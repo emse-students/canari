@@ -32,6 +32,7 @@ import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 import {
   saveMlsState,
+  MlsStateWriteRefusedError,
   toBase64,
   fromBase64,
   tagMlsSnapshot,
@@ -941,10 +942,22 @@ export class WebMlsService extends BaseMlsService {
   /**
    * Re-encrypts the in-memory MLS state with the new device key and writes it to storage.
    * The in-memory client state is unchanged; only the persisted blob is re-encrypted.
+   *
+   * THE WRITE MUST LAND. The version guard drops a capture not newer than the stored one - a
+   * follower tab's client, loaded from an older snapshot than the leader last wrote, always is - and
+   * a dropped re-seal leaves the stored state under the OLD key. That is a typed failure
+   * ({@link MlsStateWriteRefusedError}), which ends the session into the recovery, never a "done".
    */
   protected async changeDeviceKeyImpl(newDeviceKeyB64: string): Promise<void> {
     const newState = await this.saveState(newDeviceKeyB64);
-    await saveMlsState(this.userId, newState);
+    const outcome = await saveMlsState(this.userId, newState);
+    if (outcome !== 'written') {
+      console.error(
+        `[MLS] Device key change: the re-sealed state was NOT written (${outcome}) - the stored ` +
+          'state stays under the old key.'
+      );
+      throw new MlsStateWriteRefusedError(outcome);
+    }
     console.log('[MLS] Device key changed - state re-encrypted and persisted.');
   }
 

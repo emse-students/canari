@@ -15,11 +15,12 @@ import { computePinVerifier } from '$lib/utils/chat/auth';
 import {
   DeviceKeyMismatchError,
   KeyChangeInterruptedError,
+  KeyChangeSupersededError,
   LocalStateUnopenableError,
   performPinChange,
   type PinProgressCallback,
 } from '$lib/utils/chat/pinChange';
-import { endIntoKeyRecovery } from '$lib/db/deviceKeyGate';
+import { endIntoKeyRecovery, joinDeviceKeyLock } from '$lib/db/deviceKeyGate';
 import { deriveDeviceKeyB64, isValidDeviceKeyB64 } from '$lib/crypto/deviceKey';
 import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 // Every `throw` below whose message is a Paraglide line is a `LocalizedError`: the modals rendering
@@ -496,6 +497,9 @@ export async function loginImpl(
   // from a boot that never gets this far, and that seam is where `app-first-line` is marked.
   markBoot('login-start');
   const userId = ctx.getUserId();
+  // BEFORE any key is read: the key-change epoch this session's key belongs to is recorded here, so a
+  // change another tab makes before this session's first storage call is still seen as one.
+  joinDeviceKeyLock(userId);
   const pin = ctx.getPin();
   // Reassigned below once the PIN branch has fetched the server salt and derived the key.
   let deviceKeyB64 = ctx.getDeviceKey();
@@ -1866,6 +1870,8 @@ export async function nativeStorageLoginImpl(
   // (`loadDeviceKey`), and the unlabelled one of an older build must prove its owner in the login.
   try {
     const userId = ctx.getUserId();
+    // Before the vault is read, for the reason `loginImpl` gives.
+    joinDeviceKeyLock(userId);
     const vaulted = await loadDeviceKey(userId);
     if (!vaulted) {
       appendLog('[PIN] No device key in vault for this account - auto-login impossible');
@@ -2055,9 +2061,22 @@ export async function changePinImpl(
       newDeviceKeyB64
     );
   } catch (e) {
+    if (e instanceof KeyChangeSupersededError) {
+      // Another tab changed the PIN first: this tab's key is the retired one.
+      endIntoKeyRecovery('another tab changed the PIN first');
+      throw new LocalizedError(m.auth_pin_change_superseded());
+    }
     if (e instanceof KeyChangeInterruptedError) {
-      // The unattended unlock already holds the new key while the MLS state may not: this session
-      // must not run on, and the recovery (old PIN, new PIN) is what finishes the move.
+      if (!e.dataMoved) {
+        // Nothing here moved: the session's key still seals everything, so it runs on. The account
+        // already expects the new PIN, so the NEXT unlock is the one the recovery finishes.
+        log(
+          `[PIN_CHANGE] Interrupted at the ${e.stage} step - no data moved, the session runs on.`
+        );
+        throw new LocalizedError(m.auth_pin_change_not_applied());
+      }
+      // Data may sit under two keys: this session must not run on, and the recovery (old PIN, new
+      // PIN) is what finishes the move.
       log(
         `[PIN_CHANGE] Interrupted at the ${e.stage} step - ending the session into the recovery.`
       );
@@ -2149,6 +2168,11 @@ export async function recoverPinImpl(
         `[PIN_RECOVER] The local MLS state opens with no PIN (${e.failure}) - nothing changed.`
       );
       throw new LocalizedError(m.auth_pin_recover_state_unopenable());
+    }
+    if (e instanceof KeyChangeSupersededError) {
+      cb.log('[PIN_RECOVER] Another tab changed the device key first - this tab restarts.');
+      endIntoKeyRecovery('another tab changed the PIN first');
+      throw new LocalizedError(m.auth_pin_change_superseded());
     }
     if (e instanceof KeyChangeInterruptedError) {
       // Not logged in yet, so there is no session to end: the same two PINs finish what moved.

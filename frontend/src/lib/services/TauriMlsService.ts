@@ -990,14 +990,15 @@ export class TauriMlsService extends BaseMlsService {
    * {@link changeDeviceKeyImpl}, because here the order is the point. A refusal propagates: the
    * caller must not move any data while an unattended unlock still opens the old state.
    */
-  override async pointUnattendedUnlockAt(newDeviceKeyB64: string): Promise<void> {
-    if (!isTauriRuntime()) return;
+  override async pointUnattendedUnlockAt(newDeviceKeyB64: string): Promise<boolean> {
+    if (!isTauriRuntime()) return false;
     await invoke('actualiser_cle_keystore_avec_devicekey', {
       deviceKeyB64: newDeviceKeyB64,
       userId: this.userId,
       deviceId: this.deviceId,
     });
     console.log('[MLS][Tauri] Keystore now holds the new device key (unattended unlock moved).');
+    return true;
   }
 
   protected async changeDeviceKeyImpl(newDeviceKeyB64: string): Promise<void> {

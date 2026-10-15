@@ -558,9 +558,10 @@ export interface IMlsService {
   ): Promise<LocalStateOpenResult>;
   /**
    * Points the unattended unlock (platform keystore: biometrics, background push) at a new device
-   * key, awaited. A no-op on web. Rejects when the keystore refused the write.
+   * key, awaited. A no-op on web. Rejects when the keystore refused the write; resolves `true` when
+   * an entry was written, `false` when there is no keystore (nothing moved).
    */
-  pointUnattendedUnlockAt(newDeviceKeyB64: string): Promise<void>;
+  pointUnattendedUnlockAt(newDeviceKeyB64: string): Promise<boolean>;
   /** Generates a fresh MLS KeyPackage for this device, signed with the device-key-encrypted identity key. */
   generateKeyPackage(deviceKeyB64: string): Promise<DatedKeyPackage>;
   /**

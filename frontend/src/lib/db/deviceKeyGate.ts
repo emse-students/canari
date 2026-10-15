@@ -1,7 +1,7 @@
 /**
- * The seam every `IStorage` call crosses, so a device key change can HOLD the storage work of every
- * realm that writes the same database while it moves the stores, and FORWARD the retired key once it
- * has.
+ * The seam every `IStorage` call AND every MLS state read or write crosses, so a device key change
+ * can HOLD the work of every realm that touches the same databases while it moves them, and FORWARD
+ * the retired key once it has.
  *
  * WHY A GATE AND NOT A SECOND PASS. An in-session PIN change runs with the session live: the outbox
  * flusher, the message pipeline and the Graine runtime keep reading and writing while the stores are
@@ -11,21 +11,29 @@
  * the fact would heal that race, and a race that heals is still a race; this deletes the overlap.
  *
  * TWO SCOPES, BECAUSE ONE DATABASE IS SHARED BY SEVERAL REALMS. On the web every tab of the account
- * opens the SAME IndexedDB; a follower tab writes outbox rows into it with the key IT holds in
- * memory, and nothing in its realm sees this realm's change.
+ * opens the SAME IndexedDB (stores and `CanariDBMls_<userId>`); a follower tab writes outbox rows
+ * into it with the key IT holds in memory, a leader checkpoints its MLS state, a reloading tab reads
+ * that state - and nothing in their realms sees this realm's change.
  *
  *  - IN THIS REALM ({@link holdStorageForKeyChange}): every call in flight finishes, then the re-seal
  *    runs while every new call WAITS at the gate - no write lands between its read and its swap.
  *  - ACROSS REALMS ({@link holdOtherRealmsForKeyChange}): every realm holds the Web Lock
- *    `canari-device-key:<userId>` in SHARED mode while it may touch the store, and a call waits until
- *    it holds it. The changer queues the EXCLUSIVE mode FIRST (so a realm opening from then on queues
- *    behind it), then announces the change on {@link KEY_CHANGE_CHANNEL}. A realm that hears it goes
- *    STALE - every later call is refused with {@link StaleDeviceKeyError} - lets its calls in flight
- *    finish, releases its shared lock, and ends into the recovery ({@link setKeyRecoveryHandler}: a
- *    reload, which comes back with the vault's new key and waits for the lock behind the change).
- *    Only once every other realm has let go does the exclusive mode start, so no other realm writes
- *    while data moves, and none writes with the old key afterwards. No timer anywhere: a realm that
- *    has not answered yet holds the change, it is never presumed gone.
+ *    `canari-device-key:<userId>` in SHARED mode while it may touch the databases, and a call waits
+ *    until it holds it - storage calls through {@link gateStorage}, the MLS state's reads and writes
+ *    through {@link withDeviceKeyHeld}. The changer queues the EXCLUSIVE mode FIRST (so a realm
+ *    opening from then on queues behind it), then announces the change on {@link KEY_CHANGE_CHANNEL}.
+ *    A realm that hears it goes STALE - every later call is refused with {@link StaleDeviceKeyError}
+ *    - lets its calls in flight finish, releases its shared lock, and ends into the recovery
+ *    ({@link setKeyRecoveryHandler}: a reload, whose first MLS read waits behind the change and which
+ *    comes back with the vault's new key onto a state already moved). No timer anywhere: a realm that
+ *    has not answered holds the change - the changer is told, to say so ({@link KeyChangeWaiting}) -
+ *    and is never presumed gone.
+ *  - THE EPOCH: a counter in `localStorage` the changer bumps inside the exclusive mode. A realm reads
+ *    it when it first joins the lock (before its key is read, {@link joinDeviceKeyLock}), and checks
+ *    it every time the shared mode is granted again: a tab that was away (bfcache, frozen) while
+ *    another changed the key finds a newer epoch and goes stale instead of writing with the old key.
+ *    The same check, inside the exclusive mode, stops the SECOND of two concurrent changes before it
+ *    touches the vault ({@link KeyChangeSupersededError}).
  *  - FORWARD: the key a caller passes is evaluated BEFORE it reaches the gate, so a call queued behind
  *    the change still carries the old key. Once the change commits, the gate maps the retired key to
  *    its successor on every argument, so that call - and any closure still holding the old value -
@@ -43,9 +51,14 @@ import type { IStorage } from './types';
 /** The channel a key change is announced on, to the other realms of this origin. */
 export const KEY_CHANGE_CHANNEL = 'canari-device-key';
 
-/** The Web Lock every realm holds SHARED while it may touch `userId`'s store. */
+/** The Web Lock every realm holds SHARED while it may touch `userId`'s databases. */
 function lockName(userId: string): string {
   return `canari-device-key:${userId}`;
+}
+
+/** The `localStorage` counter of completed-or-started key changes for `userId`. */
+function epochKey(userId: string): string {
+  return `canari-device-key-epoch:${userId}`;
 }
 
 /** The notice a changer posts BEFORE any data moves. Carries the account, never a key. */
@@ -55,14 +68,26 @@ interface KeyChangeNotice {
 }
 
 /**
- * Thrown by every storage call of a realm whose device key a change in ANOTHER realm has retired.
- * Typed so a caller can tell "this tab is ending into the recovery" from a storage failure, and
- * refused rather than run: a write under the retired key would land after the re-seal and be lost.
+ * Thrown by every gated call of a realm whose device key another realm has retired. Typed so a
+ * caller can tell "this tab is ending into the recovery" from a storage failure, and refused rather
+ * than run: a write under the retired key would land after the re-seal and be lost.
  */
 export class StaleDeviceKeyError extends Error {
   constructor() {
     super('another realm changed the device key: this realm no longer writes the store');
     this.name = 'StaleDeviceKeyError';
+  }
+}
+
+/**
+ * Thrown by {@link holdOtherRealmsForKeyChange} when, once it holds the exclusive mode, the epoch is
+ * no longer the one this realm joined with: another tab changed the key first. Nothing of this change
+ * has moved (the vault step runs inside the exclusive mode), and this realm's key is stale.
+ */
+export class KeyChangeSupersededError extends Error {
+  constructor() {
+    super('another realm changed the device key first: this change did not start');
+    this.name = 'KeyChangeSupersededError';
   }
 }
 
@@ -79,24 +104,32 @@ const targets = new WeakMap<IStorage, { raw: IStorage; userId: string }>();
 
 /** This realm's standing towards one account's cross-realm lock. */
 interface RealmHold {
+  userId: string;
   /** True while this realm holds the shared lock (always, without Web Locks). */
   held: boolean;
-  /** Resolves when the shared lock is next granted. */
+  /** Resolves when the shared lock is next granted (or the realm goes stale). */
   granted: Promise<void>;
   /** Lets go of the shared lock (a no-op when not held). */
   release: () => void;
+  /** Wakes the callers parked while the page was suspended, once it is asked for again. */
+  wake: (() => void) | null;
   /** Another realm changed the key: every call is refused from now on. */
   stale: boolean;
   /**
    * THIS realm runs the change and holds (or waits for) the exclusive mode: its own calls do not
    * wait for the shared lock it let go - {@link holdStorageForKeyChange} holds them where it must,
-   * and the MLS re-seal inside the change may itself wait on one of them.
+   * and the MLS re-seal inside the change waits on the gate itself.
    */
   changing: boolean;
+  /** The epoch this realm's key belongs to (`null` when `localStorage` cannot be read). */
+  epoch: string | null;
+  /** Another tab announced a change while this one was changing: let it through afterwards. */
+  yieldAfterChange: boolean;
 }
 
 const holds = new Map<string, RealmHold>();
 let channel: BroadcastChannel | null = null;
+let lifecycleArmed = false;
 
 /** Ends this realm into the recovery. A reload by default: it comes back with the vault's key. */
 let recoveryHandler: (reason: string) => void = () => {
@@ -126,8 +159,44 @@ function webLocks(): LockManager | null {
   return locks && typeof locks.request === 'function' ? locks : null;
 }
 
+function readEpoch(userId: string): string | null {
+  try {
+    return globalThis.localStorage?.getItem(epochKey(userId)) ?? '0';
+  } catch (e) {
+    // EVERY SWALLOWED BRANCH LOGS. Without the epoch the lock and the notice still hold every tab
+    // that is awake; only a tab that was away cannot be told.
+    console.error(`[DEVICEKEY] The key-change epoch cannot be read: ${String(e)}`);
+    return null;
+  }
+}
+
+function bumpEpoch(userId: string, from: string | null): string | null {
+  const next = String((Number(from) || 0) + 1);
+  try {
+    globalThis.localStorage?.setItem(epochKey(userId), next);
+    return next;
+  } catch (e) {
+    console.error(`[DEVICEKEY] The key-change epoch cannot be written: ${String(e)}`);
+    return from;
+  }
+}
+
+/**
+ * Marks this realm stale - ONCE, and logged once: every later call is refused without a line of its
+ * own - then lets its calls in flight finish, lets go of the lock and ends into the recovery.
+ */
+async function goStale(hold: RealmHold, reason: string): Promise<void> {
+  if (hold.stale) return;
+  hold.stale = true;
+  console.warn(`[DEVICEKEY] ${reason}: this tab stops writing; every further call is refused.`);
+  hold.wake?.();
+  await drain();
+  hold.release();
+  endIntoKeyRecovery(reason);
+}
+
 /** Requests the shared lock for `hold`, which it keeps until `hold.release()`. */
-function requestShared(locks: LockManager, userId: string, hold: RealmHold): void {
+function requestShared(locks: LockManager, hold: RealmHold): void {
   hold.held = false;
   let until!: () => void;
   const released = new Promise<void>((resolve) => {
@@ -136,7 +205,14 @@ function requestShared(locks: LockManager, userId: string, hold: RealmHold): voi
   hold.release = until;
   hold.granted = new Promise<void>((granted) => {
     locks
-      .request(lockName(userId), { mode: 'shared' }, () => {
+      .request(lockName(hold.userId), { mode: 'shared' }, () => {
+        // A grant after a change this realm did not make (it was away, or joined before it) finds a
+        // newer epoch: its key is the retired one.
+        if (!hold.changing && readEpoch(hold.userId) !== hold.epoch) {
+          granted();
+          void goStale(hold, 'The device key changed while this tab was away');
+          return released;
+        }
         hold.held = true;
         granted();
         return released;
@@ -147,47 +223,108 @@ function requestShared(locks: LockManager, userId: string, hold: RealmHold): voi
         console.error(`[DEVICEKEY] The shared device-key lock was refused: ${String(e)}`);
       });
   });
+  // Callers parked on a suspended page's promise move onto this one.
+  const wake = hold.wake;
+  hold.wake = null;
+  wake?.();
 }
 
 function ensureChannel(): BroadcastChannel | null {
   if (channel || typeof BroadcastChannel === 'undefined') return channel;
   channel = new BroadcastChannel(KEY_CHANGE_CHANNEL);
   channel.addEventListener('message', (ev: MessageEvent<KeyChangeNotice>) => {
-    if (ev.data?.type === 'key_change_starting') void onKeyChangeNotice(ev.data.userId);
+    if (ev.data?.type === 'key_change_starting') onKeyChangeNotice(ev.data.userId);
   });
   return channel;
 }
 
-/** This realm's hold on `userId`'s lock, requested the first time one of its stores is gated. */
+/**
+ * A SUSPENDED PAGE MUST NOT HOLD THE LOCK. A page put in the back-forward cache, or frozen, runs no
+ * code and so cannot hear a notice: holding the lock, it would hold every change for as long as it
+ * sleeps. It lets go when it is put away and asks again when it comes back - and the epoch check on
+ * that grant is what tells it whether its key was retired meanwhile. A page that is suspended WITHOUT
+ * either event (iOS Safari in the background) keeps its lock, and the changer says so on screen.
+ */
+function armLifecycle(): void {
+  if (lifecycleArmed || typeof document === 'undefined') return;
+  lifecycleArmed = true;
+  const suspend = () => {
+    for (const hold of holds.values()) {
+      if (hold.stale || hold.changing || !hold.held) continue;
+      hold.release();
+      hold.held = false;
+      hold.granted = new Promise<void>((resolve) => (hold.wake = resolve));
+    }
+  };
+  const resume = () => {
+    const locks = webLocks();
+    if (!locks) return;
+    for (const hold of holds.values()) {
+      if (hold.stale || hold.held || !hold.wake) continue;
+      requestShared(locks, hold);
+    }
+  };
+  document.addEventListener('freeze', suspend);
+  document.addEventListener('resume', resume);
+  globalThis.addEventListener?.('pagehide', (ev) => {
+    if ((ev as PageTransitionEvent).persisted) suspend();
+  });
+  globalThis.addEventListener?.('pageshow', (ev) => {
+    if ((ev as PageTransitionEvent).persisted) resume();
+  });
+}
+
+/**
+ * Joins `userId`'s cross-realm lock: records the epoch the key about to be read belongs to and asks
+ * for the shared mode. Called by the login BEFORE it reads a key, and implicitly by every gated call.
+ */
+export function joinDeviceKeyLock(userId: string): void {
+  realmHold(userId);
+}
+
 function realmHold(userId: string): RealmHold {
   let hold = holds.get(userId);
   if (hold) return hold;
   hold = {
+    userId,
     held: true,
     granted: Promise.resolve(),
     release: () => {},
+    wake: null,
     stale: false,
     changing: false,
+    epoch: null,
+    yieldAfterChange: false,
   };
   holds.set(userId, hold);
   const locks = webLocks();
   if (locks) {
+    hold.epoch = readEpoch(userId);
     // Listening BEFORE asking: a realm that holds the lock has always been able to hear the notice.
     ensureChannel();
-    requestShared(locks, userId, hold);
+    armLifecycle();
+    requestShared(locks, hold);
   }
   return hold;
 }
 
 /** Another realm is about to move the stores: stop, drain, let go, end into the recovery. */
-async function onKeyChangeNotice(userId: string): Promise<void> {
+function onKeyChangeNotice(userId: string): void {
   const hold = holds.get(userId);
   if (!hold || hold.stale) return;
-  hold.stale = true;
-  console.warn('[DEVICEKEY] Another tab is changing the device key: this tab stops writing.');
-  await drain();
-  hold.release();
-  endIntoKeyRecovery('another tab changed the device key');
+  if (hold.changing) {
+    // TWO CHANGES AT ONCE. Reloading here would abandon a change half made, so this realm finishes
+    // its own; the exclusive mode orders the two, and the later one stops on the epoch
+    // (`KeyChangeSupersededError`). What the notice still asks is to let the other change through
+    // once this one is done - see `holdOtherRealmsForKeyChange`.
+    console.warn(
+      '[DEVICEKEY] Another tab announced a key change while this one is changing: this change ' +
+        'finishes first, then lets the other through.'
+    );
+    hold.yieldAfterChange = true;
+    return;
+  }
+  void goStale(hold, 'Another tab is changing the device key');
 }
 
 function drain(): Promise<void> {
@@ -227,6 +364,21 @@ function retire(oldKey: string, newKey: string): void {
 }
 
 /**
+ * Runs `fn` - a read or a write of `userId`'s MLS state - through the gate: it waits for a change in
+ * this realm and for the shared mode, and is refused once this realm is stale. So a tab reloading
+ * after a notice reads the state only once it has MOVED, and an old leader's checkpoint cannot land
+ * under the retired key after the change re-sealed it.
+ */
+export async function withDeviceKeyHeld<T>(userId: string, fn: () => Promise<T>): Promise<T> {
+  await enter(realmHold(userId));
+  try {
+    return await fn();
+  } finally {
+    leave();
+  }
+}
+
+/**
  * Wraps `userId`'s store so every call goes through the gate, and takes this realm's shared hold on
  * that account's lock. Applied once, where stores are opened (`getStorage`), so no caller can reach a
  * store around it.
@@ -239,14 +391,8 @@ export function gateStorage(storage: IStorage, userId: string): IStorage {
       if (typeof value !== 'function') return value;
       const method = value as (...args: unknown[]) => Promise<unknown>;
       return async (...args: unknown[]) => {
-        try {
-          await enter(hold);
-        } catch (e) {
-          if (e instanceof StaleDeviceKeyError) {
-            console.warn(`[DEVICEKEY] Refused ${String(prop)}: this tab's device key is retired.`);
-          }
-          throw e;
-        }
+        // A refusal (`StaleDeviceKeyError`) was logged once, when this realm went stale.
+        await enter(hold);
         try {
           return await method.apply(target, args.map(forward));
         } finally {
@@ -259,39 +405,87 @@ export function gateStorage(storage: IStorage, userId: string): IStorage {
   return gated;
 }
 
+/** Tells the changer the other tabs have not let go yet - so the screen can say why it waits. */
+export type KeyChangeWaiting = () => void;
+
 /**
- * Runs `work` - the whole store move of a key change, MLS state included - while no OTHER realm can
- * touch `userId`'s store, and after every one of them has been told its key is retired.
+ * Runs `work` - the whole move of a key change, vault, stores and MLS state - while no OTHER realm
+ * can touch `userId`'s databases, after every one of them has been told its key is retired.
  *
  * The exclusive mode is QUEUED before the notice is posted, so a realm that opens after the notice
  * queues behind it rather than slipping in with a key it read before the vault moved. This realm's
  * own shared hold is released for the exclusive mode to start, and asked for again behind it. Its
  * own callers do not wait for that lock meanwhile ({@link RealmHold.changing}): the realm that holds
  * the exclusive mode is the one that may write, {@link holdStorageForKeyChange} holds them while the
- * stores move, and the MLS re-seal inside `work` must not wait on a call that waits on `work`.
- * Without Web Locks it is `work()`.
+ * stores move, and the MLS re-seal inside `work` goes through the gate itself.
+ *
+ * `onWaiting` is called when another tab still holds the lock, so the screen can say "another tab is
+ * open" instead of sitting still. Without Web Locks it is `work()`.
+ *
+ * @throws {KeyChangeSupersededError} when another tab changed the key first; `work` never ran.
  */
 export async function holdOtherRealmsForKeyChange<T>(
   userId: string,
-  work: () => Promise<T>
+  work: () => Promise<T>,
+  onWaiting?: KeyChangeWaiting
 ): Promise<T> {
   const locks = webLocks();
   if (!locks) return work();
   const hold = realmHold(userId);
   hold.changing = true;
-  const run = locks.request(lockName(userId), { mode: 'exclusive' }, () => work());
-  const notice: KeyChangeNotice = { type: 'key_change_starting', userId };
-  ensureChannel()?.postMessage(notice);
-  console.log('[DEVICEKEY] Key change announced to the other tabs; waiting for them to let go.');
-  // The shared hold is asked for again NOW, so it queues BEHIND the exclusive mode and is granted
-  // the moment the change ends; only then is the current one let go, for the exclusive to start.
-  const letGo = hold.release;
-  requestShared(locks, userId, hold);
-  letGo();
   try {
-    return await run;
+    const run = locks.request(lockName(userId), { mode: 'exclusive' }, async () => {
+      const epoch = readEpoch(userId);
+      if (epoch !== hold.epoch) {
+        hold.stale = true;
+        console.warn('[DEVICEKEY] Another tab changed the device key first: this change stops.');
+        throw new KeyChangeSupersededError();
+      }
+      hold.epoch = bumpEpoch(userId, epoch);
+      return work();
+    });
+    const notice: KeyChangeNotice = { type: 'key_change_starting', userId };
+    ensureChannel()?.postMessage(notice);
+    if (onWaiting && (await otherHolders(locks, userId)) > 0) {
+      console.log('[DEVICEKEY] Key change announced; another tab still holds the lock.');
+      onWaiting();
+    }
+    // The shared hold is asked for again NOW, so it queues BEHIND the exclusive mode and is granted
+    // the moment the change ends; only then is the current one let go, for the exclusive to start.
+    const letGo = hold.release;
+    requestShared(locks, hold);
+    letGo();
+    try {
+      return await run;
+    } finally {
+      if (hold.yieldAfterChange) {
+        // The other change queued its exclusive mode BEHIND this realm's shared re-request; holding
+        // that for the page's life would hold the other change for ever. Let go once, and ask again
+        // behind it - it stops on the epoch, and this realm's own epoch is the current one.
+        hold.yieldAfterChange = false;
+        await hold.granted;
+        const again = hold.release;
+        requestShared(locks, hold);
+        again();
+      }
+    }
   } finally {
     hold.changing = false;
+  }
+}
+
+/** How many OTHER holders of the shared mode there are (this realm's own counted out). */
+async function otherHolders(locks: LockManager, userId: string): Promise<number> {
+  if (typeof locks.query !== 'function') return 0;
+  try {
+    const snapshot = await locks.query();
+    const shared = (snapshot.held ?? []).filter(
+      (l) => l.name === lockName(userId) && l.mode === 'shared'
+    ).length;
+    return Math.max(0, shared - 1);
+  } catch (e) {
+    console.error(`[DEVICEKEY] The lock state cannot be queried: ${String(e)}`);
+    return 0;
   }
 }
 

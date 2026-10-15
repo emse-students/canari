@@ -20,7 +20,13 @@
  */
 import { openSealedBytes, sealBytes } from '$lib/encryption';
 import { getStorage, type IStorage, type SealedPayloadSwap, type SealedStore } from '$lib/db';
-import { holdOtherRealmsForKeyChange, holdStorageForKeyChange } from '$lib/db/deviceKeyGate';
+import {
+  KeyChangeSupersededError,
+  holdOtherRealmsForKeyChange,
+  holdStorageForKeyChange,
+} from '$lib/db/deviceKeyGate';
+
+export { KeyChangeSupersededError };
 import {
   clearDeviceKey,
   clearDeviceKeyAndWrapKey,
@@ -51,7 +57,9 @@ export type PinOperationStage =
   | 'messages_decrypt'
   | 'messages_encrypt'
   | 'finalize'
-  | 'login';
+  | 'login'
+  /** Another tab of the account still holds the lock: the change waits for it to let go. */
+  | 'waiting_tabs';
 
 /** User-facing progress snapshot for device key change / recovery modals. */
 export interface PinOperationProgress {
@@ -101,18 +109,29 @@ export class LocalStateUnopenableError extends Error {
 }
 
 /**
- * The change threw AFTER the unattended unlock (keystore, vault) moved to the new key: the stores
- * and the MLS state may still be (partly) under the old one. The session must end into the
- * recovery - which opens the MLS state with the old key and finishes the move - rather than keep
- * running on a key the unattended unlock no longer holds. Carries the stage, never key material.
+ * The change threw after it started moving this device. Carries the stage, never key material, and
+ * the stage decides what the caller owes:
+ *
+ *  - `stores` / `mls`: data has moved - stores and MLS state may sit under two keys. The session
+ *    must end into the recovery (which opens the MLS state with the old key and finishes the move)
+ *    rather than keep running on the old key ({@link dataMoved}).
+ *  - `vault`: no row and no state moved. The session's key is still the one everything here is
+ *    sealed under, so it may run on; only the unlock changed (the vault cleared, and on native the
+ *    keystore moved: {@link keystoreMoved}), so the NEXT unlock is the one sent to the recovery.
  */
 export class KeyChangeInterruptedError extends Error {
   constructor(
     readonly stage: 'vault' | 'stores' | 'mls',
+    readonly keystoreMoved: boolean,
     readonly reason: unknown
   ) {
     super(`the device key change was interrupted at the ${stage} step: ${String(reason)}`);
     this.name = 'KeyChangeInterruptedError';
+  }
+
+  /** Whether a row or the MLS state may already be under the new key. */
+  get dataMoved(): boolean {
+    return this.stage !== 'vault';
   }
 }
 
@@ -288,23 +307,28 @@ export interface PinChangeOptions {
  *  2. THE UNATTENDED UNLOCK MOVES FIRST: keystore, then vault, now hold the NEW key. Both skip the
  *     server PIN check, so had they kept the old key past a kill, they would open the MLS state (not
  *     yet re-sealed) and run a session over stores already half moved - silently. With the new key,
- *     every way in after a kill finds an MLS state it cannot open, and is sent to the recovery.
- *  3. THE STORES, under the storage gate: every OTHER tab of this account has been told and has let
- *     go of the store ({@link holdOtherRealmsForKeyChange}), this realm's storage calls wait while
- *     they move, and the retired key is forwarded to the new one afterwards
- *     ({@link holdStorageForKeyChange}).
+ *     every way in after a kill finds an MLS state it cannot open, and is sent to the recovery. The
+ *     vault half runs inside the other tabs' hold ({@link holdOtherRealmsForKeyChange}): every OTHER
+ *     tab of this account has been told and has let go of the databases, and a second change started
+ *     from another tab is ordered behind this one and stops before its vault step.
+ *  3. THE STORES, under the storage gate: this realm's storage calls wait while they move, and the
+ *     retired key is forwarded to the new one afterwards ({@link holdStorageForKeyChange}).
  *  4. The session adopts the new key.
- *  5. THE MLS STATE LAST, still inside the other tabs' hold, so none reloads onto a state not yet
- *     moved: it is the recovery's entry point (opened with the OLD key), so while it has not moved,
- *     the recovery is offered and finishes the stores. In the reverse order a kill left it under the
- *     new key and the remaining rows under a key no path would ever ask for again.
+ *  5. THE MLS STATE LAST, still inside the other tabs' hold - and every MLS state read and write goes
+ *     through the same lock, so a tab that reloads reads it only once it has moved, and an old
+ *     leader's checkpoint cannot land after it. It is the recovery's entry point (opened with the OLD
+ *     key), so while it has not moved, the recovery is offered and finishes the stores. In the
+ *     reverse order a kill left it under the new key and the remaining rows under a key no path would
+ *     ever ask for again.
  *
- * A THROW after step 2 is a {@link KeyChangeInterruptedError}: the unattended unlock already holds
- * the new key, so the caller must end the session into the recovery rather than run on the old one.
+ * A THROW after the keystore is a {@link KeyChangeInterruptedError} with its stage; from the stores
+ * on, the caller must end the session into the recovery rather than run on the old key.
  *
  * @throws {DeviceKeyMismatchError} in a recovery whose old key does not open the MLS state.
  * @throws {LocalStateUnopenableError} in a recovery whose MLS state no PIN can open.
- * @throws {KeyChangeInterruptedError} on any failure after the unattended unlock moved.
+ * @throws {KeyChangeInterruptedError} on any failure after the keystore step.
+ * @throws {KeyChangeSupersededError} when another tab changed the key first; nothing here moved
+ *         past the keystore.
  */
 export async function performPinChange(
   opts: PinChangeOptions,
@@ -329,35 +353,48 @@ export async function performPinChange(
     log('[DEVICEKEY_CHANGE] The old key opens the local MLS state.');
   }
 
-  await mls.pointUnattendedUnlockAt(newDeviceKeyB64);
+  const keystoreMoved = await mls.pointUnattendedUnlockAt(newDeviceKeyB64);
 
-  // FROM HERE THE UNATTENDED UNLOCK HOLDS THE NEW KEY: a throw must not leave the session running on
-  // the old one, so it is typed for the caller to end the session into the recovery.
+  // FROM HERE A THROW IS TYPED, with the stage it stopped at: from the stores on, data has moved and
+  // the session must not run on the old key; before them nothing on this device has (see the error).
   let stage: KeyChangeInterruptedError['stage'] = 'vault';
   try {
-    await applyNewDeviceKeyLocally(userId, oldDeviceKeyB64, newDeviceKeyB64, log);
-
-    stage = 'stores';
     const storage = await getStorage(userId);
-    await holdOtherRealmsForKeyChange(userId, async () => {
-      await holdStorageForKeyChange(storage, oldDeviceKeyB64, newDeviceKeyB64, (store) =>
-        resealDeviceKeyStores(store, oldDeviceKeyB64, newDeviceKeyB64, log, onProgress, {
-          start: 10,
-          end: 85,
-        })
-      );
-      setDeviceKey(newDeviceKeyB64);
+    // EVERYTHING FROM THE VAULT ON RUNS WHILE THE OTHER TABS ARE HELD: two changes started from two
+    // tabs are ordered by the exclusive lock, and the second stops before touching the vault.
+    await holdOtherRealmsForKeyChange(
+      userId,
+      async () => {
+        reportProgress(onProgress, { percent: 8, stage: 'mls' });
+        await applyNewDeviceKeyLocally(userId, oldDeviceKeyB64, newDeviceKeyB64, log);
 
-      stage = 'mls';
-      reportProgress(onProgress, { percent: 88, stage: 'mls' });
-      await mls.changeDeviceKey(newDeviceKeyB64);
-    });
+        stage = 'stores';
+        await holdStorageForKeyChange(storage, oldDeviceKeyB64, newDeviceKeyB64, (store) =>
+          resealDeviceKeyStores(store, oldDeviceKeyB64, newDeviceKeyB64, log, onProgress, {
+            start: 10,
+            end: 85,
+          })
+        );
+        setDeviceKey(newDeviceKeyB64);
+
+        stage = 'mls';
+        reportProgress(onProgress, { percent: 88, stage: 'mls' });
+        await mls.changeDeviceKey(newDeviceKeyB64);
+      },
+      () => reportProgress(onProgress, { percent: 6, stage: 'waiting_tabs' })
+    );
   } catch (e) {
+    if (e instanceof KeyChangeSupersededError) {
+      log(
+        '[DEVICEKEY_CHANGE] Another tab changed the device key first - this change did not start.'
+      );
+      throw e;
+    }
     log(
-      `[DEVICEKEY_CHANGE] ERROR: interrupted at the ${stage} step after the unattended unlock moved - ` +
+      `[DEVICEKEY_CHANGE] ERROR: interrupted at the ${stage} step (keystore moved: ${keystoreMoved}) - ` +
         `the recovery finishes it: ${String(e)}`
     );
-    throw new KeyChangeInterruptedError(stage, e);
+    throw new KeyChangeInterruptedError(stage, keystoreMoved, e);
   }
   log('[DEVICEKEY_CHANGE] MLS state re-sealed with the new device key.');
   reportProgress(onProgress, { percent: 100, stage: 'finalize' });

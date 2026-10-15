@@ -700,8 +700,13 @@ export abstract class BaseMlsService implements IMlsService {
    * Exists so a PIN change can move the unattended unlock BEFORE it moves any data: an unlock that
    * skips the server PIN check and still held the old key would open an MLS state not yet re-sealed
    * and run a session over stores already half moved - silently, with no recovery ever offered.
+   *
+   * Answers whether anything was written: `false` here, so a change interrupted before its vault step
+   * knows nothing on this device moved.
    */
-  async pointUnattendedUnlockAt(_newDeviceKeyB64: string): Promise<void> {}
+  async pointUnattendedUnlockAt(_newDeviceKeyB64: string): Promise<boolean> {
+    return false;
+  }
 
   /**
    * Removes shared event listeners and clears the heartbeat timer.

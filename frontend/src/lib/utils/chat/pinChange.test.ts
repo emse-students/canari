@@ -167,6 +167,7 @@ function fakeMls(
     }),
     pointUnattendedUnlockAt: vi.fn(async () => {
       order.push('keystore');
+      return true;
     }),
     changeDeviceKey: vi.fn(async () => {
       order.push('mls-reseal');
@@ -401,6 +402,25 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
     expect((failure as InstanceType<typeof KeyChangeInterruptedError>).stage).toBe('mls');
   });
 
+  it('a throw at the VAULT step moved no data: typed as such, so the session may run on', async () => {
+    const { OLD, NEW } = keys();
+    const s = await populated(OLD);
+    storageForUser.set('u-vault-throw', s.gated);
+    const mls = fakeMls();
+    vault.retireUnlabelledDeviceKeyIfOwnedBy.mockRejectedValueOnce(new Error('storage refused'));
+
+    const failure = await performPinChange(options('u-vault-throw', mls), OLD, NEW).catch(
+      (e: unknown) => e
+    );
+
+    expect(failure).toBeInstanceOf(KeyChangeInterruptedError);
+    const typed = failure as InstanceType<typeof KeyChangeInterruptedError>;
+    expect(typed.stage).toBe('vault');
+    expect(typed.dataMoved).toBe(false);
+    expect(mls.changeDeviceKey).not.toHaveBeenCalled();
+    await everyRowUnder(s.raw, OLD);
+  });
+
   it("retires an older build's UNLABELLED vault slot holding the old key, before the new key is saved", async () => {
     // That slot unlocks without the server PIN check: kept past a kill, it opens the MLS state not
     // yet re-sealed and runs a session over stores already half moved.
@@ -501,6 +521,7 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
     // TYPED, so the caller ends the session into the recovery instead of running on the old key.
     expect(failure).toBeInstanceOf(KeyChangeInterruptedError);
     expect((failure as InstanceType<typeof KeyChangeInterruptedError>).stage).toBe('stores');
+    expect((failure as InstanceType<typeof KeyChangeInterruptedError>).dataMoved).toBe(true);
     expect(String((failure as Error).message)).toContain('disk full');
     expect(mls.changeDeviceKey).not.toHaveBeenCalled();
     expect(opts.setDeviceKey).not.toHaveBeenCalled();
