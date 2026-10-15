@@ -810,6 +810,25 @@ export class TauriMlsService extends BaseMlsService {
     return groups.length;
   }
 
+  /**
+   * THE GROUP CACHES FOLLOW A STATE OPENED BY THE RECOVERY. `openLocalStateWithKey` marks the client
+   * initialised, so the login after a PIN recovery skips `_initImpl` - and with it the listing that
+   * fills {@link _knownGroups}. iPhone 12, `1.2.9-alpha.2`, 2026-10-15: the native manager held the
+   * group while `getLocalGroups()` answered nothing, so the restore reported "0/1 ... missing" (a
+   * banner for nothing lost), demoted the conversation to pending, and the re-add's external join
+   * failed with "already present locally" - until the next cold start listed it.
+   */
+  protected override async afterStateOpened(): Promise<void> {
+    try {
+      const groups = await this.syncGroupCachesFromNative();
+      console.log(`[MLS][Tauri] state opened by the recovery - ${groups} group(s) listed`);
+    } catch (e) {
+      // As at start-up: the state opened, so the recovery goes on; the restore check that follows
+      // will then report the groups this listing could not name.
+      console.error('[MLS][Tauri] listing the held groups after the recovery failed:', String(e));
+    }
+  }
+
   /** Tauri-native `invoke` wrapper - calls `creer_groupe` in Rust and updates the local known-groups cache. */
   async createGroup(groupId: string): Promise<void> {
     await invoke('creer_groupe', { groupId });

@@ -851,6 +851,28 @@ against a real SQLite (`node:sqlite`, 2026-10-15: a full 166-row batch swapped 1
 deleted row untouched) and has **not** run on a device yet. Neither has the awaited keystore write,
 nor the cross-tab hold in a real browser.
 
+#### The login after a recovery read no groups - a false "partial restore" (iPhone 12, 2026-10-15)
+
+**The recovery PASSED on the iPhone 12 (`1.2.9-alpha.2`) and its login then said a conversation
+could not be restored.** `[ERROR] Partial restore: 0/1 ... missing 3122333c`, the conversation
+demoted to pending, then the re-add's external join refused with `group 3122333c… already present
+locally` - the native manager held the group the restore check said was missing. The cause:
+`openLocalStateWithKey` marks the client initialised so the login skips `_initImpl`, and
+`_initImpl` is what lists the native groups into `TauriMlsService._knownGroups`, which
+`getLocalGroups()` reads. So the login after a recovery ran on an empty cache: the banner, the
+demotion, the failed rejoin (and the same failure on the community's key group), until the next
+cold start listed the groups. Now `openLocalStateWithKey` calls `afterStateOpened()`, which on Tauri
+rebuilds the group caches from the native manager (`TauriMlsService.recoveryGroups.test.ts` fails
+without it). The web reads WASM live and needed nothing.
+
+**The `LOST frame` lines that followed are this defect's cost, not the PIN lock's.** The false
+verdict sent a `welcome_request`; the peer's Welcome then made the client drop the group it held
+(`GroupAlreadyExists - forget storage + re-join`) and re-join at a newer epoch, so the frames sent
+while the device was locked - queued, and decryptable by the group it held - became frames of a
+past epoch. They are re-asked by the history diff (`raiseReconcile`, `[HISTORY_RECONCILE]`): the
+peer names from its own store what this device lacks and re-sends it at the current generation.
+With the cache right, nothing is dropped and the queued frames decrypt as they are drained.
+
 ### An at-rest format change needs its own reader, in the same commit
 
 Every at-rest envelope here is a byte layout with no version field: `mls.bin` is

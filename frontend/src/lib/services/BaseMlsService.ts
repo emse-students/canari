@@ -689,9 +689,18 @@ export abstract class BaseMlsService implements IMlsService {
     // The state in memory is the one sealed under this key, so this key is what a checkpoint
     // taken before the re-seal must use.
     this.currentDeviceKeyB64 = deviceKeyB64;
+    await this.afterStateOpened();
     this.initPromise = Promise.resolve();
     return { opened: true };
   }
+
+  /**
+   * What a platform owes once a state has been opened OUTSIDE {@link init} - the recovery's
+   * {@link openLocalStateWithKey}, which marks the client initialised so the login that follows
+   * skips `_initImpl`. Anything `_initImpl` derives from the opened state must be derived here too,
+   * or that login runs on caches describing no state at all. No-op where nothing is cached.
+   */
+  protected async afterStateOpened(): Promise<void> {}
 
   /**
    * Points every UNATTENDED unlock of this device at `newDeviceKeyB64` - the platform keystore

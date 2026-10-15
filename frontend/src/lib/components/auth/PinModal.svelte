@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick } from 'svelte';
+  import { onMount, tick, untrack } from 'svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import PinAccountField from './PinAccountField.svelte';
   import {
@@ -141,6 +141,41 @@
     if (externalError) internalError = '';
   });
 
+  /**
+   * AN ATTEMPT THAT ENDS WITH THE GATE STILL UP EMPTIES THE FIELD, whatever refused it.
+   *
+   * The gate closes on success, so `isLoading` going back to false with the gate open is a refusal -
+   * a wrong PIN, or no server to ask. The digits used to stay, and the next ones were APPENDED:
+   * iPhone 12, 2026-10-16, an offline attempt left six dots, the member typed six more once back
+   * online, and the twelve-digit PIN cost a "PIN incorrect" (an offline refusal costs no attempt -
+   * nothing reached the server - but the PIN typed after it did).
+   */
+  let attemptInFlight = false;
+  $effect(() => {
+    if (isLoading) {
+      attemptInFlight = true;
+      return;
+    }
+    if (!attemptInFlight) return;
+    attemptInFlight = false;
+    if (untrack(() => pin)) {
+      Log.d('[pin-modal] attempt refused - the field is emptied for the next try');
+      pin = '';
+    }
+  });
+
+  /**
+   * A FOCUSED CONTROL OF THE SCROLL REGION IS BROUGHT INTO IT. At the largest text sizes the keypad's
+   * last row and the two links under it sit below the fold of the scroll region, and the footer
+   * (outside that region) is what is drawn there - so a control reached by focus (VoiceOver,
+   * a keyboard, a switch) was hidden while it was the one being used. Same shape as the forgot box.
+   */
+  function revealFocused(e: FocusEvent) {
+    const target = e.target;
+    if (!(target instanceof HTMLElement)) return;
+    target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
+
   const displayError = $derived(externalError || internalError);
 
   function handleSubmit(e: Event) {
@@ -241,7 +276,11 @@
     NO AUTO-SUBMIT: a PIN here is 4 to 8 digits (`isValidPin`) and the code has no notion of a
     complete one, so submitting at the fourth digit would make every longer PIN impossible.
   -->
-  <div class="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 pt-4 pb-2">
+  <div
+    data-pin-scroll
+    onfocusin={revealFocused}
+    class="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 pt-4 pb-2"
+  >
     <form
       id={FORM_ID}
       onsubmit={handleSubmit}
