@@ -11,6 +11,11 @@ const startConnectionWatchdogImpl = vi.hoisted(() => vi.fn());
 const startSyncWatchdogImpl = vi.hoisted(() => vi.fn());
 const bindCurrentSessionDevice = vi.hoisted(() => vi.fn(async () => {}));
 
+// A promotion loads the account's notification preferences; that read is its own seam.
+vi.mock('$lib/notifications/preferencesApi', () => ({
+  fetchNotificationPreferences: async () => ({ disabled: [], groupLevels: {} }),
+}));
+
 vi.mock('$lib/stores/auth', async (orig) => ({
   ...(await orig<typeof import('$lib/stores/auth')>()),
   getToken,

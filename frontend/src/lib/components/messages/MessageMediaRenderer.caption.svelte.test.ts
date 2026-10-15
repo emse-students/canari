@@ -12,8 +12,14 @@
  * throughout and its own tests passed the whole time - what was missing was a caller. A test of the
  * parser would have gone on passing through the entire life of this defect.
  */
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
+
+/** Anything the caption does not seed is a profile lookup over HTTP; resolved offline here. */
+vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/users/displayName')>()),
+  resolveUserDisplayName: async () => null,
+}));
 import MessageMediaRenderer from './MessageMediaRenderer.svelte';
 import { seedUserDisplayName } from '$lib/utils/users/displayName';
 import type { MediaRef } from '$lib/media';

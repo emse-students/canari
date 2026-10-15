@@ -11,6 +11,16 @@ import { flushSync, mount, unmount } from 'svelte';
 import ChatArea from './ChatArea.svelte';
 import type { ChatMessage, Conversation } from '$lib/types';
 
+/** Sender heads ask for a name and an avatar over HTTP; neither is what the entry window is about. */
+vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/users/displayName')>()),
+  resolveUserDisplayName: async (id: string) => id,
+}));
+vi.mock('$lib/utils/userAvatarCache', () => ({
+  resolveUserAvatarDisplayUrl: async () => ({ kind: 'none' as const }),
+  releaseUserAvatarDisplayUrl: () => {},
+}));
+
 const PANE_PX = 700;
 const ROW_SELECTOR = '[id^="msg-"]';
 
