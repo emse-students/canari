@@ -1,0 +1,3 @@
+### Added - a form can ask for a file, read by its managers and deleted after 1 to 30 days
+
+A `file` question takes a PDF, JPEG, PNG or WebP up to 8 MiB. The form's managers download it, and it is purged `fileRetentionDays` after the answer (7 by default), after which the answer reads "file deleted". It is refused on a public or anonymous form ([forms](docs/wiki/frontend/modules/forms.md#the-file-question-2026-10-15), [media-service](docs/wiki/services/media-service.md#the-form-file-class-plaintext-read-by-the-server-only-2026-10-15)).

@@ -713,6 +713,7 @@
           disabled={submitted || isNotOpenYet}
           formId={form.id}
           currency={form.currency}
+          fileRetentionDays={form.fileRetentionDays}
           {optionModifier}
           {optionClosed}
         />

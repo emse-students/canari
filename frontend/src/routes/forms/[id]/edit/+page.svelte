@@ -52,6 +52,11 @@
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { firstEmptyCondition } from '$lib/forms/audience';
   import { fromFormItems, toFormItemsPayload } from '$lib/forms/itemsPayload';
+  import {
+    FILE_RETENTION_DEFAULT_DAYS,
+    fileQuestionProblem,
+    hasFileQuestion,
+  } from '$lib/forms/fileQuestion';
   import { CircleAlert, FileText, ImagePlus, Users, X } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -74,6 +79,7 @@
   let requiresPayment = $state(false);
   let allowCashPayment = $state(false);
   let cashPaymentExpiryDays = $state<number | undefined>(undefined);
+  let fileRetentionDays = $state(FILE_RETENTION_DEFAULT_DAYS);
   let cotisation = $state(emptyCotisationSettings());
   let priceMatrix = $state<PriceMatrix | null>(null);
   let formations = $state<FormationOption[]>([]);
@@ -163,6 +169,7 @@
       anonymous = f.anonymous ?? false;
       isPublic = f.isPublic ?? false;
       cashPaymentExpiryDays = f.cashPaymentExpiryDays ?? undefined;
+      fileRetentionDays = f.fileRetentionDays ?? FILE_RETENTION_DEFAULT_DAYS;
       imageUrl = f.imageUrl ?? null;
       items = fromFormItems(f.items ?? [], requiresPayment);
       try {
@@ -194,6 +201,8 @@
     })
   );
 
+  const formHasFile = $derived(hasFileQuestion(items));
+
   async function handleSave() {
     if (titleMissing) {
       error = m.form_error_title_required();
@@ -201,6 +210,11 @@
     }
     if (requiresPayment && !association) {
       error = m.form_error_association_required();
+      return;
+    }
+    const fileProblem = fileQuestionProblem({ items, isPublic, anonymous, fileRetentionDays });
+    if (fileProblem) {
+      error = fileProblem;
       return;
     }
     const empty = firstEmptyCondition(submitCondition, items);
@@ -239,6 +253,7 @@
         ...(requiresPayment && allowCashPayment && cashPaymentExpiryDays != null
           ? { cashPaymentExpiryDays }
           : {}),
+        ...(formHasFile ? { fileRetentionDays } : {}),
       };
       await updateForm(formId, payload);
       goto(resolve('/forms'));
@@ -432,6 +447,8 @@
       {formations}
       {grantBlocker}
       associationName={association?.name ?? ''}
+      hasFileQuestion={formHasFile}
+      bind:fileRetentionDays
     />
 
     <FormSaveBar

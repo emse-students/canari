@@ -1,9 +1,18 @@
 <script lang="ts">
-  import { ChevronDown, ChevronRight, X } from '@lucide/svelte';
+  import { ChevronDown, ChevronRight, Download, X } from '@lucide/svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { reportClipped } from '$lib/actions/reportClipped';
   import { statusClass, statusLabel } from '$lib/forms/paymentStatus';
-  import type { FormItem, Submission } from '$lib/forms/api';
+  import {
+    downloadFormAnswerFile,
+    fileAnswerWords,
+    type FormItem,
+    type Submission,
+  } from '$lib/forms/api';
+  import { FILE_QUESTION_TYPE } from '$lib/forms/fileQuestion';
+  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import { Log } from '$lib/utils/Log';
   import type { AnsweredItem } from '$lib/forms/submissionTable';
   import {
     answerColumns,
@@ -39,6 +48,8 @@
    * the panel and the two controls have ONE definition each.
    */
   interface Props {
+    /** The form these responses answer - what a file answer's download is asked of. */
+    formId: string;
     /** The form's questions - the labels every answer is read through. */
     items: FormItem[];
     /**
@@ -60,6 +71,7 @@
   }
 
   let {
+    formId,
     items,
     requiresPayment,
     anonymous = false,
@@ -77,9 +89,41 @@
    * card layout a third time. Reading them per cell made the work quadratic in the number of
    * questions for no gain: the answers do not change while the accordion is open.
    */
-  const answersById = $derived(
-    new Map(submissions.map((sub) => [sub.id, answeredItems(items ?? [], sub.answers)]))
-  );
+  const answersById = $derived.by(() => {
+    // A file answer reads as a word, never as its id: "file", or "file deleted" once purged.
+    const words = fileAnswerWords(submissions);
+    return new Map(
+      submissions.map((sub) => [sub.id, answeredItems(items ?? [], sub.answers, words)])
+    );
+  });
+
+  /** The file being downloaded, so its control can say so. */
+  let downloadingFileId = $state<string | null>(null);
+
+  /**
+   * The live file one answer cites, with the name it is saved under - or null when the answer is
+   * not a file, or its file was purged (its text then already reads "file deleted").
+   */
+  function liveFile(sub: Submission, item: FormItem): { id: string; name: string } | null {
+    if (item.type !== FILE_QUESTION_TYPE) return null;
+    const id = sub.answers?.[item.id];
+    if (typeof id !== 'string') return null;
+    const name = sub.fileNames?.[id];
+    return name ? { id, name } : null;
+  }
+
+  async function downloadFile(file: { id: string; name: string }) {
+    Log.d('FormSubmissionsTable', `downloading answer file ${file.id}`);
+    downloadingFileId = file.id;
+    try {
+      await downloadDecryptedFile(await downloadFormAnswerFile(formId, file.id), file.name);
+    } catch (e) {
+      Log.d('FormSubmissionsTable', `answer file download failed: ${String(e)}`);
+      showToast(m.form_answer_file_download_error());
+    } finally {
+      downloadingFileId = null;
+    }
+  }
 
   /** Which rows have their answer panel open. */
   let expanded = $state<Record<string, boolean>>({});
@@ -173,11 +217,27 @@
   {:else}
     <dl class="grid gap-x-6 gap-y-3 sm:grid-cols-2">
       {#each answered as { item, text } (item.id)}
+        {@const file = liveFile(sub, item)}
         <div class={text.length > 80 ? 'sm:col-span-2' : ''}>
           <dt class="text-text-muted text-2xs font-semibold tracking-wide uppercase">
             {item.label}
           </dt>
-          <dd class="text-text-main mt-0.5 text-sm break-words whitespace-pre-wrap">{text}</dd>
+          {#if file}
+            <dd class="mt-0.5">
+              <button
+                type="button"
+                onclick={() => void downloadFile(file)}
+                disabled={downloadingFileId === file.id}
+                class="text-text-main hover:text-cn-yellow inline-flex max-w-full items-center gap-1.5 text-sm font-medium underline-offset-2 hover:underline disabled:opacity-50"
+                title={m.form_answer_file_download()}
+              >
+                <Download size={14} class="shrink-0" />
+                <span class="truncate">{file.name}</span>
+              </button>
+            </dd>
+          {:else}
+            <dd class="text-text-main mt-0.5 text-sm break-words whitespace-pre-wrap">{text}</dd>
+          {/if}
         </div>
       {/each}
     </dl>

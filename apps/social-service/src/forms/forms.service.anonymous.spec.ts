@@ -65,7 +65,8 @@ describe('FormsService - anonymous forms', () => {
       {} as any,
       {} as any,
       pricingFacts,
-      respondentRepo
+      respondentRepo,
+      {} as any
     );
     return { service, manager, saved, formRepo, submissionRepo, respondentRepo };
   }

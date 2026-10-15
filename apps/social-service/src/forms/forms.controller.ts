@@ -25,6 +25,8 @@ import { AssociationsService } from '../associations/associations.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
+import { contentDisposition } from '../common/content-disposition';
+import { FORM_FILE_MAX_BYTES, FormFilesService, type UploadedFormFile } from './form-files.service';
 
 /**
  * Manages form resources including submissions, payment status, XLSX exports, and purchase history.
@@ -42,7 +44,8 @@ export class FormsController {
     private readonly associationsService: AssociationsService,
     private readonly purchaseRecordService: PurchaseRecordService,
     private readonly userTagService: UserTagService,
-    private readonly pricingFacts: PricingFactsService
+    private readonly pricingFacts: PricingFactsService,
+    private readonly formFiles: FormFilesService
   ) {}
 
   /** Creates a new form owned by the calling user. */
@@ -134,6 +137,51 @@ export class FormsController {
   ): Promise<{ imageUrl: string }> {
     if (!file) throw new BadRequestException('No file provided');
     return this.service.uploadItemImage(id, file, xUserId, ga === 'true', authorization);
+  }
+
+  /**
+   * Uploads the file of one FILE question (`itemId` in the multipart body) before the answer is
+   * sent; any signed-in member may, and the answer may cite it only if they are its uploader
+   * (`FormFilesService.attach`). The interceptor's ceiling is one byte above the cap so the service,
+   * not Multer, says what the cap is. Returns `{ fileId, fileName, sizeBytes, contentType }`.
+   */
+  @UseGuards(NginxAuthGuard)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: FORM_FILE_MAX_BYTES + 1 } }))
+  @Post(':id/files')
+  uploadAnswerFile(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Body('itemId') itemId: string | undefined,
+    @Headers('x-user-id') xUserId: string
+  ): Promise<UploadedFormFile> {
+    if (!file) throw new BadRequestException('No file provided');
+    return this.formFiles.upload(id, itemId, file, xUserId);
+  }
+
+  /**
+   * Streams one answer's file to a MANAGER of its form - the only reader a form file has. Its own
+   * type and name, `attachment` so a browser saves rather than renders it, and `nosniff` so the type
+   * read from the bytes at upload is the type the browser uses. Never through `GET /media/:id`.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/files/:fileId')
+  async downloadAnswerFile(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('fileId', ParseUUIDPipe) fileId: string,
+    @Res() res: Response,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    await this.service.assertFormManager(id, xUserId, ga === 'true');
+    const { data, contentType, fileName } = await this.formFiles.download(id, fileId);
+    res.set({
+      'Content-Type': contentType,
+      'Content-Disposition': contentDisposition(fileName, fileId.slice(0, 8)),
+      'Content-Length': data.byteLength,
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-store, private',
+    });
+    res.send(data);
   }
 
   /** Removes the banner image from a form. Requires owner, co-owner, or MANAGE_FORMS flag. */
@@ -354,19 +402,9 @@ export class FormsController {
       parseExportLabels(rawLabels)
     );
 
-    // ASCII fallback (strips accents) + RFC 5987 UTF-8 encoded filename for modern browsers
-    const asciiName =
-      title
-        .normalize('NFD')
-        .replace(/[̀-ͯ]/g, '')
-        .replace(/[^a-zA-Z0-9_\- ]/g, '')
-        .trim()
-        .replace(/\s+/g, '_') || 'export';
-    const encodedName = encodeURIComponent(title);
-
     res.set({
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': `attachment; filename="${asciiName}.xlsx"; filename*=UTF-8''${encodedName}.xlsx`,
+      'Content-Disposition': contentDisposition(`${title}.xlsx`, 'export'),
       'Content-Length': buffer.byteLength,
     });
 

@@ -61,6 +61,10 @@ export type MediaType = 'image' | 'video' | 'audio' | 'file';
  *
  * An object with no class is KEPT. It used to be the other way round, and an association vault
  * document - uploaded with no class - was swept on production in 2026-09.
+ *
+ * `'form-file'` IS DELIBERATELY ABSENT: a form answer's file is PLAINTEXT a manager reads, so only
+ * social-service may store one (`POST /media/internal/form-file`), and every client route refuses
+ * the class with a 400. A client never names it ([media-service](docs/wiki/services/media-service.md)).
  */
 export type MediaRetentionClass =
   | 'ephemeral'

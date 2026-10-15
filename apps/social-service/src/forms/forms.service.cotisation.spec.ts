@@ -76,6 +76,7 @@ describe('FormsService - cotisation configuration and granting', () => {
       userTagService,
       purchaseRecordService,
       pricingFacts,
+      {} as any,
       {} as any
     );
     return {

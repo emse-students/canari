@@ -16,6 +16,13 @@
  *   POST /media/internal/retention-class - set an object's retention class (X-Internal-Secret)
  *   POST /media/internal/reel-claim - claim a CanaReel's blob for its author (X-Internal-Secret)
  *   POST /media/internal/reel-purge - delete expired reels' blobs, per owner (X-Internal-Secret)
+ *   POST /media/internal/form-file - store a form answer's file, plaintext, class form-file
+ *   POST /media/internal/form-file-purge - delete form files, per uploader (X-Internal-Secret)
+ *   GET  /media/internal/form-file/:id - read a form file, and nothing else (X-Internal-Secret)
+ *
+ * A `form-file` object is served by `GET /media/internal/form-file/:id` ONLY: `GET /media/:id` and
+ * `GET /media/internal/:id` (the push media proxy's) answer 404 for it - neither has a per-object
+ * ACL, and the file is plaintext.
  *
  * Authentication: Bearer JWT validated via the shared JWT_SECRET env var.
  * The token carries `sub` (userId). Deletion additionally requires the shared
@@ -56,6 +63,8 @@ import sharp from 'sharp';
 import {
   MediaService,
   isRetentionClass,
+  SERVER_READ_ONLY_CLASS,
+  type FormFilePurgeOutcome,
   type MediaStorageStats,
   type ReelPurgeOutcome,
   type RetentionClass,
@@ -88,6 +97,21 @@ const TOUCH_MAX_IDS = 500;
 
 /** Upper bound on a single POST /media/internal/retention-class batch; social-service chunks to it. */
 const RETENTION_CLASS_MAX_IDS = 500;
+
+/**
+ * The class a CLIENT upload names, read from its body.
+ *
+ * An unrecognised value is ignored rather than refused (an old client sends none, and failing an
+ * upload over it would break posting; an unclassified object is KEPT). `form-file` is REFUSED: it is
+ * the plaintext class only social-service may create (`POST internal/form-file`), and a client naming
+ * it would mint an object nobody tracks, kept for ever and readable by nobody.
+ */
+export function clientRetentionClass(value: unknown): RetentionClass | undefined {
+  if (value === SERVER_READ_ONLY_CLASS) {
+    throw new BadRequestException(`class '${SERVER_READ_ONLY_CLASS}' is not a client upload class`);
+  }
+  return isRetentionClass(value) ? value : undefined;
+}
 
 @Controller('media')
 export class MediaController {
@@ -216,7 +240,7 @@ export class MediaController {
     // Unrecognised values are ignored rather than refused: an old client sends none at all, and
     // failing an upload over it would break posting outright. An object with no class is KEPT -
     // the sweep is an allowlist of `ephemeral` - so a missing hint costs storage, never a file.
-    const retentionClass = isRetentionClass(body?.retentionClass) ? body.retentionClass : undefined;
+    const retentionClass = clientRetentionClass(body?.retentionClass);
 
     const mediaId = await this.mediaService.upload(upload.buffer, ownerId, retentionClass);
     this.logger.log(
@@ -277,7 +301,7 @@ export class MediaController {
     const ownerId = this.verifyToken(req);
     // A `chat-reel` declares its class and total HERE so the daily budget is reserved before any
     // byte is staged; every other caller sends no body and is unchanged.
-    const retentionClass = isRetentionClass(body?.retentionClass) ? body.retentionClass : undefined;
+    const retentionClass = clientRetentionClass(body?.retentionClass);
     const totalBytes = typeof body?.totalBytes === 'number' ? body.totalBytes : undefined;
     const uploadId = await this.mediaService.initChunkedUpload(
       ownerId,
@@ -336,7 +360,7 @@ export class MediaController {
     const ownerId = this.verifyToken(req);
     // Same hint as the single-shot upload: a 50 MB+ video posted to the feed is archive too, and
     // the class has to survive the path the file happened to take.
-    const retentionClass = isRetentionClass(body?.retentionClass) ? body.retentionClass : undefined;
+    const retentionClass = clientRetentionClass(body?.retentionClass);
     const mediaId = await this.mediaService.completeChunkedUpload(
       id,
       MAX_BYTES,
@@ -363,7 +387,7 @@ export class MediaController {
     @Req() req: Request
   ) {
     const ownerId = this.verifyToken(req);
-    const retentionClass = isRetentionClass(body?.retentionClass) ? body.retentionClass : undefined;
+    const retentionClass = clientRetentionClass(body?.retentionClass);
     return this.uploadSessions.init(
       ownerId,
       {
@@ -499,7 +523,12 @@ export class MediaController {
     // `chat-reel` and `reel-pending` are attached AT UPLOAD, where the owner (and for a chat-reel
     // the size) are known: applying either to an existing id would make that object sweepable by
     // age - a claimed reel's blob deleted under its live post.
-    if (retentionClass === 'chat-reel' || retentionClass === 'reel-pending') {
+    // `form-file` likewise: only `internal/form-file` creates one, with its uploader.
+    if (
+      retentionClass === 'chat-reel' ||
+      retentionClass === 'reel-pending' ||
+      retentionClass === SERVER_READ_ONLY_CLASS
+    ) {
       throw new BadRequestException(
         `class '${retentionClass}' is set by the upload that creates the object`
       );
@@ -614,6 +643,63 @@ export class MediaController {
     return { results };
   }
 
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/form-file - store the file of a form's FILE question
+  // ---------------------------------------------------------------------------
+  /**
+   * Stores a form answer's file (a CV) as class `form-file`, PLAINTEXT, for the member named by
+   * `ownerId`. Sole consumer: social-service's `POST /forms/:id/files`, which authenticated the
+   * member, checked the form and the question, the size and the type (read from the bytes) before
+   * calling. No user JWT: the caller is a service. The object is readable only through
+   * `GET internal/:id` - see `form-file` on {@link RetentionClass}.
+   */
+  @Post('internal/form-file')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_BYTES }, storage: undefined }))
+  async uploadFormFile(
+    @UploadedFile() file: unknown,
+    @Body() body: { ownerId?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ mediaId: string }> {
+    assertInternalSecret(internalSecret);
+    if (typeof body?.ownerId !== 'string' || body.ownerId.length === 0) {
+      throw new BadRequestException('ownerId must be a non-empty string');
+    }
+    const upload = requireUploadedFile(file);
+    const mediaId = await this.mediaService.uploadFormFile(upload.buffer, body.ownerId);
+    return { mediaId };
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/form-file-purge - delete form files whose retention ran out
+  // ---------------------------------------------------------------------------
+  /**
+   * Deletes form files on their uploader's name and answers one outcome per id. Sole consumer:
+   * social-service's `FormFileRetentionScheduler`. The allowlist (class `form-file` AND the named
+   * uploader) and the outcomes are on {@link MediaService.purgeFormFiles}.
+   */
+  @Post('internal/form-file-purge')
+  async purgeFormFiles(
+    @Body() body: { items?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ results: Record<string, FormFilePurgeOutcome> }> {
+    assertInternalSecret(internalSecret);
+    const raw = body?.items;
+    if (!Array.isArray(raw)) {
+      throw new BadRequestException('items must be an array');
+    }
+    if (raw.length > RETENTION_CLASS_MAX_IDS) {
+      throw new BadRequestException(`items must hold at most ${RETENTION_CLASS_MAX_IDS} entries`);
+    }
+    const items = raw.map((item) => {
+      const { mediaId, ownerId } = (item ?? {}) as { mediaId?: unknown; ownerId?: unknown };
+      if (typeof mediaId !== 'string' || typeof ownerId !== 'string') {
+        throw new BadRequestException('each item needs a string mediaId and ownerId');
+      }
+      return { mediaId, ownerId };
+    });
+    return { results: await this.mediaService.purgeFormFiles(items) };
+  }
+
   /** A string array bounded like every internal batch, ids that are not strings dropped. */
   private boundedIds(value: unknown, field: string): string[] {
     if (!Array.isArray(value)) {
@@ -644,8 +730,32 @@ export class MediaController {
     @Res() res: Response
   ): Promise<void> {
     assertInternalSecret(internalSecret);
+    // A form file is NOT served here: this route answers the push proxy, which any member's device
+    // reaches with an id. Form files have their own route below.
+    await this.sendInternal(id, false, res);
+  }
 
-    const result = await this.mediaService.download(id);
+  // ---------------------------------------------------------------------------
+  // GET /media/internal/form-file/:id - a form answer's file, to social-service only
+  // ---------------------------------------------------------------------------
+  /**
+   * The ONE read of a `form-file` object, for social-service's manager-gated download
+   * (`GET /api/forms/:id/files/:fileId`, after `assertFormManager`). It serves form files and nothing
+   * else, so this route can never become a second way into ordinary media either.
+   */
+  @Get('internal/form-file/:id')
+  async downloadFormFile(
+    @Param('id') id: string,
+    @Headers('x-internal-secret') internalSecret: string | undefined,
+    @Res() res: Response
+  ): Promise<void> {
+    assertInternalSecret(internalSecret);
+    await this.sendInternal(id, true, res);
+  }
+
+  /** The bytes of one object to an internal caller: 410 when purged, 404 when absent or refused. */
+  private async sendInternal(id: string, formFile: boolean, res: Response): Promise<void> {
+    const result = await this.mediaService.download(id, formFile);
     if (result.status === 'purged') {
       throw new GoneException('Media purged after retention expiry.');
     }

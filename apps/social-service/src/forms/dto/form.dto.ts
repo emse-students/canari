@@ -9,6 +9,7 @@ import {
   IsNumber,
   IsOptional,
   IsString,
+  Max,
   MaxLength,
   Min,
   ValidateNested,
@@ -16,6 +17,7 @@ import {
   ValidationOptions,
 } from 'class-validator';
 import { Type } from 'class-transformer';
+import { FILE_RETENTION_MAX_DAYS, FILE_RETENTION_MIN_DAYS } from '../form-files.service';
 
 /** Max keys per answers record - prevents oversized payloads. */
 const ANSWERS_MAX_KEYS = 50;
@@ -257,6 +259,16 @@ export class CreateFormDto {
   @IsOptional()
   @Min(1)
   cashPaymentExpiryDays?: number;
+
+  /**
+   * Days a FILE question's file is kept after the answer, 1 to 30 (decisions D23, D41). Absent keeps
+   * the stored value (7 for a new form). The database holds the same range as a CHECK.
+   */
+  @IsInt()
+  @IsOptional()
+  @Min(FILE_RETENTION_MIN_DAYS)
+  @Max(FILE_RETENTION_MAX_DAYS)
+  fileRetentionDays?: number;
 }
 
 export class UpdateFormDto extends CreateFormDto {}

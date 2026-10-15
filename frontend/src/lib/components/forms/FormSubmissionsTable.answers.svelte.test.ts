@@ -78,7 +78,14 @@ const submission = (over: Partial<Submission> = {}): Submission => ({
 function render(items: FormItem[], submissions: Submission[], requiresPayment = true) {
   const component = mount(FormSubmissionsTable, {
     target: document.body,
-    props: { items, requiresPayment, submissions, deletingId: null, onDelete: vi.fn() },
+    props: {
+      formId: 'f1',
+      items,
+      requiresPayment,
+      submissions,
+      deletingId: null,
+      onDelete: vi.fn(),
+    },
   });
   mounted.push(() => unmount(component));
   flushSync();
@@ -230,6 +237,39 @@ describe('the responses table, rendered', () => {
     const cards = document.querySelectorAll('ul.sm\\:hidden > li');
     expect(cards).toHaveLength(1);
     expect(cards[0].textContent).toContain('Ada LOVELACE');
+  });
+});
+
+/**
+ * A FILE ANSWER IS A NAME TO DOWNLOAD OR THE WORDS "FILE DELETED" - never its id, and never a column.
+ */
+describe('the responses table of a form that asks for a file', () => {
+  const FILE_ID = '11111111-1111-4111-8111-111111111111';
+  const CV = item({ id: 'cv', label: 'Ton CV', type: 'file' });
+
+  it('draws no column for it, and offers the file under its name in the panel', () => {
+    render(
+      [CV],
+      [submission({ answers: { cv: FILE_ID }, fileNames: { [FILE_ID]: 'cv-ada.pdf' } })],
+      false
+    );
+    const headers = [...table().querySelectorAll('thead th')].map((th) => th.textContent?.trim());
+    expect(headers).not.toContain('Ton CV');
+    openFirstPanel();
+    const download = [...table().querySelectorAll('tbody td[colspan] button')].find((b) =>
+      b.textContent?.includes('cv-ada.pdf')
+    );
+    expect(download).toBeDefined();
+    expect(document.body.textContent).not.toContain(FILE_ID);
+  });
+
+  it('reads a purged file as deleted, with nothing to download', () => {
+    render([CV], [submission({ answers: { cv: FILE_ID }, deletedFileIds: [FILE_ID] })], false);
+    openFirstPanel();
+    const panel = table().querySelector('tbody td[colspan]')!;
+    expect(panel.textContent).toContain(m.form_answer_file_deleted());
+    expect(panel.querySelector('button')).toBeNull();
+    expect(document.body.textContent).not.toContain(FILE_ID);
   });
 });
 

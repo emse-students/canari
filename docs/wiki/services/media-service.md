@@ -87,8 +87,11 @@ The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is t
 | POST   | `/api/media/internal/retention-class`  | `INTERNAL_SECRET` | Set an existing object's class (`ephemeral`, `archive`, `association`; required, no `null`) - see retention below                                                                |
 | POST   | `/api/media/internal/reel-claim`       | `INTERNAL_SECRET` | `{mediaIds, ownerId}` - class `reel` on what `ownerId` uploaded; see [reels](reels.md)                                                                                           |
 | POST   | `/api/media/internal/reel-purge`       | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - delete on the owner's say-so, one outcome per id (`deleted`/`absent`/`refused`/`failed`)                                                        |
+| POST   | `/api/media/internal/form-file`        | `INTERNAL_SECRET` | multipart `file` + `ownerId`: store a form answer's PLAINTEXT file as class `form-file` ([form-file](#the-form-file-class-plaintext-read-by-the-server-only-2026-10-15)) |
+| POST   | `/api/media/internal/form-file-purge`  | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - delete form files, class AND owner allowlist, one outcome per id |
+| GET    | `/api/media/internal/form-file/:id`    | `INTERNAL_SECRET` | The ONE read of a form file, for social-service's manager-gated download; serves nothing else |
 
-(`retention-class` refuses `reel`: that class is only ever set through its owner, and `chat-reel` and `reel-pending`: they are attached at the upload that creates the object.)
+(`retention-class` refuses `reel`: that class is only ever set through its owner, and `chat-reel`, `reel-pending` and `form-file`: they are attached at the upload that creates the object. Every CLIENT upload route refuses `form-file` with a 400.)
 
 Neither `DELETE` is reachable by a client. `:id` is called by
 `AssociationsService.deleteMediaBestEffort` (logos, event images, documents, form banners) and
@@ -228,6 +231,7 @@ community image (`channel_workspaces`) was unclassified, uploaded before `upload
 | `reel`         | social-service's CLAIM, proven by `ownerId` ([reels](reels.md)); a client older than `reel-pending` at upload               | keeps                                        | takes it         |
 | `reel-pending` | the client at upload of a FEED reel ([below](#the-reel-pending-class-a-feed-reel-whose-post-does-not-exist-yet-2026-10-11)) | **by AGE: 24 h from upload**, unless claimed | takes it         |
 | `chat-reel`    | the client at upload ([below](#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09))                          | **by AGE: 30 days from upload**              | takes it         |
+| `form-file`    | social-service only, at `internal/form-file` ([below](#the-form-file-class-plaintext-read-by-the-server-only-2026-10-15))   | keeps - social-service's purge deletes it    | takes it         |
 | none           | an old client, anything before 2026-10-01, an entry re-created after an index loss                                          | **keeps**                                    | takes it         |
 
 - **The client's `encryptAndUpload` takes the class as a REQUIRED argument**, so no new call site
@@ -403,6 +407,38 @@ sets the class yet** (the sender is RC-4, the resumable upload RC-5), so on prod
   `encryptAndUpload` class argument now accepts `'chat-reel'` but nothing passes it, and the storage
   forecast re-read with a real send rate (RC-0). **Tested with unit specs over a stubbed store, NOT
   against a real media-service over HTTP**: that bench run (window shortened by env) is still owed.
+
+## The `form-file` class: plaintext, read by the server only (2026-10-15)
+
+The file of a form's FILE question (a CV) is the ONE object here that is **not** end-to-end
+encrypted: the form's managers read it, through social-service
+([forms](../frontend/modules/forms.md#the-file-question-2026-10-15)). Everything below keeps that
+plaintext away from every route a client can reach:
+
+- **Stored only by `POST /media/internal/form-file`** (secret-gated), with the uploader as `ownerId`.
+  `clientRetentionClass` refuses the class on every client upload route (simple, chunked, session),
+  and `internal/retention-class` refuses to move an object onto it or off it.
+- **No contentType is recorded.** `isPublicAssetEntry` reads any `image/*` content type as a PUBLIC
+  asset - a recorded `image/jpeg` would have put a member's CV photo on `GET /media/public/:id`, which
+  needs no auth. social-service keeps the real type in `form_files.contentType`.
+- **`GET /media/:id` answers 404** for it, whole or ranged: that route has no per-object ACL, and a
+  member holding the id must not read another's file. **So does `GET /media/internal/:id`**: secret-
+  gated, but its caller is chat-delivery's push media proxy (`/api/mls/push/media/:id`), which any
+  member's device reaches with an id. The only read is `GET /media/internal/form-file/:id`, used by
+  social-service's manager-gated download - and it serves nothing BUT form files
+  (`MediaService.download(id, formFile)`), so it is not a second door into ordinary media either.
+- **It cannot become anything else**: no reel claim, no promotion to a public asset.
+- **The idle sweep keeps it; social-service's purge deletes it** through
+  `POST /media/internal/form-file-purge`, whose ALLOWLIST is two facts both required - class
+  `form-file` AND `ownerId` equal to the uploader named by the caller. A chat object, a reel, a vault
+  document or an unclassified object is `refused` even when its id is handed over. Each deletion is
+  logged and tombstoned `retention_expired` (a later read is a 410); a store failure is `failed` for
+  that one id and the next is still deleted.
+- **Counted**: `formFileCount` / `formFileBytes` in the storage stats - a count that only grows is the
+  purge stopped. Not yet drawn on `/admin/storage`.
+
+Account deletion takes it with the rest of the member's uploads; the form's manager then reads
+"Fichier supprimé" (the download marks the row purged on media's 404/410).
 
 ## Upload sessions: streamed, resumable, every body under 8 MiB (WP-S1, 2026-10-10)
 

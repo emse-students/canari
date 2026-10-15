@@ -1,5 +1,6 @@
 import { m } from '$lib/paraglide/messages';
 import { statusLabels } from './paymentStatus';
+import type { AnswerWords } from './answerText';
 
 export interface FormOption {
   label: string;
@@ -85,6 +86,11 @@ export interface CreateFormPayload {
   allowCashPayment?: boolean;
   /** Days after submission before an unvalidated cash payment expires (null = never). */
   cashPaymentExpiryDays?: number;
+  /**
+   * Days a FILE question's file is kept after each answer, 1 to 30, 7 by default. The answer stays;
+   * the file is deleted by the server's purge (`form-file-retention.scheduler.ts`).
+   */
+  fileRetentionDays?: number;
   /**
    * The pricing grid: `{ dimensions, cells }` in cents, or null for one price for everybody.
    *
@@ -312,6 +318,10 @@ export interface Submission {
   totalPaid: number;
   paymentStatus: string;
   createdAt: string;
+  /** The file answers of this submission whose file the retention purge has deleted. */
+  deletedFileIds?: string[];
+  /** The live files of this submission, by id: the name a manager's download is saved under. */
+  fileNames?: Record<string, string>;
 }
 
 /** Returns all submissions for a form with submitter names (form manager only). */
@@ -368,6 +378,10 @@ export interface ExportLabels {
   status: string;
   /** Every payment status this client knows, by its stored value. */
   statuses: Record<string, string>;
+  /** What a FILE question's cell reads: the file is never exported, only this word. */
+  file: string;
+  /** The same cell once the retention purge has deleted the file. */
+  fileDeleted: string;
 }
 
 /** The labels this client would write an export in, resolved through Paraglide. */
@@ -379,7 +393,58 @@ export function exportLabels(): ExportLabels {
     amount: m.form_list_col_amount(),
     status: m.form_list_col_status(),
     statuses: statusLabels(),
+    file: m.form_answer_file(),
+    fileDeleted: m.form_answer_file_deleted(),
   };
+}
+
+/**
+ * The words a FILE answer reads as on this screen, for `answerText`. `deletedFiles` comes from the
+ * submissions the server returned (`deletedFileIds`).
+ */
+export function fileAnswerWords(submissions: Pick<Submission, 'deletedFileIds'>[]): AnswerWords {
+  return {
+    file: m.form_answer_file(),
+    fileDeleted: m.form_answer_file_deleted(),
+    deletedFiles: new Set(submissions.flatMap((s) => s.deletedFileIds ?? [])),
+  };
+}
+
+/** What an answer file's upload returns: the id the answer carries, and what the page shows. */
+export interface UploadedAnswerFile {
+  fileId: string;
+  fileName: string;
+  sizeBytes: number;
+  contentType: string;
+}
+
+/**
+ * Uploads the file of one FILE question before the answer is sent. The answer then carries
+ * `fileId`; the server accepts it only from the member who uploaded it, for this question.
+ */
+export async function uploadFormAnswerFile(
+  formId: string,
+  itemId: string,
+  file: File
+): Promise<UploadedAnswerFile> {
+  const fd = new FormData();
+  fd.append('itemId', itemId);
+  fd.append('file', file);
+  const res = await apiFetch(`${socialUrl()}/api/forms/${encodeURIComponent(formId)}/files`, {
+    method: 'POST',
+    body: fd,
+  });
+  if (!res.ok) throw await refusal(res, 'File upload failed');
+  return res.json();
+}
+
+/** A manager's download of one answer's file - the only way it is ever read. */
+export async function downloadFormAnswerFile(formId: string, fileId: string): Promise<Blob> {
+  const res = await apiFetch(
+    `${socialUrl()}/api/forms/${encodeURIComponent(formId)}/files/${encodeURIComponent(fileId)}`
+  );
+  if (!res.ok) throw await refusal(res, 'File download failed');
+  return res.blob();
 }
 
 export async function exportSubmissions(id: string, labels: ExportLabels): Promise<Blob> {

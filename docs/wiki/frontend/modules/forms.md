@@ -458,6 +458,57 @@ the page calls them with plain `fetch`, never `apiFetch`, whose refresh-and-retr
 
 Paying guests are **parked behind Lydia** ([backlog](../../backlog.md)).
 
+## The file question (2026-10-15)
+
+A question of type **`file`** asks the member for one file (a CV, a certificate). Unlike every other
+attachment in the app, **it is NOT end-to-end encrypted**: the form's managers read it, so the
+server must be able to hand it to them. That one fact decides the whole design.
+
+| Step | Where | What holds |
+|---|---|---|
+| Pick | `FormQuestion.svelte` | PDF, JPEG, PNG or WebP, 8 MiB at most - the per-request budget under the host WAF ([host-waf-body-limit](../../infrastructure/host-waf-body-limit.md)) (`fileQuestion.ts`); checked before upload to say it in the reader's language |
+| Upload | `POST /api/forms/:id/files` (social-service, `FormFilesService.upload`) | the TYPE is read from the bytes, never from the name or the claimed type; the form must exist, be open, NOT public, and the item must be a file question; at most 10 unsent uploads per member per form (429) |
+| Store | `POST /media/internal/form-file` (media-service, secret-gated) | retention class `form-file`, the uploader as owner, **no contentType recorded** - see [media-service](../../services/media-service.md#the-form-file-class-plaintext-read-by-the-server-only-2026-10-15) |
+| Submit | `FormsService.submit` -> `FormFilesService.attach` | the answer is the file's id; one `UPDATE ... RETURNING` inside the submission's transaction claims the `form_files` row, matching id, form, question, UPLOADER, not purged, and either unsent within one day or already this submission's. No row = the whole submission is refused |
+| Read | `GET /api/forms/:id/files/:fileId` | `assertFormManager` FIRST, then the bytes from `GET /media/internal/form-file/:id` with their own Content-Type, `Content-Disposition: attachment` (ASCII + RFC 5987 name), `nosniff`, `no-store`. Never through `GET /media/:id`, the push proxy's `GET /media/internal/:id` (no per-object ACL - both refuse the class) nor `/media/public` |
+| Purge | `FormFileRetentionScheduler`, hourly at :37 | see below |
+
+**Refused at save**, with the sentence on the save bar (`assertPublicConfigValid`,
+`assertAnonymousConfigValid`, and `fileQuestionProblem` on the page):
+
+- **a public form** (D40): a guest has no account to upload with;
+- **an anonymous form**: the `form_files` row and the blob's owner name the uploader, which would
+  re-join an anonymous answer to its author. A choice, not a requirement of the brief - see the PR.
+
+**The answer reads as a word, never as its id.** `answerText` (and its declared duplicate
+`answer-text.ts`) takes the reader's `AnswerWords` - "Fichier" / "Fichier supprimé" - and THROWS on
+a file answer without them, so no screen or spreadsheet can print an id by omission. A file is never
+a table column (`COLUMN_TYPES`); the responses panel offers a download under the uploader's cleaned
+name (`Submission.fileNames`, sent with the list because a native shell cannot read
+`Content-Disposition` cross-origin), or "Fichier supprimé" once purged (`deletedFileIds`).
+
+### Retention: `forms.fileRetentionDays` and the purge
+
+`forms.fileRetentionDays` (migration 084, default **7**, CHECK **1..30**) is a row in "Paramètres
+avancés", shown only when a question asks for a file. The purge (`purgeOnce`) has two passes, both
+drawn ONLY from `form_files` rows - that table is the allowlist; nothing else is a candidate:
+
+1. **Answer files** whose `attachedAt + fileRetentionDays` has passed: blob deleted, then `purgedAt`
+   set. The answer stays and reads "Fichier supprimé".
+2. **Unsent uploads** older than one day (the attach window is `createdAt > NOW() - 1 day`, the
+   purge `<=`, so the two never overlap): blob deleted, then the row deleted.
+
+**The state is the row.** The blob goes first and the row changes only once media-service says the
+blob is gone (or was already absent), so a crash in between leaves a row the next run picks up again.
+A blob that fails to delete leaves its row untouched, logged, retried next hour; within one run it is
+excluded so the run terminates. media-service checks a second allowlist on its side: it deletes only
+an object of class `form-file` OWNED by the named uploader, and refuses anything else even when its
+id sits in an answer. One log per deleted file and per failure (`[FORM_FILE_GC]`).
+
+**For reuse (bookings):** `purgeExpiredFiles` in `apps/social-service/src/forms/file-retention-purge.ts`
+takes each candidate's START date as data (`{ fileId, ownerId, start, retentionDays }`), so a caller
+whose clock starts somewhere else - a booking slot's end - passes that instead of `attachedAt`.
+
 ## A form's association is chosen once, at creation
 
 A form is either personal or an association's, and `update` refuses any change to `associationId`
@@ -649,6 +700,9 @@ would look saved and then do nothing:
 - a `variantKey` the association does not sell;
 - a base-tier grant on an association that sells named tiers only.
 
+A file question is refused on a public or an anonymous form, and `fileRetentionDays` outside 1..30
+([the file question](#the-file-question-2026-10-15)).
+
 ## Sharing a form: the link, and the same link as a QR code
 
 Both `/forms` and the detail screen carry two controls side by side: copy the public link, and show
@@ -729,6 +783,17 @@ TS library between `frontend/` and `apps/` ([libs](../../libs.md)). `submissionT
 which questions become columns, and `FormSubmissionsTable.answers.svelte.test.ts` mounts the
 component for the part neither file can prove: that a column arrives as a header AND a cell, that the
 panel is shut until opened, and that its `colspan` still spans the whole header.
+
+The file question has its own suites: `form-files.service.spec.ts` (every upload refusal - wrong
+type read from the bytes, too big, closed/public form, not a file question, too many pending - the
+ownership statement at submit, the download's 404/410), `forms.service.file.spec.ts` (refused at
+save on a public or anonymous form, attached inside the submit transaction, the manager list),
+`forms.controller.files.spec.ts` (a non-manager download refused before any byte is read; the
+headers), `form-file-retention.scheduler.spec.ts` (a stateful fake database and media service: the
+purge run twice, a blob that fails, a file of another class whose id sits in an answer left alone),
+and media-service's `media.service.form-file.spec.ts` (the class refused on every client route, the
+purge allowlist). Front: `fileQuestion.test.ts`, and the file cases of `answerText.test.ts` and
+`FormSubmissionsTable.answers.svelte.test.ts`.
 
 `frontend/src/lib/utils/qrCode.test.ts` answers the QR claim on PIXELS rather than on the badge's
 arithmetic: it rasterises a symbol in pure JS through the SAME exported geometry the canvas draws
