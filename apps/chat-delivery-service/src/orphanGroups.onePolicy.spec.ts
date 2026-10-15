@@ -13,6 +13,7 @@ import { DeviceGroupMembership } from './entities/device-group-membership.entity
 import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
 import { GroupInvite } from './entities/group-invite.entity';
+import { GroupMembershipInterval } from './entities/group-membership-interval.entity';
 import { UserDismissedGroup } from './entities/user-dismissed-group.entity';
 import { KeyPackage } from './entities/key-package.entity';
 import { OneTimeKeyPackage } from './entities/one-time-key-package.entity';
@@ -50,6 +51,7 @@ const SWEPT = [
   MlsCommitLog,
   MlsGroupInfo,
   GroupInvite,
+  GroupMembershipInterval,
   UserDismissedGroup,
 ];
 
@@ -66,6 +68,7 @@ const FAKE_TABLE = new Map<unknown, string>([
   [MlsCommitLog, 'table_of_commit_log'],
   [MlsGroupInfo, 'table_of_group_info'],
   [GroupInvite, 'table_of_invite'],
+  [GroupMembershipInterval, 'table_of_membership_interval'],
   [UserDismissedGroup, 'table_of_dismissal'],
 ]);
 
@@ -196,6 +199,8 @@ describe('an orphan group - one repair, three paths', () => {
           queries.push(sql);
           return orphanRowIds.map((groupId) => ({ groupId }));
         }),
+        // The reader's own membership intervals, read by a history page: nobody here ever left.
+        find: jest.fn(async () => []),
       },
     };
 

@@ -88,6 +88,49 @@ describe('PushController - getCommitsPush (PushSecret commit catch-up)', () => {
   });
 });
 
+describe('PushController - sendMessagePush answers the receive time', () => {
+  it('hands back the receivedAt every recipient copy is dated by, as the foreground route does', async () => {
+    const pushTokenRepo = {
+      findOne: jest.fn().mockResolvedValue({
+        pushSecret: 'bb757689c39373a6cac9ef6ba55616c6249d7500ca4d443f1130c4766453a412',
+      }),
+      update: jest.fn(),
+    };
+    const sendMessage = jest.fn().mockResolvedValue({
+      status: 'processed',
+      queued: 2,
+      sent: 1,
+      receivedAt: 1_700_000_000_123,
+    });
+    const module: TestingModule = await Test.createTestingModule({
+      controllers: [PushController],
+      providers: [
+        { provide: getRepositoryToken(PushToken), useValue: pushTokenRepo },
+        { provide: getRepositoryToken(QueuedMessage), useValue: {} },
+        { provide: getRepositoryToken(KeyPackage), useValue: {} },
+        { provide: getRepositoryToken(GroupMember), useValue: {} },
+        { provide: 'REDIS_CLIENT', useValue: {} },
+        { provide: MessagingService, useValue: { sendMessage } },
+      ],
+    })
+      .overrideGuard(ThrottlerGuard)
+      .useValue({ canActivate: () => true })
+      .overrideGuard(HeaderAuthGuard)
+      .useValue({ canActivate: () => true })
+      .compile();
+    const controller = module.get(PushController);
+
+    const res = await controller.sendMessagePush('PushSecret sekret', {
+      userId: 'u1',
+      deviceId: 'd1',
+      groupId: 'g1',
+      proto: 'AAA=',
+    });
+
+    expect(res).toEqual({ status: 'sent', queued: 2, sent: 1, receivedAt: 1_700_000_000_123 });
+  });
+});
+
 // The `sinceEpoch` cases that used to live here asserted the clamp - a negative or non-numeric
 // epoch becoming 0 - which was the half of this route that disagreed with its JWT twin. Both routes
 // now share one policy, and it is asserted over BOTH of them in `commitReplay.onePolicy.spec.ts`.

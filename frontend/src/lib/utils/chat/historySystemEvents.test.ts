@@ -56,7 +56,8 @@ async function replay(
   messages: ChatMessage[],
   // The pin store caches one set per conversation for the life of the module, so a test that wants
   // a device with no pin state has to ask under a name no earlier test has written.
-  groupId: string = GROUP
+  groupId: string = GROUP,
+  dropOwnExcluded: Parameters<typeof applyReplaySystemEvent>[0]['dropOwnExcluded'] = async (m) => m
 ): Promise<{
   convo: Conversation;
   deletedMessages: Map<string, { by: string }>;
@@ -92,9 +93,60 @@ async function replay(
     readWatermarkUpdates: sinks.readWatermarkUpdates,
     historyFloorUpdate: sinks.historyFloorUpdate,
     pushPendingMessage: (entry) => sinks.pushed.push(entry),
+    dropOwnExcluded,
   });
   return { convo, ...sinks };
 }
+
+describe('replaying a bundle - a Remove holds against a later re-add', () => {
+  const bundle = {
+    messages: [
+      { id: 'kept', senderId: OTHER, content: 'a', timestamp: 1, serverTimestamp: 5_000 },
+      { id: 'out', senderId: OTHER, content: 'b', timestamp: 2, serverTimestamp: 15_000 },
+      { id: 'undated', senderId: OTHER, content: 'c', timestamp: 3 },
+    ],
+  };
+
+  it('keeps only what the receiver filter admits - the stream replay is the same answer, late', async () => {
+    const seen: string[] = [];
+    const { pushed } = await replay(
+      systemEvent('history_bundle', bundle),
+      OTHER,
+      [],
+      GROUP,
+      async (m) => {
+        seen.push(...m.map((x) => x.id));
+        return m.filter((x) => x.id !== 'out');
+      }
+    );
+
+    expect(seen).toEqual(['kept', 'out', 'undated']);
+    expect((pushed as Array<{ messageId: string }>).map((p) => p.messageId)).toEqual([
+      'kept',
+      'undated',
+    ]);
+  });
+
+  it('ingests no message when the windows cannot be read', async () => {
+    const { pushed } = await replay(
+      systemEvent('history_bundle', bundle),
+      OTHER,
+      [],
+      GROUP,
+      async () => null
+    );
+    expect(pushed).toEqual([]);
+  });
+
+  it('never dates an undated message by the frame time - it stays undated', async () => {
+    const { pushed } = await replay(systemEvent('history_bundle', bundle), OTHER, []);
+    const undated = (pushed as Array<{ messageId: string; serverTimestamp?: number }>).find(
+      (p) => p.messageId === 'undated'
+    );
+    expect(undated).toBeDefined();
+    expect(undated!.serverTimestamp).toBeUndefined();
+  });
+});
 
 describe('replaying a deletion', () => {
   it("applies the author's own deletion", async () => {

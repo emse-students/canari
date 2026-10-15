@@ -119,6 +119,7 @@ describe('a visible system notice carries the sender’s id', () => {
       readWatermarkUpdates: {},
       historyFloorUpdate: { at: 0 },
       pushPendingMessage: (entry: any) => pushed.push(entry),
+      dropOwnExcluded: async (messages: any) => messages,
     } as any);
 
     expect(pushed).toHaveLength(1);

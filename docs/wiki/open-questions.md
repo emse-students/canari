@@ -85,6 +85,22 @@ three app-level consequences are not measured:
 - push frames while it is dead;
 - resume, and read the log for `live-ahead`, duplicates and `unreadable for good`.
 
+### DECISION OWED - should a read receipt wait for a COUNT or an event instead of the 2 s window? (2026-10-15)
+
+Since the sender coalescing, a DM or group watermark is sent when the 2 s window after reading ends,
+when the reader leaves, or when the app leaves the screen. The window is the mechanism's one clock.
+If it were wrong the cost would be more traffic, never a lost receipt. Under the "termination from a
+proof, never from a clock" rule, that still makes it load-bearing. The alternatives change what a
+peer sees:
+
+- **events only** (leave, background, the next send): a DM peer sees "Vu" only once the reader leaves
+  or replies;
+- **a count K**: the frame goes after K foreign messages read, so "Vu" lags by up to K messages.
+
+Measured gain first: the frames left after the own-send half was removed
+([history-reconciliation](protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)).
+A device count of watermark frames per minute of active reading would size what is left to take.
+
 ### DECISION OWED - should the KeyPackage pile leave the blob every checkpoint rewrites?
 
 **Measured 2026-10-13** ([store-phone-reading](frontend/store-phone-reading-2026-10-13.md#4-the-mls-state-rewritten-in-full)):
@@ -104,6 +120,51 @@ the pile - the unclaimed-but-handed-out bundles that only the 84-day expiry recl
 that page already owes. **Options**: (a) shrink first, measure again; (b) a v3 frame with a
 KeyPackage segment sealed separately and cached; (c) per-group storage, the structural lever the
 [performance audit](frontend/performance-audit-2026-10-12.md) names third. Nothing is built.
+
+**IS IT SAFE? ANSWERED YES, 2026-10-14, BY TWO ASSERTIONS** (`mls-core/tests/key_packages_are_separable.rs`).
+
+1. **A joined group needs no `KeyPackage` row.** openmls 0.9 `StagedWelcome::into_group` copies the
+   bundle's leaf key into the group's own `EpochKeyPairs`. Every bundle can be deleted and the state
+   reloaded, and the joined group still applies a commit whose path is encrypted to that leaf, then
+   sends and receives. This holds even for a last-resort package, whose row `into_group` keeps. Every
+   bundle lives in one row under the `KeyPackage` label, so a split by label is exact.
+2. **A bundle missing when its Welcome arrives costs that join and nothing else.** The Welcome
+   cannot be opened, and the device's other groups are untouched. The device recovers by the
+   existing rejoin path.
+
+**What this fixes in a two-file design.** These two facts set the write order:
+
+- Mint: the bundle segment must be durable BEFORE the package is published.
+- Consume or prune: the core blob is written first and the segment after.
+
+A crash between the two steps costs one of these, never a group:
+
+- **Before the segment is written:** a bundle reappears. That loses forward secrecy on one init key
+  until the 84-day prune; the server never hands the bundle out again.
+- **A mint lost before publication:** nothing.
+
+**Measured 2026-10-14** (`heavy_state_checkpoint.rs` `key_package_share_of_a_checkpoint`, OXYGEN,
+release): 80 groups are 7.70 MB and 11.1-11.6 ms; adding 2535 bundles makes 12.53 MB and
+15.6-16.1 ms. **The pile is 39 % of the bytes and ~28 % of the encode-and-seal time.** That is the
+ceiling of a split, and it is CPU on a desktop. What a phone checkpoint spends on writing to disk and
+on IPC, against encoding, is still not measured. The Mi 9T's 1.4-2.0 s checkpoints after a sign-in
+are far above anything encoding 15 MB costs here.
+
+**Recommendation (for the user's go).** Do not build the split yet. Settle the phone first with the
+trace the [performance audit](frontend/performance-audit-2026-10-12.md) already owes, which splits
+the export from the write:
+
+- **If the write dominates:** build option (b) as ONE file holding a cached, separately sealed
+  bundle segment. It saves the encode and the seal and keeps today's single atomic write, so none
+  of the crash orderings above are needed. Two files only if the bytes on disk themselves are the
+  cost.
+- **If the export dominates:** the same single-file variant is the whole fix.
+- **Either way, the reader ships first and the floor must reach it before any writer.** This is the
+  [state blob framing](protocols/mls-protocol.md#the-state-blobs-framing---read-first-write-later) rule.
+
+The after-sign-in storm is about the NUMBER of checkpoints (finding 2 of the
+[community-open page](frontend/community-open-slowness-mi9t-2026-10-13.md)), and a split does not
+change that number.
 
 ### DECISION OWED - the ceiling's `postgres` arm names a test this estate's own upgrade path can never satisfy
 
@@ -331,6 +392,14 @@ holder rather than merely re-asking the same agreeing peers - is the part still 
 **Raised 2026-08-27** (876 rows for one account, put there by the campaign). Nothing reads it in bulk, so it is no incident, but it is an unbounded table nobody has decided about. A row may only go once no device of that user can still hold the group: the group's own purge (`cleanupSoftDeletedGroups`) is the natural moment, and whether it should take the dismissals with it is the decision.
 
 ### Is a Remove meant to be durable against a later re-add?
+
+**DECIDED by the user, 2026-10-14: YES, for private group conversations.** A re-added member keeps
+what preceded their removal and NEVER receives what was sent while they were out (user,
+2026-10-14). Built as an entitlement filter on the ANSWERING side, keyed on membership intervals the
+server records (migration `030`) - design, clock and what it does not cover in
+[history-reconciliation](protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14).
+Communities keep their own decision (a returner may read the past); 1:1 conversations have no remove
+path. What follows is the question as it was raised, kept for its reasoning.
 
 **Raised 2026-08-26 by GRP-8**, and it is a decision rather than a defect - which is why the P2 it sits
 behind ([backlog](backlog.md)) is written to change nothing until this is answered.

@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.GenericBannerLedger
 import fr.emse.canari.push.GroupLocality
+import fr.emse.canari.push.NotificationLevelGate
 import fr.emse.canari.push.PostReactionGroup
 import fr.emse.canari.push.PushRecoveryLadder
 import fr.emse.canari.push.SeedFrameLadder
@@ -2363,6 +2364,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      */
     external fun nativeBuildReadWatermarkProto(at: Long): String
 
+    /**
+     * A refused push frame leaves the state behind: the worker retries it on the next cycle. One
+     * implementation for the two branches that owe it - a frame drawn as the fallback banner, and
+     * a frame withheld by the conversation's `mentions` level.
+     */
+    private fun enqueueRefusedFrameWorker() {
+        val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
+            .build()
+        enqueueWorkerIfHealthy(workRequest)
+        Log.w(TAG, "Decryption failed -> MlsBackgroundWorker enqueued")
+    }
+
     /** Structured result of the MLS decryption, extracted from the JSON returned by Rust. */
     data class DecryptedMessage(
         val text: String,
@@ -2381,6 +2396,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val callId: String? = null,
         val callEnded: Boolean = false,
         val hasVideo: Boolean = false,
+        // Every user id the WHOLE plaintext mentions, read before `text` is cut to its preview, so a
+        // mention past character 200 still counts (`NotificationLevelGate`).
+        val mentionedUserIds: Set<String> = emptySet(),
     )
 
     override fun onNewToken(token: String) {
@@ -2808,6 +2826,28 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // Read once and used twice below: to render the mention tokens the decrypted body
         // carries, and to decide whether one of them names ME (which chooses the channel).
         val myUserId = MlsContextLoader.loadPushContext(this)?.userId
+        // THE MEMBER'S LEVEL FOR THIS CONVERSATION, DECIDED ONCE, HERE. `none` never arrives as a
+        // visible frame (the server sends it silent); `mentions` arrives as `notifLevel=mentions`
+        // because only this device can read who the message names. Decided BEFORE the fallback
+        // text below, which would otherwise announce a banner this never raises. A withheld
+        // message is still cached, so it is in the conversation, unread, when the app opens.
+        // A REFUSED frame at `mentions` is withheld too (the stated rule); its worker is still
+        // enqueued, because the worker advances the state, which is owed whatever is drawn.
+        val gate = NotificationLevelGate.decide(data["notifLevel"], decrypted?.mentionedUserIds, myUserId)
+        if (gate is NotificationLevelGate.Decision.Withhold) {
+            Log.d(TAG, "[NOTIF] group=${groupId.take(8)} withheld: ${gate.reason}")
+            if (decrypted != null) {
+                writeFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted)
+            }
+            if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
+                enqueueRefusedFrameWorker()
+            }
+            MlsContextLoader.loadPushContext(this)?.let { drainCtx ->
+                maybeNotifyPendingSync(drainOutboxBackground(this, this, drainCtx))
+            }
+            return
+        }
+
         val body: String = decrypted?.text?.let {
             renderMentions(it, myUserId, appLocaleContext(this))
         }
@@ -2821,12 +2861,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // same bytes into the same unrenderable plaintext while reaching for `mls.bin`
                 // as a third engine.
                 if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
-                    val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
-                        .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                        .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
-                        .build()
-                    enqueueWorkerIfHealthy(workRequest)
-                    Log.w(TAG, "Decryption failed -> MlsBackgroundWorker enqueued")
+                    enqueueRefusedFrameWorker()
                 }
                 buildFallbackText(appLocaleContext(this), senderName)
                     .also { Log.w(TAG, "Fallback notification: $it") }
@@ -2859,8 +2894,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // @-mention of me (WP-XP-5): decrypted text carries inline `@[uuid]` tokens; when one
         // targets my own userId the notification is posted on the higher-tier mentions channel
         // (bypass-DND request) instead of the regular messages channel.
-        val mentionsMe = myUserId != null &&
-            decrypted?.text?.contains("@[$myUserId]", ignoreCase = true) == true
+        val mentionsMe = (gate as NotificationLevelGate.Decision.Alert).mentionsMe
         val channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES
         Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null} hasMedia=${media != null} mentionsMe=$mentionsMe")
         // NOTIF-10 (b). A push refused for good means another engine consumed this generation, so
@@ -3746,6 +3780,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             callId    = json.optString("callId").takeIf { it.isNotEmpty() },
             callEnded = json.optBoolean("callEnded", false),
             hasVideo  = json.optBoolean("hasVideo", false),
+            mentionedUserIds = NotificationLevelGate.mentionedUserIds(text),
         ))
     }
 

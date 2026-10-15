@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
 import { flushSync, mount, unmount, tick } from 'svelte';
 
 const api = vi.hoisted(() => ({
-  fetchDisabledCategories: vi.fn(),
+  fetchNotificationPreferences: vi.fn(),
   saveDisabledCategories: vi.fn(),
 }));
 vi.mock('$lib/notifications/preferencesApi', () => api);
@@ -33,7 +33,7 @@ const switchOf = (category: string) =>
 beforeEach(() => {
   vi.clearAllMocks();
   notificationPreferences.reset();
-  api.fetchDisabledCategories.mockResolvedValue([]);
+  api.fetchNotificationPreferences.mockResolvedValue({ disabled: [], groupLevels: {} });
   api.saveDisabledCategories.mockResolvedValue(undefined);
 });
 
@@ -60,7 +60,7 @@ describe('SettingsNotificationsSection', () => {
   });
 
   it('shows the account state the server returned', async () => {
-    api.fetchDisabledCategories.mockResolvedValue(['posts']);
+    api.fetchNotificationPreferences.mockResolvedValue({ disabled: ['posts'], groupLevels: {} });
     await render();
     expect(switchOf('posts').getAttribute('aria-checked')).toBe('false');
     expect(switchOf('messages').getAttribute('aria-checked')).toBe('true');
@@ -84,7 +84,7 @@ describe('SettingsNotificationsSection', () => {
   });
 
   it('says so when the choices cannot be loaded', async () => {
-    api.fetchDisabledCategories.mockRejectedValue(new Error('503'));
+    api.fetchNotificationPreferences.mockRejectedValue(new Error('503'));
     await render();
     expect(document.body.textContent).toContain(m.settings_notifications_load_error());
   });

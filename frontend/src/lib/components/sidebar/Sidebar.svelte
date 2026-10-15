@@ -2,13 +2,14 @@
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { untrack } from 'svelte';
+  import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { flip } from 'svelte/animate';
   import { SvelteMap } from 'svelte/reactivity';
   import { dndzone, TRIGGERS, type DndEvent } from 'svelte-dnd-action';
   import { keepRowActivationKeys } from '$lib/utils/dndActivationKeys';
   import { longPress } from '$lib/actions/longPress';
   import CommunityRailMenu from './CommunityRailMenu.svelte';
-  import { Hash, Lock, MessageSquarePlus, Plus, Settings, X } from '@lucide/svelte';
+  import { Hash, LoaderCircle, Lock, MessageSquarePlus, Plus, Settings, X } from '@lucide/svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import ConversationTile from '../chat/ConversationTile.svelte';
@@ -200,6 +201,18 @@
      * then is a lie the user cannot check. Omitted, the gesture stays off entirely.
      */
     canRefresh?: () => boolean;
+    /**
+     * The community list is drawn from the device before the session is up (F1, the saved
+     * snapshot): rows and the rail are shown, and every control that would ACT - reordering the
+     * rail, the community settings - is withheld until the session exists; the add button stays
+     * (the rail must not move when the session arrives) and its press is answered with a toast.
+     */
+    previewOnly?: boolean;
+    /**
+     * The list on screen is the saved snapshot and a listing is refreshing it: said by a quiet
+     * spinner in the header, so stale rows are shown AS stale rows being refreshed.
+     */
+    listRefreshing?: boolean;
   }
 
   let {
@@ -235,6 +248,8 @@
     currentUserId = '',
     onRefresh,
     canRefresh,
+    previewOnly = false,
+    listRefreshing = false,
   }: Props = $props();
 
   let showNewChatModal = $state(false);
@@ -450,6 +465,10 @@
   function closeCommunityAdminPanel() {
     showCommunityAdminPanel = false;
   }
+  // The admin drawer holds a history entry: the system Back closes the drawer, not the community
+  // under it. `SidePanel` registers none by design - its other consumer's owner already does
+  // (audit of 2026-10-13).
+  bindHistoryOverlay(() => showCommunityAdminPanel, closeCommunityAdminPanel);
 
   /**
    * Runs one creation and decides what the panel does with the answer.
@@ -565,7 +584,12 @@
     >
       <div
         class="flex flex-col items-center gap-3"
-        use:dndzone={{ items: orderedWorkspaces, flipDurationMs: 150, type: 'community' }}
+        use:dndzone={{
+          items: orderedWorkspaces,
+          flipDurationMs: 150,
+          type: 'community',
+          dragDisabled: previewOnly,
+        }}
         onconsider={handleCommunityDndConsider}
         onfinalize={handleCommunityDndFinalize}
       >
@@ -639,10 +663,17 @@
         {/each}
       </div>
 
+      <!-- Drawn before the session too, so the rail does not move when the session arrives; until
+           then the press is answered, not acted on (F1 preview). -->
       <div class="my-1 h-[2px] w-8 rounded-full bg-white/30 dark:bg-white/10"></div>
 
       <button
         onclick={() => {
+          if (previewOnly) {
+            console.log('[WORKSPACE-SNAPSHOT] add-community pressed before the session');
+            showToast(m.communities_wait_for_session(), 'info');
+            return;
+          }
           showNewCommunityModal = true;
         }}
         class="border-text-muted/50 text-text-muted hover:text-text-main hover:border-text-main flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-dashed transition-all hover:rounded-lg hover:bg-white/10"
@@ -675,7 +706,18 @@
         </h2>
 
         <div class="flex items-center gap-1">
-          {#if selectedCommunityWorkspace}
+          {#if listRefreshing}
+            <span
+              data-communities-refreshing
+              role="status"
+              class="text-text-muted inline-flex"
+              title={m.sidebar_communities_refreshing()}
+              aria-label={m.sidebar_communities_refreshing()}
+            >
+              <LoaderCircle size={16} class="animate-spin" />
+            </span>
+          {/if}
+          {#if selectedCommunityWorkspace && !previewOnly}
             <button
               class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-surface rounded-full transition-colors dark:hover:bg-black/30"
               onclick={() => {

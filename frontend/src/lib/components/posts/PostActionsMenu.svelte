@@ -18,6 +18,8 @@
   import { clickOutside } from '$lib/actions/clickOutside';
   import { portal } from '$lib/actions/portal';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
+  import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
+  import { isMobileOverlayLayout } from '$lib/utils/historyOverlayStack';
   import { slide } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
 
@@ -135,6 +137,13 @@
     if (!open || !menuEl || !buttonEl) return;
     return bindFixedPopover(menuEl, { anchor: () => buttonEl, alignEnd: true, offset: 4 });
   });
+
+  // On a phone the open menu holds a history entry: the system Back closes the menu, not the feed
+  // or the post under it (audit of 2026-10-13). A wide window's popover is closed by a click beside it.
+  bindHistoryOverlay(
+    () => open && isMobileOverlayLayout(),
+    () => (open = false)
+  );
 
   /** Runs a menu entry and closes the menu, which every entry does. */
   function pick(action: () => void) {

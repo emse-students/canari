@@ -47,6 +47,7 @@ import {
 } from './session/sessionConnection';
 import { exportBackupImpl, importBackupImpl } from './session/sessionBackup';
 import { createMlsHolder } from './session/mlsHolder';
+import { setMlsReady } from './session/mlsReadiness';
 import { processDeviceInvitationsLocally } from './session/sessionAuth';
 
 /** Creates and returns the reactive chat session store covering login, MLS init, WebSocket, biometrics, device sync and backup. */
@@ -176,6 +177,8 @@ export function useChatSession() {
     isLoggedIn: () => isLoggedIn,
     setIsLoggedIn: (v) => {
       isLoggedIn = v;
+      // The one writer of the flag is the one writer of the awaitable form (`mlsReadiness.ts`).
+      setMlsReady(v);
     },
     isWsConnected: () => isWsConnected,
     setIsWsConnected: (v) => {

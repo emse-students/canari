@@ -12,6 +12,7 @@ import { dropGroupState } from './dropGroupState';
 import { forgetGroupReconciliation } from './historyReconcile';
 import { historyRangeStart, isWithinHistoryRange } from './historyWindow';
 import { cachedHistoryStateKey } from './historyStateKey';
+import { entitledHistorySelection } from './historyEntitlement';
 import {
   buildHistoryDigest,
   chunkIds,
@@ -257,9 +258,21 @@ async function notifyMembershipChange(
 
 /**
  * Removes a member from the MLS group (admin action):
- *  1. MLS remove commit - removes the leaf from the tree and advances the epoch for all.
- *  2. Broadcasts `memberRemoved` to remaining members.
- *  3. Cleans the server registry (dm_group_members + dm_device_group_memberships).
+ *  1. Ends the membership on the server (dm_group_members + dm_device_group_memberships, and the
+ *     membership interval that makes the removal hold against a later re-add).
+ *  2. MLS remove commit - removes the leaf from the tree and advances the epoch for all.
+ *  3. Broadcasts `memberRemoved` to remaining members.
+ *
+ * **THE SERVER RECORD COMES FIRST, AND A FAILURE THERE ABORTS THE REMOVAL** (user, 2026-10-14: a
+ * Remove holds against a later re-add). The record used to be written LAST and best-effort: a
+ * failed call left one log line, no exclusion window, and a later re-add was served the whole gap.
+ * In this order every outcome is durable without a queue of its own:
+ *  - the record fails: nothing has happened, the error reaches the person who asked, they retry;
+ *  - the record lands and the commit fails: the roster no longer names the member while the tree
+ *    still holds their leaves - which is exactly the state `removeStrayLeaves` collects, on every
+ *    member's next connection, with a Remove commit of its own. The removal completes itself.
+ * The window also opens on the safe side: it starts BEFORE the commit, so nothing sent between the
+ * two can later be served to the member as if they had still been in.
  */
 export async function removeMemberAndBroadcast(params: {
   mlsService: IMlsService;
@@ -270,18 +283,22 @@ export async function removeMemberAndBroadcast(params: {
 }) {
   const { mlsService, groupId, memberId, userId, deviceKeyB64 } = params;
 
-  // 1. MLS remove commit: removes the member's leaf for all remaining members.
-  await mlsService.removeMember(groupId, [memberId]);
-
-  // 2. Notify remaining members.
-  await notifyMembershipChange(mlsService, groupId, 'memberRemoved', { targetUser: memberId });
-
-  // 3. Clean the server registry. Best-effort: the MLS commit is authoritative.
+  // 1. The server record. Propagates: a removal the server did not record is not a removal yet.
   try {
     await mlsService.removeMemberFromServer(groupId, memberId);
-  } catch {
-    /* non-blocking */
+  } catch (e) {
+    console.warn(
+      `[REMOVE_MEMBER] Server refused or missed the removal in ${groupId.slice(0, 8)}… - nothing committed, the removal is not done: ${String(e).slice(0, 120)}`
+    );
+    throw e;
   }
+
+  // 2. MLS remove commit: removes the member's leaf for all remaining members. A failure here is
+  // completed by `removeStrayLeaves` (see above), and still reaches the caller.
+  await mlsService.removeMember(groupId, [memberId]);
+
+  // 3. Notify remaining members.
+  await notifyMembershipChange(mlsService, groupId, 'memberRemoved', { targetUser: memberId });
 
   await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64);
 }
@@ -744,20 +761,38 @@ export async function sendFullHistoryBundle(
     return;
   }
   const state = await storedConversationState(groupId, storage);
-  if (messages.length === 0) {
-    // A group with no messages can still have read state and a floor worth handing over.
+  // A group with no messages can still have read state, a floor and pins worth handing over - and
+  // so can one whose every message was withheld, or whose exclusion windows could not be read: the
+  // invitee has no conversation row yet, and this frame is what gives it one. It carries no message.
+  const sendStateOnly = async (why: string): Promise<void> => {
     const bytes = bundleFrame([], to, { state });
     try {
       await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
-      log(`[HISTORY_BUNDLE] Empty bundle sent for ${groupId.slice(0, 8)}… (group has no history)`);
+      log(`[HISTORY_BUNDLE] Empty bundle sent for ${groupId.slice(0, 8)}… (${why})`);
     } catch (e) {
       log(`[HISTORY_BUNDLE] Empty bundle send error: ${String(e).slice(0, 120)}`);
     }
+  };
+  if (messages.length === 0) {
+    await sendStateOnly('group has no history');
     return;
   }
 
-  await sendBundleChunks(groupId, messages, { mlsService, log }, { chunkSize, to, state });
-  log(`[HISTORY_BUNDLE] Full history sent: ${messages.length} message(s)`);
+  const outcome = await sendBundleChunks(
+    groupId,
+    messages,
+    { mlsService, log },
+    { chunkSize, to, state }
+  );
+  if (outcome.kind === 'unreadable') {
+    await sendStateOnly('exclusion windows unreadable - no message carried');
+    return;
+  }
+  if (outcome.kind === 'withheld-all') {
+    await sendStateOnly('every message withheld');
+    return;
+  }
+  log(`[HISTORY_BUNDLE] Full history sent: ${outcome.count} of ${messages.length} message(s)`);
 }
 
 /** Shared deps of every history control frame: the group send and somewhere to say what happened. */
@@ -774,28 +809,71 @@ export type HistoryStoreDeps = HistorySendDeps & {
  *
  * Shared by the full bundle and the id-filtered one so a change to the wire shape cannot reach one
  * path and miss the other - the two differ only in WHICH messages they were handed.
+ *
+ * **AND IT IS WHERE A REMOVE IS MADE TO HOLD** (user, 2026-10-14): every selection passes through
+ * {@link entitledHistorySelection} before a frame is built, so no answer path - full, diff or
+ * scrollback - can carry a message sent while a current member was out of the group.
+ *
+ * @returns the {@link BundleOutcome} - whether anything could be sent, and how much was.
  */
 async function sendBundleChunks(
   groupId: string,
-  messages: StoredMessage[],
+  selection: StoredMessage[],
   { mlsService, log }: HistorySendDeps,
   { chunkSize, to, state }: { chunkSize: number; to: string; state?: ConversationHistoryState }
-): Promise<void> {
-  const totalChunks = Math.ceil(messages.length / chunkSize);
-  for (let i = 0; i < messages.length; i += chunkSize) {
-    const payload = messages.slice(i, i + chunkSize).map(serializeForBundle);
+): Promise<BundleOutcome> {
+  // THE WINDOWS ARE READ AGAIN FOR EVERY CHUNK. A long answer spans seconds of network, and a
+  // member re-added in the meantime decrypts every chunk sealed after their add commit - so the
+  // windows that filter a chunk are the ones in force when THAT chunk leaves, never the ones read
+  // when the answer began. Concurrent reads of one group share one request (`joinInFlight`).
+  const totalChunks = Math.ceil(selection.length / chunkSize);
+  let sent = 0;
+  let read = false;
+  for (let i = 0; i < selection.length; i += chunkSize) {
+    const chunkNo = Math.floor(i / chunkSize) + 1;
+    const kept = await entitledHistorySelection(groupId, selection.slice(i, i + chunkSize), {
+      mlsService,
+      log,
+    });
+    if (kept === null) {
+      if (!read) return { kind: 'unreadable' };
+      log(
+        `[HISTORY_BUNDLE] Chunk ${chunkNo}/${totalChunks} not sent - exclusion windows unreadable; stopping after ${sent} message(s)`
+      );
+      return { kind: 'sent', count: sent };
+    }
+    read = true;
+    if (kept.length === 0) continue;
+    const payload = kept.map(serializeForBundle);
     const bytes = bundleFrame(payload, to, { state });
     try {
       await mlsService.sendMessage(groupId, bytes, undefined, DELIVERY.transport);
+      sent += payload.length;
       log(
-        `[HISTORY_BUNDLE] Chunk ${Math.floor(i / chunkSize) + 1}/${totalChunks} - ${payload.length} msg → ${groupId.slice(0, 8)}…`
+        `[HISTORY_BUNDLE] Chunk ${chunkNo}/${totalChunks} - ${payload.length} msg → ${groupId.slice(0, 8)}…`
       );
     } catch (e) {
-      log(`[HISTORY_BUNDLE] Chunk send error ${Math.floor(i / chunkSize) + 1}: ${String(e)}`);
-      return;
+      log(`[HISTORY_BUNDLE] Chunk send error ${chunkNo}: ${String(e)}`);
+      return { kind: 'sent', count: sent };
     }
   }
+  if (sent === 0) {
+    log(
+      `[HISTORY_BUNDLE] Every message selected for ${groupId.slice(0, 8)}… was withheld - no message sent`
+    );
+    return { kind: 'withheld-all' };
+  }
+  return { kind: 'sent', count: sent };
 }
+
+/**
+ * What {@link sendBundleChunks} did: no window could be read (nothing sent), every message was
+ * withheld (nothing sent), or `count` messages went out before the end or the first failed chunk.
+ */
+type BundleOutcome =
+  | { kind: 'unreadable' }
+  | { kind: 'withheld-all' }
+  | { kind: 'sent'; count: number };
 
 /**
  * Reads the local store for `groupId` as manifest entries - an id and the instant that buckets it.
@@ -1198,9 +1276,15 @@ export async function sendHistoryBundleForIds(
   }
 
   const state = await storedConversationState(groupId, storage);
-  await sendBundleChunks(groupId, selected, { mlsService, log }, { chunkSize, to, state });
+  const outcome = await sendBundleChunks(
+    groupId,
+    selected,
+    { mlsService, log },
+    { chunkSize, to, state }
+  );
+  if (outcome.kind !== 'sent') return;
   log(
-    `[HISTORY_BUNDLE] Diff sent for ${groupId.slice(0, 8)}…: ${selected.length} of ${wanted.size} requested message(s)`
+    `[HISTORY_BUNDLE] Diff sent for ${groupId.slice(0, 8)}…: ${outcome.count} of ${wanted.size} requested message(s)`
   );
 }
 
@@ -1247,9 +1331,15 @@ export async function sendHistoryRangeBundle(
 
   const page = inRange.slice(-Math.max(1, limit));
   const state = await storedConversationState(groupId, storage);
-  await sendBundleChunks(groupId, page, { mlsService, log }, { chunkSize: 200, to, state });
+  const outcome = await sendBundleChunks(
+    groupId,
+    page,
+    { mlsService, log },
+    { chunkSize: 200, to, state }
+  );
+  if (outcome.kind !== 'sent') return;
   log(
-    `[HISTORY_RANGE] Sent ${page.length} of ${inRange.length} message(s) older than ${new Date(before).toISOString()} for ${groupId.slice(0, 8)}…`
+    `[HISTORY_RANGE] Sent ${outcome.count} of ${inRange.length} message(s) older than ${new Date(before).toISOString()} for ${groupId.slice(0, 8)}…`
   );
 }
 

@@ -377,6 +377,8 @@ class NotificationService: UNNotificationServiceExtension {
     let senderId = Self.string(userInfo["senderId"]) ?? ""
     let queuedMessageId = Self.string(userInfo["queuedMessageId"]) ?? ""
     let inlineProto = Self.string(userInfo["proto"]) ?? ""
+    // The member's level for this conversation, when it is `mentions` - see `levelDecision`.
+    let notifLevel = Self.string(userInfo["notifLevel"])
 
     guard let ctx = loadPushContext() else {
       NSLog("[CanariNSE] push_context absent - fallback")
@@ -385,7 +387,8 @@ class NotificationService: UNNotificationServiceExtension {
         // No context means no mirrored locale either, so this one sentence falls back to the main
         // bundle - French. It is the honest answer: nothing on the device knows better here.
         body: Self.fallbackText(senderName: senderName, locale: nil), groupId: groupId,
-        senderId: senderId, ctx: nil, media: nil)
+        senderId: senderId, ctx: nil, media: nil,
+        level: Self.levelDecision(level: notifLevel, mentioned: nil, myUserId: nil, groupId: groupId))
       return
     }
 
@@ -429,7 +432,50 @@ class NotificationService: UNNotificationServiceExtension {
 
     applyMessageContent(
       content: content, senderName: senderName, groupName: groupName, body: body,
-      groupId: groupId, senderId: senderId, ctx: ctx, media: decrypted)
+      groupId: groupId, senderId: senderId, ctx: ctx, media: decrypted,
+      level: Self.levelDecision(
+        level: notifLevel, mentioned: decrypted?.mentionedUserIds, myUserId: ctx.userId,
+        groupId: groupId))
+  }
+
+  /// How loud one MLS message may be, given the member's level for its conversation.
+  ///
+  /// THE ONE PLACE THIS EXTENSION DECIDES IT - the twin of Android's `NotificationLevelGate`. `none`
+  /// never wakes the extension (the server sends it as a background frame); `mentions` arrives as
+  /// `notifLevel=mentions` on an alert the server already made `passive` and soundless, because the
+  /// server cannot see who the message names. An extension cannot WITHHOLD an alert push without
+  /// Apple's filtering entitlement, which this app does not hold - so the iOS form of "withhold" is
+  /// `passive`: filed in the notification centre, no sound, no banner, the screen stays dark.
+  ///
+  /// THE STATED RULE FOR WHAT CANNOT BE DECIDED (docs/wiki/services/chat-delivery.md): a message
+  /// that could not be read, or an account id that could not be loaded, proves no mention - it stays
+  /// passive, which is also exactly what iOS shows when this extension never runs at all.
+  struct LevelDecision {
+    /// The message names this account: break through Focus.
+    let mentionsMe: Bool
+    /// The conversation is at `mentions` and the message does not prove a mention: stay passive.
+    let quiet: Bool
+    /// The conversation is at `mentions` and the message names this account: ring, as `all` does.
+    let raise: Bool
+  }
+
+  static func levelDecision(
+    level: String?, mentioned: Set<String>?, myUserId: String?, groupId: String
+  ) -> LevelDecision {
+    let me = myUserId?.lowercased() ?? ""
+    let mentionsMe = !me.isEmpty && (mentioned?.contains(me) ?? false)
+    guard level == "mentions" else {
+      return LevelDecision(mentionsMe: mentionsMe, quiet: false, raise: false)
+    }
+    if mentionsMe {
+      NSLog("[CanariNSE] [NOTIF] group=\(groupId.prefix(8)) level=mentions and it names me - raised")
+      return LevelDecision(mentionsMe: true, quiet: false, raise: true)
+    }
+    let why = mentioned == nil || me.isEmpty
+      ? "the message could not be read - a mention is not proven"
+      : "the message does not mention this account"
+    NSLog("[CanariNSE] [NOTIF] group=\(groupId.prefix(8)) level=mentions - kept passive: \(why)")
+    return LevelDecision(mentionsMe: false, quiet: true, raise: false)
   }
 
   /// Runs the decrypt ladder matching Android (WP-PUSH-2):
@@ -557,6 +603,9 @@ class NotificationService: UNNotificationServiceExtension {
     let callId: String?
     let callEnded: Bool
     let hasVideo: Bool
+    /// Every user id the WHOLE plaintext mentions (`@[<64 hex>]`), lower-cased, read before `text`
+    /// is clamped - a mention past the preview is still a mention.
+    let mentionedUserIds: Set<String>
     /// True for an image/GIF message that carries everything needed to fetch + decrypt a thumbnail.
     var isImageMedia: Bool {
       mediaKind == "image" && !(mediaId ?? "").isEmpty && !(mediaKey ?? "").isEmpty
@@ -746,7 +795,8 @@ class NotificationService: UNNotificationServiceExtension {
   /// Fills the notification with the resolved title/subtitle/body + attachment, then delivers.
   private func applyMessageContent(
     content: UNMutableNotificationContent, senderName: String, groupName: String, body: String,
-    groupId: String, senderId: String, ctx: PushContext?, media: DecryptResult?
+    groupId: String, senderId: String, ctx: PushContext?, media: DecryptResult?,
+    level: LevelDecision
   ) {
     let isGroup = !groupName.isEmpty && groupName != senderName
     content.title = isGroup ? groupName : (senderName.isEmpty ? "Canari" : senderName)
@@ -784,10 +834,17 @@ class NotificationService: UNNotificationServiceExtension {
     // @-mention of me (WP-XP-5): decrypted text carries inline `@[uuid]` tokens; when one targets
     // my own userId, elevate to time-sensitive so it breaks through Focus (requires the app's
     // Time Sensitive Notifications entitlement - silently downgraded to .active without it).
-    if #available(iOS 15.0, *), let uid = ctx?.userId, !uid.isEmpty,
-      body.range(of: "@[\(uid)]", options: .caseInsensitive) != nil
-    {
+    // Read from the WHOLE plaintext's mentions (`DecryptResult.mentionedUserIds`), never the clamped
+    // preview, and decided once in `levelDecision`.
+    if level.mentionsMe {
       content.interruptionLevel = .timeSensitive
+    } else if level.quiet {
+      content.interruptionLevel = .passive
+      content.sound = nil
+    }
+    // The server sent a `mentions` frame soundless; a proven mention rings like any message.
+    if level.raise {
+      content.sound = .default
     }
 
     // Attachment priority: a media thumbnail (WP-XP-3) outranks the sender avatar, since iOS shows
@@ -1446,6 +1503,7 @@ class NotificationService: UNNotificationServiceExtension {
     // any other kind without a preview is unrenderable -> nil (generic fallback).
     let isCall = type == "call_invite" || type == "call_control"
     guard var text = dict["text"] as? String, !text.isEmpty || isCall else { return nil }
+    let mentioned = Self.mentionedUserIds(in: text)
     if text.count > maxPreviewLength {
       text = String(text.prefix(maxPreviewLength))
     }
@@ -1463,7 +1521,18 @@ class NotificationService: UNNotificationServiceExtension {
       sentAt: sentAt, replyTo: nonEmpty("replyTo"), mediaKind: nonEmpty("mediaKind"), mediaId: nonEmpty("mediaId"),
       mediaKey: nonEmpty("mediaKey"), mediaIv: nonEmpty("mediaIv"), mimeType: nonEmpty("mimeType"),
       type: type, callId: nonEmpty("callId"), callEnded: (dict["callEnded"] as? Bool) ?? false,
-      hasVideo: (dict["hasVideo"] as? Bool) ?? false)
+      hasVideo: (dict["hasVideo"] as? Bool) ?? false, mentionedUserIds: mentioned)
+  }
+
+  /// The user ids a plaintext mentions: the `@[<64 hex>]` token every client writes, lower-cased.
+  static func mentionedUserIds(in text: String) -> Set<String> {
+    guard let re = try? NSRegularExpression(pattern: "@\\[([0-9a-fA-F]{64})\\]") else { return [] }
+    let range = NSRange(text.startIndex..., in: text)
+    var ids = Set<String>()
+    for match in re.matches(in: text, range: range) {
+      if let r = Range(match.range(at: 1), in: text) { ids.insert(text[r].lowercased()) }
+    }
+    return ids
   }
 
   /// Convenience for the channel path, which needs only the preview text.

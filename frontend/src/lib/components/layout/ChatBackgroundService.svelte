@@ -42,6 +42,12 @@
     leaveSignedOut,
   } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
+  import { sessionAnsweredFor } from '$lib/stores/sessionAnswer.svelte';
+  import {
+    noteUnlockNeedsMember,
+    noteUnlockUnattended,
+    unlockUnattendedFor,
+  } from '$lib/stores/unlockPath.svelte';
   import {
     globalSession,
     globalConvs,
@@ -107,7 +113,10 @@
     landingStep,
     openInvitedChannel,
   } from '$lib/utils/chat/notificationRouting';
-  import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+  import {
+    CHANNEL_CONVERSATION_PREFIX,
+    isChannelConversationId,
+  } from '$lib/utils/chat/channelCrypto';
   import { setGraineRepairListener } from '$lib/utils/graine/runtime';
   import { channelService } from '$lib/services/ChannelService';
   import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
@@ -561,6 +570,17 @@
   }
 
   /**
+   * The ONE place the keypad is put on screen. A keypad on screen means a PIN is owed, so the
+   * unlock fact is set back to "needs the member" here and nowhere else: every caller that draws
+   * the keypad also hides the community list and holds the pre-session listing (F1).
+   */
+  function showPinGate(reason: string): void {
+    noteUnlockNeedsMember();
+    appendLog(`[PIN] Keypad shown (${reason}) - the unlock is owed to the member`);
+    showPinModal = true;
+  }
+
+  /**
    * Opens the PIN modal for the given user.
    *
    * THE GATE IS DRAWN ON THE LOCAL FACT WHEN THERE IS ONE. A device that enrolled this user is a
@@ -569,6 +589,8 @@
    * See {@link firstPinSetupFromDevice}.
    */
   async function openPinModal(uid: string, opts?: { deviceIdUnproven?: boolean }) {
+    // A PIN is owed: the device is locked from here until the unlock, whatever page is shown (F1).
+    noteUnlockNeedsMember();
     if (!mayPromptForPin()) return;
     globalSession.userId = uid;
     // A device id the attempt that just FAILED minted proves nothing about a PIN: a refused vault
@@ -584,7 +606,7 @@
     // The salt does not depend on the PIN, so it is asked while the person types. A first setup
     // is excluded: on a user without a salt that GET is a write (see `prefetchPinSaltImpl`).
     if (!isFirstPinSetup) globalSession.prefetchPinSalt(appendLog);
-    showPinModal = true;
+    showPinGate('open');
   }
 
   /**
@@ -655,7 +677,11 @@
    * the latch here is what lets the next sign-in start, whatever ended the previous one.
    */
   function handleSignedOut() {
+    noteUnlockNeedsMember();
     globalSession.endSession(sessionCb());
+    // After the teardown, and whether or not there was a live session to tear down: the community
+    // list of the leaving account goes, and a listing started on its token stops (F1/F2).
+    globalChannels.forgetAccount(appendLog);
     _loginInProgress = false;
   }
 
@@ -725,7 +751,7 @@
       return;
     }
     isFirstPinSetup = false;
-    showPinModal = true;
+    showPinGate('saved unlock failed');
     applyPinFailure(globalSession.userId || currentUserId() || '', code);
   }
 
@@ -819,6 +845,9 @@
       saveConversation: (name: string) => globalConvs.saveConversation(name, convCtx()),
       deleteConversation: (name: string) =>
         globalSession.storage?.deleteConversation(name) ?? Promise.resolve(),
+      storedSalonPageIds: () =>
+        globalSession.storage?.getMessageConversationIds(CHANNEL_CONVERSATION_PREFIX) ??
+        Promise.resolve([]),
       selectConversation: globalConvs.selectConversation,
       ensureMls: globalSession.ensureMls,
       startDirectConversation: (targetUserId: string, opts?: { silent?: boolean }) =>
@@ -1205,9 +1234,22 @@
     void openInvitedChannel(channelId);
   }
 
-  // ── Post-login: load channel workspaces ───────────────────────────────────
+  // ── Load channel workspaces on the ACCESS TOKEN, not on MLS ready (F2) ────
+  // The listing is a REST call and needs the token alone; `isLoggedIn` flips only once the unlock
+  // and MLS initialisation are through - 650 ms later on the Mi 9T at 1x, 1.9 s at 4x
+  // (community-open-budget). The one step that needs MLS, the key group, awaits it on its own
+  // (`whenMlsReady`). `isLoggedIn` stays a trigger: an offline unlock has a session and no token.
+  // A DERIVED, so the flip of `isLoggedIn` after the token does not list a second time.
+  // Before the session, ONLY for an unlock that prompts nobody: a device owing a PIN is locked, and
+  // lists nothing until it is unlocked (`unlockPath.svelte.ts`).
+  const listingMayStart = $derived(
+    globalSession.isLoggedIn ||
+      (sessionAnsweredFor() !== null &&
+        sessionAnsweredFor() === currentUserId() &&
+        unlockUnattendedFor() === currentUserId())
+  );
   $effect(() => {
-    if (!globalSession.isLoggedIn) return;
+    if (!listingMayStart) return;
     untrack(() => {
       void globalChannels.loadChannelWorkspacesFromBackend(channelsCtx()).then((refreshRan) => {
         if (refreshRan && globalChannels.workspacesLoadError !== null) {
@@ -1471,6 +1513,9 @@
               // on the PIN modal, whose "use biometrics" button always prompts.
               const promptDue = await isBiometricPromptDue();
               showBiometricSheet = promptDue;
+              // A keystore read with no prompt due asks nobody: the unlock is unattended (F1).
+              if (promptDue) noteUnlockNeedsMember();
+              else noteUnlockUnattended(savedUser);
 
               // THE WINDOW THIS TIMER PROTECTED WAS ONE NOBODY COULD USE. A 250 ms sleep sat here
               // so a tap on the sheet's "use my PIN" could land before the OS prompt was raised -
@@ -1539,6 +1584,9 @@
       const savedUser = currentUserId();
       const vaulted = savedUser ? await loadDeviceKey(savedUser) : null;
       if (savedUser && vaulted) {
+        // Only a slot whose owner is proven unlocks without anyone: an unlabelled one may be
+        // another account's, and its login is what proves it (F1).
+        if (vaulted.ownerProven) noteUnlockUnattended(savedUser);
         globalSession.userId = savedUser;
         globalSession.deviceKeyB64 = vaulted.deviceKeyB64;
         // loginImpl checks isLoginInProgress itself and will bail if it's true.
@@ -1931,7 +1979,7 @@
       // Deliberately NOT gated on `mayPromptForPin`: the POST above carried a live access token, so
       // the credential is not dead, and the local MLS state is already wiped. Declining the keypad
       // here would strand the user mid-reset with nothing to unlock and no way to finish.
-      showPinModal = true;
+      showPinGate('PIN reset');
     } catch (e) {
       // The `Server-side PIN reset failed.` thrown above is a DEV line and used to be shown as it
       // stood - an English sentence on a French modal, and the only thing the reader was told.

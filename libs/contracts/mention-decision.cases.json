@@ -1,0 +1,39 @@
+{
+  "$comment": [
+    "WHETHER ONE PRIVATE-CONVERSATION MESSAGE MAY ALERT, WRITTEN ONCE AND ASSERTED ON EVERY PLATFORM.",
+    "",
+    "A conversation's level (all / mentions / none) cannot be applied by the server at `mentions`: who a",
+    "ciphertext names is only known after decryption. So three implementations decide it - the client's",
+    "`conversationLevelRefusal` (frontend/src/lib/notifications/conversationLevel.ts), Android's",
+    "`NotificationLevelGate` and the iOS extension's `levelDecision` - and this file is the contract they",
+    "are each tested against, so the three copies cannot drift. See docs/wiki/services/chat-delivery.md,",
+    "\"A conversation's notification level\".",
+    "",
+    "Fields: `level` is the push's `notifLevel` (`null` = absent, the ordinary `all`); `text` is the",
+    "decrypted plaintext, `null` when the device could not read it; `me` is this account's id, `null`",
+    "when it could not be loaded. `expected`: `alert` (draw it), `alert-mention` (draw it on the",
+    "mentions channel / time-sensitive), `withhold` (Android and the client draw nothing; iOS keeps the",
+    "alert passive and soundless, since an extension cannot withhold one).",
+    "",
+    "WHO READS WHICH CASE. The native paths never receive `none` as a visible frame (the server sends it",
+    "silent), so they skip `level: \"none\"`. The client always holds the plaintext and its own id, so it",
+    "skips `text: null` and `me: null` - the undecidable cases only a push can meet."
+  ],
+  "me": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "cases": [
+    { "name": "ordinary frame, no mention", "level": null, "text": "hello", "me": "self", "expected": "alert" },
+    { "name": "ordinary frame naming me", "level": null, "text": "@[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa] look", "me": "self", "expected": "alert-mention" },
+    { "name": "explicit all, no mention", "level": "all", "text": "hello", "me": "self", "expected": "alert" },
+    { "name": "ordinary frame nobody could read still alerts", "level": null, "text": null, "me": "self", "expected": "alert" },
+    { "name": "mentions, naming me", "level": "mentions", "text": "hey @[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]", "me": "self", "expected": "alert-mention" },
+    { "name": "mentions, naming me in upper case", "level": "mentions", "text": "hey @[AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA]", "me": "self", "expected": "alert-mention" },
+    { "name": "mentions, naming somebody else", "level": "mentions", "text": "hey @[bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb]", "me": "self", "expected": "withhold" },
+    { "name": "mentions, naming nobody", "level": "mentions", "text": "ok", "me": "self", "expected": "withhold" },
+    { "name": "mentions, my id without the token is not a mention", "level": "mentions", "text": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "me": "self", "expected": "withhold" },
+    { "name": "mentions, the mention is past the 200-character preview", "level": "mentions", "text": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx @[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]", "me": "self", "expected": "alert-mention" },
+    { "name": "mentions, unreadable: the stated rule", "level": "mentions", "text": null, "me": "self", "expected": "withhold" },
+    { "name": "mentions, own id unknown: the stated rule", "level": "mentions", "text": "hey @[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]", "me": null, "expected": "withhold" },
+    { "name": "none, even a mention", "level": "none", "text": "hey @[aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa]", "me": "self", "expected": "withhold" },
+    { "name": "none, no mention", "level": "none", "text": "hello", "me": "self", "expected": "withhold" }
+  ]
+}

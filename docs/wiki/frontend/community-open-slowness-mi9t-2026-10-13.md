@@ -169,12 +169,30 @@ blob pool releases a face when its last mount goes: **170 mirrors for 62 distinc
 first capture, 47 then 46 for the two `general` opens. Fix: remember which user ids were mirrored
 this session (or which byte length/etag), and skip the rest.
 
+> **CLOSED 2026-10-14 by #1811. Do not reopen it without a new capture.** This was checked in the
+> code on `main`, not on a phone:
+>
+> - `utils/avatarMirror.ts` keeps one process-wide map, keyed by the SHA-256 of the bytes. A face
+>   is written to the notification cache once per process, whatever happens in the blob pool, and
+>   it travels as base64 rather than a JSON number array.
+> - `deviceReset` calls `forgetMirroredAvatars`, so the next account mirrors again.
+> - The test "writes the same face once per process" pins it.
+>
+> Measured by #1811 on the Mi 9T: 50 faces cost 360-440 ms of main thread before, 130-150 ms after
+> on the first open, and nothing on a repeat. The 47 and 46 mirrors per `general` open become 0 on
+> the second open. **The rule:** a side effect fed by a pool that releases and reloads must be keyed
+> by WHAT it writes, never by the load that triggered it.
+
 ## Finding 6 - noise met on the way
 
 - **37 `Failed to load resource: 404`** on `/api/users/<id>/avatar`, 25 of them in the first
   `general` open, each with `[AvatarCache] 404 ... absent for the rest of the session`. The
   request is how the client learns a member has no picture; `users/batch`, which it already called,
   could carry that fact (durable rule: never learn by failing what a fact could have told you).
+  **Built 2026-10-14** as a list question of its own rather than a `users/batch` field, so names never
+  wait on the gallery: [which faces exist](../services/core-service.md#which-faces-exist-asked-once-per-list-2026-10-14).
+  A face without a photo is no longer requested; owed once shipped, the same walk's count (expected 0
+  avatar `404`s where there were 37).
 - **496 `[GRAINE] v2 endorsement of session ... verified ... from the tree`** debug lines, the
   largest tag of the capture. **Fixed 2026-10-13**: a verification that succeeds is a seed being
   stored, and the caller already says that once per distributed seed or once per bundle, so the

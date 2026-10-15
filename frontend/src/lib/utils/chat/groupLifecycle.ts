@@ -142,6 +142,15 @@ export type LocalGroupFate = {
   reason: string;
 };
 
+/**
+ * A {@link LocalGroupFate} plus WHERE it came from, which is what decides whether it may be reused.
+ *
+ * `serverAnswered` is false when the `dm_groups` row could not be read (a transport failure, a 5xx)
+ * and the `keep` is the never-destroy-on-doubt default rather than the server's word. Such a keep is
+ * the absence of an answer, so a later sweep of the same pass must ask again instead of believing it.
+ */
+export type AbsentLocalGroupVerdict = LocalGroupFate & { serverAnswered: boolean };
+
 /** Signals {@link decideAbsentLocalGroupFate} reduces. Both are facts, never guesses. */
 export interface AbsentLocalGroupInput {
   /**
@@ -269,7 +278,7 @@ export async function reconcileAbsentLocalGroup(
     | 'noteDistributionGroup'
   >,
   groupId: string
-): Promise<LocalGroupFate> {
+): Promise<AbsentLocalGroupVerdict> {
   const isKnownDistributionGroup = mlsService.isDistributionGroup(groupId);
   const serverStatus = classifyServerStatus(await mlsService.getGroupServerStatus(groupId));
   const fate = decideAbsentLocalGroupFate({ isKnownDistributionGroup, serverStatus });
@@ -287,7 +296,7 @@ export async function reconcileAbsentLocalGroup(
       mlsService.noteDistributionGroup(groupId);
     }
   }
-  return fate;
+  return { ...fate, serverAnswered: serverStatus.kind !== 'unknown' };
 }
 
 /**

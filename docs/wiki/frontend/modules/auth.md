@@ -1042,6 +1042,16 @@ account never sees that slot - [the vault names its account](#the-vault-names-it
 vault was never cleared by any live path, `v1.2.6` included. Whether a sign-out should end "Rester
 connecte" is a decision for the user, not a defect of this fix.
 
+**What a sign-out does NOT keep: the saved community list (2026-10-14).** The rail and salon rows
+the last listing drew are saved per account (`canari_workspace_snapshot:v1:<userId>`,
+[community-open-budget](../community-open-budget.md#f1-f3-built-2026-10-14)) so the next launch
+draws them before the network. `clearUserLocally` erases every such slot at EVERY sign-out, with or
+without "Rester connecte", and `saveUserLocally` does on a change of account - the feed verdict's
+rule. Why not keep it like the vault: the vault saves a PIN, which a member must type to rebuild it;
+the list saves only the first listing after the next sign-in, which needs the network anyway. A
+copy of one account's communities waiting on a signed-out device is a disclosure with no gain. The
+in-memory list goes too (`forgetAccount` in the sign-out handler), which it never did before.
+
 ## Mobile unlock flow (Tauri)
 
 Driven by `startLoginFlow()` in `components/layout/ChatBackgroundService.svelte`.

@@ -53,6 +53,71 @@ export interface GroupRosterBatch {
 }
 
 /**
+ * What sending one application frame produced: the sealed ciphertext, and the server's receive time
+ * for it - the `serverTimestamp` the sender's own copy is stored with, since a sender never receives
+ * its frame back. `null` when the server's answer carried none (a server predating the field).
+ */
+export interface SentFrame {
+  sealed: Uint8Array;
+  receivedAt: number | null;
+}
+
+/**
+ * One window, in SERVER milliseconds, during which a person was not a member of a group;
+ * `until: null` means still out. Mirrors `ExclusionWindow` in chat-delivery-service's
+ * `utils/group-membership.ts`.
+ */
+export interface ExclusionWindow {
+  from: number;
+  until: number | null;
+}
+
+/**
+ * What `GET /api/mls/groups/:groupId/exclusions` answered: the windows of every CURRENT member that
+ * has one, keyed by LOWER-CASED user id. A member absent from the map has no window.
+ */
+export type GroupExclusions = ReadonlyMap<string, readonly ExclusionWindow[]>;
+
+/** The answer did not have the shape the exclusions route promises - typed, so no caller reads a message. */
+export class MalformedExclusionsError extends Error {
+  constructor(detail: string) {
+    super(`malformed exclusions answer: ${detail}`);
+    this.name = 'MalformedExclusionsError';
+  }
+}
+
+/**
+ * Parses the body of `GET /api/mls/groups/:groupId/exclusions`.
+ *
+ * Strict on purpose: a window that cannot be read is a window that would not be withheld, so a
+ * malformed answer throws rather than being read as "nobody was ever out".
+ */
+export function parseGroupExclusions(raw: unknown): GroupExclusions {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+    throw new MalformedExclusionsError('not an object');
+  }
+  const out = new Map<string, ExclusionWindow[]>();
+  for (const [userId, windows] of Object.entries(raw as Record<string, unknown>)) {
+    if (!Array.isArray(windows)) throw new MalformedExclusionsError(`windows of ${userId}`);
+    out.set(
+      userId.toLowerCase(),
+      windows.map((w) => {
+        const from = (w as { from?: unknown })?.from;
+        const until = (w as { until?: unknown })?.until;
+        if (typeof from !== 'number' || !Number.isFinite(from)) {
+          throw new MalformedExclusionsError(`window start of ${userId}`);
+        }
+        if (until !== null && (typeof until !== 'number' || !Number.isFinite(until))) {
+          throw new MalformedExclusionsError(`window end of ${userId}`);
+        }
+        return { from, until };
+      })
+    );
+  }
+  return out;
+}
+
+/**
  * The delivery service refused this device id: it was explicitly deleted, and the denylist is
  * permanent. Typed rather than message-matched, because the only cure is structural - enrol under
  * a fresh device id ({@link BaseMlsService.rotateDeviceIdentity}), never a retry of the same call.
@@ -227,6 +292,36 @@ export class SenderNotActiveError extends Error {
       `This device holds no leaf in group ${groupId}${status ? ` (membership ${status})` : ''}`
     );
     this.name = 'SenderNotActiveError';
+  }
+}
+
+/**
+ * Whom a staged commit removes, as its submission declares it: a whole person (`userId` alone, every
+ * leaf of theirs) or one device of theirs.
+ */
+export type CommitRemoval = { userId: string; deviceId?: string };
+
+/**
+ * The delivery service ANSWERED 403 to `GET /groups/:id/exclusions`: this account is not on the
+ * group's roster, while this device holds the group locally (it is asking because it is about to
+ * answer or send in it).
+ *
+ * AN ANSWER ABOUT THE ROSTER, NOT ABOUT THIS DEVICE - and deliberately NOT a
+ * {@link SenderNotActiveError}. The route refuses on `dm_group_members` alone, the send on this
+ * device's membership row: a device `active` but roster-less sends freely. Classified as a send
+ * refusal it ran the roster repair, which FORGETS THE TREE, on a device that was not broken (fourth
+ * review of #1878) - a destructive repair is gated on proof, and only the send's own refusal is that
+ * proof. Typed so its readers act on the answer (the outbox quotes by id only and lets the send
+ * decide; an answerer sends nothing) rather than retry a blip, which parked replies for good.
+ */
+export class ExclusionsRefusedError extends ApiRefusalError {
+  constructor(readonly groupId: string) {
+    super(
+      403,
+      'not_on_roster',
+      `The server refused the exclusion windows of group ${groupId}: this account is not on its roster`
+    );
+    this.name = 'ExclusionsRefusedError';
   }
 }
 
@@ -915,6 +1010,11 @@ export class MlsDeliveryApi {
    * the epoch the commit creates, in the same transaction as the advance, which makes it a recipient
    * of every frame sealed from then on while its Welcome waits for it (channel-encryption section
    * 20). Only a staged Add has any.
+   *
+   * `removes` names whom this commit REMOVES - a person, or one device of theirs. Their device rows
+   * were deleted by the server's half of the removal, which ran first, so the server queues the
+   * commit to the devices it parted for exactly these (`partingKey`, server side): the removed
+   * devices receive the commit that removes them. Only a staged Remove has any.
    */
   async submitCommit(
     groupId: string,
@@ -922,7 +1022,8 @@ export class MlsDeliveryApi {
     protoBase64: string,
     excludeDeviceIds?: string[],
     groupInfoBase64?: string,
-    admits?: Array<{ userId: string; deviceId: string }>
+    admits?: Array<{ userId: string; deviceId: string }>,
+    removes?: CommitRemoval[]
   ): Promise<{ accepted: boolean; reason?: string; currentEpoch?: number; newEpoch?: number }> {
     const res = await this.f(`${this.historyUrl}/api/mls/commit`, {
       method: 'POST',
@@ -936,6 +1037,7 @@ export class MlsDeliveryApi {
         ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
         ...(groupInfoBase64 ? { groupInfo: groupInfoBase64 } : {}),
         ...(admits?.length ? { admits } : {}),
+        ...(removes?.length ? { removes } : {}),
       }),
     });
     if (!res.ok) {
@@ -1211,12 +1313,14 @@ export class MlsDeliveryApi {
    * Both halves of `delivery` travel on the wire because the server holds ciphertext only and can
    * classify nothing itself: `silent` decides whether recipients are notified, `durable` whether
    * the frame is appended to the group's shared log.
+   *
+   * @returns the server's receive time for the frame (ms), or `null` when the answer carries none.
    */
   async postApplicationMessage(
     groupId: string,
     protoBase64: string,
     delivery: FrameDelivery = DELIVERY.visible
-  ): Promise<void> {
+  ): Promise<number | null> {
     const headers = await this.auth({ 'Content-Type': 'application/json' });
     let res: Response;
     try {
@@ -1277,6 +1381,21 @@ export class MlsDeliveryApi {
       }
       throw new Error(`Message send HTTP error: ${res.status}`);
     }
+    // The server's receive time for this frame - the `createdAt` every recipient's copy carries, and
+    // the only server time the SENDER's own copy can ever get (it never receives its frame back). A
+    // server predating the field, or an unreadable body, answers `null`: the frame WAS accepted, so
+    // that is not a failure of the send, and the copy is placed by the rule for undated messages.
+    const answered = (await res.json().catch((e: unknown) => {
+      console.warn(
+        `[DELIVERY] send to ${groupId.slice(0, 8)} accepted, its answer unreadable - the copy stays undated:`,
+        e
+      );
+      return null;
+    })) as { receivedAt?: unknown } | null;
+    const receivedAt = answered?.receivedAt;
+    return typeof receivedAt === 'number' && Number.isFinite(receivedAt) && receivedAt > 0
+      ? receivedAt
+      : null;
   }
 
   /**
@@ -1325,7 +1444,10 @@ export class MlsDeliveryApi {
         );
         return { rows: [] };
       }
-      return { rows: await res.json(), head: res.headers.get('X-History-Head') ?? undefined };
+      return {
+        rows: await res.json(),
+        head: res.headers.get('X-History-Head') ?? undefined,
+      };
     } catch (e) {
       console.error('Fetch History Error:', e);
       return { rows: [] };
@@ -1473,6 +1595,41 @@ export class MlsDeliveryApi {
       });
       if (!res.ok) throw new Error(`getGroupUserMembers failed: ${res.status}`);
       return await res.json();
+    });
+  }
+
+  /**
+   * The windows during which each current member of `groupId` was out of it - what a history answer
+   * must withhold (user, 2026-10-14: a Remove holds against a later re-add).
+   *
+   * Throws on any transport or HTTP failure, and on an answer it cannot parse: the caller cannot
+   * prove what may be sent without it, so it sends nothing and says so. Simultaneous askers share one
+   * request; nothing is kept past the answer.
+   *
+   * CLASSIFIED AT THE THROW: a gateway 403 is {@link ExclusionsRefusedError} (this account is not on
+   * the roster - never on its own a reason to repair this device), an edge 403 a {@link SendEdgeRefusedError} (the
+   * network path), any other status an {@link ApiRefusalError} carrying it; a transport failure is
+   * whatever `f` raised, untouched.
+   */
+  getGroupExclusions(groupId: string): Promise<GroupExclusions> {
+    return this.joinInFlight(`exclusions:${groupId}`, async () => {
+      const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/exclusions`, {
+        headers: await this.auth(),
+      });
+      if (res.status === 403) {
+        // ORIGIN FIRST, as for a send: an HTML 403 is the edge, and says nothing about the roster.
+        if (responseOrigin(res) === 'edge') throw new SendEdgeRefusedError(groupId, res.status);
+        throw new ExclusionsRefusedError(groupId);
+      }
+      if (!res.ok) {
+        throw new ApiRefusalError(
+          res.status,
+          null,
+          `getGroupExclusions refused with ${res.status} for group ${groupId}`
+        );
+      }
+      const body = (await res.json()) as { exclusions?: unknown };
+      return parseGroupExclusions(body?.exclusions);
     });
   }
 
