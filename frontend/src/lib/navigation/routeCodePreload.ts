@@ -16,8 +16,11 @@ import { Log } from '$lib/utils/Log';
  *
  * WHY A MEMO IS CORRECT. A module imported once stays in the module map for the life of the
  * document: there is nothing a second `preloadCode` of the same route can add. A preload that FAILS
- * (a web build offline, a deploy that replaced the chunk) is forgotten, so the next caller tries
- * again - the memo holds successes and attempts in flight, never a failure.
+ * (a web build offline, a deploy that replaced the chunk) is forgotten, so the next CALLER tries
+ * again - the memo holds successes and attempts in flight, never a failure. Whether a next caller
+ * comes is the caller's business: `preloadRouteOnView` makes one attempt per drawn link, and the
+ * layout asks again for the swipe neighbours on every arrival. Either way the navigation itself
+ * loads the route's code, so a missed preload costs only its head start.
  *
  * Keyed by pathname: `preloadCode` takes one, and a query string never changes a route's code.
  */

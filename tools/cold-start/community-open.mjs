@@ -163,8 +163,13 @@ const PROBE = `(function () {
   }
   (function frame() {
     var c = window.__cob;
+    // A watch marks the first frame its condition holds AFTER a frame where it did not (see arm()).
     Object.keys(c.watch).forEach(function (k) {
-      try { if (c.watch[k]()) { c.marks[k] = Math.round(performance.now()); delete c.watch[k]; } } catch (e) {}
+      try {
+        var w = c.watch[k];
+        if (!w.f()) w.low = true;
+        else if (w.low) { c.marks[k] = Math.round(performance.now()); delete c.watch[k]; }
+      } catch (e) {}
     });
     if (c === window.__cob) requestAnimationFrame(frame);
   })();
@@ -227,21 +232,42 @@ async function attach() {
  * plus a CDP round trip), so `salons` could not be marked before ~100 ms after `rail` even when the
  * rows were drawn in the same frame - measured on the Mi 9T: rows on screen from the rail's frame,
  * marked 120 ms later. `messages` after `pane` carried the same floor.
+ *
+ * AN EDGE, NOT A LEVEL. Arming early has its own lie: a condition ALREADY true when it is armed
+ * (the previous salon's composer and bubbles still on screen during the back animation, before a
+ * reopen) would mark at once, before the tap, and report a zero or negative duration as real. So a
+ * watch marks only the first frame its condition holds AFTER a frame where it did not. A condition
+ * that never goes false times out as `null` - a missing number, never a wrong one.
+ *
+ * `edge: false` is for the one LEVEL question, `nav` ("is the bar there yet"), which no tap causes
+ * and which a warm resume finds already true.
  */
-async function arm(cx, name, predicate) {
+async function arm(cx, name, predicate, edge = true) {
   await evaluate(
     cx,
-    `window.__cob.watch[${JSON.stringify(name)}] = function () { return ${predicate}; }, 1`
+    `window.__cob.watch[${JSON.stringify(name)}] = { f: function () { return ${predicate}; }, low: ${!edge} }, 1`
   );
 }
 
-/** Arms a page-side watch (unless already armed) and polls for its mark; null after `--timeout`. */
-async function until(cx, name, predicate) {
-  if (predicate) await arm(cx, name, predicate);
+/**
+ * Arms a page-side watch (unless already armed) and polls for its mark; null after `--timeout`.
+ *
+ * `after` is the tap the mark measures from. A mark that precedes it is REFUSED (null, and said):
+ * the edge in `arm` should make that impossible, and a measurement tool that reports one anyway is
+ * lying about the run, so it never reaches the row.
+ */
+async function until(cx, name, predicate, after = null, edge = true) {
+  if (predicate) await arm(cx, name, predicate, edge);
   const deadline = Date.now() + TIMEOUT;
   while (Date.now() < deadline) {
     const m = JSON.parse(await evaluate(cx, 'JSON.stringify(window.__cob.marks)'));
-    if (m[name] !== undefined) return m[name];
+    if (m[name] !== undefined) {
+      if (after !== null && m[name] < after) {
+        console.log(`  REFUSED mark ${name}: ${m[name]} precedes its tap at ${after}`);
+        return null;
+      }
+      return m[name];
+    }
     await waitMs(100);
   }
   return null;
@@ -287,8 +313,8 @@ async function openFirstSalon(cx, key, withMessages) {
   await arm(cx, `${key}Pane`, PRED.pane);
   if (withMessages) await arm(cx, `${key}Messages`, PRED.messages);
   const tapped = await tap(cx, FIRST_ROW);
-  const pane = await until(cx, `${key}Pane`);
-  const messages = withMessages ? await until(cx, `${key}Messages`) : null;
+  const pane = await until(cx, `${key}Pane`, null, tapped);
+  const messages = withMessages ? await until(cx, `${key}Messages`, null, tapped) : null;
   return [tapped, pane, messages];
 }
 
@@ -350,7 +376,7 @@ async function oneRun(index, warmCx) {
   row.attachMs = Math.round(armed.now);
   say(`attached pid ${pid} at +${row.attachMs}`);
 
-  row.nav = await until(cx, 'nav', PRED.nav);
+  row.nav = await until(cx, 'nav', PRED.nav, null, false);
   if (BEFORE_TAP) row.beforeTap = await evaluate(cx, BEFORE_TAP);
   if (SETTLE) await waitMs(SETTLE);
   if (PROFILE) {
@@ -364,14 +390,14 @@ async function oneRun(index, warmCx) {
   await arm(cx, 'rail', PRED.rail);
   await arm(cx, 'salons', PRED.salons);
   row.tapHub = await tap(cx, NAV_TAB);
-  row.rail = await until(cx, 'rail');
-  row.salons = await until(cx, 'salons');
+  row.rail = await until(cx, 'rail', null, row.tapHub);
+  row.salons = await until(cx, 'salons', null, row.tapHub);
   row.hubName = await evaluate(cx, HUB_NAME);
   say(`hub ${row.hubName}: rail ${row.rail} salons ${row.salons}`);
   if (row.hubName !== TARGET) {
     await arm(cx, 'targetSalons', hubOf(TARGET));
     row.tapTarget = await tap(cx, railButton(TARGET));
-    row.targetSalons = await until(cx, 'targetSalons');
+    row.targetSalons = await until(cx, 'targetSalons', null, row.tapTarget);
   } else {
     row.targetSalons = row.salons;
   }
@@ -416,7 +442,7 @@ async function oneRun(index, warmCx) {
   if (other) {
     await arm(cx, 'otherSalons', hubOf(other));
     row.tapOther = await tap(cx, railButton(other));
-    row.otherSalons = await until(cx, 'otherSalons');
+    row.otherSalons = await until(cx, 'otherSalons', null, row.tapOther);
     [row.tapOtherSalon, row.otherPane] = await openFirstSalon(cx, 'other', false);
     // THE SAME SALON AGAIN: what a member pays for a salon already opened in this session.
     await backToHub(cx, 'b2');

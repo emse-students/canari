@@ -91,7 +91,10 @@ Two facts decided its shape, and each one cost a wrong first reading:
   named after the app's pid - `forwardDevtools` took the first one listed until 2026-10-14.
 - **A mark is armed BEFORE the tap it times.** Until 2026-10-15, `until()` armed each mark only after
   the previous one had been polled. A mark drawn in the same frame was therefore timed at the next
-  poll, which put 80-120 ms on `tap>salons` and `reopen>msgs`.
+  poll, which put 80-120 ms on `tap>salons` and `reopen>msgs`. Armed early, a mark is an EDGE: it
+  marks the first frame its condition holds AFTER a frame where it did not. Otherwise the previous
+  screen, still drawn, satisfies it before the tap. A mark that precedes its tap is refused (printed,
+  recorded as `null`).
 
 To find what a slow mark is made of:
 

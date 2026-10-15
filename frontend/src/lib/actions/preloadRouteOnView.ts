@@ -13,6 +13,12 @@ import { preloadRouteCodeOnce } from '$lib/navigation/routeCodePreload';
  *
  * Event-driven, never timed: the first intersection after the link is drawn starts it.
  *
+ * ONE ATTEMPT PER DRAWN LINK. The observer is one-shot, so a link whose preload FAILED does not
+ * retry by itself: re-observing a link that is still on screen would fire at once and retry in a
+ * loop for as long as the network is gone. The memo forgets the failure, so the next caller - this
+ * link drawn again, a swipe neighbour - asks anew, and the navigation itself loads the route's
+ * code regardless.
+ *
  * @example
  * ```svelte
  * <a href={place.href} use:preloadRouteOnView={place.href}>

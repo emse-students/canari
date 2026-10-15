@@ -58,6 +58,24 @@ describe('preloadRouteOnView', () => {
     expect(preloadCode).toHaveBeenCalledWith('/communities');
   });
 
+  it('makes one attempt per drawn link: a failure is retried by the link drawn again, not by itself', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    preloadCode.mockRejectedValueOnce(new Error('offline'));
+    const first = preloadRouteOnView(document.createElement('a'), '/chat');
+    FakeObserver.all[0].enter();
+    await new Promise((r) => setTimeout(r, 0));
+    // One-shot: the observer let go, so a visible link cannot loop on a failure.
+    FakeObserver.all[0].enter();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(preloadCode).toHaveBeenCalledTimes(1);
+    first.destroy();
+    preloadRouteOnView(document.createElement('a'), '/chat');
+    FakeObserver.all[1].enter();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(preloadCode).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
+  });
+
   it('follows a changed route and stops observing when the link goes', () => {
     const action = preloadRouteOnView(document.createElement('a'), '/posts');
     action.update('/chat');

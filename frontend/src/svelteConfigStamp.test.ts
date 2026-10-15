@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
 
@@ -7,10 +7,14 @@ import { resolve } from 'node:path';
  * `kit.version.name` at every load, so one output carried two build ids and the bundle check
  * refused it. The stamp must be computed ONCE per process: two loads, one name.
  *
- * The work under test IS two cold evaluations of the config and its adapter graph: ~1 s alone, and
- * it passed the default 5 s budget only until the full suite (826 files) shared the CPU with it
- * (timed out 2026-10-15, green alone in 2 s). The budget names that cost, it does not wait on a clock.
+ * The adapters and the preprocessor are not what is under test, and cold-importing their graphs
+ * twice is what made this test the slowest in the suite (it timed out under the full run,
+ * 2026-10-15). They are stubbed; the stamp and its one `git rev-parse` are the real ones.
  */
+vi.mock('@sveltejs/adapter-node', () => ({ default: () => ({ name: 'adapter-node-stub' }) }));
+vi.mock('@sveltejs/adapter-static', () => ({ default: () => ({ name: 'adapter-static-stub' }) }));
+vi.mock('@sveltejs/vite-plugin-svelte', () => ({ vitePreprocess: () => ({}) }));
+
 describe('svelte.config.js build stamp', () => {
   it('is the same name on every load within one process, in the <ms>-<sha9> shape', async () => {
     const url = pathToFileURL(resolve(__dirname, '../svelte.config.js')).href;
@@ -19,5 +23,5 @@ describe('svelte.config.js build stamp', () => {
     const second = (await import(/* @vite-ignore */ `${url}?load=2`)).default.kit.version.name;
     expect(first).toMatch(/^\d+-[0-9a-f]{9}$/);
     expect(second).toBe(first);
-  }, 30_000);
+  });
 });
