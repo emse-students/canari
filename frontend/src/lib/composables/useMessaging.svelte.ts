@@ -192,6 +192,22 @@ export function useMessaging() {
     return conversationKey ? (pendingByConversation.get(conversationKey) ?? []) : [];
   }
 
+  /**
+   * THE ACCOUNT SIGNED OUT: its staged files and armed replies leave the memory. This composable is
+   * a singleton that outlives a sign-out without a page reload, and both maps are keyed by
+   * conversation ids the NEXT account may open too - a DM between the two accounts, a salon of a
+   * shared community - whose composer would then show, and send, what the previous one staged.
+   */
+  function forgetAccount(log: (msg: string) => void): void {
+    const staged = pendingByConversation.size;
+    const replies = replyByConversation.size;
+    pendingByConversation.clear();
+    replyByConversation.clear();
+    log(
+      `[MEDIA] signed out: staging of ${staged} and replies of ${replies} conversation(s) forgotten`
+    );
+  }
+
   /** Replaces the staged files of `conversationKey`; an empty list removes its entry. */
   function setPendingMediaFiles(
     conversationKey: string,
@@ -1333,7 +1349,14 @@ export function useMessaging() {
 
     if (fileEntries.length > 0) {
       // Only the queue's own send empties it; a voice note never entered it.
-      if (sendsQueue) setPendingMediaFiles(sentFrom, []);
+      // ONLY WHAT THIS SEND TOOK leaves the staging: the membership barrier above awaits, and a file
+      // staged in the same conversation meanwhile belongs to the NEXT send, not to this one's clear.
+      if (sendsQueue) {
+        setPendingMediaFiles(
+          sentFrom,
+          pendingMediaFilesFor(sentFrom).filter((entry) => !fileEntries.includes(entry))
+        );
+      }
       try {
         for (let index = 0; index < fileEntries.length; index++) {
           const entry = fileEntries[index];
@@ -2112,6 +2135,8 @@ export function useMessaging() {
     replyFor,
     /** The files staged IN a given conversation, sent by its next handleSendChat. */
     pendingMediaFilesFor,
+    /** Forgets every staged file and armed reply of the account that signed out. */
+    forgetAccount,
     videoPreparation,
     /** True while a media file is being encrypted and uploaded. */
     get isUploadingMedia() {

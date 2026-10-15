@@ -109,3 +109,68 @@ describe('an attachment the queue cannot take', () => {
     expect(ctx.conversations.get(CONVO)!.messages).toHaveLength(1);
   });
 });
+
+describe('the staging belongs to ONE conversation and ONE account', () => {
+  const pdf = (name: string) => new File(['%PDF'], name, { type: 'application/pdf' });
+
+  beforeEach(() => {
+    enqueueMock.mockReset();
+    // The upload ceiling: asked once, answered generously.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          ({
+            ok: true,
+            status: 200,
+            json: async () => ({ maxBytes: 50 * 1024 * 1024 }),
+          }) as Response
+      )
+    );
+  });
+
+  it('a photo staged in A, Send in B posts nothing of A', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    await messaging.handleFilesSelected([pdf('a.pdf')], ctx);
+    expect(messaging.pendingMediaFilesFor(CONVO)).toHaveLength(1);
+
+    (ctx as { selectedContact: string | null }).selectedContact = 'conversation-b';
+    await messaging.handleSendChat(ctx, 'hello B');
+
+    const sendLine = vi
+      .mocked(ctx.log)
+      .mock.calls.find(([l]) => String(l).startsWith('[SEND] handleSendChat'));
+    expect(sendLine?.[0]).toMatch(/files=0$/);
+    expect(enqueueMock).not.toHaveBeenCalled();
+    expect(messaging.pendingMediaFilesFor(CONVO)).toHaveLength(1);
+  });
+
+  it('a file staged in the same conversation DURING a send stays for the next one', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    await messaging.handleFilesSelected([pdf('first.pdf')], ctx);
+    let admit: (v: boolean) => void = () => {};
+    ctx.verifyCurrentUserMembership = () => new Promise((r) => (admit = r));
+
+    const sending = messaging.handleSendChat(ctx, '');
+    await new Promise((r) => setTimeout(r, 0));
+    await messaging.handleFilesSelected([pdf('second.pdf')], ctx);
+    admit(true);
+    await sending;
+
+    expect(messaging.pendingMediaFilesFor(CONVO).map((e) => e.file.name)).toEqual(['second.pdf']);
+  });
+
+  it('a sign-out forgets every staged file and armed reply', async () => {
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    await messaging.handleFilesSelected([pdf('a.pdf')], ctx);
+    messaging.handleReply(CONVO, { id: 'm1' } as never);
+
+    messaging.forgetAccount(vi.fn());
+
+    expect(messaging.pendingMediaFilesFor(CONVO)).toEqual([]);
+    expect(messaging.replyFor(CONVO)).toBeNull();
+  });
+});

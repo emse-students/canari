@@ -25,7 +25,7 @@
   import ReelReview from './ReelReview.svelte';
   import ReelPublishSheet from './ReelPublishSheet.svelte';
   import { CameraSession, type CameraOpener } from '$lib/reels/cameraSession.svelte';
-  import { openPhotoCamera, openPostCamera, openReelCamera } from '$lib/reels/cameraAccess';
+  import { openPhotoCamera, openReelCamera, postCameraOpener } from '$lib/reels/cameraAccess';
   import {
     captureFileFrom,
     captureReducer,
@@ -85,7 +85,7 @@
 
   /** The opener for each way of asking the microphone (`DestinationRules.microphone`). */
   function openerFor(microphone: DestinationRules['microphone']): CameraOpener {
-    if (microphone === 'separate') return openPostCamera;
+    if (microphone === 'separate') return postCameraOpener();
     if (microphone === 'never') return openPhotoCamera;
     return (lens) => openReelCamera(lens);
   }
@@ -93,13 +93,13 @@
   const rules = $derived(destinationRules(destination));
   /** A photo needs no ceiling: only a video take reads the server's cap. */
   const needsLimits = $derived(!rules.photoOnly);
-  /** The open stream carries a microphone - a fact of the session, not of the destination. */
-  const hasMicrophone = $derived((session.stream?.getAudioTracks().length ?? 0) > 0);
+  /** The open stream carries a LIVE microphone - a fact of the session, not of the destination. */
+  const hasMicrophone = $derived(session.microphone);
   let capture = $state<CaptureState>({ kind: 'ready' });
   let limits = $state<ReelLimits | null>(null);
   /**
    * A HOLD MAY BECOME A VIDEO. A post camera whose microphone was refused keeps its photos
-   * (`openPostCamera`); a cap not read yet (offline) keeps them too - a photo needs neither.
+   * (`postCameraOpener`); a cap not read yet (offline) keeps them too - a photo needs neither.
    */
   const canFilm = $derived(!rules.photoOnly && hasMicrophone && limits !== null);
   /** Set by the teardown: an answer arriving after it (the discard question) acts on nothing. */
@@ -414,7 +414,7 @@
       return;
     }
     console.debug('[reel-capture] gallery: the native library');
-    pickNatively('library')
+    pickNatively('library', { single: true })
       .then((files) => {
         console.debug(`[reel-capture] the native library handed ${files.length} file(s)`);
         if (files[0]) void takePickedVideo(files[0]);

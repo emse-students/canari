@@ -3295,6 +3295,8 @@
   "reels_camera_unavailable_body": "Canari cannot find a camera it can use on this device.",
   "reels_camera_busy_title": "The camera is busy",
   "reels_camera_busy_body": "Another app is using it. Close that app, then try again.",
+  "reels_camera_interrupted_title": "The camera stopped",
+  "reels_camera_interrupted_body": "Another app took it, or its permission was withdrawn. Check it, then try again.",
   "reels_camera_retry": "Try again",
   "reels_camera_close": "Close the camera",
   "reels_camera_switch": "Switch camera",

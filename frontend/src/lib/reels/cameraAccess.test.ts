@@ -8,7 +8,7 @@ import {
   CameraAccessError,
   classifyCameraError,
   openPhotoCamera,
-  openPostCamera,
+  postCameraOpener,
   openReelCamera,
   releaseCamera,
   torchSupported,
@@ -59,7 +59,7 @@ describe('openPhotoCamera (a chat photo never asks for the microphone)', () => {
   });
 });
 
-describe('openPostCamera (a refused microphone leaves the photos)', () => {
+describe('postCameraOpener (a refused microphone leaves the photos)', () => {
   const lensTrack = { label: 'back', kind: 'video' };
   const lens = { getVideoTracks: () => [lensTrack], getAudioTracks: () => [] };
 
@@ -78,7 +78,7 @@ describe('openPostCamera (a refused microphone leaves the photos)', () => {
       }
     );
 
-    const stream = (await openPostCamera('environment')) as unknown as { tracks: unknown[] };
+    const stream = (await postCameraOpener()('environment')) as unknown as { tracks: unknown[] };
 
     expect(getUserMedia.mock.calls[0][0].audio).toBe(false);
     expect(getUserMedia.mock.calls[1][0].video).toBeUndefined();
@@ -93,7 +93,24 @@ describe('openPostCamera (a refused microphone leaves the photos)', () => {
       .mockRejectedValueOnce(new DOMException('no', 'NotAllowedError'));
     vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
 
-    await expect(openPostCamera('environment')).resolves.toBe(lens);
+    await expect(postCameraOpener()('environment')).resolves.toBe(lens);
+  });
+
+  it('a lens flip after a refused microphone does not ask for it again (same session)', async () => {
+    vi.stubGlobal('screen', { width: 393, height: 851 });
+    const getUserMedia = vi
+      .fn()
+      .mockResolvedValueOnce(lens)
+      .mockRejectedValueOnce(new DOMException('no', 'NotAllowedError'))
+      .mockResolvedValueOnce(lens);
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+    const open = postCameraOpener();
+
+    await open('environment');
+    await open('user');
+
+    expect(getUserMedia).toHaveBeenCalledTimes(3);
+    expect(getUserMedia.mock.calls[2][0].audio).toBe(false);
   });
 
   it('a refused lens is the camera refusal, and the microphone is never asked', async () => {
@@ -101,7 +118,7 @@ describe('openPostCamera (a refused microphone leaves the photos)', () => {
     const getUserMedia = vi.fn().mockRejectedValueOnce(new DOMException('no', 'NotAllowedError'));
     vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
 
-    await expect(openPostCamera('environment')).rejects.toMatchObject({ fault: 'denied' });
+    await expect(postCameraOpener()('environment')).rejects.toMatchObject({ fault: 'denied' });
     expect(getUserMedia).toHaveBeenCalledTimes(1);
   });
 });

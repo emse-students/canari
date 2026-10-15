@@ -3295,6 +3295,8 @@
   "reels_camera_unavailable_body": "Canari ne trouve aucune caméra utilisable sur cet appareil.",
   "reels_camera_busy_title": "La caméra est occupée",
   "reels_camera_busy_body": "Une autre application l'utilise. Fermez-la, puis réessayez.",
+  "reels_camera_interrupted_title": "La caméra s'est arrêtée",
+  "reels_camera_interrupted_body": "Une autre application l'a prise, ou l'autorisation a été retirée. Vérifiez-la, puis réessayez.",
   "reels_camera_retry": "Réessayer",
   "reels_camera_close": "Fermer la caméra",
   "reels_camera_switch": "Changer de caméra",

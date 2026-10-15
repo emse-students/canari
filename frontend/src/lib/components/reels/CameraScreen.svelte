@@ -206,6 +206,10 @@
     denied: { title: m.reels_camera_denied_title, body: m.reels_camera_denied_body },
     unavailable: { title: m.reels_camera_unavailable_title, body: m.reels_camera_unavailable_body },
     busy: { title: m.reels_camera_busy_title, body: m.reels_camera_busy_body },
+    interrupted: {
+      title: m.reels_camera_interrupted_title,
+      body: m.reels_camera_interrupted_body,
+    },
   };
 
   /**

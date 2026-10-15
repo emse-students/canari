@@ -197,7 +197,7 @@ export interface DestinationRules {
   /**
    * How the microphone is asked. `with-lens`: in the lens's own request (the reel always has sound,
    * so a refused microphone is a refused camera). `separate`: after the lens, on its own, so a refused
-   * microphone leaves the photos (`openPostCamera`). `never`: a photo-only destination.
+   * microphone leaves the photos (`postCameraOpener`). `never`: a photo-only destination.
    */
   microphone: 'with-lens' | 'separate' | 'never';
   /** The review offers to remove the sound (only the reel publish applies it). */

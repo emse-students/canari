@@ -525,7 +525,7 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
     await settle();
     await settle();
 
-    expect(pickNatively).toHaveBeenCalledWith('library');
+    expect(pickNatively).toHaveBeenCalledWith('library', { single: true });
     expect(target.querySelector('[data-reel-review]')).not.toBeNull();
   });
 

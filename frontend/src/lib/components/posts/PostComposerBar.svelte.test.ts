@@ -22,7 +22,7 @@ vi.mock('$lib/posts/api', () => ({
 }));
 vi.mock('$lib/reels/cameraAccess', async (orig) => ({
   ...(await orig<typeof import('$lib/reels/cameraAccess')>()),
-  openPostCamera: () => new Promise<MediaStream>(() => {}),
+  postCameraOpener: () => () => new Promise<MediaStream>(() => {}),
 }));
 
 const runtime = vi.hoisted(() => ({ iosApp: false }));

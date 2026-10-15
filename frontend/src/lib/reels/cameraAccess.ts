@@ -25,7 +25,12 @@ export type CameraFault =
   /** No camera, no `mediaDevices` (an insecure origin), or none matching the request. */
   | 'unavailable'
   /** A camera exists and is allowed, but the OS could not start it (another app holds it). */
-  | 'busy';
+  | 'busy'
+  /**
+   * A LIVE lens ended under the preview: another app took it, or the permission was withdrawn. The
+   * track's end does not say which, so this names only what is known.
+   */
+  | 'interrupted';
 
 /** A camera that could not be opened, classified at the throw so no caller reads a message. */
 export class CameraAccessError extends Error {
@@ -145,19 +150,37 @@ export const openPhotoCamera: (facing: CameraFacing) => Promise<MediaStream> = (
  * answers the one question it asks. On iOS that is the same two system questions as the combined
  * request, camera first this time.
  *
- * @throws {CameraAccessError} when the LENS is refused - never for the microphone.
+ * ONE OPENER PER CAMERA SESSION, because it REMEMBERS a refused microphone: a lens flip reopens
+ * through the same opener, and asking again after a refusal would put the question (or, once denied
+ * for good, a silent failure) in front of every flip. The refusal is the answer for the session; the
+ * next session asks again.
+ *
+ * The returned opener throws {@link CameraAccessError} when the LENS is refused - never for the
+ * microphone.
  */
-export async function openPostCamera(facing: CameraFacing): Promise<MediaStream> {
-  const lens = await openReelCamera(facing, false);
-  try {
-    const mic = await navigator.mediaDevices.getUserMedia({ audio: REEL_AUDIO_CONSTRAINTS });
-    console.debug('[camera] post camera: microphone granted - photos and videos');
-    return new MediaStream([...lens.getVideoTracks(), ...mic.getAudioTracks()]);
-  } catch (err) {
-    const fault = classifyCameraError(err);
-    console.warn(`[camera] post camera: microphone refused (${fault}) - PHOTOS ONLY`, err);
-    return lens;
-  }
+export function postCameraOpener(): (facing: CameraFacing) => Promise<MediaStream> {
+  let microphoneRefused: CameraFault | null = null;
+  return async (facing) => {
+    const lens = await openReelCamera(facing, false);
+    if (microphoneRefused) {
+      console.debug(
+        `[camera] post camera: microphone already refused (${microphoneRefused}) this session - not asked again`
+      );
+      return lens;
+    }
+    try {
+      const mic = await navigator.mediaDevices.getUserMedia({ audio: REEL_AUDIO_CONSTRAINTS });
+      console.debug('[camera] post camera: microphone granted - photos and videos');
+      return new MediaStream([...lens.getVideoTracks(), ...mic.getAudioTracks()]);
+    } catch (err) {
+      microphoneRefused = classifyCameraError(err);
+      console.warn(
+        `[camera] post camera: microphone refused (${microphoneRefused}) - PHOTOS ONLY`,
+        err
+      );
+      return lens;
+    }
+  };
 }
 
 /** Hands the camera and the microphone back. Safe on a stream already stopped. */
