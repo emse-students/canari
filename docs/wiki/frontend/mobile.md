@@ -1152,7 +1152,7 @@ divides by 17px (the default "Large" body), clamps to `[1, 2]` and publishes `--
 the eight `--text-*` tokens of `app.css` multiply by. No Swift. It behaves like Android's WebView:
 font sizes grow, lengths (spacing, line heights, boxes) stay, and `--text-zoom` carries the same
 factor so `.text-zoom-exempt` keeps avatar initials in their circle
-([phone-comparison](../phone-comparison.md#what-is-left-scoped-by-the-user-on-2026-09-30)).
+([phone-comparison](../phone-comparison.md)).
 
 - **Bound: 2.** Android's 200 % is the largest scale rows, composer, nav, bubbles and the agenda were
   read at, so the accessibility sizes (body up to 53px) stop there. Floor 1: `--text-2xs` is the floor
