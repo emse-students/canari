@@ -11,6 +11,8 @@ export type {
   BulkIngestHandle,
   BulkIngestPhase,
   BulkIngestObserver,
+  StateLoadFailure,
+  LocalStateOpenResult,
 } from './IMlsService';
 export {
   MLS_LOCAL_STATE_UNDECRYPTABLE,

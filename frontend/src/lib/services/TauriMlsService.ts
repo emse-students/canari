@@ -949,7 +949,7 @@ export class TauriMlsService extends BaseMlsService {
    * `legacyPin` is only ever set on the migration retry from {@link _initImpl}: with it, the Rust
    * side may fall back to the pre-v0.11.0 Argon2id envelope, re-seal `mls.bin` under
    * `deviceKeyB64` and persist it. {@link loadStateWithKey} must stay free of it so probing a
-   * candidate key (recoverAndRekey) cannot rewrite the stored snapshot as a side effect.
+   * candidate key (openLocalStateWithKey) cannot rewrite the stored snapshot as a side effect.
    *
    * `biometricPrompt` is sent unconditionally, even though only biometric mode (empty
    * `deviceKeyB64`) raises a sheet: this is the one command that can carry it, because the native
@@ -982,6 +982,23 @@ export class TauriMlsService extends BaseMlsService {
         unattendedKeyRead: unattendedKeyRead === true,
       },
     });
+  }
+
+  /**
+   * See {@link BaseMlsService.pointUnattendedUnlockAt}: the keystore entry biometric unlock and the
+   * background push read, rewritten with the new key and AWAITED - unlike the refresh inside
+   * {@link changeDeviceKeyImpl}, because here the order is the point. A refusal propagates: the
+   * caller must not move any data while an unattended unlock still opens the old state.
+   */
+  override async pointUnattendedUnlockAt(newDeviceKeyB64: string): Promise<boolean> {
+    if (!isTauriRuntime()) return false;
+    await invoke('actualiser_cle_keystore_avec_devicekey', {
+      deviceKeyB64: newDeviceKeyB64,
+      userId: this.userId,
+      deviceId: this.deviceId,
+    });
+    console.log('[MLS][Tauri] Keystore now holds the new device key (unattended unlock moved).');
+    return true;
   }
 
   protected async changeDeviceKeyImpl(newDeviceKeyB64: string): Promise<void> {

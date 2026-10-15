@@ -13,12 +13,14 @@ import { getStorage, type IStorage } from '$lib/db';
 import { resetSalonUnread } from '$lib/utils/chat/salonUnread';
 import { computePinVerifier } from '$lib/utils/chat/auth';
 import {
-  applyNewDeviceKeyLocally,
-  dropStoredFeedPages,
+  DeviceKeyMismatchError,
+  KeyChangeInterruptedError,
+  KeyChangeSupersededError,
+  LocalStateUnopenableError,
   performPinChange,
-  reencryptLocalMessages,
   type PinProgressCallback,
 } from '$lib/utils/chat/pinChange';
+import { endIntoKeyRecovery, joinDeviceKeyLock } from '$lib/db/deviceKeyGate';
 import { deriveDeviceKeyB64, isValidDeviceKeyB64 } from '$lib/crypto/deviceKey';
 import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 // Every `throw` below whose message is a Paraglide line is a `LocalizedError`: the modals rendering
@@ -495,6 +497,9 @@ export async function loginImpl(
   // from a boot that never gets this far, and that seam is where `app-first-line` is marked.
   markBoot('login-start');
   const userId = ctx.getUserId();
+  // BEFORE any key is read: the key-change epoch this session's key belongs to is recorded here, so a
+  // change another tab makes before this session's first storage call is still seen as one.
+  joinDeviceKeyLock(userId);
   const pin = ctx.getPin();
   // Reassigned below once the PIN branch has fetched the server salt and derived the key.
   let deviceKeyB64 = ctx.getDeviceKey();
@@ -1865,6 +1870,8 @@ export async function nativeStorageLoginImpl(
   // (`loadDeviceKey`), and the unlabelled one of an older build must prove its owner in the login.
   try {
     const userId = ctx.getUserId();
+    // Before the vault is read, for the reason `loginImpl` gives.
+    joinDeviceKeyLock(userId);
     const vaulted = await loadDeviceKey(userId);
     if (!vaulted) {
       appendLog('[PIN] No device key in vault for this account - auto-login impossible');
@@ -1993,8 +2000,8 @@ export function prefetchPinSaltImpl(ctx: SessionContext, log: (msg: string) => v
  *     then fails, the account already expects the new PIN and the user can finish with
  *     {@link recoverPinImpl} (old PIN -> new PIN). The reverse order would leave the
  *     account on the old PIN with local state sealed under the new key -- unrecoverable.
- *  2. Re-derive this device's key from the new PIN and re-encrypt the MLS state plus every
- *     locally stored message under it ({@link performPinChange}).
+ *  2. Re-derive this device's key from the new PIN and re-seal every device-key-sealed store
+ *     (messages, Graine seeds, outbox) and the MLS state under it ({@link performPinChange}).
  *
  * The other devices keep their old key locally and will hit a verifier mismatch at their
  * next login; {@link recoverPinImpl} is what gets them across. That is inherent: the device
@@ -2039,26 +2046,56 @@ export async function changePinImpl(
     deriveDeviceKeyB64(userId, newPin, salt),
   ]);
 
-  await performPinChange(
-    {
-      userId,
-      mlsService: ctx.ensureMls(),
-      setDeviceKey: (k: string) => ctx.setDeviceKey(k),
-      log,
-      onProgress,
-    },
-    currentDeviceKeyB64,
-    newDeviceKeyB64
-  );
+  // The live client, whose state is already open under the current key - which the server verifier
+  // has just proven, so no stored row can refuse it.
+  try {
+    await performPinChange(
+      {
+        userId,
+        mls: ctx.ensureMls(),
+        setDeviceKey: (k: string) => ctx.setDeviceKey(k),
+        log,
+        onProgress,
+      },
+      currentDeviceKeyB64,
+      newDeviceKeyB64
+    );
+  } catch (e) {
+    if (e instanceof KeyChangeSupersededError) {
+      // Another tab changed the PIN first: this tab's key is the retired one.
+      endIntoKeyRecovery('another tab changed the PIN first');
+      throw new LocalizedError(m.auth_pin_change_superseded());
+    }
+    if (e instanceof KeyChangeInterruptedError) {
+      if (!e.dataMoved) {
+        // Nothing here moved: the session's key still seals everything, so it runs on. The account
+        // already expects the new PIN, so the NEXT unlock is the one the recovery finishes.
+        log(
+          `[PIN_CHANGE] Interrupted at the ${e.stage} step - no data moved, the session runs on.`
+        );
+        throw new LocalizedError(m.auth_pin_change_not_applied());
+      }
+      // Data may sit under two keys: this session must not run on, and the recovery (old PIN, new
+      // PIN) is what finishes the move.
+      log(
+        `[PIN_CHANGE] Interrupted at the ${e.stage} step - ending the session into the recovery.`
+      );
+      endIntoKeyRecovery('the PIN change was interrupted');
+      throw new LocalizedError(m.auth_pin_change_interrupted());
+    }
+    throw e;
+  }
   log('[PIN_CHANGE] Complete - local state re-encrypted under the new PIN.');
 }
 
 /**
  * "PIN changed on another device" recovery. The account PIN was rotated elsewhere, so
- * this device's local MLS state is still sealed under the OLD pin while the server now
- * expects the NEW one. Decrypts the local state with the OLD device key (non-destructively),
- * re-encrypts it under the NEW one, then logs in normally - preserving every local message
- * instead of falling back to a fresh-start.
+ * this device's local state is still sealed under the OLD pin while the server now expects the
+ * NEW one. Both keys derive from the same salt, so the old one is still derivable here: every
+ * sealed store (messages, Graine seeds, outbox) and the MLS state (opened non-destructively with
+ * the old key) move to the new one through `performPinChange`, the in-session change's own path,
+ * then a normal login follows - preserving everything instead of falling back to a fresh start.
+ * It is also how an in-session change killed half way is finished (see `performPinChange`).
  *
  * Throws a user-facing message when the new PIN is wrong, the old PIN does not decrypt
  * the local state, or there is no local state to recover.
@@ -2106,30 +2143,49 @@ export async function recoverPinImpl(
     deriveDeviceKeyB64(userId, newPin, salt),
   ]);
 
-  onProgress?.({ percent: 15, stage: 'mls' });
-  // Non-destructively decrypt local state with the old key, then re-encrypt under the new.
-  const mls = ctx.ensureMls();
-  const ok = await mls.recoverAndRekey(userId, oldDeviceKeyB64, newDeviceKeyB64, state);
-  if (!ok) {
-    throw new LocalizedError(m.auth_pin_old_incorrect());
+  // THE SAME PATH AS AN IN-SESSION CHANGE (`performPinChange`). Only the MLS source differs: the
+  // stored blob, opened (non-destructively) with the old key - the proof the old PIN is right.
+  try {
+    await performPinChange(
+      {
+        userId,
+        mls: ctx.ensureMls(),
+        storedMlsState: state,
+        setDeviceKey: (k: string) => ctx.setDeviceKey(k),
+        log: cb.log,
+        onProgress,
+      },
+      oldDeviceKeyB64,
+      newDeviceKeyB64
+    );
+  } catch (e) {
+    if (e instanceof DeviceKeyMismatchError) {
+      cb.log('[PIN_RECOVER] The old PIN does not open the local MLS state - nothing was changed.');
+      throw new LocalizedError(m.auth_pin_old_incorrect());
+    }
+    if (e instanceof LocalStateUnopenableError) {
+      cb.log(
+        `[PIN_RECOVER] The local MLS state opens with no PIN (${e.failure}) - nothing changed.`
+      );
+      throw new LocalizedError(m.auth_pin_recover_state_unopenable());
+    }
+    if (e instanceof KeyChangeSupersededError) {
+      cb.log('[PIN_RECOVER] Another tab changed the device key first - this tab restarts.');
+      endIntoKeyRecovery('another tab changed the PIN first');
+      throw new LocalizedError(m.auth_pin_change_superseded());
+    }
+    if (e instanceof KeyChangeInterruptedError) {
+      // Not logged in yet, so there is no session to end: the same two PINs finish what moved.
+      cb.log(`[PIN_RECOVER] Interrupted at the ${e.stage} step - the same two PINs finish it.`);
+      throw new LocalizedError(m.auth_pin_recover_interrupted());
+    }
+    throw e;
   }
-  cb.log('[PIN_RECOVER] MLS state re-encrypted with the new device key.');
-
-  const storage = await getStorage(userId);
-  await reencryptLocalMessages(storage, oldDeviceKeyB64, newDeviceKeyB64, cb.log, onProgress, {
-    start: 20,
-    end: 82,
-  });
-  cb.log('[PIN_RECOVER] Local messages re-encrypted with the new device key.');
-  await dropStoredFeedPages(storage, cb.log);
-
-  onProgress?.({ percent: 88, stage: 'finalize' });
-  await applyNewDeviceKeyLocally(ctx.getUserId(), newDeviceKeyB64, cb.log);
   ctx.setPin(newPin);
-  ctx.setDeviceKey(newDeviceKeyB64);
+  cb.log('[PIN_RECOVER] Local state re-sealed with the new device key.');
 
   onProgress?.({ percent: 92, stage: 'login' });
-  // Continue with a normal login. init() is a no-op (recoverAndRekey already marked the
+  // Continue with a normal login. init() is a no-op (openLocalStateWithKey already marked the
   // client initialised), so the decrypted client is reused and all messages are kept.
   await loginImpl(ctx, cb);
   if (!ctx.isLoggedIn()) {

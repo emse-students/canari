@@ -22,6 +22,15 @@ vi.mock('$lib/utils/userAvatarCache', () => ({
 }));
 
 const mounted: (() => void)[] = [];
+// HERMETIC, FOR THE WHOLE FILE: the rows resolve names and avatars over the network, through a
+// batch that fires on a later tick - after a per-test `afterEach` would have restored the real
+// `fetch`. Unstubbed, those requests went to a real `localhost:3000`, failed after the environment
+// was torn down, and failed the whole run with an unhandled teardown error attributed to whichever
+// file happened to be running. Not restored: the file's environment is discarded with it.
+vi.stubGlobal(
+  'fetch',
+  vi.fn(async () => new Response(null, { status: 404 }))
+);
 afterEach(() => {
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';

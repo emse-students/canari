@@ -51,6 +51,48 @@ export async function encryptData(
 }
 
 /**
+ * Open a sealed payload under `deviceKeyB64` and return its plaintext BYTES, or `null` when the
+ * AES-GCM tag does not verify under that key.
+ *
+ * The bytes, not the parsed value, because the one caller re-seals them as they are
+ * ({@link sealBytes}): a parse and re-stringify would be a rewrite of the payload, not a re-seal. A
+ * `null` and not a throw because the caller's question is WHICH key a row is under, and a tag that
+ * fails is one of the two answers, not an error.
+ */
+export async function openSealedBytes(
+  cipherText: Uint8Array,
+  iv: Uint8Array,
+  deviceKeyB64: string
+): Promise<Uint8Array | null> {
+  const key = await importDeviceKey(deviceKeyB64);
+  try {
+    const plainBuf = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: new Uint8Array(iv) },
+      key,
+      new Uint8Array(cipherText)
+    );
+    return new Uint8Array(plainBuf);
+  } catch {
+    return null;
+  }
+}
+
+/** Seal plaintext bytes under `deviceKeyB64` with a fresh IV - the inverse of {@link openSealedBytes}. */
+export async function sealBytes(
+  plaintext: Uint8Array,
+  deviceKeyB64: string
+): Promise<{ iv: Uint8Array; cipherText: Uint8Array }> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const key = await importDeviceKey(deviceKeyB64);
+  const cipherBuf = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    new Uint8Array(plaintext)
+  );
+  return { iv, cipherText: new Uint8Array(cipherBuf) };
+}
+
+/**
  * Decrypt a ciphertext blob produced by {@link encryptData}.
  *
  * Throws with "Decryption failed. Wrong device key?" if the authentication

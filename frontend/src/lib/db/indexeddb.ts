@@ -13,6 +13,9 @@ import type {
   IStorage,
   OutboxEntry,
   PendingGroupExit,
+  SealedPayload,
+  SealedPayloadSwap,
+  SealedStore,
   StoredDistributionGroup,
   StoredGraineSession,
   StoredMessage,
@@ -100,6 +103,13 @@ export class StorageOpenError extends Error {
  * where it is CREATED, by the module that creates it, because no caller can see the others.
  */
 const openConnections = new Set<IndexedDbStorage>();
+
+/** Byte equality of two stored ciphertexts - the compare half of {@link IndexedDbStorage.swapSealedPayloads}. */
+function sameBytes(a: Uint8Array | undefined, b: Uint8Array): boolean {
+  if (!a || a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
 
 /**
  * Closes every open connection to a `CanariDB_<userId>` database, so a delete can COMPLETE.
@@ -1247,6 +1257,55 @@ export class IndexedDbStorage implements IStorage {
       tx.oncomplete = () => resolve();
       tx.onerror = () => reject(tx.error);
     });
+  }
+
+  // -- Device key change ---------------------------------------------------
+
+  /** See {@link IStorage.getSealedPayloads}. The object store names ARE the {@link SealedStore} names. */
+  async getSealedPayloads(store: SealedStore): Promise<SealedPayload[]> {
+    const db = this.ensureDb();
+    const rows: any[] = await new Promise((resolve, reject) => {
+      const req = db.transaction(store, 'readonly').objectStore(store).getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    return rows.map((row) => ({
+      id: store === 'graine' ? row.sessionId : row.id,
+      iv: row.iv,
+      cipherText: row.cipherText,
+    }));
+  }
+
+  /**
+   * See {@link IStorage.swapSealedPayloads}. ONE readwrite transaction for the whole batch, every
+   * payload already sealed by the caller, so nothing awaited inside it can end it early.
+   */
+  async swapSealedPayloads(
+    store: SealedStore,
+    swaps: readonly SealedPayloadSwap[]
+  ): Promise<number> {
+    if (swaps.length === 0) return 0;
+    // A message write must drop the reconciliation's cached state key (see IStorage).
+    if (store === 'messages') invalidateAllHistoryStateKeys();
+    const db = this.ensureDb();
+    let swapped = 0;
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction(store, 'readwrite');
+      const os = tx.objectStore(store);
+      for (const swap of swaps) {
+        const req = os.get(swap.id);
+        req.onsuccess = () => {
+          const row = req.result;
+          if (!row || !sameBytes(row.cipherText, swap.expected)) return;
+          os.put({ ...row, iv: swap.iv, cipherText: swap.cipherText });
+          swapped++;
+        };
+      }
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+      tx.onabort = () => reject(tx.error);
+    });
+    return swapped;
   }
 
   // -- Stored feed pages ---------------------------------------------------

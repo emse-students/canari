@@ -345,6 +345,29 @@ export interface GraineDistributionFrame {
 }
 
 /**
+ * The stores whose rows carry a payload sealed under the device key (AES-256-GCM). The MLS state is
+ * sealed too, but lives outside `IStorage` and is re-sealed by `IMlsService`.
+ */
+export type SealedStore = 'messages' | 'graine' | 'outbox';
+
+/** One row of a {@link SealedStore}: its primary key and its sealed payload, as on disk. */
+export interface SealedPayload {
+  /** The row's primary key (`sessionId` for a Graine row). */
+  id: string;
+  iv: Uint8Array;
+  cipherText: Uint8Array;
+}
+
+/** A compare-and-swap of one row's sealed payload - see {@link IStorage.swapSealedPayloads}. */
+export interface SealedPayloadSwap {
+  id: string;
+  /** The ciphertext the row must still hold for the swap to apply. */
+  expected: Uint8Array;
+  iv: Uint8Array;
+  cipherText: Uint8Array;
+}
+
+/**
  * A Graine row exactly as stored, for backup export and import.
  *
  * The seed travels still encrypted under the device key, like message rows: a backup is restored
@@ -629,6 +652,22 @@ export interface IStorage {
    * with that id, so a device live since the backup keeps what it has learned since.
    */
   importEncryptedGraineRow(row: EncryptedGraineRow): Promise<void>;
+
+  // Device key change (the PIN changed here, or on another device): every store sealed under the
+  // device key, through ONE pair of methods so a store added later cannot be missed by one of the
+  // two paths that re-seal (see `resealDeviceKeyStores` in `utils/chat/pinChange.ts`).
+
+  /** Every row of a device-key-sealed store as its id and sealed payload, nothing decrypted. */
+  getSealedPayloads(store: SealedStore): Promise<SealedPayload[]>;
+  /**
+   * Replace the sealed payload of each named row, ONLY where the row still exists and still holds
+   * `expected` - a compare-and-swap, clear columns untouched. Resolves with how many rows changed.
+   *
+   * A compare-and-swap and not an upsert, because the in-session PIN change runs with the session
+   * live: a row the outbox deleted (sent) must not come back, and a row rewritten since it was read
+   * must not be overwritten with the older payload.
+   */
+  swapSealedPayloads(store: SealedStore, swaps: readonly SealedPayloadSwap[]): Promise<number>;
 
   // The feed's stored first pages (sealed with the device key; see `$lib/posts/feedStore`)
 
