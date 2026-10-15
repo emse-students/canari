@@ -15,7 +15,7 @@ import type { PostNotification } from './api';
  * validated. That is also why an event notification lands on a list rather than on the event: the
  * thing the reader has to do is act on it, and the queue is where acting happens.
  */
-export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'>): string {
+export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'>): string | null {
   switch (notif.type) {
     case 'form_reminder':
       return `/forms/${notif.postId}`;
@@ -37,9 +37,69 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'profile_correction_applied':
     case 'profile_correction_refused':
       return '/profile';
-    default:
+    // The association's proposal queue is reached by SLUG, which this synchronous function cannot
+    // look up: `resolveNotificationHref` owns these two.
+    case 'repost_proposed':
+    case 'coorganise_proposed':
+      return null;
+    // The types whose `postId` IS a post.
+    case 'comment':
+    case 'reply':
+    case 'reaction':
+    case 'mention':
+    case 'association_post':
+    case 'followed_post':
+    case 'association_repost':
       return `/posts/${notif.postId}`;
+    // A type this build does not know has an id of unknown meaning. The old default sent it to
+    // `/posts/<id>`, a dead link for anything that is not a post.
+    default:
+      return null;
   }
+}
+
+/**
+ * Every notification type this build can render and route. `NotificationRow` and `notificationHref`
+ * both reason about exactly this set, so a type outside it is one NEITHER can show or open.
+ */
+const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
+  'comment',
+  'reply',
+  'reaction',
+  'mention',
+  'form_reminder',
+  'association_post',
+  'followed_post',
+  'association_repost',
+  'repost_proposed',
+  'coorganise_proposed',
+  'event_proposed',
+  'event_validated',
+  'event_rejected',
+  'event_updated',
+  'event_deleted',
+  'event_pending',
+  'profile_correction_applied',
+  'profile_correction_refused',
+]);
+
+/** Whether this build knows how to render and route a notification of this type. */
+export function isKnownNotificationType(type: string): boolean {
+  return KNOWN_NOTIFICATION_TYPES.has(type);
+}
+
+/** Types already reported, so a list of fifty rows of one new type logs ONE line. */
+const reportedUnknownTypes: Record<string, true> = {};
+
+/**
+ * Says, once per type, that a notification of a type this build does not know reached the screen.
+ * A newer server can send one to an older client; the row stays neutral and unlinked, and this line
+ * is what tells a reader of the log WHY - never a silent swallow.
+ */
+export function reportUnknownNotificationType(type: string): void {
+  if (reportedUnknownTypes[type]) return;
+  reportedUnknownTypes[type] = true;
+  console.warn(`[notifications] unknown notification type "${type}": shown neutral, no link`);
 }
 
 /**
@@ -57,13 +117,13 @@ const ASSOCIATION_QUEUE_TYPES: Record<string, string> = {
  * WHERE A NOTIFICATION GOES, including the types that need the association's slug first.
  *
  * `lookupSlug` resolves an association id to its slug (`getAssociation`); it is a parameter so the
- * routing stays testable without a network. A lookup that fails REJECTS - the caller says the
+ * routing stays testable without a network. Null means the type has no destination. A lookup that fails REJECTS - the caller says the
  * notification could not be opened, rather than sending the reader somewhere else.
  */
 export async function resolveNotificationHref(
   notif: Pick<PostNotification, 'type' | 'postId'>,
   lookupSlug: (associationId: string) => Promise<string>
-): Promise<string> {
+): Promise<string | null> {
   const section = ASSOCIATION_QUEUE_TYPES[notif.type];
   if (!section) return notificationHref(notif);
   const slug = await lookupSlug(notif.postId);

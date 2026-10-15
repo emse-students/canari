@@ -111,6 +111,23 @@ SELECT count(*) FROM channel_messages WHERE "signature" IS NULL AND "senderSessi
 
 ## The diary
 
+### No date yet - a notification TYPE the client does not know, from any new server type
+
+**Site:** `NotificationRow.svelte` and `notificationHref` in `frontend/src/lib/posts/notificationTarget.ts`.
+**The defect in released clients (v1.0.3 up to main before the release carrying PR #<n>):** an unknown
+`type` fell into the row's final `{:else}`, the COMMENT branch ("<actor> a commente : <title>", comment
+glyph), and `notificationHref` answered `/posts/<id>`, a dead link when the id is not a post. Native
+pushes are not affected: Android and iOS (NSE and `canari_push.mm`) keep the server's own wording for
+an unknown `contentKey` and log it. An unknown deep-link host used to open the app and go nowhere; it
+now lands on `/notifications`.
+**Consequence for the ones already shipped:** `profile_correction_*`, `coorganise_proposed` and
+`repost_proposed` (and the agenda's types before their own rows) show the comment sentence on a client
+older than the release carrying their rows.
+**THE MINIMUM CLIENT VERSION MUST COVER THIS FIX BEFORE ANY NEW NOTIFICATION TYPE SHIPS** - the release
+carrying PR #<n>, both stores serving it, then `minClientVersion` raised to it. A new type shipped
+earlier reaches the floor clients as a wrong sentence and a dead link, which no server change can undo.
+**Removal condition:** none; this is a floor requirement, not a shim.
+
 ### No date yet - the `fr.emse.canari://stripe/...` checkout return host, from a build older than 2026-10-09
 
 **Site:** `isAllowedCheckoutCallbackUrl` in `apps/social-service/src/common/checkout-callback-url.ts` and

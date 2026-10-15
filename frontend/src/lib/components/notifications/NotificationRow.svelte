@@ -14,6 +14,7 @@
     Newspaper,
     Repeat2,
     CalendarPlus,
+    Bell,
   } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
@@ -23,6 +24,10 @@
   import { MENTION_USER_ID_PATTERN, normalizeMentionUserId } from '$lib/utils/mentions';
   import { resolveUserDisplayName } from '$lib/utils/users/displayName';
   import type { PostNotification } from '$lib/posts/api';
+  import {
+    isKnownNotificationType,
+    reportUnknownNotificationType,
+  } from '$lib/posts/notificationTarget';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -42,6 +47,16 @@
 
   let { notif, unread, onOpen, actorNames = [notif.actorName] }: Props = $props();
   const otherActorCount = $derived(Math.max(0, actorNames.length - 1));
+
+  /**
+   * A TYPE THIS BUILD DOES NOT KNOW (a newer server, an older app). The chain below used to end in
+   * the COMMENT branch, so such a row read "<actor> a commente : <title>" with a link to a post that
+   * does not exist. It now renders a neutral sentence, is not activatable, and is logged once.
+   */
+  const isUnknownNotif = $derived(!isKnownNotificationType(notif.type));
+  $effect(() => {
+    if (isUnknownNotif) reportUnknownNotificationType(notif.type);
+  });
 
   /** Bumped once async name resolution completes, to re-render resolved mentions. */
   let resolveVersion = $state(0);
@@ -173,7 +188,9 @@
                     ? 'bg-indigo-500 text-white'
                     : notif.type === 'profile_correction_refused'
                       ? 'bg-red-500 text-white'
-                      : 'bg-green-600 text-white'
+                      : isUnknownNotif
+                        ? 'bg-gray-500 text-white'
+                        : 'bg-green-600 text-white'
   );
 
   // ONE GEOMETRY, BECAUSE THERE IS ONE SURFACE. These were `compact ? a : b`, and `compact` was
@@ -186,6 +203,7 @@
 
 <button
   type="button"
+  disabled={isUnknownNotif}
   onclick={onOpen}
   class="flex w-full items-start gap-3 rounded-lg px-2 py-2.5 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/10"
 >
@@ -234,6 +252,8 @@
         <Repeat2 size={glyph} strokeWidth={2.75} />
       {:else if isCoorganiseNotif}
         <CalendarPlus size={glyph} strokeWidth={2.75} />
+      {:else if isUnknownNotif}
+        <Bell size={glyph} strokeWidth={2.75} />
       {:else}
         <MessageCircle size={glyph} strokeWidth={2.75} />
       {/if}
@@ -248,10 +268,16 @@
       colour carries is "have I seen this" and nothing else.
     -->
     <p class="text-sm leading-snug {unread ? 'text-text-main' : 'text-text-muted'}">
-      <span class="font-semibold"
-        ><EmojiText text={actorNames[0] || m.notif_actor_unknown()} /></span
-      >
-      {#if otherActorCount === 1}
+      {#if isUnknownNotif}
+        {m.notif_unknown_type_text()}
+      {:else}
+        <span class="font-semibold"
+          ><EmojiText text={actorNames[0] || m.notif_actor_unknown()} /></span
+        >
+      {/if}
+      {#if isUnknownNotif}
+        <!-- Neutral and unlinked: nothing more to say about a type this build cannot read. -->
+      {:else if otherActorCount === 1}
         {m.notif_grouped_one_other()}
       {:else if otherActorCount > 1}
         {m.notif_grouped_many_others({ count: otherActorCount })}
@@ -297,7 +323,7 @@
       {:else if isCoorganiseNotif}
         {m.notif_coorganise_proposed_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
-      {:else}
+      {:else if !isUnknownNotif}
         {m.notif_comment_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
       {/if}

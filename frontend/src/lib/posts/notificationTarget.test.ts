@@ -7,9 +7,19 @@
  * applied. Sending either to the other's page is a reader looking at a screen with nothing to do.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { notificationHref, resolveNotificationHref } from './notificationTarget';
+import {
+  isKnownNotificationType,
+  notificationHref,
+  resolveNotificationHref,
+} from './notificationTarget';
 
 describe('notificationHref', () => {
+  it('gives an unknown type NO link, never /posts/<id>', () => {
+    expect(notificationHref({ type: 'booking_full', postId: 'x1' })).toBeNull();
+    expect(isKnownNotificationType('booking_full')).toBe(false);
+    expect(isKnownNotificationType('comment')).toBe(true);
+  });
+
   it('sends a post notification to its post', () => {
     expect(notificationHref({ type: 'comment', postId: 'p1' })).toBe('/posts/p1');
     expect(notificationHref({ type: 'reaction', postId: 'p1' })).toBe('/posts/p1');
@@ -38,10 +48,8 @@ describe('notificationHref', () => {
     }
   });
 
-  it('falls back to the post route for a type it has never heard of', () => {
-    // Deliberately not an error: a server that ships a new type before a client knows it must not
-    // produce a row that does nothing when tapped.
-    expect(notificationHref({ type: 'something_new', postId: 'x' })).toBe('/posts/x');
+  it('gives a type it has never heard of NO link, so the row can say so instead of a dead /posts/<id>', () => {
+    expect(notificationHref({ type: 'something_new', postId: 'x' })).toBeNull();
   });
 });
 
