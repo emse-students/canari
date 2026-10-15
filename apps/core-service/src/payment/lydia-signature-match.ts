@@ -1,7 +1,17 @@
 import { createHash } from 'crypto';
 
-/** Most received field names tried as subsets: 2^12 subsets x the algorithms stays instant. */
-const MAX_FIELDS = 12;
+/**
+ * Observation budget. The callback route is PUBLIC and its JSON/urlencoded body may reach megabytes,
+ * while the search is 2^fields x algorithms x keys synchronous md5 passes: above either bound the
+ * observation is SKIPPED (and says so), never truncated, so a miss is never misread as "no algorithm".
+ */
+export const OBSERVE_MAX_FIELDS = 10;
+export const OBSERVE_MAX_BYTES = 2048;
+
+/** A received field name reduced to what a log line may carry (the sender picks every name). */
+export function logSafeFieldName(name: string): string {
+  return name.replace(/[^\w.-]/g, '').slice(0, 32);
+}
 
 const md5 = (s: string): string => createHash('md5').update(s).digest('hex');
 
@@ -46,6 +56,30 @@ export interface LydiaSignatureMatch {
 }
 
 /**
+ * The string fields of a received body except the signature, or why none can be tried: a value that
+ * is not a string or number (an object from a JSON body) is dropped, and a body over the budget is
+ * refused whole. Never throws, whatever the sender put in the body.
+ */
+export function observableFields(
+  body: Record<string, unknown> | undefined
+): { fields: Record<string, string> } | { skipped: string } {
+  const fields: Record<string, string> = {};
+  let bytes = 0;
+  for (const [name, value] of Object.entries(body ?? {})) {
+    if (name === 'sig') continue;
+    if (typeof value !== 'string' && typeof value !== 'number') continue;
+    const text = String(value);
+    bytes += Buffer.byteLength(name) + Buffer.byteLength(text);
+    fields[name] = text;
+  }
+  const count = Object.keys(fields).length;
+  if (count > OBSERVE_MAX_FIELDS || bytes > OBSERVE_MAX_BYTES) {
+    return { skipped: `${count} field(s), ${bytes} byte(s) exceed the observation budget` };
+  }
+  return { fields };
+}
+
+/**
  * Finds which (key, field subset, algorithm) reproduces a received signature. OBSERVATION only:
  * the callback route keeps refusing what the Provider key does not verify, and uses this to log
  * which candidate Business key and field set Lydia really signed with (2026-10-15 measured that the
@@ -59,7 +93,7 @@ export function matchLydiaSignature(
   keys: readonly string[]
 ): LydiaSignatureMatch[] {
   const received = signature.toLowerCase();
-  const names = Object.keys(fields).slice(0, MAX_FIELDS);
+  const names = Object.keys(fields);
   const matches: LydiaSignatureMatch[] = [];
   keys.forEach((key, keyIndex) => {
     for (let mask = 1; mask < 1 << names.length; mask++) {

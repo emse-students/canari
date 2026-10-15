@@ -75,8 +75,8 @@ export class PaymentService {
   }
 
   /** What a callback that failed verification would have matched with the candidate keys (names only). */
-  observeLydiaRequestCallback(fields: Record<string, string>, signature: string): string {
-    return this.lydiaProvider.observeRequestCallback(fields, signature);
+  observeLydiaRequestCallback(body: Record<string, unknown>, signature: string): string | null {
+    return this.lydiaProvider.observeRequestCallback(body, signature);
   }
 
   /** Creates or resumes a Connect-style onboarding link for the given association. */

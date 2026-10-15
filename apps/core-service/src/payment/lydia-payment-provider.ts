@@ -1,7 +1,7 @@
 import { BadRequestException, Logger } from '@nestjs/common';
 import axios from 'axios';
 import { verifyLydiaSignature } from './lydia-signature';
-import { matchLydiaSignature } from './lydia-signature-match';
+import { logSafeFieldName, matchLydiaSignature, observableFields } from './lydia-signature-match';
 import { parseLydiaOrderRef, orderRefToMetadata } from './lydia-order-ref';
 import type { ConnectAccountStatusResponse } from './payment-provider.interface';
 import type {
@@ -89,7 +89,8 @@ export class LydiaPaymentProvider implements PaymentProvider {
         : HOMOLOGATION_BASE_URL;
     this.providerToken = env.LYDIA_PROVIDER_TOKEN;
     this.providerPrivateToken = env.LYDIA_PROVIDER_PRIVATE_TOKEN;
-    this.observeKeys = (env.LYDIA_OBSERVE_KEYS ?? '')
+    // Second guard next to the compose wiring: a measurement variable never acts on production.
+    this.observeKeys = (this.baseUrl === PRODUCTION_BASE_URL ? '' : (env.LYDIA_OBSERVE_KEYS ?? ''))
       .split(',')
       .map((k) => k.trim())
       .filter(Boolean);
@@ -405,14 +406,21 @@ export class LydiaPaymentProvider implements PaymentProvider {
   /**
    * Observation of a callback that failed verification: which candidate key (by index), field set
    * and algorithm reproduces its signature. Candidates come from `LYDIA_OBSERVE_KEYS`, a dev-only
-   * measurement variable removed once the algorithm is known; the answer carries names, never a value.
+   * measurement variable removed once the algorithm is known; the answer carries names, never a
+   * value. `null` when nothing is configured (production, or no variable), so a refusal there carries
+   * no suffix at all.
    */
-  observeRequestCallback(fields: Record<string, string>, signature: string): string {
-    if (this.observeKeys.length === 0) return 'observe: no candidate key configured';
-    const matches = matchLydiaSignature(fields, signature, this.observeKeys);
+  observeRequestCallback(body: Record<string, unknown>, signature: string): string | null {
+    if (this.observeKeys.length === 0) return null;
+    const observable = observableFields(body);
+    if ('skipped' in observable) return `observe: skipped, ${observable.skipped}`;
+    const matches = matchLydiaSignature(observable.fields, signature, this.observeKeys);
     if (matches.length === 0) return `observe: no match over ${this.observeKeys.length} key(s)`;
     return `observe: ${matches
-      .map((m) => `key#${m.keyIndex} fields=[${m.fields.join(',')}] algorithm=${m.algorithm}`)
+      .map(
+        (m) =>
+          `key#${m.keyIndex} fields=[${m.fields.map(logSafeFieldName).join(',')}] algorithm=${m.algorithm}`
+      )
       .join('; ')}`;
   }
 }

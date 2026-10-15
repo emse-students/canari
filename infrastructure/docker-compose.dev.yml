@@ -349,6 +349,8 @@ services:
       LYDIA_ENV: homologation
       LYDIA_PROVIDER_TOKEN: ${LYDIA_PROVIDER_TOKEN:-}
       LYDIA_PROVIDER_PRIVATE_TOKEN: ${LYDIA_PROVIDER_PRIVATE_TOKEN:-}
+      # Dev-only measurement of which key signs Lydia's callback; empty by default, removed once known.
+      LYDIA_OBSERVE_KEYS: ${LYDIA_OBSERVE_KEYS:-}
       FORM_URL: http://social-service:3014
       FORM_SERVICE_URL: http://social-service:3014
       # Account deletion fans out to media-service to remove the user's own uploads.

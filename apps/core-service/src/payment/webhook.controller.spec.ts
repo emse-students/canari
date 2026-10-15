@@ -335,3 +335,37 @@ describe('a callback that fails verification says which fields it carried', () =
     expect(line).not.toContain('abc');
   });
 });
+
+describe('a refused callback while observing', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('stays a 400 even when an observe key matches, and a hostile body still logs', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const KEY = 'observe-key';
+    const body = { request_id: '9', amount: '5.00', currency: 'EUR' };
+    const provider = new LydiaPaymentProvider({ LYDIA_OBSERVE_KEYS: KEY });
+    const paymentService = {
+      verifyLydiaRequestCallback: () => false,
+      observeLydiaRequestCallback: (b: Record<string, unknown>, sig: string) =>
+        provider.observeRequestCallback(b, sig),
+    } as unknown as PaymentService;
+    const controller = new PaymentWebhookController(paymentService);
+
+    await expect(
+      controller.handleLydiaRequestCallback('cancel', {
+        ...body,
+        sig: signLydiaParams(body, KEY),
+      })
+    ).rejects.toThrow(/Invalid signature/);
+    expect(String(errorSpy.mock.calls[0]?.[0])).toContain('observe: key#0');
+
+    await expect(
+      controller.handleLydiaRequestCallback('cancel', {
+        request_id: '9',
+        sig: 'x',
+        foo: { toString: 1 },
+      })
+    ).rejects.toThrow(/Invalid signature/);
+    expect(errorSpy).toHaveBeenCalledTimes(2);
+  });
+});

@@ -43,6 +43,34 @@ describe('LydiaPaymentProvider.observeRequestCallback', () => {
     BUSINESS_KEY
   );
 
+  it('is silent in production and when no key is configured', () => {
+    expect(new LydiaPaymentProvider({}).observeRequestCallback(fields, sig)).toBeNull();
+    expect(
+      new LydiaPaymentProvider({
+        LYDIA_ENV: 'production',
+        LYDIA_OBSERVE_KEYS: BUSINESS_KEY,
+      }).observeRequestCallback(fields, sig)
+    ).toBeNull();
+  });
+
+  it('skips a value that is not a string instead of throwing', () => {
+    const provider = new LydiaPaymentProvider({ LYDIA_OBSERVE_KEYS: BUSINESS_KEY });
+    const body = { ...fields, foo: { toString: 1 } } as Record<string, unknown>;
+    expect(() => provider.observeRequestCallback(body, sig)).not.toThrow();
+    expect(provider.observeRequestCallback(body, sig)).toContain('key#0');
+  });
+
+  it('skips, and says so, a body over the byte or field budget', () => {
+    const provider = new LydiaPaymentProvider({ LYDIA_OBSERVE_KEYS: BUSINESS_KEY });
+    const big = { ...fields, note: 'x'.repeat(5_000_000) };
+    const started = Date.now();
+    expect(provider.observeRequestCallback(big, sig)).toMatch(/^observe: skipped, /);
+    expect(Date.now() - started).toBeLessThan(500);
+    const wide: Record<string, string> = {};
+    for (let i = 0; i < 11; i++) wide[`k${i}`] = '1';
+    expect(provider.observeRequestCallback(wide, sig)).toMatch(/^observe: skipped, /);
+  });
+
   it('reports names and an index, never the key or a value', () => {
     const provider = new LydiaPaymentProvider({ LYDIA_OBSERVE_KEYS: ` ${BUSINESS_KEY} ` });
     const line = provider.observeRequestCallback(fields, sig);
@@ -51,10 +79,7 @@ describe('LydiaPaymentProvider.observeRequestCallback', () => {
     expect(line).not.toContain('12115504');
   });
 
-  it('says so when no candidate key is configured or none matches', () => {
-    expect(new LydiaPaymentProvider({}).observeRequestCallback(fields, sig)).toBe(
-      'observe: no candidate key configured'
-    );
+  it('says so when no candidate matches', () => {
     expect(
       new LydiaPaymentProvider({ LYDIA_OBSERVE_KEYS: 'x' }).observeRequestCallback(fields, sig)
     ).toBe('observe: no match over 1 key(s)');
