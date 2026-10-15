@@ -1,4 +1,4 @@
-import { answerText } from './answerText';
+import { answerText, type AnswerWords } from './answerText';
 import type { FormItem } from './api';
 import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
 import { m } from '$lib/paraglide/messages';
@@ -10,7 +10,7 @@ import { m } from '$lib/paraglide/messages';
  * The responses table used to print four fixed columns - date, name, status, amount - and none of
  * the answers, so the one thing a manager opened it for was the one thing it did not show. Adding a
  * column per question is not the answer either: a form has as many questions as it likes, and three
- * of the eight question types have no bounded length at all.
+ * of the question types have no bounded length at all.
  *
  * So the layout is derived here, per form: the short questions become columns, everything else is
  * read in the row's detail panel. A form of three short questions lays itself flat; a form of twenty
@@ -22,7 +22,8 @@ import { m } from '$lib/paraglide/messages';
  *
  * A column is a fixed, narrow box repeated down the page, so what may go in one is decided by the
  * SHAPE of the answer and not by its length on a given day: a paragraph, a checkbox list and a
- * matrix have no bound, and one long answer would set the height of every row in the table.
+ * matrix have no bound, and one long answer would set the height of every row in the table. A FILE
+ * is not here either: its cell would hold a download control, and the panel is where one is drawn.
  */
 const COLUMN_TYPES = new Set(['short_text', 'single_choice', 'dropdown', 'linear_scale']);
 
@@ -74,14 +75,18 @@ export interface AnsweredItem {
  * question has since been deleted has no label, and a value under no heading is not a reading of
  * anything. A question left blank is dropped rather than shown as a dash - the panel is one person's
  * answers, and a list of what they did not say is longer than the list of what they did.
+ *
+ * `words` reads a FILE answer ("file" / "file deleted", never its id) and is required as soon as the
+ * form asks for one - `answerText` throws without it rather than print an id.
  */
 export function answeredItems(
   items: FormItem[],
-  answers: Record<string, unknown> | undefined
+  answers: Record<string, unknown> | undefined,
+  words?: AnswerWords
 ): AnsweredItem[] {
   if (!answers) return [];
   return items
-    .map((item) => ({ item, text: answerText(answers[item.id], item) }))
+    .map((item) => ({ item, text: answerText(answers[item.id], item, words) }))
     .filter((answered) => answered.text !== '');
 }
 

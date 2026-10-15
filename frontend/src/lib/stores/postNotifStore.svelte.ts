@@ -11,9 +11,12 @@ import {
   markPostNotificationsReadForPost,
 } from '$lib/posts/api';
 import type { PostNotification } from '$lib/posts/api';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 
 let notifications = $state<PostNotification[]>([]);
 let loading = $state(false);
+/** The last load got no answer; reset by the next one that does. */
+let unanswered = false;
 
 export const postNotifStore = {
   get notifications(): PostNotification[] {
@@ -32,9 +35,17 @@ export const postNotifStore = {
     loading = true;
     try {
       notifications = await getPostNotifications(limit);
+      unanswered = false;
     } catch (e) {
-      // stale data is better than an error screen; log for diagnostics
-      console.warn('[postNotifStore] load failed, keeping stale data:', e);
+      // Stale data is better than an error screen. A load that got NO ANSWER is the link, which the
+      // session already reports: said once per spell, not on every minute's poll while offline. Any
+      // other failure is this route's, and is a warning every time.
+      if (!isTransportFailure(e)) {
+        console.warn('[postNotifStore] load failed, keeping stale data:', e);
+      } else if (!unanswered) {
+        unanswered = true;
+        console.log(`[postNotifStore] no answer (${String(e)}) - stale data kept until one comes`);
+      }
     } finally {
       loading = false;
     }

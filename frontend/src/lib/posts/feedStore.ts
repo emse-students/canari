@@ -72,11 +72,13 @@ export function feedStoreAccess(input: FeedStoreGateInput): FeedStoreAccess | nu
  * The slot a tab's first page is stored under, or `null` for a tab that is not stored.
  *
  * Only the bare tabs are: a `promo` or `formation` filter comes from a shared link, and storing every
- * filter a link ever named would make the store unbounded. Four tabs, four slots at most.
+ * filter a link ever named would make the store unbounded. The CanaReels filter IS stored, under
+ * its own slot (`feed:<tab>:reel`): a filtered first page is not the tab's first page, and drawing
+ * one for the other would show reels as the whole feed. Four tabs times two views, eight slots.
  */
 export function storedFeedKey(params: FeedCacheParams): string | null {
   if (params.promo !== undefined || params.formation !== undefined) return null;
-  return `feed:${params.feed}`;
+  return params.kind ? `feed:${params.feed}:${params.kind}` : `feed:${params.feed}`;
 }
 
 /** A post as it may be stored: no served verdict on the reader, and no vote offered. */
@@ -280,6 +282,53 @@ export function firstPageFailure(error: unknown, fromStore: boolean): FirstPageF
     return { firstPage: 'refused', withdrawCopy: fromStore, copyUnconfirmed: false };
   }
   return { firstPage: 'failed', withdrawCopy: false, copyUnconfirmed: fromStore };
+}
+
+/** What a refresh of a tab's first page came to - see {@link refreshFirstPage}. */
+export type FeedRefreshOutcome =
+  | { kind: 'stale' }
+  | { kind: 'answered'; params: FeedCacheParams; posts: PostEntity[] }
+  | { kind: 'failed'; params: FeedCacheParams; error: unknown };
+
+/**
+ * Asks a tab's first page again, for the tab it was ISSUED for.
+ *
+ * THE TAB IS TAKEN BEFORE THE AWAIT, AND AN ANSWER FOR A TAB THE READER HAS LEFT IS DROPPED (review
+ * of the reconnect refresh, 2026-10-15). The page used to read `data.feedParams` after its await: a
+ * refresh of "Suivis" landing after a switch to "Tout" was drawn over "Tout" and written into its
+ * cache and its stored page. The reconnect made that race ordinary - it fires whenever it fires.
+ *
+ * @param stillCurrent - Whether the tab this refresh was issued for is still the one on screen,
+ *   read after the answer (the page's tab-load counter).
+ */
+export async function refreshFirstPage(input: {
+  params: FeedCacheParams;
+  read: (params: FeedCacheParams) => Promise<PostEntity[]>;
+  stillCurrent: () => boolean;
+}): Promise<FeedRefreshOutcome> {
+  const { params } = input;
+  try {
+    const posts = await input.read(params);
+    return input.stillCurrent() ? { kind: 'answered', params, posts } : { kind: 'stale' };
+  } catch (error) {
+    return input.stillCurrent() ? { kind: 'failed', params, error } : { kind: 'stale' };
+  }
+}
+
+/**
+ * Whether the feed asks for its first page again now that the connectivity store announces a
+ * reconnect (`connectivity.onReconnect`). Only when the tab's last request got NO answer
+ * (`failed`): an answered page is current, a refusal is an answer about this reader, and a pending
+ * request will answer by itself. Never while a refresh is already out, and never on a reconnect
+ * the server has not confirmed: the store also announces the browser's `online` event, which proves
+ * no reachability, and announces again once a request has actually reached the server.
+ */
+export function feedRefetchOnReconnect(input: {
+  firstPage: FirstPageState;
+  loading: boolean;
+  serverReachable: boolean;
+}): boolean {
+  return input.firstPage === 'failed' && !input.loading && input.serverReachable;
 }
 
 /**

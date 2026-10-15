@@ -39,8 +39,10 @@
       })();
     </script>
     <!-- iOS Dynamic Type, before first paint so the page never draws at 1 and jumps. Same decision
-         as publishIosTypeScale (lib/utils/textZoom.ts), which stays authoritative and re-publishes
-         on mount and on every return to the foreground: 17px is the default body, the cap is 2.
+         as publishIosTypeScale (lib/utils/textZoom.ts), which re-publishes on mount; every later
+         change (and each activation) is the size UIKit reports, sent by canari_ios.mm as
+         canari:dynamic-type and published by followIosDynamicType: 17px is the default body, the
+         cap is 2.
          Tauri only, and only an iPhone/iPad user agent (iPadOS reports Macintosh plus touch). -->
     <script>
       (function () {

@@ -102,6 +102,25 @@ function isTextContentType(contentType: string | null): boolean {
   );
 }
 
+/**
+ * Whether the request is a READ (`GET` or `HEAD`): it sends no body, and what it costs is the
+ * RESPONSE body coming back.
+ *
+ * Through the plugin that body crosses the IPC bridge one `fetch_read_body` call per chunk, queued
+ * behind every other `invoke` of the app. Measured on the Mi 9T (`v1.2.9-alpha.1`, 2026-10-15, the
+ * feed's first page, 52 kB): its head arrived 0.2-0.8 s after the call and its body 3.5-4.3 s
+ * later during a cold start, 0.42-0.65 s later at rest; the WebView's own `fetch` read the same body
+ * in 3-13 ms. The plugin's per-call cost is the chunk loop, so it grows with the body and with
+ * whatever else holds the bridge.
+ */
+function isRead(input: RequestInfo | URL, init?: RequestInit): boolean {
+  const method =
+    init?.method ??
+    (typeof Request !== 'undefined' && input instanceof Request ? input.method : 'GET');
+  const upper = method.toUpperCase();
+  return upper === 'GET' || upper === 'HEAD';
+}
+
 /** Whether `url` is on one of Canari's own API origins (`origins` are bare `scheme://host[:port]`). */
 function isFirstPartyUrl(url: string, origins: readonly string[]): boolean {
   try {
@@ -132,6 +151,15 @@ function isFirstPartyUrl(url: string, origins: readonly string[]): boolean {
  * Android origin against dev's media, social and core upload routes) - while an arbitrary
  * third-party host keeps the plugin, the reason the override exists.
  *
+ * A READ FROM A CANARI API ORIGIN is the third class kept native ({@link isRead}): its response
+ * body is what the plugin is slow at, by seconds during a cold start. It was kept on the plugin on
+ * the belief that a response body streamed in raw binary chunks cost nothing; the feed's first page
+ * measured otherwise (posts.md, "The stored copy stayed on screen for the plugin's body read").
+ * Every Canari service answers the preflight an `Authorization` header raises from the WebView
+ * origins (the Nest services' `cors-origins.ts`, the gateway's `chat_gateway_cors_layer`), and the
+ * one response header a read consumes beyond the safelisted ones is exposed by its service
+ * (`Content-Disposition`, social-service).
+ *
  * @param firstPartyOrigins Canari's service origins (`apiServiceOrigins()`); empty keeps the
  *                          historical behaviour, which is what the unit tests of the other rules use.
  */
@@ -150,7 +178,8 @@ export function shouldUseNativeFetch(
   // waiting on a cookie-jar sync that never completes.
   if (init?.credentials === 'include') return true;
 
-  return isFirstPartyUrl(url, firstPartyOrigins) && hasBinaryBody(input ?? url, init);
+  if (!isFirstPartyUrl(url, firstPartyOrigins)) return false;
+  return isRead(input ?? url, init) || hasBinaryBody(input ?? url, init);
 }
 
 /**

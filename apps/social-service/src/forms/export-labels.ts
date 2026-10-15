@@ -27,6 +27,14 @@ export interface ExportLabels {
   status: string;
   /** Every payment status the client knows, by its stored value. */
   statuses: Record<string, string>;
+  /**
+   * What a FILE question's cell reads when the file is kept, and when the retention purge has
+   * deleted it. Optional HERE because only a form with a file question needs them -
+   * `exportSubmissions` refuses such a form when they are missing. A client older than the file
+   * question cannot have built one, so it is never asked for them.
+   */
+  file?: string;
+  fileDeleted?: string;
 }
 
 const REQUIRED = ['date', 'firstName', 'lastName', 'amount', 'status'] as const;
@@ -63,6 +71,10 @@ export function parseExportLabels(raw: string | undefined): ExportLabels {
   for (const [status, label] of Object.entries(statuses))
     if (typeof label !== 'string')
       throw new BadRequestException(`export label for status "${status}" is not a string`);
+
+  for (const key of ['file', 'fileDeleted'] as const)
+    if (labels[key] !== undefined && (typeof labels[key] !== 'string' || labels[key] === ''))
+      throw new BadRequestException(`export label "${key}" must be a non-empty string`);
 
   return parsed as ExportLabels;
 }

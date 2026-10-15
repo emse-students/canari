@@ -3,6 +3,7 @@ import {
   hasVirtualKeyboard,
   isDoubleReport,
   keyboardSafeAreaBottomOverride,
+  overlaySettledAroundFocus,
   pinSafeAreaBottom,
   type ViewportMeasurement,
 } from './keyboardViewport.svelte';
@@ -281,5 +282,30 @@ describe('keyboardSafeAreaBottomOverride and pinSafeAreaBottom - the iOS stale i
     pinSafeAreaBottom(bare, '0px');
     pinSafeAreaBottom(bare, null);
     expect(bare.getPropertyValue('--safe-area-inset-bottom')).toBe('');
+  });
+});
+
+describe('overlaySettledAroundFocus - the reveal redone once the overlay stops moving (iPhone 12, 2026-10-15)', () => {
+  function overlayWithField(): { overlay: HTMLElement; field: HTMLInputElement } {
+    const overlay = document.createElement('div');
+    overlay.setAttribute('data-keyboard-aware-overlay', '');
+    const field = document.createElement('input');
+    overlay.appendChild(field);
+    return { overlay, field };
+  }
+
+  it('is true when the overlay holding the focused field ends its HEIGHT transition', () => {
+    const { overlay, field } = overlayWithField();
+    expect(overlaySettledAroundFocus('height', overlay, field)).toBe(true);
+  });
+
+  it('is false for another property, another element, or a focus outside the overlay', () => {
+    const { overlay, field } = overlayWithField();
+    expect(overlaySettledAroundFocus('padding-bottom', overlay, field)).toBe(false);
+    expect(overlaySettledAroundFocus('height', field, field)).toBe(false);
+    expect(overlaySettledAroundFocus('height', overlay, document.createElement('input'))).toBe(
+      false
+    );
+    expect(overlaySettledAroundFocus('height', overlay, null)).toBe(false);
   });
 });

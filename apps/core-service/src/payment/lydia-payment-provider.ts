@@ -1,6 +1,7 @@
 import { BadRequestException, Logger } from '@nestjs/common';
 import axios from 'axios';
 import { verifyLydiaSignature } from './lydia-signature';
+import { logSafeFieldName, matchLydiaSignature, observableFields } from './lydia-signature-match';
 import { parseLydiaOrderRef, orderRefToMetadata } from './lydia-order-ref';
 import type { ConnectAccountStatusResponse } from './payment-provider.interface';
 import type {
@@ -74,11 +75,13 @@ export class LydiaPaymentProvider implements PaymentProvider {
   private readonly baseUrl: string;
   private readonly providerToken: string | undefined;
   private readonly providerPrivateToken: string | undefined;
+  private readonly observeKeys: string[];
 
   constructor(env: {
     LYDIA_ENV?: string;
     LYDIA_PROVIDER_TOKEN?: string;
     LYDIA_PROVIDER_PRIVATE_TOKEN?: string;
+    LYDIA_OBSERVE_KEYS?: string;
   }) {
     this.baseUrl =
       (env.LYDIA_ENV || '').trim().toLowerCase() === 'production'
@@ -86,6 +89,11 @@ export class LydiaPaymentProvider implements PaymentProvider {
         : HOMOLOGATION_BASE_URL;
     this.providerToken = env.LYDIA_PROVIDER_TOKEN;
     this.providerPrivateToken = env.LYDIA_PROVIDER_PRIVATE_TOKEN;
+    // Second guard next to the compose wiring: a measurement variable never acts on production.
+    this.observeKeys = (this.baseUrl === PRODUCTION_BASE_URL ? '' : (env.LYDIA_OBSERVE_KEYS ?? ''))
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean);
     this.logger.log(`Lydia configured: ${this.isConfigured() ? 'yes' : 'no'} (${this.baseUrl})`);
   }
 
@@ -393,5 +401,26 @@ export class LydiaPaymentProvider implements PaymentProvider {
   verifyRequestCallback(fields: Record<string, string>, signature: string): boolean {
     if (!this.providerPrivateToken) return false;
     return verifyLydiaSignature(fields, this.providerPrivateToken, signature);
+  }
+
+  /**
+   * Observation of a callback that failed verification: which candidate key (by index), field set
+   * and algorithm reproduces its signature. Candidates come from `LYDIA_OBSERVE_KEYS`, a dev-only
+   * measurement variable removed once the algorithm is known; the answer carries names, never a
+   * value. `null` when nothing is configured (production, or no variable), so a refusal there carries
+   * no suffix at all.
+   */
+  observeRequestCallback(body: Record<string, unknown>, signature: string): string | null {
+    if (this.observeKeys.length === 0) return null;
+    const observable = observableFields(body);
+    if ('skipped' in observable) return `observe: skipped, ${observable.skipped}`;
+    const matches = matchLydiaSignature(observable.fields, signature, this.observeKeys);
+    if (matches.length === 0) return `observe: no match over ${this.observeKeys.length} key(s)`;
+    return `observe: ${matches
+      .map(
+        (m) =>
+          `key#${m.keyIndex} fields=[${m.fields.map(logSafeFieldName).join(',')}] algorithm=${m.algorithm}`
+      )
+      .join('; ')}`;
   }
 }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { forgetPostComposerMedia } from '$lib/posts/postComposerDraft';
   import { resolve } from '$app/paths';
   /**
    * Always-on layout component for the MLS session lifecycle.
@@ -684,6 +685,8 @@
     globalChannels.forgetAccount(appendLog);
     // ...and so do its staged attachments and armed replies, keyed by ids the next account may share.
     globalMessaging.forgetAccount(appendLog);
+    // ...and the media held by a closed new-post composer (`holdPostComposerMedia`).
+    forgetPostComposerMedia();
     _loginInProgress = false;
   }
 

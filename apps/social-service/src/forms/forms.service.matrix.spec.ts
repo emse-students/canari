@@ -98,6 +98,7 @@ describe('FormsService pricing, through submit', () => {
       { listCotisationTiers: jest.fn(() => Promise.resolve([])) } as any,
       { create: jest.fn() } as any,
       pricingFacts,
+      {} as any,
       {} as any
     );
     return { service, pricingFacts, saved };

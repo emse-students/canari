@@ -575,7 +575,7 @@ Three mechanisms, each independently sufficient for a different failure:
 | Where | What | Why it is not the others |
 | --- | --- | --- |
 | `fetchMessages` | fills a page to `PENDING_PAGE_MAX_BYTES` (1 MB), reading `PENDING_FETCH_CHUNK_ROWS` (50) at a time | bounds the SERVICE's memory too: reading 500 rows before trimming would load 44 MB to return 1 MB |
-| `pullPendingMessagesJson` | halves `limit` when a page does not arrive, down to 1 | survives an OLD server, and a link too slow for any fixed budget; terminates on a proof (nine steps), never a clock. What counts as "does not arrive" is the progress deadline below |
+| `pullPendingMessagesJson` | halves `limit` when a page does not arrive, down to 1 | survives an OLD server, and a link too slow for any fixed budget; terminates on a proof (nine steps), never a clock. What counts as "does not arrive" is the progress deadline below; a request nobody answered is rethrown at once, never halved, while a body cut after the head (`BodyInterruptedError`) still halves (2026-10-15) |
 | both | a page always carries **at least one row**, whatever its size | an oversized frame must stay deliverable, or it blocks its own queue for ever |
 
 **Verified on production the same evening.** The server logged
@@ -1238,8 +1238,10 @@ asserts the block on the message that actually reaches FCM, because `push-payloa
 covered the builder field by field and none of it applied to a caller that never called it).
 
 **Which iOS process a push reaches is decided here.** `mutable-content: 1` (alert) runs the
-Notification Service Extension; `content-available: 1` (background) goes to the app
-(`canari_push.mm` `CanariHandleFcmData`) and never to the extension. So a silent type — today only
+Notification Service Extension; `content-available: 1` (background) is meant for the app
+(`canari_push.mm` `CanariHandleFcmData`) and never goes to the extension - **but the app hook taking
+it is not installed (2026-10-15), so no Canari native code acts on it, background or foreground**
+([mobile](../frontend/mobile.md), [backlog](../backlog.md)). So a silent type — today only
 `channel_read` — is acted on by the app alone, and listing one in the NSE's switch is a branch that
 cannot execute. `frontend/src/lib/mobile/channelPushFields.test.ts` pins both directions across the
 seam.

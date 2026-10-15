@@ -27,6 +27,7 @@ import { getLocale } from '$lib/i18n';
 import { BaseMlsService } from './BaseMlsService';
 import { beginBootSpan, endBootSpan, timeBootSpan } from '$lib/mls-client/bootBenchmark';
 import { keystoreUnlockPrompt } from './biometric';
+import { keystoreCommand } from './keystoreCommands';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
 
@@ -743,7 +744,12 @@ export class TauriMlsService extends BaseMlsService {
           // EVERY SWALLOWED BRANCH LOGS. This chain is gated on a network round-trip and a
           // keystore write, and it silently carried the device-identity backup until that backup
           // became `store_device_identity`'s own job - months of drift with nothing in any log.
-          .catch((e) => console.warn('[MLS][Tauri] push_context write after init failed:', e))
+          // `String(e)`: the class names the cause (`TransportFailureError` on an offline start,
+          // when no token exists), and the stack of a known throw is a dozen lines that say nothing.
+          // NOT re-attempted at the reconnect - an open item, see offline-and-weak-network section 15.
+          .catch((e) =>
+            console.warn(`[MLS][Tauri] push_context write after init failed: ${String(e)}`)
+          )
       );
     }
 
@@ -989,14 +995,30 @@ export class TauriMlsService extends BaseMlsService {
    * background push read, rewritten with the new key and AWAITED - unlike the refresh inside
    * {@link changeDeviceKeyImpl}, because here the order is the point. A refusal propagates: the
    * caller must not move any data while an unattended unlock still opens the old state.
+   *
+   * A REFUSED WRITE DELETES THE ENTRY BEFORE IT PROPAGATES. A refusal that came before the native
+   * side's own deletes (a malformed key, a platform that throws first) would leave the OLD key in
+   * the keystore, and with biometric unlock on that is a silent login on the old PIN, skipping the
+   * server check. With no entry, the next launch asks for the PIN; the biometric flag is left as the
+   * user set it, and the next PIN login writes the entry back (`store_push_context`).
    */
   override async pointUnattendedUnlockAt(newDeviceKeyB64: string): Promise<boolean> {
     if (!isTauriRuntime()) return false;
-    await invoke('actualiser_cle_keystore_avec_devicekey', {
-      deviceKeyB64: newDeviceKeyB64,
-      userId: this.userId,
-      deviceId: this.deviceId,
-    });
+    try {
+      await invoke('actualiser_cle_keystore_avec_devicekey', {
+        deviceKeyB64: newDeviceKeyB64,
+        userId: this.userId,
+        deviceId: this.deviceId,
+      });
+    } catch (e) {
+      console.error('[MLS][Tauri] Keystore refused the new device key - deleting its entry:', e);
+      await invoke(keystoreCommand('deleteKeyBytes'), {
+        payload: { alias: `mls_device_key_${this.userId}_${this.deviceId}` },
+      }).catch((d) =>
+        console.error('[MLS][Tauri] Deleting the keystore entry after a refusal failed too:', d)
+      );
+      throw e;
+    }
     console.log('[MLS][Tauri] Keystore now holds the new device key (unattended unlock moved).');
     return true;
   }

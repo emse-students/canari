@@ -365,8 +365,17 @@ leaves every other body type alone), and a refusal for missing fields logs the c
 FIELD NAMES, never a value - at most 16 names of 32 characters from `[w.-]`, plus the count, because the
 sender chooses every name and a newline in one would forge a log line. **The route is public, so
 multer is bounded** (16 fields, 4096 bytes each, 16 parts, no file) and the signature comparison is
-`timingSafeEqual`. **This is a hypothesis about Lydia's body type, not an observation of
+`timingSafeEqual`. **A callback that fails verification now logs, on the same line, the names it carried
+and the names it was verified over** (`verified-over=[request_id,amount,currency,order_ref,vendor_token]`),
+because 2026-10-15 measured that the Provider private token does not verify Lydia's callback and a wrong
+field SET fails identically to a wrong KEY. **This is a hypothesis about Lydia's body type, not an observation of
 it**: the test reproduces the exact symptom without the interceptor, but the next real callback's
 log line is what settles it. No callback has yet been verified, so which private token signs one
 (the Provider's, as `verifyRequestCallback` assumes, or the Business's, as Lydia's CSM wrote on
 2026-10-15) is still open.
+
+### Which key signs Lydia's callback - the observation (2026-10-15)
+
+Lydia's CSM says the callback is signed with the BUSINESS private token; core stores none (`associations` holds only the public `vendor_token`, and `business/create`'s `api_token_id` is dropped on purpose), and the Provider private token verifies nothing. `LYDIA_OBSERVE_KEYS` (a comma list, dev only, never logged, REMOVED once the algorithm is known) feeds `matchLydiaSignature` (`lydia-signature-match.ts`): on a refused callback it tries every subset of the received field names x five algorithms per candidate key and the failure line adds `observe: key#N fields=[names] algorithm=...` - indexes and names, never a value. The refusal itself is unchanged. **Lasting design, a later lot:** capture the Business key at `business/create`, store it ENCRYPTED per association (column + migration) and verify with it.
+
+The observation is bounded and guarded (review of #1928): it runs only when `LYDIA_ENV` is not `production` and the variable is set (the dev compose carries it, empty by default; production compose does not), it skips - and says so in the one line - a body over 10 fields or 2 KB (the route is public and its JSON body may be megabytes), and it ignores any non-string value, so a hostile body still gets its usual 400 and its log line.

@@ -2,6 +2,7 @@ import {
   Injectable,
   Logger,
   BadRequestException,
+  UnprocessableEntityException,
   ForbiddenException,
   HttpException,
   HttpStatus,
@@ -175,6 +176,12 @@ export interface MediaStorageStats {
   /** The window the sweep applies to them, echoed so the reader need not know the constant. */
   pendingReelTtlMs: number;
   /**
+   * Files of forms' FILE questions (`form-file`): kept by the idle sweep, deleted by social-service's
+   * form-file purge days after the answer. A count that only grows is that purge stopped.
+   */
+  formFileCount: number;
+  formFileBytes: number;
+  /**
    * Live objects carrying no class at all: everything stored before the sweep became an allowlist
    * (2026-10-01), and every upload from a client too old to name its surface. The sweep may not
    * touch them, so this line is where their growth shows.
@@ -247,6 +254,19 @@ function isGoneTombstone(entry: { purgedAt?: number; purgeReason?: PurgeReason }
  *   refuses it) - the class is attached at the moment its owner and size are known. Its sender may
  *   delete it ({@link MediaService.removeChatReel}), on the ownership allowlist.
  *
+ * - `form-file` - the file of a form's FILE question (a CV): the ONE class that is PLAINTEXT and
+ *   served to nobody but social-service. Its reader is the form's manager, who must open it, so it
+ *   cannot be end-to-end encrypted; and because `GET /media/:id` has no per-object ACL (any JWT
+ *   holding an id reads it), that route REFUSES this class ({@link isServerReadOnly}), and so does
+ *   `GET /media/internal/:id`, which the push media proxy reaches for any member's device. The only
+ *   read is `GET /media/internal/form-file/:id`, behind the internal secret, from social-service's
+ *   manager-gated download - and that route serves nothing else. SET ONLY BY `POST /media/internal/form-file`: every client upload route
+ *   refuses the name, and `internal/retention-class` neither sets it nor moves an object out of it.
+ *   No `contentType` is recorded, because an `image/*` type is what {@link isPublicAssetEntry} reads
+ *   as "public" - social-service keeps the type on its own row. Kept by the idle sweep; deleted by
+ *   social-service's form-file purge through {@link MediaService.purgeFormFiles}, N days after the
+ *   answer. Still reached by account deletion: a CV is its uploader's.
+ *
  * None of them is `publicAsset`: that flag also opens `GET /media/public/:id` (no JWT), so reusing
  * it would put ciphertext on an unauthenticated route.
  */
@@ -256,7 +276,8 @@ export type RetentionClass =
   | 'association'
   | 'reel'
   | 'reel-pending'
-  | 'chat-reel';
+  | 'chat-reel'
+  | 'form-file';
 
 export const RETENTION_CLASSES: ReadonlySet<string> = new Set<RetentionClass>([
   'ephemeral',
@@ -265,7 +286,115 @@ export const RETENTION_CLASSES: ReadonlySet<string> = new Set<RetentionClass>([
   'reel',
   'reel-pending',
   'chat-reel',
+  'form-file',
 ]);
+
+/** The class whose objects are plaintext readable by social-service alone - see {@link RetentionClass}. */
+export const SERVER_READ_ONLY_CLASS: RetentionClass = 'form-file';
+
+/** What `purgeFormFiles` answers for one object - the same four outcomes as a reel's purge. */
+export type FormFilePurgeOutcome = ReelPurgeOutcome;
+
+/** True for an object only social-service may read (`form-file`) - see {@link RetentionClass}. */
+export function isServerReadOnly(entry: { retentionClass?: RetentionClass } | undefined): boolean {
+  return entry?.retentionClass === SERVER_READ_ONLY_CLASS;
+}
+
+/**
+ * The image format a form file's bytes ANNOUNCE by their signature, or null (a PDF). Read from the
+ * signature and not from a decoder, so an image a decoder chokes on is refused rather than taken for
+ * "not an image" and stored with its metadata.
+ */
+function announcedImageFormat(data: Buffer): 'jpeg' | 'png' | 'webp' | null {
+  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return 'jpeg';
+  if (data.length >= 8 && data.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) {
+    return 'png';
+  }
+  if (
+    data.length >= 12 &&
+    data.subarray(0, 4).toString('latin1') === 'RIFF' &&
+    data.subarray(8, 12).toString('latin1') === 'WEBP'
+  ) {
+    return 'webp';
+  }
+  return null;
+}
+
+/**
+ * The most pixels this service lets sharp DECODE from a member's upload: 40 Mpx, above any phone
+ * camera (a 200 Mpx sensor saves 12.5 Mpx binned) and far under sharp's default of ~268 Mpx. The
+ * limit is read from the HEADER before any pixel is allocated, which is the point: a 1.5 MB JPEG
+ * declaring 16000x16000 took this process from 53 MB to 2.4 GB RSS in 1.3 s without it - and this
+ * process carries every chat medium, so the OOM killer would have taken all of them down.
+ */
+export const IMAGE_DECODE_MAX_PIXELS = 40_000_000;
+
+/** A sharp pipeline over a member's bytes, bounded by {@link IMAGE_DECODE_MAX_PIXELS}. */
+export function boundedSharp(data: Buffer): sharp.Sharp {
+  return sharp(data, { limitInputPixels: IMAGE_DECODE_MAX_PIXELS });
+}
+
+/**
+ * The most bytes a form file may be STORED as - social-service's `FORM_FILE_MAX_BYTES` (8 MiB, the
+ * per-request budget under the host WAF), which social-service also uses to bound the DOWNLOAD. The
+ * cap is held on what is stored, not only on what was received: a re-encoded image can be larger
+ * than its upload, and a stored object over the download bound could never be read back.
+ */
+export const FORM_FILE_MAX_BYTES = 8 * 1024 * 1024;
+
+/**
+ * The lossy qualities tried, in order, until the re-encoded image fits the stored cap. 90 first; a
+ * photo already saved at a low quality GROWS at 90 (a q70 6.3 MB JPEG becomes 8.3 MB), so an image
+ * near the cap steps down.
+ */
+const STRIP_LOSSY_QUALITIES = [90, 80, 70, 60, 50, 40] as const;
+
+/**
+ * A form file's bytes WITHOUT the image's metadata: a JPEG, PNG or WebP is decoded and re-encoded
+ * in its own format, which drops EXIF (GPS position, device, date), XMP and ICC - a phone photo of a
+ * certificate carries where it was taken, and the form's managers have no use for that. The EXIF
+ * orientation is APPLIED first (`rotate()`), so the picture stands the way it was seen. Anything else
+ * (a PDF) is returned untouched.
+ *
+ * **The result is never larger than `maxBytes`** ({@link FORM_FILE_MAX_BYTES} by default): the
+ * download is bounded by that cap, so a stored file over it could never be read back. A lossy image
+ * steps down {@link STRIP_LOSSY_QUALITIES}; a PNG tries the default encoder, then the maximum
+ * compression. Still over: refused.
+ *
+ * @throws UnprocessableEntityException for bytes that announce an image and do not decode as one, an
+ *   image over {@link IMAGE_DECODE_MAX_PIXELS}, or one no encoding brings under `maxBytes` - refused,
+ *   never stored with their metadata.
+ */
+export async function stripImageMetadata(
+  data: Buffer,
+  maxBytes: number = FORM_FILE_MAX_BYTES
+): Promise<Buffer> {
+  const format = announcedImageFormat(data);
+  if (!format) return data;
+  const attempts: Array<(image: sharp.Sharp) => sharp.Sharp> =
+    format === 'png'
+      ? [(i) => i.png(), (i) => i.png({ compressionLevel: 9, adaptiveFiltering: true, effort: 10 })]
+      : STRIP_LOSSY_QUALITIES.map(
+          (quality) => (i: sharp.Sharp) =>
+            format === 'jpeg' ? i.jpeg({ quality }) : i.webp({ quality })
+        );
+  let smallest = Number.POSITIVE_INFINITY;
+  for (const encode of attempts) {
+    let out: Buffer;
+    try {
+      out = await encode(boundedSharp(data).rotate()).toBuffer();
+    } catch (err) {
+      throw new UnprocessableEntityException(
+        `The image could not be read: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+    if (out.length <= maxBytes) return out;
+    smallest = Math.min(smallest, out.length);
+  }
+  throw new UnprocessableEntityException(
+    `The image could not be re-encoded under ${maxBytes} B (${data.length} B received, ${smallest} B at best)`
+  );
+}
 
 /** What `purgeReels` answers for one object - see {@link MediaService.purgeReels}. */
 export type ReelPurgeOutcome = 'deleted' | 'absent' | 'refused' | 'failed';
@@ -429,7 +558,42 @@ export class MediaService {
     return mediaId;
   }
 
-  async download(mediaId: string): Promise<DownloadResult> {
+  /**
+   * Stores the file of a form's FILE question, class `form-file`, for `ownerId` - the member
+   * social-service authenticated. Plaintext, and readable only through
+   * `GET /media/internal/form-file/:id` ({@link isServerReadOnly}, {@link download}). No content type is recorded: see `form-file` on {@link RetentionClass}.
+   */
+  async uploadFormFile(
+    data: Buffer,
+    ownerId: string
+  ): Promise<{ mediaId: string; sizeBytes: number }> {
+    if (!ownerId) {
+      throw new BadRequestException('A form file needs the member who uploads it');
+    }
+    if (data.length > FORM_FILE_MAX_BYTES) {
+      this.logger.warn(`Form file refused: ${data.length} bytes received for ${ownerId}`);
+      throw new PayloadTooLargeException(`A form file is at most ${FORM_FILE_MAX_BYTES} bytes`);
+    }
+    const stored = await stripImageMetadata(data, FORM_FILE_MAX_BYTES);
+    const mediaId = uuidv4();
+    await this.storage.put(mediaId, stored, stored.length);
+    this.setAccess(mediaId, Date.now(), ownerId, SERVER_READ_ONLY_CLASS);
+    await this.persistMetadata();
+    this.logger.log(
+      `Stored form file ${mediaId} (${stored.length} bytes, ${data.length} received) for ${ownerId}`
+    );
+    return { mediaId, sizeBytes: stored.length };
+  }
+
+  /**
+   * The whole object.
+   *
+   * @param formFile Whether the caller asks for a FORM FILE. A form file is plaintext for its form's
+   *   managers, so it is served ONLY to a caller that asks for one (`GET /media/internal/form-file/:id`,
+   *   social-service's manager-gated download), and that caller is served nothing else. Every other
+   *   reader - the member route, the push media proxy, a post preview - meets a form file as absent.
+   */
+  async download(mediaId: string, formFile = false): Promise<DownloadResult> {
     // Validate mediaId is a UUID to prevent path traversal and prototype pollution.
     if (!UUID_REGEX.test(mediaId)) {
       throw new BadRequestException('Invalid mediaId');
@@ -439,8 +603,16 @@ export class MediaService {
     await this.expireIfDue(mediaId);
 
     const entry = this.meta.items[mediaId];
+    if (!formFile && isServerReadOnly(entry)) {
+      this.logger.warn(`media ${mediaId}: a form file asked for as ordinary media - refused`);
+      return { status: 'not_found' };
+    }
     if (isGoneTombstone(entry)) {
       return { status: 'purged' };
+    }
+    if (formFile && !isServerReadOnly(entry)) {
+      this.logger.warn(`media ${mediaId}: asked for as a form file and is not one - refused`);
+      return { status: 'not_found' };
     }
 
     const stream = await this.storage.get(mediaId);
@@ -470,6 +642,15 @@ export class MediaService {
     mediaId: string,
     rangeHeader: string | undefined
   ): Promise<RangedDownloadResult> {
+    if (!UUID_REGEX.test(mediaId)) {
+      throw new BadRequestException('Invalid mediaId');
+    }
+    // A form file is plaintext for its form's managers only, and this is the route ANY member's JWT
+    // reaches with nothing but the id - so it answers as if the object did not exist.
+    if (isServerReadOnly(this.meta.items[mediaId])) {
+      this.logger.warn(`media ${mediaId}: a form file asked for on the member route - refused`);
+      return { status: 'not_found' };
+    }
     if (!rangeHeader) {
       const whole = await this.download(mediaId);
       return whole.status === 'ok'
@@ -639,6 +820,13 @@ export class MediaService {
       if (!entry || entry.purgedAt) continue;
       if (this.isPublicAssetEntry(entry)) continue;
       if (entry.retentionClass === retentionClass) continue;
+      // A form file keeps its class: moving it out would put a plaintext CV on the member route.
+      if (isServerReadOnly(entry)) {
+        this.logger.warn(
+          `media ${mediaId}: a form file keeps its class - ${retentionClass} refused`
+        );
+        continue;
+      }
 
       entry.retentionClass = retentionClass;
       changed += 1;
@@ -672,7 +860,7 @@ export class MediaService {
         continue;
       }
       const entry = this.meta.items[mediaId];
-      if (!entry || entry.purgedAt) {
+      if (!entry || entry.purgedAt || isServerReadOnly(entry)) {
         refused.push(mediaId);
         continue;
       }
@@ -735,6 +923,7 @@ export class MediaService {
         !entry ||
         entry.purgedAt ||
         this.isPublicAssetEntry(entry) ||
+        isServerReadOnly(entry) ||
         !entry.ownerId ||
         entry.ownerId !== ownerId
       ) {
@@ -806,7 +995,8 @@ export class MediaService {
         !ownerId ||
         entry.ownerId !== ownerId ||
         this.isPublicAssetEntry(entry) ||
-        entry.retentionClass === 'association'
+        entry.retentionClass === 'association' ||
+        isServerReadOnly(entry)
       ) {
         results.set(mediaId, 'refused');
         this.logger.warn(
@@ -831,6 +1021,71 @@ export class MediaService {
       };
       changed = true;
       results.set(mediaId, 'deleted');
+    }
+
+    if (changed) await this.persistMetadata();
+    return Object.fromEntries(results);
+  }
+
+  /**
+   * Deletes the files of forms' FILE questions whose retention has run out, for social-service's
+   * form-file purge.
+   *
+   * THE ALLOWLIST IS TWO FACTS, both required: the entry's class is `form-file` AND its `ownerId` is
+   * the uploader the caller names. Anything else - a chat photo, a reel, a vault document, a public
+   * logo, somebody else's file - is `refused` and left in place, whatever id the caller sends: an id
+   * found in an answer is not a licence to delete what it names.
+   *
+   * Outcomes, one per id, read by the caller exactly as a reel's are:
+   * - `deleted` - removed now, tombstoned `retention_expired` (a later read answers `410`);
+   * - `absent` - no entry, or already purged: SUCCESS, which is what makes a rerun after a crash safe;
+   * - `refused` - not a form file of that uploader: terminal, logged;
+   * - `failed` - the store refused or threw: the caller keeps its row and retries.
+   *
+   * A `try` per id, and one log line per file deleted and per failure.
+   */
+  async purgeFormFiles(
+    items: Array<{ mediaId: string; ownerId: string }>
+  ): Promise<Record<string, FormFilePurgeOutcome>> {
+    const results = new Map<string, FormFilePurgeOutcome>();
+    let changed = false;
+
+    for (const { mediaId, ownerId } of items) {
+      if (!UUID_REGEX.test(mediaId)) {
+        results.set(mediaId, 'refused');
+        this.logger.warn(`Form-file purge refused: ${JSON.stringify(mediaId)} is not a media id`);
+        continue;
+      }
+      const entry = this.meta.items[mediaId];
+      if (!entry || entry.purgedAt) {
+        results.set(mediaId, 'absent');
+        continue;
+      }
+      if (!isServerReadOnly(entry) || !ownerId || entry.ownerId !== ownerId) {
+        results.set(mediaId, 'refused');
+        this.logger.warn(
+          `Form-file purge refused for ${mediaId}: class ${entry.retentionClass ?? 'none'}, not a form file of ${ownerId || '(none)'} - left in place`
+        );
+        continue;
+      }
+      try {
+        await this.storage.delete(mediaId);
+      } catch (err) {
+        results.set(mediaId, 'failed');
+        this.logger.warn(
+          `Form-file purge could not delete ${mediaId}: ${err instanceof Error ? err.message : String(err)}`
+        );
+        continue;
+      }
+      this.meta.items[mediaId] = {
+        createdAt: entry.createdAt,
+        lastAccessAt: entry.lastAccessAt,
+        purgedAt: Date.now(),
+        purgeReason: 'retention_expired',
+      };
+      changed = true;
+      results.set(mediaId, 'deleted');
+      this.logger.log(`Form-file purge deleted ${mediaId} (uploaded by ${ownerId})`);
     }
 
     if (changed) await this.persistMetadata();
@@ -982,6 +1237,13 @@ export class MediaService {
     if (!UUID_REGEX.test(mediaId)) {
       throw new BadRequestException('Invalid mediaId');
     }
+    // A form file is deleted by ONE path, its retention purge (`purgeFormFiles`, class AND owner),
+    // or with its uploader's account. This generic delete takes any id a caller names, so it is
+    // not one of those paths: an id copied from an answer must not reach the blob through it.
+    if (isServerReadOnly(this.meta.items[mediaId])) {
+      this.logger.warn(`media ${mediaId}: generic delete of a form file refused`);
+      throw new ForbiddenException('A form file is deleted by its retention purge only.');
+    }
     await this.storage.delete(mediaId);
     const now = Date.now();
     const current = this.meta.items[mediaId];
@@ -1112,6 +1374,8 @@ export class MediaService {
       pendingReelOverdueCount: 0,
       pendingReelOverdueBytes: 0,
       pendingReelTtlMs: PENDING_REEL_TTL_MS,
+      formFileCount: 0,
+      formFileBytes: 0,
       unclassifiedCount: 0,
       unclassifiedBytes: 0,
       retentionMs: RETENTION_MS,
@@ -1171,6 +1435,11 @@ export class MediaService {
           stats.chatReelOverdueCount += 1;
           stats.chatReelOverdueBytes += object.size;
         }
+        continue;
+      }
+      if (entry.retentionClass === 'form-file') {
+        stats.formFileCount += 1;
+        stats.formFileBytes += object.size;
         continue;
       }
       if (entry.retentionClass === 'reel-pending') {

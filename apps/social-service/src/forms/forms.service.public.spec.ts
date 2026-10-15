@@ -62,7 +62,8 @@ describe('FormsService - public forms', () => {
       {} as any,
       {} as any,
       pricingFacts,
-      { count: jest.fn() } as any
+      { count: jest.fn() } as any,
+      {} as any
     );
     return { service, manager, saved, formRepo, submissionRepo, pricingFacts };
   }

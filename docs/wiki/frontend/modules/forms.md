@@ -458,6 +458,75 @@ the page calls them with plain `fetch`, never `apiFetch`, whose refresh-and-retr
 
 Paying guests are **parked behind Lydia** ([backlog](../../backlog.md)).
 
+## The file question (2026-10-15)
+
+A question of type **`file`** asks the member for one file (a CV, a certificate). Unlike every other
+attachment in the app, **it is NOT end-to-end encrypted**: the form's managers read it, so the
+server must be able to hand it to them. That one fact decides the whole design.
+
+| Step | Where | What holds |
+|---|---|---|
+| Pick | `FormQuestion.svelte` | PDF, JPEG, PNG or WebP, 8 MiB at most - the per-request budget under the host WAF ([host-waf-body-limit](../../infrastructure/host-waf-body-limit.md)) (`fileQuestion.ts`); checked before upload to say it in the reader's language. A file with an EMPTY `type` (some Android pickers) is judged by its EXTENSION (`pickedFileType`), and `accept` lists the extensions too; **HEIC is refused with its own sentence**, not converted - only Apple's engine decodes it, so a conversion would work on one phone in two |
+| Upload | `POST /api/forms/:id/files` (social-service, `FormFilesService.upload`) | the member must be ELIGIBLE to answer (`assertMayUploadAnswerFile`: the form's `submitCondition`, the same audience check as submit); the TYPE is read from the bytes, never from the name or the claimed type; the form must exist, be open, NOT public, and the item must be a file question (an `itemId` over 64 characters is a 400); at most 10 unsent uploads per member per form (429), counted again under a `pg_advisory_xact_lock` on (form, uploader) in the transaction that inserts the row, so twelve parallel uploads keep exactly ten - a loser's blob is taken back. Sent through `fetchUpload` (XHR): the card shows the percentage and offers a cancel, and the page REFUSES to send the answer while any file is still travelling (`form_file_wait_upload`) - an optional file question would otherwise go out empty |
+| Store | `POST /media/internal/form-file` (media-service, secret-gated) | retention class `form-file`, the uploader as owner, **no contentType recorded**, an image's EXIF/GPS removed by re-encoding (a PDF is untouched). The STORED size never exceeds 8 MiB - a re-encode can grow a low-quality photo, so the quality steps down - and the manager's download is bounded by that same 8 MiB. An image that does not decode, declares over 40 Mpx, or cannot fit is a 400 "send it as a PDF" - see [media-service](../../services/media-service.md#the-form-file-class-plaintext-read-by-the-server-only-2026-10-15) |
+| Submit | `FormsService.submit` -> `FormFilesService.attach` | the answer is the file's id; one `UPDATE ... RETURNING` inside the submission's transaction claims the `form_files` row, matching id, form, question, UPLOADER, not purged, and either unsent within one day or already this submission's. No row = the whole submission is refused. `attachedAt = GREATEST(NOW(), submission.createdAt)`: a pending submission reused later keeps its old `createdAt`, and the retention must count from the claim. A transaction whose `NOW()` was read just before the one-day edge may claim a file the purge is deleting at that instant - benign: the manager's first download reads "Fichier supprimé" and marks the row purged |
+| Read | `GET /api/forms/:id/files/:fileId` | `assertFormManager` FIRST, then the bytes from `GET /media/internal/form-file/:id` with their own Content-Type, `Content-Disposition: attachment` (ASCII + RFC 5987 name), `nosniff`, `no-store`. Never through `GET /media/:id`, the push proxy's `GET /media/internal/:id` (no per-object ACL - both refuse the class) nor `/media/public` |
+| Purge | `FormFileRetentionScheduler`, hourly at :37 | see below |
+
+**Refused at save**, with the sentence on the save bar (`assertPublicConfigValid`,
+`assertAnonymousConfigValid`, and `fileQuestionProblem` on the page):
+
+- **a public form** (D40): a guest has no account to upload with;
+- **an anonymous form**: the `form_files` row and the blob's owner name the uploader, which would
+  re-join an anonymous answer to its author (confirmed by the user 2026-10-15; "a file without an
+  account" is a future work package);
+- **an ANSWER criterion in `submitCondition`** (`assertFileQuestionConfigValid`, and
+  `form_file_submit_condition_answer` on the page): the upload is judged on the form's audience
+  BEFORE any answer exists, so such a criterion would refuse every upload. A profile criterion
+  (promo, formation, cotisation) is known at upload and stays allowed.
+
+**Cancelling an upload is client-side only.** The card aborts the request, but a file the server had
+already stored keeps its blob and its unsent `form_files` row until the one-day purge, and that row
+holds one of the member's 10 unsent slots meanwhile. Accepted: a member reaching 10 by cancelling
+waits a day, which the 429 sentence says.
+
+**The answer reads as a word, never as its id.** `answerText` (and its declared duplicate
+`answer-text.ts`) takes the reader's `AnswerWords` - "Fichier" / "Fichier supprimé" - and THROWS on
+a file answer without them, so no screen or spreadsheet can print an id by omission. A file is never
+a table column (`COLUMN_TYPES`); the responses panel offers a download under the uploader's cleaned
+name (`Submission.fileNames`, sent with the list because a native shell cannot read
+`Content-Disposition` cross-origin), or "Fichier supprimé" once purged (`deletedFileIds`).
+
+### Retention: `forms.fileRetentionDays` and the purge
+
+`forms.fileRetentionDays` (migration 085, default **7**, CHECK **1..30**) is a row in "Paramètres
+avancés", shown only when a question asks for a file. The purge (`purgeOnce`) has two passes, both
+drawn ONLY from `form_files` rows - that table is the allowlist; nothing else is a candidate:
+
+1. **Answer files** whose `attachedAt + fileRetentionDays` has passed: blob deleted, then `purgedAt`
+   set. The answer stays and reads "Fichier supprimé".
+2. **Unsent uploads** older than one day (the attach window is `createdAt > NOW() - 1 day`, the
+   purge `<=`, so the two never overlap): blob deleted, then the row deleted.
+
+**ONE clock, the database's.** A run reads `SELECT NOW()` once and passes it as a parameter to both
+selections AND to the re-check of each row, and every interval is counted in hours
+(`make_interval(hours => 24 * days)`) like the app's own arithmetic. A box clock a few minutes off the
+database's would otherwise select a row the re-check calls "not due", an ERROR line every hour.
+
+**Lowering the retention applies at once, without confirmation** (user decision 2026-10-15): the
+next run deletes every file already older than the new delay. The settings hint says so.
+
+**The state is the row.** The blob goes first and the row changes only once media-service says the
+blob is gone (or was already absent), so a crash in between leaves a row the next run picks up again.
+A blob that fails to delete leaves its row untouched, logged, retried next hour; within one run it is
+excluded so the run terminates. media-service checks a second allowlist on its side: it deletes only
+an object of class `form-file` OWNED by the named uploader, and refuses anything else even when its
+id sits in an answer. One log per deleted file and per failure (`[FORM_FILE_GC]`).
+
+**For reuse (bookings):** `purgeExpiredFiles` in `apps/social-service/src/forms/file-retention-purge.ts`
+takes each candidate's START date as data (`{ fileId, ownerId, start, retentionDays }`), so a caller
+whose clock starts somewhere else - a booking slot's end - passes that instead of `attachedAt`.
+
 ## A form's association is chosen once, at creation
 
 A form is either personal or an association's, and `update` refuses any change to `associationId`
@@ -649,6 +718,9 @@ would look saved and then do nothing:
 - a `variantKey` the association does not sell;
 - a base-tier grant on an association that sells named tiers only.
 
+A file question is refused on a public or an anonymous form, and `fileRetentionDays` outside 1..30
+([the file question](#the-file-question-2026-10-15)).
+
 ## Sharing a form: the link, and the same link as a QR code
 
 Both `/forms` and the detail screen carry two controls side by side: copy the public link, and show
@@ -730,6 +802,35 @@ which questions become columns, and `FormSubmissionsTable.answers.svelte.test.ts
 component for the part neither file can prove: that a column arrives as a header AND a cell, that the
 panel is shut until opened, and that its `colspan` still spans the whole header.
 
+The file question has its own suites: `form-files.service.spec.ts` (every upload refusal - wrong
+type read from the bytes, too big, closed/public form, not a file question, too many pending - the
+ownership statement at submit, the download's 404/410), `forms.service.file.spec.ts` (refused at
+save on a public or anonymous form, attached inside the submit transaction, the manager list),
+`forms.controller.files.spec.ts` (a non-manager download refused before any byte is read; the
+headers), `form-file-retention.scheduler.spec.ts` (a stateful fake database and media service: the
+purge run twice, a blob that fails, a file of another class whose id sits in an answer left alone),
+and media-service's `media.service.form-file.spec.ts` (the class refused on every client route and
+by `DELETE /media/:id`, the purge allowlist, EXIF/ICC stripped with the orientation applied, a PDF
+byte-identical). Front: `fileQuestion.test.ts` (empty type, HEIC), `FormQuestion.svelte.test.ts`
+(progress, cancel, the busy signal), and the file cases of `answerText.test.ts` and
+`FormSubmissionsTable.answers.svelte.test.ts`.
+
+**What a mock cannot prove runs on a real Postgres**: `form-files.integration.spec.ts` applies
+migration 085 to a throwaway schema and drives the real service and scheduler - a claim past the
+window, by another uploader, of a purged row, from another form, two submissions racing for one
+file (exactly one wins), `attachedAt` on a reused submission, twelve parallel uploads (exactly ten
+kept), the purge run twice and a lowered retention. **IT NEVER RUNS IN CI** - no workflow sets
+`SOCIAL_IT_DATABASE_URL`, so CI reports it skipped - and it is the ONLY test guarding the
+`GREATEST(...)` on `attachedAt`, the advisory lock and the claim SQL as Postgres executes it. Run it
+by hand before merging any change to `form-files.service.ts`, `form-file-retention.scheduler.ts` or
+migration 085:
+
+```sh
+docker run -d --rm --name formfiles-pg -e POSTGRES_PASSWORD=it -p 55432:5432 postgres:18-alpine
+cd apps/social-service && SOCIAL_IT_DATABASE_URL=postgres://postgres:it@localhost:55432/postgres \
+  bun run test -- src/forms/form-files.integration.spec.ts
+```
+
 `frontend/src/lib/utils/qrCode.test.ts` answers the QR claim on PIXELS rather than on the badge's
 arithmetic: it rasterises a symbol in pure JS through the SAME exported geometry the canvas draws
 (`moduleCorners`, `moduleContains`, `finderShapes`, `badgeShape`) and hands the buffer to `jsQR`, a
@@ -808,3 +909,32 @@ Measured on `main` before this: `submit` counted `pending` toward `maxSubmission
 | D3 | Notify the organiser actively on `paid_over_capacity`, plus the durable "cotisation granted" flag | the flag is built (`cotisationGrantedAt`); the notification needs a category | **The notification is a SEPARATE work package** (a new category: the closest, `form_reminder`, deep-links to the fill page and carries the opening-reminder copy). The return page's over-capacity sentence promises no notification today and should say so once that package ships |
 
 Tests: `forms.service.seat-hold.spec.ts` runs the service on an in-memory store that evaluates its own `where` clauses and refuses any transaction that is not READ COMMITTED (the boundary one second either side of the hold, two simultaneous submits on the last seat, the reuse restarting the hold on a full form, the job twice, a late payment with and without room, two simultaneous late payments on the last seat with a real per-form mutex, replays, a failed grant retried, one payment confirmed under both ids in both orders, a cancel against a paid row, a cancel naming another request, the request lifetime (1680 s), the old request settled before the new one with the row still naming it, an old request found PAID stopping the retry, a failed cancel / open state / failed state read / request being issued each refused with `PREVIOUS_PAYMENT_OPEN`, the old request's cancel callback landing DURING the retry and taken back, the submitter's cancel settling the request, a confirmation naming another request accused at ERROR, a late payment on a one-answer form whose payer already has a seat or a payment, and the bodies core-service posts entering through `InternalFormsController`: webhook confirm and verify-session in both orders and at once, a cancel or expire callback after the payment, one between the two confirmations, a payment after its own expiry - one transition, one grant, one purchase each). Controls (each makes it fail): the lock removed from `markPaid`; REPEATABLE READ put back in `submit`; the cancel comparison removed; error 2 read as cancelled without the state read; a failed settle carried past; the one-answer check removed; the foreign-id accusation removed; the take-back of a self-caused cancel removed. The core half is in `lydia-payment-provider.spec.ts` (`expire_time`, `request_id`, `request/cancel` and its error 2, `request/state` and its codes) and `payment.controller.spec.ts`. **Real Postgres is NOT in CI**: the Postgres 18 runs quoted on this page (concurrency, migration 084 twice, the hold restart surviving the id write, the real core controllers wired to the real internal route) were throwaway scripts on the pull request, not committed tests - the committed proof is the in-memory store above. `paymentStatus.test.ts` and `paymentReturn.test.ts` on the client.
+
+## What a client reads of a submission is an allowlist (2026-10-15)
+
+`GET /api/forms/submissions/:id` (the submitter or a manager, read by the payment return pages)
+answered `paymentAccountId`: the Business's Lydia `vendor_token`. Lydia's `request/cancel` asks
+for nothing else besides the `request_id`, and request ids are sequential (`12115506`,
+[payments](payments.md)), so any submitter could cancel the open payment requests of everyone
+else paying that association. No client field read it. The two submitter reads and the two
+manager lists (`:id/submissions`, `:id/submissions/pending-cash`) also answered the whole row:
+the provider ids (`stripeSessionId`, `paymentRequestId`, `paymentSettledBy`), the hold clock and
+the fulfilment flags.
+
+`apps/social-service/src/forms/submission.projection.ts` now decides, as an ALLOWLIST, so a column
+added later is private until someone adds it there:
+
+- the submitter's view: `id`, `formId`, `answers`, `totalPaid`, `paymentStatus`, `paymentMethod`,
+  `cashExpiresAt`, `createdAt`. `GET submissions/:id` answers `id`, `formId`, `totalPaid`,
+  `currency` and `paymentStatus` only.
+- the manager's view adds `userId` and `email`. Both lists use `userId` to name the submitter
+  (`submitterName`, the pending-cash list), and a manager already reads both on member pages.
+
+`submission.projection.spec.ts` fills every private column (and the vendor token) with a
+recognisable value and fails if any client read carries one, by value or by key name. Control: it
+fails 4/4 against the previous service.
+
+**Not closed by this: the association reads.** `GET /api/associations` and its siblings answer
+`lydiaAccountId`, the same vendor token, to any signed-in member (`associations.controller.ts`
+says so). Its only client reader is the manager's Lydia panel, which shows it. Closing it needs a
+manager-only read for that panel, which is a separate change.

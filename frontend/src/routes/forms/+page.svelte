@@ -313,6 +313,7 @@
               {:else if Array.isArray(submissionsData[form.id])}
                 {@const subs = submissionsData[form.id] as Submission[]}
                 <FormSubmissionsTable
+                  formId={form.id}
                   items={form.items ?? []}
                   requiresPayment={form.requiresPayment ?? false}
                   anonymous={form.anonymous ?? false}

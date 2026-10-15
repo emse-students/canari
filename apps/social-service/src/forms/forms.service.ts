@@ -29,8 +29,14 @@ import { FormRespondent } from './entities/form-respondent.entity';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import axios from 'axios';
 import * as ExcelJS from 'exceljs';
-import { answerText, type AnswerQuestion } from './answer-text';
+import { answerText, type AnswerQuestion, type AnswerWords } from './answer-text';
 import type { ExportLabels } from './export-labels';
+import {
+  FormFilesService,
+  fileAnswersOf,
+  hasFileQuestion,
+  type AnswerFileState,
+} from './form-files.service';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
@@ -38,6 +44,7 @@ import { withSubmissionReturnKey } from './return-url-key';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
+import { toManagerView, toSubmitterView } from './submission.projection';
 import {
   bucketFor,
   dimensionsNeedProfile,
@@ -127,7 +134,8 @@ export class FormsService {
     private readonly userTagService: UserTagService,
     private readonly purchaseRecordService: PurchaseRecordService,
     private readonly pricingFacts: PricingFactsService,
-    @InjectRepository(FormRespondent) private readonly respondentRepo: Repository<FormRespondent>
+    @InjectRepository(FormRespondent) private readonly respondentRepo: Repository<FormRespondent>,
+    private readonly formFiles: FormFilesService
   ) {}
 
   /**
@@ -157,6 +165,33 @@ export class FormsService {
         'An anonymous form must be free: a payment or a cotisation grant identifies the submitter.'
       );
     }
+    // A file is uploaded by an account and kept on a row that names it, and its CONTENT (a CV)
+    // names its author too - the identity the form promised not to keep.
+    if (hasFileQuestion(input.items)) {
+      throw new BadRequestException(
+        'An anonymous form cannot ask for a file: a file is tied to the account that uploads it.'
+      );
+    }
+  }
+
+  /**
+   * Refuses a form that asks for a file AND restricts who may submit by an ANSWER. The file is
+   * uploaded before the answer exists, and the upload is judged on the same `submitCondition`
+   * (`assertMayUploadAnswerFile`) - with no answers yet, an `answer` criterion matches nobody, so
+   * every upload would be a 403. Refused where it is chosen rather than shipped as a form nobody can
+   * fill. A profile criterion (promo, formation, cotisation) is known at upload and stays allowed.
+   */
+  private assertFileQuestionConfigValid(input: {
+    items?: CreateFormDto['items'];
+    submitCondition?: unknown;
+  }): void {
+    if (!hasFileQuestion(input.items)) return;
+    const condition = input.submitCondition as { answer?: unknown } | null | undefined;
+    if (condition?.answer != null) {
+      throw new BadRequestException(
+        'A form that asks for a file cannot restrict who may answer by an answer: the file is sent before the answers exist.'
+      );
+    }
   }
 
   /**
@@ -181,6 +216,13 @@ export class FormsService {
     if (input.allowMultipleSubmissions !== true) {
       throw new BadRequestException(
         'A public form must accept several answers: a guest cannot be recognised a second time.'
+      );
+    }
+    // Decision D40: a file upload needs an account, and an anonymous write of files is the largest
+    // abuse surface a form could open. Refused here rather than at the guest's submit.
+    if (hasFileQuestion(input.items)) {
+      throw new BadRequestException(
+        'A public form cannot ask for a file: a guest has no account to upload it with.'
       );
     }
   }
@@ -343,6 +385,19 @@ export class FormsService {
     throw new ForbiddenException('This form is not open to you.');
   }
 
+  /**
+   * Refuses an upload for a FILE question to a member the form is not open to - the same audience
+   * rule `submit` applies, judged BEFORE the bytes are stored, so a member who may not answer cannot
+   * park files on the form either. Visibility of the question itself (`showIf`) is not judged here:
+   * it may depend on answers not given yet, and `submit` re-reads the whole answer anyway.
+   */
+  async assertMayUploadAnswerFile(formId: string, userId: string): Promise<void> {
+    const form = await this.formRepo.findOne({ where: { id: formId, deletedAt: IsNull() } });
+    if (!form) throw new NotFoundException('Form not found');
+    if (!form.submitCondition) return;
+    this.assertMaySubmit(form, await this.factsFor(form, userId));
+  }
+
   /** Creates a form and assigns stable IDs to all items and options that lack them. */
   async create(input: CreateFormDto, isGlobalAdmin = false) {
     if (input.associationId && !isGlobalAdmin) {
@@ -353,6 +408,7 @@ export class FormsService {
     }
     this.assertAnonymousConfigValid(input);
     this.assertPublicConfigValid(input);
+    this.assertFileQuestionConfigValid(input);
     await this.assertPaidFormAssociationReady(input);
     await this.assertCotisationConfigValid(input, {
       userId: input.ownerId!,
@@ -542,10 +598,18 @@ export class FormsService {
         'A form stays anonymous, or not, as it was created. Create a new form to change it.'
       );
     }
-    this.assertAnonymousConfigValid({ ...input, anonymous: form.anonymous });
+    // The questions the form WILL have: an absent list keeps the stored one, file questions included.
+    const items = input.items ?? form.items;
+    this.assertAnonymousConfigValid({ ...input, items, anonymous: form.anonymous });
     // Unlike anonymity, a link can be opened or withdrawn at any time: it promises nothing about
     // the answers already stored. An absent value means "leave it", so the stored one is checked.
-    this.assertPublicConfigValid({ ...input, isPublic: input.isPublic ?? form.isPublic });
+    this.assertPublicConfigValid({ ...input, items, isPublic: input.isPublic ?? form.isPublic });
+    // An absent condition keeps the stored one, which still meets the questions sent now.
+    this.assertFileQuestionConfigValid({
+      items,
+      submitCondition:
+        input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
+    });
 
     await this.assertPaidFormAssociationReady({ ...input, associationId: form.associationId });
     await this.assertCotisationConfigValid(
@@ -606,13 +670,14 @@ export class FormsService {
 
   /** Returns the most recent completed (paid or free) submission for a given user on a form. */
   async getSubmission(formId: string, userId: string) {
-    return this.submissionRepo.findOne({
+    const submission = await this.submissionRepo.findOne({
       where: [
         { formId, userId, paymentStatus: 'paid' },
         { formId, userId, paymentStatus: 'free' },
       ],
       order: { createdAt: 'DESC' },
     });
+    return submission ? toSubmitterView(submission) : null;
   }
 
   /**
@@ -869,6 +934,17 @@ export class FormsService {
       }
     }
 
+    // The files this answer cites: their SHAPE here, their ownership inside the transaction below
+    // (`FormFilesService.attach`), where it is checked and taken in one write. A form that cannot
+    // hold a file question (public, anonymous) never reaches `attach`: refused before anything.
+    const fileAnswers = fileAnswersOf(form.items ?? [], input.answers);
+    if (fileAnswers.length > 0 && (guest || form.anonymous || !input.userId)) {
+      this.logger.warn(
+        `[FORMS] submit refused: a file answer on form=${form.id.slice(0, 8)} without an account`
+      );
+      throw new BadRequestException('This form cannot receive a file without an account.');
+    }
+
     // Answers as option-id lists, which is what every criterion reads. A free-text answer is not a
     // criterion input, so it contributes nothing here and keeps its place in `input.answers`.
     // THE KEYS ARE THE FORM'S OWN QUESTION IDS, AND NOTHING ELSE GETS IN. Every key here comes
@@ -1106,6 +1182,9 @@ export class FormsService {
         });
         savedSubmission = await manager.save(submission);
       }
+      if (fileAnswers.length > 0) {
+        await this.formFiles.attach(manager, savedSubmission, id, input.userId!, fileAnswers);
+      }
     });
 
     // Cash payment shortcut - skip the online checkout entirely
@@ -1339,22 +1418,17 @@ export class FormsService {
     this.logger.log(`[Forms] Submission ${submissionId} deleted by ${callerId}`);
   }
 
-  /** Loads a submission by ID with its payment status and the associated payment account ID (if any). */
+  /**
+   * Loads a submission by ID with its payment status, for its submitter or a manager. It used to
+   * answer `paymentAccountId` too - the Business's Lydia `vendor_token`, which no client read and
+   * which lets anyone cancel that Business's payment requests (`submission.projection.ts`).
+   */
   async getSubmissionById(submissionId: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
     const form = await this.formRepo.findOne({ where: { id: submission.formId } });
-    return {
-      id: submission.id,
-      formId: submission.formId,
-      userId: submission.userId,
-      totalPaid: submission.totalPaid,
-      currency: form?.currency ?? 'eur',
-      paymentStatus: submission.paymentStatus,
-      paymentAccountId: form?.associationId
-        ? await this.associationsService.getPaymentAccountId(form.associationId)
-        : null,
-    };
+    const { id, formId, totalPaid, paymentStatus } = toSubmitterView(submission);
+    return { id, formId, totalPaid, currency: form?.currency ?? 'eur', paymentStatus };
   }
 
   /**
@@ -1625,10 +1699,11 @@ export class FormsService {
   /** Lists submissions waiting for cash validation on a given form. Requires form manager rights. */
   async listPendingCash(formId: string, callerId: string, isGlobalAdmin: boolean) {
     await this.assertFormManager(formId, callerId, isGlobalAdmin);
-    return this.submissionRepo.find({
+    const rows = await this.submissionRepo.find({
       where: { formId, paymentStatus: 'pending_cash' },
       order: { createdAt: 'ASC' },
     });
+    return rows.map(toManagerView);
   }
 
   /**
@@ -1788,11 +1863,25 @@ export class FormsService {
         );
       rows.forEach((r) => nameMap.set(r.id, { firstName: r.firstName, lastName: r.lastName }));
     }
-    return subs.map((s) => ({
-      ...s,
-      firstName: nameMap.get(s.userId)?.firstName ?? null,
-      lastName: nameMap.get(s.userId)?.lastName ?? null,
-    }));
+    // The files among these answers: a purged one reads "file deleted" instead of offering a
+    // download, a live one is saved under its name. Asked only of a form that has a file question.
+    const files = hasFileQuestion(form?.items)
+      ? await this.formFiles.answerFiles(subs.map((s) => s.id))
+      : new Map<string, AnswerFileState>();
+    return subs.map((s) => {
+      const cited = Object.values(s.answers ?? {}).filter(
+        (value): value is string => typeof value === 'string' && files.has(value)
+      );
+      return {
+        ...toManagerView(s),
+        firstName: nameMap.get(s.userId)?.firstName ?? null,
+        lastName: nameMap.get(s.userId)?.lastName ?? null,
+        deletedFileIds: cited.filter((id) => files.get(id)!.purged),
+        fileNames: Object.fromEntries(
+          cited.filter((id) => !files.get(id)!.purged).map((id) => [id, files.get(id)!.fileName])
+        ),
+      };
+    });
   }
 
   /**
@@ -1863,6 +1952,21 @@ export class FormsService {
 
     sheet.columns = headers;
 
+    // A file question's cell is a WORD - the file itself is never exported. The words are the
+    // client's, like every other one in this file; a form with a file question and a client that
+    // did not send them is refused, not written with the id or with English.
+    let words: AnswerWords | undefined;
+    if (hasFileQuestion(form.items)) {
+      if (!labels.file || !labels.fileDeleted) {
+        throw new BadRequestException('export labels "file" and "fileDeleted" are required');
+      }
+      words = {
+        file: labels.file,
+        fileDeleted: labels.fileDeleted,
+        deletedFiles: await this.formFiles.deletedFileIds(submissions.map((s) => s.id)),
+      };
+    }
+
     submissions.forEach((sub) => {
       const names = (sub.userId && nameMap.get(sub.userId)) || { firstName: null, lastName: null };
       const row: Record<string, unknown> = {
@@ -1885,7 +1989,7 @@ export class FormsService {
       }
 
       form.items.forEach((item: FormItemLike) => {
-        row[item.id] = answerText(sub.answers[item.id], item);
+        row[item.id] = answerText(sub.answers[item.id], item, words);
       });
 
       sheet.addRow(row);

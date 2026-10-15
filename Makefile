@@ -358,6 +358,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/static-compression.test.mjs
 	@bun .github/scripts/tests/adminer-route.test.mjs
 	@bun .github/scripts/tests/access-log-redaction.test.mjs
+	@bun .github/scripts/tests/api-error-cors.test.mjs
 	@bun .github/scripts/tests/codeql-category.test.mjs
 	@bun .github/scripts/tests/declared-duplicates.test.mjs
 	@bun .github/scripts/tests/undeclared-duplicates.test.mjs

@@ -10,6 +10,7 @@ import {
   iosTypeScale,
   publishIosTypeScale,
   followIosDynamicType,
+  DYNAMIC_TYPE_EVENT,
   IOS_TYPE_SCALE_MAX,
   IOS_DEFAULT_BODY_PX,
 } from './textZoom';
@@ -101,15 +102,32 @@ describe('followIosDynamicType', () => {
 
   it('publishes nothing and listens to nothing when not on iOS (Android keeps its measured --text-zoom)', () => {
     document.documentElement.style.setProperty('--text-zoom', '2');
-    const add = vi.spyOn(document, 'addEventListener');
+    const add = vi.spyOn(window, 'addEventListener');
     const dispose = followIosDynamicType(false);
     expect(document.documentElement.style.getPropertyValue('--type-scale')).toBe('');
     expect(document.documentElement.style.getPropertyValue('--text-zoom')).toBe('2');
-    expect(add).not.toHaveBeenCalledWith('visibilitychange', expect.anything());
+    expect(add).not.toHaveBeenCalledWith(DYNAMIC_TYPE_EVENT, expect.anything());
     expect(() => dispose()).not.toThrow();
   });
 
-  it('on iOS publishes now and again on return to the foreground, until disposed', () => {
+  it('on iOS publishes the probe now, then the size native reports on each change, until disposed', () => {
+    const real = window.getComputedStyle;
+    vi.spyOn(window, 'getComputedStyle').mockImplementation((el) =>
+      el instanceof HTMLElement && el.style.cssText.includes('apple-system-body')
+        ? ({ fontSize: '17px' } as CSSStyleDeclaration)
+        : real(el)
+    );
+    const dispose = followIosDynamicType(true);
+    expect(document.documentElement.style.getPropertyValue('--type-scale')).toBe('1');
+    // What canari_ios.mm sends on return from Settings - the probe still reads the OLD size there.
+    window.dispatchEvent(new CustomEvent(DYNAMIC_TYPE_EVENT, { detail: { bodyPx: 25.5 } }));
+    expect(document.documentElement.style.getPropertyValue('--type-scale')).toBe('1.5');
+    dispose();
+    window.dispatchEvent(new CustomEvent(DYNAMIC_TYPE_EVENT, { detail: { bodyPx: 34 } }));
+    expect(document.documentElement.style.getPropertyValue('--type-scale')).toBe('1.5');
+  });
+
+  it('on iOS does not re-read the probe on visibilitychange (it read the old size, 3 of 3)', () => {
     let body = '17px';
     const real = window.getComputedStyle;
     vi.spyOn(window, 'getComputedStyle').mockImplementation((el) =>
@@ -118,14 +136,31 @@ describe('followIosDynamicType', () => {
         : real(el)
     );
     const dispose = followIosDynamicType(true);
-    expect(document.documentElement.style.getPropertyValue('--type-scale')).toBe('1');
-    body = '25.5px';
-    document.dispatchEvent(new Event('visibilitychange'));
-    expect(document.documentElement.style.getPropertyValue('--type-scale')).toBe('1.5');
-    dispose();
     body = '34px';
     document.dispatchEvent(new Event('visibilitychange'));
-    expect(document.documentElement.style.getPropertyValue('--type-scale')).toBe('1.5');
+    expect(document.documentElement.style.getPropertyValue('--type-scale')).toBe('1');
+    dispose();
+  });
+
+  it('starts from the size native already published, for a page loaded after it', () => {
+    (window as unknown as Record<string, unknown>).__canariDynamicTypeBodyPx = 34;
+    try {
+      const dispose = followIosDynamicType(true);
+      expect(document.documentElement.style.getPropertyValue('--type-scale')).toBe('2');
+      dispose();
+    } finally {
+      delete (window as unknown as Record<string, unknown>).__canariDynamicTypeBodyPx;
+    }
+  });
+
+  it('ignores an event that carries no size', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const dispose = followIosDynamicType(true);
+    const before = document.documentElement.style.getPropertyValue('--type-scale');
+    window.dispatchEvent(new CustomEvent(DYNAMIC_TYPE_EVENT, { detail: {} }));
+    expect(document.documentElement.style.getPropertyValue('--type-scale')).toBe(before);
+    expect(warn).toHaveBeenCalled();
+    dispose();
   });
 
   it('app.html (the pre-paint copy) uses the same default body and cap', () => {
@@ -197,5 +232,24 @@ describe('the root layout', () => {
     const layout = readFileSync('src/routes/+layout.svelte', 'utf8');
     expect(layout).toMatch(/const isIosApp = isIosTauriRuntime\(\)/);
     expect(layout).toContain('followIosDynamicType(isIosApp)');
+  });
+});
+
+describe('the native side (canari_ios.mm)', () => {
+  const native = readFileSync('src-tauri/gen/apple/Sources/canari/canari_ios.mm', 'utf8');
+
+  it('dispatches the event and writes the global this module reads', () => {
+    expect(native).toContain(`CustomEvent('${DYNAMIC_TYPE_EVENT}'`);
+    expect(native).toContain('window.__canariDynamicTypeBodyPx=');
+  });
+
+  it('publishes on the change, on every activation and after every page load', () => {
+    expect(native).toMatch(
+      /UIContentSizeCategoryDidChangeNotification[\s\S]{0,200}CanariPublishDynamicType\(\)/
+    );
+    const active = native.slice(native.indexOf('static void CanariOnDidBecomeActive'));
+    expect(active.slice(0, active.indexOf('\n}\n'))).toContain('CanariPublishDynamicType();');
+    const load = native.slice(native.indexOf('@implementation CanariLoadObserver'));
+    expect(load.slice(0, load.indexOf('@end'))).toContain('CanariPublishDynamicType();');
   });
 });

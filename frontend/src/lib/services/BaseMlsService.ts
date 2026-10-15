@@ -100,6 +100,7 @@ import {
 import { getToken } from '$lib/stores/auth';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 import type {
   DistributionFrameHandler,
   DistributionGroupInfoTransport,
@@ -2016,12 +2017,20 @@ export abstract class BaseMlsService implements IMlsService {
         // here means this device's offline backlog is still on the server and nothing here will go
         // back for it - the next reconnect's pull is what covers it. Read as "fetch failed", the line
         // sat in production logs beside a queue that had not shrunk in weeks and nobody connected the
-        // two. `pullPendingMessagesJson` has already halved its page size down to a single row before
-        // giving up, so this is a genuine transport failure rather than an answer too big to arrive.
-        console.error(
-          `[PENDING] Pending fetch failed after ${fetched} message(s) - the backlog for ${this.userId}:${this.deviceId} is UNDRAINED and stays queued until the next reconnect:`,
-          e
-        );
+        // two. `pullPendingMessagesJson` halves its page only against a page that did not ARRIVE, and
+        // gives up at once on a transport failure (nobody answered: no smaller page can help), which
+        // is the expected end of an offline start - one line, by its class, no stack.
+        const where = `the backlog for ${this.userId}:${this.deviceId} is UNDRAINED and stays queued until the next reconnect`;
+        if (isTransportFailure(e)) {
+          console.warn(
+            `[PENDING] Pending fetch got no answer after ${fetched} message(s) - ${where}: ${String(e)}`
+          );
+        } else {
+          console.error(
+            `[PENDING] Pending fetch failed after ${fetched} message(s) - ${where}:`,
+            e
+          );
+        }
       }
     })();
     // CHAINED, NEVER OVERWRITTEN. Two pulls can overlap (a reconnect and the restore's seeded-rows

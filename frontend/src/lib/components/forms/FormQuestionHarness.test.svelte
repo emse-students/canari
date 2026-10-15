@@ -10,9 +10,11 @@
     onChange: (value: unknown) => void;
     optionModifier?: (item: FormItem, opt: FormOption) => number;
     optionClosed?: (opt: FormOption) => boolean;
+    onUploadingChange?: (uploading: boolean) => void;
   }
 
-  let { item, initial, onChange, optionModifier, optionClosed }: Props = $props();
+  let { item, initial, onChange, optionModifier, optionClosed, onUploadingChange }: Props =
+    $props();
 
   // A deep `$state`, as `selections` is on the page, so a matrix row write is seen here. The props
   // are a SEED read once, which `untrack` says out loud.
@@ -33,4 +35,5 @@
   formId="f1"
   {optionModifier}
   {optionClosed}
+  {onUploadingChange}
 />

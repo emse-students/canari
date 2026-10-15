@@ -5,6 +5,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import { getToken } from '$lib/stores/auth';
   import { showToast } from '$lib/stores/toast.svelte';
   import { currentUserId } from '$lib/stores/user';
@@ -410,8 +411,18 @@
     return Math.max(0, total);
   }
 
+  /** The FILE questions whose file is still travelling: the answer is not sent while any is. */
+  const uploadingFiles = new SvelteSet<string>();
+
   async function handleSubmit(payerEmail?: string) {
     if (!form || submitting) return;
+    if (uploadingFiles.size > 0) {
+      // Refused, not queued: an optional file question would otherwise go out empty while the
+      // member believes the file is attached.
+      Log.d('FormView', `submit refused: ${uploadingFiles.size} file(s) still uploading`);
+      error = m.form_file_wait_upload();
+      return;
+    }
     if (isNotOpenYet && form.opensAt) {
       error = m.form_view_error_not_open({ date: formatFormOpensAt(form.opensAt) });
       return;
@@ -716,8 +727,11 @@
           disabled={submitted || isNotOpenYet}
           formId={form.id}
           currency={form.currency}
+          fileRetentionDays={form.fileRetentionDays}
           {optionModifier}
           {optionClosed}
+          onUploadingChange={(busy) =>
+            busy ? uploadingFiles.add(item.id) : uploadingFiles.delete(item.id)}
         />
       {/each}
     </div>

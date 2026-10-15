@@ -273,6 +273,32 @@ export function scrollFocusedFieldIntoView(behavior: ScrollBehavior = 'smooth'):
 }
 
 /**
+ * Whether a `transitionend` is a keyboard-aware overlay reaching its final HEIGHT with the focused
+ * field inside it - the moment the reveal must be redone.
+ *
+ * THE FIRST REVEAL MEASURES A BOX STILL MOVING. `[data-keyboard-aware-overlay]` animates its height
+ * (180 ms, `app.css`), and the reveal that follows a keyboard rise runs one frame after the resize,
+ * so it scrolls the field to the bottom of a scrollport that is still shrinking: once the overlay
+ * settles, the field sits under the modal's footer. iPhone 12 bench, 2026-10-15: in the PIN change
+ * dialog the focused field was half under the submit button, and a tap where the next field stood
+ * hit the button and submitted the form. The iOS keyboard drops and rises again between two fields,
+ * so every field move paid it.
+ */
+export function overlaySettledAroundFocus(
+  propertyName: string,
+  target: EventTarget | null,
+  active: Element | null
+): boolean {
+  return (
+    propertyName === 'height' &&
+    target instanceof HTMLElement &&
+    target.matches('[data-keyboard-aware-overlay]') &&
+    active !== null &&
+    target.contains(active)
+  );
+}
+
+/**
  * Registers listeners and updates CSS variables. Call once from the root layout.
  * Returns a teardown function.
  */
@@ -319,6 +345,13 @@ export function initKeyboardViewport(): () => void {
     scrollFocusedFieldIntoView('smooth');
   };
 
+  const handleTransitionEnd = (e: TransitionEvent) => {
+    if (!snapshot.isOpen) return;
+    if (!overlaySettledAroundFocus(e.propertyName, e.target, document.activeElement)) return;
+    Log.d('keyboardViewport', 'overlay settled - revealing the focused field in its final box');
+    scrollFocusedFieldIntoView('smooth');
+  };
+
   const handleOrientationChange = () => {
     setTimeout(() => {
       baselineHeight = window.innerHeight;
@@ -330,6 +363,7 @@ export function initKeyboardViewport(): () => void {
   window.addEventListener('resize', update);
   window.addEventListener('orientationchange', handleOrientationChange);
   window.addEventListener('focusin', handleFocusIn, true);
+  window.addEventListener('transitionend', handleTransitionEnd, true);
   window.visualViewport?.addEventListener('resize', update);
   window.visualViewport?.addEventListener('scroll', updateOffsetOnly);
 
@@ -337,6 +371,7 @@ export function initKeyboardViewport(): () => void {
     window.removeEventListener('resize', update);
     window.removeEventListener('orientationchange', handleOrientationChange);
     window.removeEventListener('focusin', handleFocusIn, true);
+    window.removeEventListener('transitionend', handleTransitionEnd, true);
     window.visualViewport?.removeEventListener('resize', update);
     window.visualViewport?.removeEventListener('scroll', updateOffsetOnly);
     pinSafeAreaBottom(document.documentElement.style, null);
