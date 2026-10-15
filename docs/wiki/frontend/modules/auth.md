@@ -666,8 +666,8 @@ the keystore moved, logged, never key material):
   holds the old one. `changePinImpl` answers with `endIntoKeyRecovery` - a reload, which comes back
   with the new key, cannot open the MLS state and is offered the recovery with the same two PINs
   (`auth_pin_change_interrupted`).
-- `vault`: no row and no state moved, so the session's key still seals everything here and it RUNS
-  ON. Only the unlock changed (the vault was cleared; on native the keystore holds the new key), and
+- `keystore` / `vault`: no row and no state moved, so the session's key still seals everything here
+  and it RUNS ON. Only the unlock changed (the keystore refused or moved; the vault was cleared), and
   the account already expects the new PIN, so the NEXT unlock is the one sent to the recovery
   (`auth_pin_change_not_applied` says exactly that, without claiming a restart).
 
@@ -687,6 +687,29 @@ open the state with the new key and offers the recovery, which opens it with the
 and runs this same path - every store already under the new key counts as DONE. A lost race costs
 one recovery prompt, never data. The gate does not hold it: the push runs where the WebView's locks
 do not reach.
+
+#### A keychain that cannot hold the biometric item (iOS with no passcode, 2026-10-15)
+
+**The iPhone 12 bench has no device passcode, and the change failed there after the server had
+rotated.** Its syslog at the submit: `SecItemDelete`, then `SecItemAdd` of the primary item with
+`.userPresence` access control -> LocalAuthentication `-5 "Passcode not set"` -> `errSecAuthFailed`
+(`-25293`); the same pair at both recovery attempts, and at EVERY PIN unlock (`store_push_context`).
+A `.userPresence` item cannot exist without a passcode, so `storeKeyBytes` threw on every call, and
+`pointUnattendedUnlockAt` - awaited since #1898, and OUTSIDE the typed `try` - let it escape
+untyped: "n'a pas abouti, reessayez" against a server that now refused the old PIN, then the same
+refusal in the recovery. Three things changed:
+
+- `storeKeyBytes` reads the FACT (`LAContext.canEvaluatePolicy(.deviceOwnerAuthentication)`,
+  `passcodeNotSet`) and writes no primary item on such a phone - biometric unlock, its only reader,
+  cannot be enabled there either. The background copy is written in both cases.
+- It deletes BOTH old items before writing either. It used to delete the primary, throw on its add
+  and never reach the background copy, which kept the OLD key - the very unattended unlock step 2
+  exists to retire.
+- The keystore step is inside the typed `try`, as stage `keystore` (`dataMoved` false). Tested from
+  the state the bench was left in (server on the new PIN, keystore refusing, every store and the MLS
+  state under the old key): the change is typed and moves nothing, and the recovery then finishes.
+
+Not yet read on the phone: the Swift half compiles only on a macOS runner.
 
 #### The other tabs of the account
 

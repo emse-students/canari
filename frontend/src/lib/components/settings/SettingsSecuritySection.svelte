@@ -212,8 +212,11 @@
           - `PinModal` serves setup and unlock, this one serves change and recovery - and a check
           that could not open it would be measuring half the rule. Published rather than guessed.
         -->
+        <!-- The visible label is hidden below `sm`, so the icon button needs its own name
+             (iPhone 12 bench, 2026-10-15: VoiceOver read it as an unnamed button). -->
         <button
           data-change-pin
+          aria-label={m.profile_pin_change_btn()}
           onclick={() => {
             changePinError = '';
             showChangePinModal = true;

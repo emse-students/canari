@@ -115,13 +115,14 @@ export class LocalStateUnopenableError extends Error {
  *  - `stores` / `mls`: data has moved - stores and MLS state may sit under two keys. The session
  *    must end into the recovery (which opens the MLS state with the old key and finishes the move)
  *    rather than keep running on the old key ({@link dataMoved}).
- *  - `vault`: no row and no state moved. The session's key is still the one everything here is
- *    sealed under, so it may run on; only the unlock changed (the vault cleared, and on native the
- *    keystore moved: {@link keystoreMoved}), so the NEXT unlock is the one sent to the recovery.
+ *  - `keystore` / `vault`: no row and no state moved. The session's key is still the one everything
+ *    here is sealed under, so it may run on; only the unlock changed (the vault cleared, and on
+ *    native the keystore moved: {@link keystoreMoved}), so the NEXT unlock is the one sent to the
+ *    recovery.
  */
 export class KeyChangeInterruptedError extends Error {
   constructor(
-    readonly stage: 'vault' | 'stores' | 'mls',
+    readonly stage: 'keystore' | 'vault' | 'stores' | 'mls',
     readonly keystoreMoved: boolean,
     readonly reason: unknown
   ) {
@@ -131,7 +132,7 @@ export class KeyChangeInterruptedError extends Error {
 
   /** Whether a row or the MLS state may already be under the new key. */
   get dataMoved(): boolean {
-    return this.stage !== 'vault';
+    return this.stage === 'stores' || this.stage === 'mls';
   }
 }
 
@@ -343,12 +344,12 @@ export interface PinChangeOptions {
  *     reverse order a kill left it under the new key and the remaining rows under a key no path would
  *     ever ask for again.
  *
- * A THROW after the keystore is a {@link KeyChangeInterruptedError} with its stage; from the stores
+ * A THROW from the keystore on is a {@link KeyChangeInterruptedError} with its stage; from the stores
  * on, the caller must end the session into the recovery rather than run on the old key.
  *
  * @throws {DeviceKeyMismatchError} in a recovery whose old key does not open the MLS state.
  * @throws {LocalStateUnopenableError} in a recovery whose MLS state no PIN can open.
- * @throws {KeyChangeInterruptedError} on any failure after the keystore step.
+ * @throws {KeyChangeInterruptedError} on any failure from the keystore step on.
  * @throws {KeyChangeSupersededError} when another tab changed the key first; nothing here moved
  *         past the keystore.
  */
@@ -375,12 +376,16 @@ export async function performPinChange(
     log('[DEVICEKEY_CHANGE] The old key opens the local MLS state.');
   }
 
-  const keystoreMoved = await mls.pointUnattendedUnlockAt(newDeviceKeyB64);
-
   // FROM HERE A THROW IS TYPED, with the stage it stopped at: from the stores on, data has moved and
   // the session must not run on the old key; before them nothing on this device has (see the error).
-  let stage: KeyChangeInterruptedError['stage'] = 'vault';
+  // The keystore step is inside: on the change path the server verifier is ALREADY rotated, so an
+  // untyped refusal here told the user to retry a change the server had already taken (iPhone 12
+  // bench, 2026-10-15: the keystore refused every write on a phone with no passcode).
+  let stage: KeyChangeInterruptedError['stage'] = 'keystore';
+  let keystoreMoved = false;
   try {
+    keystoreMoved = await mls.pointUnattendedUnlockAt(newDeviceKeyB64);
+    stage = 'vault';
     const storage = await getStorage(userId);
     // EVERYTHING FROM THE VAULT ON RUNS WHILE THE OTHER TABS ARE HELD: two changes started from two
     // tabs are ordered by the exclusive lock, and the second stops before touching the vault.

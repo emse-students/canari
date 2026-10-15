@@ -1083,8 +1083,9 @@ pub(crate) fn exporter_secret(
 /// The derivation (PBKDF2-SHA256, see `$lib/crypto/deviceKey.ts`) already happened on the frontend.
 ///
 /// Decodes the base64 into 32 bytes and stores them under the alias
-/// `mls_device_key_{user_id}_{device_id}`. Best-effort: if the keystore is unavailable the error is
-/// logged but the command still succeeds (the next PIN login re-derives the key automatically).
+/// `mls_device_key_{user_id}_{device_id}`. A refused write is RETURNED, never swallowed: a PIN change
+/// awaits this before it moves any data (`pointUnattendedUnlockAt`), and the frontend types the
+/// refusal as the `keystore` stage of the change.
 #[tauri::command]
 pub(crate) async fn actualiser_cle_keystore_avec_devicekey(
     device_key_b64: String,
@@ -1101,7 +1102,6 @@ pub(crate) async fn actualiser_cle_keystore_avec_devicekey(
     tauri::async_runtime::spawn_blocking(move || -> Result<(), String> {
         keystore.store_device_key(&key_bytes, &alias).map_err(|e| {
             log::warn!("[DEVICEKEY_CHANGE] Failed to refresh keystore key: {e}");
-            // Non-fatal: the next login will re-derive and store the key.
             e
         })
     })

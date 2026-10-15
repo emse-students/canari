@@ -422,6 +422,43 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
     await everyRowUnder(s.raw, OLD);
   });
 
+  it('a KEYSTORE refusal is typed, moves nothing, and the recovery from the state it left finishes the job', async () => {
+    // iPhone 12 bench, 2026-10-15: the server had rotated the verifier (pin-change 201), then the
+    // keystore refused the write (no device passcode, errSecAuthFailed) and the refusal escaped
+    // untyped - "retry", against a server that now refused the old PIN. The state it left: server on
+    // the new PIN, keystore holding no key, every store AND the MLS state under the old key.
+    const { OLD, NEW } = keys();
+    const s = await populated(OLD);
+    storageForUser.set('u-keystore-throw', s.gated);
+    const mls = fakeMls([], OLD);
+    vi.mocked(mls.pointUnattendedUnlockAt).mockRejectedValueOnce(
+      new Error('The operation could not be completed. (OSStatus error -25293.)')
+    );
+    vault.clearDeviceKey.mockClear();
+    vault.saveDeviceKey.mockClear();
+    const change = options('u-keystore-throw', mls);
+
+    const failure = await performPinChange(change, OLD, NEW).catch((e: unknown) => e);
+
+    expect(failure).toBeInstanceOf(KeyChangeInterruptedError);
+    const typed = failure as InstanceType<typeof KeyChangeInterruptedError>;
+    expect(typed.stage).toBe('keystore');
+    expect(typed.dataMoved).toBe(false);
+    expect(typed.keystoreMoved).toBe(false);
+    expect(vault.clearDeviceKey).not.toHaveBeenCalled();
+    expect(mls.changeDeviceKey).not.toHaveBeenCalled();
+    expect(change.setDeviceKey).not.toHaveBeenCalled();
+    await everyRowUnder(s.raw, OLD);
+
+    // The recovery the next unlock is sent to (old PIN, new PIN), the keystore writing again.
+    const recovery = options('u-keystore-throw', mls, new Uint8Array([1]));
+    await performPinChange(recovery, OLD, NEW);
+
+    await everyRowUnder(s.raw, NEW);
+    expect(mls.changeDeviceKey).toHaveBeenCalledWith(NEW);
+    expect(recovery.setDeviceKey).toHaveBeenCalledWith(NEW);
+  });
+
   it("retires an older build's UNLABELLED vault slot holding the old key, before the new key is saved", async () => {
     // That slot unlocks without the server PIN check: kept past a kill, it opens the MLS state not
     // yet re-sealed and runs a session over stores already half moved.
