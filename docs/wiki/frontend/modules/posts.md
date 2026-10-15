@@ -1494,8 +1494,12 @@ row speaks for a field only when its read was issued after the field's last writ
 write on it is pending. No clock: the order is the program's own. EVERY write of the card goes
 through the ledger: reactions, votes, new comments and comment likes (optimistic: `begin`/`end`),
 and comment edit and delete, pin, unmask and a post edit (applied on the answer: `answered`). A
-failed write restores ONLY its field, and to the newest served value if a row was adopted while it
-was out, not to the pre-tap one. **The expanded thread is HELD**: a feed row carries the first
+failed reaction or vote restores ONLY its field, and to the newest served value if a row was
+adopted while it was out, not to the pre-tap one. A failed COMMENT write is narrower still: the
+comment list carries several writes of the reader at once (a heart on one comment while another
+comment is sending), so a failed comment removes only its own pending row and a failed heart puts
+back only that comment (third review). A post edit's answer is taken for every field EXCEPT the
+comments: an edit changes none, and its answer's list could collapse an expanded thread. **The expanded thread is HELD**: a feed row carries the first
 comments only, so once the reader loaded the whole thread a feed row no longer replaces it, and a
 new row asks for the thread again (`getPost`, merged through the same rule). The poll selection is
 read from the card's polls, never from the prop, so it says what the tally says.

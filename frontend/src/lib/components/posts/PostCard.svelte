@@ -378,9 +378,12 @@
 
   /** Called by EditPostForm on successful save; merges the updated post and closes edit mode. */
   function onPostSaved(updated: PostEntity) {
-    // Applied on the answer: a feed row read before it must not put the old text back.
-    ledger.answered(Object.keys(updated) as (keyof PostEntity)[]);
-    localPost = { ...localPost, ...updated };
+    // Applied on the answer: a feed row read before it must not put the old text back. The
+    // COMMENTS are not the edit's: an edit changes none, and the answer's list may be the feed's
+    // first few where the card holds the expanded thread - so they are left as the card has them.
+    const { comments: _notEdited, ...edited } = updated;
+    ledger.answered(Object.keys(edited) as (keyof PostEntity)[]);
+    localPost = { ...localPost, ...edited };
     editingPost = false;
   }
 
@@ -449,7 +452,7 @@
     commentText = '';
     submittingComment = true;
 
-    const token = ledger.begin(['comments']);
+    ledger.begin(['comments']);
     try {
       await assertNotMuted();
       const result = await addComment(localPost.id, { text, parentId, media });
@@ -461,13 +464,13 @@
       // Two causes wear this sentence: moderation refusing, and `addComment` failing. Only the
       // first is about the reader, and only the second is about the comment. Either way the row
       // goes, and the text goes back where the reader can send it again.
+      // ONLY THE ROW THIS WRITE ADDED GOES: the list carries other writes of the reader (a heart
+      // on a comment, another comment) that this failure says nothing about.
       console.error('[POST_CARD] comment refused', err);
-      localPost = ledger.rollback(
-        localPost,
-        'comments',
-        (localPost.comments ?? []).filter((c) => c.id !== pendingId),
-        token
-      );
+      localPost = {
+        ...localPost,
+        comments: (localPost.comments ?? []).filter((c) => c.id !== pendingId),
+      };
       if (!commentText.trim()) commentText = text;
       errorMessage = publishFailureMessage(err, m.post_unable_to_comment());
     } finally {
@@ -482,8 +485,8 @@
     // THE HEART IS A MEMBERSHIP TEST ON AN ARRAY THIS DEVICE HOLDS. It used to move only when the
     // server answered, and a failure was swallowed - so on a bad link a tap did nothing at all and
     // said nothing either.
-    const previousComments = localPost.comments;
-    const token = ledger.begin(['comments']);
+    const previous = (localPost.comments ?? []).find((c) => c.id === commentId);
+    ledger.begin(['comments']);
     localPost = {
       ...localPost,
       comments: (localPost.comments ?? []).map((c) =>
@@ -504,9 +507,15 @@
         comments: (localPost.comments ?? []).map((c) => (c.id === commentId ? result.comment : c)),
       };
     } catch (err) {
-      // Put the heart back rather than leaving a count this device invented - the comments only.
+      // Put the heart back rather than leaving a count this device invented - on THIS comment only:
+      // the list carries other writes of the reader (a comment still sending) this failure is not about.
       Log.d('handleLikeComment failed', err);
-      localPost = ledger.rollback(localPost, 'comments', previousComments, token);
+      if (previous) {
+        localPost = {
+          ...localPost,
+          comments: (localPost.comments ?? []).map((c) => (c.id === commentId ? previous : c)),
+        };
+      }
     } finally {
       ledger.end(['comments']);
     }

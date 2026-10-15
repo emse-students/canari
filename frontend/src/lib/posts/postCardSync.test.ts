@@ -118,10 +118,10 @@ describe('PostCardLedger.rollback', () => {
     const ledger = new PostCardLedger(local);
     const token = ledger.begin(['reactions']);
     const s = served(nextPostSequence(), answer);
-    const adopted = ledger.adopt(local, s);
-    const next = ledger.rollback(adopted, 'reactions', {}, token);
-    expect(next.reactions).toEqual({ bob: 'love' });
-    expect(next.markdown).toBe('served');
+    // The card moved on after the adoption (an edit answered): only the reactions may change.
+    const edited = { ...ledger.adopt(local, s), markdown: 'edited since', pinned: true };
+    const next = ledger.rollback(edited, 'reactions', {}, token);
+    expect(next).toEqual({ ...edited, reactions: { bob: 'love' } });
   });
 
   it('keeps the pre-tap value when the adopted row is older than another answered write', () => {
