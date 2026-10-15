@@ -178,13 +178,21 @@ export class PaymentWebhookController {
       throw new BadRequestException('Missing request_id or sig');
     }
 
-    const verified = this.paymentService.verifyLydiaRequestCallback(
-      { request_id: requestId, amount, currency, order_ref: orderRef, vendor_token: vendorToken },
-      signature
-    );
+    // The field set we assume Lydia signed; its NAMES go in the failure line below, next to the
+    // names actually received, so one refused callback says which set is wrong.
+    const signedFields = {
+      request_id: requestId,
+      amount,
+      currency,
+      order_ref: orderRef,
+      vendor_token: vendorToken,
+    };
+    const verified = this.paymentService.verifyLydiaRequestCallback(signedFields, signature);
     if (!verified) {
       this.logger.error(
-        `Lydia request-callback: signature verification failed (outcome=${outcome})`
+        `Lydia request-callback: signature verification failed (outcome=${outcome}, ` +
+          `content-type=${describeContentType(contentType)}, ${describeFieldNames(body)}, ` +
+          `verified-over=[${Object.keys(signedFields).join(',')}])`
       );
       throw new BadRequestException('Invalid signature');
     }
