@@ -130,6 +130,8 @@ interface RealmHold {
 const holds = new Map<string, RealmHold>();
 let channel: BroadcastChannel | null = null;
 let lifecycleArmed = false;
+/** A suspension deferred while a call was inside: run when the last one leaves. */
+let releaseWhenIdle: (() => void) | null = null;
 
 /** Ends this realm into the recovery. A reload by default: it comes back with the vault's key. */
 let recoveryHandler: (reason: string) => void = () => {
@@ -159,6 +161,10 @@ function webLocks(): LockManager | null {
   return locks && typeof locks.request === 'function' ? locks : null;
 }
 
+/**
+ * The stored epoch: a counter, `'0'` when no change ever ran here, or `null` when it cannot be read.
+ * Only the join reads it raw; every comparison goes through {@link epochMoved}.
+ */
 function readEpoch(userId: string): string | null {
   try {
     return globalThis.localStorage?.getItem(epochKey(userId)) ?? '0';
@@ -168,6 +174,36 @@ function readEpoch(userId: string): string | null {
     console.error(`[DEVICEKEY] The key-change epoch cannot be read: ${String(e)}`);
     return null;
   }
+}
+
+/**
+ * Whether a change this realm did not make has moved the epoch since it joined.
+ *
+ * AN ABSENT COUNTER IS NOT A CHANGE. A change always writes a counter of 1 or more, so a key that is
+ * GONE while this realm joined with a number means `localStorage` was cleared under an IndexedDB
+ * that stayed - read as `'0'`, it reloaded an open tab for nothing and refused the next change as
+ * superseded. It is logged, and the counter this realm knows is written back.
+ */
+function epochMoved(hold: RealmHold): boolean {
+  let stored: string | null;
+  try {
+    stored = globalThis.localStorage?.getItem(epochKey(hold.userId)) ?? null;
+  } catch (e) {
+    console.error(`[DEVICEKEY] The key-change epoch cannot be read: ${String(e)}`);
+    return false;
+  }
+  if (stored === null && hold.epoch !== null && hold.epoch !== '0') {
+    console.warn(
+      `[DEVICEKEY] The key-change epoch is gone (site storage cleared?) - not a change; restored.`
+    );
+    try {
+      globalThis.localStorage?.setItem(epochKey(hold.userId), hold.epoch);
+    } catch (e) {
+      console.error(`[DEVICEKEY] The key-change epoch cannot be restored: ${String(e)}`);
+    }
+    return false;
+  }
+  return (stored ?? '0') !== (hold.epoch ?? '0');
 }
 
 function bumpEpoch(userId: string, from: string | null): string | null {
@@ -208,7 +244,7 @@ function requestShared(locks: LockManager, hold: RealmHold): void {
       .request(lockName(hold.userId), { mode: 'shared' }, () => {
         // A grant after a change this realm did not make (it was away, or joined before it) finds a
         // newer epoch: its key is the retired one.
-        if (!hold.changing && readEpoch(hold.userId) !== hold.epoch) {
+        if (!hold.changing && epochMoved(hold)) {
           granted();
           void goStale(hold, 'The device key changed while this tab was away');
           return released;
@@ -249,6 +285,20 @@ function armLifecycle(): void {
   if (lifecycleArmed || typeof document === 'undefined') return;
   lifecycleArmed = true;
   const suspend = () => {
+    // NOT WHILE A CALL IS INSIDE. A call between its read and its write, suspended there, would
+    // resume AFTER another tab re-sealed and write its row under the OLD key before any epoch check
+    // could stop it - lost for good. So the lock is kept until the last call leaves (`leave`), and a
+    // change waits for it meanwhile (and says so).
+    if (active > 0) {
+      console.log(
+        '[DEVICEKEY] Page suspended with a call in flight: the lock is kept until it ends.'
+      );
+      releaseWhenIdle = suspendNow;
+      return;
+    }
+    suspendNow();
+  };
+  const suspendNow = () => {
     for (const hold of holds.values()) {
       if (hold.stale || hold.changing || !hold.held) continue;
       hold.release();
@@ -257,6 +307,8 @@ function armLifecycle(): void {
     }
   };
   const resume = () => {
+    // Back before the last call left: the lock was never let go, and need not be.
+    releaseWhenIdle = null;
     const locks = webLocks();
     if (!locks) return;
     for (const hold of holds.values()) {
@@ -344,6 +396,11 @@ async function enter(hold: RealmHold): Promise<void> {
 
 function leave(): void {
   active--;
+  if (active === 0 && releaseWhenIdle) {
+    const release = releaseWhenIdle;
+    releaseWhenIdle = null;
+    release();
+  }
   if (active === 0 && drainWaiters.length > 0) {
     const wake = drainWaiters;
     drainWaiters = [];
@@ -435,13 +492,12 @@ export async function holdOtherRealmsForKeyChange<T>(
   hold.changing = true;
   try {
     const run = locks.request(lockName(userId), { mode: 'exclusive' }, async () => {
-      const epoch = readEpoch(userId);
-      if (epoch !== hold.epoch) {
+      if (epochMoved(hold)) {
         hold.stale = true;
         console.warn('[DEVICEKEY] Another tab changed the device key first: this change stops.');
         throw new KeyChangeSupersededError();
       }
-      hold.epoch = bumpEpoch(userId, epoch);
+      hold.epoch = bumpEpoch(userId, hold.epoch);
       return work();
     });
     const notice: KeyChangeNotice = { type: 'key_change_starting', userId };

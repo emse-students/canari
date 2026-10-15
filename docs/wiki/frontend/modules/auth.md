@@ -719,15 +719,29 @@ nothing. So the gate holds REALMS too, with the Web Locks API `tabLeader.ts` alr
 (`canari-device-key-epoch:<userId>` in `localStorage`) inside the exclusive mode. Every realm records
 it when it joins, before its key is read, and checks it every time the shared mode is granted again:
 
-- **a suspended page lets go.** A page in the back-forward cache or frozen runs no code, so it cannot
-  hear the notice, and holding the lock it would hold every change for as long as it sleeps. It
-  releases on `pagehide` (persisted) and `freeze`, asks again on `pageshow` / `resume`, and a newer
-  epoch on that grant makes it stale before it writes anything;
+- **a suspended page lets go - but never with a call inside.** A page in the back-forward cache or
+  frozen runs no code, so it cannot hear the notice, and holding the lock it would hold every change
+  for as long as it sleeps. It releases on `pagehide` (persisted) and `freeze`, asks again on
+  `pageshow` / `resume`, and a newer epoch on that grant makes it stale before it writes anything.
+  A page suspended while a gated call is INSIDE (between its read and its write) keeps the lock until
+  that call leaves: released, it would resume after another tab re-sealed and write its row under the
+  OLD key before any epoch check - lost for good. The change waits meanwhile, and says so;
+- **a frozen page whose shared request was still queued** is granted the lock while frozen (the
+  grant needs none of its code to run), so it holds it like a page frozen holding it: the next change
+  shows `waiting_tabs` until that page is resumed or closed;
+- **an epoch that is GONE is not a change.** Every change writes 1 or more, so an absent counter under
+  a realm that joined with a number means the site's `localStorage` was cleared while IndexedDB
+  stayed. It is logged and written back, rather than read as `'0'` - which reloaded an open tab for
+  nothing and refused the next change as superseded;
 - **two changes from two tabs are ordered, not raced.** A notice heard while this tab is itself
   changing never reloads it (that would abandon a change half made): it finishes its own, then lets
   go once so the other's exclusive mode can start. The second change finds the epoch moved and stops
   with `KeyChangeSupersededError` before its vault step; its tab restarts
-  (`auth_pin_change_superseded`).
+  (`auth_pin_change_superseded`). **The server is ordered the same way**: `POST
+  mls/security/pin-change` swaps the verifier with a conditional update on the one it compared
+  (`security.controller.ts`), so of two changes that both passed the check, the second is refused as
+  a wrong current PIN - it used to be a read-then-save, where the LAST write decided the account's
+  PIN while the first exclusive lock decided the local key.
 
 **A page that is suspended WITHOUT either event** (iOS Safari in the background) keeps its lock, and
 the change waits for it - never on a timer. The changer asks the lock manager whether another tab
@@ -783,7 +797,11 @@ opening mid-change waits behind it; a reloading tab's MLS read waits until the s
 stale tab's checkpoint is refused; the changer's own calls inside the change do not deadlock (fails
 without the `changing` bypass); of two concurrent changes the second stops superseded and neither tab
 reloads mid-change (fails if a notice reloads a changing tab); and a page put in the back-forward
-cache lets go, then finds the key retired when it comes back.
+cache lets go, then finds the key retired when it comes back; a page suspended with a call inside
+keeps the lock until that call has written (fails without the deferral); and a cleared epoch neither
+reloads the tab nor refuses the next change (fails if absent reads as `'0'`).
+`security.controller.spec.ts` pins the server's conditional swap and its refusal of the second of
+two concurrent changes.
 - the compare half of the swap leaves a row holding another ciphertext untouched - fails if the
   IndexedDB swap checks only that the row exists;
 - both PIN paths are pinned in the source to `performPinChange`.

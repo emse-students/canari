@@ -371,4 +371,73 @@ describe('deviceKeyGate across two tabs of one account', () => {
     expect(ended).toEqual(['The device key changed while this tab was away']);
     expect(await rawB.getMessage('m9', OLD)).toBeNull();
   });
+
+  it('a page suspended with a call INSIDE keeps the lock until that call has written', async () => {
+    // Suspended between its read and its write, then resumed after another tab re-sealed: the write
+    // would land under the OLD key before any epoch check, and be lost for good.
+    const OLD = key();
+    const NEW = key();
+    const userId = `cross-realm-${counter++}`;
+    const rawA = new IndexedDbStorage(userId);
+    await rawA.init();
+    const rawB = new IndexedDbStorage(userId);
+    await rawB.init();
+    await rawA.saveMessages([message('m0')], OLD);
+    const changer = await realm();
+    const a = changer.gateStorage(rawA, userId);
+    await a.getMessages('conv-1', OLD);
+    const sleeper = await realm();
+    sleeper.setKeyRecoveryHandler(() => {});
+    const b = sleeper.gateStorage(rawB, userId);
+    await b.getMessages('conv-1', OLD);
+    FakeChannel.open.at(-1)!.deaf = true;
+
+    let land!: () => void;
+    const landed = new Promise<void>((r) => (land = r));
+    const save = rawB.saveMessage.bind(rawB);
+    vi.spyOn(rawB, 'saveMessage').mockImplementationOnce(async (msg, k) => {
+      await landed;
+      return save(msg, k);
+    });
+    const inside = b.saveMessage(message('m1'), OLD);
+    await Promise.resolve();
+    window.dispatchEvent(Object.assign(new Event('pagehide'), { persisted: true }));
+
+    let done = false;
+    const change = changer
+      .holdOtherRealmsForKeyChange(userId, () =>
+        changer.holdStorageForKeyChange(a, OLD, NEW, (store) =>
+          resealDeviceKeyStores(store, OLD, NEW)
+        )
+      )
+      .then(() => (done = true));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(done).toBe(false);
+
+    land();
+    await inside;
+    await change;
+    expect(await opensUnder(rawA, NEW)).toEqual([true, true]);
+  });
+
+  it('an epoch CLEARED with the site storage is not a change: no reload, the next change runs', async () => {
+    const userId = `cross-realm-${counter++}`;
+    const first = await realm();
+    first.joinDeviceKeyLock(userId);
+    await first.withDeviceKeyHeld(userId, async () => {});
+    await first.holdOtherRealmsForKeyChange(userId, async () => {});
+    const ended: string[] = [];
+    first.setKeyRecoveryHandler((r) => ended.push(r));
+    await first.withDeviceKeyHeld(userId, async () => {});
+
+    localStorage.removeItem(`canari-device-key-epoch:${userId}`);
+    window.dispatchEvent(Object.assign(new Event('pagehide'), { persisted: true }));
+    window.dispatchEvent(Object.assign(new Event('pageshow'), { persisted: true }));
+    await first.withDeviceKeyHeld(userId, async () => {});
+    const ran = vi.fn(async () => {});
+    await first.holdOtherRealmsForKeyChange(userId, ran);
+
+    expect(ended).toEqual([]);
+    expect(ran).toHaveBeenCalledTimes(1);
+  });
 });
