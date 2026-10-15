@@ -81,7 +81,7 @@ describe('an attachment the queue cannot take', () => {
     await messaging.handleSendChat(ctx, '', { files: [file] });
     expect(ctx.conversations.get(CONVO)!.messages).toHaveLength(0);
     expect(enqueueMock).not.toHaveBeenCalled();
-    expect(messaging.pendingMediaFiles).toEqual([file]);
+    expect(messaging.pendingMediaFilesFor(CONVO)).toEqual([file]);
   });
 
   it('a refused enqueue withdraws the placeholder before the file is re-staged', async () => {
@@ -96,7 +96,7 @@ describe('an attachment the queue cannot take', () => {
     await messaging.handleSendChat(ctx, '', { files: [file] });
     expect(enqueueMock).toHaveBeenCalledOnce();
     expect(ctx.conversations.get(CONVO)!.messages).toHaveLength(0);
-    expect(messaging.pendingMediaFiles).toEqual([file]);
+    expect(messaging.pendingMediaFilesFor(CONVO)).toEqual([file]);
   });
 
   it('a queued attachment keeps its placeholder', async () => {

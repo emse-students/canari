@@ -22,6 +22,7 @@ vi.mock('$lib/posts/api', () => ({ getReelLimits: () => getReelLimits() }));
 vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, goto: vi.fn() }));
 vi.mock('$lib/utils/appVersion', () => ({
   isIosTauriRuntime: () => false,
+  isAndroidTauriRuntime: () => false,
   isMobileTauriRuntime: () => false,
 }));
 vi.mock('$lib/components/shared/VideoPlayer.svelte', async () => ({
@@ -219,6 +220,8 @@ describe('CameraOverlay history', () => {
     await settle();
 
     expect(document.activeElement).not.toBe(field);
+    // The page under the layer is not re-laid out (its scroller would lose its position).
+    expect(document.documentElement.classList.contains('fullscreen-place-open')).toBe(false);
     // Its entry's traversal lands HERE, not in the next test.
     unmount(app);
     await drainTraversals(model);

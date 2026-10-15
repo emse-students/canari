@@ -1465,8 +1465,9 @@
           authToken={session.authToken}
           onFilesSelected={handleFilesSelected}
           onSendVoiceNote={handleSendVoiceNote}
-          pendingFiles={messaging.pendingMediaFiles}
-          onRemovePendingFile={messaging.removePendingMediaFile}
+          pendingFiles={messaging.pendingMediaFilesFor(convs.selectedContact)}
+          onRemovePendingFile={(index) =>
+            messaging.removePendingMediaFile(convs.selectedContact, index)}
           videoPreparation={messaging.videoPreparation}
           isUploading={messaging.isUploadingMedia}
           onStartAudioCall={CALLS_ENABLED

@@ -152,7 +152,7 @@ describe('destinationRules (D-camera, 2026-10-11)', () => {
   it('a chat takes photos only, and hands the take back as a file', () => {
     expect(destinationRules('chat')).toEqual({
       photoOnly: true,
-      audio: false,
+      microphone: 'never',
       handsBackFile: true,
       gallery: false,
       soundRemoval: false,
@@ -162,7 +162,7 @@ describe('destinationRules (D-camera, 2026-10-11)', () => {
   it('a post may film, hands back a file, and has no reel-only controls', () => {
     expect(destinationRules('post')).toEqual({
       photoOnly: false,
-      audio: true,
+      microphone: 'separate',
       handsBackFile: true,
       gallery: false,
       soundRemoval: false,
@@ -172,7 +172,7 @@ describe('destinationRules (D-camera, 2026-10-11)', () => {
   it('the feed is the reel flow, unchanged', () => {
     expect(destinationRules('feed')).toEqual({
       photoOnly: false,
-      audio: true,
+      microphone: 'with-lens',
       handsBackFile: false,
       gallery: true,
       soundRemoval: true,

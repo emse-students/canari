@@ -6,10 +6,16 @@
    * AN OVERLAY, NEVER THE `/camera` TAB (reels-in-chat.md section 1): a conversation is selected by
    * state, not by a route a Back can restore, so leaving through the tab would drop the draft, the
    * scroll position and the open conversation. The layer is moved to `document.body` (a composer sits
-   * under transforms that would turn `fixed` into "fixed to the composer"), carries
-   * `fullscreen-place-open` on the document as the tab's route does, and holds ONE history entry:
+   * under transforms that would turn `fixed` into "fixed to the composer") and holds ONE history entry:
    * Back closes the camera when nothing is being taken, while a take pushes its own above it
    * (ReelCapture), so Back ends a recording, then discards a review, then closes the camera.
+   *
+   * THE PAGE UNDER IT IS NOT TOUCHED. It used to set `fullscreen-place-open` as the tab's route does,
+   * but that class re-lays the page OUT (the shell's top padding, the scroller's bottom padding and
+   * `overflow: hidden`): under an opaque layer it changed nothing visible, and a scroller at its
+   * bottom lost its padding, so its `scrollTop` was clamped and the conversation or the feed came back
+   * shifted (PR #1859 review, 2026-10-15). The layer is `fixed` on `document.body`, outside the shell,
+   * so none of those rules ever applied to IT.
    *
    * THERE IS NO FALLBACK. A camera that cannot open (permission, no device) shows its own refusal
    * screen in CameraScreen; the member closes the layer and uses the gallery picker.
@@ -49,12 +55,10 @@
       console.debug('[camera-overlay] the focused field is blurred: no keyboard over the camera');
       focused.blur();
     }
-    document.documentElement.classList.add('fullscreen-place-open');
     pushHistoryOverlay(entry);
   });
 
   onDestroy(() => {
-    document.documentElement.classList.remove('fullscreen-place-open');
     // A no-op when Back already took the entry off the stack.
     abandonHistoryOverlay(entry);
   });

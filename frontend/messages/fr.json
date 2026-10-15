@@ -3304,6 +3304,7 @@
   "reels_shutter_stop": "Arrêter l'enregistrement",
   "reels_capture_gallery": "Choisir une vidéo dans la galerie",
   "reels_capture_record_error": "L'enregistrement a échoué. Réessayez.",
+  "reels_capture_no_microphone": "Micro indisponible : photos uniquement. Autorisez le micro pour filmer.",
   "reels_capture_photo_error": "La photo a échoué. Réessayez.",
   "reels_capture_not_a_video": "Ce fichier n'est pas une vidéo.",
   "reels_capture_too_long": "Un CanaReel dure {seconds} secondes au plus.",

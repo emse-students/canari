@@ -24,8 +24,8 @@
   import ReelShutter from './ReelShutter.svelte';
   import ReelReview from './ReelReview.svelte';
   import ReelPublishSheet from './ReelPublishSheet.svelte';
-  import { CameraSession } from '$lib/reels/cameraSession.svelte';
-  import { openPhotoCamera } from '$lib/reels/cameraAccess';
+  import { CameraSession, type CameraOpener } from '$lib/reels/cameraSession.svelte';
+  import { openPhotoCamera, openPostCamera, openReelCamera } from '$lib/reels/cameraAccess';
   import {
     captureFileFrom,
     captureReducer,
@@ -35,6 +35,7 @@
     shutterRingFraction,
     SHUTTER_HOLD_THRESHOLD_MS,
     type CaptureDestination,
+    type DestinationRules,
     type CaptureEvent,
     type CaptureState,
     type LimitsFault,
@@ -47,6 +48,8 @@
   import type { PublishReelDeps } from '$lib/reels/publishReel';
   import { refusalStatus } from '$lib/utils/apiRefusal';
   import { isIosTauriRuntime } from '$lib/utils/appVersion';
+  import { currentAttachRuntime, opensNatively } from '$lib/utils/chat/attachSources';
+  import { pickNatively } from '$lib/utils/chat/nativeAttachPicker';
   import {
     abandonHistoryOverlay,
     closeHistoryOverlayFromUi,
@@ -57,6 +60,13 @@
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { m } from '$lib/paraglide/messages';
   import ReelEditor from './ReelEditor.svelte';
+
+  /** The opener for each way of asking the microphone (`DestinationRules.microphone`). */
+  const OPENER: Record<DestinationRules['microphone'], CameraOpener> = {
+    'with-lens': (facing) => openReelCamera(facing),
+    separate: openPostCamera,
+    never: openPhotoCamera,
+  };
 
   interface Props {
     /** The session, injectable for tests. */
@@ -73,8 +83,9 @@
 
   let {
     destination = 'feed',
-    // A photo-only camera (a chat) never asks for the microphone (D-camera, 2026-10-11).
-    session = new CameraSession(destinationRules(destination).audio ? undefined : openPhotoCamera),
+    // How the microphone is asked is the destination's (destinationRules): with the lens on the tab,
+    // on its own in a post, never in a chat.
+    session = new CameraSession(OPENER[destinationRules(destination).microphone]),
     publishDeps,
     oncapture,
     onclose,
@@ -83,9 +94,29 @@
   const rules = $derived(destinationRules(destination));
   /** A photo needs no ceiling: only a video take reads the server's cap. */
   const needsLimits = $derived(!rules.photoOnly);
-
+  /** The open stream carries a microphone - a fact of the session, not of the destination. */
+  const hasMicrophone = $derived((session.stream?.getAudioTracks().length ?? 0) > 0);
+  /**
+   * A HOLD MAY BECOME A VIDEO. A post camera whose microphone was refused keeps its photos
+   * (`openPostCamera`); a cap not read yet (offline) keeps them too - a photo needs neither.
+   */
   let capture = $state<CaptureState>({ kind: 'ready' });
   let limits = $state<ReelLimits | null>(null);
+  const canFilm = $derived(!rules.photoOnly && hasMicrophone && limits !== null);
+  /** Set by the teardown: an answer arriving after it (the discard question) acts on nothing. */
+  let destroyed = false;
+  /** The "photos only" notice was given for this session's microphone refusal. */
+  let toldNoMicrophone = false;
+
+  // A destination that films, on a camera live WITHOUT a microphone: said once, so a hold that takes
+  // a photo is not a mystery.
+  $effect(() => {
+    if (session.phase !== 'live' || rules.photoOnly || hasMicrophone || toldNoMicrophone) return;
+    toldNoMicrophone = true;
+    console.warn(`[reel-capture] live with no microphone (${destination}): photos only`);
+    showToast(m.reels_capture_no_microphone(), 'warning');
+  });
+
   let limitsFault = $state<LimitsFault | null>(null);
   let elapsedMs = $state(0);
   /** The publish step is open over the review (its own history entry, above the take's). */
@@ -108,6 +139,8 @@
   let editor = $state<ReelEditor>();
 
   const ios = isIosTauriRuntime();
+  /** The gallery is the native library (the iOS app), never a file input. */
+  const nativeGallery = opensNatively(currentAttachRuntime(false), 'library');
 
   async function loadLimits() {
     limitsFault = null;
@@ -145,9 +178,10 @@
     console.debug(`[reel-capture] ${before.kind} -> ${after.kind} on ${event.type}`);
     capture = after;
     if (before.kind === 'pressing') clearHoldTimer();
-    if (after.kind === 'pressing' && !rules.photoOnly) {
-      // The press becomes a video only by STAYING down; the timer only reports that it did. A
-      // photo-only destination never arms it, so every press is a tap, however long.
+    if (after.kind === 'pressing' && canFilm) {
+      // The press becomes a video only by STAYING down; the timer only reports that it did. A camera
+      // that cannot film (photo-only destination, no microphone, no cap) never arms it, so every
+      // press is a tap, however long.
       holdTimer = setTimeout(() => send({ type: 'hold' }), SHUTTER_HOLD_THRESHOLD_MS);
     }
     if (before.kind === 'pressing' && after.kind === 'recording') beginTake();
@@ -235,7 +269,14 @@
    * Keeping it re-arms the Back entry that asking spent.
    */
   async function discardTakeAfterAsking() {
-    if (await confirmDiscardTake()) dismissTake();
+    const discard = await confirmDiscardTake();
+    if (destroyed) {
+      // Back closed the camera while the question was up: there is no take left to keep, and an
+      // entry pushed now would close nothing - the next Back spent on a dead page.
+      console.debug('[reel-capture] the discard question was answered after the camera closed');
+      return;
+    }
+    if (discard) dismissTake();
     else if (capture.kind === 'review') holdTakeEntry();
   }
 
@@ -359,7 +400,37 @@
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
-    if (!file || !limits) return;
+    if (file) await takePickedVideo(file);
+  }
+
+  /**
+   * THE GALLERY IN THE iOS APP IS THE NATIVE LIBRARY (`opensNatively`): a `video/*` input there is
+   * answered by WebKit's sheet, whose "Prendre une video" is the SYSTEM camera that D-camera removed
+   * (PR #1859 review, 2026-10-15). PHPicker offers the library alone; its first pick is checked as
+   * an input's would be.
+   */
+  function openGallery() {
+    if (!nativeGallery) {
+      picker?.click();
+      return;
+    }
+    console.debug('[reel-capture] gallery: the native library');
+    pickNatively('library')
+      .then((files) => {
+        console.debug(`[reel-capture] the native library handed ${files.length} file(s)`);
+        if (files[0]) void takePickedVideo(files[0]);
+      })
+      .catch((error: unknown) => {
+        console.error(`[reel-capture] the native library picker failed: ${String(error)}`);
+        showToast(m.chat_attach_picker_failed(), 'error');
+      });
+  }
+
+  async function takePickedVideo(file: File) {
+    if (!limits) {
+      console.warn('[reel-capture] a gallery pick arrived before the cap was read');
+      return;
+    }
     if (!file.type.startsWith('video/')) {
       console.warn(`[reel-capture] picked a ${file.type || 'typeless'} file, not a video`);
       showToast(m.reels_capture_not_a_video(), 'error');
@@ -383,6 +454,7 @@
   }
 
   onDestroy(() => {
+    destroyed = true;
     clearHoldTimer();
     abandonRecording();
     const entry = takeEntry;
@@ -426,17 +498,19 @@
               title={m.reels_capture_gallery()}
               disabled={!limits}
               data-swipe-nav-ignore
-              onclick={() => picker?.click()}
+              onclick={openGallery}
             >
               <Images size={22} strokeWidth={2} />
             </button>
-            <input
-              bind:this={picker}
-              type="file"
-              accept="video/*"
-              class="hidden"
-              onchange={onPicked}
-            />
+            {#if !nativeGallery}
+              <input
+                bind:this={picker}
+                type="file"
+                accept="video/*"
+                class="hidden"
+                onchange={onPicked}
+              />
+            {/if}
           {/if}
         </div>
         <div class="flex flex-col items-center gap-3">
@@ -444,7 +518,7 @@
             {recording}
             {fraction}
             timeLabel={formatTakeTime(elapsedMs)}
-            disabled={(needsLimits && !limits) ||
+            disabled={(!rules.handsBackFile && !limits) ||
               !camera?.ready ||
               capture.kind === 'finishing' ||
               capture.kind === 'photo'}

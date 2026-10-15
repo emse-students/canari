@@ -105,9 +105,39 @@ describe('a video picked in the chat', () => {
     const options = prepareMock.mock.calls[0][1] as PrepareVideoOptions;
     expect(options.maxBytes).toBeGreaterThan(SERVER_MAX_BYTES - 1024);
     expect(options.maxBytes).toBeLessThan(SERVER_MAX_BYTES);
-    expect(messaging.pendingMediaFiles).toEqual([{ file: prepared, width: 720, height: 1280 }]);
+    expect(messaging.pendingMediaFilesFor(CONVO)).toEqual([
+      { file: prepared, width: 720, height: 1280 },
+    ]);
     expect(fractionSeen).toBe(0.4);
     expect(messaging.videoPreparation.fraction).toBeNull();
+  });
+
+  it('is staged in the conversation it was picked in, never in the one opened meanwhile', async () => {
+    const prepared = new File([new Uint8Array(4)], 'clip.mp4', { type: 'video/mp4' });
+    const messaging = await freshMessaging();
+    const ctx = makeContext();
+    prepareMock.mockImplementation(async () => {
+      // The member opens another conversation while the video is being prepared.
+      (ctx as { selectedContact: string | null }).selectedContact = 'another-conversation';
+      return {
+        file: prepared,
+        width: 720,
+        height: 1280,
+        durationSeconds: 2,
+        sourceBytes: 9,
+        outputBytes: 4,
+      };
+    });
+
+    await messaging.handleFilesSelected([videoOf(1000)], ctx);
+
+    expect(messaging.pendingMediaFilesFor('another-conversation')).toEqual([]);
+    expect(messaging.pendingMediaFilesFor(CONVO)).toEqual([
+      { file: prepared, width: 720, height: 1280 },
+    ]);
+    // ...and that conversation's Send takes only its own staging.
+    messaging.removePendingMediaFile('another-conversation', 0);
+    expect(messaging.pendingMediaFilesFor(CONVO)).toHaveLength(1);
   });
 
   it('names a refusal on the banner and stages nothing', async () => {
@@ -118,7 +148,7 @@ describe('a video picked in the chat', () => {
     await messaging.handleFilesSelected([videoOf(1000)], ctx);
 
     expect(ctx.setSendError).toHaveBeenCalledTimes(1);
-    expect(messaging.pendingMediaFiles).toEqual([]);
+    expect(messaging.pendingMediaFilesFor(CONVO)).toEqual([]);
   });
 
   it('says nothing for a cancel the member asked for', async () => {
@@ -129,7 +159,7 @@ describe('a video picked in the chat', () => {
     await messaging.handleFilesSelected([videoOf(1000)], ctx);
 
     expect(ctx.setSendError).not.toHaveBeenCalled();
-    expect(messaging.pendingMediaFiles).toEqual([]);
+    expect(messaging.pendingMediaFilesFor(CONVO)).toEqual([]);
   });
 
   it('prepares two picks one after the other, never at once', async () => {

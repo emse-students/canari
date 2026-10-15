@@ -132,6 +132,34 @@ export async function openReelCamera(facing: CameraFacing, withAudio = true): Pr
 export const openPhotoCamera: (facing: CameraFacing) => Promise<MediaStream> = (facing) =>
   openReelCamera(facing, false);
 
+/**
+ * The opener of the NEW-POST camera: the lens and the microphone as TWO INDEPENDENT requests.
+ *
+ * WHY NOT ONE REQUEST, AS THE REEL TAB MAKES (PR #1859 review, 2026-10-15). One request is one
+ * outcome: a refused or absent microphone rejected the whole of it, so the post camera took no PHOTO
+ * either - and the system camera that used to cover a post's photo is gone (D-camera). A post photo
+ * needs no microphone, so the lens is asked alone and its refusal is the camera's
+ * ({@link CameraAccessError}); the microphone is then asked on its own, and ITS outcome is a fact
+ * about the session, read by the capture screen from the stream (no audio track: photos only, said
+ * to the member). Neither request is a retry of the other, and nothing is learnt by failing: each
+ * answers the one question it asks. On iOS that is the same two system questions as the combined
+ * request, camera first this time.
+ *
+ * @throws {CameraAccessError} when the LENS is refused - never for the microphone.
+ */
+export async function openPostCamera(facing: CameraFacing): Promise<MediaStream> {
+  const lens = await openReelCamera(facing, false);
+  try {
+    const mic = await navigator.mediaDevices.getUserMedia({ audio: REEL_AUDIO_CONSTRAINTS });
+    console.debug('[camera] post camera: microphone granted - photos and videos');
+    return new MediaStream([...lens.getVideoTracks(), ...mic.getAudioTracks()]);
+  } catch (err) {
+    const fault = classifyCameraError(err);
+    console.warn(`[camera] post camera: microphone refused (${fault}) - PHOTOS ONLY`, err);
+    return lens;
+  }
+}
+
 /** Hands the camera and the microphone back. Safe on a stream already stopped. */
 export function releaseCamera(stream: MediaStream | null): void {
   if (!stream) return;

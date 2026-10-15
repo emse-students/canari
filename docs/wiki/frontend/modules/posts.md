@@ -100,7 +100,15 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   (`CameraOverlay`, `ReelCapture` with `destination="post"`): a PHOTO or a VIDEO taken there comes
   back as a file through `onFiles` and is attached - and retained - as any picked post media, with
   the POST class, never as a reel. The sound-removal button and the gallery shortcut of the reel flow
-  are not offered there. The Android manifest lost its `<queries>` for `IMAGE_CAPTURE` /
+  are not offered there. **The post camera asks the lens and the microphone as TWO requests**
+  (`openPostCamera`, PR #1859 review 2026-10-15): one combined request made a refused microphone a
+  refused camera, so a post took no photo either. A refused microphone leaves a live camera with no
+  audio track: every press is a photo, said once ("Micro indisponible : photos uniquement"). A cap
+  not yet read (offline) disables only the video, never the photo. **In the iOS app "Photo/video" is
+  the native photo library** (`opensNatively` + `pickNatively`, as the chat's "Phototheque"): a file
+  input accepting images or videos is answered by WebKit's sheet, whose "Prendre une photo ou une
+  video" IS the system camera. The documents input stays an input: no image or video in its accept
+  list, so WebKit opens the document picker directly. The Android manifest lost its `<queries>` for `IMAGE_CAPTURE` /
   `VIDEO_CAPTURE` and the FileProvider its `Pictures/` root; `androidCaptureManifest.test.ts` pins
   their ABSENCE. **Every pick ADDS**: each input empties itself after handing its files over, so a
   PDF added after a photo no longer replaces the photo.

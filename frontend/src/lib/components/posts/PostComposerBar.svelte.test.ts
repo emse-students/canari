@@ -14,9 +14,30 @@ import { it, expect, afterEach, vi } from 'vitest';
 import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
 import PostComposerBar from './PostComposerBar.svelte';
 
+// The camera chip mounts the real capture screen: no server for its cap, no lens to open. Both are
+// answered here, or every run prints a refused connection and a missing `getUserMedia`.
+vi.mock('$lib/posts/api', () => ({
+  getReelLimits: () =>
+    Promise.resolve({ maxDurationMs: 90_000, retentionDays: 30, warningWindowDays: 7 }),
+}));
+vi.mock('$lib/reels/cameraAccess', async (orig) => ({
+  ...(await orig<typeof import('$lib/reels/cameraAccess')>()),
+  openPostCamera: () => new Promise<MediaStream>(() => {}),
+}));
+
+const runtime = vi.hoisted(() => ({ iosApp: false }));
+vi.mock('$lib/utils/appVersion', async (orig) => ({
+  ...(await orig<typeof import('$lib/utils/appVersion')>()),
+  isIosTauriRuntime: () => runtime.iosApp,
+}));
+const pickNatively = vi.hoisted(() => vi.fn());
+vi.mock('$lib/utils/chat/nativeAttachPicker', () => ({ pickNatively }));
+
 const mounted: (() => void)[] = [];
 
 afterEach(() => {
+  runtime.iosApp = false;
+  pickNatively.mockReset();
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';
 });
@@ -128,4 +149,19 @@ it('has ONE camera chip, a button opening the in-app overlay for a POST - never 
   expect(document.querySelector('[data-camera-overlay]')?.getAttribute('data-camera-overlay')).toBe(
     'post'
   );
+});
+
+it('in the iOS app "Photo/video" is the native library: no input WebKit would answer with its camera', async () => {
+  runtime.iosApp = true;
+  const photo = new File(['x'], 'IMG_1.jpg', { type: 'image/jpeg' });
+  pickNatively.mockResolvedValue([photo]);
+  const { target, props } = mountBar();
+
+  expect(target.querySelectorAll('input[accept*="image"], input[accept*="video"]')).toHaveLength(0);
+  target.querySelector<HTMLButtonElement>('button[data-post-library]')!.click();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(pickNatively).toHaveBeenCalledWith('library');
+  expect(props.onFiles).toHaveBeenCalledWith([photo]);
 });

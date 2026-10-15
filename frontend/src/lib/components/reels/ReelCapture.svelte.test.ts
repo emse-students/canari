@@ -13,6 +13,7 @@ import { installFakeMediaRecorder } from '$lib/reels/fakeMediaRecorder.test-help
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import { pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
 import { m } from '$lib/paraglide/messages';
+import { toastStore } from '$lib/stores/toast.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
 // The publish step fades in, and a test closes it mid-fade.
@@ -23,10 +24,15 @@ vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm }));
 const getReelLimits = vi.fn();
 vi.mock('$lib/posts/api', () => ({ getReelLimits: () => getReelLimits() }));
 vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, goto: vi.fn() }));
+const runtime = vi.hoisted(() => ({ iosApp: false }));
 vi.mock('$lib/utils/appVersion', () => ({
-  isIosTauriRuntime: () => false,
-  isMobileTauriRuntime: () => false,
+  isIosTauriRuntime: () => runtime.iosApp,
+  isAndroidTauriRuntime: () => false,
+  isMobileTauriRuntime: () => runtime.iosApp,
 }));
+vi.mock('$lib/reels/videoDuration', () => ({ readVideoDurationMs: () => Promise.resolve(5_000) }));
+const pickNatively = vi.hoisted(() => vi.fn());
+vi.mock('$lib/utils/chat/nativeAttachPicker', () => ({ pickNatively }));
 vi.mock('$lib/utils/historyOverlayStack', async (orig) => ({
   ...(await orig<typeof import('$lib/utils/historyOverlayStack')>()),
   pushHistoryOverlay: vi.fn(),
@@ -54,9 +60,15 @@ vi.mock('$lib/reels/framedCapture', async (orig) => ({
 const mounted: Record<string, unknown>[] = [];
 let Recorder: ReturnType<typeof installFakeMediaRecorder>;
 
-function stream(): MediaStream {
+/** A camera stream; `microphone: false` is a session whose microphone was refused. */
+function stream(microphone = true): MediaStream {
   const track = { stop: vi.fn(), getCapabilities: () => ({}) };
-  const s = { getTracks: () => [track], getVideoTracks: () => [track], getAudioTracks: () => [] };
+  const audio = microphone ? [{ stop: vi.fn(), kind: 'audio' }] : [];
+  const s = {
+    getTracks: () => [track, ...audio],
+    getVideoTracks: () => [track],
+    getAudioTracks: () => audio,
+  };
   Object.setPrototypeOf(s, MediaStream.prototype);
   return s as unknown as MediaStream;
 }
@@ -81,6 +93,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  runtime.iosApp = false;
   vi.useRealTimers();
   while (mounted.length) unmount(mounted.pop()!);
   document.body.innerHTML = '';
@@ -96,8 +109,8 @@ async function settle() {
   flushSync();
 }
 
-async function render(extra: Record<string, unknown> = {}) {
-  const session = new CameraSession(() => Promise.resolve(stream()));
+async function render(extra: Record<string, unknown> = {}, microphone = true) {
+  const session = new CameraSession(() => Promise.resolve(stream(microphone)));
   const target = document.createElement('div');
   document.body.appendChild(target);
   mounted.push(mount(ReelCapture, { target, props: { session, ...extra } }));
@@ -376,23 +389,43 @@ describe('ReelCapture', () => {
   });
 });
 
-describe('the default camera opener follows the destination (no microphone for a chat)', () => {
+describe('the default camera opener follows the destination (how the microphone is asked)', () => {
   it.each([
-    ['chat', false],
-    ['post', true],
-    ['feed', true],
-  ] as const)('%s asks for audio: %s', async (destination, audio) => {
+    // [destination, the requests' audio: false = none, true = asked]
+    ['chat', [false]],
+    ['post', [false, true]],
+    ['feed', [true]],
+  ] as const)('%s asks %j', async (destination, requests) => {
     vi.stubGlobal('screen', { width: 393, height: 851 });
-    const getUserMedia = vi.fn().mockResolvedValue(stream());
-    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+    const lens = stream();
+    const getUserMedia = vi.fn().mockResolvedValue(lens);
+    vi.stubGlobal('navigator', { userAgent: '', mediaDevices: { getUserMedia } });
+    // The post camera joins its two answers into one stream.
+    const Real = MediaStream;
+    vi.stubGlobal(
+      'MediaStream',
+      class {
+        constructor(tracks: { kind?: string }[]) {
+          const joined = {
+            getTracks: () => tracks,
+            getVideoTracks: () => tracks.filter((t) => t.kind !== 'audio'),
+            getAudioTracks: () => tracks.filter((t) => t.kind === 'audio'),
+          };
+          // The element's `srcObject` accepts only a MediaStream.
+          Object.setPrototypeOf(joined, Real.prototype);
+          return joined;
+        }
+      }
+    );
     const target = document.createElement('div');
     document.body.appendChild(target);
     // No injected session: the component builds its own, which is what ships.
     mounted.push(mount(ReelCapture, { target, props: { destination, oncapture: vi.fn() } }));
     await settle();
 
-    expect(getUserMedia).toHaveBeenCalledTimes(1);
-    expect(getUserMedia.mock.calls[0][0].audio === false).toBe(!audio);
+    expect(
+      getUserMedia.mock.calls.map(([c]) => c.audio !== false && c.audio !== undefined)
+    ).toEqual(requests);
   });
 });
 
@@ -439,6 +472,61 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
       m.reels_review_add()
     );
     expect(target.querySelector('[data-reel-sound]')).toBeNull();
+  });
+
+  it('a post camera whose microphone was refused still takes photos: a hold is a photo, and it is said', async () => {
+    const { target, hold } = await render({ destination: 'post', oncapture: vi.fn() }, false);
+    expect(toastStore.toasts.map((t) => t.message)).toContain(m.reels_capture_no_microphone());
+
+    await hold();
+
+    expect(Recorder.instances).toHaveLength(0);
+    expect(target.querySelector('[data-reel-media]')?.tagName).toBe('IMG');
+  });
+
+  it('a post photo needs no reel cap: the shutter works while the cap is unread (offline)', async () => {
+    getReelLimits.mockReturnValue(new Promise(() => {}));
+    const { target, shutter, tap } = await render({ destination: 'post', oncapture: vi.fn() });
+    expect(shutter().disabled).toBe(false);
+
+    await tap();
+
+    expect(target.querySelector('[data-reel-media]')?.tagName).toBe('IMG');
+  });
+
+  it('a discard question answered "keep" after the camera closed pushes no dead history entry', async () => {
+    let answer: (keep: boolean) => void = () => {};
+    showConfirm.mockReturnValue(new Promise<boolean>((r) => (answer = (keep) => r(!keep))));
+    const { tap } = await render({ destination: 'chat', oncapture: vi.fn(), onclose: vi.fn() });
+    await tap();
+    expect(vi.mocked(pushHistoryOverlay)).toHaveBeenCalledTimes(1);
+    const takeClose = vi.mocked(pushHistoryOverlay).mock.calls[0][0];
+
+    // Back #1 asks; Back #2 closes the camera (its owner unmounts it) while the question is up.
+    takeClose('back');
+    await settle();
+    unmount(mounted.pop()!);
+    answer(true);
+    await settle();
+
+    expect(vi.mocked(pushHistoryOverlay)).toHaveBeenCalledTimes(1);
+  });
+
+  it('in the iOS app the gallery is the native library, never an input WebKit would answer with its camera', async () => {
+    runtime.iosApp = true;
+    const clip = new File([new Uint8Array(3)], 'clip.mp4', { type: 'video/mp4' });
+    pickNatively.mockResolvedValue([clip]);
+    const { target } = await render();
+    expect(target.querySelector('input[type="file"]')).toBeNull();
+
+    target
+      .querySelector<HTMLButtonElement>('[aria-label="' + m.reels_capture_gallery() + '"]')!
+      .click();
+    await settle();
+    await settle();
+
+    expect(pickNatively).toHaveBeenCalledWith('library');
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
   });
 
   it('the feed keeps its gallery shortcut and the publish step', async () => {

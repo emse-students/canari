@@ -8,6 +8,7 @@ import {
   CameraAccessError,
   classifyCameraError,
   openPhotoCamera,
+  openPostCamera,
   openReelCamera,
   releaseCamera,
   torchSupported,
@@ -55,6 +56,53 @@ describe('openPhotoCamera (a chat photo never asks for the microphone)', () => {
 
     expect(getUserMedia.mock.calls[0][0].audio).toBe(false);
     expect(getUserMedia.mock.calls[0][0].video.facingMode).toEqual({ exact: 'user' });
+  });
+});
+
+describe('openPostCamera (a refused microphone leaves the photos)', () => {
+  const lensTrack = { label: 'back', kind: 'video' };
+  const lens = { getVideoTracks: () => [lensTrack], getAudioTracks: () => [] };
+
+  it('asks the lens ALONE first, then the microphone on its own, and joins both', async () => {
+    vi.stubGlobal('screen', { width: 393, height: 851 });
+    const micTrack = { kind: 'audio' };
+    const getUserMedia = vi
+      .fn()
+      .mockResolvedValueOnce(lens)
+      .mockResolvedValueOnce({ getAudioTracks: () => [micTrack] });
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+    vi.stubGlobal(
+      'MediaStream',
+      class {
+        constructor(readonly tracks: unknown[]) {}
+      }
+    );
+
+    const stream = (await openPostCamera('environment')) as unknown as { tracks: unknown[] };
+
+    expect(getUserMedia.mock.calls[0][0].audio).toBe(false);
+    expect(getUserMedia.mock.calls[1][0].video).toBeUndefined();
+    expect(stream.tracks).toEqual([lensTrack, micTrack]);
+  });
+
+  it('a refused microphone is NOT a refused camera: the lens comes back, photos only', async () => {
+    vi.stubGlobal('screen', { width: 393, height: 851 });
+    const getUserMedia = vi
+      .fn()
+      .mockResolvedValueOnce(lens)
+      .mockRejectedValueOnce(new DOMException('no', 'NotAllowedError'));
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+
+    await expect(openPostCamera('environment')).resolves.toBe(lens);
+  });
+
+  it('a refused lens is the camera refusal, and the microphone is never asked', async () => {
+    vi.stubGlobal('screen', { width: 393, height: 851 });
+    const getUserMedia = vi.fn().mockRejectedValueOnce(new DOMException('no', 'NotAllowedError'));
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+
+    await expect(openPostCamera('environment')).rejects.toMatchObject({ fault: 'denied' });
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
   });
 });
 

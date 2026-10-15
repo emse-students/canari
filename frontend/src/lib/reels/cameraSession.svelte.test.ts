@@ -124,4 +124,34 @@ describe('CameraSession', () => {
     await session.toggleTorch();
     expect(session.torchOn).toBe(true);
   });
+
+  it('leaves `live` when the OS ends the lens under it, and an ended stale lens changes nothing', async () => {
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open);
+    const listeners: (() => void)[] = [];
+    const first = fakeStream();
+    Object.assign(first.video, {
+      addEventListener: (type: string, fn: () => void) => type === 'ended' && listeners.push(fn),
+    });
+    const started = session.start();
+    calls[0].resolve(first.stream);
+    await started;
+    expect(session.phase).toBe('live');
+
+    // Another app takes the camera: the track ends.
+    listeners[0]();
+    expect(session.phase).toBe('error');
+    expect(session.fault).toBe('busy');
+    expect(session.stream).toBeNull();
+    expect(first.stop).toHaveBeenCalled();
+
+    // A retry opens a new lens; the OLD track's end, arriving late, must not take it down.
+    const second = fakeStream();
+    const retried = session.start();
+    calls[1].resolve(second.stream);
+    await retried;
+    listeners[0]();
+    expect(session.phase).toBe('live');
+    expect(session.stream).toBe(second.stream);
+  });
 });

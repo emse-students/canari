@@ -16,6 +16,9 @@
   import DateTimeField from '$lib/components/ui/DateTimeField.svelte';
   import { toDatetimeLocalValue } from '$lib/utils/dates';
   import { Log } from '$lib/utils/Log';
+  import { currentAttachRuntime, opensNatively } from '$lib/utils/chat/attachSources';
+  import { pickNatively } from '$lib/utils/chat/nativeAttachPicker';
+  import { showToast } from '$lib/stores/toast.svelte';
   import { getLocale } from '$lib/paraglide/runtime';
   import { m } from '$lib/paraglide/messages';
 
@@ -40,6 +43,12 @@
    * native"*). The ONE camera chip opens Canari's own camera as an overlay (`CameraOverlay`) and a photo
    * OR a video taken there comes back as a file through `onFiles`, so it is attached - and retained -
    * as any picked post media, never as a reel. A mouse has no camera chip: `pointer-fine:hidden`.
+   *
+   * IN THE iOS APP "Photo/video" OPENS THE NATIVE PHOTO LIBRARY, as the chat's "Phototheque" does
+   * (`opensNatively`): an input accepting images or videos is answered by WebKit's sheet, whose
+   * "Prendre une photo ou une video" is the SYSTEM camera - the one D-camera removed (PR #1859
+   * review, 2026-10-15). The documents input stays an input: its accept list holds no image or video,
+   * so WebKit opens the document picker directly.
    */
   interface Props {
     /** Files picked through any of the inputs, in the order picked. Always an ADDITION. */
@@ -73,6 +82,22 @@
   let formatting = $state(false);
   /** The in-app camera is open over the composer. */
   let cameraOpen = $state(false);
+  /** The photo library is the native picker (the iOS app), never a file input. */
+  const nativeLibrary = opensNatively(currentAttachRuntime(false), 'library');
+
+  /** The iOS app's photo library: PHPicker, its picks handed over like an input's. */
+  function pickLibraryNatively() {
+    Log.d('POST_COMPOSER', 'photo library: the native picker');
+    pickNatively('library')
+      .then((files) => {
+        Log.d('POST_COMPOSER', `${files.length} file(s) picked via the native library`);
+        if (files.length > 0) onFiles(files);
+      })
+      .catch((error: unknown) => {
+        console.error(`[POST_COMPOSER] the native library picker failed: ${String(error)}`);
+        showToast(m.chat_attach_picker_failed());
+      });
+  }
 
   /** Formatted for the chip, in the reader's locale; the input keeps its own value. */
   const scheduledLabel = $derived.by(() => {
@@ -138,17 +163,29 @@
         use:scrollFades
         class="no-scrollbar -my-1 flex w-full items-center gap-2 overflow-x-auto px-0.5 py-1"
       >
-        <label class="{chipClass} {idleChip}">
-          <Images size={16} strokeWidth={2.25} class="text-emerald-600 dark:text-emerald-400" />
-          {m.post_composer_photo_video()}
-          <input
-            type="file"
-            accept="image/*,video/*"
-            multiple
-            class="sr-only"
-            onchange={(e) => takeFiles(e, 'gallery')}
-          />
-        </label>
+        {#if nativeLibrary}
+          <button
+            type="button"
+            class="{chipClass} {idleChip}"
+            data-post-library
+            onclick={pickLibraryNatively}
+          >
+            <Images size={16} strokeWidth={2.25} class="text-emerald-600 dark:text-emerald-400" />
+            {m.post_composer_photo_video()}
+          </button>
+        {:else}
+          <label class="{chipClass} {idleChip}">
+            <Images size={16} strokeWidth={2.25} class="text-emerald-600 dark:text-emerald-400" />
+            {m.post_composer_photo_video()}
+            <input
+              type="file"
+              accept="image/*,video/*"
+              multiple
+              class="sr-only"
+              onchange={(e) => takeFiles(e, 'gallery')}
+            />
+          </label>
+        {/if}
         <button
           type="button"
           class="{chipClass} {idleChip} pointer-fine:hidden"

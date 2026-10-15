@@ -3304,6 +3304,7 @@
   "reels_shutter_stop": "Stop recording",
   "reels_capture_gallery": "Pick a video from the gallery",
   "reels_capture_record_error": "The recording failed. Try again.",
+  "reels_capture_no_microphone": "Microphone unavailable: photos only. Allow the microphone to film.",
   "reels_capture_photo_error": "The photo failed. Try again.",
   "reels_capture_not_a_video": "This file is not a video.",
   "reels_capture_too_long": "A CanaReel lasts {seconds} seconds at most.",

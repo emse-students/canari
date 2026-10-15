@@ -71,7 +71,19 @@ export class CameraSession {
         return;
       }
       this.stream = stream;
-      this.torchAvailable = torchSupported(stream.getVideoTracks()[0]);
+      const lens = stream.getVideoTracks()[0];
+      this.torchAvailable = torchSupported(lens);
+      // THE OS CAN TAKE THE LENS BACK under a live preview - another app opening the camera, the
+      // permission revoked in the settings. The track then ENDS, and a session still saying `live`
+      // would draw a frozen frame with an armed shutter. The end is the fact; it is read here.
+      lens?.addEventListener?.('ended', () => {
+        if (generation !== this.#generation) return;
+        console.warn(`[camera-session] #${generation} the lens ended under a live preview`);
+        ++this.#generation;
+        this.#releaseCurrent();
+        this.fault = 'busy';
+        this.phase = 'error';
+      });
       this.phase = 'live';
     } catch (err) {
       if (generation !== this.#generation) return;

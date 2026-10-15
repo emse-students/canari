@@ -194,8 +194,12 @@ export interface DestinationRules {
   handsBackFile: boolean;
   /** The gallery shortcut (reel clips only) is drawn. */
   gallery: boolean;
-  /** The camera opens WITH the microphone; a photo-only destination never asks for it. */
-  audio: boolean;
+  /**
+   * How the microphone is asked. `with-lens`: in the lens's own request (the reel always has sound,
+   * so a refused microphone is a refused camera). `separate`: after the lens, on its own, so a refused
+   * microphone leaves the photos (`openPostCamera`). `never`: a photo-only destination.
+   */
+  microphone: 'with-lens' | 'separate' | 'never';
   /** The review offers to remove the sound (only the reel publish applies it). */
   soundRemoval: boolean;
 }
@@ -204,7 +208,8 @@ export interface DestinationRules {
 export function destinationRules(destination: CaptureDestination): DestinationRules {
   return {
     photoOnly: destination === 'chat',
-    audio: destination !== 'chat',
+    microphone:
+      destination === 'feed' ? 'with-lens' : destination === 'post' ? 'separate' : 'never',
     handsBackFile: destination !== 'feed',
     gallery: destination === 'feed',
     soundRemoval: destination === 'feed',
