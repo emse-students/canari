@@ -368,7 +368,20 @@ Same protocol and instrument as sections 1 and 5.
 - A pre-session landing still has no salon preview (`landingPreview.ts`).
 - A salon pruned by the listing is deleted with its rows (`deleteConversation`).
 
-**Measured.** See the table below, once the bench has run.
+**Measured** on the Mi 9T (2026-10-15). Both builds are 1.2.8, measured with
+`tools/cold-start/community-open.mjs` on target `BancOuverture-1`. The baseline is #1886's head;
+the F4 build adds this change on top. Each figure is the median of 3 runs, in ms.
+
+| Condition | salon>msgs before | salon>msgs F4 | reopen>msgs before | reopen>msgs F4 |
+| --- | --- | --- | --- | --- |
+| none, 1x | 4177 | 978 | 911 | 572 |
+| none, 4x | 14190 | 4246 | 3587 | 2003 |
+| slow3g, 4x | 17404 | 3832 | 3643 | 2089 |
+| airplane, 1x | never | 606 | never | 646 |
+
+The tab (`tap>salons`) is unchanged within noise: 556/619, 1765/1719 and 1851/1902. That is
+expected, because F4 only touches the salon pane. In the airplane condition, one run of three timed
+out at `tap>target salons` in both builds, so the airplane medians cover 2 runs.
 
 ### Reaching under 200 ms: the tab, and a cached salon's first messages
 
