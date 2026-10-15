@@ -686,17 +686,33 @@ export class MembersController {
     );
 
     // A REMOVAL BY SOMEBODY ELSE IS RECORDED HERE BEFORE ITS MLS COMMIT, and the commit is fanned out
-    // from the device rows deleted just below - so the removed person's devices are read first, and
-    // named as PARTING once the removal has landed (`partingKey`): the commit declaring their
-    // removal is queued to them too. A self-leave makes no commit, and gets no entry.
+    // from the device rows deleted just below - so the removed person's devices are named PARTING
+    // first (`partingKey`): the commit declaring their removal is queued to them too. A self-leave
+    // makes no commit, and gets no entry.
+    //
+    // WRITTEN BEFORE THE DELETE, because the rows it is derived from are gone after it: written
+    // after, a crash in between lost it silently, and a retry found no rows to derive it from
+    // (fourth review of #1878). Redis cannot join the Postgres transaction, so the order is what
+    // makes it crash-safe. An entry for a removal that then fails is HARMLESS, and that is what
+    // allows this order: it names devices that are still members, which the fan-out reaches as
+    // members and never twice, and only a commit declaring this person's removal consumes it.
     const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
-    const partingDevices =
-      caller && caller !== safeUserId
-        ? await this.deviceGroupRepo.find({
-            where: { groupId: safeGroupId, userId: safeUserId },
-            select: { userId: true, deviceId: true },
-          })
-        : [];
+    if (caller && caller !== safeUserId) {
+      const partingDevices = await this.deviceGroupRepo.find({
+        where: { groupId: safeGroupId, userId: safeUserId },
+        select: { userId: true, deviceId: true },
+      });
+      if (partingDevices.length > 0) {
+        const fields = partingDevices.flatMap((d) => [`${d.userId}:${d.deviceId}`, caller]);
+        await this.redis
+          .hset(partingKey(safeGroupId), ...fields)
+          .catch((e: unknown) =>
+            this.logger.warn(
+              `[REMOVE_MEMBER] group=${safeGroupId.slice(0, 8)} user=${safeUserId.slice(0, 8)} parting devices NOT recorded - the removal commit will not reach them: ${String(e)}`
+            )
+          );
+      }
+    }
 
     // Remove all per-device memberships for this user in the group: from here on no application
     // frame is queued for them, and no frame they send is accepted.
@@ -718,20 +734,6 @@ export class MembersController {
       this.logger.error(
         `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} had NO open membership interval - this removal is not recorded as an exclusion`
       );
-    }
-
-    // WRITTEN ONLY ONCE THE REMOVAL HAS LANDED: a removal that failed half-way leaves devices that
-    // are still members, and an entry naming them would be a stale hint nothing asked for. Before
-    // the answer, so the remover's commit - sent after it - finds the entries.
-    if (caller && partingDevices.length > 0) {
-      const fields = partingDevices.flatMap((d) => [`${d.userId}:${d.deviceId}`, caller]);
-      await this.redis
-        .hset(partingKey(safeGroupId), ...fields)
-        .catch((e: unknown) =>
-          this.logger.warn(
-            `[REMOVE_MEMBER] group=${safeGroupId.slice(0, 8)} user=${safeUserId.slice(0, 8)} parting devices NOT recorded - the removal commit will not reach them: ${String(e)}`
-          )
-        );
     }
 
     // Remove all devices of this user from the Redis set

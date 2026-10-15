@@ -182,6 +182,10 @@ export interface ValidateCommitBody {
    * whoever commits a removal - the remover, or a holder collecting a stray leaf - delivers it.
    * Absent from a client predating the field: its removals reach the removed devices as they did
    * before, which is not at all.
+   *
+   * DECLARED, NOT PROVEN - the server cannot read the commit, so any member can forge it. Bounded by
+   * the hint: a forgery can only consume an entry (suppress a delivery), never route a frame to a
+   * device the server did not itself part from this group.
    */
   removes?: { userId: string; deviceId?: string }[];
 }
@@ -392,6 +396,12 @@ export interface HistoryBatchResponse {
    * Absent for a group that holds no history at all (nothing to bound).
    */
   heads: Record<string, string>;
+  /**
+   * Per group, the last row of a tail the server DROPPED for this reader (sent while they were out
+   * of the group): a cursor may move there, as if those rows had been walked. Absent unless the
+   * page ended on such a tail - see `readHistoryStreamPage`.
+   */
+  skipTo?: Record<string, string>;
 }
 
 /** Redis stream MAXLEN (~1000) — upper bound for a full catch-up page. */
@@ -3285,11 +3295,21 @@ export class MessagingService {
    * STILL FILLS** (a Remove holds against a later re-add, user 2026-10-14). Every build ends its walk
    * on an empty page and continues from the LAST row it was handed, so a page that dropped its rows
    * and returned short would end the walk with real rows still behind the dropped ones. The read
-   * goes on, `limit` rows at a time, until `limit` rows are kept or the bound is reached. Rows
-   * dropped past the last kept one are read again by the next page and dropped again - nothing is
-   * skipped that a later page would not reach. A cursor followed only by dropped rows up to the head
-   * IS caught up: there is nothing this reader may ever be handed there, so it is counted as such
-   * rather than logged on every launch.
+   * goes on until `limit` rows are kept or the bound is reached, in chunks of at least
+   * `HISTORY_FULL_PAGE_LIMIT` whatever the caller's `limit` - the caller sets how much it is HANDED,
+   * never how many reads it costs: a `limit` of 1 would otherwise buy one `XRANGE` per row, up to
+   * `HISTORY_STREAM_MAXLEN` of them (fourth review of #1878). Rows dropped past the last kept one
+   * are read again by the next page and dropped again - nothing is skipped that a later page would
+   * not reach.
+   *
+   * **A DROPPED TAIL IS NAMED, SO A CURSOR CAN MOVE PAST IT** (`skipTo`). Every build advances only
+   * over rows it was handed, so a reader whose only unread rows lie in its own window would rescan
+   * them on every launch. When the read reached the bound having kept everything it may hand and
+   * dropped what followed, `skipTo` is the last row read: nothing up to it will ever be this reader's
+   * - a window is a closed past - so a current build moves its cursor there, and the next launch reads
+   * from it. State, not a clock. An older build ignores the field, and its rescan is bounded by the
+   * chunk above; its cursor followed only by dropped rows up to the head is still counted as caught
+   * up rather than logged on every launch.
    */
   private async readHistoryStreamPage(
     groupId: string,
@@ -3299,24 +3319,44 @@ export class MessagingService {
     requester: string,
     quietWhenCaughtUp = false,
     windows?: readonly ExclusionWindow[]
-  ): Promise<{ rows: Record<string, unknown>[]; head?: string; caughtUp: boolean }> {
+  ): Promise<{
+    rows: Record<string, unknown>[];
+    head?: string;
+    caughtUp: boolean;
+    skipTo?: string;
+  }> {
     const streamKey = `history:${groupId}`;
     const endId = until ?? '+';
+    const filtering = windows !== undefined && windows.length > 0;
+    // Without windows nothing is dropped, so this is the single read of `limit` it always was.
+    const chunk = filtering ? Math.max(limit, HISTORY_FULL_PAGE_LIMIT) : limit;
     const kept: Record<string, unknown>[] = [];
     let withheld = 0;
     let read = 0;
     let lastRead = after;
+    let truncated = false;
+    let reachedBound = false;
     while (kept.length < limit) {
       const startId = lastRead ? `(${lastRead}` : '-';
-      const entries = await this.redis.xrange(streamKey, startId, endId, 'COUNT', limit);
+      const entries = await this.redis.xrange(streamKey, startId, endId, 'COUNT', chunk);
       read += entries.length;
       if (entries.length > 0) lastRead = entries[entries.length - 1][0];
       const page = withholdExcludedHistoryRows(this.mapHistoryEntries(entries), windows ?? []);
       withheld += page.withheld;
-      kept.push(...page.rows.slice(0, limit - kept.length));
-      // Without windows nothing is dropped, so this is the single read it always was.
-      if (entries.length < limit || !windows || windows.length === 0) break;
+      const room = limit - kept.length;
+      if (page.rows.length > room) truncated = true;
+      kept.push(...page.rows.slice(0, room));
+      if (entries.length < chunk) {
+        reachedBound = true;
+        break;
+      }
+      if (!filtering) break;
     }
+    const lastKept = kept.length > 0 ? String(kept[kept.length - 1]['id']) : after;
+    const skipTo =
+      filtering && reachedBound && !truncated && read > 0 && lastRead !== lastKept
+        ? lastRead
+        : undefined;
     const head = until
       ? until
       : ((await this.redis.xrevrange(streamKey, '+', '-', 'COUNT', 1))[0]?.[0] ?? undefined);
@@ -3328,10 +3368,12 @@ export class MessagingService {
       this.logger.log(
         `[HISTORY] ${requester} group=${groupId} after=${after ?? 'start'} ` +
           `until=${until ?? 'none'} head=${head ?? 'empty'} limit=${limit} entries=${kept.length}` +
-          (withheld > 0 ? ` withheld=${withheld} (sent while the reader was out of the group)` : '')
+          (withheld > 0
+            ? ` withheld=${withheld} (sent while the reader was out of the group)${skipTo ? ` skipTo=${skipTo}` : ''}`
+            : '')
       );
     }
-    return { rows: kept, head, caughtUp };
+    return { rows: kept, head, caughtUp, ...(skipTo ? { skipTo } : {}) };
   }
 
   /**
@@ -3402,7 +3444,7 @@ export class MessagingService {
     limitRaw?: number,
     untilRaw?: string,
     headerDeviceId?: string
-  ): Promise<{ rows: Record<string, unknown>[]; head?: string }> {
+  ): Promise<{ rows: Record<string, unknown>[]; head?: string; skipTo?: string }> {
     const requester = this.historyRequester(headerUserId, headerDeviceId);
     const groupId = sanitizeQueryValue(groupIdRaw, 'groupId');
     const after = this.sanitizeStreamId(afterRaw);
@@ -3439,7 +3481,11 @@ export class MessagingService {
         false,
         windows
       );
-      return { rows: await this.enrichHistoryWithDisplayNames(page.rows), head: page.head };
+      return {
+        rows: await this.enrichHistoryWithDisplayNames(page.rows),
+        head: page.head,
+        ...(page.skipTo ? { skipTo: page.skipTo } : {}),
+      };
     } catch (e) {
       this.logger.error(`[HISTORY] ${requester} group=${groupId} error=${String(e)}`);
       throw new ServiceUnavailableException('History stream unavailable');
@@ -3507,6 +3553,7 @@ export class MessagingService {
 
     const histories: Record<string, Record<string, unknown>[]> = {};
     const heads: Record<string, string> = {};
+    const skipTo: Record<string, string> = {};
     let caughtUp = 0;
     await Promise.all(
       normalized.map(async ({ groupId, after, until, limit }) => {
@@ -3530,6 +3577,7 @@ export class MessagingService {
           );
           histories[groupId] = page.rows;
           if (page.head) heads[groupId] = page.head;
+          if (page.skipTo) skipTo[groupId] = page.skipTo;
           if (page.caughtUp) caughtUp++;
         } catch (e) {
           this.logger.error(`[HISTORY_BATCH] ${requester} group=${groupId} error=${String(e)}`);
@@ -3546,7 +3594,7 @@ export class MessagingService {
       `[HISTORY_BATCH] ${requester} groups=${normalized.length} authorized=${authorized.size} ` +
         `caughtUp=${caughtUp}`
     );
-    return { histories, heads };
+    return { histories, heads, ...(Object.keys(skipTo).length > 0 ? { skipTo } : {}) };
   }
 
   /**

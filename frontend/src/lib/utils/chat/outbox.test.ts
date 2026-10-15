@@ -2208,12 +2208,12 @@ describe('outbox - a reply decides its quote text at the send', () => {
   });
 
   /**
-   * A 403 ON THE WINDOWS IS AN ANSWER, NOT A BLIP (third review of #1878): this account is off the
-   * roster while the device holds the group - a stale leaf, or a roster and a tree that disagree. It
-   * is the refusal a send would meet, so it takes that arm: the roster repair runs, and the reply is
-   * kept for when it lands. Untyped, it was retried as a blip for good and nothing repaired.
+   * A 403 ON THE WINDOWS IS AN ANSWER ABOUT THE ROSTER, NOT ABOUT THIS DEVICE (fourth review of
+   * #1878). The route refuses on the roster alone; the send refuses on this device's row. So a device
+   * `active` but roster-less must not lose its tree to the roster repair for quoting a message: the
+   * reply goes out quoting by id only, and only the SEND's own refusal may repair.
    */
-  it('a roster refusal on the windows drives the roster repair, and keeps the reply', async () => {
+  it('an active, roster-less device sends its reply id-only and repairs NOTHING', async () => {
     const storage = makeStorage([replyEntry()]);
     const mlsService = makeMls({
       exclusions: async () => {
@@ -2228,10 +2228,36 @@ describe('outbox - a reply decides its quote text at the send', () => {
 
     await outbox.flush();
 
+    expect(recoverRosterDisagreement).not.toHaveBeenCalled();
+    expect(sentPreview(mlsService)).toBe('');
+    const echo = conversations.get('g1')!.messages.find((m) => m.id === 'r1')!;
+    expect(echo.replyTo?.content).toBe('');
+    outbox.dispose();
+  });
+
+  it('the repair runs only on the SEND refusing this device, and the quote survives the failure', async () => {
+    const storage = makeStorage([replyEntry()]);
+    const mlsService = makeMls({
+      exclusions: async () => {
+        throw new ExclusionsRefusedError('g1');
+      },
+      send: async () => {
+        throw new SenderNotActiveError('g1', 'pending');
+      },
+    });
+    const recoverRosterDisagreement = vi.fn().mockResolvedValue(undefined);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, conversations, recoverRosterDisagreement })
+    );
+
+    await outbox.flush();
+
     expect(recoverRosterDisagreement).toHaveBeenCalledWith('g1');
-    expect(mlsService.sendMessage).not.toHaveBeenCalled();
-    expect(storage._map.get('r1')!.status).toBe('pending');
+    // Refused, the blank was never made permanent: the next attempt decides again.
     expect(storage._map.get('r1')!.replyTo!.preview).toBe('the quoted words');
+    const echo = conversations.get('g1')!.messages.find((m) => m.id === 'r1')!;
+    expect(echo.replyTo?.content).toBe('the quoted words');
     outbox.dispose();
   });
 

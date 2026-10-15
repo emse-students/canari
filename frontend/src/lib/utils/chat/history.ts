@@ -843,14 +843,25 @@ export async function replayConversationHistory(params: {
       // First page only: every later fetch already carried it, and the server echoes it back.
       walkHead ??= page.head;
       const history = page.rows;
+      /**
+       * A TAIL THE SERVER DROPPED FOR THIS READER - sent while it was out of the group - is passed
+       * as if walked: none of it will ever be this reader's, and a cursor that stayed before it
+       * would rescan it on every launch (fourth review of #1878). The server names it only when the
+       * page reached the bound, so it is also the end of this walk.
+       */
+      if (page.skipTo) advancePast(page.skipTo);
       if (history.length === 0) {
+        // A walk that only learnt it may skip still has a position worth committing.
+        if (page.skipTo) fetchedAnyPage = true;
         break;
       }
       fetchedAnyPage = true;
 
       const pageLastId = history[history.length - 1]?.id;
       // Reaching the head IS the end of the walk - no request is spent discovering an empty page.
-      const hasMore = Boolean(pageLastId && pageLastId !== fetchCursor && pageLastId !== walkHead);
+      const hasMore = Boolean(
+        !page.skipTo && pageLastId && pageLastId !== fetchCursor && pageLastId !== walkHead
+      );
       if (hasMore && pageLastId) {
         prefetchedNextPage = mlsService.fetchHistory(id, pageLastId, undefined, walkHead);
       }

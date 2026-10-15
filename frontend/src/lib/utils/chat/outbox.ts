@@ -35,7 +35,11 @@ import { syncOutboxMirror } from '$lib/utils/chat/outboxMirror';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { installReachabilityProbe } from '$lib/utils/reachabilityProbe';
-import { SendEdgeRefusedError, type SentFrame } from '$lib/mls-client/mlsDeliveryApi';
+import {
+  ExclusionsRefusedError,
+  SendEdgeRefusedError,
+  type SentFrame,
+} from '$lib/mls-client/mlsDeliveryApi';
 import {
   UPLOAD_NO_ANSWER_ATTEMPTS,
   UPLOAD_PROGRESS_MARGIN_BYTES,
@@ -608,16 +612,44 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * Decided HERE, at the send, against the windows in force now - never when the reply is composed,
    * which would cost a round trip per reply and blank the quote for good when composed offline.
    * **A failed read THROWS** into the send's own catch, an ordinary transient failure: the reply
-   * waits for the next attempt and is never blanked on a failure. A blank is permanent, so it is
-   * written to the entry and to the echo - the stored copy is what a later bundle carries.
+   * waits for the next attempt and is never blanked on a failure.
+   *
+   * **THE SERVER REFUSING THE READ (`ExclusionsRefusedError`, off the roster) IS NOT A VERDICT ON
+   * THIS DEVICE.** The route refuses on the roster alone, the send on this device's row - a device
+   * `active` but roster-less sends freely. So the read's refusal repairs nothing (the roster repair
+   * forgets the tree, and a destructive repair waits for proof the state is broken): the frame
+   * quotes by id only - what a reader of no window may safely carry - and the SEND decides. Accepted,
+   * the reply went out id-only; refused `sender-not-active`, the send's own arm repairs on its own
+   * proof (fourth review of #1878).
+   *
+   * A blank is permanent, so it is written to the entry and the echo - the stored copy is what a
+   * later bundle carries - but only by `commit`, once the frame carrying it has been ACCEPTED: a
+   * send that fails keeps the quote, and the next attempt decides again.
    */
-  async function decideQuote(entry: OutboxEntry): Promise<OutboxEntry> {
-    if (entry.kind !== 'reply' || !entry.replyTo?.preview) return entry;
+  async function decideQuote(
+    entry: OutboxEntry
+  ): Promise<{ entry: OutboxEntry; commit: () => Promise<void> }> {
+    const kept = { entry, commit: async () => {} };
+    if (entry.kind !== 'reply' || !entry.replyTo?.preview) return kept;
     const quoted = await quotedCopy(entry.replyTo.id);
-    if (await quotePreviewEntitled(entry.conversationId, quoted, { mlsService, log })) {
-      return entry;
+    let entitled: boolean;
+    try {
+      entitled = await quotePreviewEntitled(entry.conversationId, quoted, { mlsService, log });
+    } catch (e) {
+      if (!(e instanceof ExclusionsRefusedError)) throw e;
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… the server refused the exclusion windows of ${entry.conversationId.slice(0, 8)}… (not on its roster) - the reply quotes by id only, and the send decides whether this device is a member`
+      );
+      entitled = false;
     }
+    if (entitled) return kept;
     const blanked: OutboxEntry = { ...entry, replyTo: { ...entry.replyTo, preview: '' } };
+    return { entry: blanked, commit: () => persistBlankedQuote(blanked) };
+  }
+
+  /** Writes an accepted reply's blanked quote to its queue entry and its echo - see `decideQuote`. */
+  async function persistBlankedQuote(blanked: OutboxEntry): Promise<void> {
+    const entry = blanked;
     await storage
       ?.saveOutboxEntry(blanked, deviceKey())
       .catch((e: unknown) =>
@@ -639,7 +671,6 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       };
       conversations.set(found.key, { ...found.convo, messages });
     }
-    return blanked;
   }
 
   /**
@@ -1132,6 +1163,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // Media: upload (idempotent) then build proto + the real attachment envelope.
       let proto: Uint8Array;
       let mediaContent: string | undefined;
+      // What an accepted frame makes permanent (a blanked quote); nothing for any other entry.
+      let commitQuote: () => Promise<void> = async () => {};
       if (entry.kind === 'media') {
         const prepared = await prepareMedia(entry);
         proto = prepared.proto;
@@ -1141,7 +1174,9 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         // the whole network race and a renderer that observed that state stays on its skeleton.
         updateMessageContent(entry.id, mediaContent);
       } else {
-        proto = buildOutboxProto(await decideQuote(entry)) ?? new Uint8Array(0);
+        const decided = await decideQuote(entry);
+        commitQuote = decided.commit;
+        proto = buildOutboxProto(decided.entry) ?? new Uint8Array(0);
       }
 
       inFlight = entry.id;
@@ -1156,6 +1191,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       } finally {
         inFlight = null;
       }
+      await commitQuote();
       // THE SENDER'S OWN COPY GETS THE SERVER TIME every recipient's copy carries. A sender never
       // receives its frame back, so this answer is the only place it can come from - and an undated
       // copy cannot be placed against an exclusion window (a Remove holds against a later re-add,

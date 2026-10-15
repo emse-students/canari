@@ -39,7 +39,7 @@ async function bootstrap() {
      * the history walk's upper bound on mobile ONLY - the shape of failure that compiles, deploys
      * green, and is wrong.
      */
-    exposedHeaders: ['X-History-Head'],
+    exposedHeaders: ['X-History-Head', 'X-History-Skip-To'],
   });
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));

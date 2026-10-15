@@ -232,10 +232,11 @@ describe('MembersController - membership intervals and the exclusions read', () 
     expect(txUpdates[0].where).toMatchObject({ groupId: 'g-1', userId: 'bob' });
   });
 
-  it("a removal by ANOTHER member names the removed person's devices as parting, once the removal has landed", async () => {
+  it("a removal by ANOTHER member names the removed person's devices as parting, before their rows go", async () => {
     // The commit that removes bob is fanned out from the rows deleted here; without the parting
-    // entry it would never reach his devices (second review of #1878, P1-a). Written only after
-    // the removal succeeded (third review).
+    // entry it would never reach his devices (second review of #1878, P1-a). Written BEFORE the
+    // delete: after it, a crash in between lost the entry and a retry had no rows to derive it from
+    // (fourth review).
     await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
 
     expect(redis.hset).toHaveBeenCalledWith(
@@ -245,15 +246,26 @@ describe('MembersController - membership intervals and the exclusions read', () 
       'bob:b2',
       'alice'
     );
-    expect(order).toEqual(['devices-deleted', 'interval-closed', 'parting-recorded']);
+    expect(order).toEqual(['parting-recorded', 'devices-deleted', 'interval-closed']);
   });
 
-  it('a removal whose transaction fails names nobody as parting', async () => {
+  it('a crash after the device rows went still leaves the entry - a retry could not re-derive it', async () => {
     failTx = true;
 
     await expect(controller.removeGroupMember('g-1', 'bob', 'alice', undefined)).rejects.toThrow(
       'serialization failure'
     );
+    expect(redis.hset).toHaveBeenCalledWith(
+      'group:parting:g-1',
+      'bob:b1',
+      'alice',
+      'bob:b2',
+      'alice'
+    );
+    // The retry finds no device rows to derive an entry from - which is why it was written first.
+    redis.hset.mockClear();
+    failTx = false;
+    await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
     expect(redis.hset).not.toHaveBeenCalled();
   });
 

@@ -197,6 +197,55 @@ describe('a history read names who asked', () => {
       expect(cursor).toBe('9-0');
     });
 
+    it('the caller sets how much it is handed, never how many reads it costs', async () => {
+      stream = [];
+      for (let n = 1; n <= 300; n++) put(n, 4); // all inside the window
+      put(301, 6);
+
+      const page = await service.getHistory(GROUP, '0-0', USER, ADMIN, 1);
+
+      expect(page.rows.map((r) => r['id'])).toEqual(['301-0']);
+      // One chunk of HISTORY_FULL_PAGE_LIMIT, never 301 reads of one row.
+      expect(redis.xrange).toHaveBeenCalledTimes(1);
+    });
+
+    /**
+     * A reader whose only unread rows lie in its own window used to rescan them on every launch: a
+     * cursor only moves over rows it is handed (fourth review of #1878). The server names the
+     * dropped tail; a current build saves it as its cursor.
+     */
+    it('a dropped tail is named, so a saved cursor never rescans it - and a later row still arrives', async () => {
+      stream = [];
+      put(1, 2);
+      for (let n = 2; n <= 6; n++) put(n, 4); // the tail, inside the window
+
+      const first = await service.getHistory(GROUP, '0-0', USER, ADMIN, 200);
+      expect(first.rows.map((r) => r['id'])).toEqual(['1-0']);
+      expect(first.skipTo).toBe('6-0');
+
+      // Relaunch from the saved cursor: nothing to rescan.
+      redis.xrange.mockClear();
+      const relaunch = await service.getHistory(GROUP, first.skipTo, USER, ADMIN, 200);
+      expect(relaunch.rows).toEqual([]);
+      expect(relaunch.skipTo).toBeUndefined();
+      const scanned = (await Promise.all(
+        redis.xrange.mock.results.map((r) => r.value as Promise<unknown[]>)
+      )) as unknown[][];
+      expect(scanned.flat()).toEqual([]);
+
+      // A legitimate row appended after the dropped tail is handed on the next launch.
+      put(7, 6);
+      const later = await service.getHistory(GROUP, first.skipTo, USER, ADMIN, 200);
+      expect(later.rows.map((r) => r['id'])).toEqual(['7-0']);
+    });
+
+    it('names no tail when the last row read was handed', async () => {
+      const page = await service.getHistory(GROUP, '0-0', USER, ADMIN, 200);
+
+      expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '3-0']);
+      expect(page.skipTo).toBeUndefined();
+    });
+
     it('counts a cursor followed only by withheld rows as caught up, not as a line per launch', async () => {
       stream.pop(); // the head is now 2-0, inside the window
       await service.getHistoryBatch([{ groupId: GROUP, after: '1-0' }], USER, ADMIN);

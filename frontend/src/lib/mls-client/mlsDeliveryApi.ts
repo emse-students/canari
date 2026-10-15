@@ -306,17 +306,21 @@ export type CommitRemoval = { userId: string; deviceId?: string };
  * group's roster, while this device holds the group locally (it is asking because it is about to
  * answer or send in it).
  *
- * THE SAME DISAGREEMENT AS {@link SenderNotActiveError}, seen one read earlier - a stale leaf after a
- * removal, or a roster and a tree that disagree - so it IS one, and every consumer that classifies a
- * send failure routes it to the roster repair rather than to a retry that cannot change the answer.
- * Before it was typed, an untyped `Error('... 403')` was retried as a blip, the outbox's quote
- * decision parked the conversation's replies for good, and the repair never ran (third review of
- * #1878). A status is an answer; a transport failure is not, and never becomes one of these.
+ * AN ANSWER ABOUT THE ROSTER, NOT ABOUT THIS DEVICE - and deliberately NOT a
+ * {@link SenderNotActiveError}. The route refuses on `dm_group_members` alone, the send on this
+ * device's membership row: a device `active` but roster-less sends freely. Classified as a send
+ * refusal it ran the roster repair, which FORGETS THE TREE, on a device that was not broken (fourth
+ * review of #1878) - a destructive repair is gated on proof, and only the send's own refusal is that
+ * proof. Typed so its readers act on the answer (the outbox quotes by id only and lets the send
+ * decide; an answerer sends nothing) rather than retry a blip, which parked replies for good.
  */
-export class ExclusionsRefusedError extends SenderNotActiveError {
-  constructor(groupId: string) {
-    super(groupId, null);
-    this.message = `The server refused the exclusion windows of group ${groupId}: this account is not on its roster`;
+export class ExclusionsRefusedError extends ApiRefusalError {
+  constructor(readonly groupId: string) {
+    super(
+      403,
+      'not_on_roster',
+      `The server refused the exclusion windows of group ${groupId}: this account is not on its roster`
+    );
     this.name = 'ExclusionsRefusedError';
   }
 }
@@ -1440,7 +1444,11 @@ export class MlsDeliveryApi {
         );
         return { rows: [] };
       }
-      return { rows: await res.json(), head: res.headers.get('X-History-Head') ?? undefined };
+      return {
+        rows: await res.json(),
+        head: res.headers.get('X-History-Head') ?? undefined,
+        skipTo: res.headers.get('X-History-Skip-To') ?? undefined,
+      };
     } catch (e) {
       console.error('Fetch History Error:', e);
       return { rows: [] };
@@ -1504,9 +1512,14 @@ export class MlsDeliveryApi {
       const data = (await res.json()) as {
         histories?: Record<string, import('$lib/mls-client/historyTypes').HistoryStreamRow[]>;
         heads?: Record<string, string>;
+        skipTo?: Record<string, string>;
       };
       for (const [groupId, rows] of Object.entries(data.histories ?? {})) {
-        out.set(groupId, { rows: rows ?? [], head: data.heads?.[groupId] });
+        out.set(groupId, {
+          rows: rows ?? [],
+          head: data.heads?.[groupId],
+          skipTo: data.skipTo?.[groupId],
+        });
       }
     } catch (e) {
       console.error(`[History] batch of ${chunk.length} group(s) could not be sent:`, e);
@@ -1600,7 +1613,7 @@ export class MlsDeliveryApi {
    * request; nothing is kept past the answer.
    *
    * CLASSIFIED AT THE THROW: a gateway 403 is {@link ExclusionsRefusedError} (this account is not on
-   * the roster - an answer the roster repair owns), an edge 403 a {@link SendEdgeRefusedError} (the
+   * the roster - never on its own a reason to repair this device), an edge 403 a {@link SendEdgeRefusedError} (the
    * network path), any other status an {@link ApiRefusalError} carrying it; a transport failure is
    * whatever `f` raised, untouched.
    */

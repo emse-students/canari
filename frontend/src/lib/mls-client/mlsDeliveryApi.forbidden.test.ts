@@ -84,13 +84,18 @@ describe('getGroupExclusions on a refusal', () => {
       headers: { 'content-type': 'application/json' },
     });
 
-  it('a gateway 403 is the roster disagreement a send would meet, typed as such', async () => {
+  it('a gateway 403 is an answer about the ROSTER - typed, and never read as a send refusal', async () => {
+    // The route refuses on the roster alone; a device `active` but roster-less sends freely. Read as
+    // `sender-not-active`, it ran the roster repair - which forgets the tree - on a healthy device
+    // (fourth review of #1878).
     const failure = await api(json(403))
       .getGroupExclusions('g1')
       .catch((e: unknown) => e);
 
     expect(failure).toBeInstanceOf(ExclusionsRefusedError);
-    expect(classifyOutgoingSendError(failure)).toBe('sender-not-active');
+    expect(failure).not.toBeInstanceOf(SenderNotActiveError);
+    expect(classifyOutgoingSendError(failure)).toBe('unknown');
+    expect(refusalStatus(failure)).toBe(403);
   });
 
   it('an edge 403 is the network path, never the roster', async () => {
