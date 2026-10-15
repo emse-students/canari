@@ -1408,8 +1408,17 @@ User decision 2026-10-14: declare exclusion rects.
   BOTTOM 200 dp (where a conversation pinned to the newest messages is read). The system Back swipe
   from the right edge is unavailable on those 200 dp while a conversation is open; higher up it still
   closes the conversation, and a reply swipe on an own bubble there is still lost.
+- **The span excludes the composer:** the list reserves the floating composer as `padding-bottom`
+  (`--chat-composer-height`), which the page subtracts before reporting, so the 200 dp are spent on
+  bubbles. Reports are coalesced to the last value over 100 ms (the keyboard animation resizes the
+  list continuously); native logs and re-sets only on change.
+- **Known gap:** an overlay drawn over a mounted list (side panel on a phone, modal, media viewer)
+  keeps the band; the right-edge Back swipe is unavailable there too.
 - **Unaffected:** the system Back button / 3-button Back, and the LEFT edge gesture (no rect there);
   the history stepping of "The hardware Back press had no owner" is unchanged.
+- **The 74 px comes from `dumpsys`** (`EdgeBackGestureHandler`), not from the code: the first thing to
+  read on the Mi 9T is the log line `right-edge gesture exclusion: span=... -> ...` (a null band
+  there means the inset read 0).
 - **Owed:** a reading on the Mi 9T through the next pre-release (own bubble, x >= 406.5 CSS px,
   keyboard closed and open; then the right-edge back swipe on the list screen must still work).
 

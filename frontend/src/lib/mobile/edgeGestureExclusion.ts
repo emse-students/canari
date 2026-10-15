@@ -32,18 +32,34 @@ export function excludeRightEdgeOver(list: HTMLElement): () => void {
   const publish = () => {
     const rect = list.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
+    // THE COMPOSER FLOATS OVER THE LIST'S BOTTOM: the list reserves it as padding-bottom
+    // (`--chat-composer-height`, plus the keyboard lift while it is up), so the bubbles end above
+    // `rect.bottom - paddingBottom`. Native keeps only the BOTTOM 200 dp of what it is told, and
+    // sending the whole rect would spend most of them on the composer and the nav inset.
+    const reserved = parseFloat(getComputedStyle(list).paddingBottom) || 0;
     const top = Math.round(rect.top * dpr);
-    const bottom = Math.round(rect.bottom * dpr);
+    const bottom = Math.round((rect.bottom - reserved) * dpr);
+    if (bottom <= top) return;
     const key = `${top}:${bottom}`;
     if (key === lastKey) return;
     lastKey = key;
-    Log.d('GESTURE', `right-edge exclusion over list ${top}..${bottom} px`);
+    Log.d('GESTURE', `right-edge exclusion over bubbles ${top}..${bottom} px`);
     native.setRightBand?.(top, bottom);
   };
   publish();
-  const observer = new ResizeObserver(publish);
+  // The keyboard animation resizes the list many times a second: coalesce to the last value, which
+  // is always sent (a trailing rate limit, not a correctness timer).
+  let pending: ReturnType<typeof setTimeout> | null = null;
+  const observer = new ResizeObserver(() => {
+    if (pending !== null) return;
+    pending = setTimeout(() => {
+      pending = null;
+      publish();
+    }, 100);
+  });
   observer.observe(list);
   return () => {
+    if (pending !== null) clearTimeout(pending);
     observer.disconnect();
     Log.d('GESTURE', 'right-edge exclusion cleared');
     native.clearRightBand?.();
