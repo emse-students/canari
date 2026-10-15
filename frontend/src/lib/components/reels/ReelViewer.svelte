@@ -17,7 +17,8 @@
   import ReelSlide from './ReelSlide.svelte';
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
-  import { listPosts, type PostEntity } from '$lib/posts/api';
+  import type { PostEntity } from '$lib/posts/api';
+  import { getReelFeedSource, reelPageLoader } from '$lib/reels/reelFeedSource';
   import {
     mergeReelPage,
     mountedReelIndices,
@@ -44,15 +45,21 @@
     startPost: PostEntity;
     authToken: string;
     onClose: () => void;
-    /** The next page of reels; injectable for tests. */
+    /**
+     * The next page of reels; injectable for tests. By default the feed filtered to CanaReels when
+     * the viewer was opened from it (`reels/reelFeedSource.ts`), else every reel (C7).
+     */
     loadPage?: (offset: number, limit: number) => Promise<PostEntity[]>;
   }
+
+  // Read at initialisation, as a context must be: the source the feed page set, if any.
+  const feedSource = getReelFeedSource();
 
   let {
     startPost,
     authToken,
     onClose,
-    loadPage = (offset, limit) => listPosts({ kind: 'reel', feed: 'all', offset, limit }),
+    loadPage = reelPageLoader(feedSource, startPost.id),
   }: Props = $props();
 
   /** How many reels one page asks for. */

@@ -13,8 +13,17 @@
     getMyScheduledPosts,
     type PostEntity,
     type PostFeed,
+    type PostKind,
     type ScheduledPost,
   } from '$lib/posts/api';
+  import {
+    feedKindFilterOf,
+    rememberFeedKind,
+    type FeedKindFilter,
+  } from '$lib/posts/feedKindFilter';
+  import { setReelFeedSource } from '$lib/reels/reelFeedSource';
+  import FeedKindFilterControl from '$lib/components/posts/FeedKindFilter.svelte';
+  import ReelsEmptyState from '$lib/components/posts/ReelsEmptyState.svelte';
   import { msUntilNextDue, stillScheduled } from '$lib/posts/scheduledDue';
   import { deletePostAfterConfirm } from '$lib/posts/postDeletion';
   import { isFeedAudienceRefusal, isOutsideFeedAudience } from '$lib/posts/feedAudience';
@@ -62,7 +71,7 @@
   }: {
     data: {
       posts: Promise<PostEntity[]>;
-      feedParams: { feed: PostFeed; promo?: number; formation?: string };
+      feedParams: { feed: PostFeed; promo?: number; formation?: string; kind?: PostKind };
     };
   } = $props();
 
@@ -178,6 +187,9 @@
     if (!seenObserver) {
       seenObserver = new IntersectionObserver(
         (entries) => {
+          // The "new" mark measures the WHOLE feed: a reel seen in the CanaReels view says nothing
+          // of the posts published between, so the filtered view does not advance it.
+          if (activeKind === 'reel') return;
           let maxTs = lastSeenTs;
           for (const entry of entries) {
             if (entry.isIntersecting) {
@@ -374,6 +386,21 @@
    * re-derives it.
    */
   const activeFeed = $derived(data.feedParams.feed);
+  /** The CanaReels filter `load` resolved (URL, remembered, none) - read, never re-derived. */
+  const activeKind = $derived(feedKindFilterOf(data.feedParams.kind));
+
+  /**
+   * THE VIEWER OPENED FROM THE FILTERED FEED SWIPES THROUGH IT (`$lib/reels/reelFeedSource`): the
+   * reels of this tab, from the one touched. Unfiltered, or on a search result, it keeps C7's list.
+   */
+  setReelFeedSource({
+    options: () => {
+      if (activeKind !== 'reel' || searchQuery) return null;
+      const { feed, promo, formation } = data.feedParams;
+      return { feed, promo, formation };
+    },
+    list: () => postsOverride ?? initialPostsResolved ?? [],
+  });
 
   /**
    * PAINT THE TAB FROM WHAT IT LAST HELD, THEN REPLACE IT WITH THE ANSWER.
@@ -521,12 +548,30 @@
     showFeed(feed);
   }
 
-  /** Opens a feed WITHOUT remembering it: the tab a reader chose is theirs, a publish is not a choice. */
-  function showFeed(feed: PostFeed) {
+  /**
+   * Opens a feed WITHOUT remembering it: the tab a reader chose is theirs, a publish is not a choice.
+   * The CanaReels filter follows the reader across tabs; `kind` overrides it for this visit only.
+   */
+  function showFeed(feed: PostFeed, kind?: FeedKindFilter) {
     const u = new URL(page.url);
     u.searchParams.set('feed', feed);
     u.searchParams.delete('promo');
     u.searchParams.delete('formation');
+    if (kind) u.searchParams.set('kind', kind);
+    void goto(resolve(internalPath(feedPath(u))), { invalidateAll: true, noScroll: true });
+  }
+
+  /**
+   * Switches between the whole feed and its CanaReels, and REMEMBERS it for this viewer - a per-viewer
+   * convenience (`feedKindFilter.ts`), so the URL says it too: the choice holds without storage.
+   */
+  function selectKind(filter: FeedKindFilter) {
+    if (filter === activeKind) return;
+    Log.d('POSTS', `feed filter: ${activeKind} -> ${filter}`);
+    rememberFeedKind(filter);
+    const u = new URL(page.url);
+    if (filter === 'reel') u.searchParams.set('kind', filter);
+    else u.searchParams.delete('kind');
     void goto(resolve(internalPath(feedPath(u))), { invalidateAll: true, noScroll: true });
   }
 
@@ -583,6 +628,13 @@
   function onPostCreated(landing: PostFeed | null) {
     showCreateModal = false;
     const target = feedToShowAfterPublish(activeFeed, landing);
+    // A post does not appear among the reels: the whole feed is shown for this visit, unremembered.
+    if (activeKind === 'reel') {
+      Log.d('POSTS', 'published post lands in the whole feed, leaving the CanaReels view');
+      showFeed(target ?? activeFeed, 'all');
+      void loadScheduled();
+      return;
+    }
     if (target) {
       Log.d('POSTS', `published post lands in "${target}", leaving "${activeFeed}"`);
       showFeed(target);
@@ -726,6 +778,12 @@
         <X size={16} />
       </button>
     {/if}
+  </div>
+
+  <!-- THE CANAREELS FILTER (user, 2026-10-15): a view on the feed, not a place - C7 keeps reels out
+       of every bar. Hidden with the pills while a search replaces the feed. -->
+  <div class="mb-3" class:hidden={!!searchQuery}>
+    <FeedKindFilterControl value={activeKind} onSelect={selectKind} />
   </div>
 
   <!--
@@ -881,6 +939,8 @@
              rule as `ChatArea.svelte`'s `showSkeleton`: the skeleton is for an empty list. -->
         {#if loading && resolvedPosts.length === 0}
           {@render skeletonCards()}
+        {:else if resolvedPosts.length === 0 && activeKind === 'reel'}
+          <ReelsEmptyState />
         {:else if resolvedPosts.length === 0}
           <div
             class="border-cn-border bg-cn-surface rounded-3xl border border-dashed px-6 py-16 text-center"

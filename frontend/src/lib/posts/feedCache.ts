@@ -1,6 +1,6 @@
 import type { PostEntity } from '$lib/posts/api';
 import { currentUserId } from '$lib/stores/userState.svelte';
-import type { PostFeed } from '$lib/posts/api';
+import type { PostFeed, PostKind } from '$lib/posts/api';
 
 /**
  * THE LAST PAGE EACH FEED TAB HELD, SO A TAB SWITCH PAINTS BEFORE IT ASKS.
@@ -30,6 +30,8 @@ export interface FeedCacheParams {
   feed: PostFeed;
   promo?: number;
   formation?: string;
+  /** The CanaReels filter (`feedKindFilter.ts`): `reel` is its own content, so its own entry. */
+  kind?: PostKind;
 }
 
 /** The tabs a reader can reach, times the filters on them - a handful, and bounded by that. */
@@ -39,7 +41,13 @@ const entries = new Map<string, FeedCacheEntry>();
 
 /** The key one tab's content is held under: the reader, then everything `load` resolved. */
 export function feedCacheKey(params: FeedCacheParams): string {
-  return [currentUserId() ?? '', params.feed, params.promo ?? '', params.formation ?? ''].join('|');
+  return [
+    currentUserId() ?? '',
+    params.feed,
+    params.promo ?? '',
+    params.formation ?? '',
+    params.kind ?? '',
+  ].join('|');
 }
 
 /** The last page this tab held for this reader, or `null` if it has never been loaded here. */

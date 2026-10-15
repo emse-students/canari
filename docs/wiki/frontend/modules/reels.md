@@ -374,6 +374,34 @@ has finished, the preload is ABORTED and the player fetches (or streams) it alon
 known and accepted: a reel whose FEED card is still streaming when it is opened is fetched a second
 time by the viewer, since an MSE URL feeds one element - the same rule the media viewer lives by.
 
+### The CanaReels filter - a VIEW on the feed, not a place (addendum to C7, user 2026-10-15)
+
+The user asked for "CanaReels" at the top of the feed, *to get people talking about it*. C7 holds:
+there is still no Reels tab in any bar. What was added is a filter, and these are its decisions.
+
+1. **A reel is a post of `kind = 'reel'`** (`isReel`, `PostKind`), the column migration 069 added.
+   Nothing else identifies one, and no client-side guess (a 9:16 video) is made.
+2. **The SERVER filters, the client never does.** Filtering a paginated feed on the device gives
+   empty pages. `GET /api/posts?kind=reel` already exists (typed `@IsIn(['post','reel'])`, every
+   feed arm, pinned by `posts.service.reels.spec.ts`), and its predicate `kind = 'reel' AND
+   "expiresAt" > NOW()` is the partial index `idx_posts_reels_expiry` (069), bounded by the 30-day
+   life of a reel. **The server did not change; no migration.**
+3. **The filter composes with the tab** (Associations / Suivis / Tout): `load` resolves `kind` as it
+   resolves `feed` - `?kind=reel`, then the remembered choice, then none - and publishes it in
+   `feedParams`, so the first page, the next pages and the refresh ask the same thing.
+4. **It is drawn as `SegmentedControl`** ("Tout" / "CanaReels"), the fixed set of section-navigation,
+   under the tab pills. The choice is a per-viewer convenience (`posts/feedKindFilter.ts`, its
+   storage in `try`/`catch`): the feed renders with no storage at all.
+5. **The local-first copy keeps one slot per (tab, filter)**: `storedFeedKey` is `feed:<tab>` or
+   `feed:<tab>:reel`, the in-memory tab cache likewise - eight slots at most, same epoch and ledger.
+6. **The "new" mark is not advanced by the filtered view**: the last-seen time measures the whole
+   feed, and seeing a reel says nothing of the posts between.
+7. **The viewer follows the filtered list** (`reels/reelFeedSource.ts`, a context the feed page
+   sets while filtering): after the touched reel it pages `kind=reel` on the SAME tab from the touched
+   reel's position. Anywhere else (a chat, a post page, the unfiltered feed) it lists `feed=all`.
+8. **An empty filtered feed says so honestly** ("Pas encore de CanaReels") with a button to the
+   camera (`CAMERA_PLACE`), the one place a reel is made.
+
 ## Saving before the deletion (C6)
 
 **The "my reels" list is gone from the client (2026-10-09).** The save used to need it: only the author
