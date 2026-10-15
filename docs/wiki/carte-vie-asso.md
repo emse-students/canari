@@ -418,9 +418,10 @@ the one implementation, so both sides of the comparison come from the same code;
 what it is given and decides nothing with it. It is a staleness hint, never an access control - a
 malformed value is dropped rather than stored, so a later comparison can never be decided by junk.
 
-**Null means UNKNOWN, never unchanged.** A poster published by a client older than the fingerprint
-has none, and the editor shows nothing rather than claiming the live map is current
-([legacy-compatibility](legacy-compatibility.md#no-date-yet---a-carte-publish-body-that-is-the-bare-document-with-no-fingerprint)).
+**Null means UNKNOWN, never unchanged.** A poster published before the fingerprint, or with a
+malformed one, has none, and the editor shows nothing rather than claiming the live map is current.
+Since `minClientVersion` 1.2.7 a publish body that is not the `{ carte, fingerprint }` wrapper is a
+400: the bare document older builds posted is refused.
 
 **It is recomputed when the SAVED state settles**, on load and after each save - never on a pointer
 frame. The document carries the background image, which can be several megabytes.
