@@ -10,6 +10,7 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import ChatArea from './ChatArea.svelte';
 import type { Conversation } from '$lib/types';
+import { OVERLAY_LAYOUT_QUERY } from '$lib/utils/viewport';
 import {
   clearHistoryOverlayStack,
   historyOverlayStackDepth,
@@ -29,12 +30,16 @@ vi.mock('$lib/utils/userAvatarCache', () => ({
 const mounted: (() => void)[] = [];
 let stopStack: () => void = () => {};
 
+/** True for every query but the overlay layout's when a test sets it to false (a wide touch screen). */
+let overlayLayout = true;
+
 beforeEach(() => {
+  overlayLayout = true;
   // A phone layout: the swipe is armed.
   vi.spyOn(window, 'matchMedia').mockImplementation(
     (query: string) =>
       ({
-        matches: true,
+        matches: query === OVERLAY_LAYOUT_QUERY ? overlayLayout : true,
         media: query,
         addEventListener: () => {},
         removeEventListener: () => {},
@@ -118,6 +123,21 @@ describe('ChatArea edge swipe', () => {
     edgeSwipe(panel);
     expect(closeConversation).toHaveBeenCalledWith('back');
     expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it('on a wide touch screen (no overlay layout, the conversation holds no entry) the swipe is onBack, never the stack top', () => {
+    // An iPad in landscape: a community admin panel's entry is on the stack, the conversation's is not.
+    overlayLayout = false;
+    const onBack = vi.fn();
+    const closePanel = vi.fn();
+    pushHistoryOverlay(closePanel);
+    const panel = mountArea(onBack);
+
+    edgeSwipe(panel);
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(closePanel).not.toHaveBeenCalled();
+    expect(historyOverlayStackDepth()).toBe(1);
   });
 
   it("with no overlay on the stack, the swipe is the conversation's own Back", () => {

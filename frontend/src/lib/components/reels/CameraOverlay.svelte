@@ -40,10 +40,10 @@
   import {
     abandonHistoryOverlay,
     backHistoryOverlayFromGesture,
+    isMobileOverlayLayout,
     pushHistoryOverlay,
   } from '$lib/utils/historyOverlayStack';
   import { swipeBack } from '$lib/actions/swipeBack';
-  import { isNarrowChatLayout } from '$lib/utils/viewport';
   import type { CameraSession } from '$lib/reels/cameraSession.svelte';
 
   interface Props {
@@ -59,8 +59,12 @@
 
   let { destination, oncapture, onclose, session }: Props = $props();
 
-  /** A phone layout, where the edge swipe is a Back - read once: the layer lives for one take. */
-  const narrow = isNarrowChatLayout();
+  /**
+   * Where the overlay stack holds entries (`isMobileOverlayLayout`) - the one predicate the swipe and
+   * the entries share, so a swipe never closes an entry the layout does not stand behind. Read once:
+   * the layer lives for one take.
+   */
+  const narrow = isMobileOverlayLayout();
 
   const entry = () => {
     console.debug(`[camera-overlay] Back closes the camera (${destination})`);

@@ -41,6 +41,13 @@ import { isOverlayLayout } from './viewport';
  *  `drainHistoryOverlayStack` (in `beforeNavigate`) leaves ghosts too: `history.go(-n)` after
  *  SvelteKit pushed the new route would move the pointer back off it - "the first back gesture
  *  lands on the previous page".
+ *
+ * WHERE NOTHING EVER POPS AN ENTRY, NONE IS WRITTEN (`systemBack: false`, the iOS app, 2026-10-16).
+ * Its WKWebView has no back-forward swipe, so its only Back is the app's own edge swipe
+ * (`backHistoryOverlayFromGesture`), which needs the stack and never the history. Entries there were
+ * pure cost and grew without bound: closing N nested overlays by swipe leaves N ghosts and only the
+ * one under the pointer is ever taken again, so each such cycle added N-1 entries for good (review
+ * of #1936). The stack is kept; the history is left to the router.
  */
 const STATE_KEY = 'canariOverlay';
 /** Which page load pushed an entry: an id is only comparable with ids of the same load. */
@@ -82,6 +89,8 @@ let here = 0;
 let hereHref = '';
 /** A walk issued by `settleArrival` has not landed yet: its landing is not a Back. */
 let walking = false;
+/** False where no system Back exists to pop an entry (see the module comment): none is written. */
+let writesEntries = true;
 
 /** The page address now; empty where there is none (a test without a `location`). */
 function currentHref(): string {
@@ -104,10 +113,18 @@ export function isMobileOverlayLayout(): boolean {
 /**
  * Registers a global `popstate` listener. Call once from the root layout.
  * Returns a teardown function.
+ *
+ * `systemBack: false` is for a runtime with NO system Back (the iOS app): overlays are stacked for
+ * the app's own gesture Back, and no history entry is written for them.
  */
-export function initHistoryOverlayStack(): () => void {
+export function initHistoryOverlayStack(options: { systemBack?: boolean } = {}): () => void {
   if (!isBrowser || initialized) return () => {};
   initialized = true;
+  writesEntries = options.systemBack ?? true;
+  Log.d(
+    'historyOverlay',
+    `stack ready - ${writesEntries ? 'entries written' : 'no system Back, no entries'}`
+  );
 
   const onPopState = (event: PopStateEvent) => {
     const from = here;
@@ -131,6 +148,7 @@ export function initHistoryOverlayStack(): () => void {
     here = 0;
     hereHref = '';
     walking = false;
+    writesEntries = true;
   };
 }
 
@@ -146,6 +164,10 @@ export function initHistoryOverlayStack(): () => void {
 export function pushHistoryOverlay(close: OverlayClose): void {
   if (!isBrowser) return;
   const id = ++lastId;
+  if (!writesEntries) {
+    stack.push({ close, id });
+    return;
+  }
   const state = { [STATE_KEY]: id, [LOAD_KEY]: LOAD_ID };
   if (readArrival(history.state).ghost) {
     Log.d('historyOverlay', `overlay ${id} takes the ghost entry under the pointer (a hand-off)`);

@@ -58,6 +58,26 @@ describe('swipeBack', () => {
     expect(onBack).not.toHaveBeenCalled();
   });
 
+  it('does not arm inside a region marked data-swipe-back-off (the camera editor, a recording)', () => {
+    const node = document.createElement('section');
+    const region = document.createElement('div');
+    region.setAttribute('data-swipe-back-off', '');
+    const surface = document.createElement('div');
+    region.appendChild(surface);
+    node.appendChild(region);
+    document.body.appendChild(node);
+    const onBack = vi.fn();
+    swipeBack(node, { onBack, enabled: true });
+
+    touch(surface, 'touchstart', 5);
+    touch(surface, 'touchmove', 150);
+    touch(surface, 'touchend', 150);
+    node.dispatchEvent(new Event('transitionend'));
+
+    expect(onBack).not.toHaveBeenCalled();
+    expect(node.style.transform).toBe('');
+  });
+
   it('still commits when the touch starts on plain space inside the edge zone', () => {
     const node = document.createElement('section');
     node.appendChild(document.createElement('div'));

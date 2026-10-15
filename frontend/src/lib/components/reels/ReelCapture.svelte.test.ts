@@ -318,6 +318,31 @@ describe('ReelCapture', () => {
     expect(framed.stop).toHaveBeenCalled();
   });
 
+  it('no Back swipe arms while the editor owns the strokes or a take is being filmed (review of #1936)', async () => {
+    const { target, pointer } = await render();
+    const root = () => target.querySelector('[data-swipe-back-off]');
+    expect(root()).toBeNull();
+    // Filming: a swipe would have thrown the take away unasked.
+    pointer('pointerdown', 1000);
+    vi.advanceTimersByTime(SHUTTER_HOLD_THRESHOLD_MS);
+    await settle();
+    expect(root()).not.toBeNull();
+    pointer('pointerup', 4000);
+    await settle();
+    // The review: the swipe is a Back again (it asks).
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+    expect(root()).toBeNull();
+    // The editor: a paint stroke from the left edge dragged the whole layer, then left the editor.
+    target
+      .querySelector<HTMLButtonElement>(
+        `[data-reel-review] [aria-label="${m.reels_review_edit()}"]`
+      )!
+      .click();
+    await settle();
+    expect(root()).not.toBeNull();
+    expect(root()!.contains(target.querySelector('[data-reel-surface]'))).toBe(true);
+  });
+
   it('Back with the editor open leaves the editor, never the take', async () => {
     const { target, hold } = await render();
     await hold();

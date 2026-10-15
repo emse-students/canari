@@ -476,6 +476,24 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
     expect(closeConversation).not.toHaveBeenCalled();
   });
 
+  it('with no system Back (the iOS app) no entry is ever written, so nested closes by swipe leave nothing behind', () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack({ systemBack: false });
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const closes = [vi.fn(), vi.fn(), vi.fn()];
+      for (const close of closes) pushHistoryOverlay(close);
+      expect(historyOverlayStackDepth()).toBe(3);
+      for (let i = closes.length - 1; i >= 0; i--) {
+        expect(backHistoryOverlayFromGesture()).toBe(true);
+        expect(closes[i]).toHaveBeenCalledWith('back');
+      }
+    }
+    expect(historyOverlayStackDepth()).toBe(0);
+    // Three cycles of three nested overlays: still the router's one entry.
+    expect(history.length).toBe(1);
+    expect(h.index).toBe(0);
+  });
+
   it('reads an entry left by an earlier page load as the router entry below every live overlay', () => {
     let listener: ((e: PopStateEvent) => void) | undefined;
     vi.stubGlobal('history', { length: 1, state: null, pushState: vi.fn(), back: vi.fn() });

@@ -310,6 +310,26 @@ export function useConversations() {
 
   let mobileConvoHistoryClose: (() => void) | null = null;
   let drawerHistoryClose: (() => void) | null = null;
+  /** What the app owns OUTSIDE this composable that leaving a thread ends (the salon selection). */
+  let threadLeftListener: (() => void) | null = null;
+
+  /**
+   * Registers the teardown that leaving a thread owes outside this composable. ONE listener, called
+   * by BOTH exits - the in-app back and the history close (Android's Back, the iOS edge swipe): the
+   * salon row stayed highlighted after a Back because only the in-app back cleared it.
+   */
+  function onThreadLeft(listener: () => void) {
+    threadLeftListener = listener;
+  }
+
+  /** The state every way out of a thread ends: the selection, the drawer, the landing, the salon. */
+  function leaveThread() {
+    // Backing out of the thread ends any landing, or the target would be re-selected instantly.
+    endLandingUnlessTarget(null);
+    selectedContact = null;
+    isConversationDrawerOpen = false;
+    threadLeftListener?.();
+  }
   let sidePanelHistoryClose: (() => void) | null = null;
 
   function ensureMobileConvoHistory() {
@@ -325,9 +345,7 @@ export function useConversations() {
       // MEASURED ON AN ANDROID HANDSET 2026-09-21: after the tap, the first Back press left the app
       // in the foreground still showing the conversation, and the second exited. Nothing on screen
       // said a press had been consumed at all.
-      endLandingUnlessTarget(null);
-      selectedContact = null;
-      isConversationDrawerOpen = false;
+      leaveThread();
     };
     pushHistoryOverlay(mobileConvoHistoryClose);
   }
@@ -1405,23 +1423,17 @@ export function useConversations() {
 
   /** Deselects the active conversation and closes the drawer (mobile back-button action). */
   function goBackToMenu() {
-    // Backing out of the thread ends any landing, or the target would be re-selected instantly.
-    endLandingUnlessTarget(null);
     dismissSidePanelIfAny();
+    // Cleared synchronously so any rapid click on a new conversation after pressing back pushes a
+    // fresh history overlay rather than reusing the stale one.
+    leaveThread();
     if (mobileConvoHistoryClose) {
-      // Clear state synchronously so any rapid click on a new conversation after
-      // pressing back pushes a fresh history overlay rather than reusing the stale one.
-      // abandonHistoryOverlay takes the entry off the stack without calling its close, so the
-      // old callback can never clear a newly-selected conversation; the entry stays as a ghost.
-      selectedContact = null;
-      isConversationDrawerOpen = false;
+      // abandonHistoryOverlay takes the entry off the stack without calling its close, so the old
+      // callback can never clear a newly-selected conversation; the entry stays as a ghost.
       const ref = mobileConvoHistoryClose;
       mobileConvoHistoryClose = null;
       abandonHistoryOverlay(ref);
-      return;
     }
-    selectedContact = null;
-    isConversationDrawerOpen = false;
   }
 
   function openConversationDrawer() {
@@ -2170,6 +2182,7 @@ export function useConversations() {
     selectConversationWithCtx,
     /** Deselects the active conversation and closes the drawer. */
     goBackToMenu,
+    onThreadLeft,
     openConversationDrawer,
     closeConversationDrawer,
     openSidePanel,

@@ -60,7 +60,13 @@
   import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
   import { Log } from '$lib/utils/Log';
   import { mayPinMessage, type PinStanding } from '$lib/utils/chat/pinPermission';
-  import { isNarrowChatLayout, NARROW_CHAT_QUERY, onViewportChange } from '$lib/utils/viewport';
+  import {
+    isNarrowChatLayout,
+    isOverlayLayout,
+    NARROW_CHAT_QUERY,
+    OVERLAY_LAYOUT_QUERY,
+    onViewportChange,
+  } from '$lib/utils/viewport';
 
   interface Props {
     /** The active conversation to display, or null when nothing is selected. */
@@ -1015,6 +1021,16 @@
     });
   });
 
+  // Where the conversation holds a history entry (the overlay layout) - the predicate the swipe
+  // must share with the entries, see `onSwipedBack`.
+  let overlayLayout = $state(false);
+  $effect(() => {
+    overlayLayout = isOverlayLayout();
+    return onViewportChange(OVERLAY_LAYOUT_QUERY, (overlay) => {
+      overlayLayout = overlay;
+    });
+  });
+
   $effect(() => {
     onMessagesScrollEl?.(chatContainer ?? null);
     return () => onMessagesScrollEl?.(null);
@@ -1159,10 +1175,13 @@
    * panel - and the conversation only when nothing is open over it (on a phone it holds an entry of
    * its own, so the stack closes it exactly as Android's Back does). Calling `onBack` directly closed
    * the conversation from under an open menu with ONE swipe (iPhone 12, v1.2.9-alpha.2, 2 of 2).
-   * `onBack` is left for a layout where nothing, the conversation included, holds an entry.
+   * Outside the overlay layout (a touch screen of 1280 px and more: the conversation sits beside
+   * its list and holds NO entry) the swipe is the conversation's own `onBack`, never the stack's:
+   * the stack's top there is something else (a community admin panel), and the swipe closed it
+   * instead of the conversation. One predicate for the swipe and the entries.
    */
   function onSwipedBack() {
-    if (backHistoryOverlayFromGesture()) return;
+    if (overlayLayout && backHistoryOverlayFromGesture()) return;
     onBack?.();
   }
 </script>
