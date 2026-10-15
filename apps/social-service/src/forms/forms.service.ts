@@ -44,6 +44,7 @@ import { withSubmissionReturnKey } from './return-url-key';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
+import { toManagerView, toSubmitterView } from './submission.projection';
 import {
   bucketFor,
   dimensionsNeedProfile,
@@ -669,13 +670,14 @@ export class FormsService {
 
   /** Returns the most recent completed (paid or free) submission for a given user on a form. */
   async getSubmission(formId: string, userId: string) {
-    return this.submissionRepo.findOne({
+    const submission = await this.submissionRepo.findOne({
       where: [
         { formId, userId, paymentStatus: 'paid' },
         { formId, userId, paymentStatus: 'free' },
       ],
       order: { createdAt: 'DESC' },
     });
+    return submission ? toSubmitterView(submission) : null;
   }
 
   /**
@@ -1416,22 +1418,17 @@ export class FormsService {
     this.logger.log(`[Forms] Submission ${submissionId} deleted by ${callerId}`);
   }
 
-  /** Loads a submission by ID with its payment status and the associated payment account ID (if any). */
+  /**
+   * Loads a submission by ID with its payment status, for its submitter or a manager. It used to
+   * answer `paymentAccountId` too - the Business's Lydia `vendor_token`, which no client read and
+   * which lets anyone cancel that Business's payment requests (`submission.projection.ts`).
+   */
   async getSubmissionById(submissionId: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
     const form = await this.formRepo.findOne({ where: { id: submission.formId } });
-    return {
-      id: submission.id,
-      formId: submission.formId,
-      userId: submission.userId,
-      totalPaid: submission.totalPaid,
-      currency: form?.currency ?? 'eur',
-      paymentStatus: submission.paymentStatus,
-      paymentAccountId: form?.associationId
-        ? await this.associationsService.getPaymentAccountId(form.associationId)
-        : null,
-    };
+    const { id, formId, totalPaid, paymentStatus } = toSubmitterView(submission);
+    return { id, formId, totalPaid, currency: form?.currency ?? 'eur', paymentStatus };
   }
 
   /**
@@ -1702,10 +1699,11 @@ export class FormsService {
   /** Lists submissions waiting for cash validation on a given form. Requires form manager rights. */
   async listPendingCash(formId: string, callerId: string, isGlobalAdmin: boolean) {
     await this.assertFormManager(formId, callerId, isGlobalAdmin);
-    return this.submissionRepo.find({
+    const rows = await this.submissionRepo.find({
       where: { formId, paymentStatus: 'pending_cash' },
       order: { createdAt: 'ASC' },
     });
+    return rows.map(toManagerView);
   }
 
   /**
@@ -1875,7 +1873,7 @@ export class FormsService {
         (value): value is string => typeof value === 'string' && files.has(value)
       );
       return {
-        ...s,
+        ...toManagerView(s),
         firstName: nameMap.get(s.userId)?.firstName ?? null,
         lastName: nameMap.get(s.userId)?.lastName ?? null,
         deletedFileIds: cited.filter((id) => files.get(id)!.purged),
