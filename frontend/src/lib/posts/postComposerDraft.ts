@@ -177,6 +177,36 @@ export function isPostComposerDraftWorthKeeping(draft: PostComposerDraft): boole
   return draft.markdown.trim().length > 0 || draft.includePoll || draft.includeForm;
 }
 
+/**
+ * The media picked in the composer, held IN MEMORY while it is closed (the text draft's twin).
+ *
+ * The composer keeps unsent text as a draft that survives closing it (`savePostComposerDraft`), and
+ * nothing asks before a close. Its media did not follow: Back closed the composer holding a video
+ * just filmed with the in-app camera, with no question, and the video was gone at the next open (Mi
+ * 9T, v1.2.9-alpha.1). Media follow the text's rule now - kept, not asked about - but in memory
+ * only: a photo or a 90 s video does not belong in `localStorage`, so a reload still loses them,
+ * and the draft banner says which of the two it restored. Owned by the account like the text
+ * draft, so a second account never opens the first one's media.
+ */
+let heldMedia: { userId: string; files: File[] } | null = null;
+
+/** Holds the composer's current media for the signed-in account (an empty list forgets them). */
+export function holdPostComposerMedia(files: readonly File[]): void {
+  const userId = getSavedUserId();
+  if (!userId || files.length === 0) {
+    heldMedia = null;
+    return;
+  }
+  heldMedia = { userId, files: [...files] };
+}
+
+/** The media held for the signed-in account, or an empty list. */
+export function heldPostComposerMedia(): File[] {
+  const userId = getSavedUserId();
+  if (!heldMedia || heldMedia.userId !== userId) return [];
+  return [...heldMedia.files];
+}
+
 export function clearPostComposerDraft(): void {
   if (typeof localStorage === 'undefined') return;
   dropUnownedDrafts();

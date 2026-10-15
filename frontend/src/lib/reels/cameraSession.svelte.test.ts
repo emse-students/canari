@@ -66,6 +66,51 @@ describe('CameraSession', () => {
     expect(session.phase).toBe('stopped');
   });
 
+  it('the permission dialog backgrounding the app does not ask a second time: a refusal is shown once (Mi 9T, v1.2.9-alpha.1)', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open);
+    const started = session.start();
+    // Android's dialog hides the WebView while it asks, and shows it again when answered.
+    session.suspend();
+    calls[0].reject(new CameraAccessError('denied', 'denied'));
+    await started;
+    session.resume();
+    expect(calls).toHaveLength(1);
+    expect(session.phase).toBe('error');
+    expect(session.fault).toBe('denied');
+  });
+
+  it('an open granted while the app is away is released, and the return opens it again', async () => {
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open);
+    const started = session.start();
+    session.suspend();
+    const away = fakeStream();
+    calls[0].resolve(away.stream);
+    await started;
+    expect(away.stop).toHaveBeenCalled();
+    expect(session.phase).toBe('stopped');
+
+    session.resume();
+    expect(calls).toHaveLength(2);
+    expect(session.phase).toBe('starting');
+  });
+
+  it('an open granted after the return is installed, never asked again', async () => {
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open);
+    const started = session.start();
+    session.suspend();
+    session.resume();
+    const { stream } = fakeStream();
+    calls[0].resolve(stream);
+    await started;
+    expect(calls).toHaveLength(1);
+    expect(session.phase).toBe('live');
+    expect(session.stream).toBe(stream);
+  });
+
   it('keeps only the LAST lens when two opens overlap, and releases the first', async () => {
     const { open, calls } = deferredOpener();
     const session = new CameraSession(open);

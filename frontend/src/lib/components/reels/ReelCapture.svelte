@@ -44,6 +44,7 @@
   import type { CameraCapture, FramedStream } from '$lib/reels/framedCapture';
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { readVideoDurationMs } from '$lib/reels/videoDuration';
+  import { attachCapturePoster } from '$lib/reels/capturePoster';
   import { getReelLimits, type ReelLimits } from '$lib/posts/api';
   import type { PublishReelDeps } from '$lib/reels/publishReel';
   import { refusalStatus } from '$lib/utils/apiRefusal';
@@ -124,6 +125,8 @@
   let recorder: ReelRecorder | null = null;
   /** The preview's crop being drawn for the take in progress (framedCapture.ts). */
   let framed: FramedStream | null = null;
+  /** The take in progress's first picture (`ReelClip.poster`), asked for as the recording starts. */
+  let takePoster: Promise<Blob | null> | null = null;
   /** Armed by a press; its firing makes the press a video (reelCapture.ts). */
   let holdTimer: ReturnType<typeof setTimeout> | null = null;
   let limitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -232,8 +235,9 @@
    * A composer destination: the take leaves as a file for the composer's attachment path, and the
    * camera closes. `blob` is the edited media when the editor changed it.
    */
-  function handBack(blob: Blob) {
+  function handBack(blob: Blob, poster: Blob | null | undefined) {
     const file = captureFileFrom(blob);
+    if (poster && file.type.startsWith('video/')) attachCapturePoster(file, poster);
     console.debug(
       `[reel-capture] handing back ${file.name} (${file.size} bytes) to ${destination}`
     );
@@ -340,6 +344,14 @@
     }
     buzz(15);
     holdTakeEntry();
+    // The take's thumbnail for a composer (`ReelClip.poster`): the same crop, now, while the preview
+    // runs. The reel publish step draws its take itself and needs none.
+    if (rules.handsBackFile) {
+      takePoster = (camera?.photo() ?? Promise.resolve(null)).catch((err: unknown) => {
+        console.error('[reel-capture] the take thumbnail could not be taken', err);
+        return null;
+      });
+    }
     elapsedMs = 0;
     // THE CAP IS THE PRODUCT'S RULE (C4), so it is a deadline by definition: the ring is full when
     // the take is as long as the server allows, and that ends it exactly as a second tap would.
@@ -367,9 +379,12 @@
       send({ type: 'failed' });
       return;
     }
+    const posterOfTake = takePoster;
+    takePoster = null;
     try {
       const blob = await ending.stop();
-      send({ type: 'stopped', clip: { blob, source: 'camera' } });
+      const poster = posterOfTake ? await posterOfTake : null;
+      send({ type: 'stopped', clip: { blob, source: 'camera', poster } });
     } catch (err) {
       const fault = err instanceof ReelRecorderError ? err.fault : 'record';
       console.error(`[reel-capture] the take could not be kept (${fault})`, err);
@@ -391,6 +406,7 @@
     elapsedMs = 0;
     recorder?.abort();
     recorder = null;
+    takePoster = null;
     stopFraming();
   }
 
@@ -485,6 +501,7 @@
     paused={capture.kind === 'review'}
     {onBeforeRelease}
     {onclose}
+    microphoneAsked={rules.microphone === 'with-lens'}
   >
     {#snippet controls()}
       <div class="grid grid-cols-3 items-end px-6">
@@ -554,7 +571,7 @@
         onedit={() => (editorOpen = true)}
         soundRemoval={rules.soundRemoval}
         nextLabel={m.reels_review_add()}
-        onnext={() => handBack(clip.blob)}
+        onnext={() => handBack(clip.blob, clip.poster)}
       />
     {:else if publishOpen && limits}
       <ReelPublishSheet {clip} {limits} deps={publishDeps} onclose={() => (publishOpen = false)} />
@@ -582,7 +599,8 @@
         if (capture.kind !== 'review') return;
         // The edited media replaces the take (null: untouched), and the publish step opens at once.
         if (rules.handsBackFile) {
-          handBack(blob ?? capture.clip.blob);
+          // The poster is the take as filmed: the editor's drawings are not on the thumbnail.
+          handBack(blob ?? capture.clip.blob, capture.clip.poster);
           return;
         }
         if (blob) capture = { kind: 'review', clip: { ...capture.clip, blob } };

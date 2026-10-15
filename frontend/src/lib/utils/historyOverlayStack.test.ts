@@ -1,4 +1,5 @@
 import {
+  abandonHistoryOverlay,
   drainHistoryOverlayStack,
   pushHistoryOverlay,
   closeHistoryOverlayFromUi,
@@ -100,9 +101,13 @@ function fakeHistory() {
       entries[index] = state;
     },
     back() {
-      if (index === 0) return;
-      index--;
-      queueMicrotask(() => listener?.({ state: entries[index] } as PopStateEvent));
+      // The pointer moves when the traversal RUNS, not when it is asked for: a `pushState` made in
+      // between is gone back off, as Chrome does.
+      queueMicrotask(() => {
+        if (index === 0) return;
+        index--;
+        listener?.({ state: entries[index] } as PopStateEvent);
+      });
     },
   };
   vi.stubGlobal('history', api);
@@ -234,6 +239,47 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
 
     await h.pressBack();
     expect(h.index).toBe(1);
+  });
+
+  it('an overlay opened in the task that abandons another waits for that traversal: Back then closes only the top (Mi 9T, v1.2.9-alpha.1)', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closeConversation = vi.fn();
+    const closeMenu = vi.fn();
+    const closeCamera = vi.fn();
+    const closeTake = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeMenu);
+    // "Ouvrir la camera": the menu gives its entry back and the camera opens, in ONE task.
+    abandonHistoryOverlay(closeMenu);
+    pushHistoryOverlay(closeCamera);
+    expect(historyOverlayStackDepth()).toBe(2);
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    // Conversation, camera: the abandon's traversal did not go back off the camera's entry.
+    expect(h.index).toBe(2);
+    pushHistoryOverlay(closeTake);
+    expect(h.index).toBe(3);
+
+    await h.pressBack();
+    expect(closeTake).toHaveBeenCalledWith('back');
+    expect(closeCamera).not.toHaveBeenCalled();
+    expect(closeConversation).not.toHaveBeenCalled();
+    expect(h.index).toBe(2);
+  });
+
+  it('an overlay held behind a traversal and closed before it landed never writes an entry', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closeMenu = vi.fn();
+    const closeCamera = vi.fn();
+    pushHistoryOverlay(closeMenu);
+    abandonHistoryOverlay(closeMenu);
+    pushHistoryOverlay(closeCamera);
+    closeHistoryOverlayFromUi(closeCamera);
+    expect(closeCamera).toHaveBeenCalledTimes(1);
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    expect(h.index).toBe(0);
+    expect(historyOverlayStackDepth()).toBe(0);
   });
 
   it('reads an entry left by an earlier page load as the router entry below every live overlay', () => {

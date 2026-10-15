@@ -59,6 +59,13 @@ export interface ReelClip {
    * (`prepareVideoForUpload`'s `removeAudio`), it is not a playback preference.
    */
   soundRemoved?: boolean;
+  /**
+   * A FILMED take's first picture, taken from the preview as the recording starts (the same crop
+   * the recorder draws). A composer draws it as the take's thumbnail (`capturePoster.ts`): a
+   * recorder's file has no index to seek in, so the WebView decodes no frame of it and drew a grey
+   * tile (Mi 9T, v1.2.9-alpha.1). `null` when the still could not be taken (logged).
+   */
+  poster?: Blob | null;
 }
 
 /** Where a capture stands. */
@@ -217,19 +224,32 @@ export function destinationRules(destination: CaptureDestination): DestinationRu
 }
 
 /**
+ * The extension of each type a capture can carry - the types the recorder and the photo path
+ * PRODUCE, which are not always the ones asked for: the Android WebView asked for
+ * `video/webm;codecs=h264,opus` reports its take as `video/x-matroska;codecs=avc1,opus` (Mi 9T,
+ * v1.2.9-alpha.1), and the take reached the post composer as `canari-video-*.bin`. H.264 is not a
+ * WebM codec, so the engine names the container honestly; the name follows it.
+ */
+const CAPTURE_EXTENSIONS: Readonly<Record<string, string>> = {
+  'image/jpeg': 'jpg',
+  'video/webm': 'webm',
+  'video/x-matroska': 'mkv',
+  'video/mp4': 'mp4',
+};
+
+/**
  * The take as a `File` for a composer's attachment path: the extension follows the blob's own type
- * (a Chromium WebView records WebM, iOS an MP4), because the composers classify by name AND type.
+ * (`CAPTURE_EXTENSIONS`), because the composers classify by name AND type.
  */
 export function captureFileFrom(blob: Blob, now: number = Date.now()): File {
   const type = blob.type.split(';')[0] || 'application/octet-stream';
-  const ext =
-    type === 'image/jpeg'
-      ? 'jpg'
-      : type === 'video/webm'
-        ? 'webm'
-        : type === 'video/mp4'
-          ? 'mp4'
-          : 'bin';
+  let ext = CAPTURE_EXTENSIONS[type];
+  if (!ext) {
+    // A type the table does not know is a recorder this code was never read against: accused, and
+    // named, so the next reading adds it here.
+    console.error(`[reel-capture] a take of an unknown type "${blob.type}" - named .bin`);
+    ext = 'bin';
+  }
   const kind = type.startsWith('image/') ? 'photo' : 'video';
   return new File([blob], `canari-${kind}-${now}.${ext}`, { type: blob.type || type });
 }

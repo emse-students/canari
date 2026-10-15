@@ -52,6 +52,11 @@ export class CameraSession {
 
   /** Bumped by every open and every stop; an acquisition that returns to another number is stale. */
   #generation = 0;
+  /**
+   * The app left the screen while an open was in flight ({@link suspend}): the open's answer is still
+   * awaited, and a stream it brings back is given back at once, since nothing is on screen to use it.
+   */
+  #suspended = false;
   readonly #open: CameraOpener;
 
   constructor(open: CameraOpener = openReelCamera) {
@@ -63,6 +68,7 @@ export class CameraSession {
     const generation = ++this.#generation;
     console.debug(`[camera-session] start ${facing} (#${generation})`);
     this.#releaseCurrent();
+    this.#suspended = false;
     this.facing = facing;
     this.phase = 'starting';
     this.fault = null;
@@ -73,6 +79,15 @@ export class CameraSession {
           `[camera-session] #${generation} came back after the session moved on - releasing it`
         );
         releaseCamera(stream);
+        return;
+      }
+      if (this.#suspended) {
+        // Granted while the app was away (a backgrounding that was not the permission dialog): the
+        // camera is not held in the background; the return opens it again (`resume`).
+        console.debug(`[camera-session] #${generation} granted while the app is away - released`);
+        this.#suspended = false;
+        releaseCamera(stream);
+        this.phase = 'stopped';
         return;
       }
       this.stream = stream;
@@ -114,6 +129,9 @@ export class CameraSession {
       this.phase = 'live';
     } catch (err) {
       if (generation !== this.#generation) return;
+      // A refusal is the member's ANSWER, whether or not the app was away while it was given: it is
+      // shown once, as the refusal screen, and never asked again behind their back.
+      this.#suspended = false;
       const fault = err instanceof CameraAccessError ? err.fault : 'unavailable';
       if (!(err instanceof CameraAccessError)) {
         console.error('[camera-session] the opener threw something untyped', err);
@@ -149,9 +167,47 @@ export class CameraSession {
     }
   }
 
+  /**
+   * The app left the screen.
+   *
+   * AN OPEN IN FLIGHT IS NOT CANCELLED. On Android the system PERMISSION DIALOG itself sends the app to
+   * the background, so stopping here threw away the request the dialog was answering - its refusal
+   * came back to a stale generation and was dropped - and the return to the screen opened the camera
+   * again, which raised the dialog a SECOND time (Mi 9T, v1.2.9-alpha.1). The request's answer is the
+   * fact; it is awaited ({@link start} reads {@link #suspended} when it lands). Anything already open
+   * is given back, as before.
+   */
+  suspend(): void {
+    if (this.phase === 'starting') {
+      console.debug('[camera-session] app away with an open in flight - its answer is awaited');
+      this.#suspended = true;
+      return;
+    }
+    this.stop();
+  }
+
+  /**
+   * The app is back on screen: the camera opens again if the background closed it. An open still in
+   * flight (the permission dialog just closed) is left to land, and a refusal stays the refusal.
+   */
+  resume(): void {
+    if (this.#suspended) {
+      console.debug('[camera-session] back on screen - the open in flight is kept');
+      this.#suspended = false;
+      return;
+    }
+    if (this.phase !== 'stopped') {
+      console.debug(`[camera-session] back on screen in ${this.phase} - nothing to reopen`);
+      return;
+    }
+    console.debug('[camera-session] back on screen - reopening');
+    void this.start();
+  }
+
   /** Gives the camera back - leaving the tab, or the app going to the background. */
   stop(): void {
     ++this.#generation;
+    this.#suspended = false;
     console.debug('[camera-session] stop');
     this.#releaseCurrent();
     this.phase = 'stopped';

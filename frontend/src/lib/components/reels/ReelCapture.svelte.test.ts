@@ -12,6 +12,7 @@ import { CameraSession } from '$lib/reels/cameraSession.svelte';
 import { installFakeMediaRecorder } from '$lib/reels/fakeMediaRecorder.test-helper';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import { pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
+import { capturePosterOf } from '$lib/reels/capturePoster';
 import { m } from '$lib/paraglide/messages';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
@@ -472,6 +473,20 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
       m.reels_review_add()
     );
     expect(target.querySelector('[data-reel-sound]')).toBeNull();
+  });
+
+  it('a filmed post take carries its first picture as its thumbnail (Mi 9T, v1.2.9-alpha.1)', async () => {
+    const still = new Blob(['first-frame'], { type: 'image/jpeg' });
+    framed.photo.mockResolvedValue(still);
+    const oncapture = vi.fn();
+    const { target, hold } = await render({ destination: 'post', oncapture, onclose: vi.fn() });
+    await hold();
+    target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
+    await settle();
+
+    const file = oncapture.mock.calls[0][0] as File;
+    expect(file.type).toMatch(/^video\//);
+    expect(capturePosterOf(file)).toBe(still);
   });
 
   it('a post camera whose microphone was refused still takes photos: a hold is a photo, and it is said', async () => {

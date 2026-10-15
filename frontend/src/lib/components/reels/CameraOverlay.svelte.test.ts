@@ -10,7 +10,11 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 import CameraOverlay from './CameraOverlay.svelte';
 import { CameraSession } from '$lib/reels/cameraSession.svelte';
 import { screenCover } from '$lib/actions/coversScreen.svelte';
+import { showConfirm } from '$lib/stores/confirm.svelte';
+import { CameraAccessError } from '$lib/reels/cameraAccess';
+import { m } from '$lib/paraglide/messages';
 import {
+  abandonHistoryOverlay,
   clearHistoryOverlayStack,
   historyOverlayStackDepth,
   initHistoryOverlayStack,
@@ -198,6 +202,79 @@ describe('CameraOverlay history', () => {
     expect(closeConversation).not.toHaveBeenCalled();
     expect(historyOverlayStackDepth()).toBe(1);
     expect(model.index()).toBe(1);
+  });
+
+  it('opened from a menu that gave its entry back in the same tap, Back on a photo ASKS with the photo on screen, and "keep" keeps it (Mi 9T, v1.2.9-alpha.1)', async () => {
+    vi.mocked(showConfirm).mockResolvedValueOnce(false);
+    const model = installHistoryModel();
+    const closeConversation = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    const closeMenu = vi.fn();
+    pushHistoryOverlay(closeMenu);
+
+    // "Ouvrir la camera": the "+" menu abandons its entry and the camera mounts, in ONE task.
+    abandonHistoryOverlay(closeMenu);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    let open = true;
+    const app = mount(CameraOverlay, {
+      target,
+      props: {
+        destination: 'chat',
+        session: new CameraSession(() => Promise.resolve(stream())),
+        oncapture: vi.fn(),
+        onclose: () => {
+          open = false;
+          unmount(app);
+        },
+      },
+    });
+    await settle();
+    await drainTraversals(model);
+    const video = document.querySelector('video')!;
+    Object.defineProperty(video, 'videoWidth', { value: 720, configurable: true });
+    video.dispatchEvent(new Event('loadeddata'));
+    await settle();
+    const shutter = document.querySelector<HTMLButtonElement>('[data-reel-shutter]')!;
+    shutter.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, bubbles: true }));
+    shutter.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }));
+    await settle();
+    // Conversation, camera, take.
+    expect(model.index()).toBe(3);
+
+    history.back();
+    await drainTraversals(model);
+
+    expect(showConfirm).toHaveBeenCalledTimes(1);
+    expect(open).toBe(true);
+    expect(document.querySelector('[data-reel-review]')).not.toBeNull();
+    // Kept: Back is armed on the take again, above the camera.
+    expect(model.index()).toBe(3);
+    expect(closeConversation).not.toHaveBeenCalled();
+    unmount(app);
+    await drainTraversals(model);
+  });
+
+  it('a chat camera refused does not ask the member to allow the microphone it never asked for', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const model = installHistoryModel();
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const app = mount(CameraOverlay, {
+      target,
+      props: {
+        destination: 'chat',
+        session: new CameraSession(() => Promise.reject(new CameraAccessError('denied', 'd'))),
+        oncapture: vi.fn(),
+        onclose: vi.fn(),
+      },
+    });
+    await settle();
+    const alert = document.querySelector('[role="alert"]')!.textContent;
+    expect(alert).toContain(m.reels_camera_denied_body_camera_only());
+    expect(alert).not.toContain(m.reels_camera_denied_body());
+    unmount(app);
+    await drainTraversals(model);
   });
 
   it('takes the focus from the composer field, so no soft keyboard stays over the shutter', async () => {

@@ -95,6 +95,17 @@ let initialized = false;
  * allowing multiple concurrent absorptions.
  */
 let skipPops = 0;
+/**
+ * Traversals this module started (`history.back()` from an abandon, a UI close or a walk) whose
+ * `popstate` has not arrived yet. While one is in flight, a push is HELD (`pending`), see
+ * {@link pushHistoryOverlay}.
+ */
+let traversalsInFlight = 0;
+/**
+ * Overlays opened while a traversal was in flight: on the JS side they are open, but their history
+ * entry is written only once that traversal has landed (`flushPending`), in the order they opened.
+ */
+const pending: OverlayClose[] = [];
 
 /**
  * Viewports where chat/drawers use full-screen overlays.
@@ -117,6 +128,12 @@ export function initHistoryOverlayStack(): () => void {
   initialized = true;
 
   const onPopState = (event: PopStateEvent) => {
+    if (traversalsInFlight > 0) traversalsInFlight--;
+    settlePopState(event);
+    if (traversalsInFlight === 0) flushPending();
+  };
+
+  const settlePopState = (event: PopStateEvent) => {
     const from = here;
     const fromHref = hereHref;
     here = readArrival(event.state).id;
@@ -142,20 +159,60 @@ export function initHistoryOverlayStack(): () => void {
     initialized = false;
     stack.length = 0;
     skipPops = 0;
+    traversalsInFlight = 0;
+    pending.length = 0;
     here = 0;
     hereHref = '';
     walking = false;
   };
 }
 
-/** Push a history entry; Android/iOS back will invoke `close`. */
+/**
+ * Push a history entry; Android/iOS back will invoke `close`.
+ *
+ * A PUSH WAITS FOR A TRAVERSAL IN FLIGHT. `history.back()` is asynchronous and `pushState` is not,
+ * so an overlay opened in the same task as another one is abandoned (a menu entry that opens the
+ * camera) wrote its entry FIRST, and the abandon's traversal then went back off THAT entry: the
+ * pointer sat on the menu's ghost, the next push truncated the camera's entry, and one Back on the
+ * camera's review closed the review AND the camera (Mi 9T, v1.2.9-alpha.1, `Back closed 2
+ * overlay(s)`, 2 of 2). The order is a fact this module holds (`traversalsInFlight`), so the entry
+ * is written when the traversal has landed - never after a delay.
+ */
 export function pushHistoryOverlay(close: OverlayClose): void {
   if (!isBrowser) return;
+  if (traversalsInFlight > 0) {
+    Log.d(
+      'historyOverlay',
+      `push held until ${traversalsInFlight} traversal(s) in flight have landed`
+    );
+    pending.push(close);
+    return;
+  }
+  writeEntry(close);
+}
+
+/** Writes `close`'s history entry and puts it on the stack. */
+function writeEntry(close: OverlayClose): void {
   const id = ++lastId;
   stack.push({ close, id });
   history.pushState({ [STATE_KEY]: id, [LOAD_KEY]: LOAD_ID }, '');
   here = id;
   hereHref = currentHref();
+}
+
+/** Writes the entries held while a traversal was in flight, in the order their overlays opened. */
+function flushPending(): void {
+  if (pending.length === 0) return;
+  Log.d('historyOverlay', `the traversal landed - writing ${pending.length} held entry(ies)`);
+  for (const close of pending.splice(0)) writeEntry(close);
+}
+
+/** Takes `close` out of the held pushes; true when it was there (it has no history entry yet). */
+function dropPending(close: OverlayClose): boolean {
+  const idx = pending.indexOf(close);
+  if (idx < 0) return false;
+  pending.splice(idx, 1);
+  return true;
 }
 
 /**
@@ -212,6 +269,7 @@ function settleArrival(state: unknown, leftGhost: boolean): void {
         : 'the router entry from a ghost above it';
     Log.d('historyOverlay', `Back landed on ${where} - walking one more`);
     walking = true;
+    traversalsInFlight++;
     history.back();
   }
 }
@@ -225,6 +283,10 @@ export function closeHistoryOverlayFromUi(close: () => void): void {
     close();
     return;
   }
+  if (dropPending(close)) {
+    close();
+    return;
+  }
   const idx = stack.findIndex((e) => e.close === close);
   if (idx < 0) {
     close();
@@ -233,6 +295,7 @@ export function closeHistoryOverlayFromUi(close: () => void): void {
   if (idx === stack.length - 1) {
     // Do NOT increment skipPops here: the resulting popstate SHOULD reach
     // `onPopState` so it pops the stack entry and calls close().
+    traversalsInFlight++;
     history.back();
     return;
   }
@@ -250,12 +313,14 @@ export function closeHistoryOverlayFromUi(close: () => void): void {
  */
 export function abandonHistoryOverlay(close: () => void): void {
   if (!isBrowser) return;
+  if (dropPending(close)) return;
   const idx = stack.findIndex((e) => e.close === close);
   if (idx < 0) return;
   const wasTop = idx === stack.length - 1;
   stack.splice(idx, 1);
   if (wasTop) {
     skipPops++;
+    traversalsInFlight++;
     history.back();
   }
 }
@@ -277,6 +342,7 @@ export function abandonHistoryOverlay(close: () => void): void {
  */
 export function releaseHistoryOverlay(close: () => void): void {
   if (!isBrowser) return;
+  if (dropPending(close)) return;
   const idx = stack.findIndex((e) => e.close === close);
   if (idx >= 0) stack.splice(idx, 1);
 }
@@ -295,6 +361,8 @@ export function releaseHistoryOverlay(close: () => void): void {
  * known as "the first back gesture lands on the previous page".
  */
 export function drainHistoryOverlayStack(): void {
+  // Held overlays are the topmost: they close first, and never get an entry.
+  while (pending.length > 0) pending.pop()?.('navigation');
   while (stack.length > 0) {
     stack.pop()?.close('navigation');
   }
@@ -309,12 +377,15 @@ export function drainHistoryOverlayStack(): void {
 /** Drop stack entries without invoking close handlers (app teardown). */
 export function clearHistoryOverlayStack(): void {
   stack.length = 0;
+  pending.length = 0;
   skipPops = 0;
+  traversalsInFlight = 0;
   here = 0;
   hereHref = '';
   walking = false;
 }
 
 export function historyOverlayStackDepth(): number {
-  return stack.length;
+  // A held overlay is open on screen: it stands the tab swipe down like any other.
+  return stack.length + pending.length;
 }
