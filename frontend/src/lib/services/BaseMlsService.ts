@@ -7,6 +7,8 @@ import type {
   BulkIngestHandle,
   BulkIngestPhase,
   BulkIngestObserver,
+  LocalStateOpenResult,
+  StateLoadFailure,
 } from '$lib/mls-client';
 import { MlsDeliveryApi, isKeystoreKeyUnavailable, resolveMlsPublicUrls } from '$lib/mls-client';
 import {
@@ -614,9 +616,7 @@ export abstract class BaseMlsService implements IMlsService {
    * is not accused as unrecognised on every refused fingerprint; the caller destroys nothing for it
    * and hands the user to the PIN modal ({@link isKeystoreKeyUnavailable}).
    */
-  protected classifyStateLoadFailure(
-    error: unknown
-  ): 'mismatch' | 'undecryptable' | 'rotated' | 'keystore_unavailable' | 'unknown' {
+  protected classifyStateLoadFailure(error: unknown): StateLoadFailure {
     const errStr = String(error);
     if (errStr.includes('IDENTITY_MISMATCH')) return 'mismatch';
     if (errStr.includes('STATE_KEY_MISMATCH')) return 'rotated';
@@ -661,32 +661,35 @@ export abstract class BaseMlsService implements IMlsService {
    * initialised so a following {@link init}/login reuses it. The re-seal is {@link changeDeviceKey},
    * called by `performPinChange` only AFTER the local stores have moved - see there for why.
    *
-   * Returns `false` when `deviceKeyB64` does not open the local state: THE proof that the old PIN
-   * the user typed is wrong, decided here and not from the message store, whose rows may sit under
-   * an even older key.
+   * A refusal carries WHY ({@link classifyStateLoadFailure}), because only one kind of refusal is
+   * the old PIN's fault: `undecryptable` / `rotated` (the key does not open it). A state carrying
+   * another device's identity, or a failure nothing here recognises, would refuse EVERY PIN - read as
+   * "old PIN incorrect" it sent the user round the same keypad for ever. The decision is made here
+   * and not from the message store, whose rows may sit under an even older key.
    */
   async openLocalStateWithKey(
     userId: string,
     deviceKeyB64: string,
     state: Uint8Array
-  ): Promise<boolean> {
+  ): Promise<LocalStateOpenResult> {
     this.userId = userId;
     this.delivery.userId = userId;
     await this.resolveDeviceId(userId);
     try {
       await this.loadStateWithKey(deviceKeyB64, state);
     } catch (e) {
+      const cause = this.classifyStateLoadFailure(e);
       console.warn(
-        '[MLS] openLocalStateWithKey: the old device key did not open the local state:',
+        `[MLS] openLocalStateWithKey: the local state did not open (${cause}):`,
         String(e).slice(0, 160)
       );
-      return false;
+      return { opened: false, cause };
     }
     // The state in memory is the one sealed under this key, so this key is what a checkpoint
     // taken before the re-seal must use.
     this.currentDeviceKeyB64 = deviceKeyB64;
     this.initPromise = Promise.resolve();
-    return true;
+    return { opened: true };
   }
 
   /**

@@ -20,7 +20,7 @@
  */
 import { openSealedBytes, sealBytes } from '$lib/encryption';
 import { getStorage, type IStorage, type SealedPayloadSwap, type SealedStore } from '$lib/db';
-import { holdStorageForKeyChange } from '$lib/db/deviceKeyGate';
+import { holdOtherRealmsForKeyChange, holdStorageForKeyChange } from '$lib/db/deviceKeyGate';
 import {
   clearDeviceKey,
   clearDeviceKeyAndWrapKey,
@@ -30,7 +30,7 @@ import {
 import { BiometricService } from '$lib/services/biometric';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
-import type { IMlsService } from '$lib/mls-client';
+import type { IMlsService, StateLoadFailure } from '$lib/mls-client';
 
 /** Rows sealed and swapped per step: bounds the new ciphertexts held at once. */
 const RESEAL_BATCH_SIZE = 200;
@@ -84,6 +84,35 @@ export class DeviceKeyMismatchError extends Error {
   constructor() {
     super('the old device key does not open the local MLS state');
     this.name = 'DeviceKeyMismatchError';
+  }
+}
+
+/**
+ * The stored MLS state refused to open for a reason NO PIN can fix: another device's identity
+ * (`mismatch`), or a failure `mls-core` does not type (`unknown`, `keystore_unavailable`). Worded
+ * apart from {@link DeviceKeyMismatchError}, which it used to be - and which sent the user round the
+ * same keypad for ever. Thrown before anything is written.
+ */
+export class LocalStateUnopenableError extends Error {
+  constructor(readonly failure: Exclude<StateLoadFailure, 'undecryptable' | 'rotated'>) {
+    super(`the local MLS state cannot be opened by any PIN (${failure})`);
+    this.name = 'LocalStateUnopenableError';
+  }
+}
+
+/**
+ * The change threw AFTER the unattended unlock (keystore, vault) moved to the new key: the stores
+ * and the MLS state may still be (partly) under the old one. The session must end into the
+ * recovery - which opens the MLS state with the old key and finishes the move - rather than keep
+ * running on a key the unattended unlock no longer holds. Carries the stage, never key material.
+ */
+export class KeyChangeInterruptedError extends Error {
+  constructor(
+    readonly stage: 'vault' | 'stores' | 'mls',
+    readonly reason: unknown
+  ) {
+    super(`the device key change was interrupted at the ${stage} step: ${String(reason)}`);
+    this.name = 'KeyChangeInterruptedError';
   }
 }
 
@@ -260,14 +289,22 @@ export interface PinChangeOptions {
  *     server PIN check, so had they kept the old key past a kill, they would open the MLS state (not
  *     yet re-sealed) and run a session over stores already half moved - silently. With the new key,
  *     every way in after a kill finds an MLS state it cannot open, and is sent to the recovery.
- *  3. THE STORES, under the storage gate: the live session's storage calls wait while they move, and
- *     the retired key is forwarded to the new one afterwards ({@link holdStorageForKeyChange}).
+ *  3. THE STORES, under the storage gate: every OTHER tab of this account has been told and has let
+ *     go of the store ({@link holdOtherRealmsForKeyChange}), this realm's storage calls wait while
+ *     they move, and the retired key is forwarded to the new one afterwards
+ *     ({@link holdStorageForKeyChange}).
  *  4. The session adopts the new key.
- *  5. THE MLS STATE LAST: it is the recovery's entry point (opened with the OLD key), so while it has
- *     not moved, the recovery is offered and finishes the stores. In the reverse order a kill left it
- *     under the new key and the remaining rows under a key no path would ever ask for again.
+ *  5. THE MLS STATE LAST, still inside the other tabs' hold, so none reloads onto a state not yet
+ *     moved: it is the recovery's entry point (opened with the OLD key), so while it has not moved,
+ *     the recovery is offered and finishes the stores. In the reverse order a kill left it under the
+ *     new key and the remaining rows under a key no path would ever ask for again.
+ *
+ * A THROW after step 2 is a {@link KeyChangeInterruptedError}: the unattended unlock already holds
+ * the new key, so the caller must end the session into the recovery rather than run on the old one.
  *
  * @throws {DeviceKeyMismatchError} in a recovery whose old key does not open the MLS state.
+ * @throws {LocalStateUnopenableError} in a recovery whose MLS state no PIN can open.
+ * @throws {KeyChangeInterruptedError} on any failure after the unattended unlock moved.
  */
 export async function performPinChange(
   opts: PinChangeOptions,
@@ -279,25 +316,49 @@ export async function performPinChange(
   reportProgress(onProgress, { percent: 5, stage: 'mls' });
 
   if (storedMlsState) {
-    const opened = await mls.openLocalStateWithKey(userId, oldDeviceKeyB64, storedMlsState);
-    if (!opened) throw new DeviceKeyMismatchError();
+    const result = await mls.openLocalStateWithKey(userId, oldDeviceKeyB64, storedMlsState);
+    if (!result.opened) {
+      // ONLY A KEY REFUSAL IS THE OLD PIN'S FAULT. Another device's identity or an untyped failure
+      // would refuse every PIN the user could type.
+      log(`[DEVICEKEY_CHANGE] The local MLS state did not open (${result.cause}) - nothing moved.`);
+      if (result.cause === 'undecryptable' || result.cause === 'rotated') {
+        throw new DeviceKeyMismatchError();
+      }
+      throw new LocalStateUnopenableError(result.cause);
+    }
     log('[DEVICEKEY_CHANGE] The old key opens the local MLS state.');
   }
 
   await mls.pointUnattendedUnlockAt(newDeviceKeyB64);
-  await applyNewDeviceKeyLocally(userId, oldDeviceKeyB64, newDeviceKeyB64, log);
 
-  const storage = await getStorage(userId);
-  await holdStorageForKeyChange(storage, oldDeviceKeyB64, newDeviceKeyB64, (store) =>
-    resealDeviceKeyStores(store, oldDeviceKeyB64, newDeviceKeyB64, log, onProgress, {
-      start: 10,
-      end: 85,
-    })
-  );
-  setDeviceKey(newDeviceKeyB64);
+  // FROM HERE THE UNATTENDED UNLOCK HOLDS THE NEW KEY: a throw must not leave the session running on
+  // the old one, so it is typed for the caller to end the session into the recovery.
+  let stage: KeyChangeInterruptedError['stage'] = 'vault';
+  try {
+    await applyNewDeviceKeyLocally(userId, oldDeviceKeyB64, newDeviceKeyB64, log);
 
-  reportProgress(onProgress, { percent: 88, stage: 'mls' });
-  await mls.changeDeviceKey(newDeviceKeyB64);
+    stage = 'stores';
+    const storage = await getStorage(userId);
+    await holdOtherRealmsForKeyChange(userId, async () => {
+      await holdStorageForKeyChange(storage, oldDeviceKeyB64, newDeviceKeyB64, (store) =>
+        resealDeviceKeyStores(store, oldDeviceKeyB64, newDeviceKeyB64, log, onProgress, {
+          start: 10,
+          end: 85,
+        })
+      );
+      setDeviceKey(newDeviceKeyB64);
+
+      stage = 'mls';
+      reportProgress(onProgress, { percent: 88, stage: 'mls' });
+      await mls.changeDeviceKey(newDeviceKeyB64);
+    });
+  } catch (e) {
+    log(
+      `[DEVICEKEY_CHANGE] ERROR: interrupted at the ${stage} step after the unattended unlock moved - ` +
+        `the recovery finishes it: ${String(e)}`
+    );
+    throw new KeyChangeInterruptedError(stage, e);
+  }
   log('[DEVICEKEY_CHANGE] MLS state re-sealed with the new device key.');
   reportProgress(onProgress, { percent: 100, stage: 'finalize' });
   log('[DEVICEKEY_CHANGE] Done.');

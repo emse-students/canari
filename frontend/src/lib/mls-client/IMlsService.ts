@@ -259,6 +259,21 @@ export function isKeystoreKeyUnavailable(error: unknown): boolean {
 }
 
 /**
+ * Why a stored MLS state did not load, typed at the one place that reads `mls-core`'s codes:
+ * `mismatch` (another device's identity), `rotated` / `undecryptable` (the key does not open it),
+ * `keystore_unavailable` (biometric mode found no key) and `unknown` (an untyped failure).
+ */
+export type StateLoadFailure =
+  | 'mismatch'
+  | 'undecryptable'
+  | 'rotated'
+  | 'keystore_unavailable'
+  | 'unknown';
+
+/** The answer of {@link IMlsService.openLocalStateWithKey}: opened, or refused with its cause. */
+export type LocalStateOpenResult = { opened: true } | { opened: false; cause: StateLoadFailure };
+
+/**
  * Describes a bulk-ingest window: a span during which many MLS messages are processed at once
  * (a queue drain after reconnect, or a history restore). The same immutable object is replayed
  * at open and close, which guarantees the two ends agree on what to do.
@@ -532,10 +547,15 @@ export interface IMlsService {
   /**
    * Forgot-PIN-elsewhere recovery: opens this device's local state with the OLD key
    * (non-destructively, nothing written) and marks the client initialised so a following login
-   * reuses it. Returns `false` if the key does not open the state - the proof the old PIN is wrong.
+   * reuses it. A refusal carries its typed cause: only `undecryptable` / `rotated` prove the old PIN
+   * wrong; the others would refuse every PIN, so a caller must not word them as one.
    * The re-seal is a later {@link changeDeviceKey}.
    */
-  openLocalStateWithKey(userId: string, deviceKeyB64: string, state: Uint8Array): Promise<boolean>;
+  openLocalStateWithKey(
+    userId: string,
+    deviceKeyB64: string,
+    state: Uint8Array
+  ): Promise<LocalStateOpenResult>;
   /**
    * Points the unattended unlock (platform keystore: biometrics, background push) at a new device
    * key, awaited. A no-op on web. Rejects when the keystore refused the write.

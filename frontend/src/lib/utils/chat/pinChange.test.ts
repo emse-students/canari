@@ -13,7 +13,7 @@ import { IndexedDbStorage } from '$lib/db/indexeddb';
 import { gateStorage } from '$lib/db/deviceKeyGate';
 import { decryptData } from '$lib/encryption';
 import { toBase64 } from '$lib/utils/hex';
-import type { IMlsService } from '$lib/mls-client';
+import type { IMlsService, StateLoadFailure } from '$lib/mls-client';
 import type {
   IStorage,
   OutboxEntry,
@@ -35,8 +35,13 @@ const vault = vi.hoisted(() => ({
 }));
 vi.mock('$lib/utils/deviceKeyVault', () => vault);
 
-const { DeviceKeyMismatchError, performPinChange, resealDeviceKeyStores } =
-  await import('./pinChange');
+const {
+  DeviceKeyMismatchError,
+  KeyChangeInterruptedError,
+  LocalStateUnopenableError,
+  performPinChange,
+  resealDeviceKeyStores,
+} = await import('./pinChange');
 
 const SEED = 'c2VlZC1vbmUtdGhpcnR5LXR3by1ieXRlcy0wMDAwMDA=';
 
@@ -54,9 +59,10 @@ let dbCounter = 0;
 
 /** The store as the session sees it (through the gate) and as it is behind it. */
 async function freshStorage(): Promise<{ raw: IndexedDbStorage; gated: IStorage }> {
-  const raw = new IndexedDbStorage(`pin-change-test-${dbCounter++}`);
+  const userId = `pin-change-test-${dbCounter++}`;
+  const raw = new IndexedDbStorage(userId);
   await raw.init();
-  return { raw, gated: gateStorage(raw) };
+  return { raw, gated: gateStorage(raw, userId) };
 }
 
 function message(id: string, body = id): StoredMessage {
@@ -143,12 +149,21 @@ async function everyRowUnder(storage: IndexedDbStorage, k: string): Promise<void
   }
 }
 
-/** An MLS client double recording the order of the calls a key change makes. */
-function fakeMls(order: string[] = [], opensWith?: string): IMlsService {
+/**
+ * An MLS client double recording the order of the calls a key change makes. `refusal` is what a
+ * key other than `opensWith` gets back - a key refusal unless a test says otherwise.
+ */
+function fakeMls(
+  order: string[] = [],
+  opensWith?: string,
+  refusal: StateLoadFailure = 'undecryptable'
+): IMlsService {
   return {
     openLocalStateWithKey: vi.fn(async (_u: string, k: string) => {
       order.push('mls-open');
-      return opensWith === undefined || k === opensWith;
+      return opensWith === undefined || k === opensWith
+        ? { opened: true }
+        : { opened: false, cause: refusal };
     }),
     pointUnattendedUnlockAt: vi.fn(async () => {
       order.push('keystore');
@@ -350,6 +365,88 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
     await everyRowUnder(s.raw, OLD);
   });
 
+  it.each(['mismatch', 'unknown', 'keystore_unavailable'] as const)(
+    'a state no PIN opens (%s) is NOT "old PIN incorrect", and nothing moves',
+    async (refusal) => {
+      const { OLD, NEW, WRONG } = keys();
+      const s = await populated(OLD);
+      storageForUser.set(`u-${refusal}`, s.gated);
+      const mls = fakeMls([], WRONG, refusal);
+
+      const failure = await performPinChange(
+        options(`u-${refusal}`, mls, new Uint8Array([1])),
+        OLD,
+        NEW
+      ).catch((e: unknown) => e);
+
+      expect(failure).toBeInstanceOf(LocalStateUnopenableError);
+      expect(failure).not.toBeInstanceOf(DeviceKeyMismatchError);
+      expect(mls.pointUnattendedUnlockAt).not.toHaveBeenCalled();
+      await everyRowUnder(s.raw, OLD);
+    }
+  );
+
+  it('a THROW in the MLS re-seal is typed too: the stores moved, the session must end', async () => {
+    const { OLD, NEW } = keys();
+    const s = await populated(OLD);
+    storageForUser.set('u-mls-throw', s.gated);
+    const mls = fakeMls();
+    vi.mocked(mls.changeDeviceKey).mockRejectedValueOnce(new Error('persist failed'));
+
+    const failure = await performPinChange(options('u-mls-throw', mls), OLD, NEW).catch(
+      (e: unknown) => e
+    );
+
+    expect(failure).toBeInstanceOf(KeyChangeInterruptedError);
+    expect((failure as InstanceType<typeof KeyChangeInterruptedError>).stage).toBe('mls');
+  });
+
+  it("retires an older build's UNLABELLED vault slot holding the old key, before the new key is saved", async () => {
+    // That slot unlocks without the server PIN check: kept past a kill, it opens the MLS state not
+    // yet re-sealed and runs a session over stores already half moved.
+    const { OLD, NEW } = keys();
+    const s = await populated(OLD);
+    storageForUser.set('u-unlabelled', s.gated);
+    const order: string[] = [];
+    vault.retireUnlabelledDeviceKeyIfOwnedBy.mockImplementationOnce(async () => {
+      order.push('retire-unlabelled');
+      return true;
+    });
+    vault.saveDeviceKey.mockImplementationOnce(async () => {
+      order.push('vault-save');
+    });
+
+    await performPinChange(options('u-unlabelled', fakeMls()), OLD, NEW);
+
+    expect(vault.retireUnlabelledDeviceKeyIfOwnedBy).toHaveBeenCalledWith('u-unlabelled', OLD);
+    expect(order).toEqual(['retire-unlabelled', 'vault-save']);
+  });
+
+  it('a call ALREADY IN FLIGHT when the change starts finishes before the pass reads', async () => {
+    // Started before the hold: it is inside the store, under the old key. Read before it lands, its
+    // row would be missing from the pass and stay under the old key for good.
+    const { OLD, NEW } = keys();
+    const s = await populated(OLD);
+    storageForUser.set('u-inflight', s.gated);
+    let land!: () => void;
+    const landed = new Promise<void>((r) => (land = r));
+    const save = s.raw.saveMessage.bind(s.raw);
+    vi.spyOn(s.raw, 'saveMessage').mockImplementationOnce(async (msg, k) => {
+      await landed;
+      return save(msg, k);
+    });
+    const inFlight = s.gated.saveMessage(message('m9'), OLD);
+    await Promise.resolve();
+
+    const change = performPinChange(options('u-inflight', fakeMls()), OLD, NEW);
+    await new Promise((r) => setTimeout(r, 20));
+    land();
+    await Promise.all([inFlight, change]);
+
+    await everyRowUnder(s.raw, NEW);
+    expect(await s.raw.getMessage('m9', NEW)).not.toBeNull();
+  });
+
   it('a recovery whose MLS opens succeeds even with a row under an older key (no lockout)', async () => {
     const { OLD, NEW, WRONG: K0 } = keys();
     const s = await populated(OLD);
@@ -399,8 +496,12 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
     const mls = fakeMls([], OLD);
     const opts = options('u-kill', mls);
 
-    await expect(performPinChange(opts, OLD, NEW)).rejects.toThrow('disk full');
+    const failure = await performPinChange(opts, OLD, NEW).catch((e: unknown) => e);
 
+    // TYPED, so the caller ends the session into the recovery instead of running on the old key.
+    expect(failure).toBeInstanceOf(KeyChangeInterruptedError);
+    expect((failure as InstanceType<typeof KeyChangeInterruptedError>).stage).toBe('stores');
+    expect(String((failure as Error).message)).toContain('disk full');
     expect(mls.changeDeviceKey).not.toHaveBeenCalled();
     expect(opts.setDeviceKey).not.toHaveBeenCalled();
     // The recovery the next launch is sent to: the MLS state still opens with the old key.

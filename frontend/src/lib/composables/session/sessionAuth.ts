@@ -14,9 +14,12 @@ import { resetSalonUnread } from '$lib/utils/chat/salonUnread';
 import { computePinVerifier } from '$lib/utils/chat/auth';
 import {
   DeviceKeyMismatchError,
+  KeyChangeInterruptedError,
+  LocalStateUnopenableError,
   performPinChange,
   type PinProgressCallback,
 } from '$lib/utils/chat/pinChange';
+import { endIntoKeyRecovery } from '$lib/db/deviceKeyGate';
 import { deriveDeviceKeyB64, isValidDeviceKeyB64 } from '$lib/crypto/deviceKey';
 import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 // Every `throw` below whose message is a Paraglide line is a `LocalizedError`: the modals rendering
@@ -2039,17 +2042,30 @@ export async function changePinImpl(
 
   // The live client, whose state is already open under the current key - which the server verifier
   // has just proven, so no stored row can refuse it.
-  await performPinChange(
-    {
-      userId,
-      mls: ctx.ensureMls(),
-      setDeviceKey: (k: string) => ctx.setDeviceKey(k),
-      log,
-      onProgress,
-    },
-    currentDeviceKeyB64,
-    newDeviceKeyB64
-  );
+  try {
+    await performPinChange(
+      {
+        userId,
+        mls: ctx.ensureMls(),
+        setDeviceKey: (k: string) => ctx.setDeviceKey(k),
+        log,
+        onProgress,
+      },
+      currentDeviceKeyB64,
+      newDeviceKeyB64
+    );
+  } catch (e) {
+    if (e instanceof KeyChangeInterruptedError) {
+      // The unattended unlock already holds the new key while the MLS state may not: this session
+      // must not run on, and the recovery (old PIN, new PIN) is what finishes the move.
+      log(
+        `[PIN_CHANGE] Interrupted at the ${e.stage} step - ending the session into the recovery.`
+      );
+      endIntoKeyRecovery('the PIN change was interrupted');
+      throw new LocalizedError(m.auth_pin_change_interrupted());
+    }
+    throw e;
+  }
   log('[PIN_CHANGE] Complete - local state re-encrypted under the new PIN.');
 }
 
@@ -2127,6 +2143,17 @@ export async function recoverPinImpl(
     if (e instanceof DeviceKeyMismatchError) {
       cb.log('[PIN_RECOVER] The old PIN does not open the local MLS state - nothing was changed.');
       throw new LocalizedError(m.auth_pin_old_incorrect());
+    }
+    if (e instanceof LocalStateUnopenableError) {
+      cb.log(
+        `[PIN_RECOVER] The local MLS state opens with no PIN (${e.failure}) - nothing changed.`
+      );
+      throw new LocalizedError(m.auth_pin_recover_state_unopenable());
+    }
+    if (e instanceof KeyChangeInterruptedError) {
+      // Not logged in yet, so there is no session to end: the same two PINs finish what moved.
+      cb.log(`[PIN_RECOVER] Interrupted at the ${e.stage} step - the same two PINs finish it.`);
+      throw new LocalizedError(m.auth_pin_recover_interrupted());
     }
     throw e;
   }

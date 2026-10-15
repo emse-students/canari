@@ -620,7 +620,12 @@ being re-sealed fails `check`.
 **The order, each step chosen so a kill anywhere leaves a state the recovery finishes.**
 
 1. **Proof (recovery only)**: the stored MLS blob opens with the old key (`openLocalStateWithKey`),
-   or `DeviceKeyMismatchError` -> `auth_pin_old_incorrect`, with nothing written. **The MLS blob
+   with nothing written otherwise. Its refusal is TYPED by `classifyStateLoadFailure`, because only
+   a key refusal (`undecryptable`, `rotated`) is the old PIN's fault: `DeviceKeyMismatchError` ->
+   `auth_pin_old_incorrect`. Another device's identity (`mismatch`) or an untyped failure (`unknown`,
+   `keystore_unavailable`) refuses EVERY PIN, so it is `LocalStateUnopenableError` ->
+   `auth_pin_recover_state_unopenable`, which points at the reset instead of sending the user round
+   the same keypad for ever. **The MLS blob
    decides, never the message stores**: their rows may sit under a key older still (a seed the
    pre-fix recovery stranded, an outbox row no earlier change moved), and deciding "wrong old PIN"
    from them refused the right PIN - and on the change path, where the verifier is already rotated,
@@ -634,7 +639,8 @@ being re-sealed fails `check`.
    new key, every way in after a kill finds an MLS state it cannot open and is sent to the recovery.
    The cost: between this step and step 5 a background push cannot open `mls.bin` and shows generic
    text.
-3. **The stores, under the storage gate** (`db/deviceKeyGate.ts`). Every `IStorage` handle comes from
+3. **The stores, under the storage gate** (`db/deviceKeyGate.ts`), **in every tab** - see
+   [below](#the-other-tabs-of-the-account). Every `IStorage` handle comes from
    `getStorage`, which returns it through the gate. A change waits for the calls in flight, re-seals
    while every new call WAITS, then RETIRES the old key: from then on any argument naming it is
    forwarded to the new one. So an edit, a message received, a seed received or a message queued by
@@ -644,10 +650,57 @@ being re-sealed fails `check`.
    forwarding is a fact the change recorded, never a guess from a failed decrypt; the retired key
    stays in memory for the page's life, where it already was.
 4. The session adopts the new key.
-5. **The MLS state LAST** (`changeDeviceKey`): it is the recovery's entry point, so while it has not
-   moved, the recovery is offered and finishes the stores. In the old order (MLS first) a kill in
-   the message pass left it under the new key and the remaining rows under a key no path would ever
-   ask for again.
+5. **The MLS state LAST** (`changeDeviceKey`), still inside the other tabs' hold so none reloads onto
+   a state not yet moved: it is the recovery's entry point, so while it has not moved, the recovery
+   is offered and finishes the stores. In the old order (MLS first) a kill in the message pass left
+   it under the new key and the remaining rows under a key no path would ever ask for again.
+
+**A THROW after the keystore moved ends the session into the recovery.** A kill is covered by the
+order; a throw is not, because the session would run on: an I/O error in a swap, a failed MLS
+persist or a refused vault write left the session on the old key while the keystore and the vault
+hold the new one. `performPinChange` wraps everything after `pointUnattendedUnlockAt` and turns any
+throw into `KeyChangeInterruptedError` (its stage, logged, never key material). `changePinImpl`
+answers it with `endIntoKeyRecovery` - a reload, which comes back with the new key, cannot open the
+MLS state and is offered the recovery with the same two PINs (`auth_pin_change_interrupted`). The
+recovery, not logged in yet, has no session to end and says the same two PINs finish it
+(`auth_pin_recover_interrupted`).
+
+**A background push may still write `mls.bin` under the OLD key after step 5, and the recovery heals
+it.** On native, the push handler holds the key it unlocked with (the keystore entry it read before
+step 2) for as long as it runs, so a push that started before the change can checkpoint `mls.bin`
+under the old key after `changeDeviceKey` sealed it under the new one. The next launch then cannot
+open the state with the new key and offers the recovery, which opens it with the old key (step 1)
+and runs this same path - every store already under the new key counts as DONE. A lost race costs
+one recovery prompt, never data. The gate does not hold it: the push runs where the WebView's locks
+do not reach.
+
+#### The other tabs of the account
+
+**The in-realm hold covers one JavaScript realm, and on the web one database is shared by several.**
+Every tab of the account opens the SAME IndexedDB; a follower tab writes outbox rows into it with
+the key IT holds in memory (only the leader encrypts and flushes, `tabMessageSync.ts`). Unheld, a
+follower's row written after the pass stayed under the old key, and the leader's flusher parked it
+as "payload cannot be decrypted" (`outbox.ts`) - a message lost, with no recovery offered because the
+MLS state had already moved. So the gate holds REALMS too, with the Web Locks API `tabLeader.ts`
+already elects with:
+
+- every realm holds `canari-device-key:<userId>` in SHARED mode while it may touch the store, taken
+  when its first store is gated; a call waits until it holds it;
+- the changer QUEUES the EXCLUSIVE mode first (so a tab opening from then on - a reload, a new tab
+  that read the vault's new key - queues behind it), then posts `key_change_starting` on the
+  `canari-device-key` channel, then lets go of its own shared hold;
+- a tab that hears it goes STALE: every later call is refused with `StaleDeviceKeyError` (a tab that
+  wakes with the old key never writes), its calls already inside the store finish, it releases the
+  lock, and it ends into the recovery (`endIntoKeyRecovery`: a reload, which waits behind the change
+  and comes back with the vault's new key);
+- the exclusive mode starts only once every other tab has let go, and covers the stores AND the MLS
+  state (steps 3 to 5). The changer's own calls do not wait for the lock meanwhile: its in-realm hold
+  covers them, and the MLS re-seal must not wait on a call that waits on it.
+
+No timer anywhere: a tab that has not answered holds the change, it is never presumed gone. Without
+`navigator.locks` (WebKitGTK; the unit tests) the realm is alone, the reading `tabLeader.ts` makes
+of the same absence. Not covered, and older than this: a PIN change made FROM a follower tab re-seals
+that tab's MLS snapshot, which may be behind the leader's ([backlog](../../backlog.md)).
 
 **Resumable, because it cannot be atomic.** SQLite through the Tauri plugin has no multi-statement
 transaction (`sqliteBatch.ts`), so a history of thousands of rows cannot be swapped in one step, and
@@ -676,13 +729,25 @@ re-serialised. Logs carry counts only - never a row id, never key material.
 - writes the live session makes DURING the change (an edit, a new message, a seed, a queued message,
   all with the old key) land under the new key - fails with a gate that does not hold;
 - a caller still holding the retired key reads what was moved;
+- a call already INSIDE the store when the change starts finishes before the pass reads - fails
+  without the drain;
+- an older build's unlabelled vault slot holding the old key is retired before the new key is saved;
+- a state no PIN opens (`mismatch`, `unknown`, `keystore_unavailable`) is not "old PIN incorrect";
+- a throw in the stores or the MLS re-seal is `KeyChangeInterruptedError`, with its stage.
+
+`deviceKeyGate.crossRealm.test.ts` runs two realms (two imports of the gate) on one IndexedDB, with
+a Web Locks double (FIFO per name, shared/exclusive) and a broadcast double that never delivers to
+its poster: the pass does not start while the other tab's write is inside, that write is moved, its
+writes after the notice and after the change are refused, and a tab opening mid-change waits behind
+it. Both fail with the cross-realm lock removed.
 - the compare half of the swap leaves a row holding another ciphertext untouched - fails if the
   IndexedDB swap checks only that the row exists;
 - both PIN paths are pinned in the source to `performPinChange`.
 
 The SQLite statement (`sealedSwapStatement`) is unit-tested for its shape; it was run once by hand
 against a real SQLite (`node:sqlite`, 2026-10-15: a full 166-row batch swapped 166, a stale and a
-deleted row untouched) and has **not** run on a device yet. Neither has the awaited keystore write.
+deleted row untouched) and has **not** run on a device yet. Neither has the awaited keystore write,
+nor the cross-tab hold in a real browser.
 
 ### An at-rest format change needs its own reader, in the same commit
 

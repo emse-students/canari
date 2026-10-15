@@ -86,12 +86,12 @@ async function openStore(userId: string): Promise<IStorage> {
     const s = new SqliteStorage(userId);
     await s.init();
     console.log('[DB] Using SQLite storage (Tauri)');
-    return gateStorage(s);
+    return gateStorage(s, userId);
   }
   const s = new IndexedDbStorage(userId);
   await s.init();
   console.log(`[DB] Using IndexedDB storage (Web) for user: ${userId}`);
   // THROUGH THE GATE, ALWAYS: a device key change holds every call here while it re-seals, and
   // forwards the retired key afterwards (`db/deviceKeyGate.ts`).
-  return gateStorage(s);
+  return gateStorage(s, userId);
 }
