@@ -16,6 +16,7 @@
   import { m } from '$lib/paraglide/messages';
   import { QUICK_REACTION_EMOJIS } from '$lib/utils/chat/messageActions';
   import { sheetClearance, sheetRestingTop } from '$lib/utils/chat/sheetClearance';
+  import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
 
   /** Quick-reaction emojis shown in the strip (WhatsApp/Messenger style). */
 
@@ -99,6 +100,18 @@
   }: Props = $props();
 
   let sheetEl = $state<HTMLDivElement | undefined>();
+
+  /**
+   * THE SHEET IS A HISTORY ENTRY OF ITS OWN, so the system Back closes the sheet and nothing else.
+   * It held none, so one Back popped the CONVERSATION's entry and closed both (Mi 9T, three-button
+   * and gesture Back alike, 3 of 3, 2026-10-13). The scrim and a tapped action close it through the
+   * owner's state; the entry left behind is a ghost `historyOverlayStack` crosses without costing a
+   * Back.
+   */
+  bindHistoryOverlay(
+    () => visible,
+    () => onClose?.()
+  );
 
   /**
    * LIFT THE THREAD SO THE SHEET IS NOT COVERING THE MESSAGE IT ACTS ON.

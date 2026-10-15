@@ -6,6 +6,7 @@
   import Button from '$lib/components/ui/Button.svelte';
   import { normalizePayerEmail } from '$lib/payments/payerEmail';
   import { m } from '$lib/paraglide/messages';
+  import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
 
   interface Props {
     /** Called with the validated address when the payer confirms. */
@@ -15,6 +16,15 @@
   }
 
   let { onSubmit, onClose }: Props = $props();
+
+  /**
+   * Mounted only while asked, so it is open for as long as it exists: the system Back cancels it,
+   * like "Annuler", instead of leaving the form under it (audit of 2026-10-13).
+   */
+  bindHistoryOverlay(
+    () => true,
+    () => onClose()
+  );
 
   let value = $state('');
   let touched = $state(false);

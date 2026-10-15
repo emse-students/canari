@@ -7,6 +7,8 @@
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
   import { slide } from 'svelte/transition';
+  import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
+  import { isMobileOverlayLayout } from '$lib/utils/historyOverlayStack';
 
   /**
    * THE APP LAUNCHER: one grid button in the app header, opening the other student sites -
@@ -42,6 +44,13 @@
     Log.d('ecosystemLauncher.close', { reason });
     open = false;
   }
+
+  // On a phone the open menu holds a history entry: the system Back closes the menu, not the page
+  // under it (audit of 2026-10-13). A wide window's popover is closed by a click beside it.
+  bindHistoryOverlay(
+    () => open && isMobileOverlayLayout(),
+    () => close('back')
+  );
 </script>
 
 <div class="flex shrink-0 items-center" use:clickOutside={() => close('outside')}>

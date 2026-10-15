@@ -25,6 +25,7 @@
   } from '$lib/utils/pinchZoom';
   import { ZoomIn, ZoomOut, Download, FileText } from '@lucide/svelte';
   import FullScreenViewer from './FullScreenViewer.svelte';
+  import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import {
     openPdfDocument,
     PdfRenderCancelled,
@@ -62,6 +63,16 @@
   }
 
   let { url, fileName, onClose, onDownload }: Props = $props();
+
+  /**
+   * Mounted only while open, so it is open for as long as it exists. `FullScreenViewer` registers no
+   * history entry (its other consumer, `MediaLightbox`, holds its own), so this one does: the system
+   * Back closes the document, not the conversation or the post under it (audit of 2026-10-13).
+   */
+  bindHistoryOverlay(
+    () => true,
+    () => onClose()
+  );
 
   /** Render width multipliers, in order. 1 = fit the column width. */
   const ZOOM_STEPS = [1, 1.5, 2, 3];

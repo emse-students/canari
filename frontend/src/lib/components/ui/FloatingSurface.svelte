@@ -6,6 +6,7 @@
   import { clickOutside } from '$lib/actions/clickOutside';
   import { bindFixedPopover } from '$lib/actions/fixedPopover';
   import { m } from '$lib/paraglide/messages';
+  import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
 
   /**
    * THE SURFACE AN IN-APP CONTROL OPENS: a sheet rising from the bottom on a phone, a popover under
@@ -54,6 +55,17 @@
   }: Props = $props();
 
   let panelEl: HTMLDivElement | null = $state(null);
+
+  /**
+   * THE SHEET SHAPE HOLDS A HISTORY ENTRY, so a phone's system Back closes the sheet and not what is
+   * under it. Every `Picker` and `DateTimeField` opens one, many of them inside a `Modal`: the Back
+   * used to close the MODAL and leave the sheet standing over the page (audit of 2026-10-13). The
+   * popover shape is a wide window's dropdown, closed by a click beside it, and holds none.
+   */
+  bindHistoryOverlay(
+    () => open && asSheet,
+    () => onClose(true)
+  );
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key !== 'Escape') return;
