@@ -1396,6 +1396,75 @@ camera. **Owed one reading each on the Mi 9T and the iPhone 12:**
 - The overlay over the keyboard and over a conversation with a pending draft; a camera refused
   (permission denied) shows the refusal screen with no native fallback.
 
+## The Mi 9T readings of v1.2.9-alpha.1 (2026-10-15)
+
+Build `1.2.9 (100200901)` (`dumpsys package`), the `v1.2.9-alpha.1` release APK
+(`app-universal-release.apk`, sha256 `651f740e...`), installed with `adb install -r` over `1.2.8`
+(accepted, account kept), dev estate, account `fourth` ("Canari Test Delta"), bench conversations
+only, vault path. Settings > A propos reads "Version de Canari 1.2.9-alpha.1". The app console was
+streamed over CDP and logcat captured for the whole pass. Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1015-a129/` (frames `s*.png`, `cons-*.ndjson`,
+`logcat-main.txt`, `co-banc1/`, `feed-runs.ndjson`, `heart-runs.ndjson`, `flicker.txt`).
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1. In-app camera everywhere (#1859) | **`PASS`, two findings** | Chat "+" > "Ouvrir la camera" and the new-post composer's "Ouvrir la camera" both open the in-app layer (`[camera-overlay] open for chat` / `for post`); focus is only ever Canari or the system permission dialog, no capture intent in logcat; "Photo/video" still opens the system photo picker. Chat: `opening user (no microphone)`, no microphone prompt; a 2 s HOLD gives a photo, not a video; "Ajouter" stages `canari-photo-*.jpg` (122 KB) as "1 fichier en attente", send gives an image bubble with its check mark. Camera refused: "Canari n'a pas acces a la camera" with "Reessayer" / "Ouvrir les reglages", no native fallback. Post: the microphone is asked at open; refused, `live with no microphone (post): photos only`, not asked again; granted, a 3 s hold records `video/webm;codecs=h264,opus` (1.07 MB) and "Ajouter" attaches it; the review has no sound button. The post was not published |
+| 2. Right-edge exclusion (#1883) | **`PASS`** | `right-edge gesture exclusion: span=(292, 2152) -> ExclusionBand(left=987, top=1657, right=1080, bottom=2152)`; `dumpsys window` shows the same rect. The band follows the list: (292, 1949) with the reply bar, (292, 1757) with the keyboard up. Swipes from x=1070-1078 inside the band: 5 of 5 keep the conversation open; on an own bubble, 3 of 4 arm "Repondre a Canari Test Delta" (the miss was a 200 ms swipe), including with the keyboard open. Above the band (y=900) the system back still closes the conversation |
+| 3. Back closes the message sheet (#1817) | **`PASS`** | Long press opens the sheet (reactions + Repondre / Transferer / Copier / Modifier / Supprimer); `KEYCODE_BACK` (2 of 2) and a left-edge back swipe (1 of 1) close the sheet only, the salon stays with its 54 bubbles and `history.state` returns to the conversation's entry |
+| 4. Avatars without a photo (#1840) | **`PASS`** | Launch + hub + a 62-bubble salon: **0** avatar image requests, **0** `404` (CDP `Network` and the `[API]` lines); 9 `GET /api/users/avatar-presence`, each answered 200, and `[AvatarPresence] N of N have no photo - not requested`. P3: 7 of the 9 asked about ONE face, so the per-turn batching merges less than the PR's 30-in-1 test suggests |
+| 5. Feed local-first (#1896) | **`PASS` offline, two findings online** | Offline cold (Wi-Fi and data off, n=4): the first card is drawn **2454-2561 ms after `am start`** (page 1781-1855 ms) from the device, 20 cards, "Fil enregistre sur l'appareil : pas de reponse du serveur." with "Reessayer", never "Impossible de charger". Online cold (n=7): first card **2465-2973 ms** after `am start` (page 1777-2189), the stored copy drawn every time. Warm (Feed tab tap from Communautes, n=4): **230-289 ms** touchstart to first card, from the in-memory cache. Heart during the first load (2 of 2): tapped on the stored copy while "mise a jour..." showed, `201 POST .../reactions`, then `[PostCardLedger] post 6c736e01: kept reactions over a row read at ...`; the count stays 1 |
+| 6. Communities first mount and tabs (#1897) | **`FAIL` against 200 ms, better than 1.2.8, no flicker** | `community-open.mjs --community BancOuverture-1 --runs 6 --start cold --net none --cpu 1`, medians (worst): nav 1139, **tap>rail = tap>salons 384 (406)** [1.2.8 base 415-456], tap>target salons 717, salon>pane 304, salon>msgs 1048, switch>salons 158, **reopen>msgs 919 (967)** [965-1020]. Flicker watch (`flicker.mjs`, every frame's bubble count from the touchstart, 6 reopens of the same salon from the hub): first bubbles **237-265 ms**, counts `0 -> 20 -> 60`, **0 blank frames after the first bubble**: the stored page is not followed by an empty frame, so the instrument's ~920 ms reopen is not a flicker |
+| 7. PIN change then relaunch (#1898) | **`PASS`** (change path; recovery not exercised) | Bench PIN to a temporary PIN and back, both in Settings > Securite: `[DEVICEKEY_CHANGE] Re-sealed under the new device key: messages=733 seeds=11 outbox=0; already new=0, unreadable=0, changed since read=0`, then `MLS state re-sealed`, "PIN modifie" in 1.6 s. Kill and relaunch: vault path, no PIN or recovery prompt, salon 63 bubbles (the photo of reading 1 included), DM 54 bubbles, the same 8 `[GRAINE] ... no-seed-held` asks as before the change (no seed lost). The outbox was empty, so a queued row's re-seal was not read. The other devices of `fourth` (W3) must re-enter the PIN |
+| 8. 200 % text (Android) | **`PASS`** | `font_scale 2.0`: root font 32 px; `/posts`, `/communities`, `/chat`, `/settings/about`, `/dashboard` all `scrollWidth = innerWidth = 436`; the only elements past the right edge are the feed's chip rows inside their own horizontal scroller. Restored to the phone's `0.85` |
+
+**Findings:**
+
+- **P2 - Back from a camera review closes the camera first, then asks.** In chat, Back on a taken
+  photo logs `[camera-overlay] Back closes the camera (chat)` and `camera-session stop`; the
+  "Abandonner cette capture ?" dialog then shows over the conversation, and "La garder" keeps
+  nothing (`the discard question was answered after the camera closed`), 2 of 2. The overlay's own
+  comment promises "Back ends a recording, then discards a review, then closes the camera". The X
+  on the review asks with the review still behind it, as designed.
+- **P2 - A refused camera is asked twice.** The first `getUserMedia` is answered "denied" by the
+  system dialog, but the dialog itself backgrounds the WebView (`app hidden - releasing the
+  camera`), and its close re-opens the camera (`app visible - reopening`), which raises the
+  permission dialog a second time. The microphone path does not do this (`already refused ... not
+  asked again`).
+- **P2 - Online, the stored feed stays on screen ~3 s after the server answered.** 4 of 4 timed
+  runs: `<- 200 GET /api/posts` lands 0.06-0.5 s before `stored first page drawn`, yet the
+  "Fil enregistre sur l'appareil, mise a jour..." status (no rights, no vote) shows for 3.0-3.6 s
+  and clears **3.1-3.5 s after that answer**. Nothing in the console names what the answer waits
+  on.
+- **P2 against the expectation (not claimed by #1896) - back online, the stored feed is not
+  refreshed by itself.** After an offline start, `[CONNECTIVITY] server reachable again` and
+  `[PROMOTE] ... session is online` at 20:44:06, and 40 s later the feed still says "pas de reponse
+  du serveur"; "Reessayer" replaced it (`200 GET /api/posts`, status gone).
+- **P3 - Back closes the new-post composer holding a camera video with no question**, and the
+  video is not in the composer when it is reopened.
+- **P3 - the take reaches the post composer as `canari-video-*.bin`** (`video/x-matroska`), and its
+  composer thumbnail is a flat grey tile.
+- **P3 - the refusal screen says "Autorisez la camera et le micro"** in the chat camera, which never
+  asks for the microphone.
+
+**Noise met on the way (every line is a finding):**
+
+- **Offline cold start: 70 warnings in 6 s.** Each API call logs `[API] getToken failed ... -
+  proceeding without auth (TypeError: Failed to fetch)` and goes out unauthenticated; `[A]
+  refresh-transport ... TypeError` per attempt; `[PENDING] page did not arrive (TypeError: Failed
+  to fetch) - retrying with limit=250`, then 125, 62, 31, 15, 7, 3, 1 (eight requests halving a
+  page size against a transport failure); `[DISPLAYNAME] profile fetch failed - this user renders
+  as "unknown" for the next 120s` 6 times; `[MLS] revocation check unreachable - treated as NOT
+  revoked`. Several still carry a raw `TypeError: Failed to fetch` where #1843 made a transport
+  failure ONE type.
+- **Every launch asks this account's own devices for the history of 8 bench communities**
+  (`[GRAINE] asked 43319a65... (every device) ... reason no-seed-held`), before and after the PIN
+  change alike.
+- Logcat, Canari pids: no `FATAL`, no ANR. Chromium's camera stack: `E/cr_VideoCapture:
+  CameraDevice.StateCallback onOpened` at error level, 45 `W/CameraManagerGlobal: Ignoring status
+  update of camera 0`, `W/MessageQueue ... sending message to a Handler on a dead thread` at a
+  recording's end; `W/cr_media ... BLUETOOTH_CONNECT permission is missing` per camera open.
+- The online cold start's console carried **0** warnings or errors at launch.
+
 ## The Mi 9T readings of v1.2.8-alpha.1 (2026-10-15)
 
 Build `1.2.8` (`versionName` from `dumpsys package`), the `v1.2.8-alpha.1` release APK installed with
