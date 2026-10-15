@@ -14,6 +14,7 @@ import { Form } from './entities/form.entity';
 import { retireForms } from './retire-forms';
 import {
   PENDING_HOLD_CUTOFF_SQL,
+  PENDING_PAYMENT_HOLD_SECONDS,
   SETTLED_PAYMENT_STATUSES,
   livePendingWhere,
   lockFormSeats,
@@ -952,6 +953,8 @@ export class FormsService {
     // each insert, a write skew that isolation level does not detect. READ COMMITTED is required
     // by the lock (`lockFormSeats`), and late payments (`markPaid`) queue on the same lock.
     let savedSubmission!: Submission;
+    // The provider id of the request a reused row was waiting on, cancelled below before any new one.
+    let supersededRequestId: string | null = null;
     await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
       await lockFormSeats(manager, id);
 
@@ -1022,9 +1025,15 @@ export class FormsService {
       }
 
       if (existingPending) {
+        supersededRequestId = existingPending.paymentRequestId;
         existingPending.answers = input.answers;
         existingPending.totalPaid = totalCents;
         existingPending.email = input.email;
+        // The row stops naming its old request NOW, in the same transaction: Lydia reports the
+        // cancel issued below, and a report about a request the row no longer names changes nothing
+        // (`cancelPendingSubmission`). The new request's ids are written once the provider answers.
+        existingPending.paymentRequestId = null;
+        existingPending.stripeSessionId = null;
         savedSubmission = await manager.save(existingPending);
         // A new payment request is about to be issued for this row, so its hold restarts with it,
         // on the database clock like every other read of it (`seat-hold.ts`).
@@ -1049,6 +1058,12 @@ export class FormsService {
       }
     });
 
+    // Before anything else is issued for the row - a new online request, or a switch to cash - the
+    // request it was waiting on stops being payable, so one answer is never payable twice (D2).
+    if (supersededRequestId) {
+      await this.cancelSupersededRequest(savedSubmission.id, supersededRequestId, form);
+    }
+
     // Cash payment shortcut - skip the online checkout entirely
     if (totalCents > 0 && form.allowCashPayment && input.paymentMethod === 'cash') {
       const cashExpiresAt =
@@ -1058,7 +1073,13 @@ export class FormsService {
       savedSubmission.paymentStatus = 'pending_cash';
       savedSubmission.paymentMethod = 'cash';
       savedSubmission.cashExpiresAt = cashExpiresAt;
-      await this.submissionRepo.save(savedSubmission);
+      // Named columns, never a whole-entity save: the entity still carries the
+      // `paymentRequestedAt` read before the transaction rewrote it, and would write it back.
+      await this.submissionRepo.update(savedSubmission.id, {
+        paymentStatus: 'pending_cash',
+        paymentMethod: 'cash',
+        cashExpiresAt,
+      });
       this.logger.log(`[Forms] Cash payment pending for submission ${savedSubmission.id}`);
       return { submissionId: savedSubmission.id, cashPayment: true };
     }
@@ -1126,6 +1147,8 @@ export class FormsService {
             connectAccountId,
             idempotencyKey,
             payerEmail: input.payerEmail,
+            // The provider stops the request when the seat stops being held: ONE constant.
+            expireAfterSeconds: PENDING_PAYMENT_HOLD_SECONDS,
           },
           internalCoreRequestConfig()
         );
@@ -1133,6 +1156,7 @@ export class FormsService {
         const data = res.data || {};
         const sessionUrl = data.url || data.checkoutUrl || null;
         const sessionId = data.id || data.sessionId || null;
+        const requestId: string | null = typeof data.requestId === 'string' ? data.requestId : null;
 
         if (!sessionUrl) {
           return {
@@ -1141,9 +1165,14 @@ export class FormsService {
           };
         }
 
-        if (sessionId) {
+        if (sessionId || requestId) {
           savedSubmission.stripeSessionId = sessionId;
-          await this.submissionRepo.save(savedSubmission);
+          savedSubmission.paymentRequestId = requestId;
+          // Named columns: a whole-entity save would write back a stale `paymentRequestedAt`.
+          await this.submissionRepo.update(savedSubmission.id, {
+            stripeSessionId: sessionId,
+            paymentRequestId: requestId,
+          });
         }
 
         return { checkoutUrl: sessionUrl, submissionId: savedSubmission.id };
@@ -1153,6 +1182,45 @@ export class FormsService {
     }
 
     return { submissionId: savedSubmission.id };
+  }
+
+  /**
+   * Cancels, at the provider, the request a reused pending row was waiting on (D2, measured on the
+   * Lydia sandbox 2026-10-15: payments.md). "Already cancelled or expired" is success - the goal is
+   * that it can no longer be paid. Any other failure is LOGGED AND CARRIED ON PAST: the payer is
+   * retrying right now, refusing that retry would not make the old request less payable, and if it
+   * is paid after all, `markPaid` decides it from the row like any late payment (over capacity at
+   * worst, at the top of the manager's list). That residual risk is the one forms.md documents.
+   */
+  private async cancelSupersededRequest(
+    submissionId: string,
+    requestId: string,
+    form: Form
+  ): Promise<void> {
+    try {
+      const connectAccountId = form.associationId
+        ? await this.associationsService.getPaymentAccountId(form.associationId)
+        : null;
+      if (!connectAccountId) {
+        this.logger.warn(
+          `[Forms] submission ${submissionId}: old request ${requestId} NOT cancelled, the form has no payment account - it stays payable`
+        );
+        return;
+      }
+      const res = await axios.post(
+        coreUrl('payments/cancel-request'),
+        { requestId, connectAccountId },
+        internalCoreRequestConfig()
+      );
+      this.logger.log(
+        `[Forms] submission ${submissionId}: old request ${requestId} ${res.data?.outcome ?? 'cancelled'}`
+      );
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.warn(
+        `[Forms] submission ${submissionId}: old request ${requestId} NOT cancelled (${message}) - it stays payable until it expires`
+      );
+    }
   }
 
   /** Deletes a submission. Requires form manager access. */
@@ -1291,21 +1359,52 @@ export class FormsService {
     if (submission.userId !== callerId) {
       await this.assertFormManager(submission.formId, callerId, isGlobalAdmin);
     }
-    return this.cancelPendingSubmission(submissionId);
+    return this.applyPendingCancel(submissionId, 'its submitter or a manager');
   }
 
   /**
-   * Marks a pending online-payment submission as cancelled without auth checks.
-   * Called by core-service when checkout expires or a charge fails definitively.
+   * Marks a pending online-payment submission as cancelled without auth checks, when the provider
+   * reports ITS request cancelled or expired (core-service: Lydia's cancel/expire callback, or the
+   * payer returning from the fail URL).
+   *
+   * The report must NAME the request - `requestId` (Lydia's numeric `request_id`, what a callback
+   * carries) or `sessionId` (the `request_uuid`, what the fail URL carries) - and is applied only
+   * when that is the row's CURRENT request. `submit` reuses a pending row for a new request and
+   * cancels the old one first, which makes Lydia call back about the OLD one: applying that would
+   * cancel the answer the payer is paying for right now. A row that has no stored id names no
+   * request, so no report can match it - it leaves `pending` through the expiry job instead.
    */
-  async cancelPendingSubmission(submissionId: string): Promise<{ ok: boolean }> {
-    const outcome = await this.moveLockedSubmission(submissionId, 'pending', 'cancelled');
+  async cancelPendingSubmission(
+    submissionId: string,
+    request: { requestId?: string; sessionId?: string }
+  ): Promise<{ ok: boolean }> {
+    if (!request.requestId && !request.sessionId) {
+      this.logger.warn(
+        `[Forms] cancelPendingSubmission ${submissionId} refused: the report names no request`
+      );
+      throw new BadRequestException('A cancel report must name its request');
+    }
+    const named = (submission: Submission) =>
+      (!!request.requestId && submission.paymentRequestId === request.requestId) ||
+      (!!request.sessionId && submission.stripeSessionId === request.sessionId);
+    return this.applyPendingCancel(submissionId, 'the provider', named);
+  }
+
+  /** Moves a `pending` row to `cancelled` (see `moveLockedSubmission`) and logs the outcome. */
+  private async applyPendingCancel(
+    submissionId: string,
+    by: string,
+    named?: (submission: Submission) => boolean
+  ): Promise<{ ok: boolean }> {
+    const outcome = await this.moveLockedSubmission(submissionId, 'pending', 'cancelled', {
+      named,
+    });
     if (outcome === 'missing') {
-      this.logger.warn(`[Forms] cancelPendingSubmission: submission ${submissionId} not found`);
+      this.logger.warn(`[Forms] cancel: submission ${submissionId} not found`);
       return { ok: false };
     }
     if (typeof outcome === 'object') {
-      this.logger.log(`[Forms] Submission ${submissionId} cancelled (payment failed or abandoned)`);
+      this.logger.log(`[Forms] Submission ${submissionId} cancelled by ${by}`);
     }
     return { ok: true };
   }
@@ -1317,14 +1416,15 @@ export class FormsService {
    * callback that read `pending` could then overwrite a `paid` that `markPaid` committed in between,
    * and a cash validation could be applied twice. The lock makes the check and the move one step.
    * Takes no form lock: none of these moves changes how many seats are held in a way a count could
-   * race (a cancel only frees one, a cash validation keeps the one it has).
+   * race (a cancel only frees one, a cash validation keeps the one it has). `named`, when given, is
+   * read under the same lock: a row whose current request is not the one reported is left as is.
    */
   private async moveLockedSubmission(
     submissionId: string,
     from: string,
     to: string,
-    formId?: string
-  ): Promise<{ moved: Submission } | 'missing' | 'not-in-state'> {
+    { formId, named }: { formId?: string; named?: (submission: Submission) => boolean } = {}
+  ): Promise<{ moved: Submission } | 'missing' | 'not-in-state' | 'other-request'> {
     return this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
       const submission = await manager.findOne(Submission, {
         where: formId ? { id: submissionId, formId } : { id: submissionId },
@@ -1336,6 +1436,13 @@ export class FormsService {
           `[Forms] submission ${submissionId} is ${submission.paymentStatus}, not ${from} - left as is`
         );
         return 'not-in-state';
+      }
+      if (named && !named(submission)) {
+        // Expected after every reuse: the old request was cancelled on purpose, and Lydia reports it.
+        this.logger.log(
+          `[Forms] submission ${submissionId} left ${from}: the reported request is not its current one (${submission.paymentRequestId ?? 'none'})`
+        );
+        return 'other-request';
       }
       submission.paymentStatus = to;
       await manager.save(submission);
@@ -1363,9 +1470,11 @@ export class FormsService {
     isGlobalAdmin: boolean
   ) {
     await this.assertFormManager(formId, validatedBy, isGlobalAdmin);
-    const outcome = await this.moveLockedSubmission(submissionId, 'pending_cash', 'paid', formId);
+    const outcome = await this.moveLockedSubmission(submissionId, 'pending_cash', 'paid', {
+      formId,
+    });
     if (outcome === 'missing') throw new NotFoundException('Submission not found');
-    if (outcome === 'not-in-state') return { ok: true, message: 'Already processed' };
+    if (typeof outcome !== 'object') return { ok: true, message: 'Already processed' };
     this.logger.log(`[Forms] Cash validated for submission ${submissionId} by ${validatedBy}`);
 
     // Credits the validator rather than `system`, which is why the granter is a parameter.
@@ -1385,12 +1494,9 @@ export class FormsService {
     isGlobalAdmin: boolean
   ) {
     await this.assertFormManager(formId, callerId, isGlobalAdmin);
-    const outcome = await this.moveLockedSubmission(
-      submissionId,
-      'pending_cash',
-      'cancelled',
-      formId
-    );
+    const outcome = await this.moveLockedSubmission(submissionId, 'pending_cash', 'cancelled', {
+      formId,
+    });
     if (outcome === 'missing') throw new NotFoundException('Submission not found');
     return { ok: true };
   }

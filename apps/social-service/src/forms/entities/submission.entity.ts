@@ -55,8 +55,17 @@ export class Submission {
   @Column({ nullable: true })
   paymentMethod: string | null;
 
-  @Column({ nullable: true })
-  stripeSessionId: string;
+  /** The CURRENT payment request's session id (Lydia's `request_uuid`, which `request/state` reads). */
+  @Column({ type: 'varchar', nullable: true })
+  stripeSessionId: string | null;
+
+  /**
+   * The CURRENT payment request's provider id (Lydia's NUMERIC `request_id`, migration 084): the one
+   * its callbacks and its cancel call carry. A cancel callback naming another id is about a request
+   * this row no longer uses, and is ignored. Null until the provider answered, or on older rows.
+   */
+  @Column({ type: 'varchar', length: 32, nullable: true })
+  paymentRequestId: string | null;
 
   /** When a cash payment expires if not validated (computed from form.cashPaymentExpiryDays). */
   @Column({ type: 'timestamptz', nullable: true })

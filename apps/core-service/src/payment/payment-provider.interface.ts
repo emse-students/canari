@@ -77,12 +77,25 @@ export interface CreateCheckoutSessionParams {
   payerRecipient?: PayerRecipient;
   /** Stable key for idempotency; derived from submission ID or a client-supplied UUID. */
   idempotencyKey?: string;
+  /**
+   * How long the request stays payable, in whole SECONDS from its creation (Lydia's `expire_time`,
+   * measured on the sandbox 2026-10-15: payments.md). Must be positive - Lydia reads 0 as "never".
+   */
+  expireAfterSeconds?: number;
 }
 
 export interface CheckoutSessionResult {
   id: string;
   url: string | null;
+  /**
+   * The provider's OWN id of the request, the one its callbacks and its cancel call carry (Lydia's
+   * numeric `request_id`, which is NOT `id`, the `request_uuid`). Null when the provider has none.
+   */
+  requestId: string | null;
 }
+
+/** What cancelling a request achieved: cancelled now, or already cancelled or expired before. */
+export type CancelRequestOutcome = 'cancelled' | 'already-settled';
 
 /** Minimal session shape consumed by verify/cancel - decoupled from any provider SDK type. */
 export interface CheckoutSessionInfo {
@@ -118,6 +131,8 @@ export interface PaymentProvider {
 
   createCheckoutSession(params: CreateCheckoutSessionParams): Promise<CheckoutSessionResult>;
   retrieveSession(sessionId: string): Promise<CheckoutSessionInfo>;
+  /** Makes a request no longer payable. `requestId` is `CheckoutSessionResult.requestId`. */
+  cancelCheckoutRequest(requestId: string, connectAccountId: string): Promise<CancelRequestOutcome>;
 }
 
 /**

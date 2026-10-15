@@ -98,8 +98,10 @@ describe('PaymentWebhookController.handleLydiaRequestCallback', () => {
     });
 
     expect(mockedAxios.post.mock.calls).toHaveLength(1);
-    const [url] = mockedAxios.post.mock.calls[0];
+    const [url, body] = mockedAxios.post.mock.calls[0];
     expect(url).toContain('/submissions/sub-1/cancel-pending');
+    // The report names Lydia's request, so social-service can ignore one a retry replaced.
+    expect(body).toEqual({ requestId: 'r1' });
   });
 
   it('does nothing on a cancelled/expired product order_ref - no pending row exists to undo', async () => {

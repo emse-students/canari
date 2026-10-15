@@ -6,11 +6,13 @@ import type { Submission } from './entities/submission.entity';
  * - the instant its CURRENT payment request was issued (migration 084). `createdAt` would be wrong
  * the moment `submit` reuses a live pending row for a new request: the hold must restart with it.
  *
- * UNMEASURED: 30 minutes is a guess at Lydia's payment window, not a reading of it (the window is
- * one of the Livrable A questions, [backlog WP-LYDIA-1]). Too short and a slow payer lands over
- * capacity (`paid_over_capacity`, which the organiser refunds by hand); too long and an abandoned
- * checkout keeps a seat nobody will take. Before 2026-10-15 it was infinite: nothing released an
- * online `pending` row at all.
+ * The SAME number is the payment request's own lifetime: `submit` sends it to the provider as
+ * `expireAfterSeconds` (Lydia's `expire_time`, integer seconds, measured on the sandbox 2026-10-15),
+ * so the request stops being payable when the seat stops being held. The provider's expiry is
+ * swept about once a minute, so a payment can still land a little after the hold - `markPaid`
+ * decides that one from the row (`paid_over_capacity` when the seat went). Too short and a slow
+ * payer cannot pay; too long and an abandoned checkout keeps a seat nobody will take. Before
+ * 2026-10-15 it was infinite: nothing released an online `pending` row at all.
  */
 export const PENDING_PAYMENT_HOLD_SECONDS = 30 * 60;
 

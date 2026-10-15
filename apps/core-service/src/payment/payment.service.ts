@@ -5,6 +5,7 @@ import { PlatformService } from '../platform/platform.service';
 
 import type {
   BusinessLegalProfile,
+  CancelRequestOutcome,
   CheckoutLineItem,
   CheckoutSessionInfo,
   CheckoutSessionResult,
@@ -94,6 +95,8 @@ export class PaymentService {
     payerRecipient?: PayerRecipient;
     /** Stable key for idempotency; derived from submission ID or a client-supplied UUID. */
     idempotencyKey?: string;
+    /** The request's lifetime in seconds; the caller's seat hold (social-service `seat-hold.ts`). */
+    expireAfterSeconds?: number;
   }): Promise<CheckoutSessionResult> {
     return (await this.getProvider()).createCheckoutSession({
       lineItems: params.lineItems.map(toGenericLineItem),
@@ -103,7 +106,16 @@ export class PaymentService {
       payerRecipient: params.payerRecipient,
       connectAccountId: params.connectAccountId,
       idempotencyKey: params.idempotencyKey,
+      expireAfterSeconds: params.expireAfterSeconds,
     });
+  }
+
+  /** Makes a payment request no longer payable (`PaymentProvider.cancelCheckoutRequest`). */
+  async cancelCheckoutRequest(
+    requestId: string,
+    connectAccountId: string
+  ): Promise<CancelRequestOutcome> {
+    return (await this.getProvider()).cancelCheckoutRequest(requestId, connectAccountId);
   }
 
   /** Retrieves the charges-enabled status for a Connect-style account. */

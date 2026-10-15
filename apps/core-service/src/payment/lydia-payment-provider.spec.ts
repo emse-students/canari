@@ -33,7 +33,11 @@ describe('LydiaPaymentProvider.createCheckoutSession', () => {
       idempotencyKey: 'submission-42',
     });
 
-    expect(result).toEqual({ id: 'req-uuid-1', url: 'https://lydia-app.com/pay/1' });
+    expect(result).toEqual({
+      id: 'req-uuid-1',
+      url: 'https://lydia-app.com/pay/1',
+      requestId: null,
+    });
 
     // Asserted through `mock.calls` rather than `expect(mockedAxios.post)`: handing the method
     // itself to a matcher detaches it from its receiver, which is what `unbound-method` warns
@@ -60,8 +64,55 @@ describe('LydiaPaymentProvider.createCheckoutSession', () => {
     );
     expect(sent.get('cancel_url')).toContain('/api/payments/lydia-request-callback?outcome=cancel');
     expect(sent.get('expire_url')).toContain('/api/payments/lydia-request-callback?outcome=expire');
+    // No lifetime asked for, none sent: Lydia's default applies.
+    expect(sent.has('expire_time')).toBe(false);
   });
 
+  // Measured on the sandbox 2026-10-15 (payments.md): `expire_time` is whole seconds, and request/do
+  // answers the numeric `request_id` its callbacks and its cancel call carry, next to the uuid.
+  it('sends the lifetime as expire_time and returns the numeric request_id', async () => {
+    mockedAxios.post.mockResolvedValue({
+      data: {
+        error: '0',
+        request_id: 48213,
+        request_uuid: 'req-uuid-1',
+        mobile_url: 'https://lydia-app.com/pay/1',
+      },
+    });
+    const result = await makeProvider().createCheckoutSession({
+      lineItems: [{ productName: 'Gala', unitAmountCents: 1500, quantity: 1, currency: 'eur' }],
+      successUrl: 's',
+      cancelUrl: 'c',
+      connectAccountId: 'vendor-token-abc',
+      payerRecipient: { value: 'user@example.com', type: 'email' },
+      expireAfterSeconds: 1800,
+    });
+    expect(result).toEqual({
+      id: 'req-uuid-1',
+      url: 'https://lydia-app.com/pay/1',
+      requestId: '48213',
+    });
+    const sent = new URLSearchParams(mockedAxios.post.mock.calls[0][1] as string);
+    expect(sent.get('expire_time')).toBe('1800');
+  });
+
+  // Lydia reads 0 as "never expires" and refuses the rest: none of them may reach it.
+  it.each([0, -5, 1.5, Number.NaN])(
+    'refuses expireAfterSeconds %p before calling Lydia',
+    async (v) => {
+      await expect(
+        makeProvider().createCheckoutSession({
+          lineItems: [{ productName: 'Gala', unitAmountCents: 1500, quantity: 1, currency: 'eur' }],
+          successUrl: 's',
+          cancelUrl: 'c',
+          connectAccountId: 'vendor-token-abc',
+          payerRecipient: { value: 'user@example.com', type: 'email' },
+          expireAfterSeconds: v,
+        })
+      ).rejects.toThrow('expireAfterSeconds');
+      expect(mockedAxios.post.mock.calls).toHaveLength(0);
+    }
+  );
   it('throws when no target vendor_token is given', async () => {
     const provider = makeProvider();
     await expect(
@@ -136,6 +187,49 @@ describe('LydiaPaymentProvider.createCheckoutSession', () => {
         payerRecipient: { value: '+33600000000', type: 'phone' },
       })
     ).rejects.toThrow(/ERROR_INVALID_PHONE_FORMAT/);
+  });
+});
+
+describe('LydiaPaymentProvider.cancelCheckoutRequest', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  it('posts request/cancel with the numeric request_id and the vendor_token, unsigned', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { error: '0', state: '6' } });
+    await expect(makeProvider().cancelCheckoutRequest('48213', 'vendor-token-abc')).resolves.toBe(
+      'cancelled'
+    );
+    const [url, body] = mockedAxios.post.mock.calls[0];
+    expect(url).toBe('https://homologation.lydia-app.com/api/request/cancel.json');
+    const sent = new URLSearchParams(body as string);
+    expect([...sent.keys()].sort()).toEqual(['request_id', 'vendor_token']);
+    expect(sent.get('request_id')).toBe('48213');
+    expect(sent.get('vendor_token')).toBe('vendor-token-abc');
+  });
+
+  it('reads error 2 (already cancelled or expired) as an answer, with no refusal logged', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { error: '2', message: 'Already cancelled' } });
+    const warn = jest.spyOn(Logger.prototype, 'warn');
+    await expect(makeProvider().cancelCheckoutRequest('48213', 'vendor-token-abc')).resolves.toBe(
+      'already-settled'
+    );
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it('throws the typed refusal on any other error', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { error: '105', message: 'Unknown request' } });
+    await expect(
+      makeProvider().cancelCheckoutRequest('48213', 'vendor-token-abc')
+    ).rejects.toMatchObject({
+      response: { code: PAYMENT_PROVIDER_REFUSED, providerCode: '105' },
+    });
+  });
+
+  it('refuses a request_uuid, which Lydia does not accept here, before calling it', async () => {
+    await expect(
+      makeProvider().cancelCheckoutRequest('0f8e4c3a-1b2c-4d5e-8f90-123456789abc', 'v')
+    ).rejects.toThrow('numeric request_id');
+    expect(mockedAxios.post.mock.calls).toHaveLength(0);
   });
 });
 

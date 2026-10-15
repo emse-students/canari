@@ -1,4 +1,5 @@
 import { BadRequestException } from '@nestjs/common';
+import axios from 'axios';
 import { FindOperator } from 'typeorm';
 import { FormsService } from './forms.service';
 import { Form } from './entities/form.entity';
@@ -33,7 +34,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     totalPaid: number;
     paymentRequestedAt: Date;
     createdAt: Date;
-    stripeSessionId?: string;
+    stripeSessionId?: string | null;
+    paymentRequestId?: string | null;
     cotisationGrantedAt?: Date | null;
     purchaseRecordedAt?: Date | null;
     answers?: Record<string, unknown>;
@@ -45,6 +47,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     rows: Row[];
     basePrice?: number;
     allowMultipleSubmissions?: boolean;
+    /** `lydia` reaches the fake core below; `disabled` stops a paid submit after its transaction. */
+    provider?: 'lydia' | 'disabled';
   }) {
     let now = T0;
     const rows: Row[] = opts.rows.map((row) => ({ ...row }));
@@ -225,13 +229,46 @@ describe('FormsService - the seat a pending payment holds', () => {
         answers: input.answers ?? {},
       })),
     };
-    // Payments are DISABLED, so a paid submit stops right after its transaction committed: these
-    // tests are about what the transaction wrote, not about the checkout.
+    // Payments are DISABLED by default, so a paid submit stops right after its transaction
+    // committed: those tests are about what the transaction wrote, not about the checkout.
     const associationsService: any = {
       assertPaymentsReady: jest.fn(async () => undefined),
       getPaymentAccountId: jest.fn(async () => 'vendor'),
-      getActivePaymentProvider: jest.fn(async () => 'disabled'),
+      getActivePaymentProvider: jest.fn(async () => opts.provider ?? 'disabled'),
     };
+    // A fake core-service: every call is recorded with what the ROWS looked like when it was made,
+    // and the cancel route answers what the test sets (core reads Lydia's error 2 as
+    // `already-settled`).
+    const core = {
+      calls: [] as { route: string; body: any; rowIdsThen: unknown[] }[],
+      cancelAnswer: 'cancelled' as 'cancelled' | 'already-settled' | Error,
+      /** Runs inside the cancel call, as Lydia's own cancel callback for the old request may. */
+      duringCancel: null as null | (() => Promise<unknown>),
+    };
+    let requests = 0;
+    jest.spyOn(axios, 'post').mockImplementation(async (url: string, body: any) => {
+      const route = url.split('/payments/')[1];
+      core.calls.push({
+        route,
+        body,
+        rowIdsThen: rows.map((r) => [r.id, r.paymentRequestId ?? null, r.stripeSessionId ?? null]),
+      });
+      if (route === 'cancel-request') {
+        if (core.duringCancel) await core.duringCancel();
+        if (core.cancelAnswer instanceof Error) throw core.cancelAnswer;
+        return { data: { ok: true, outcome: core.cancelAnswer } };
+      }
+      expect(route).toBe('create-checkout-session');
+      requests += 1;
+      return {
+        data: {
+          ok: true,
+          url: `https://lydia.example/pay/${requests}`,
+          id: `uuid-${requests}`,
+          requestId: String(1000 + requests),
+        },
+      };
+    });
     const service = new FormsService(
       formRepo,
       submissionRepo,
@@ -248,9 +285,12 @@ describe('FormsService - the seat a pending payment holds', () => {
       rows,
       userTagService,
       purchaseRecordService,
+      core,
       advance: (ms: number) => (now = new Date(now.getTime() + ms)),
     };
   }
+
+  afterEach(() => jest.restoreAllMocks());
 
   const ago = (ms: number) => new Date(T0.getTime() - ms);
   const row = (over: Partial<Row>): Row => ({
@@ -524,11 +564,128 @@ describe('FormsService - the seat a pending payment holds', () => {
     it('cancels a pending row and leaves a paid one alone', async () => {
       const { service, rows } = makeStore({
         maxSubmissions: 1,
-        rows: [row({ id: 'p', paymentStatus: 'pending' }), row({ id: 'q', paymentStatus: 'paid' })],
+        rows: [
+          row({ id: 'p', paymentStatus: 'pending', paymentRequestId: '1' }),
+          row({ id: 'q', paymentStatus: 'paid', paymentRequestId: '2' }),
+        ],
       });
-      await service.cancelPendingSubmission('p');
-      await service.cancelPendingSubmission('q');
+      await service.cancelPendingSubmission('p', { requestId: '1' });
+      await service.cancelPendingSubmission('q', { requestId: '2' });
       expect(rows.map((r) => r.paymentStatus)).toEqual(['cancelled', 'paid']);
+    });
+
+    // Fails without the comparison: after a retry, the cancel of the OLD request would cancel the
+    // answer whose NEW request the payer is paying right now.
+    it('applies only to the request the row is waiting on, by either id', async () => {
+      const { service, rows } = makeStore({
+        maxSubmissions: 1,
+        rows: [row({ id: 'p', paymentRequestId: '600', stripeSessionId: 'uuid-600' })],
+      });
+      await service.cancelPendingSubmission('p', { requestId: '555' });
+      await service.cancelPendingSubmission('p', { sessionId: 'uuid-555' });
+      expect(rows[0].paymentStatus).toBe('pending');
+      await service.cancelPendingSubmission('p', { sessionId: 'uuid-600' });
+      expect(rows[0].paymentStatus).toBe('cancelled');
+    });
+
+    it('refuses a report naming no request, and leaves a row with no stored id alone', async () => {
+      const { service, rows } = makeStore({
+        maxSubmissions: 1,
+        rows: [row({ id: 'p', paymentRequestId: null, stripeSessionId: null })],
+      });
+      await expect(service.cancelPendingSubmission('p', {})).rejects.toBeInstanceOf(
+        BadRequestException
+      );
+      await service.cancelPendingSubmission('p', { requestId: '555' });
+      expect(rows[0].paymentStatus).toBe('pending');
+    });
+  });
+
+  describe('the payment request a submit issues', () => {
+    // D1: the request dies with the seat hold, from ONE constant - Lydia reads 0 as "never".
+    it('expires with the seat hold, and the row keeps both of its ids', async () => {
+      const { service, rows, core } = makeStore({
+        maxSubmissions: 1,
+        basePrice: 1500,
+        provider: 'lydia',
+        rows: [],
+      });
+      const result = await service.submit('f1', { userId: 'u1', answers: {} } as any);
+      expect(result).toMatchObject({ checkoutUrl: 'https://lydia.example/pay/1' });
+      expect(core.calls.map((c) => c.route)).toEqual(['create-checkout-session']);
+      expect(core.calls[0].body.expireAfterSeconds).toBe(PENDING_PAYMENT_HOLD_SECONDS);
+      expect(PENDING_PAYMENT_HOLD_SECONDS).toBe(1800);
+      expect(rows[0]).toMatchObject({ paymentRequestId: '1001', stripeSessionId: 'uuid-1' });
+      // The ids are written by name: the hold the transaction set is not written back over.
+      expect(rows[0].paymentRequestedAt).toEqual(T0);
+    });
+
+    // D2: a retry cancels the request the row was waiting on, BEFORE issuing the new one.
+    it.each(['cancelled', 'already-settled'] as const)(
+      'cancels the old request first on a retry (provider answer: %s)',
+      async (answer) => {
+        const { service, rows, core } = makeStore({
+          maxSubmissions: 1,
+          basePrice: 1500,
+          provider: 'lydia',
+          rows: [
+            row({
+              id: 'mine',
+              paymentRequestedAt: ago(60_000),
+              paymentRequestId: '555',
+              stripeSessionId: 'uuid-old',
+            }),
+          ],
+        });
+        core.cancelAnswer = answer;
+        const warn = jest.spyOn((service as any).logger, 'warn');
+        await service.submit('f1', { userId: 'u1', answers: {} } as any);
+        expect(core.calls.map((c) => c.route)).toEqual([
+          'cancel-request',
+          'create-checkout-session',
+        ]);
+        expect(core.calls[0].body).toEqual({ requestId: '555', connectAccountId: 'vendor' });
+        // By the time the cancel is sent, the row no longer names the old request.
+        expect(core.calls[0].rowIdsThen).toEqual([['mine', null, null]]);
+        expect(rows).toHaveLength(1);
+        expect(rows[0]).toMatchObject({
+          paymentStatus: 'pending',
+          paymentRequestId: '1001',
+          stripeSessionId: 'uuid-1',
+          paymentRequestedAt: T0,
+        });
+        expect(warn).not.toHaveBeenCalled();
+      }
+    );
+
+    it('accuses a cancel that failed at warn, and the retry still gets its request', async () => {
+      const { service, rows, core } = makeStore({
+        maxSubmissions: 1,
+        basePrice: 1500,
+        provider: 'lydia',
+        rows: [row({ id: 'mine', paymentRequestedAt: ago(60_000), paymentRequestId: '555' })],
+      });
+      core.cancelAnswer = new Error('connect ECONNREFUSED');
+      const warn = jest.spyOn((service as any).logger, 'warn');
+      await service.submit('f1', { userId: 'u1', answers: {} } as any);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('555 NOT cancelled'));
+      expect(rows[0]).toMatchObject({ paymentStatus: 'pending', paymentRequestId: '1001' });
+    });
+
+    // Lydia calls the old request's cancel_url as soon as it is cancelled - possibly before the
+    // new request even exists. The row names no request at that instant, so the report is ignored.
+    it('ignores the old request cancel callback, however early it lands', async () => {
+      const { service, rows, core } = makeStore({
+        maxSubmissions: 1,
+        basePrice: 1500,
+        provider: 'lydia',
+        rows: [row({ id: 'mine', paymentRequestedAt: ago(60_000), paymentRequestId: '555' })],
+      });
+      core.duringCancel = () => service.cancelPendingSubmission('mine', { requestId: '555' });
+      await service.submit('f1', { userId: 'u1', answers: {} } as any);
+      await service.cancelPendingSubmission('mine', { requestId: '555' });
+      expect(rows[0]).toMatchObject({ paymentStatus: 'pending', paymentRequestId: '1001' });
     });
   });
 

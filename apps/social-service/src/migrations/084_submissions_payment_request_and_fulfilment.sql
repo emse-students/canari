@@ -1,10 +1,13 @@
--- Migration 084 : submissions - when the CURRENT payment request was issued, and two durable
--- fulfilment flags (forms.md, "An online payment holds its seat for 30 minutes").
+-- Migration 084 : submissions - when the CURRENT payment request was issued, its provider id, and
+-- two durable fulfilment flags (forms.md, "An online payment holds its seat for 30 minutes").
 --
 -- "paymentRequestedAt": the seat hold of an online `pending` answer is counted from it, not from
 --   "createdAt", because `submit` reuses a live pending row and issues a NEW payment request: the
 --   hold must restart with that request. Written by the database's own now() (DEFAULT, and
 --   `() => 'now()'` on reuse), same clock and same type as "createdAt".
+-- "paymentRequestId": the CURRENT request's provider id - Lydia's NUMERIC `request_id`, the one its
+--   callbacks and `request/cancel` carry (the `request_uuid` stays in "stripeSessionId"). Schema
+--   only: NULL on every existing row, filled by the next request.
 -- "cotisationGrantedAt" / "purchaseRecordedAt": set when `markPaid` (or the cash validation) has
 --   granted the cotisation / written the purchase record, or found there was nothing to do. A
 --   replayed payment re-runs only what is still NULL: idempotence from the row, never a clock.
@@ -34,6 +37,8 @@ ALTER TABLE submissions ADD COLUMN IF NOT EXISTS "paymentRequestedAt" timestamp;
 UPDATE submissions SET "paymentRequestedAt" = "createdAt" WHERE "paymentRequestedAt" IS NULL;
 ALTER TABLE submissions ALTER COLUMN "paymentRequestedAt" SET DEFAULT now();
 ALTER TABLE submissions ALTER COLUMN "paymentRequestedAt" SET NOT NULL;
+
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS "paymentRequestId" varchar(32);
 
 ALTER TABLE submissions ADD COLUMN IF NOT EXISTS "cotisationGrantedAt" timestamptz;
 ALTER TABLE submissions ADD COLUMN IF NOT EXISTS "purchaseRecordedAt" timestamptz;

@@ -4,6 +4,7 @@ import { verifyLydiaSignature } from './lydia-signature';
 import { parseLydiaOrderRef, orderRefToMetadata } from './lydia-order-ref';
 import type { ConnectAccountStatusResponse } from './payment-provider.interface';
 import type {
+  CancelRequestOutcome,
   CheckoutSessionInfo,
   CheckoutSessionResult,
   ConnectBalanceSummary,
@@ -26,6 +27,9 @@ const PRODUCTION_BASE_URL = 'https://lydia-app.com';
 /** Lydia's payable range per request, confirmed by Lydia 2026-10-04: 0,50 EUR to 1000 EUR. */
 export const LYDIA_MIN_AMOUNT_CENTS = 50;
 export const LYDIA_MAX_AMOUNT_CENTS = 100_000;
+
+/** `request/cancel`'s answer for a request already cancelled or expired (sandbox, 2026-10-15). */
+const LYDIA_CANCEL_ALREADY_SETTLED = '2';
 
 /**
  * Fields no log line may ever carry in the clear - `api_token_id` is the Business's own
@@ -99,7 +103,17 @@ export class LydiaPaymentProvider implements PaymentProvider {
     return !!this.providerToken;
   }
 
-  private async postForm<T>(path: string, fields: Record<string, string>): Promise<T> {
+  /**
+   * POSTs a form to Lydia and throws a `PAYMENT_PROVIDER_REFUSED` 400 on any error code - except the
+   * codes listed in `answers`, which the CALLER knows to be an answer rather than a refusal (the
+   * cancel call's "already cancelled or expired", error 2). Those come back as the raw body, so the
+   * caller reads `error` itself and no refusal is logged for an outcome that is not one.
+   */
+  private async postForm<T>(
+    path: string,
+    fields: Record<string, string>,
+    answers: readonly string[] = []
+  ): Promise<T & { error?: string }> {
     const body = new URLSearchParams(fields);
     const res = await axios.post<
       T & { error?: string; status?: string; code?: string; message?: string }
@@ -126,6 +140,10 @@ export class LydiaPaymentProvider implements PaymentProvider {
         : null;
     const statusError = res.data?.status === 'error' ? (res.data.code ?? 'unknown') : null;
     const errorCode = numericError ?? statusError;
+    if (errorCode && answers.includes(String(errorCode))) {
+      this.logger.debug(`${path} answered error ${errorCode}, which the caller reads as an answer`);
+      return res.data;
+    }
     if (errorCode) {
       this.logger.warn(`${path} refused by Lydia: error ${errorCode}: ${res.data.message ?? ''}`);
       throw new BadRequestException({
@@ -187,12 +205,59 @@ export class LydiaPaymentProvider implements PaymentProvider {
       expire_url: this.callbackUrl('expire'),
     };
     if (params.idempotencyKey) fields.order_ref = params.idempotencyKey;
+    if (params.expireAfterSeconds !== undefined) {
+      // Lydia reads 0 as "never expires" and refuses anything but an integer (measured on the
+      // sandbox 2026-10-15): a value that would silently drop the expiry is refused HERE instead.
+      if (!Number.isInteger(params.expireAfterSeconds) || params.expireAfterSeconds <= 0) {
+        this.logger.warn(`Lydia checkout refused: expire_time ${params.expireAfterSeconds}`);
+        throw new BadRequestException('expireAfterSeconds must be a positive whole number');
+      }
+      fields.expire_time = String(params.expireAfterSeconds);
+    }
 
-    const data = await this.postForm<{ request_uuid: string; mobile_url: string }>(
-      '/api/request/do',
-      fields
+    const data = await this.postForm<{
+      request_id?: string | number;
+      request_uuid: string;
+      mobile_url: string;
+    }>('/api/request/do', fields);
+    // `request_id` (numeric) is the id Lydia's callbacks and its cancel call carry; `request_uuid`
+    // is the one `request/state` reads. Both are kept, because neither replaces the other.
+    const requestId =
+      data.request_id === undefined || data.request_id === null ? null : String(data.request_id);
+    if (!requestId) {
+      this.logger.warn(`request/do answered without a request_id for ${data.request_uuid}`);
+    }
+    return { id: data.request_uuid, url: data.mobile_url, requestId };
+  }
+
+  /**
+   * Cancels a request via `POST /api/request/cancel` (measured on the sandbox 2026-10-15,
+   * payments.md): the NUMERIC `request_id` plus the Business's `vendor_token`, no signature. Lydia
+   * then moves the request to state 6 and calls its `cancel_url`. Error 2 means the request was
+   * already cancelled or had expired - the goal (not payable any more) holds, so it is an answer.
+   * Any other refusal throws, like every call through `postForm`.
+   */
+  async cancelCheckoutRequest(
+    requestId: string,
+    connectAccountId: string
+  ): Promise<CancelRequestOutcome> {
+    if (!this.providerToken) throw new BadRequestException('Lydia not configured');
+    if (!/^\d+$/.test(requestId)) {
+      // Lydia refuses a request_uuid here (error 1): the numeric id is the only one it accepts.
+      throw new BadRequestException(`Lydia request/cancel needs the numeric request_id`);
+    }
+    if (!connectAccountId) {
+      throw new BadRequestException('Lydia request/cancel requires the vendor_token');
+    }
+    const data = await this.postForm<object>(
+      '/api/request/cancel',
+      { request_id: requestId, vendor_token: connectAccountId },
+      [LYDIA_CANCEL_ALREADY_SETTLED]
     );
-    return { id: data.request_uuid, url: data.mobile_url };
+    const outcome: CancelRequestOutcome =
+      String(data.error ?? '0') === LYDIA_CANCEL_ALREADY_SETTLED ? 'already-settled' : 'cancelled';
+    this.logger.log(`Lydia request ${requestId} cancel: ${outcome}`);
+    return outcome;
   }
 
   /**

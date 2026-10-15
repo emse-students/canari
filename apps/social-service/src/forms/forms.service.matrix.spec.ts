@@ -68,7 +68,7 @@ describe('FormsService pricing, through submit', () => {
     const submissionRepo: any = {
       count: jest.fn(() => Promise.resolve(0)),
       findOne: jest.fn(() => Promise.resolve(null)),
-      save: jest.fn((x: unknown) => Promise.resolve(x)),
+      update: jest.fn(() => Promise.resolve({ affected: 1 })),
       manager: {
         transaction: jest.fn((_level: string, run: (m: unknown) => Promise<void>) => run(manager)),
       },

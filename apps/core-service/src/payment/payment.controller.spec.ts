@@ -141,6 +141,78 @@ describe('PaymentController.createCheckout', () => {
     ).rejects.toThrow(/payerEmail/);
     expect(Date.now() - started).toBeLessThan(1000);
   });
+
+  it('forwards the lifetime and answers the provider request id', async () => {
+    const createCheckoutSession = jest
+      .fn()
+      .mockResolvedValue({ id: 'uuid-1', url: 'https://x', requestId: '48213' });
+    const controller = makeController(createCheckoutSession);
+
+    await expect(
+      controller.createCheckout({
+        lineItems: [],
+        successUrl: 's',
+        cancelUrl: 'c',
+        expireAfterSeconds: 1800,
+      })
+    ).resolves.toEqual({ ok: true, url: 'https://x', id: 'uuid-1', requestId: '48213' });
+    expect(createCheckoutSession).toHaveBeenCalledWith(
+      expect.objectContaining({ expireAfterSeconds: 1800 })
+    );
+  });
+
+  it.each([0, -1, 2.5])('refuses expireAfterSeconds %p before any provider call', async (v) => {
+    const createCheckoutSession = jest.fn();
+    const controller = makeController(createCheckoutSession);
+    await expect(
+      controller.createCheckout({
+        lineItems: [],
+        successUrl: 's',
+        cancelUrl: 'c',
+        expireAfterSeconds: v,
+      })
+    ).rejects.toThrow(/expireAfterSeconds/);
+    expect(createCheckoutSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('PaymentController.cancelRequest', () => {
+  const SECRET = 'internal-secret-for-test';
+  beforeAll(() => {
+    process.env.INTERNAL_SECRET = SECRET;
+  });
+
+  function makeController(cancelCheckoutRequest: jest.Mock) {
+    return new PaymentController({ cancelCheckoutRequest } as unknown as PaymentService);
+  }
+
+  it('cancels the named request at the Business it was issued to', async () => {
+    const cancel = jest.fn().mockResolvedValue('already-settled');
+    await expect(
+      makeController(cancel).cancelRequest({ requestId: '48213', connectAccountId: 'v' }, SECRET)
+    ).resolves.toEqual({ ok: true, outcome: 'already-settled' });
+    expect(cancel).toHaveBeenCalledWith('48213', 'v');
+  });
+
+  it.each([
+    [{ requestId: 'uuid-1', connectAccountId: 'v' }],
+    [{ requestId: '48213', connectAccountId: ' ' }],
+    [{}],
+  ])('refuses %p before any provider call', async (body) => {
+    const cancel = jest.fn();
+    await expect(makeController(cancel).cancelRequest(body, SECRET)).rejects.toThrow(
+      'Invalid payload'
+    );
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it('refuses a caller without the internal secret', async () => {
+    const cancel = jest.fn();
+    await expect(
+      makeController(cancel).cancelRequest({ requestId: '1', connectAccountId: 'v' }, 'wrong')
+    ).rejects.toThrow('Forbidden');
+    expect(cancel).not.toHaveBeenCalled();
+  });
 });
 
 /**
