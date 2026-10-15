@@ -1,4 +1,14 @@
-import { BadRequestException, Body, Controller, Post, Query, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Headers,
+  Post,
+  Query,
+  Logger,
+  UseInterceptors,
+} from '@nestjs/common';
+import { NoFilesInterceptor } from '@nestjs/platform-express';
 import axios from 'axios';
 import { PaymentService } from './payment.service';
 import { parseLydiaOrderRef } from './lydia-order-ref';
@@ -94,9 +104,14 @@ export class PaymentWebhookController {
    * carry (Lydia, not a signed-in user, is the caller).
    */
   @Post('lydia-request-callback')
+  // Reads the text fields of a `multipart/form-data` body: the global parsers only know JSON and
+  // urlencoded, and Lydia's two real callbacks of 2026-10-15 reached this route with NO field at all.
+  // A body of any other type passes through untouched.
+  @UseInterceptors(NoFilesInterceptor())
   async handleLydiaRequestCallback(
     @Query('outcome') outcome: string,
-    @Body() body: Record<string, unknown>
+    @Body() body: Record<string, unknown>,
+    @Headers('content-type') contentType?: string
   ) {
     if (outcome !== 'confirm' && outcome !== 'cancel' && outcome !== 'expire') {
       throw new BadRequestException('Invalid outcome');
@@ -110,6 +125,12 @@ export class PaymentWebhookController {
     const signature = String(body?.sig ?? '');
 
     if (!requestId || !signature) {
+      // Names only, never values: what Lydia actually sent is the one fact that separates a body
+      // type we do not parse from field names we do not know.
+      this.logger.error(
+        `Lydia request-callback refused: no request_id or sig (outcome=${outcome}, ` +
+          `content-type=${contentType ?? 'none'}, fields=[${Object.keys(body ?? {}).join(',')}])`
+      );
       throw new BadRequestException('Missing request_id or sig');
     }
 
