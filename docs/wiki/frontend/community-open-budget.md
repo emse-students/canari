@@ -380,6 +380,21 @@ now deletes the stored page of every salon it does not name, except a salon crea
 after the request (`sweepStoredSalonPages`, over `IStorage.getMessageConversationIds`). A listing
 that failed sweeps nothing.
 
+**Two narrow windows left open on purpose (P3, review of #1892, 2026-10-15).**
+- **Another tab stores a newer page between this load's request and its draw.** This load then
+  draws that newer copy. Its own server answer, older than that copy, withdraws the rows the copy
+  has and the answer lacks, then writes its older page back over the copy. The screen shows what
+  this tab's server answer said, which is correct for that answer. A row posted in between is
+  missing only until the live stream delivers it or the next load runs. Closing the window would
+  need a version on the stored page that both tabs compare. One web user with two tabs, on the
+  same salon, inside one round trip, does not justify that.
+- **A tap's load that is still in flight when the sweep deletes its salon's page writes that page
+  back.** The load was asked before the listing answered and does not know the salon is gone. The
+  orphan page is sealed, belongs to this account only, and is never drawn: no listing names the
+  salon, so nothing opens it. The next listing's sweep deletes it. Closing this window would mean
+  checking the listing generation inside `storeSalonPage`, which is a second source of truth about
+  membership.
+
 **What a sign-out does not sweep, deliberately.** A sign-out keeps the message database: the user
 chose "deconnecter seulement, garder l'etat" (`ChatBackgroundService`, the PIN gate's exit). A salon
 copy follows the same rule as a DM's rows: sealed under the device key, in the account's own

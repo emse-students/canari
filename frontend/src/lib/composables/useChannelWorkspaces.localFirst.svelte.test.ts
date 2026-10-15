@@ -28,12 +28,14 @@ vi.mock('$lib/utils/chat/channelCrypto', () => ({
 const listUserWorkspaces = vi.fn();
 const listChannels = vi.fn();
 const listUnreadCounts = vi.fn().mockResolvedValue([]);
+const createChannel = vi.fn();
 vi.mock('$lib/services/ChannelService', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/services/ChannelService')>()),
   ChannelService: class MockChannelService {
     listUserWorkspaces = listUserWorkspaces;
     listChannels = listChannels;
     listUnreadCounts = listUnreadCounts;
+    createChannel = createChannel;
   },
 }));
 
@@ -354,6 +356,28 @@ describe('F1 - the saved community list', () => {
 
     expect(deleteConversation).toHaveBeenCalledTimes(1);
     expect(deleteConversation).toHaveBeenCalledWith('channel_lost');
+  });
+
+  it('spares the stored page of a salon created on this device while the listing was in flight', async () => {
+    listUserWorkspaces.mockResolvedValue([ws('ws1', 'One', 'one')]);
+    let answerSalons!: (salons: ChannelDto[]) => void;
+    listChannels.mockReturnValue(new Promise((resolve) => (answerSalons = resolve)));
+    createChannel.mockResolvedValue({ id: 'born', name: 'new' });
+    const deleteConversation = vi.fn().mockResolvedValue(undefined);
+    const store = useChannelWorkspaces();
+    const ctx = makeContext({
+      deleteConversation,
+      storedSalonPageIds: vi.fn().mockResolvedValue(['channel_born', 'channel_lost']),
+    });
+
+    const loading = store.loadChannelWorkspacesFromBackend(ctx);
+    await vi.waitFor(() => expect(listChannels).toHaveBeenCalled());
+    // Created after the question was asked: missing from the answer for a reason that is not loss.
+    await store.createNewChannel('ws1', 'new', ctx);
+    answerSalons([salon('c1', 'general')]);
+    await loading;
+
+    expect(deleteConversation.mock.calls.map(([id]) => id)).toEqual(['channel_lost']);
   });
 
   it('sweeps no stored page when the listing failed', async () => {
