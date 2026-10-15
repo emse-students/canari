@@ -310,8 +310,9 @@ handled in code, neither seen); the menu's position on screen (the probe page re
 app's CSS); two devices clearing at ONCE (one connection only: argued, not measured - the `UPDATE`
 re-reads the locked row, so the stored mark is right and only the answer's `prev` can be stale, which
 at worst repeats an event and a silent push). **The SQL IS run**, by
-`channel-unread-clear.integration.spec.ts` (gated on `SOCIAL_IT_DATABASE_URL`; at review on PGlite,
-Postgres 17 in WASM, Docker did not answer): microsecond rows clear exactly, a lower or repeated `upTo`
+`channel-unread-clear.integration.spec.ts` (gated on `SOCIAL_IT_DATABASE_URL`, run in CI by
+`test-social-integration` since 2026-10-15; at review on PGlite, Postgres 17 in WASM, Docker did not
+answer - and it failed on every real PostgreSQL until #1913): microsecond rows clear exactly, a lower or repeated `upTo`
 moves nothing, and it found two defects, both fixed. `LEAST` ignores a NULL, so an EMPTY salon took
 `upTo` itself as its mark and a future `upTo` hid that salon's next messages; an empty salon now gets
 no mark. And the column was off the entity, so `synchronize` (every boot outside production) dropped

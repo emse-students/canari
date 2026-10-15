@@ -7,9 +7,8 @@
  * feed gate, each post, the announce recipients, the agenda's association predicate - and that
  * `READER_SPACES_SQL` and the pure `readerSpaces` answer the same for every reader.
  *
- * GATED ON `SOCIAL_IT_DATABASE_URL`, like `reel-retention.integration.spec.ts` and for its reason:
- * CI provides no database here, and the whole file reports as skipped rather than passing. Run it
- * against any throwaway PostgreSQL:
+ * GATED ON `SOCIAL_IT_DATABASE_URL`, like `reel-retention.integration.spec.ts` and for its reason;
+ * CI's `test-social-integration` sets it. Locally, against any throwaway PostgreSQL:
  *
  *   SOCIAL_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- reader-spaces.integration
  *
