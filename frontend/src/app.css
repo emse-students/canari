@@ -117,22 +117,28 @@
      carries timestamps and nothing else. Canari had 157 occurrences BELOW it (10.4px, 11.2px, 10px,
      9px), which is the single largest contributor to "pas assez ergonomique". `text-2xs` exists so
      that the answer to "this must be small" is a token with a floor, not another `text-[0.65rem]`. */
-  --text-2xs: 0.75rem; /* 12px / 16px - timestamps. Nothing goes below this. */
-  --text-2xs--line-height: 1rem;
-  --text-xs: 0.8125rem; /* 13px / 16px - the dominant secondary tier, 84 + 144 runs in the reference */
-  --text-xs--line-height: 1rem;
-  --text-sm: 0.9375rem; /* 15px / 20px - body, and the composer */
-  --text-sm--line-height: 1.25rem;
-  --text-base: 1.0625rem; /* 17px / 24px - emphasis and thread headers */
-  --text-base--line-height: 1.5rem;
-  --text-lg: 1.25rem; /* 20px / 28px - section title */
-  --text-lg--line-height: 1.75rem;
-  --text-xl: 1.5rem; /* 24px / 32px - page title */
-  --text-xl--line-height: 2rem;
-  --text-2xl: 1.75rem; /* 28px / 36px */
-  --text-2xl--line-height: 2.25rem;
-  --text-3xl: 2rem; /* 32px / 40px */
-  --text-3xl--line-height: 2.5rem;
+  --text-2xs: calc(
+    0.75rem * var(--type-scale, 1)
+  ); /* 12px / 16px - timestamps. Nothing goes below this. */
+  --text-2xs--line-height: calc(1rem * var(--type-scale, 1));
+  --text-xs: calc(
+    0.8125rem * var(--type-scale, 1)
+  ); /* 13px / 16px - the dominant secondary tier, 84 + 144 runs in the reference */
+  --text-xs--line-height: calc(1rem * var(--type-scale, 1));
+  --text-sm: calc(0.9375rem * var(--type-scale, 1)); /* 15px / 20px - body, and the composer */
+  --text-sm--line-height: calc(1.25rem * var(--type-scale, 1));
+  --text-base: calc(
+    1.0625rem * var(--type-scale, 1)
+  ); /* 17px / 24px - emphasis and thread headers */
+  --text-base--line-height: calc(1.5rem * var(--type-scale, 1));
+  --text-lg: calc(1.25rem * var(--type-scale, 1)); /* 20px / 28px - section title */
+  --text-lg--line-height: calc(1.75rem * var(--type-scale, 1));
+  --text-xl: calc(1.5rem * var(--type-scale, 1)); /* 24px / 32px - page title */
+  --text-xl--line-height: calc(2rem * var(--type-scale, 1));
+  --text-2xl: calc(1.75rem * var(--type-scale, 1)); /* 28px / 36px */
+  --text-2xl--line-height: calc(2.25rem * var(--type-scale, 1));
+  --text-3xl: calc(2rem * var(--type-scale, 1)); /* 32px / 40px */
+  --text-3xl--line-height: calc(2.5rem * var(--type-scale, 1));
 
   /* ================================== THE RADII ==================================
      FOUR MEANINGS, NOT FOURTEEN. The reference uses `8px` for every card, menu, popover and
@@ -1382,9 +1388,11 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
    scales font sizes and leaves lengths alone, so at 200 % avatar initials came out twice the size
    of their circle and were cut by it (Mi 9T, 2026-09-30). `--text-zoom` is that factor, measured by
    `publishTextZoom` (`lib/utils/textZoom.ts`); `zoom` undoes it on the glyph alone. Reading text is
-   never exempt - only a mark whose box cannot grow. */
+   never exempt - only a mark whose box cannot grow. `--text-zoom` means "the engine inflated every font"
+   (Android, 1 on iOS); `--type-scale` is the app's own Dynamic Type factor (iOS, 1 elsewhere); a font
+   that is neither inflated nor token-sized (the reel overlay, `cqmin`) divides by `--text-zoom` only. */
 .text-zoom-exempt {
-  zoom: calc(1 / var(--text-zoom, 1));
+  zoom: calc(1 / (var(--text-zoom, 1) * var(--type-scale, 1)));
 }
 
 /* THE OTHER ANSWER: A BOX THAT GROWS WITH ITS TEXT. When the glyph in a fixed box is READING text
@@ -1393,12 +1401,12 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
    spacing scale as `size-*` and `w-*`, so no length is written at a call site. At 200 % today's day
    number (40px) overran its 36px circle in the agenda (Mi 9T, 2026-10-13). */
 @utility text-zoom-size-* {
-  width: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1));
-  height: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1));
+  width: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1) * var(--type-scale, 1));
+  height: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1) * var(--type-scale, 1));
 }
 
 @utility text-zoom-w-* {
-  width: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1));
+  width: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1) * var(--type-scale, 1));
 }
 
 /* THE STATUS STRIP ABOVE THE PHONE HEADER IS PAINTED WITH THE HEADER'S SURFACE, so the top reads as

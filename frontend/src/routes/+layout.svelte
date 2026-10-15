@@ -67,7 +67,7 @@
   import { totalUnreadMessages } from '$lib/utils/unreadTotal';
   import SeoHead from '$lib/components/seo/SeoHead.svelte';
   import { purgeRetiredAvatarCache } from '$lib/utils/userAvatarCache';
-  import { publishTextZoom } from '$lib/utils/textZoom';
+  import { publishTextZoom, followIosDynamicType } from '$lib/utils/textZoom';
   import { m } from '$lib/paraglide/messages';
 
   let { children } = $props();
@@ -128,6 +128,7 @@
     themeStore.init();
     startTabIndicator();
     publishTextZoom();
+    const disposeDynamicType = followIosDynamicType(isIosApp);
 
     // Dismiss the inline splash screen (see app.html) once the first frame is rendered.
     // tick() ensures SvelteKit has completed its initial render before we fade out.
@@ -155,6 +156,7 @@
 
     return () => {
       disposePressedClickGuard();
+      disposeDynamicType();
       teardownHistory();
       teardownKeyboard();
       window.removeEventListener('focus', onVersionCheckTrigger);

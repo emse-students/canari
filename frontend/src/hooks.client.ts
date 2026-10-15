@@ -237,6 +237,12 @@ if (isTauriRuntime()) {
                     { type: 'repost_proposed', postId: queueAssociationId },
                     async (id) => (await assos.getAssociation(id)).slug
                   );
+                  // Unreachable for `repost_proposed` (it always has a slug route); kept because the
+                  // signature is `string | null` and a null must never reach `goto`.
+                  if (!route) {
+                    console.warn('[hooks] proposals queue has no destination');
+                    return;
+                  }
                   return goto(route);
                 })
                 .catch((err) => console.error('[hooks] Proposal queue navigation failed', err));
@@ -327,6 +333,18 @@ if (isTauriRuntime()) {
                   appendLog('[AUTH] MiConnect session ended - the sign-out browser came back')
                 )
                 .catch((err) => console.error('[hooks] Could not log the MiConnect sign-out', err));
+              continue;
+            }
+
+            // A host of our own scheme that no table above owns: a push from a newer server. The
+            // tap must land somewhere a reader can see the notification, never nowhere.
+            if (u.protocol === MOBILE_APP_PROTOCOL && u.host !== 'callback') {
+              console.warn(
+                `[hooks] unknown deep-link host, opening notifications: ${describeDeepLink(url)}`
+              );
+              import('$app/navigation')
+                .then(({ goto }) => goto('/notifications'))
+                .catch((err) => console.error('[hooks] Notifications navigation failed', err));
               continue;
             }
 

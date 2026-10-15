@@ -324,3 +324,49 @@ absent or `0` - request `12115504` (uuid `2c4c4bb4...`, no `expire_time`) and `1
 (`expire_time=0`) were left open on the sandbox, so a `request/state` on them later bounds it;
 whether `expire_time` has a ceiling (one year and `1792000000` s were both accepted); whether
 an expire/cancel callback is retried after a non-2xx.
+
+### `request/state`, the payer's own cancel, and a callback that is PARSED (2026-10-15, 18:30Z)
+
+Same sandbox, same rules. `request/do` echoes `order_ref` in its answer when one is sent.
+
+| `request/state` fields sent | Answer |
+|---|---|
+| `request_uuid` alone (what `retrieveSession` sends) | `{state, used_ease_of_payment}` - works, unsigned |
+| `request_uuid` + `provider_token` | same, unsigned |
+| `request_uuid` + `vendor_token` | `{state, used_ease_of_payment, signature}` |
+| `request_id` + `vendor_token`, or `order_ref` + `vendor_token` | same, signed - both lookups find the request |
+| unknown `request_uuid`, or unknown `order_ref` | `error: "2"`, "Requete introuvable" |
+
+**No variant ever returns `order_ref`**, so `retrieveSession`'s `metadata` from it is always empty;
+`vendor_token` is optional and only adds a `signature`.
+
+**The payer's "annuler la commande" link** (`/collect/cancel?uuid=...` on the payer page) redirects
+to `browser_fail_url` and leaves `state 6` - the same code as a merchant cancel and an expiry, not
+`5`. It POSTed `cancel_url` at 18:37:02Z, by then on a dev build carrying the multipart parser of the
+section below: nginx logged `400 70` and core-service logged `signature verification failed
+(outcome=cancel)`. **So the body now parses (`request_id` and `sig` are present) and the PROVIDER
+private token does NOT verify Lydia's callback** - consistent with the CSM's "signed with the
+Business's token", though a wrong field set in `verifyRequestCallback` would fail the same way; the
+field names were not logged, since that log line fires only when fields are missing.
+
+**Not produced, so unmeasured:** the state of a PAID request (`1` expected) and of a payer decline
+(`5` expected), and what `request/cancel` answers on a paid request. A test card (`4111...`) is
+refused before any status choice ("ne permet pas l'usage du code de securite 3DSecure",
+`/collect/payment-error?code=4`) and the request stays `state 0`; no Lydia sandbox test card is
+documented here, and none was guessed further.
+
+## Lydia's callbacks reached `lydia-request-callback` with an EMPTY body (2026-10-15)
+
+Two real calls from Lydia's servers (an `expire` at 16:40Z and a `cancel` at 16:41Z on dev, source
+`91.194.60.148`) were answered `400` with the 78-byte `Missing request_id or sig`, and the route
+logged nothing: the global parsers read JSON and urlencoded only, so a body of any other type arrives
+with no field at all. **The route now reads `multipart/form-data` too** (`NoFilesInterceptor`, which
+leaves every other body type alone), and a refusal for missing fields logs the content type and the
+FIELD NAMES, never a value - at most 16 names of 32 characters from `[w.-]`, plus the count, because the
+sender chooses every name and a newline in one would forge a log line. **The route is public, so
+multer is bounded** (16 fields, 4096 bytes each, 16 parts, no file) and the signature comparison is
+`timingSafeEqual`. **This is a hypothesis about Lydia's body type, not an observation of
+it**: the test reproduces the exact symptom without the interceptor, but the next real callback's
+log line is what settles it. No callback has yet been verified, so which private token signs one
+(the Provider's, as `verifyRequestCallback` assumes, or the Business's, as Lydia's CSM wrote on
+2026-10-15) is still open.

@@ -7,7 +7,9 @@ describe('paymentReturnVerdict', () => {
     ['free', 'confirmed'],
     ['pending', 'wait'],
     ['cancelled', 'failed'],
-    ['expired', 'failed'],
+    // A seat released while the payer was still paying: a late payment may still land.
+    ['expired', 'wait'],
+    ['paid_over_capacity', 'overCapacity'],
     ['pending_cash', 'failed'],
     ['', 'failed'],
   ])('%j is %s', (status, verdict) => {
