@@ -94,31 +94,52 @@ export async function endGroupMembership(
  * Two writers can leave that state: a container still on pre-030 code while the migration was
  * applied, and `ensureGroupMember` interrupted between its two statements on a caller with no
  * transaction (the invitation join). Both readers of intervals call this before computing a window,
- * so whichever reads first heals it. The insert ignores a conflict, so a concurrent repair is
- * harmless.
+ * so whichever reads first heals it.
  *
- * @returns the intervals it opened, for the caller to add to what it already read; empty when
- *          every member given already had one open.
+ * **THE ROSTER READ AND THE INSERT ARE ONE TRANSACTION, AND THE ROSTER ROWS ARE HELD `FOR SHARE`**
+ * (final review of #1878). Read without a lock, a removal committing between the read and the
+ * insert found no open interval to close, and the insert then left an OPEN interval with no roster
+ * row: on the re-add, `ensureGroupMember`'s ignored conflict kept it, and no window covered the
+ * removal - the very leak these intervals exist to close. Held, the removal's DELETE waits for this
+ * transaction, then closes the interval it opened; a row already deleted is not read at all.
+ *
+ * ONLY WHAT WAS STORED IS RETURNED (`RETURNING`): a concurrent repair whose insert hit the
+ * conflict opened nothing, so it neither logs a repair nor adds a row that does not exist.
+ *
+ * @param userIds people the caller read with no open interval; the roster decides which of them
+ *                are members, read under the lock.
+ * @returns the intervals actually opened, for the caller to add to what it already read and to log.
  */
 export async function openMissingIntervals(
   manager: EntityManager,
   groupId: string,
-  members: ReadonlyArray<{ userId: string; joinedAt: Date }>,
-  intervalsByUser: ReadonlyMap<string, ReadonlyArray<{ leftAt: Date | null }>>
+  userIds: readonly string[]
 ): Promise<Array<{ userId: string; joinedAt: Date; leftAt: null }>> {
-  const unopened = members.filter(
-    (m) => !(intervalsByUser.get(m.userId) ?? []).some((r) => r.leftAt === null)
-  );
-  if (unopened.length === 0) return [];
-  const opened = unopened.map((m) => ({ userId: m.userId, joinedAt: m.joinedAt, leftAt: null }));
-  await manager
-    .createQueryBuilder()
-    .insert()
-    .into(GroupMembershipInterval)
-    .values(opened.map((o) => ({ groupId, ...o })))
-    .orIgnore()
-    .execute();
-  return opened;
+  if (userIds.length === 0) return [];
+  return manager.transaction(async (tx) => {
+    const roster = await tx
+      .getRepository(GroupMember)
+      .createQueryBuilder('m')
+      .select('m.userId', 'userId')
+      .addSelect('m.joinedAt', 'joinedAt')
+      .where('m.groupId = :groupId', { groupId })
+      .andWhere('m.userId IN (:...userIds)', { userIds: [...userIds] })
+      .setLock('pessimistic_read')
+      .getRawMany<{ userId: string; joinedAt: Date }>();
+    if (roster.length === 0) return [];
+    const inserted = await tx
+      .createQueryBuilder()
+      .insert()
+      .into(GroupMembershipInterval)
+      .values(
+        roster.map((m) => ({ groupId, userId: m.userId, joinedAt: m.joinedAt, leftAt: null }))
+      )
+      .orIgnore()
+      .returning(['userId', 'joinedAt'])
+      .execute();
+    const raw = (inserted.raw ?? []) as Array<{ userId: string; joinedAt: Date | string }>;
+    return raw.map((r) => ({ userId: r.userId, joinedAt: new Date(r.joinedAt), leftAt: null }));
+  });
 }
 
 /** One window, in server milliseconds, during which a person was NOT a member. `until: null` = still out. */

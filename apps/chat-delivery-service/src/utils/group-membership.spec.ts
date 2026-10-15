@@ -5,6 +5,7 @@ import {
   endGroupMembership,
   ensureGroupMember,
   exclusionWindows,
+  openMissingIntervals,
   withholdExcludedHistoryRows,
 } from './group-membership';
 import { GroupMember } from '../entities/group-member.entity';
@@ -129,6 +130,160 @@ describe('endGroupMembership', () => {
     const set = updates[0].set as { leftAt: Date };
     expect(set.leftAt).toBeInstanceOf(Date);
     expect(set.leftAt.getTime()).toBeGreaterThanOrEqual(before);
+  });
+});
+
+/**
+ * A ROSTER MEMBER WITH NO OPEN INTERVAL IS REPAIRED UNDER A LOCK (final review of #1878).
+ *
+ * The fake below keeps Postgres's one rule that matters here: a row read `FOR SHARE` makes a DELETE
+ * of that row wait until the reading transaction ends. Everything else is a table in memory, and the
+ * removal is the real `endGroupMembership`.
+ */
+describe('openMissingIntervals', () => {
+  const G = 'g-1';
+  const ARRIVED = new Date('2026-10-05T00:00:00Z');
+  let roster: Map<string, Date>;
+  let intervals: Array<{ userId: string; joinedAt: Date; leftAt: Date | null }>;
+  let shareLocks: Map<string, Promise<void>>;
+  let insertGate: Promise<void>;
+
+  const manager = () =>
+    ({
+      transaction: async (fn: (tx: unknown) => Promise<unknown>) => {
+        const releases: Array<() => void> = [];
+        const tx = {
+          getRepository: () => ({
+            createQueryBuilder: () => {
+              let locked = false;
+              let ids: string[] = [];
+              const qb = {
+                select: () => qb,
+                addSelect: () => qb,
+                where: () => qb,
+                andWhere: (_sql: string, p: { userIds: string[] }) => {
+                  ids = p.userIds;
+                  return qb;
+                },
+                setLock: (mode: string) => {
+                  locked = mode === 'pessimistic_read';
+                  return qb;
+                },
+                getRawMany: async () => {
+                  const rows = ids
+                    .filter((id) => roster.has(id))
+                    .map((id) => ({ userId: id, joinedAt: roster.get(id) as Date }));
+                  if (locked) {
+                    for (const r of rows) {
+                      shareLocks.set(r.userId, new Promise<void>((res) => releases.push(res)));
+                    }
+                  }
+                  return rows;
+                },
+              };
+              return qb;
+            },
+          }),
+          createQueryBuilder: () => {
+            let values: Array<{ userId: string; joinedAt: Date }> = [];
+            const ib = {
+              insert: () => ib,
+              into: () => ib,
+              values: (v: Array<{ userId: string; joinedAt: Date }>) => {
+                values = v;
+                return ib;
+              },
+              orIgnore: () => ib,
+              returning: () => ib,
+              execute: async () => {
+                await insertGate;
+                const raw: Array<{ userId: string; joinedAt: Date }> = [];
+                for (const v of values) {
+                  // The partial unique index: one OPEN interval per person, a conflict is ignored.
+                  if (intervals.some((i) => i.userId === v.userId && i.leftAt === null)) continue;
+                  intervals.push({ userId: v.userId, joinedAt: v.joinedAt, leftAt: null });
+                  raw.push({ userId: v.userId, joinedAt: v.joinedAt });
+                }
+                return { raw };
+              },
+            };
+            return ib;
+          },
+        };
+        try {
+          return await fn(tx);
+        } finally {
+          for (const release of releases) release();
+        }
+      },
+      getRepository: (entity: unknown) => ({
+        delete: async ({ userId }: { userId: string }) => {
+          await shareLocks.get(userId); // DELETE waits for a FOR SHARE holder
+          return { affected: roster.delete(userId) ? 1 : 0 };
+        },
+        update: async ({ userId }: { userId: string }, set: { leftAt: Date }) => {
+          expect(entity).toBe(GroupMembershipInterval);
+          let affected = 0;
+          for (const i of intervals) {
+            if (i.userId === userId && i.leftAt === null) {
+              i.leftAt = set.leftAt;
+              affected++;
+            }
+          }
+          return { affected };
+        },
+      }),
+    }) as unknown as EntityManager;
+
+  beforeEach(() => {
+    roster = new Map([['dave', ARRIVED]]);
+    // Removed on the 3rd, re-added on the 5th by an enrolment interrupted before its interval.
+    intervals = [
+      {
+        userId: 'dave',
+        joinedAt: new Date('2026-10-01T00:00:00Z'),
+        leftAt: new Date('2026-10-03T00:00:00Z'),
+      },
+    ];
+    shareLocks = new Map();
+    insertGate = Promise.resolve();
+  });
+
+  it('opens the interval from the roster row, and says so only for what it stored', async () => {
+    const m = manager();
+
+    expect(await openMissingIntervals(m, G, ['dave'])).toEqual([
+      { userId: 'dave', joinedAt: ARRIVED, leftAt: null },
+    ]);
+    // A second repair hits the conflict: nothing stored, nothing returned, nothing to log.
+    expect(await openMissingIntervals(m, G, ['dave'])).toEqual([]);
+    expect(intervals.filter((i) => i.leftAt === null)).toHaveLength(1);
+  });
+
+  it('opens nothing for a person the roster no longer holds', async () => {
+    roster.clear();
+
+    expect(await openMissingIntervals(manager(), G, ['dave'])).toEqual([]);
+    expect(intervals.filter((i) => i.leftAt === null)).toEqual([]);
+  });
+
+  it('a removal committing between the roster read and the insert closes the repaired interval - never an orphan open one', async () => {
+    let openGate!: () => void;
+    insertGate = new Promise<void>((res) => (openGate = res));
+    const m = manager();
+
+    const repair = openMissingIntervals(m, G, ['dave']);
+    await new Promise((r) => setImmediate(r)); // the roster has been read; the insert waits
+    const removal = endGroupMembership(m, G, 'dave');
+    await new Promise((r) => setImmediate(r));
+    openGate();
+    await repair;
+    const ended = await removal;
+
+    // Unlocked, the removal ran first, closed nothing, and the insert left an OPEN interval with no
+    // roster row - which a re-add's ignored conflict would keep, so no window covered the removal.
+    expect(ended).toEqual({ deleted: 1, closed: 1 });
+    expect(intervals.filter((i) => i.leftAt === null)).toEqual([]);
   });
 });
 

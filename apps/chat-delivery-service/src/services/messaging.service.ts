@@ -3490,28 +3490,23 @@ export class MessagingService {
   ): Promise<ExclusionWindow[]> {
     const userId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     if (!userId) return [];
-    const intervals: Array<{ joinedAt: Date; leftAt: Date | null }> =
-      await this.groupRepo.manager.find(GroupMembershipInterval, {
+    const read = () =>
+      this.groupRepo.manager.find(GroupMembershipInterval, {
         where: { userId, groupId },
         select: { groupId: true, joinedAt: true, leftAt: true },
       });
+    let intervals = await read();
     if (intervals.length > 0 && !intervals.some((r) => r.leftAt === null)) {
-      const member = await this.groupMemberRepo.findOne({
-        where: { groupId, userId },
-        select: { userId: true, joinedAt: true },
-      });
-      if (member) {
-        const opened = await openMissingIntervals(
-          this.groupRepo.manager,
-          groupId,
-          [member],
-          new Map([[userId, intervals]])
-        );
-        intervals.push(...opened);
+      // The roster is read under a lock inside the helper - a person removed meanwhile gets nothing.
+      const opened = await openMissingIntervals(this.groupRepo.manager, groupId, [userId]);
+      if (opened.length > 0) {
         this.logger.error(
           `[HISTORY] group=${groupId.slice(0, 8)} user=${userId.slice(0, 8)} opened a missing interval - a member with no open interval (pre-030 enrolment or an interrupted one) would have read as out of the group`
         );
       }
+      // Re-read rather than patch the list: a concurrent repair may have opened it instead, and a
+      // removal may have closed it since - the table is the only answer to both.
+      intervals = await read();
     }
     return exclusionWindows(intervals);
   }

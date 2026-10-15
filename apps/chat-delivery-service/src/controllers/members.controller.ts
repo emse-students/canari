@@ -817,34 +817,36 @@ export class MembersController {
       .getRawMany<{ userId: string }>();
     const counted = new Set([...memberIds, ...admittedRows.map((r) => r.userId)]);
 
-    const intervals = await this.dataSource.manager.find(GroupMembershipInterval, {
-      where: { groupId: safeGroupId, userId: In([...counted]) },
-      select: { userId: true, joinedAt: true, leftAt: true },
-    });
-    const byUser = new Map<string, GroupMembershipInterval[]>();
-    for (const row of intervals) {
-      const list = byUser.get(row.userId) ?? [];
-      list.push(row);
-      byUser.set(row.userId, list);
-    }
+    const readByUser = async () => {
+      const rows = await this.dataSource.manager.find(GroupMembershipInterval, {
+        where: { groupId: safeGroupId, userId: In([...counted]) },
+        select: { userId: true, joinedAt: true, leftAt: true },
+      });
+      const grouped = new Map<string, GroupMembershipInterval[]>();
+      for (const row of rows) {
+        const list = grouped.get(row.userId) ?? [];
+        list.push(row);
+        grouped.set(row.userId, list);
+      }
+      return grouped;
+    };
+    let byUser = await readByUser();
 
     // Members outside every open interval - see the docstring. Repaired before the answer is built,
     // so the answer already carries the window between their last close and their arrival.
-    const opened = await openMissingIntervals(
-      this.dataSource.manager,
-      safeGroupId,
-      members,
-      byUser
-    );
-    if (opened.length > 0) {
-      for (const row of opened) {
-        const list = byUser.get(row.userId) ?? [];
-        list.push(row as GroupMembershipInterval);
-        byUser.set(row.userId, list);
+    const unopened = members
+      .filter((m) => !(byUser.get(m.userId) ?? []).some((r) => r.leftAt === null))
+      .map((m) => m.userId);
+    if (unopened.length > 0) {
+      const opened = await openMissingIntervals(this.dataSource.manager, safeGroupId, unopened);
+      if (opened.length > 0) {
+        this.logger.error(
+          `[GROUP_EXCLUSIONS] group=${safeGroupId.slice(0, 8)} opened ${opened.length} missing interval(s) - member(s) enrolled by pre-030 code or by an interrupted enrolment; a window they were out for before that is not recorded`
+        );
       }
-      this.logger.error(
-        `[GROUP_EXCLUSIONS] group=${safeGroupId.slice(0, 8)} opened ${opened.length} missing interval(s) - member(s) enrolled by pre-030 code or by an interrupted enrolment; a window they were out for before that is not recorded`
-      );
+      // Re-read rather than patch: a concurrent repair may have opened one instead, and a removal
+      // may have closed it since - the table is the only answer to both.
+      byUser = await readByUser();
     }
 
     const exclusions: Record<string, ExclusionWindow[]> = {};

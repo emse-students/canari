@@ -215,48 +215,74 @@ describe('a history read names who asked', () => {
      * removal although they were a member again (fifth review of #1878). The interval is opened from
      * the roster row, as `GET .../exclusions` does, before the window is computed.
      */
-    it('repairs a roster member with no open interval instead of reading them as still out', async () => {
-      intervalFind.mockResolvedValue([
+    /** The interval table, with a repair transaction whose roster read finds `rosterJoinedAt`. */
+    const withRepairableTable = (rosterJoinedAt: Date | null, stored: boolean) => {
+      const table: Array<{ groupId: string; joinedAt: Date; leftAt: Date | null }> = [
         {
           groupId: GROUP,
           joinedAt: at('2026-10-01T00:00:00Z'),
           leftAt: at('2026-10-03T00:00:00Z'),
         },
-      ]);
-      const execute = jest.fn().mockResolvedValue({});
-      const insert = { into: jest.fn(), values: jest.fn(), orIgnore: jest.fn(), execute };
-      insert.into.mockReturnValue(insert);
-      insert.values.mockReturnValue(insert);
-      insert.orIgnore.mockReturnValue(insert);
-      const internals = service as unknown as {
-        groupRepo: { manager: Record<string, unknown> };
-        groupMemberRepo: { findOne: jest.Mock };
+      ];
+      intervalFind.mockImplementation(async () => table.map((r) => ({ ...r })));
+      const values = jest.fn();
+      const ib: Record<string, unknown> = {
+        insert: () => ib,
+        into: () => ib,
+        values: (v: Array<{ joinedAt: Date }>) => {
+          values(v);
+          return ib;
+        },
+        orIgnore: () => ib,
+        returning: () => ib,
+        execute: async () => {
+          // `stored: false` is a concurrent repair that got there first: the conflict is ignored.
+          table.push({ groupId: GROUP, joinedAt: rosterJoinedAt as Date, leftAt: null });
+          return { raw: stored ? [{ userId: USER, joinedAt: rosterJoinedAt }] : [] };
+        },
       };
-      internals.groupRepo.manager.createQueryBuilder = () => ({ insert: () => insert });
-      internals.groupMemberRepo.findOne.mockResolvedValue({
-        userId: USER,
-        joinedAt: at('2026-10-05T00:00:00Z'),
-      });
+      const rb: Record<string, unknown> = {
+        select: () => rb,
+        addSelect: () => rb,
+        where: () => rb,
+        andWhere: () => rb,
+        setLock: () => rb,
+        getRawMany: async () =>
+          rosterJoinedAt ? [{ userId: USER, joinedAt: rosterJoinedAt }] : [],
+      };
+      const tx = {
+        getRepository: () => ({ createQueryBuilder: () => rb }),
+        createQueryBuilder: () => ib,
+      };
+      const internals = service as unknown as { groupRepo: { manager: Record<string, unknown> } };
+      internals.groupRepo.manager.transaction = (fn: (t: unknown) => Promise<unknown>) => fn(tx);
+      return values;
+    };
+
+    it('repairs a roster member with no open interval instead of reading them as still out', async () => {
+      const values = withRepairableTable(at('2026-10-05T00:00:00Z'), true);
 
       const page = await service.getHistory(GROUP, undefined, USER, ADMIN);
 
       // Without the repair, 3-0 (the 6th) falls in a window open from the 3rd and is dropped.
       expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '3-0']);
-      expect(insert.values).toHaveBeenCalledWith([
+      expect(values).toHaveBeenCalledWith([
         { groupId: GROUP, userId: USER, joinedAt: at('2026-10-05T00:00:00Z'), leftAt: null },
       ]);
-      expect(execute).toHaveBeenCalledTimes(1);
       expect(lines()).toContain('opened a missing interval');
     });
 
+    it('a concurrent repair that stored it first: the table is re-read, and no repair is claimed', async () => {
+      withRepairableTable(at('2026-10-05T00:00:00Z'), false);
+
+      const page = await service.getHistory(GROUP, undefined, USER, ADMIN);
+
+      expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '3-0']);
+      expect(lines()).not.toContain('opened a missing interval');
+    });
+
     it('a person with no roster row and a closed interval is still read as out', async () => {
-      intervalFind.mockResolvedValue([
-        {
-          groupId: GROUP,
-          joinedAt: at('2026-10-01T00:00:00Z'),
-          leftAt: at('2026-10-03T00:00:00Z'),
-        },
-      ]);
+      withRepairableTable(null, false);
 
       const page = await service.getHistory(GROUP, undefined, USER, ADMIN);
 

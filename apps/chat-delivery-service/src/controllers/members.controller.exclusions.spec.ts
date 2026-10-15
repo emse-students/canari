@@ -91,16 +91,49 @@ describe('MembersController - membership intervals and the exclusions read', () 
         return healBuilder;
       },
       orIgnore: () => healBuilder,
-      // The real insert lands in the table the next read comes from.
+      returning: () => healBuilder,
+      // The real insert lands in the table the next read comes from, and RETURNING names it.
       execute: () => {
-        intervals.push(
-          ...healInserts.map(({ userId, joinedAt, leftAt }) => ({ userId, joinedAt, leftAt }))
-        );
-        return Promise.resolve({ identifiers: [] });
+        const stored = healInserts.map(({ userId, joinedAt, leftAt }) => ({
+          userId,
+          joinedAt,
+          leftAt,
+        }));
+        intervals.push(...stored);
+        return Promise.resolve({
+          raw: stored.map(({ userId, joinedAt }) => ({ userId, joinedAt })),
+        });
       },
     };
+    // The repair's own transaction: the roster read under its lock, then the insert.
+    const healTx = {
+      getRepository: () => ({
+        createQueryBuilder: () => {
+          let ids: string[] = [];
+          const qb = {
+            select: () => qb,
+            addSelect: () => qb,
+            where: () => qb,
+            andWhere: (_sql: string, p: { userIds: string[] }) => {
+              ids = p.userIds;
+              return qb;
+            },
+            setLock: () => qb,
+            getRawMany: async () =>
+              members
+                .filter((m) => ids.includes(m.userId))
+                .map((m) => ({ userId: m.userId, joinedAt: m.joinedAt })),
+          };
+          return qb;
+        },
+      }),
+      createQueryBuilder: () => healBuilder,
+    };
     const dataSource = {
-      manager: { find: intervalFind, createQueryBuilder: () => healBuilder },
+      manager: {
+        find: intervalFind,
+        transaction: (fn: (m: unknown) => Promise<unknown>) => fn(healTx),
+      },
       transaction: (fn: (m: unknown) => Promise<unknown>) => fn(txManager),
     };
 

@@ -906,6 +906,14 @@ What a future version must prove first is in the [backlog](../backlog.md) (P3).
 their roster row's `joinedAt` (`openMissingIntervals`, shared with `GET .../exclusions`, one ERROR
 line each time), rather than being read as out from their last close.
 
+The roster read and the insert run in ONE transaction, with the roster row held `FOR SHARE`. Without
+the lock, a removal committing between the two found no open interval to close. The insert then left
+an OPEN interval with no roster row, which a re-add's ignored conflict kept, so no window covered the
+removal. With the lock, the removal's DELETE waits and then closes the repaired interval.
+
+Only what `RETURNING` names was stored, so a concurrent repair that lost the conflict neither logs nor
+counts a row. Both callers re-read the table after a repair attempt rather than patching their list.
+
 The window read is per group, inside that group's `try` on the batch route: a failed read answers
 that group empty - never unfiltered - and serves the rest.
 
