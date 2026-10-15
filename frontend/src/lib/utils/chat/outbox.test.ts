@@ -2269,6 +2269,62 @@ describe('outbox - a reply decides its quote text at the send', () => {
     outbox.dispose();
   });
 
+  /**
+   * THE QUOTE DECISION IS AN AWAIT BEFORE THE CLAIM, so #1887's last look must still come after it:
+   * a withdrawal landing while the windows are read is answered "never sent" and must stay true.
+   */
+  it('a reply withdrawn while its quote is being decided is never sent and never re-queued', async () => {
+    const storage = makeStorage([replyEntry()]);
+    let outbox: ReturnType<typeof createOutbox> | null = null;
+    let withdrawn: boolean | undefined;
+    const mlsService = makeMls({
+      exclusions: async () => {
+        withdrawn = await outbox!.cancelPending('r1');
+        return bobsWindow();
+      },
+    });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(withdrawn).toBe(true);
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.has('r1')).toBe(false);
+    expect(storage.saveOutboxEntry).not.toHaveBeenCalled();
+    outbox.dispose();
+  });
+
+  /**
+   * WITHDRAWN WHILE ITS FRAME IS ON THE WIRE: the peers have it, so the delete travels as an event
+   * (#1887), and the row is gone. Making the blank permanent must not write that row back - a
+   * deleted message in the queue is one a later flush, or a crash before the final delete, sends.
+   */
+  it('a reply withdrawn while its frame is on the wire: the blank is not saved back into the queue', async () => {
+    const storage = makeStorage([replyEntry()]);
+    let outbox: ReturnType<typeof createOutbox> | null = null;
+    let withdrawn: boolean | undefined;
+    const mlsService = makeMls({
+      exclusions: bobsWindow,
+      send: (async () => {
+        withdrawn = await outbox!.cancelPending('r1');
+      }) as any,
+    });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(withdrawn).toBe(false);
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(storage.saveOutboxEntry).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'r1' }),
+      expect.anything()
+    );
+    expect(storage._map.has('r1')).toBe(false);
+    outbox.dispose();
+  });
+
   it('the native mirror quotes by id only - it cannot read the windows', () => {
     const mirror = toMirrorEntry(replyEntry())!;
     const decoded = decodeAppMessage(Uint8Array.from(atob(mirror.proto), (c) => c.charCodeAt(0)));
