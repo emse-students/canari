@@ -3,7 +3,7 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import * as bodyParser from 'body-parser';
 import cookieParser from 'cookie-parser';
-import { buildAllowedOrigins, corsOriginDelegate } from './cors-origins';
+import { buildAllowedOrigins, corsOptions } from './cors-origins';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -14,10 +14,7 @@ async function bootstrap() {
   // Allowed origins: every Tauri WebView origin (one per platform), the deployed frontend, and
   // http(s) loopback on any port for dev. The list and the predicate live in `cors-origins.ts`.
   const allowedOrigins = buildAllowedOrigins(process.env.FRONTEND_URL);
-  app.enableCors({
-    origin: corsOriginDelegate(allowedOrigins),
-    credentials: true,
-  });
+  app.enableCors(corsOptions(allowedOrigins));
 
   // Increase payload limit to accommodate base64 background images for posters
   app.use(bodyParser.json({ limit: '15mb' }));

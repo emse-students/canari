@@ -19,6 +19,7 @@ import {
   firstPageFailure,
   listAfterFirstPage,
   readStoredFeedPage,
+  refreshFirstPage,
   saveStoredFeed,
   storableFeedRow,
   storedCopyMayDraw,
@@ -387,6 +388,44 @@ describe('the page wiring, as decisions', () => {
     expect(feedMayLoadMore({ loadingMore: false, hasMore: true, fromStore: true })).toBe(false);
     expect(feedMayLoadMore({ loadingMore: false, hasMore: true, fromStore: false })).toBe(true);
     expect(feedMayLoadMore({ loadingMore: true, hasMore: true, fromStore: false })).toBe(false);
+  });
+
+  // Review of the reconnect refresh: the page read `data.feedParams` AFTER its await, so a refresh of
+  // one tab landing after a switch was drawn over the next tab and written into its cache and store.
+  it('a refresh asks for the tab it was issued for, and drops an answer for a tab left since', async () => {
+    const followed = { feed: 'followed' as const };
+    let current = 1;
+    let answer!: (rows: PostEntity[]) => void;
+    const read = vi.fn(
+      () =>
+        new Promise<PostEntity[]>((resolve) => {
+          answer = resolve;
+        })
+    );
+    const issued = 1;
+    const pending = refreshFirstPage({
+      params: followed,
+      read,
+      stillCurrent: () => current === issued,
+    });
+    expect(read).toHaveBeenCalledWith(followed);
+    current = 2; // the reader switched tab while the request was out
+    answer([post('p1')]);
+    expect(await pending).toEqual({ kind: 'stale' });
+
+    const failing = refreshFirstPage({
+      params: followed,
+      read: () => Promise.reject(new TypeError('Failed to fetch')),
+      stillCurrent: () => false,
+    });
+    expect(await failing).toEqual({ kind: 'stale' });
+
+    const kept = await refreshFirstPage({
+      params: followed,
+      read: async () => [post('p2')],
+      stillCurrent: () => true,
+    });
+    expect(kept).toMatchObject({ kind: 'answered', params: followed });
   });
 
   // Mi 9T, `v1.2.9-alpha.1` (2026-10-15): after an offline start the copy still said "pas de

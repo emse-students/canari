@@ -321,12 +321,25 @@ headers plus the exposed ones: the reads consume `Content-Type` and `Content-Len
 `Content-Disposition` (the XLSX exports, exposed by social-service with this change). A new response header a
 read depends on must be added to its service's `exposedHeaders`, or the phone reads `null`.
 
+**What a cross-origin read needs from the server, and where each is held (review of #1922):**
+
+| Need | Where |
+| --- | --- |
+| The preflight names `Authorization` back. A `*` in `Access-Control-Allow-Headers` does NOT cover it (Fetch standard) | Nest: `corsOptions` in `apps/*/src/cors-origins.ts` leaves `allowedHeaders` unset, so `cors` mirrors the request (asserted in `cors-origins.spec.ts`). The chat gateway answered `*` and now mirrors (`AllowHeaders::mirror_request()`, test `names_back_the_authorization_header_a_bearer_read_preflights`): `GET /api/presence` carries a Bearer token |
+| The preflight is cached | `Access-Control-Max-Age: 7200` on the four Nest services and the gateway (Chromium caps it at 2 h, WebKit at 10 min). Without it Chromium kept a preflight 5 s per URL |
+| An error nginx makes ITSELF is readable | A 502/504 while a service restarts, or the 500 of a failed `auth_request` (maintenance included), carried no CORS header, so a native read got a `TypeError` - "unreachable" - where the status was an answer. `error_page 500/502/503/504` at server level now answers through `@api_error_<code>` with `Access-Control-Allow-Origin` mapped from an ALLOWLIST of the three WebView origins (`$api_error_cors_origin`). Gate: `.github/scripts/tests/api-error-cors.test.mjs`, which also holds the map equal to `TAURI_WEBVIEW_ORIGINS`. Checked with `nginx -t` and a container: a failed auth sub-request answers `500` with `Access-Control-Allow-Origin: http://tauri.localhost`, and nothing for a foreign origin |
+| The response headers a read consumes | `Content-Disposition` (social-service), `X-History-Head` (chat-delivery) |
+
+Not covered by this repository: a 502 made by the HOST proxy in front of the container (the Portail-etu host's
+own nginx, the Cloudflare edge) while this container itself is down, which still reaches a native read as a
+transport failure.
+
 **Left on the plugin:** JSON writes (their responses are small), third-party hosts, and `TauriMlsService`'s
 delivery client, which imports the plugin's `fetch` directly and so still pays the chunk loop on history
 pages (F7's remaining half). **Not verified:** the iPhone (`Origin: tauri://localhost`, allowed everywhere and
-already carrying the refresh POST natively), and the preflight's cost on a slow link: no service sets
-`Access-Control-Max-Age`, so Chromium caches a preflight 5 s per URL; measured on Wi-Fi the native head was
-still 189-256 ms against the plugin's 246-779 ms, which also builds a new `reqwest` client per call.
+already carrying the refresh POST natively; whether WKWebView would have refused the gateway's `*` was not
+seen either way), and the preflight's cost on a slow link: measured on Wi-Fi the native head was 189-256 ms
+against the plugin's 246-779 ms, which also builds a new `reqwest` client per call.
 
 ### A relative `/api/` path is dead on mobile, and it fails as a SUCCESS
 

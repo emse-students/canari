@@ -50,6 +50,12 @@ RUN rm -f /usr/share/nginx/html/index.html /usr/share/nginx/html/50x.html
 # connect-src must not, since it governs what the app can read into memory.
 RUN mkdir -p /etc/nginx/snippets && printf 'add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"' '"'"'unsafe-inline'"'"'; script-src-elem '"'"'self'"'"' '"'"'unsafe-inline'"'"'; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss: ws: https://api.klipy.com https://static.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"'; form-action '"'"'self'"'"'; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n' > /etc/nginx/snippets/csp.conf
 
+# The headers of an error this nginx makes itself on an API route (@api_error_*): JSON, never cached,
+# readable cross-origin by the three WebView origins ($api_error_cors_origin, an allowlist - empty
+# for anyone else, and nginx sends no header with an empty value), and the three security headers,
+# since a block that sets any header loses the inherited ones.
+RUN printf 'default_type application/json;\nadd_header Access-Control-Allow-Origin $api_error_cors_origin always;\nadd_header Access-Control-Allow-Credentials "true" always;\nadd_header Vary "Origin" always;\nadd_header Cache-Control "no-store" always;\ninclude /etc/nginx/snippets/csp.conf;\nadd_header X-Content-Type-Options "nosniff" always;\nadd_header X-Frame-Options "DENY" always;\n' > /etc/nginx/snippets/api-error-headers.conf
+
 # SPA fallback + reverse proxy WebSocket/API vers les services Docker
 RUN printf '# THE ACCESS LOG NEVER RECORDS A BEARER TOKEN (prod 2026-10-06: every `GET /api/ws` line carried the\n\
 # full `token=<JWT>` query, a live credential for its remaining hour, readable by anyone who can read\n\
@@ -71,6 +77,20 @@ map $http_cookie $adminer_cookie {\n\
     "~^canari_adminer=[^;]*;?\\s*(?<rest>.*)$" $rest;\n\
     "~^(?<head>.*?);\\s*canari_adminer=[^;]*(?:;\\s*(?<tail>.*))?$" "$head; $tail";\n\
     default $http_cookie;\n\
+}\n\
+\n\
+# AN ERROR THIS nginx MAKES ITSELF MUST STILL BE READABLE BY THE PHONE APPS (2026-10-15). They read\n\
+# the API through the WebView fetch, cross-origin (frontend/src/lib/utils/fetchRouting.ts), so a\n\
+# response without Access-Control-Allow-Origin reaches them as a TypeError - a transport failure,\n\
+# which marks the server unreachable - where the status was an ANSWER. The services set the header\n\
+# on everything they answer; a 502/504 while one restarts, or the 500 of a failed auth_request, is\n\
+# made here and carried none. ALLOWLIST, not a mirror: the three WebView origins of\n\
+# TAURI_WEBVIEW_ORIGINS (apps/*/src/cors-origins.ts). The web app is same-origin and needs none.\n\
+map $http_origin $api_error_cors_origin {\n\
+    default "";\n\
+    "http://tauri.localhost" $http_origin;\n\
+    "https://tauri.localhost" $http_origin;\n\
+    "tauri://localhost" $http_origin;\n\
 }\n\
 \n\
 server {\n\
@@ -137,6 +157,31 @@ server {\n\
     include /etc/nginx/snippets/csp.conf;\n\
     add_header X-Content-Type-Options "nosniff" always;\n\
     add_header X-Frame-Options "DENY" always;\n\
+    \n\
+    # The errors this nginx makes, answered with the allowlisted origin (see the map above). Only an\n\
+    # error MADE HERE reaches these: proxy_intercept_errors is off, so a 5xx a service answers passes\n\
+    # through with its own CORS headers. `location /` declares its own error_page (the app shell)\n\
+    # and so does not inherit this; the other locations serve files and make no 5xx of their own.\n\
+    error_page 500 @api_error_500;\n\
+    error_page 502 @api_error_502;\n\
+    error_page 503 @api_error_503;\n\
+    error_page 504 @api_error_504;\n\
+    location @api_error_500 {\n\
+    include /etc/nginx/snippets/api-error-headers.conf;\n\
+    return 500 "{\\"statusCode\\":500,\\"message\\":\\"edge error\\"}";\n\
+    }\n\
+    location @api_error_502 {\n\
+    include /etc/nginx/snippets/api-error-headers.conf;\n\
+    return 502 "{\\"statusCode\\":502,\\"message\\":\\"upstream unavailable\\"}";\n\
+    }\n\
+    location @api_error_503 {\n\
+    include /etc/nginx/snippets/api-error-headers.conf;\n\
+    return 503 "{\\"statusCode\\":503,\\"message\\":\\"upstream unavailable\\"}";\n\
+    }\n\
+    location @api_error_504 {\n\
+    include /etc/nginx/snippets/api-error-headers.conf;\n\
+    return 504 "{\\"statusCode\\":504,\\"message\\":\\"upstream timed out\\"}";\n\
+    }\n\
     \n\
     location = /internal/auth/verify {\n\
     internal;\n\

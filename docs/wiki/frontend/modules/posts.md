@@ -1658,7 +1658,14 @@ the cards adopt through `PostCardLedger`) when `feedRefetchOnReconnect` says so:
 request got NO answer (`firstPage === 'failed'`), no refresh is out, and the server is reachable -
 the store also announces the browser's `online` event, which proves nothing, and announces again
 once a request has reached the server, so one confirmed reconnect asks once. `refreshPosts` now
-records its outcome in `firstPage`. The same reconnect reads the access token again when the launch
+records its outcome in `firstPage`.
+
+**A refresh answers for the tab it was issued for (review of #1922).** `refreshPosts` and the
+infinite scroll read `data.feedParams` AFTER their await, so a refresh of one tab landing after a
+switch was drawn over the next tab and written into its cache and stored page - a race the reconnect
+made ordinary. Both now take the tab's params and a tab-load count BEFORE the await
+(`refreshFirstPage` in `feedStore.ts`); an answer whose count is no longer current is dropped
+(logged at debug), and the tab switch resets `loading`/`loadingMore`, which belonged to the old tab. The same reconnect reads the access token again when the launch
 had none: offline, `getToken` failed and the cards' media (`authToken`) stayed hidden for the session.
 
 **Noise of the offline cold start, the feed's share.** `[Posts] Failed to get token` (an error with a

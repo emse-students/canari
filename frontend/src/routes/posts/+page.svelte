@@ -30,10 +30,16 @@
   import { msUntilNextDue, stillScheduled } from '$lib/posts/scheduledDue';
   import { deletePostAfterConfirm } from '$lib/posts/postDeletion';
   import { isFeedAudienceRefusal, isOutsideFeedAudience } from '$lib/posts/feedAudience';
-  import { feedCacheKey, readFeedCache, writeFeedCache } from '$lib/posts/feedCache';
+  import {
+    feedCacheKey,
+    readFeedCache,
+    writeFeedCache,
+    type FeedCacheParams,
+  } from '$lib/posts/feedCache';
   import {
     feedMayLoadMore,
     feedRefetchOnReconnect,
+    refreshFirstPage,
     feedStoreAccess,
     firstPageFailure,
     listAfterFirstPage,
@@ -119,14 +125,21 @@
   );
 
   /** Keeps `posts` as the tab's stored first page, when the device may hold it now. */
-  function storeFirstPage(posts: PostEntity[]) {
+  function storeFirstPage(params: FeedCacheParams, posts: PostEntity[]) {
     const access = storeAccess;
     if (!access) {
       Log.d('POSTS', 'first page not stored - the device key is not in hand for this account');
       return;
     }
-    void saveStoredFeed(access, data.feedParams, posts);
+    void saveStoredFeed(access, params, posts);
   }
+
+  /**
+   * Counts the tab loads of this page instance: a request remembers the count it was issued under,
+   * and its answer is dropped when the reader has switched tab since (`refreshFirstPage`). Not
+   * reactive: nothing is drawn from it.
+   */
+  let tabLoad = 0;
 
   /**
    * Applies a failed feed read to the screen, as `firstPageFailure` classifies it: a 401/403 ends
@@ -420,8 +433,14 @@
    * answer only replaces the paint it is replacing, which is what the identity check says.
    */
   $effect(() => {
-    const key = feedCacheKey(data.feedParams);
+    const params = data.feedParams;
+    const key = feedCacheKey(params);
     const promise = data.posts;
+    // A new tab load: a refresh or a next page still out for the previous one is now stale, and the
+    // flags it set belong to nobody.
+    tabLoad++;
+    loading = false;
+    loadingMore = false;
 
     const cached = readFeedCache(key);
     const stale = cached?.posts ?? null;
@@ -447,7 +466,7 @@
         const more = posts.length >= FIRST_PAGE_SIZE;
         writeFeedCache(key, { posts, hasMore: more });
         initialPostsResolved = posts;
-        storeFirstPage(posts);
+        storeFirstPage(params, posts);
         const next = listAfterFirstPage({
           answer: posts,
           onScreen: postsOverride,
@@ -534,10 +553,11 @@
    * This used to re-parse `feed`, `promo` and `formation` off the URL - a third copy of `load`'s
    * parsing, complete with its own `parseInt` and its own default - so page 2 could be fetched
    * from a different feed than page 1 whenever the two disagreed. `load` publishes what it
-   * resolved; the only thing that changes between pages is the offset.
+   * resolved; the only thing that changes between pages is the offset. The caller passes the tab's
+   * params as it took them BEFORE its await, never `data.feedParams` read after it.
    */
-  function buildListOptions(offset = 0) {
-    return feedPageOptions(data.feedParams, offset, PAGE_SIZE);
+  function buildListOptions(params: FeedCacheParams, offset = 0) {
+    return feedPageOptions(params, offset, PAGE_SIZE);
   }
 
   /**
@@ -582,49 +602,68 @@
   }
 
   async function refreshPosts() {
+    // The tab is taken NOW: an answer for a tab the reader has left is dropped (`refreshFirstPage`).
+    const issuedFor = tabLoad;
     loading = true;
     errorMessage = '';
     hasMore = true;
-    try {
-      const posts = await listPosts(buildListOptions(0));
+    const outcome = await refreshFirstPage({
+      params: data.feedParams,
+      read: (params) => listPosts(buildListOptions(params)),
+      stillCurrent: () => issuedFor === tabLoad,
+    });
+    if (outcome.kind === 'stale') {
+      // `loading` belongs to the tab on screen now, which reset it at the switch.
+      Log.d('POSTS', 'a refresh answered for a tab the reader has left - dropped');
+      return;
+    }
+    loading = false;
+    if (outcome.kind === 'answered') {
+      const { posts, params } = outcome;
       postsOverride = posts;
       hasMore = posts.length >= PAGE_SIZE;
-      writeFeedCache(feedCacheKey(data.feedParams), { posts, hasMore });
+      writeFeedCache(feedCacheKey(params), { posts, hasMore });
       // An answer: whatever the device drew is now the server's page, and the store follows it.
       firstPage = 'answered';
       fromStore = false;
       storedRefreshFailed = false;
-      storeFirstPage(posts);
-    } catch (err) {
-      Log.d('refreshPosts failed', err);
-      const outside = isOutsideFeedAudience(err);
-      // A copy that stays on screen says it could not be refreshed on its own line; the red banner
-      // is for a feed that has nothing to show.
-      const failure = applyFirstPageFailure(err);
-      firstPage = failure.firstPage;
-      if (outside) noAudience = true;
-      else if (!failure.copyUnconfirmed) errorMessage = m.posts_load_error_title();
-    } finally {
-      loading = false;
+      storeFirstPage(params, posts);
+      return;
     }
+    const err = outcome.error;
+    Log.d('refreshPosts failed', err);
+    const outside = isOutsideFeedAudience(err);
+    // A copy that stays on screen says it could not be refreshed on its own line; the red banner
+    // is for a feed that has nothing to show.
+    const failure = applyFirstPageFailure(err);
+    firstPage = failure.firstPage;
+    if (outside) noAudience = true;
+    else if (!failure.copyUnconfirmed) errorMessage = m.posts_load_error_title();
   }
 
   async function loadMorePosts(currentPosts: PostEntity[]) {
     // A stored copy is not paged (`feedMayLoadMore`).
     if (!feedMayLoadMore({ loadingMore, hasMore, fromStore })) return;
+    // Same rule as `refreshPosts`: a page for a tab the reader has left is not appended to this one.
+    const issuedFor = tabLoad;
+    const params = data.feedParams;
     loadingMore = true;
     try {
-      const more = await listPosts(buildListOptions(currentPosts.length));
+      const more = await listPosts(buildListOptions(params, currentPosts.length));
+      if (issuedFor !== tabLoad) {
+        Log.d('POSTS', 'a next page answered for a tab the reader has left - dropped');
+        return;
+      }
       if (more.length === 0 || more.length < PAGE_SIZE) hasMore = false;
       // Deduplicate in case new posts were inserted between page fetches.
       const existingIds = new Set(currentPosts.map((p) => p.id));
       const newPosts = more.filter((p) => !existingIds.has(p.id));
       postsOverride = [...currentPosts, ...newPosts];
-      writeFeedCache(feedCacheKey(data.feedParams), { posts: postsOverride, hasMore });
+      writeFeedCache(feedCacheKey(params), { posts: postsOverride, hasMore });
     } catch {
       // silent - user can scroll back up and retry
     } finally {
-      loadingMore = false;
+      if (issuedFor === tabLoad) loadingMore = false;
     }
   }
 
@@ -1022,7 +1061,7 @@
                     hasMore,
                   });
                   // The next launch must not draw the post just deleted from the stored page.
-                  storeFirstPage(postsOverride.slice(0, FIRST_PAGE_SIZE));
+                  storeFirstPage(data.feedParams, postsOverride.slice(0, FIRST_PAGE_SIZE));
                 }}
               />
             </div>
