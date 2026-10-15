@@ -19,6 +19,7 @@ export const PAYMENT_STATUSES = [
   'paid',
   'cancelled',
   'expired',
+  'paid_over_capacity',
 ] as const;
 
 export type PaymentStatus = (typeof PAYMENT_STATUSES)[number];
@@ -36,10 +37,16 @@ export function statusLabel(status: string): string {
   if (status === 'paid') return m.form_status_paid();
   if (status === 'cancelled') return m.form_status_cancelled();
   if (status === 'expired') return m.form_status_expired();
+  if (status === 'paid_over_capacity') return m.form_status_paid_over_capacity();
   return status;
 }
 
-/** The pill's colours, by what the status MEANS: settled, owed, or refused. */
+/**
+ * The pill's colours, by what the status MEANS: settled, owed, or refused.
+ *
+ * `paid_over_capacity` takes the refused colour on purpose: the money landed but the seat did not,
+ * and the organiser owes a refund - a green pill would read as "nothing to do".
+ */
 export function statusClass(status: string): string {
   if (status === 'paid')
     return 'bg-green-100 text-green-800 dark:bg-green-900/30 dark:text-green-300';

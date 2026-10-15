@@ -12,6 +12,14 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { Form } from './entities/form.entity';
 import { retireForms } from './retire-forms';
+import {
+  PENDING_HOLD_CUTOFF_SQL,
+  SETTLED_PAYMENT_STATUSES,
+  livePendingWhere,
+  lockFormSeats,
+  overCapacityFirst,
+  seatHoldingWhere,
+} from './seat-hold';
 import { Submission } from './entities/submission.entity';
 import { FormReminder } from './entities/form-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
@@ -440,16 +448,12 @@ export class FormsService {
     return { ...form, submissionCount };
   }
 
-  /** The submissions holding a place on the form: answered, paid, or waiting to be. */
+  /**
+   * The submissions holding a place on the form: answered, paid, or waiting to be - an online
+   * `pending` only while it is younger than the hold (`seatHoldingWhere`).
+   */
   private countActiveSubmissions(formId: string): Promise<number> {
-    return this.submissionRepo.count({
-      where: [
-        { formId, paymentStatus: 'paid' },
-        { formId, paymentStatus: 'free' },
-        { formId, paymentStatus: 'pending' },
-        { formId, paymentStatus: 'pending_cash' },
-      ],
-    });
+    return this.submissionRepo.count({ where: seatHoldingWhere(formId) });
   }
 
   /**
@@ -722,13 +726,10 @@ export class FormsService {
       };
     }
 
+    // The same predicate as the seat count: a checkout abandoned past the hold is no longer "an
+    // answer waiting for its payment", so the person may answer again.
     const submission = await this.submissionRepo.findOne({
-      where: [
-        { formId, userId, paymentStatus: 'paid' },
-        { formId, userId, paymentStatus: 'free' },
-        { formId, userId, paymentStatus: 'pending' },
-        { formId, userId, paymentStatus: 'pending_cash' },
-      ],
+      where: seatHoldingWhere(formId, { userId }),
       order: { createdAt: 'DESC' },
     });
     return {
@@ -845,20 +846,17 @@ export class FormsService {
       }
     }
 
-    // C1+C2: Wrap capacity check + submission upsert in a REPEATABLE READ transaction.
-    // Prevents two concurrent requests from both passing the capacity check (C2) and
-    // from both creating a new submission for the same user/form (C1 double-charge).
+    // C1+C2: the capacity check and the submission upsert are ONE transaction, serialised on the
+    // form's row lock, so two concurrent requests cannot both pass the capacity check (C2) nor both
+    // create a pending submission for the same user (C1 double-charge). It used to be REPEATABLE
+    // READ with no lock, which prevents neither: two snapshots each count the seat as free and
+    // each insert, a write skew that isolation level does not detect. READ COMMITTED is required
+    // by the lock (`lockFormSeats`), and late payments (`markPaid`) queue on the same lock.
     let savedSubmission!: Submission;
-    await this.submissionRepo.manager.transaction('REPEATABLE READ', async (manager) => {
+    await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
+      await lockFormSeats(manager, id);
       if (form.maxSubmissions) {
-        const count = await manager.count(Submission, {
-          where: [
-            { formId: id, paymentStatus: 'paid' },
-            { formId: id, paymentStatus: 'free' },
-            { formId: id, paymentStatus: 'pending' },
-            { formId: id, paymentStatus: 'pending_cash' },
-          ],
-        });
+        const count = await manager.count(Submission, { where: seatHoldingWhere(id) });
         if (count >= form.maxSubmissions) throw new BadRequestException('Form is full');
       }
 
@@ -909,11 +907,13 @@ export class FormsService {
       }
 
       // Reuse an existing pending submission to avoid double-charge, unless multiple
-      // submissions are allowed (e.g. order forms where each submit is a new purchase).
+      // submissions are allowed (e.g. order forms where each submit is a new purchase). Only one
+      // still holding its seat: a row past the hold was not counted above, so reviving it would
+      // take a seat the count never saw, and it stays for the expiry job (and a late payment).
       const existingPending =
         totalCents > 0 && !form.allowMultipleSubmissions
           ? await manager.findOne(Submission, {
-              where: { formId: id, userId: input.userId, paymentStatus: 'pending' },
+              where: livePendingWhere(id, { userId: input.userId }),
               order: { createdAt: 'DESC' },
               lock: { mode: 'pessimistic_write' },
             })
@@ -1085,13 +1085,77 @@ export class FormsService {
    * somewhere that cannot be spoofed by a client. It used to accept `callerId`/`isGlobalAdmin` and
    * run `assertSubmissionAccess` only `if (callerId)`: a check that quietly did not happen when the
    * argument was absent, behind a public route the SUBMITTER could reach. Both are gone.
+   *
+   * A LATE PAYMENT IS DECIDED FROM THE ROW, under the form's seat lock (PP4,
+   * `public-paid-forms-chantier.md`). A row still holding its seat becomes `paid`. A row that holds
+   * none - `expired`, `cancelled`, or `pending` past the hold before the job reached it - becomes
+   * `paid` if the form still has room, else `paid_over_capacity`: the money landed, the seat did
+   * not, and the organiser refunds it outside the application. Two late payments queue on the lock,
+   * so they cannot both take the last seat.
+   *
+   * A SECOND CALL ON A SETTLED ROW IS A REPLAY AND DOES NOTHING. It is the ordinary case, not an
+   * accident: the Lydia callback and the payer's `verify-session` both land here for one payment.
+   * Before 2026-10-15 each call re-granted and wrote ANOTHER purchase record, and a replay would now
+   * also have turned a `paid_over_capacity` into a `paid` that took no seat.
    */
   async markPaid(submissionId: string, sessionId?: string) {
-    const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
-    if (!submission) throw new NotFoundException('Submission not found');
-    submission.paymentStatus = 'paid';
-    if (sessionId) submission.stripeSessionId = sessionId;
-    await this.submissionRepo.save(submission);
+    const found = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    if (!found) throw new NotFoundException('Submission not found');
+
+    const outcome = await this.submissionRepo.manager.transaction(
+      'READ COMMITTED',
+      async (manager) => {
+        await lockFormSeats(manager, found.formId);
+        const submission = await manager.findOne(Submission, {
+          where: { id: submissionId },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (!submission) throw new NotFoundException('Submission not found');
+        if (SETTLED_PAYMENT_STATUSES.has(submission.paymentStatus)) {
+          return { submission, status: submission.paymentStatus, replay: true };
+        }
+        const holdsSeat =
+          (await manager.count(Submission, {
+            where: seatHoldingWhere(submission.formId, { id: submissionId }),
+          })) > 0;
+        let status = 'paid';
+        if (!holdsSeat) {
+          const form = await manager.findOne(Form, {
+            where: { id: submission.formId },
+            select: { id: true, maxSubmissions: true },
+          });
+          const taken = form?.maxSubmissions
+            ? await manager.count(Submission, { where: seatHoldingWhere(submission.formId) })
+            : 0;
+          if (form?.maxSubmissions && taken >= form.maxSubmissions) status = 'paid_over_capacity';
+          this.logger.log(
+            `[Forms] Late payment on submission ${submissionId} (was ${submission.paymentStatus}): ` +
+              `${taken}/${form?.maxSubmissions ?? 'unlimited'} seats taken -> ${status}`
+          );
+        }
+        submission.paymentStatus = status;
+        if (sessionId) submission.stripeSessionId = sessionId;
+        await manager.save(submission);
+        return { submission, status, replay: false };
+      }
+    );
+    const { submission } = outcome;
+
+    if (outcome.replay) {
+      this.logger.debug(
+        `[Forms] markPaid replay on submission ${submissionId}, already ${outcome.status}`
+      );
+      return { ok: true };
+    }
+    if (outcome.status === 'paid_over_capacity') {
+      // The money is the payer's until the organiser refunds it: no cotisation is granted for a
+      // seat that was not given. The purchase record below is still written - it is the payer's
+      // trace that they paid.
+      this.logger.warn(
+        `[Forms] Payment on submission ${submissionId} landed OVER CAPACITY ` +
+          `(form ${submission.formId}, ${submission.totalPaid} cents): the organiser owes a refund`
+      );
+    }
 
     // Grant the configured cotisation tier if any + log purchase record
     const form = await this.formRepo.findOne({
@@ -1104,7 +1168,7 @@ export class FormsService {
         associationId: true,
       },
     });
-    if (form) {
+    if (form && outcome.status === 'paid') {
       await this.grantCotisationIfConfigured(form, submission.userId, 'system', {
         submissionId,
         sessionId: sessionId ?? null,
@@ -1265,6 +1329,30 @@ export class FormsService {
     return count;
   }
 
+  /**
+   * Moves every online `pending` submission past the hold to `expired` (PP3).
+   *
+   * THE SEAT IS ALREADY FREE BEFORE THIS RUNS: every count reads the hold from the row itself
+   * (`seatHoldingWhere`), so this job only makes the row SAY what it already is, for the manager's
+   * list and the export. It never deletes: the row is the trace a late payment is matched against
+   * (`markPaid`). Idempotent from the row - the `WHERE` names the only state it moves out of, so a
+   * second run, or two overlapping ones, find nothing left to move.
+   */
+  async expireStalePendingPayments(): Promise<number> {
+    const result = await this.submissionRepo
+      .createQueryBuilder()
+      .update()
+      .set({ paymentStatus: 'expired' })
+      .where('"paymentStatus" = :status', { status: 'pending' })
+      .andWhere(`"createdAt" <= ${PENDING_HOLD_CUTOFF_SQL}`)
+      .execute();
+    const count = result.affected ?? 0;
+    if (count > 0) {
+      this.logger.log(`[Forms] Expired ${count} online payment(s) left pending past the hold`);
+    }
+    return count;
+  }
+
   /** Returns false for empty arrays, empty objects, null, undefined, and empty strings - used to validate required fields. */
   private hasValue(val: any): boolean {
     if (Array.isArray(val)) return val.length > 0;
@@ -1314,15 +1402,21 @@ export class FormsService {
     return currentTotal;
   }
 
-  /** Returns all submissions for a form enriched with the submitter's first/last name. */
+  /**
+   * Returns all submissions for a form enriched with the submitter's first/last name, a payment
+   * that landed over capacity first (`overCapacityFirst`): it is the one row the organiser owes
+   * something to.
+   */
   async getSubmissions(formId: string) {
     const form = await this.formRepo.findOne({ where: { id: formId } });
     // An anonymous form lists in the order of a random id, never of arrival: the order of insertion
     // is a clock the day-precision `createdAt` was cut to hide.
-    const subs = await this.submissionRepo.find({
-      where: { formId },
-      order: form?.anonymous ? { id: 'ASC' } : { createdAt: 'DESC' },
-    });
+    const subs = overCapacityFirst(
+      await this.submissionRepo.find({
+        where: { formId },
+        order: form?.anonymous ? { id: 'ASC' } : { createdAt: 'DESC' },
+      })
+    );
     const userIds = [...new Set(subs.map((s) => s.userId).filter(Boolean))];
     const nameMap = new Map<string, { firstName: string | null; lastName: string | null }>();
     if (userIds.length > 0) {
@@ -1359,10 +1453,13 @@ export class FormsService {
     const form = await this.formRepo.findOne({ where: { id: formId } });
     if (!form) throw new NotFoundException('Form not found');
 
-    const submissions = await this.submissionRepo.find({
-      where: { formId },
-      order: form.anonymous ? { id: 'ASC' } : { createdAt: 'DESC' },
-    });
+    // Same order as the responses list, a payment over capacity first.
+    const submissions = overCapacityFirst(
+      await this.submissionRepo.find({
+        where: { formId },
+        order: form.anonymous ? { id: 'ASC' } : { createdAt: 'DESC' },
+      })
+    );
 
     // Batch-fetch first/last names for all submitters
     const userIds = [...new Set(submissions.map((s) => s.userId).filter(Boolean))];

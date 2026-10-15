@@ -55,6 +55,8 @@ describe('FormsService pricing, through submit', () => {
   ) {
     const saved: Record<string, unknown>[] = [];
     const manager = {
+      // The form's seat lock (`lockFormSeats`), taken before the capacity count.
+      query: jest.fn(() => Promise.resolve([])),
       count: jest.fn(() => Promise.resolve(0)),
       findOne: jest.fn(() => Promise.resolve(null)),
       create: jest.fn((_entity: unknown, x: Record<string, unknown>) => x),

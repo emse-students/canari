@@ -743,11 +743,12 @@ Found while scoping it, so it is not re-derived (the paid half itself waits for 
 
 - **The payer's e-mail IS Lydia's `payerRecipient`** - the Lydia payer-address blocker resolves itself for a
   guest form, since the guest types an e-mail. It does not for a logged-in boutique purchase.
-- **`social-service` calls `core-service`'s `create-checkout-session` with no credential** (a bare
-  `axios.post`), and that route sits behind `NginxAuthGuard`, which demands `X-User-Id`. Whether the
-  existing paid-form checkout works at all is NOT verified - read the two services' logs on dev
-  before building on it. A guest has no `X-User-Id` either, so it needs a dedicated internal route
-  guarded by the shared internal secret, as `internal/forms` is.
+- **`social-service` calls `core-service`'s `create-checkout-session` WITH the shared internal
+  secret** (`internalCoreRequestConfig()`, `apps/social-service/src/internal/core-request.ts`), and
+  the route has accepted it since 2026-10-07 (`apps/core-service/src/payment/payment.controller.ts`
+  documents the 401 it used to answer). This line said "no credential" until 2026-10-15, which was
+  stale. A guest needs no `X-User-Id` for the checkout itself; what is still NOT verified is one
+  observed paid form on dev.
 - **Fulfilment must work without a `userId`**: `markPaid` and the cotisation grant both read it.
 - A fixed price only (no grid, no cotisation grant, no cash). The rate limit and the honeypot the
   free half added (`PublicFormsController`) already cover the submission.
@@ -780,3 +781,16 @@ Found while scoping it, so it is not re-derived (the paid half itself waits for 
 - **Respondents and lists never see an archived form**: `list` (admin, owned, association scan), `get`, `getPublic`, `submit` (member and guest), `hasSubmission` and `subscribeReminder` filter `deletedAt IS NULL` and answer 404 / no right to submit.
 - **Staff still do**: `assertFormManager` and `getSubmissions` do not filter, so an archived form's submissions stay readable by id (owner, global admin, MANAGE_FORMS of the association). An archived form keeps its `associationId`; deleting the association archives rather than detaches it, and it appears in no list, so it cannot show as "Personnel".
 - **The migration refuses to run while orphans exist**: it RAISES with their count, so it cannot deploy before the data is cleaned ([backlog](../../backlog.md#p3---submissionsformid-names-a-form-nothing-keeps-and-29-rows-point-at-deleted-ones)). It is idempotent (`IF NOT EXISTS`, a `pg_constraint` check).
+
+## An online payment holds its seat for 30 minutes, and a late one is decided from the row (2026-10-15)
+
+Measured on `main` before this: `submit` counted `pending` toward `maxSubmissions` and nothing ever released it, so an abandoned checkout kept its seat for ever (cash had its own expiry, `expireStalecashPayments`). Decisions PP3 and PP4 of the paid public forms chantier (`public-paid-forms-chantier.md`, planning), for ALL forms.
+
+- **The hold is read from the row.** `apps/social-service/src/forms/seat-hold.ts` holds the one constant (`PENDING_PAYMENT_HOLD_SECONDS`, 30 min, a guess NOT measured against Lydia's payment window) and the one SQL fragment (`PENDING_HOLD_CUTOFF_SQL`, on the DATABASE clock: `createdAt` is a `timestamp` written by the database's `now()`, and the service process does not run in the same zone - measured +2 h against a UTC session). `seatHoldingWhere` counts `paid`, `free`, `pending_cash` and a `pending` younger than the hold; the seat count, `get`, `getPublic`, `hasSubmission` and the pending-row reuse in `submit` all read it, so a seat is free the moment the hold passes, whether or not any job ran.
+- **The job only makes the row say it.** `FormReminderScheduler.expireStalePendingPayments` (every 5 min, a `running` flag against self-overlap) moves `pending` past the hold to `expired` - never a delete, the row is the trace a late payment is matched against. Its `WHERE` names the only state it leaves, so a second run moves nothing. `paymentMethod` tells an online `expired` (null) from a cash one (`cash`).
+- **A late payment (`markPaid`) is decided under the form's row lock** (`lockFormSeats`, `SELECT ... FOR UPDATE` on `forms`, READ COMMITTED). A row still holding its seat becomes `paid`; one that holds none (`expired`, `cancelled`, `pending` past the hold) becomes `paid` while the cap has room, else **`paid_over_capacity`**, logged at WARN with the submission, the form and the amount. It grants no cotisation (no seat was given) but keeps its purchase record (the payer's trace). Refunding is the organiser's, outside the application: no refund mechanism exists.
+- **A second `markPaid` on a settled row is a replay and does nothing.** It is the ordinary case - the Lydia callback and the payer's `verify-session` both land there for one payment - and before this each call re-granted and wrote another purchase record.
+- **`submit` takes the same lock.** Its REPEATABLE READ transaction prevented neither race its comment named: measured on Postgres 18, four concurrent submits on a 1-seat form took 4 seats on `main`, 1 with the lock.
+- **The manager sees it first.** `getSubmissions` and the XLSX put `paid_over_capacity` rows on top (`overCapacityFirst`); `frontend/src/lib/forms/paymentStatus.ts` labels both new words (the XLSX takes them from the client, as above) and colours an over-capacity pill as refused, not settled. The return page (`paymentReturn.ts`) keeps waiting on `expired` (a late payment may still land) and says "payment received, form full" on `paid_over_capacity`.
+
+Tests: `forms.service.seat-hold.spec.ts` runs the service on an in-memory store that evaluates its own `where` clauses (the boundary one second either side of the hold, the job twice, a late payment with and without room, two simultaneous late payments on the last seat with a real per-form mutex - it fails with the lock removed - and the replays); `paymentStatus.test.ts` and `paymentReturn.test.ts` on the client.

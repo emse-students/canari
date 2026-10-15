@@ -15,7 +15,7 @@
   const MAX_POLLS = 10;
   const POLL_INTERVAL_MS = 3000;
 
-  let status = $state<'loading' | 'confirmed' | 'pending' | 'error'>('loading');
+  let status = $state<'loading' | 'confirmed' | 'pending' | 'overCapacity' | 'error'>('loading');
   let formId = $state<string | null>(null);
 
   async function confirmBySubmission(id: string) {
@@ -25,6 +25,10 @@
       const verdict = paymentReturnVerdict(submission.paymentStatus);
       if (verdict === 'confirmed') {
         status = 'confirmed';
+        return;
+      }
+      if (verdict === 'overCapacity') {
+        status = 'overCapacity';
         return;
       }
       if (verdict === 'failed') {
@@ -108,6 +112,19 @@
       <a
         href={formId ? `/forms/${formId}` : '/forms'}
         class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
+      >
+        {m.form_success_back_to_form()}
+      </a>
+    {:else if status === 'overCapacity'}
+      <div>
+        <h1 class="text-text-main text-2xl font-bold tracking-tight">
+          {m.form_success_over_capacity_heading()}
+        </h1>
+        <p class="text-text-muted mt-2">{m.form_success_over_capacity_desc()}</p>
+      </div>
+      <a
+        href={formId ? `/forms/${formId}` : '/forms'}
+        class="bg-cn-border/40 text-text-main hover:bg-cn-border/60 inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold transition-all"
       >
         {m.form_success_back_to_form()}
       </a>

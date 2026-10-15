@@ -36,11 +36,17 @@ export class Submission {
   /**
    * Lifecycle status of the payment.
    * - `free` - no payment required
-   * - `pending` - online checkout pending
+   * - `pending` - online checkout pending; holds a seat only for `PENDING_PAYMENT_HOLD_SECONDS`
+   *   after `createdAt` (`seat-hold.ts`)
    * - `pending_cash` - awaiting physical cash validation by an admin
    * - `paid` - paid (online or cash validated)
+   * - `paid_over_capacity` - an online payment that landed after its seat was released, on a full
+   *   form: the money is in, no seat was given, the organiser refunds it
    * - `cancelled` - cancelled / abandoned
-   * - `expired` - cash payment window elapsed without validation
+   * - `expired` - cash payment window elapsed without validation, or an online `pending` past the
+   *   hold (`paymentMethod` tells the two apart: `cash` or null)
+   *
+   * A plain varchar with no CHECK constraint, so a new state needs no migration.
    */
   @Column({ default: 'free' })
   paymentStatus: string;
