@@ -89,6 +89,25 @@ Two facts decided its shape, and each one cost a wrong first reading:
   is the instrument that covers them.
 - **Four WebViews can be debuggable at once** (other apps open sockets too), so the socket is the one
   named after the app's pid - `forwardDevtools` took the first one listed until 2026-10-14.
+- **A mark is armed BEFORE the tap it times.** Until 2026-10-15, `until()` armed each mark only after
+  the previous one had been polled. A mark drawn in the same frame was therefore timed at the next
+  poll, which put 80-120 ms on `tap>salons` and `reopen>msgs`. Armed early, a mark is an EDGE: it
+  marks the first frame its condition holds AFTER a frame where it did not. Otherwise the previous
+  screen, still drawn, satisfies it before the tap. A mark that precedes its tap is refused (printed,
+  recorded as `null`).
+
+To find what a slow mark is made of:
+
+```sh
+bun tools/cold-start/community-open.mjs ... --profile --trace --out <dir>   # CPU profile + trace, tab tap -> target salon rows
+bun tools/cold-start/community-open.mjs ... --before-tap '<js>'             # emulate a change on the installed build
+bun tools/cold-start/profile-summary.mjs <dir>/profile-<label>-1.cpuprofile --top 30 [--timeline 10 --mark ...] [--tree 5]
+bun tools/cold-start/trace-summary.mjs <dir>/trace-<label>-1.json          # input events and tasks, from touchstart
+```
+
+A local bundle cannot be served to the APK: Tauri answers `tauri.localhost` from
+`shouldInterceptRequest`, which CDP `Fetch` never sees. `--before-tap` is how a candidate change is
+measured on the installed build, in interleaved arms, before a pre-release carries it.
 
 ## What the numbers mean
 

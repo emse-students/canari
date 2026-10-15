@@ -11,6 +11,16 @@ import { flushSync, mount, unmount } from 'svelte';
 import ProfileParrainageSection from './ProfileParrainageSection.svelte';
 import ProfileChips from './ProfileChips.svelte';
 
+/** The member heads ask for a name and an avatar over HTTP; the keys are what is under test. */
+vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/users/displayName')>()),
+  resolveUserDisplayName: async (id: string) => id,
+}));
+vi.mock('$lib/utils/userAvatarCache', () => ({
+  resolveUserAvatarDisplayUrl: async () => ({ kind: 'none' as const }),
+  releaseUserAvatarDisplayUrl: () => {},
+}));
+
 const mounted: (() => void)[] = [];
 // HERMETIC, FOR THE WHOLE FILE: the rows resolve names and avatars over the network, through a
 // batch that fires on a later tick - after a per-test `afterEach` would have restored the real

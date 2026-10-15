@@ -15,6 +15,21 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
 
+/**
+ * The sender lookup a notification waits on is a profile read (`/api/users/batch`) nothing here is
+ * about: it answers from the cache, offline, as the synchronous form does.
+ */
+vi.mock('$lib/utils/users/displayName', async (importOriginal) => {
+  const real = await importOriginal<typeof import('$lib/utils/users/displayName')>();
+  return {
+    ...real,
+    resolveNotificationSenderName: async (
+      senderId: string,
+      convo: Parameters<typeof real.notificationSenderName>[1]
+    ) => real.notificationSenderName(senderId, convo),
+  };
+});
+
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   appendLog: () => {},
   globalSession: {},
@@ -22,6 +37,11 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
   globalMessaging: {},
   globalChannels: {},
   globalNotifs: {},
+}));
+/** The per-conversation notification level is a server read; every conversation is `all` here. */
+vi.mock('$lib/notifications/preferencesApi', async (orig) => ({
+  ...(await orig<typeof import('$lib/notifications/preferencesApi')>()),
+  fetchChannelNotificationLevel: async () => 'all' as const,
 }));
 vi.mock('$lib/utils/appVersion', async (orig) => ({
   ...(await orig<Record<string, unknown>>()),

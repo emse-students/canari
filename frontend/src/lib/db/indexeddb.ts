@@ -21,6 +21,7 @@ import type {
   StoredMessage,
   StoredMessagePatch,
 } from './types';
+import { FeedPageUnreadableError } from './types';
 import {
   attachOutboxBlob,
   clearOutboxBlobsLast,
@@ -159,6 +160,36 @@ export class IndexedDbStorage implements IStorage {
     this.db = null;
   }
 
+  /**
+   * ANOTHER TAB NEEDS A NEWER SCHEMA: THIS ONE LETS GO AND RELOADS (review of #1896).
+   *
+   * Without it, a tab still running the previous bundle held its connection open and every newer
+   * tab's open was BLOCKED (`StorageOpenError`, "close the other tabs") until the old one closed -
+   * which a member with a forgotten tab never does. The old bundle cannot reopen the upgraded
+   * database either (it asks for the version below), so closing and reloading onto the new bundle is
+   * the only state it can continue from. `db.close()` lets the transactions already running finish.
+   * The reload drops what this tab held only in memory (a chat composer's text, a PIN prompt); that
+   * is decided, not overlooked - why no guard defers it is in docs/wiki/frontend/modules/posts.md.
+   *
+   * A DELETE (`newVersion === null`, the revoked-device wipe of another tab) is deliberately left as
+   * it was: this tab reopening would re-create the database the wipe is removing.
+   */
+  private onVersionChange(event: IDBVersionChangeEvent): void {
+    if (event.newVersion === null) {
+      console.warn(
+        `[DB] ${this.dbName} is being deleted by another tab - this tab keeps its connection until it closes`
+      );
+      return;
+    }
+    console.warn(
+      `[DB] ${this.dbName} is being upgraded to v${event.newVersion} by a newer tab - closing this connection and reloading`
+    );
+    openConnections.delete(this);
+    this.db?.close();
+    this.db = null;
+    if (typeof window !== 'undefined') window.location.reload();
+  }
+
   async init(): Promise<void> {
     return new Promise((resolve, reject) => {
       // Version 3: conversation.id is now the MLS groupId UUID (was human-readable contactName).
@@ -170,7 +201,8 @@ export class IndexedDbStorage implements IStorage {
       // Version 7: adds the `graine` store (community-channel session seeds).
       // Version 8: adds the `pendingGroupExits` store (a delete/leave the server has not answered).
       // Version 9: adds the `distributionGroups` store (which held groups carry Graine seeds).
-      const request = indexedDB.open(this.dbName, 9);
+      // Version 10: adds the `feedPages` store (the feed's stored first pages, sealed).
+      const request = indexedDB.open(this.dbName, 10);
 
       request.onerror = () =>
         reject(new StorageOpenError(this.dbName, false, { cause: request.error }));
@@ -196,6 +228,7 @@ export class IndexedDbStorage implements IStorage {
 
       request.onsuccess = () => {
         this.db = request.result;
+        this.db.onversionchange = (event) => this.onVersionChange(event);
         // Registered HERE and nowhere else: an open connection is exactly what defers a delete, so
         // the set holds what is OPEN rather than what was ever constructed.
         openConnections.add(this);
@@ -287,6 +320,14 @@ export class IndexedDbStorage implements IStorage {
           // re-fetched by that same registration (see `registerDistributionGroup`).
           if (!db.objectStoreNames.contains('distributionGroups')) {
             db.createObjectStore('distributionGroups', { keyPath: 'groupId' });
+          }
+        }
+
+        if (oldVersion < 10) {
+          // The feed's stored first pages (`$lib/posts/feedStore`). Additive and EMPTY on every
+          // existing database, which is the honest state: the next feed answer writes the first one.
+          if (!db.objectStoreNames.contains('feedPages')) {
+            db.createObjectStore('feedPages', { keyPath: 'key' });
           }
         }
 
@@ -1267,6 +1308,50 @@ export class IndexedDbStorage implements IStorage {
     return swapped;
   }
 
+  // -- Stored feed pages ---------------------------------------------------
+
+  /** Seal and replace one stored feed page. See {@link IStorage.saveFeedPage}. */
+  async saveFeedPage(key: string, payload: unknown, deviceKeyB64: string): Promise<void> {
+    const encrypted = await encryptData(payload, deviceKeyB64);
+    const db = this.ensureDb();
+    const tx = db.transaction('feedPages', 'readwrite');
+    const done = idbCommitted(tx);
+    tx.objectStore('feedPages').put({ key, ...encrypted });
+    await done;
+  }
+
+  /** One stored feed page, opened, or `null`. See {@link IStorage.getFeedPage}. */
+  async getFeedPage(key: string, deviceKeyB64: string): Promise<unknown> {
+    const db = this.ensureDb();
+    const row: any = await new Promise((resolve, reject) => {
+      const req = db.transaction('feedPages', 'readonly').objectStore('feedPages').get(key);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    if (!row) return null;
+    try {
+      return await decryptData(row.cipherText, row.iv, deviceKeyB64);
+    } catch (error) {
+      throw new FeedPageUnreadableError(key, { cause: error });
+    }
+  }
+
+  /** Delete every stored feed page. See {@link IStorage.deleteFeedPages}. */
+  async deleteFeedPages(): Promise<number> {
+    const db = this.ensureDb();
+    const tx = db.transaction('feedPages', 'readwrite');
+    const done = idbCommitted(tx);
+    const store = tx.objectStore('feedPages');
+    const counted = new Promise<number>((resolve, reject) => {
+      const req = store.count();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    store.clear();
+    const [count] = await Promise.all([counted, done]);
+    return count;
+  }
+
   // -- Misc ----------------------------------------------------------------
 
   /**
@@ -1278,7 +1363,15 @@ export class IndexedDbStorage implements IStorage {
     invalidateAllHistoryStateKeys();
     const db = this.ensureDb();
     const tx = db.transaction(
-      ['conversations', 'messages', 'outbox', 'graine', 'pendingGroupExits', 'distributionGroups'],
+      [
+        'conversations',
+        'messages',
+        'outbox',
+        'graine',
+        'pendingGroupExits',
+        'distributionGroups',
+        'feedPages',
+      ],
       'readwrite'
     );
     const done = idbCommitted(tx);
@@ -1293,6 +1386,8 @@ export class IndexedDbStorage implements IStorage {
       tx.objectStore('pendingGroupExits').clear();
       // The seeds go with the reset, so the classification that routes to them goes too.
       tx.objectStore('distributionGroups').clear();
+      // A copy of the feed is the account's content too; a reset leaves none of it behind.
+      tx.objectStore('feedPages').clear();
     } catch (e) {
       // A synchronous refusal does NOT abort the transaction: the clears already queued would
       // commit and the reset would be half done. All of it, or none of it.

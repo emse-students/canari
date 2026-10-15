@@ -39,6 +39,7 @@ const {
   DeviceKeyMismatchError,
   KeyChangeInterruptedError,
   LocalStateUnopenableError,
+  dropStoredFeedPages,
   performPinChange,
   resealDeviceKeyStores,
 } = await import('./pinChange');
@@ -571,5 +572,38 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
 
     expect((await s.gated.getOutboxEntry('o1', OLD))?.text).toBe('queued o1');
     expect(await s.gated.getGraineSession('s1', OLD)).toEqual(session('s1'));
+  });
+});
+
+describe('dropStoredFeedPages', () => {
+  it('drops the feed copy rather than leaving it sealed under a key this device no longer has', async () => {
+    const { raw } = await freshStorage();
+    vi.spyOn(raw, 'deleteFeedPages').mockResolvedValue(3);
+    const log = vi.fn();
+
+    await dropStoredFeedPages(raw, log);
+
+    expect(raw.deleteFeedPages).toHaveBeenCalledTimes(1);
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('3 stored feed page(s) dropped'));
+  });
+
+  it('logs a refused delete and does not fail the PIN change', async () => {
+    const { raw } = await freshStorage();
+    vi.spyOn(raw, 'deleteFeedPages').mockRejectedValue(new Error('disk full'));
+    const log = vi.fn();
+
+    await expect(dropStoredFeedPages(raw, log)).resolves.toBeUndefined();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('disk full'));
+  });
+
+  it('a PIN change drops them, under the hold, on the store behind the gate', async () => {
+    const { OLD, NEW } = keys();
+    const s = await populated(OLD);
+    storageForUser.set('u-feed', s.gated);
+    const dropped = vi.spyOn(s.raw, 'deleteFeedPages');
+
+    await performPinChange(options('u-feed', fakeMls()), OLD, NEW);
+
+    expect(dropped).toHaveBeenCalledTimes(1);
   });
 });

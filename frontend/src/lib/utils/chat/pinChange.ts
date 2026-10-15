@@ -244,6 +244,28 @@ export async function resealDeviceKeyStores(
 }
 
 /**
+ * Deletes the feed's stored first pages instead of re-sealing them under the new device key.
+ *
+ * They are a COPY the server's next answer rewrites (`$lib/posts/feedStore`), so re-sealing them is
+ * work for nothing, and leaving them under the old key would make every later read fail to open
+ * them - a warning on every launch about a copy nobody needs. Never fatal: a page left behind is
+ * deleted by the first read that cannot open it.
+ */
+export async function dropStoredFeedPages(
+  storage: IStorage,
+  log: (msg: string) => void = () => {}
+): Promise<void> {
+  try {
+    const dropped = await storage.deleteFeedPages();
+    log(
+      `[DEVICEKEY_CHANGE] ${dropped} stored feed page(s) dropped - the next feed answer rewrites them.`
+    );
+  } catch (e) {
+    log(`[DEVICEKEY_CHANGE] Warning: the stored feed pages could not be dropped: ${String(e)}`);
+  }
+}
+
+/**
  * Points this device's vault at the new device key - the tail of {@link performPinChange}'s first
  * step, after the keystore ({@link IMlsService.pointUnattendedUnlockAt}).
  *
@@ -369,12 +391,19 @@ export async function performPinChange(
         await applyNewDeviceKeyLocally(userId, oldDeviceKeyB64, newDeviceKeyB64, log);
 
         stage = 'stores';
-        await holdStorageForKeyChange(storage, oldDeviceKeyB64, newDeviceKeyB64, (store) =>
-          resealDeviceKeyStores(store, oldDeviceKeyB64, newDeviceKeyB64, log, onProgress, {
-            start: 10,
-            end: 85,
-          })
-        );
+        await holdStorageForKeyChange(storage, oldDeviceKeyB64, newDeviceKeyB64, async (store) => {
+          const report = await resealDeviceKeyStores(
+            store,
+            oldDeviceKeyB64,
+            newDeviceKeyB64,
+            log,
+            onProgress,
+            { start: 10, end: 85 }
+          );
+          // The stored feed pages are a copy the server's next answer rewrites: dropped, not moved.
+          await dropStoredFeedPages(store, log);
+          return report;
+        });
         setDeviceKey(newDeviceKeyB64);
 
         stage = 'mls';
