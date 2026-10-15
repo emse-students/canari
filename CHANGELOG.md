@@ -14,6 +14,80 @@ folded under its version by the stable release that ships it.
 
 ## [Unreleased]
 
+## [1.2.8] - 2026-10-15
+
+### Changed - two log lines settle a message that reaches the list but not the open pane
+
+`[ADD_MSG] Batch into` now says `selected=<bool>` and the pane logs `[CHAT_VIEW] <id> messages N` once per count change; how to read the pair is in [chat](docs/wiki/frontend/modules/chat.md#reading-the-add_msg-selected-flag-against-chat_view).
+
+### Added - the community open, measured on the Mi 9T, and its budget
+
+`tools/cold-start/community-open.mjs` times the hub, its salons and a salon's messages per condition; the readings, the blockers and a 200 ms local-first budget are on [community-open-budget](docs/wiki/frontend/community-open-budget.md). The devtools forward now takes the app's own WebView socket.
+
+### Fixed - a second account signing in on one device no longer unlocks with the first account's saved key, nor erases its messages
+
+The device-key vault now names the account it belongs to: a sign-in as anyone else goes to its own PIN, and a vault written by an older build must prove its owner before it is used, rotating nothing if it cannot. When a phone proves it holds another account's messages, the PIN gate no longer offers the reset that would erase them ([auth](docs/wiki/frontend/modules/auth.md#the-vault-names-its-account---fixed-2026-10-14)).
+
+### Fixed - the organising association is the centre of a co-organised event on the agenda grid
+
+From three associations up, the organiser's colour segment and logo are the middle band (screen and PDF export), the invited ones on the sides ([calendar](docs/wiki/frontend/modules/calendar.md)).
+
+### Added - a notification level per private conversation: all, mentions or none
+
+Groups and direct messages get the salon's three levels, in the same control. The server applies `none`; `mentions` is decided by the device after decryption, and a message it cannot read does not alert ([chat-delivery](docs/wiki/services/chat-delivery.md#a-conversations-notification-level---the-server-applies-none-the-device-decides-mentions)).
+
+### Harness lint
+
+Two oxlint warnings from the cold-start tools no longer fail `Test Harness (self-tests)` on every PR that touches the harness.
+
+### Fixed - an institution has its own heading at the top of every association picker, the post composer's "publish as" included, and archived rows sit muted at the bottom
+
+An institution was filed among the clubs under "Associations", where its member could not find it to publish in its name. Archived rows now sit in their own muted group at the bottom, "Archivées", and can still be chosen ([associations](docs/wiki/frontend/modules/associations.md#the-post-composer-filed-an-institution-among-the-clubs-and-its-member-could-not-find-it-2026-10-14-prod)).
+
+### Fixed - the key-distribution groups are asked about once per connection, not twice
+
+The connection sync and the discovery that follows it each asked the server about the same key groups (16 serial requests and 16 `WASM kept` lines per connection on a Pixel 6a); the discovery now reuses the sync's answer for that pass only ([startup audit](docs/wiki/frontend/startup-load-audit-2026-10-12.md)).
+
+### Fixed - a group notification names the sender, not the group, on a conversation not yet opened
+
+The in-app notification path read the sender's name from a cache that is empty until a conversation has been opened, so a group fell back to its own title (`NME`) on the sender line. The name is now fetched first, and a lookup that still fails is logged as a warning ([display names](docs/wiki/frontend/architecture.md)).
+
+### Fixed - a reply swipe drawn armed now replies, even along a thumb's arc
+
+A release with 42 px or more of vertical drift was silently refused while the bubble already showed the armed icon; the release now uses the same rule the bubble paints from ([design-reference](docs/wiki/frontend/design-reference.md#the-reply-swipe-that-sometimes-did-nothing-two-classes-measured-mi-9t-2026-10-14)).
+
+### Security - rustls 0.23.46 in the three Rust lockfiles
+
+Lockfile-only patch for RUSTSEC-2026-0347 and RUSTSEC-2026-0348 in `apps/call-service`, `apps/chat-gateway` and `frontend/src-tauri`; nothing else moved ([cicd](docs/wiki/cicd.md)).
+
+### Fixed - a salon's own notification level now applies to messages received over the socket
+
+On web, desktop and an active Android app, a salon set to "mentions" or "none" still raised a banner for every message; it now follows the same decision as private conversations ([chat-delivery](docs/wiki/services/chat-delivery.md#a-conversations-notification-level---the-server-applies-none-the-device-decides-mentions)).
+
+### Changed - opening a salon asks for its history on the press and draws the visible bubbles first
+
+The history request now leaves at the tap instead of after the pane is mounted, and the first frame mounts only the last ~20 message groups, the rest of the entry window following after that frame, so a page of rows is no longer one long task before the first paint ([local-first-ui](docs/wiki/frontend/local-first-ui.md)).
+
+### Fixed - a sign-out then a sign-in in the same process never unlocked
+
+Every sign-out ran `clearAuth()` only and left the chat session live on the device; its foreground reconnect raced the next OIDC callback, and a latch left by the previous unlock turned the new one away ("Connexion en cours..." until a relaunch). `clearAuth` now ends the live session first, releasing its socket before the final flush, and retires its MLS client, so a different account signing in next no longer runs on the previous one's client and device id. A second session expiry in the same process logs out again, and the sign-out reset of the announcement state now actually runs ([auth](docs/wiki/frontend/modules/auth.md#a-sign-out-ended-the-session-on-the-server-and-left-it-live-on-the-device---fixed-2026-10-14)).
+
+### Changed - signing out of Canari also ends the MiConnect session
+
+A sign-out somebody chose now goes through MiConnect's end-session, so the next sign-in asks who you are instead of coming back as the account that left; a dead session still goes straight to `/login`, and an offline sign-out completes locally and says so ([auth](docs/wiki/frontend/modules/auth.md#signing-out-ends-the-miconnect-session-2026-10-14), [authentik](docs/wiki/infrastructure/authentik.md#signing-out-of-canari-ends-the-miconnect-session-2026-10-14)).
+
+### A member added to a group no longer shows as a message you typed
+
+On the phone apps, the push preview of "added a member" was stored as a plain message and drew as an own bubble with no subject. A system event is now a banner only; the notice naming who added whom comes from the conversation itself ([fcmCache.ts](frontend/src/lib/utils/chat/fcmCache.ts)).
+
+### Fixed - a burst of unreadable frames of one group is evaluated once, not once per frame
+
+A cold start replaying dozens of unreadable frames raised the same history ask for each one and logged "not asking again" every time; the first now asks and the rest are counted into one line ([history reconciliation](docs/wiki/protocols/mls-graine-state-machine.md)).
+
+### Fixed - frames parked behind a Welcome say so once, not once per frame
+
+150 frames held behind one redelivered Welcome printed 150 identical lines on a Pixel 6a cold start; the window now opens with one line and its release line carries the count ([backlog](docs/wiki/backlog.md#p3---found-reading-the-pixel-6a-on-prod-127-wi-fi-lte-offline-2026-10-14)).
+
 ## [1.2.7] - 2026-10-14
 
 ### Fixed - Android: a navigation-mode switch no longer leaves the old page alive and holding refused texts
