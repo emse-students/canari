@@ -35,7 +35,7 @@ export function publishTextZoom(doc: Document = document): number {
 }
 
 /** The body size (px) iOS draws at the default "Large" Dynamic Type category: the scale's 1. */
-const IOS_DEFAULT_BODY_PX = 17;
+export const IOS_DEFAULT_BODY_PX = 17;
 
 /**
  * The most the type scale follows iOS. Android's 200 % is the largest scale every layout was read
@@ -81,4 +81,25 @@ export function publishIosTypeScale(doc: Document = document): number {
   root.style.setProperty('--text-zoom', String(scale));
   Log.d(`textZoom: iOS body ${bodyPx}px -> --type-scale ${scale}`);
   return scale;
+}
+
+/**
+ * Wires Dynamic Type for the platform that has it, and does NOTHING anywhere else. The gate is
+ * load-bearing: Chromium rejects the `-apple-system-body` shorthand, so an ungated probe reads the
+ * default 16px and would overwrite Android's measured `--text-zoom` with 1.
+ *
+ * Publishes now and again each time the app returns to the foreground (the setting is changed
+ * outside the app and does not reload the page).
+ *
+ * @param isIos - true on the Tauri iOS runtime.
+ * @returns the teardown (a no-op when the gate is shut).
+ */
+export function followIosDynamicType(isIos: boolean, doc: Document = document): () => void {
+  if (!isIos) return () => {};
+  publishIosTypeScale(doc);
+  const onForeground = () => {
+    if (doc.visibilityState === 'visible') publishIosTypeScale(doc);
+  };
+  doc.addEventListener('visibilitychange', onForeground);
+  return () => doc.removeEventListener('visibilitychange', onForeground);
 }
