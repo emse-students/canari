@@ -492,14 +492,15 @@ export class AssociationsController {
 
   /**
    * Returns whether the calling user may manage the payout account of the association.
-   * Used by core-service before starting Connect onboarding.
+   * Used by core-service before starting Connect onboarding. A malformed id is a 400 from the pipe:
+   * it would otherwise reach Postgres's `uuid` column through `mayAct` and answer a 500.
    */
   @UseGuards(NginxAuthGuard)
   @Get(':id/manage-permission')
   async managePermission(
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
-    @Param('id') id: string
+    @Param('id', ParseUUIDPipe) id: string
   ) {
     const ok = await this.service.canManagePayoutAccount(userId, id, {
       isGlobalAdmin: ga === 'true',
@@ -512,14 +513,14 @@ export class AssociationsController {
    * Lydia panel. MANAGE_PAYOUT_ACCOUNT only, the permission the onboarding and the disconnect ask
    * (`canManagePayoutAccount`, which a BDE super-admin does not inherit). The member reads never
    * carry these two (`toAssociationView`): the token is all Lydia's `request/cancel` needs besides a
-   * sequential request id.
+   * sequential request id. A malformed id is a 400 from the pipe, never a 500 from Postgres.
    */
   @UseGuards(NginxAuthGuard)
   @Get(':id/payout-account')
   async payoutAccount(
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga: string | undefined,
-    @Param('id') id: string
+    @Param('id', ParseUUIDPipe) id: string
   ) {
     const allowed = await this.service.canManagePayoutAccount(userId, id, {
       isGlobalAdmin: ga === 'true',
@@ -1667,15 +1668,19 @@ export class AssociationsController {
   /**
    * Sets the Lydia Business vendor_token (and dashboard URL, if given) for an association; called
    * internally by core-service.
+   *
+   * Answers `{ ok: true }` and nothing of the row: it returned the raw entity, vault key included,
+   * and its one caller (core-service `createOnboarding`) never read the body.
    */
   @Post(':id/lydia-account')
-  setLydiaAccount(
+  async setLydiaAccount(
     @Param('id') id: string,
     @Body() body: { lydiaAccountId: string; lydiaDashboardUrl?: string },
     @Headers('x-internal-secret') internalSecret: string
   ) {
     assertInternalSecret(internalSecret);
-    return this.service.setLydiaAccountId(id, body.lydiaAccountId, body.lydiaDashboardUrl);
+    await this.service.setLydiaAccountId(id, body.lydiaAccountId, body.lydiaDashboardUrl);
+    return { ok: true as const };
   }
 
   /**

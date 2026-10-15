@@ -1,5 +1,5 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
-import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { BadRequestException, ForbiddenException, ParseUUIDPipe } from '@nestjs/common';
+import { GUARDS_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-super-admin.guard';
@@ -184,6 +184,58 @@ describe('AssociationsController response shape', () => {
   it('keeps the caller own membership on me/list', async () => {
     const [mine] = await makeController().myAssociations('u1');
     expect(mine).toMatchObject({ role: 'Treasurer', permissions: 512, isAdmin: true });
+  });
+
+  it('answers only { ok: true } to the internal POST :id/lydia-account, even if the service hands back the row', async () => {
+    const previous = process.env.INTERNAL_SECRET;
+    process.env.INTERNAL_SECRET = 'internal-secret-for-tests';
+    try {
+      const controller = makeController();
+      const service = (controller as unknown as { service: Record<string, jest.Mock> }).service;
+      // The service USED to return `{ ...asso, ...update }`; a row coming back must not get out.
+      service.setLydiaAccountId = jest.fn(() => Promise.resolve(row));
+      const result = await controller.setLydiaAccount(
+        'asso1',
+        { lydiaAccountId: VENDOR_TOKEN, lydiaDashboardUrl: DASHBOARD_URL },
+        'internal-secret-for-tests'
+      );
+      expect(result).toEqual({ ok: true });
+      const body = JSON.stringify(result);
+      for (const secret of [VENDOR_TOKEN, DASHBOARD_URL, VAULT_KEY, NOTES]) {
+        expect(body).not.toContain(secret);
+      }
+    } finally {
+      if (previous === undefined) delete process.env.INTERNAL_SECRET;
+      else process.env.INTERNAL_SECRET = previous;
+    }
+  });
+});
+
+/**
+ * A MALFORMED ID IS A 400, NEVER A 500. The two payout-account routes hand `:id` to `mayAct`, whose
+ * SQL compares it with a `uuid` column, so a non-UUID reached Postgres as a syntax error.
+ */
+describe('AssociationsController payout routes validate the id', () => {
+  type ArgMeta = { index: number; data?: unknown; pipes?: unknown[] };
+
+  function idPipes(handler: 'payoutAccount' | 'managePermission'): unknown[] {
+    const meta = (Reflect.getMetadata(ROUTE_ARGS_METADATA, AssociationsController, handler) ??
+      {}) as Record<string, ArgMeta>;
+    const id = Object.values(meta).find((arg) => arg.data === 'id');
+    return id?.pipes ?? [];
+  }
+
+  it.each(['payoutAccount', 'managePermission'] as const)(
+    '%s parses :id with ParseUUIDPipe',
+    (handler) => {
+      expect(idPipes(handler)).toContain(ParseUUIDPipe);
+    }
+  );
+
+  it('and that pipe answers 400 to a malformed id', async () => {
+    await expect(
+      new ParseUUIDPipe().transform('not-a-uuid', { type: 'param', data: 'id' })
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });
 

@@ -2832,13 +2832,16 @@ ${rejectionReason}`
    * Stores the Lydia Business vendor_token (and its dashboard URL, handed out once by
    * `business/create` and never re-issuable) for an association, and invalidates post-list caches.
    */
-  async setLydiaAccountId(id: string, lydiaAccountId: string, lydiaDashboardUrl?: string) {
-    const asso = await this.findById(id);
+  async setLydiaAccountId(
+    id: string,
+    lydiaAccountId: string,
+    lydiaDashboardUrl?: string
+  ): Promise<void> {
+    await this.findById(id);
     const update: Partial<Association> = { lydiaAccountId };
     if (lydiaDashboardUrl) update.lydiaDashboardUrl = lydiaDashboardUrl;
     await this.assoRepo.update(id, update);
     await this.invalidatePostListCaches();
-    return { ...asso, ...update };
   }
 
   /**
