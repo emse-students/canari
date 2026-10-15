@@ -4,6 +4,7 @@ import { FindOperator } from 'typeorm';
 import { FormsService } from './forms.service';
 import { Form } from './entities/form.entity';
 import { Submission } from './entities/submission.entity';
+import { InternalFormsController } from '../internal/internal-forms.controller';
 import {
   PENDING_HOLD_CUTOFF_SQL,
   PENDING_PAYMENT_HOLD_SECONDS,
@@ -93,6 +94,8 @@ describe('FormsService - the seat a pending payment holds', () => {
         Object.entries(clause).every(([key, value]) => matchesValue(row, key as keyof Row, value))
       );
     const byId = (id: string) => rows.find((r) => r.id === id)!;
+    /** Every status a locked step wrote, in order: one payment must move its row ONCE. */
+    const transitions: string[] = [];
 
     const locks = new Map<string, Promise<void>>();
     const purchaseRecordService = { create: jest.fn(() => Promise.resolve()) };
@@ -202,7 +205,11 @@ describe('FormsService - the seat a pending payment holds', () => {
                 rows.push(inserted);
                 return { ...inserted };
               }
+              const before = byId(row.id).paymentStatus;
               Object.assign(byId(row.id), row);
+              if (row.paymentStatus !== before) {
+                transitions.push(`${row.id}:${before}->${row.paymentStatus}`);
+              }
               return row;
             },
             update: async (_entity: unknown, id: string, values: Record<string, unknown>) => {
@@ -286,6 +293,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       userTagService,
       purchaseRecordService,
       core,
+      transitions,
       advance: (ms: number) => (now = new Date(now.getTime() + ms)),
     };
   }
@@ -686,6 +694,111 @@ describe('FormsService - the seat a pending payment holds', () => {
       await service.submit('f1', { userId: 'u1', answers: {} } as any);
       await service.cancelPendingSubmission('mine', { requestId: '555' });
       expect(rows[0]).toMatchObject({ paymentStatus: 'pending', paymentRequestId: '1001' });
+    });
+  });
+
+  /**
+   * THE TWO CONFIRMATIONS OF ONE PAYMENT, THROUGH THE ROUTE CORE-SERVICE CALLS. Since #1910 Lydia's
+   * callbacks are parsed, so every payment reaches `markPaid` twice: the confirm callback posts
+   * `{ sessionId: <numeric request_id> }` (webhook.controller.ts) and the payer's verify-session
+   * posts `{ sessionId: <request_uuid> }` (payment.controller.ts); a cancel or expire callback
+   * posts `{ requestId }`. Those bodies are pinned on the core side by its own specs; here they
+   * enter through `InternalFormsController`, the handler they reach.
+   */
+  describe('through the internal routes, in either order', () => {
+    const SECRET = 'internal-secret-for-test';
+    const webhookConfirm = { sessionId: '1001' };
+    const verifySession = { sessionId: 'uuid-1' };
+
+    function makeRoutes(over: Partial<Row> = {}, maxSubmissions = 1, others: Row[] = []) {
+      process.env.INTERNAL_SECRET = SECRET;
+      const store = makeStore({
+        maxSubmissions,
+        rows: [
+          row({
+            id: 's1',
+            paymentRequestedAt: ago(60_000),
+            paymentRequestId: '1001',
+            stripeSessionId: 'uuid-1',
+            ...over,
+          }),
+          ...others,
+        ],
+      });
+      const routes = new InternalFormsController(store.service);
+      return {
+        ...store,
+        markPaid: (body: { sessionId: string }) => routes.markPaid('s1', SECRET, body),
+        cancelPending: (body: { requestId: string }) => routes.cancelPending('s1', SECRET, body),
+      };
+    }
+
+    it.each([
+      ['the webhook, then verify-session', [webhookConfirm, verifySession]],
+      ['verify-session, then the webhook', [verifySession, webhookConfirm]],
+    ])('%s: one transition, one grant, one purchase', async (_order, bodies) => {
+      const r = makeRoutes();
+      const warn = jest.spyOn((r.service as any).logger, 'warn');
+      for (const body of bodies) await r.markPaid(body);
+      expect(r.rows[0].paymentStatus).toBe('paid');
+      expect(r.transitions).toEqual(['s1:pending->paid']);
+      expect(r.userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(r.purchaseRecordService.create).toHaveBeenCalledTimes(1);
+      expect(warn).not.toHaveBeenCalled();
+    });
+
+    it('both at once: one transition, one grant, one purchase', async () => {
+      const r = makeRoutes();
+      await Promise.all([r.markPaid(webhookConfirm), r.markPaid(verifySession)]);
+      expect(r.transitions).toEqual(['s1:pending->paid']);
+      expect(r.userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(r.purchaseRecordService.create).toHaveBeenCalledTimes(1);
+    });
+
+    // A cancel or expiry report that lands AFTER the payment never takes it back, and neither does
+    // the expiry job: both move only a `pending` row.
+    it.each(['cancel', 'expire'])(
+      'a %s callback after the payment leaves it paid',
+      async (_outcome) => {
+        const r = makeRoutes();
+        await r.markPaid(webhookConfirm);
+        await r.cancelPending({ requestId: '1001' });
+        await r.markPaid(verifySession);
+        r.advance(10 * HOLD_MS);
+        await r.service.expireStalePendingPayments();
+        expect(r.rows[0].paymentStatus).toBe('paid');
+        expect(r.transitions).toEqual(['s1:pending->paid']);
+        expect(r.userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      }
+    );
+
+    it('a cancel landing in the middle of the two confirmations changes nothing', async () => {
+      const r = makeRoutes();
+      await Promise.all([
+        r.markPaid(webhookConfirm),
+        r.cancelPending({ requestId: '1001' }),
+        r.markPaid(verifySession),
+      ]);
+      // Whichever took the row lock first, a payment is never undone: either the cancel lost the
+      // race to a `paid`, or it won and the payment then lands on `cancelled` as a late payment.
+      // The form has room either way, so both orders end `paid`.
+      expect(r.rows[0].paymentStatus).toBe('paid');
+      expect(r.userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+      expect(r.purchaseRecordService.create).toHaveBeenCalledTimes(1);
+    });
+
+    // The request expired first (its callback cancels the row), then the payer's money lands
+    // anyway: decided from the row, once, and over capacity when the seat went meanwhile.
+    it('a payment after its own expiry is decided from the row, once', async () => {
+      const r = makeRoutes({}, 1, [row({ id: 'other', paymentStatus: 'pending', userId: 'u2' })]);
+      await r.cancelPending({ requestId: '1001' });
+      r.rows[1].paymentStatus = 'paid';
+      await r.markPaid(webhookConfirm);
+      await r.markPaid(verifySession);
+      expect(r.rows[0].paymentStatus).toBe('paid_over_capacity');
+      expect(r.transitions).toEqual(['s1:pending->cancelled', 's1:cancelled->paid_over_capacity']);
+      expect(r.userTagService.grantCotisant).not.toHaveBeenCalled();
+      expect(r.purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
   });
 
