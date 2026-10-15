@@ -17,6 +17,12 @@
    * shifted (PR #1859 review, 2026-10-15). The layer is `fixed` on `document.body`, outside the shell,
    * so none of those rules ever applied to IT.
    *
+   * IT DOES COVER THE SCREEN, AND SAYS SO (`coversScreen`). On iOS the conversation's chrome and the
+   * tab bar are NATIVE views drawn above the whole WebView, which no `z-index` reaches: the back
+   * button, the title pill, the menu and the composer's "+" painted over the viewfinder (iPhone 12,
+   * 1.2.9-alpha.1, 2026-10-15). They hide while a surface is registered there, as under every modal -
+   * the post composer's camera was clean only because its modal already was one.
+   *
    * THERE IS NO FALLBACK. A camera that cannot open (permission, no device) shows its own refusal
    * screen in CameraScreen; the member closes the layer and uses the gallery picker.
    */
@@ -24,6 +30,7 @@
   import ReelCapture from './ReelCapture.svelte';
   import { m } from '$lib/paraglide/messages';
   import { portal } from '$lib/actions/portal';
+  import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { CaptureDestination } from '$lib/reels/reelCapture';
   import { abandonHistoryOverlay, pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
   import type { CameraSession } from '$lib/reels/cameraSession.svelte';
@@ -66,6 +73,7 @@
 
 <div
   use:portal
+  use:coversScreen
   class="fixed inset-0 z-(--z-viewer) bg-black text-white"
   role="dialog"
   aria-modal="true"

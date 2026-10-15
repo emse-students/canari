@@ -156,6 +156,7 @@ static void CanariSetupFirebaseIfAvailable(void) {
 }
 
 static void CanariPublishSafeAreaInsets(void);
+static void CanariPublishDynamicType(void);
 
 /// Puts the WebView's own scroll view back inside its content whenever it has left it.
 ///
@@ -395,6 +396,7 @@ static void CanariObserveTheme(void) {
                        context:(void *)context {
   if ([keyPath isEqualToString:@"loading"] && ![(WKWebView *)object isLoading]) {
     CanariPublishSafeAreaInsets();
+    CanariPublishDynamicType();
   }
 }
 @end
@@ -437,6 +439,37 @@ static void CanariPublishSafeAreaInsets(void) {
   }
 }
 
+/// Hands the page the user's Dynamic Type body size, as `canari:dynamic-type` (detail `bodyPx`) and
+/// `window.__canariDynamicTypeBodyPx` - `followIosDynamicType` in `lib/utils/textZoom.ts` turns it
+/// into `--type-scale`.
+///
+/// WHY NATIVE SAYS IT, when a `-apple-system-body` probe reads the same size at start-up: a size
+/// changed while the app was in the background applied only after a cold start, 3 of 3 (iPhone 12,
+/// 1.2.9-alpha.1, 2026-10-15) - the page re-read its probe on `visibilitychange` and either was not
+/// told or read WebKit's size before WebKit had learnt the new one. UIKit KNOWS the size when it
+/// posts the change, so the value is carried from there instead of re-derived through a probe
+/// (docs/wiki/frontend/mobile.md, Dynamic Type). Points are CSS pixels at the page's 1:1 viewport.
+/// Sent on the change itself, on every activation (a change made while suspended), and after every
+/// page load (a reloaded page starts from its probe again).
+static void CanariPublishDynamicType(void) {
+  static CGFloat published = -1;
+  WKWebView *webView = CanariFindWebView();
+  if (webView == nil) {
+    return;
+  }
+  CGFloat bodyPt = [UIFont preferredFontForTextStyle:UIFontTextStyleBody].pointSize;
+  NSString *js = [NSString
+      stringWithFormat:@"window.__canariDynamicTypeBodyPx=%.2f;"
+                        "window.dispatchEvent(new CustomEvent('canari:dynamic-type',{detail:{bodyPx:%.2f}}));",
+                       bodyPt, bodyPt];
+  [webView evaluateJavaScript:js completionHandler:nil];
+  if (bodyPt != published) {
+    published = bodyPt;
+    NSLog(@"[CanariIOS] Dynamic Type body published to the page: %.1f pt (%@)", bodyPt,
+          [UIApplication sharedApplication].preferredContentSizeCategory);
+  }
+}
+
 /// Removes the form accessory bar WebKit draws above the keyboard on every text field - the up and
 /// down arrows and "OK", about 45 pt that the composer, the search box and every form lose while
 /// typing (finding E of docs/wiki/phone-comparison.md). Canari has no use for field-to-field
@@ -454,8 +487,17 @@ static void CanariHideKeyboardAccessoryBar(void) {
   if (webView == nil) {
     return;
   }
+  static const char *kSubclassName = "CanariNoInputAccessoryContentView";
+  Class subclass = NSClassFromString([NSString stringWithUTF8String:kSubclassName]);
   UIView *content = nil;
   for (UIView *candidate in webView.scrollView.subviews) {
+    // ALREADY DONE is the common case: every activation after the first lands here. The swap renames
+    // the view's class, so the `WKContent` prefix below no longer matches it - which logged "NOT
+    // removed" on every return to the foreground of a bar that WAS removed (7 times in one session,
+    // iPhone 12, 2026-10-15).
+    if (subclass != Nil && [candidate isMemberOfClass:subclass]) {
+      return;
+    }
     if ([NSStringFromClass([candidate class]) hasPrefix:@"WKContent"]) {
       content = candidate;
       break;
@@ -465,8 +507,6 @@ static void CanariHideKeyboardAccessoryBar(void) {
     NSLog(@"[CanariIOS] keyboard accessory bar NOT removed: no WKContent view under the WebView's scroll view");
     return;
   }
-  static const char *kSubclassName = "CanariNoInputAccessoryContentView";
-  Class subclass = NSClassFromString([NSString stringWithUTF8String:kSubclassName]);
   if (subclass == nil) {
     subclass = objc_allocateClassPair([content class], kSubclassName, 0);
     if (subclass == Nil) {
@@ -494,6 +534,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariObserveTheme();
   CanariHideKeyboardAccessoryBar();
   CanariPublishSafeAreaInsets();
+  CanariPublishDynamicType();
   CanariProcessPendingPushSecret();
   CanariMigrateDeviceKeyFromJson();
   CanariCheckKeystoreHealth();
@@ -628,6 +669,13 @@ void canari_ios_bootstrap(void) {
                    queue:[NSOperationQueue mainQueue]
               usingBlock:^(NSNotification *note) {
                 CanariApplyKeyboardLayout(note);
+              }];
+  // A size changed from Control Center with the app in front: no activation follows it.
+  [nc addObserverForName:UIContentSizeCategoryDidChangeNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                CanariPublishDynamicType();
               }];
   CanariRequestNotificationPermission();
   CanariSetupFirebaseIfAvailable();

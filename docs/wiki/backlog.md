@@ -228,7 +228,11 @@ Decided: declare system gesture exclusion rects for the right edge band while a 
 
 ## iPhone follows the system text size (Dynamic Type) - DECIDED by the user 2026-10-14, draft PR in progress
 
-Decided: the iPhone app FOLLOWS the system text size, like Android. **Owed: an iPhone 12 reading** (the 2026-10-13 bench pass saw the largest size draw as the default).
+Decided: the iPhone app FOLLOWS the system text size, like Android. Read on `1.2.9-alpha.1` (2026-10-15): cold start PASS; a size changed while backgrounded applied only after a cold start, now carried from native ([mobile](frontend/mobile.md#the-iphone-follows-dynamic-type-decided-by-the-user-2026-10-14)). **Owed: an iPhone 12 reading of the background change, the rail salon name and a long heading at 2x.**
+
+## P2 - iOS silent frames reach no Canari code in the background (found 2026-10-15, iPhone 12 syslog)
+
+`CanariInstallRemoteNotificationHook` only replaces an EXISTING `application:didReceiveRemoteNotification:fetchCompletionHandler:`; wry's delegate has none and Firebase's proxy found no delegate at configure time, so the hook is never installed (`remote notification hook NOT installed`, every launch since at least 2026-10-14) and no `[CanariPush] onMessage` line was ever seen on the bench. `channel_read` (cross-device dismissal) and every other `content-available` frame are therefore not acted on while the app is backgrounded, against what [mobile](frontend/mobile.md) and [chat-delivery](services/chat-delivery.md) described. **Owed**: add the method with `class_replaceMethod` as the APNs token hook does - a change of what iOS wakes the app for (background launch included), so its own pull request, an adversarial review of the background `CanariHandleFcmData` path, and a bench reading of a `channel_read` dismissal.
 
 ## Next chantier after 1.2.8 - speed (user, 2026-10-14)
 

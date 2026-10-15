@@ -931,7 +931,7 @@ killed, and confirm the alert arrives: the row proves registration, not delivery
 regression either** - it is the first time the platform has reported anything, and it says the
 ordering was not the only broken link. The candidates left, and the device log that separates them,
 are in [backlog](backlog.md) under the P1; `[CanariPush] APNs token not here yet` versus
-`[CanariPush] FCM token synchronise` names the branch, and reading it needs `idevicesyslog` or a Mac.
+`[CanariPush] FCM token synchronised` names the branch, and reading it needs `idevicesyslog` or a Mac.
 
 **Neither answer arriving means the build did not reach the phone.** Check the version the device
 runs before reading anything into the silence - TestFlight is the beta channel and an ordinary
