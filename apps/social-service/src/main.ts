@@ -14,6 +14,12 @@ async function bootstrap() {
   app.enableCors({
     origin: corsOriginDelegate(allowedOrigins),
     credentials: true,
+    /**
+     * The phone apps read Canari's API through the WebView's own `fetch` (`fetchRouting.ts`), so
+     * they are a cross-origin client: a response header the browser does not expose is `null` to
+     * them. The XLSX exports name their file in `Content-Disposition` (`downloadXlsxFromApi`).
+     */
+    exposedHeaders: ['Content-Disposition'],
   });
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));

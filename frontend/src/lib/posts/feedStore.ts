@@ -285,6 +285,22 @@ export function firstPageFailure(error: unknown, fromStore: boolean): FirstPageF
 }
 
 /**
+ * Whether the feed asks for its first page again now that the connectivity store announces a
+ * reconnect (`connectivity.onReconnect`). Only when the tab's last request got NO answer
+ * (`failed`): an answered page is current, a refusal is an answer about this reader, and a pending
+ * request will answer by itself. Never while a refresh is already out, and never on a reconnect
+ * the server has not confirmed: the store also announces the browser's `online` event, which proves
+ * no reachability, and announces again once a request has actually reached the server.
+ */
+export function feedRefetchOnReconnect(input: {
+  firstPage: FirstPageState;
+  loading: boolean;
+  serverReachable: boolean;
+}): boolean {
+  return input.firstPage === 'failed' && !input.loading && input.serverReachable;
+}
+
+/**
  * Whether the infinite scroll may ask for the next page. Never while the stored copy is on screen: an
  * offset counted on it is an offset into a list nobody confirmed.
  */

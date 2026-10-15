@@ -235,8 +235,9 @@ fine, so a passing XHR next to a failing `fetch` is the fingerprint of this clas
 **Measured on the Mi 9T (Android 16, 5.6 GB, app 1.2.2), 2026-10-10.** The plugin's JS (`dist-js/index.js`,
 2.6.1 installed, **2.8.1 in the lockfile, byte-identical on this point; 2.8.1 is the latest on npm**, the
 3.0 line is alpha) does `Array.from(new Uint8Array(await req.arrayBuffer()))` and ships it through `invoke`
-as JSON: one JS number per byte, then a JSON string, then a Rust `Vec<u8>`. The RESPONSE side is not like
-that: `fetch_read_body` returns raw binary chunks (`tauri::ipc::Response`), so only request bodies are hit.
+as JSON: one JS number per byte, then a JSON string, then a Rust `Vec<u8>`. The RESPONSE side returns raw
+binary chunks (`tauri::ipc::Response`), so it does not inflate - **but it is one `fetch_read_body` `invoke`
+per chunk, queued behind every other `invoke`, and that is SLOW** (next section).
 
 Resident memory above the pre-run baseline (`/proc/<pid>/statm` polled every ~20 ms for the app and the
 renderer, upload of a random `FormData` blob to `dev.canari-emse.fr/api/media/upload` with an invalid token,
@@ -259,8 +260,9 @@ production. Checked from the Android origin against dev: an `Authorization`-bear
 
 **The rule (`shouldUseNativeFetch`, third and fourth arguments, wired in `hooks.client.ts`):** a request with a
 BINARY body (`Blob`/`File`, `FormData`, `ArrayBuffer`, typed array, or a `Request` whose `Content-Type` is not
-text) to one of Canari's five service origins (`apiServiceOrigins()`) goes to the WebView. JSON string bodies,
-JSON/text `Request`s, GETs and third-party hosts stay on the plugin, which is what the override is for. A
+text) to one of Canari's five service origins (`apiServiceOrigins()`) goes to the WebView. **So does every
+READ (`GET`/`HEAD`) to those origins since 2026-10-15** (next section). JSON string bodies, JSON/text
+`Request`s and third-party hosts stay on the plugin, which is what the override is for. A
 `ReadableStream` or async-iterable body is NEVER native (WKWebView cannot stream a request body; the plugin
 buffers it). A `Request` built from a stream looks like one built from an untyped `Blob` and counts as binary,
 the one case `hasBinaryBody` cannot tell apart. The hook installs `createRoutedFetch` (`utils/fetchRouting.ts`),
@@ -297,6 +299,34 @@ below 1 MiB (401 on a 500 KB body) and by the web client, which runs this very `
 the wait into a typed error but was proven only by unit test (fake timers), NOT on a device. (3) Downloads were
 not changed or measured. (4) That the deadline's 16 KiB/s floor suits a real member link is a choice, not a
 measurement.
+
+### A response body through the HTTP plugin takes seconds at launch, so every first-party READ is native (2026-10-15)
+
+**Measured on the Mi 9T, `v1.2.9-alpha.1`**, the feed's first page (52 kB): through the plugin its body ended
+**3.5-4.3 s** after its head during a cold start and 0.42-0.65 s after it at rest; through the WebView's
+`fetch`, 3-13 ms. The main thread was idle for the end of the wait, so it is the bridge: one
+`fetch_read_body` `invoke` per chunk, queued behind the cold start's other `invoke`s. It kept the feed's
+stored copy on screen ~3.5 s after the server had answered ([posts](modules/posts.md#the-stored-copy-stayed-on-screen-for-the-plugins-body-read-2026-10-15),
+where the method and the per-run numbers are). The same cost is F7 of
+[community-open-budget](community-open-budget.md) (888 of 1114 ms for a 116 kB page).
+
+**The rule:** a `GET` or `HEAD` to a Canari service origin goes to the WebView (`isRead` in
+`shouldUseNativeFetch`). It was kept on the plugin on the belief that a response streamed in raw chunks cost
+nothing; that belief is what the measurement refuted. What makes it safe is what made the uploads safe: every
+service answers the preflight an `Authorization` header raises from the three WebView origins
+(`cors-origins.ts` in the Nest services, `chat_gateway_cors_layer`), measured from the Android origin for the
+whole cold start (0 warnings, every read answered). A cross-origin client sees only the safelisted response
+headers plus the exposed ones: the reads consume `Content-Type` and `Content-Length` (safelisted),
+`X-History-Head` (exposed by chat-delivery, and read by the MLS client, which keeps its own plugin `fetch`) and
+`Content-Disposition` (the XLSX exports, exposed by social-service with this change). A new response header a
+read depends on must be added to its service's `exposedHeaders`, or the phone reads `null`.
+
+**Left on the plugin:** JSON writes (their responses are small), third-party hosts, and `TauriMlsService`'s
+delivery client, which imports the plugin's `fetch` directly and so still pays the chunk loop on history
+pages (F7's remaining half). **Not verified:** the iPhone (`Origin: tauri://localhost`, allowed everywhere and
+already carrying the refresh POST natively), and the preflight's cost on a slow link: no service sets
+`Access-Control-Max-Age`, so Chromium caches a preflight 5 s per URL; measured on Wi-Fi the native head was
+still 189-256 ms against the plugin's 246-779 ms, which also builds a new `reqwest` client per call.
 
 ### A relative `/api/` path is dead on mobile, and it fails as a SUCCESS
 

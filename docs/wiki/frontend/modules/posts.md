@@ -1520,8 +1520,8 @@ page of the account is made unreadable. So does an audience verdict of `false`
 (`revalidateFeedAudience`, `isOutsideFeedAudience`). The page's decisions are pure functions in
 `feedStore.ts` so they are tested without rendering: `storedCopyMayDraw` (nothing is drawn once the
 answer or a refusal is in, or while something is on screen), `firstPageFailure` (a refusal
-withdraws and ends the copy, a transport failure keeps it unconfirmed) and `feedMayLoadMore` (no
-infinite scroll while the copy shows).
+withdraws and ends the copy, a transport failure keeps it unconfirmed), `feedMayLoadMore` (no
+infinite scroll while the copy shows) and `feedRefetchOnReconnect` (see below).
 
 **A failed refresh is not an answer.** A transport failure or a 5xx keeps the copy on screen,
 marked unconfirmed: a line above the feed with a spinner says it is being refreshed, then that it
@@ -1619,6 +1619,59 @@ So the stored copy costs under 10 ms of the 200 ms budget even at 6x, and the re
 mount of three cards (`progressiveCount`), which is unchanged by this work. **OWED ON THE PHONE**:
 `tap -> Fil, first card` cold and warm, Wi-Fi and airplane, on the Mi 9T and on SQLite (whose read
 goes over the Tauri bridge, which this bench does not cross), with the APK of this branch.
+
+### The stored copy stayed on screen for the plugin's body read (2026-10-15)
+
+**The reading.** Mi 9T, `v1.2.9-alpha.1`, online cold start: `<- 200 GET /api/posts` was logged, and
+the "Fil enregistre sur l'appareil, mise a jour..." line still showed 3.1-3.5 s later, with nothing
+in the console naming the wait. The `[API] <-` line is logged at the response HEAD; the copy leaves
+the screen when `data.posts` resolves, which is after `res.json()`.
+
+**The cause, measured** (CDP on the Mi 9T, the running app reloaded on `/posts` with an
+instrumentation script installed before any app code: the `/api/posts` call, its head, the end of
+its `json()`, the status line's frames and the long tasks; 3 runs each way, alternated):
+
+| | head after the call | body (`json()` done) after the call | status line on screen |
+| --- | --- | --- | --- |
+| through the HTTP plugin (`v1.2.9-alpha.1`) | 246-779 ms | **4325-4605 ms** | 3.6-3.9 s |
+| through the WebView's `fetch` | 189-256 ms | **214-276 ms** | never: the answer wins, first card at 650-736 ms from the server page |
+
+At rest the same 52 kB body took 422-649 ms through the plugin and 3-13 ms through the WebView. The
+main thread was idle for the last ~2 s of the plugin's wait (no long task), so nothing in the feed
+was waiting: the body was. `plugin-http` reads a response body one `fetch_read_body` `invoke` per
+chunk, queued behind every other `invoke` of a cold start (MLS, SQLite, the other API calls). The
+feed's decisions (the epoch, the ledger, the adoption) cost nothing measurable here.
+
+**The fix is the transport, not the feed**: a READ (`GET`/`HEAD`) to one of Canari's API origins goes
+to the WebView's `fetch` (`shouldUseNativeFetch`, `utils/fetchRouting.ts`), like a binary upload
+already did. Every service answers the preflight from the WebView origins, and social-service now
+exposes `Content-Disposition`, the one non-safelisted response header a read consumes (the XLSX
+exports). Writes with a JSON body, third-party hosts and the MLS delivery client
+(`TauriMlsService`'s own plugin `fetch`) are unchanged. The design and the history of that rule are
+in [mobile](../mobile.md#fetch-is-not-fetch-inside-the-webview); it is item F7 of
+[community-open-budget](../community-open-budget.md).
+
+**Back online, the feed asks again by itself.** After an offline start the copy said "pas de reponse
+du serveur" 40 s after `[CONNECTIVITY] server reachable again`, until "Reessayer". The page now
+subscribes to `connectivity.onReconnect` and runs the retry's own path (`refreshPosts`, whose rows
+the cards adopt through `PostCardLedger`) when `feedRefetchOnReconnect` says so: the tab's last
+request got NO answer (`firstPage === 'failed'`), no refresh is out, and the server is reachable -
+the store also announces the browser's `online` event, which proves nothing, and announces again
+once a request has reached the server, so one confirmed reconnect asks once. `refreshPosts` now
+records its outcome in `firstPage`. The same reconnect reads the access token again when the launch
+had none: offline, `getToken` failed and the cards' media (`authToken`) stayed hidden for the session.
+
+**Noise of the offline cold start, the feed's share.** `[Posts] Failed to get token` (an error with a
+raw `TypeError`) is now one `[POSTS]` line saying the media wait for the link, and an error only for
+a failure that is not the transport. `[postNotifStore] load failed` warned on every minute's poll
+while offline; a load with no answer is now said once per spell, and any other failure still warns
+each time. Not the feed's and left to their owners: `[API] getToken failed ... proceeding without
+auth` (`apiFetch`), the halving `[PENDING] page did not arrive ... retrying with limit=` (the MLS
+pending fetch, `mlsDeliveryApi.ts`), `[DISPLAYNAME]`, `[A] refresh-transport`.
+
+**Not verified:** the APK of this change on the Mi 9T (the "after" row is the same predicate injected
+into `v1.2.9-alpha.1`), the reconnect refresh on a device, and the iPhone, whose WKWebView sends
+`Origin: tauri://localhost` (already allowed, and the refresh POST already goes native there).
 
 ### What is unchanged
 

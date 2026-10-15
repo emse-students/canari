@@ -33,6 +33,7 @@
   import { feedCacheKey, readFeedCache, writeFeedCache } from '$lib/posts/feedCache';
   import {
     feedMayLoadMore,
+    feedRefetchOnReconnect,
     feedStoreAccess,
     firstPageFailure,
     listAfterFirstPage,
@@ -58,6 +59,8 @@
   import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import { getToken } from '$lib/stores/auth';
+  import { connectivity } from '$lib/stores/connectivity.svelte';
+  import { isTransportFailure } from '$lib/utils/transportFailure';
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { currentUserId } from '$lib/stores/user';
   import { RefreshCw, SquarePen, Inbox, Search, X } from '@lucide/svelte';
@@ -588,6 +591,7 @@
       hasMore = posts.length >= PAGE_SIZE;
       writeFeedCache(feedCacheKey(data.feedParams), { posts, hasMore });
       // An answer: whatever the device drew is now the server's page, and the store follows it.
+      firstPage = 'answered';
       fromStore = false;
       storedRefreshFailed = false;
       storeFirstPage(posts);
@@ -597,6 +601,7 @@
       // A copy that stays on screen says it could not be refreshed on its own line; the red banner
       // is for a feed that has nothing to show.
       const failure = applyFirstPageFailure(err);
+      firstPage = failure.firstPage;
       if (outside) noAudience = true;
       else if (!failure.copyUnconfirmed) errorMessage = m.posts_load_error_title();
     } finally {
@@ -671,13 +676,46 @@
     return () => obs.disconnect();
   });
 
+  /**
+   * The token the cards draw their media with. Offline at launch there is none to have: that is the
+   * transport, already reported by the session (`[A] refresh-transport`), so it is said once here for
+   * what it costs this page - and the reconnect below asks again.
+   */
+  async function loadAuthToken() {
+    try {
+      authToken = await getToken();
+    } catch (e) {
+      if (isTransportFailure(e)) {
+        console.log('[POSTS] no access token without the server - post media wait for the link');
+        return;
+      }
+      console.error('[POSTS] the access token could not be read', e);
+    }
+  }
+
+  /**
+   * BACK ONLINE, THE FEED ASKS AGAIN BY ITSELF (Mi 9T reading of `v1.2.9-alpha.1`, 2026-10-15: after
+   * an offline start the stored copy said "pas de reponse du serveur" 40 s after the server was
+   * reachable, until "Reessayer"). It is the retry's own path, once per reconnect the server
+   * confirmed, and only when the last request got no answer (`feedRefetchOnReconnect`).
+   */
+  function onReconnect() {
+    if (userId && !authToken) void loadAuthToken();
+    const decision = {
+      firstPage,
+      loading,
+      serverReachable: connectivity.serverReachable,
+    };
+    if (!feedRefetchOnReconnect(decision)) return;
+    Log.d('POSTS', 'server reachable again - the first page is asked again');
+    void refreshPosts();
+  }
+
+  onMount(() => connectivity.onReconnect(onReconnect));
+
   onMount(() => {
     if (userId) {
-      getToken()
-        .then((t) => {
-          authToken = t;
-        })
-        .catch((e) => console.error('[Posts] Failed to get token', e));
+      void loadAuthToken();
       void loadScheduled();
     }
 

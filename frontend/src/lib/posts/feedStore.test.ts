@@ -12,6 +12,7 @@ import { isOutsideFeedAudience, revalidateFeedAudience } from '$lib/posts/feedAu
 import { fetchFeedAudience } from '$lib/posts/api';
 import {
   feedMayLoadMore,
+  feedRefetchOnReconnect,
   feedRefusalEndsCopy,
   feedStoreAccess,
   feedWriteEpoch,
@@ -24,6 +25,7 @@ import {
   storedFeedKey,
   writeStoredFeedPage as writePage,
   type FeedStoreAccess,
+  type FirstPageState,
 } from './feedStore';
 import { currentFeedEpoch, forgetStoredFeeds } from './feedStoreEpoch';
 import { getStorage } from '$lib/db';
@@ -385,5 +387,20 @@ describe('the page wiring, as decisions', () => {
     expect(feedMayLoadMore({ loadingMore: false, hasMore: true, fromStore: true })).toBe(false);
     expect(feedMayLoadMore({ loadingMore: false, hasMore: true, fromStore: false })).toBe(true);
     expect(feedMayLoadMore({ loadingMore: true, hasMore: true, fromStore: false })).toBe(false);
+  });
+
+  // Mi 9T, `v1.2.9-alpha.1` (2026-10-15): after an offline start the copy still said "pas de
+  // reponse du serveur" 40 s after the server was reachable again; only "Reessayer" replaced it.
+  it('a confirmed reconnect asks again for a first page that got no answer', () => {
+    const at = (firstPage: FirstPageState, loading = false, serverReachable = true) =>
+      feedRefetchOnReconnect({ firstPage, loading, serverReachable });
+    expect(at('failed')).toBe(true);
+    // An answer is current, a refusal is an answer about the reader, a pending request will land.
+    expect(at('answered')).toBe(false);
+    expect(at('refused')).toBe(false);
+    expect(at('pending')).toBe(false);
+    // One request at a time, and the browser's `online` event alone proves nothing.
+    expect(at('failed', true)).toBe(false);
+    expect(at('failed', false, false)).toBe(false);
   });
 });
