@@ -45,8 +45,10 @@ describe('IndexedDbStorage.getMessageConversationIds', () => {
 
 describe('SqliteStorage.getMessageConversationIds', () => {
   /** A real SQLite (`node:sqlite`) holding the table and index `SqliteStorage.init` creates. */
-  async function sqliteHolding(ids: Array<[string, string]>) {
-    const { DatabaseSync } = await import('node:sqlite');
+  function sqliteHolding(ids: Array<[string, string]>) {
+    // Reached through `process.getBuiltinModule`, never an `import`: the test environment is a
+    // browser one, and Vite refuses to bundle a Node built-in named in an import (CI, coverage run).
+    const { DatabaseSync } = process.getBuiltinModule('node:sqlite');
     const engine = new DatabaseSync(':memory:');
     engine.exec(
       'CREATE TABLE messages (id TEXT PRIMARY KEY, conversation_id TEXT NOT NULL, timestamp INTEGER, iv TEXT, cipher_text TEXT)'
@@ -66,7 +68,7 @@ describe('SqliteStorage.getMessageConversationIds', () => {
   }
 
   it('names each conversation with the prefix once, and neither a near miss nor a pattern match', async () => {
-    const { storage } = await sqliteHolding([
+    const { storage } = sqliteHolding([
       ['m1', 'channel_a'],
       ['m2', 'channel_a'],
       ['m3', 'channel_b'],
@@ -83,7 +85,7 @@ describe('SqliteStorage.getMessageConversationIds', () => {
   });
 
   it('searches the conversation index for the range instead of scanning it', async () => {
-    const { storage, engine, sqls } = await sqliteHolding([['m1', 'channel_a']]);
+    const { storage, engine, sqls } = sqliteHolding([['m1', 'channel_a']]);
     await storage.getMessageConversationIds('channel_');
 
     const plan = engine

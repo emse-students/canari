@@ -79,6 +79,8 @@ vi.mock('$lib/services/ChannelService', async (importOriginal) => ({
     createChannel = createChannel;
     renameChannel = renameChannel;
     reorderChannels = reorderChannels;
+    // Every listing asks the unread counts at its end; a fake without them logged a TypeError there.
+    listUnreadCounts = vi.fn().mockResolvedValue([]);
   },
 }));
 
