@@ -57,6 +57,58 @@ working clients to protect them from a warning that was accurate all along - see
 
 ---
 
+## Removable at floor 1.2.7
+
+**Audited 2026-10-15, against `main` at `9f7ccfef8`**, when the user reported `1.2.7` served by BOTH
+stores (Play `1.2.8`, the App Store `1.2.7`), so that `minClientVersion` could rise from `1.0.3` to
+`1.2.7`. A removal marked "with the floor" REFUSES what an older build sends, so it may only deploy
+once `minClientVersion` reads `1.2.7` or more **on the estate it deploys to**: `platform_config` is
+PER ESTATE (production and `dev.canari-emse.fr` each hold their own row), so the floor is raised in
+`/admin/platform` on BOTH, dev included, or a pre-release carrying a refusal breaks a dev tester on an
+older build. "First release" is the first stable tag containing the replacement (`git tag --contains`);
+a shim is removable by the floor only when that release is `<= 1.2.7`. A floor never retires DATA AT
+REST: those rows need a count, then a migration.
+
+| Shim (entry below) | Condition | Met at floor 1.2.7? | Data at rest | Removal size | Disposition |
+| --- | --- | --- | --- | --- | --- |
+| Whole-list role PUT + `RETIRED_PERMISSIONS` | client floor past the PATCH (2026-08-20) and the key removal (2026-08-19) | YES (`v0.14.1`) | none (migration 044 already stripped the keys) | ~-200 lines, server + one uncalled client method | removed with the floor (server only) |
+| `stripe` checkout return host | floor >= first release with `payment` | YES (`v1.2.4`) | none | ~-40 lines, server + client + `tauri.conf.json` + manifest | removed with the floor |
+| `paymentMethod: 'stripe'` INPUT | floor >= Stripe removal | YES (`v1.2.0`) | - | 1 line | removed with the floor |
+| `paymentMethod: 'stripe'` STORED | rows written before 2026-10-08 | no - data | `purchase_records` and `submissions` | type + 3 client arms, after a migration | owed: count + migration (user) |
+| Carte bare publish body | floor >= fingerprint | YES (`v0.18.28`) | old posters keep a null fingerprint (meaning UNKNOWN, kept) | ~-20 lines, server | removed with the floor (server only); a missing or malformed fingerprint is refused too |
+| Prekeys as bare base64 strings | floor >= `0.18.10` | YES (`v0.18.10`) | undated rows stay covered by their `NULL` arms | ~-10 lines, server | removed with the floor |
+| `/key-package` 404 with no `reason` | every estate past the 2026-09-16 server (not a client floor) | YES (since `v0.18.10` deployed) | none | ~-30 lines, client | removed: a 404 with no reason is `unanswered`, a reason this build does not know is the typed refusal `unrecognized` |
+| Salon push held for a sender with no `seedFrame` | floor >= first release sending `seedFrame` | version YES (`v0.18.28`); proof NO | none | server refusal + Kotlin hold registry, native | NOT removed: nothing has measured that EVERY admitted send carries the frame (the server never stores it), so a required field could refuse an honest send. Owed: a log of frame-less non-silent sends, read for a week, then a native PR |
+| Server `legacyTitle`/`legacyBody` on social/form pushes | clients reading `contentKey` (2026-08-19) | version YES (`v0.14.1`) | none | ~-50 lines server + Kotlin + Swift arms | NOT removed: dropping them leaves an iOS alert EMPTY whenever the NSE does not run, a visible behaviour change, not a removal. Needs a decision and an iPhone reading |
+| Reaction push keeps wire type `social` + a generic `body` (`notify-reaction`; had no entry here) | clients knowing `reaction: 'true'` (2026-08-15) | version YES (`v0.14.0`) | none | server + Kotlin dispatch | NOT removed, same iOS-alert question as the row above |
+| Post `images` field (in and out, `posts.service.ts`; had no entry here) | clients sending `media` | not established | `posts.images` is the column itself | DTO + normaliser | NOT removed: the client switch is undated; find it before judging |
+| Pre-MLS send path + `queued_message.content` | log silence (`LEGACY_CONTENT_PATH`/`_ROW`), dated 2026-11-19 | not a version question | the column | `else` arm + migration | owed: log read + count + migration |
+| Graine v1 reader | 0 unsigned rows | NO | 373 rows (2026-10-14) | - | revisit 2027-10-13 |
+| `read_receipt` (both entries), `remove_reaction`, `pin`/`unpin` undated, no `sender_device_id`, no `message_id` | live peers (met) AND archive retention | live half YES, archive NO | Redis history streams | per entry | dates 2026-11-13 to 2026-12-15 stand |
+| Refresh cookie on `tauri://localhost` | floor AND a desktop measurement | floor YES, measurement NO | none | - | unchanged |
+| MiConnect `formation`/`promo` claims | WP9 | NO (not a version) | Authentik attributes | - | unchanged |
+| `GET /history` bare array | replacement shipped, then floored | NO (never shipped) | none | - | unchanged |
+| `LEGACY_PERMISSION_MAPPING` (`channel-role.entity.ts`; no entry here) | no `channel_roles` row holds an old key | not a version question | `channel_roles.permissions` | 1 map + 1 hook | owed: count |
+| Form `dependsOn`/`dependsValue` (`forms/visibility.ts`; no entry here) | no stored form uses the pair | not a version question | `forms.items` | reader branch | owed: count |
+| State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | NOT done here: a writer flip, not a removal - its own MLS PR with an adversarial review ([backlog](backlog.md)) |
+| `MLS_STATE_SEAL_V2_WRITER_ENABLED` | a stable with the reader served the web AND floor >= it | YES (`v1.2.7`) | it CHANGES device data at rest | 1 line, then the encrypt worker | NOT done here, same reason |
+| The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closes when the user sets 1.2.7 |
+| Group removal hold (#1878) | floor >= the release carrying it | NO (`1.2.9`) | - | - | waits |
+
+**Owed to the user, read-only, before any migration above** (production Postgres, as
+[databases](infrastructure/databases.md#reaching-it-from-a-workstation) describes):
+
+```sql
+SELECT count(*) FROM purchase_records WHERE "paymentMethod" = 'stripe';
+SELECT count(*) FROM submissions WHERE "paymentMethod" = 'stripe';
+SELECT count(*) FROM queued_message WHERE content IS NOT NULL;
+SELECT count(*) FROM channel_roles WHERE permissions ~ '(MANAGE_WORKSPACE|MANAGE_CHANNELS|MANAGE_ROLES|MODERATE_MESSAGES|INVITE_USERS|SEND_MESSAGES)';
+SELECT count(*) FROM forms WHERE items::text LIKE '%"dependsOn": "%';
+SELECT count(*) FROM channel_messages WHERE "signature" IS NULL AND "senderSessionId" IS NOT NULL;
+```
+
+---
+
 ## The diary
 
 ### No date yet - the `fr.emse.canari://stripe/...` checkout return host, from a build older than 2026-10-09
