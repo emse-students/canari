@@ -61,13 +61,6 @@
   import { m } from '$lib/paraglide/messages';
   import ReelEditor from './ReelEditor.svelte';
 
-  /** The opener for each way of asking the microphone (`DestinationRules.microphone`). */
-  const OPENER: Record<DestinationRules['microphone'], CameraOpener> = {
-    'with-lens': (facing) => openReelCamera(facing),
-    separate: openPostCamera,
-    never: openPhotoCamera,
-  };
-
   interface Props {
     /** The session, injectable for tests. */
     session?: CameraSession;
@@ -83,25 +76,31 @@
 
   let {
     destination = 'feed',
-    // How the microphone is asked is the destination's (destinationRules): with the lens on the tab,
-    // on its own in a post, never in a chat.
-    session = new CameraSession(OPENER[destinationRules(destination).microphone]),
+    // The microphone is asked as `destinationRules(destination).microphone` says (openerFor).
+    session = new CameraSession(openerFor(destinationRules(destination).microphone)),
     publishDeps,
     oncapture,
     onclose,
   }: Props = $props();
+
+  /** The opener for each way of asking the microphone (`DestinationRules.microphone`). */
+  function openerFor(microphone: DestinationRules['microphone']): CameraOpener {
+    if (microphone === 'separate') return openPostCamera;
+    if (microphone === 'never') return openPhotoCamera;
+    return (lens) => openReelCamera(lens);
+  }
 
   const rules = $derived(destinationRules(destination));
   /** A photo needs no ceiling: only a video take reads the server's cap. */
   const needsLimits = $derived(!rules.photoOnly);
   /** The open stream carries a microphone - a fact of the session, not of the destination. */
   const hasMicrophone = $derived((session.stream?.getAudioTracks().length ?? 0) > 0);
+  let capture = $state<CaptureState>({ kind: 'ready' });
+  let limits = $state<ReelLimits | null>(null);
   /**
    * A HOLD MAY BECOME A VIDEO. A post camera whose microphone was refused keeps its photos
    * (`openPostCamera`); a cap not read yet (offline) keeps them too - a photo needs neither.
    */
-  let capture = $state<CaptureState>({ kind: 'ready' });
-  let limits = $state<ReelLimits | null>(null);
   const canFilm = $derived(!rules.photoOnly && hasMicrophone && limits !== null);
   /** Set by the teardown: an answer arriving after it (the discard question) acts on nothing. */
   let destroyed = false;
@@ -405,9 +404,9 @@
 
   /**
    * THE GALLERY IN THE iOS APP IS THE NATIVE LIBRARY (`opensNatively`): a `video/*` input there is
-   * answered by WebKit's sheet, whose "Prendre une video" is the SYSTEM camera that D-camera removed
-   * (PR #1859 review, 2026-10-15). PHPicker offers the library alone; its first pick is checked as
-   * an input's would be.
+   * answered by the sheet of WebKit, whose "Prendre une video" is the SYSTEM camera that D-camera
+   * removed (PR #1859 review, 2026-10-15). PHPicker offers the library alone; its first pick is
+   * checked as the pick of an input would be.
    */
   function openGallery() {
     if (!nativeGallery) {
