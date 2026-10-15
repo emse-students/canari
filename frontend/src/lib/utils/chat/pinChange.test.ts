@@ -445,7 +445,10 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
     expect(typed.stage).toBe('keystore');
     expect(typed.dataMoved).toBe(false);
     expect(typed.keystoreMoved).toBe(false);
-    expect(vault.clearDeviceKey).not.toHaveBeenCalled();
+    // The vault's old key left BEFORE the keystore was asked: no unattended unlock stays on it.
+    expect(vault.clearDeviceKey).toHaveBeenCalledWith('u-keystore-throw');
+    expect(vault.retireUnlabelledDeviceKeyIfOwnedBy).toHaveBeenCalledWith('u-keystore-throw', OLD);
+    expect(vault.saveDeviceKey).not.toHaveBeenCalled();
     expect(mls.changeDeviceKey).not.toHaveBeenCalled();
     expect(change.setDeviceKey).not.toHaveBeenCalled();
     await everyRowUnder(s.raw, OLD);
@@ -457,6 +460,57 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
     await everyRowUnder(s.raw, NEW);
     expect(mls.changeDeviceKey).toHaveBeenCalledWith(NEW);
     expect(recovery.setDeviceKey).toHaveBeenCalledWith(NEW);
+  });
+
+  it('PIN1 -> PIN2 refused by the keystore, relaunch, recovery, then PIN2 -> PIN3: nothing stranded', async () => {
+    // Before 2026-10-15 the vault was cleared AFTER the keystore, so a refusal left it on PIN1: a
+    // device without biometrics logged in silently on PIN1 (no server check, no recovery), and the
+    // next change derived its "old" key from PIN2 - rows under PIN1 opened under neither key, the
+    // live MLS state moved to PIN3, and messages, seeds and outbox stayed under PIN1 for good.
+    const { OLD: K1, NEW: K2 } = keys();
+    const K3 = key();
+    const userId = 'u-pin1-pin2-pin3';
+    const s = await populated(K1);
+    storageForUser.set(userId, s.gated);
+    const slots = new Map<string, string>([[userId, K1]]);
+    vault.clearDeviceKey.mockImplementation((u: string) => void slots.delete(u));
+    vault.saveDeviceKey.mockImplementation(async (u: string, k: string) => void slots.set(u, k));
+    let mlsKey = K1;
+    const mls = {
+      openLocalStateWithKey: vi.fn(async (_u: string, k: string) =>
+        k === mlsKey ? { opened: true } : { opened: false, cause: 'undecryptable' }
+      ),
+      pointUnattendedUnlockAt: vi
+        .fn()
+        .mockRejectedValueOnce(new Error('errSecAuthFailed'))
+        .mockResolvedValue(true),
+      changeDeviceKey: vi.fn(async (k: string) => void (mlsKey = k)),
+    } as unknown as IMlsService;
+
+    try {
+      const failure = await performPinChange(options(userId, mls), K1, K2).catch((e: unknown) => e);
+      expect((failure as InstanceType<typeof KeyChangeInterruptedError>).stage).toBe('keystore');
+
+      // Relaunch: no vault key to unlock with, so the PIN is asked; the server takes PIN2, whose key
+      // does not open the MLS state - which is exactly what offers the recovery.
+      expect(slots.get(userId)).toBeUndefined();
+      expect(
+        (await mls.openLocalStateWithKey(userId, K2, new Uint8Array([1]))).opened,
+        'the MLS state must refuse the PIN2 key, or no recovery is offered'
+      ).toBe(false);
+
+      await performPinChange(options(userId, mls, new Uint8Array([1])), K1, K2);
+      await everyRowUnder(s.raw, K2);
+      expect(mlsKey).toBe(K2);
+      expect(slots.get(userId)).toBe(K2);
+
+      await performPinChange(options(userId, mls), K2, K3);
+      await everyRowUnder(s.raw, K3);
+      expect(mlsKey).toBe(K3);
+    } finally {
+      vault.clearDeviceKey.mockImplementation(() => {});
+      vault.saveDeviceKey.mockResolvedValue(undefined);
+    }
   });
 
   it("retires an older build's UNLABELLED vault slot holding the old key, before the new key is saved", async () => {
@@ -536,8 +590,8 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
     await performPinChange(options('u-order', fakeMls(order)), OLD, NEW);
 
     expect(order).toEqual([
-      'keystore',
       'vault-clear',
+      'keystore',
       'vault-save',
       'messages',
       'graine',

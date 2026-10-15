@@ -271,10 +271,12 @@ class KeystorePlugin: Plugin {
   /// biometric unlock makes sense at all, so prompting here would defeat its purpose.
   ///
   /// The background item (`mls_bg_key_`) is tested first: it carries no access control, so
-  /// matching it needs no authentication. It is written and deleted in the same operations as
-  /// the primary item, which makes its presence equivalent. The primary item is then tried with
-  /// attributes only and `kSecUseAuthenticationUISkip`, which returns a match without decrypting
-  /// - it covers a device enrolled before the background item existed.
+  /// matching it needs no authentication. Its presence is NOT the primary item's: on a device with
+  /// no passcode `storeKeyBytes` writes the background item alone. That still answers "present"
+  /// only where biometric unlock cannot be enabled (it needs the passcode too), so the answer
+  /// offers nothing it should not. The primary item is then tried with attributes only and
+  /// `kSecUseAuthenticationUISkip`, which returns a match without decrypting - it covers a device
+  /// enrolled before the background item existed.
   @objc public func hasKeyBytes(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(HasKeyBytesRequest.self)
 
