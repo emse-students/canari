@@ -17,7 +17,11 @@ import {
   ValidationOptions,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { FILE_RETENTION_MAX_DAYS, FILE_RETENTION_MIN_DAYS } from '../form-files.service';
+import {
+  FILE_RETENTION_MAX_DAYS,
+  FILE_RETENTION_MIN_DAYS,
+  FORM_ITEM_ID_MAX_LENGTH,
+} from '../form-files.service';
 
 /** Max keys per answers record - prevents oversized payloads. */
 const ANSWERS_MAX_KEYS = 50;
@@ -109,8 +113,13 @@ export class FormItemDto {
     maxLabel?: string;
   };
 
+  /**
+   * Bounded by `form_files."itemId"` (varchar 64): a longer id saved here would make every upload
+   * for that question a database error. Ids are UUIDs (36) or short legacy keys.
+   */
   @IsString()
   @IsOptional()
+  @MaxLength(FORM_ITEM_ID_MAX_LENGTH)
   id?: string;
 
   /** Optional help text displayed below the question label in the fill page. */

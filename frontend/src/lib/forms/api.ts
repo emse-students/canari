@@ -130,6 +130,8 @@ export interface Form extends CreateFormPayload {
 import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { socialUrl } from '$lib/utils/apiUrl';
+import { fetchUpload } from '$lib/media';
+import type { XhrUploadOptions } from '$lib/utils/uploadXhr';
 import { SocialApiError } from '$lib/associations/api';
 
 /**
@@ -421,19 +423,26 @@ export interface UploadedAnswerFile {
 /**
  * Uploads the file of one FILE question before the answer is sent. The answer then carries
  * `fileId`; the server accepts it only from the member who uploaded it, for this question.
+ *
+ * Through `fetchUpload` (an XHR), never `fetch`: it is the one transport that reports how much has
+ * left and can be cancelled, which an 8 MiB file on a weak link needs. `transport.signal` cancels
+ * (rejecting with `UploadAbortedError`), `transport.onProgress` reports the bytes sent.
  */
 export async function uploadFormAnswerFile(
   formId: string,
   itemId: string,
-  file: File
+  file: File,
+  transport: XhrUploadOptions = {}
 ): Promise<UploadedAnswerFile> {
   const fd = new FormData();
   fd.append('itemId', itemId);
   fd.append('file', file);
-  const res = await apiFetch(`${socialUrl()}/api/forms/${encodeURIComponent(formId)}/files`, {
-    method: 'POST',
-    body: fd,
-  });
+  const res = await fetchUpload(
+    `${socialUrl()}/api/forms/${encodeURIComponent(formId)}/files`,
+    (token) => ({ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd }),
+    await getToken(),
+    transport
+  );
   if (!res.ok) throw await refusal(res, 'File upload failed');
   return res.json();
 }

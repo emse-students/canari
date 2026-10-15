@@ -2182,13 +2182,17 @@
   "form_public_hint_blocked_file": "Indisponible avec une question fichier : un invité n'a pas de compte pour envoyer un fichier.",
   "form_anonymous_hint_file": "Indisponible avec une question fichier : un fichier est lié au compte qui l'envoie.",
   "form_file_retention_label": "Suppression des fichiers (jours après la réponse)",
-  "form_file_retention_hint": "Les fichiers envoyés sont lisibles par les gestionnaires du formulaire, puis supprimés automatiquement après ce délai, de 1 à 30 jours. La réponse reste, avec la mention « fichier supprimé ».",
+  "form_file_retention_hint": "Les fichiers envoyés sont lisibles par les gestionnaires du formulaire, puis supprimés automatiquement après ce délai, de 1 à 30 jours. La réponse reste, avec la mention « fichier supprimé ». Un changement, même un délai plus court, s'applique aussitôt aux fichiers déjà reçus.",
   "form_file_retention_invalid": "Le délai de suppression des fichiers doit être un nombre entier de jours, de 1 à 30.",
   "form_builder_file_hint": "La personne enverra un fichier : PDF, JPEG, PNG ou WebP, 8 Mo au plus. Il est lisible par les gestionnaires du formulaire et supprimé automatiquement (voir Paramètres avancés).",
   "form_file_choose": "Choisir un fichier",
   "form_file_replace": "Remplacer le fichier",
   "form_file_remove": "Retirer le fichier",
   "form_file_uploading": "Envoi en cours...",
+  "form_file_uploading_percent": "Envoi en cours... {percent} %",
+  "form_file_cancel": "Annuler l'envoi",
+  "form_file_wait_upload": "Un fichier est encore en cours d'envoi : attendez la fin, ou annulez-le, avant d'envoyer votre réponse.",
+  "form_file_error_heic": "Une photo HEIC n'est pas acceptée : exportez-la en JPEG, ou envoyez une capture d'écran ou un PDF.",
   "form_file_hint_fill": [
     {
       "declarations": ["input days", "local daysPlural = days: plural"],

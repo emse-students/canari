@@ -141,20 +141,22 @@ export class FormsController {
 
   /**
    * Uploads the file of one FILE question (`itemId` in the multipart body) before the answer is
-   * sent; any signed-in member may, and the answer may cite it only if they are its uploader
-   * (`FormFilesService.attach`). The interceptor's ceiling is one byte above the cap so the service,
-   * not Multer, says what the cap is. Returns `{ fileId, fileName, sizeBytes, contentType }`.
+   * sent. Only a member the form is OPEN TO may (its audience, as at submit), and the answer may
+   * cite the file only if they are its uploader (`FormFilesService.attach`). The interceptor's
+   * ceiling is one byte above the cap so the service, not Multer, says what the cap is. Returns
+   * `{ fileId, fileName, sizeBytes, contentType }`.
    */
   @UseGuards(NginxAuthGuard)
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: FORM_FILE_MAX_BYTES + 1 } }))
   @Post(':id/files')
-  uploadAnswerFile(
+  async uploadAnswerFile(
     @Param('id', ParseUUIDPipe) id: string,
     @UploadedFile() file: Express.Multer.File,
     @Body('itemId') itemId: string | undefined,
     @Headers('x-user-id') xUserId: string
   ): Promise<UploadedFormFile> {
     if (!file) throw new BadRequestException('No file provided');
+    await this.service.assertMayUploadAnswerFile(id, xUserId);
     return this.formFiles.upload(id, itemId, file, xUserId);
   }
 

@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  FORM_FILE_ACCEPT,
   FORM_FILE_MAX_BYTES,
   fileQuestionProblem,
   hasFileQuestion,
   isValidFileRetention,
   pickedFileProblem,
+  pickedFileType,
 } from './fileQuestion';
 import { m } from '$lib/paraglide/messages';
 
@@ -72,16 +74,53 @@ describe('fileQuestionProblem', () => {
 
 describe('pickedFileProblem', () => {
   it('accepts a PDF under the cap', () => {
-    expect(pickedFileProblem({ type: 'application/pdf', size: 1000 })).toBeNull();
+    expect(pickedFileProblem({ name: 'a.pdf', type: 'application/pdf', size: 1000 })).toBeNull();
   });
 
   it('refuses a type the server does not take', () => {
-    expect(pickedFileProblem({ type: 'text/html', size: 10 })).toBe(m.form_file_error_type());
+    expect(pickedFileProblem({ name: 'a.html', type: 'text/html', size: 10 })).toBe(
+      m.form_file_error_type()
+    );
   });
 
   it('refuses a file over 8 MiB', () => {
-    expect(pickedFileProblem({ type: 'image/png', size: FORM_FILE_MAX_BYTES + 1 })).toBe(
-      m.form_file_error_size()
+    expect(
+      pickedFileProblem({ name: 'a.png', type: 'image/png', size: FORM_FILE_MAX_BYTES + 1 })
+    ).toBe(m.form_file_error_size());
+  });
+
+  it('judges a file with NO declared type (an Android picker) by its extension', () => {
+    expect(pickedFileProblem({ name: 'Scan 12.PDF', type: '', size: 10 })).toBeNull();
+    expect(pickedFileProblem({ name: 'photo.jpeg', type: '', size: 10 })).toBeNull();
+    expect(pickedFileProblem({ name: 'notes.txt', type: '', size: 10 })).toBe(
+      m.form_file_error_type()
     );
+    expect(pickedFileProblem({ name: 'no-extension', type: '', size: 10 })).toBe(
+      m.form_file_error_type()
+    );
+  });
+
+  it('refuses HEIC with its own sentence, by type or by extension', () => {
+    expect(pickedFileProblem({ name: 'IMG_1.HEIC', type: 'image/heic', size: 10 })).toBe(
+      m.form_file_error_heic()
+    );
+    expect(pickedFileProblem({ name: 'IMG_1.heif', type: '', size: 10 })).toBe(
+      m.form_file_error_heic()
+    );
+  });
+});
+
+describe('pickedFileType', () => {
+  it('keeps a declared type and names one from the extension otherwise', () => {
+    expect(pickedFileType({ name: 'x.png', type: 'image/png' })).toBe('image/png');
+    expect(pickedFileType({ name: 'x.webp', type: '' })).toBe('image/webp');
+    expect(pickedFileType({ name: 'x', type: '' })).toBe('');
+  });
+});
+
+describe('FORM_FILE_ACCEPT', () => {
+  it('lists the types AND the extensions, for pickers that filter by extension only', () => {
+    const accept = FORM_FILE_ACCEPT.split(',');
+    expect(accept).toEqual(expect.arrayContaining(['application/pdf', '.pdf', '.jpg', '.webp']));
   });
 });

@@ -353,6 +353,19 @@ export class FormsService {
     throw new ForbiddenException('This form is not open to you.');
   }
 
+  /**
+   * Refuses an upload for a FILE question to a member the form is not open to - the same audience
+   * rule `submit` applies, judged BEFORE the bytes are stored, so a member who may not answer cannot
+   * park files on the form either. Visibility of the question itself (`showIf`) is not judged here:
+   * it may depend on answers not given yet, and `submit` re-reads the whole answer anyway.
+   */
+  async assertMayUploadAnswerFile(formId: string, userId: string): Promise<void> {
+    const form = await this.formRepo.findOne({ where: { id: formId, deletedAt: IsNull() } });
+    if (!form) throw new NotFoundException('Form not found');
+    if (!form.submitCondition) return;
+    this.assertMaySubmit(form, await this.factsFor(form, userId));
+  }
+
   /** Creates a form and assigns stable IDs to all items and options that lack them. */
   async create(input: CreateFormDto, isGlobalAdmin = false) {
     if (input.associationId && !isGlobalAdmin) {

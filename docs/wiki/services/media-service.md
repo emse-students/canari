@@ -427,7 +427,15 @@ plaintext away from every route a client can reach:
   member's device reaches with an id. The only read is `GET /media/internal/form-file/:id`, used by
   social-service's manager-gated download - and it serves nothing BUT form files
   (`MediaService.download(id, formFile)`), so it is not a second door into ordinary media either.
-- **It cannot become anything else**: no reel claim, no promotion to a public asset.
+- **An image loses its metadata before it is stored** (`stripImageMetadata`, user decision
+  2026-10-15): a JPEG, PNG or WebP is re-encoded by sharp with NO EXIF (GPS included), ICC or XMP,
+  after `rotate()` has applied the orientation the EXIF carried. The format is read from the bytes'
+  signature, never from sharp's guess, so a corrupt JPEG is a `422` rather than stored unstripped.
+  A PDF (or anything else) is stored byte for byte. The answer carries `{ mediaId, sizeBytes }`, the
+  STRIPPED size, which is what social-service records.
+- **It cannot become anything else**: no reel claim, no promotion to a public asset, and
+  **`DELETE /media/:id` refuses it** (403, `isServerReadOnly`): that route is secret-gated but its
+  callers delete on behalf of a member, and a form file is deleted by the retention purge alone.
 - **The idle sweep keeps it; social-service's purge deletes it** through
   `POST /media/internal/form-file-purge`, whose ALLOWLIST is two facts both required - class
   `form-file` AND `ownerId` equal to the uploader named by the caller. A chat object, a reel, a vault

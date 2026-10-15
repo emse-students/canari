@@ -258,8 +258,11 @@ const pauseUnlessAborted: ReaskPause = (ms, signal) =>
  * @param transport When given, the request goes through {@link xhrUpload} instead of `fetch`, which
  *                  is the only way to see its progress, cancel it and bound it by silence. The 401
  *                  retry is the same on both, and a retry reports its progress from zero again.
+ *
+ * Exported for the other body-carrying upload that is not media's: a form answer's file
+ * (`forms/api.ts`), which needs the same progress, cancel, gateway budget and 401 renewal.
  */
-async function fetchUpload(
+export async function fetchUpload(
   url: string,
   build: (token: string) => RequestInit,
   authToken: string,

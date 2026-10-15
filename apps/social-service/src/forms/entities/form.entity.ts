@@ -133,7 +133,7 @@ export class Form {
 
   /**
    * How many days the file of a FILE question's answer is kept, counted from the date of the answer
-   * (migration 084, 1 to 30, 7 by default). The answer stays; only the file goes - see
+   * (migration 085, 1 to 30, 7 by default). The answer stays; only the file goes - see
    * `form-files.service.ts`.
    */
   @Column({ type: 'int', default: 7 })

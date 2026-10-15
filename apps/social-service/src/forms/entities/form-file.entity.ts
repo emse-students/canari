@@ -1,7 +1,7 @@
 import { Entity, Column, PrimaryColumn, CreateDateColumn, Index } from 'typeorm';
 
 /**
- * A file uploaded for a FILE question of a form (migration 084).
+ * A file uploaded for a FILE question of a form (migration 085).
  *
  * The answer carries only this row's id; everything a manager's download needs, and everything the
  * purge decides from, is here. THE STATE IS THE ROW: `submissionId` null means "uploaded, not yet

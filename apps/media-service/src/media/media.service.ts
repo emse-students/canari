@@ -2,6 +2,7 @@ import {
   Injectable,
   Logger,
   BadRequestException,
+  UnprocessableEntityException,
   ForbiddenException,
   HttpException,
   HttpStatus,
@@ -299,6 +300,51 @@ export function isServerReadOnly(entry: { retentionClass?: RetentionClass } | un
   return entry?.retentionClass === SERVER_READ_ONLY_CLASS;
 }
 
+/**
+ * The image format a form file's bytes ANNOUNCE by their signature, or null (a PDF). Read from the
+ * signature and not from a decoder, so an image a decoder chokes on is refused rather than taken for
+ * "not an image" and stored with its metadata.
+ */
+function announcedImageFormat(data: Buffer): 'jpeg' | 'png' | 'webp' | null {
+  if (data.length >= 3 && data[0] === 0xff && data[1] === 0xd8 && data[2] === 0xff) return 'jpeg';
+  if (data.length >= 8 && data.subarray(0, 8).equals(Buffer.from('89504e470d0a1a0a', 'hex'))) {
+    return 'png';
+  }
+  if (
+    data.length >= 12 &&
+    data.subarray(0, 4).toString('latin1') === 'RIFF' &&
+    data.subarray(8, 12).toString('latin1') === 'WEBP'
+  ) {
+    return 'webp';
+  }
+  return null;
+}
+
+/**
+ * A form file's bytes WITHOUT the image's metadata: a JPEG, PNG or WebP is decoded and re-encoded
+ * in its own format, which drops EXIF (GPS position, device, date), XMP and ICC - a phone photo of a
+ * certificate carries where it was taken, and the form's managers have no use for that. The EXIF
+ * orientation is APPLIED first (`rotate()`), so the picture stands the way it was seen. Anything else
+ * (a PDF) is returned untouched.
+ *
+ * @throws UnprocessableEntityException for bytes that announce an image and do not decode as one -
+ *   refused, never stored with their metadata.
+ */
+export async function stripImageMetadata(data: Buffer): Promise<Buffer> {
+  const format = announcedImageFormat(data);
+  if (!format) return data;
+  try {
+    const image = sharp(data).rotate();
+    if (format === 'jpeg') return await image.jpeg({ quality: 90 }).toBuffer();
+    if (format === 'png') return await image.png().toBuffer();
+    return await image.webp({ quality: 90 }).toBuffer();
+  } catch (err) {
+    throw new UnprocessableEntityException(
+      `The image could not be read: ${err instanceof Error ? err.message : String(err)}`
+    );
+  }
+}
+
 /** What `purgeReels` answers for one object - see {@link MediaService.purgeReels}. */
 export type ReelPurgeOutcome = 'deleted' | 'absent' | 'refused' | 'failed';
 
@@ -466,16 +512,22 @@ export class MediaService {
    * social-service authenticated. Plaintext, and readable only through
    * `GET /media/internal/form-file/:id` ({@link isServerReadOnly}, {@link download}). No content type is recorded: see `form-file` on {@link RetentionClass}.
    */
-  async uploadFormFile(data: Buffer, ownerId: string): Promise<string> {
+  async uploadFormFile(
+    data: Buffer,
+    ownerId: string
+  ): Promise<{ mediaId: string; sizeBytes: number }> {
     if (!ownerId) {
       throw new BadRequestException('A form file needs the member who uploads it');
     }
+    const stored = await stripImageMetadata(data);
     const mediaId = uuidv4();
-    await this.storage.put(mediaId, data, data.length);
+    await this.storage.put(mediaId, stored, stored.length);
     this.setAccess(mediaId, Date.now(), ownerId, SERVER_READ_ONLY_CLASS);
     await this.persistMetadata();
-    this.logger.log(`Stored form file ${mediaId} (${data.length} bytes) for ${ownerId}`);
-    return mediaId;
+    this.logger.log(
+      `Stored form file ${mediaId} (${stored.length} bytes, ${data.length} received) for ${ownerId}`
+    );
+    return { mediaId, sizeBytes: stored.length };
   }
 
   /**
@@ -1129,6 +1181,13 @@ export class MediaService {
     // Validate mediaId is a UUID to prevent prototype pollution via property key injection.
     if (!UUID_REGEX.test(mediaId)) {
       throw new BadRequestException('Invalid mediaId');
+    }
+    // A form file is deleted by ONE path, its retention purge (`purgeFormFiles`, class AND owner),
+    // or with its uploader's account. This generic delete takes any id a caller names, so it is
+    // not one of those paths: an id copied from an answer must not reach the blob through it.
+    if (isServerReadOnly(this.meta.items[mediaId])) {
+      this.logger.warn(`media ${mediaId}: generic delete of a form file refused`);
+      throw new ForbiddenException('A form file is deleted by its retention purge only.');
     }
     await this.storage.delete(mediaId);
     const now = Date.now();

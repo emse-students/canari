@@ -59,6 +59,46 @@ describe('FormsController - the file download', () => {
   });
 });
 
+/** An upload is judged by the form's AUDIENCE before a byte is stored, as an answer is at submit. */
+describe('FormsController - the file upload', () => {
+  const file = { buffer: Buffer.from('%PDF-1.7'), size: 8, originalname: 'cv.pdf' } as any;
+
+  function makeController(mayAnswer: boolean) {
+    const service: any = {
+      assertMayUploadAnswerFile: jest.fn(() =>
+        mayAnswer
+          ? Promise.resolve()
+          : Promise.reject(new ForbiddenException('This form is not open to you.'))
+      ),
+    };
+    const formFiles: any = { upload: jest.fn(() => Promise.resolve({ fileId: 'x' })) };
+    const controller = new FormsController(
+      service,
+      {} as any,
+      {} as any,
+      {} as any,
+      {} as any,
+      formFiles
+    );
+    return { controller, service, formFiles };
+  }
+
+  it('refuses a member outside the form audience, and stores nothing', async () => {
+    const { controller, formFiles } = makeController(false);
+    await expect(controller.uploadAnswerFile('f1', file, 'q_cv', 'outsider')).rejects.toThrow(
+      'not open to you'
+    );
+    expect(formFiles.upload).not.toHaveBeenCalled();
+  });
+
+  it('hands an eligible member file to the upload', async () => {
+    const { controller, service, formFiles } = makeController(true);
+    await controller.uploadAnswerFile('f1', file, 'q_cv', 'member');
+    expect(service.assertMayUploadAnswerFile).toHaveBeenCalledWith('f1', 'member');
+    expect(formFiles.upload).toHaveBeenCalledWith('f1', 'q_cv', file, 'member');
+  });
+});
+
 describe('contentDisposition', () => {
   it('keeps the export header it replaced', () => {
     expect(contentDisposition("Gala d'hiver.xlsx", 'export')).toBe(

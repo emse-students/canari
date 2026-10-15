@@ -169,6 +169,41 @@ describe('FormsService - the file question', () => {
     });
   });
 
+  // The same audience rule as submit, applied before a byte is stored.
+  describe('at upload - the form audience', () => {
+    const PROMO_2024 = { promo: { values: [2024] } };
+    const facts = (promo: number | null) => ({
+      promo,
+      formation: null,
+      cotisationTiers: [],
+      answers: {},
+    });
+
+    it('refuses a member the form is not open to', async () => {
+      const { service } = makeService(baseForm({ submitCondition: PROMO_2024 }));
+      (service as any).pricingFacts.build.mockResolvedValueOnce(facts(2023));
+      await expect(service.assertMayUploadAnswerFile('f1', 'u1')).rejects.toThrow(
+        'not open to you'
+      );
+    });
+
+    it('accepts a member inside the audience, and anybody on an unrestricted form', async () => {
+      const restricted = makeService(baseForm({ submitCondition: PROMO_2024 }));
+      (restricted.service as any).pricingFacts.build.mockResolvedValueOnce(facts(2024));
+      await expect(
+        restricted.service.assertMayUploadAnswerFile('f1', 'u1')
+      ).resolves.toBeUndefined();
+      const open = makeService();
+      await expect(open.service.assertMayUploadAnswerFile('f1', 'u1')).resolves.toBeUndefined();
+      expect((open.service as any).pricingFacts.build).not.toHaveBeenCalled();
+    });
+
+    it('is a 404 for a form that is gone', async () => {
+      const { service } = makeService(null as any);
+      await expect(service.assertMayUploadAnswerFile('f1', 'u1')).rejects.toThrow('Form not found');
+    });
+  });
+
   describe('the manager list', () => {
     const PURGED_ID = '22222222-2222-4222-8222-222222222222';
 

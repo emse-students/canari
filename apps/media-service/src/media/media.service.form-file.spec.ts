@@ -8,8 +8,13 @@
  * serve a form file, because it has no per-object ACL.
  */
 import { Readable } from 'node:stream';
-import { BadRequestException } from '@nestjs/common';
-import { MediaService, isServerReadOnly } from './media.service';
+import sharp from 'sharp';
+import {
+  BadRequestException,
+  ForbiddenException,
+  UnprocessableEntityException,
+} from '@nestjs/common';
+import { MediaService, isServerReadOnly, stripImageMetadata } from './media.service';
 import { clientRetentionClass } from './media.controller';
 
 const ALICE = 'alice';
@@ -82,8 +87,9 @@ describe('form-file: stored by social-service, read by nobody else', () => {
   it('stores the bytes as form-file for the named uploader, with NO content type', async () => {
     const items: Record<string, Entry> = {};
     const { service, stored } = serviceWith(items);
-    const id = await service.uploadFormFile(Buffer.from('%PDF-1.7'), ALICE);
+    const { mediaId: id, sizeBytes } = await service.uploadFormFile(Buffer.from('%PDF-1.7'), ALICE);
     expect(stored).toEqual([id]);
+    expect(sizeBytes).toBe(8);
     expect(items[id].retentionClass).toBe('form-file');
     expect(items[id].ownerId).toBe(ALICE);
     // An `image/*` content type is what the public route reads as "public": never recorded here.
@@ -114,6 +120,13 @@ describe('form-file: stored by social-service, read by nobody else', () => {
     expect((await service.download(ALICES_CHAT)).status).toBe('ok');
   });
 
+  // `DELETE /media/:id` deletes any id a service names; a form file has its own deletion paths.
+  it('cannot be deleted through the generic delete', async () => {
+    const { service, deleted } = serviceWith({ [CV]: formFile(ALICE) });
+    await expect(service.remove(CV)).rejects.toThrow(ForbiddenException);
+    expect(deleted).toEqual([]);
+  });
+
   it('is not served by the public route', async () => {
     const { service } = serviceWith({ [CV]: formFile(ALICE) });
     expect(await service.downloadPublic(CV)).toEqual({ status: 'not_found' });
@@ -136,6 +149,68 @@ describe('form-file: stored by social-service, read by nobody else', () => {
     expect(() => clientRetentionClass('form-file')).toThrow(BadRequestException);
     expect(clientRetentionClass('chat-reel')).toBe('chat-reel');
     expect(clientRetentionClass('not-a-class')).toBeUndefined();
+  });
+});
+
+/**
+ * A phone photo of a certificate carries where it was taken. What is STORED is the picture alone.
+ */
+describe('stripImageMetadata: an image is stored without EXIF, GPS or ICC', () => {
+  /** A small JPEG carrying EXIF (with a GPS position) and an orientation of 6 (rotate 90 degrees). */
+  async function photoWithGps(format: 'jpeg' | 'png' | 'webp'): Promise<Buffer> {
+    return sharp({
+      create: { width: 40, height: 20, channels: 3, background: { r: 200, g: 50, b: 50 } },
+    })
+      .withExif({
+        IFD0: { Make: 'PhoneMaker' },
+        IFD3: { GPSLatitudeRef: 'N', GPSLatitude: '45/1 26/1 0/1' },
+      })
+      .withMetadata({ orientation: 6 })
+      .toFormat(format)
+      .toBuffer();
+  }
+
+  it.each(['jpeg', 'png', 'webp'] as const)('drops the metadata of a %s', async (format) => {
+    const input = await photoWithGps(format);
+    expect((await sharp(input).metadata()).exif).toBeDefined();
+    const out = await stripImageMetadata(input);
+    const meta = await sharp(out).metadata();
+    expect(meta.format).toBe(format);
+    expect(meta.exif).toBeUndefined();
+    expect(meta.icc).toBeUndefined();
+    expect(out.includes(Buffer.from('PhoneMaker'))).toBe(false);
+  });
+
+  it('applies the orientation before dropping it, so the picture stands as it was seen', async () => {
+    const input = await photoWithGps('jpeg');
+    expect((await sharp(input).metadata()).orientation).toBe(6);
+    const out = await stripImageMetadata(input);
+    const meta = await sharp(out).metadata();
+    expect([meta.width, meta.height]).toEqual([20, 40]);
+    expect(meta.orientation).toBeUndefined();
+  });
+
+  it('leaves a PDF byte for byte', async () => {
+    const pdf = Buffer.from('%PDF-1.7\n1 0 obj << /Author (Alice) >> endobj\n');
+    expect((await stripImageMetadata(pdf)).equals(pdf)).toBe(true);
+  });
+
+  it('refuses bytes that announce a JPEG and do not decode, rather than store them', async () => {
+    const broken = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe1]), Buffer.from('Exif GPS')]);
+    await expect(stripImageMetadata(broken)).rejects.toThrow(UnprocessableEntityException);
+  });
+
+  it('stores what it stripped, and says how big that is', async () => {
+    const items: Record<string, Entry> = {};
+    const { service } = serviceWith(items);
+    const putSizes: number[] = [];
+    (service as unknown as ServiceInternals).storage.put = (_id, data, size) => {
+      putSizes.push(size);
+      expect(data.includes(Buffer.from('PhoneMaker'))).toBe(false);
+      return Promise.resolve();
+    };
+    const { sizeBytes } = await service.uploadFormFile(await photoWithGps('jpeg'), ALICE);
+    expect(putSizes).toEqual([sizeBytes]);
   });
 });
 

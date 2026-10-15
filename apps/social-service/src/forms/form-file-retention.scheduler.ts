@@ -26,7 +26,7 @@ export interface FormFilePurgeReport {
 /**
  * Deletes the files of forms' FILE questions when their retention runs out - the ANSWER STAYS.
  *
- * Two predicates over `form_files` (migration 084), each a fact of the row:
+ * Two predicates over `form_files` (migration 085), each a fact of the row:
  * - an ANSWER's file: sent (`submissionId` set), not purged, and `attachedAt` + the form's
  *   `fileRetentionDays` is past. The blob goes, then `purgedAt` is set: the manager reads
  *   "file deleted" where the file was, and the answer row is untouched.
@@ -69,8 +69,20 @@ export class FormFileRetentionScheduler {
     }
   }
 
-  /** The whole run, separated so a test can call it without a scheduler. */
-  async purgeOnce(now: Date = new Date()): Promise<FormFilePurgeReport> {
+  /**
+   * The whole run, separated so a test can call it without a scheduler.
+   *
+   * ONE CLOCK, THE DATABASE'S. The selection and `purgeExpiredFiles`' re-check of each candidate are
+   * the same predicate, so they read the same instant: `now` is taken from PostgreSQL once and handed
+   * to both - a selection by `NOW()` re-checked against this box's clock would, on any skew, select a
+   * file the re-check calls early and log an error for it every hour. The interval is counted in
+   * HOURS (24 x days), the arithmetic the re-check uses, never in calendar days, which a session time
+   * zone with daylight saving makes 23 or 25 hours long.
+   *
+   * @param at The instant to judge at; omitted, the database's `NOW()`.
+   */
+  async purgeOnce(at?: Date): Promise<FormFilePurgeReport> {
+    const now = at ?? (await this.databaseNow());
     const report: FormFilePurgeReport = {
       answerFiles: { due: 0, gone: 0 },
       unsent: { due: 0, gone: 0 },
@@ -89,11 +101,11 @@ export class FormFileRetentionScheduler {
           `SELECT ff.id, ff."uploaderId", ff."attachedAt" AS start, f."fileRetentionDays" AS days
              FROM form_files ff JOIN forms f ON f.id = ff."formId"
             WHERE ff."purgedAt" IS NULL AND ff."submissionId" IS NOT NULL
-              AND ff."attachedAt" + make_interval(days => f."fileRetentionDays") <= NOW()
+              AND ff."attachedAt" + make_interval(hours => 24 * f."fileRetentionDays") <= $3::timestamptz
               AND ff.id <> ALL($1::uuid[])
             ORDER BY ff."attachedAt" ASC
             LIMIT $2`,
-          [excluded, BATCH]
+          [excluded, BATCH, now]
         ),
       { deleteBlobs, markGone: (id) => this.markAnswerFileGone(id) }
     );
@@ -107,11 +119,11 @@ export class FormFileRetentionScheduler {
           `SELECT id, "uploaderId", "createdAt" AS start, $3::int AS days
              FROM form_files
             WHERE "purgedAt" IS NULL AND "submissionId" IS NULL
-              AND "createdAt" <= NOW() - make_interval(days => $3)
+              AND "createdAt" <= $4::timestamptz - make_interval(hours => 24 * $3::int)
               AND id <> ALL($1::uuid[])
             ORDER BY "createdAt" ASC
             LIMIT $2`,
-          [excluded, BATCH, FORM_FILE_UPLOAD_WINDOW_DAYS]
+          [excluded, BATCH, FORM_FILE_UPLOAD_WINDOW_DAYS, now]
         ),
       { deleteBlobs, markGone: (id) => this.deleteUnsentRow(id) }
     );
@@ -169,6 +181,14 @@ export class FormFileRetentionScheduler {
         return;
       }
     }
+  }
+
+  /** PostgreSQL's clock - the one every predicate over `form_files` is written against. */
+  private async databaseNow(): Promise<Date> {
+    const [{ now }] = (await this.fileRepo.query(`SELECT NOW() AS now`)) as Array<{
+      now: Date | string;
+    }>;
+    return new Date(now);
   }
 
   /** The answer's file is gone: the row says so, and the answer is not touched. */

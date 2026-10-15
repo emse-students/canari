@@ -37,7 +37,10 @@ function makeWorld(opts: {
   blobs: Record<string, Blob>;
   retentionDays?: number;
   failing?: string[];
+  /** What PostgreSQL's NOW() answers; this box's clock by default. */
+  dbNow?: Date;
 }) {
+  const dbNow = opts.dbNow ?? new Date();
   const rows = opts.rows;
   const blobs = opts.blobs;
   const deletedBlobs: string[] = [];
@@ -46,7 +49,12 @@ function makeWorld(opts: {
   const fileRepo: any = {
     query: jest.fn((sql: string, params: unknown[] = []) => {
       const excluded = new Set((params[0] as string[] | undefined) ?? []);
+      // The database's clock: the one instant the run is judged at.
+      if (sql.includes('SELECT NOW() AS now')) {
+        return Promise.resolve([{ now: dbNow.toISOString() }]);
+      }
       if (sql.includes('JOIN forms')) {
+        const now = (params[2] as Date).getTime();
         return Promise.resolve(
           rows
             .filter(
@@ -54,21 +62,22 @@ function makeWorld(opts: {
                 !r.purgedAt &&
                 r.submissionId &&
                 r.attachedAt &&
-                r.attachedAt.getTime() + days * DAY <= Date.now() &&
+                r.attachedAt.getTime() + days * DAY <= now &&
                 !excluded.has(r.id)
             )
             .map((r) => ({ id: r.id, uploaderId: r.uploaderId, start: r.attachedAt, days }))
         );
       }
-      if (sql.includes('"createdAt" <= NOW()')) {
+      if (sql.includes('"createdAt" <= $4::timestamptz')) {
         const windowDays = params[2] as number;
+        const now = (params[3] as Date).getTime();
         return Promise.resolve(
           rows
             .filter(
               (r) =>
                 !r.purgedAt &&
                 !r.submissionId &&
-                r.createdAt.getTime() <= Date.now() - windowDays * DAY &&
+                r.createdAt.getTime() <= now - windowDays * DAY &&
                 !excluded.has(r.id)
             )
             .map((r) => ({
@@ -223,6 +232,20 @@ describe('FormFileRetentionScheduler', () => {
     const report = await world.scheduler.purgeOnce();
     expect(report.blobs.absent).toBe(1);
     expect(world.rows[0].purgedAt).toBeInstanceOf(Date);
+  });
+
+  // Selection and re-check read ONE clock. The database runs an hour ahead of this box; a file due
+  // 30 minutes from now by the box is due by the database, and must be purged rather than logged as
+  // "selected but not due" every hour.
+  it('judges at the database clock, so a skewed box never calls a selected file early', async () => {
+    const world = makeWorld({
+      rows: [{ ...answerRow('edge', 0), attachedAt: ago(7 - 0.5 / 24) }],
+      blobs: { edge: { ownerId: 'alice', retentionClass: 'form-file' } },
+      dbNow: new Date(Date.now() + 60 * 60 * 1000),
+    });
+    const report = await world.scheduler.purgeOnce();
+    expect(report.answerFiles).toEqual({ due: 1, gone: 1 });
+    expect(world.logs.some((l) => l.includes('selected but not due'))).toBe(false);
   });
 
   it('skips a tick while the previous run is still going', async () => {

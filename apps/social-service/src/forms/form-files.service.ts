@@ -28,7 +28,7 @@ import { describeHttpError } from '../common/http-error-log';
  * ACL. The ONLY reader is `download` below, behind
  * `assertFormManager`. See docs/wiki/frontend/modules/forms.md ("The file question").
  *
- * The answer stores the file's id; this service's table (`form_files`, migration 084) is where that
+ * The answer stores the file's id; this service's table (`form_files`, migration 085) is where that
  * id means something - and where the purge reads its state from (`form-file-retention.scheduler.ts`).
  */
 
@@ -53,6 +53,9 @@ export const FORM_FILE_UPLOAD_WINDOW_DAYS = 1;
 
 /** Uploads one member may hold on one form without having sent them, within the window above. */
 export const FORM_FILE_MAX_PENDING = 10;
+
+/** The longest question id a file can be filed under: `form_files."itemId"` is varchar(64). */
+export const FORM_ITEM_ID_MAX_LENGTH = 64;
 
 /** The bounds and default of `forms.fileRetentionDays` (decisions D23, D41). */
 export const FILE_RETENTION_MIN_DAYS = 1;
@@ -98,16 +101,24 @@ export function detectFormFileType(data: Buffer): FormFileType | null {
 }
 
 /**
- * The name a file is filed under: the device's own name, without a path, control characters or the
- * two characters a `Content-Disposition` header cannot carry, and with the extension of its REAL
- * type. Multer hands the name over as latin1 (busboy's default), so UTF-8 bytes are re-read as such.
- * A name that cleans to nothing is the id's first eight characters, never a word in some language.
+ * What a file name must not carry: the C0 and C1 control characters, DEL, the double quote a
+ * `Content-Disposition` header cannot hold, and the BIDIRECTIONAL controls (U+200E/F, U+061C,
+ * U+202A-202E, U+2066-2069) - a right-to-left override turns `cv[U+202E]fdp.exe` into a name that
+ * READS `cvexe.pdf` on the manager's screen.
+ */
+// eslint-disable-next-line no-control-regex -- control characters are exactly what is removed
+const UNSAFE_NAME_CHARS = /[\u0000-\u001f\u007f-\u009f"‎‏؜‪-‮⁦-⁩]/g;
+
+/**
+ * The name a file is filed under: the device's own name, without a path or {@link UNSAFE_NAME_CHARS},
+ * and with the extension of its REAL type. Multer hands the name over as latin1 (busboy's default),
+ * so UTF-8 bytes are re-read as such. A name that cleans to nothing is the id's first eight
+ * characters, never a word in some language.
  */
 export function cleanFileName(raw: string | undefined, type: FormFileType, fileId: string): string {
   const decoded = Buffer.from(raw ?? '', 'latin1').toString('utf8');
   const base = decoded.split(/[\\/]/).pop() ?? '';
-  // eslint-disable-next-line no-control-regex -- control characters are exactly what is removed
-  const printable = base.replace(/[\u0000-\u001f\u007f"]/g, '');
+  const printable = base.replace(UNSAFE_NAME_CHARS, '');
   const stem = printable
     .replace(/\.[^.]*$/, '')
     .trim()
@@ -189,6 +200,13 @@ export class FormFilesService {
     file: { buffer: Buffer; size: number; originalname?: string },
     uploaderId: string
   ): Promise<UploadedFormFile> {
+    if (
+      typeof itemId !== 'string' ||
+      itemId.length === 0 ||
+      itemId.length > FORM_ITEM_ID_MAX_LENGTH
+    ) {
+      throw new BadRequestException('This question does not ask for a file.');
+    }
     const form = await this.formRepo.findOne({ where: { id: formId, deletedAt: IsNull() } });
     if (!form) throw new NotFoundException('Form not found');
     const item = (form.items ?? []).find((i: { id: string }) => i.id === itemId);
@@ -219,10 +237,72 @@ export class FormFilesService {
       throw new BadRequestException('A file answer must be a PDF, JPEG, PNG or WebP file.');
     }
 
-    const [{ pending }] = (await this.fileRepo.query(
+    // Read before the bytes travel, so a member at the cap is told without an 8 MiB round trip. NOT
+    // the gate: two uploads in flight both pass it. The gate is the same count, under a lock, in the
+    // transaction that writes the row (below).
+    await this.assertPendingRoom(this.fileRepo.manager, formId, uploaderId);
+
+    const { mediaId: fileId, sizeBytes } = await this.storeInMedia(file.buffer, uploaderId);
+    const fileName = cleanFileName(file.originalname, contentType, fileId);
+    try {
+      await this.fileRepo.manager.transaction(async (tx) => {
+        // One member's uploads on one form are written one at a time, so the count below cannot be
+        // read by two writers at once: an advisory lock on the pair, released with the transaction.
+        await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+          `form_files:${formId}:${uploaderId}`,
+        ]);
+        await this.assertPendingRoom(tx, formId, uploaderId);
+        await tx.insert(FormFile, {
+          id: fileId,
+          formId,
+          itemId: item.id,
+          uploaderId,
+          contentType,
+          fileName,
+          sizeBytes,
+          submissionId: null,
+          attachedAt: null,
+          purgedAt: null,
+        });
+      });
+    } catch (e) {
+      // The blob exists and no row names it: nothing would ever purge it. Taken back now, and if
+      // that fails too the line says which object is stranded.
+      if (e instanceof HttpException && e.getStatus() === HttpStatus.TOO_MANY_REQUESTS) {
+        this.logger.warn(
+          `[FORM_FILES] ${fileId} lost the race for the last pending slot - taken back`
+        );
+      } else {
+        this.logger.error(
+          `[FORM_FILES] row insert failed for ${fileId} - deleting its blob: ${describeHttpError(e)}`
+        );
+      }
+      const outcome = (await this.purgeBlobs([{ mediaId: fileId, ownerId: uploaderId }]))[fileId];
+      if (outcome !== 'deleted' && outcome !== 'absent') {
+        this.logger.error(`[FORM_FILES] blob ${fileId} is STRANDED (purge said ${outcome})`);
+      }
+      throw e;
+    }
+    this.logger.log(
+      `[FORM_FILES] upload ${fileId} form=${formId.slice(0, 8)} item=${item.id} ${contentType} ${sizeBytes} B stored (${file.buffer.length} B received)`
+    );
+    return { fileId, fileName, sizeBytes, contentType };
+  }
+
+  /**
+   * Refuses (429) a member already holding {@link FORM_FILE_MAX_PENDING} unsent uploads on a form
+   * within the upload window. The window is counted in hours (24 x days), as everywhere a
+   * `form_files` predicate is written.
+   */
+  private async assertPendingRoom(
+    db: Pick<EntityManager, 'query'>,
+    formId: string,
+    uploaderId: string
+  ): Promise<void> {
+    const [{ pending }] = (await db.query(
       `SELECT count(*)::int AS pending FROM form_files
         WHERE "formId" = $1 AND "uploaderId" = $2 AND "submissionId" IS NULL
-          AND "purgedAt" IS NULL AND "createdAt" > NOW() - make_interval(days => $3)`,
+          AND "purgedAt" IS NULL AND "createdAt" > NOW() - make_interval(hours => 24 * $3::int)`,
       [formId, uploaderId, FORM_FILE_UPLOAD_WINDOW_DAYS]
     )) as Array<{ pending: number }>;
     if (pending >= FORM_FILE_MAX_PENDING) {
@@ -234,38 +314,6 @@ export class FormFilesService {
         HttpStatus.TOO_MANY_REQUESTS
       );
     }
-
-    const fileId = await this.storeInMedia(file.buffer, uploaderId);
-    const fileName = cleanFileName(file.originalname, contentType, fileId);
-    try {
-      await this.fileRepo.insert({
-        id: fileId,
-        formId,
-        itemId: item.id,
-        uploaderId,
-        contentType,
-        fileName,
-        sizeBytes: file.buffer.length,
-        submissionId: null,
-        attachedAt: null,
-        purgedAt: null,
-      });
-    } catch (e) {
-      // The blob exists and no row names it: nothing would ever purge it. Taken back now, and if
-      // that fails too the line says which object is stranded.
-      this.logger.error(
-        `[FORM_FILES] row insert failed for ${fileId} - deleting its blob: ${describeHttpError(e)}`
-      );
-      const outcome = (await this.purgeBlobs([{ mediaId: fileId, ownerId: uploaderId }]))[fileId];
-      if (outcome !== 'deleted' && outcome !== 'absent') {
-        this.logger.error(`[FORM_FILES] blob ${fileId} is STRANDED (purge said ${outcome})`);
-      }
-      throw e;
-    }
-    this.logger.log(
-      `[FORM_FILES] upload ${fileId} form=${formId.slice(0, 8)} item=${item.id} ${contentType} ${file.buffer.length} B`
-    );
-    return { fileId, fileName, sizeBytes: file.buffer.length, contentType };
   }
 
   /**
@@ -276,6 +324,19 @@ export class FormFilesService {
    * purged, and is either unsent and inside its upload window, or already this submission's (a paid
    * form re-submitted while pending reuses its row). Anything else throws, and the submission rolls
    * back with it.
+   *
+   * `attachedAt` - where retention counts from - is the LATER of the transaction's `NOW()` and the
+   * submission's `createdAt`. A pending submission that is REUSED keeps its old `createdAt`, and
+   * counting from it would cut the file's life short by however long the row waited; `NOW()` alone
+   * is this answer's moment.
+   *
+   * `NOW()` is the transaction's START, so the window closes at the instant the transaction began,
+   * not when it commits. A submission begun a hair before the 24th hour of an upload can therefore
+   * claim a file the purge, judging at its own later instant, has just selected as unsent. The
+   * overlap is the length of one submission's transaction at that one boundary, and its worst case
+   * is BENIGN and visible: the blob goes, the answer keeps the id, and the manager's first download
+   * meets the media service's 404, marks the row purged and reads "file deleted". Accepted, not
+   * healed silently (decided in review of #1908).
    */
   async attach(
     manager: EntityManager,
@@ -287,10 +348,11 @@ export class FormFilesService {
     for (const { itemId, fileId } of files) {
       const rows = (await manager.query(
         `WITH claimed AS (
-           UPDATE form_files SET "submissionId" = $1, "attachedAt" = $2
+           UPDATE form_files SET "submissionId" = $1, "attachedAt" = GREATEST(NOW(), $2::timestamptz)
             WHERE id = $3 AND "formId" = $4 AND "itemId" = $5 AND "uploaderId" = $6
               AND "purgedAt" IS NULL
-              AND (("submissionId" IS NULL AND "createdAt" > NOW() - make_interval(days => $7))
+              AND (("submissionId" IS NULL
+                    AND "createdAt" > NOW() - make_interval(hours => 24 * $7::int))
                    OR "submissionId" = $1)
             RETURNING id)
          SELECT id FROM claimed`,
@@ -401,24 +463,42 @@ export class FormFilesService {
     return res.data?.results ?? {};
   }
 
-  /** Stores the bytes as a `form-file` for `uploaderId`; returns the media id. */
-  private async storeInMedia(data: Buffer, uploaderId: string): Promise<string> {
+  /**
+   * Stores the bytes as a `form-file` for `uploaderId`. The media service re-encodes an image
+   * without its metadata (EXIF, GPS), so `sizeBytes` is what it STORED, not what was received.
+   * Its 422 - an image that does not decode - is the member's file, answered as a 400.
+   */
+  private async storeInMedia(
+    data: Buffer,
+    uploaderId: string
+  ): Promise<{ mediaId: string; sizeBytes: number }> {
     const fd = new FormData();
     fd.append('file', data, { filename: 'answer', contentType: 'application/octet-stream' });
     fd.append('ownerId', uploaderId);
     try {
       const res = await firstValueFrom(
-        this.http.post<{ mediaId: string }>(mediaUrl('media/internal/form-file'), fd, {
-          headers: {
-            ...fd.getHeaders(),
-            'x-internal-secret': process.env.INTERNAL_SECRET ?? '',
-          },
-          maxBodyLength: FORM_FILE_MAX_BYTES + 65_536,
-        })
+        this.http.post<{ mediaId: string; sizeBytes: number }>(
+          mediaUrl('media/internal/form-file'),
+          fd,
+          {
+            headers: {
+              ...fd.getHeaders(),
+              'x-internal-secret': process.env.INTERNAL_SECRET ?? '',
+            },
+            maxBodyLength: FORM_FILE_MAX_BYTES + 65_536,
+          }
+        )
       );
-      if (!res.data?.mediaId) throw new Error('the media service returned no mediaId');
-      return res.data.mediaId;
+      if (!res.data?.mediaId || typeof res.data.sizeBytes !== 'number') {
+        throw new Error('the media service returned no mediaId or sizeBytes');
+      }
+      return { mediaId: res.data.mediaId, sizeBytes: res.data.sizeBytes };
     } catch (e) {
+      const status = (e as { response?: { status?: number } })?.response?.status;
+      if (status === HttpStatus.UNPROCESSABLE_ENTITY) {
+        this.logger.warn(`[FORM_FILES] upload refused: the image does not decode`);
+        throw new BadRequestException('This image could not be read. Send it again as a PDF.');
+      }
       this.logger.error(`[FORM_FILES] media upload failed: ${describeHttpError(e)}`);
       throw new HttpException('The file could not be stored. Try again.', HttpStatus.BAD_GATEWAY);
     }

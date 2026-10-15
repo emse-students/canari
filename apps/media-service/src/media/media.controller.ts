@@ -651,7 +651,7 @@ export class MediaController {
    * `ownerId`. Sole consumer: social-service's `POST /forms/:id/files`, which authenticated the
    * member, checked the form and the question, the size and the type (read from the bytes) before
    * calling. No user JWT: the caller is a service. The object is readable only through
-   * `GET internal/:id` - see `form-file` on {@link RetentionClass}.
+   * `GET internal/form-file/:id` - see `form-file` on {@link RetentionClass}.
    */
   @Post('internal/form-file')
   @UseInterceptors(FileInterceptor('file', { limits: { fileSize: MAX_BYTES }, storage: undefined }))
@@ -659,14 +659,15 @@ export class MediaController {
     @UploadedFile() file: unknown,
     @Body() body: { ownerId?: unknown },
     @Headers('x-internal-secret') internalSecret: string | undefined
-  ): Promise<{ mediaId: string }> {
+  ): Promise<{ mediaId: string; sizeBytes: number }> {
     assertInternalSecret(internalSecret);
     if (typeof body?.ownerId !== 'string' || body.ownerId.length === 0) {
       throw new BadRequestException('ownerId must be a non-empty string');
     }
     const upload = requireUploadedFile(file);
-    const mediaId = await this.mediaService.uploadFormFile(upload.buffer, body.ownerId);
-    return { mediaId };
+    // An image is re-encoded without its metadata (EXIF, GPS) before it is stored; `sizeBytes` is
+    // what was STORED. An image that does not decode is a 422.
+    return this.mediaService.uploadFormFile(upload.buffer, body.ownerId);
   }
 
   // ---------------------------------------------------------------------------
