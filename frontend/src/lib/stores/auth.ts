@@ -32,7 +32,7 @@ import { customTabsCommand } from '$lib/services/customTabsCommands';
 import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
 import { forgetPinSaltAhead } from '$lib/composables/session/pinSaltAhead';
 import { connectivity } from '$lib/stores/connectivity.svelte';
-import { isTransportFailure } from '$lib/utils/transportFailure';
+import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 import { flushAndroidCookies } from '$lib/utils/androidCookies';
 import {
   REFRESH_HEADER,
@@ -88,6 +88,8 @@ let _accessToken: string | null = null;
 // Shared in-flight refresh promise - prevents concurrent getToken() callers from
 // each firing a separate /api/auth/refresh request.
 let _pendingRefresh: Promise<string> | null = null;
+/** A refresh was refused for no network since the last one sent - so the line is said once a spell. */
+let _refreshHeldForNoNetwork = false;
 
 /**
  * Thrown when the HttpOnly refresh cookie has expired or been revoked (HTTP 401).
@@ -611,6 +613,23 @@ export async function refresh(fetchImpl: typeof fetch = fetch): Promise<string> 
     alog('refresh✗identity split (not asking again until sign-out)');
     throw new IdentitySplitError(split);
   }
+  // NO NETWORK IS A FACT THE BROWSER ALREADY STATED, so it is not learnt again by failing. Each
+  // caller of `getToken` used to send its own refresh into a dead link: an offline cold start on the
+  // Mi 9T (`v1.2.9-alpha.1`, 2026-10-15) logged 23 `refresh✗transport` lines in six seconds, one per
+  // request that wanted a token. The answer is the same transport failure, typed, without a request;
+  // the `online` event that ends the condition re-runs the reconnect listeners, and the next call
+  // asks for real. Said once per spell, not once per caller.
+  if (connectivity.browserReportsNoNetwork()) {
+    if (!_refreshHeldForNoNetwork) {
+      _refreshHeldForNoNetwork = true;
+      alog('refresh not sent: the browser reports no network - held until it reports one');
+    }
+    throw new TransportFailureError(
+      'navigator.onLine is false',
+      'refresh not sent: the browser reports no network'
+    );
+  }
+  _refreshHeldForNoNetwork = false;
   if (_pendingRefresh) return _pendingRefresh;
   _pendingRefresh = _doRefresh(fetchImpl).finally(() => {
     _pendingRefresh = null;
@@ -659,11 +678,16 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
     });
     connectivity.notifyServerReachable();
   } catch (e) {
-    if (isTransportFailure(e)) connectivity.notifyServerUnreachable();
     _accessToken = null;
     clearWsSessionCookie();
     awarn(`refresh✗transport ${Date.now() - t0}ms: ${String(e)}`);
-    throw e;
+    if (!isTransportFailure(e)) throw e;
+    connectivity.notifyServerUnreachable();
+    // TYPED AT THE THROW. The refresh carries the cookie, so it always takes the WebView's own
+    // `fetch`, whose transport failure is the contract's bare `TypeError: Failed to fetch` - and every
+    // caller of `getToken` (the MLS delivery client, the history pulls) printed that raw object, stack
+    // and all. The one class `transportFailure.ts` defines says "no answer" by its NAME.
+    throw e instanceof TransportFailureError ? e : new TransportFailureError(e);
   }
 
   if (!res.ok) {

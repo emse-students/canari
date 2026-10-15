@@ -575,7 +575,7 @@ Three mechanisms, each independently sufficient for a different failure:
 | Where | What | Why it is not the others |
 | --- | --- | --- |
 | `fetchMessages` | fills a page to `PENDING_PAGE_MAX_BYTES` (1 MB), reading `PENDING_FETCH_CHUNK_ROWS` (50) at a time | bounds the SERVICE's memory too: reading 500 rows before trimming would load 44 MB to return 1 MB |
-| `pullPendingMessagesJson` | halves `limit` when a page does not arrive, down to 1 | survives an OLD server, and a link too slow for any fixed budget; terminates on a proof (nine steps), never a clock. What counts as "does not arrive" is the progress deadline below |
+| `pullPendingMessagesJson` | halves `limit` when a page does not arrive, down to 1 | survives an OLD server, and a link too slow for any fixed budget; terminates on a proof (nine steps), never a clock. What counts as "does not arrive" is the progress deadline below; a transport failure (nobody answered) is rethrown at once, never halved (2026-10-15) |
 | both | a page always carries **at least one row**, whatever its size | an oversized frame must stay deliverable, or it blocks its own queue for ever |
 
 **Verified on production the same evening.** The server logged

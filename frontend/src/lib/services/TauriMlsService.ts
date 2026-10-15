@@ -743,7 +743,12 @@ export class TauriMlsService extends BaseMlsService {
           // EVERY SWALLOWED BRANCH LOGS. This chain is gated on a network round-trip and a
           // keystore write, and it silently carried the device-identity backup until that backup
           // became `store_device_identity`'s own job - months of drift with nothing in any log.
-          .catch((e) => console.warn('[MLS][Tauri] push_context write after init failed:', e))
+          // `String(e)`: the class names the cause (`TransportFailureError` on an offline start,
+          // when no token exists), and the stack of a known throw is a dozen lines that say nothing.
+          // NOT re-attempted at the reconnect - an open item, see offline-and-weak-network section 15.
+          .catch((e) =>
+            console.warn(`[MLS][Tauri] push_context write after init failed: ${String(e)}`)
+          )
       );
     }
 

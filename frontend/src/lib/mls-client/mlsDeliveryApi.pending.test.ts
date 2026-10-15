@@ -1,3 +1,4 @@
+import { TransportFailureError } from '$lib/utils/transportFailure';
 import { MlsDeliveryApi } from './mlsDeliveryApi';
 
 /**
@@ -105,6 +106,41 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
 
     const limits = fetchFn.mock.calls.map((c) => new URL(String(c[0])).searchParams.get('limit'));
     expect(limits).toEqual(['500', '250', '125', '62', '31', '15', '7', '3', '1']);
+  });
+
+  it('never halves against a transport failure: nobody answered, so a smaller page cannot help', async () => {
+    // The Mi 9T's offline cold start (2026-10-15) walked 250, 125, ... 1 against `Failed to fetch`:
+    // eight warn lines and eight requests into the same dead link.
+    const fetchFn = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await expect(api(fetchFn).pullPendingMessagesJson()).rejects.toBeInstanceOf(TypeError);
+
+    expect(fetchFn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls.some(([m]) => String(m).includes('retrying with limit'))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it('never halves, nor sends, when the token itself cannot be had', async () => {
+    const fetchFn = vi.fn();
+    const getToken = vi.fn(async () => {
+      throw new TransportFailureError('navigator.onLine is false');
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const a = new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken,
+      fetchImpl: fetchFn as unknown as typeof fetch,
+    });
+    a.userId = 'u1';
+    a.deviceId = 'd1';
+
+    await expect(a.pullPendingMessagesJson()).rejects.toBeInstanceOf(TransportFailureError);
+    expect(fetchFn).not.toHaveBeenCalled();
+    // ONE ask for the token, not one per rung of a ladder that never left the device.
+    expect(getToken).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls.some(([m]) => String(m).includes('retrying with limit'))).toBe(false);
+    warn.mockRestore();
   });
 
   it('keeps the smaller page for the pages that follow, never growing back', async () => {
