@@ -21,7 +21,7 @@ import {
 import type { Request, Response } from 'express';
 import { UsersService } from './users.service';
 import { UserBlocksService } from './user-blocks.service';
-import { AvatarService } from './avatar.service';
+import { AvatarService, AVATAR_SUBJECT_ID } from './avatar.service';
 import { ProfileEditService } from './profile-edit.service';
 import { ProfileCorrectionService } from './profile-correction.service';
 import {
@@ -216,6 +216,46 @@ export class UsersController {
       );
     }
     return { users: await this.usersService.findManyPublic(requested) };
+  }
+
+  /**
+   * Which of a comma-separated list of users have a profile photo, in ONE request.
+   * Usage: `GET /users/avatar-presence?ids=<a>,<b>,<c>` -> `{ withPhoto: string[] | null }`
+   *
+   * WHY IT EXISTS: a client learned that a member has no photo by asking `:id/avatar` and being
+   * answered `404` - 37 refused requests, each a console error line, in one salon walk on the Mi 9T
+   * (2026-10-13). The gallery holds the fact; the client now asks it once per list and requests
+   * only the faces that exist. `null` means the gallery could not say (unreachable, or an older
+   * build without the route), and the client then asks each avatar as before.
+   *
+   * Bounded like `batch` (a refusal, never a truncation), and each id is held to the shape the avatar
+   * route already enforces, since the list is forwarded to another service.
+   *
+   * DECLARED BEFORE `:id`, for the reason `batch` is.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get('avatar-presence')
+  async avatarPresence(@Query('ids') ids: string) {
+    if (typeof ids !== 'string')
+      throw new BadRequestException('ids must be a comma-separated list');
+    const requested = [
+      ...new Set(
+        ids
+          .split(',')
+          .map((id) => id.trim())
+          .filter(Boolean)
+      ),
+    ];
+    if (requested.length > MAX_PROFILE_BATCH) {
+      throw new BadRequestException(
+        `too many ids (${requested.length} > ${MAX_PROFILE_BATCH}) - split the request`
+      );
+    }
+    if (requested.some((id) => !AVATAR_SUBJECT_ID.test(id))) {
+      throw new BadRequestException('ids must be identifiers');
+    }
+    const withPhoto = await this.avatarService.fetchAvatarPresence(requested);
+    return { withPhoto: withPhoto === null ? null : requested.filter((id) => withPhoto.has(id)) };
   }
 
   /**

@@ -189,6 +189,10 @@ this session (or which byte length/etag), and skip the rest.
   `general` open, each with `[AvatarCache] 404 ... absent for the rest of the session`. The
   request is how the client learns a member has no picture; `users/batch`, which it already called,
   could carry that fact (durable rule: never learn by failing what a fact could have told you).
+  **Built 2026-10-14** as a list question of its own rather than a `users/batch` field, so names never
+  wait on the gallery: [which faces exist](../services/core-service.md#which-faces-exist-asked-once-per-list-2026-10-14).
+  A face without a photo is no longer requested; owed once shipped, the same walk's count (expected 0
+  avatar `404`s where there were 37).
 - **496 `[GRAINE] v2 endorsement of session ... verified ... from the tree`** debug lines, the
   largest tag of the capture. **Fixed 2026-10-13**: a verification that succeeds is a seed being
   stored, and the caller already says that once per distributed seed or once per bundle, so the

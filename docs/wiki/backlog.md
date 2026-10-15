@@ -442,6 +442,8 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 
 10 of 28 avatar reads answered 404 on one load. The client already keeps the absence for the session; removing the first ask needs the user record to say whether a photo exists, which only MiGallery knows.
 
+**Built (2026-10-14, draft PRs: MiGallery `feat/avatar-presence-batch`, Canari `feat/avatar-presence-batch`)**: one presence question per list ([core-service](services/core-service.md#which-faces-exist-asked-once-per-list-2026-10-14)). MiGallery ships first; Canari tolerates its absence. Owed once both ship: the salon walk's count on a console (0 avatar `404`s expected, 37 before). Delete this entry then.
+
 ## Seen in the 2026-10-12 heavy-state performance audit - what is open
 
 Ranked, measured and located on [performance-audit-2026-10-12](frontend/performance-audit-2026-10-12.md); five draft pull requests carry the rest (#1771-#1775).

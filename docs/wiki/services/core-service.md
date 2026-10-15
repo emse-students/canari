@@ -157,6 +157,30 @@ arriving in six bursts roughly 450 ms apart, each tile appearing as its own hist
 so today this is 19 requests becoming 6. It becomes 1 when the tiles mount together, and needs no
 revisiting when they do.
 
+#### Which faces exist, asked once per list (2026-10-14)
+
+**Measured on the Mi 9T, 2026-10-13**: a salon open requested every member's avatar and collected 25
+`404`s (37 in the walk), one `Failed to load resource` line each - the client learned "no photo" by being
+refused ([community-open-slowness](../frontend/community-open-slowness-mi9t-2026-10-13.md#finding-6---noise-met-on-the-way)).
+
+- **MiGallery** answers `GET /api/users/avatar-presence?ids=` with `{ withPhoto }`: the ids whose row has
+  a `photos_id`, i.e. those its avatar route does not 404 (MiGallery `docs/wiki/api-reference.md`).
+- **Core** proxies it as `GET /api/users/avatar-presence?ids=` (`NginxAuthGuard`, 100 ids like `batch`,
+  each id held to `AVATAR_SUBJECT_ID`, the avatar route's own shape). No key on the estate answers an
+  empty list (nobody has a photo here, what every avatar would have said); a gallery that cannot say -
+  unreachable, key refused, or a build without the route - answers `withPhoto: null`, logged at warn.
+- **The client** (`utils/avatarPresence.ts`) asks once per turn of the event loop for every face it has
+  not seen, remembers the answer for the reader's session, and `userAvatarCache.ts` requests only a face
+  that is not `false`. `null` is never remembered and requests the avatar as before.
+- **The cost**: a face never seen this session waits one round trip before its own request (initials
+  are drawn meanwhile). A photo added in MiGallery shows on the next app load, the cost the absence set
+  already accepts.
+- **Not on `users/batch`, deliberately**: names would wait on MiGallery's health (4 s budget per batch
+  during an outage). A separate list question costs the same one request and couples nothing.
+
+Pinned by `avatar-presence.spec.ts` (core), `avatarPresence.test.ts` and `userAvatarCache.test.ts`
+(client), `tests/avatar-presence.test.ts` (MiGallery).
+
 #### The avatar proxy
 
 `avatar.service.ts` fetches `gallery.mitv.fr/api/users/<id>/avatar` with `x-api-key` and answers one
@@ -552,6 +576,8 @@ and `userAvatarCache.ts` forgot `none` with the mount.
 
 - **A has-avatar flag in `/api/users/batch` is REFUTED**: the photo lives in MiGallery, core holds no
   column for it, so the flag would cost one upstream call per profile, which is the request it replaces.
+  **What replaced the first ask instead (2026-10-14)** is a LIST question with its own route, so a slow
+  gallery never delays a name: [which faces exist, asked once per list](#which-faces-exist-asked-once-per-list-2026-10-14).
 - **A 404 is kept per URL for the rest of the session, with NO timer** (user, 2026-10-06; the 10-minute
   lifetime of 2026-10-05 was a clock deciding traffic, and prod 1.0.3 - which predates it - logged 5121
   404s in 6587 avatar requests over 30 h) - cleared only when the signed-in reader changes. **Only a
