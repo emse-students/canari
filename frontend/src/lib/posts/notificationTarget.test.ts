@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import {
+  KNOWN_NOTIFICATION_TYPES,
   isKnownNotificationType,
   notificationHref,
   resolveNotificationHref,
@@ -45,6 +46,15 @@ describe('notificationHref', () => {
     // `postId` is the REQUEST's id, which has no page: `/posts/<request id>` would be a 404.
     for (const type of ['profile_correction_applied', 'profile_correction_refused']) {
       expect(notificationHref({ type, postId: 'req-1' }), type).toBe('/profile');
+    }
+  });
+
+  it('gives every known type a destination, bar the two resolved by slug', () => {
+    // Compared with a hand-written count so a type removed from the set cannot pass silently.
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(18);
+    for (const type of KNOWN_NOTIFICATION_TYPES) {
+      const slugged = type === 'repost_proposed' || type === 'coorganise_proposed';
+      expect(notificationHref({ type, postId: 'x1' }) === null, type).toBe(slugged);
     }
   });
 

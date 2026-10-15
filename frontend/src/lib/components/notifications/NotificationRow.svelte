@@ -204,8 +204,11 @@
 <button
   type="button"
   disabled={isUnknownNotif}
+  aria-disabled={isUnknownNotif}
   onclick={onOpen}
-  class="flex w-full items-start gap-3 rounded-lg px-2 py-2.5 text-left transition-colors hover:bg-black/5 dark:hover:bg-white/10"
+  class="flex w-full items-start gap-3 rounded-lg px-2 py-2.5 text-left transition-colors {isUnknownNotif
+    ? 'cursor-default'
+    : 'hover:bg-black/5 dark:hover:bg-white/10'}"
 >
   <!--
     Actor avatar with the type badge punched out of its lower-right corner. The ring is the row's

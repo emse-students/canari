@@ -237,6 +237,8 @@ if (isTauriRuntime()) {
                     { type: 'repost_proposed', postId: queueAssociationId },
                     async (id) => (await assos.getAssociation(id)).slug
                   );
+                  // Unreachable for `repost_proposed` (it always has a slug route); kept because the
+                  // signature is `string | null` and a null must never reach `goto`.
                   if (!route) {
                     console.warn('[hooks] proposals queue has no destination');
                     return;

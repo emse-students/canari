@@ -118,14 +118,22 @@ SELECT count(*) FROM channel_messages WHERE "signature" IS NULL AND "senderSessi
 `type` fell into the row's final `{:else}`, the COMMENT branch ("<actor> a commente : <title>", comment
 glyph), and `notificationHref` answered `/posts/<id>`, a dead link when the id is not a post. Native
 pushes are not affected: Android and iOS (NSE and `canari_push.mm`) keep the server's own wording for
-an unknown `contentKey` and log it. An unknown deep-link host used to open the app and go nowhere; it
-now lands on `/notifications`.
+an unknown `contentKey` and log it. An unknown deep-link HOST of our scheme used to open the app and go nowhere; it
+now lands on `/notifications`. **But a push for a new type does not get there by itself:** the server
+(`socialDeepLink`, `apps/social-service/src/push/push-target.ts`) and Android
+(`CanariFirebaseMessagingService.kt`) map ANY `postId` to `fr.emse.canari://post/<id>`, so a new type whose
+id is not a post keeps a DEAD tap on every client.
 **Consequence for the ones already shipped:** `profile_correction_*`, `coorganise_proposed` and
 `repost_proposed` (and the agenda's types before their own rows) show the comment sentence on a client
 older than the release carrying their rows.
 **THE MINIMUM CLIENT VERSION MUST COVER THIS FIX BEFORE ANY NEW NOTIFICATION TYPE SHIPS** - the release
 carrying PR #1911, both stores serving it, then `minClientVersion` raised to it. A new type shipped
 earlier reaches the floor clients as a wrong sentence and a dead link, which no server change can undo.
+**Checklist - a NEW notification type** (no other checklist existed; this is it):
+1. The floor above covers PR #1911 first.
+2. The server sends an EXPLICIT `deepLink` (or a dedicated host) for it in `socialDeepLink`; never rely on the `postId` -> `post/<id>` default when the id is not a post.
+3. Add the type to `KNOWN_NOTIFICATION_TYPES` and the `notificationHref` switch (`notificationTarget.ts`), and give `NotificationRow` its glyph, colour and Paraglide sentence; the tests walk every known type through both.
+4. Native tables (`composeServerNotification`, NSE, `canari_push.mm`) get its `contentKey`.
 **Removal condition:** none; this is a floor requirement, not a shim.
 
 ### No date yet - the `fr.emse.canari://stripe/...` checkout return host, from a build older than 2026-10-09

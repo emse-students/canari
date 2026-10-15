@@ -220,3 +220,44 @@ describe('NotificationRow with a type this build does not know', () => {
     expect(String(warn.mock.calls[0][0])).toContain('unit_test_future_type');
   });
 });
+
+/** Written out by hand on purpose: walking the production set would pass when a type left it. */
+const EVERY_TYPE_THE_SERVER_EMITS = [
+  'comment',
+  'reply',
+  'reaction',
+  'mention',
+  'form_reminder',
+  'association_post',
+  'followed_post',
+  'association_repost',
+  'repost_proposed',
+  'coorganise_proposed',
+  'event_proposed',
+  'event_validated',
+  'event_rejected',
+  'event_updated',
+  'event_deleted',
+  'event_pending',
+  'profile_correction_applied',
+  'profile_correction_refused',
+];
+
+describe('NotificationRow with every known type', () => {
+  it('is never the neutral row, and stays activatable', () => {
+    for (const type of EVERY_TYPE_THE_SERVER_EMITS) {
+      const target = renderRow({
+        id: `n-${type}`,
+        type,
+        postId: 'x1',
+        actorId: 'u1',
+        actorName: 'Marie',
+        text: 'Titre',
+        read: false,
+        createdAt: new Date().toISOString(),
+      });
+      expect(target.textContent, type).not.toContain(m.notif_unknown_type_text());
+      expect(target.querySelector('button')!.disabled, type).toBe(false);
+    }
+  });
+});

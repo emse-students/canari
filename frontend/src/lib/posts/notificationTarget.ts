@@ -60,9 +60,9 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
 
 /**
  * Every notification type this build can render and route. `NotificationRow` and `notificationHref`
- * both reason about exactly this set, so a type outside it is one NEITHER can show or open.
+ * both reason about exactly this set (a test walks every member through both), so a type outside it is one NEITHER can show or open.
  */
-const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
+export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'comment',
   'reply',
   'reaction',
