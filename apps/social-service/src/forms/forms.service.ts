@@ -19,6 +19,7 @@ import {
   PREVIOUS_PAYMENT_OPEN,
   SETTLED_PAYMENT_STATUSES,
   CONFIRMABLE_PAYMENT_STATUSES,
+  LYDIA_REQUEST_UUID_RE,
   livePendingWhere,
   lockFormSeats,
   overCapacityFirst,
@@ -1651,7 +1652,17 @@ export class FormsService {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
     const sessionId = submission.stripeSessionId;
-    if (CONFIRMABLE_PAYMENT_STATUSES.has(submission.paymentStatus) && sessionId) {
+    if (
+      CONFIRMABLE_PAYMENT_STATUSES.has(submission.paymentStatus) &&
+      sessionId &&
+      !LYDIA_REQUEST_UUID_RE.test(sessionId)
+    ) {
+      // A Stripe-era row (`cs_...`): Lydia never issued it, so there is nothing to ask - and core
+      // would refuse it with a 400 on every poll.
+      this.logger.log(
+        `[Forms] confirmPayment ${submissionId}: ${submission.paymentStatus} row holds a non-Lydia request id, nothing to ask the provider`
+      );
+    } else if (CONFIRMABLE_PAYMENT_STATUSES.has(submission.paymentStatus) && sessionId) {
       const form = await this.formRepo.findOne({ where: { id: submission.formId } });
       const connectAccountId = form?.associationId
         ? await this.associationsService.getPaymentAccountId(form.associationId)

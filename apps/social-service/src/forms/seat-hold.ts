@@ -64,6 +64,14 @@ export const CONFIRMABLE_PAYMENT_STATUSES: ReadonlySet<string> = new Set([
 ]);
 
 /**
+ * The shape of a Lydia `request_uuid`: 32 hex digits, no dash (measured on the sandbox,
+ * 2026-10-15) - the same pattern core-service's `payments/request-state` accepts (`SESSION_ID_RE`).
+ * A row from the Stripe era still holds a `cs_...` id there, which core refuses with a 400, so
+ * `confirmPayment` reads it first and never sends one.
+ */
+export const LYDIA_REQUEST_UUID_RE = /^[0-9a-f]{32}$/i;
+
+/**
  * The submissions that hold a seat on a form, as a TypeORM `where` (an OR of four rows).
  *
  * A `pending` row holds one only while it is younger than the hold, and that is decided HERE, from

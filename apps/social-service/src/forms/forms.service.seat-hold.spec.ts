@@ -934,12 +934,15 @@ describe('FormsService - the seat a pending payment holds', () => {
    * request whose callback failed stayed `pending` until the expiry job released its seat.
    */
   describe('the payer return (confirm-payment)', () => {
+    // A `request_uuid` as Lydia issues it (32 hex digits): `confirmPayment` asks about no other shape.
+    const UUID_OLD = '0a1b2c3d4e5f60718293a4b5c6d7e8f9';
+    const UUID_NEW = 'f9e8d7c6b5a4938271605f4e3d2c1b0a';
     const mine = (over: Partial<Row> = {}) =>
       row({
         id: 'mine',
         paymentRequestedAt: ago(60_000),
         paymentRequestId: '555',
-        stripeSessionId: 'uuid-old',
+        stripeSessionId: UUID_OLD,
         ...over,
       });
 
@@ -956,9 +959,9 @@ describe('FormsService - the seat a pending payment holds', () => {
       });
       // Read by the row's OWN uuid and the Business's vendor_token: nothing comes from the caller.
       expect(core.calls.map((c) => [c.route, c.body])).toEqual([
-        ['request-state', { sessionId: 'uuid-old', connectAccountId: 'vendor' }],
+        ['request-state', { sessionId: UUID_OLD, connectAccountId: 'vendor' }],
       ]);
-      expect(rows[0]).toMatchObject({ paymentStatus: 'paid', paymentSettledBy: 'uuid-old' });
+      expect(rows[0]).toMatchObject({ paymentStatus: 'paid', paymentSettledBy: UUID_OLD });
       expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
     });
 
@@ -981,7 +984,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       await service.markPaid('mine', '999');
       expect(error).toHaveBeenCalledTimes(1);
       expect(error).toHaveBeenCalledWith(expect.stringContaining('999'));
-      expect(error).toHaveBeenCalledWith(expect.stringContaining('by uuid-old'));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining(`by ${UUID_OLD}`));
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
     });
 
@@ -1001,7 +1004,7 @@ describe('FormsService - the seat a pending payment holds', () => {
           paymentStatus: 'paid',
         });
         expect(core.calls.map((c) => c.route)).toEqual(['request-state']);
-        expect(rows[0]).toMatchObject({ paymentStatus: 'paid', paymentSettledBy: 'uuid-old' });
+        expect(rows[0]).toMatchObject({ paymentStatus: 'paid', paymentSettledBy: UUID_OLD });
       }
     );
 
@@ -1029,7 +1032,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       });
       core.stateAnswer = 'paid';
       core.duringState = () => {
-        rows[0].stripeSessionId = 'uuid-new';
+        rows[0].stripeSessionId = UUID_NEW;
         rows[0].paymentRequestId = '777';
       };
       const warn = jest.spyOn((service as any).logger, 'warn');
@@ -1037,7 +1040,7 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(rows[0].paymentStatus).toBe('pending');
       expect(rows[0].paymentSettledBy ?? null).toBeNull();
       expect(userTagService.grantCotisant).not.toHaveBeenCalled();
-      expect(warn).toHaveBeenCalledWith(expect.stringContaining('uuid-new'));
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining(UUID_NEW));
     });
 
     it.each([
@@ -1085,6 +1088,36 @@ describe('FormsService - the seat a pending payment holds', () => {
       await service.confirmPayment('mine');
       expect(core.calls).toEqual([]);
     });
+
+    // A Stripe-era row still holds a `cs_...` id: core refuses it with a 400, so asking would only
+    // put a WARN in the log on every poll of the return page.
+    it.each([['pending'], ['expired'], ['cancelled']])(
+      'asks nothing about a Stripe-era id on a %s row, and says so once at INFO',
+      async (status) => {
+        const { service, rows, core } = makeStore({
+          maxSubmissions: 1,
+          provider: 'lydia',
+          rows: [
+            mine({
+              paymentStatus: status,
+              stripeSessionId: 'cs_test_a1B2c3',
+              paymentRequestId: null,
+            }),
+          ],
+        });
+        core.stateAnswer = 'paid';
+        const log = jest.spyOn((service as any).logger, 'log');
+        const warn = jest.spyOn((service as any).logger, 'warn');
+        await expect(service.confirmPayment('mine')).resolves.toMatchObject({
+          paymentStatus: status,
+        });
+        expect(core.calls).toEqual([]);
+        expect(rows[0].paymentStatus).toBe(status);
+        expect(log).toHaveBeenCalledTimes(1);
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('non-Lydia request id'));
+        expect(warn).not.toHaveBeenCalled();
+      }
+    );
 
     // P3: the ROUTE refuses someone who is neither the submitter nor a manager of the form, before
     // anything is asked of the provider.
