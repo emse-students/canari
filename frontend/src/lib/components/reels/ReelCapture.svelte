@@ -387,7 +387,17 @@
     abandonRecording();
     const entry = takeEntry;
     takeEntry = null;
-    if (entry) closeHistoryOverlayFromUi(entry);
+    if (!entry) return;
+    if (onclose) {
+      // AN OVERLAY TORN DOWN UNDER A TAKE (its composer unmounted): the take's entry leaves the stack
+      // NOW, as in `handBack`. `closeHistoryOverlayFromUi` would leave it there until its traversal
+      // lands, so the overlay's own abandon below it would splice without going back - one history
+      // entry left behind, and the next Back spent on nothing.
+      console.debug('[reel-capture] torn down under a take: its history entry is abandoned');
+      abandonHistoryOverlay(entry);
+      return;
+    }
+    closeHistoryOverlayFromUi(entry);
   });
 
   const recording = $derived(capture.kind === 'recording' || capture.kind === 'finishing');

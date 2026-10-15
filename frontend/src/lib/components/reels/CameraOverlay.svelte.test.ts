@@ -197,4 +197,69 @@ describe('CameraOverlay history', () => {
     expect(historyOverlayStackDepth()).toBe(1);
     expect(model.index()).toBe(1);
   });
+
+  it('takes the focus from the composer field, so no soft keyboard stays over the shutter', async () => {
+    const model = installHistoryModel();
+    const field = document.createElement('textarea');
+    document.body.appendChild(field);
+    field.focus();
+    expect(document.activeElement).toBe(field);
+
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const app = mount(CameraOverlay, {
+      target,
+      props: {
+        destination: 'chat',
+        session: new CameraSession(() => Promise.resolve(stream())),
+        oncapture: vi.fn(),
+        onclose: vi.fn(),
+      },
+    });
+    await settle();
+
+    expect(document.activeElement).not.toBe(field);
+    // Its entry's traversal lands HERE, not in the next test.
+    unmount(app);
+    await drainTraversals(model);
+  });
+
+  it('torn down by its owner under a review, it takes BOTH its entries back and releases the camera', async () => {
+    const model = installHistoryModel();
+    const closeConversation = vi.fn();
+    pushHistoryOverlay(closeConversation);
+
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const lens = stream();
+    const app = mount(CameraOverlay, {
+      target,
+      props: {
+        destination: 'chat',
+        session: new CameraSession(() => Promise.resolve(lens)),
+        oncapture: vi.fn(),
+        onclose: vi.fn(),
+      },
+    });
+    await settle();
+    const video = document.querySelector('video')!;
+    Object.defineProperty(video, 'videoWidth', { value: 720, configurable: true });
+    video.dispatchEvent(new Event('loadeddata'));
+    await settle();
+    const shutter = document.querySelector<HTMLButtonElement>('[data-reel-shutter]')!;
+    shutter.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, bubbles: true }));
+    shutter.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }));
+    await settle();
+    expect(document.querySelector('[data-reel-review]')).not.toBeNull();
+    expect(model.index()).toBe(3);
+
+    // The composer goes away (its conversation was closed by state) with the review still open.
+    unmount(app);
+    await drainTraversals(model);
+
+    expect(closeConversation).not.toHaveBeenCalled();
+    expect(historyOverlayStackDepth()).toBe(1);
+    expect(model.index()).toBe(1);
+    expect(lens.getTracks()[0].stop).toHaveBeenCalled();
+  });
 });

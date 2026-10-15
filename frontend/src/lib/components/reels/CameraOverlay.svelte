@@ -42,6 +42,13 @@
 
   onMount(() => {
     console.debug(`[camera-overlay] open for ${destination}`);
+    // The composer's text field may still hold the focus (a tap on a menu item does not take it on
+    // iOS), and a focused field keeps the soft keyboard up OVER the shutter. The layer takes it down.
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && focused !== document.body) {
+      console.debug('[camera-overlay] the focused field is blurred: no keyboard over the camera');
+      focused.blur();
+    }
     document.documentElement.classList.add('fullscreen-place-open');
     pushHistoryOverlay(entry);
   });
