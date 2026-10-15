@@ -101,8 +101,8 @@ describe('the constants the server also defines', () => {
   });
 
   it('mirrors the backend ALL_CORE_FLAGS value', () => {
-    expect(ALL_CORE_FLAGS).toBe(1311);
-    expect(ASSOCIATION_ADMIN_PRESET).toBe(1311 | MANAGE_PAYOUT_ACCOUNT);
+    expect(ALL_CORE_FLAGS).toBe(3359);
+    expect(ASSOCIATION_ADMIN_PRESET).toBe(3359 | MANAGE_PAYOUT_ACCOUNT);
   });
 
   it('lists exactly the three flags the server gates on a.isBDE', () => {

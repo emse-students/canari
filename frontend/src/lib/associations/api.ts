@@ -30,6 +30,7 @@ export enum AssociationPermissionFlag {
   MANAGE_PRODUCTS = 1 << 8,
   MANAGE_PAYOUT_ACCOUNT = 1 << 9,
   MANAGE_PARTNERSHIPS = 1 << 10,
+  MANAGE_BOOKINGS = 1 << 11,
 }
 
 /**
@@ -43,7 +44,8 @@ export const ALL_CORE_FLAGS =
   AssociationPermissionFlag.MANAGE_DOCUMENTS |
   AssociationPermissionFlag.MANAGE_FORMS |
   AssociationPermissionFlag.MANAGE_PRODUCTS |
-  AssociationPermissionFlag.MANAGE_PARTNERSHIPS;
+  AssociationPermissionFlag.MANAGE_PARTNERSHIPS |
+  AssociationPermissionFlag.MANAGE_BOOKINGS;
 
 /** Default admin preset when adding a member (core flags + Stripe Connect). */
 export const ASSOCIATION_ADMIN_PRESET =
