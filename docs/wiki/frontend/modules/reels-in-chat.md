@@ -46,6 +46,22 @@ The reading ([device-verification](../../device-verification.md), PR #1917) pass
 
 **Owed on a device:** all five on the Mi 9T (Back + "La garder" on a chat photo and a post video, a refusal from a fresh permission, the post video's name and tile), and the iPhone 12 for the permission and Back paths, whose WebKit timing nothing here models.
 
+### The iPhone 12 reading of v1.2.9-alpha.2 - the edge swipe is the iOS Back (2026-10-16)
+
+The iOS app has NO system Back: Tauri's WKWebView does not enable the back-forward swipe, so no `popstate` ever comes from the left edge. Its only Back is the swipe the conversation draws itself (`swipeBack` on `ChatArea`), and that swipe called `onBack` (`goBackToMenu`) directly, outside the overlay stack. Two findings, 2 of 2 each, both of that one cause:
+
+- **With the "+" menu open, ONE swipe closed the menu AND left the conversation.** The swipe closed the conversation; the menu went with the composer's teardown. It now asks the stack first (`backHistoryOverlayFromGesture`): the TOP overlay closes, told `'back'`, as Android's Back would; the conversation's own entry closes it when nothing is over it, and `onBack` is left for a layout where nothing holds an entry.
+- **A swipe over the photo review did nothing.** `CameraOverlay` is portalled to `document.body`, out of `ChatArea`, so no touch over it reached the only swipe there was. The layer now carries the same `swipeBack`, closing the top overlay: the take (which asks), then the camera.
+
+What the review of #1936 added:
+
+- **No swipe arms inside `[data-swipe-back-off]`** - `ReelCapture`'s root carries it while the editor is open (a paint stroke or a sticker drag from the left edge dragged the whole layer, then asked to leave the editor mid-stroke) or a take is being FILMED (the swipe dropped the recording unasked; a recording ends by its own shutter, so the swipe is ignored there rather than asking).
+- **One predicate for the swipe and the entries**: the stack is asked only in the overlay layout (`isOverlayLayout`, below `xl`), where the conversation holds an entry. On a touch screen of 1280 px and more (an iPad in landscape) the swipe is the conversation's `onBack` again; it had closed an unrelated top entry (a community admin panel) instead.
+- **Leaving a thread ends the salon selection on every exit** (`onThreadLeft`, registered once in `globalChatSingleton`): the history close (Android's Back, the iOS swipe) left the salon row highlighted, since only the in-app back cleared it.
+- **The iOS app writes NO history entry for an overlay** (`initHistoryOverlayStack({ systemBack: false })`): nothing there ever pops one, and closing N nested overlays by swipe left N ghosts of which only the one under the pointer is taken again - N-1 entries for good per cycle.
+
+Pinned by `ChatArea.swipeBack.svelte.test.ts`, `CameraOverlay.svelte.test.ts`, `ReelCapture.svelte.test.ts`, `swipeBack.test.ts`, `useConversations.backOutOfLanding.svelte.test.ts` and `historyOverlayStack.test.ts`; the model check gained the gesture Back as an operation (177,155 sequences to length 5, 41,370 with router and bfcache to 4) and an iOS mode with no entries (579,194 sequences to length 5, router, shallow and bfcache included), no failure. **NOT covered, named:** a `Modal` or sheet portalled over a conversation still gets no swipe on iOS - the same mechanism, filed in [backlog](../../backlog.md#p3---ios-a-modal-or-sheet-over-a-conversation-has-no-edge-swipe-found-2026-10-16). **Owed on the iPhone 12:** the two sequences above, then a swipe on the review answered "La garder" (the review stays, a second swipe asks again).
+
 **An OVERLAY over the conversation, never the `/camera` tab.** The tab is a swipe place left of the feed
 (`CAMERA_PLACE`, [reels](reels.md#the-tab-c5)) and its origin logic (`cameraOriginFrom`) returns to a
 PATH. A conversation is selected by state, not by a route a Back can restore (`notifNav`, the

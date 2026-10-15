@@ -19,7 +19,10 @@ function startsOnInteractiveElement(target: EventTarget | null): boolean {
 }
 
 /**
- * True when the touch started on a message bubble, which owns a RIGHTWARD drag of its own.
+ * True when the touch started on a message bubble, which owns a RIGHTWARD drag of its own - or inside
+ * `[data-swipe-back-off]`, a region whose own strokes or state no Back swipe may take: the camera's
+ * editor (a paint stroke or a sticker drag from the left edge dragged the whole layer, then asked to
+ * leave the editor mid-stroke) and a recording (a swipe threw the take away without asking).
  *
  * REPLY-SWIPING A RECEIVED MESSAGE USED TO CLOSE THE CONVERSATION (user, 2026-09-29: *"parfois un
  * clic un peu baveux change de page (ou ferme la discussion)"*). The two gestures are the same
@@ -33,7 +36,7 @@ function startsOnInteractiveElement(target: EventTarget | null): boolean {
  * whole rest of the strip, while a reply swipe has nowhere else to happen.
  */
 function startsOnCompetingGesture(target: EventTarget | null): boolean {
-  return target instanceof Element && !!target.closest('[data-swipe-reply]');
+  return target instanceof Element && !!target.closest('[data-swipe-reply], [data-swipe-back-off]');
 }
 
 export interface SwipeBackOptions {

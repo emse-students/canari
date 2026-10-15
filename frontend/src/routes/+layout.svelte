@@ -140,7 +140,9 @@
       }
     });
 
-    const teardownHistory = initHistoryOverlayStack();
+    // The iOS app has no system Back (no back-forward swipe in its WKWebView): its overlays are
+    // closed by the app's own edge swipe, and no history entry is written for them.
+    const teardownHistory = initHistoryOverlayStack({ systemBack: !isIosTauriRuntime() });
     const teardownKeyboard = initKeyboardViewport();
 
     // Reclaim the avatar bucket this client no longer writes. Idempotent, and free once it is gone.

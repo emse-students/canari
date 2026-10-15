@@ -481,7 +481,9 @@
   );
 </script>
 
-<div class="relative h-full w-full">
+<!-- No Back swipe while the editor owns the strokes or a take is being filmed (`swipeBack`): a
+     recording ends by its own shutter, never by an edge swipe that would drop it unasked. -->
+<div class="relative h-full w-full" data-swipe-back-off={editorOpen || recording ? '' : undefined}>
   <CameraScreen
     {session}
     bind:capture={camera}
