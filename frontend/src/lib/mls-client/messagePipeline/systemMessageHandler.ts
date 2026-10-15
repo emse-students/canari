@@ -18,11 +18,13 @@ import {
   noteProbeReceived,
   takeDigestSolicitation,
 } from '$lib/utils/chat/historyDigestRendezvous';
-import { answerHistoryDigest } from '$lib/utils/chat/historyDiffAnswer';
+import { answerHistoryDigest, pullFromOverheardDigest } from '$lib/utils/chat/historyDiffAnswer';
 import { parseHistoryDigest, selectEntryIdsForPrefixes } from '$lib/utils/chat/historyManifest';
 import { mergeHistoryFloor, parseHistorySince } from '$lib/utils/chat/historyWindow';
 import { parseHistoryStateKey } from '$lib/utils/chat/historyStateKey';
 import { answerAfterMailboxDrained, noteCoverageShortfall } from '$lib/utils/chat/historyReconcile';
+import { owedPullTicket } from '$lib/utils/chat/historyOverheardPull';
+import { dropOwnExcludedMessages } from '$lib/utils/chat/historyEntitlement';
 import {
   historyRangeStartFor,
   readHistoryEntries,
@@ -299,6 +301,29 @@ export async function handleSystemEvent(
           )
         )
       );
+    } else if (!takenByAWaiter) {
+      // OVERHEARD: an exchange between two other members, and the author's full list of what it
+      // holds. Not ours to ANSWER - the election picked one responder - but it is the only evidence
+      // this device may ever get of a message it lacks, so we ask the author for that and nothing
+      // else. It used to fall through here without a line (production, 2026-10-13: a browser saw
+      // its owner's phone list seven ids, held six, and never said so). See `pullFromOverheardDigest`.
+      // The ticket is taken NOW, while this is still the session and the conversation the digest
+      // arrived in; the pull runs after the drain, and a sign-out or a leave can fall in between.
+      const ticket = owedPullTicket(convoKey);
+      answerAfterMailboxDrained(mlsService, convoKey, () =>
+        pullFromOverheardDigest({
+          groupId: convoKey,
+          holderIdentity: from,
+          selfIdentity: digestIdentity(userId, mlsService.getDeviceId()),
+          digest,
+          ticket,
+          deps: { storage, deviceKeyB64: deviceKey(), mlsService, log },
+        }).catch((e) =>
+          log(
+            `[HISTORY_DIGEST] Overheard-digest pull failed for ${convoKey.slice(0, 8)}…: ${String(e).slice(0, 120)}`
+          )
+        )
+      );
     }
     return true;
   }
@@ -524,7 +549,7 @@ export async function handleSystemEvent(
       convoKey,
       { isSystem: true, messageId }
     );
-    log(`📝 Group renamed to "${data.newName}" by ${getName(senderNorm)}`);
+    log(`📝 Group renamed by ${senderNorm}`);
     return true;
   }
 
@@ -542,7 +567,7 @@ export async function handleSystemEvent(
       convoKey,
       { isSystem: true, messageId }
     );
-    log(`🖼️ Group photo changed by ${getName(senderNorm)} (media=${imageMediaId ?? 'null'})`);
+    log(`🖼️ Group photo changed by ${senderNorm} (media=${imageMediaId ?? 'null'})`);
     return true;
   }
 
@@ -572,7 +597,7 @@ export async function handleSystemEvent(
         addMessageToChat,
         log,
       });
-      log(`[INFO] Excluded from group "${convoKey}" by ${getName(senderNorm)} - marked removed`);
+      log(`[INFO] Excluded from group "${convoKey}" by ${senderNorm} - marked removed`);
     } else {
       await addMessageToChat(
         'system',
@@ -629,7 +654,7 @@ export async function handleSystemEvent(
         messageId,
       }
     );
-    log(`[INFO] ${getName(leaver)} left group "${convoKey}"`);
+    log(`[INFO] ${leaver} left group "${convoKey}"`);
     return true;
   }
 
@@ -692,7 +717,7 @@ export async function handleSystemEvent(
         groupId: convo.id,
         saveConversation,
       });
-      log(`[INFO] Group deleted by ${senderName} - conversation marked removed`);
+      log(`[INFO] Group deleted by ${senderNorm} - conversation marked removed`);
     }
     return true;
   }
@@ -901,22 +926,29 @@ export async function handleSystemEvent(
 
       if (msgs.length > 0) {
         const existingIds = new Set(convo.messages.map((m) => m.id));
+        // HYGIENE, NOT A CONTROL (user, 2026-10-14: a Remove holds against a later re-add). The
+        // answering peer withholds what was sent while a member was out; a message that still
+        // reaches us from inside OUR OWN window is dropped here, each one logged. Only the messages
+        // we would ADD are checked - one we already hold changes nothing - so a bundle restating
+        // our own store costs no read. An unreadable window set ingests none of them.
+        const fresh = await dropOwnExcludedMessages(
+          convoKey,
+          userId,
+          msgs.filter((m) => !existingIds.has(m.id)),
+          { mlsService, log }
+        );
         // 1) Add only the genuinely new messages. The add-path (AddMessageToChatOptions) cannot
         //    carry reactions/tombstones, so that metadata is merged in step 2 for new AND existing
         //    messages alike.
-        const toAdd = msgs
-          .filter((m) => !existingIds.has(m.id))
-          .map((m) => ({
-            senderId: m.senderId.toLowerCase(),
-            content: m.content,
-            messageId: m.id,
-            timestamp: new Date(m.timestamp),
-            // The secondary sort key. Dropping it here - the replay path keeps it - left two
-            // messages sharing a client timestamp in an order that changed on every reload.
-            ...(typeof m.serverTimestamp === 'number'
-              ? { serverTimestamp: m.serverTimestamp }
-              : {}),
-          }));
+        const toAdd = (fresh ?? []).map((m) => ({
+          senderId: m.senderId.toLowerCase(),
+          content: m.content,
+          messageId: m.id,
+          timestamp: new Date(m.timestamp),
+          // The secondary sort key. Dropping it here - the replay path keeps it - left two
+          // messages sharing a client timestamp in an order that changed on every reload.
+          ...(typeof m.serverTimestamp === 'number' ? { serverTimestamp: m.serverTimestamp } : {}),
+        }));
         if (toAdd.length > 0) {
           // NAMES ITS CONVERSATION AND ITS SENDER, like the pin line above it. This said
           // "from the inviting peer" and nothing else - wrong twice on a device rejoining forty

@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { RefreshFailedError, SessionExpiredError, setToken } from '$lib/stores/auth';
-import { connectivity, isTransportFailure } from '$lib/stores/connectivity.svelte';
+import { connectivity } from '$lib/stores/connectivity.svelte';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 import { apiFetch } from '$lib/utils/apiFetch';
 import {
   DEADLINE_MS,

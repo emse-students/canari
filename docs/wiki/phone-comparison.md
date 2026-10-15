@@ -234,6 +234,18 @@ names truncate, the PIN sheet scrolls to every option. Two defects, both fixed o
   box (2 here, 1 on a desktop whose default font was raised, since both grow there), and
   `.text-zoom-exempt` undoes it with `zoom` on the glyph alone - Avatar, GroupAvatar,
   AssociationAvatar. Reading text is never exempt.
+- **2026-10-13, the agenda (fixed the same day): a box that GROWS with its text.** Two overruns read
+  at 200 % in `/calendar`: today's day number (40px) in its fixed 36px circle, and "S'abonner au
+  calendrier" held at full width by `shrink-0`, spilling 33 px out of its card. A day number is
+  reading text, so it is not exempted: `text-zoom-size-N` / `text-zoom-w-N` (`app.css`) size a box
+  on the spacing scale TIMES `--text-zoom`, and the circle and its gutter use them. The page's
+  actions lost `shrink-0` and wrap their label (`max-w-full min-w-0`). The `+N` organiser pill is a
+  mark beside avatars and takes `.text-zoom-exempt`. `lib/styles/textZoomBoxes.test.ts` fails any
+  agenda element declaring a fixed square box and a type-scale size together. Read on desktop Chrome
+  at 390 px with fonts doubled and lengths kept (the WebView's behaviour), not yet on the phone:
+  spill 55 -> 0 px, circle 36 -> 72 px around a 48 px glyph; the subscribe modal, the event detail
+  modal and the day panel show no overrun. The month grid's weekday labels overrun their 51 px
+  column, which a phone never draws (the list replaces the grid below `md`).
 
 **Bench traps met on the way:** the PIN sheet KEEPS the digits typed on the unlock keypad when it switches to "choose a PIN" after a reset (6 + 6 = a 12-digit PIN that then matches nothing) - clear with the backspace key first and read the dots; the test banner is 4 lines on a phone, so its detail text should go on narrow screens.
 

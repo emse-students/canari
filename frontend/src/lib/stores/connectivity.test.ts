@@ -3,7 +3,6 @@ import {
   SLOW_ENTER_MS,
   SLOW_IN_FLIGHT_MS,
   connectivity,
-  isTransportFailure,
 } from './connectivity.svelte';
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 
@@ -67,26 +66,6 @@ describe('connectivity store', () => {
     connectivity.notifyServerReachable();
 
     expect(listener).not.toHaveBeenCalled();
-  });
-});
-
-describe('isTransportFailure', () => {
-  it('recognises the bare TypeError fetch throws when it never reached the network', () => {
-    expect(isTransportFailure(new TypeError('fetch failed'))).toBe(true);
-  });
-
-  it('recognises engine-specific transport wordings', () => {
-    expect(isTransportFailure(new Error('Failed to fetch'))).toBe(true);
-    expect(isTransportFailure(new Error('Load failed'))).toBe(true);
-    expect(isTransportFailure(new Error('NetworkError when attempting to fetch'))).toBe(true);
-  });
-
-  it('does not treat a server answer as a connectivity problem', () => {
-    // This is the distinction the whole offline flow rests on: an HTTP status means the server
-    // was reached and has spoken, so it must never degrade the app to "offline".
-    expect(isTransportFailure(new Error('Token refresh failed (HTTP 502)'))).toBe(false);
-    expect(isTransportFailure(new Error('Unauthorized'))).toBe(false);
-    expect(isTransportFailure('not an error')).toBe(false);
   });
 });
 

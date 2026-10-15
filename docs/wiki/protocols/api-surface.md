@@ -142,6 +142,8 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | DELETE | `/api/mls/users/:userId/dismissed-groups/:groupId` | Un-dismiss group |
 | POST | `/api/mls/groups/:groupId/members` | Add member record |
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members |
+| GET | `/api/mls/groups/:groupId/exclusions` | Exclusion windows of every current member (current members only) |
+| POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read |
 | GET | `/api/mls/groups/:groupId/members` | Get active device members |
 | DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove user from group |
 
@@ -149,7 +151,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/mls/send` | Send MLS message/commit |
+| POST | `/api/mls/send` | Send MLS message/commit; answers `receivedAt`, the instant every recipient's copy is dated by, which the sender stores as its own copy's `serverTimestamp` |
 | POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out |
 | GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits since epoch N |
 | GET | `/api/mls/group-info/:groupId` | Latest GroupInfo for external-join (membership-gated) |

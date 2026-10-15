@@ -41,6 +41,8 @@ describe('MessagingService - visibility vs durability', () => {
     publish: jest.fn().mockResolvedValue(1),
     smembers: jest.fn().mockResolvedValue([]),
     pipeline: jest.fn(() => pipelineDouble()),
+    hgetall: jest.fn().mockResolvedValue({}),
+    hdel: jest.fn().mockResolvedValue(1),
   };
 
   /**
@@ -414,6 +416,115 @@ describe('MessagingService - visibility vs durability', () => {
       const res = await service.sendMessage(send({ silent: true, durable: false }));
 
       expect(res).toEqual(expect.objectContaining({ queued: 1 }));
+    });
+
+    /**
+     * A REMOVAL IS RECORDED BEFORE ITS COMMIT and deletes the removed person's device rows, which
+     * are what a commit is fanned out from - so the commit that removes them never reached them, and
+     * they kept the epoch's keys until a refused send told them (second review of #1878, P1-a).
+     */
+    describe('a commit reaches whoever it removes', () => {
+      const queuedKeys = () =>
+        (
+          queuedMessageRepo.save.mock.calls[0][0] as unknown as {
+            recipientId: string;
+            deviceId: string;
+          }[]
+        ).map((q) => `${q.recipientId}:${q.deviceId}`);
+
+      it('queues the commit to the removed devices it was handed, and consumes the entries', async () => {
+        twoPeers();
+        onlyAOnline();
+        pushSpies();
+
+        await service.sendMessage(send({ isCommit: true }), undefined, [
+          { userId: 'u9', deviceId: 'dX' },
+        ]);
+
+        expect(queuedKeys()).toEqual(['u2:dA', 'u2:dB', 'u9:dX']);
+        expect(redis.hdel).toHaveBeenCalledWith('group:parting:g1', 'u9:dX');
+      });
+
+      it('a parted device that is a member again is queued ONCE, as a member, and its entry is not consumed', async () => {
+        twoPeers();
+        onlyAOnline();
+        pushSpies();
+
+        await service.sendMessage(send({ isCommit: true }), undefined, [
+          { userId: 'u2', deviceId: 'dA' },
+          { userId: 'u9', deviceId: 'dX' },
+        ]);
+
+        expect(queuedKeys()).toEqual(['u2:dA', 'u2:dB', 'u9:dX']);
+        expect(redis.hdel).toHaveBeenCalledWith('group:parting:g1', 'u9:dX');
+      });
+
+      it('an application frame never reaches them', async () => {
+        twoPeers();
+        onlyAOnline();
+        pushSpies();
+
+        await service.sendMessage(send({ silent: false, durable: true }), undefined, [
+          { userId: 'u9', deviceId: 'dX' },
+        ]);
+
+        expect(queuedKeys()).toEqual(['u2:dA', 'u2:dB']);
+        expect(redis.hdel).not.toHaveBeenCalled();
+      });
+
+      /**
+       * KEYED TO WHAT THE COMMIT DECLARES, never to "the remover's next commit" (third review of
+       * #1878): two removals in flight by one member each reach their own person, and a commit
+       * declaring nothing - an ordinary one, or one from an older build - consumes nobody's entry.
+       */
+      describe('which parted devices a commit names', () => {
+        const declared = (removes: unknown) =>
+          (
+            service as unknown as {
+              declaredPartingDevices: (
+                g: string,
+                r: unknown,
+                t: string
+              ) => Promise<Array<{ userId: string; deviceId: string }>>;
+            }
+          ).declaredPartingDevices('g1', removes, 'trace');
+
+        beforeEach(() => {
+          redis.hgetall.mockResolvedValue({ 'u9:dX': 'u1', 'u9:dZ': 'u1', 'u8:dY': 'u1' });
+        });
+
+        it("every device of a person named alone, and nobody else's", async () => {
+          await expect(declared([{ userId: 'u9' }])).resolves.toEqual([
+            { userId: 'u9', deviceId: 'dX' },
+            { userId: 'u9', deviceId: 'dZ' },
+          ]);
+        });
+
+        it('the one device of a person named with it', async () => {
+          await expect(declared([{ userId: 'u9', deviceId: 'dZ' }])).resolves.toEqual([
+            { userId: 'u9', deviceId: 'dZ' },
+          ]);
+        });
+
+        it('nothing for a commit that declares nothing, without reading the hint', async () => {
+          redis.hgetall.mockClear();
+          await expect(declared(undefined)).resolves.toEqual([]);
+          expect(redis.hgetall).not.toHaveBeenCalled();
+        });
+      });
+    });
+
+    it("answers the sender the SAME receive time its recipients' rows carry", async () => {
+      // The sender dates its own copy by it, and a history answer places that copy against a
+      // membership window - so it must be the instant a recipient's copy is dated by, not a near one.
+      twoPeers();
+      onlyAOnline();
+      pushSpies();
+
+      const res = await service.sendMessage(send({ silent: true, durable: false }));
+
+      const queued = queuedMessageRepo.save.mock.calls[0][0] as unknown as { createdAt: Date }[];
+      expect(res).toEqual(expect.objectContaining({ receivedAt: queued[0].createdAt.getTime() }));
     });
 
     it('still queues a DURABLE frame for an offline device, and pushes to it', async () => {

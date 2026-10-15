@@ -16,6 +16,111 @@ measurement or a device nobody here has. None of them is waiting on an implement
 
 ---
 
+### DECISION OWED - may a drain that only RECEIVED application frames skip its full checkpoint? (2026-10-13)
+
+**What happens today.** Every drain ends with a full encrypted checkpoint of the WHOLE MLS state,
+even a drain of one application frame. `mlsStatePersister.onBulkIngestEnd` sets
+`dirtyEncrypted = true` unconditionally, overriding the commit/application split
+`setupMessageHandler` makes (`persistNow` vs `scheduleDeferred`).
+
+**Measured.**
+
+| Mi 9T, native (`heavy_state_checkpoint` cross-built for aarch64) | 0.48 MB | 1.9 MB | 3.8 MB | 7.7 MB |
+| --- | ---: | ---: | ---: | ---: |
+| one decrypt | 0.55 ms | 0.48 ms | 0.49 ms | 0.49 ms |
+| export + seal | 2.7 ms | 11.7 ms | 25.6 ms | **49.3 ms** |
+
+The file write and the IPC come on top. On native the manager mutex is held across the export and
+the seal (performance-audit finding 12), so a send or a decrypt waits for all of it. On the bench
+account's small state the app logged 5-96 ms per checkpoint. On web the cost is the seal plus
+IndexedDB: 198 ms at 7.7 MB legacy, 47 ms with the v2 seal
+([performance-audit](frontend/performance-audit-2026-10-12.md#finding-2-and-3-read-together---the-checkpoint-question-the-backlog-owed)).
+Per frame, the checkpoint costs about 100 times the decrypt it follows.
+
+**What a crash then costs at the MLS layer** (`mls-core/tests/deferred_receive_checkpoint.rs`). The
+on-disk state is BEHIND by the frames received since the last checkpoint. The three tests show:
+
+- every one of those frames decrypts again from the restored state: a re-read, never a loss;
+- the next frame from that sender decrypts, and this device's next send is read by its peers;
+- the bound is the sender ratchet window (`maximum_forward_distance` = 2000, `group.rs`): 1990
+  unsaved receives still recover.
+
+Three things are out of scope: commits, which `persistNow` checkpoints at once under any policy; this
+device's own sends, which are checkpointed on the send path; and the replay marks, which are already
+bound to the checkpoint (`commitPendingHistoryMarks`).
+
+**Why this is a decision and not a fix.** Skipping the checkpoint WEAKENS durability. A process
+death leaves `mls.bin` behind by up to N received generations. The MLS layer recovers from that, but
+three app-level consequences are not measured:
+
+1. **The seen-cipher ledger is written per frame** (`noteFrameConsumed`, `localStorage`). After a
+   crash it can say "read" for a frame the restored state could still read. The rows for those frames
+   are written at the same drain end as today's checkpoint, so nothing new is lost. The open part is
+   that a replay skips the frame. This is the safe direction of TAB-3b; the defect it fixes runs the
+   other way ([history-reconciliation](protocols/history-reconciliation.md#a-cold-start-re-accuses-frames-it-already-read-the-mark-must-be-one-write-with-the-advance-tab-3b-measured-2026-09-08)).
+2. **The native resume reload would see `live-ahead` on most resumes instead of rarely.** It then
+   refuses the reload and persists the live state, which discards whatever the background FCM engine
+   wrote to `mls.bin` meanwhile (`TauriMlsService.reloadStateFromDisk`). Whether that loses a frame
+   the background engine read AND acknowledged is the question to measure first. The background
+   flush (`mlsStatePersisterLifecycle`, on the native foreground edge) runs before the engine
+   starts, but it is not awaited.
+3. **Forward secrecy at rest.** The keys of frames already read stay on disk until the next
+   checkpoint. The plaintext rows sit on the same disk under the same device key, so the exposure is
+   believed to be nil. That is a judgement, not a measurement.
+
+**The proposal, if the user takes it.**
+
+- `onBulkIngestEnd` checkpoints only when the drain set `persistNow` (a commit, a Welcome, a
+  structural change).
+- A receive-only drain marks the state dirty and leaves it for the next trigger that already exists:
+  a send, a commit, the background edge, logout.
+- A COUNT bound, never a clock: a checkpoint is forced after K deferred receive generations, with K
+  well under the 2000 window (for example 200).
+- Lever one (the v2 seal, writer OFF) cuts the web side about four-fold with no change in
+  semantics, and should be switched on first.
+
+**Not built, deliberately.** Item 2 must be measured on the Mi 9T before any of it:
+
+- kill the app (`am force-stop`) with deferred receives pending;
+- push frames while it is dead;
+- resume, and read the log for `live-ahead`, duplicates and `unreadable for good`.
+
+### DECISION OWED - should a read receipt wait for a COUNT or an event instead of the 2 s window? (2026-10-15)
+
+Since the sender coalescing, a DM or group watermark is sent when the 2 s window after reading ends,
+when the reader leaves, or when the app leaves the screen. The window is the mechanism's one clock.
+If it were wrong the cost would be more traffic, never a lost receipt. Under the "termination from a
+proof, never from a clock" rule, that still makes it load-bearing. The alternatives change what a
+peer sees:
+
+- **events only** (leave, background, the next send): a DM peer sees "Vu" only once the reader leaves
+  or replies;
+- **a count K**: the frame goes after K foreign messages read, so "Vu" lags by up to K messages.
+
+Measured gain first: the frames left after the own-send half was removed
+([history-reconciliation](protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)).
+A device count of watermark frames per minute of active reading would size what is left to take.
+
+### DECISION OWED - should the KeyPackage pile leave the blob every checkpoint rewrites?
+
+**Measured 2026-10-13** ([store-phone-reading](frontend/store-phone-reading-2026-10-13.md#4-the-mls-state-rewritten-in-full)):
+a store Pixel 6a holds 15.5 MB of MLS state, ~6 MB of it 2535 KeyPackage bundles, and every native
+checkpoint re-encodes, re-seals and rewrites all of it. A bundle never changes once minted - it is
+written once and only ever deleted - so that share is rewritten for nothing. On a desktop, the same
+80-group state checkpoints in 16-20 ms and in 27 ms once 2535 bundles are added (4.8 MB, +60 % of
+the bytes, +40-70 % of the time); a phone's number is not measured.
+
+**Why it is a decision and not a pull request.** Splitting the pile out is a FORMAT change on a
+blob every platform reads: a second file or a v3 frame whose reader must ship before any writer
+(unknown versions are refused, `state_blob.rs`), a backup envelope that must carry both halves, and
+the reload guards that read KeyPackage identity across the whole store (`key_package_keys`,
+`recharger_mls_au_resume`) must agree on where a bundle lives. The cheaper alternative is to SHRINK
+the pile - the unclaimed-but-handed-out bundles that only the 84-day expiry reclaims
+([key-package-pool](protocols/key-package-pool.md)) - which needs the server's claimed-at column
+that page already owes. **Options**: (a) shrink first, measure again; (b) a v3 frame with a
+KeyPackage segment sealed separately and cached; (c) per-group storage, the structural lever the
+[performance audit](frontend/performance-audit-2026-10-12.md) names third. Nothing is built.
+
 ### DECISION OWED - the ceiling's `postgres` arm names a test this estate's own upgrade path can never satisfy
 
 **Found by performing the thing the gate asks for, on 2026-09-15, and discovering the gate cannot
@@ -242,6 +347,14 @@ holder rather than merely re-asking the same agreeing peers - is the part still 
 **Raised 2026-08-27** (876 rows for one account, put there by the campaign). Nothing reads it in bulk, so it is no incident, but it is an unbounded table nobody has decided about. A row may only go once no device of that user can still hold the group: the group's own purge (`cleanupSoftDeletedGroups`) is the natural moment, and whether it should take the dismissals with it is the decision.
 
 ### Is a Remove meant to be durable against a later re-add?
+
+**DECIDED by the user, 2026-10-14: YES, for private group conversations.** A re-added member keeps
+what preceded their removal and NEVER receives what was sent while they were out (user,
+2026-10-14). Built as an entitlement filter on the ANSWERING side, keyed on membership intervals the
+server records (migration `030`) - design, clock and what it does not cover in
+[history-reconciliation](protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14).
+Communities keep their own decision (a returner may read the past); 1:1 conversations have no remove
+path. What follows is the question as it was raised, kept for its reasoning.
 
 **Raised 2026-08-26 by GRP-8**, and it is a decision rather than a defect - which is why the P2 it sits
 behind ([backlog](backlog.md)) is written to change nothing until this is answered.

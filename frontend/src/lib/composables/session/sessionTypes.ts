@@ -87,6 +87,13 @@ export interface ChatSessionCallbacks {
     channelsReordered?: boolean;
   }) => void;
   /**
+   * This account emptied a community's unread ("Marquer tout comme lu") on one of its devices - this
+   * one included. Addressed by the server to this account alone; the handler re-reads the counts
+   * (one request), because the server's own count is the only one that knows what the clear covered
+   * on a device that holds different messages.
+   */
+  onSalonUnreadCleared?: (event: { workspaceId: string }) => void;
+  /**
    * This device's own role in a community changed, pushed by the server to the member it concerns.
    *
    * Carries what the role GRANTS rather than only its name: the client caches `viewerCanManage`,
@@ -163,6 +170,15 @@ export interface SessionContext {
   ensureMls(): IMlsService;
   /** Destroys the MLS instance (destroy + null) to force a clean reinitialisation. */
   resetMls(): void;
+  /**
+   * Lets go of the MLS client at a sign-out and destroys it once `finalWrite` (the teardown's final
+   * checkpoint) has landed - see `mlsHolder.ts`. The next `ensureMls` builds a fresh client.
+   */
+  retireMls(finalWrite: Promise<void>): Promise<void>;
+  /** Settles once every retired client's final checkpoint has landed; a login waits for it. */
+  whenMlsRetired(): Promise<void>;
+  /** True while a retired client's final checkpoint is still being written. */
+  isMlsRetiring(): boolean;
   getStorage(): IStorage | null;
   setStorage(v: IStorage | null): void;
   getHistoryBaseUrl(): string;

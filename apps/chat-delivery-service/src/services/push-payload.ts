@@ -75,6 +75,14 @@ export interface PushMessageInput {
   proto: string;
   /** When true, no notification is shown (read receipts, own-device copies, control frames). */
   silent: boolean;
+  /**
+   * When true, the recipient set this conversation to `mentions`: the device must draw the message
+   * ONLY if its decrypted content mentions the recipient. The server cannot decide it - it never
+   * sees the plaintext - so the fact travels to where the decision can be made. A non-mention, and a
+   * message the device cannot read, never ALERT (docs/wiki/services/chat-delivery.md, "A
+   * conversation's notification level"). Absent or false: the ordinary `all`.
+   */
+  mentionsOnly?: boolean;
   /** When true, the payload carries an MLS Welcome rather than an application message. */
   isWelcome: boolean;
   /** Server queue time (ISO 8601) so the client can show the right timestamp pre-decryption. */
@@ -181,6 +189,9 @@ export function buildPushDataFields(input: PushMessageInput): Record<string, str
       : { isKeyDistribution: input.isKeyDistribution ? 'true' : 'false' }),
     proto: input.proto,
     silent: input.silent ? 'true' : 'false',
+    // ABSENT UNLESS SET, so the ordinary `all` frame costs no byte and a build that predates the
+    // field reads the frame exactly as before. Only a frame that draws can carry it.
+    ...(input.mentionsOnly && !input.silent ? { notifLevel: 'mentions' } : {}),
     isWelcome: input.isWelcome ? 'true' : 'false',
     createdAt: input.createdAt,
   };
@@ -330,12 +341,19 @@ export function buildApnsRequest(
 
   const title = input.senderName || input.groupName || 'Canari';
 
+  // A `mentions` FRAME LEAVES HERE QUIET, AND ONLY THE EXTENSION MAY MAKE IT LOUD. Without Apple's
+  // filtering entitlement an extension cannot withhold an alert push, and if it does not run (memory
+  // pressure, timeout, no state) the alert below is what iOS shows. So the server's version is the
+  // undecidable case's answer - `passive`, no sound: filed in the notification centre, never lighting
+  // the screen - and the extension raises it to `active` with a sound when it reads a mention.
+  const quiet = !!input.mentionsOnly;
+
   return {
     payload: {
       aps: {
         'mutable-content': 1,
         alert: { title, body: apnsFallbackBody(locale) },
-        sound: 'default',
+        ...(quiet ? { 'interruption-level': 'passive' } : { sound: 'default' }),
         // Groups a conversation's notifications together in the iOS notification centre.
         'thread-id': input.groupId,
       },

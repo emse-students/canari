@@ -8,6 +8,7 @@ import type { MlsDecryptSession } from './mlsDecryptSession';
 import type { DistributionScope } from './distributionScope';
 import type { EnvelopeSender } from './verifiedSender';
 import type { IStorage } from '$lib/db/types';
+import type { GroupExclusions, GroupRosterBatch, SentFrame } from './mlsDeliveryApi';
 
 export type { FrameDelivery };
 export type { DistributionScope };
@@ -204,6 +205,38 @@ export interface MlsInitOptions {
    * The decision belongs to `biometricCadence.ts`; this flag only carries it to the native side.
    */
   unattendedKeyRead?: boolean;
+  /**
+   * The device key came from the UNLABELLED vault an older build wrote, so nothing yet says it
+   * belongs to the account signing in (`deviceKeyVault.loadDeviceKey`). Such a key is accepted only
+   * if it OPENS a saved state whose credential names this account; any other outcome - the state
+   * will not open, it opens and names someone else (`mismatch`), or the load fails otherwise -
+   * throws {@link VaultOwnerUnprovenError} and changes NOTHING: no rotation, no fresh start, no
+   * write. On a phone `mls.bin` is one file per install, so a rotation here is another account's
+   * local state overwritten.
+   */
+  vaultOwnerUnproven?: boolean;
+}
+
+/**
+ * What refused a vaulted key of unproven owner: `no_state` (nothing on this device to prove the
+ * account with - the login checks this before init), `mismatch` (the key OPENED the state and its
+ * credential names another account or device: on a phone, the state of the account that signed in
+ * before), or `unopenable` (the state did not open under it, or the load failed otherwise).
+ */
+export type VaultRefusal = 'no_state' | 'mismatch' | 'unopenable';
+
+/**
+ * A vaulted device key whose owner was not proven was refused, and nothing local was changed
+ * ({@link MlsInitOptions.vaultOwnerUnproven}). The login turns it into the PIN gate.
+ */
+export class VaultOwnerUnprovenError extends Error {
+  readonly refusal: VaultRefusal;
+
+  constructor(refusal: VaultRefusal) {
+    super(`vaulted device key refused: its owner is not proven (${refusal})`);
+    this.name = 'VaultOwnerUnprovenError';
+    this.refusal = refusal;
+  }
 }
 
 /**
@@ -579,7 +612,7 @@ export interface IMlsService {
     messageBytes: Uint8Array,
     messageId?: string,
     delivery?: FrameDelivery
-  ): Promise<Uint8Array>;
+  ): Promise<SentFrame>;
   /**
    * Decrypts and processes an incoming MLS message for the group, returning the plaintext or null.
    *
@@ -1001,6 +1034,17 @@ export interface IMlsService {
   getGroupMembers(groupId: string): Promise<{ userId: string; deviceId: string }[]>;
   /** Returns user-level membership (dm_group_members) for `groupId`. Throws on transport/HTTP failure; `[]` only for a genuinely empty group. */
   getGroupUserMembers(groupId: string): Promise<{ userId: string }[]>;
+  /**
+   * The windows during which each current member of `groupId` was out of it, from
+   * `GET /api/mls/groups/:groupId/exclusions`. Throws on any failure: a history answer that cannot
+   * read them sends nothing (see `historyEntitlement.ts`).
+   */
+  getGroupExclusions(groupId: string): Promise<GroupExclusions>;
+  /**
+   * The user-level rosters of many groups in one read (`POST /api/mls/group-rosters`). Never throws:
+   * a group it did not answer is absent from both sets, and nothing is decided for it.
+   */
+  getGroupRosters(groupIds: string[]): Promise<GroupRosterBatch>;
   /** Returns all groups the given user belongs to according to the delivery service. */
   getUserGroups(userId: string): Promise<UserGroupRow[]>;
   /** Fetches server metadata for one group (name, soft-delete tombstone). */

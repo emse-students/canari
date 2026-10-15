@@ -7,7 +7,11 @@ import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { persistMlsStateAfterMutation } from '$lib/utils/chat/groupActions';
-import { forgetGroupsAbsentFromServer, readGroupSweepSnapshot } from '$lib/utils/chat/groupSweep';
+import {
+  forgetGroupsAbsentFromServer,
+  readGroupSweepSnapshot,
+  type AbsentGroupVerdicts,
+} from '$lib/utils/chat/groupSweep';
 import { removeStrayLeaves } from '$lib/utils/chat/strayLeaves';
 import {
   connectionSweepDecision,
@@ -191,11 +195,18 @@ export async function openGatewayConnection(
  * `onGroupMissing` - the single recovery seam - and nowhere else.
  *
  * Deleted groups (tombstones): WASM state purged and the UI notified.
+ *
+ * @returns what the server said this pass about each local group its list leaves out, for the
+ *   discovery that follows in the same pass ({@link AbsentGroupVerdicts}); `undefined` on a follower
+ *   tab, which sweeps nothing.
  */
-export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Promise<void> {
+export async function syncConnectionAfterWsOpen(
+  deps: SyncAfterConnectDeps
+): Promise<AbsentGroupVerdicts | undefined> {
   const { mlsService, userId, deviceKeyB64, processDeviceInvitationsLocally, log } = deps;
 
-  if (!getIsTabLeader()) return;
+  if (!getIsTabLeader()) return undefined;
+  const verdicts: AbsentGroupVerdicts = new Map();
 
   // 1. Publish KeyPackages
   // welcome_requests must only be sent if this step succeeds:
@@ -250,6 +261,7 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
   const { localGroups } = snapshot;
 
   let stateMutated = false;
+  const strayCandidates: string[] = [];
 
   for (const g of snapshot.serverGroups) {
     // Group deleted server-side (tombstone) -> purge WASM state and notify the UI.
@@ -324,24 +336,27 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
       log(`[BASE] ${g.groupId.slice(0, 8)}… republish check failed: ${String(e).slice(0, 120)}`)
     );
 
-    // AND THE SECOND THING ONLY A HOLDER CAN DO: EVICT A LEAF ITS OWNER WALKED AWAY FROM.
-    //
-    // Leaving stages no Remove for the leaver's own leaf and cannot - a departing member is exactly
-    // the party that may not commit its own eviction - so the leaf stays in every remaining tree,
-    // holding key material for a conversation its owner has left. The repair existed for
-    // distribution groups only, the same sentence the branch above carries. See `strayLeaves.ts`
-    // for the diff, the cost it pays and why nothing is broadcast.
-    const evicted = await removeStrayLeaves(mlsService, g.groupId, userId, log).catch((e) => {
-      log(`[STRAY] ${g.groupId.slice(0, 8)}… reconciliation failed: ${String(e).slice(0, 120)}`);
-      return [];
-    });
-    if (evicted.length > 0) stateMutated = true;
+    // AND THE SECOND THING ONLY A HOLDER CAN DO: EVICT A LEAF ITS OWNER WALKED AWAY FROM - after the
+    // loop, for every held group at once, so the rosters are ONE read rather than one per group.
+    strayCandidates.push(g.groupId);
   }
+
+  // Leaving stages no Remove for the leaver's own leaf and cannot - a departing member is exactly
+  // the party that may not commit its own eviction - so the leaf stays in every remaining tree,
+  // holding key material for a conversation its owner has left. See `strayLeaves.ts` for the diff,
+  // the one roster read it pays, the order that keeps it sound and why nothing is broadcast.
+  const strayChanged = await removeStrayLeaves(mlsService, strayCandidates, userId, log).catch(
+    (e) => {
+      log(`[STRAY] reconciliation failed: ${String(e).slice(0, 120)}`);
+      return [];
+    }
+  );
+  if (strayChanged.length > 0) stateMutated = true;
 
   // 3. Purge WASM state for groups no longer known to the server - the same call discovery makes,
   // over the same snapshot, with the same guard and the same log vocabulary. The guard used to live
   // here and NOT in discovery, while a comment here asserted that it did; that divergence is `D5`.
-  if (await forgetGroupsAbsentFromServer(mlsService, snapshot, log)) stateMutated = true;
+  if (await forgetGroupsAbsentFromServer(mlsService, snapshot, log, verdicts)) stateMutated = true;
 
   if (stateMutated) {
     await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
@@ -405,6 +420,7 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
     log(`[HISTORY_RECONCILE] no sweep - ${reason}; every group already audited`);
   }
   noteConnection(userId, deviceId);
+  return verdicts;
 }
 
 /**
@@ -419,14 +435,16 @@ export async function syncConnectionAfterWsOpen(deps: SyncAfterConnectDeps): Pro
  *     absent from WASM, purge of stale states.
  *  5. Process invitations from our own other devices.
  */
-export async function initializeConnection(deps: ConnectionDeps): Promise<void> {
+export async function initializeConnection(
+  deps: ConnectionDeps
+): Promise<AbsentGroupVerdicts | undefined> {
   if (!getIsTabLeader()) {
     deps.log('[TAB] Follower tab - skipping initializeConnection.');
-    return;
+    return undefined;
   }
 
   const connected = await openGatewayConnection(deps);
-  if (!connected) return;
+  if (!connected) return undefined;
 
-  await syncConnectionAfterWsOpen(deps);
+  return syncConnectionAfterWsOpen(deps);
 }

@@ -361,6 +361,155 @@ iOS, the OS save panel on desktop). Two rules come with it:
 there they are unreachable by class name, and the failure only appears in the release build, which
 is the [first real Kotlin compile](../cicd.md).
 
+## The in-app log
+
+**A store build logged no JavaScript anywhere** (read on a store 1.2.6 Pixel 6a, 2026-10-13). wry's
+`RustWebChromeClient.onConsoleMessage` forwards `console.*` to logcat (`Tauri/Console`) only when
+`BuildConfig.DEBUG`; WKWebView keeps it to Safari's inspector; and the layout's
+`attachConsole()` - credited with "redirecting console to logcat" - did the opposite: it LISTENS for
+`log://log` and writes Rust records INTO the JS console, an event only a `Webview` target emits, and
+`lib.rs` configures none (its defaults are `Stdout` and `LogDir`). A dead listener on every
+platform, so it is **removed**, with the `@tauri-apps/plugin-log` JS package nothing imports any
+more. The Rust crate stays: Rust `log::` lines still reach logcat and the private `Canari.log`
+exactly as before. The `log:` grants stay too, because `tauriCapabilities.test.ts` requires one for
+every plugin with a JS command surface, and an exemption there is how that test stops working.
+
+**What replaced it** (`utils/appLog.ts`, `appLogRedact.ts`, `appLogExport.ts`):
+
+| Part | Decision |
+| --- | --- |
+| Source | The ONE console wrapper, `installConsoleIdTruncation(captureConsoleLine)` in `hooks.client.ts`. `log`, `info`, `warn`, `error` enter; **`debug` does not** (it is `Log.d` at every function entry - the volume that would evict the `[SELECT]`/`[QUEUE]`/`[GRAINE]` lines a reading needs, none of which is debug). Workers have their own console and do not enter. |
+| Privacy | Every line goes through `redactLogLine` BEFORE it is stored; the raw line never is. **And again when it is READ** (`readAppLog`, the one reader of the stored log): see [redacted at write AND at read](#redacted-at-write-and-at-read). See below. |
+| Storage | IndexedDB `CanariDBLog`, store `chunks`, auto-increment keys (two web tabs never collide), an index on each record's size. The same database on the web and in the Tauri WebView: one implementation, nothing native to verify. |
+| Write | Batched in memory, written as **one new record per batch**: at 32 KiB or 200 lines, when the app leaves the screen (`onAppScreenChange`, which is the only honest signal on Android, plus `pagehide`), and before an export. **Never on a timer.** Nothing already written is rewritten. |
+| Bound | After each write, the oldest records are deleted until the total is under **2 MiB** (UTF-16 code units; a redacted line is ASCII). Rotation is by SIZE. The newest record is never evicted. |
+| Failure | No IndexedDB, or a failed write: persistence stops for the process, said ONCE at `error` (`[APPLOG] the in-app log is no longer written to disk`), lines stay in a 256 KiB memory tail (oldest dropped and counted), and the export header names the state. Not a second storage path. |
+| Wipe | `wipeDeviceToFactory` calls `discardAppLog()` (empties, closes, stops writing for the process) before the `CanariDB*` prefix delete removes the database; `onversionchange` closes the connection too, so the delete cannot block. A sign-out does NOT clear it: "I was logged out" is exactly the report it must survive. The cost, accepted rather than missed: the next account to sign in on that device can export the previous one's REDACTED lines (8-character id prefixes, times, error kinds). |
+| Export | Settings > About > **Save the log**: user-initiated only, through `downloadDecryptedFile` - the browser download on the web, the native save dialog in the app (Android's document picker, iOS's Files picker, the desktop save panel). A header gives version, platform class (`android-app`, never the model), export time and UTC offset, line / redacted / dropped counts and the storage state. |
+
+**Why IndexedDB and not a file through the log or fs plugin.** A plugin-log `Webview`/`LogDir`
+forward would cost an IPC crossing per line - on Android a JSON `postMessage` - on the hot path,
+and only native builds would have it. The IndexedDB record is written from the page with no bridge,
+in batches. **Measured write cost** (`appLog.test.ts`, the amplification case): logging 3 MiB writes
+exactly the logged characters minus one newline per batch, in `ceil(logged / 32 KiB)` `add`
+calls and zero `put`s - an amplification of **1.0** for the log itself, against the MLS state that
+is rewritten whole (15 MB on the heavy phone) at every checkpoint. Captured sessions put the
+non-debug volume at ~6.5 KB for a cold boot and ~20 KB per active minute (Mi 9T captures,
+2026-10-01 and 2026-10-13), so a batch lands roughly once a minute of active use and the ring holds
+on the order of 1-2 hours of activity, more for an idle phone. The engine's own overhead (LevelDB
+on Chromium, SQLite on WebKit) is NOT measured: no phone was used.
+
+**Redaction - an allowlist where it carries weight, a scrubber around it.** In order: the input is
+cut at 1000 characters back to the last space (several patterns rescan from every position of an
+unbroken run, so an uncut 32 KB line took MINUTES - measured), control characters become ` | `,
+then JWTs, `Bearer`/`Basic` values, URL query strings and fragments (`?[query]`), invitation
+tokens (`/join/[token]`), e-mail addresses (`%40` included), the value of any field whose name
+ENDS in a secret or prose word once split on camelCase, `_` and `-` (`pin`, `password`, `token`,
+`cookie`, `seed`, `cek`, `email`, `phone`, `name`, `title`, `body`, `text`, `content`, ...; `code`
+and `key` only after `invite`/`auth`/`private`/`api`/..., so `statusCode` and `conversationKey`
+survive) -> `newPin: [redacted]`; a quoted value the payload renderer cut takes the rest of the
+line with it, and an unquoted prose value runs to the next FIELD, across a comma. `refresh`
+(the cookie and `X-Canari-Refresh`), `sub`, `tel`, `ip`, `lat`/`lng` are secret words; `search`,
+`query`, `q`, `alias`, `label`, `filename`, `preview`, `note` are prose words. Two values a
+sensitive name may keep: an exception's class (`{"name":"NotAllowedError"}`) and a bare `code` of
+1-4 digits (a WebSocket close code). Then a secret word followed by a digit-bearing value with no
+`:`/`=` (`pin 482913`, `Invalid PIN 482913`), phone numbers, IPv4 and full IPv6 addresses, a list
+of 16+ small integers (a key as `JSON.stringify` writes a byte array; `renderLogPayload` itself now
+writes any `ArrayBuffer` view as `[bytes:N]`), the existing 8-character id truncation, base64 runs
+of 20+ characters mixing digits and letters (`[key:N]`; a path is judged segment by segment, an
+upper-case `CONSTANT_NAME` is not base64), then **every quoted value - `"`, `'` (not an
+apostrophe), backtick, curly quotes, guillemets - that does not have an identifier / enum / number
+shape, or holds a Capitalised word** (`"[21 chars]"`), the stem of any token ending in a
+member-upload extension (`.pdf`, `.jpg`, `.docx`, ... -> `[file].pdf`; the app's own `mls.bin`,
+`*.wasm` keep their names), an unbalanced quote's tail, zero-width characters, pictographs and
+flags, and **every word holding a non-ASCII letter, combining mark or digit** (`[text]` - French
+prose; log lines are English ASCII by rule; the four status marks are kept). The result is capped
+at 400 characters.
+
+**Cost** (bun, desktop, 2026-10-13, five representative real lines): 5.2 us per line as first
+written, 10.3 us after both reviews of #1819; a phone is slower by an unmeasured factor. The worst
+case under the 1000-character cut is about 3-5 ms (an unbroken run of `00` or `x.`). The second
+review measured the comma-crossing prose rule at 33 us per line when written as a lookahead inside
+`FIELD_RE`'s repetition, so it runs as a separate pass on lines that HAVE a prose field, and the
+file-name pass only on lines that contain an upload extension.
+
+**How it was attacked** (second review of #1819): every `console.log/info/warn/error` and
+`appendLog` call site of `frontend/src` (1022) and every local `log(...)` wrapper (504) was parsed
+with the TypeScript compiler, each interpolation named like a name, a file, a body, an e-mail, a
+PIN, a token or a URL was replaced by a hostile value, and the rendered line was redacted; plus 79
+hand-written attacks. What still leaked after the fixes is the list below, plus Error messages
+whose text a server or a library wrote.
+
+**A CONTENT FIELD IS ITS LENGTH, WHATEVER ITS SHAPE (Mi 9T reading of `v1.2.7-alpha.1`, 2026-10-14).**
+`text="ok"`, `text="bisous"` and `text="refuse1-a127"` reached the export: a one-word message has
+the shape of an enum, so the quoted-value allowlist kept it. Two causes, both fixed in
+`appLogRedact.ts`. (1) The `FIELD_RE` tail of the PRECEDING field (`contact="jolan"`) swallowed the
+next field's name (` text=`), so `text` was never judged as a field; a tail word now stops where
+`word=` / `word:` begins. (2) A prose-keyed value is replaced by `[N chars]` (`"[N chars]"` when it
+was quoted) instead of the shape test; the list gained `contact`, `comment`, `draft`, `snippet`,
+`excerpt`. The shape allowlist now applies only to values under NON-content keys. The two `text=`
+call sites are `useMessaging.svelte.ts` (`handleSendChat`) and `utils/chat/messaging.ts`
+(`sendChatMessage`); a new site that interpolates content must use a key of that list.
+
+**What it cannot catch, for the reviewer:** an UNQUOTED ASCII word that is a name
+(`Joined channel #bureau`, `Jolan Boudin left`, a path segment `/users/jolan`) - no pattern
+separates `bureau` from `ready` - a quoted name written in lower case (`"bureau"`), a byte list
+shorter than sixteen, `jean at emse.fr`, and a phone number written with parentheses. The
+cotisation roster line logged the admin's search text and now logs its length (second review). The
+Settings text says the log removes what Canari RECOGNISES and asks the member to read it before
+sending - it no longer promises "no name". The call sites that interpolated names were
+changed to log an id, a type or a size: channel join/leave/create, member invite, group rename and
+creation, vault and reviewer documents, then (review of #1819, 2026-10-13) the system-message
+lines that named the member who renamed, left, excluded or deleted, the discovery and placeholder
+lines that quoted a group's name, the 1:1 merge line, and the four `[MEDIA]` lines that quoted the
+file's name. A new call site logging a name is a review finding.
+
+### Redacted at write AND at read
+
+**A fix to the redactor protected only what was written after it (Mi 9T reading of
+`v1.2.7-alpha.2`, 2026-10-14).** The ring keeps up to 2 MiB of lines, and the export of the
+upgraded phone still carried `contact="jolan" text="bisous"` and `text="ok"` that `v1.2.7-alpha.1`
+had stored before #1839. So `readAppLog` - the ONLY reader of `CanariDBLog`; the export
+(`appLogExport.ts`, Settings > About) is its only caller, and nothing else shows, shares or copies
+the stored log - passes every line through the SAME `redactLogLine` again on the way out, the
+`YYYY-MM-DD HH:MM:SS.mmm L ` stamp and level left as they are. One function, two call sites; no
+second implementation. What it redacted at read is added to the header's count and said once
+(`[APPLOG] N values redacted at read, in M lines an older build stored`) - which, the pass being
+idempotent, only a line an older build stored can trigger. **The pass yields** to the main thread
+(`yieldToMainThread`) every 250 lines, by COUNT, never by a clock: a full 2 MiB ring is ~5000
+lines, ~125 ms on desktop and 1-3 s estimated on a phone in one synchronous pass (review of #1861).
+
+**That requires `redactLogLine` to be IDEMPOTENT**: a line it returned comes back identical with
+zero redactions, so a line this build stored costs the read nothing and is never re-marked
+(`"[5 chars]"` must not become `"[9 chars]"`). Four things broke that and were fixed: a field whose
+value is already `[redacted]` / `[N chars]` / `"[N chars]"` is kept uncounted - a CONTENT field
+only when that marker is its WHOLE value, with no word after it, since a member can type
+`[3 chars] my message` and the first pass must not keep it; a replacement that
+equals its match (`?[query]`, an already closed `"[cut]`) is not counted; the 400-character cap
+cuts at a space OUTSIDE any quote or bracket, so it ends between whole tokens, and a line already
+carrying its `… (N chars)` suffix is redacted without it and gets it back unchanged - a cut inside
+a marker (`name: [11 ch… (1140 chars)`) used to be read by the next pass as a new value, so EVERY
+export re-counted this build's own capped lines and logged a false `[APPLOG]` claim. Only a suffix
+the cap can have written counts as one (N from 401 to 9999, no leading zero), because its number is
+put back VERBATIM: a member's `… (0612345678 chars)` kept a phone number the line-wide pass would
+have redacted. A member who types a plausible one (`text: … (4829 chars)`) still keeps those four
+digits - a residual accepted, not closed; and a NON-sensitive field
+whose bare value starts another field (`handleSendChat: contact="[5 chars]"`) is resumed at that
+field instead of giving `handleSendChat` the value `contact="[5` - a SENSITIVE name still swallows
+such a value whole, or `text=a="ok" my message` would hand the message to the harmless inner
+field. Both shapes were found by a differential fuzz against the previous redactor (review of
+#1861). The `[SEND]` lines also JSON-quote the text: hand-written `text="${text}"` let a `"` the
+member typed close the quote, and the words after it stayed as plain log words - at write AND at
+read, since a stored line of that shape no longer says where the value ended. Pinned by
+`appLogRedact.test.ts` (every hostile case and the content cases, passed twice) and
+`appLog.test.ts` (an old-format record written straight into IndexedDB comes out redacted;
+removing the read-side call fails it; a line this build stored, capped or not, never fires the
+`[APPLOG]` line; a 751-line ring yields exactly three times). Each was mutation-checked.
+
+**The stored records are NOT rewritten in place.** A rewrite would be a `put` over records the
+writer's amplification test pins at zero, and it would buy nothing: the read-side pass already
+covers every line, and it also covers whatever a FUTURE rule change finds in lines stored today.
+
 ## The app owns which URLs its own WebView may load
 
 **A URL `http::Uri` cannot parse used to abort the whole process, and nothing on either side of the
@@ -480,7 +629,13 @@ own parameters. **Not yet verified inside Messenger itself** - both halves are m
 browser carrying Messenger's user agent (the production build, served locally under the legacy
 name, 2026-09-28: the banner above the login page, `Ouvrir` carrying the intent to the post behind
 `returnTo`, nothing in a plain Chrome); the iOS half also needs a store release, because the
-`open` host is handled by the app's own code.
+`open` host is handled by the app's own code. **On iOS that handler is in every store build since
+`v0.18.28`, and it works only on a RUNNING app**: from `v1.2.0` to the fix of 2026-10-14 a tap that
+had to launch the app opened it on the feed instead of the page
+([below](#a-cold-start-on-the-scene-lifecycle-lost-its-link)). Whether Messenger, Instagram and
+Facebook hand a tapped `fr.emse.canari://` to iOS at all is still unmeasured: no bench iPhone carries
+a Meta app (a user report about "Ouvrir dans l'application" on an iPhone, 2026-10-13, names neither
+the app nor the page).
 
 ### How a deep link actually reaches the app — two paths, only one of them gated
 
@@ -514,6 +669,41 @@ The diagnosis is cheap when a cold start misbehaves, because each hop logs separ
 `START ... act=android.intent.action.VIEW dat=fr.emse.canari://chat/...`, the WebView prints
 `[hooks] Deep-link listener registered`, the handoff prints `[hooks] Processing URL`, and the product
 prints `[notifNav] deep link received`. The first absent line names the broken hop.
+
+#### A cold start on the scene lifecycle lost its link
+
+**Since `v1.2.0` (tauri 2.12, tao 0.37, #1609) every link that LAUNCHED the iOS app was lost**: the
+app opened on its default page. Measured on the iPhone 12 (iOS 27.0.1, TestFlight `1.2.3-alpha.5`,
+2026-10-14), each opened with `ios.mjs url` once with the app running and once after
+`ios.mjs terminate`:
+
+| link | app running | app killed |
+| --- | --- | --- |
+| `fr.emse.canari://open?url=https://canari.emse.fr/notifications` | lands on `/notifications` | lands on the feed, behind the PIN |
+| `fr.emse.canari://post/<all-zero uuid>` (positive control, `PASS` cold on 1.0.3 on 2026-10-05) | - | lands on the feed, behind the PIN |
+
+The same JavaScript on the Mi 9T (`v1.2.7`, Android) opens `/posts/<id>` cold, read over CDP, so the
+loss is below the WebView. The cause is in tao: 0.37 answers
+`application:configurationForConnectingSceneSession:` for every app, so UIKit runs Canari on the
+SCENE lifecycle although `Info.plist` declares no scene manifest (the syslog shows the
+`UIWindowScene`). On that lifecycle a launching link is delivered ONCE, in the connection options of
+`scene:willConnectToSession:options:` (`URLContexts`, and `userActivities` for a Universal Link), and
+`TaoSceneDelegate` ignores them - so no `RunEvent::Opened`, and `getCurrent()` answers null. tao 0.35
+answered that configuration only for a multi-scene plist, which kept the app on the classic
+lifecycle, where `application:openURL:options:` carried the link. tao's `dev` branch still ignores
+the options.
+
+`canari_ios.mm` wraps `TaoSceneDelegate`'s `willConnect` (`CanariInstallSceneLaunchUrlHook`): tao's
+own method runs first (it gives the scene its window; the event loop is already up, because with no
+scene manifest tao runs `on_app_ready()` from `didFinishLaunching`), then the
+options go to the two methods tao implements for a RUNNING app, `scene:openURLContexts:` and
+`scene:continueUserActivity:`. It is installed on `UIApplicationDidFinishLaunchingNotification` with
+`queue:nil`: tao registers the class inside `ffi::start_app()`, and the first scene connects right
+after that notification - the APNs hook, which is queued, already runs only 1 ms before the scene's
+first line in the syslog. `iosSceneLaunchUrl.test.ts` pins the shape, because nothing compiles the
+file on a workstation. **It is native, so it ships only with a store build**, and its proof is
+`[CanariDeepLink] scene connected with 1 launch url(s)` in the syslog of a cold launch, then the
+target page behind the PIN.
 
 #### A reload used to replay the launch link, and the guard's LIFETIME is the fix (WP-RELOAD-DL-1)
 
@@ -1141,6 +1331,46 @@ compile time, and `gen/android` is regenerated by `tauri android init` and by a 
 The web half of the same defect - a landing that drained its own overlay entry - is in
 [chat](modules/chat.md#and-the-re-verification-it-asked-for-says-the-mechanism-is-there-and-the-landing-destroys-it-2026-09-21).
 
+### A relaunched activity left its WebView alive, and the orphan kept its Web Locks (2026-10-14)
+
+**Some configuration changes cannot be absorbed by `configChanges`.** Switching the navigation mode
+(gestural <-> 3-button) swaps a system overlay (`cmd overlay list | grep navbar`), and a System WebView
+update swaps the WebView's resources; both change the app's ASSET PATHS. The system logs
+`Config changes=80000000`, which is `ActivityInfo.CONFIG_ASSETS_PATHS` - a `@hide` bit with no
+manifest name, so no `configChanges` value can claim it, and claiming it would leave the activity on
+stale resources anyway. Android relaunches the activity **in the same process** (`ActivityThread:
+ApplicationInfo updating for fr.emse.canari`, then `finishDrawing of relaunch`).
+
+What wry 0.57 does with that: `WryActivity.onDestroy` only reports to Rust, which on
+`isChangingConfigurations` keeps its maps; the new activity's `android_setup` re-sends `CreateWebView`
+and a NEW `RustWebView` loads the app from scratch. **Nobody calls `destroy()` on the old one.** It
+stays a detached but live page, whose context is the dead activity.
+
+**MEASURED ON THE Mi 9T, Android 16, `1.2.7-alpha.1`, 2026-10-14** (`cmd overlay enable-exclusive
+--category com.android.internal.systemui.navbar.threebutton`, then back): one more `attached:false`
+page in CDP per switch - four pages after three switches. The newest orphan answered
+`Runtime.evaluate` (`visibilityState: "hidden"`) and a probe lock it had taken BEFORE the switch was
+still in `navigator.locks.query().held` read from the new page. On the reading itself
+([device-verification](../device-verification.md)) the orphan held the unsent-salon-text owner lock,
+so three refused salon texts were never handed back:
+`[SALON-UNSENT] 3 entr(y/ies) kept: a live sibling tab owns them`, six times.
+
+**THE LOCK LOGIC IS RIGHT AND IS NOT CHANGED** (`salonUnsent.ts`): a held lock is the browser saying
+the page lives, and by every fact the browser has it does - it can still run, over the same storage,
+as a second copy of the app. Teaching the ledger to ignore a holder would be guessing which live page
+"really" counts. The defect is the orphan, so `MainActivity.onDestroy` (after `super.onDestroy()`)
+detaches the WebView it was handed in `onWebViewCreate` and calls `destroy()`; the browser then
+releases its locks the way it does for a closed tab. Every destroy, not only a configuration one:
+a WebView whose activity is gone has no screen to come back to either way.
+
+Cost, named: between that destroy and the new `CreateWebView`, a Rust-side message aimed at the
+activity's WebView reaches the destroyed one, and Chromium drops it with its `destroyed WebView`
+warning - where it previously reached the orphan, which no one could see. Gated by
+`frontend/src/lib/mobile/androidWebViewTeardown.test.ts` (which also fails the day wry destroys the
+WebView itself, so the override is deleted rather than doubled). **Owed: one Mi 9T reading on the
+next pre-release - switch the navigation mode twice, then CDP must list ONE page and a salon text
+refused before the switch must come back to its composer.**
+
 ### A modal closed by its owner's state left the overlay stack, and the tab swipe stood down (2026-10-09)
 
 On a fresh Feed after publishing a post the swipe to the camera did nothing three times, and worked
@@ -1760,8 +1990,8 @@ unchanged** - it still asks on every miss, and stays so until it can be read on 
 build. Pinned by `messageNotificationShape.test.ts`.
 
 **A face the app has drawn is in the notification's cache before any push needs it (Android,
-2026-10-01).** `userAvatarCache.ts` hands the bytes of every avatar it LOADS (once per load, not per
-mount) to `store_avatar_mirror` (`commands/notifications.rs`), which writes
+2026-10-01).** `userAvatarCache.ts` hands the bytes of every avatar it LOADS (the same bytes once per
+process, below) to `store_avatar_mirror` (`commands/notifications.rs`), which writes
 `files/avatar_<id>.jpg` - the very file `cachedRemoteIcon` reads first - and deletes the
 `.absent` marker beside it. One cache, one reader: a contact seen in the app no longer depends on the
 network for the notification's face. The id comes from `Avatar.svelte`, which holds it, never from
@@ -1770,10 +2000,24 @@ together. **The clock**: the mirror's mtime is the moment of the write, so the n
 measures "since the app last drew this face" - a contact seen daily never ages out, and a changed
 photo can be up to two days stale in the shade (the browser's 24 h `max-age` until 2026-10-08, now only the native one).
 No ETag is carried: a cross-origin `fetch` cannot read it without an `Access-Control-Expose-Headers`
-nobody sends, and the reader would need the network to compare it. **The bytes go as a plain array
-(`{ userId, data }`, the shape `save_mls_state` takes), never a raw invoke body**: the first version
-read `tauri::ipc::Request` and the Mi 9T refused every call with "the body is not raw bytes" - the
-Android IPC turns a typed array into JSON. A body that does not open like a JPEG/PNG/GIF/WebP is
+nobody sends, and the reader would need the network to compare it. **The bytes go as ONE base64
+string (`{ userId, dataB64 }`), never a raw invoke body**: the first version read
+`tauri::ipc::Request` and the Mi 9T refused every call with "the body is not raw bytes" - the
+Android IPC turns a typed array into JSON. Until 2026-10-13 they went as a number array (`data`, the
+shape `save_mls_state` takes), ~3.6 JSON characters and one JS number per byte, built and
+serialised on the main thread: 50 faces of 7.5 KB (the production median, read from the edge log:
+p10 5.0 KB, p90 12.4 KB, max 16 KB) held it 360-440 ms on the Mi 9T, against 130-150 ms as base64.
+
+**A face is written once per process, not once per load (2026-10-13).** "Once per load" was every
+salon open: the avatar answers `no-cache` + ETag, each mount revalidates (a `304` the WebView's HTTP
+cache turns back into the same bytes), and the blob pool forgets a face with its last mount - so a
+store Pixel 6a re-mirrored 7/50/11/24 faces for four salons, identically on every repeat.
+`avatarMirror.ts` keeps the SHA-256 of what it last wrote per user, for the life of the process,
+and writes only bytes it has not written; a failed write is forgotten so the next draw retries, and
+the factory wipe forgets them all right after `clear_app_data` deletes the files (`deviceReset.ts`),
+or the next account signed in on that process would never be mirrored a face. What
+that gives up: the first write per process refreshes the mtime, so a process alive over 24 h lets
+the shade fall back to the network for a face it keeps drawing - the cost before any mirror. A body that does not open like a JPEG/PNG/GIF/WebP is
 refused, so a proxy's `200` HTML page never becomes a face. iOS is not mirrored: the extension reads
 an app-group container this command does not write.
 
@@ -2407,7 +2651,7 @@ conversation has read it (product decision, 2026-08-31). Both call one function 
 
 ### A salon: Mark as read only, and why Reply is not offered (decided 2026-10-10, Android)
 
-A salon notification (`channel_<id>`) carries **Mark as read** and no Reply. Marking read is server-authoritative, so it is one PushSecret call (`CanariFirebaseMessagingService.postChannelRead` -> chat-delivery `POST /api/mls/push/channel-read` -> social-service, mechanism on [social-service](../services/social-service.md)); the local banner is cleared first, and the action is offered only when the notification holds the message's server instant (`ChannelReadMark.offered`, JVM-tested). **Reply is not built, by decision**: a salon send is not a plain POST but an end-to-end encrypted message sealed under a Graine session (a signed v2 frame, [channel-encryption](../protocols/channel-encryption.md)), and the broadcast receiver holds neither the signing key nor the session. Building it means a native Graine sealing path in the JNI layer plus a PushSecret send route in the delivery service - a package of its own. **iOS has neither half**: the NSE category actions run in no gate of this repo, so they wait for a hand on an iPhone ([backlog](../backlog.md)).
+A salon notification (`channel_<id>`) carries **Mark as read** and no Reply. Marking read is server-authoritative, so it is one PushSecret call (`CanariFirebaseMessagingService.postChannelRead` -> chat-delivery `POST /api/mls/push/channel-read` -> social-service, mechanism on [social-service](../services/social-service.md)); the local banner is cleared first, and the action is offered only when the notification holds the message's server instant (`ChannelReadMark.offered`, JVM-tested). **And only when the banner SHOWS the message (2026-10-14)**: the action moves the salon's "Lu par" receipt, which is kept on the shade because the reader read the message there, so a BLIND banner ("Nouveau message", no seed or no ciphertext or a refused decryption) offers nothing - `postChannelNotification` passes `showsMessage` only where the body is the decrypted text, and a blind line redrawn with its plaintext offers it again ([read-receipt-privacy](../read-receipt-privacy.md)). **Reply is not built, by decision**: a salon send is not a plain POST but an end-to-end encrypted message sealed under a Graine session (a signed v2 frame, [channel-encryption](../protocols/channel-encryption.md)), and the broadcast receiver holds neither the signing key nor the session. Building it means a native Graine sealing path in the JNI layer plus a PushSecret send route in the delivery service - a package of its own. **iOS has neither half**: the NSE category actions run in no gate of this repo, so they wait for a hand on an iPhone ([backlog](../backlog.md)).
 
 ### The instant is carried, never looked up
 

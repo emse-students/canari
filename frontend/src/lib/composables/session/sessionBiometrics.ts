@@ -117,7 +117,11 @@ export async function disableBiometricImpl(ctx: SessionContext): Promise<void> {
   await BiometricService.disable(alias);
 
   const deviceKeyB64 = ctx.getDeviceKey();
-  if (deviceKeyB64) await saveDeviceKey(deviceKeyB64).catch(() => {});
+  if (deviceKeyB64 && userId) {
+    await saveDeviceKey(userId, deviceKeyB64).catch((e: unknown) =>
+      appendLog(`[BIOMETRIC] Re-seeding the device key vault failed: ${String(e)}`)
+    );
+  }
 
   // Re-seed the keystore and push_context.json with the session device key so background
   // push decryption keeps working without biometrics. BiometricService.disable() emptied

@@ -33,17 +33,44 @@
  * NOT HERE: the seed relayed from a departed member (GRAINE-AUTH-4, board row, `pending`) - it needs
  * a member who has left the key group and a forged relay, and has no runner yet.
  *
+ *   bun archive/graineauth.mjs --only 6    GRAINE-AUTH-6, an unsigned row the SERVER stored, read on W3
+ *   bun archive/graineauth.mjs --only 7    GRAINE-AUTH-7, an unsigned row POSTed, refused at the door
+ *
+ * 6 AND 7 - WHAT AN UNSIGNED (v1) ROW GETS, now that an arriving v1 seed is refused (channel-encryption
+ * section 21.7, G2-5b) and the server refuses to store an unsigned row (section 21.8).
+ *  7. THE DOOR: W1 POSTs, through the API and not the composer, what a modified client minting v1
+ *     would - an UNSIGNED row under a fresh session nobody holds. Answer 400
+ *     `CHANNEL_SIGNATURE_REQUIRED`, `[CHANNEL_SIGNATURE] REFUSED` at ERROR in social-service, and no
+ *     row stored.
+ *  6. HISTORY: the same row, INSERTED in the database - the one place it can still come from is a
+ *     server that stores it anyway, which is the adversary section 21.8 leaves to the reader. The
+ *     reader reloads and opens the salon. The page counts the row under `v1 session not held` at
+ *     warn (a page replays honest pre-floor rows, so it accuses nobody), asks nobody, and the salon
+ *     shows the older-messages notice ONCE (`showing the older-messages notice`, and its text in the
+ *     DOM).
+ * GRAINE-AUTH-5 (the same row arriving LIVE) has no arm since section 21.8: it needed the server to
+ * PUBLISH a row it now refuses to store, and a database insert publishes nothing. Its last reading
+ * (`PASS` 2026-10-13) stands; `channelEventHandler.v1Live.test.ts` carries the live refusal.
+ * The reader is W3, the owner's scratch device: any client lacks the injected session (it was never
+ * distributed), so the account does not matter. The row is DELETED in `finally`: left in place,
+ * every later history load of the venue would warn about it.
+ * NO SIGNED CONTROL ARM, deliberately: a signed row under an unknown session DOES ask, and that ask
+ * is a durable frame on the key group naming a session nobody minted - debris no `finally` can undo.
+ * The control is `channelEventHandler.v1Live.test.ts` (the signed twin asks).
+ *
  * A PRECONDITION IS ASSERTED, NOT ASSUMED: the row W1 just sent must carry a `signature`. An estate
  * still on a v1 writer would otherwise make every arm "pass" by refusing nothing to read.
  */
+import { randomBytes, randomUUID } from 'node:crypto';
 import { APP_TAB, apiPost, awaitMessage, countMessage, ensureChat, openChannel, send, client } from '../chat.mjs';
-import { reloadAndWait } from '../cdp.mjs';
+import { evaluate, reloadAndWait } from '../cdp.mjs';
 import { channelIdOf, userIdOf, workspaceIdOf } from '../grainedb.mjs';
 import { psql, srvLines } from '../estate.mjs';
 import { OWNER_NAME, PEER_NAME, PORTS, VENUE } from '../names.mjs';
 import { exitOnRecorded, mark, record } from '../results.mjs';
 import {
   awaitLine,
+  consoleLines,
   gate,
   ignoringExpectedLog,
   ignoringExpectedRefusal,
@@ -54,15 +81,28 @@ import {
 
 const argv = process.argv.slice(2);
 const only = argv.includes('--only') ? Number(argv[argv.indexOf('--only') + 1]) : null;
-const ARMS = only ? [only] : [1, 2, 3];
+const KNOWN_ARMS = [1, 2, 3, 6, 7];
+if (only !== null && !KNOWN_ARMS.includes(only)) {
+  // 5 is the one a session would still type: say why it is gone rather than run nothing silently.
+  console.error(
+    only === 5
+      ? 'GRAINE-AUTH-5 has no arm since channel-encryption 21.8: the server refuses the unsigned row it needed (see --only 7)'
+      : `no arm ${only} - known arms: ${KNOWN_ARMS.join(', ')}`
+  );
+  process.exit(2);
+}
+const ARMS = only ? [only] : KNOWN_ARMS;
+/** The client that reads the injected v1 row (arm 6): the owner's scratch device. */
+const READER = 'W3';
+const recordedIds = (n) => [`GRAINE-AUTH-${n}`];
 
 const workspaceId = workspaceIdOf(VENUE.community);
 const channelId = workspaceId ? channelIdOf(workspaceId, VENUE.channel) : null;
 const ownerId = userIdOf(OWNER_NAME);
 const peerId = userIdOf(PEER_NAME);
 if (!workspaceId || !channelId || !ownerId || !peerId) {
-  for (const n of ARMS) {
-    record(`GRAINE-AUTH-${n}`, 'SETUP-FAILED', {
+  for (const id of ARMS.flatMap(recordedIds)) {
+    record(id, 'SETUP-FAILED', {
       setupFailed: `venue or accounts not found (community ${!!workspaceId}, salon ${!!channelId}, owner ${!!ownerId}, peer ${!!peerId}) - build the fixture with \`bun venue.mjs\``,
     });
   }
@@ -70,11 +110,17 @@ if (!workspaceId || !channelId || !ownerId || !peerId) {
 }
 
 const w1 = await client(PORTS.W1, APP_TAB);
-const w2 = await client(PORTS.W2, APP_TAB);
-await ensureChat(w1);
-await ensureChat(w2);
-await openChannel(w1);
-await openChannel(w2);
+// Arms 1-3 write through W1's composer and read on W2. Arm 7 only POSTs from W1's page and arm 6
+// writes the database, so neither navigates W1 nor touches W2.
+const composes = ARMS.some((n) => n <= 3);
+const w2 = composes ? await client(PORTS.W2, APP_TAB) : null;
+if (composes) {
+  await ensureChat(w1);
+  await openChannel(w1);
+  await ensureChat(w2);
+  await openChannel(w2);
+}
+const reader = ARMS.includes(6) ? await client(PORTS.W3, APP_TAB) : null;
 
 /** The newest v2-looking row of the salon: `{ id, authorId, index, signed }` or null. */
 function newestRow() {
@@ -199,6 +245,154 @@ async function replayArm() {
   });
 }
 
+/** The notice's French text, read from the shipped catalogue so a rewording cannot blind the row. */
+const NOTICE_TEXT = JSON.parse(
+  await Bun.file(new URL('../../../frontend/messages/fr.json', import.meta.url)).text()
+).chat_older_messages_unavailable;
+
+/** How many times the reader's page shows `text`, after scrolling its transcript to the top. */
+async function shownOnPage(cx, text) {
+  return evaluate(
+    cx,
+    `(async function () {
+      var list = document.querySelector('.chat-messages-scroll');
+      for (var i = 0; list && i < 6; i++) {
+        list.scrollTop = 0;
+        await new Promise(function (r) { setTimeout(r, 400); });
+      }
+      return document.body.innerText.split(${JSON.stringify(text)}).length - 1;
+    })()`
+  );
+}
+
+/** What a modified client minting v1 would send: an UNSIGNED row under a fresh session nobody holds. */
+function unsignedRow() {
+  return {
+    ciphertext: randomBytes(48).toString('base64'),
+    nonce: randomBytes(12).toString('base64'),
+    senderSessionId: randomUUID(),
+    messageIndex: 0,
+  };
+}
+
+/** How many rows the venue's salon holds - the door arm's "nothing was stored". */
+const salonRowCount = () =>
+  psql(`SELECT count(*) FROM channel_messages WHERE "channelId" = '${channelId}'`).trim();
+
+/** Arm 7: the door. W1 POSTs the unsigned row; the server must refuse it before storing anything. */
+async function doorArm() {
+  const id = 'GRAINE-AUTH-7';
+  const since = new Date().toISOString();
+  const row = unsignedRow();
+  const before = salonRowCount();
+  // W1 IS OBSERVED, because the refused POST is its request: the 400 it provokes is named below, and
+  // anything else it says is dirt.
+  const obs = await watch(w1, 'graineauth-7');
+  const answer = await apiPost(w1, `/api/channels/${channelId}/messages`, row);
+  const after = salonRowCount();
+  const stored = psql(
+    `SELECT count(*) FROM channel_messages WHERE "senderSessionId" = '${row.senderSessionId}'`
+  ).trim();
+  const log =
+    srvLines('social-service', since).find(
+      (l) =>
+        l.includes('[CHANNEL_SIGNATURE] REFUSED') &&
+        l.includes(`session=${row.senderSessionId.slice(0, 8)}`)
+    ) ?? null;
+  const unmet = [];
+  if (answer.status !== 400 || !String(answer.body).includes('CHANNEL_SIGNATURE_REQUIRED')) {
+    unmet.push('theUnsignedRowWasNotAnswered400CHANNEL_SIGNATURE_REQUIRED');
+  }
+  if (stored !== '0' || after !== before) unmet.push('theUnsignedRowWasSTORED');
+  if (!log) unmet.push('noCHANNEL_SIGNATURE_REFUSEDLineInSocialService');
+  const doorPath = new RegExp(`^/api/channels/${channelId}/messages$`);
+  const gated = gate(unmet.length ? 'FAIL' : 'PASS', {
+    W1: ignoringExpectedRefusal(await report(obs), [{ path: doorPath, status: [400] }]),
+  });
+  record(id, gated.verdict, {
+    ...gated.detail,
+    unmet,
+    status: answer.status,
+    body: String(answer.body).slice(0, 160),
+    rowsBefore: before,
+    rowsAfter: after,
+    serverLine: log && log.slice(0, 240),
+  });
+  // A server still on the shape-only check STORED it: undo that, so a FAIL leaves no debris.
+  if (stored !== '0') {
+    psql(`DELETE FROM channel_messages WHERE "senderSessionId" = '${row.senderSessionId}'`);
+  }
+}
+
+/** Arm 6: the unsigned row a server stored anyway, read from history on the scratch device. */
+async function historyArm() {
+  const row = unsignedRow();
+  const sessionId = row.senderSessionId;
+  const rowId = randomUUID();
+  const since = new Date().toISOString();
+  // THE SERVER IS THE ADVERSARY HERE, so the row is written the way only it can: in the database,
+  // never through the API that now refuses it. Nothing is published, so no client sees it live.
+  psql(
+    `INSERT INTO channel_messages (id, "workspaceId", "channelId", "authorId", content, nonce, ` +
+      `"senderSessionId", "messageIndex", signature) VALUES ('${rowId}', '${workspaceId}', ` +
+      `'${channelId}', '${ownerId}', '${row.ciphertext}', '${row.nonce}', '${sessionId}', 0, NULL)`
+  );
+  // The app's logger shortens an id to its first eight characters and an ellipsis, so the needle is
+  // that prefix: the full id is never printed, and a needle spelling it matched nothing (2026-10-13).
+  const shortId = sessionId.slice(0, 8);
+  const refusal = `unsigned row under v1 session ${shortId}`;
+  // A seed ask for THIS venue - not the history ask for another community a fresh page makes itself.
+  const asked = (cx) =>
+    consoleLines(cx).filter(
+      (l) =>
+        l.includes('[GRAINE] asked') &&
+        l.includes(`seed(s) in community ${workspaceId.slice(0, 8)}`)
+    );
+  // Every line naming the injected session, whatever its level: what the reader decided about it.
+  const aboutRow = (cx) => consoleLines(cx).filter((l) => l.includes(shortId));
+  try {
+    // A FRESH PAGE: the row is about the refusal the CURRENT build makes, and a tab left open across a
+    // rebuild would answer with the code from before it. The reload is also what reads history.
+    await reloadAndWait(reader);
+    const histObs = await watch(reader, 'graineauth-6');
+    await ensureChat(reader);
+    await openChannel(reader);
+    // The page line names its class and samples the per-row cause, which carries THIS session's id.
+    const tallyLine = await awaitLine(reader, refusal, 20_000);
+    const noticeLine = await awaitLine(reader, 'showing the older-messages notice', 5_000);
+    await new Promise((r) => setTimeout(r, 5_000));
+    const histAsks = asked(reader);
+    const noticeShown = await shownOnPage(reader, NOTICE_TEXT);
+    const histUnmet = [];
+    if (!tallyLine) histUnmet.push('theHistoryPageNeverCountedTheInjectedRow');
+    else if (!tallyLine.includes('v1 session not held')) histUnmet.push('theInjectedRowWasCountedUnderAnotherClass');
+    else if (tallyLine.includes('REFUSED')) histUnmet.push('theHistoryPageACCUSEDAnHonestReplayClass');
+    if (!noticeLine) histUnmet.push('theOlderMessagesNoticeWasNeverMade');
+    if (noticeShown !== 1) histUnmet.push(`theNoticeIsShown${noticeShown}TimesNotOnce`);
+    if (histAsks.length) histUnmet.push('theHistoryRowASKEDForASeed');
+    const hist = gate(histUnmet.length ? 'FAIL' : 'PASS', {
+      [READER]: ignoringExpectedLog(await report(histObs), [
+        refusal,
+        'showing the older-messages notice',
+        ...PAGE_BOOT_NARRATION,
+      ]),
+    });
+    record('GRAINE-AUTH-6', hist.verdict, {
+      ...hist.detail,
+      unobservable: 'the unsigned row is injected on purpose - the warn it provokes is what this row reads',
+      unmet: histUnmet,
+      reader: READER,
+      line: tallyLine ? tallyLine.slice(0, 240) : null,
+      noticeShown,
+      asks: histAsks,
+      aboutRow: aboutRow(reader),
+      serverSince: since,
+    });
+  } finally {
+    psql(`DELETE FROM channel_messages WHERE id = '${rowId}'`);
+  }
+}
+
 try {
   for (const n of ARMS) {
     if (n === 1) {
@@ -217,11 +411,16 @@ try {
       });
     } else if (n === 3) {
       await replayArm();
+    } else if (n === 6) {
+      await historyArm();
+    } else if (n === 7) {
+      await doorArm();
     }
   }
 } finally {
   w1.close();
-  w2.close();
+  w2?.close();
+  reader?.close();
 }
 
 exitOnRecorded();

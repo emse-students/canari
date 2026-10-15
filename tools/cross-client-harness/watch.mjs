@@ -289,6 +289,9 @@ const BENIGN = [
   // discriminator repair both landed. Its ABSENCE is what would be the signal: a boot where these
   // do not appear is a boot where the sweep deleted the group and sending stops working.
   /^\[(SYNC|DISCOVERY)\] (WASM kept|MLS state kept for) [0-9a-f]{8}… - .*key-distribution group/,
+  // The second sweep of the same connection pass reusing the first one's `keep` (2026-10-14): the
+  // per-group line above was printed by the sweep that asked, so this one only counts.
+  /^\[SYNC\] \d+ group\(s\) kept on the answer this connection pass already had - not asked again$/,
   // THE REDUCER DECLINING TO RE-PURGE A CONVERSATION THE USER HAS ALREADY SEEN DIE. A row marked
   // `removed` is a fact about what its owner was TOLD, so it survives every later reconciliation
   // until they delete it by hand - the guard at the top of `decideAbsentGroupFate`, which no server
@@ -1120,7 +1123,8 @@ const NOTABLE = [
   // decrypted against a group the client does not hold yet, so this is the mechanism working -
   // `notable` because it can only happen while a join is open, and a check that opened none has a
   // finding here.
-  /^\[QUEUE\] Buffering message for group \S+ \(Welcome in progress\)$/,
+  // One line per window since 2026-10-14 (it was one per frame); the count is on the release line.
+  /^\[QUEUE\] Buffering messages for group \S+ behind its Welcome - the count is reported when the Welcome ends$/,
   // THE THREE WAYS THAT WINDOW CLOSES, and they are the complete set: `Welcome complete` and
   // `Welcome failed` from the handler, `stranded buffer` from the sweep that refuses to leave a
   // bucket nobody will drain. One rule, because all three mean "the buffer gave its frames back";
@@ -2026,10 +2030,10 @@ export const BLOCK_LIST_READ_NARRATION = [/^\[blocks\.listBlockedUsers\]$/];
 
 /**
  * WHAT ANY PAGE LOAD SAYS ABOUT ITSELF, so a row that RELOADS a client names it instead of widening
- * the classifier. Four lines, each a function-entry or restore log the project's standard requires
- * and each carrying no value that could be a finding: the brand's fit measurement, the text-zoom
- * measurement, the notification-preference fetch, and the Graine key-group registry being restored
- * before the drain (the boot step of the v2 reader - its COUNT is not asserted here).
+ * the classifier. Each is a function-entry or restore log the project's standard requires and none
+ * carries a value that could be a finding: the brand's fit measurement, the text-zoom measurement,
+ * the notification-preference fetch, the Graine key-group registry being restored before the drain
+ * (the boot step of the v2 reader - its COUNT is not asserted here), and the two unread-count reads.
  *
  * THEY ARE PINNED TO THEIR OWN SENTENCES and applied only by a row that provoked a reload
  * (`graineauth.mjs` reloads W2 on purpose to re-read history). A client that did not reload and
@@ -2040,6 +2044,9 @@ export const PAGE_BOOT_NARRATION = [
   /^\[textZoom: font \d+px over a \d+px rem box -> --text-zoom [\d.]+\]$/,
   /^\[notificationPreferences\.fetch\]$/,
   /^\[GRAINE\] key-group registry restored before the drain - \d+ group\(s\)/,
+  // The salon unread counts (2026-10-08) are read from the server at every boot, once when the
+  // communities load and once when the live stream opens. Seen first on GRAINE-AUTH-6, 2026-10-13.
+  /^\[UNREAD\] (?:communities loaded|live stream back): \d+ salon\(s\) unread on the server, \d+ count\(s\) moved here$/,
 ];
 
 /**

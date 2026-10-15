@@ -203,6 +203,8 @@ grid's bands, the day panel and the event dialog - and every list of them is key
 `associationId`. **A name is a label two associations may share and a slug is a URL; neither is an
 identity, and a key that can repeat is a crash rather than a cosmetic slip.**
 
+**Display order on the grid block (2026-10-14, user).** `eventOwners()` stays owner-first (modal, labels). The block's colour segments and split logo are painted in `organiserCentred()` order instead: from three associations up the ORGANISER (the event's owner, who invites the others) is the MIDDLE band and the invited ones fill the sides in their given order; with two, the owner stays first. Screen (`MonthCalendarGridRich`) and PDF export (`calendarExport.ts`) both call it, so they cannot disagree. Bands stay equal width: the centre is not enlarged, to keep the colour segments and logo slices aligned.
+
 **Since D39 a co-owner row means ACCEPTED** (migration 074): naming a co-organiser in the event form
 asks it, and it reaches nothing - this list, its rights, its readers' agenda - until its publishers
 accept. The form reads the states from `GET .../events/:eventId/co-organisers` after it opens and
@@ -214,6 +216,17 @@ only the accepted ones ([profiles-and-access](../../profiles-and-access.md#d39-c
 from the states endpoint (a reader without the right gets none: the endpoint refuses, and the modal
 logs it). The picker counts `n / 4` (the owner included), stops offering associations at three picks
 and says why; `coOrganiserCap.ts` mirrors the server's constant.
+
+**Typing opens the picker's list, not only focusing (user, 2026-10-13).** Reported as "two
+associations added, 'BD' typed, no suggestion - not always". An option is picked on a `mousedown`
+whose default is prevented, so the field KEEPS focus through the pick, and a field that keeps focus
+never fires `focus` again. The list opened on `focus` alone and every pick closed it, so after the
+first pick no keystroke brought it back until the user left the field and came back. The test suite
+missed it because its helper re-dispatched a synthetic `focus` before every pick, which no browser
+does. The list now also opens on `input`; it closes when focus leaves the picker (a `focusout` on the
+wrapper, checking `relatedTarget`) instead of a 150 ms `setTimeout` after `blur`; and a search
+matching nothing says "no other association matches" rather than drawing nothing
+(`EventFormModal.coOwners.svelte.test.ts` gives focus once, as a pointer does).
 
 **UP TO FOUR ORGANISERS, AND WHAT A ROW SHOWS OF THEM (user, 2026-10-10).** The cap is four
 associations in total ([profiles-and-access](../../profiles-and-access.md#d39-co-organisation-as-built-2026-10-05)).

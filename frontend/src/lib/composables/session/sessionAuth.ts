@@ -24,13 +24,30 @@ import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 // these PIN flows must be able to tell "the PIN you typed is not the current one" from a browser's
 // `Failed to fetch`, and only the THROW knows which it is.
 import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
-import { LoginFailure, isExpectedLoginOutcome, loginErrorCode } from './loginErrors';
-import { MLS_LOCAL_STATE_UNDECRYPTABLE, isKeystoreKeyUnavailable } from '$lib/mls-client';
-import { getToken, clearAuth, SessionExpiredError } from '$lib/stores/auth';
+import {
+  LoginFailure,
+  isExpectedLoginOutcome,
+  isVaultRefusal,
+  loginErrorCode,
+} from './loginErrors';
+import {
+  MLS_LOCAL_STATE_UNDECRYPTABLE,
+  isKeystoreKeyUnavailable,
+  VaultOwnerUnprovenError,
+  type VaultRefusal,
+} from '$lib/mls-client';
+import {
+  getToken,
+  clearAuth,
+  SessionExpiredError,
+  isRefreshCredentialProvenDead,
+} from '$lib/stores/auth';
 import { IdentitySplitError, isIdentitySplit } from '$lib/stores/tokenIdentity.svelte';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { connectivity } from '$lib/stores/connectivity.svelte';
+import { noteUnlockUnattended } from '$lib/stores/unlockPath.svelte';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
+import { resetAnnouncementState } from '$lib/stores/announcement.svelte';
 import { registerOfflinePromotion, unregisterOfflinePromotion } from './promoteOfflineSession';
 import {
   flushPendingGroupExits,
@@ -53,7 +70,7 @@ import {
 } from '$lib/utils/chat/historyReconcile';
 import { resetWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { onPeersCameOnline } from '$lib/stores/presenceStore';
-import { sendHistoryStateKey } from '$lib/utils/chat/groupActions';
+import { sendHistoryProbe } from '$lib/utils/chat/groupActions';
 import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
 import { canSendInGroup } from '$lib/utils/chat/groupUsability';
 import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
@@ -64,6 +81,7 @@ import { distributionGapListener } from '$lib/utils/graine/distributionGroup';
 import { sweepExpiredGraineSeeds } from '$lib/utils/graine/retention';
 import {
   unregisterMlsStatePersister,
+  activeMlsStatePersister,
   flushActiveMlsStateEncrypted,
 } from '$lib/mls-client/mlsStatePersisterRegistry';
 import { uninstallMlsStatePersisterLifecycle } from '$lib/mls-client/mlsStatePersisterLifecycle';
@@ -76,6 +94,7 @@ import {
   initTabLeadershipAsync,
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
+import type { AbsentGroupVerdicts } from '$lib/utils/chat/groupSweep';
 import {
   beginStartupCatchupBench,
   beginStartupCatchupPhase,
@@ -92,7 +111,14 @@ import {
   timeBootSpan,
   finishBootBench,
 } from '$lib/mls-client/bootBenchmark';
-import { saveDeviceKey, clearDeviceKey, clearDeviceKeyAndWrapKey } from '$lib/utils/deviceKeyVault';
+import {
+  saveDeviceKey,
+  loadDeviceKey,
+  clearDeviceKey,
+  clearDeviceKeyAndWrapKey,
+  forgetUnlabelledDeviceKey,
+  retireUnlabelledDeviceKeyIfOwnedBy,
+} from '$lib/utils/deviceKeyVault';
 import { askPinSaltAhead, forgetPinSaltAhead, takePinSaltAhead } from './pinSaltAhead';
 import { unlockWithPin, type PinCheckAnswer } from './pinUnlock';
 import { wipeDeviceToFactory } from '$lib/utils/deviceReset';
@@ -308,6 +334,24 @@ export async function processDeviceInvitationsLocally(
   }
 }
 
+/**
+ * The login failure for a vault key of unproven owner that was refused (`vaultOwnerUnproven`).
+ *
+ * TWO CODES, BECAUSE ONLY ONE OF THE REFUSALS KNOWS WHOSE STATE IS ON THE DEVICE. On a phone a
+ * `mismatch` is PROVEN to be another account's state - `mls.bin` is one file per install and the key
+ * opened it - so it is `device_holds_other_account`: the member is told so, and the gate withholds
+ * the reset that would delete that file. `no_state` and `unopenable` prove nothing of the kind - the
+ * store may be this account's own, evicted or sealed under an older key - and the web keeps one
+ * state per account, so everywhere else it is `vault_not_this_account` with a NEUTRAL sentence that
+ * accuses nobody.
+ */
+function vaultRefusedFailure(refusal: VaultRefusal): LoginFailure {
+  if (refusal === 'mismatch' && isTauriRuntime()) {
+    return new LoginFailure('device_holds_other_account', m.auth_vault_other_account_device());
+  }
+  return new LoginFailure('vault_not_this_account', m.auth_vault_unverified());
+}
+
 // ── Exported functions ────────────────────────────────────────────────────────
 
 /**
@@ -319,6 +363,11 @@ export async function resetDeviceAsFreshImpl(
   userIdToReset: string,
   cb: ChatSessionCallbacks
 ): Promise<void> {
+  // A SIGNED-OUT SESSION'S FINAL CHECKPOINT LANDS BEFORE THE DELETE, not after it: the "forgot PIN"
+  // reset runs from the PIN gate of the next sign-in, and a write still in flight from the sign-out
+  // (48 s measured on a Mi 9T) would put back the state under the OLD key that this deletes - so the
+  // new PIN would meet an unopenable state. Settles at once when nothing is retiring.
+  await ctx.whenMlsRetired();
   const { removeMlsState } = await import('$lib/utils/hex');
   await removeMlsState(userIdToReset);
   localStorage.removeItem(`mls_device_id_${userIdToReset}`);
@@ -401,7 +450,7 @@ export async function wipeRevokedDevice(ctx: SessionContext, cb: ChatSessionCall
   // what this spans - and being released in `finally`, it can never leave a real user locked out.
   ctx.setWipingRevokedDevice(true);
   try {
-    tearDownLiveSession(ctx, cb, 'revoked');
+    void tearDownLiveSession(ctx, cb, 'revoked');
     ctx.resetMls();
     await resetDeviceAsFreshImpl(ctx, ctx.getUserId(), cb);
     await clearAuth();
@@ -426,11 +475,16 @@ export async function wipeRevokedDevice(ctx: SessionContext, cb: ChatSessionCall
  *
  * `opts.unattendedKeyRead` only matters in biometric mode: the keystore is read with no sheet,
  * because the biometric cadence said the last proof is recent enough ({@link biometricLoginImpl}).
+ *
+ * `opts.vaultOwnerUnproven` only matters on the vault path: the key came from the unlabelled vault
+ * of an older build, and is accepted only if it opens a saved state of THIS account
+ * (`MlsInitOptions.vaultOwnerUnproven`). Refused, the login fails with `vault_not_this_account`
+ * having changed nothing; accepted, the key moves into this account's own slot.
  */
 export async function loginImpl(
   ctx: SessionContext,
   cb: ChatSessionCallbacks,
-  opts?: { unattendedKeyRead?: boolean }
+  opts?: { unattendedKeyRead?: boolean; vaultOwnerUnproven?: boolean }
 ): Promise<void> {
   // EVERY OFFSET IN THIS REPORT IS MEASURED FROM NAVIGATION START, not from here, so the document,
   // the module graph and hydration are all visible as the gap before `login-start` without anything
@@ -449,6 +503,8 @@ export async function loginImpl(
   // the encrypted vault, proving the user already authenticated with the correct PIN.
   const isBiometric = deviceKeyB64.length === 0 && pin.length === 0;
   const isVaultLogin = deviceKeyB64.length > 0 && pin.length === 0;
+  /** A vault key that does not yet name its account - see `opts.vaultOwnerUnproven`. */
+  const vaultOwnerUnproven = isVaultLogin && opts?.vaultOwnerUnproven === true;
 
   /**
    * Whether this login can complete with no network at all.
@@ -498,6 +554,15 @@ export async function loginImpl(
     return;
   }
   ctx.setIsLoginInProgress(true);
+
+  // THE PREVIOUS ACCOUNT'S FINAL CHECKPOINT LANDS FIRST. A sign-out retires its MLS client once that
+  // write is on disk (`endSessionImpl`), and this login reads the disk: opening the state while the
+  // write is in flight would start from a state one write behind. Settles at once when nothing is
+  // retiring, and never rejects.
+  if (ctx.isMlsRetiring()) {
+    cb.log('[LOGIN] Waiting for the signed-out session to finish its final MLS checkpoint.');
+  }
+  await ctx.whenMlsRetired();
 
   ctx.setLoginError('');
   ctx.setUserId(userId.trim().toLowerCase());
@@ -559,10 +624,12 @@ export async function loginImpl(
 
   try {
     const mlsService = ctx.ensureMls();
-    if (isVaultLogin) {
+    if (isVaultLogin && !vaultOwnerUnproven) {
       // The vault returned the device key before this function was called, so the store can be
       // opened and read now - nothing about either needs the token. `getStorage` shares one handle
       // per user, and the init below awaits this same promise instead of opening a second one.
+      // NOT for a key whose owner is unproven: nothing may be drawn from this account's store with
+      // a key that may be another account's.
       storageOpen = getStorage(ctx.getUserId());
       startLandingPreview(storageOpen, deviceKeyB64);
     }
@@ -670,6 +737,17 @@ export async function loginImpl(
             'MLS state present on disk (mls.bin); the native side reads it.'
           : 'MLS state loaded from IndexedDB.'
       );
+    }
+
+    // A VAULT KEY OF UNPROVEN OWNER NEEDS A SAVED STATE TO PROVE ITSELF ON, and with none there is
+    // nothing to prove it with - a fresh start would seal this account's first state under a key
+    // that may be another account's. Refused HERE, before `resolveDeviceId` mints an id for an
+    // attempt that is not going to run.
+    if (vaultOwnerUnproven && !mlsStateResult) {
+      cb.log(
+        '[VAULT] unlabelled vault key refused - no saved state of this account to prove it on'
+      );
+      throw vaultRefusedFailure('no_state');
     }
 
     // THE REVOCATION QUESTION IS ASKED HERE AND READ AFTER THE DECRYPT, and this variable is the
@@ -824,6 +902,9 @@ export async function loginImpl(
           // change needs it: init re-seals such a snapshot instead of reporting a PIN rotation.
           legacyPin: !isBiometric && !isVaultLogin ? pin : undefined,
           unattendedKeyRead: isBiometric && opts?.unattendedKeyRead === true,
+          // A key from an older build's unlabelled vault must PROVE it is this account's on the
+          // saved state, and changes nothing if it does not - see `MlsInitOptions.vaultOwnerUnproven`.
+          vaultOwnerUnproven,
         })
       ),
       timeBootSpan('storage-open', storageOpen ?? getStorage(ctx.getUserId())),
@@ -854,6 +935,8 @@ export async function loginImpl(
 
     if (mlsInitSettled.status === 'rejected') {
       const reason = mlsInitSettled.reason;
+      // The init changed nothing (`MlsInitOptions.vaultOwnerUnproven`): the PIN gate, typed.
+      if (reason instanceof VaultOwnerUnprovenError) throw vaultRefusedFailure(reason.refusal);
       const reasonStr = reason instanceof Error ? reason.message : String(reason);
       const isUndecryptable = reasonStr === MLS_LOCAL_STATE_UNDECRYPTABLE;
       if (isUndecryptable) {
@@ -972,10 +1055,21 @@ export async function loginImpl(
     // The device key is always saved — on Tauri it feeds push_context.json for
     // background FCM decryption; on web it powers auto-login.
     // Biometric mode derives nothing: the keystore holds the key, so there is nothing to vault.
-    if (deviceKeyB64) {
+    //
+    // INTO THIS ACCOUNT'S OWN SLOT. Then, and only then - this login has SUCCEEDED and the key is
+    // safe in its own slot - the unlabelled slot of an older build is retired IF it holds the key
+    // this account unlocked with, whichever path the login took: that proves it is this account's.
+    // One holding any other key may be another account's, never proven, and is kept for it
+    // (`retireUnlabelledDeviceKeyIfOwnedBy`). A failed save skips the retirement: the key survives.
+    {
+      const owner = ctx.getUserId();
+      const unlockedWith = ctx.getDeviceKey();
       void (async () => {
-        await saveDeviceKey(deviceKeyB64);
-      })();
+        if (deviceKeyB64) await saveDeviceKey(owner, deviceKeyB64);
+        if (unlockedWith && (await retireUnlabelledDeviceKeyIfOwnedBy(owner, unlockedWith))) {
+          cb.log(`[VAULT] unlabelled vault proven to be ${owner.slice(0, 8)}'s - retired`);
+        }
+      })().catch((e: unknown) => cb.log(`[VAULT] saving the device key failed: ${String(e)}`));
     }
 
     // Stamp this session with the device that just unlocked. It is the ONLY
@@ -1134,6 +1228,7 @@ export async function loginImpl(
       onRolePermissionsChanged: cb.onRolePermissionsChanged,
       onChannelDeleted: cb.onChannelDeleted,
       onWorkspaceUpdated: cb.onWorkspaceUpdated,
+      onSalonUnreadCleared: cb.onSalonUnreadCleared,
       onWorkspaceRoleChanged: cb.onWorkspaceRoleChanged,
       onWorkspaceDeleted: cb.onWorkspaceDeleted,
       onChannelMessageDeleted: cb.onChannelMessageDeleted,
@@ -1502,7 +1597,7 @@ export async function loginImpl(
     // before asking anything, which is what lets the usual answer be silence.
     setHistoryProbeSender(async (groupId: string) => {
       const mls = ctx.ensureMls();
-      return sendHistoryStateKey(groupId, digestIdentity(ctx.getUserId(), mls.getDeviceId()), {
+      return sendHistoryProbe(groupId, digestIdentity(ctx.getUserId(), mls.getDeviceId()), {
         storage: ctx.getStorage(),
         deviceKeyB64: ctx.getDeviceKey(),
         mlsService: mls,
@@ -1571,12 +1666,15 @@ export async function loginImpl(
     // above. What is left here is the half that reasons about the conversations this device holds:
     // publishing KeyPackages, sweeping the server's group list, reconciling history. It is skipped
     // when the socket never opened, exactly as `initializeConnection` skipped it.
+    /** What the connection sync learnt about absent local groups, handed to discovery below. */
+    let passVerdicts: AbsentGroupVerdicts | undefined;
     if (offlineSession) {
       cb.log('[INIT] Offline session - group reconciliation deferred until the network returns.');
       finishStartupCatchupBench(cb.log);
     } else {
       beginStartupCatchupPhase('initialize_connection');
-      if (gatewayIsOpen) await syncConnectionAfterWsOpen(makeConnectionDeps(ctx, cb));
+      if (gatewayIsOpen)
+        passVerdicts = await syncConnectionAfterWsOpen(makeConnectionDeps(ctx, cb));
       {
         const stats = summarizeConversationStats(cb.conversations);
         endStartupCatchupPhase({
@@ -1648,7 +1746,8 @@ export async function loginImpl(
     // the right answer. promoteOfflineSession starts all of this once a token exists.
     if (offlineSession) return;
 
-    runGroupDiscoveryImpl(ctx, cb, ctx.ensureMls());
+    // The same pass as the sync above, so the absent groups it asked about are not asked again.
+    runGroupDiscoveryImpl(ctx, cb, ctx.ensureMls(), '', passVerdicts);
 
     // Graine retention, once per boot and LEADER-ONLY: two tabs sweeping would ask the same
     // question twice and race each other's deletes. Deliberately after the startup bench is closed
@@ -1694,7 +1793,11 @@ export async function loginImpl(
       console.error(`[INIT] Login failed (${code}):`, _e);
     }
     ctx.resetMls();
-    clearDeviceKey();
+    // THIS ACCOUNT'S SLOT ONLY: another account's, and the unlabelled one of an older build, are not
+    // this login's to judge - a refused unlabelled key may be the previous account's, kept for it.
+    clearDeviceKey(ctx.getUserId());
+    // And a refused key leaves the session too: it was never this account's to hold.
+    if (isVaultRefusal(code)) ctx.setDeviceKey('');
     // A dead session (refresh cookie expired/revoked) is not retryable via the PIN modal:
     // hand it to onSessionExpired so the caller logs out and redirects to /login. When no
     // callback is wired, redirect directly so the user is never stranded in the modal.
@@ -1757,28 +1860,38 @@ export async function nativeStorageLoginImpl(
   }
 
   // Read deviceKeyB64 from the device key vault (AES-GCM encrypted), never from
-  // push_context.json.
+  // push_context.json - and THIS ACCOUNT'S slot of it: a key another account left is never offered
+  // (`loadDeviceKey`), and the unlabelled one of an older build must prove its owner in the login.
   try {
-    const { loadDeviceKey } = await import('$lib/utils/deviceKeyVault');
-    const deviceKeyB64 = await loadDeviceKey();
-    if (!deviceKeyB64) {
-      appendLog('[PIN] No device key in vault - auto-login impossible');
+    const userId = ctx.getUserId();
+    const vaulted = await loadDeviceKey(userId);
+    if (!vaulted) {
+      appendLog('[PIN] No device key in vault for this account - auto-login impossible');
       return false;
     }
     // Builds before the derivation existed stored the raw PIN under this key. Such a value can
     // never decrypt anything, so refuse the auto-login and let the PIN modal re-derive a real
     // key rather than failing deeper in the crypto stack with an opaque error.
-    if (!isValidDeviceKeyB64(deviceKeyB64)) {
+    if (!isValidDeviceKeyB64(vaulted.deviceKeyB64)) {
       appendLog('[PIN] Vaulted device key is not a 32-byte key - discarding, PIN required');
-      const { clearDeviceKeyAndWrapKey: dropVault } = await import('$lib/utils/deviceKeyVault');
-      dropVault();
+      if (vaulted.ownerProven) clearDeviceKey(userId);
+      else forgetUnlabelledDeviceKey();
       return false;
     }
-    appendLog('[PIN] Device key restored from PinVault - auto-login…');
-    ctx.setDeviceKey(deviceKeyB64);
-    await loginImpl(ctx, cb);
+    appendLog(
+      vaulted.ownerProven
+        ? '[PIN] Device key restored from PinVault - auto-login…'
+        : '[PIN] Device key restored from the UNLABELLED PinVault - auto-login, owner to be proven…'
+    );
+    // This account's key is in hand and nobody is prompted: pages may draw its local data (F1).
+    if (vaulted.ownerProven) noteUnlockUnattended(userId);
+    ctx.setDeviceKey(vaulted.deviceKeyB64);
+    await loginImpl(ctx, cb, { vaultOwnerUnproven: !vaulted.ownerProven });
     return ctx.isLoggedIn();
-  } catch {
+  } catch (e) {
+    // EVERY SWALLOWED BRANCH LOGS: `false` sends the member to the PIN gate, and a throw here that
+    // said nothing would look exactly like an empty vault.
+    appendLog(`[PIN] Vault auto-login threw - PIN required: ${String(e)}`);
     return false;
   }
 }
@@ -1961,6 +2074,9 @@ export async function recoverPinImpl(
   cb.log('[PIN_RECOVER] Starting recovery...');
   onProgress?.({ percent: 3, stage: 'verify' });
 
+  // The state is read as a signed-out session LEFT it, so its final checkpoint lands first (see
+  // `loginImpl`), and the client that wrote it is retired before `ensureMls` below builds ours.
+  await ctx.whenMlsRetired();
   const { loadMlsState } = await import('$lib/utils/hex');
   const state = await loadMlsState(userId);
   if (!state) {
@@ -2006,7 +2122,7 @@ export async function recoverPinImpl(
   cb.log('[PIN_RECOVER] Local messages re-encrypted with the new device key.');
 
   onProgress?.({ percent: 88, stage: 'finalize' });
-  await applyNewDeviceKeyLocally(newDeviceKeyB64, cb.log);
+  await applyNewDeviceKeyLocally(ctx.getUserId(), newDeviceKeyB64, cb.log);
   ctx.setPin(newPin);
   ctx.setDeviceKey(newDeviceKeyB64);
 
@@ -2046,7 +2162,7 @@ export function tearDownLiveSession(
   ctx: SessionContext,
   cb: ChatSessionCallbacks,
   reason: 'logout' | 'revoked'
-): void {
+): Promise<void> {
   unregisterOutbox();
   // Detach the reconnect listener too, or a regained network would promote a session that no
   // longer exists - reopening a WebSocket for the user who just signed out.
@@ -2065,25 +2181,38 @@ export function tearDownLiveSession(
   unregisterPeerReturn?.();
   unregisterPeerReturn = null;
 
+  // THE PERSISTER THIS SESSION REGISTERED, named now: the removal below runs after the final flush,
+  // and only what this session installed may be removed then (see `unregisterMlsStatePersister`).
+  const persister = activeMlsStatePersister();
+  const releasePersister = () => {
+    uninstallMlsStatePersisterLifecycle(persister);
+    unregisterMlsStatePersister(persister);
+    // The encrypt worker is shared and recreated on demand; it is disposed only when no session
+    // has registered a persister since - the one that has may be using it.
+    if (activeMlsStatePersister() === null) disposeMlsEncryptWorker();
+  };
+  let finalWrite: Promise<void>;
   if (reason === 'logout') {
-    void flushActiveMlsStateEncrypted().finally(() => {
-      uninstallMlsStatePersisterLifecycle();
-      unregisterMlsStatePersister();
-      // Dispose after the final flush: flushEncrypted relies on the encrypt worker.
-      disposeMlsEncryptWorker();
-    });
+    // Dispose after the final flush: flushEncrypted relies on the encrypt worker. NEVER REJECTS:
+    // the caller chains the MLS client's retirement, and the next login's wait, on it.
+    finalWrite = flushActiveMlsStateEncrypted()
+      .catch((e) => console.error(`[LOGOUT] Final MLS checkpoint failed: ${String(e)}`))
+      .then(releasePersister);
   } else {
     // NO FINAL FLUSH FOR A REVOKED DEVICE. Persisting the state the next step deletes is precisely
     // the write that must not survive the wipe, so the persister is uninstalled without one.
-    uninstallMlsStatePersisterLifecycle();
-    unregisterMlsStatePersister();
-    disposeMlsEncryptWorker();
+    releasePersister();
+    finalWrite = Promise.resolve();
   }
 
   if (reason === 'logout') {
     const tokenForPushCleanup = ctx.getAuthToken();
     const deviceForPushCleanup = ctx.getMyDeviceId();
-    if (tokenForPushCleanup && deviceForPushCleanup) {
+    if (isRefreshCredentialProvenDead()) {
+      // A DEAD SESSION ENDING: the server already refused this session's credential, so the
+      // deregistration would only earn a refusal - known here, so it is not asked.
+      cb.log('[LOGOUT] Push token left registered - the session is already dead on the server.');
+    } else if (tokenForPushCleanup && deviceForPushCleanup) {
       void stopPushService(ctx.getHistoryBaseUrl(), tokenForPushCleanup, deviceForPushCleanup);
     }
   }
@@ -2118,21 +2247,56 @@ export function tearDownLiveSession(
   setGraineRuntime(null);
   ctx.getCallService()?.setChatNotifier(null);
   resetSiblingCallWarning();
+  return finalWrite;
 }
 
 /**
- * Clears all session state (conversations, tokens, push registration),
- * deregisters the device push token, and redirects to /login.
+ * Ends the live session on the device because the user signed out - the device half of `clearAuth`.
+ *
+ * REACHED FROM `clearAuth` ITSELF (through `setSignOutHandler`, wired by the app shell), because
+ * every sign-out in the app is `clearAuth()` then `/login` and none of them could reach the session.
+ * This used to be `logoutImpl`, which had NO caller since 2026-04-09: the navbar refactor dropped the
+ * last one, so a sign-out ended the session on the server and left it live on the device - socket
+ * resume armed, `isLoggedIn` true. Measured on the Mi 9T 2026-10-14: the foreground resume after the
+ * sign-in browser reconnected that ghost session before the OIDC callback had its token, met the dead
+ * credential, and the new sign-in was never unlocked.
+ *
+ * IDEMPOTENT ON THE SESSION'S OWN STATE: a session that is not logged in has nothing running, which
+ * is also what keeps the revocation wipe's `clearAuth` from running a second, flushing teardown.
+ *
+ * What a PIN protects is untouched - `mls.bin`, the message database and the device-key vault -
+ * because a sign-out keeps the local state (user, "deconnecter seulement, garder l'etat"); the
+ * identity and the credentials are `clearAuth`'s own work.
  */
-export function logoutImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
+export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
+  if (!ctx.isLoggedIn()) {
+    cb.log('[LOGOUT] Signed out with no live session on this device - nothing to stop.');
+    return;
+  }
   cb.log(`[LOGOUT] Signing out userId=${ctx.getUserId()?.slice(0, 8) ?? 'unknown'}...`);
-  tearDownLiveSession(ctx, cb, 'logout');
+  // THE SOCKET GOES BEFORE THE FINAL FLUSH. The gateway does not close it when the server revokes the
+  // session, and the teardown below unregisters the state persister: left open, it kept decrypting
+  // and ACKing the leaving account's frames, and every MLS advance they made after the flush was in
+  // memory only - lost at the next process death, an epoch behind what the server had delivered.
+  try {
+    ctx.ensureMls().pauseSocket();
+  } catch (e) {
+    cb.log(`[LOGOUT] Could not release the socket - frames may still arrive: ${String(e)}`);
+  }
+  const finalWrite = tearDownLiveSession(ctx, cb, 'logout');
+  // THE CLIENT LEAVES WITH ITS ACCOUNT. Kept, it served the next sign-in as it was: `init` returns at
+  // once on a client that ran, and `resolveDeviceId` hands back its cached id - so account B unlocked
+  // on account A's state and device id. Let go of NOW, destroyed once the final checkpoint above has
+  // landed; `loginImpl` waits for that before it opens any state. See `mlsHolder.ts`.
+  void ctx
+    .retireMls(finalWrite)
+    .then(() => cb.log('[LOGOUT] MLS client retired - the next sign-in opens the state afresh.'));
   notificationPreferences.reset();
+  // The announcement asked for, and the one waiting, belong to the account that is leaving: without
+  // this the next account signing in in the same tab was never asked on its own behalf (the store's
+  // `checked` latch stayed set) and could be shown the previous account's.
+  resetAnnouncementState();
   ctx.setStorage(null);
   ctx.setAuthToken('');
-  clearUserLocally();
-  clearDeviceKeyAndWrapKey();
-  clearAuth();
-  cb.log('[LOGOUT] Local state cleared - redirecting to /login.');
-  void goto(resolve('/login'), { replaceState: true });
+  cb.log('[LOGOUT] Live session stopped.');
 }

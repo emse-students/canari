@@ -5,6 +5,8 @@
   import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
   import type { ChannelPollMeta, ChannelPollSpec } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { Log } from '$lib/utils/Log';
 
   /**
    * Renders a community poll inline as a rich card by reusing the post poll
@@ -90,11 +92,35 @@
   }
 
   let closing = $state(false);
+  /** True while the confirmation is on screen - a guard only, nothing renders from it. */
+  let confirming = false;
 
-  /** Closes the poll early after a confirmation, guarding against double taps. */
+  /**
+   * Closes the poll early after a confirmation, guarding against double taps.
+   *
+   * THE APP'S OWN DIALOG, NEVER `window.confirm`: on Android the WebView draws the system's, with
+   * the phone's English "CANCEL" / "OK" under this French sentence and none of the app's colours
+   * (Mi 9T reading of `v1.2.6-alpha.1`). `confirming` is raised BEFORE the await so a second tap
+   * while the dialog is up cannot open a second one; it is not `closing`, which would label the
+   * button "sending" while nothing has been sent.
+   */
   async function handleClose() {
-    if (isClosed || closing) return;
-    if (typeof window !== 'undefined' && !window.confirm(m.channel_poll_close_confirm())) return;
+    if (isClosed || closing || confirming) return;
+    confirming = true;
+    let confirmed: boolean;
+    try {
+      confirmed = await showConfirm(m.channel_poll_close_confirm(), {
+        confirmLabel: m.channel_poll_close_button(),
+        danger: true,
+      });
+    } finally {
+      confirming = false;
+    }
+    if (!confirmed) {
+      Log.d('ChannelPoll.handleClose', 'declined at the confirmation');
+      return;
+    }
+    Log.d('ChannelPoll.handleClose', 'confirmed - closing the poll');
     closing = true;
     try {
       await onClose?.();

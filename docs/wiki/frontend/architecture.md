@@ -234,6 +234,12 @@ with no `firstName` keeps the full name. `firstNameCache` is a `SvelteMap`, so a
 the profile lands. The current user's first name comes from that same one fetch (the saved login
 carries only `displayName`).
 
+**A notification's sender line is ASKED for (2026-10-14).** `notifyInbound` used the sync cache read
+with the conversation's title as fallback; on a conversation never opened since launch the cache holds
+nobody, so a group banner read the GROUP name where the person belongs (Pixel 6a, prod 1.2.7) and the
+native builder, which treats "group name == sender name" as a DM, drew no group shape.
+`resolveNotificationSenderName` fetches the profile first and logs a warn when only the title is left.
+
 ### A derived that needs ONE key reads the SvelteMap by key, never by iterating it (2026-10-12)
 
 Iterating a `SvelteMap` (`for ... of`, `entries()`, `values()`, `forEach`) subscribes to the map's

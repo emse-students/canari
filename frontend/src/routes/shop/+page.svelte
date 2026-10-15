@@ -3,6 +3,9 @@
   import { CARD_GRID } from '$lib/components/layout/cardGrid';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import { onMount } from 'svelte';
+  import { replaceState } from '$app/navigation';
+  import { resolve } from '$app/paths';
+  import { page } from '$app/state';
   import { SvelteMap } from 'svelte/reactivity';
   import { showToast } from '$lib/stores/toast.svelte';
   import {
@@ -24,6 +27,10 @@
   import { ShoppingBag, Handshake } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { associationAccent } from '$lib/associations/accent';
+  import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
+  import { parseTab, tabUrl, withoutQuery } from '$lib/navigation/tabQuery';
+  import { internalPath } from '$lib/utils/internalPath';
+  import { Log } from '$lib/utils/Log';
 
   let products = $state<AssociationProduct[]>([]);
   let partnerships = $state<PartnershipCard[]>([]);
@@ -31,7 +38,19 @@
   let loading = $state(true);
   let error = $state('');
   let customAmounts = $state<Record<string, number>>({});
-  let shopTab = $state<'products' | 'partnerships'>('products');
+  const SHOP_TABS = ['products', 'partnerships'] as const;
+  type ShopTab = (typeof SHOP_TABS)[number];
+  /** The return markers of a checkout, consumed once on arrival. */
+  const PURCHASE_MARKERS = ['purchase_success', 'purchase_cancel'] as const;
+  // `?tab=` keeps the segment across a reload; written with `replaceState`, see `tabQuery`.
+  let shopTab = $state<ShopTab>(parseTab(page.url.searchParams.get('tab'), SHOP_TABS, 'products'));
+
+  /** Opens a segment without adding a history entry: Back still leaves the shop. */
+  function switchTab(next: ShopTab) {
+    Log.d('shop: segment', next);
+    shopTab = next;
+    replaceState(resolve(internalPath(tabUrl(page.url, next, 'products'))), page.state);
+  }
 
   const isLoggedIn = $derived(!!currentUserId());
 
@@ -90,12 +109,12 @@
       loading = false;
     }
 
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('purchase_success') === '1') {
-      showToast(m.shop_purchase_success());
-      history.replaceState(null, '', '/shop');
-    } else if (params.get('purchase_cancel') === '1') {
-      history.replaceState(null, '', '/shop');
+    // The checkout return marker is consumed once. Through SvelteKit's `replaceState`, never the
+    // raw History API: a raw write erased the router's own entry state, and the open `?tab=` with it.
+    const params = page.url.searchParams;
+    if (PURCHASE_MARKERS.some((name) => params.get(name) === '1')) {
+      if (params.get('purchase_success') === '1') showToast(m.shop_purchase_success());
+      replaceState(resolve(internalPath(withoutQuery(page.url, PURCHASE_MARKERS))), page.state);
     }
   });
 
@@ -165,7 +184,7 @@
         <p class="text-text-main text-lg font-semibold">{m.shop_login_required_title()}</p>
         <p class="text-text-muted text-sm">{m.shop_login_required_desc()}</p>
         <a
-          href="/login"
+          href={resolve('/login')}
           class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-5 py-2.5 text-sm font-bold transition-opacity"
         >
           {m.shop_login_button()}
@@ -180,30 +199,16 @@
     {:else if error}
       <p class="text-sm text-red-500">{error}</p>
     {:else}
-      <div class="flex gap-2">
-        <button
-          type="button"
-          onclick={() => (shopTab = 'products')}
-          class="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {shopTab === 'products'
-            ? 'bg-cn-yellow text-cn-ink shadow-sm'
-            : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-        >
-          <ShoppingBag size={17} />
-          {m.shop_tab_products()}
-        </button>
-        <button
-          type="button"
-          onclick={() => (shopTab = 'partnerships')}
-          class="inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors
- {shopTab === 'partnerships'
-            ? 'bg-cn-yellow text-cn-ink shadow-sm'
-            : 'border-cn-border text-text-muted hover:text-text-main border bg-(--cn-surface)'}"
-        >
-          <Handshake size={17} />
-          {m.shop_tab_partnerships()}
-        </button>
-      </div>
+      <SegmentedControl
+        items={[
+          { key: 'products', label: m.shop_tab_products(), icon: ShoppingBag },
+          { key: 'partnerships', label: m.shop_tab_partnerships(), icon: Handshake },
+        ]}
+        value={shopTab}
+        onSelect={switchTab}
+        label={m.shop_heading()}
+        tone="yellow"
+      />
 
       {#if shopTab === 'products'}
         {#if grouped.size === 0}

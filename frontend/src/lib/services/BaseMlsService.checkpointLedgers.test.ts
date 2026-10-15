@@ -4,8 +4,12 @@ vi.mock('$lib/services/TauriMlsService', () => ({ TauriMlsService: class {} }));
 vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
 
 const commitPendingHistoryMarks = vi.hoisted(() => vi.fn());
+const snapshotPendingHistoryMarks = vi.hoisted(() =>
+  vi.fn((userId: string) => ({ userId, groups: [] }))
+);
 vi.mock('$lib/utils/chat/history', () => ({
   commitPendingHistoryMarks,
+  snapshotPendingHistoryMarks,
   noteFrameConsumed: vi.fn(),
 }));
 
@@ -54,7 +58,7 @@ describe('BaseMlsService.persistCheckpoint', () => {
     await persist(ctx);
 
     expect(ctx.writeCheckpoint).toHaveBeenCalledWith('k');
-    expect(commitPendingHistoryMarks).toHaveBeenCalledWith('u');
+    expect(commitPendingHistoryMarks).toHaveBeenCalledWith({ userId: 'u', groups: [] });
   });
 
   it('declares them AFTER the write, never before', async () => {
@@ -90,6 +94,32 @@ describe('BaseMlsService.persistCheckpoint', () => {
   it('names the account it is checkpointing, so another session is never declared for', async () => {
     await persist(makeCtx({ userId: 'someone-else' }));
 
-    expect(commitPendingHistoryMarks).toHaveBeenCalledWith('someone-else');
+    expect(snapshotPendingHistoryMarks).toHaveBeenCalledWith('someone-else');
+    expect(commitPendingHistoryMarks).toHaveBeenCalledWith({ userId: 'someone-else', groups: [] });
+  });
+
+  it('declares the marks that stood BEFORE the write started, not those made while it ran', async () => {
+    // The native checkpoint releases the manager once it has exported (2026-10-13), so a replay page
+    // can decrypt and mark while the seal and the write run. Those marks describe an advance this
+    // write does not hold; only the set captured before it may be declared.
+    const order: string[] = [];
+    const before = { userId: 'u', groups: [] };
+    snapshotPendingHistoryMarks.mockImplementationOnce(() => {
+      order.push('snapshot');
+      return before;
+    });
+    const ctx = makeCtx({
+      writeCheckpoint: vi.fn().mockImplementation(async () => {
+        order.push('write');
+      }),
+    });
+    commitPendingHistoryMarks.mockImplementation(() => {
+      order.push('commit');
+    });
+
+    await persist(ctx);
+
+    expect(order).toEqual(['snapshot', 'write', 'commit']);
+    expect(commitPendingHistoryMarks).toHaveBeenCalledWith(before);
   });
 });

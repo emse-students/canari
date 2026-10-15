@@ -1,18 +1,17 @@
 <script lang="ts">
-  import { resolve } from '$app/paths';
   import StatusPill from '../shared/StatusPill.svelte';
   import CanariBrand from './CanariBrand.svelte';
   import EcosystemLauncher from './EcosystemLauncher.svelte';
   import SessionActionButtons from './SessionActionButtons.svelte';
   import Avatar from '../shared/Avatar.svelte';
   import { goto } from '$app/navigation';
-  import { clearAuth } from '$lib/stores/auth';
+  import { clearAuth, leaveSignedOut } from '$lib/stores/auth';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { m } from '$lib/paraglide/messages';
 
   async function handleLogout() {
     await clearAuth();
-    void goto(resolve('/login'), { replaceState: true });
+    await leaveSignedOut();
   }
 </script>
 

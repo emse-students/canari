@@ -5,8 +5,11 @@
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { flip } from 'svelte/animate';
   import { SvelteMap } from 'svelte/reactivity';
-  import { dndzone, type DndEvent } from 'svelte-dnd-action';
-  import { Hash, Lock, MessageSquarePlus, Plus, Settings, X } from '@lucide/svelte';
+  import { dndzone, TRIGGERS, type DndEvent } from 'svelte-dnd-action';
+  import { keepRowActivationKeys } from '$lib/utils/dndActivationKeys';
+  import { longPress } from '$lib/actions/longPress';
+  import CommunityRailMenu from './CommunityRailMenu.svelte';
+  import { Hash, LoaderCircle, Lock, MessageSquarePlus, Plus, Settings, X } from '@lucide/svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import GroupAvatar from '../shared/GroupAvatar.svelte';
   import ConversationTile from '../chat/ConversationTile.svelte';
@@ -163,6 +166,11 @@
     onDeleteWorkspace?: (workspaceDbId: string, confirmationName: string) => void;
     /** Callback fired when the user drags a community to a new position in the rail. */
     onReorderCommunities?: (newOrder: ChannelWorkspace[]) => void;
+    /**
+     * "Marquer tout comme lu" picked from a community's rail menu (long press, right click). Absent,
+     * the menu is not offered at all.
+     */
+    onMarkCommunityRead?: (workspaceId: string) => void;
     /** Callback fired when a salon manager rearranges a community's salons (drag or keyboard). */
     onReorderChannels?: (workspaceSlug: string, newOrder: ChannelItem[]) => void;
     /** Callback fired when the user selects a direct or group conversation. */
@@ -193,6 +201,18 @@
      * then is a lie the user cannot check. Omitted, the gesture stays off entirely.
      */
     canRefresh?: () => boolean;
+    /**
+     * The community list is drawn from the device before the session is up (F1, the saved
+     * snapshot): rows and the rail are shown, and every control that would ACT - reordering the
+     * rail, the community settings - is withheld until the session exists; the add button stays
+     * (the rail must not move when the session arrives) and its press is answered with a toast.
+     */
+    previewOnly?: boolean;
+    /**
+     * The list on screen is the saved snapshot and a listing is refreshing it: said by a quiet
+     * spinner in the header, so stale rows are shown AS stale rows being refreshed.
+     */
+    listRefreshing?: boolean;
   }
 
   let {
@@ -215,6 +235,7 @@
     onLeaveWorkspace,
     onDeleteWorkspace,
     onReorderCommunities,
+    onMarkCommunityRead,
     onReorderChannels,
     onSelectConversation,
     onSelectChannelConversation,
@@ -227,6 +248,8 @@
     currentUserId = '',
     onRefresh,
     canRefresh,
+    previewOnly = false,
+    listRefreshing = false,
   }: Props = $props();
 
   let showNewChatModal = $state(false);
@@ -310,11 +333,42 @@
       : channelWorkspaces;
   });
 
+  /**
+   * The community whose rail menu is open, and the icon it is placed against; null when closed.
+   * One at a time: opening another closes this one.
+   */
+  let railMenu = $state<{ workspaceId: string; anchor: HTMLElement } | null>(null);
+  /**
+   * True from a rail drag's start to its finalize, read from the drag's own `consider` - THE fact
+   * that decides whether a hold on an icon is a menu or the start of a reorder. The rail zone has no
+   * touch delay, so a finger that drifts 3 px starts a drag well inside the hold's 450 ms; asking
+   * the drag rather than tuning a slop to the library's threshold is what keeps the two from both
+   * firing.
+   */
+  let railDragActive = false;
+
+  /** A hold or a right click on a rail icon: opens its menu, unless a drag took the press. */
+  function openRailMenu(workspaceId: string, anchor: HTMLElement): boolean {
+    if (railDragActive) {
+      Log.d('sidebar.railMenu', { workspaceId, opened: false, reason: 'drag in progress' });
+      return false;
+    }
+    Log.d('sidebar.railMenu', { workspaceId, opened: true });
+    railMenu = { workspaceId, anchor };
+    return true;
+  }
+
   function handleCommunityDndConsider(e: CustomEvent<DndEvent<ChannelWorkspace>>) {
+    if (e.detail.info.trigger === TRIGGERS.DRAG_STARTED) {
+      railDragActive = true;
+      // A hold that became a drag (the finger moved after the menu opened) is a reorder now.
+      railMenu = null;
+    }
     orderedWorkspaces = e.detail.items;
   }
 
   function handleCommunityDndFinalize(e: CustomEvent<DndEvent<ChannelWorkspace>>) {
+    railDragActive = false;
     orderedWorkspaces = e.detail.items;
     onReorderCommunities?.(orderedWorkspaces);
   }
@@ -530,15 +584,38 @@
     >
       <div
         class="flex flex-col items-center gap-3"
-        use:dndzone={{ items: orderedWorkspaces, flipDurationMs: 150, type: 'community' }}
+        use:dndzone={{
+          items: orderedWorkspaces,
+          flipDurationMs: 150,
+          type: 'community',
+          dragDisabled: previewOnly,
+        }}
         onconsider={handleCommunityDndConsider}
         onfinalize={handleCommunityDndFinalize}
       >
         {#each orderedWorkspaces as workspace (workspace.id)}
           {@const hasUnread = communityHasUnread(workspace.channels, conversations)}
           <div animate:flip={{ duration: 150 }} class="relative">
+            <!-- THE MENU IS A HOLD UNDER A FINGER AND A RIGHT CLICK UNDER A MOUSE (`longPress`), and
+                 the mouse's main button is left to the drag: held on an icon, it starts a reorder.
+                 The hold swallows the click that ends it - the browser's and the one the drag
+                 library dispatches on `touchend` - so opening the menu never also switches
+                 community. `select-none` and no touch callout: iOS would otherwise answer the same
+                 hold with its own text-selection bubble. -->
             <button
-              class="relative h-12 w-12 shrink-0 overflow-hidden rounded-2xl transition-all duration-200 {selectedCommunityWorkspaceId ===
+              use:longPress={{
+                pointerTypes: ['touch', 'pen'],
+                onHold: (anchor) =>
+                  onMarkCommunityRead ? openRailMenu(workspace.id, anchor) : false,
+                onContextMenu: (anchor) => {
+                  if (onMarkCommunityRead) openRailMenu(workspace.id, anchor);
+                },
+              }}
+              aria-haspopup={onMarkCommunityRead ? 'menu' : undefined}
+              aria-expanded={onMarkCommunityRead
+                ? railMenu?.workspaceId === workspace.id
+                : undefined}
+              class="relative h-12 w-12 shrink-0 overflow-hidden rounded-2xl transition-all duration-200 select-none [-webkit-touch-callout:none] {selectedCommunityWorkspaceId ===
               workspace.id
                 ? 'ring-cn-yellow ring-offset-cn-bg ring-2 ring-offset-2'
                 : 'opacity-70 hover:rounded-xl hover:opacity-100'}"
@@ -570,14 +647,33 @@
                 class="ring-cn-bg pointer-events-none absolute -top-0.5 -right-0.5 h-3 w-3 rounded-full bg-red-500 ring-2"
               ></span>
             {/if}
+            {#if railMenu?.workspaceId === workspace.id && onMarkCommunityRead}
+              {@const menuWorkspaceId = workspace.id}
+              <CommunityRailMenu
+                anchor={railMenu.anchor}
+                communityName={workspace.name}
+                {hasUnread}
+                onMarkRead={() => onMarkCommunityRead(menuWorkspaceId)}
+                onClose={() => {
+                  railMenu = null;
+                }}
+              />
+            {/if}
           </div>
         {/each}
       </div>
 
+      <!-- Drawn before the session too, so the rail does not move when the session arrives; until
+           then the press is answered, not acted on (F1 preview). -->
       <div class="my-1 h-[2px] w-8 rounded-full bg-white/30 dark:bg-white/10"></div>
 
       <button
         onclick={() => {
+          if (previewOnly) {
+            console.log('[WORKSPACE-SNAPSHOT] add-community pressed before the session');
+            showToast(m.communities_wait_for_session(), 'info');
+            return;
+          }
           showNewCommunityModal = true;
         }}
         class="border-text-muted/50 text-text-muted hover:text-text-main hover:border-text-main flex h-12 w-12 shrink-0 items-center justify-center rounded-2xl border border-dashed transition-all hover:rounded-lg hover:bg-white/10"
@@ -610,7 +706,18 @@
         </h2>
 
         <div class="flex items-center gap-1">
-          {#if selectedCommunityWorkspace}
+          {#if listRefreshing}
+            <span
+              data-communities-refreshing
+              role="status"
+              class="text-text-muted inline-flex"
+              title={m.sidebar_communities_refreshing()}
+              aria-label={m.sidebar_communities_refreshing()}
+            >
+              <LoaderCircle size={16} class="animate-spin" />
+            </span>
+          {/if}
+          {#if selectedCommunityWorkspace && !previewOnly}
             <button
               class="ui-icon-button text-text-muted hover:text-text-main hover:bg-cn-surface rounded-full transition-colors dark:hover:bg-black/30"
               onclick={() => {
@@ -702,7 +809,11 @@
             {#if canReorderChannels}
               <p id="channel-reorder-hint" class="sr-only">{m.sidebar_channel_reorder_hint()}</p>
             {/if}
+            <!-- `keepRowActivationKeys`: each row IS the draggable, and the library takes Enter and
+                 Space for a keyboard drag, cancelling the button - Enter opened no salon for whoever
+                 may reorder them. Reordering by keyboard is Alt + arrows, never the library's. -->
             <div
+              use:keepRowActivationKeys
               use:dndzone={{
                 items: draggedChannels ?? currentWorkspace.channels,
                 flipDurationMs: 150,

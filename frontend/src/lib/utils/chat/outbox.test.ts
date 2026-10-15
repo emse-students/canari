@@ -47,13 +47,22 @@ import {
 } from './outbox';
 import {
   DeliveryUnreachableError,
+  ExclusionsRefusedError,
   GroupDeletedError,
   SenderNotActiveError,
   SendForbiddenError,
   SendEdgeRefusedError,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { toMirrorEntry } from './outboxMirror';
-import { MediaKind, decodeAppMessage, mediaReelFromProto } from '$lib/proto/codec';
+import {
+  MediaKind,
+  decodeAppMessage,
+  encodeAppMessage,
+  mediaReelFromProto,
+  mkReaction,
+  mkSystem,
+} from '$lib/proto/codec';
+import { queuedReadWatermarkAt, sendReadWatermark } from './messaging';
 import { MediaUploadError } from '$lib/utils/mediaErrors';
 import {
   UploadAbortedError,
@@ -70,6 +79,8 @@ import {
 } from '$lib/db/outboxCodec';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import type { TabOutboxEvent } from '$lib/mls-client/tabMessageSync';
+import type { SentFrame } from '$lib/mls-client/mlsDeliveryApi';
+import { mkTextEnvelope, parseEnvelope, serializeEnvelope } from '$lib/envelope';
 import type { OutboxEntry } from '$lib/db';
 import type { Conversation } from '$lib/types';
 
@@ -125,8 +136,12 @@ function makeStorage(seed: OutboxEntry[] = []) {
 function makeMls(
   opts: {
     meta?: (id: string) => unknown;
-    send?: () => Promise<void>;
+    send?: (...args: unknown[]) => Promise<void>;
     active?: (id: string) => Promise<boolean>;
+    /** The server's exclusion windows; nobody was ever out by default. */
+    exclusions?: (
+      id: string
+    ) => Promise<Map<string, Array<{ from: number; until: number | null }>>>;
   } = {}
 ) {
   return {
@@ -135,9 +150,20 @@ function makeMls(
       opts.meta ? opts.meta(id) : { groupId: id, name: '', isGroup: true, deletedAt: null }
     ),
     isGroupActive: vi.fn(opts.active ?? (async () => true)),
-    sendMessage: vi.fn(opts.send ?? (async () => {})),
+    getGroupExclusions: vi.fn(opts.exclusions ?? (async () => new Map())),
+    // Whatever a test's own `send` does (throw, wait), an accepted frame answers what the real
+    // service answers: the sealed bytes and the server's receive time.
+    sendMessage: vi.fn(async (...args: unknown[]) => {
+      await (opts.send ?? (async () => {}))(...args);
+      return accepted();
+    }),
     waitForMessageQueueIdle: vi.fn(async () => {}),
   } as any;
+}
+
+/** What `sendMessage` answers for a frame the server took: the sealed bytes and its receive time. */
+function accepted(): SentFrame {
+  return { sealed: new Uint8Array(), receivedAt: 1_700_000_000_000 };
 }
 
 function convoWith(id: string, messageIds: string[]): Conversation {
@@ -397,6 +423,23 @@ describe('outbox flusher', () => {
     expect(sentIds).toEqual(['m1', 'm2']);
     expect(storage._map.size).toBe(0);
     expect(conversations.get('g1')!.messages.every((m) => m.status === 'sent')).toBe(true);
+  });
+
+  it("dates a sent message by the server's receive time, in memory and on disk", async () => {
+    // A history answer places our OWN copies against exclusion windows by this field - left
+    // undated, they could only be placed by the phone clock.
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls();
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['m1'])]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(conversations.get('g1')!.messages[0].serverTimestamp).toBe(1_700_000_000_000);
+    expect(storage.saveMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'm1', serverTimestamp: 1_700_000_000_000 }),
+      'device-key'
+    );
   });
 
   it('sends a control entry silently (silent=true) then deletes it', async () => {
@@ -1844,6 +1887,7 @@ describe('outbox lanes - a stalled send freezes its own conversation and nothing
     const send = vi.fn(async (_g: string, _p: Uint8Array, id: string) => {
       started.push(id);
       await new Promise<void>((resolve, reject) => gates.set(id, { resolve, reject }));
+      return accepted();
     });
     return { gates, started, send };
   }
@@ -1914,6 +1958,7 @@ describe('outbox lanes - a stalled send freezes its own conversation and nothing
     const mlsService = makeMls();
     mlsService.sendMessage = vi.fn(async (_g: string, _p: Uint8Array, id: string) => {
       sent.push(id);
+      return accepted();
     });
     const outbox = createOutbox(makeDeps({ mlsService, storage }));
     await outbox.flush();
@@ -1974,7 +2019,7 @@ describe('outbox resume - prompt, and exactly once in effect', () => {
     const mlsService = makeMls();
     mlsService.sendMessage = vi.fn(async (g: string, _p: Uint8Array, id: string) => {
       sent.push(id);
-      if (healed && g === 'gT') return;
+      if (healed && g === 'gT') return accepted();
       if (g === 'gT') throw new DeliveryUnreachableError(new TypeError('Failed to fetch'));
       throw new SenderNotActiveError(g, 'pending');
     });
@@ -2032,6 +2077,7 @@ describe('outbox resume - prompt, and exactly once in effect', () => {
             // The POST REACHED the server; the link died with the answer.
             throw new DeliveryUnreachableError(new TypeError('Failed to fetch'));
           }
+          return accepted();
         });
         return mls;
       };
@@ -2059,6 +2105,231 @@ describe('outbox resume - prompt, and exactly once in effect', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+/**
+ * A REMOVE HOLDS AGAINST A LATER RE-ADD (user, 2026-10-14). A reply carries the quoted message's text
+ * to every current member live, so a quote of something sent while one of them was out carries the
+ * id only. Decided HERE, at the send, against the windows in force then - and never on a failure,
+ * because a blank is permanent (second review of #1878).
+ */
+describe('outbox - a reply decides its quote text at the send', () => {
+  beforeEach(() => {
+    connectivity.reset();
+  });
+
+  const QUOTED_AT = 1_700_000_050_000;
+  /** Bob was out around the quoted message. */
+  const bobsWindow = async () => new Map([['bob', [{ from: QUOTED_AT - 1, until: null }]]]);
+
+  function replyEntry(): OutboxEntry {
+    return {
+      id: 'r1',
+      conversationId: 'g1',
+      sentAt: 100,
+      kind: 'reply',
+      text: 'answer',
+      replyTo: { id: 'q1', senderId: 'carol', preview: 'the quoted words' },
+      status: 'pending',
+      attempts: 0,
+      createdAt: 100,
+    };
+  }
+
+  function convo(): Conversation {
+    return {
+      ...convoWith('g1', []),
+      messages: [
+        {
+          id: 'q1',
+          senderId: 'carol',
+          content: 'x',
+          timestamp: new Date(QUOTED_AT),
+          serverTimestamp: QUOTED_AT,
+          isOwn: false,
+        },
+        {
+          id: 'r1',
+          senderId: 'u',
+          content: serializeEnvelope(
+            mkTextEnvelope('answer', { id: 'q1', senderId: 'carol', content: 'the quoted words' })
+          ),
+          replyTo: { id: 'q1', senderId: 'carol', content: 'the quoted words' },
+          timestamp: new Date(100),
+          isOwn: true,
+          status: 'pending' as const,
+        },
+      ],
+    };
+  }
+
+  const sentPreview = (mls: any): string | null | undefined =>
+    decodeAppMessage(mls.sendMessage.mock.calls[0][1] as Uint8Array)?.reply?.replyTo?.preview;
+
+  it('quotes by id only when the quoted message falls in a member window - frame, entry and echo', async () => {
+    const storage = makeStorage([replyEntry()]);
+    const mlsService = makeMls({ exclusions: bobsWindow });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(sentPreview(mlsService)).toBe('');
+    expect(storage.saveOutboxEntry).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'r1', replyTo: expect.objectContaining({ preview: '' }) }),
+      'device-key'
+    );
+    const echo = conversations.get('g1')!.messages.find((m) => m.id === 'r1')!;
+    expect(echo.replyTo?.content).toBe('');
+    const env = parseEnvelope(echo.content);
+    expect(env.kind === 'text' && env.replyTo?.content).toBe('');
+  });
+
+  it('keeps the quote text when nobody is out around it', async () => {
+    const storage = makeStorage([replyEntry()]);
+    const mlsService = makeMls();
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(sentPreview(mlsService)).toBe('the quoted words');
+  });
+
+  it('sends nothing and blanks nothing when the windows cannot be read - the reply waits', async () => {
+    const storage = makeStorage([replyEntry()]);
+    const mlsService = makeMls({
+      exclusions: async () => {
+        throw new TypeError('Failed to fetch');
+      },
+    });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.get('r1')!.replyTo!.preview).toBe('the quoted words');
+    expect(storage._map.get('r1')!.status).not.toBe('failed');
+    outbox.dispose();
+  });
+
+  /**
+   * A 403 ON THE WINDOWS IS AN ANSWER ABOUT THE ROSTER, NOT ABOUT THIS DEVICE (fourth review of
+   * #1878). The route refuses on the roster alone; the send refuses on this device's row. So a device
+   * `active` but roster-less must not lose its tree to the roster repair for quoting a message: the
+   * reply goes out quoting by id only, and only the SEND's own refusal may repair.
+   */
+  it('an active, roster-less device sends its reply id-only and repairs NOTHING', async () => {
+    const storage = makeStorage([replyEntry()]);
+    const mlsService = makeMls({
+      exclusions: async () => {
+        throw new ExclusionsRefusedError('g1');
+      },
+    });
+    const recoverRosterDisagreement = vi.fn().mockResolvedValue(undefined);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, conversations, recoverRosterDisagreement })
+    );
+
+    await outbox.flush();
+
+    expect(recoverRosterDisagreement).not.toHaveBeenCalled();
+    expect(sentPreview(mlsService)).toBe('');
+    const echo = conversations.get('g1')!.messages.find((m) => m.id === 'r1')!;
+    expect(echo.replyTo?.content).toBe('');
+    outbox.dispose();
+  });
+
+  it('the repair runs only on the SEND refusing this device, and the quote survives the failure', async () => {
+    const storage = makeStorage([replyEntry()]);
+    const mlsService = makeMls({
+      exclusions: async () => {
+        throw new ExclusionsRefusedError('g1');
+      },
+      send: async () => {
+        throw new SenderNotActiveError('g1', 'pending');
+      },
+    });
+    const recoverRosterDisagreement = vi.fn().mockResolvedValue(undefined);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService, storage, conversations, recoverRosterDisagreement })
+    );
+
+    await outbox.flush();
+
+    expect(recoverRosterDisagreement).toHaveBeenCalledWith('g1');
+    // Refused, the blank was never made permanent: the next attempt decides again.
+    expect(storage._map.get('r1')!.replyTo!.preview).toBe('the quoted words');
+    const echo = conversations.get('g1')!.messages.find((m) => m.id === 'r1')!;
+    expect(echo.replyTo?.content).toBe('the quoted words');
+    outbox.dispose();
+  });
+
+  /**
+   * THE QUOTE DECISION IS AN AWAIT BEFORE THE CLAIM, so #1887's last look must still come after it:
+   * a withdrawal landing while the windows are read is answered "never sent" and must stay true.
+   */
+  it('a reply withdrawn while its quote is being decided is never sent and never re-queued', async () => {
+    const storage = makeStorage([replyEntry()]);
+    let outbox: ReturnType<typeof createOutbox> | null = null;
+    let withdrawn: boolean | undefined;
+    const mlsService = makeMls({
+      exclusions: async () => {
+        withdrawn = await outbox!.cancelPending('r1');
+        return bobsWindow();
+      },
+    });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(withdrawn).toBe(true);
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.has('r1')).toBe(false);
+    expect(storage.saveOutboxEntry).not.toHaveBeenCalled();
+    outbox.dispose();
+  });
+
+  /**
+   * WITHDRAWN WHILE ITS FRAME IS ON THE WIRE: the peers have it, so the delete travels as an event
+   * (#1887), and the row is gone. Making the blank permanent must not write that row back - a
+   * deleted message in the queue is one a later flush, or a crash before the final delete, sends.
+   */
+  it('a reply withdrawn while its frame is on the wire: the blank is not saved back into the queue', async () => {
+    const storage = makeStorage([replyEntry()]);
+    let outbox: ReturnType<typeof createOutbox> | null = null;
+    let withdrawn: boolean | undefined;
+    const mlsService = makeMls({
+      exclusions: bobsWindow,
+      send: (async () => {
+        withdrawn = await outbox!.cancelPending('r1');
+      }) as any,
+    });
+    const conversations = new SvelteMap<string, Conversation>([['g1', convo()]]);
+    outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+
+    await outbox.flush();
+
+    expect(withdrawn).toBe(false);
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(storage.saveOutboxEntry).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'r1' }),
+      expect.anything()
+    );
+    expect(storage._map.has('r1')).toBe(false);
+    outbox.dispose();
+  });
+
+  it('the native mirror quotes by id only - it cannot read the windows', () => {
+    const mirror = toMirrorEntry(replyEntry())!;
+    const decoded = decodeAppMessage(Uint8Array.from(atob(mirror.proto), (c) => c.charCodeAt(0)));
+    expect(decoded?.reply?.replyTo?.preview).toBe('');
+    expect(decoded?.reply?.replyTo?.id).toBe('q1');
   });
 });
 
@@ -2845,5 +3116,356 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
       await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
       errorSpy.mockRestore();
     });
+  });
+});
+
+/**
+ * A READ WATERMARK IS LATEST-WINS, SO THE QUEUE KEEPS ONE PER CONVERSATION. Every frame costs every
+ * member a decrypt and a full MLS checkpoint, and only the newest says anything. See
+ * history-reconciliation, "The sender says only what is new". Each case drives the real
+ * `sendReadWatermark` into a registered controller, so the supersede is asserted the way the app
+ * reaches it.
+ */
+describe('outbox - a read watermark supersedes the unsent one of its conversation', () => {
+  function watermarkEntry(id: string, conversationId: string, at: number): OutboxEntry {
+    return {
+      id,
+      conversationId,
+      sentAt: at,
+      kind: 'control',
+      controlProto: encodeAppMessage(mkSystem('read_watermark', JSON.stringify({ at }))),
+      status: 'pending',
+      attempts: 0,
+      createdAt: at,
+    };
+  }
+  const queuedAts = (storage: ReturnType<typeof makeStorage>, conversationId = 'g1') =>
+    [...storage._map.values()]
+      .filter((e: OutboxEntry) => e.conversationId === conversationId)
+      .map((e: OutboxEntry) => queuedReadWatermarkAt(e));
+  const sentAts = (mlsService: ReturnType<typeof makeMls>) =>
+    mlsService.sendMessage.mock.calls.map(
+      (call: unknown[]) =>
+        JSON.parse(decodeAppMessage(call[1] as Uint8Array)?.system?.data ?? '{}').at as number
+    );
+  const read = (at: number, conversationId = 'g1') =>
+    sendReadWatermark(at, { conversation: { id: conversationId } } as any);
+
+  beforeEach(() => {
+    connectivity.reset();
+    isTabLeaderMock.mockReturnValue(true);
+    tabOutboxMock.subscribeTabOutboxEvents.mockImplementation(() => () => {});
+  });
+  afterEach(() => {
+    unregisterOutbox();
+  });
+
+  it('two watermarks queued while offline: one row, and only the newest is sent', async () => {
+    const storage = makeStorage();
+    const mlsService = makeMls();
+    connectivity.notifyServerUnreachable();
+    const outbox = registerOutbox(makeDeps({ mlsService, storage }));
+
+    await read(100);
+    await read(200);
+    expect(queuedAts(storage)).toEqual([200]);
+
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+    await outbox.flush();
+    expect(sentAts(mlsService)).toEqual([200]);
+    expect(storage._map.size).toBe(0);
+  });
+
+  it('supersedes a watermark queued by an earlier session, across a restart', async () => {
+    // Written offline before the app was killed: the new controller finds it on disk.
+    const storage = makeStorage([watermarkEntry('old', 'g1', 100)]);
+    const mlsService = makeMls();
+    connectivity.notifyServerUnreachable();
+    const outbox = registerOutbox(makeDeps({ mlsService, storage }));
+
+    await read(250);
+    expect(storage._map.has('old')).toBe(false);
+    expect(queuedAts(storage)).toEqual([250]);
+
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+    await outbox.flush();
+    expect(sentAts(mlsService)).toEqual([250]);
+  });
+
+  it('never moves a mark backwards: a watermark an unsent one covers is not queued at all', async () => {
+    const storage = makeStorage([watermarkEntry('high', 'g1', 300)]);
+    connectivity.notifyServerUnreachable();
+    registerOutbox(makeDeps({ mlsService: makeMls(), storage }));
+
+    await read(200);
+    await read(300);
+    expect(queuedAts(storage)).toEqual([300]);
+    expect(storage.saveOutboxEntry).not.toHaveBeenCalled();
+  });
+
+  it('writes the new row BEFORE withdrawing the old one, so a crash between keeps both and loses none', async () => {
+    const storage = makeStorage([watermarkEntry('old', 'g1', 100)]);
+    const mlsService = makeMls();
+    let oldStillQueuedAtWrite: boolean | null = null;
+    let deletesBeforeWrite: number | null = null;
+    const save = storage.saveOutboxEntry.getMockImplementation();
+    storage.saveOutboxEntry.mockImplementation(async (e: OutboxEntry) => {
+      // The ORDER is the claim: no delete may have been ISSUED by the time the new row is written.
+      // The map alone cannot tell, because the crash below makes that delete fail either way.
+      deletesBeforeWrite = storage.deleteOutboxEntry.mock.calls.length;
+      oldStillQueuedAtWrite = storage._map.has('old');
+      await save(e);
+    });
+    // The process dies before the withdrawal lands: the delete never happens.
+    storage.deleteOutboxEntry.mockRejectedValueOnce(new Error('process killed'));
+    connectivity.notifyServerUnreachable();
+    const outbox = registerOutbox(makeDeps({ mlsService, storage }));
+
+    await read(200);
+    expect(deletesBeforeWrite).toBe(0);
+    expect(oldStillQueuedAtWrite).toBe(true);
+    expect(queuedAts(storage).sort()).toEqual([100, 200]);
+
+    // Both go, oldest first, and `max` on every receiver makes the spare one harmless.
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+    await outbox.flush();
+    expect(sentAts(mlsService)).toEqual([100, 200]);
+  });
+
+  it('touches nothing but read watermarks of the same conversation', async () => {
+    const reaction: OutboxEntry = {
+      ...watermarkEntry('reaction', 'g1', 90),
+      controlProto: encodeAppMessage(mkReaction('m1', 'x', 90)),
+    };
+    const storage = makeStorage([
+      textEntry('text', 'g1', 80),
+      reaction,
+      watermarkEntry('other-convo', 'g2', 100),
+    ]);
+    connectivity.notifyServerUnreachable();
+    registerOutbox(makeDeps({ mlsService: makeMls(), storage }));
+
+    await read(200);
+    expect(storage._map.has('text')).toBe(true);
+    expect(storage._map.has('reaction')).toBe(true);
+    expect(queuedAts(storage, 'g2')).toEqual([100]);
+    expect(queuedAts(storage)).toEqual([null, null, 200]);
+  });
+
+  it('does not count a watermark already on the wire as withdrawn: the newer one follows it', async () => {
+    let release!: () => void;
+    const onTheWire = new Promise<void>((r) => {
+      release = r;
+    });
+    const storage = makeStorage([watermarkEntry('old', 'g1', 100)]);
+    const mlsService = makeMls({ send: () => onTheWire });
+    const outbox = registerOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+
+    await read(200);
+    release();
+    await outboxIdle();
+    await outbox.flush();
+    await outboxIdle();
+    expect(sentAts(mlsService)).toEqual([100, 200]);
+    expect(storage._map.size).toBe(0);
+  });
+
+  it('reads the queue ONCE per enqueue, however many rows it supersedes, and logs per tab', async () => {
+    // Two leftovers of a crash between write and withdraw: both are superseded by one read.
+    const storage = makeStorage([watermarkEntry('a', 'g1', 100), watermarkEntry('b', 'g1', 150)]);
+    const log = vi.fn();
+    connectivity.notifyServerUnreachable();
+    registerOutbox(makeDeps({ mlsService: makeMls(), storage, log }));
+    await outboxIdle();
+    storage.getOutboxQueue.mockClear();
+
+    await read(200);
+    expect(storage.getOutboxQueue).toHaveBeenCalledTimes(1);
+    expect(queuedAts(storage)).toEqual([200]);
+    // A follower cannot see a leader's wire, so the line says what THIS tab knows.
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('before this tab sent it'));
+  });
+
+  it('forgets a superseded id once its row is gone and no lane holds it', async () => {
+    const storage = makeStorage();
+    const log = vi.fn();
+    connectivity.notifyServerUnreachable();
+    const outbox = registerOutbox(makeDeps({ mlsService: makeMls(), storage, log }));
+    await read(100);
+    await read(200);
+
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+    await outbox.flush();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('forgot 1 withdrawn id(s)'));
+  });
+});
+
+describe('outbox - every lane on the wire is known to a cancellation (review of #1887)', () => {
+  beforeEach(() => {
+    connectivity.reset();
+    isTabLeaderMock.mockReturnValue(true);
+    tabOutboxMock.subscribeTabOutboxEvents.mockImplementation(() => () => {});
+  });
+
+  it('answers "already sent" for a message on the wire in ANY lane, not only the last to start', async () => {
+    let release!: () => void;
+    const onTheWire = new Promise<void>((r) => {
+      release = r;
+    });
+    const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g2', 100)]);
+    const mlsService = makeMls({ send: () => onTheWire });
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(2);
+
+    // Both frames are leaving. Answering `true` for either would skip its `delete_message` event
+    // and the peers would keep a message the user deleted - which one lane's id overwriting the
+    // other's did.
+    expect(await outbox.cancelPending('m1')).toBe(false);
+    expect(await outbox.cancelPending('m2')).toBe(false);
+
+    release();
+    await outboxIdle();
+  });
+
+  it('a withdrawal landing while the flush waits on the membership read keeps the frame off the wire', async () => {
+    let answer!: (v: boolean) => void;
+    const membership = new Promise<boolean>((r) => {
+      answer = r;
+    });
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({ active: () => membership });
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    expect(mlsService.isGroupActive).toHaveBeenCalled();
+    // Past the check at the top of flushOne, not yet on the wire.
+    expect(await outbox.cancelPending('m1')).toBe(true);
+
+    answer(true);
+    await outboxIdle();
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('keeps the mark while the withdrawal delete is pending, so a second lane pass cannot send it', async () => {
+    let finishDelete!: () => void;
+    const deleteHeld = new Promise<void>((r) => {
+      finishDelete = r;
+    });
+    const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g1', 200)]);
+    const realDelete = storage.deleteOutboxEntry.getMockImplementation();
+    storage.deleteOutboxEntry.mockImplementation(async (id: string) => {
+      if (id === 'm2') await deleteHeld;
+      await realDelete(id);
+    });
+    let outbox: ReturnType<typeof createOutbox> | null = null;
+    const mlsService = makeMls({
+      // The user deletes m2 while m1 is being sent; the delete of its row is slow.
+      send: (async (_g: string, _p: Uint8Array, id: string) => {
+        if (id === 'm1') {
+          void outbox!.cancelPending('m2');
+          await outboxIdle();
+        }
+      }) as any,
+    });
+    outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    // m1 sent -> m2 dropped from this pass -> a second pass re-reads m2's row, still there.
+    await outbox.flush();
+    finishDelete();
+    await outboxIdle();
+    expect(mlsService.sendMessage.mock.calls.map((c: unknown[]) => c[2])).toEqual(['m1']);
+  });
+
+  it('does not forget a mark while a lane still holds the row in its snapshot', async () => {
+    let release!: () => void;
+    const onTheWire = new Promise<void>((r) => {
+      release = r;
+    });
+    const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g1', 200)]);
+    const mlsService = makeMls({
+      send: (async (_g: string, _p: Uint8Array, id: string) => {
+        if (id === 'm1') await onTheWire;
+      }) as any,
+    });
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    // m2 is in the running lane's snapshot, behind m1 which is on the wire.
+    expect(await outbox.cancelPending('m2')).toBe(true);
+    // A second flush reads a queue without m2; pruning its mark now would let the lane send it.
+    await outbox.flush();
+    release();
+    await outboxIdle();
+    expect(mlsService.sendMessage.mock.calls.map((c: unknown[]) => c[2])).toEqual(['m1']);
+  });
+
+  it('answers "already sent" for a frame sent whose row is not deleted yet', async () => {
+    let finishDelete!: () => void;
+    const deleteHeld = new Promise<void>((r) => {
+      finishDelete = r;
+    });
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const realDelete = storage.deleteOutboxEntry.getMockImplementation();
+    let flusherDeleteStarted = false;
+    storage.deleteOutboxEntry.mockImplementation(async (id: string) => {
+      if (!flusherDeleteStarted) {
+        flusherDeleteStarted = true;
+        await deleteHeld;
+      }
+      await realDelete(id);
+    });
+    const mlsService = makeMls();
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(flusherDeleteStarted).toBe(true);
+    // The peers have it; "never sent" would skip the delete_message event.
+    expect(await outbox.cancelPending('m1')).toBe(false);
+    finishDelete();
+    await outboxIdle();
+  });
+
+  it("a follower's own withdrawal leaves no mark behind it", async () => {
+    isTabLeaderMock.mockReturnValue(false);
+    const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g1', 200)]);
+    const log = vi.fn();
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage, log }));
+
+    expect(await outbox.cancelPending('m1')).toBe(true);
+
+    // Had the follower kept it, the first leader flush would find it and forget it.
+    isTabLeaderMock.mockReturnValue(true);
+    await outbox.flush();
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('forgot'));
+  });
+
+  it('a follower tab keeps no cancellation it will never consume', async () => {
+    let onTabEvent!: (e: TabOutboxEvent) => void;
+    tabOutboxMock.subscribeTabOutboxEvents.mockImplementation(((h: (e: TabOutboxEvent) => void) => {
+      onTabEvent = h;
+      return () => {};
+    }) as any);
+    isTabLeaderMock.mockReturnValue(false);
+    const log = vi.fn();
+    createOutbox(makeDeps({ mlsService: makeMls(), storage: makeStorage(), log }));
+
+    onTabEvent({ type: 'outbox_entry_cancelled', messageId: 'm1' });
+
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('cancelled by another tab'));
   });
 });

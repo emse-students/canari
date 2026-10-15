@@ -4,6 +4,7 @@ import {
   hasBinaryBody,
   shouldUseNativeFetch,
 } from './fetchRouting';
+import { isTransportFailure, TransportFailureError } from './transportFailure';
 
 describe('createRoutedFetch - the function hooks.client.ts installs as window.fetch', () => {
   const API = 'https://canari.emse.fr';
@@ -59,6 +60,19 @@ describe('createRoutedFetch - the function hooks.client.ts installs as window.fe
     await f('blob:http://tauri.localhost/x');
     await f(`${API}/api/auth/refresh`, { credentials: 'include' });
     expect(native).toHaveBeenCalledTimes(2);
+  });
+
+  // Mi 9T, `v1.2.7-alpha.1` (2026-10-14): the plugin rejects with reqwest's bare STRING, which no
+  // consumer read as a network failure. The override must hand the app the contract's TypeError.
+  it("types the plugin's bare-string rejection as a transport failure", async () => {
+    const raw = `error sending request for url (${API}/api/channels/workspaces/user/me)`;
+    const native = vi.fn();
+    const plugin = vi.fn().mockRejectedValue(raw);
+    const f = createRoutedFetch(native as never, plugin as never, () => [API]);
+    const failure = await f(`${API}/api/channels/workspaces/user/me`).catch((e: unknown) => e);
+    expect(failure).toBeInstanceOf(TransportFailureError);
+    expect(isTransportFailure(failure)).toBe(true);
+    expect((failure as TransportFailureError).cause).toBe(raw);
   });
 });
 

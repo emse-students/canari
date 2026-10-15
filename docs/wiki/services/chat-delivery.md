@@ -953,14 +953,60 @@ Any authenticated caller may read it, like `key-package`, which already serves t
 | DELETE | `/api/mls/users/:userId/dismissed-groups/:groupId` | Un-dismiss group |
 | POST | `/api/mls/groups/:groupId/members` | Add member record to group |
 | GET | `/api/mls/groups/:groupId/user-members` | Get user-level members |
+| GET | `/api/mls/groups/:groupId/exclusions` | Exclusion windows of every current member, for history answers ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)); current members only |
+| POST | `/api/mls/group-rosters` | User-level rosters of up to 200 groups in one read (`{ rosters, refused }`) |
 | GET | `/api/mls/groups/:groupId/members` | Get active device members |
 | DELETE | `/api/mls/groups/:groupId/members/:userId` | Remove user from group |
+
+#### Many rosters in one read - `POST /api/mls/group-rosters` (2026-10-13)
+
+**Why.** Every connection compares each held conversation's tree with its roster (`removeStrayLeaves`,
+the collection of a leaver's leaf) and read the rosters one `GET user-members` at a time: 81 in
+series, 5.0 s, on the 2026-10-12 production console
+([startup-load-audit](../frontend/startup-load-audit-2026-10-12.md), finding 5).
+
+**What.** Body `{ groupIds: string[] }`, at most `GROUP_ROSTERS_MAX_GROUPS` = 200 (mirrored in
+`mlsDeliveryApi.ts`, which chunks by it). Answer `{ rosters: { [groupId]: userId[] }, refused:
+groupId[] }`, from ONE `dm_group_members ... WHERE groupId IN (...)` query. **The authorization is
+the single read's, per group**: a group the caller holds no roster row in - or that does not exist -
+is listed in `refused` instead of failing the request, so a refusal and a nonexistent group read
+alike; a global admin is answered for every group. **An absent `x-user-id` is NOT a wildcard here**,
+unlike `assertCallerIsGroupMember`: `HeaderAuthGuard` refuses it first anyway, and a route reading
+many rosters at once does not carry a branch that would hand every one of them to a caller nobody
+identified. No display names: nobody reading rosters in bulk asks for them.
+
+**Compatibility, and no second path.** The single `GET .../user-members` is unchanged and is still
+what every other caller reads (membership guards, peer resolution). A client meeting a server
+without the route (a store build ahead of the production deploy) gets a 404, logs one `[ROSTER]
+batch ... not answered` warning per connection, and **removes nobody** in those groups until the
+server deploys - the direction the sweep already fails in. It deliberately does NOT read each roster
+on its own instead: that would be a fallback silent the day the batch broke, and on a failing
+network the very storm the batch removed. So nothing is registered on
+[legacy-compatibility](../legacy-compatibility.md): there is no shim to retire. **Deploy the server
+before the client** (a pre-release does both in one run).
+
+**What keeps the batch sound** (client, `strayLeaves.ts`): every TREE is read before the rosters,
+so a leaf joining after the read is in no tree this pass compares and is never a candidate. The
+batch roster is as old as the start of the pass, and a removal by user id takes EVERY leaf of that
+user - so a member who left before the batch read and rejoined after it would lose the fresh leaf
+with the stale one. **The batch therefore only says which groups need no work**: a group it names a
+stray in is decided again - its tree, then its single `GET user-members`, then the diff - right
+before the commit, which puts the roster-to-commit window back at the one round trip the per-group
+read had. That extra read is paid only by a group holding a stray.
+
+**Measured.** Same server build, same scratch database (81 groups of 9 members among 18 729 rows),
+loopback, 7 rounds: 81 serial `GET` **182 ms** median [168-240] against one `POST` **4 ms** [3-5]
+(first round 164 ms, cold), identical rosters. That is the server and database half only; the
+production cost is the round trips (81 x ~62 ms on the console above), which the batch replaces by
+one. Pinned by `members.controller.group-rosters.spec.ts` (one query, refusal per group) and
+`strayLeaves.test.ts` (one roster read for every held group, after every tree; a leaver who
+rejoined after the batch read is spared).
 
 ### Messaging
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/mls/send` | Send MLS message/commit (publishes to Redis, queues for offline devices) |
+| POST | `/api/mls/send` | Send MLS message/commit (publishes to Redis, queues for offline devices); answers `receivedAt`, the `Date` written into every queued copy's `createdAt` ([history-reconciliation](../protocols/history-reconciliation.md#a-remove-holds-against-a-later-re-add---the-answering-peer-withholds-the-window-decided-by-the-user-2026-10-14)) |
 | POST | `/api/mls/commit` | Validate commit epoch + store in commit-log + fan out (one atomic call). An optional `groupInfo` carries the external-join base for the epoch the commit CREATES; it is written with the epoch advance in one transaction, so a joiner can never leave the base behind (COMM-22) |
 | GET | `/api/mls/commits/:groupId?sinceEpoch=N` | Rung-1 replay: ordered commits to catch up a lagging device |
 | GET | `/api/mls/group-info/:groupId` | Latest GroupInfo for external-join (membership-gated) |
@@ -1906,7 +1952,8 @@ reads the server file so the two cannot drift.
   not be read loses a message the user wanted. The settings GET reads strictly and fails loudly.
 - **The per-salon level is a different question and is not replaced.** `channel_members.notifLevels`
   (`all` / `mentions` / `none`, social-service) says how loud ONE salon is and is applied there
-  before a push is handed here; the category switch sits below it, at the single send.
+  before a push is handed here; the category switch sits below it, at the single send. A PRIVATE
+  conversation's level is applied here, after the category - see the next section.
 - **The client half.** A frame received over the WebSocket raises its notification on the device
   with no push involved, so `useMessaging.notifyInbound` consults `notificationPreferences` (the
   store mirroring the server set, loaded at sign-in and by the settings section) with the same
@@ -1914,6 +1961,97 @@ reads the server file so the two cannot drift.
   alert, and is unchanged.
 - **Unverified on hardware**: native delivery with a category off is covered by unit tests on what
   reaches FCM, not by a phone.
+
+## A conversation's notification level - the server applies `none`, the device decides `mentions`
+
+Decided 2026-10-14 (user: the salon's three levels for private groups, DMs included). A member sets
+`all` / `mentions` / `none` on ONE private conversation, with the same control a salon uses
+(`NotificationLevelControl.svelte`, shared by `ChannelSettingsPanel` and `ChatGroupPanel`).
+
+**Where it is stored.** `dm_group_members.notifLevel` (migration 029, default `all`, CHECK on the
+three values) - the salon's `channel_members.notifLevels` pattern: on the member's own membership
+row, so it is per ACCOUNT (every device, survives a reinstall) and it ends with the membership
+(leaving hard-deletes the row; a member who comes back starts at `all`). Read by
+`PATCH /mls/groups/:groupId/notification-level` (403 for a non-member) and listed, non-`all` only,
+in `GET /mls/notification-preferences` as `groupLevels` - the read the client already makes at
+sign-in, so no second request.
+
+**Why the server cannot decide `mentions`, and what it does instead.** In a salon the sender attaches
+a cleartext `mentionedUserIds` list and social-service filters before pushing. A private MLS
+conversation carries no such list - who is mentioned is inside the ciphertext - and adding one would
+hand the server a social graph the encryption exists to hide. So:
+
+| Level | Server (`sendFcmForQueued`) | Device |
+|---|---|---|
+| `all` | visible frame, as before | draws it |
+| `none` | the frame is sent `silent` - delivered (it is MLS state), never drawn, exactly like the `messages` category switch | nothing to decide |
+| `mentions` | visible frame carrying `notifLevel=mentions`; on APNs the alert is `interruption-level: passive` with NO sound | decrypts, then draws only if the WHOLE plaintext holds `@[<own user id>]` |
+
+A DM or group REACTION (`sendPushToUser`, `reaction: 'true'`) is refused at `mentions` and `none`: a
+reaction is never a mention, and the server knows the group. The level is read only for a group id
+that IS a uuid (`isGroupUuid`, a type guard): a SALON reaction carries `groupId = channel_<id>`,
+names no private conversation, and would be refused by the uuid column (22P02) - asked first, never
+learnt from a failed query.
+
+**ONE decision per platform, fed by that field, no timer, no fallback:**
+
+- Android push: `push/NotificationLevelGate.decide` (pure, tested in `android-tests`), called once in
+  `handleMlsFrame` before the fallback text is computed. A withheld message is still written to
+  `fcm_message_cache` and a refused one still enqueues its worker - state is owed whatever is drawn.
+- iOS extension: `levelDecision` in `NotificationService.swift`. An extension cannot WITHHOLD an alert
+  without Apple's filtering entitlement, which the app does not hold, so iOS's "withhold" is
+  `passive` (filed in the notification centre, no sound, no banner, screen stays dark); a proven
+  mention is raised to `timeSensitive` with the default sound.
+- A frame received over the socket (web, desktop, a backgrounded Android app that ACKed it):
+  `conversationLevelRefusal` in `notifyInbound`, reading the store `notificationPreferences` by the
+  GROUP id (`convo.id`, never a `me::peer` conversation key). Here the plaintext is always in hand.
+  **A SALON takes the same decision** (`channel_<id>` key, category `channels`) with its own level
+  from `channel_members.notifLevels`: `notificationPreferences.channelLevel`, read ONCE per salon
+  (`GET /api/channels/:id/notification-level`, one shared request) when its first frame arrives, the
+  frame waiting for the answer, then cached for the session - never a read per message. A failed
+  read is logged and the frame raised as `all` (the account default), nothing cached, so the next
+  frame reads again.
+  A catch-up flush raises ONE banner (its last message) but counts as a mention if ANY of its
+  inbound messages names the reader - "@me look", "ok", "lol" is a mention.
+
+The three decisions are asserted against ONE contract, `libs/contracts/mention-decision.cases.json`:
+`conversationLevel.contract.test.ts` (client), `NotificationLevelGateTest` (Android, JVM) and
+`canari_NSETests/MentionDecisionContractTests.swift` (iOS - written, NOT compiled and not wired to a
+target yet: there is no Xcode on the workstation that wrote it).
+
+**When this device's copy of the levels refreshes, and why that is enough.** The store is read at
+sign-in, at every visit to the notification settings, and at every opening of a conversation's
+panel (a salon's: its settings panel, which also writes the cache on save). No socket event announces a level changed on ANOTHER device, so until one of those three, a
+session that was already open keeps the old level for the notifications it raises ITSELF from socket
+frames. That is safe: pushes are always current (the server reads the column at each send), the
+error is at most one banner too many or too few on an open session, never a lost message, and the
+device where the level was changed holds it at once.
+
+Mentions are read from the whole plaintext before the 200-character preview cut, on both native
+paths (`mentionedUserIds`) - a mention past the cut used to miss the mentions channel too.
+
+**THE RULE FOR WHAT CANNOT BE DECIDED.** At `mentions`, a message the device cannot read (no state,
+refused, extension timed out, push context missing) proves no mention, so it does NOT alert: Android
+draws nothing, iOS leaves the server's passive alert, which is also exactly what iOS shows when the
+extension never runs. The message is not lost - it is in the conversation, unread, at the next open.
+The member chose to be interrupted only by a mention; a false alarm breaks that choice on every
+undecryptable frame, whereas a missed mention costs one unread line they will see.
+
+**What travels in clear.** `notifLevel=mentions` in the FCM data map and `interruption-level:
+passive` in the APNs payload are cleartext to Google and Apple, like `silent` and `isGroup` already
+are: they say how loud this member keeps this conversation, never what was said or who was named.
+
+**The iOS target gap.** The extension's deployment target is 18.2 while the app's is 15.6 (and the
+XcodeGen project 14.0): on an iPhone older than 18.2 the extension cannot run, so every `mentions`
+frame stays the server's passive alert and a mention never rings - the undecidable rule, applied to
+the whole device. Check on a device before relying on the iOS half of `mentions`.
+
+**Older builds.** A client predating the field ignores `notifLevel` and draws a `mentions` frame as
+`all` (on iOS, passive - the server's alert). `none` works on every build, because it is the server's.
+
+**Unverified on hardware**: the Android and iOS halves are covered by unit tests on the decision and
+on what reaches FCM/APNs; the iOS extension was not compiled here (no Xcode on the workstation), and
+neither phone has run it.
 
 ## Two lines that report a rate, not an event
 

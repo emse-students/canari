@@ -217,7 +217,7 @@ import {(LoginForm, Navbar, Sidebar, ChatArea, LogsPanel)} from "$lib/components
     onReset={resetAll}
   />
 {:else}
-  <div class="h-screen flex flex-col">
+  <div class="flex h-screen flex-col">
     <Navbar {isWsConnected} onToggleLogs={() => (showLogs = !showLogs)} onLogout={logout} />
 
     <main class="flex flex-1">

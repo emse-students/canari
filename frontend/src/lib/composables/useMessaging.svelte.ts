@@ -12,7 +12,6 @@ import { SvelteMap, SvelteDate } from 'svelte/reactivity';
 import { getToken } from '$lib/stores/auth';
 import { fromHex } from '$lib/utils/hex';
 import { systemNotificationsBlockedAnnounceOnce } from '$lib/utils/systemNotificationsBlocked';
-import { extractMentionUserIds, normalizeMentionUserId } from '$lib/utils/mentions';
 import {
   sendChatMessage,
   retrySalonSend,
@@ -53,9 +52,18 @@ import {
   notificationGroupName,
   type NativeMessageNotification,
 } from '$lib/utils/nativeNotification';
-import { getUserDisplayNameSync, notificationSenderName } from '$lib/utils/users/displayName';
+import {
+  getUserDisplayNameSync,
+  resolveNotificationSenderName,
+} from '$lib/utils/users/displayName';
 import { chat_system_message_deleted, m } from '$lib/paraglide/messages';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
+import {
+  readSalonSendGate,
+  SalonNotLoadableError,
+  whenSalonSendable,
+} from '$lib/utils/graine/salonSendGate';
+import { salonGateRefusalMessage } from '$lib/utils/graine/sealUnavailableMessage';
 import { MediaService } from '$lib/media';
 import { isReelMessage } from '$lib/reels/chatReel';
 import {
@@ -97,6 +105,11 @@ import { claimChannelReadSignal } from '$lib/utils/chat/channelReadSignal';
 import { isVideoPrepareError, prepareVideoForUpload } from '$lib/video/prepareVideoForUpload';
 import { videoPrepareFailureMessage } from '$lib/video/videoPrepareMessages';
 import { categoryOfConversation } from '$lib/notifications/categories';
+import {
+  conversationLevelRefusal,
+  mentionsUser,
+  type ConversationNotificationLevel,
+} from '$lib/notifications/conversationLevel';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
 
@@ -390,15 +403,26 @@ export function useMessaging() {
      * is where both already are - deriving it from the name would be `deriveConversationIdentity`
      * run a second time, in a second place, against a string that is a `me::peer` key for a DM.
      */
-    convo: Pick<Conversation, 'name' | 'contactName' | 'conversationType' | 'readWatermarks'>,
+    convo: Pick<
+      Conversation,
+      'id' | 'name' | 'contactName' | 'conversationType' | 'readWatermarks'
+    >,
     senderId: string,
     content: string,
+    /**
+     * Whether what this ONE banner stands for names the reader - the message itself on the live path,
+     * ANY inbound message of the flush on the batch path. A catch-up bringing "@me look", "ok", "lol"
+     * is a mention even though its banner shows "lol": computed by the caller, which holds them all.
+     */
+    mentionsMe: boolean,
     isSystem: boolean,
     isOwn: boolean,
     /** The SENDER's instant in ms - what lets the native builder recognise one message. */
     sentAt: number,
     /** How many inbound messages the ONE banner stands for - see `NativeMessageNotification.covers`. */
-    covers: number
+    covers: number,
+    /** True on the re-entry that follows the read of a salon's level - see the salon branch below. */
+    salonLevelRead = false
   ): void {
     if (isOwn || isSystem) return;
     if (typeof document === 'undefined') return;
@@ -427,6 +451,62 @@ export function useMessaging() {
         `[NOTIF] Inbound in ${conversationKey} - category "${category}" is switched off for this account; nothing raised.`
       );
       return;
+    }
+
+    // THE CONVERSATION'S OWN LEVEL (all / mentions / none), the salon's three for a private
+    // conversation. The server applies `none` to every push and hands `mentions` to the device; a
+    // frame received here involves no push, so this is the client's half - the ONE place it decides,
+    // with the plaintext already in hand. A salon is read from its own cache - see below.
+    //
+    // `mentionsMe` (see `mentionsUser`) decides the level here and picks the notification channel,
+    // which is the reader's own mute, sound and DND switch. `CanariFirebaseMessagingService` makes the
+    // same decision from the same token for messages that arrive as a push; this is the WebSocket
+    // half of one rule (NOTIF-16).
+    //
+    // LOOKED UP BY THE GROUP ID (`convo.id`), NEVER THE CONVERSATION KEY: a DM may be keyed
+    // `me::peer`, and the server's levels are keyed by the MLS group.
+    //
+    // A SALON'S LEVEL IS THE SAME THREE VALUES AND THE SAME DECISION (`conversationLevelRefusal`), read
+    // from the social service rather than the sign-in list, so it is cached per channel: read ONCE
+    // when the first frame of a salon arrives (one shared request, no read per message), refreshed
+    // whenever its settings panel opens. The frame that triggers the read waits for the answer and
+    // re-enters with `salonLevelRead`; if the read FAILED it is raised as `all`, the account default,
+    // and the failure is said by the store - the same rule as the groups' store.
+    let level: ConversationNotificationLevel | undefined;
+    if (category === 'messages') {
+      level = notificationPreferences.groupLevel(convo.id);
+    } else {
+      level = notificationPreferences.channelLevel(conversationKey);
+      if (level === undefined && !salonLevelRead) {
+        void notificationPreferences.loadChannelLevel(conversationKey).then(() => {
+          notifyInbound(
+            ctx,
+            conversationKey,
+            convo,
+            senderId,
+            content,
+            mentionsMe,
+            isSystem,
+            isOwn,
+            sentAt,
+            covers,
+            true
+          );
+        });
+        return;
+      }
+      if (level === undefined) {
+        console.warn(
+          `[NOTIF] Inbound in ${conversationKey} - the salon's level is unreadable; raised as "all".`
+        );
+      }
+    }
+    if (level !== undefined) {
+      const refusal = conversationLevelRefusal(level, mentionsMe);
+      if (refusal) {
+        console.log(`[NOTIF] Inbound in ${conversationKey} - ${refusal}; nothing raised.`);
+        return;
+      }
     }
 
     // NATIVE MOBILE USED TO RETURN HERE, AND THAT IS WHY A PHONE IN A POCKET NEVER NOTIFIED.
@@ -483,29 +563,23 @@ export function useMessaging() {
         : `the window is open on ${window.location.pathname} showing ${ctx.selectedContact || 'the list'}`;
     console.log(`[NOTIF] Inbound in ${conversationKey} while ${away} - asking.`);
     const preview = getPreviewText(parseEnvelope(content));
-    // WHETHER THIS MESSAGE NAMES THE READER IS DECIDED HERE, WHERE BOTH HALVES ARE ALREADY KNOWN -
-    // the raw text and `ctx.userId` - rather than left to the layer that only sees a title and a
-    // body. It picks the notification channel, which is the reader's own mute, sound and DND
-    // switch. `CanariFirebaseMessagingService` makes the same decision from the same token for
-    // messages that arrive as a push; this is the WebSocket half of one rule, and until 2026-09-08
-    // it did not exist, so which switches applied to a mention depended on which transport
-    // happened to carry it (NOTIF-16).
-    const mentionsMe = extractMentionUserIds(content).includes(normalizeMentionUserId(ctx.userId));
-    const senderName = notificationSenderName(senderId, convo);
     const notificationBody = preview || m.notif_new_message();
-    void ctx.sendSystemNotification(senderName, notificationBody, conversationKey, mentionsMe, {
-      // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its own
-      // plain notification, it asks the native builder for the SAME one a push would raise. See
-      // `nativeNotification.ts` for the pair of notifications this replaced.
-      conversationId: conversationKey,
-      senderId,
-      senderName,
-      groupName: notificationGroupName(convo.conversationType, convo.contactName, convo.name),
-      body: notificationBody,
-      mentionsMe,
-      sentAt,
-      covers,
-    });
+    // The sender's name is ASKED for, not just read: see `resolveNotificationSenderName`.
+    void resolveNotificationSenderName(senderId, convo).then((senderName) =>
+      ctx.sendSystemNotification(senderName, notificationBody, conversationKey, mentionsMe, {
+        // ON ANDROID THIS IS THE CALL, not an enrichment of it: the frame no longer builds its own
+        // plain notification, it asks the native builder for the SAME one a push would raise. See
+        // `nativeNotification.ts` for the pair of notifications this replaced.
+        conversationId: conversationKey,
+        senderId,
+        senderName,
+        groupName: notificationGroupName(convo.conversationType, convo.contactName, convo.name),
+        body: notificationBody,
+        mentionsMe,
+        sentAt,
+        covers,
+      })
+    );
   }
 
   /**
@@ -534,7 +608,10 @@ export function useMessaging() {
     if (!key || !convo) return;
     ctx.setSendError('');
     const refusal = await retrySalonSend(messageId, makeSendDeps(ctx, convo));
-    if (refusal) ctx.setSendError(refusal);
+    if (!refusal) return;
+    // A retry may wait for its salon to load: the banner goes to the conversation still on screen.
+    if (ctx.selectedContact === key) ctx.setSendError(refusal);
+    else ctx.log(`[SEND] retry refusal not shown: the conversation changed (${refusal})`);
   }
 
   /** Drops a failed salon message the member gave up on: its registration and its row. */
@@ -833,9 +910,7 @@ export function useMessaging() {
       canSeeArrival(ctx, normalized)
     ) {
       if (ctx.playReceiveTone) {
-        ctx.playReceiveTone(
-          extractMentionUserIds(content).includes(normalizeMentionUserId(ctx.userId))
-        );
+        ctx.playReceiveTone(mentionsUser(content, ctx.userId));
       } else {
         ctx.playNotificationTone();
       }
@@ -848,6 +923,7 @@ export function useMessaging() {
       convo,
       senderId,
       content,
+      mentionsUser(content, ctx.userId),
       isSystem,
       isOwn,
       resolvedTimestamp.getTime(),
@@ -1051,7 +1127,7 @@ export function useMessaging() {
     // System messages are named individually because they are few, and because a card is one.
     const systemIds = brandNew.filter((m) => m.isSystem).map((m) => m.id);
     console.log(
-      `[ADD_MSG] Batch into "${normalized}": ${brandNew.length} added, ${upgradedById.size} upgraded` +
+      `[ADD_MSG] Batch into "${normalized}": ${brandNew.length} added, ${upgradedById.size} upgraded, selected=${ctx.selectedContact === normalized}` +
         (systemIds.length > 0 ? ` - system: ${systemIds.join(', ')}` : '')
     );
 
@@ -1100,17 +1176,23 @@ export function useMessaging() {
         `[NOTIF] Batch into "${normalized}" restored ${brandNew.length} message(s) from an archive - a replay is not an arrival, nothing raised.`
       );
     } else if (lastInbound) {
+      const inbound = brandNew.filter(
+        (msg) => !msg.isSystem && !isOwnMessage(msg.senderId, ctx.userId)
+      );
       notifyInbound(
         ctx,
         normalized,
         convo,
         lastInbound.senderId,
         lastInbound.content,
+        // ANY message of the flush, not the last one: at `mentions` a catch-up whose mention is not
+        // its final line is still a mention, and the one banner must say so.
+        inbound.some((msg) => mentionsUser(msg.content, ctx.userId)),
         false,
         false,
         lastInbound.timestamp.getTime(),
         // THE FLUSH RAISES ONE BANNER FOR N MESSAGES, and the server may have pushed each of them.
-        brandNew.filter((msg) => !msg.isSystem && !isOwnMessage(msg.senderId, ctx.userId)).length
+        inbound.length
       );
     }
 
@@ -1158,9 +1240,13 @@ export function useMessaging() {
     const fileEntries = filesToSend;
     const mediaCaption = text || undefined;
     let sentMediaMessageCount = 0;
+    /** A held salon upload was refused because the account signed out - see the media catch. */
+    let sessionEndedDuringSend = false;
 
+    // JSON-quoted: a `"` in a member's text closes a hand-written quote, and the in-app log's
+    // redaction then keeps the words after it as ordinary log words (appLogRedact, 2026-10-14).
     ctx.log(
-      `[SEND] handleSendChat: contact="${ctx.selectedContact}" text="${text.slice(0, 40)}" files=${filesToSend.length}`
+      `[SEND] handleSendChat: contact=${JSON.stringify(ctx.selectedContact)} text=${JSON.stringify(text.slice(0, 40))} files=${filesToSend.length}`
     );
 
     if (!text && filesToSend.length === 0) {
@@ -1177,6 +1263,7 @@ export function useMessaging() {
       return;
     }
 
+    const sentFrom = ctx.selectedContact;
     const isChannel = isChannelConversationId(ctx.selectedContact);
     ctx.log(
       `[SEND] convo: groupId="${convo.id}" lifecycle=${convo.lifecycle} isChannel=${isChannel}`
@@ -1201,15 +1288,15 @@ export function useMessaging() {
         // `null`: a click on the send button, never a stack inside a decrypt session.
         .waitForMessageQueueIdle('media send', null)
         .catch((e) => ctx.log(`[SEND] queue-idle barrier failed, sending anyway: ${String(e)}`));
-      const stillMember = await ctx.verifyCurrentUserMembership(ctx.selectedContact);
+      const stillMember = await ctx.verifyCurrentUserMembership(sentFrom);
       if (!stillMember || convo.lifecycle !== 'active') {
         ctx.setSendError(m.chat_send_session_establishing());
         return;
       }
     }
 
-    const currentReplyingTo = replyByConversation.get(ctx.selectedContact) ?? null;
-    replyByConversation.delete(ctx.selectedContact);
+    const currentReplyingTo = replyByConversation.get(sentFrom) ?? null;
+    replyByConversation.delete(sentFrom);
     ctx.setSendError('');
     const channelSvc = isChannel ? new ChannelService() : null;
 
@@ -1235,6 +1322,19 @@ export function useMessaging() {
           if (isChannel && channelSvc) {
             // Channels are server-authoritative + always available: encrypt + upload + send inline.
             isUploadingMedia = true;
+            // THE SALON MUST BE LOADED BEFORE ANYTHING IS UPLOADED OR SEALED, and one that is not
+            // yet is WAITED FOR, as a text is (`salonSendGate.ts`): the upload indicator stays up
+            // meanwhile, and a refusal re-stages the file below. Before the upload, so a salon that
+            // never loads leaves no orphan blob behind.
+            const gateReading = readSalonSendGate(sentFrom);
+            if (gateReading.kind === 'wait') {
+              ctx.log(
+                `[MEDIA] ${messageId.slice(0, 8)}... HELD: salon ${sentFrom.slice(0, 16)} is not loaded on this device yet`
+              );
+            }
+            const gate =
+              gateReading.kind === 'wait' ? await whenSalonSendable(sentFrom) : gateReading;
+            if (gate.kind === 'refused') throw new SalonNotLoadableError(gate.reason);
             // `ctx.authToken` is a COPY taken at sign-in: it is empty or EXPIRED far more often than it
             // is live, and a 15-minute-old copy sent the upload out as `401 JWT expired` ("your session
             // expired") on a tab that was perfectly signed in. `getToken` is the one place that knows
@@ -1267,7 +1367,8 @@ export function useMessaging() {
               messageId,
               sentAt,
             });
-            const actualChannelId = ctx.selectedContact!.replace('channel_', '');
+            // The salon the send was MADE in: the selection may have moved during the wait above.
+            const actualChannelId = sentFrom.replace('channel_', '');
             await sendEncryptedChannelMessage(actualChannelId, protoBytes, messageId);
           } else {
             // MLS: queue the media. The flusher uploads then sends once the group is ready
@@ -1299,7 +1400,7 @@ export function useMessaging() {
             const endInflight = beginOutboxEnqueue(messageId);
             try {
               const fileBytes = new Uint8Array(await entry.file.arrayBuffer());
-              await addMessageToChat(ctx.userId, placeholder, ctx.selectedContact!, ctx, {
+              await addMessageToChat(ctx.userId, placeholder, sentFrom, ctx, {
                 messageId,
                 status: 'pending',
                 timestamp: new SvelteDate(sentAt),
@@ -1333,9 +1434,9 @@ export function useMessaging() {
                 ctx.log(
                   `[MEDIA] ${messageId.slice(0, 8)}… not queued, withdrawing its placeholder: ${String(enqueueError)}`
                 );
-                const current = ctx.conversations.get(ctx.selectedContact!);
+                const current = ctx.conversations.get(sentFrom);
                 if (current) {
-                  ctx.conversations.set(ctx.selectedContact!, {
+                  ctx.conversations.set(sentFrom, {
                     ...current,
                     messages: current.messages.filter((m) => m.id !== messageId),
                   });
@@ -1353,9 +1454,6 @@ export function useMessaging() {
           ctx.playSendTone?.();
         }
       } catch (error) {
-        if (sentMediaMessageCount < fileEntries.length) {
-          pendingMediaFiles = [...fileEntries.slice(sentMediaMessageCount), ...pendingMediaFiles];
-        }
         // BOTH BRANCHES OF THE LOOP ABOVE LAND HERE AND ONLY ONE OF THEM ASKS A SERVER ANYTHING.
         // The MLS branch writes bytes to IndexedDB and returns; the channel branch uploads and
         // sends inline, and both of those now throw a typed refusal. So the status is READ rather
@@ -1364,25 +1462,60 @@ export function useMessaging() {
         // route answers for an oversized file is the one a member can act on, and it is the
         // reason this catch gained a status instead of a second sentence.
         const status = refusalStatus(error);
-        ctx.setSendError(
-          describeApiRefusal(status, m.chat_media_action_send()) ??
-            (isEnqueueQuotaFailure(error)
-              ? m.chat_media_send_error_storage_full()
-              : m.chat_media_send_error_generic())
-        );
-        ctx.log(
-          `[MEDIA] send failed (status=${status ?? 'none'}), ${fileEntries.length - sentMediaMessageCount} file(s) re-staged: ${String(error)}`
-        );
+        const mediaRefusal =
+          error instanceof SalonNotLoadableError
+            ? salonGateRefusalMessage(error.reason)
+            : (describeApiRefusal(status, m.chat_media_action_send()) ??
+              (isEnqueueQuotaFailure(error)
+                ? m.chat_media_send_error_storage_full()
+                : m.chat_media_send_error_generic()));
+        const unsent = fileEntries.length - sentMediaMessageCount;
+        // THE STAGING IS ONE QUEUE FOR EVERY CONVERSATION, so where an unsent file goes back is a
+        // question of WHICH conversation is on screen - a held salon upload may be refused long after
+        // the click.
+        if (error instanceof SalonNotLoadableError && error.reason === 'session-ended') {
+          // THE ACCOUNT THAT MADE THIS SEND HAS LEFT. Nothing of it may reach the next account: this
+          // composable outlives a sign-out, so a re-staged file would sit in the NEXT account's
+          // composer, and the caption below would be held for the next session's gate and sealed
+          // by whoever signs in. No banner either - it would be the next account's.
+          sessionEndedDuringSend = true;
+          ctx.log(
+            `[MEDIA] ${unsent} file(s) dropped, not re-staged: the session ended while the salon was loading`
+          );
+        } else if (ctx.selectedContact === sentFrom) {
+          if (unsent > 0) {
+            pendingMediaFiles = [...fileEntries.slice(sentMediaMessageCount), ...pendingMediaFiles];
+          }
+          ctx.setSendError(mediaRefusal);
+          ctx.log(
+            `[MEDIA] send failed (status=${status ?? 'none'}), ${unsent} file(s) re-staged: ${String(error)}`
+          );
+        } else {
+          // THE MEMBER MOVED ON. Re-staged here, the file would sit in ANOTHER conversation's
+          // composer and its next Send would post it there. Dropped, and said so on the banner of
+          // the conversation now on screen, with the cause.
+          ctx.setSendError(m.chat_media_dropped_other_conversation({ cause: mediaRefusal }));
+          ctx.log(
+            `[MEDIA] send failed (status=${status ?? 'none'}), ${unsent} file(s) DROPPED, not re-staged: the conversation changed since the send: ${String(error)}`
+          );
+        }
       } finally {
         isUploadingMedia = false;
       }
     }
 
+    if (sessionEndedDuringSend) {
+      ctx.log('[SEND] caption not sent: the session ended while its upload was held');
+      return;
+    }
     if (sentMediaMessageCount > 0 || !text) return;
 
+    // THE CONVERSATION THE SEND WAS MADE IN, never the one on screen now: a salon upload may have
+    // been held for its salon above, and a caption falling through to here after a refused upload
+    // went to whichever conversation the member had moved to meanwhile.
     const result = await sendChatMessage(
       text,
-      ctx.selectedContact!,
+      sentFrom,
       currentReplyingTo,
       makeSendDeps(ctx, convo)
     );
@@ -1391,8 +1524,11 @@ export function useMessaging() {
     // (deleted group) or a channel error surfaces a message to the user.
     if (!result.success) {
       if (result.error) {
-        ctx.setSendError(result.error);
         ctx.log(`[SEND] Failed: ${result.error}`);
+        // A SALON SEND MAY ANSWER LONG AFTER THE CLICK - held until its salon loads - and the
+        // banner belongs to the conversation on screen. Its row keeps the failure either way.
+        if (ctx.selectedContact === sentFrom) ctx.setSendError(result.error);
+        else ctx.log(`[SEND] banner not shown: the conversation changed since the send`);
       }
       // THE TEXT LIVES IN A ROW (failed, with its retry) when the send was echoed: the composer has
       // nothing to take back, and restoring it would put the message in the thread twice (WP-OFF-2).
@@ -1400,7 +1536,7 @@ export function useMessaging() {
       // Nothing was drawn: the reply target goes back too, so the caller can restore the draft and
       // lose nothing (WP-OFF-1).
       if (isChannel && currentReplyingTo) {
-        replyByConversation.set(ctx.selectedContact, currentReplyingTo);
+        replyByConversation.set(sentFrom, currentReplyingTo);
       }
       return false;
     }
@@ -1451,7 +1587,9 @@ export function useMessaging() {
         // The LOG is dev-facing and stays English, and it names the file the banner cannot: the
         // banner tells the user one file was too big, this says WHICH, so a report of "it refused my
         // picture" is answerable without asking them to reproduce it.
-        ctx.log(`[MEDIA] refused "${file.name}" - ${size} Mo over the ${mediaMaxSizeMb} Mo limit`);
+        ctx.log(
+          `[MEDIA] refused a ${file.type || 'typeless'} file - ${size} Mo over the ${mediaMaxSizeMb} Mo limit`
+        );
         continue;
       }
       let entry: import('$lib/media').PendingMediaFile = { file };
@@ -1485,7 +1623,7 @@ export function useMessaging() {
         const { readImageDimensions } = await import('$lib/media');
         const dims = await readImageDimensions(file);
         if (dims) entry = { file, width: dims.width, height: dims.height };
-        else ctx.log(`[MEDIA] GIF "${file.name}" has no readable size - sent without one`);
+        else ctx.log(`[MEDIA] a GIF of ${file.size} bytes has no readable size - sent without one`);
       }
       if (entry.file.type.startsWith('image/')) {
         // The receiver's box shows this while the blob downloads (`MediaMsg.placeholder`).
@@ -1533,10 +1671,10 @@ export function useMessaging() {
       if (!isVideoPrepareError(e)) throw e;
       const message = videoPrepareFailureMessage(e);
       if (message === null) {
-        ctx.log(`[MEDIA] video "${file.name}" not staged: cancelled`);
+        ctx.log(`[MEDIA] video of ${file.size} bytes not staged: cancelled`);
         return null;
       }
-      ctx.log(`[MEDIA] video "${file.name}" refused: ${e.fault} - ${e.message}`);
+      ctx.log(`[MEDIA] video of ${file.size} bytes refused: ${e.fault} - ${e.message}`);
       ctx.setSendError(message);
       return null;
     } finally {

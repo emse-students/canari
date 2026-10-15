@@ -1,5 +1,6 @@
 import { m } from '$lib/paraglide/messages';
 import type { GraineSealUnavailableReason } from './sealUnavailable';
+import type { SalonGateRefusal } from './salonSendGate';
 
 /**
  * The sentence a member reads when a seal was refused, chosen by the TYPED reason the refusal
@@ -27,5 +28,23 @@ export function sealUnavailableMessage(reason: GraineSealUnavailableReason): str
       return m.chat_send_error_seal_key_group_unsettled();
     case 'key-group-catching-up':
       return m.chat_send_error_seal_key_group_catching_up();
+  }
+}
+
+/**
+ * The sentence a member reads when a send HELD for its salon to load is refused - the salon will not
+ * load without something new happening, so "try again in a moment" would be false for three of the
+ * four. Chosen by the gate's typed reason (`salonSendGate.ts`).
+ */
+export function salonGateRefusalMessage(reason: SalonGateRefusal): string {
+  switch (reason) {
+    case 'not-listed':
+      return m.chat_send_error_salon_not_listed();
+    case 'listing-failed':
+      return m.chat_send_error_salon_listing_failed();
+    case 'left':
+      return m.chat_send_error_salon_left();
+    case 'session-ended':
+      return m.chat_send_error_salon_session_ended();
   }
 }

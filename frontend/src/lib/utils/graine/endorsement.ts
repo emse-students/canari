@@ -9,7 +9,9 @@ import type { IncomingSeed } from './wireSeed';
 /**
  * What checking a v2 seed's endorsement established.
  *
- * - `valid`: the minter's device signed this session key AND this seed.
+ * - `valid`: the minter's device signed this session key AND this seed. `source` says which key
+ *   proved it: the key group's `tree`, or the keys the `server` published for a device that has left
+ *   it - the weaker trust, which the caller reports.
  * - `refused`: it did not - a forged minter, a substituted key or seed, or a v2 seed missing its
  *   fields. Never stored, not even half.
  * - `unanswered`: the minter's device has left the tree and the server could not be asked. This
@@ -17,9 +19,12 @@ import type { IncomingSeed } from './wireSeed';
  *   session is a missing seed, which repairs.
  */
 export type EndorsementVerdict =
-  | { kind: 'valid' }
+  | { kind: 'valid'; source: EndorsementSource }
   | { kind: 'refused'; why: string }
   | { kind: 'unanswered'; why: string };
+
+/** Which key proved a valid endorsement: the key group's tree, or the server's published keys. */
+export type EndorsementSource = 'tree' | 'server';
 
 /**
  * Checks a v2 seed's endorsement against the minter device's signature key (channel-encryption
@@ -38,7 +43,8 @@ export async function checkSeedEndorsement(
   seed: IncomingSeed
 ): Promise<EndorsementVerdict> {
   const v2 = seed.v2;
-  if (!v2) return { kind: 'valid' };
+  // A v1 seed names no minter, so nothing can endorse it: its caller refuses it before asking.
+  if (!v2) return { kind: 'refused', why: 'a v1 seed carries no endorsement' };
   if (
     !v2.minterUserId ||
     !v2.minterDeviceId ||
@@ -51,7 +57,7 @@ export async function checkSeedEndorsement(
   const identity = `${v2.minterUserId}:${v2.minterDeviceId}`;
   const treeKey = await mls.memberSignatureKey(keyGroupId, identity);
   let candidates: Uint8Array[];
-  let source: string;
+  let source: EndorsementSource;
   if (treeKey) {
     candidates = [treeKey];
     source = 'tree';
@@ -64,7 +70,7 @@ export async function checkSeedEndorsement(
       };
     }
     candidates = published.keys;
-    source = `server (${candidates.length} key(s))`;
+    source = 'server';
   }
   if (candidates.length === 0) {
     return {
@@ -87,10 +93,11 @@ export async function checkSeedEndorsement(
   for (const key of candidates) {
     try {
       await verifyGraineEndorsementV2(endorsement, seed.seed, v2.endorsement, key, engine);
-      console.debug(
-        `[GRAINE] v2 endorsement of session ${seed.sessionId.slice(0, 8)} verified against ${identity} from the ${source}`
-      );
-      return { kind: 'valid' };
+      // NO LINE OF ITS OWN. A success here is a seed being stored, and the caller already says that
+      // once per seed or once per bundle - with this source in it. A line per verification printed
+      // 496 times in one sign-in on the Mi 9T (2026-10-13), the largest tag of the capture, and said
+      // nothing the stored-seed line did not.
+      return { kind: 'valid', source };
     } catch (err) {
       if (!(err instanceof GraineSignatureError)) throw err;
       last = err;
@@ -98,6 +105,6 @@ export async function checkSeedEndorsement(
   }
   return {
     kind: 'refused',
-    why: `the endorsement does not verify against ${identity} from the ${source}: ${String(last)}`,
+    why: `the endorsement does not verify against ${identity} from the ${source} (${candidates.length} key(s)): ${String(last)}`,
   };
 }

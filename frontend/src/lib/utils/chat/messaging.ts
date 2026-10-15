@@ -1,8 +1,20 @@
 import type { IMlsService } from '$lib/mlsService';
 import type { ChatMessage, Conversation } from '$lib/types';
 import type { OutboxEntry } from '$lib/db';
-import { cancelOutboxMessage, enqueueOutboxMessage, OutboxEnqueueError } from './outbox';
-import { encodeAppMessage, mkText, mkReply, mkReaction, mkSystem } from '$lib/proto/codec';
+import {
+  cancelOutboxMessage,
+  enqueueOutboxMessage,
+  OutboxEnqueueError,
+  type LatestWins,
+} from './outbox';
+import {
+  decodeAppMessage,
+  encodeAppMessage,
+  mkText,
+  mkReply,
+  mkReaction,
+  mkSystem,
+} from '$lib/proto/codec';
 import { serializeEnvelope, mkTextEnvelope, parseEnvelope } from '$lib/envelope';
 import {
   sendEncryptedChannelMessage,
@@ -14,7 +26,11 @@ import { m } from '$lib/paraglide/messages';
 import { cutReplyPreview, gifPreviewUrl } from '$lib/utils/chat/messageDisplay';
 import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
-import { sealUnavailableMessage } from '$lib/utils/graine/sealUnavailableMessage';
+import {
+  salonGateRefusalMessage,
+  sealUnavailableMessage,
+} from '$lib/utils/graine/sealUnavailableMessage';
+import { readSalonSendGate, whenSalonSendable } from '$lib/utils/graine/salonSendGate';
 import type { SalonEchoChange } from './salonEcho';
 import { clearUnsentSalonText, recordUnsentSalonText } from './salonUnsent';
 
@@ -69,8 +85,18 @@ export function liveSalonSendIds(): ReadonlySet<string> {
 }
 
 /**
- * POSTs one salon send and moves its echo: `sending` while in flight, `settled` on the server's
- * answer, `error` on a refusal (the entry stays registered so the row can be retried).
+ * POSTs one salon send and moves its echo: `pending` while the salon is not loaded yet, `sending`
+ * while in flight, `settled` on the server's answer, `error` on a refusal (the entry stays
+ * registered so the row can be retried).
+ *
+ * A SALON NOT YET LOADED HOLDS THE SEND, IT DOES NOT REFUSE IT (2026-10-13). A salon is drawn from
+ * the local store before the community listing has taught this session its scope, and the seal
+ * used to throw `GraineUnknownChannelError` for a message typed in that window - nothing lost but
+ * the order. The gate (`salonSendGate.ts`) is asked FIRST, so that fact is read where it is known
+ * instead of learnt from the seal's refusal: the row stays `pending` until the salon is entered,
+ * then goes through the ordinary seal - sealed and signed THEN, never queued unsealed. A listing
+ * that ends without the salon, a community that leaves, a sign-out: each refuses the hold, and the
+ * row turns `error` with its Retry. The wait is bounded by those events, never by a clock.
  *
  * THE OUTCOME IS CLASSIFIED AT THE THROW. A status code is an ANSWER: the server saw the request and
  * said no, so the row is `error`. A throw that carries NO status (the network dropped, the reply was
@@ -88,6 +114,25 @@ async function deliverSalonSend(
   send: SalonSend,
   deps: SendMessageDeps
 ): Promise<string | null> {
+  const reading = readSalonSendGate(send.channelId);
+  if (reading.kind === 'wait') {
+    deps.log(
+      `[SEND] channel send ${messageId.slice(0, 8)}... HELD: salon ${send.channelId.slice(0, 8)} is not loaded on this device yet`
+    );
+    deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'pending' });
+  }
+  const gate = reading.kind === 'wait' ? await whenSalonSendable(send.channelId) : reading;
+  if (gate.kind === 'refused') {
+    // NOTHING WAS SEALED: an answer, so the row is `error` and its Retry is safe.
+    deps.log(
+      `[SEND] channel send ${messageId.slice(0, 8)}... NOT sent: salon ${send.channelId.slice(0, 8)} cannot be loaded (reason=${gate.reason})`
+    );
+    deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'error' });
+    return salonGateRefusalMessage(gate.reason);
+  }
+  if (reading.kind === 'wait') {
+    deps.log(`[SEND] channel send ${messageId.slice(0, 8)}... released: its salon is loaded`);
+  }
   deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'sending' });
   try {
     const row = await sendEncryptedChannelMessage(
@@ -165,8 +210,9 @@ const retrying = new Set<string>();
 /**
  * Re-sends a REFUSED salon message from its row's "retry". Same payload, same client id.
  *
- * SAFE BECAUSE IT IS OFFERED ONLY WHERE THE SERVER PROVED IT STORED NOTHING: a 4xx refusal, or a
- * seal that never left this device (`error`). An `unconfirmed` row - no answer, or a 5xx - gets no
+ * SAFE BECAUSE IT IS OFFERED ONLY WHERE THE SERVER PROVED IT STORED NOTHING: a 4xx refusal, a
+ * seal that never left this device, or a salon that could not be loaded (`error`). A retry of the
+ * last one waits for the salon again if a listing is in flight. An `unconfirmed` row - no answer, or a 5xx - gets no
  * retry, because a repeat the server did take would post twice until the server dedupes on the
  * client id (WP-OFF-3).
  *
@@ -242,8 +288,10 @@ export async function sendChatMessage(
 ): Promise<{ success: boolean; error?: string; echoed?: boolean }> {
   const { userId, conversation, addMessageToChat } = deps;
 
+  // JSON-quoted: a `"` in a member's text closes a hand-written quote, and the in-app log's
+  // redaction then keeps the words after it as ordinary log words (appLogRedact, 2026-10-14).
   deps.log(
-    `[SEND] sendChatMessage: contact="${contactName}" groupId="${conversation.id}" lifecycle=${conversation.lifecycle} text="${text.slice(0, 40)}" reply=${!!replyingTo}`
+    `[SEND] sendChatMessage: contact=${JSON.stringify(contactName)} groupId="${conversation.id}" lifecycle=${conversation.lifecycle} text=${JSON.stringify(text.slice(0, 40))} reply=${!!replyingTo}`
   );
 
   if (!text.trim()) {
@@ -330,6 +378,10 @@ export async function sendChatMessage(
     return { success: false, error: m.chat_conversation_deleted_message() };
   }
 
+  // A quote from inside a member's exclusion window is decided by the OUTBOX, at the send - not here,
+  // where it would cost a round trip per reply and turn an offline compose into a lost quote. See
+  // `decideQuote` in `outbox.ts`.
+
   // THE ECHO AND ITS QUEUE ENTRY ARE ONE WRITE, and the entry is therefore built first.
   //
   // It used to be two awaits in the other order - persist the echo, then queue it - and a document
@@ -395,20 +447,24 @@ interface MessageActionDeps {
 async function enqueueControlEvent(
   kind: string,
   conversationId: string,
-  proto: Uint8Array
+  proto: Uint8Array,
+  latestWins?: LatestWins
 ): Promise<void> {
   const now = Date.now();
   try {
-    await enqueueOutboxMessage({
-      id: crypto.randomUUID(),
-      conversationId,
-      sentAt: now,
-      kind: 'control',
-      controlProto: proto,
-      status: 'pending',
-      attempts: 0,
-      createdAt: now,
-    });
+    await enqueueOutboxMessage(
+      {
+        id: crypto.randomUUID(),
+        conversationId,
+        sentAt: now,
+        kind: 'control',
+        controlProto: proto,
+        status: 'pending',
+        attempts: 0,
+        createdAt: now,
+      },
+      latestWins ? { latestWins } : undefined
+    );
   } catch (e) {
     // A control event is best-effort by nature (it converges on the next one), so a queue that cannot
     // take it must not throw into the reaction/edit/pin/read UI - but it is NEVER silent: the peers
@@ -567,6 +623,11 @@ export async function setMessagePinned(
  * so it compares correctly against the population it will be compared against on every other
  * device.
  *
+ * LATEST-WINS IN THE QUEUE: an unsent watermark of the same conversation is superseded by this one,
+ * and this one is not queued when an unsent one already carries as much. Only the newest needs to
+ * reach anyone, and each frame costs every member a decrypt and a checkpoint. See
+ * history-reconciliation, "The sender says only what is new".
+ *
  * @returns false only when there is nothing to announce (`at` not ahead of what peers were last
  *          told), which is what keeps an open conversation from emitting a frame per render.
  */
@@ -575,7 +636,29 @@ export async function sendReadWatermark(at: number, deps: MessageActionDeps): Pr
   await enqueueControlEvent(
     'read_watermark',
     deps.conversation.id,
-    encodeAppMessage(mkSystem('read_watermark', JSON.stringify({ at })))
+    encodeAppMessage(mkSystem('read_watermark', JSON.stringify({ at }))),
+    { value: at, valueOf: queuedReadWatermarkAt }
   );
   return true;
+}
+
+/**
+ * The instant a queued outbox entry announces when it is a `read_watermark`, else null - which is
+ * every other entry, a reaction or an edit included, so the latest-wins supersede never touches one.
+ * Read from the entry's own pre-encoded proto: the queue row has no column saying what it carries.
+ */
+export function queuedReadWatermarkAt(entry: OutboxEntry): number | null {
+  if (entry.kind !== 'control' || !entry.controlProto) return null;
+  const system = decodeAppMessage(entry.controlProto)?.system;
+  if (system?.event !== 'read_watermark') return null;
+  try {
+    const at = Number((JSON.parse(system.data ?? '') as { at?: unknown }).at);
+    return Number.isFinite(at) && at > 0 ? at : null;
+  } catch (e) {
+    console.warn(
+      `[OUTBOX] queued read_watermark ${entry.id.slice(0, 8)}… has unreadable data, left alone:`,
+      e
+    );
+    return null;
+  }
 }

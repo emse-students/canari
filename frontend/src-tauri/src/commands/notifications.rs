@@ -43,6 +43,7 @@
 /// `covers` is how many inbound messages this one banner stands for (a catch-up flush raises one
 /// banner for N), which the Kotlin `GenericBannerLedger` credits against refused pushes.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn notifier_message_natif(
     group_id: String,
     sender_id: String,
@@ -226,33 +227,48 @@ pub(crate) fn write_avatar_mirror(
     Ok(())
 }
 
+/// The bytes of one face from the base64 the WebView sends; an undecodable string is refused by
+/// name rather than written as an empty or truncated file.
+#[cfg(any(target_os = "android", test))]
+fn decode_avatar_b64(data_b64: &str) -> Result<Vec<u8>, String> {
+    use base64::Engine;
+    base64::engine::general_purpose::STANDARD
+        .decode(data_b64)
+        .map_err(|e| format!("{} chars that are not base64: {e}", data_b64.len()))
+}
+
 /// Hands the bytes of a face the WebView has just drawn to the notification's cache (Android).
 ///
-/// `data` is the image as a byte array, the shape `save_mls_state` already takes. **NOT a raw
-/// invoke body**: the first version read `tauri::ipc::Request` and the Mi 9T refused every call
-/// with "the body is not raw bytes" - Android's IPC delivers a typed array as JSON, whatever the
-/// caller passed. Off Android it refuses: the iOS extension reads its own app-group container,
-/// which this does not write, and the caller checks the platform before it calls.
+/// `data_b64` is the image as ONE base64 string. **NOT a raw invoke body**: the first version read
+/// `tauri::ipc::Request` and the Mi 9T refused every call with "the body is not raw bytes" -
+/// Android's IPC delivers its arguments as JSON, whatever the caller passed. And NOT a number array
+/// (`Vec<u8>`, the shape this took until 2026-10-13): JSON spells each byte as up to four
+/// characters, and the WebView builds and serialises one number per byte on its main thread - 50
+/// faces of 7.5 KB cost 360-440 ms there as an array, 130-150 ms as base64 (Mi 9T). Off Android it
+/// refuses: the iOS extension reads its own app-group container, which this does not write, and the
+/// caller checks the platform before it calls.
 #[tauri::command]
 pub(crate) fn store_avatar_mirror(
     app: tauri::AppHandle,
     user_id: String,
-    data: Vec<u8>,
+    data_b64: String,
 ) -> Result<(), String> {
     #[cfg(target_os = "android")]
     {
         use tauri::Manager;
         let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-        write_avatar_mirror(&data_dir, &user_id, &data).inspect_err(|e| {
-            log::warn!(
-                "[AVATAR_MIRROR] {} not mirrored: {e}",
-                avatar_cache_stem(&user_id)
-            );
-        })
+        decode_avatar_b64(&data_b64)
+            .and_then(|data| write_avatar_mirror(&data_dir, &user_id, &data))
+            .inspect_err(|e| {
+                log::warn!(
+                    "[AVATAR_MIRROR] {} not mirrored: {e}",
+                    avatar_cache_stem(&user_id)
+                );
+            })
     }
     #[cfg(not(target_os = "android"))]
     {
-        let _ = (app, data);
+        let _ = (app, data_b64);
         log::warn!("[AVATAR_MIRROR] refused off Android for {user_id}: no reader here");
         Err("android only".into())
     }
@@ -260,7 +276,17 @@ pub(crate) fn store_avatar_mirror(
 
 #[cfg(test)]
 mod avatar_mirror_tests {
-    use super::{avatar_cache_stem, write_avatar_mirror};
+    use super::{avatar_cache_stem, decode_avatar_b64, write_avatar_mirror};
+
+    #[test]
+    fn decodes_the_base64_the_webview_sends_and_refuses_anything_else() {
+        // "/9j/4AAQ" is what `toBase64` makes of a JPEG's first six bytes.
+        assert_eq!(
+            decode_avatar_b64("/9j/4AAQ").unwrap(),
+            vec![0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10]
+        );
+        assert!(decode_avatar_b64("not base64!").is_err());
+    }
 
     const JPEG: &[u8] = &[0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10];
 

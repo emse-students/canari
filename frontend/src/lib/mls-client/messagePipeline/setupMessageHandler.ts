@@ -24,7 +24,14 @@ import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
 import { noteUnackedFrame } from './unackedFrames';
 import { frameFingerprint, hasFrameBeenProcessed, noteFrameProcessed } from '../inboundFrameLedger';
-import { reconcileGroup } from '$lib/utils/chat/historyReconcile';
+import {
+  answerAfterMailboxDrained,
+  isReconcileRaised,
+  raiseReconcile,
+} from '$lib/utils/chat/historyReconcile';
+import { digestIdentity } from '$lib/utils/chat/historyDigestRendezvous';
+import { retryOverheardPull } from '$lib/utils/chat/historyDiffAnswer';
+import { takeOwedPulls } from '$lib/utils/chat/historyOverheardPull';
 import {
   hasHistoryFrameBeenConsumed,
   markHistoryFrameConsumed,
@@ -161,6 +168,7 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
       onRolePermissionsChanged: deps.onRolePermissionsChanged,
       onChannelDeleted: deps.onChannelDeleted,
       onWorkspaceUpdated: deps.onWorkspaceUpdated,
+      onSalonUnreadCleared: deps.onSalonUnreadCleared,
       onWorkspaceRoleChanged: deps.onWorkspaceRoleChanged,
       onWorkspaceDeleted: deps.onWorkspaceDeleted,
       onChannelMessageDeleted: deps.onChannelMessageDeleted,
@@ -932,8 +940,15 @@ async function handleKnownGroup({
     // this path never solicited again (measured on prod 2026-08-10: twelve `LOST frame` lines,
     // zero solicitations). `reconcileGroup` coalesces a burst instead, which is the only thing that
     // was ever needed here - a replay giving up on forty frames of one conversation asks once.
-    log(`[MLS] Frames are being lost in ${convoKey.slice(0, 8)}… - reconciling this conversation`);
-    void reconcileGroup(mlsService, groupId, log);
+    // A burst of unreadable frames of one group (a cold-start replay) is ONE trigger: only the first
+    // announces and asks, the rest are counted by `raiseReconcile` and said once when it settles.
+    // Each frame is still named by its own `LOST frame` line above.
+    if (!isReconcileRaised(groupId)) {
+      log(
+        `[MLS] Frames are being lost in ${convoKey.slice(0, 8)}… - reconciling this conversation`
+      );
+    }
+    void raiseReconcile(mlsService, groupId, log);
   };
 
   /**
@@ -1022,6 +1037,13 @@ async function handleKnownGroup({
       log(`[MLS] Undecodable payload for ${convoKey.slice(0, 8)}… - ACK`);
       return true;
     }
+
+    // A LIVE frame from a device we owe a retry is the proof it is online NOW, and its device is the
+    // one `verifiedSender` just checked against the credential. A pulled copy proves nothing about
+    // now, and the author's own digest supersedes the entry rather than spending it (see
+    // `historyOverheardPull`). Silent when nothing is owed - which is nearly every frame.
+    const liveAuthor = liveProofOfAuthor(sender, deliveryMeta, msg.system?.event);
+    if (liveAuthor) retryPullsOwedTo(liveAuthor, deps);
 
     if (msg.text || msg.reply || msg.media) {
       const envelope = appMsgToEnvelope(msg, deliveryMeta?.queuedCreatedAt);
@@ -1437,4 +1459,43 @@ async function upsertConversation(
       `[WELCOME] undismissGroup(${joinedGroupId}) failed - other devices keep purging it: ${String(e)}`
     );
   });
+}
+
+/**
+ * The device a decrypted frame PROVES online now, or `null`: only a LIVE copy says anything about
+ * now (a pulled one is a queue row, possibly hours old), only one naming its device can be addressed,
+ * and the author's own `history_digest` supersedes what it is owed instead of spending it.
+ */
+export function liveProofOfAuthor(
+  sender: string,
+  deliveryMeta: IncomingDeliveryMeta | undefined,
+  systemEvent: string | null | undefined
+): string | null {
+  if (deliveryMeta?.channel !== 'live' || !deliveryMeta.senderDeviceId) return null;
+  if (systemEvent === 'history_digest') return null;
+  return digestIdentity(sender, deliveryMeta.senderDeviceId);
+}
+
+/**
+ * Re-asks, once each, every pull an overheard digest left owed to `author`, now that it was seen
+ * live. Each retry waits for that conversation's mailbox, like every other store read here.
+ */
+export function retryPullsOwedTo(author: string, deps: MessageHandlerDeps): void {
+  const { mlsService, storage, deviceKey, userId, log } = deps;
+  for (const owed of takeOwedPulls(author)) {
+    log(
+      `[HISTORY_DIGEST] ${owed.groupId.slice(0, 8)}… ${author} is live again - retrying the pull its digest left owed, once`
+    );
+    answerAfterMailboxDrained(mlsService, owed.groupId, () =>
+      retryOverheardPull({
+        owed,
+        selfIdentity: digestIdentity(userId, mlsService.getDeviceId()),
+        deps: { storage, deviceKeyB64: deviceKey(), mlsService, log },
+      }).catch((e) =>
+        log(
+          `[HISTORY_DIGEST] Retry of the owed pull failed for ${owed.groupId.slice(0, 8)}…: ${String(e).slice(0, 120)}`
+        )
+      )
+    );
+  }
 }

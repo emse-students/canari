@@ -33,7 +33,11 @@ import {
   isDistributionGroupMeta,
   type GroupServerStatus,
 } from '$lib/utils/chat/groupLifecycle';
-import { forgetGroupsAbsentFromServer, readGroupSweepSnapshot } from '$lib/utils/chat/groupSweep';
+import {
+  forgetGroupsAbsentFromServer,
+  readGroupSweepSnapshot,
+  type AbsentGroupVerdicts,
+} from '$lib/utils/chat/groupSweep';
 import { saveBlobAs } from '$lib/utils/fileDownload';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
@@ -445,6 +449,12 @@ export async function discoverMissingGroups(params: {
   log: (msg: string) => void;
   /** Optional: IndexedDB access to verify messages have been migrated before purge. */
   storage?: IStorage | null;
+  /**
+   * The answers the connection sync of THIS pass already had about absent local groups, so the
+   * key-distribution groups are not asked about twice per connection ({@link AbsentGroupVerdicts}).
+   * Absent when discovery is a pass of its own (the 35 s and 70 s retries), which asks afresh.
+   */
+  verdicts?: AbsentGroupVerdicts;
 }) {
   const {
     mlsService,
@@ -485,7 +495,7 @@ export async function discoverMissingGroups(params: {
     // conversation. A device with no row ends in the same state as one with a row.
     const dismissedGroupIds = new Set(await mlsService.getDismissedGroups());
 
-    if (await forgetGroupsAbsentFromServer(mlsService, snapshot, log)) {
+    if (await forgetGroupsAbsentFromServer(mlsService, snapshot, log, params.verdicts)) {
       await persistMlsStateAfterMutation(mlsService, userId, deviceKeyB64, log);
     }
 
@@ -499,7 +509,7 @@ export async function discoverMissingGroups(params: {
       //    or we would delete a group we just re-joined.
       if (dismissedGroupIds.has(convo.id)) {
         if (!serverGroupIds.has(convo.id)) {
-          log(`[DISCOVERY] UI group "${convo.name || convo.id}" dismissed by user - removing`);
+          log(`[DISCOVERY] UI group "${convo.id}" dismissed by user - removing`);
           await purgeLocalConversationRecord({
             conversations,
             contactKey: key,
@@ -560,7 +570,7 @@ export async function discoverMissingGroups(params: {
           serverStatus,
           isStillUserMember,
         });
-        const label = convo.name || convo.id;
+        const label = convo.id;
 
         if (fate.action === 'purge') {
           log(`[DISCOVERY] UI group "${label}" - ${fate.reason} - removing`);

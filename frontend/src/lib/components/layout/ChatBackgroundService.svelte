@@ -27,17 +27,27 @@
   import { isBiometricPromptDismissed } from '$lib/composables/session/sessionBiometrics';
   import {
     isRecoverableWithOldPin,
+    isVaultRefusal,
     type LoginErrorCode,
     provesLocalStateExists,
+    provesOtherAccountState,
   } from '$lib/composables/session/loginErrors';
   import { forgetPinSaltAhead } from '$lib/composables/session/pinSaltAhead';
   import {
     getToken,
     clearAuth,
     setSessionExpiredHandler,
+    setSignOutHandler,
     isRefreshCredentialProvenDead,
+    leaveSignedOut,
   } from '$lib/stores/auth';
   import { currentUserId } from '$lib/stores/user';
+  import { sessionAnsweredFor } from '$lib/stores/sessionAnswer.svelte';
+  import {
+    noteUnlockNeedsMember,
+    noteUnlockUnattended,
+    unlockUnattendedFor,
+  } from '$lib/stores/unlockPath.svelte';
   import {
     globalSession,
     globalConvs,
@@ -56,10 +66,14 @@
   import { biometricPrompt } from '$lib/stores/biometricPrompt.svelte';
   import CallOverlay from '$lib/components/chat/CallOverlay.svelte';
   import { showToast } from '$lib/stores/toast.svelte';
+  import { connectivity } from '$lib/stores/connectivity.svelte';
   import { removalOutcome } from '$lib/utils/chat/memberRemoval';
   import { isReadingConversationNow } from '$lib/utils/chat/arrivalRuntime';
   import type { ConversationContext } from '$lib/composables/useConversations.svelte';
-  import type { WorkspacePurgeContext } from '$lib/composables/useChannelWorkspaces.svelte';
+  import type {
+    ListingRetryTrigger,
+    WorkspacePurgeContext,
+  } from '$lib/composables/useChannelWorkspaces.svelte';
   import type { MessagingContext } from '$lib/composables/useMessaging.svelte';
   import type { BulkIngestPhase } from '$lib/mls-client';
   import { Phone, PhoneOff, Video } from '@lucide/svelte';
@@ -99,7 +113,10 @@
     landingStep,
     openInvitedChannel,
   } from '$lib/utils/chat/notificationRouting';
-  import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+  import {
+    CHANNEL_CONVERSATION_PREFIX,
+    isChannelConversationId,
+  } from '$lib/utils/chat/channelCrypto';
   import { setGraineRepairListener } from '$lib/utils/graine/runtime';
   import { channelService } from '$lib/services/ChannelService';
   import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
@@ -364,6 +381,19 @@
   /** True when the user has no prior MLS device on this browser - shown as "choose your PIN". */
   let isFirstPinSetup = $state(false);
   let pinError = $state('');
+  /**
+   * The local state of this install is PROVEN to be another account's (`device_holds_other_account`:
+   * the vaulted key opened `mls.bin` and its credential named someone else). While it holds, the gate
+   * offers NO reset - `handlePinReset` -> `resetDeviceAsFresh` -> `removeMlsState` deletes the one
+   * `mls.bin` of the install, the other account's state with it - and says why instead. This
+   * account stays locked out on this phone, which is the safe outcome: nothing of the other
+   * account is ever deleted from this one's session. Cleared by a sign-out, by a session expiry and
+   * by a session.
+   */
+  let deviceHoldsOtherAccount = $state(false);
+  $effect(() => {
+    if (globalSession.isLoggedIn) deviceHoldsOtherAccount = false;
+  });
   let pinLoading = $state(false);
   let pinStep = $state('');
   let biometricConfigured = $state(false);
@@ -540,6 +570,17 @@
   }
 
   /**
+   * The ONE place the keypad is put on screen. A keypad on screen means a PIN is owed, so the
+   * unlock fact is set back to "needs the member" here and nowhere else: every caller that draws
+   * the keypad also hides the community list and holds the pre-session listing (F1).
+   */
+  function showPinGate(reason: string): void {
+    noteUnlockNeedsMember();
+    appendLog(`[PIN] Keypad shown (${reason}) - the unlock is owed to the member`);
+    showPinModal = true;
+  }
+
+  /**
    * Opens the PIN modal for the given user.
    *
    * THE GATE IS DRAWN ON THE LOCAL FACT WHEN THERE IS ONE. A device that enrolled this user is a
@@ -547,10 +588,15 @@
    * trip, ~0.5 s of a cold start behind a notification - is asked only by a device that never did.
    * See {@link firstPinSetupFromDevice}.
    */
-  async function openPinModal(uid: string) {
+  async function openPinModal(uid: string, opts?: { deviceIdUnproven?: boolean }) {
+    // A PIN is owed: the device is locked from here until the unlock, whatever page is shown (F1).
+    noteUnlockNeedsMember();
     if (!mayPromptForPin()) return;
     globalSession.userId = uid;
-    const knownLocally = firstPinSetupFromDevice(localStorage, uid);
+    // A device id the attempt that just FAILED minted proves nothing about a PIN: a refused vault
+    // resolves this account's id before the state refuses it, so it would read "returning" for an
+    // account that has never chosen one, and draw the keypad without its confirmation step.
+    const knownLocally = opts?.deviceIdUnproven ? null : firstPinSetupFromDevice(localStorage, uid);
     if (knownLocally !== null) {
       appendLog('[PIN] Gate drawn from the enrolled device id - no pin-status round trip');
       isFirstPinSetup = knownLocally;
@@ -560,7 +606,7 @@
     // The salt does not depend on the PIN, so it is asked while the person types. A first setup
     // is excluded: on a user without a salt that GET is a write (see `prefetchPinSaltImpl`).
     if (!isFirstPinSetup) globalSession.prefetchPinSalt(appendLog);
-    showPinModal = true;
+    showPinGate('open');
   }
 
   /**
@@ -590,6 +636,9 @@
     // So the release is unconditional and runs first. Every line of it is idempotent.
     dismissAuthPrompts();
     pinError = '';
+    // The refused account leaves with its session: kept, the flag withheld the reset from the NEXT
+    // account's gate on this shell (the root layout outlives `/login`), which may be the owner's.
+    deviceHoldsOtherAccount = false;
     _loginInProgress = false;
     globalSession.isLoginInProgress = false;
 
@@ -616,6 +665,27 @@
   }
 
   /**
+   * The device half of every sign-out, run by `clearAuth` before it drops the credential.
+   *
+   * TWO THINGS OUTLIVED A SIGN-OUT, AND TOGETHER THEY LOCKED THE NEXT SIGN-IN OUT (Mi 9T,
+   * 2026-10-14, 2 of 2). The live session kept running - so the foreground resume after the sign-in
+   * browser reconnected it before the OIDC callback had its token, met the dead credential and set
+   * `isLoggedIn` false behind the callback's back - and `_loginInProgress`, which the login that
+   * SUCCEEDED never releases, still said a login owned the flow. Every later trigger (`afterNavigate`,
+   * the user-id effect) returned on it: no PIN gate, no vault unlock, "Connexion en cours..." for
+   * four minutes, and only a relaunch recovered. Ending the session here removes the race; releasing
+   * the latch here is what lets the next sign-in start, whatever ended the previous one.
+   */
+  function handleSignedOut() {
+    noteUnlockNeedsMember();
+    globalSession.endSession(sessionCb());
+    // After the teardown, and whether or not there was a live session to tear down: the community
+    // list of the leaving account goes, and a listing started on its token stops (F1/F2).
+    globalChannels.forgetAccount(appendLog);
+    _loginInProgress = false;
+  }
+
+  /**
    * The PIN gate's way out, and the ONE that destroys nothing.
    *
    * The gate stopped being dismissible on 2026-09-05 (see the comment on `PinModal.svelte`), which
@@ -623,8 +693,8 @@
    * has only the destructive reset, and a modal that cannot be closed and offers nothing but "erase
    * my message history" is a softlock with a button on it.
    *
-   * IT IS THE APP'S ORDINARY SIGN-OUT, deliberately - `clearAuth()` then `/login`, the same two
-   * lines the navbar's logout runs. `clearAuth` ends the session on the server, drops the access
+   * IT IS THE APP'S ORDINARY SIGN-OUT, deliberately - `clearAuth()` then `leaveSignedOut()` (which
+   * also ends the MiConnect session), the same two lines the navbar's logout runs. `clearAuth` ends the session on the server, drops the access
    * token, the refresh credential and the persisted ACKs, and touches NOTHING that a PIN protects:
    * `mls.bin`, the message database and the device key vault are all still there afterwards. The
    * user asked for exactly this ("deconnecter seulement, garder l'etat"), and it is what makes the
@@ -637,11 +707,12 @@
    * lasts. `PlatformGateOverlay` holds its own gate the same way, on the same argument.
    */
   async function handlePinSignOut() {
+    deviceHoldsOtherAccount = false;
     appendLog('[AUTH] Sign-out from the PIN gate - ending the session, keeping the local state.');
     // A failure here is a failure to REVOKE, never a reason to strand the user on a gate they asked
     // to leave - and a swallowed one would leave nothing behind, so it is accused by name.
     await clearAuth().catch((e) => appendLog(`[AUTH] Sign-out: clearAuth failed - ${e}`));
-    await goto(resolve('/login'), { replaceState: true });
+    await leaveSignedOut();
     dismissAuthPrompts();
     pinError = '';
     _loginInProgress = false;
@@ -664,8 +735,23 @@
       return;
     }
     pinError = msg;
+    // A REFUSED VAULT SAYS NOTHING ABOUT THIS ACCOUNT'S PIN - not even that it has one: the vault
+    // was another account's, or an older build's that could not prove itself. So the gate is drawn
+    // from the SERVER, never assumed "returning" - and not from the device id either, which the
+    // refused attempt itself may have just minted (`openPinModal`).
+    if (isVaultRefusal(code)) {
+      if (provesOtherAccountState(code)) {
+        deviceHoldsOtherAccount = true;
+        appendLog(
+          "[VAULT] This install's MLS state is another account's - the reset is withheld at the gate."
+        );
+      }
+      appendLog('[VAULT] Saved unlock refused for this account - drawing its own PIN gate.');
+      void openPinModal(globalSession.userId || currentUserId() || '', { deviceIdUnproven: true });
+      return;
+    }
     isFirstPinSetup = false;
-    showPinModal = true;
+    showPinGate('saved unlock failed');
     applyPinFailure(globalSession.userId || currentUserId() || '', code);
   }
 
@@ -759,6 +845,9 @@
       saveConversation: (name: string) => globalConvs.saveConversation(name, convCtx()),
       deleteConversation: (name: string) =>
         globalSession.storage?.deleteConversation(name) ?? Promise.resolve(),
+      storedSalonPageIds: () =>
+        globalSession.storage?.getMessageConversationIds(CHANNEL_CONVERSATION_PREFIX) ??
+        Promise.resolve([]),
       selectConversation: globalConvs.selectConversation,
       ensureMls: globalSession.ensureMls,
       startDirectConversation: (targetUserId: string, opts?: { silent?: boolean }) =>
@@ -919,7 +1008,7 @@
               )
             );
         }
-        appendLog(`Joined channel #${event.channelName || event.channelId}`);
+        appendLog(`Joined channel ${event.channelId}`);
 
         // Add a system message to the channel so the inviter (and other members) see who joined.
         if (event.invitedBy && event.joinedBy) {
@@ -999,7 +1088,7 @@
         if (globalChannels.selectedChannelConversationId === channelConversationId) {
           globalChannels.selectedChannelConversationId = '';
         }
-        appendLog(`Removed from channel #${event.channelName || event.channelId}`);
+        appendLog(`Removed from channel ${event.channelId}`);
         showToast(m.channel_removed_from_channel({ channel: event.channelName || '' }), 'info');
       },
       onRolePermissionsChanged: (event: { roleId: string; permissions: string[] }) => {
@@ -1072,6 +1161,10 @@
           });
         }
       },
+      onSalonUnreadCleared: () => {
+        // One request for every salon, whichever community was cleared: the answer is per account.
+        void globalChannels.refreshSalonUnread(channelsCtx(), 'community cleared on a device');
+      },
       onWorkspaceRoleChanged: (event: {
         workspaceId: string;
         roleName: string;
@@ -1118,6 +1211,10 @@
       onLoadHistoryForConversation: (contactName: string, groupId: string) =>
         globalConvs.loadHistoryForConversation(contactName, groupId, convCtx()),
       onMlsReady: () => {
+        // A session that unlocked holds a live credential, so the expiry `handleSessionExpired`
+        // deduplicated is over: the NEXT one must log out again. Never reset, the guard swallowed
+        // every later expiry of the same process - no sign-out, no redirect, a dead session left up.
+        _sessionExpiredHandled = false;
         dismissAuthPrompts();
         checkSiblingCallWarning();
         overrides.onMlsReady?.();
@@ -1137,9 +1234,22 @@
     void openInvitedChannel(channelId);
   }
 
-  // ── Post-login: load channel workspaces ───────────────────────────────────
+  // ── Load channel workspaces on the ACCESS TOKEN, not on MLS ready (F2) ────
+  // The listing is a REST call and needs the token alone; `isLoggedIn` flips only once the unlock
+  // and MLS initialisation are through - 650 ms later on the Mi 9T at 1x, 1.9 s at 4x
+  // (community-open-budget). The one step that needs MLS, the key group, awaits it on its own
+  // (`whenMlsReady`). `isLoggedIn` stays a trigger: an offline unlock has a session and no token.
+  // A DERIVED, so the flip of `isLoggedIn` after the token does not list a second time.
+  // Before the session, ONLY for an unlock that prompts nobody: a device owing a PIN is locked, and
+  // lists nothing until it is unlocked (`unlockPath.svelte.ts`).
+  const listingMayStart = $derived(
+    globalSession.isLoggedIn ||
+      (sessionAnsweredFor() !== null &&
+        sessionAnsweredFor() === currentUserId() &&
+        unlockUnattendedFor() === currentUserId())
+  );
   $effect(() => {
-    if (!globalSession.isLoggedIn) return;
+    if (!listingMayStart) return;
     untrack(() => {
       void globalChannels.loadChannelWorkspacesFromBackend(channelsCtx()).then((refreshRan) => {
         if (refreshRan && globalChannels.workspacesLoadError !== null) {
@@ -1180,20 +1290,21 @@
       }
     });
 
-    function handleOnline() {
+    // THE RECONNECT, NOT THE BROWSER'S `online` ALONE: `connectivity.onReconnect` fires on `online`
+    // AND when the server answers again after a transport failure - the one proof that a listing
+    // which gave up on a dead link can now succeed. The decision (retry, or owe it to the listing in
+    // flight) is the composable's: `retryFailedListing`.
+    function handleReconnect(trigger: ListingRetryTrigger) {
       if (!globalSession.isLoggedIn) return;
-      if (globalChannels.isLoadingWorkspaces) return;
-      if (globalChannels.workspacesLoadError === null) return;
-      appendLog('[WORKSPACE-LOAD] online event - retrying community load');
-      void globalChannels.loadChannelWorkspacesFromBackend(channelsCtx());
+      globalChannels.retryFailedListing(channelsCtx(), trigger);
     }
 
     function handleVisibility() {
       if (document.visibilityState !== 'visible') return;
-      handleOnline();
+      handleReconnect('foreground');
     }
 
-    window.addEventListener('online', handleOnline);
+    const stopReconnect = connectivity.onReconnect(() => handleReconnect('reconnect'));
     document.addEventListener('visibilitychange', handleVisibility);
 
     // The refresh endpoint is the only place that learns a session is dead, and it can learn it
@@ -1201,11 +1312,14 @@
     // reaction once, here, is what makes the logout unmissable instead of depending on which path
     // happened to observe the 401 (WP-ANDROID-SESS-1).
     setSessionExpiredHandler(() => void handleSessionExpired());
+    // And every sign-out, whichever button ran `clearAuth`: see `handleSignedOut`.
+    setSignOutHandler(handleSignedOut);
 
     return () => {
-      window.removeEventListener('online', handleOnline);
+      stopReconnect();
       document.removeEventListener('visibilitychange', handleVisibility);
       setSessionExpiredHandler(null);
+      setSignOutHandler(null);
       setGraineRepairListener(null);
     };
   });
@@ -1399,6 +1513,9 @@
               // on the PIN modal, whose "use biometrics" button always prompts.
               const promptDue = await isBiometricPromptDue();
               showBiometricSheet = promptDue;
+              // A keystore read with no prompt due asks nobody: the unlock is unattended (F1).
+              if (promptDue) noteUnlockNeedsMember();
+              else noteUnlockUnattended(savedUser);
 
               // THE WINDOW THIS TIMER PROTECTED WAS ONE NOBODY COULD USE. A 250 ms sleep sat here
               // so a tap on the sheet's "use my PIN" could land before the OS prompt was raised -
@@ -1461,15 +1578,24 @@
       }
 
       // ── WEB BRANCH ──
+      // THE VAULT IS READ FOR THE ACCOUNT SIGNING IN, never for "whoever left one": a key another
+      // account left is not offered, and the unlabelled one of an older build is offered only to be
+      // proven by the login (`loadDeviceKey`).
       const savedUser = currentUserId();
-      const savedDeviceKeyB64 = await loadDeviceKey();
-      if (savedUser && savedDeviceKeyB64) {
+      const vaulted = savedUser ? await loadDeviceKey(savedUser) : null;
+      if (savedUser && vaulted) {
+        // Only a slot whose owner is proven unlocks without anyone: an unlabelled one may be
+        // another account's, and its login is what proves it (F1).
+        if (vaulted.ownerProven) noteUnlockUnattended(savedUser);
         globalSession.userId = savedUser;
-        globalSession.deviceKeyB64 = savedDeviceKeyB64;
+        globalSession.deviceKeyB64 = vaulted.deviceKeyB64;
         // loginImpl checks isLoginInProgress itself and will bail if it's true.
         // Reset it here so loginImpl can set it and manage its own lifecycle.
         globalSession.isLoginInProgress = false;
-        void globalSession.login({ ...sessionCb(), onLoginFailed: onSavedPinFailed });
+        void globalSession.login(
+          { ...sessionCb(), onLoginFailed: onSavedPinFailed },
+          { vaultOwnerUnproven: !vaulted.ownerProven }
+        );
       } else if (savedUser) {
         globalSession.userId = savedUser;
         globalSession.isLoginInProgress = false;
@@ -1823,6 +1949,14 @@
   async function handlePinReset() {
     const uid = globalSession.userId || currentUserId();
     if (!uid) return;
+    // The modal no longer offers it in this state; this is the second lock, on the act itself.
+    if (deviceHoldsOtherAccount) {
+      appendLog(
+        "[PIN_RESET] REFUSED - this install's MLS state is another account's, and the reset deletes it."
+      );
+      pinError = m.auth_pin_reset_blocked_other_account();
+      return;
+    }
     pinError = '';
     pinLoading = true;
     pinStep = m.auth_pin_step_resetting();
@@ -1845,7 +1979,7 @@
       // Deliberately NOT gated on `mayPromptForPin`: the POST above carried a live access token, so
       // the credential is not dead, and the local MLS state is already wiped. Declining the keypad
       // here would strand the user mid-reset with nothing to unlock and no way to finish.
-      showPinModal = true;
+      showPinGate('PIN reset');
     } catch (e) {
       // The `Server-side PIN reset failed.` thrown above is a DEV line and used to be shown as it
       // stood - an English sentence on a French modal, and the only thing the reader was told.
@@ -1926,7 +2060,8 @@
   isLoading={pinLoading}
   loadingStep={pinStep}
   isFirstSetup={isFirstPinSetup}
-  onForgotPinReset={handlePinReset}
+  onForgotPinReset={deviceHoldsOtherAccount ? undefined : handlePinReset}
+  resetWithheldNotice={deviceHoldsOtherAccount ? m.auth_pin_reset_blocked_other_account() : ''}
   onRecoverPin={canRecoverPin ? handleOpenRecover : undefined}
   account={globalSession.userId}
 />

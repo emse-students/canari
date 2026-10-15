@@ -105,6 +105,26 @@ export class ChannelsController {
     return this.service.reorderChannels(workspaceId, xUserId.trim().toLowerCase(), body.orderedIds);
   }
 
+  /**
+   * "Marquer tout comme lu" on a community: empties the caller's unread count of every salon they
+   * may read in it, up to `upTo` (epoch ms, the server clock), in one call. Moves the caller's
+   * private `clearedMarks`, never the read mark other members see as "Lu par".
+   * `{ cleared: { [channelId]: at } }` names the salons that moved.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Post('workspaces/:workspaceId/unread/clear')
+  clearWorkspaceUnread(
+    @Headers('x-user-id') xUserId: string,
+    @Param('workspaceId') workspaceId: string,
+    @Body() body: { upTo?: unknown }
+  ) {
+    return this.service.clearWorkspaceUnread(
+      workspaceId,
+      xUserId.trim().toLowerCase(),
+      Number(body?.upTo)
+    );
+  }
+
   /** Persists the calling user's personal top-to-bottom order for their communities. */
   @UseGuards(NginxAuthGuard)
   @Patch('workspaces/reorder')

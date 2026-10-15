@@ -11,6 +11,8 @@
  * asynchronously at startup, which nothing else can reach.
  */
 
+import { conformPluginFetch } from '$lib/utils/transportFailure';
+
 /**
  * A WebView custom protocol wearing an `http(s)` URL, which no network client can ever resolve.
  *
@@ -159,8 +161,11 @@ export function shouldUseNativeFetch(
  * passed as the 2nd and 3rd, origins as the 4th) is a function a test can drive; the hook itself
  * runs asynchronously at startup and nothing else can reach it.
  *
+ * THE PLUGIN'S REJECTIONS ARE TYPED HERE ({@link conformPluginFetch}): it rejects with a bare string
+ * where the contract says `TypeError`, and every consumer of `window.fetch` reads the contract.
+ *
  * @param native        The WebView's original `fetch`, already bound to `window`.
- * @param plugin        The HTTP plugin's `fetch`.
+ * @param plugin        The HTTP plugin's `fetch`, raw.
  * @param firstPartyOrigins Read PER CALL (`apiServiceOrigins`), never captured once.
  */
 export function createRoutedFetch(
@@ -168,10 +173,11 @@ export function createRoutedFetch(
   plugin: typeof fetch,
   firstPartyOrigins: () => readonly string[]
 ): typeof fetch {
+  const conformed = conformPluginFetch(plugin);
   return ((input: RequestInfo | URL, init?: RequestInit) =>
     shouldUseNativeFetch(fetchInputUrl(input), init, input, firstPartyOrigins())
       ? native(input, init)
-      : plugin(input, init)) as typeof fetch;
+      : conformed(input, init)) as typeof fetch;
 }
 
 /** Resolves the URL string of any `fetch` first argument, or `null` when it has none. */

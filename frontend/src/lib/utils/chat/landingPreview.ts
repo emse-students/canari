@@ -18,7 +18,8 @@
  * The caller owns the rest: the preview is discarded if the login fails, and the revocation wipe
  * waits for it before erasing (`loginImpl`).
  *
- * A community salon has no preview: its history lives on the server and is never stored locally.
+ * A community salon has no preview: the store holds only a copy of its last page (F4), drawn when
+ * the salon is opened in a session, and a landing before the session is not that.
  */
 import type { IStorage } from '$lib/db';
 import type { ChatMessage, Conversation } from '$lib/types';

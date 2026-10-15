@@ -247,7 +247,7 @@
     }
     rosterError = '';
     console.log(
-      `[Cotisations] Loading roster - asso=${asso.id.slice(0, 8)} offset=${offset} search=${search}`
+      `[Cotisations] Loading roster - asso=${asso.id.slice(0, 8)} offset=${offset} searchChars=${search.length}`
     );
     try {
       const pageResult = await listCotisants(asso.id, { search, offset, limit: PAGE_SIZE });

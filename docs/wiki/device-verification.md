@@ -1265,15 +1265,26 @@ by the heads sampler (it is installed before the tap on the phone, after the ope
 
 **Met on the way, not asked about:**
 
-- **The creator of a community is not offered "Epingler" until a reload.** Gamma created `Bench126`
+- **The creator of a community is not offered "Epingler" until a reload** (FIXED 2026-10-13: the
+  creation answer omitted `viewerCanModerate`, which also hid the close of another member's poll,
+  [social-service](services/social-service.md)). Gamma created `Bench126`
   in the web tab; the message menu in its salon showed Transferer / Modifier / Supprimer and no
   Epingler, although the database gives gamma the Administrateur role (`channel.moderate`). After a
   reload the same menu has Epingler. One observation; whether "Cloturer le sondage" was also missing
   before the reload was not read.
 - **The poll close confirmation is the system dialog with English buttons** ("CANCEL" / "OK") over a
-  French sentence (`poll-close-1.png`).
+  French sentence (`poll-close-1.png`). FIXED 2026-10-13: `ChannelPoll` asks through the app's
+  `showConfirm`; no `window.confirm` is left in the frontend.
 - **The sticky "AUJOURD'HUI" pill sits partly under the pinned pill** after the pinned jump
-  (`pinned-jump.png`).
+  (`pinned-jump.png`). **RE-READ 2026-10-13: the pill in that frame is NOT the sticky one** - its
+  letters are spaced (`tracking-widest`) and its padding is wider, which is the IN-THREAD date
+  separator (`ChatMessageGroups`), a content row scrolling under the floating glass chrome as every
+  row does; the sticky pill is `letter-spacing: normal`. The sticky pill's own placement was
+  measured in desktop Chrome at 390 px with the glass chrome forced on: `--chat-header-height`
+  follows the pinned list closing (159 -> 113 -> 111 px within 100 ms) and the pill lands 13.6 px
+  below the pinned bar. Nothing to fix on the sticky pill. Still unexplained: the jumped-to message
+  in that frame was not centred, and the frame does not say which message was pinned - the next
+  reading should name it.
 - **The phone's long-press menu has no "Epingler" for a plain member**, which matches
   `mayPinMessage`.
 
@@ -1317,6 +1328,195 @@ key. Check X needs a real finger. The iPhone rear-lens letterbox (#1370) needs t
 Check U and the iOS launch logo need a person (a face, a restart that kills WDA). The emoji
 `naturalWidth`, the liquid glass re-read and every fix newer than `1.2.3-alpha.5` need an iPhone
 build newer than the one TestFlight serves this tester.
+
+## The Mi 9T readings of v1.2.7-alpha.1 (2026-10-13/14)
+
+Build `1.2.7 (100200701)`, the `v1.2.7-alpha.1` release APK (`app-universal-release.apk` from the
+GitHub release, sha256 `156ae21e...`), on `dev.canari-emse.fr`. The phone had no Canari, so this was
+a **fresh install and a new device**, signed in through the service-account link as `fourth`
+("Canari Test Delta"), "Rester connecte" unticked. The peer is `canari-test-gamma` in the
+`chrome-w2` dev tab. Numbers come from CDP on the inspectable WebView and from logcat (the Rust
+lines reach logcat, the WebView console does not). Dev still sends no push
+(`DEV_FIREBASE_SERVICE_ACCOUNT_JSON` absent), so the notification is its exact intent fired with
+`am start`. Evidence: `F:/Programmation/canari-harness/a1-bench/r1013-a127/` (frames, `cons-*.ndjson`,
+`logcat-*.txt`, `inapp-log*.txt`, `notif-runs2.ndjson`).
+
+**Another session drove this phone during the pass** (00:02-00:05: three force-stops from a shell,
+`fr.emse.canari://post/0000...` and `://open/...` deep links, and wrong PINs typed on the gate). The
+readings below were taken before it or after three quiet minutes.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| Native checkpoint (#1826) | **`PASS`** | 60 `[MLS] checkpoint: manager lock held N ms (export), seal + write M ms off it` lines: **N = 0 ms 51 times, 1 ms 8 times, 2 ms once**; M median 2 ms, p95 5, max 9; state up to 304 KB. **0** `reload REFUSED`, `reload DROPS KEY MATERIAL`, `mls.bin write FAILED` or `ordering lock was poisoned`; no FATAL, no ANR |
+| No stall on a salon open | **`PASS`** | Five real taps on a 56-row salon: one long task per open, **293-412 ms (median 335)**, the longest frame gap 425 ms, nothing over half a second. Same shape as the DM open of the 1.2.6 bench (257-349 ms) |
+| In-app log (#1819): the save | **`PASS`** | Settings > A propos > "Enregistrer le journal" opens the system picker on Telechargements with `canari-log-1.2.7-alpha.1-<date>-<time>.txt`; "Enregistrer" writes it (68 KB, 748 lines) and the app says "Fichier enregistre." |
+| In-app log: the redaction | **`FAIL`** | No name, e-mail, JWT, Bearer, full UUID, password, PIN or OIDC subject in either export. **But message text survives when it is one word or identifier-shaped**: `[SEND] handleSendChat: ... text="ok"`, `text="bisous"`, `text="refuse1-a127"`, while `text="Rendez-vous demain chez Paul a 18h"` became `"[34 chars]"`. `text` is in `PROSE_LAST_WORDS`, yet the quoted-value shape allowlist still keeps a value that looks like an identifier (`appLogRedact.ts`) |
+| "Marquer tout comme lu" on a community icon (#1820) | **`PASS`** | A long press opens the menu with nothing selected (`getSelection()` empty). The tap clears the salon's `6` and the rail dot; the badge stays clear after a kill and relaunch. Gamma's tab, reloaded: delta's "Message lu par" head stays on `in-bg-mv6hmrir` (11:53), not on the six newer rows |
+| Drag-reorder of the rail | **`PASS`** | With a second community (`Bench127`, created for this), a long press + drag moves it above `Bench126`; no menu is left open |
+| Salon send before the salon is loaded (#1821) | **`PASS`** | Cold start from the salon's deep link, link throttled to 15 KB/s, sent at composer-usable: **"En attente..." for 1.9 s**, `[SEND] channel send ... HELD`, then `released: its salon is loaded`, "Envoi...", "Message envoye" at 4.6 s; one copy on gamma's side, no banner. Unthrottled, the same send never waits (the salon is loaded in time) |
+| The refusal banner | **`PASS` (geometry)** | Provoked by cutting the Wi-Fi right after the unlock: "Rien n'a ete envoye : vos communautes n'ont pas pu etre chargees..." sits in the composer footer, opaque (alpha 1), the last row ending 24 CSS px above the footer, no overlap |
+| A salon after an offline start, once back online | **`FAIL`, P1** | Back online, `[WORKSPACE-LOAD] online event` tried once and gave up as **non-retryable**: the Tauri HTTP error `error sending request for url (...)` is neither a `TypeError` nor a `DeliveryUnreachableError`, so `isRetryableLoadError` calls a transport failure fatal (`[CHANNEL] ... unclassified failure`). For 2.5 min, online with the socket up, the rail was EMPTY ("Selectionner ou creer une communaute") and every salon send and Retry was refused `listing-failed`. Only the next foreground's online event reloaded it |
+| Reactors list on a long press | **`PASS`** | Long press on a heart chip (`aria-label` "(1 personne)"): the list ("Canari Test Delta") opens 5 CSS px under the chip, left edges aligned (chip 60-90 x 540-562, list 61-221 x 567-622); no message sheet |
+| Typing bubble, three-button navigation | **`PASS`** | Bottom inset 49 px. Gamma typing: the bubble's wrapper ends at 844.8 CSS px, the composer footer starts at 844.5, the bubble itself 16 px above it |
+| A salon row tap does not tap a message | **`PASS`** | Control: a tap on a bubble logs `[MESSAGE] bubble tap ... single, info panel`. Then six real taps on the salon row at a point that has a bubble under it once the salon is drawn: six opens, **0** `[MESSAGE] bubble tap` |
+| Notification intent, killed, behind the PIN (n=5) | **`PASS`** | `performance.now()` of the new page, medians: PIN gate 1204 ms, route `/chat` 1736, composer usable with 56 rows 3421 (PIN submitted at 2511, the instrument waits 400 ms for a still keypad). Not comparable 1:1 with the 1.2.6 numbers, which count from the tap |
+| Double tap / single tap | **`PASS`** | Double tap on gamma's bubble: `bubble tap ... double, heart`, `notify-reaction` 200, no panel in 1.5 s. Single tap: `single, info panel` |
+| Polls | **`PASS`** | Created from the phone; gamma votes; "Cloturer le sondage" now asks through the app's dialog in French ("Annuler" / "Cloturer le sondage"); both clients read "Termine", the "1 sondage actif" pill gone on both |
+
+**Met on the way:**
+
+- **A configuration relaunch leaves the old WebView alive.** Switching the navigation mode (an
+  overlay change, `Config changes=80000000`, which `configChanges` cannot absorb) relaunched the
+  activity in the same process. CDP then listed TWO pages, the old one detached and unresponsive.
+  It still held its `canari.salon-unsent.owner.*` Web Lock, so the three refused salon texts were
+  never handed back to the composer: `[SALON-UNSENT] 3 entr(y/ies) kept: a live sibling tab owns
+  them`. A System WebView update relaunches the same way.
+- **Offline, the banner and the send disagree.** "Hors connexion ... les nouveaux messages
+  partiront des le retour du reseau" is on screen while a salon send is refused at once
+  (`listing-failed`, "Echec / Reessayer"). Offline, the salon's history is not drawn either
+  (`[LANDING_PREVIEW] nothing drawn for channel_ (channel)`).
+- **"Utilisateur inconnu"** names the DM peer for 60-125 ms after the landing is usable.
+- **"Se deconnecter" on the PIN gate signs out with no confirmation**, one row under
+  "Deverrouiller": the instrument's tap that raced the keypad animation signed the device out
+  (re-signed in, same local state).
+
+## The Mi 9T readings of v1.2.8-alpha.1 (2026-10-15)
+
+Build `1.2.8` (`versionName` from `dumpsys package`), the `v1.2.8-alpha.1` release APK installed with
+`adb install -r` over the `1.2.7-alpha.3` build (accepted, no signature or downgrade refusal, account
+kept), dev estate, account `fourth` ("Canari Test Delta"), bench conversations only. The phone is on
+the vault path ("Rester connecte"), so no PIN gate was drawn. Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1015-a128/` (`runs.ndjson`, summaries). Dev has no push,
+so reading 5 could not be taken.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1. Start, version, unlock | **`PASS`** | Settings > A propos reads "Version de Canari 1.2.8-alpha.1" and "Vous utilisez la derniere version"; the app opened straight onto the feed on the vault path (a PIN-path unlock was not exercised) |
+| 2. Communities and a salon | **`PASS`** | `community-open.mjs --community Bench126 --runs 3 --start cold --net none --cpu 1`, medians ms: attach 552, nav 1099, **tap>rail 1134** (worst 1243), tap>salons 2244, tap>target salons 2512, **salon>pane 277**, salon>msgs 1833, switch>salons 143, switch salon>pane 202, reopen>msgs 773; long tasks 728, max gap 443 |
+| 3. Notification level, private conversation | **`PASS`** | The phone holds no group, only the DM with gamma (a bench account). Its "Infos de la discussion" panel shows Notifications with Tous / Mentions / Aucune; "Mentions" highlights, then "Tous" restores it. Persistence across a restart not read |
+| 4. Reply swipe near the right edge (#1880) | **`PASS`** | A swipe on an own bubble from x=985 of 1080 with a 70 px vertical drift arms "Repondre a Canari Test Delta" with the bubble's text in the composer. **From x=1040 the system back gesture wins** and the conversation closes: the gesture zone is the system's, not the app's |
+| 5. Group notification shows the sender | **`NOT-OBSERVED`** | No group on the phone and no push on dev |
+| 6. In-app log export | **`PASS`** | "Enregistrer le journal" saves `canari-log-1.2.8-alpha.1-20261015-0130.txt` (1.8 MB, 20471 lines) to Telechargements. All **397** `[SEND] handleSendChat` lines carry `text="[N chars]"`; no quoted value outside that shape, no `eyJ` or `Bearer`. The one-word leak of the 1.2.7 reading (`text="ok"`) is not present |
+
+**Met on the way:** a tap on the profile settings icon during the page transition hit the camera badge
+and opened the photo picker; it was cancelled without choosing. Tap again once the page is drawn.
+
+## The Mi 9T readings of v1.2.8-alpha.2 (2026-10-15)
+
+Build `1.2.8` (`versionName`), the `v1.2.8-alpha.2` release APK (`app-universal-release.apk`, sha256
+`2ac1560f...`) installed with `adb install -r` over the alpha.1 build (accepted, no signature or
+downgrade refusal, account kept), dev estate, account `fourth` ("Canari Test Delta"), bench
+conversations only, vault path (no PIN gate drawn). The only delta since alpha.1 is #1889: a salon
+message over the socket honours the salon's notification level. Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1015-a128a2/` (`runs.ndjson`, summary, frames, `log.txt`).
+Dev has no push, so what #1889 changes (a notification suppressed or kept) could not be observed.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1. Start, version, unlock | **`PASS`** | Settings > A propos reads "Version de Canari 1.2.8-alpha.2" and "Vous utilisez la derniere version"; the app opened on the feed on the vault path (a PIN-path unlock was not exercised) |
+| 2. Communities and a salon | **`PASS`** | `community-open.mjs --community Bench126 --runs 3 --start cold --net none --cpu 1`, medians ms (alpha.1 in brackets): attach 329 [552], nav 1092 [1099], **tap>rail 1072** [1134] (worst 1088), tap>salons 1899 [2244], tap>target salons 2276 [2512], **salon>pane 279** [277], salon>msgs 1834 [1833], switch>salons 174 [143], switch salon>pane 201 [202], reopen>msgs 676 [773]; api calls 65, long tasks 699, max gap 439. Same shape as alpha.1, within run-to-run noise |
+| 3. Notification level of a bench salon | **`PASS` (the control), the effect `NOT-OBSERVED`** | Salon "general" of a bench community: Parametres du canal shows Notifications with Tous / Mentions / Aucune, Tous selected; "Mentions" highlights, then "Tous" restores it. No push on dev, so a message received over the socket under Mentions/Aucune was not produced |
+| 4. In-app log export | **`PASS`** | `canari-log-1.2.8-alpha.2-20261015-0223.txt` (2.15 MB, 23773 lines): 0 `eyJ`, 0 `Bearer`; of 383 `handleSendChat` lines, the 192 carrying a text all read `text="[N chars]"`, the rest are "completed (message queued)"; no bench message text (`bisous`, `heldA*`, `iosA3*`, `Rendez`) found |
+
+## The bench readings of v1.2.7-alpha.2 (2026-10-14)
+
+**Mi 9T**: build `1.2.7 (100200702)`, the release's `app-universal-release.apk` (sha256
+`99379a80...`), installed with `adb install -r` over alpha.1: same signature, the enrolment of
+`fourth` ("Canari Test Delta") survived, PIN gate first. Numbers from CDP on the inspectable WebView,
+logcat and the in-app log export. **iPhone 12**: TestFlight `1.2.7 (100200702)`, account
+`canari-test-gamma`, driven over WDA; the native lines read from the device syslog
+(`pymobiledevice3 syslog live -pn Canari`). Dev still sends no push. Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1014-a127a2/` (frames, `cons-*.ndjson`, `logcat-*.txt`,
+`inapp-log.txt`) and `.../ios-bench/r1014-a127a2/` (frames, `syslog-canari.txt`).
+
+**How the iPhone got the build.** TestFlight's app page offered `1.2.7 (100200702)` with "Mettre a
+jour"; the phone was on `1.2.3 (100200305)` with "Mises a jour automatiques" OFF (turned off by the
+2026-10-11 install from "Builds precedents"). One tap updated it, the enrolment survived (PIN gate),
+and automatic updates are now ON. **Watch it**: with them on, a later STABLE build (which talks to
+production) replaces the bench pre-release by itself, as on 2026-10-11.
+
+| Reading | Phone | Verdict | What was seen |
+| --- | --- | --- | --- |
+| #1843 offline banner text | Mi 9T, iPhone | **`PASS`** | "Hors connexion. Vous pouvez lire vos conversations. Les messages de vos conversations privees partiront des le retour du reseau ; dans un salon, attendez la connexion pour ecrire." on both (`14-off-cold.png`, iPhone `26-offbanner.png`) |
+| #1843 offline cold start: the community list | Mi 9T | **`FAIL` against the expectation, not a regression** | On the vault path (a PIN-only cold start cannot unlock offline, by design, check N), the rail is EMPTY offline: "Selectionner ou creer une communaute" (`15-off-comm.png`). Nothing in alpha.2 claims a cached rail; recorded so nobody reads the banner as a promise of one |
+| #1843 a salon send whose community is not loaded | Mi 9T | **`PASS`** | Deep link to the salon offline, send: "En attente..." and `[SEND] channel send 8a11887e... HELD: salon a4b30b40 is not loaded on this device yet`, no error (`20-off-sent-15s.png`) |
+| #1843 network back | Mi 9T | **`PASS`** | `[WORKSPACE-LOAD] reconnect - listing the communities again (the last one gave up)`, a first attempt that raced the radio (`attempt 1/4 failed: TransportFailureError`, retryable), `[CONNECTIVITY] server reachable again`, `reconnect during a reconnect's own listing - nothing owed`, `released: its salon is loaded`, `communities/channels loaded (attempt 2)`: the rail and the held send settle **3.3 s** after the online event; the message left ONCE (`settled as d9513a22`; gamma's iPhone shows it once). **No** `non-retryable`, **no** `[WORKSPACE-LOAD]` line in the 75 s after |
+| #1843 failure lines in the exported log | Mi 9T | **`PASS`** | `TransportFailureError: request got no answer: error sending request for url (https://dev.canari-emse.fr/api/presence?[query]` - the query string is redacted |
+| #1842 orphan WebView on a navigation-mode switch | Mi 9T | **`PASS`, one P3** | Six switches (`cmd overlay enable-exclusive` threebutton/gestural): CDP lists **ONE** page, attached, after each. A salon text refused offline before the first switch ("Non confirme") came back: `[SEND] unanswered salon message 05b01dbd... of a past session restored to the composer` (`31-switch1.png`). **P3**: the composer is not kept across a relaunch, so that restored text (and any typed draft, `sheet-38-39.png`) is LOST at the next relaunch |
+| #1842 kill/relaunch, background x3, notification intent warm and killed | Mi 9T | **`PASS`** | One page each time, the salon opens from the intent. Logcat: no `FATAL`, no ANR, no destroyed-WebView warning. Four `[TAURI] Couldn't find callback id 1269519213` warnings (the SAME id) after the relaunches: a Rust callback of the first page still fires into the new one (P3 noise) |
+| #1839 redaction of the exported log | Mi 9T | **`FAIL`, P2** | The alpha.2 lines are clean: `contact="[17 chars]" text="[9 chars]"`, 0 one-word text, 0 name. **But the export still carries the alpha.1 lines** of the ring, written before the upgrade with the old redaction: 10 lines with `text="bisous"`, `text="ok"`, `text="refuse1-a127"`. Redaction runs at WRITE (`appLog.ts`), never at export, so an upgraded device keeps exporting what the older build let through until the ring rolls over |
+| #1835 blind salon banner offers no "Lu par" | Mi 9T | **NOT READ** | Dev sends no push, so no salon banner can be produced |
+| #1841 a join is acknowledged after its checkpoint | Mi 9T | **`PASS`** | Fresh state (`pm clear`), sign-in, PIN: each of the 3 `externalJoin succeeded` lines comes right after an `Encrypted state checkpoint persisted` |
+| #1844 the empty store opens with its digest; checkpoints per rejoined group | Mi 9T + iPhone | **`PASS`** | No member was online at the rejoin (`no member online for 3122333c - will ask when one returns`). Unlocking gamma's iPhone woke it: `[HISTORY_RECONCILE] a peer came back online`, then `[HISTORY_DIGEST] Sent for 3122333c - ids mode, 0 id(s)` as the FIRST leg (no state key), and 466 messages back in three bundles. **Checkpoints (native `manager lock held` lines): 9 for the 3 joins (3.0 per group), then 3 for the one exchange (1 + 2 drains)**; 15 in the 11 min after the sign-in, against 247 in 432 s on alpha.1. Lock held 0 ms 13 times of 15 |
+| Salon tap, community rail, long-press menu | Mi 9T | **`PASS` in part** | A salon tap opens it; the rail fills. "Marquer tout comme lu" and the typing bubble were not read (no peer driving the salon) |
+| Sign out, then sign in again, in the same process | Mi 9T | **`FAIL`, P1 candidate (2 of 2)** | Below |
+| Nothing fatal | Mi 9T | **`PASS`** | Four logcat captures: no `FATAL`, no ANR, no crash |
+| #1836 cold-start link | iPhone | **`PASS`** | App terminated, `fr.emse.canari://chat/channel_a4b30b40...`: syslog `[CanariDeepLink] scene connected with 1 launch url(s) and 0 web activit(ies)`, PIN, then the salon "general" (`t11.png`). Same for `fr.emse.canari://open?url=https://canari.emse.fr/notifications` cold (`t13.png`) and warm (`t12.png`) |
+| "Ouvrir dans l'application" from Safari, app killed | iPhone | **`PASS`** | `canari.emse.fr/login` shows the link, Safari asks "Ouvrir dans << Canari >> ?", the line above is logged, and after the PIN the app is on `/chat` (`t16.png`) |
+| Sanity: open, send, no crash | iPhone | **`PASS`** | `iosA2send` in the DM: check mark, decrypted on the Mi 9T |
+| Redaction on iOS | iPhone | **NOT READ** | The exported file cannot be pulled off the TestFlight app's container; the redaction is the same JS module as Android |
+
+**The P1 candidate: a sign-out then a sign-in in the same process never unlocks.** On the vault path
+("Rester connecte" ticked earlier), Tableau de bord > Deconnexion, then "Connexion externe
+(service-account)": the OIDC callback completes (`handleOidcCallback resolved`, `goto -> /posts`)
+but NO PIN gate and NO vault restore follow; Communautes and Discussions sit on "Connexion en
+cours..." for 4 min (`52-longpress.png`, `56-signin2-60s.png`), no avatar in the header. Twice, same
+sequence (`cons-signin.ndjson`, `cons-signin2.ndjson`). In both, the resume of the app coming back
+from the browser races the callback: `[A] refresh-latched (cookie already proven dead)` then
+`[AUTH] Session expired - redirecting to /login.` and `[A] session->F`, 1-2 s BEFORE the callback's
+`got access_token`. A kill and relaunch then opens with NO PIN: `[PIN] Device key restored from
+PinVault - auto-login`, so **the "Rester connecte" vault survives the sign-out** (P2 on its own: a
+signed-out device reopens without its PIN). A fresh state (`pm clear`) signs in correctly to the PIN
+gate. Whether the PIN path (no vault) shows the same hang was not read.
+
+**Also met:** on the Mi 9T, while offline, `Failed to fetch presence` is logged at ERROR level every
+10 s and `[API] getToken failed ... proceeding without auth` at WARN for every request (24 times
+for the workspace listing alone), and `[PENDING] page did not arrive ... retrying with limit=N`
+halves the page from 250 to 1 on a transport failure: ~300 warning lines for 4 offline minutes (P3,
+noise). On the iPhone, the feed read "Impossible de charger les posts" after an unlock just after the
+network came back and did not retry by itself until "Reessayer" (P3). The tab bar keeps the last
+tab highlighted on `/notifications` (P3, cosmetic). The Mi 9T is LEFT on a fresh device of `fourth`
+(PIN path, "Rester connecte" unticked).
+
+## The bench readings of v1.2.7-alpha.3 (2026-10-14)
+
+**Mi 9T**: build `1.2.7 (100200703)`, the release's `app-universal-release.apk` (sha256
+`96903cde...`), installed with `adb install -r` over alpha.2: same signature, the enrolment of
+`fourth` survived, PIN gate first. **iPhone 12**: TestFlight offered `1.2.7 (100200703)` with
+"Mettre a jour" although automatic updates were ON (the build was ~30 min old); one tap updated it
+and the enrolment of `canari-test-gamma` survived (PIN gate). Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1014-a127a3/` (`export1-3.txt`, `export-*.json`,
+`ring-*.txt`, `cons-offline.ndjson`, `logcat-main.txt`, frames) and `.../ios-bench/r1014-a127a3/`
+(frames, `syslog-canari.txt`).
+
+**How the old lines were produced.** The alpha.2 reading ended on a `pm clear`, so the ring held no
+line from alpha.1 any more (411 lines from 12:18, every value already `[N chars]`). The 10 leaking
+lines of the alpha.2 export (`inapp-log.txt`: `text="bisous"`, `"ok"`, `"refuse1-a127"`, ...) plus one
+`contact="jolan" text="bisous"` line were written VERBATIM into `CanariDBLog` as one chunk, over CDP,
+while alpha.2 still ran (`inject.mjs`, `old-lines.txt`) - the bytes an older build stores, placed by
+hand. alpha.3 was installed over that.
+
+| Reading | Phone | Verdict | What was seen |
+| --- | --- | --- | --- |
+| #1861 the old lines are redacted at export | Mi 9T | **`PASS`** | The 11 lines come out `contact="[17 chars]" text="[6 chars]"` (`[5 chars]` for `jolan`); 0 hit for any known string, 0 `text=`/`contact=` value that is not `[N chars]`, in all three exports. Header `555 lines - 24 values redacted` (22 at read + 2 at write) |
+| #1861 the `[APPLOG] ... redacted at read` line appears once | Mi 9T | **`FAIL` against the expectation, P3** | `[APPLOG] 22 values redacted at read, in 11 lines an older build stored` - the count is exact - but it is logged AGAIN, identical, at the second export and the third, and each header counts the 22 again (`25`, then `38`). By design of #1861 (stored records are not rewritten; `ring-end.txt` still holds `bisous` 3 times), so every export of an upgraded device repeats the line until the ring rolls over |
+| #1861 the export does not freeze the UI | Mi 9T | **`PASS`, on a small ring** | Tap to the save dialog 482 / 444 / 383 ms; longest frame gap 34 / 28 / 30 ms; no long task; no ANR. The ring was 555-664 lines, not a full ~5000: the yield-by-count path was barely exercised |
+| #1861 fresh lines with a double quote | Mi 9T | **`PASS`** | `quote "zorglub" a3` and `trail\ back" end` sent in the DM: `text="[20 chars]"` and `text="[18 chars]"` (the JSON-quoted lengths), nothing of either text in the export or the raw ring |
+| App opens on the PIN path | Mi 9T, iPhone | **`PASS`** | PIN gate, then `/posts` (`01-unlocked.png`, iPhone `05-unlocked.png`) |
+| DM both ways | Mi 9T + iPhone | **`PASS`** | `a3-plain` and the two quoted texts arrive on the iPhone verbatim; `iosA3send` arrives on the Mi 9T |
+| Salon both ways | Mi 9T + iPhone | **`PASS`** | `iosA3salon` arrives on the Mi 9T; `a3salon-mi9t` arrives on the iPhone ("Message lu par Canari T...") |
+| Offline cold start: banner, held salon send, network back | Mi 9T | **`PASS`** | PIN path offline: "Impossible de contacter le serveur" (no unlock, by design); vault path ("Rester connecte" ticked online first): the banner on cold start; salon deep link, send: `HELD: salon a4b30b40 is not loaded on this device yet`, "En attente..."; network back: `reconnect - listing the communities again`, `server reachable again`, `released: its salon is loaded`, `settled as 55eabc2d` **4.6 s** after the online event; the iPhone shows `heldA3one` ONCE. **No** `[WORKSPACE-LOAD]` line in the 60 s after |
+| Orphan WebView after two navigation-mode switches | Mi 9T | **`PASS`** | threebutton then gestural: same pid, CDP lists ONE page, attached, after each |
+| Nothing fatal | Mi 9T, iPhone | **`PASS`** | Logcat: no ANR; the two `FATAL EXCEPTION` lines are `uiautomator` (uid 2000, `UiAutomationService already registered`), not the app. iPhone syslog: no crash line, no crash report |
+| #1836 cold-start link | iPhone | **`PASS`** | Terminated, `fr.emse.canari://chat/channel_a4b30b40-...`: `[CanariDeepLink] scene connected with 1 launch url(s)`, PIN, the salon "general" (`14-cold-salon.png`). The DM link lands in the DM (`12-cold-dm.png`). A link to a salon gamma is not in (Bench127) lands on the community list |
+| Checkpoints per rejoined group | Mi 9T | **NOT READ** | Needs a `pm clear` and a sign-in; not taken |
+| Redaction on iOS | iPhone | **NOT READ** | The exported file cannot be pulled off the TestFlight app's container |
+
+**Noise (P3, unchanged from alpha.2):** ~125 warning/error console lines for two offline cold starts
+in ~2 min: `[API] getToken failed ... proceeding without auth`, the `[A] refresh` transport failure,
+`Failed to fetch presence` and `[WS] Gateway connection failed` at ERROR, `[PENDING] page did not
+arrive`. Logcat adds 24 `AppOps: attributionTag  not declared in manifest of fr.emse.canari`. The
+Mi 9T is LEFT on the vault path ("Rester connecte" ticked) - mind the sign-out P1 candidate above.
 
 ## Traps that outlived the work that found them
 

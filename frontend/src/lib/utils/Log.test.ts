@@ -67,6 +67,11 @@ describe('Log.d', () => {
     expect(rendered.length).toBeLessThan(300);
   });
 
+  it('renders bytes as their size, never their content - a key would be spelled out', () => {
+    Log.d('key', { cek: new Uint8Array([201, 202, 203]), raw: new ArrayBuffer(16) });
+    expect(payloadOf(debug)).toBe('{"cek":"[bytes:3]","raw":"[bytes:16]"}');
+  });
+
   it('renders a value JSON cannot express rather than dropping the payload', () => {
     Log.d('fn', () => 1);
     expect(payloadOf(debug)).toContain('=>');

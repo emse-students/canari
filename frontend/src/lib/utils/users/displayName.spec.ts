@@ -150,6 +150,39 @@ describe('notificationSenderName', () => {
   });
 });
 
+describe('resolveNotificationSenderName', () => {
+  const GROUP = { name: 'nme', contactName: 'NME', conversationType: 'group' as const };
+
+  beforeEach(() => {
+    vi.resetModules();
+    vi.clearAllMocks();
+    vi.mocked(userStore.currentUserId).mockReturnValue(null);
+    vi.mocked(userStore.getSavedDisplayName).mockReturnValue(null);
+  });
+
+  it('asks for the sender on a cold cache, so a group banner names the person, not the group', async () => {
+    vi.mocked(userStore.fetchUserProfile).mockResolvedValue({
+      firstName: 'Prenom',
+      lastName: 'NOM',
+    } as never);
+    const mod = await import('./displayName');
+    expect(await mod.resolveNotificationSenderName('cold-sender', GROUP)).toBe('Prenom NOM');
+  });
+
+  it('one member whose lookup keeps failing is never titled with the group name, and is accused', async () => {
+    vi.mocked(userStore.fetchUserProfile).mockRejectedValue(new Error('offline'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const mod = await import('./displayName');
+    expect(await mod.resolveNotificationSenderName('cold-sender', GROUP)).toBe(UNKNOWN_LABEL);
+    // second message: backoff suppresses the fetch, the answer must not flip to the title
+    expect(await mod.resolveNotificationSenderName('cold-sender', GROUP)).toBe(UNKNOWN_LABEL);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('[NOTIF] No display name'))).toBe(
+      true
+    );
+    warn.mockRestore();
+  });
+});
+
 describe('resolveDisplayNames', () => {
   beforeEach(() => {
     vi.resetModules();

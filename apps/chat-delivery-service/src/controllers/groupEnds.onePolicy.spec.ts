@@ -12,6 +12,7 @@ import { QueuedMessage } from '../entities/queued-message.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
+import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
 import { PushToken } from '../entities/push-token.entity';
 import { KeyPackage } from '../entities/key-package.entity';
@@ -49,6 +50,7 @@ const SWEPT = [
   MlsCommitLog,
   MlsGroupInfo,
   GroupInvite,
+  GroupMembershipInterval,
 ];
 
 interface Doors {
@@ -178,6 +180,7 @@ describe('a group ends - one policy, three routes', () => {
         { provide: getRepositoryToken(PinVerifier), useValue: anyRepo() },
         { provide: getRepositoryToken(RevokedDevice), useValue: anyRepo() },
         { provide: getRepositoryToken(GroupInvite), useValue: anyRepo() },
+        { provide: getRepositoryToken(GroupMembershipInterval), useValue: anyRepo() },
         { provide: 'REDIS_CLIENT', useValue: redis },
         { provide: MessagingService, useValue: {} as unknown as MessagingService },
       ],
@@ -240,7 +243,8 @@ describe('a group ends - one policy, three routes', () => {
       expect(redis.del).toHaveBeenCalledWith(
         `history:${GROUP_ID}`,
         `group:members:${GROUP_ID}`,
-        `pending_welcome:${GROUP_ID}`
+        `pending_welcome:${GROUP_ID}`,
+        `group:parting:${GROUP_ID}`
       );
       // The reverse order would strip a live group's history if the transaction then rolled back.
       expect(order).toEqual(['commit', 'redis']);

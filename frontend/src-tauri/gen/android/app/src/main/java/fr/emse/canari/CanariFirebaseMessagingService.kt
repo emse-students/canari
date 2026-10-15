@@ -34,6 +34,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 import fr.emse.canari.push.ChannelReadMark
 import fr.emse.canari.push.GenericBannerLedger
 import fr.emse.canari.push.GroupLocality
+import fr.emse.canari.push.NotificationLevelGate
 import fr.emse.canari.push.PostReactionGroup
 import fr.emse.canari.push.PushRecoveryLadder
 import fr.emse.canari.push.SeedFrameLadder
@@ -1992,6 +1993,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
              * is the salon's own title: naming either above its line would print the title twice.
              */
             namesEachSender: Boolean = false,
+            /**
+             * Whether [body] IS the message, rather than a generic "nouveau message" line standing
+             * in for one this device could not open. A salon offers "Marquer comme lu" only when it
+             * is: that action moves the "Lu par" receipt other members see ([ChannelReadMark.offered]).
+             * TRUE everywhere a real text is handed in; the salon push says FALSE for a blind banner.
+             */
+            showsMessage: Boolean = true,
         ): Long {
             if (suppressInForeground && MainActivity.isInForeground) {
                 Log.d(TAG, "showMessageNotification: app in foreground -> suppressed (groupId=${groupId.take(8)})")
@@ -2181,10 +2189,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             if (quickActions && groupId.isNotEmpty() && !groupId.startsWith("channel_")) {
                 notifBuilder.addAction(buildReplyAction(this, res, groupId, notifId, sentAt))
                 notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt))
-            } else if (quickActions && ChannelReadMark.offered(groupId, sentAt)) {
+            } else if (quickActions && ChannelReadMark.offered(groupId, sentAt, showsMessage)) {
                 // A SALON offers "Mark as read" ONLY: its read state is a server row the receiver
                 // reaches with one PushSecret call. Reply stays off - the send is end-to-end
-                // encrypted under a Graine session the broadcast receiver cannot seal.
+                // encrypted under a Graine session the broadcast receiver cannot seal. And only on a
+                // banner that shows the message: the mark is the receipt the sender sees.
                 notifBuilder.addAction(buildMarkReadAction(this, res, groupId, notifId, sentAt))
             }
 
@@ -2355,6 +2364,20 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      */
     external fun nativeBuildReadWatermarkProto(at: Long): String
 
+    /**
+     * A refused push frame leaves the state behind: the worker retries it on the next cycle. One
+     * implementation for the two branches that owe it - a frame drawn as the fallback banner, and
+     * a frame withheld by the conversation's `mentions` level.
+     */
+    private fun enqueueRefusedFrameWorker() {
+        val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
+            .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
+            .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
+            .build()
+        enqueueWorkerIfHealthy(workRequest)
+        Log.w(TAG, "Decryption failed -> MlsBackgroundWorker enqueued")
+    }
+
     /** Structured result of the MLS decryption, extracted from the JSON returned by Rust. */
     data class DecryptedMessage(
         val text: String,
@@ -2373,6 +2396,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         val callId: String? = null,
         val callEnded: Boolean = false,
         val hasVideo: Boolean = false,
+        // Every user id the WHOLE plaintext mentions, read before `text` is cut to its preview, so a
+        // mention past character 200 still counts (`NotificationLevelGate`).
+        val mentionedUserIds: Set<String> = emptySet(),
     )
 
     override fun onNewToken(token: String) {
@@ -2800,6 +2826,28 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // Read once and used twice below: to render the mention tokens the decrypted body
         // carries, and to decide whether one of them names ME (which chooses the channel).
         val myUserId = MlsContextLoader.loadPushContext(this)?.userId
+        // THE MEMBER'S LEVEL FOR THIS CONVERSATION, DECIDED ONCE, HERE. `none` never arrives as a
+        // visible frame (the server sends it silent); `mentions` arrives as `notifLevel=mentions`
+        // because only this device can read who the message names. Decided BEFORE the fallback
+        // text below, which would otherwise announce a banner this never raises. A withheld
+        // message is still cached, so it is in the conversation, unread, when the app opens.
+        // A REFUSED frame at `mentions` is withheld too (the stated rule); its worker is still
+        // enqueued, because the worker advances the state, which is owed whatever is drawn.
+        val gate = NotificationLevelGate.decide(data["notifLevel"], decrypted?.mentionedUserIds, myUserId)
+        if (gate is NotificationLevelGate.Decision.Withhold) {
+            Log.d(TAG, "[NOTIF] group=${groupId.take(8)} withheld: ${gate.reason}")
+            if (decrypted != null) {
+                writeFcmCache(groupId, senderId, senderName, groupName, isGroup, decrypted)
+            }
+            if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
+                enqueueRefusedFrameWorker()
+            }
+            MlsContextLoader.loadPushContext(this)?.let { drainCtx ->
+                maybeNotifyPendingSync(drainOutboxBackground(this, this, drainCtx))
+            }
+            return
+        }
+
         val body: String = decrypted?.text?.let {
             renderMentions(it, myUserId, appLocaleContext(this))
         }
@@ -2813,12 +2861,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 // same bytes into the same unrenderable plaintext while reaching for `mls.bin`
                 // as a third engine.
                 if (outcome is PushDecrypt.Refused && !queuedMessageId.isNullOrEmpty()) {
-                    val workRequest = OneTimeWorkRequestBuilder<MlsBackgroundWorker>()
-                        .setExpedited(OutOfQuotaPolicy.RUN_AS_NON_EXPEDITED_WORK_REQUEST)
-                        .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, WorkRequest.MIN_BACKOFF_MILLIS, TimeUnit.MILLISECONDS)
-                        .build()
-                    enqueueWorkerIfHealthy(workRequest)
-                    Log.w(TAG, "Decryption failed -> MlsBackgroundWorker enqueued")
+                    enqueueRefusedFrameWorker()
                 }
                 buildFallbackText(appLocaleContext(this), senderName)
                     .also { Log.w(TAG, "Fallback notification: $it") }
@@ -2851,8 +2894,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // @-mention of me (WP-XP-5): decrypted text carries inline `@[uuid]` tokens; when one
         // targets my own userId the notification is posted on the higher-tier mentions channel
         // (bypass-DND request) instead of the regular messages channel.
-        val mentionsMe = myUserId != null &&
-            decrypted?.text?.contains("@[$myUserId]", ignoreCase = true) == true
+        val mentionsMe = (gate as NotificationLevelGate.Decision.Alert).mentionsMe
         val channel = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES
         Log.d(TAG, "showNotification: groupId=$groupId senderName=$senderName body=${body.take(60)} hasAvatar=${avatarBitmap != null} hasMedia=${media != null} mentionsMe=$mentionsMe")
         // NOTIF-10 (b). A push refused for good means another engine consumed this generation, so
@@ -3738,6 +3780,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             callId    = json.optString("callId").takeIf { it.isNotEmpty() },
             callEnded = json.optBoolean("callEnded", false),
             hasVideo  = json.optBoolean("hasVideo", false),
+            mentionedUserIds = NotificationLevelGate.mentionedUserIds(text),
         ))
     }
 
@@ -4661,6 +4704,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
 
         // Read once: the only id this device can name in a mention token is its own.
         val myUserId = MlsContextLoader.loadPushContext(this)?.userId
+        // Set only where the banner's body IS the decrypted text: every other branch below posts the
+        // generic line, on which "Marquer comme lu" would move a receipt for an unseen message.
+        var showsMessage = false
         val body: String = if (seedB64 != null && ciphertext != null && nonce != null && messageIndex != null) {
             try {
                 val json = JSONObject(
@@ -4674,9 +4720,13 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     // RENDERED, NOT PRINTED. The decrypted text carries `@[<64 hex>]` tokens; taking
                     // it raw put a hex blob in the banner - see `renderMentions`. The truncation is
                     // applied AFTER, so a token near the 200-character edge cannot be cut in half.
-                    json.optString("text").takeIf { it.isNotEmpty() }
-                        ?.let { renderMentions(it, myUserId, res).take(200) }
-                        ?: buildChannelFallbackText(res, channelName)
+                    val text = json.optString("text").takeIf { it.isNotEmpty() }
+                    if (text != null) {
+                        showsMessage = true
+                        renderMentions(text, myUserId, res).take(200)
+                    } else {
+                        buildChannelFallbackText(res, channelName)
+                    }
                 } else {
                     // A v2 refusal ACCUSES the server or a member (channel-encryption 21.5), so it
                     // is said at ERROR; the rest are a missing or unreadable seed. The Rust line
@@ -4730,6 +4780,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             channel    = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
             sentAt     = createdAt,
             supersedes = supersedes,
+            showsMessage = showsMessage,
         )
     }
 

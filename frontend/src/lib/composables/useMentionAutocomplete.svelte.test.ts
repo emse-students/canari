@@ -237,3 +237,70 @@ describe('useMentionAutocomplete - the signed-in reader is never offered', () =>
     expect(autocomplete.suggestions.map((u) => u.id)).toEqual(['alice', 'charlie']);
   });
 });
+
+describe('useMentionAutocomplete - Tab completes the suggestion', () => {
+  let text = '';
+  beforeEach(() => {
+    text = '';
+    signedInAs = null;
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    globalThis.fetch = makeFetchStub([
+      { id: 'alice', displayName: 'Alice' },
+      { id: 'bob', displayName: 'Bob' },
+    ]);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  async function opened() {
+    const ac = useMentionAutocomplete({
+      getText: () => text,
+      setText: (t) => {
+        text = t;
+      },
+      getCursor: () => text.length,
+    });
+    text = '@a';
+    ac.handleEditorInput('@a', 2);
+    vi.advanceTimersByTime(250);
+    await tick();
+    return ac;
+  }
+  const tab = (init: KeyboardEventInit = {}) =>
+    new KeyboardEvent('keydown', { key: 'Tab', cancelable: true, ...init });
+
+  it('picks the first suggestion when none is highlighted', async () => {
+    const ac = await opened();
+    const e = tab();
+    expect(ac.handleKeydown(e)).toBe(true);
+    expect(e.defaultPrevented).toBe(true);
+    expect(text).toContain('alice');
+    expect(ac.open).toBe(false);
+  });
+
+  it('picks the highlighted suggestion', async () => {
+    const ac = await opened();
+    ac.handleKeydown(new KeyboardEvent('keydown', { key: 'ArrowDown', cancelable: true }));
+    ac.handleKeydown(new KeyboardEvent('keydown', { key: 'ArrowDown', cancelable: true }));
+    ac.handleKeydown(tab());
+    expect(text).toContain('bob');
+  });
+
+  it('leaves shift+Tab and composing Tab alone', async () => {
+    const ac = await opened();
+    const shifted = tab({ shiftKey: true });
+    expect(ac.handleKeydown(shifted)).toBe(false);
+    expect(shifted.defaultPrevented).toBe(false);
+    expect(ac.handleKeydown(tab({ isComposing: true }))).toBe(false);
+    expect(ac.open).toBe(true);
+  });
+
+  it('leaves Tab alone when the list is closed', () => {
+    const ac = useMentionAutocomplete({ getText: () => '', setText: () => {} });
+    const e = tab();
+    expect(ac.handleKeydown(e)).toBe(false);
+    expect(e.defaultPrevented).toBe(false);
+  });
+});

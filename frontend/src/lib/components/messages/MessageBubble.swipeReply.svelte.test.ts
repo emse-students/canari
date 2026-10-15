@@ -239,6 +239,53 @@ describe('MessageBubble - the swipe reaches onReply', () => {
   });
 });
 
+describe('MessageBubble - a thumb ARCS, and an armed bubble replies (Mi 9T, 2026-10-14)', () => {
+  /**
+   * The failing cell of the matrix, event for event as the Mi 9T's WebView delivers a real finger:
+   * pointer AND touch for each contact, 110px across with 45px of downward drift, lock at the first
+   * move. Before the fix the bubble slid its full 72px and lit the armed icon, and the release -
+   * 45px below where it started - was refused by a vertical rule the drag never showed.
+   */
+  function arc(el: HTMLElement, x0: number, dx: number, dy: number): void {
+    const steps = 6;
+    el.dispatchEvent(pointer('pointerdown', x0, 200));
+    el.dispatchEvent(touch('touchstart', x0, 200));
+    flushSync();
+    for (let i = 1; i <= steps; i++) {
+      const x = x0 + (dx * i) / steps;
+      const y = 200 + (dy * i) / steps;
+      el.dispatchEvent(pointer('pointermove', x, y));
+      el.dispatchEvent(touch('touchmove', x, y));
+      flushSync();
+    }
+    el.dispatchEvent(pointer('pointerup', x0 + dx, 200 + dy));
+    el.dispatchEvent(touch('touchend', x0 + dx, 200 + dy));
+    flushSync();
+  }
+
+  it('replies to a received message swiped right along a 45px downward arc', () => {
+    const h = mountBubble();
+    arc(bubble(), 100, 110, 45);
+
+    expect(h.reply).toHaveBeenCalledTimes(1);
+    expect(h.reply).toHaveBeenCalledWith('m1');
+  });
+
+  it('replies to an OWN message swiped left along a 60px upward arc', () => {
+    const h = mountBubble({ isOwn: true, senderId: 'u-me' });
+    arc(bubble(), 300, -110, -60);
+
+    expect(h.reply).toHaveBeenCalledTimes(1);
+  });
+
+  it('still refuses a stroke steeper than 45 degrees - the lock decides, once', () => {
+    const h = mountBubble();
+    arc(bubble(), 100, 110, 140);
+
+    expect(h.reply).not.toHaveBeenCalled();
+  });
+});
+
 describe('MessageBubble - the outward swipe is a NON-GESTURE, and that is the point', () => {
   // It used to open the reaction tray. The user cut it on 2026-09-22 - *"swiper pour reagir n'est
   // pas quelque chose de bien, c'est meme assez bizarre"* - after it was measured against Messenger

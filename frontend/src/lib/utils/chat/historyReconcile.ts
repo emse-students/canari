@@ -1,5 +1,6 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { appendLog } from '$lib/utils/sessionLog';
+import { forgetOwedPulls, owedPullsIn, resetOwedPulls } from '$lib/utils/chat/historyOverheardPull';
 
 /**
  * When a device asks whether it holds the same history as its peers, and how it stops asking.
@@ -64,6 +65,53 @@ const PROBE_COALESCE_MS = 30_000;
 
 /** Groups whose probe went out recently, with the instant it stops counting as recent. */
 const asked = new Map<string, number>();
+
+/**
+ * The ask a burst of unreadable frames has already raised, per group, with how many further
+ * triggers it has absorbed. Exists so one group is EVALUATED ONCE per burst, not once per frame.
+ *
+ * Measured on a Pixel 6a (prod 1.2.7, 2026-10-14): a cold start replayed dozens of unreadable
+ * frames of one group in 250 ms, and each one called {@link reconcileGroup}, which answered the
+ * second onward with "not asking again" - a line per frame about ONE decision. The line was true
+ * and the count was the symptom: the caller asked the same question N times. The fix is at the
+ * source and it is a fact, not a clock: while the first ask is still being evaluated (it awaits the
+ * mailbox drain, which IS the burst) a further trigger carries no new information.
+ */
+const raised = new Map<string, { done: Promise<boolean>; absorbed: number }>();
+
+/** Whether a reconcile raised through {@link raiseReconcile} for `groupId` is still being evaluated. */
+export function isReconcileRaised(groupId: string): boolean {
+  return raised.has(groupId);
+}
+
+/**
+ * Raises a reconcile for a group whose frames are unreadable, collapsing a burst into ONE evaluation.
+ *
+ * The first call runs {@link reconcileGroup}; every call made before it settles is absorbed and
+ * counted, and the count is said once when it settles - the one line that replaces N.
+ */
+export function raiseReconcile(
+  mlsService: Parameters<typeof reconcileGroup>[0],
+  groupId: string,
+  log: (msg: string) => void
+): Promise<boolean> {
+  const pending = raised.get(groupId);
+  if (pending) {
+    pending.absorbed++;
+    return pending.done;
+  }
+  const entry = { done: Promise.resolve(false), absorbed: 0 };
+  raised.set(groupId, entry);
+  entry.done = reconcileGroup(mlsService, groupId, log).finally(() => {
+    raised.delete(groupId);
+    if (entry.absorbed > 0) {
+      log(
+        `[HISTORY_RECONCILE] ${groupId.slice(0, 8)}… ${entry.absorbed} further unreadable frame(s) raised the same ask while it was being evaluated - one evaluation, not ${entry.absorbed + 1}`
+      );
+    }
+  });
+  return entry.done;
+}
 
 /**
  * The member the server elected for the ask currently in flight, per group.
@@ -972,20 +1020,23 @@ export function forgetGroupReconciliation(groupId: string): void {
   // The seam exists because this state once outlived its conversation, so a run leaves evidence of
   // WHAT it held - the one thing a reader wants when it leaks again.
   appendLog(
-    `[HISTORY_RECONCILE] forgetting ${groupId.slice(0, 8)}…: asked=${asked.has(groupId)} deferred=${deferred.get(groupId) ?? 'none'} coverageStated=${coverageStated.get(groupId)?.size ?? 0} peer(s) electedFor=${electedFor.has(groupId)} chased=${chased.get(groupId)?.size ?? 0}`
+    `[HISTORY_RECONCILE] forgetting ${groupId.slice(0, 8)}…: asked=${asked.has(groupId)} deferred=${deferred.get(groupId) ?? 'none'} owedPulls=${owedPullsIn(groupId)} coverageStated=${coverageStated.get(groupId)?.size ?? 0} peer(s) electedFor=${electedFor.has(groupId)} chased=${chased.get(groupId)?.size ?? 0}`
   );
   asked.delete(groupId);
   deferred.delete(groupId);
   coverageStated.delete(groupId);
   electedFor.delete(groupId);
   chased.delete(groupId);
+  forgetOwedPulls(groupId);
 }
 
 /** Drops everything (session teardown, logout, test cleanup). */
 export function resetHistoryReconciliation(): void {
   asked.clear();
+  raised.clear();
   deferred.clear();
   coverageStated.clear();
   electedFor.clear();
   chased.clear();
+  resetOwedPulls();
 }

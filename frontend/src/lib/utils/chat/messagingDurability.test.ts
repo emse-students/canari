@@ -1,5 +1,6 @@
 import { sendChatMessage } from './messaging';
 import type { Conversation } from '$lib/types';
+import { serializeEnvelope, mkTextEnvelope } from '$lib/envelope';
 
 const enqueueOutboxMessage = vi.fn().mockResolvedValue(undefined);
 vi.mock('./outbox', () => ({
@@ -120,5 +121,39 @@ describe('sendChatMessage: the echo and its queue entry are one write', () => {
     expect(result.success).toBe(false);
     expect(h.calls).toEqual([]);
     expect(enqueueOutboxMessage).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A REMOVE HOLDS AGAINST A LATER RE-ADD (user, 2026-10-14), and whether a reply may carry its quote
+ * text is decided by the OUTBOX at the send (`decideQuote`). Composing reads nothing: a round trip
+ * per reply was a cost, and a compose made offline used to lose its quote for good (second review
+ * of #1878).
+ */
+describe('sendChatMessage - composing a reply asks the server nothing', () => {
+  const conversation = { id: 'group-1', lifecycle: 'active' } as unknown as Conversation;
+  const quoted = {
+    id: 'q1',
+    senderId: 'carol',
+    content: serializeEnvelope(mkTextEnvelope('said while Bob was out')),
+    timestamp: new Date(1_700_000_000_000),
+    serverTimestamp: 1_700_000_000_000,
+  } as never;
+
+  it('queues the quote text as composed, and reads no exclusion window', async () => {
+    let options: Record<string, any> = {};
+    const getGroupExclusions = vi.fn();
+    await sendChatMessage('replying', 'alice', quoted, {
+      userId: 'me',
+      conversation,
+      log: () => {},
+      mlsService: { getGroupExclusions },
+      addMessageToChat: async (_s: string, _c: string, _n: string, o: Record<string, any>) => {
+        options = o;
+      },
+    } as any);
+
+    expect(getGroupExclusions).not.toHaveBeenCalled();
+    expect(options.outboxEntry.replyTo.preview).toBe('said while Bob was out');
   });
 });

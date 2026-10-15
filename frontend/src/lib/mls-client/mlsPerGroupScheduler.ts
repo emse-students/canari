@@ -1,4 +1,5 @@
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
+import type { DeliveryChannel } from '$lib/mls-client/incomingDelivery';
 
 /** Sentinel bucket key for messages without a `groupId`. */
 export const MLS_QUEUE_ORPHAN_KEY = '__no_group__';
@@ -17,6 +18,11 @@ export interface MlsQueuedMessage {
   queuedCreatedAt?: number;
   /** Tauri: persisted control frame (e.g. `group_reset`). */
   type?: string;
+  /**
+   * The route of the copy that was ADMITTED - set by `enqueueMessage` alone, never by a caller,
+   * because the same row can be offered by both routes and only the dedup decides which one counts.
+   */
+  channel?: DeliveryChannel;
 }
 
 /** `web`: Welcome at front of each group's message list. `tauri`: separate control/welcome tiers. */
@@ -317,8 +323,18 @@ export class MlsPerGroupScheduler {
     }
 
     if (groupId && this.pendingWelcomeGroups.has(groupId) && !msg.isWelcome) {
-      console.log(`[QUEUE] Buffering message for group ${groupId} (Welcome in progress)`);
-      this.pendingWelcomeGroups.get(groupId)!.push(msg);
+      const held = this.pendingWelcomeGroups.get(groupId)!;
+      // ONE LINE PER WINDOW, NOT PER FRAME. The window has one cause - this group's Welcome is in
+      // flight - and `releaseWelcomeBuffer` already reports how many frames it held when it closes.
+      // A per-frame line printed that one cause once per frame: 150 identical lines in 19 ms on a
+      // Pixel 6a cold start (prod 1.2.7, 2026-10-14), ahead of the one line that carried the count.
+      // The buffer itself says whether this is the window's first frame, so nothing else is kept.
+      if (held.length === 0) {
+        console.log(
+          `[QUEUE] Buffering messages for group ${groupId} behind its Welcome - the count is reported when the Welcome ends`
+        );
+      }
+      held.push(msg);
       return;
     }
 

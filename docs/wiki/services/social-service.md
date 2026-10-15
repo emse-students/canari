@@ -38,7 +38,10 @@ does, which is now almost nothing:
 1. A message names `senderSessionId` and `messageIndex`, and the row is refused without them
    (`CHANNEL_SESSION_REQUIRED`, `CHANNEL_MESSAGE_INDEX_REQUIRED`). The key is
    `HKDF(seed, sessionId, index)` and the seed never leaves the sending devices, so a row missing
-   either is a row NOBODY can open - including its own author.
+   either is a row NOBODY can open - including its own author. It must also carry a Graine v2
+   `signature` (64 bytes, base64), refused otherwise with `CHANNEL_SIGNATURE_REQUIRED` since every
+   client the floor admits signs ([channel-encryption 21.8](../protocols/channel-encryption.md#218-the-server-refuses-an-unsigned-salon-row-2026-10-13)).
+   The service checks its shape and cannot verify it.
 2. Seeds travel over the community's MLS distribution group, whose `groupInfo` this service serves
    to members only (`/workspaces/:id/distribution-group`). That GroupInfo IS the capability to read
    every seed on the group, which is why the membership check lives here: `channel_workspace_members`
@@ -252,6 +255,11 @@ Communities use a deliberately simple, two-level model (no per-channel permissio
   (`canManage`, `canManageChannels`, `canModerate`; an absent one means unchanged) - a fourth cached
   flag owes a fourth field here, never a derivation from `permissions` on the client. The invariant
   was already broken once: `viewerCanModerate` was cached and never announced until 2026-10-05.
+  **And broken a second time at the other source of the cache: `createWorkspace`'s answer** named
+  `viewerCanManage` and `viewerCanManageChannels` and omitted `viewerCanModerate`, so the creator of
+  a community was offered no "Epingler" (and no close on another member's poll) until a reload
+  (2026-10-13). The answer now derives all three from the seeded Administrateur role through the
+  listing's own predicates; any path that inserts a workspace into the client owes all three.
 - **Editing what a role grants re-announces its HOLDERS' standing** (2026-09-29). `workspace.role.permissions`
   only redraws the grid, so granting `channel.manage` to Moderateur left every moderator without the
   salon controls until a full load, and revoking it left them offered controls that fail.
@@ -496,7 +504,7 @@ The legacy per-channel/per-role override system (`channel_permission_overrides`,
 `GET /:channelId/messages` returns the newest messages first, capped at 200 per page. Passing
 `before=<ISO createdAt>` returns only strictly-older messages (keyset pagination on `createdAt`),
 so clients page back through the whole channel by following the oldest `createdAt` of the previous
-page until an empty page is returned. Channel messages are never persisted client-side, so full-text
+page until an empty page is returned. Channel messages are not persisted one by one client-side (only a copy of the last page a load drew is kept, [F4](../frontend/community-open-budget.md#f4-built-2026-10-15)), so full-text
 search fetches and decrypts the entire history on demand (`ChannelService.fetchAllChannelMessages`
 -> `useConversations.searchChannelHistory`, capped at ~2000 messages) and merges the decrypted rows
 into the open conversation so a hit older than the loaded page can be scrolled to. The server only
@@ -522,9 +530,11 @@ uuid no native surface can turn into a community name (there is no workspace mir
 `graine_seeds.json` mirrors the seeds); `workspaceName` replaced it because it is what the title
 actually needs. `messageId` / `createdAt` cannot repeat what the MLS path does
 with them: that path writes `fcm_message_cache.ndjson` so a background-decrypted message is already
-in the store at open, whereas a channel message is DELIBERATELY never persisted locally
+in the store at open, whereas a channel message is DELIBERATELY never persisted one by one
 (`useMessaging` skips the DB save for a `channel_` conversation - channels are server-authoritative
-and refetched over HTTP), so the cache has nowhere to inject. Fewer bytes also buys headroom under
+and refetched over HTTP; only a copy of the last page a load drew is kept, replaced by every load,
+[community-open-budget F4](../frontend/community-open-budget.md#f4-built-2026-10-15)), so the cache
+has nowhere to inject. Fewer bytes also buys headroom under
 the same ~4 KB FCM cap the inlined ciphertext competes for (over 3000 chars it is omitted and the
 notification degrades to the generic body). The whole contract is pinned in both directions by
 `frontend/src/lib/mobile/channelPushFields.test.ts`, which reads the four source files.
@@ -595,6 +605,8 @@ server's, `createdAt`) never reached the row's `sentAt` key. Pinned by `salonRow
 under the last message: 2 before the reload, 2 after; 0 before the fix).
 
 **"Mark as read" from a salon NOTIFICATION, app shut (Android, 2026-10-10).** A shut phone has no session, so the two public calls above are out of reach. Its action calls chat-delivery's `POST /api/mls/push/channel-read` `{ userId, deviceId, channelId, at }` under `Authorization: PushSecret` (which proves the caller is a device of `userId`); chat-delivery forwards it with `x-internal-secret` to `POST /api/internal/channels/:channelId/read` (`InternalChannelReadController`, never exposed by the edge), which runs `advanceChannelReadMark` (membership still checked here, `at` bounded by the newest message) and then `markChannelRead` so the user's other devices clear their banner. `at` is the notification's own `createdAt`, never the phone's clock. A refused or failed call is logged on both sides (`[CHANNEL_READ_PUSH]`) and never retried: the banner is already gone locally and the receipt rises the next time the salon is opened. Reply is NOT offered on a salon: see [mobile](../frontend/mobile.md#a-salon-mark-as-read-only-and-why-reply-is-not-offered-decided-2026-10-10-android).
+
+**Clearing a community without reading it (2026-10-13).** `POST /api/channels/workspaces/:workspaceId/unread/clear` `{ upTo }` (`clearWorkspaceUnread`) raises `channel_members."clearedMarks"` (migration 082) for every salon the caller may read, in one statement, to `LEAST(upTo, the salon's newest createdAt)` and never lower; `listUnreadCounts` counts from the later of `readMarks` and `clearedMarks`. It never touches `readMarks` and never publishes `channel.read`: only `channel.unread.cleared` to the caller, and one silent `channel_read` push per salon that moved. The column is on the TypeORM entity with `select`/`insert`/`update: false` (raw SQL only): off the entity, `synchronize` DROPPED it at every local boot; as a plain column it would be in every membership `SELECT` during the deploy's window before migrations run. A salon with no message gets no mark (`LEAST` ignores a NULL, so it is filtered first; measured on Postgres). Why: [chat](../frontend/modules/chat.md#mark-a-whole-community-as-read-2026-10-13).
 
 **Unread counts (2026-10-08).** `GET /api/channels/unread-counts` answers `{ asOf, counts: { [channelId]: n } }`
 (zero absent): per salon the caller may read (`canAccessChannel`, so a private salon the caller is not in is
