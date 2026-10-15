@@ -261,6 +261,100 @@ a failed fetch fell back to `'stripe'` too. Both are the fallback `CLAUDE.md` fo
 into the one sentence both the shop toast and a paid form's inline error show. Details in
 [forms](forms.md#four-defects-found-on-dev-v112-alpha2-2026-10-07).
 
+## Expiry, merchant cancel and the callbacks, measured on the sandbox (2026-10-15)
+
+Measured from inside `canari-dev-core-service-1` with the dev estate's HOMOLOGATION pair
+(`DEV_LYDIA_*`, `LYDIA_ENV=homologation` pinned) against `https://homologation.lydia-app.com`, the
+base URL hardcoded in the probe. Vendor: the dev homologation Business "Les Rootz" created that
+morning. Every request: `0.50 EUR`, recipient `lydia-probe@example.com`, the same fields
+`createCheckoutSession` sends, callbacks pointed at dev's `lydia-request-callback`. Tokens, the
+vendor token and every `signature`/`sig` value are redacted below.
+
+**`request/do` answers** `{error, request_id, request_uuid, message, mobile_url}`: the numeric
+`request_id` (e.g. `12115496`) the callbacks carry IS in the response, beside the `request_uuid`
+Canari stores today. `request/state` (`request_uuid` + `vendor_token`) answers
+`{state, used_ease_of_payment, signature}` - no expiry date, no `request_id`.
+
+**Expiry - the parameter is `expire_time`, an integer number of SECONDS from creation.**
+
+| `expire_time` sent | Answer | Observed |
+|---|---|---|
+| absent | `error: "0"` | still `state 0` at the end of the session |
+| `60` (created 16:38:50 UTC) | `error: "0"` | `state 6` at 16:40:34; `expire_url` POSTed at 16:40:09 (+79 s) |
+| `120` (created 16:43:06) | `error: "0"` | `expire_url` POSTed at 16:46:07 (+181 s), then `state 6` |
+| `0` | `error: "0"` | still `state 0` minutes later - `0` is NOT "expire now" |
+| `3600`, `604800`, `2592000`, `31536000`, `1792000000` | `error: "0"` each | no upper bound refused; `1792000000` read as a Unix date would be YESTERDAY and the request stayed `state 0`, so the value is a duration, not a timestamp |
+| `abc`, `-5`, `2026-10-16 12:00:00` | `error: "1"`, "Format de la date d'expiration incorrect" | the name is recognised and validated |
+
+Expiry fires on what looks like a once-a-minute sweep at or after the deadline (both callbacks at
+`:07`-`:09` past the minute), ONE `expire_url` POST each in the window watched, and leaves
+`request/state` at **`6`** - the same code a merchant cancel leaves, so `state` alone cannot tell
+expired from cancelled; the callback's `outcome` can.
+
+**Merchant cancel - `POST /api/request/cancel.json` with `request_id` (the NUMERIC id) and
+`vendor_token`, no signature.**
+
+| Fields sent | Answer |
+|---|---|
+| `request_uuid` + `vendor_token` | `error: "1"`, "Parametre manquant" |
+| `identifier` (numeric or uuid) + `vendor_token` | `error: "1"`, "Parametre manquant" |
+| **`request_id` + `vendor_token`** | **`error: "0"`**, then `state 6`, and `cancel_url` POSTed (16:41:31) |
+| `request_id` alone, or with `provider_token` instead | `error: "105"`, "Operation not allowed." |
+| `request_id` of a request already cancelled, or already expired | `error: "2"`, "Cette transaction a deja ete traitee" |
+| unknown `request_id` + `vendor_token` | `error: "105"`, "Operation not allowed." |
+
+So cancelling needs the numeric `request_id`, which Canari does not store today (it keeps
+`request_uuid` only), and the target Business's `vendor_token`.
+
+**The callbacks reach dev and our controller REFUSES them before verifying anything.** All three
+(`expire` x2, `cancel` x1) arrived from `91.194.60.148` and dev's nginx logged `400 78`. 78 bytes is
+exactly `{"message":"Missing request_id or sig","error":"Bad Request","statusCode":400}`
+(`webhook.controller.ts`, unlogged since `BadRequestException` is not logged); an `Invalid
+signature` answer is 70 bytes and logs an error line, and none was logged. Replaying a forged
+callback against dev settles the encoding: `request_id=1&sig=00` form-urlencoded -> `400 70`,
+the same as JSON -> `400 70`, but as `multipart/form-data` -> `400 78`, Lydia's exact answer.
+core-service parses JSON and urlencoded only, so Lydia most likely POSTs `multipart/form-data`
+and `@Body()` is empty. **Consequence: the signature has never been checked, so whether Lydia signs
+with the provider's or the Business's private token (the CSM says the Business's) is still unmeasured;
+and no confirm/cancel/expire callback can fulfil anything on dev or prod until the body is parsed.**
+
+**Still unknown.** The callback's exact field names and Content-Type (inferred from the 78-byte
+answer, not read; nginx logs neither); the signing key; the DEFAULT lifetime when `expire_time` is
+absent or `0` - request `12115504` (uuid `2c4c4bb4...`, no `expire_time`) and `12115498`
+(`expire_time=0`) were left open on the sandbox, so a `request/state` on them later bounds it;
+whether `expire_time` has a ceiling (one year and `1792000000` s were both accepted); whether
+an expire/cancel callback is retried after a non-2xx.
+
+### `request/state`, the payer's own cancel, and a callback that is PARSED (2026-10-15, 18:30Z)
+
+Same sandbox, same rules. `request/do` echoes `order_ref` in its answer when one is sent.
+
+| `request/state` fields sent | Answer |
+|---|---|
+| `request_uuid` alone (what `retrieveSession` sends) | `{state, used_ease_of_payment}` - works, unsigned |
+| `request_uuid` + `provider_token` | same, unsigned |
+| `request_uuid` + `vendor_token` | `{state, used_ease_of_payment, signature}` |
+| `request_id` + `vendor_token`, or `order_ref` + `vendor_token` | same, signed - both lookups find the request |
+| unknown `request_uuid`, or unknown `order_ref` | `error: "2"`, "Requete introuvable" |
+
+**No variant ever returns `order_ref`**, so `retrieveSession`'s `metadata` from it is always empty;
+`vendor_token` is optional and only adds a `signature`.
+
+**The payer's "annuler la commande" link** (`/collect/cancel?uuid=...` on the payer page) redirects
+to `browser_fail_url` and leaves `state 6` - the same code as a merchant cancel and an expiry, not
+`5`. It POSTed `cancel_url` at 18:37:02Z, by then on a dev build carrying the multipart parser of the
+section below: nginx logged `400 70` and core-service logged `signature verification failed
+(outcome=cancel)`. **So the body now parses (`request_id` and `sig` are present) and the PROVIDER
+private token does NOT verify Lydia's callback** - consistent with the CSM's "signed with the
+Business's token", though a wrong field set in `verifyRequestCallback` would fail the same way; the
+field names were not logged, since that log line fires only when fields are missing.
+
+**Not produced, so unmeasured:** the state of a PAID request (`1` expected) and of a payer decline
+(`5` expected), and what `request/cancel` answers on a paid request. A test card (`4111...`) is
+refused before any status choice ("ne permet pas l'usage du code de securite 3DSecure",
+`/collect/payment-error?code=4`) and the request stays `state 0`; no Lydia sandbox test card is
+documented here, and none was guessed further.
+
 ## Lydia's callbacks reached `lydia-request-callback` with an EMPTY body (2026-10-15)
 
 Two real calls from Lydia's servers (an `expire` at 16:40Z and a `cancel` at 16:41Z on dev, source
