@@ -7,6 +7,7 @@ import type { DatedKeyPackage } from './keyPackages';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
 import { toBase64, fromBase64 } from '$lib/utils/hex';
 import { trackedFetch } from '$lib/utils/trackedFetch';
+import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { ApiRefusalError, responseOrigin } from '$lib/utils/apiRefusal';
 
@@ -723,22 +724,23 @@ export class MlsDeliveryApi {
     if (res.status === 404) {
       // The reason is the server's, classified where it is known, and every delivery service since
       // 2026-09-16 sends one. A 404 WITHOUT one is therefore not the delivery service answering (a
-      // proxy, a missing route): it establishes nothing about the device, so it is `unanswered`.
-      const reason = await res
+      // proxy, a missing route): it establishes nothing about the device, so it is `unanswered`,
+      // and the caller logs its `detail` (once). A reason this build does not know IS an answer -
+      // a newer server refusing for a cause added after this build - so it is `unrecognized`.
+      const raw = await res
         .json()
-        .then((b: { reason?: unknown }) =>
-          b?.reason === 'revoked' || b?.reason === 'unregistered' || b?.reason === 'expired'
-            ? b.reason
-            : null
-        )
-        .catch(() => null);
-      if (reason === null) {
-        console.warn(
-          '[MLS] key-package 404 carries no reason - not the delivery service answering'
-        );
+        .then((b: { reason?: unknown }) => b?.reason)
+        .catch(() => undefined);
+      if (typeof raw !== 'string' || raw.length === 0) {
         return { kind: 'unanswered', detail: 'a 404 with no reason in it' };
       }
-      return { kind: 'none', reason };
+      if (raw === 'revoked' || raw === 'unregistered' || raw === 'expired') {
+        return { kind: 'none', reason: raw };
+      }
+      console.warn(
+        `[MLS] key-package 404 names a reason this build does not know: ${sanitizeForLog(raw.slice(0, 40))}`
+      );
+      return { kind: 'none', reason: 'unrecognized' };
     }
 
     if (!res.ok) {
@@ -891,12 +893,10 @@ export class MlsDeliveryApi {
   /**
    * Uploads a batch of one-time prekeys (OTKP) to replenish the server-side prekey pool.
    *
-   * **EACH ROW CARRIES ITS OWN EXPIRY, AND THE SHAPE IS A UNION FOR ONE RELEASE.** The server
-   * cannot parse an MLS KeyPackage, so until 2026-09-16 it stored an opaque string and could not
-   * tell an elapsed package from a fresh one - it served expired ones, and a join built on one
-   * fails with `LifetimeError(Expired)` for ever. Clients older than this change still send a bare
-   * base64 string, so `keyPackages` accepts either that or `{ keyPackage, notAfter }`; the removal
-   * date is on `docs/wiki/legacy-compatibility.md`.
+   * **EACH ROW CARRIES ITS OWN EXPIRY, `{ keyPackage, notAfter }`, THE ONLY SHAPE THE SERVER
+   * ACCEPTS.** The server cannot parse an MLS KeyPackage, so until 2026-09-16 it stored an opaque
+   * string and could not tell an elapsed package from a fresh one - it served expired ones, and a
+   * join built on one fails with `LifetimeError(Expired)` for ever.
    */
   async publishKeyPackages(packages: DatedKeyPackage[]): Promise<void> {
     const keyPackages = packages.map((kp) => ({

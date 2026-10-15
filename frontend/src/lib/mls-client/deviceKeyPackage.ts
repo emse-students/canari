@@ -22,10 +22,13 @@ export type DeviceKeyPackage = {
 };
 
 /**
- * Why there is no package. Mirrors `KeyPackageRefusal` in the delivery service exactly; a 404 that
- * names none of the three is not the delivery service answering and is `unanswered`.
+ * Why there is no package. The first three mirror `KeyPackageRefusal` in the delivery service;
+ * `unrecognized` is a reason the server DID name but this build does not know (a cause added after
+ * it shipped - the server deploys before the stores update). That is still an answer, and it
+ * promises nothing about a return. A 404 naming no reason at all is not the delivery service
+ * answering and is `unanswered`, not a refusal.
  */
-export type DeviceKeyPackageRefusal = 'revoked' | 'unregistered' | 'expired';
+export type DeviceKeyPackageRefusal = 'revoked' | 'unregistered' | 'expired' | 'unrecognized';
 
 /**
  * The answer, or the statement that there was none.
@@ -65,8 +68,8 @@ export type DeviceSignatureKeys =
  *
  * - `published`: a row exists. An ELAPSED package counts, because the gate checks presence and an
  *   elapsed row is exactly the one the device replaces on its own next connection.
- * - `absent`: the server says there is no row (`unregistered`) - the fact is false until the
- *   device's round publishes.
+ * - `absent`: the server says there is no row (`unregistered`, or a reason this build does not
+ *   know) - the fact is false until the device's round publishes.
  * - `revoked`: the id is denylisted; no round of THIS id will ever make it true.
  * - `unknown`: nothing was established (`unanswered`).
  */

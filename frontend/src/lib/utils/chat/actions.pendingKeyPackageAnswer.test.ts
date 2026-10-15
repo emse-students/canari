@@ -114,7 +114,7 @@ describe('a pending invitation acts on WHICH answer it got', () => {
     expect(lines).not.toContain('deregistered');
   });
 
-  it.each(['revoked', 'unregistered'] as const)(
+  it.each(['revoked', 'unregistered', 'unrecognized'] as const)(
     'retires it on `%s` and promises nothing about a return',
     async (reason) => {
       const { mlsService, lines } = await sweep({ kind: 'none', reason });
