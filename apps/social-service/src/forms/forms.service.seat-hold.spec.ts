@@ -1,4 +1,6 @@
-import { BadRequestException, ConflictException } from '@nestjs/common';
+import { BadRequestException, ConflictException, ForbiddenException } from '@nestjs/common';
+import { CONFIRM_PAYMENT_PER_MINUTE, FormsController } from './forms.controller';
+import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import axios from 'axios';
 import { FindOperator } from 'typeorm';
 import { FormsService } from './forms.service';
@@ -244,6 +246,8 @@ describe('FormsService - the seat a pending payment holds', () => {
     const associationsService: any = {
       assertPaymentsReady: jest.fn(async () => undefined),
       getPaymentAccountId: jest.fn(async () => 'vendor'),
+      // Nobody manages this form through the association: only its submitter may read its answer.
+      mayAct: jest.fn(async () => false),
       getActivePaymentProvider: jest.fn(async () => opts.provider ?? 'disabled'),
     };
     // A fake core-service: every call is recorded with what the ROWS looked like when it was made,
@@ -253,7 +257,9 @@ describe('FormsService - the seat a pending payment holds', () => {
       calls: [] as { route: string; body: any; rowIdsThen: unknown[] }[],
       cancelAnswer: 'cancelled' as 'cancelled' | 'already-settled' | Error,
       /** What `request-state` answers once a cancel said `already-settled` (Lydia's error 2). */
-      stateAnswer: 'closed' as 'closed' | 'paid' | 'open' | Error,
+      stateAnswer: 'closed' as 'closed' | 'paid' | 'open' | 'other' | Error,
+      /** Runs inside the state read, as a concurrent retry replacing the row's request may. */
+      duringState: null as null | (() => void),
       /** Runs inside the cancel call, as Lydia's own cancel callback for the old request may. */
       duringCancel: null as null | (() => Promise<unknown>),
     };
@@ -271,8 +277,12 @@ describe('FormsService - the seat a pending payment holds', () => {
         return { data: { ok: true, outcome: core.cancelAnswer } };
       }
       if (route === 'request-state') {
+        core.duringState?.();
         if (core.stateAnswer instanceof Error) throw core.stateAnswer;
-        return { data: { ok: true, state: core.stateAnswer, raw: 'x' } };
+        // core-service maps every code it has not measured (5, refused by the payer, among them)
+        // to `other` and passes the raw code along.
+        const raw = { paid: '1', closed: '6', open: '0', other: '5' }[core.stateAnswer];
+        return { data: { ok: true, state: core.stateAnswer, raw } };
       }
       expect(route).toBe('create-checkout-session');
       requests += 1;
@@ -966,11 +976,75 @@ describe('FormsService - the seat a pending payment holds', () => {
       expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
       expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
       expect(error).not.toHaveBeenCalled();
+      // The same row, then confirmed by a request it never named: THAT is accused. Without this
+      // line the test above passes with the accusation deleted, since silence is all it asserts.
+      await service.markPaid('mine', '999');
+      expect(error).toHaveBeenCalledTimes(1);
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('999'));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('by uuid-old'));
+      expect(purchaseRecordService.create).toHaveBeenCalledTimes(1);
+    });
+
+    // P2-a: a payment made at the end of the hold whose callback is lost leaves the row released
+    // (`expired` by the job, or `cancelled` by its own expire callback). It is still read, and
+    // decided like any late payment: `paid` while the form has room.
+    it.each([['expired'], ['cancelled']])(
+      'records a payment found PAID on a row already %s',
+      async (status) => {
+        const { service, rows, core } = makeStore({
+          maxSubmissions: 1,
+          provider: 'lydia',
+          rows: [mine({ paymentStatus: status })],
+        });
+        core.stateAnswer = 'paid';
+        await expect(service.confirmPayment('mine')).resolves.toMatchObject({
+          paymentStatus: 'paid',
+        });
+        expect(core.calls.map((c) => c.route)).toEqual(['request-state']);
+        expect(rows[0]).toMatchObject({ paymentStatus: 'paid', paymentSettledBy: 'uuid-old' });
+      }
+    );
+
+    it('lands a late payment on an expired row over capacity when the seat went meanwhile', async () => {
+      const { service, rows, core } = makeStore({
+        maxSubmissions: 1,
+        provider: 'lydia',
+        rows: [
+          mine({ paymentStatus: 'expired' }),
+          row({ id: 'other', userId: 'u2', paymentStatus: 'paid' }),
+        ],
+      });
+      core.stateAnswer = 'paid';
+      await service.confirmPayment('mine');
+      expect(rows[0].paymentStatus).toBe('paid_over_capacity');
+    });
+
+    // P3: the request was read paid outside the row lock. If a retry replaced it in between, the
+    // retry's own settle read it and decided it; this read writes nothing.
+    it('writes nothing when the row no longer names the uuid it read', async () => {
+      const { service, rows, core, userTagService } = makeStore({
+        maxSubmissions: 1,
+        provider: 'lydia',
+        rows: [mine()],
+      });
+      core.stateAnswer = 'paid';
+      core.duringState = () => {
+        rows[0].stripeSessionId = 'uuid-new';
+        rows[0].paymentRequestId = '777';
+      };
+      const warn = jest.spyOn((service as any).logger, 'warn');
+      await service.confirmPayment('mine');
+      expect(rows[0].paymentStatus).toBe('pending');
+      expect(rows[0].paymentSettledBy ?? null).toBeNull();
+      expect(userTagService.grantCotisant).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('uuid-new'));
     });
 
     it.each([
       ['still open', 'open'],
       ['closed', 'closed'],
+      // A code nothing here has measured - 5, refused by the payer, is one - is never read as paid.
+      ['in an unmeasured state (5)', 'other'],
     ] as const)('leaves the row pending when the request is %s', async (_label, state) => {
       const { service, rows, core } = makeStore({
         maxSubmissions: 1,
@@ -1010,6 +1084,43 @@ describe('FormsService - the seat a pending payment holds', () => {
       });
       await service.confirmPayment('mine');
       expect(core.calls).toEqual([]);
+    });
+
+    // P3: the ROUTE refuses someone who is neither the submitter nor a manager of the form, before
+    // anything is asked of the provider.
+    it('the route answers 403 to a caller who neither submitted nor manages it', async () => {
+      const { service, rows, core } = makeStore({
+        maxSubmissions: 1,
+        provider: 'lydia',
+        rows: [mine()],
+      });
+      core.stateAnswer = 'paid';
+      const routes = new FormsController(
+        service,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any,
+        {} as any
+      );
+      await expect(routes.confirmPayment('mine', 'intruder', 'false')).rejects.toBeInstanceOf(
+        ForbiddenException
+      );
+      expect(core.calls).toEqual([]);
+      expect(rows[0].paymentStatus).toBe('pending');
+      // The submitter passes the same route.
+      await expect(routes.confirmPayment('mine', 'u1', 'false')).resolves.toMatchObject({
+        paymentStatus: 'paid',
+      });
+    });
+
+    it('the route is throttled per user and submission', () => {
+      const handler = (FormsController.prototype as unknown as Record<string, object>)
+        .confirmPayment;
+      const guards = Reflect.getMetadata('__guards__', handler);
+      expect(guards).toContain(UserResourceThrottlerGuard);
+      expect(CONFIRM_PAYMENT_PER_MINUTE).toBeGreaterThanOrEqual(10);
+      expect(CONFIRM_PAYMENT_PER_MINUTE).toBeLessThanOrEqual(20);
     });
   });
 

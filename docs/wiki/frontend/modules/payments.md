@@ -236,7 +236,16 @@ signatures redacted). One request, `request_id 12115506`, created with `order_re
 - **`request_uuid` is 32 hex digits, no dash** (`077f2efc...`). `payments/request-state` validated
   it as the dashed RFC 4122 shape and refused every real one until this was measured.
 
-**Not measured, and why: state 1 (paid) and state 5 (refused by the payer).** Both are reached
+- **The answer carries no amount**, so `confirm-payment` trusts that the request it reads is the
+  one the row stored at issue time (its own uuid, never the client's) and that its amount is the
+  one `request/do` was sent. **Its `signature` is not verified**: the scheme is undocumented for
+  this call, and the answer is read server to server over TLS from Lydia's own host, which is
+  what makes it trustworthy here - not the signature.
+
+**Not measured, and why: state 1 (paid) and state 5 (refused by the payer).** `1 = paid` is
+**Lydia's documentation, NOT a measurement**, and `confirm-payment`, the settle of a retry and the
+cancel all act on it. **A real sandbox payment, read back with `request/state`, is owed before
+any STABLE ships this.** Both are reached
 only by acting as the PAYER on Lydia's payer page (the homologation page's final-status buttons),
 which is a human at the Lydia form, so they were not driven here. The code reads `1` as paid
 from Lydia's documentation and reports `5`, like any code not measured, as `other`: a retry or a

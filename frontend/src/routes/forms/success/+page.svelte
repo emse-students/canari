@@ -5,6 +5,7 @@
   import { m } from '$lib/paraglide/messages';
   import { confirmSubmissionPayment } from '$lib/forms/api';
   import { paymentReturnVerdict } from '$lib/forms/paymentReturn';
+  import { SocialApiError } from '$lib/associations/api';
 
   /**
    * Lydia's return carries the submission id (it cannot fill in a session id). Each read asks the
@@ -51,6 +52,13 @@
     try {
       await confirmBySubmission(submissionId);
     } catch (err) {
+      if (err instanceof SocialApiError && err.status === 429) {
+        // The server's per-answer limit on asking Lydia (a reload after a full poll): an answer,
+        // not a failure - the callback still decides, and the page says it is awaited.
+        console.info('[forms/success] confirmation limit reached, waiting on the callback');
+        status = 'pending';
+        return;
+      }
       console.error('[forms/success] could not read the submission:', err);
       status = 'error';
     }

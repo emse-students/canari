@@ -18,6 +18,7 @@ import {
   PAYMENT_REQUEST_LIFETIME_SECONDS,
   PREVIOUS_PAYMENT_OPEN,
   SETTLED_PAYMENT_STATUSES,
+  CONFIRMABLE_PAYMENT_STATUSES,
   livePendingWhere,
   lockFormSeats,
   overCapacityFirst,
@@ -1464,8 +1465,12 @@ export class FormsService {
    *
    * ONE ANSWER PER PERSON: on a single-answer form, a late payment whose payer already has another
    * row holding a seat or paid lands `paid_over_capacity`, logged at ERROR.
+   *
+   * `onlyIfRowNames` (the payer's return, `confirmPayment`): the request was read paid OUTSIDE
+   * this lock, so the row must still name that very uuid once locked. If a retry replaced it in
+   * between, the retry's own settle already read that request and decided it - nothing is written.
    */
-  async markPaid(submissionId: string, sessionId?: string) {
+  async markPaid(submissionId: string, sessionId?: string, onlyIfRowNames = false) {
     const found = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!found) throw new NotFoundException('Submission not found');
 
@@ -1478,6 +1483,9 @@ export class FormsService {
           lock: { mode: 'pessimistic_write' },
         });
         if (!submission) throw new NotFoundException('Submission not found');
+        if (onlyIfRowNames && submission.stripeSessionId !== sessionId) {
+          return { submission, status: submission.paymentStatus, replay: true, stale: true };
+        }
         if (SETTLED_PAYMENT_STATUSES.has(submission.paymentStatus)) {
           return { submission, status: submission.paymentStatus, replay: true };
         }
@@ -1534,6 +1542,14 @@ export class FormsService {
       }
     );
     const { submission } = outcome;
+
+    if ('stale' in outcome) {
+      this.logger.warn(
+        `[Forms] markPaid on submission ${submissionId}: request ${sessionId} was read paid, but the ` +
+          `row now names ${submission.stripeSessionId ?? 'no request'} - a retry replaced it and settled it; nothing written`
+      );
+      return { ok: false };
+    }
 
     if (outcome.replay) {
       // The row now names its request by BOTH ids (`paymentRequestId`, the numeric one callbacks
@@ -1611,9 +1627,15 @@ export class FormsService {
   }
 
   /**
-   * Asks the provider whether a `pending` online answer was paid, from the request the ROW names,
-   * and records the payment if so - the payer's return page calls it (`confirm-payment`), so a
+   * Asks the provider whether an online answer was paid, from the request the ROW names, and
+   * records the payment if so - the payer's return page calls it (`confirm-payment`), so a
    * payment whose confirm callback never arrived is still confirmed while the payer is looking.
+   *
+   * Asked of a `pending` row AND of an `expired` or `cancelled` one that names a request: a
+   * payment made at the end of the hold whose callback is lost leaves the row `expired` with no
+   * seat, and `markPaid` already decides a late payment from the row (`paid` while the form has
+   * room, else `paid_over_capacity`). The row is re-checked under its lock to still name the uuid
+   * that was read (`markPaid`'s `onlyIfRowNames`).
    *
    * It is the only confirmation besides the callback. `verify-session` used to be the other one
    * and never worked: it took the submission from the `order_ref` Lydia's `request/state` was
@@ -1629,7 +1651,7 @@ export class FormsService {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
     const sessionId = submission.stripeSessionId;
-    if (submission.paymentStatus === 'pending' && sessionId) {
+    if (CONFIRMABLE_PAYMENT_STATUSES.has(submission.paymentStatus) && sessionId) {
       const form = await this.formRepo.findOne({ where: { id: submission.formId } });
       const connectAccountId = form?.associationId
         ? await this.associationsService.getPaymentAccountId(form.associationId)
@@ -1649,7 +1671,7 @@ export class FormsService {
             this.logger.log(
               `[Forms] confirmPayment ${submissionId}: request ${sessionId} is PAID at the provider - recorded`
             );
-            await this.markPaid(submissionId, sessionId);
+            await this.markPaid(submissionId, sessionId, true);
           } else {
             this.logger.debug(
               `[Forms] confirmPayment ${submissionId}: request ${sessionId} is ${data?.state ?? 'unknown'} (${data?.raw ?? ''})`
