@@ -1,6 +1,6 @@
 import { BadRequestException, Logger } from '@nestjs/common';
 import axios from 'axios';
-import { signLydiaParams } from './lydia-signature';
+import { verifyLydiaSignature } from './lydia-signature';
 import { parseLydiaOrderRef, orderRefToMetadata } from './lydia-order-ref';
 import type { ConnectAccountStatusResponse } from './payment-provider.interface';
 import type {
@@ -297,7 +297,6 @@ export class LydiaPaymentProvider implements PaymentProvider {
   /** Verifies a `confirm_url`/`cancel_url`/`expire_url` callback signature from `request/do`. */
   verifyRequestCallback(fields: Record<string, string>, signature: string): boolean {
     if (!this.providerPrivateToken) return false;
-    const expected = signLydiaParams(fields, this.providerPrivateToken);
-    return expected === signature;
+    return verifyLydiaSignature(fields, this.providerPrivateToken, signature);
   }
 }

@@ -2,7 +2,13 @@ import axios from 'axios';
 import * as bodyParser from 'body-parser';
 import { Logger, type INestApplication } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
-import { PaymentWebhookController } from './webhook.controller';
+import {
+  PaymentWebhookController,
+  describeContentType,
+  describeFieldNames,
+} from './webhook.controller';
+import { LydiaPaymentProvider } from './lydia-payment-provider';
+import { signLydiaParams } from './lydia-signature';
 import { PaymentService } from './payment.service';
 
 jest.mock('axios');
@@ -141,7 +147,7 @@ describe('PaymentWebhookController.handleLydiaRequestCallback - what a refusal s
     const line = String(errorSpy.mock.calls[0]?.[0]);
     expect(line).toContain('outcome=cancel');
     expect(line).toContain('content-type=multipart/form-data');
-    expect(line).toContain('fields=[amount,note]');
+    expect(line).toContain('2 field(s)=[amount,note]');
     expect(line).not.toContain('secret-value');
   });
 });
@@ -201,5 +207,94 @@ describe('POST /api/payments/lydia-request-callback - the body types it reads', 
     expect((await encoded.json()).message).toBe('Invalid signature');
     expect((await json.json()).message).toBe('Invalid signature');
     expect(verify).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('what a refused callback may put in the log', () => {
+  it('caps the names, shortens each and strips what could forge a line', () => {
+    const body: Record<string, unknown> = { 'a\nERROR forged line': '1', ['x'.repeat(200)]: '2' };
+    for (let i = 0; i < 40; i++) body[`k${i}`] = 'v';
+
+    const line = describeFieldNames(body);
+
+    expect(line).not.toMatch(/[\r\n]/);
+    expect(line).toContain('42 field(s)=[');
+    expect(line).toContain('aERRORforgedline');
+    expect(line.split(',')).toHaveLength(16);
+    expect(line.length).toBeLessThan(16 * 33 + 40);
+  });
+
+  it('reduces the content type to a bounded media type', () => {
+    expect(describeContentType('multipart/form-data; boundary=----abc')).toBe(
+      'multipart/form-data'
+    );
+    expect(describeContentType(undefined)).toBe('none');
+    expect(describeContentType('text/x\nERROR ' + 'y'.repeat(200)).length).toBeLessThanOrEqual(48);
+  });
+});
+
+describe('a multipart callback through the REAL signature check', () => {
+  const PRIVATE = 'test-provider-private-token';
+  let app: INestApplication;
+  let baseUrl: string;
+
+  beforeAll(async () => {
+    const provider = new LydiaPaymentProvider({ LYDIA_PROVIDER_PRIVATE_TOKEN: PRIVATE });
+    const moduleRef = await Test.createTestingModule({
+      controllers: [PaymentWebhookController],
+      providers: [
+        {
+          provide: PaymentService,
+          useValue: {
+            verifyLydiaRequestCallback: (f: Record<string, string>, sig: string) =>
+              provider.verifyRequestCallback(f, sig),
+          },
+        },
+      ],
+    }).compile();
+    app = moduleRef.createNestApplication();
+    app.use(bodyParser.json());
+    app.use(bodyParser.urlencoded({ extended: true }));
+    await app.listen(0);
+    baseUrl = (await app.getUrl()).replace('[::1]', 'localhost');
+  });
+  afterAll(() => app.close());
+
+  const signed = {
+    request_id: '12115504',
+    amount: '5.00',
+    currency: 'EUR',
+    order_ref: 'unknown-ref',
+    vendor_token: '6ac36045f16e4830718291',
+  };
+  const post = (fields: Record<string, string>) => {
+    const form = new FormData();
+    for (const [k, v] of Object.entries(fields)) form.append(k, v);
+    return fetch(`${baseUrl}/payments/lydia-request-callback?outcome=expire`, {
+      method: 'POST',
+      body: form,
+    });
+  };
+
+  it('accepts a correctly signed multipart body with the fields Lydia sends', async () => {
+    const res = await post({
+      ...signed,
+      sig: signLydiaParams(signed, PRIVATE),
+      state: '3',
+      request_uuid: 'abcdef',
+    });
+    expect(await res.json()).toEqual({ received: true });
+  });
+
+  it('refuses the same body with a wrong signature', async () => {
+    const res = await post({ ...signed, sig: signLydiaParams(signed, 'another-token') });
+    expect((await res.json()).message).toBe('Invalid signature');
+  });
+
+  it('refuses a body with more fields than the route allows, before any verification', async () => {
+    const many: Record<string, string> = { ...signed, sig: 'x' };
+    for (let i = 0; i < 30; i++) many[`extra${i}`] = '1';
+    const res = await post(many);
+    expect(res.status).toBe(400);
   });
 });

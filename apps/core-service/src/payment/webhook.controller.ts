@@ -30,6 +30,40 @@ function assertValidSubmissionId(submissionId: string): void {
   }
 }
 
+/** Multer limits for the public Lydia callback route: a few short text fields, never a file. */
+export const LYDIA_CALLBACK_BODY_LIMITS = {
+  fields: 16,
+  fieldSize: 4096,
+  parts: 16,
+  files: 0,
+} as const;
+
+/** Most field names a refusal line carries, and the longest one: the sender decides every name. */
+const LOGGED_FIELD_NAMES = 16;
+const LOGGED_NAME_LENGTH = 32;
+
+/**
+ * The field NAMES of a refused body, safe to log: the sender controls them, so they are capped in
+ * number and length and stripped of anything outside `[w.-]` (a newline in a key would forge a log
+ * line). Names only, never a value.
+ */
+export function describeFieldNames(body: Record<string, unknown> | undefined): string {
+  const names = Object.keys(body ?? {});
+  const shown = names
+    .slice(0, LOGGED_FIELD_NAMES)
+    .map((name) => name.replace(/[^\w.-]/g, '').slice(0, LOGGED_NAME_LENGTH));
+  return `${names.length} field(s)=[${shown.join(',')}]`;
+}
+
+/** The media type of a request, bounded and stripped like a field name (the header is the sender's too). */
+export function describeContentType(contentType: string | undefined): string {
+  const mediaType = (contentType ?? '')
+    .split(';')[0]
+    .toLowerCase()
+    .replace(/[^\w/.+-]/g, '');
+  return mediaType.slice(0, 48) || 'none';
+}
+
 @Controller('payments')
 export class PaymentWebhookController {
   private readonly logger = new Logger(PaymentWebhookController.name);
@@ -107,7 +141,10 @@ export class PaymentWebhookController {
   // Reads the text fields of a `multipart/form-data` body: the global parsers only know JSON and
   // urlencoded, and Lydia's two real callbacks of 2026-10-15 reached this route with NO field at all.
   // A body of any other type passes through untouched.
-  @UseInterceptors(NoFilesInterceptor())
+  // The route is PUBLIC and unauthenticated, so multer is bounded before it parses anything: Lydia's
+  // callback carries about eight fields, and an unbounded parser would hold 20 000 fields or 60 x 1 MB
+  // parts in memory for any caller.
+  @UseInterceptors(NoFilesInterceptor({ limits: LYDIA_CALLBACK_BODY_LIMITS }))
   async handleLydiaRequestCallback(
     @Query('outcome') outcome: string,
     @Body() body: Record<string, unknown>,
@@ -129,7 +166,7 @@ export class PaymentWebhookController {
       // type we do not parse from field names we do not know.
       this.logger.error(
         `Lydia request-callback refused: no request_id or sig (outcome=${outcome}, ` +
-          `content-type=${contentType ?? 'none'}, fields=[${Object.keys(body ?? {}).join(',')}])`
+          `content-type=${describeContentType(contentType)}, ${describeFieldNames(body)})`
       );
       throw new BadRequestException('Missing request_id or sig');
     }

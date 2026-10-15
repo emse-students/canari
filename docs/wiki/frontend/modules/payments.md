@@ -268,7 +268,10 @@ Two real calls from Lydia's servers (an `expire` at 16:40Z and a `cancel` at 16:
 logged nothing: the global parsers read JSON and urlencoded only, so a body of any other type arrives
 with no field at all. **The route now reads `multipart/form-data` too** (`NoFilesInterceptor`, which
 leaves every other body type alone), and a refusal for missing fields logs the content type and the
-FIELD NAMES, never a value. **This is a hypothesis about Lydia's body type, not an observation of
+FIELD NAMES, never a value - at most 16 names of 32 characters from `[w.-]`, plus the count, because the
+sender chooses every name and a newline in one would forge a log line. **The route is public, so
+multer is bounded** (16 fields, 4096 bytes each, 16 parts, no file) and the signature comparison is
+`timingSafeEqual`. **This is a hypothesis about Lydia's body type, not an observation of
 it**: the test reproduces the exact symptom without the interceptor, but the next real callback's
 log line is what settles it. No callback has yet been verified, so which private token signs one
 (the Provider's, as `verifyRequestCallback` assumes, or the Business's, as Lydia's CSM wrote on
