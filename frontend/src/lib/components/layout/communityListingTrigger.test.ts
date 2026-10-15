@@ -49,6 +49,17 @@ describe('a device that owes an unlock draws nothing of the account before it (F
     expect(out.slice(0, 200)).toContain('noteUnlockNeedsMember();');
   });
 
+  it('every keypad on screen marks the unlock owed: one function draws it (review 2026-10-15)', () => {
+    // A saved unlock that failed after an unattended read, and a PIN reset, used to set the flag
+    // directly and leave the device marked unlocked behind the keypad.
+    expect(source.match(/showPinModal = true;/g)).toHaveLength(1);
+    const gate = source.slice(source.indexOf('function showPinGate('));
+    const body = gate.slice(0, gate.indexOf('showPinModal = true;'));
+    expect(body).toContain('noteUnlockNeedsMember();');
+    expect(source).toContain("showPinGate('saved unlock failed');");
+    expect(source).toContain("showPinGate('PIN reset');");
+  });
+
   it('only a vault slot whose owner is proven, or a keystore read with no prompt, unlocks unattended', () => {
     expect(source).toContain('if (vaulted.ownerProven) noteUnlockUnattended(savedUser);');
     expect(source).toMatch(

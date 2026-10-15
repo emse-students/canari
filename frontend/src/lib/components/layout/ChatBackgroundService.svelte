@@ -574,6 +574,17 @@
    * trip, ~0.5 s of a cold start behind a notification - is asked only by a device that never did.
    * See {@link firstPinSetupFromDevice}.
    */
+  /**
+   * The ONE place the keypad is put on screen. A keypad on screen means a PIN is owed, so the
+   * unlock fact is set back to "needs the member" here and nowhere else: every caller that draws
+   * the keypad also hides the community list and holds the pre-session listing (F1).
+   */
+  function showPinGate(reason: string): void {
+    noteUnlockNeedsMember();
+    appendLog(`[PIN] Keypad shown (${reason}) - the unlock is owed to the member`);
+    showPinModal = true;
+  }
+
   async function openPinModal(uid: string, opts?: { deviceIdUnproven?: boolean }) {
     // A PIN is owed: the device is locked from here until the unlock, whatever page is shown (F1).
     noteUnlockNeedsMember();
@@ -592,7 +603,7 @@
     // The salt does not depend on the PIN, so it is asked while the person types. A first setup
     // is excluded: on a user without a salt that GET is a write (see `prefetchPinSaltImpl`).
     if (!isFirstPinSetup) globalSession.prefetchPinSalt(appendLog);
-    showPinModal = true;
+    showPinGate('open');
   }
 
   /**
@@ -737,7 +748,7 @@
       return;
     }
     isFirstPinSetup = false;
-    showPinModal = true;
+    showPinGate('saved unlock failed');
     applyPinFailure(globalSession.userId || currentUserId() || '', code);
   }
 
@@ -1962,7 +1973,7 @@
       // Deliberately NOT gated on `mayPromptForPin`: the POST above carried a live access token, so
       // the credential is not dead, and the local MLS state is already wiped. Declining the keypad
       // here would strand the user mid-reset with nothing to unlock and no way to finish.
-      showPinModal = true;
+      showPinGate('PIN reset');
     } catch (e) {
       // The `Server-side PIN reset failed.` thrown above is a DEV line and used to be shown as it
       // stood - an English sentence on a French modal, and the only thing the reader was told.

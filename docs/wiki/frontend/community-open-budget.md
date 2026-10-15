@@ -300,6 +300,18 @@ open on this build, and also on `main` when the tap was fast (one main run in th
   - Now `loadChannelHistory` fetches the page at once but DECODES it only when no listing or entry
     still in flight can enter the salon (`whenSalonEntryDecided` in `salonSendGate.ts`).
   - An entered salon waits for nothing, and nothing ever waits for a listing that has not started.
+  - **The wait is bounded by LISTING STATE, not by a clock.** It ends when the salon is entered,
+    when the last listing or entry in flight settles, or when the session ends
+    (`resetSalonSendGate` wakes every reader). A listing whose fetch HANGS therefore holds
+    decoding for as long as it hangs. `apiFetch` has no per-request timeout
+    ([local-first-ui ledger row 6](local-first-ui.md#4-the-ledger---what-is-fixed-what-is-not)), so
+    a hung fetch is held for as long as the platform's HTTP stack keeps the request open. The fix
+    belongs to that row, not to a timer here.
+- **Every keypad marks the unlock owed.** One function draws the keypad (`showPinGate` in
+  `ChatBackgroundService`), and it resets the unlock fact. Before this fix, the keypad could be
+  drawn with the device still marked as unlocked unattended, which left the rail drawn and the
+  listing running behind it. Two paths did this: a saved unlock that failed after an unattended
+  read, and a PIN reset.
 - **A press that joins a background load** raises the skeleton; the joined load owns it.
 - **A saved row tapped early, for a salon closed to the member since,** becomes a landing that ends
   at the listing's own answer: the landing was published before the request, and the answer does
