@@ -51,11 +51,4 @@ export type HistoryStreamRow = {
 export type HistoryPage = {
   rows: HistoryStreamRow[];
   head?: string;
-  /**
-   * The last row of a tail the server DROPPED for this reader - sent while it was out of the group
-   * (a Remove holds against a later re-add). None of it will ever be this reader's, so a walk's
-   * cursor moves there as if it had walked those rows; without it, a reader whose only unread rows
-   * lie in its window rescans them on every launch. Absent unless the page ended on such a tail.
-   */
-  skipTo?: string;
 };

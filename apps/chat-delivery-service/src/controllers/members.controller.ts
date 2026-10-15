@@ -37,6 +37,7 @@ import {
   ensureGroupMember,
   endGroupMembership,
   exclusionWindows,
+  openMissingIntervals,
   partingKey,
   type ExclusionWindow,
 } from '../utils/group-membership';
@@ -829,33 +830,20 @@ export class MembersController {
 
     // Members outside every open interval - see the docstring. Repaired before the answer is built,
     // so the answer already carries the window between their last close and their arrival.
-    const unopened = members.filter((m) => !(byUser.get(m.userId) ?? []).some((r) => !r.leftAt));
-    if (unopened.length > 0) {
-      await this.dataSource.manager
-        .createQueryBuilder()
-        .insert()
-        .into(GroupMembershipInterval)
-        .values(
-          unopened.map((m) => ({
-            groupId: safeGroupId,
-            userId: m.userId,
-            joinedAt: m.joinedAt,
-            leftAt: null,
-          }))
-        )
-        .orIgnore()
-        .execute();
-      for (const m of unopened) {
-        const list = byUser.get(m.userId) ?? [];
-        list.push({
-          userId: m.userId,
-          joinedAt: m.joinedAt,
-          leftAt: null,
-        } as GroupMembershipInterval);
-        byUser.set(m.userId, list);
+    const opened = await openMissingIntervals(
+      this.dataSource.manager,
+      safeGroupId,
+      members,
+      byUser
+    );
+    if (opened.length > 0) {
+      for (const row of opened) {
+        const list = byUser.get(row.userId) ?? [];
+        list.push(row as GroupMembershipInterval);
+        byUser.set(row.userId, list);
       }
       this.logger.error(
-        `[GROUP_EXCLUSIONS] group=${safeGroupId.slice(0, 8)} opened ${unopened.length} missing interval(s) - member(s) enrolled by pre-030 code; a window they were out for before that is not recorded`
+        `[GROUP_EXCLUSIONS] group=${safeGroupId.slice(0, 8)} opened ${opened.length} missing interval(s) - member(s) enrolled by pre-030 code or by an interrupted enrolment; a window they were out for before that is not recorded`
       );
     }
 

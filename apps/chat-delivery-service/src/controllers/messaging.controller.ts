@@ -247,7 +247,7 @@ export class MessagingController {
     @Headers('x-canari-device') headerDeviceId?: string
   ): Promise<Record<string, unknown>[]> {
     const limit = limitRaw ? parseInt(limitRaw, 10) : undefined;
-    const { rows, head, skipTo } = await this.messagingService.getHistory(
+    const { rows, head } = await this.messagingService.getHistory(
       groupId,
       after,
       headerUserId,
@@ -257,9 +257,6 @@ export class MessagingController {
       headerDeviceId
     );
     if (head) res.setHeader('X-History-Head', head);
-    // The last row of a tail dropped for this reader: a cursor may move past it (see
-    // `readHistoryStreamPage`). A header for the same reason as the head - the body stays an array.
-    if (skipTo) res.setHeader('X-History-Skip-To', skipTo);
     return rows;
   }
 

@@ -671,65 +671,6 @@ describe('the walk is bounded by the head observed at its start', () => {
 
     expect(fetchHistory).toHaveBeenCalledWith(GROUP, '3-0', undefined, undefined);
   });
-
-  /**
-   * A TAIL THE SERVER DROPPED FOR THIS READER (sent while it was out of the group) moves the cursor:
-   * none of it is ever this reader's, and a cursor left before it rescans it on every launch (fourth
-   * review of #1878). The server names it only when the page reached the bound - the walk ends.
-   */
-  describe('a dropped tail named by the server', () => {
-    const CURSOR_KEY = `history_last_stream_id:${USER}:${GROUP}`;
-    const replayPrimed = async (primedFirstPage: {
-      rows: ReturnType<typeof rowAt>[];
-      head?: string;
-      skipTo?: string;
-    }) => {
-      localStorage.removeItem(CURSOR_KEY);
-      const fetchHistory = vi.fn().mockResolvedValue({ rows: [] });
-      const mlsService = createMlsServiceStub({
-        getLocalGroups: vi.fn().mockReturnValue([GROUP]),
-        fetchHistory,
-        createDecryptSession: vi.fn().mockResolvedValue({
-          decryptPage: vi
-            .fn()
-            .mockResolvedValue(primedFirstPage.rows.map(() => ({ ok: true, plaintext: null }))),
-          finish: vi.fn().mockResolvedValue(undefined),
-        }),
-      });
-      const commit = await replayConversationHistory({
-        mlsService,
-        id: GROUP,
-        contactName: 'peer',
-        userId: USER,
-        deviceKey: () => 'device-key',
-        storage: null,
-        getConversation: () => undefined,
-        setConversation: () => undefined,
-        messageReactions: new Map(),
-        log: () => undefined,
-        primedFirstPage,
-      });
-      commit?.();
-      return fetchHistory;
-    };
-
-    it('an empty page naming one saves the cursor there', async () => {
-      await replayPrimed({ rows: [], head: '9-0', skipTo: '9-0' });
-
-      expect(localStorage.getItem(CURSOR_KEY)).toBe('9-0');
-    });
-
-    it('a page ending on one walks its rows, moves past the tail, and asks for nothing more', async () => {
-      const fetchHistory = await replayPrimed({
-        rows: [rowAt('3-0', 0x04)],
-        head: '9-0',
-        skipTo: '8-0',
-      });
-
-      expect(fetchHistory).not.toHaveBeenCalled();
-      expect(localStorage.getItem(CURSOR_KEY)).toBe('8-0');
-    });
-  });
 });
 
 /**

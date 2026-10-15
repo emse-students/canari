@@ -210,40 +210,58 @@ describe('a history read names who asked', () => {
     });
 
     /**
-     * A reader whose only unread rows lie in its own window used to rescan them on every launch: a
-     * cursor only moves over rows it is handed (fourth review of #1878). The server names the
-     * dropped tail; a current build saves it as its cursor.
+     * A ROSTER MEMBER WITH NO OPEN INTERVAL (an enrolment interrupted between its two statements) is
+     * NOT read as out of the group from their last close onwards: that dropped every row since their
+     * removal although they were a member again (fifth review of #1878). The interval is opened from
+     * the roster row, as `GET .../exclusions` does, before the window is computed.
      */
-    it('a dropped tail is named, so a saved cursor never rescans it - and a later row still arrives', async () => {
-      stream = [];
-      put(1, 2);
-      for (let n = 2; n <= 6; n++) put(n, 4); // the tail, inside the window
+    it('repairs a roster member with no open interval instead of reading them as still out', async () => {
+      intervalFind.mockResolvedValue([
+        {
+          groupId: GROUP,
+          joinedAt: at('2026-10-01T00:00:00Z'),
+          leftAt: at('2026-10-03T00:00:00Z'),
+        },
+      ]);
+      const execute = jest.fn().mockResolvedValue({});
+      const insert = { into: jest.fn(), values: jest.fn(), orIgnore: jest.fn(), execute };
+      insert.into.mockReturnValue(insert);
+      insert.values.mockReturnValue(insert);
+      insert.orIgnore.mockReturnValue(insert);
+      const internals = service as unknown as {
+        groupRepo: { manager: Record<string, unknown> };
+        groupMemberRepo: { findOne: jest.Mock };
+      };
+      internals.groupRepo.manager.createQueryBuilder = () => ({ insert: () => insert });
+      internals.groupMemberRepo.findOne.mockResolvedValue({
+        userId: USER,
+        joinedAt: at('2026-10-05T00:00:00Z'),
+      });
 
-      const first = await service.getHistory(GROUP, '0-0', USER, ADMIN, 200);
-      expect(first.rows.map((r) => r['id'])).toEqual(['1-0']);
-      expect(first.skipTo).toBe('6-0');
+      const page = await service.getHistory(GROUP, undefined, USER, ADMIN);
 
-      // Relaunch from the saved cursor: nothing to rescan.
-      redis.xrange.mockClear();
-      const relaunch = await service.getHistory(GROUP, first.skipTo, USER, ADMIN, 200);
-      expect(relaunch.rows).toEqual([]);
-      expect(relaunch.skipTo).toBeUndefined();
-      const scanned = (await Promise.all(
-        redis.xrange.mock.results.map((r) => r.value as Promise<unknown[]>)
-      )) as unknown[][];
-      expect(scanned.flat()).toEqual([]);
-
-      // A legitimate row appended after the dropped tail is handed on the next launch.
-      put(7, 6);
-      const later = await service.getHistory(GROUP, first.skipTo, USER, ADMIN, 200);
-      expect(later.rows.map((r) => r['id'])).toEqual(['7-0']);
+      // Without the repair, 3-0 (the 6th) falls in a window open from the 3rd and is dropped.
+      expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '3-0']);
+      expect(insert.values).toHaveBeenCalledWith([
+        { groupId: GROUP, userId: USER, joinedAt: at('2026-10-05T00:00:00Z'), leftAt: null },
+      ]);
+      expect(execute).toHaveBeenCalledTimes(1);
+      expect(lines()).toContain('opened a missing interval');
     });
 
-    it('names no tail when the last row read was handed', async () => {
-      const page = await service.getHistory(GROUP, '0-0', USER, ADMIN, 200);
+    it('a person with no roster row and a closed interval is still read as out', async () => {
+      intervalFind.mockResolvedValue([
+        {
+          groupId: GROUP,
+          joinedAt: at('2026-10-01T00:00:00Z'),
+          leftAt: at('2026-10-03T00:00:00Z'),
+        },
+      ]);
 
-      expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '3-0']);
-      expect(page.skipTo).toBeUndefined();
+      const page = await service.getHistory(GROUP, undefined, USER, ADMIN);
+
+      expect(page.rows.map((r) => r['id'])).toEqual(['1-0']);
+      expect(lines()).not.toContain('opened a missing interval');
     });
 
     it('counts a cursor followed only by withheld rows as caught up, not as a line per launch', async () => {

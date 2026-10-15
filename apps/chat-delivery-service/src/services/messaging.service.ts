@@ -31,6 +31,7 @@ import { mlsFrameEpoch } from '../utils/mls-frame-epoch';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import {
   exclusionWindows,
+  openMissingIntervals,
   partingKey,
   withholdExcludedHistoryRows,
   type ExclusionWindow,
@@ -396,12 +397,6 @@ export interface HistoryBatchResponse {
    * Absent for a group that holds no history at all (nothing to bound).
    */
   heads: Record<string, string>;
-  /**
-   * Per group, the last row of a tail the server DROPPED for this reader (sent while they were out
-   * of the group): a cursor may move there, as if those rows had been walked. Absent unless the
-   * page ended on such a tail - see `readHistoryStreamPage`.
-   */
-  skipTo?: Record<string, string>;
 }
 
 /** Redis stream MAXLEN (~1000) — upper bound for a full catch-up page. */
@@ -3302,14 +3297,14 @@ export class MessagingService {
    * are read again by the next page and dropped again - nothing is skipped that a later page would
    * not reach.
    *
-   * **A DROPPED TAIL IS NAMED, SO A CURSOR CAN MOVE PAST IT** (`skipTo`). Every build advances only
-   * over rows it was handed, so a reader whose only unread rows lie in its own window would rescan
-   * them on every launch. When the read reached the bound having kept everything it may hand and
-   * dropped what followed, `skipTo` is the last row read: nothing up to it will ever be this reader's
-   * - a window is a closed past - so a current build moves its cursor there, and the next launch reads
-   * from it. State, not a clock. An older build ignores the field, and its rescan is bounded by the
-   * chunk above; its cursor followed only by dropped rows up to the head is still counted as caught
-   * up rather than logged on every launch.
+   * **A DROPPED TAIL IS RESCANNED, ON PURPOSE.** A reader whose only unread rows lie in its own window
+   * reads them again on every launch, because every build advances only over rows it was handed. The
+   * rescan is bounded by the stream's `MAXLEN` and costs whole chunks. Naming the tail so the cursor
+   * could jump it (`skipTo`) was built and DELETED (fifth review of #1878): a window read wrongly
+   * open - a roster row with no open interval - moved the cursor past rows the later repair made
+   * entitled again, hiding them for good. A bounded rescan is the cost of never hiding a row
+   * (history-reconciliation, backlog P3). A cursor followed only by dropped rows up to the head is
+   * still counted as caught up rather than logged on every launch.
    */
   private async readHistoryStreamPage(
     groupId: string,
@@ -3323,7 +3318,6 @@ export class MessagingService {
     rows: Record<string, unknown>[];
     head?: string;
     caughtUp: boolean;
-    skipTo?: string;
   }> {
     const streamKey = `history:${groupId}`;
     const endId = until ?? '+';
@@ -3334,8 +3328,6 @@ export class MessagingService {
     let withheld = 0;
     let read = 0;
     let lastRead = after;
-    let truncated = false;
-    let reachedBound = false;
     while (kept.length < limit) {
       const startId = lastRead ? `(${lastRead}` : '-';
       const entries = await this.redis.xrange(streamKey, startId, endId, 'COUNT', chunk);
@@ -3343,20 +3335,9 @@ export class MessagingService {
       if (entries.length > 0) lastRead = entries[entries.length - 1][0];
       const page = withholdExcludedHistoryRows(this.mapHistoryEntries(entries), windows ?? []);
       withheld += page.withheld;
-      const room = limit - kept.length;
-      if (page.rows.length > room) truncated = true;
-      kept.push(...page.rows.slice(0, room));
-      if (entries.length < chunk) {
-        reachedBound = true;
-        break;
-      }
-      if (!filtering) break;
+      kept.push(...page.rows.slice(0, limit - kept.length));
+      if (entries.length < chunk || !filtering) break;
     }
-    const lastKept = kept.length > 0 ? String(kept[kept.length - 1]['id']) : after;
-    const skipTo =
-      filtering && reachedBound && !truncated && read > 0 && lastRead !== lastKept
-        ? lastRead
-        : undefined;
     const head = until
       ? until
       : ((await this.redis.xrevrange(streamKey, '+', '-', 'COUNT', 1))[0]?.[0] ?? undefined);
@@ -3368,12 +3349,10 @@ export class MessagingService {
       this.logger.log(
         `[HISTORY] ${requester} group=${groupId} after=${after ?? 'start'} ` +
           `until=${until ?? 'none'} head=${head ?? 'empty'} limit=${limit} entries=${kept.length}` +
-          (withheld > 0
-            ? ` withheld=${withheld} (sent while the reader was out of the group)${skipTo ? ` skipTo=${skipTo}` : ''}`
-            : '')
+          (withheld > 0 ? ` withheld=${withheld} (sent while the reader was out of the group)` : '')
       );
     }
-    return { rows: kept, head, caughtUp, ...(skipTo ? { skipTo } : {}) };
+    return { rows: kept, head, caughtUp };
   }
 
   /**
@@ -3444,7 +3423,7 @@ export class MessagingService {
     limitRaw?: number,
     untilRaw?: string,
     headerDeviceId?: string
-  ): Promise<{ rows: Record<string, unknown>[]; head?: string; skipTo?: string }> {
+  ): Promise<{ rows: Record<string, unknown>[]; head?: string }> {
     const requester = this.historyRequester(headerUserId, headerDeviceId);
     const groupId = sanitizeQueryValue(groupIdRaw, 'groupId');
     const after = this.sanitizeStreamId(afterRaw);
@@ -3484,7 +3463,6 @@ export class MessagingService {
       return {
         rows: await this.enrichHistoryWithDisplayNames(page.rows),
         head: page.head,
-        ...(page.skipTo ? { skipTo: page.skipTo } : {}),
       };
     } catch (e) {
       this.logger.error(`[HISTORY] ${requester} group=${groupId} error=${String(e)}`);
@@ -3499,6 +3477,12 @@ export class MessagingService {
    *
    * ONE GROUP PER READ, so the batch route isolates a failure to the group it was read for: one
    * Postgres hiccup answers that group empty, never the whole batch.
+   *
+   * **A ROSTER MEMBER WITH NO OPEN INTERVAL IS REPAIRED BEFORE ITS WINDOWS ARE READ** (fifth review
+   * of #1878). Read as it stands, their last closed interval is a window open to now, and every row
+   * since their removal would be dropped although they are a member again. The repair is the one
+   * `GET .../exclusions` runs (`openMissingIntervals`), with the same ERROR line; it costs a roster
+   * read only when no interval is open, so a consistent member pays nothing extra.
    */
   private async ownExclusionWindows(
     headerUserId: string | undefined,
@@ -3506,10 +3490,29 @@ export class MessagingService {
   ): Promise<ExclusionWindow[]> {
     const userId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
     if (!userId) return [];
-    const intervals = await this.groupRepo.manager.find(GroupMembershipInterval, {
-      where: { userId, groupId },
-      select: { groupId: true, joinedAt: true, leftAt: true },
-    });
+    const intervals: Array<{ joinedAt: Date; leftAt: Date | null }> =
+      await this.groupRepo.manager.find(GroupMembershipInterval, {
+        where: { userId, groupId },
+        select: { groupId: true, joinedAt: true, leftAt: true },
+      });
+    if (intervals.length > 0 && !intervals.some((r) => r.leftAt === null)) {
+      const member = await this.groupMemberRepo.findOne({
+        where: { groupId, userId },
+        select: { userId: true, joinedAt: true },
+      });
+      if (member) {
+        const opened = await openMissingIntervals(
+          this.groupRepo.manager,
+          groupId,
+          [member],
+          new Map([[userId, intervals]])
+        );
+        intervals.push(...opened);
+        this.logger.error(
+          `[HISTORY] group=${groupId.slice(0, 8)} user=${userId.slice(0, 8)} opened a missing interval - a member with no open interval (pre-030 enrolment or an interrupted one) would have read as out of the group`
+        );
+      }
+    }
     return exclusionWindows(intervals);
   }
 
@@ -3553,7 +3556,6 @@ export class MessagingService {
 
     const histories: Record<string, Record<string, unknown>[]> = {};
     const heads: Record<string, string> = {};
-    const skipTo: Record<string, string> = {};
     let caughtUp = 0;
     await Promise.all(
       normalized.map(async ({ groupId, after, until, limit }) => {
@@ -3577,7 +3579,6 @@ export class MessagingService {
           );
           histories[groupId] = page.rows;
           if (page.head) heads[groupId] = page.head;
-          if (page.skipTo) skipTo[groupId] = page.skipTo;
           if (page.caughtUp) caughtUp++;
         } catch (e) {
           this.logger.error(`[HISTORY_BATCH] ${requester} group=${groupId} error=${String(e)}`);
@@ -3594,7 +3595,7 @@ export class MessagingService {
       `[HISTORY_BATCH] ${requester} groups=${normalized.length} authorized=${authorized.size} ` +
         `caughtUp=${caughtUp}`
     );
-    return { histories, heads, ...(Object.keys(skipTo).length > 0 ? { skipTo } : {}) };
+    return { histories, heads };
   }
 
   /**

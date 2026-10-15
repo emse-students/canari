@@ -85,6 +85,42 @@ export async function endGroupMembership(
   return { deleted: del.affected ?? 0, closed: upd.affected ?? 0 };
 }
 
+/**
+ * Opens the missing interval of roster members who have none open, from each roster row's own
+ * `joinedAt` - what the migration's backfill does. A roster member outside every open interval
+ * would otherwise read as out of the group from their last close onwards: every row since then
+ * would be withheld from them, and every answerer would withhold it too.
+ *
+ * Two writers can leave that state: a container still on pre-030 code while the migration was
+ * applied, and `ensureGroupMember` interrupted between its two statements on a caller with no
+ * transaction (the invitation join). Both readers of intervals call this before computing a window,
+ * so whichever reads first heals it. The insert ignores a conflict, so a concurrent repair is
+ * harmless.
+ *
+ * @returns the intervals it opened, for the caller to add to what it already read; empty when
+ *          every member given already had one open.
+ */
+export async function openMissingIntervals(
+  manager: EntityManager,
+  groupId: string,
+  members: ReadonlyArray<{ userId: string; joinedAt: Date }>,
+  intervalsByUser: ReadonlyMap<string, ReadonlyArray<{ leftAt: Date | null }>>
+): Promise<Array<{ userId: string; joinedAt: Date; leftAt: null }>> {
+  const unopened = members.filter(
+    (m) => !(intervalsByUser.get(m.userId) ?? []).some((r) => r.leftAt === null)
+  );
+  if (unopened.length === 0) return [];
+  const opened = unopened.map((m) => ({ userId: m.userId, joinedAt: m.joinedAt, leftAt: null }));
+  await manager
+    .createQueryBuilder()
+    .insert()
+    .into(GroupMembershipInterval)
+    .values(opened.map((o) => ({ groupId, ...o })))
+    .orIgnore()
+    .execute();
+  return opened;
+}
+
 /** One window, in server milliseconds, during which a person was NOT a member. `until: null` = still out. */
 export type ExclusionWindow = { from: number; until: number | null };
 

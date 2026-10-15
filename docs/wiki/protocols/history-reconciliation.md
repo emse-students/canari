@@ -810,7 +810,10 @@ answer path can forget it.
   repair, which forgets the tree, on a device that was not broken. The outbox therefore quotes by id
   only and lets the SEND decide: accepted, the reply went out id-only; refused `sender-not-active`,
   the send's own arm repairs on its own proof. A blank is written to the entry and the echo only once
-  the frame carrying it was accepted, so a refused send keeps the quote for the next decision. Composing reads nothing (the earlier compose-time GET cost a round trip per
+  the frame carrying it was accepted, so a refused send keeps the quote for the next decision. A
+  known crash window remains, and it is accepted. If the app is killed between the accepted send and
+  that write, this device's entry and echo keep the quote text that the frame did not carry. That
+  text was decrypted on this device, so nothing reaches anyone who was out of the group. Composing reads nothing (the earlier compose-time GET cost a round trip per
   reply and blanked a quote for good when composed offline). The native outbox mirror sends frames
   built at enqueue, where no decision can be made, so it mirrors a reply with the quoted id and an
   EMPTY preview always - a background-sent reply quotes by reference only.
@@ -870,13 +873,39 @@ threw on the same row, so a re-added member on a store build lost stream catch-u
 good. A page is filled past what it drops because every build ends its walk on an empty page. **The
 caller sets how much it is handed, never how many reads it costs**: the fill reads chunks of at least
 `HISTORY_FULL_PAGE_LIMIT` (1000) and keeps `limit`, so a stream at `HISTORY_STREAM_MAXLEN` (8000)
-costs at most eight `XRANGE`s - a `limit` of 1 used to buy one read per row. **A dropped tail is
-named** (`skipTo`: the `X-History-Skip-To` header, the batch's `skipTo` map) when the read reached
-the bound having handed everything it may and dropped what followed; a current build moves its cursor
-there, so a reader whose only unread rows lie in its own window does not rescan them on every launch,
-and a row appended after the tail is read on the next. State, not a clock - a window is a closed past.
-An older build ignores the field; its rescan is bounded by the chunk, and a cursor followed only by
-dropped rows up to the head is counted as caught up rather than logged per launch.
+costs at most eight `XRANGE`s - a `limit` of 1 used to buy one read per row.
+
+**A dropped tail is RESCANNED on every launch, and that is a known, bounded cost.** A cursor advances
+only over rows it was handed. So a re-added reader whose only unread rows lie in its own window reads
+them again at each launch: at most the stream's `MAXLEN`, in whole chunks. A cursor followed only by
+dropped rows up to the head counts as caught up, so it writes no log line per launch.
+
+**Rejected: naming the tail so the cursor jumps it** (`skipTo`, built in the fourth review of #1878,
+deleted in the fifth). A saved `skipTo` could hide entitled rows FOR GOOD, which is worse than a
+bounded rescan. The exact scenario:
+
+1. `ensureGroupMember` is interrupted between its two statements. The invitation join runs it with
+   no transaction, so it leaves a roster row with only the CLOSED interval of the earlier
+   membership.
+2. The interval read took that last close as a window open to now. Every row since the removal was
+   dropped.
+3. `skipTo` moved the cursor to the head.
+4. The later repair opens the interval at the roster row's `joinedAt`. The window shrinks, and the
+   rows after it become entitled again.
+5. The saved cursor is already past those rows, permanently.
+
+Three more things made it unsafe:
+
+- the guards against jumping a kept row were untested;
+- the client did not check that a `skipTo` lay ahead of its cursor and at or before the walk head;
+- a client with an empty local store clears its cursor on every launch, so it never helped there.
+
+What a future version must prove first is in the [backlog](../backlog.md) (P3).
+
+**The interval read repairs before it filters**: a roster member with no open interval gets one from
+their roster row's `joinedAt` (`openMissingIntervals`, shared with `GET .../exclusions`, one ERROR
+line each time), rather than being read as out from their last close.
+
 The window read is per group, inside that group's `try` on the batch route: a failed read answers
 that group empty - never unfiltered - and serves the rest.
 

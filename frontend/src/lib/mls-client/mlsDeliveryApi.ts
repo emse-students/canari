@@ -1447,7 +1447,6 @@ export class MlsDeliveryApi {
       return {
         rows: await res.json(),
         head: res.headers.get('X-History-Head') ?? undefined,
-        skipTo: res.headers.get('X-History-Skip-To') ?? undefined,
       };
     } catch (e) {
       console.error('Fetch History Error:', e);
@@ -1512,14 +1511,9 @@ export class MlsDeliveryApi {
       const data = (await res.json()) as {
         histories?: Record<string, import('$lib/mls-client/historyTypes').HistoryStreamRow[]>;
         heads?: Record<string, string>;
-        skipTo?: Record<string, string>;
       };
       for (const [groupId, rows] of Object.entries(data.histories ?? {})) {
-        out.set(groupId, {
-          rows: rows ?? [],
-          head: data.heads?.[groupId],
-          skipTo: data.skipTo?.[groupId],
-        });
+        out.set(groupId, { rows: rows ?? [], head: data.heads?.[groupId] });
       }
     } catch (e) {
       console.error(`[History] batch of ${chunk.length} group(s) could not be sent:`, e);

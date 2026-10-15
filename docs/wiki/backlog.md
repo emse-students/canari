@@ -185,6 +185,16 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 - **Abuse**: a nickname set by someone else can be an insult. Show who set it (setter id travels with the value), let the target reset it for themselves, make the community case reportable and moderator-reversible ([moderation-and-blocking](moderation-and-blocking.md)), and do not let a blocked user rename the blocker. Length and content limits mirror the profile's; every string through Paraglide.
 - **Open for the user**: in a community, is the setter named to the target; does a nickname outlive its setter leaving.
 
+## P3 - A re-added reader rescans its own dropped tail on every launch (fifth review of #1878, 2026-10-15)
+
+When a re-added reader's only unread history rows fall inside its own exclusion window, the server drops them and the cursor cannot move past them. Every launch reads them again, bounded by `MAXLEN` in whole chunks. This cost is accepted.
+
+Letting the cursor jump the tail (`skipTo`) was built and deleted because it could hide entitled rows for good ([history-reconciliation](protocols/history-reconciliation.md)). A future version must prove three things before it moves a cursor past rows it did not hand:
+
+- every window touching the skipped span is CLOSED and ends after the span;
+- the windows were repaired before the filter ran (no roster member is left without an open interval);
+- the client accepts a skip only when it is ahead of its cursor and at or before the walk head.
+
 ## P3 - `isTransportFailure` still reads EVERY `TypeError` as a transport failure (review of #1843, 2026-10-14)
 
 The browser's `fetch` rejects a transport failure with a plain `TypeError`, and the predicate accepts any `TypeError` for that reason - so a programming error (`cannot read properties of undefined`) inside a `try` around a request is also read as "no answer" and retried or held. Fix proposed and NOT built: wrap the native rejection in `trackedFetch` as `TransportFailureError` (the plugin's is already, `conformPluginFetch`) and narrow the predicate to that class plus `RequestDeadlineError`. App-wide, since every `fetch` that bypasses `trackedFetch` would then stop being read as transport ([offline-and-weak-network](frontend/offline-and-weak-network.md#14-a-transport-failure-is-one-type-on-every-platform-2026-10-14)).

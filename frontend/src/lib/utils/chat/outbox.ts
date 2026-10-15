@@ -1191,6 +1191,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       } finally {
         inFlight = null;
       }
+      // A KNOWN CRASH WINDOW, AND WHY IT IS ACCEPTED: a kill between the accepted send and this
+      // write leaves the local entry and echo with the quote text the frame did not carry. The text is
+      // this device's own (it was decrypted here), so nothing reaches anyone who was out; only this
+      // device keeps showing it. The window is one storage write wide (history-reconciliation).
       await commitQuote();
       // THE SENDER'S OWN COPY GETS THE SERVER TIME every recipient's copy carries. A sender never
       // receives its frame back, so this answer is the only place it can come from - and an undated
