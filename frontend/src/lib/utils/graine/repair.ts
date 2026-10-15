@@ -908,7 +908,10 @@ export async function requestCommunityHistory(
   if (!answerer && ownOnGroup) {
     // Our other devices hold this group and none is online. Filed against the epoch so a pass that
     // changes nothing says nothing again - which is what the request sent into the void used to buy
-    // through `historyAsked`: one per session. The next start reads presence again.
+    // through `historyAsked`: one per session. The next start reads presence again. NOT parked like
+    // the other members ({@link parkHistoryUntilOnline}): the presence store's waiter watches USERS,
+    // and this user is online by definition (it is us), so it would fire at once - no per-device
+    // waiter exists yet (backlog, "Four things the offline cold start fix left open").
     if (epoch !== null) historyUnanswerableAt.set(workspaceId, epoch);
     console.info(
       `[GRAINE] the history of community ${workspaceId.slice(0, 8)} is not asked: no other member, ` +

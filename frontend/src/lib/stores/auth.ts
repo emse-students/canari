@@ -34,6 +34,7 @@ import { forgetPinSaltAhead } from '$lib/composables/session/pinSaltAhead';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 import { flushAndroidCookies } from '$lib/utils/androidCookies';
+import { onAppForegroundChange } from '$lib/utils/appForeground';
 import {
   REFRESH_HEADER,
   clearNativeRefreshToken,
@@ -88,8 +89,28 @@ let _accessToken: string | null = null;
 // Shared in-flight refresh promise - prevents concurrent getToken() callers from
 // each firing a separate /api/auth/refresh request.
 let _pendingRefresh: Promise<string> | null = null;
-/** A refresh was refused for no network since the last one sent - so the line is said once a spell. */
+/**
+ * The transport failure of the refresh SENT while the browser reported no network: the proof every
+ * later caller of the same spell is answered from (see `refresh`). Null when no spell is proven.
+ */
+let _noNetworkSpellFailure: TransportFailureError | null = null;
+/** A refresh was answered from that proof since the spell began - so the line is said once a spell. */
 let _refreshHeldForNoNetwork = false;
+
+/** Ends a no-network spell: the next refresh is sent and becomes the new proof. */
+function endNoNetworkSpell(reason: string): void {
+  if (!_noNetworkSpellFailure) return;
+  _noNetworkSpellFailure = null;
+  _refreshHeldForNoNetwork = false;
+  alog(`refresh no-network spell ended (${reason}) - the next refresh is sent`);
+}
+// Two events end it: the reconnect (the browser's `online`, or any request answered after a
+// transport failure) and the app coming back to the foreground, which is where a WebView that
+// missed `online` while suspended is caught.
+connectivity.onReconnect(() => endNoNetworkSpell('reconnect'));
+onAppForegroundChange((foreground) => {
+  if (foreground) endNoNetworkSpell('foreground');
+});
 
 /**
  * Thrown when the HttpOnly refresh cookie has expired or been revoked (HTTP 401).
@@ -613,23 +634,27 @@ export async function refresh(fetchImpl: typeof fetch = fetch): Promise<string> 
     alog('refresh✗identity split (not asking again until sign-out)');
     throw new IdentitySplitError(split);
   }
-  // NO NETWORK IS A FACT THE BROWSER ALREADY STATED, so it is not learnt again by failing. Each
-  // caller of `getToken` used to send its own refresh into a dead link: an offline cold start on the
-  // Mi 9T (`v1.2.9-alpha.1`, 2026-10-15) logged 23 `refresh✗transport` lines in six seconds, one per
-  // request that wanted a token. The answer is the same transport failure, typed, without a request;
-  // the `online` event that ends the condition re-runs the reconnect listeners, and the next call
-  // asks for real. Said once per spell, not once per caller.
-  if (connectivity.browserReportsNoNetwork()) {
+  // ONE REFRESH PER NO-NETWORK SPELL, NEVER ZERO. Each caller of `getToken` used to send its own
+  // refresh into a dead link: an offline cold start on the Mi 9T (`v1.2.9-alpha.1`, 2026-10-15)
+  // logged 23 `refresh✗transport` lines in six seconds, one per request that wanted a token.
+  //
+  // `navigator.onLine === false` is NOT a proof either way, so it never decides alone: a stale false
+  // (WebKitGTK behind a full-tunnel VPN, a WebView that missed the `online` event while suspended)
+  // would lock a signed-in user out if it did - no token means no request, and nothing would ever
+  // answer to end it. So the FIRST refresh of a spell is sent, and its outcome is the proof: an
+  // answer sets reachability and ends the spell; a transport failure, while the browser still says
+  // no network, is the fact every later caller is answered from, without a request. The spell ends
+  // on the reconnect (the `online` event, or any request answered) and on the app's return to the
+  // foreground - events, never a clock.
+  if (_noNetworkSpellFailure && connectivity.browserReportsNoNetwork()) {
     if (!_refreshHeldForNoNetwork) {
       _refreshHeldForNoNetwork = true;
-      alog('refresh not sent: the browser reports no network - held until it reports one');
+      alog(
+        'refresh not sent: the browser reports no network and this spell refresh got no answer - held until the reconnect or the foreground'
+      );
     }
-    throw new TransportFailureError(
-      'navigator.onLine is false',
-      'refresh not sent: the browser reports no network'
-    );
+    throw _noNetworkSpellFailure;
   }
-  _refreshHeldForNoNetwork = false;
   if (_pendingRefresh) return _pendingRefresh;
   _pendingRefresh = _doRefresh(fetchImpl).finally(() => {
     _pendingRefresh = null;
@@ -687,7 +712,10 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
     // `fetch`, whose transport failure is the contract's bare `TypeError: Failed to fetch` - and every
     // caller of `getToken` (the MLS delivery client, the history pulls) printed that raw object, stack
     // and all. The one class `transportFailure.ts` defines says "no answer" by its NAME.
-    throw e instanceof TransportFailureError ? e : new TransportFailureError(e);
+    const failure = e instanceof TransportFailureError ? e : new TransportFailureError(e);
+    // The proof the spell gate in `refresh` answers later callers from - see there.
+    if (connectivity.browserReportsNoNetwork()) _noNetworkSpellFailure = failure;
+    throw failure;
   }
 
   if (!res.ok) {

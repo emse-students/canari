@@ -48,4 +48,16 @@ describe('resolveUserDisplayName when the server gives no answer', () => {
     expect(await resolveUserDisplayName('user-d')).toBeNull();
     expect(noAnswer()).toHaveLength(2);
   });
+
+  it('keeps accusing a plain TypeError: a programming bug is not "no answer"', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    fetchUserProfile.mockRejectedValue(
+      new TypeError("Cannot read properties of undefined (reading 'id')")
+    );
+
+    expect(await resolveUserDisplayName('user-bug')).toBeNull();
+
+    expect(warn.mock.calls.some(([m]) => String(m).includes('profile fetch failed'))).toBe(true);
+    expect(displayNameLookupStats().failed).toBe(1);
+  });
 });

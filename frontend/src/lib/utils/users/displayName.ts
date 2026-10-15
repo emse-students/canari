@@ -5,7 +5,8 @@ import {
   isAbsentUserError,
 } from '$lib/stores/user';
 import { connectivity } from '$lib/stores/connectivity.svelte';
-import { isTransportFailure } from '$lib/utils/transportFailure';
+import { TransportFailureError } from '$lib/utils/transportFailure';
+import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { m } from '$lib/paraglide/messages';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 // The sentinel is imported rather than restated: that a notice carries this sender id, and that no
@@ -386,7 +387,10 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
       // clears the backoff the moment the server answers - and it printed once per user: six lines
       // on the Mi 9T's offline cold start (2026-10-15), each counting into a rate that exists to
       // judge a REFUSING server. Said once per spell instead, with what actually happens.
-      if (isTransportFailure(e)) {
+      // BY THE TRANSPORT TYPES ONLY - `TransportFailureError` (typed at the throw by `trackedFetch`,
+      // `refresh` and the Tauri fetch) or a deadline - never by `TypeError` at large, which a
+      // programming bug throws too and which must keep its accusation below.
+      if (e instanceof TransportFailureError || e instanceof RequestDeadlineError) {
         failedAt.set(normalized, Date.now());
         if (!noAnswerSaid) {
           noAnswerSaid = true;

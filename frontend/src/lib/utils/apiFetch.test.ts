@@ -106,22 +106,57 @@ describe('apiFetch when no token can be obtained', () => {
     expect(err).toBeInstanceOf(RefreshFailedError);
     expect(callsTo('/api/social/feed')).toHaveLength(0);
   });
+});
 
-  it('does not ask for a token at all while the browser reports no network', async () => {
-    // A fact the browser already stated is not learnt again by failing: no refresh, no request.
-    const onLine = vi.spyOn(navigator, 'onLine', 'get').mockReturnValue(false);
-    connectivity.reset();
+/**
+ * ONE refresh per no-network spell: the first is sent and its outcome is the proof, every later
+ * caller of the spell is answered from it, and the reconnect ends the spell. `navigator.onLine` is
+ * driven through the store's own `offline` / `online` listeners.
+ */
+describe('apiFetch while the browser reports no network', () => {
+  const goOffline = () => {
+    connectivity.browserReportsNoNetwork(); // installs the window listeners
+    window.dispatchEvent(new Event('offline'));
+  };
+  const goOnline = () => window.dispatchEvent(new Event('online'));
+
+  it('sends ONE refresh for the spell, answers every later caller from its failure, and sends again after the online event', async () => {
+    refreshStatus = 0;
+    goOffline();
     try {
-      const first = await apiFetch(TARGET).catch((e: unknown) => e);
-      const second = await apiFetch(TARGET).catch((e: unknown) => e);
+      const errors = [];
+      for (let i = 0; i < 5; i++) errors.push(await apiFetch(TARGET).catch((e: unknown) => e));
 
-      expect(first).toBeInstanceOf(TransportFailureError);
-      expect(second).toBeInstanceOf(TransportFailureError);
-      expect(callsTo('/api/auth/refresh')).toHaveLength(0);
+      for (const e of errors) expect(e).toBeInstanceOf(TransportFailureError);
+      expect(callsTo('/api/auth/refresh')).toHaveLength(1);
       expect(callsTo('/api/social/feed')).toHaveLength(0);
+
+      refreshStatus = 200;
+      goOnline();
+      await expect(apiFetch(TARGET)).resolves.toHaveProperty('status', 200);
+      expect(callsTo('/api/auth/refresh')).toHaveLength(2);
     } finally {
-      onLine.mockRestore();
-      connectivity.reset();
+      goOnline();
+    }
+  });
+
+  it('recovers from a STALE false: the spell refresh is sent, answered, and ends the spell', async () => {
+    // WebKitGTK behind a full-tunnel VPN, or a WebView that missed `online` while suspended: the
+    // browser says no network while the server is right there. Refusing on the flag alone would lock
+    // a signed-in user out, since no token means no request and nothing would ever answer.
+    refreshStatus = 200;
+    goOffline();
+    try {
+      const res = await apiFetch(TARGET);
+
+      expect(res.status).toBe(200);
+      expect(callsTo('/api/auth/refresh')).toHaveLength(1);
+      const [, init] = callsTo('/api/social/feed')[0] as unknown as [string, RequestInit];
+      expect((init.headers as Record<string, string>).Authorization).toMatch(/^Bearer h\./);
+      // The answer proved the server reachable: the store no longer believes the browser.
+      expect(connectivity.browserReportsNoNetwork()).toBe(false);
+    } finally {
+      goOnline();
     }
   });
 

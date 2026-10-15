@@ -121,6 +121,36 @@ describe('MlsDeliveryApi.pullPendingMessagesJson', () => {
     warn.mockRestore();
   });
 
+  it.each([
+    ['a TypeError (a browser read cut off)', new TypeError('network error')],
+    ["a bare string (Tauri's plugin)", 'error decoding response body'],
+  ])('still halves when the answer STARTED and its body died - %s', async (_label, failure) => {
+    // A started-then-stopped transfer is an answer too big to arrive whole: the size question.
+    const cutBody = () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('[{"id":'));
+            controller.error(failure);
+          },
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } }
+      );
+    const fetchFn = vi
+      .fn()
+      .mockResolvedValueOnce(cutBody())
+      .mockResolvedValueOnce(json(page(2, '2026-01-01T00:00:00.000Z')))
+      .mockResolvedValueOnce(json([]));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const rows = await api(fetchFn).pullPendingMessagesJson();
+
+    expect(rows).toHaveLength(2);
+    const limits = fetchFn.mock.calls.map((c) => new URL(String(c[0])).searchParams.get('limit'));
+    expect(limits).toEqual(['500', '250', '250']);
+    warn.mockRestore();
+  });
+
   it('never halves, nor sends, when the token itself cannot be had', async () => {
     const fetchFn = vi.fn();
     const getToken = vi.fn(async () => {

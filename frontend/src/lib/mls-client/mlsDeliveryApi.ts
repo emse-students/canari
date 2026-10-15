@@ -579,8 +579,9 @@ export class MlsDeliveryApi {
       } catch (e) {
         // A TRANSPORT FAILURE IS NOT A SIZE PROBLEM. Nobody answered, so no smaller question can get
         // a different answer from the same dead link: halving it eight times was eight warn lines and
-        // eight requests against a fact (`transportFailure.ts`). Only what this function's own
-        // deadline raised - a page that did not ARRIVE - is evidence about its size.
+        // eight requests against a fact (`transportFailure.ts`). A body that STARTED and died is not
+        // that: `fetchJsonUnderProgressDeadline` types it `BodyInterruptedError` (never a
+        // `TypeError`, on either platform), and it halves like a stall - an answer too big to arrive.
         if (isTransportFailure(e)) throw e;
         // A page that does not arrive is a page ASKED FOR TOO BIG, until proven otherwise. Measured
         // on production: a device whose frames carried media needed 12 MB for 500 rows, timed out on
