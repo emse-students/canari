@@ -5,7 +5,7 @@
 import 'fake-indexeddb/auto';
 import { IndexedDbStorage } from './indexeddb';
 import { SqliteStorage } from './sqlite';
-import type { IStorage } from './types';
+import { FeedPageUnreadableError, type IStorage } from './types';
 
 const KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 const OTHER_KEY = 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=';
@@ -54,14 +54,13 @@ describe.each(backends)('%s stored feed pages', (_name, open) => {
     expect(await storage.getFeedPage('feed:custom', KEY)).toBeNull();
   });
 
-  it('opens nothing under another device key, and says so instead of throwing', async () => {
+  it('refuses a page sealed under another device key with a TYPED error, never a null', async () => {
     const storage = await open();
-    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await storage.saveFeedPage('feed:all', { posts: ['a'] }, KEY);
 
-    expect(await storage.getFeedPage('feed:all', OTHER_KEY)).toBeNull();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('[FEED-STORE]'));
-    warn.mockRestore();
+    await expect(storage.getFeedPage('feed:all', OTHER_KEY)).rejects.toBeInstanceOf(
+      FeedPageUnreadableError
+    );
   });
 
   it('deletes every page and counts them', async () => {
@@ -94,5 +93,79 @@ describe('an account reset empties the stored feed', () => {
     await storage.clear();
     expect(await storage.getFeedPage('feed:all', KEY)).toBeNull();
     await storage.close();
+  });
+});
+
+/** Opens `name` at v9 with the stores v9 had, holding one conversation, the way the last build left it. */
+function openV9WithData(name: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(name, 9);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      db.createObjectStore('conversations', { keyPath: 'id' });
+      db.createObjectStore('messages', { keyPath: 'id' }).createIndex(
+        'byConversation',
+        'conversationId',
+        { unique: false }
+      );
+      const outbox = db.createObjectStore('outbox', { keyPath: 'id' });
+      outbox.createIndex('byConversation', 'conversationId', { unique: false });
+      outbox.createIndex('bySentAt', 'sentAt', { unique: false });
+      const graine = db.createObjectStore('graine', { keyPath: 'sessionId' });
+      graine.createIndex('byChannel', 'channelId', { unique: false });
+      graine.createIndex('byWorkspace', 'workspaceId', { unique: false });
+      db.createObjectStore('pendingGroupExits', { keyPath: 'groupId' });
+      db.createObjectStore('distributionGroups', { keyPath: 'groupId' });
+    };
+    req.onsuccess = () => {
+      const db = req.result;
+      const tx = db.transaction('conversations', 'readwrite');
+      tx.objectStore('conversations').put({ id: 'g1', name: 'Kept', lifecycle: 'active' });
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onerror = () => reject(tx.error);
+    };
+    req.onerror = () => reject(req.error);
+  });
+}
+
+describe('the v9 -> v10 upgrade', () => {
+  it('adds the feed store and keeps every row already there', async () => {
+    const user = `upgrade-${Date.now()}-${n++}`;
+    await openV9WithData(`CanariDB_${user}`);
+
+    const storage = new IndexedDbStorage(user);
+    await storage.init();
+
+    expect((await storage.getConversations()).map((c) => c.id)).toEqual(['g1']);
+    await storage.saveFeedPage('feed:all', { posts: ['a'] }, KEY);
+    expect(await storage.getFeedPage('feed:all', KEY)).toEqual({ posts: ['a'] });
+    await storage.close();
+  });
+
+  it('a tab holding the older connection lets go when a newer one upgrades, instead of blocking it', async () => {
+    const storage = await idbStorage();
+    const name = (storage as unknown as { dbName: string }).dbName;
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const reload = vi.spyOn(window.location, 'reload').mockImplementation(() => {});
+
+    // A newer bundle asking for the next version, while this connection is still open.
+    const upgraded = await new Promise<number>((resolve, reject) => {
+      const req = indexedDB.open(name, 11);
+      req.onblocked = () => reject(new Error('blocked by the older connection'));
+      req.onsuccess = () => {
+        const version = req.result.version;
+        req.result.close();
+        resolve(version);
+      };
+      req.onerror = () => reject(req.error);
+    });
+
+    expect(upgraded).toBe(11);
+    expect(storage.isOpen).toBe(false);
+    expect(reload).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
   });
 });

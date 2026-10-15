@@ -27,6 +27,7 @@
   import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { publishFailureMessage } from '$lib/posts/publishFailure';
+  import { adoptServedPost, noInteractionsInFlight } from '$lib/posts/postCardSync';
   import { getForm, checkSubmission } from '$lib/forms/api';
   import Card from '$lib/components/ui/Card.svelte';
   import PostHeader from './PostHeader.svelte';
@@ -87,8 +88,30 @@
   }: Props = $props();
 
   // Local mutable copy - updated directly after interactions to avoid a full list reload.
-  // Re-syncs from postProp whenever the parent explicitly refreshes.
-  let localPost = $derived(untrack(() => ({ ...postProp })));
+  let localPost = $state.raw<PostEntity>(untrack(() => ({ ...postProp })));
+
+  /**
+   * The served row the copy was last taken from, and the writes still in flight on this card.
+   *
+   * A NEW ROW FROM THE PARENT REPLACES THE COPY (`adoptServedPost`). The copy used to be taken once,
+   * so a card drawn from the feed's stored page kept no rights and `canVote: false` for the whole
+   * session after the server's page replaced its row - the keyed list keeps the card (review of
+   * #1896). What a write of this reader is still carrying is kept until that write answers. A row
+   * keeps its identity while the parent only re-slices or filters its list (Svelte's proxies), so
+   * only a real answer is adopted.
+   */
+  let adoptedRow = untrack(() => postProp);
+  const inFlight = noInteractionsInFlight();
+  $effect.pre(() => {
+    const served = postProp;
+    if (served === adoptedRow) return;
+    adoptedRow = served;
+    localPost = adoptServedPost(
+      untrack(() => localPost),
+      served,
+      inFlight
+    );
+  });
 
   let actionMessage = $state('');
   let errorMessage = $state('');
@@ -127,7 +150,7 @@
     const ids = new Set(poll.options.map((o) => o.id));
     return selectedOptions.filter((id) => ids.has(id));
   }
-  // Sync selectedOptions from server data (postProp is reactive; localPost is not).
+  // Sync selectedOptions from the served row (a new row from the parent carries the server's votes).
   $effect(() => {
     const serverVotes = (postProp.polls ?? []).flatMap((p) => p.votesByUser?.[currentUserId] ?? []);
     if (serverVotes.length > 0) {
@@ -280,16 +303,20 @@
     // nothing happen for seconds. The channel-poll path had already reached the other conclusion
     // (applyLocalVote, called before the server); applyPostPollVote is the same decision for the
     // post shape, and it is pure, so the rollback is the post we came in with.
-    const previousPost = localPost;
+    const previousPolls = localPost.polls;
     localPost = applyPostPollVote(localPost, pollId, currentUserId, optionIds);
     actionMessage = optionIds.length === 0 ? m.post_vote_retire() : m.post_vote_enregistre();
+    inFlight.polls++;
     try {
       await votePoll(localPost.id, pollId, { optionIds });
     } catch (err) {
       Log.d('PostCard.submitVote failed', err);
-      localPost = previousPost;
+      // Only the polls go back: a served row adopted meanwhile keeps everything else it said.
+      localPost = { ...localPost, polls: previousPolls };
       actionMessage = '';
       errorMessage = m.post_unable_to_vote();
+    } finally {
+      inFlight.polls--;
     }
   }
 
@@ -315,6 +342,7 @@
     localPost = { ...localPost, reactions: newReactions };
     showReactionPicker = false;
 
+    inFlight.reactions++;
     try {
       // Still never sent to a server certain to refuse it: when nothing is known, this asks -
       // behind a picker that has already closed and a tally that has already moved.
@@ -331,6 +359,8 @@
       Log.d('handleReaction failed', err);
       localPost = { ...localPost, reactions: prevReactions };
       errorMessage = publishFailureMessage(err, m.post_reaction_error());
+    } finally {
+      inFlight.reactions--;
     }
   }
 
@@ -404,6 +434,7 @@
     commentText = '';
     submittingComment = true;
 
+    inFlight.comments++;
     try {
       await assertNotMuted();
       const result = await addComment(localPost.id, { text, parentId, media });
@@ -423,6 +454,7 @@
       if (!commentText.trim()) commentText = text;
       errorMessage = publishFailureMessage(err, m.post_unable_to_comment());
     } finally {
+      inFlight.comments--;
       pendingCommentIds.delete(pendingId);
       submittingComment = false;
     }
@@ -433,7 +465,8 @@
     // THE HEART IS A MEMBERSHIP TEST ON AN ARRAY THIS DEVICE HOLDS. It used to move only when the
     // server answered, and a failure was swallowed - so on a bad link a tap did nothing at all and
     // said nothing either.
-    const previousPost = localPost;
+    const previousComments = localPost.comments;
+    inFlight.comments++;
     localPost = {
       ...localPost,
       comments: (localPost.comments ?? []).map((c) =>
@@ -454,9 +487,11 @@
         comments: (localPost.comments ?? []).map((c) => (c.id === commentId ? result.comment : c)),
       };
     } catch (err) {
-      // Put the heart back rather than leaving a count this device invented.
+      // Put the heart back rather than leaving a count this device invented - the comments only.
       Log.d('handleLikeComment failed', err);
-      localPost = previousPost;
+      localPost = { ...localPost, comments: previousComments };
+    } finally {
+      inFlight.comments--;
     }
   }
 

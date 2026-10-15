@@ -639,8 +639,9 @@ export interface IStorage {
    */
   saveFeedPage(key: string, payload: unknown, deviceKeyB64: string): Promise<void>;
   /**
-   * The stored feed page `key`, opened, or `null` when there is none or it cannot be opened (another
-   * key, a damaged row - reported, never thrown: a copy that cannot be read is a copy not drawn).
+   * The stored feed page `key`, opened, or `null` when there is none. A row that cannot be opened
+   * (sealed under another device key, damaged) rejects with {@link FeedPageUnreadableError}, so the
+   * caller can tell "nothing stored" from "something stored that must go" and delete it.
    */
   getFeedPage(key: string, deviceKeyB64: string): Promise<unknown>;
   /** Delete every stored feed page, returning how many went. Needs no key. */
@@ -651,4 +652,19 @@ export interface IStorage {
    * account reset).
    */
   clear(): Promise<void>;
+}
+
+/**
+ * A stored feed page is there and cannot be opened: sealed under a device key this device no longer
+ * uses, or damaged. Typed at the throw so `readStoredFeedPage` deletes it instead of meeting it again
+ * at every launch.
+ */
+export class FeedPageUnreadableError extends Error {
+  constructor(
+    readonly key: string,
+    options?: { cause?: unknown }
+  ) {
+    super(`stored feed page ${key} cannot be opened`, options);
+    this.name = 'FeedPageUnreadableError';
+  }
 }

@@ -20,16 +20,18 @@
   import { isFeedAudienceRefusal, isOutsideFeedAudience } from '$lib/posts/feedAudience';
   import { feedCacheKey, readFeedCache, writeFeedCache } from '$lib/posts/feedCache';
   import {
-    feedRefusalEndsCopy,
+    feedMayLoadMore,
     feedStoreAccess,
+    firstPageFailure,
     listAfterFirstPage,
     loadStoredFeed,
     saveStoredFeed,
+    storedCopyMayDraw,
+    type FirstPageFailure,
+    type FirstPageState,
   } from '$lib/posts/feedStore';
-  import { forgetStoredFeeds } from '$lib/posts/feedStoreEpoch';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { unlockUnattendedFor } from '$lib/stores/unlockPath.svelte';
-  import { refusalStatus } from '$lib/utils/apiRefusal';
   import { progressiveCount } from '$lib/utils/progressiveMount.svelte';
   import { feedHeldForLanding } from '$lib/posts/feedLandingHold';
   import { notifNav } from '$lib/stores/notifNav.svelte';
@@ -84,7 +86,7 @@
    * Where the current tab's first request stands: `pending`, `answered` (a page came back),
    * `failed` (no answer - transport or 5xx), `refused` (401/403, an answer about this reader).
    */
-  let firstPage = $state<'pending' | 'answered' | 'failed' | 'refused'>('pending');
+  let firstPage = $state<FirstPageState>('pending');
 
   /**
    * The account and key the stored feed may be read and written with now, or `null` while an unlock
@@ -111,18 +113,24 @@
   }
 
   /**
-   * A 401 or 403 is an ANSWER about this reader: every stored page ends, and a copy on screen leaves
-   * it so the no-audience or error state the refusal deserves takes over.
+   * Applies a failed feed read to the screen, as `firstPageFailure` classifies it: a 401/403 ends
+   * every stored page and withdraws a copy on screen, so the refusal's own state is drawn; anything
+   * else keeps the copy, unconfirmed and said once. Returns the classification.
    */
-  function endStoredCopyOnRefusal(err: unknown): boolean {
-    if (!feedRefusalEndsCopy(err)) return false;
-    forgetStoredFeeds(`the feed answered ${refusalStatus(err)}`);
-    if (fromStore) {
+  function applyFirstPageFailure(err: unknown): FirstPageFailure {
+    const failure = firstPageFailure(err, fromStore);
+    if (failure.withdrawCopy) {
       postsOverride = null;
       fromStore = false;
       storedRefreshFailed = false;
     }
-    return true;
+    if (failure.copyUnconfirmed) {
+      storedRefreshFailed = true;
+      console.warn(
+        `[FEED-STORE] the feed could not be refreshed (${String(err)}) - the stored copy stays, unconfirmed`
+      );
+    }
+    return failure;
   }
 
   /**
@@ -423,20 +431,10 @@
       })
       .catch((err: unknown) => {
         if (cancelled) return;
-        if (endStoredCopyOnRefusal(err)) {
-          firstPage = 'refused';
-          return;
-        }
-        firstPage = 'failed';
         // With nothing on screen the `{#await}` shows its error state; with something cached the
         // reader keeps the feed they had rather than losing it to a timeout. A stored copy stays too,
-        // and says it could not be refreshed - logged once, here.
-        if (fromStore) {
-          storedRefreshFailed = true;
-          console.warn(
-            `[FEED-STORE] the feed could not be refreshed (${String(err)}) - the stored copy stays, unconfirmed`
-          );
-        }
+        // and says it could not be refreshed - unless the failure is a refusal, which ends it.
+        firstPage = applyFirstPageFailure(err).firstPage;
       });
     return () => {
       cancelled = true;
@@ -456,13 +454,10 @@
     const access = storeAccess;
     const params = data.feedParams;
     if (!access) return;
-    const blocked = untrack(
-      () =>
-        firstPage === 'answered' ||
-        firstPage === 'refused' ||
-        (postsOverride ?? initialPostsResolved) !== null
+    const mayDraw = untrack(() =>
+      storedCopyMayDraw({ firstPage, onScreen: postsOverride ?? initialPostsResolved })
     );
-    if (blocked) return;
+    if (!mayDraw) return;
 
     let cancelled = false;
     const askedAt = performance.now();
@@ -474,11 +469,7 @@
           Log.d('POSTS', 'no stored first page for this tab - the server draws it');
           return;
         }
-        if (
-          firstPage === 'answered' ||
-          firstPage === 'refused' ||
-          (postsOverride ?? initialPostsResolved) !== null
-        ) {
+        if (!storedCopyMayDraw({ firstPage, onScreen: postsOverride ?? initialPostsResolved })) {
           Log.d('POSTS', 'stored first page read after the server answered - not drawn');
           return;
         }
@@ -554,24 +545,19 @@
     } catch (err) {
       Log.d('refreshPosts failed', err);
       const outside = isOutsideFeedAudience(err);
-      const refused = endStoredCopyOnRefusal(err);
+      // A copy that stays on screen says it could not be refreshed on its own line; the red banner
+      // is for a feed that has nothing to show.
+      const failure = applyFirstPageFailure(err);
       if (outside) noAudience = true;
-      else if (fromStore && !refused) {
-        // The copy stays on screen and its line says it could not be refreshed; the red banner is
-        // for a feed that has nothing to show.
-        storedRefreshFailed = true;
-        console.warn(
-          `[FEED-STORE] the feed could not be refreshed (${String(err)}) - the stored copy stays, unconfirmed`
-        );
-      } else errorMessage = m.posts_load_error_title();
+      else if (!failure.copyUnconfirmed) errorMessage = m.posts_load_error_title();
     } finally {
       loading = false;
     }
   }
 
   async function loadMorePosts(currentPosts: PostEntity[]) {
-    // A stored copy is not paged: an offset counted on it is an offset into a list nobody confirmed.
-    if (loadingMore || !hasMore || fromStore) return;
+    // A stored copy is not paged (`feedMayLoadMore`).
+    if (!feedMayLoadMore({ loadingMore, hasMore, fromStore })) return;
     loadingMore = true;
     try {
       const more = await listPosts(buildListOptions(currentPosts.length));

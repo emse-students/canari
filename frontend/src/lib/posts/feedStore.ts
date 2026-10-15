@@ -1,7 +1,8 @@
 import { getStorage, type IStorage } from '$lib/db';
+import { FeedPageUnreadableError } from '$lib/db/types';
 import type { PostEntity } from '$lib/posts/api';
 import type { FeedCacheParams } from '$lib/posts/feedCache';
-import { currentFeedEpoch, ensureFeedEpoch } from '$lib/posts/feedStoreEpoch';
+import { currentFeedEpoch, ensureFeedEpoch, forgetStoredFeeds } from '$lib/posts/feedStoreEpoch';
 import { getSavedUserId } from '$lib/stores/user';
 import { refusalStatus } from '$lib/utils/apiRefusal';
 
@@ -149,8 +150,19 @@ export async function readStoredFeedPage(
 ): Promise<PostEntity[] | null> {
   const key = storedFeedKey(params);
   if (!key) return null;
-  const payload = (await storage.getFeedPage(key, access.deviceKeyB64)) as Partial<StoredFeedPage>;
-  if (payload === null || payload === undefined) return null;
+  let opened: unknown;
+  try {
+    opened = await storage.getFeedPage(key, access.deviceKeyB64);
+  } catch (error) {
+    if (!(error instanceof FeedPageUnreadableError)) throw error;
+    // Sealed under a key this device no longer uses (a PIN changed without the drop) or damaged:
+    // deleted now, so the next launch does not meet it again.
+    console.log(`[FEED-STORE] the stored ${key} page cannot be opened - every stored page deleted`);
+    await deleteAllPages(storage, 'unreadable page');
+    return null;
+  }
+  if (opened === null || opened === undefined) return null;
+  const payload = opened as Partial<StoredFeedPage>;
 
   const valid =
     typeof payload === 'object' &&
@@ -176,30 +188,52 @@ export async function readStoredFeedPage(
   return payload.posts!.map(storableFeedRow);
 }
 
+/** The epoch a write was decided under, taken BEFORE any await (see {@link writeStoredFeedPage}). */
+export interface FeedWriteEpoch {
+  epoch: string;
+  started: boolean;
+}
+
 /**
- * Stores `posts` as the tab's first page for `userId`, replacing the previous one.
+ * The epoch a write of `userId`'s feed may carry, decided NOW, or `null` when nothing may be written.
  *
  * Refused (and logged) when the device's sign-in record names another account or nobody: a tab still
- * showing an account another tab signed out must not write that account's feed back. The first write
- * of a new epoch deletes every older page first.
+ * showing an account another tab signed out must not write that account's feed back.
+ *
+ * SYNCHRONOUS ON PURPOSE (review of #1896). Started after an await, a write could meet a refusal or
+ * a sign-out that ended the epochs in the meantime, start a NEW epoch and store a page drawable after
+ * it. Decided before the first await, a write carries the epoch its answer was current under, and a
+ * page written under an epoch ended since is never drawn.
+ */
+export function feedWriteEpoch(userId: string, key: string): FeedWriteEpoch | null {
+  if (getSavedUserId() !== userId) {
+    console.warn(
+      `[FEED-STORE] ${key} not stored - this device is no longer signed in as the account on screen`
+    );
+    return null;
+  }
+  return ensureFeedEpoch(userId);
+}
+
+/**
+ * Stores `posts` as the tab's first page under `epoch`, replacing the previous one. The first write
+ * of a new epoch deletes every older page first. Nothing is written when the epoch ended while this
+ * write waited - logged, the next answer writes under the current one.
  */
 export async function writeStoredFeedPage(
   storage: IStorage,
   access: FeedStoreAccess,
   params: FeedCacheParams,
-  posts: readonly PostEntity[]
+  posts: readonly PostEntity[],
+  epoch: FeedWriteEpoch
 ): Promise<void> {
   const key = storedFeedKey(params);
   if (!key) return;
-  if (getSavedUserId() !== access.userId) {
-    console.warn(
-      `[FEED-STORE] ${key} not stored - this device is no longer signed in as the account on screen`
-    );
+  if (epoch.started) await deleteAllPages(storage, 'new epoch');
+  if (currentFeedEpoch(access.userId) !== epoch.epoch) {
+    console.log(`[FEED-STORE] ${key} not stored - its epoch ended while the write waited`);
     return;
   }
-  const epoch = ensureFeedEpoch(access.userId);
-  if (!epoch) return;
-  if (epoch.started) await deleteAllPages(storage, 'new epoch');
   const page: StoredFeedPage = {
     owner: access.userId,
     epoch: epoch.epoch,
@@ -207,6 +241,57 @@ export async function writeStoredFeedPage(
     posts: posts.map(storableFeedRow),
   };
   await storage.saveFeedPage(key, page, access.deviceKeyB64);
+}
+
+/** Where a tab's first request stands - see the feed page's `firstPage`. */
+export type FirstPageState = 'pending' | 'answered' | 'failed' | 'refused';
+
+/**
+ * Whether the stored copy may still be drawn: not once the server has ANSWERED (its page is drawn
+ * instead) or REFUSED (the copy is ended), and not over anything already on screen. A first request
+ * that merely FAILED does not stop it - offline, the failure usually lands before the store is read,
+ * and the copy is exactly what offline needs.
+ */
+export function storedCopyMayDraw(input: {
+  firstPage: FirstPageState;
+  onScreen: unknown;
+}): boolean {
+  if (input.firstPage === 'answered' || input.firstPage === 'refused') return false;
+  return input.onScreen === null || input.onScreen === undefined;
+}
+
+/** What a failed first page (or refresh) does to the feed. */
+export interface FirstPageFailure {
+  firstPage: 'failed' | 'refused';
+  /** The stored copy leaves the screen, so the refusal's own state is drawn. */
+  withdrawCopy: boolean;
+  /** The stored copy stays on screen, marked not refreshed. */
+  copyUnconfirmed: boolean;
+}
+
+/**
+ * Classifies a failed feed read for the page. A 401/403 is an ANSWER: every stored page of every
+ * account ends now ({@link forgetStoredFeeds}) and a copy on screen is withdrawn. Anything else is
+ * no answer: a copy on screen stays, unconfirmed.
+ */
+export function firstPageFailure(error: unknown, fromStore: boolean): FirstPageFailure {
+  if (feedRefusalEndsCopy(error)) {
+    forgetStoredFeeds(`the feed answered ${refusalStatus(error)}`);
+    return { firstPage: 'refused', withdrawCopy: fromStore, copyUnconfirmed: false };
+  }
+  return { firstPage: 'failed', withdrawCopy: false, copyUnconfirmed: fromStore };
+}
+
+/**
+ * Whether the infinite scroll may ask for the next page. Never while the stored copy is on screen: an
+ * offset counted on it is an offset into a list nobody confirmed.
+ */
+export function feedMayLoadMore(input: {
+  loadingMore: boolean;
+  hasMore: boolean;
+  fromStore: boolean;
+}): boolean {
+  return !input.loadingMore && input.hasMore && !input.fromStore;
 }
 
 /**
@@ -235,9 +320,13 @@ export async function saveStoredFeed(
   params: FeedCacheParams,
   posts: readonly PostEntity[]
 ): Promise<void> {
-  if (!storedFeedKey(params)) return;
+  const key = storedFeedKey(params);
+  if (!key) return;
+  // Decided before the store is awaited - see `feedWriteEpoch`.
+  const epoch = feedWriteEpoch(access.userId, key);
+  if (!epoch) return;
   try {
-    await writeStoredFeedPage(await getStorage(access.userId), access, params, posts);
+    await writeStoredFeedPage(await getStorage(access.userId), access, params, posts, epoch);
   } catch (error) {
     console.warn(`[FEED-STORE] the feed could not be stored: ${String(error)}`);
   }

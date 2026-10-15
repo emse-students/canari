@@ -18,6 +18,7 @@ import type {
   StoredMessage,
   StoredMessagePatch,
 } from './types';
+import { FeedPageUnreadableError } from './types';
 import {
   attachOutboxBlob,
   clearOutboxBlobsLast,
@@ -149,6 +150,34 @@ export class IndexedDbStorage implements IStorage {
     this.db = null;
   }
 
+  /**
+   * ANOTHER TAB NEEDS A NEWER SCHEMA: THIS ONE LETS GO AND RELOADS (review of #1896).
+   *
+   * Without it, a tab still running the previous bundle held its connection open and every newer
+   * tab's open was BLOCKED (`StorageOpenError`, "close the other tabs") until the old one closed -
+   * which a member with a forgotten tab never does. The old bundle cannot reopen the upgraded
+   * database either (it asks for the version below), so closing and reloading onto the new bundle is
+   * the only state it can continue from. `db.close()` lets the transactions already running finish.
+   *
+   * A DELETE (`newVersion === null`, the revoked-device wipe of another tab) is deliberately left as
+   * it was: this tab reopening would re-create the database the wipe is removing.
+   */
+  private onVersionChange(event: IDBVersionChangeEvent): void {
+    if (event.newVersion === null) {
+      console.warn(
+        `[DB] ${this.dbName} is being deleted by another tab - this tab keeps its connection until it closes`
+      );
+      return;
+    }
+    console.warn(
+      `[DB] ${this.dbName} is being upgraded to v${event.newVersion} by a newer tab - closing this connection and reloading`
+    );
+    openConnections.delete(this);
+    this.db?.close();
+    this.db = null;
+    if (typeof window !== 'undefined') window.location.reload();
+  }
+
   async init(): Promise<void> {
     return new Promise((resolve, reject) => {
       // Version 3: conversation.id is now the MLS groupId UUID (was human-readable contactName).
@@ -187,6 +216,7 @@ export class IndexedDbStorage implements IStorage {
 
       request.onsuccess = () => {
         this.db = request.result;
+        this.db.onversionchange = (event) => this.onVersionChange(event);
         // Registered HERE and nowhere else: an open connection is exactly what defers a delete, so
         // the set holds what is OPEN rather than what was ever constructed.
         openConnections.add(this);
@@ -1241,8 +1271,7 @@ export class IndexedDbStorage implements IStorage {
     try {
       return await decryptData(row.cipherText, row.iv, deviceKeyB64);
     } catch (error) {
-      console.warn(`[FEED-STORE] stored feed page ${key} could not be opened: ${String(error)}`);
-      return null;
+      throw new FeedPageUnreadableError(key, { cause: error });
     }
   }
 

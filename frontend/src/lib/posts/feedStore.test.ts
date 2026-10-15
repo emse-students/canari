@@ -8,20 +8,42 @@ import { IndexedDbStorage } from '$lib/db/indexeddb';
 import type { PostEntity } from '$lib/posts/api';
 import { ApiRefusalError } from '$lib/utils/apiRefusalError';
 import { clearUserLocally, saveUserLocally } from '$lib/stores/user';
-import { isOutsideFeedAudience } from '$lib/posts/feedAudience';
+import { isOutsideFeedAudience, revalidateFeedAudience } from '$lib/posts/feedAudience';
+import { fetchFeedAudience } from '$lib/posts/api';
 import {
+  feedMayLoadMore,
   feedRefusalEndsCopy,
   feedStoreAccess,
+  feedWriteEpoch,
+  firstPageFailure,
   listAfterFirstPage,
   readStoredFeedPage,
   storableFeedRow,
+  storedCopyMayDraw,
   storedFeedKey,
-  writeStoredFeedPage,
+  writeStoredFeedPage as writePage,
   type FeedStoreAccess,
 } from './feedStore';
 import { currentFeedEpoch, forgetStoredFeeds } from './feedStoreEpoch';
 
+vi.mock('$lib/posts/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/posts/api')>()),
+  fetchFeedAudience: vi.fn(),
+}));
+
+/** A write as `saveStoredFeed` makes it: the epoch decided first, then the store written. */
+async function writeStoredFeedPage(
+  storage: IndexedDbStorage,
+  access: FeedStoreAccess,
+  params: { feed: 'all' | 'followed' | 'associations' },
+  posts: PostEntity[]
+): Promise<void> {
+  const epoch = feedWriteEpoch(access.userId, storedFeedKey(params)!);
+  if (epoch) await writePage(storage, access, params, posts, epoch);
+}
+
 const KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+const OTHER_KEY = 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=';
 const ALICE: FeedStoreAccess = { userId: 'alice', deviceKeyB64: KEY };
 const ALL = { feed: 'all' as const };
 let n = 0;
@@ -230,5 +252,92 @@ describe('the server page is authoritative for everything it could have returned
     await writeStoredFeedPage(storage, ALICE, ALL, copy);
     await writeStoredFeedPage(storage, ALICE, ALL, []);
     expect(await readStoredFeedPage(storage, ALICE, ALL)).toEqual([]);
+  });
+});
+
+describe('ended by what the device learns, and never revived by a write already waiting', () => {
+  it('an audience verdict of false ends the copy', async () => {
+    const storage = await openStore();
+    await writeStoredFeedPage(storage, ALICE, ALL, [post('p1')]);
+    vi.mocked(fetchFeedAudience).mockResolvedValue({ inAudience: false });
+
+    expect(await revalidateFeedAudience()).toBe(false);
+
+    expect(currentFeedEpoch('alice')).toBeNull();
+    expect(await readStoredFeedPage(storage, ALICE, ALL)).toBeNull();
+  });
+
+  it('an audience verdict of true keeps it', async () => {
+    const storage = await openStore();
+    await writeStoredFeedPage(storage, ALICE, ALL, [post('p1')]);
+    vi.mocked(fetchFeedAudience).mockResolvedValue({ inAudience: true });
+
+    await revalidateFeedAudience();
+
+    expect((await readStoredFeedPage(storage, ALICE, ALL))?.map((p) => p.id)).toEqual(['p1']);
+  });
+
+  it('a refusal while a write waits for the store leaves nothing drawable', async () => {
+    const storage = await openStore();
+    // The write decides its epoch, then waits for the store; the refusal lands in between.
+    const epoch = feedWriteEpoch('alice', 'feed:all')!;
+    firstPageFailure(new ApiRefusalError(403, null, 'post-service 403'), true);
+    await writePage(storage, ALICE, ALL, [post('p1')], epoch);
+
+    expect(currentFeedEpoch('alice')).toBeNull();
+    expect(await readStoredFeedPage(storage, ALICE, ALL)).toBeNull();
+  });
+
+  it('a page this device can no longer open is deleted, so no later launch meets it again', async () => {
+    const storage = await openStore();
+    await writeStoredFeedPage(storage, ALICE, ALL, [post('p1')]);
+    const after = { ...ALICE, deviceKeyB64: OTHER_KEY };
+
+    expect(await readStoredFeedPage(storage, after, ALL)).toBeNull();
+    expect(await storage.getFeedPage('feed:all', OTHER_KEY)).toBeNull();
+    expect(console.warn).not.toHaveBeenCalled();
+  });
+});
+
+describe('the page wiring, as decisions', () => {
+  it('draws the copy while the request is pending or failed, never once answered or refused or over a list', () => {
+    expect(storedCopyMayDraw({ firstPage: 'pending', onScreen: null })).toBe(true);
+    expect(storedCopyMayDraw({ firstPage: 'failed', onScreen: null })).toBe(true);
+    expect(storedCopyMayDraw({ firstPage: 'answered', onScreen: null })).toBe(false);
+    expect(storedCopyMayDraw({ firstPage: 'refused', onScreen: null })).toBe(false);
+    expect(storedCopyMayDraw({ firstPage: 'pending', onScreen: [post('a')] })).toBe(false);
+  });
+
+  it('a refusal ends every stored page and withdraws a copy on screen', async () => {
+    const storage = await openStore();
+    await writeStoredFeedPage(storage, ALICE, ALL, [post('p1')]);
+
+    expect(firstPageFailure(new ApiRefusalError(401, null, 'x'), true)).toEqual({
+      firstPage: 'refused',
+      withdrawCopy: true,
+      copyUnconfirmed: false,
+    });
+    expect(await readStoredFeedPage(storage, ALICE, ALL)).toBeNull();
+  });
+
+  it('a transport failure keeps the copy, unconfirmed, and ends nothing', async () => {
+    const storage = await openStore();
+    await writeStoredFeedPage(storage, ALICE, ALL, [post('p1')]);
+
+    expect(firstPageFailure(new TypeError('Failed to fetch'), true)).toEqual({
+      firstPage: 'failed',
+      withdrawCopy: false,
+      copyUnconfirmed: true,
+    });
+    expect(firstPageFailure(new ApiRefusalError(503, null, 'x'), false).copyUnconfirmed).toBe(
+      false
+    );
+    expect((await readStoredFeedPage(storage, ALICE, ALL))?.map((p) => p.id)).toEqual(['p1']);
+  });
+
+  it('the infinite scroll asks nothing while the copy is on screen', () => {
+    expect(feedMayLoadMore({ loadingMore: false, hasMore: true, fromStore: true })).toBe(false);
+    expect(feedMayLoadMore({ loadingMore: false, hasMore: true, fromStore: false })).toBe(true);
+    expect(feedMayLoadMore({ loadingMore: true, hasMore: true, fromStore: false })).toBe(false);
   });
 });

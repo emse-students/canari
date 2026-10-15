@@ -19,6 +19,7 @@ import type {
   StoredMessage,
   StoredMessagePatch,
 } from './types';
+import { FeedPageUnreadableError } from './types';
 import {
   attachOutboxBlob,
   clearOutboxBlobsLast,
@@ -1189,8 +1190,7 @@ export class SqliteStorage implements IStorage {
     try {
       return await decryptData(base64ToUint8(row.cipher_text), base64ToUint8(row.iv), deviceKeyB64);
     } catch (error) {
-      console.warn(`[FEED-STORE] stored feed page ${key} could not be opened: ${String(error)}`);
-      return null;
+      throw new FeedPageUnreadableError(key, { cause: error });
     }
   }
 

@@ -1474,10 +1474,27 @@ row drawn from the device, wherever it sits, including when the answer is empty:
 
 The store is then rewritten from that answer, so the next launch draws what the server last said.
 
+**A card already drawn takes the answer's row (review of #1896).** The list is keyed by post id, so
+the card drawn from the copy is KEPT when the answer replaces its row, and `PostCard` used to copy
+its prop once: the vote stayed refused (`canVote: false`), the owner's and moderator's menu never
+appeared, and counts, tallies and text stayed as stored for the whole session. The card now ADOPTS
+a row whenever its prop is a different object (`adoptServedPost`, `lib/posts/postCardSync.ts`),
+which happens only when the server hands a new row: the feed's own edits (a filter on delete, the
+infinite scroll's append) keep each row's proxy, so a reaction the reader completed is not
+overwritten by an older row. Adopting on identity rather than remounting keeps an open comment
+thread and a half-typed comment. **A field with a write in flight is not adopted** (reactions,
+polls, comments, counted per field): the row may predate the write, and that write's own answer
+lands the server's verdict on it. Each write's rollback restores ONLY its own field, so an
+adopted row is not reverted by a failure that predates it.
+
 **A refused answer ends the copy.** A `401` or a `403` from the feed is an answer about this reader:
 the copy leaves the screen (the existing no-audience or error state takes over) and every stored
 page of the account is made unreadable. So does an audience verdict of `false`
-(`revalidateFeedAudience`, `isOutsideFeedAudience`).
+(`revalidateFeedAudience`, `isOutsideFeedAudience`). The page's decisions are pure functions in
+`feedStore.ts` so they are tested without rendering: `storedCopyMayDraw` (nothing is drawn once the
+answer or a refusal is in, or while something is on screen), `firstPageFailure` (a refusal
+withdraws and ends the copy, a transport failure keeps it unconfirmed) and `feedMayLoadMore` (no
+infinite scroll while the copy shows).
 
 **A failed refresh is not an answer.** A transport failure or a 5xx keeps the copy on screen,
 marked unconfirmed: a line above the feed with a spinner says it is being refreshed, then that it
@@ -1496,6 +1513,23 @@ meets a dead epoch deletes every page, and the first write after a sign-in start
 deletes the old pages first. A write is refused when the device's sign-in record
 (`canari_saved_user`) names another account or nobody, so a tab signed out elsewhere does not write
 its feed back.
+
+**The write decides its epoch BEFORE it awaits the storage** (`feedWriteEpoch`, synchronous), and
+re-checks it after: a refusal or a sign-out that erases the epochs while the write waits on
+`getStorage` used to let the write start a NEW epoch and seal a page drawable after the refusal.
+Now the write finds its epoch gone and seals nothing.
+
+**A page the read cannot open is deleted by that read.** `getFeedPage` rejects with a typed
+`FeedPageUnreadableError` (another device key, damaged bytes) on both backends, and
+`readStoredFeedPage` deletes every page of the store on it, logged at debug: a page left under an
+old key costs one delete, not a warning on every launch.
+
+**The main IndexedDB connection lets go of an upgrade.** A tab still running the previous bundle
+holds a v9 connection; without an `onversionchange` handler the v10 open of a newer tab is BLOCKED
+(`StorageOpenError(blocked)`). `IndexedDbStorage` now closes its connection on a version change
+(logged), and reloads the page so that tab runs the new bundle rather than a closed store. A
+`deleteDatabase` from another tab (`newVersion === null`) is left as before: reopening would
+recreate a database being wiped.
 
 ### Rejected options
 
@@ -1554,4 +1588,6 @@ its role for a tab switch.
 
 `lib/posts/feedStore.ts` (the sealed page, its owner, its epoch, the rights it drops, the gate),
 `lib/posts/feedStoreEpoch.ts` (the synchronous erase) and `routes/posts/+page.svelte` (the draw and
-the merge). Pinned by `feedStore.test.ts` and `db/feedPages.test.ts`.
+the merge). Pinned by `feedStore.test.ts`, `db/feedPages.test.ts` (the v9 -> v10 upgrade with data
+in place, and the version-change release), `postCardSync.test.ts` and
+`components/posts/PostCard.served.svelte.test.ts` (the same id redrawn with rights opens the vote).
