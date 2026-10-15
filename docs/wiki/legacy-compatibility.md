@@ -199,55 +199,6 @@ this entry deliberately has no date: a date would be a guess about a platform no
 is that a client sending neither looks identical to one sending a stale cookie, which is why the
 refusal already logs the cookie names it received.
 
-### 2027-02-20 - the whole-list role-permission PUT
-
-**Site:** `PUT /api/channels/roles/:roleId/permissions` and `ChannelService.setRoleBasePermissions`
-in [`channel.service.ts`](../../apps/social-service/src/channels/channel.service.ts).
-**Shim:** the endpoint replaces a role's permissions wholesale. Since 2026-08-20 every client sends
-`PATCH` with a single `{ key, granted }` instead, because a grid cell IS a delta and sending it as a
-whole list is what made two administrators' compatible edits erase one another (COMM-20, measured on
-production the same day: the loser's grid went on showing a permission the server had dropped AND
-one it had never stored).
-**Why a shim at all:** the fleet is mixed by construction - an APK serves the bundle inside itself
-and no deploy reaches it - so every Android client built before 2026-08-20 still PUTs the whole list
-on any toggle. Removing the route would turn every role edit on those clients into a 404. They keep
-the old behaviour, lost update included, which is what they had.
-**On removal:** delete the `@Put` route, `setRoleBasePermissions`, its `RETIRED_PERMISSIONS` branch
-(whose own entry expires first, above) and the tests that name it. **The date is read, not argued**,
-and nothing currently reads it: the PUT logs `[ROLE] permissions updated` exactly as the PATCH logs
-`[ROLE] granted|revoked`, so **the two are distinguishable in the service log** and a campaign that
-never sees the first line has a fleet that has turned over.
-**Cost of keeping it:** two write paths for one column. They share `assertCanManageRoles` and
-`announceRolePermissions`, so the permission rule and the announcement cannot drift - what differs is
-only how the new list is arrived at, which is the whole point.
-
-### 2026-11-19 - the two permissions the grid drew and nothing enforced
-
-**Site:** `RETIRED_PERMISSIONS` in
-[`permissions.ts`](../../apps/social-service/src/channels/permissions.ts), and the branch that reads
-it in `ChannelService.setRoleBasePermissions`.
-**Shim:** `channel.access` and `channel.send` were deleted on 2026-08-19. They were in the registry
-from the start, drawn as two of the eight rows in the community permission grid, and read by NOTHING
-- neither decided any outcome, because a public salon is visible to every member and a private one
-to the people in it, and writing is decided per salon by `writePolicy`. Migration 044 stripped them
-from `channel_roles.permissions`, and the write path validates against the registry, so they cannot
-come back.
-**Why a shim at all:** the write path validates the WHOLE list and throws `BadRequestException` on
-any unknown key. A client built before the removal still renders eight rows and PUTs all eight on
-any toggle, so without this branch every role edit on such a client would 400 over two keys the
-server itself had put in its grid. They are therefore DROPPED and the rest applied, which is exactly
-what the admin asked for - and anything else unknown still fails the write, because a key the server
-cannot name is a client asking for a capability that does not exist.
-**On removal:** delete `RETIRED_PERMISSIONS`, the branch, its two tests in
-[`role-permissions.spec.ts`](../../apps/social-service/src/channels/role-permissions.spec.ts), and
-this entry. The date is read, not argued: `[ROLE] RETIRED_PERMISSION_SENT` fires at warn on every
-old-client edit, so if the log is silent across a campaign the fleet has turned over. **If it has
-fired, find which client and why before removing the branch** - the guard in the same spec asserts
-no retired name is ever reused as a live one, which is the only way this drop could silently delete
-a real grant.
-**Cost of keeping it:** one array and one filter, and a validation that is not uniform - which is
-the real cost, because "unknown keys are refused" now has an exception a reader must look up.
-
 ### 2026-11-19 - the pre-MLS send path, and the `content` column it is the only writer of
 
 **Site:** the `else` arm of `MessagingService.sendMessage`
