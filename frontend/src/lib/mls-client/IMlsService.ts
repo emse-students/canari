@@ -259,6 +259,21 @@ export function isKeystoreKeyUnavailable(error: unknown): boolean {
 }
 
 /**
+ * Why a stored MLS state did not load, typed at the one place that reads `mls-core`'s codes:
+ * `mismatch` (another device's identity), `rotated` / `undecryptable` (the key does not open it),
+ * `keystore_unavailable` (biometric mode found no key) and `unknown` (an untyped failure).
+ */
+export type StateLoadFailure =
+  | 'mismatch'
+  | 'undecryptable'
+  | 'rotated'
+  | 'keystore_unavailable'
+  | 'unknown';
+
+/** The answer of {@link IMlsService.openLocalStateWithKey}: opened, or refused with its cause. */
+export type LocalStateOpenResult = { opened: true } | { opened: false; cause: StateLoadFailure };
+
+/**
  * Describes a bulk-ingest window: a span during which many MLS messages are processed at once
  * (a queue drain after reconnect, or a history restore). The same immutable object is replayed
  * at open and close, which guarantees the two ends agree on what to do.
@@ -530,17 +545,23 @@ export interface IMlsService {
    */
   changeDeviceKey(newDeviceKeyB64: string): Promise<void>;
   /**
-   * Forgot-PIN-elsewhere recovery: decrypts this device's local state with the OLD key
-   * (non-destructively) then re-encrypts it under the NEW key, preserving all
-   * local messages. Marks the client initialised so a following login reuses it.
-   * Returns `false` if `oldDeviceKeyB64` does not decrypt the local state.
+   * Forgot-PIN-elsewhere recovery: opens this device's local state with the OLD key
+   * (non-destructively, nothing written) and marks the client initialised so a following login
+   * reuses it. A refusal carries its typed cause: only `undecryptable` / `rotated` prove the old PIN
+   * wrong; the others would refuse every PIN, so a caller must not word them as one.
+   * The re-seal is a later {@link changeDeviceKey}.
    */
-  recoverAndRekey(
+  openLocalStateWithKey(
     userId: string,
-    oldDeviceKeyB64: string,
-    newDeviceKeyB64: string,
+    deviceKeyB64: string,
     state: Uint8Array
-  ): Promise<boolean>;
+  ): Promise<LocalStateOpenResult>;
+  /**
+   * Points the unattended unlock (platform keystore: biometrics, background push) at a new device
+   * key, awaited. A no-op on web. Rejects when the keystore refused the write; resolves `true` when
+   * an entry was written, `false` when there is no keystore (nothing moved).
+   */
+  pointUnattendedUnlockAt(newDeviceKeyB64: string): Promise<boolean>;
   /** Generates a fresh MLS KeyPackage for this device, signed with the device-key-encrypted identity key. */
   generateKeyPackage(deviceKeyB64: string): Promise<DatedKeyPackage>;
   /**

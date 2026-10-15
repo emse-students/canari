@@ -17,5 +17,15 @@ export function providerRefusalMessage(err: unknown): string | null {
   if (err instanceof SocialApiError && err.code === PAYMENT_PROVIDER_REFUSED) {
     return m.shop_payment_refused({ reason: err.message });
   }
+  if (err instanceof SocialApiError && err.code === PREVIOUS_PAYMENT_OPEN) {
+    return m.form_previous_payment_open();
+  }
   return null;
 }
+
+/**
+ * The body `code` of social-service's 409 when a form answer's previous payment request could not
+ * be shown dead or paid, so no second one was issued (`seat-hold.ts`). A retry a moment later reads
+ * it again; the sentence says so rather than echoing the server's English.
+ */
+export const PREVIOUS_PAYMENT_OPEN = 'PREVIOUS_PAYMENT_OPEN';

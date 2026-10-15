@@ -345,6 +345,29 @@ export interface GraineDistributionFrame {
 }
 
 /**
+ * The stores whose rows carry a payload sealed under the device key (AES-256-GCM). The MLS state is
+ * sealed too, but lives outside `IStorage` and is re-sealed by `IMlsService`.
+ */
+export type SealedStore = 'messages' | 'graine' | 'outbox';
+
+/** One row of a {@link SealedStore}: its primary key and its sealed payload, as on disk. */
+export interface SealedPayload {
+  /** The row's primary key (`sessionId` for a Graine row). */
+  id: string;
+  iv: Uint8Array;
+  cipherText: Uint8Array;
+}
+
+/** A compare-and-swap of one row's sealed payload - see {@link IStorage.swapSealedPayloads}. */
+export interface SealedPayloadSwap {
+  id: string;
+  /** The ciphertext the row must still hold for the swap to apply. */
+  expected: Uint8Array;
+  iv: Uint8Array;
+  cipherText: Uint8Array;
+}
+
+/**
  * A Graine row exactly as stored, for backup export and import.
  *
  * The seed travels still encrypted under the device key, like message rows: a backup is restored
@@ -630,6 +653,57 @@ export interface IStorage {
    */
   importEncryptedGraineRow(row: EncryptedGraineRow): Promise<void>;
 
-  /** Wipe all conversations, messages, outbox entries and Graine sessions (tests / account reset). */
+  // Device key change (the PIN changed here, or on another device): every store sealed under the
+  // device key, through ONE pair of methods so a store added later cannot be missed by one of the
+  // two paths that re-seal (see `resealDeviceKeyStores` in `utils/chat/pinChange.ts`).
+
+  /** Every row of a device-key-sealed store as its id and sealed payload, nothing decrypted. */
+  getSealedPayloads(store: SealedStore): Promise<SealedPayload[]>;
+  /**
+   * Replace the sealed payload of each named row, ONLY where the row still exists and still holds
+   * `expected` - a compare-and-swap, clear columns untouched. Resolves with how many rows changed.
+   *
+   * A compare-and-swap and not an upsert, because the in-session PIN change runs with the session
+   * live: a row the outbox deleted (sent) must not come back, and a row rewritten since it was read
+   * must not be overwritten with the older payload.
+   */
+  swapSealedPayloads(store: SealedStore, swaps: readonly SealedPayloadSwap[]): Promise<number>;
+
+  // The feed's stored first pages (sealed with the device key; see `$lib/posts/feedStore`)
+
+  /**
+   * Seal `payload` (any JSON value) under the device key and keep it as the stored feed page `key`,
+   * replacing the previous one. It is a COPY the server's next answer replaces, never a source of
+   * truth, and it is not carried by a backup.
+   */
+  saveFeedPage(key: string, payload: unknown, deviceKeyB64: string): Promise<void>;
+  /**
+   * The stored feed page `key`, opened, or `null` when there is none. A row that cannot be opened
+   * (sealed under another device key, damaged) rejects with {@link FeedPageUnreadableError}, so the
+   * caller can tell "nothing stored" from "something stored that must go" and delete it.
+   */
+  getFeedPage(key: string, deviceKeyB64: string): Promise<unknown>;
+  /** Delete every stored feed page, returning how many went. Needs no key. */
+  deleteFeedPages(): Promise<number>;
+
+  /**
+   * Wipe all conversations, messages, outbox entries, Graine sessions and stored feed pages (tests /
+   * account reset).
+   */
   clear(): Promise<void>;
+}
+
+/**
+ * A stored feed page is there and cannot be opened: sealed under a device key this device no longer
+ * uses, or damaged. Typed at the throw so `readStoredFeedPage` deletes it instead of meeting it again
+ * at every launch.
+ */
+export class FeedPageUnreadableError extends Error {
+  constructor(
+    readonly key: string,
+    options?: { cause?: unknown }
+  ) {
+    super(`stored feed page ${key} cannot be opened`, options);
+    this.name = 'FeedPageUnreadableError';
+  }
 }

@@ -451,7 +451,10 @@
         await navigateExternal(res.checkoutUrl);
       } else {
         submitted = true;
-        successMessage = m.form_view_submission_success();
+        // The previous request of this answer was found PAID while settling it: no new one.
+        successMessage = res.alreadyPaid
+          ? m.form_view_submission_already_paid()
+          : m.form_view_submission_success();
         setTimeout(() => goto(resolve(internalPath(redirectTo))), 1500);
       }
     } catch (e: any) {

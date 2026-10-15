@@ -19,6 +19,19 @@
   import { deletePostAfterConfirm } from '$lib/posts/postDeletion';
   import { isFeedAudienceRefusal, isOutsideFeedAudience } from '$lib/posts/feedAudience';
   import { feedCacheKey, readFeedCache, writeFeedCache } from '$lib/posts/feedCache';
+  import {
+    feedMayLoadMore,
+    feedStoreAccess,
+    firstPageFailure,
+    listAfterFirstPage,
+    loadStoredFeed,
+    saveStoredFeed,
+    storedCopyMayDraw,
+    type FirstPageFailure,
+    type FirstPageState,
+  } from '$lib/posts/feedStore';
+  import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
+  import { unlockUnattendedFor } from '$lib/stores/unlockPath.svelte';
   import { progressiveCount } from '$lib/utils/progressiveMount.svelte';
   import { feedHeldForLanding } from '$lib/posts/feedLandingHold';
   import { notifNav } from '$lib/stores/notifNav.svelte';
@@ -41,6 +54,8 @@
 
   const LAST_SEEN_KEY = 'posts_last_seen_ts';
   const PAGE_SIZE = 10;
+  /** What `load` asks for first (`listPosts({ limit: 20 })`), and so what one stored page holds. */
+  const FIRST_PAGE_SIZE = 20;
 
   let {
     data,
@@ -57,6 +72,67 @@
   let postsOverride = $state<PostEntity[] | null>(null);
   /** Resolved value of data.posts - used as fallback when postsOverride is still null. */
   let initialPostsResolved = $state<PostEntity[] | null>(null);
+
+  /**
+   * THE LIST ON SCREEN WAS DRAWN FROM THE DEVICE'S STORED COPY (`$lib/posts/feedStore`) AND NO
+   * SERVER ANSWER HAS REPLACED IT YET. While it holds, the feed says it is not confirmed, the
+   * infinite scroll asks nothing, and every card is drawn without the reader's rights.
+   */
+  let fromStore = $state(false);
+  /** The refresh of a stored copy failed without an answer: the copy stays, marked not refreshed. */
+  let storedRefreshFailed = $state(false);
+  /** A read of the stored copy is in flight: an error screen would flash before it draws. */
+  let storedReadPending = $state(false);
+  /**
+   * Where the current tab's first request stands: `pending`, `answered` (a page came back),
+   * `failed` (no answer - transport or 5xx), `refused` (401/403, an answer about this reader).
+   */
+  let firstPage = $state<FirstPageState>('pending');
+
+  /**
+   * The account and key the stored feed may be read and written with now, or `null` while an unlock
+   * is pending - nothing stored is drawn on a locked device (`feedStoreAccess`).
+   */
+  const storeAccess = $derived(
+    feedStoreAccess({
+      currentUserId: currentUserId(),
+      sessionUserId: globalSession.userId,
+      deviceKeyB64: globalSession.deviceKeyB64,
+      isLoggedIn: globalSession.isLoggedIn,
+      unattendedFor: unlockUnattendedFor(),
+    })
+  );
+
+  /** Keeps `posts` as the tab's stored first page, when the device may hold it now. */
+  function storeFirstPage(posts: PostEntity[]) {
+    const access = storeAccess;
+    if (!access) {
+      Log.d('POSTS', 'first page not stored - the device key is not in hand for this account');
+      return;
+    }
+    void saveStoredFeed(access, data.feedParams, posts);
+  }
+
+  /**
+   * Applies a failed feed read to the screen, as `firstPageFailure` classifies it: a 401/403 ends
+   * every stored page and withdraws a copy on screen, so the refusal's own state is drawn; anything
+   * else keeps the copy, unconfirmed and said once. Returns the classification.
+   */
+  function applyFirstPageFailure(err: unknown): FirstPageFailure {
+    const failure = firstPageFailure(err, fromStore);
+    if (failure.withdrawCopy) {
+      postsOverride = null;
+      fromStore = false;
+      storedRefreshFailed = false;
+    }
+    if (failure.copyUnconfirmed) {
+      storedRefreshFailed = true;
+      console.warn(
+        `[FEED-STORE] the feed could not be refreshed (${String(err)}) - the stored copy stays, unconfirmed`
+      );
+    }
+    return failure;
+  }
 
   /**
    * THE FIRST DRAW WAITS WHILE A NOTIFICATION LANDING IS UNDER WAY - this page is about to be left,
@@ -327,26 +403,97 @@
     const painted = untrack(() => postsOverride);
     initialPostsResolved = stale;
     hasMore = cached?.hasMore ?? true;
+    fromStore = false;
+    storedRefreshFailed = false;
+    firstPage = 'pending';
 
     let cancelled = false;
     promise
       .then((posts) => {
         if (cancelled) return;
+        firstPage = 'answered';
         // The first batch asks for 20 where a page is PAGE_SIZE, so a short answer is the end.
-        const more = posts.length >= 20;
+        const more = posts.length >= FIRST_PAGE_SIZE;
         writeFeedCache(key, { posts, hasMore: more });
         initialPostsResolved = posts;
-        if (postsOverride === painted) {
-          postsOverride = posts;
+        storeFirstPage(posts);
+        const next = listAfterFirstPage({
+          answer: posts,
+          onScreen: postsOverride,
+          painted,
+          fromStore,
+        });
+        if (next) {
+          postsOverride = next;
           hasMore = more;
         }
+        fromStore = false;
+        storedRefreshFailed = false;
       })
-      .catch(() => {
-        // Left to the render: with nothing cached the `{#await}` shows its error state, and with
-        // something cached the reader keeps the feed they had rather than losing it to a timeout.
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        // With nothing on screen the `{#await}` shows its error state; with something cached the
+        // reader keeps the feed they had rather than losing it to a timeout. A stored copy stays too,
+        // and says it could not be refreshed - unless the failure is a refusal, which ends it.
+        firstPage = applyFirstPageFailure(err).firstPage;
       });
     return () => {
       cancelled = true;
+    };
+  });
+
+  /**
+   * DRAW THE TAB'S STORED FIRST PAGE WHILE THE SERVER IS ASKED (local-first feed, 2026-10-15).
+   *
+   * Only when this page instance holds nothing for the tab (the in-memory cache of a tab switch is
+   * younger), when no answer has come back yet - an answer that wins the race is drawn instead - and
+   * when the device may read the account's store ({@link storeAccess}). A request that has already
+   * FAILED does not stop it: offline, the failure usually lands before the store is read, and the
+   * copy is exactly what offline needs; it is then drawn as not refreshed. A refusal does stop it.
+   */
+  $effect(() => {
+    const access = storeAccess;
+    const params = data.feedParams;
+    if (!access) return;
+    const mayDraw = untrack(() =>
+      storedCopyMayDraw({ firstPage, onScreen: postsOverride ?? initialPostsResolved })
+    );
+    if (!mayDraw) return;
+
+    let cancelled = false;
+    const askedAt = performance.now();
+    storedReadPending = true;
+    void loadStoredFeed(access, params)
+      .then((posts) => {
+        if (cancelled) return;
+        if (!posts) {
+          Log.d('POSTS', 'no stored first page for this tab - the server draws it');
+          return;
+        }
+        if (!storedCopyMayDraw({ firstPage, onScreen: postsOverride ?? initialPostsResolved })) {
+          Log.d('POSTS', 'stored first page read after the server answered - not drawn');
+          return;
+        }
+        postsOverride = posts;
+        fromStore = true;
+        hasMore = false;
+        storedRefreshFailed = firstPage === 'failed';
+        if (storedRefreshFailed) {
+          console.warn(
+            '[FEED-STORE] the feed request failed before the stored copy was read - drawn, unconfirmed'
+          );
+        }
+        Log.d(
+          'POSTS',
+          `stored first page drawn: ${posts.length} posts read in ${Math.round(performance.now() - askedAt)} ms`
+        );
+      })
+      .finally(() => {
+        if (!cancelled) storedReadPending = false;
+      });
+    return () => {
+      cancelled = true;
+      storedReadPending = false;
     };
   });
 
@@ -392,17 +539,26 @@
       postsOverride = posts;
       hasMore = posts.length >= PAGE_SIZE;
       writeFeedCache(feedCacheKey(data.feedParams), { posts, hasMore });
+      // An answer: whatever the device drew is now the server's page, and the store follows it.
+      fromStore = false;
+      storedRefreshFailed = false;
+      storeFirstPage(posts);
     } catch (err) {
       Log.d('refreshPosts failed', err);
-      if (isOutsideFeedAudience(err)) noAudience = true;
-      else errorMessage = m.posts_load_error_title();
+      const outside = isOutsideFeedAudience(err);
+      // A copy that stays on screen says it could not be refreshed on its own line; the red banner
+      // is for a feed that has nothing to show.
+      const failure = applyFirstPageFailure(err);
+      if (outside) noAudience = true;
+      else if (!failure.copyUnconfirmed) errorMessage = m.posts_load_error_title();
     } finally {
       loading = false;
     }
   }
 
   async function loadMorePosts(currentPosts: PostEntity[]) {
-    if (loadingMore || !hasMore) return;
+    // A stored copy is not paged (`feedMayLoadMore`).
+    if (!feedMayLoadMore({ loadingMore, hasMore, fromStore })) return;
     loadingMore = true;
     try {
       const more = await listPosts(buildListOptions(currentPosts.length));
@@ -650,6 +806,25 @@
         </div>
       {/if}
 
+      <!-- THE LIST IS THE DEVICE'S STORED COPY, NOT YET THE SERVER'S: said while it is refreshed, and
+           after a refresh that got no answer, with a retry - never the error screen over posts the
+           reader can read (local-first feed, `$lib/posts/feedStore`). -->
+      {#if fromStore && !heldForLanding}
+        <div class="text-text-muted mb-4 flex items-center gap-2 text-xs" role="status">
+          {#if storedRefreshFailed && !loading}
+            <span>{m.posts_stored_not_refreshed()}</span>
+            <button
+              type="button"
+              class="tap-target ml-auto font-bold underline"
+              onclick={refreshPosts}>{m.common_retry_button()}</button
+            >
+          {:else}
+            <RefreshCw size={14} class="animate-spin opacity-60" />
+            <span>{m.posts_stored_refreshing()}</span>
+          {/if}
+        </div>
+      {/if}
+
       <!-- `postsOverride` is checked BEFORE the await, not inside its `{:then}`.
                `data.posts` is a streamed promise from the load function, and an `{#await}` on a
                promise that has REJECTED stays in `{:catch}` for the life of the component - so
@@ -669,7 +844,8 @@
           {:then initialPosts}
             {@render feedList(initialPosts)}
           {:catch err}
-            {#if loading}
+            <!-- A stored copy still being read is about to draw: no error screen flashes before it. -->
+            {#if loading || storedReadPending}
               {@render skeletonCards()}
             {:else if noAudience || isFeedAudienceRefusal(err)}
               <div
@@ -747,6 +923,8 @@
                     posts: postsOverride,
                     hasMore,
                   });
+                  // The next launch must not draw the post just deleted from the stored page.
+                  storeFirstPage(postsOverride.slice(0, FIRST_PAGE_SIZE));
                 }}
               />
             </div>
@@ -762,7 +940,7 @@
             <div class="flex justify-center py-4">
               <RefreshCw size={20} class="text-text-muted animate-spin opacity-50" />
             </div>
-          {:else if !hasMore && resolvedPosts.length >= PAGE_SIZE}
+          {:else if !hasMore && !fromStore && resolvedPosts.length >= PAGE_SIZE}
             <p class="text-text-muted text-2xs py-4 text-center opacity-50">
               {m.posts_all_loaded()}
             </p>

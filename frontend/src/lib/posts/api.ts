@@ -3,6 +3,7 @@ import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import { socialUrl } from '$lib/utils/apiUrl';
 import type { MediaRef } from '$lib/media';
 import type { FormItem } from '$lib/forms/api';
+import { nextPostSequence, stampServed } from '$lib/posts/postCardSync';
 
 export type PostMediaRef = MediaRef & { caption?: string };
 
@@ -330,11 +331,22 @@ export async function searchPosts(
   const p = new URLSearchParams({ q });
   if (opts.limit != null) p.set('limit', String(opts.limit));
   if (opts.offset != null) p.set('offset', String(opts.offset));
-  return request<PostEntity[]>(`/api/posts/search?${p}`);
+  return readPosts<PostEntity[]>(`/api/posts/search?${p}`);
+}
+
+/**
+ * A read of posts, its rows stamped with the point it was ISSUED at (`stampServed`): a card compares
+ * that point with its own writes to know which of the two is newer (`PostCardLedger`).
+ */
+async function readPosts<T extends PostEntity | PostEntity[]>(path: string): Promise<T> {
+  const issuedAt = nextPostSequence();
+  const rows = await request<T>(path);
+  stampServed(rows, issuedAt);
+  return rows;
 }
 
 export async function getPost(postId: string): Promise<PostEntity> {
-  return request<PostEntity>(`/api/posts/${postId}`);
+  return readPosts<PostEntity>(`/api/posts/${postId}`);
 }
 
 export async function updatePost(postId: string, payload: UpdatePostPayload): Promise<PostEntity> {
@@ -355,7 +367,7 @@ export async function listPosts(
   const opts: ListPostsOptions =
     typeof limitOrOptions === 'number' ? { limit: limitOrOptions } : limitOrOptions;
   const q = buildListPostsSearchParams(opts);
-  return request<PostEntity[]>(`/api/posts${q}`);
+  return readPosts<PostEntity[]>(`/api/posts${q}`);
 }
 
 /**

@@ -329,8 +329,21 @@ export class SecurityController {
       throw new ForbiddenException('current PIN is incorrect');
     }
 
-    doc.verifier = newVerifier;
-    await this.pinVerifierRepo.save(doc);
+    // A COMPARE-AND-SWAP, NOT A READ THEN A SAVE. Two devices (or two tabs) changing the PIN at once
+    // both pass the check above against the same row; with a plain save the LAST one decided the
+    // account's PIN while each device moved its local key to its own - one of them then locked out of
+    // the PIN it had just set. The row moves only if it still holds the verifier just compared, so
+    // the second change is refused like any other wrong current PIN.
+    const swapped = await this.pinVerifierRepo.update(
+      { userId: safeUserId, verifier: doc.verifier },
+      { verifier: newVerifier }
+    );
+    if (!swapped.affected) {
+      this.logger.warn(
+        `[PIN_CHANGE] verifier for ${safeUserId} changed between the check and the write - refused`
+      );
+      throw new ForbiddenException('current PIN is incorrect');
+    }
     this.logger.log(`[PIN_CHANGE] verifier rotated for ${safeUserId}`);
 
     return { ok: true };

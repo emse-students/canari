@@ -260,3 +260,19 @@ a failed fetch fell back to `'stripe'` too. Both are the fallback `CLAUDE.md` fo
 "Paiement Canari", disabled = unavailable, no wallet or card-network copy); `paymentRefusal.ts` turns a typed `PAYMENT_PROVIDER_REFUSED`
 into the one sentence both the shop toast and a paid form's inline error show. Details in
 [forms](forms.md#four-defects-found-on-dev-v112-alpha2-2026-10-07).
+
+## Lydia's callbacks reached `lydia-request-callback` with an EMPTY body (2026-10-15)
+
+Two real calls from Lydia's servers (an `expire` at 16:40Z and a `cancel` at 16:41Z on dev, source
+`91.194.60.148`) were answered `400` with the 78-byte `Missing request_id or sig`, and the route
+logged nothing: the global parsers read JSON and urlencoded only, so a body of any other type arrives
+with no field at all. **The route now reads `multipart/form-data` too** (`NoFilesInterceptor`, which
+leaves every other body type alone), and a refusal for missing fields logs the content type and the
+FIELD NAMES, never a value - at most 16 names of 32 characters from `[w.-]`, plus the count, because the
+sender chooses every name and a newline in one would forge a log line. **The route is public, so
+multer is bounded** (16 fields, 4096 bytes each, 16 parts, no file) and the signature comparison is
+`timingSafeEqual`. **This is a hypothesis about Lydia's body type, not an observation of
+it**: the test reproduces the exact symptom without the interceptor, but the next real callback's
+log line is what settles it. No callback has yet been verified, so which private token signs one
+(the Provider's, as `verifyRequestCallback` assumes, or the Business's, as Lydia's CSM wrote on
+2026-10-15) is still open.

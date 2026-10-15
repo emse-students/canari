@@ -86,6 +86,8 @@
         return m.auth_changepin_progress_finalize();
       case 'login':
         return m.auth_changepin_progress_login();
+      case 'waiting_tabs':
+        return m.auth_changepin_progress_waiting_tabs();
       default:
         return isRecover ? m.auth_changepin_recovering() : m.auth_changepin_changing();
     }

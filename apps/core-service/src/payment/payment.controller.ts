@@ -60,11 +60,17 @@ export class PaymentController {
     );
   }
 
-  /** Cancels a pending form submission via the internal social-service route. */
-  private async cancelPendingSubmissionInternal(submissionId: string): Promise<void> {
+  /**
+   * Cancels a pending form submission via the internal social-service route, naming the request
+   * reported abandoned: social-service applies it only if that is still the row's current one.
+   */
+  private async cancelPendingSubmissionInternal(
+    submissionId: string,
+    sessionId: string
+  ): Promise<void> {
     await axios.post(
       internalSubmissionUrl(submissionId, 'cancel-pending'),
-      {},
+      { sessionId },
       internalSocialRequestConfig()
     );
   }
@@ -297,12 +303,20 @@ export class PaymentController {
       idempotencyKey?: string;
       /** The payer's address, which Lydia's request/do needs as its recipient. Never stored. */
       payerEmail?: string;
+      /** How long the request stays payable, in whole seconds: the caller's seat hold. */
+      expireAfterSeconds?: number;
     },
     @Headers('x-internal-secret') secret?: string
   ) {
     assertInternalSecret(secret);
     if (!body || !body.lineItems || !Array.isArray(body.lineItems)) {
       throw new BadRequestException('Invalid payload');
+    }
+    if (
+      body.expireAfterSeconds !== undefined &&
+      (!Number.isInteger(body.expireAfterSeconds) || body.expireAfterSeconds <= 0)
+    ) {
+      throw new BadRequestException('Invalid expireAfterSeconds');
     }
 
     if (!(await this.paymentService.isConfigured())) {
@@ -326,9 +340,12 @@ export class PaymentController {
         metadata: body.metadata,
         connectAccountId: body.connectAccountId,
         idempotencyKey: body.idempotencyKey,
+        expireAfterSeconds: body.expireAfterSeconds,
       });
-      this.logger.debug(`[Payments] Checkout session created: ${session.id}`);
-      return { ok: true, url: session.url, id: session.id };
+      this.logger.debug(
+        `[Payments] Checkout session created: ${session.id} (request ${session.requestId ?? 'none'})`
+      );
+      return { ok: true, url: session.url, id: session.id, requestId: session.requestId };
     } catch (err: unknown) {
       // A typed refusal (the Lydia provider's PAYMENT_PROVIDER_REFUSED) is already the answer:
       // re-labelling it would bury both its code and its readable message.
@@ -337,6 +354,65 @@ export class PaymentController {
       this.logger.error(`[Payments] create-checkout-session failed: ${msg}`);
       throw new BadRequestException(`Payment error: ${msg}`);
     }
+  }
+
+  /**
+   * Makes a payment request no longer payable at the provider. SERVER-TO-SERVER ONLY, like
+   * `create-checkout-session`: social-service calls it when a retry replaces the request a pending
+   * answer was waiting on, BEFORE issuing the new one. `requestId` is the provider's own id (Lydia's
+   * numeric `request_id`) and `connectAccountId` the Business that request was issued to.
+   * Answers `{ ok: true, outcome }`. `already-settled` (Lydia's error 2) means PROCESSED - cancelled,
+   * expired, or very probably PAID - so the caller reads `request-state` before treating the
+   * request as dead. A refusal is the provider's typed 400.
+   */
+  @Post('cancel-request')
+  @HttpCode(200)
+  async cancelRequest(
+    @Body() body: { requestId?: string; connectAccountId?: string },
+    @Headers('x-internal-secret') secret?: string
+  ) {
+    assertInternalSecret(secret);
+    if (
+      typeof body?.requestId !== 'string' ||
+      !/^\d{1,32}$/.test(body.requestId) ||
+      typeof body.connectAccountId !== 'string' ||
+      !body.connectAccountId.trim()
+    ) {
+      throw new BadRequestException('Invalid payload');
+    }
+    const outcome = await this.paymentService.cancelCheckoutRequest(
+      body.requestId,
+      body.connectAccountId
+    );
+    return { ok: true, outcome };
+  }
+
+  /**
+   * Reads a payment request's state at the provider. SERVER-TO-SERVER ONLY (internal secret):
+   * social-service asks it when a cancel answered `already-settled`, to tell a request that was
+   * PAID (the answer is then paid, and no new request may be issued) from one cancelled or expired.
+   * `sessionId` is the `request_uuid`; answers `{ ok: true, state, raw }`.
+   */
+  @Post('request-state')
+  @HttpCode(200)
+  async requestState(
+    @Body() body: { sessionId?: string; connectAccountId?: string },
+    @Headers('x-internal-secret') secret?: string
+  ) {
+    assertInternalSecret(secret);
+    if (
+      typeof body?.sessionId !== 'string' ||
+      !SESSION_ID_RE.test(body.sessionId) ||
+      typeof body.connectAccountId !== 'string' ||
+      !body.connectAccountId.trim()
+    ) {
+      throw new BadRequestException('Invalid payload');
+    }
+    const { state, raw } = await this.paymentService.getCheckoutRequestState(
+      body.sessionId,
+      body.connectAccountId
+    );
+    return { ok: true, state, raw };
   }
 
   /** Verifies a completed checkout session and marks the linked form submission as paid. */
@@ -403,7 +479,7 @@ export class PaymentController {
     }
 
     try {
-      await this.cancelPendingSubmissionInternal(submissionId);
+      await this.cancelPendingSubmissionInternal(submissionId, body.sessionId);
     } catch (err: unknown) {
       const error = err as Error & { response?: { data?: unknown } };
       this.logger.error('cancel-session: cancel submission failed', describeHttpError(error));
