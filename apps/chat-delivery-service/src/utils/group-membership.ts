@@ -126,7 +126,7 @@ export function insideExclusion(at: number, windows: readonly ExclusionWindow[])
 
 /**
  * The history-stream rows a reader may have, given the reader's OWN exclusion windows in that group:
- * a row whose server time falls inside one keeps its `id` and nothing else, marked `withheld`.
+ * a row whose server time falls inside one is DROPPED - no id, no marker, nothing.
  *
  * **WHY THE SERVER, AND WHY HERE.** A Remove whose MLS commit never landed leaves the removed person's
  * leaf, and every frame sent while they were out is sealed at an epoch their old state can still
@@ -134,42 +134,51 @@ export function insideExclusion(at: number, windows: readonly ExclusionWindow[])
  * back is this stream, walked after a re-add. The server knows both the window and the row's time,
  * so it withholds the ciphertext itself - a control that holds whatever the reader's build.
  *
- * **THE ID STAYS** so a reader's cursor still advances past the row: a page whose rows were dropped
- * outright would read as the end of the stream, or be asked for again for ever. A row whose time
- * cannot be read is withheld whenever a window exists, as the client's rule withholds an undatable
- * message.
+ * **DROPPED, NEVER MARKED.** A marked row (`{ id, withheld }`, the first shape) stalled every store
+ * build shipped before it for good: the old walk decodes `content` unconditionally, the decode
+ * threw on `undefined`, the cursor was never saved and every later replay threw on the same row
+ * (third review of #1878). A dropped row is one no build can trip on. The page stays FULL, because
+ * the reader filling it keeps reading past what it drops (`readHistoryStreamPage`) - an empty page
+ * is the end of the walk to every build. A row whose time cannot be read is dropped whenever a
+ * window exists, as the client's rule withholds an undatable message.
  *
- * @returns the rows, and how many were withheld (for the caller's log line).
+ * @returns the rows kept, and how many were dropped (for the caller's log line).
  */
 export function withholdExcludedHistoryRows(
   rows: Record<string, unknown>[],
   windows: readonly ExclusionWindow[]
 ): { rows: Record<string, unknown>[]; withheld: number } {
   if (windows.length === 0) return { rows, withheld: 0 };
-  let withheld = 0;
-  const out = rows.map((row) => {
+  const kept = rows.filter((row) => {
     const at = typeof row['timestamp'] === 'string' ? Date.parse(row['timestamp']) : Number.NaN;
-    if (Number.isFinite(at) && !insideExclusion(at, windows)) return row;
-    withheld++;
-    return { id: row['id'], withheld: '1' };
+    return Number.isFinite(at) && !insideExclusion(at, windows);
   });
-  return { rows: out, withheld };
+  return { rows: kept, withheld: rows.length - kept.length };
 }
 
 /**
- * The Redis hash naming the devices of people removed from `groupId` whose removal commit has not
- * been fanned out yet: field `userId:deviceId`, value the REMOVER's user id.
+ * The Redis hash naming the devices of people removed from `groupId` whose REMOVE commit has not
+ * been queued to them yet: field `userId:deviceId`, value the user id of whoever removed them (for
+ * the log line only - nothing is decided on it).
  *
  * **A REMOVAL IS RECORDED BEFORE ITS COMMIT, AND THE COMMIT MUST STILL REACH THE REMOVED PERSON.**
- * `removeGroupMember` deletes the roster row, closes the interval and deletes the device rows - so
+ * `removeGroupMember` deletes the device rows, closes the interval and deletes the roster row - so
  * no application frame reaches them from that instant - and the commit fan-out resolves recipients
  * from those very device rows. Without this hash the removed devices never received the commit
- * that removes them and kept the epoch's keys until a refused send told them. The remover's next
- * commit is queued to these devices too, and consumes the entries (`sendMessage`).
+ * that removes them and kept the epoch's keys until a refused send told them.
+ *
+ * **KEYED TO THE COMMIT'S DECLARED INTENT, NOT TO "THE REMOVER'S NEXT COMMIT".** A commit says whom
+ * it removes (`ValidateCommitBody.removes`), and only an entry it names is queued and consumed - so
+ * two removals in parallel each reach their own person, and whoever commits the removal (the
+ * remover, or any holder collecting a stray leaf after a global admin removed somebody without
+ * committing) delivers it. An entry ends on STATE, never on a clock: consumed by the commit naming
+ * it, or cleared when that device is in the tree again (admitted by a commit, or committing itself),
+ * or with the group. An entry no commit will ever name - its removal committed by an older build,
+ * which declares nothing - stays until one of those, one small field per device.
  *
  * A HINT, NOT THE RECORD: the removal itself is the Postgres rows, written first. Losing this hash
- * (Redis has persisted to a volume since 2026-08-12) costs the removed device the commit, which is
- * the refused-send discovery it had anyway; it never re-admits anybody.
+ * (Redis persists to a volume since 2026-08-12, so only a lost volume loses it) costs the removed
+ * device the commit, which is the refused-send discovery it had anyway; it never re-admits anybody.
  */
 export function partingKey(groupId: string): string {
   return `group:parting:${groupId}`;

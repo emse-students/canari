@@ -171,6 +171,19 @@ export interface ValidateCommitBody {
    * before, with nothing replayed.
    */
   admits?: { userId: string; deviceId: string }[];
+  /**
+   * Whom this commit REMOVES from the tree, as the committing device staged it: a whole person
+   * (`userId` alone, every leaf of theirs) or one device (`userId` + `deviceId`).
+   *
+   * The removal was recorded by the server first (`removeGroupMember`), which deleted the device rows
+   * the fan-out resolves from - so the removed devices are found in the parting hint (`partingKey`)
+   * and the commit is queued to the ones this list names, and only those. Keyed to what the commit
+   * declares rather than to who sent it, so two removals in flight each reach their own person, and
+   * whoever commits a removal - the remover, or a holder collecting a stray leaf - delivers it.
+   * Absent from a client predating the field: its removals reach the removed devices as they did
+   * before, which is not at all.
+   */
+  removes?: { userId: string; deviceId?: string }[];
 }
 
 export interface ValidateCommitResult {
@@ -952,7 +965,15 @@ export class MessagingService {
    * For online recipients, publishes via Redis pub/sub and schedules a deferred FCM fallback.
    * For offline recipients, schedules an immediate FCM push (non-blocking).
    */
-  async sendMessage(body: SendMessageBody, authUserIdRaw?: string): Promise<SendMessageResult> {
+  /**
+   * @param parting INTERNAL ONLY, never read from a request body: the removed devices a commit is
+   *   also queued to, resolved by {@link validateCommit} from what the commit declares it removes.
+   */
+  async sendMessage(
+    body: SendMessageBody,
+    authUserIdRaw?: string,
+    parting: ReadonlyArray<{ userId: string; deviceId: string }> = []
+  ): Promise<SendMessageResult> {
     const traceId = this.makeTraceId('send');
 
     // `senderId` is what the shared log records as the author of the frame, and what a device
@@ -1158,16 +1179,18 @@ export class MessagingService {
               `devices=${ghosts.map((m) => `${m.userId}:${m.deviceId}`).join(',')}`
           );
         }
-        // A COMMIT ALSO REACHES WHOEVER ITS SENDER HAS JUST REMOVED. A removal is recorded before its
-        // commit and deletes the removed person's device rows, so the set above no longer names
-        // them - the commit that removes them would never reach them (`partingKey` says why). The
-        // entries this sender wrote are queued like members' rows and consumed once queued.
-        const parting =
-          body.isCommit && !addressed && body.senderId
-            ? await this.partingDevicesOf(groupId, body.senderId, targets, traceId)
+        // A COMMIT ALSO REACHES WHOEVER IT REMOVES. A removal is recorded before its commit and
+        // deletes the removed person's device rows, so the set above no longer names them - the
+        // commit that removes them would never reach them (`partingKey` says why). The devices the
+        // commit declared are queued like members' rows, minus any `targets` already names (a person
+        // re-added in between is reached as a member), and their entries are consumed once queued.
+        const already = new Set(targets.map((t) => `${t.userId}:${t.deviceId}`));
+        const removed =
+          body.isCommit && !addressed
+            ? parting.filter((p) => !already.has(`${p.userId}:${p.deviceId}`))
             : [];
-        partingConsumed = parting.map((p) => `${p.userId}:${p.deviceId}`);
-        for (const m of [...targets, ...parting]) {
+        partingConsumed = removed.map((p) => `${p.userId}:${p.deviceId}`);
+        for (const m of [...targets, ...removed]) {
           ops.push(
             this.queuedMessageRepo.create({
               recipientId: m.userId,
@@ -1352,7 +1375,7 @@ export class MessagingService {
           .hdel(partingKey(body.groupId), ...partingConsumed)
           .catch((e: unknown) =>
             this.logger.warn(
-              `[SEND][${traceId}] parting entries NOT cleared group=${body.groupId?.slice(0, 8)} - this sender's next commit reaches them again: ${String(e)}`
+              `[SEND][${traceId}] parting entries NOT cleared group=${body.groupId?.slice(0, 8)} - a later commit naming them reaches them again: ${String(e)}`
             )
           );
       }
@@ -1719,14 +1742,27 @@ export class MessagingService {
       // broadcast is a single atomic unit; delivery is fast (queued rows + Redis publish, FCM is
       // deferred). Best-effort: the commit-log is already the durable source of truth, so a device
       // that misses the realtime fan-out replays it via GET /mls/commits. [[C7]]
-      await this.sendMessage({
+      // A device back in the tree - admitted by this commit, or committing itself (an external
+      // rejoin) - is no longer parting: an entry left for it would hand a LATER removal's commit to
+      // nobody who needs it, so it ends here, on that state.
+      await this.clearParting(
         groupId,
-        senderId: body.senderId,
-        senderDeviceId: deviceId,
-        proto: commitProto,
-        isCommit: true,
-        excludeDeviceIds: body.excludeDeviceIds,
-      }).catch((e) =>
+        [...admitted, ...(body.senderId ? [{ userId: body.senderId, deviceId }] : [])],
+        traceId
+      );
+      const parting = await this.declaredPartingDevices(groupId, body.removes, traceId);
+      await this.sendMessage(
+        {
+          groupId,
+          senderId: body.senderId,
+          senderDeviceId: deviceId,
+          proto: commitProto,
+          isCommit: true,
+          excludeDeviceIds: body.excludeDeviceIds,
+        },
+        undefined,
+        parting
+      ).catch((e) =>
         this.logger.warn(
           `[COMMIT][${traceId}] commit fan-out failed group=${groupId}: ${String(e)}`
         )
@@ -1754,42 +1790,67 @@ export class MessagingService {
   }
 
   /**
-   * The devices `senderId` removed from `groupId` and whose removal commit has not been queued yet
-   * (see `partingKey`), minus any `targets` already names - a person re-added in between is a member
-   * again and is reached as one.
+   * The parted devices of `groupId` (see `partingKey`) that a commit's declared `removes` names: every
+   * device of a person named alone, the one device of a person named with it. Nothing for a commit
+   * that declares nothing - an ordinary commit, or one from a build predating the field.
    *
-   * Only the REMOVER's commit carries them: the removal and its commit come from the same member, so
-   * a concurrent commit by somebody else does not consume the entries before the commit they wait
-   * for. A failed read reaches nobody extra and says so.
+   * Only an entry the server itself wrote can be named, so a commit cannot route itself to a device
+   * that was never parted from this group. A failed read reaches nobody extra and says so.
    */
-  private async partingDevicesOf(
+  private async declaredPartingDevices(
     groupId: string,
-    senderId: string,
-    targets: ReadonlyArray<{ userId: string; deviceId: string }>,
+    removes: ValidateCommitBody['removes'],
     traceId: string
   ): Promise<Array<{ userId: string; deviceId: string }>> {
+    const declared = (Array.isArray(removes) ? removes : []).filter(
+      (r): r is { userId: string; deviceId?: string } =>
+        typeof r?.userId === 'string' &&
+        r.userId.length > 0 &&
+        (r.deviceId === undefined || typeof r.deviceId === 'string')
+    );
+    if (declared.length === 0) return [];
     let entries: Record<string, string>;
     try {
       entries = await this.redis.hgetall(partingKey(groupId));
     } catch (e) {
       this.logger.warn(
-        `[SEND][${traceId}] parting devices unreadable group=${groupId.slice(0, 8)} - a removed device may miss its removal commit: ${String(e)}`
+        `[COMMIT][${traceId}] parting devices unreadable group=${groupId.slice(0, 8)} - the removed device(s) miss their removal commit: ${String(e)}`
       );
       return [];
     }
-    const already = new Set(targets.map((t) => `${t.userId}:${t.deviceId}`));
-    const parting = Object.entries(entries ?? {})
-      .filter(([key, remover]) => remover === senderId && !already.has(key))
-      .map(([key]) => {
+    const parting = Object.keys(entries ?? {})
+      .map((key) => {
         const at = key.lastIndexOf(':');
         return { userId: key.slice(0, at), deviceId: key.slice(at + 1) };
-      });
-    if (parting.length > 0) {
-      this.logger.log(
-        `[SEND][${traceId}] PARTING group=${groupId.slice(0, 8)} commit also queued to ${parting.length} removed device(s): ${parting.map((p) => `${cutUserId(p.userId)}:${cutDeviceId(p.deviceId)}`).join(',')}`
+      })
+      .filter((p) =>
+        declared.some(
+          (r) => r.userId === p.userId && (r.deviceId === undefined || r.deviceId === p.deviceId)
+        )
       );
-    }
+    this.logger.log(
+      `[COMMIT][${traceId}] PARTING group=${groupId.slice(0, 8)} removes=${declared.length} - commit also queued to ${parting.length} removed device(s)${parting.length > 0 ? `: ${parting.map((p) => `${cutUserId(p.userId)}:${cutDeviceId(p.deviceId)}`).join(',')}` : ''}`
+    );
     return parting;
+  }
+
+  /**
+   * Ends the parting entries of devices that are in the tree again (see `partingKey`). Best-effort:
+   * a failure leaves an entry only a commit declaring that device's removal could ever name.
+   */
+  private async clearParting(
+    groupId: string,
+    devices: ReadonlyArray<{ userId: string; deviceId: string }>,
+    traceId: string
+  ): Promise<void> {
+    if (devices.length === 0) return;
+    await this.redis
+      .hdel(partingKey(groupId), ...devices.map((d) => `${d.userId}:${d.deviceId}`))
+      .catch((e: unknown) =>
+        this.logger.warn(
+          `[COMMIT][${traceId}] parting entries of re-admitted device(s) NOT cleared group=${groupId.slice(0, 8)}: ${String(e)}`
+        )
+      );
   }
 
   /**
@@ -3140,12 +3201,10 @@ export class MessagingService {
   private async enrichHistoryWithDisplayNames(
     entries: Record<string, unknown>[]
   ): Promise<Record<string, unknown>[]> {
-    // A withheld row names nobody and must stay `{ id, withheld }` - see withholdExcludedHistoryRows.
-    const named = entries.filter((e) => e['withheld'] !== '1');
-    if (named.length === 0) return entries;
+    if (entries.length === 0) return entries;
     const senderIds = [
       ...new Set(
-        named
+        entries
           .map((e) => e['sender_id'])
           .filter((id): id is string => typeof id === 'string' && id.length > 0)
       ),
@@ -3153,13 +3212,13 @@ export class MessagingService {
     if (senderIds.length === 0) return entries;
     try {
       const nameMap = await resolveUserDisplayNamesBatch(this.groupRepo.manager, senderIds);
-      for (const entry of named) {
+      for (const entry of entries) {
         const sid = typeof entry['sender_id'] === 'string' ? entry['sender_id'] : '';
         entry['sender_display_name'] = nameMap.get(sid) ?? null;
       }
     } catch (e) {
       this.logger.warn(`[HISTORY] display name resolution failed: ${String(e)}`);
-      for (const entry of named) {
+      for (const entry of entries) {
         entry['sender_display_name'] = null;
       }
     }
@@ -3221,6 +3280,16 @@ export class MessagingService {
    *
    * @param quietWhenCaughtUp the batch route's: a group whose cursor IS the head writes no line, and
    *   is counted in `[HISTORY_BATCH]` instead - 83 of 85 lines per launch said only that.
+   *
+   * **WITH `windows`, THE READER'S OWN EXCLUSION WINDOWS, A ROW INSIDE ONE IS DROPPED AND THE PAGE
+   * STILL FILLS** (a Remove holds against a later re-add, user 2026-10-14). Every build ends its walk
+   * on an empty page and continues from the LAST row it was handed, so a page that dropped its rows
+   * and returned short would end the walk with real rows still behind the dropped ones. The read
+   * goes on, `limit` rows at a time, until `limit` rows are kept or the bound is reached. Rows
+   * dropped past the last kept one are read again by the next page and dropped again - nothing is
+   * skipped that a later page would not reach. A cursor followed only by dropped rows up to the head
+   * IS caught up: there is nothing this reader may ever be handed there, so it is counted as such
+   * rather than logged on every launch.
    */
   private async readHistoryStreamPage(
     groupId: string,
@@ -3228,23 +3297,41 @@ export class MessagingService {
     limit: number,
     until: string | undefined,
     requester: string,
-    quietWhenCaughtUp = false
+    quietWhenCaughtUp = false,
+    windows?: readonly ExclusionWindow[]
   ): Promise<{ rows: Record<string, unknown>[]; head?: string; caughtUp: boolean }> {
     const streamKey = `history:${groupId}`;
-    const startId = after ? `(${after}` : '-';
     const endId = until ?? '+';
-    const entries = await this.redis.xrange(streamKey, startId, endId, 'COUNT', limit);
+    const kept: Record<string, unknown>[] = [];
+    let withheld = 0;
+    let read = 0;
+    let lastRead = after;
+    while (kept.length < limit) {
+      const startId = lastRead ? `(${lastRead}` : '-';
+      const entries = await this.redis.xrange(streamKey, startId, endId, 'COUNT', limit);
+      read += entries.length;
+      if (entries.length > 0) lastRead = entries[entries.length - 1][0];
+      const page = withholdExcludedHistoryRows(this.mapHistoryEntries(entries), windows ?? []);
+      withheld += page.withheld;
+      kept.push(...page.rows.slice(0, limit - kept.length));
+      // Without windows nothing is dropped, so this is the single read it always was.
+      if (entries.length < limit || !windows || windows.length === 0) break;
+    }
     const head = until
       ? until
       : ((await this.redis.xrevrange(streamKey, '+', '-', 'COUNT', 1))[0]?.[0] ?? undefined);
-    const caughtUp = entries.length === 0 && after !== undefined && head === after;
+    const caughtUp =
+      kept.length === 0 &&
+      after !== undefined &&
+      (head === after || (read > 0 && lastRead === head));
     if (!(quietWhenCaughtUp && caughtUp)) {
       this.logger.log(
         `[HISTORY] ${requester} group=${groupId} after=${after ?? 'start'} ` +
-          `until=${until ?? 'none'} head=${head ?? 'empty'} limit=${limit} entries=${entries.length}`
+          `until=${until ?? 'none'} head=${head ?? 'empty'} limit=${limit} entries=${kept.length}` +
+          (withheld > 0 ? ` withheld=${withheld} (sent while the reader was out of the group)` : '')
       );
     }
-    return { rows: this.mapHistoryEntries(entries), head, caughtUp };
+    return { rows: kept, head, caughtUp };
   }
 
   /**
@@ -3342,10 +3429,17 @@ export class MessagingService {
     }
 
     try {
-      const windows = await this.ownExclusionWindows(headerUserId, [groupId]);
-      const page = await this.readHistoryStreamPage(groupId, after, limit, until, requester);
-      const rows = this.withholdOwnWindows(page.rows, windows.get(groupId), groupId, requester);
-      return { rows: await this.enrichHistoryWithDisplayNames(rows), head: page.head };
+      const windows = await this.ownExclusionWindows(headerUserId, groupId);
+      const page = await this.readHistoryStreamPage(
+        groupId,
+        after,
+        limit,
+        until,
+        requester,
+        false,
+        windows
+      );
+      return { rows: await this.enrichHistoryWithDisplayNames(page.rows), head: page.head };
     } catch (e) {
       this.logger.error(`[HISTORY] ${requester} group=${groupId} error=${String(e)}`);
       throw new ServiceUnavailableException('History stream unavailable');
@@ -3353,52 +3447,24 @@ export class MessagingService {
   }
 
   /**
-   * The caller's OWN exclusion windows in each of `groupIds` - the spans they were out of the group
-   * (user, 2026-10-14: a Remove holds against a later re-add). Empty for a caller who never left,
-   * and for an internal caller with no user header, which reads on nobody's behalf.
+   * The caller's OWN exclusion windows in `groupId` - the spans they were out of the group (user,
+   * 2026-10-14: a Remove holds against a later re-add). Empty for a caller who never left, and for
+   * an internal caller with no user header, which reads on nobody's behalf.
+   *
+   * ONE GROUP PER READ, so the batch route isolates a failure to the group it was read for: one
+   * Postgres hiccup answers that group empty, never the whole batch.
    */
   private async ownExclusionWindows(
     headerUserId: string | undefined,
-    groupIds: string[]
-  ): Promise<Map<string, ExclusionWindow[]>> {
+    groupId: string
+  ): Promise<ExclusionWindow[]> {
     const userId = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
-    const byGroup = new Map<string, ExclusionWindow[]>();
-    if (!userId || groupIds.length === 0) return byGroup;
+    if (!userId) return [];
     const intervals = await this.groupRepo.manager.find(GroupMembershipInterval, {
-      where: { userId, groupId: In(groupIds) },
+      where: { userId, groupId },
       select: { groupId: true, joinedAt: true, leftAt: true },
     });
-    const rowsByGroup = new Map<string, GroupMembershipInterval[]>();
-    for (const row of intervals) {
-      const list = rowsByGroup.get(row.groupId) ?? [];
-      list.push(row);
-      rowsByGroup.set(row.groupId, list);
-    }
-    for (const [groupId, rows] of rowsByGroup) {
-      const windows = exclusionWindows(rows);
-      if (windows.length > 0) byGroup.set(groupId, windows);
-    }
-    return byGroup;
-  }
-
-  /**
-   * {@link withholdExcludedHistoryRows} for one page, with the line that makes a withholding an
-   * observed event rather than a silent gap.
-   */
-  private withholdOwnWindows(
-    rows: Record<string, unknown>[],
-    windows: ExclusionWindow[] | undefined,
-    groupId: string,
-    requester: string
-  ): Record<string, unknown>[] {
-    if (!windows) return rows;
-    const out = withholdExcludedHistoryRows(rows, windows);
-    if (out.withheld > 0) {
-      this.logger.log(
-        `[HISTORY] ${requester} group=${groupId} withheld=${out.withheld} of ${rows.length} - sent while the reader was out of the group`
-      );
-    }
-    return out.rows;
+    return exclusionWindows(intervals);
   }
 
   /**
@@ -3439,9 +3505,6 @@ export class MessagingService {
       false
     );
 
-    // One read for every group of the batch. Not caught: a stream served without the caller's
-    // windows would be the unfiltered answer this exists to prevent.
-    const windows = await this.ownExclusionWindows(headerUserId, [...authorized]);
     const histories: Record<string, Record<string, unknown>[]> = {};
     const heads: Record<string, string> = {};
     let caughtUp = 0;
@@ -3452,20 +3515,20 @@ export class MessagingService {
           return;
         }
         try {
+          // Read per group and inside its `try`: a failed read answers THIS group empty - never its
+          // stream unfiltered, which is what this read exists to prevent - and the rest of the batch
+          // is served.
+          const windows = await this.ownExclusionWindows(headerUserId, groupId);
           const page = await this.readHistoryStreamPage(
             groupId,
             after,
             limit,
             until,
             requester,
-            true
+            true,
+            windows
           );
-          histories[groupId] = this.withholdOwnWindows(
-            page.rows,
-            windows.get(groupId),
-            groupId,
-            requester
-          );
+          histories[groupId] = page.rows;
           if (page.head) heads[groupId] = page.head;
           if (page.caughtUp) caughtUp++;
         } catch (e) {

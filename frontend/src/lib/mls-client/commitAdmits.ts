@@ -1,3 +1,5 @@
+import type { CommitRemoval } from './mlsDeliveryApi';
+
 /**
  * The devices a staged commit ADDS to the tree, as the `admits` its submission carries.
  *
@@ -27,13 +29,35 @@ export function commitAdmits(
   const admits: Array<{ userId: string; deviceId: string }> = [];
   for (const entry of excludeDeviceIds ?? []) {
     if (entry === self) continue;
-    // A device id never holds ':' (`web-`, `tauri-` + a UUID), so the LAST one is the separator.
-    const at = entry.lastIndexOf(':');
-    if (at <= 0 || at === entry.length - 1) continue;
-    const userId = entry.slice(0, at);
-    const deviceId = entry.slice(at + 1);
-    if (addedDeviceIds && !addedDeviceIds.includes(deviceId)) continue;
-    admits.push({ userId, deviceId });
+    const device = parseDeviceIdentity(entry);
+    if (!device) continue;
+    if (addedDeviceIds && !addedDeviceIds.includes(device.deviceId)) continue;
+    admits.push(device);
   }
   return admits;
+}
+
+/**
+ * A `userId:deviceId` identity split in two, or null when it is not one. A device id never holds ':'
+ * (`web-`, `tauri-` + a UUID), so the LAST one is the separator.
+ */
+export function parseDeviceIdentity(entry: string): { userId: string; deviceId: string } | null {
+  const at = entry.lastIndexOf(':');
+  if (at <= 0 || at === entry.length - 1) return null;
+  return { userId: entry.slice(0, at), deviceId: entry.slice(at + 1) };
+}
+
+/**
+ * Whom a staged Remove takes out of the tree, as the `removes` its submission carries - so the
+ * server queues the commit to the devices its own half of the removal parted (third review of
+ * #1878: the removed devices never received the commit that removes them).
+ *
+ * @param target - the people a `removeMember` removes, or the `userId:deviceId` identities a
+ *   `removeMemberDevice` removes.
+ */
+export function commitRemovals(
+  target: { userIds: string[] } | { deviceIdentities: string[] }
+): CommitRemoval[] {
+  if ('userIds' in target) return target.userIds.filter(Boolean).map((userId) => ({ userId }));
+  return target.deviceIdentities.flatMap((entry) => parseDeviceIdentity(entry) ?? []);
 }

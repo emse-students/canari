@@ -23,6 +23,7 @@ import {
   type SentFrame,
   type GroupRosterBatch,
   type MlsDeliveryFetch,
+  type CommitRemoval,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import {
@@ -114,7 +115,7 @@ import {
 } from '$lib/utils/chat/history';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
-import { commitAdmits } from '$lib/mls-client/commitAdmits';
+import { commitAdmits, commitRemovals } from '$lib/mls-client/commitAdmits';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 
 /**
@@ -3171,7 +3172,7 @@ export abstract class BaseMlsService implements IMlsService {
       addedDeviceIds?: string[];
       skipped?: SkippedDevice[];
     }>,
-    opts: { excludeDeviceIds?: string[]; exportTree?: boolean } = {}
+    opts: { excludeDeviceIds?: string[]; exportTree?: boolean; removes?: CommitRemoval[] } = {}
   ): Promise<{
     welcome?: Uint8Array;
     ratchetTree?: Uint8Array;
@@ -3209,7 +3210,10 @@ export abstract class BaseMlsService implements IMlsService {
           toBase64(staged.commit),
           opts.excludeDeviceIds,
           toBase64(staged.groupInfo),
-          admits
+          admits,
+          // Whom this commit removes, so the server queues it to the devices its half of the
+          // removal already parted (`commitRemovals`).
+          opts.removes
         );
         if (!validation.accepted) {
           // Rejected: roll back the staged commit. The local epoch never moved, so there is NO fork.
@@ -4491,12 +4495,16 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   async removeMember(groupId: string, userIds: string[]): Promise<void> {
-    await this.runCommitTransaction(groupId, () => this.stageRemoveMembers(groupId, userIds));
+    await this.runCommitTransaction(groupId, () => this.stageRemoveMembers(groupId, userIds), {
+      removes: commitRemovals({ userIds }),
+    });
   }
 
   async removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void> {
-    await this.runCommitTransaction(groupId, () =>
-      this.stageRemoveMembersByDevice(groupId, deviceIdentities)
+    await this.runCommitTransaction(
+      groupId,
+      () => this.stageRemoveMembersByDevice(groupId, deviceIdentities),
+      { removes: commitRemovals({ deviceIdentities }) }
     );
   }
 

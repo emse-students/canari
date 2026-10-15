@@ -296,6 +296,32 @@ export class SenderNotActiveError extends Error {
 }
 
 /**
+ * Whom a staged commit removes, as its submission declares it: a whole person (`userId` alone, every
+ * leaf of theirs) or one device of theirs.
+ */
+export type CommitRemoval = { userId: string; deviceId?: string };
+
+/**
+ * The delivery service ANSWERED 403 to `GET /groups/:id/exclusions`: this account is not on the
+ * group's roster, while this device holds the group locally (it is asking because it is about to
+ * answer or send in it).
+ *
+ * THE SAME DISAGREEMENT AS {@link SenderNotActiveError}, seen one read earlier - a stale leaf after a
+ * removal, or a roster and a tree that disagree - so it IS one, and every consumer that classifies a
+ * send failure routes it to the roster repair rather than to a retry that cannot change the answer.
+ * Before it was typed, an untyped `Error('... 403')` was retried as a blip, the outbox's quote
+ * decision parked the conversation's replies for good, and the repair never ran (third review of
+ * #1878). A status is an answer; a transport failure is not, and never becomes one of these.
+ */
+export class ExclusionsRefusedError extends SenderNotActiveError {
+  constructor(groupId: string) {
+    super(groupId, null);
+    this.message = `The server refused the exclusion windows of group ${groupId}: this account is not on its roster`;
+    this.name = 'ExclusionsRefusedError';
+  }
+}
+
+/**
  * The delivery service refused an application frame with a 403 that is NOT `sender_not_active`:
  * the AUTHENTICATED caller is not allowed to send what this request claims (the gateway's
  * `AUTHZ FAIL caller != requester`, a token whose `sub` is not the frame's sender).
@@ -980,6 +1006,11 @@ export class MlsDeliveryApi {
    * the epoch the commit creates, in the same transaction as the advance, which makes it a recipient
    * of every frame sealed from then on while its Welcome waits for it (channel-encryption section
    * 20). Only a staged Add has any.
+   *
+   * `removes` names whom this commit REMOVES - a person, or one device of theirs. Their device rows
+   * were deleted by the server's half of the removal, which ran first, so the server queues the
+   * commit to the devices it parted for exactly these (`partingKey`, server side): the removed
+   * devices receive the commit that removes them. Only a staged Remove has any.
    */
   async submitCommit(
     groupId: string,
@@ -987,7 +1018,8 @@ export class MlsDeliveryApi {
     protoBase64: string,
     excludeDeviceIds?: string[],
     groupInfoBase64?: string,
-    admits?: Array<{ userId: string; deviceId: string }>
+    admits?: Array<{ userId: string; deviceId: string }>,
+    removes?: CommitRemoval[]
   ): Promise<{ accepted: boolean; reason?: string; currentEpoch?: number; newEpoch?: number }> {
     const res = await this.f(`${this.historyUrl}/api/mls/commit`, {
       method: 'POST',
@@ -1001,6 +1033,7 @@ export class MlsDeliveryApi {
         ...(excludeDeviceIds?.length ? { excludeDeviceIds } : {}),
         ...(groupInfoBase64 ? { groupInfo: groupInfoBase64 } : {}),
         ...(admits?.length ? { admits } : {}),
+        ...(removes?.length ? { removes } : {}),
       }),
     });
     if (!res.ok) {
@@ -1565,13 +1598,29 @@ export class MlsDeliveryApi {
    * Throws on any transport or HTTP failure, and on an answer it cannot parse: the caller cannot
    * prove what may be sent without it, so it sends nothing and says so. Simultaneous askers share one
    * request; nothing is kept past the answer.
+   *
+   * CLASSIFIED AT THE THROW: a gateway 403 is {@link ExclusionsRefusedError} (this account is not on
+   * the roster - an answer the roster repair owns), an edge 403 a {@link SendEdgeRefusedError} (the
+   * network path), any other status an {@link ApiRefusalError} carrying it; a transport failure is
+   * whatever `f` raised, untouched.
    */
   getGroupExclusions(groupId: string): Promise<GroupExclusions> {
     return this.joinInFlight(`exclusions:${groupId}`, async () => {
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/exclusions`, {
         headers: await this.auth(),
       });
-      if (!res.ok) throw new Error(`getGroupExclusions failed: ${res.status}`);
+      if (res.status === 403) {
+        // ORIGIN FIRST, as for a send: an HTML 403 is the edge, and says nothing about the roster.
+        if (responseOrigin(res) === 'edge') throw new SendEdgeRefusedError(groupId, res.status);
+        throw new ExclusionsRefusedError(groupId);
+      }
+      if (!res.ok) {
+        throw new ApiRefusalError(
+          res.status,
+          null,
+          `getGroupExclusions refused with ${res.status} for group ${groupId}`
+        );
+      }
       const body = (await res.json()) as { exclusions?: unknown };
       return parseGroupExclusions(body?.exclusions);
     });

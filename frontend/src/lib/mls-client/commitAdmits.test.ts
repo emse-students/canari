@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { commitAdmits } from './commitAdmits';
+import { commitAdmits, commitRemovals } from './commitAdmits';
 
 const SELF = 'user-a:web-self';
 
@@ -30,5 +30,24 @@ describe('commitAdmits', () => {
 
   it('admits nothing for a commit that adds nobody', () => {
     expect(commitAdmits(undefined, undefined, SELF)).toEqual([]);
+  });
+});
+
+/**
+ * A REMOVE COMMIT SAYS WHOM IT REMOVES, so the server queues it to the devices its own half of the
+ * removal parted - and to those only (third review of #1878).
+ */
+describe('commitRemovals', () => {
+  it('names each removed person alone, every leaf of theirs', () => {
+    expect(commitRemovals({ userIds: ['user-b', 'user-c'] })).toEqual([
+      { userId: 'user-b' },
+      { userId: 'user-c' },
+    ]);
+  });
+
+  it('names one device of a person when a device is removed, splitting on the LAST separator', () => {
+    expect(commitRemovals({ deviceIdentities: ['a:b:web-x', 'nocolon'] })).toEqual([
+      { userId: 'a:b', deviceId: 'web-x' },
+    ]);
   });
 });

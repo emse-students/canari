@@ -185,16 +185,14 @@ describe('withholdExcludedHistoryRows', () => {
     ...(ms === null ? {} : { timestamp: new Date(ms).toISOString() }),
   });
 
-  it('keeps the id of a withheld row and nothing else, so a cursor still moves past it', () => {
+  it('drops a withheld row outright - no id, no marker an older build could trip on', () => {
     const out = withholdExcludedHistoryRows([row('a', 999), row('b', 1000), row('c', 2000)], W);
-    expect(out.rows).toEqual([row('a', 999), { id: 'b', withheld: '1' }, row('c', 2000)]);
+    expect(out.rows).toEqual([row('a', 999), row('c', 2000)]);
     expect(out.withheld).toBe(1);
   });
 
   it('withholds a row whose time cannot be read while a window exists, and touches nothing without one', () => {
-    expect(withholdExcludedHistoryRows([row('x', null)], W).rows).toEqual([
-      { id: 'x', withheld: '1' },
-    ]);
+    expect(withholdExcludedHistoryRows([row('x', null)], W).rows).toEqual([]);
     const untouched = [row('x', null)];
     expect(withholdExcludedHistoryRows(untouched, []).rows).toBe(untouched);
   });

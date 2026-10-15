@@ -32,16 +32,17 @@ changing anything that leans on one.
 | Size cap | `MAXLEN ~ 1000` per group | `messaging.service.ts:683-685` |
 | Key TTL | 90 days, **refreshed on every write** | `messaging.service.ts:695` |
 | Entry cost | ~431 bytes | `MEMORY USAGE`, prod |
-| Redis memory | 2.42 MB used, `maxmemory 1gb`, `volatile-lru` | prod / `docker-compose.prod.yml:45` |
-| Redis persistence | **none** - no volume, `appendonly no`, `dir /data` in the container layer | `docker-compose.prod.yml:35-53` |
+| Redis memory | `maxmemory 2gb`, `volatile-lru` (only keys carrying a TTL are ever evicted) | `docker-compose.prod.yml:62-71` |
+| Redis persistence | **AOF on a volume** since 2026-08-12 (`--appendonly yes`, `redis_data:/data`); it was none before, and the stream died with the container | `docker-compose.prod.yml:45-73` |
 | Per-device queue | Postgres `queued_message`, **deleted on ACK** | `messaging.service.ts:1941-1945` |
 | Excluded from the shared log | Welcome, Commit, and every `silent` frame - reactions, edits, deletes, read receipts, `history_bundle` | `messaging.service.ts:662-678` |
 
 Four consequences drive everything else.
 
-1. **The server is not an archive.** The only shared copy is an unpersisted Redis stream, capped at
-   ~1000 entries, evictable under memory pressure, destroyed when its container is recreated.
-   Measured span for an active DM: **22.6 hours**. The devices are the archive.
+1. **The server is not an archive.** The only shared copy is a Redis stream, capped per group and
+   carrying a TTL - so evictable under memory pressure. It was also destroyed whenever its container
+   was recreated, until the volume of 2026-08-12 (measured span for an active DM before it: **22.6
+   hours**). The devices are the archive.
 2. **Holding the ciphertext is not the right to read it.** MLS forward secrecy means a device cannot
    decrypt anything from before it joined, and a spent ratchet generation (`secret-reuse`) is gone
    locally. Only a member that decrypted a frame at the time can re-encrypt it. This is the
@@ -800,33 +801,67 @@ answer path can forget it.
   the QUOTED message (memory, else the store) against every current member's windows through
   `quotePreviewEntitled`; inside one, or undatable while a window exists, the preview is blanked in
   the frame, the stored entry AND the sender's echo, which a later bundle would otherwise carry. An
-  unreadable window set THROWS, so the send fails as a transient and retries - a transport failure
-  never blanks a quote. Composing reads nothing (the earlier compose-time GET cost a round trip per
+  unreadable window set THROWS, so nothing is sent and nothing is blanked, and the throw is
+  classified where it is raised (`getGroupExclusions`): a transport failure or a 5xx retries as a
+  transient; an edge 403 is `SendEdgeRefusedError`; a gateway 403 - this account is off the roster
+  while the device holds the group - is `ExclusionsRefusedError`, a `SenderNotActiveError`, so the
+  outbox takes the arm a refused send takes: the roster repair runs and the reply waits for it. Composing reads nothing (the earlier compose-time GET cost a round trip per
   reply and blanked a quote for good when composed offline). The native outbox mirror sends frames
   built at enqueue, where no decision can be made, so it mirrors a reply with the quoted id and an
   EMPTY preview always - a background-sent reply quotes by reference only.
 
 **The removal order - the record first, and the commit still reaches the removed member.**
 `removeMemberAndBroadcast` calls the server first, then commits the MLS remove, then broadcasts
-`memberRemoved`. `removeGroupMember` (called by ANOTHER member) does two things before it deletes the
-removed person's device memberships: it writes each of their devices into the Redis hash
-`group:parting:{gid}` (`partingKey`) with the remover's user id as value, then deletes the roster row
-and closes the interval in one transaction. The commit fan-out (`sendMessage`, `isCommit`) adds, for
-a commit whose sender is that remover, the devices it has just parted - so the Remove commit is
-QUEUED to the removed devices, which process it and learn they are out instead of keeping epoch-E
-keys until a refused send. The hash entries are deleted once that commit is queued. The hash is a
-hint, never the record: losing it (Redis down, logged) costs only that delivery, which the removed
-device then learns from its next refused send or reconnect, exactly as before.
+`memberRemoved`. `removeGroupMember` (called by somebody other than the removed person) reads the
+removed person's devices, deletes their device memberships, deletes the roster row and closes the
+interval in one transaction - and only once all of that has landed writes each device into the Redis
+hash `group:parting:{gid}` (`partingKey`). The removing client's commit DECLARES whom it removes
+(`ValidateCommitBody.removes`: a person, or one device of theirs - `removeMember` and
+`removeMemberDevice` both say so through `runCommitTransaction`), and `validateCommit` hands the
+fan-out the parted devices that declaration names - so the Remove commit is QUEUED to the removed
+devices, which process it and learn they are out instead of keeping epoch-E keys until a refused
+send. The entries it names are deleted once the commit is queued.
+
+**The hint is keyed to the commit's declared intent, never to "the remover's next commit"**, which
+is what the second shape did, and what four cases broke (third review of #1878):
+
+- two removals in flight by one member: the first commit consumed both people's entries, and the
+  second person never received their own removal - now each commit names only its own person;
+- a global admin who removes somebody and never commits: the entry waited for a commit that would
+  never come - now whichever holder collects the stray leaf (`removeStrayLeaves` commits through
+  `removeMemberDevice`, which declares) delivers it;
+- an older build that declares nothing: its commit consumes nobody's entry;
+- a removal whose server half failed: no entry is written, because it is written after the
+  transaction and not before.
+
+**An entry ends on state, never on a clock**: consumed by the commit naming it; cleared when its
+device is in the tree again (admitted by a commit, or committing itself - an external rejoin); gone
+with the group (`GROUP_REDIS_KEY_PREFIXES`). What remains is an entry no commit will ever name - a
+removal committed by an older build before its server call, which reached the device anyway - kept
+until the person returns or the group ends, one small field per device. The hash carries no TTL, and
+`volatile-lru` only ever evicts keys that do. It is a hint, never the record: losing it (a lost Redis
+volume, or a failed write, logged) costs only that delivery, which the removed device then learns from
+its next refused send, exactly as before.
 
 What closes a failure in the middle (a server record with no commit, then a re-add) is the SERVER,
-not the tree: **`GET /history` and `/history/batch` withhold, per row, everything inside the READER's
-own windows** (`withholdExcludedHistoryRows`; the row is answered as `{ id, withheld: '1' }`, which
-the client skips without decoding and walks past). So a stale leaf left by a failed commit - its
-device decrypts every frame at the old epoch - finds nothing to decrypt in the stream for the gap,
-and live delivery never queued it a copy while it had no device membership. The exclusions read
-also counts every user with an ADMITTED device row (`dm_device_group_memberships`), not only the
-roster: an add commit admits devices before `registerMember` enrols the person, and the union must
-include their windows from that first moment.
+not the tree: **`GET /history` and `/history/batch` DROP every row inside the READER's own windows,
+and keep reading so the page stays full** (`withholdExcludedHistoryRows`, `readHistoryStreamPage`).
+So a stale leaf left by a failed commit - its device decrypts every frame at the old epoch - finds
+nothing to decrypt in the stream for the gap, and live delivery never queued it a copy while it had
+no device membership. **Dropped, never marked**: the second shape answered such a row as
+`{ id, withheld: '1' }`, and every store build shipped before it decodes `content` unconditionally -
+the decode threw, the replay's catch only logged, the cursor was never saved, and every later replay
+threw on the same row, so a re-added member on a store build lost stream catch-up for that group for
+good. A page is filled past what it drops because every build ends its walk on an empty page;
+dropped rows after the last kept one are read and dropped again by the next page, and a cursor
+followed only by dropped rows up to the head is counted as caught up rather than logged per launch.
+The window read is per group, inside that group's `try` on the batch route: a failed read answers
+that group empty - never unfiltered - and serves the rest.
+
+The exclusions read also counts every person holding a device row (`dm_device_group_memberships`,
+either status - the enum is `pending | active`, and both mean a device the tree admitted), not only
+the roster: an add commit admits devices before `registerMember` enrols the person, and the union
+must include their windows from that first moment. It reads DISTINCT users, not rows.
 
 Rejected designs, and why:
 
@@ -840,11 +875,24 @@ Rejected designs, and why:
   costs one delivery.
 - **Refuse a re-add while a stray leaf of that user exists.** The server cannot see the tree, and
   the old state could still walk the stream - the stream filter closes that whatever the tree holds.
+- **Clear every entry when the group's next commit lands, whoever sends it.** A state-based end, but
+  the wrong state: two removals in flight lose the second person's delivery to the first commit.
+- **Mark a withheld stream row, or gate the shape on the client version.** The marker stalled every
+  older build (above); the API carries no client version to gate on, and a shape no build can trip
+  on needs no gate.
 
-**Answering in chunks.** `sendBundleChunks` re-reads the exclusions for EVERY chunk, so a removal
-landing mid-answer is honoured from the next chunk on. Binding the answer to an epoch was rejected:
-the Tauri `getEpoch` is a cached value that can be stale, so it would bind to the wrong state. An
-unreadable first read sends nothing; an unreadable later read stops the answer there.
+**Answering in chunks.** `sendBundleChunks` re-reads the exclusions for EVERY chunk. What can change
+mid-answer is a RE-ADD: a removed person is not a current member, so their window is absent from the
+union until the re-add makes them one, and every chunk sealed after it is one they can open. A
+removal mid-answer cannot widen what is sent - its window starts at the removal, after every message
+already selected. Binding the answer to an epoch was rejected: the Tauri `getEpoch` is a cached value
+that can be stale, and a stale leaf opens the old epoch anyway. The cost, justified rather than
+optimised: one read per chunk is three indexed reads on `groupId` (roster, DISTINCT device users,
+intervals) - ~86 for a 4 000-message full bundle, which happens on a new device - against the chunk's
+own `POST /send`, which inserts one queued row per recipient device. An unreadable first read sends
+nothing; an unreadable later read stops the answer there. **The narrow window that remains**: a re-add
+landing between a chunk's read and that chunk's send, if the answerer has processed the add commit
+before sealing it - one chunk at most, and only of messages the person's window covers.
 
 **The receiver - hygiene, not a control.** The `history_bundle` handler drops a message it would
 ADD by the same `withholdReason` the senders apply, against its OWN windows - a dated message inside

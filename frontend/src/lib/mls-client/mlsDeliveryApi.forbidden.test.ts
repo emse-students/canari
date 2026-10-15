@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  ExclusionsRefusedError,
   MlsDeliveryApi,
   SendEdgeRefusedError,
   SendForbiddenError,
   SenderNotActiveError,
 } from './mlsDeliveryApi';
+import { classifyOutgoingSendError } from './mlsSendError';
 import { refusalStatus } from '$lib/utils/apiRefusal';
 
 /**
@@ -61,5 +63,75 @@ describe('postApplicationMessage on a 403', () => {
     expect(failure).toBeInstanceOf(SendEdgeRefusedError);
     expect(failure).not.toBeInstanceOf(SendForbiddenError);
     expect(refusalStatus(failure)).toBeNull();
+  });
+});
+
+/**
+ * THE EXCLUSIONS READ IS CLASSIFIED AT THE THROW TOO (third review of #1878). An untyped
+ * `Error('getGroupExclusions failed: 403')` was a blip to every reader, so a roster-less device's
+ * replies were held for good and the roster repair never ran.
+ */
+describe('getGroupExclusions on a refusal', () => {
+  const api = (res: Response) =>
+    new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: vi.fn().mockResolvedValue(res) as unknown as typeof fetch,
+    });
+  const json = (status: number) =>
+    new Response(JSON.stringify({ message: 'no' }), {
+      status,
+      headers: { 'content-type': 'application/json' },
+    });
+
+  it('a gateway 403 is the roster disagreement a send would meet, typed as such', async () => {
+    const failure = await api(json(403))
+      .getGroupExclusions('g1')
+      .catch((e: unknown) => e);
+
+    expect(failure).toBeInstanceOf(ExclusionsRefusedError);
+    expect(classifyOutgoingSendError(failure)).toBe('sender-not-active');
+  });
+
+  it('an edge 403 is the network path, never the roster', async () => {
+    const failure = await api(
+      new Response('<html>ban</html>', { status: 403, headers: { 'content-type': 'text/html' } })
+    )
+      .getGroupExclusions('g1')
+      .catch((e: unknown) => e);
+
+    expect(failure).toBeInstanceOf(SendEdgeRefusedError);
+    expect(failure).not.toBeInstanceOf(SenderNotActiveError);
+  });
+
+  it('any other status carries it as a field', async () => {
+    const failure = await api(json(503))
+      .getGroupExclusions('g1')
+      .catch((e: unknown) => e);
+
+    expect(refusalStatus(failure)).toBe(503);
+    expect(classifyOutgoingSendError(failure)).toBe('unknown');
+  });
+});
+
+describe('submitCommit declares whom the commit removes', () => {
+  it('sends `removes` when there are any, and omits the field otherwise', async () => {
+    const fetchImpl = vi
+      .fn()
+      .mockImplementation(async () => new Response(JSON.stringify({ accepted: true })));
+    const delivery = new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+
+    await delivery.submitCommit('g1', 5, 'AAAA', undefined, undefined, undefined, [
+      { userId: 'user-b' },
+    ]);
+    await delivery.submitCommit('g1', 5, 'AAAA');
+
+    const bodyOf = (i: number) => JSON.parse(String(fetchImpl.mock.calls[i][1].body));
+    expect(bodyOf(0).removes).toEqual([{ userId: 'user-b' }]);
+    expect(bodyOf(1)).not.toHaveProperty('removes');
   });
 });

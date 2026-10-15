@@ -30,6 +30,7 @@ describe('MembersController - membership intervals and the exclusions read', () 
   let intervalFind: jest.Mock;
   let deviceRows: Array<{ userId: string; deviceId: string }>;
   let order: string[];
+  let failTx: boolean;
   let redis: { smembers: jest.Mock; srem: jest.Mock; hset: jest.Mock };
 
   const T = (iso: string) => new Date(iso);
@@ -49,6 +50,7 @@ describe('MembersController - membership intervals and the exclusions read', () 
     ];
     txDeletes = [];
     txUpdates = [];
+    failTx = false;
     intervalFind = jest.fn(() => Promise.resolve(intervals));
     order = [];
     deviceRows = [
@@ -73,6 +75,8 @@ describe('MembersController - membership intervals and the exclusions read', () 
           return Promise.resolve({ affected: 1 });
         },
         update: (where: Record<string, unknown>) => {
+          if (failTx) return Promise.reject(new Error('serialization failure'));
+          order.push('interval-closed');
           txUpdates.push({ entity, where });
           return Promise.resolve({ affected: 1 });
         },
@@ -128,6 +132,17 @@ describe('MembersController - membership intervals and the exclusions read', () 
               deviceRows = deviceRows.filter((d) => d.userId !== userId);
               return { affected: 2 };
             }),
+            // The exclusions read: DISTINCT users holding a device row, whatever its status.
+            createQueryBuilder: () => {
+              const qb = {
+                select: () => qb,
+                distinct: () => qb,
+                where: () => qb,
+                getRawMany: async () =>
+                  [...new Set(deviceRows.map((d) => d.userId))].map((userId) => ({ userId })),
+              };
+              return qb;
+            },
           },
         },
         { provide: getRepositoryToken(QueuedMessage), useValue: {} },
@@ -217,9 +232,10 @@ describe('MembersController - membership intervals and the exclusions read', () 
     expect(txUpdates[0].where).toMatchObject({ groupId: 'g-1', userId: 'bob' });
   });
 
-  it("a removal by ANOTHER member names the removed person's devices as parting, before their rows go", async () => {
-    // The commit that removes bob is fanned out from these very rows; without the parting entry it
-    // would never reach his devices (second review of #1878, P1-a).
+  it("a removal by ANOTHER member names the removed person's devices as parting, once the removal has landed", async () => {
+    // The commit that removes bob is fanned out from the rows deleted here; without the parting
+    // entry it would never reach his devices (second review of #1878, P1-a). Written only after
+    // the removal succeeded (third review).
     await controller.removeGroupMember('g-1', 'bob', 'alice', undefined);
 
     expect(redis.hset).toHaveBeenCalledWith(
@@ -229,7 +245,16 @@ describe('MembersController - membership intervals and the exclusions read', () 
       'bob:b2',
       'alice'
     );
-    expect(order).toEqual(['parting-recorded', 'devices-deleted']);
+    expect(order).toEqual(['devices-deleted', 'interval-closed', 'parting-recorded']);
+  });
+
+  it('a removal whose transaction fails names nobody as parting', async () => {
+    failTx = true;
+
+    await expect(controller.removeGroupMember('g-1', 'bob', 'alice', undefined)).rejects.toThrow(
+      'serialization failure'
+    );
+    expect(redis.hset).not.toHaveBeenCalled();
   });
 
   it('a self-leave makes no commit, and names nobody as parting', async () => {

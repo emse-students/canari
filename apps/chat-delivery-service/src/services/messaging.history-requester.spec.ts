@@ -93,15 +93,21 @@ describe('a history read names who asked', () => {
   /**
    * A REMOVE HOLDS AGAINST A LATER RE-ADD (user, 2026-10-14). When the Remove commit never landed,
    * the re-admitted person's OLD state can still open every frame sealed while they were out, and
-   * this stream is the one road back to those frames. The server withholds them itself: the row
-   * keeps its id - so the reader's cursor moves past it - and nothing else.
+   * this stream is the one road back to those frames. The server withholds them itself, by DROPPING
+   * the rows and filling the page past them: the first shape kept a `{ id, withheld }` row, and every
+   * store build shipped before it stalled on that row for good (third review of #1878).
    */
   describe('withholds what was sent while the READER was out', () => {
     const at = (iso: string) => new Date(iso);
-    const entry = (id: string, iso: string): [string, string[]] => [
-      id,
-      ['sender_id', 'peer', 'content', `cipher-${id}`, 'timestamp', iso],
-    ];
+    const day = (d: number) => `2026-10-${String(d).padStart(2, '0')}T00:00:00.000Z`;
+    /** A real stream: XRANGE honours its exclusive start, inclusive end and COUNT. */
+    let stream: Array<[string, string[]]> = [];
+    const seq = (id: string) => Number(id.split('-')[0]);
+    const put = (n: number, d: number) =>
+      stream.push([
+        `${n}-0`,
+        ['sender_id', 'peer', 'content', `Y2lwaGVy${n}`, 'timestamp', day(d)],
+      ]);
 
     beforeEach(() => {
       // The reader was out from the 3rd to the 5th.
@@ -113,28 +119,109 @@ describe('a history read names who asked', () => {
         },
         { groupId: GROUP, joinedAt: at('2026-10-05T00:00:00Z'), leftAt: null },
       ]);
-      redis.xrange.mockResolvedValue([
-        entry('1-0', '2026-10-02T00:00:00.000Z'),
-        entry('2-0', '2026-10-04T00:00:00.000Z'),
-        entry('3-0', '2026-10-06T00:00:00.000Z'),
-      ]);
+      stream = [];
+      put(1, 2);
+      put(2, 4);
+      put(3, 6);
+      redis.xrange.mockImplementation(
+        async (_k: string, start: string, end: string, _c: string, count: number) => {
+          const lo = start === '-' ? -1 : seq(start.replace('(', ''));
+          const hi = end === '+' ? Infinity : seq(end);
+          return stream.filter(([id]) => seq(id) > lo && seq(id) <= hi).slice(0, count);
+        }
+      );
+      redis.xrevrange.mockImplementation(async () => stream.slice(-1));
     });
 
-    it('on the single-group read', async () => {
+    it('on the single-group read, the row is absent - never a shape without content', async () => {
       const page = await service.getHistory(GROUP, undefined, USER, ADMIN);
 
-      expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '2-0', '3-0']);
-      expect(page.rows[1]).toEqual({ id: '2-0', withheld: '1' });
-      expect(page.rows[0]['content']).toBe('cipher-1-0');
-      expect(page.rows[2]['content']).toBe('cipher-3-0');
-      expect(lines()).toContain('withheld=1 of 3');
+      expect(page.rows.map((r) => r['id'])).toEqual(['1-0', '3-0']);
+      for (const row of page.rows) expect(typeof row['content']).toBe('string');
+      expect(lines()).toContain('withheld=1 (sent while the reader was out of the group)');
     });
 
     it('on the batch read', async () => {
       const res = await service.getHistoryBatch([{ groupId: GROUP }], USER, ADMIN);
 
-      expect(res.histories[GROUP][1]).toEqual({ id: '2-0', withheld: '1' });
-      expect(res.histories[GROUP][2]['content']).toBe('cipher-3-0');
+      expect(res.histories[GROUP].map((r) => r['id'])).toEqual(['1-0', '3-0']);
+    });
+
+    it('fills the page past what it drops, so a short page never ends a walk early', async () => {
+      stream = [];
+      put(1, 4);
+      put(2, 4);
+      put(3, 4);
+      put(4, 6);
+      put(5, 7);
+
+      // An incremental read (`after` set) takes the caller's limit.
+      const page = await service.getHistory(GROUP, '0-0', USER, ADMIN, 2);
+
+      expect(page.rows.map((r) => r['id'])).toEqual(['4-0', '5-0']);
+    });
+
+    /**
+     * THE LOOP OF EVERY STORE BUILD BEFORE THIS ONE, transcribed from `history.ts` on `main`: walk
+     * from the cursor up to the head pinned on the first page, stop on an empty page, DECODE EVERY
+     * ROW'S `content` (`fromBase64` -> `atob`, which throws on `undefined`), and advance the cursor
+     * past each row. A throw escapes to a catch that only logs, the cursor is never saved, and the
+     * next replay throws on the same row - for good.
+     */
+    it('an OLD build walks the new payload to the end and never meets a row it cannot decode', async () => {
+      stream = [];
+      put(1, 2);
+      for (let n = 2; n <= 7; n++) put(n, 4); // a whole page and more, all inside the window
+      put(8, 6);
+      put(9, 7);
+      put(10, 4); // inside the window, AFTER the last row the reader may have
+
+      const decode = (content: unknown): string => {
+        if (typeof content !== 'string') throw new TypeError('atob: content is undefined');
+        return content;
+      };
+      let cursor: string | undefined;
+      let head: string | undefined;
+      const decoded: string[] = [];
+      for (let guard = 0; guard < 20; guard++) {
+        const page = await service.getHistory(GROUP, cursor ?? '0-0', USER, ADMIN, 3, head);
+        head ??= page.head;
+        if (page.rows.length === 0) break;
+        for (const row of page.rows) {
+          decoded.push(decode(row['content']));
+          cursor = String(row['id']);
+        }
+      }
+
+      expect(decoded).toEqual(['Y2lwaGVy1', 'Y2lwaGVy8', 'Y2lwaGVy9']);
+      expect(cursor).toBe('9-0');
+    });
+
+    it('counts a cursor followed only by withheld rows as caught up, not as a line per launch', async () => {
+      stream.pop(); // the head is now 2-0, inside the window
+      await service.getHistoryBatch([{ groupId: GROUP, after: '1-0' }], USER, ADMIN);
+
+      expect(lines()).not.toContain('[HISTORY] ');
+      expect(lines()).toContain('caughtUp=1');
+    });
+
+    it('a failed window read answers THAT group empty and serves the rest of the batch', async () => {
+      intervalFind.mockImplementation(async (_e: unknown, opts: { where: { groupId: string } }) => {
+        if (opts.where.groupId === 'group-2') throw new Error('connection reset');
+        return [];
+      });
+      const groupRepo = (service as unknown as { groupRepo: { find: jest.Mock } }).groupRepo;
+      groupRepo.find.mockResolvedValue([{ id: GROUP }, { id: 'group-2' }]);
+
+      const res = await service.getHistoryBatch(
+        [{ groupId: GROUP }, { groupId: 'group-2' }],
+        USER,
+        ADMIN
+      );
+
+      expect(res.histories['group-2']).toEqual([]);
+      expect(res.histories[GROUP].map((r) => r['id'])).toEqual(['1-0', '2-0', '3-0']);
+      expect(lines()).toContain('[HISTORY_BATCH] user=user-9 device=unstated group=group-2 error=');
     });
 
     it('reads the windows of the CALLER, never of anybody else', async () => {
