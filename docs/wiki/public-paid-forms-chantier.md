@@ -50,7 +50,11 @@ WP-P4's stale forms.md line is already corrected in #1906. Guest rows (`userId =
 the code can be written and tested on dev with Lydia's homologation account, but nothing ships to users before.
 Order: P0 first (independent), then P1, P2, P3 in parallel, P4 last.
 
-## Blocked on information the repository does not hold (2026-10-15, from WP-P0 round two)
+## UNBLOCKED by Lydia's sandbox (measured 2026-10-15 by Master, docs PR #1909)
+
+`request/do` accepts `expire_time`, an integer of SECONDS (60 s gives the expire callback at about 79 s, the sweep runs about once a minute; **0 does NOT expire**; text, negative and date values are refused) - D1. `POST /api/request/cancel.json` with the NUMERIC `request_id` and `vendor_token`, no signature, answers error 0 and state 6 and fires `cancel_url`; the `request_uuid` is refused and an already cancelled or expired request answers error 2 - D2. `request/do` also returns the numeric `request_id` the callbacks carry, so storing it makes the id comparison and the cancel possible. **A P1 stays open: the real Lydia callbacks (expire, cancel) are refused with 400 "Missing request_id or sig" before any signature check** (likely `multipart/form-data` that core-service does not parse; another session has the fix): never count on a processed callback until it is deployed, and keep the confirmation path on `verify-session`.
+
+## Blocked on information the repository does not hold (2026-10-15, from WP-P0 round two) - RESOLVED above, kept for the story
 
 | Point | What is missing | Who can supply it |
 |---|---|---|
