@@ -121,7 +121,14 @@ describe('the landing effect before the session', () => {
 describe('the chat page during a local preview', () => {
   it('does not mount the conversation list, whose rows act when tapped', () => {
     const sidebar = at(page, '<Sidebar {...makeSidebarCommonProps()}');
-    expect(page.slice(sidebar - 120, sidebar)).toContain('{#if session.isLoggedIn}');
+    // Before the session it mounts ONLY for the Communities page's saved list (F1), whose taps are
+    // landings and whose admin controls are withheld - never for a conversation's local preview.
+    expect(page.slice(sidebar - 120, sidebar)).toContain(
+      '{#if session.isLoggedIn || isWorkspacePreview}'
+    );
+    const preview = page.slice(at(page, 'const isWorkspacePreview = $derived('));
+    expect(preview.slice(0, preview.indexOf(');'))).toContain("routeMode === 'communities'");
+    expect(page).toContain('previewOnly: !session.isLoggedIn');
   });
   it('ends the landing and reports held sends when the page is left during a preview', () => {
     const destroy = page.slice(at(page, 'onDestroy(() => {'));

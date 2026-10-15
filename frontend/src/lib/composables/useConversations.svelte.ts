@@ -31,6 +31,7 @@ import { resolveConversationKey } from '$lib/utils/chat/openConversationFromId';
 import { setPollMeta } from '$lib/stores/pollStore.svelte';
 import { applyChannelEdits, type DecodedChannelEdit } from '$lib/utils/chat/channelEdit';
 import { createLoadGenerations } from '$lib/utils/chat/loadGenerations';
+import { whenSalonEntryDecided } from '$lib/utils/graine/salonSendGate';
 import type { ChannelPollMeta } from '$lib/services/ChannelService';
 import { applyChannelReactionFrame } from '$lib/stores/reactionStore.svelte';
 import {
@@ -246,8 +247,26 @@ export function useConversations() {
    * the frame can select another salon: the skeleton is shown only on the salon it was raised for.
    */
   let skeletonSalon: string | null = null;
+  /**
+   * How many times a salon copy was declared stale ({@link invalidateChannelHistoryCache}, any
+   * salon). A load in flight is JOINED by a second non-forced load of the same salon only when its
+   * request has not left yet, or left after the last such declaration - then its page already
+   * answers whatever made the copy stale (a stream gap, a seed that arrived), and a second request
+   * would only download and decode the same 200 rows again and supersede the first.
+   *
+   * Measured on the Mi 9T (2026-10-14): a salon tapped as soon as its row is drawn, while the live
+   * stream comes back and the community listing ends, fetched its 116 kB page two or three times;
+   * the extra copies cost ~3 s before the first message at 1x.
+   */
+  let salonStaleDeclarations = 0;
+  /** The load of each salon still in flight: its request's declaration count (`null`: not sent). */
+  const salonLoadsInFlight = new SvelteMap<
+    string,
+    { sentAt: number | null; generation: number; done: Promise<void> }
+  >();
 
   function invalidateChannelHistoryCache(channelConversationId?: string) {
+    salonStaleDeclarations++;
     if (channelConversationId) channelHistoryLoadedAt.delete(channelConversationId);
     else channelHistoryLoadedAt.clear();
   }
@@ -591,11 +610,39 @@ export function useConversations() {
     const cached = channelHistoryLoadedAt.get(channelConversationId);
     if (!force && cached && cached.userId === ctx.userId) return;
 
+    // A LOAD OF THIS SALON STILL IN FLIGHT ANSWERS THIS ONE when nothing was declared stale after its
+    // request left (see `salonStaleDeclarations`): joined, not repeated.
+    const running = salonLoadsInFlight.get(channelConversationId);
+    if (
+      !force &&
+      running &&
+      (running.sentAt === null || running.sentAt === salonStaleDeclarations)
+    ) {
+      ctx.log(
+        `[CHANNEL] history load of ${channelConversationId.slice(0, 16)} joins the one in flight (${running.sentAt === null ? 'not sent yet' : 'sent after the last stale mark'})`
+      );
+      // A press joining a load started in the background (the listing's end, a reconnect) still
+      // shows the skeleton: the joined load becomes its owner, and lowers it when its page is in.
+      if (atTap || selectedContact === channelConversationId) {
+        isLoadingHistory = true;
+        salonSkeletonOwner = running.generation;
+        skeletonSalon = channelConversationId;
+      }
+      await running.done;
+      return;
+    }
     // ONLY THE LATEST LOAD STARTED FOR THIS SALON MAY MERGE (found reviewing #1761). The page is
     // authoritative for its window, so an older load finishing last would drop a row a newer one
     // had just decoded - see `loadGenerations.ts` for the exact sequence. Not a refetch afterwards:
     // that was the heal that hid the race.
     const generation = salonLoadGenerations.begin(channelConversationId);
+    let finishLoad: () => void = () => {};
+    const inFlight = {
+      sentAt: null as number | null,
+      generation,
+      done: new Promise<void>((resolve) => (finishLoad = resolve)),
+    };
+    salonLoadsInFlight.set(channelConversationId, inFlight);
     // `atTap`: the request leaves on the press, BEFORE the pane that will show this salon is mounted
     // (the selection follows the pressed row's frame). The skeleton is raised all the same, so the
     // pane mounts onto it instead of onto an empty list.
@@ -622,6 +669,7 @@ export function useConversations() {
       // events only carry what moved while this device was connected, so a load is the one moment
       // the whole picture can be taken. Their failure costs the "Lu par" row and nothing else - the
       // page still loads, and the next load asks again.
+      inFlight.sentAt = salonStaleDeclarations;
       const [rows, rawMarks] = await Promise.all([
         channelService.listMessages(rawId, 200),
         channelService.listReadMarks(rawId).catch((e) => {
@@ -632,6 +680,12 @@ export function useConversations() {
           return undefined;
         }),
       ]);
+      // DECODED ONLY ONCE NO LISTING CAN STILL ENTER THIS SALON: a row missing its seed asks for it
+      // on the community's key group, which a listing still in flight may not have registered yet
+      // (`whenSalonEntryDecided`). The page was fetched meanwhile, so an entered salon waits nothing.
+      if (await whenSalonEntryDecided(rawId)) {
+        ctx.log(`[CHANNEL] page of ${rawId.slice(0, 8)} decoded after its salon entry was decided`);
+      }
       const loaded: ChatMessage[] = [];
       // Server row id -> the client UUID its author sealed inside it (own rows only, see below).
       const clientIdOf = new SvelteMap<string, string>();
@@ -748,6 +802,10 @@ export function useConversations() {
     } catch (e) {
       ctx.log(`[CHANNEL] History load failed: ${String(e)}`);
     } finally {
+      if (salonLoadsInFlight.get(channelConversationId) === inFlight) {
+        salonLoadsInFlight.delete(channelConversationId);
+      }
+      finishLoad();
       // The load that raised the skeleton last lowers it: a superseded load leaves it to a newer one
       // that raised it again, never to one that did not (see `salonSkeletonOwner`).
       if (salonSkeletonOwner === generation) {

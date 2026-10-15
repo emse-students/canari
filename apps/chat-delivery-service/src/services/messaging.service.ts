@@ -14,14 +14,14 @@ import Redis from 'ioredis';
 import { getApps } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { QueuedMessage } from '../entities/queued-message.entity';
-import { GroupMember } from '../entities/group-member.entity';
+import { GroupMember, isGroupUuid } from '../entities/group-member.entity';
 import { Group } from '../entities/group.entity';
 import { KeyPackage } from '../entities/key-package.entity';
 import { OneTimeKeyPackage } from '../entities/one-time-key-package.entity';
 import { DeviceGroupMembership } from '../entities/device-group-membership.entity';
 import { PushToken } from '../entities/push-token.entity';
 import { categoryOfDataPush } from './push-category';
-import { readDisabledCategories } from './notification-preferences';
+import { readDisabledCategories, readGroupNotificationLevel } from './notification-preferences';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
@@ -604,6 +604,11 @@ export class MessagingService {
     // may be told to draw nothing: the same `silent` the own-device copies and receipts already use,
     // which both native clients honour. Decided here, once, so no client has to filter.
     let drawNothing = silent || queued.recipientId === senderId;
+    // THE RECIPIENT'S LEVEL FOR THIS ONE CONVERSATION, read only for a frame that would draw. `none`
+    // is the server's to apply, exactly like the switch above: the frame is sent silent. `mentions`
+    // is NOT - the server cannot see who a ciphertext mentions - so it travels in the push and the
+    // device decides after decrypting (`PushMessageInput.mentionsOnly`).
+    let mentionsOnly = false;
     if (!drawNothing) {
       const disabled = await readDisabledCategories(this.groupRepo.manager, queued.recipientId);
       if (disabled.has('messages')) {
@@ -611,6 +616,29 @@ export class MessagingService {
         this.logger.log(
           `[PUSH_SEND][${traceId}] category=messages disabled by user=${cutUserId(queued.recipientId)} - sent silent`
         );
+      } else if (!isGroupUuid(groupId)) {
+        // Every MLS conversation is a uuid row; a queued frame naming anything else is a defect
+        // upstream, and the level it cannot have is not invented here.
+        this.logger.warn(
+          `[PUSH_SEND][${traceId}] group=${groupId} is not a uuid - no conversation level applies`
+        );
+      } else {
+        const level = await readGroupNotificationLevel(
+          this.groupRepo.manager,
+          groupId,
+          queued.recipientId
+        );
+        if (level === 'none') {
+          drawNothing = true;
+          this.logger.log(
+            `[PUSH_SEND][${traceId}] level=none for user=${cutUserId(queued.recipientId)} group=${groupId} - sent silent`
+          );
+        } else if (level === 'mentions') {
+          mentionsOnly = true;
+          this.logger.log(
+            `[PUSH_SEND][${traceId}] level=mentions for user=${cutUserId(queued.recipientId)} group=${groupId} - the device decides`
+          );
+        }
       }
     }
 
@@ -682,6 +710,7 @@ export class MessagingService {
       proto: '',
       // Own-device copies, read receipts and welcome packets are not shown.
       silent: drawNothing,
+      mentionsOnly,
       isWelcome: !!queued.isWelcome,
       createdAt: queued.createdAt.toISOString(),
     };
@@ -3640,6 +3669,25 @@ export class MessagingService {
       if (disabled.has(category)) {
         this.logger.log(
           `[SOCIAL_PUSH][${traceId}] category=${category} disabled by user=${userId} - not sent`
+        );
+        return { sent: 0, failed: 0 };
+      }
+    }
+
+    // A REACTION IN A PRIVATE CONVERSATION OBEYS THAT CONVERSATION'S LEVEL. A reaction is never a
+    // mention, so both `mentions` and `none` refuse it - decided here, where the level is known,
+    // rather than drawn and left for a device to withdraw. A SALON reaction carries
+    // `groupId = channel_<id>`, which names no private conversation: the uuid guard is the fact that
+    // says so, before any query (a uuid column refuses the string with 22P02).
+    if (data.reaction === 'true' && isGroupUuid(data.groupId)) {
+      const level = await readGroupNotificationLevel(
+        this.pushTokenRepo.manager,
+        data.groupId,
+        userId
+      );
+      if (level !== 'all') {
+        this.logger.log(
+          `[SOCIAL_PUSH][${traceId}] reaction in group=${data.groupId} at level=${level} for user=${cutUserId(userId)} - not sent`
         );
         return { sent: 0, failed: 0 };
       }

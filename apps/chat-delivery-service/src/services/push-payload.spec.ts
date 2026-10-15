@@ -206,6 +206,42 @@ describe('buildPushDataFields - what a silent frame does NOT say to Google', () 
   });
 });
 
+describe('a conversation set to mentions - the device decides, the server only says so', () => {
+  it('carries notifLevel=mentions on a visible frame', () => {
+    expect(buildPushDataFields({ ...baseInput, mentionsOnly: true }).notifLevel).toBe('mentions');
+  });
+
+  it('carries no notifLevel at the ordinary level, so the frame costs no byte more', () => {
+    expect(buildPushDataFields({ ...baseInput }).notifLevel).toBeUndefined();
+    expect(buildPushDataFields({ ...baseInput, mentionsOnly: false }).notifLevel).toBeUndefined();
+  });
+
+  it('never carries it on a silent frame, which draws nothing anyway', () => {
+    const data = buildPushDataFields({ ...baseInput, silent: true, mentionsOnly: true });
+    expect(data.notifLevel).toBeUndefined();
+  });
+
+  it('leaves APNs quiet - passive, no sound - so only the extension can make it ring', () => {
+    const input = { ...baseInput, mentionsOnly: true };
+    const aps = buildApnsRequest(input, buildPushDataFields(input)).payload.aps;
+    expect(aps['interruption-level']).toBe('passive');
+    expect(aps.sound).toBeUndefined();
+    expect(aps['mutable-content']).toBe(1);
+  });
+
+  it('rings an ordinary visible frame as before', () => {
+    const aps = buildApnsRequest(baseInput, buildPushDataFields(baseInput)).payload.aps;
+    expect(aps.sound).toBe('default');
+    expect(aps['interruption-level']).toBeUndefined();
+  });
+
+  it('sizes the ciphertext budget with the extra field counted', () => {
+    expect(inlineProtoBudget({ ...baseInput, mentionsOnly: true })).toBeLessThan(
+      inlineProtoBudget(baseInput)
+    );
+  });
+});
+
 describe('buildApnsRequest', () => {
   it('builds a mutable-content alert for visible messages', () => {
     const data = buildPushDataFields(baseInput);

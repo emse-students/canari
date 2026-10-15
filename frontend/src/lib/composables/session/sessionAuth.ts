@@ -45,6 +45,7 @@ import {
 import { IdentitySplitError, isIdentitySplit } from '$lib/stores/tokenIdentity.svelte';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { connectivity } from '$lib/stores/connectivity.svelte';
+import { noteUnlockUnattended } from '$lib/stores/unlockPath.svelte';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { resetAnnouncementState } from '$lib/stores/announcement.svelte';
 import { registerOfflinePromotion, unregisterOfflinePromotion } from './promoteOfflineSession';
@@ -93,6 +94,7 @@ import {
   initTabLeadershipAsync,
   getIsTabLeader,
 } from '$lib/utils/chat/connection';
+import type { AbsentGroupVerdicts } from '$lib/utils/chat/groupSweep';
 import {
   beginStartupCatchupBench,
   beginStartupCatchupPhase,
@@ -1664,12 +1666,15 @@ export async function loginImpl(
     // above. What is left here is the half that reasons about the conversations this device holds:
     // publishing KeyPackages, sweeping the server's group list, reconciling history. It is skipped
     // when the socket never opened, exactly as `initializeConnection` skipped it.
+    /** What the connection sync learnt about absent local groups, handed to discovery below. */
+    let passVerdicts: AbsentGroupVerdicts | undefined;
     if (offlineSession) {
       cb.log('[INIT] Offline session - group reconciliation deferred until the network returns.');
       finishStartupCatchupBench(cb.log);
     } else {
       beginStartupCatchupPhase('initialize_connection');
-      if (gatewayIsOpen) await syncConnectionAfterWsOpen(makeConnectionDeps(ctx, cb));
+      if (gatewayIsOpen)
+        passVerdicts = await syncConnectionAfterWsOpen(makeConnectionDeps(ctx, cb));
       {
         const stats = summarizeConversationStats(cb.conversations);
         endStartupCatchupPhase({
@@ -1741,7 +1746,8 @@ export async function loginImpl(
     // the right answer. promoteOfflineSession starts all of this once a token exists.
     if (offlineSession) return;
 
-    runGroupDiscoveryImpl(ctx, cb, ctx.ensureMls());
+    // The same pass as the sync above, so the absent groups it asked about are not asked again.
+    runGroupDiscoveryImpl(ctx, cb, ctx.ensureMls(), '', passVerdicts);
 
     // Graine retention, once per boot and LEADER-ONLY: two tabs sweeping would ask the same
     // question twice and race each other's deletes. Deliberately after the startup bench is closed
@@ -1877,6 +1883,8 @@ export async function nativeStorageLoginImpl(
         ? '[PIN] Device key restored from PinVault - auto-login…'
         : '[PIN] Device key restored from the UNLABELLED PinVault - auto-login, owner to be proven…'
     );
+    // This account's key is in hand and nobody is prompted: pages may draw its local data (F1).
+    if (vaulted.ownerProven) noteUnlockUnattended(userId);
     ctx.setDeviceKey(vaulted.deviceKeyB64);
     await loginImpl(ctx, cb, { vaultOwnerUnproven: !vaulted.ownerProven });
     return ctx.isLoggedIn();

@@ -240,6 +240,113 @@ one unchanged. **None is built here.**
 **F1 + F4 + F6 are what reach the 200 ms budget**; F2, F3, F5, F7 shorten the network refresh that
 follows and the first-ever case (new device, first sign-in), which no cache can serve.
 
+### F1-F3: built 2026-10-14
+
+**What was built.**
+
+- **F1, the saved list.** `utils/chat/workspaceSnapshot.ts` holds one slot per account,
+  `canari_workspace_snapshot:v1:<userId>`. The owner is repeated inside the payload, and a slot
+  that is foreign or malformed is deleted, never drawn. `globalChatSingleton` draws it at module load.
+  - Left out on purpose: unread counts, the `viewerCan*` verdicts and `historyVisibility`.
+  - Before the session, `MainChatPage` shows the rail and the salon rows (`isWorkspacePreview`), but
+    nothing that acts. A salon tap becomes a `notifNav` landing, selected once the session and its
+    conversation exist. Reordering and settings are withheld, and the add and join buttons answer
+    with a toast.
+  - It is drawn ONLY while this account's unlock prompts nobody (`stores/unlockPath.svelte.ts`).
+    That is set by the fact that the key is in hand without a prompt: a vault slot whose owner is
+    proven, or a keystore read with no prompt due. The PIN gate and every sign-out clear it. The
+    default is locked, so nothing is drawn before the gate, under it, or after it is left for
+    another page (its "delete my account" link). The same rule holds back the listing on the token
+    (F2).
+  - A spinner in the header says the list is being refreshed until the first listing answers
+    (`workspacesConfirmed`).
+  - Two web tabs: the save is also checked against the device's durable sign-in record
+    (`canari_saved_user`), so a tab still showing an account that another tab signed out never
+    writes that account's list back.
+- **F2.** `ChatBackgroundService` starts the listing when the server has answered for the account
+  on screen (`sessionAnsweredFor() === currentUserId()`, set when a token is issued and cleared by a
+  401/403 or a sign-out), or when `isLoggedIn` is true, whichever comes first.
+  - The key-group step waits on `whenMlsReady()`: it never creates an MLS client before the login
+    has initialised it.
+  - A sign-out during that wait rejects it (`abandonMlsReadyWaiters`). It also bumps the listing
+    generation (`forgetAccount`), so nothing is written for the next account.
+- **F3.** `loadCommunitySalons` sends `listChannels` beside the key-group chain and draws the rows
+  and conversations as soon as it answers. The send gate opens only after the key group, as before.
+
+**The invalidation rule is durable state, not a clock.** The saved list is a copy of the last
+listing, rewritten by an effect whenever `channelWorkspaces` changes. Every listing that answers
+prunes the communities and salon rows the server no longer names, including saved rows that have
+no conversation yet. A community whose access was lost therefore leaves the screen, and the copy,
+at the first answer. In-session events (leave, delete, a removal) rewrite it too. A listing that
+fails leaves the copy on screen as unconfirmed data being refreshed. It is logged once, and the
+spinner, then the error, says so.
+
+**The sign-out decision.** Every sign-out erases every slot, with or without "Rester connecte",
+and so does a change of account. The in-memory list goes as well, which it never did before. The
+reasoning is in [auth](modules/auth.md#a-sign-out-ended-the-session-on-the-server-and-left-it-live-on-the-device---fixed-2026-10-14).
+
+**A defect the earlier tap exposed.** A salon tapped as soon as its row is drawn now overlaps two
+other events: the live stream coming back, and the end of the community listing. Each of them used
+to ask for the same 116 kB page again and supersede the first request. That happened 2-3 times per
+open on this build, and also on `main` when the tap was fast (one main run in three).
+- The fix: a load in flight is now JOINED, unless the copy was declared stale after its request
+  left (`salonStaleDeclarations` in `useConversations`). One request per open now.
+
+**What review closed (2026-10-15).**
+- **The F3 window.** A salon's rows, and a restored conversation, can be opened before the listing
+  registers the community's key group. A history page decoded then asks for its missing seeds on a
+  group that is not registered yet. The repair refuses (`key-group-unregistered`), and the request
+  is lost until the next load.
+  - Now `loadChannelHistory` fetches the page at once but DECODES it only when no listing or entry
+    still in flight can enter the salon (`whenSalonEntryDecided` in `salonSendGate.ts`).
+  - An entered salon waits for nothing, and nothing ever waits for a listing that has not started.
+  - **The wait is bounded by LISTING STATE, not by a clock.** It ends when the salon is entered,
+    when the last listing or entry in flight settles, or when the session ends
+    (`resetSalonSendGate` wakes every reader). A listing whose fetch HANGS therefore holds
+    decoding for as long as it hangs. `apiFetch` has no per-request timeout
+    ([local-first-ui ledger row 6](local-first-ui.md#4-the-ledger---what-is-fixed-what-is-not)), so
+    a hung fetch is held for as long as the platform's HTTP stack keeps the request open. The fix
+    belongs to that row, not to a timer here.
+- **Every keypad marks the unlock owed.** One function draws the keypad (`showPinGate` in
+  `ChatBackgroundService`), and it resets the unlock fact. Before this fix, the keypad could be
+  drawn with the device still marked as unlocked unattended, which left the rail drawn and the
+  listing running behind it. Two paths did this: a saved unlock that failed after an unattended
+  read, and a PIN reset.
+- **A press that joins a background load** raises the skeleton; the joined load owns it.
+- **A saved row tapped early, for a salon closed to the member since,** becomes a landing that ends
+  at the listing's own answer: the landing was published before the request, and the answer does
+  not name the salon.
+  - Before, `landingRecovery` asked for a second full listing before giving up.
+  - A landing published after the request keeps its refresh (for example, a notification for a
+    salon the listing could not know about).
+
+**Measured.** Mi 9T, the ten-community bench, target `BancOuverture-1`, cold, 3 runs, median.
+BEFORE is `main` at `b722983f0`, which already has F5 and F6 (#1875). AFTER is this branch.
+Same protocol and instrument as sections 1 and 5.
+
+| condition | tap>rail | tap>salons | tap>target salons | salon>msgs |
+| --- | --- | --- | --- | --- |
+| Wi-Fi, 1x | 999 -> **452** | 1818 -> **626** | 2207 -> **1082** | 3251 -> 4171 |
+| Wi-Fi, cpu4 | 2948 -> **1385** | 5239 -> **1755** | 6056 -> **2955** | 11102 -> 14726 |
+| slow3g + cpu4 | 3715 -> **1445** | 6923 -> **1846** | 7661 -> **3063** | 12343 -> 16995 |
+| airplane, 1x | never -> **415** | never -> **571** | never -> **896** | never (no history offline: F4) |
+
+**How to read these numbers.**
+
+- **The tab got 2-4x faster and now works offline.** It is still not at the 200 ms budget. In
+  airplane mode, with no request at all, the rail takes 415 ms and the salon rows 571 ms after the
+  tap, against 160-170 ms for a `switch` once the hub is mounted. What remains is the FIRST MOUNT of
+  the communities page (a 220-260 ms long task at 1x, 1.4 s at 4x). That is a render cost, the next
+  package, and not a data cost any more.
+- **`salon>msgs` is longer, but the messages arrive at the same moment.** The member now reaches the
+  salon about 1-3 s earlier. The salon open then overlaps the boot work (MLS initialisation, ten
+  key-group chains, roster checks) instead of following it. Counted from the tap on the tab, the
+  first message lands at about the same time on both builds: ~5.4 s at 1x, ~17-20 s at 4x.
+- **The history request leaves 750 ms after the tap at 1x** (360 ms on `main`). The chain shows the
+  load started at the tap and left unsent for ~700 ms. The only await in front of the request is the
+  `deleteMessagesForConversation` that runs before every salon load, on a SQLite store busy with the
+  boot (inferred, not profiled). F4 removes that delete.
+
 ### Reaching under 200 ms: the tab, and a cached salon's first messages
 
 What the measurements say is already within reach, and what stands between it and 200 ms:

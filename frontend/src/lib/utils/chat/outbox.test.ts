@@ -53,7 +53,15 @@ import {
   SendEdgeRefusedError,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { toMirrorEntry } from './outboxMirror';
-import { MediaKind, decodeAppMessage, mediaReelFromProto } from '$lib/proto/codec';
+import {
+  MediaKind,
+  decodeAppMessage,
+  encodeAppMessage,
+  mediaReelFromProto,
+  mkReaction,
+  mkSystem,
+} from '$lib/proto/codec';
+import { queuedReadWatermarkAt, sendReadWatermark } from './messaging';
 import { MediaUploadError } from '$lib/utils/mediaErrors';
 import {
   UploadAbortedError,
@@ -2845,5 +2853,356 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
       await vi.waitFor(() => expect(send).toHaveBeenCalledTimes(2));
       errorSpy.mockRestore();
     });
+  });
+});
+
+/**
+ * A READ WATERMARK IS LATEST-WINS, SO THE QUEUE KEEPS ONE PER CONVERSATION. Every frame costs every
+ * member a decrypt and a full MLS checkpoint, and only the newest says anything. See
+ * history-reconciliation, "The sender says only what is new". Each case drives the real
+ * `sendReadWatermark` into a registered controller, so the supersede is asserted the way the app
+ * reaches it.
+ */
+describe('outbox - a read watermark supersedes the unsent one of its conversation', () => {
+  function watermarkEntry(id: string, conversationId: string, at: number): OutboxEntry {
+    return {
+      id,
+      conversationId,
+      sentAt: at,
+      kind: 'control',
+      controlProto: encodeAppMessage(mkSystem('read_watermark', JSON.stringify({ at }))),
+      status: 'pending',
+      attempts: 0,
+      createdAt: at,
+    };
+  }
+  const queuedAts = (storage: ReturnType<typeof makeStorage>, conversationId = 'g1') =>
+    [...storage._map.values()]
+      .filter((e: OutboxEntry) => e.conversationId === conversationId)
+      .map((e: OutboxEntry) => queuedReadWatermarkAt(e));
+  const sentAts = (mlsService: ReturnType<typeof makeMls>) =>
+    mlsService.sendMessage.mock.calls.map(
+      (call: unknown[]) =>
+        JSON.parse(decodeAppMessage(call[1] as Uint8Array)?.system?.data ?? '{}').at as number
+    );
+  const read = (at: number, conversationId = 'g1') =>
+    sendReadWatermark(at, { conversation: { id: conversationId } } as any);
+
+  beforeEach(() => {
+    connectivity.reset();
+    isTabLeaderMock.mockReturnValue(true);
+    tabOutboxMock.subscribeTabOutboxEvents.mockImplementation(() => () => {});
+  });
+  afterEach(() => {
+    unregisterOutbox();
+  });
+
+  it('two watermarks queued while offline: one row, and only the newest is sent', async () => {
+    const storage = makeStorage();
+    const mlsService = makeMls();
+    connectivity.notifyServerUnreachable();
+    const outbox = registerOutbox(makeDeps({ mlsService, storage }));
+
+    await read(100);
+    await read(200);
+    expect(queuedAts(storage)).toEqual([200]);
+
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+    await outbox.flush();
+    expect(sentAts(mlsService)).toEqual([200]);
+    expect(storage._map.size).toBe(0);
+  });
+
+  it('supersedes a watermark queued by an earlier session, across a restart', async () => {
+    // Written offline before the app was killed: the new controller finds it on disk.
+    const storage = makeStorage([watermarkEntry('old', 'g1', 100)]);
+    const mlsService = makeMls();
+    connectivity.notifyServerUnreachable();
+    const outbox = registerOutbox(makeDeps({ mlsService, storage }));
+
+    await read(250);
+    expect(storage._map.has('old')).toBe(false);
+    expect(queuedAts(storage)).toEqual([250]);
+
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+    await outbox.flush();
+    expect(sentAts(mlsService)).toEqual([250]);
+  });
+
+  it('never moves a mark backwards: a watermark an unsent one covers is not queued at all', async () => {
+    const storage = makeStorage([watermarkEntry('high', 'g1', 300)]);
+    connectivity.notifyServerUnreachable();
+    registerOutbox(makeDeps({ mlsService: makeMls(), storage }));
+
+    await read(200);
+    await read(300);
+    expect(queuedAts(storage)).toEqual([300]);
+    expect(storage.saveOutboxEntry).not.toHaveBeenCalled();
+  });
+
+  it('writes the new row BEFORE withdrawing the old one, so a crash between keeps both and loses none', async () => {
+    const storage = makeStorage([watermarkEntry('old', 'g1', 100)]);
+    const mlsService = makeMls();
+    let oldStillQueuedAtWrite: boolean | null = null;
+    let deletesBeforeWrite: number | null = null;
+    const save = storage.saveOutboxEntry.getMockImplementation();
+    storage.saveOutboxEntry.mockImplementation(async (e: OutboxEntry) => {
+      // The ORDER is the claim: no delete may have been ISSUED by the time the new row is written.
+      // The map alone cannot tell, because the crash below makes that delete fail either way.
+      deletesBeforeWrite = storage.deleteOutboxEntry.mock.calls.length;
+      oldStillQueuedAtWrite = storage._map.has('old');
+      await save(e);
+    });
+    // The process dies before the withdrawal lands: the delete never happens.
+    storage.deleteOutboxEntry.mockRejectedValueOnce(new Error('process killed'));
+    connectivity.notifyServerUnreachable();
+    const outbox = registerOutbox(makeDeps({ mlsService, storage }));
+
+    await read(200);
+    expect(deletesBeforeWrite).toBe(0);
+    expect(oldStillQueuedAtWrite).toBe(true);
+    expect(queuedAts(storage).sort()).toEqual([100, 200]);
+
+    // Both go, oldest first, and `max` on every receiver makes the spare one harmless.
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+    await outbox.flush();
+    expect(sentAts(mlsService)).toEqual([100, 200]);
+  });
+
+  it('touches nothing but read watermarks of the same conversation', async () => {
+    const reaction: OutboxEntry = {
+      ...watermarkEntry('reaction', 'g1', 90),
+      controlProto: encodeAppMessage(mkReaction('m1', 'x', 90)),
+    };
+    const storage = makeStorage([
+      textEntry('text', 'g1', 80),
+      reaction,
+      watermarkEntry('other-convo', 'g2', 100),
+    ]);
+    connectivity.notifyServerUnreachable();
+    registerOutbox(makeDeps({ mlsService: makeMls(), storage }));
+
+    await read(200);
+    expect(storage._map.has('text')).toBe(true);
+    expect(storage._map.has('reaction')).toBe(true);
+    expect(queuedAts(storage, 'g2')).toEqual([100]);
+    expect(queuedAts(storage)).toEqual([null, null, 200]);
+  });
+
+  it('does not count a watermark already on the wire as withdrawn: the newer one follows it', async () => {
+    let release!: () => void;
+    const onTheWire = new Promise<void>((r) => {
+      release = r;
+    });
+    const storage = makeStorage([watermarkEntry('old', 'g1', 100)]);
+    const mlsService = makeMls({ send: () => onTheWire });
+    const outbox = registerOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+
+    await read(200);
+    release();
+    await outboxIdle();
+    await outbox.flush();
+    await outboxIdle();
+    expect(sentAts(mlsService)).toEqual([100, 200]);
+    expect(storage._map.size).toBe(0);
+  });
+
+  it('reads the queue ONCE per enqueue, however many rows it supersedes, and logs per tab', async () => {
+    // Two leftovers of a crash between write and withdraw: both are superseded by one read.
+    const storage = makeStorage([watermarkEntry('a', 'g1', 100), watermarkEntry('b', 'g1', 150)]);
+    const log = vi.fn();
+    connectivity.notifyServerUnreachable();
+    registerOutbox(makeDeps({ mlsService: makeMls(), storage, log }));
+    await outboxIdle();
+    storage.getOutboxQueue.mockClear();
+
+    await read(200);
+    expect(storage.getOutboxQueue).toHaveBeenCalledTimes(1);
+    expect(queuedAts(storage)).toEqual([200]);
+    // A follower cannot see a leader's wire, so the line says what THIS tab knows.
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('before this tab sent it'));
+  });
+
+  it('forgets a superseded id once its row is gone and no lane holds it', async () => {
+    const storage = makeStorage();
+    const log = vi.fn();
+    connectivity.notifyServerUnreachable();
+    const outbox = registerOutbox(makeDeps({ mlsService: makeMls(), storage, log }));
+    await read(100);
+    await read(200);
+
+    connectivity.notifyServerReachable();
+    await outboxIdle();
+    await outbox.flush();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('forgot 1 withdrawn id(s)'));
+  });
+});
+
+describe('outbox - every lane on the wire is known to a cancellation (review of #1887)', () => {
+  beforeEach(() => {
+    connectivity.reset();
+    isTabLeaderMock.mockReturnValue(true);
+    tabOutboxMock.subscribeTabOutboxEvents.mockImplementation(() => () => {});
+  });
+
+  it('answers "already sent" for a message on the wire in ANY lane, not only the last to start', async () => {
+    let release!: () => void;
+    const onTheWire = new Promise<void>((r) => {
+      release = r;
+    });
+    const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g2', 100)]);
+    const mlsService = makeMls({ send: () => onTheWire });
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(2);
+
+    // Both frames are leaving. Answering `true` for either would skip its `delete_message` event
+    // and the peers would keep a message the user deleted - which one lane's id overwriting the
+    // other's did.
+    expect(await outbox.cancelPending('m1')).toBe(false);
+    expect(await outbox.cancelPending('m2')).toBe(false);
+
+    release();
+    await outboxIdle();
+  });
+
+  it('a withdrawal landing while the flush waits on the membership read keeps the frame off the wire', async () => {
+    let answer!: (v: boolean) => void;
+    const membership = new Promise<boolean>((r) => {
+      answer = r;
+    });
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const mlsService = makeMls({ active: () => membership });
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    expect(mlsService.isGroupActive).toHaveBeenCalled();
+    // Past the check at the top of flushOne, not yet on the wire.
+    expect(await outbox.cancelPending('m1')).toBe(true);
+
+    answer(true);
+    await outboxIdle();
+    expect(mlsService.sendMessage).not.toHaveBeenCalled();
+  });
+
+  it('keeps the mark while the withdrawal delete is pending, so a second lane pass cannot send it', async () => {
+    let finishDelete!: () => void;
+    const deleteHeld = new Promise<void>((r) => {
+      finishDelete = r;
+    });
+    const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g1', 200)]);
+    const realDelete = storage.deleteOutboxEntry.getMockImplementation();
+    storage.deleteOutboxEntry.mockImplementation(async (id: string) => {
+      if (id === 'm2') await deleteHeld;
+      await realDelete(id);
+    });
+    let outbox: ReturnType<typeof createOutbox> | null = null;
+    const mlsService = makeMls({
+      // The user deletes m2 while m1 is being sent; the delete of its row is slow.
+      send: (async (_g: string, _p: Uint8Array, id: string) => {
+        if (id === 'm1') {
+          void outbox!.cancelPending('m2');
+          await outboxIdle();
+        }
+      }) as any,
+    });
+    outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    // m1 sent -> m2 dropped from this pass -> a second pass re-reads m2's row, still there.
+    await outbox.flush();
+    finishDelete();
+    await outboxIdle();
+    expect(mlsService.sendMessage.mock.calls.map((c: unknown[]) => c[2])).toEqual(['m1']);
+  });
+
+  it('does not forget a mark while a lane still holds the row in its snapshot', async () => {
+    let release!: () => void;
+    const onTheWire = new Promise<void>((r) => {
+      release = r;
+    });
+    const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g1', 200)]);
+    const mlsService = makeMls({
+      send: (async (_g: string, _p: Uint8Array, id: string) => {
+        if (id === 'm1') await onTheWire;
+      }) as any,
+    });
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    // m2 is in the running lane's snapshot, behind m1 which is on the wire.
+    expect(await outbox.cancelPending('m2')).toBe(true);
+    // A second flush reads a queue without m2; pruning its mark now would let the lane send it.
+    await outbox.flush();
+    release();
+    await outboxIdle();
+    expect(mlsService.sendMessage.mock.calls.map((c: unknown[]) => c[2])).toEqual(['m1']);
+  });
+
+  it('answers "already sent" for a frame sent whose row is not deleted yet', async () => {
+    let finishDelete!: () => void;
+    const deleteHeld = new Promise<void>((r) => {
+      finishDelete = r;
+    });
+    const storage = makeStorage([textEntry('m1', 'g1', 100)]);
+    const realDelete = storage.deleteOutboxEntry.getMockImplementation();
+    let flusherDeleteStarted = false;
+    storage.deleteOutboxEntry.mockImplementation(async (id: string) => {
+      if (!flusherDeleteStarted) {
+        flusherDeleteStarted = true;
+        await deleteHeld;
+      }
+      await realDelete(id);
+    });
+    const mlsService = makeMls();
+    const outbox = createOutbox(makeDeps({ mlsService, storage }));
+
+    void outbox.flush();
+    await outboxIdle();
+    expect(mlsService.sendMessage).toHaveBeenCalledTimes(1);
+    expect(flusherDeleteStarted).toBe(true);
+    // The peers have it; "never sent" would skip the delete_message event.
+    expect(await outbox.cancelPending('m1')).toBe(false);
+    finishDelete();
+    await outboxIdle();
+  });
+
+  it("a follower's own withdrawal leaves no mark behind it", async () => {
+    isTabLeaderMock.mockReturnValue(false);
+    const storage = makeStorage([textEntry('m1', 'g1', 100), textEntry('m2', 'g1', 200)]);
+    const log = vi.fn();
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage, log }));
+
+    expect(await outbox.cancelPending('m1')).toBe(true);
+
+    // Had the follower kept it, the first leader flush would find it and forget it.
+    isTabLeaderMock.mockReturnValue(true);
+    await outbox.flush();
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('forgot'));
+  });
+
+  it('a follower tab keeps no cancellation it will never consume', async () => {
+    let onTabEvent!: (e: TabOutboxEvent) => void;
+    tabOutboxMock.subscribeTabOutboxEvents.mockImplementation(((h: (e: TabOutboxEvent) => void) => {
+      onTabEvent = h;
+      return () => {};
+    }) as any);
+    isTabLeaderMock.mockReturnValue(false);
+    const log = vi.fn();
+    createOutbox(makeDeps({ mlsService: makeMls(), storage: makeStorage(), log }));
+
+    onTabEvent({ type: 'outbox_entry_cancelled', messageId: 'm1' });
+
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('cancelled by another tab'));
   });
 });

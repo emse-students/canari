@@ -32,6 +32,7 @@ import {
 import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
 import { buildConversationRow } from '$lib/utils/chat/conversations';
 import { currentUserId } from '$lib/stores/userState.svelte';
+import { getSavedUserId } from '$lib/stores/user';
 import { applyChannelEdit } from '$lib/utils/chat/channelEdit';
 import { applyChannelReactionFrame, getChannelReactions } from '$lib/stores/reactionStore.svelte';
 import {
@@ -40,6 +41,7 @@ import {
   MAX_DISTINCT_MESSAGE_REACTIONS,
 } from '$lib/utils/chat/messageReactions';
 import { showToast } from '$lib/stores/toast.svelte';
+import { notifNav } from '$lib/stores/notifNav.svelte';
 import { m } from '$lib/paraglide/messages';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { notifyReaction } from '$lib/utils/chat/reactionNotify';
@@ -57,10 +59,17 @@ import {
   currentSalonSession,
   isCurrentSalonSession,
   openSalonSendGate,
+  resetSalonSendGate,
   settleSalonEntry,
   settleSalonListing,
   type SettledListing,
 } from '$lib/utils/graine/salonSendGate';
+import { abandonMlsReadyWaiters, whenMlsReady } from '$lib/composables/session/mlsReadiness';
+import {
+  readWorkspaceSnapshot,
+  serializeWorkspaceSnapshot,
+  storeWorkspaceSnapshot,
+} from '$lib/utils/chat/workspaceSnapshot';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { forgetCommunityGraine } from '$lib/utils/graine/forget';
 import { admitInvitedMember } from '$lib/utils/graine/admitNewcomer';
@@ -285,6 +294,47 @@ export function useChannelWorkspaces() {
   }
   let workspacesLoadError = $state<string | null>(null);
 
+  /**
+   * The account `channelWorkspaces` belongs to, or `null` while it belongs to nobody (before the
+   * first listing or snapshot, after a sign-out). Set by {@link hydrateFromSnapshot} and by every
+   * listing; the saved snapshot is written only for it, and the app shell draws the list before the
+   * session only when it is the signed-in account's.
+   */
+  let workspacesOwner = $state<string | null>(null);
+  /**
+   * Whether a listing of THIS session has answered. False while the list on screen is the saved
+   * snapshot - stale data being refreshed, which the sidebar says - or nothing at all.
+   */
+  let workspacesConfirmed = $state(false);
+  /** The text last saved, so a change that does not change the snapshot writes nothing. */
+  let lastSnapshotText = '';
+
+  // THE SNAPSHOT FOLLOWS THE FIELD, NOT THE PATHS THAT WRITE IT (F1). Some twenty paths assign
+  // `channelWorkspaces` - the listing, its prune, a creation, a rename, a reorder, a leave, a
+  // deletion, a pushed event - and a copy refreshed by each of them would be stale by the first one
+  // that forgot. One effect reads the list and saves it whenever it changes, for its owner only.
+  //
+  // THE OWNER IS CHECKED AGAINST THE DEVICE'S SIGN-IN RECORD TOO, not only this page's memory. A
+  // sign-out in ANOTHER tab clears `canari_saved_user` and every slot, but leaves this tab's
+  // `currentUserId()` on the account that left: without the durable check, this tab's next change
+  // would write the signed-out account's list back.
+  $effect.root(() => {
+    $effect(() => {
+      const owner = workspacesOwner;
+      if (owner === null || owner !== currentUserId()) return;
+      const text = serializeWorkspaceSnapshot(owner, channelWorkspaces);
+      if (text === lastSnapshotText) return;
+      if (getSavedUserId() !== owner) {
+        console.warn(
+          '[WORKSPACE-SNAPSHOT] not saved: this device is no longer signed in as the list owner (signed out in another tab?)'
+        );
+        return;
+      }
+      lastSnapshotText = text;
+      storeWorkspaceSnapshot(owner, text);
+    });
+  });
+
   const service = new ChannelService();
 
   /**
@@ -329,6 +379,7 @@ export function useChannelWorkspaces() {
     // moment it was asked, so anything this device creates from here on is newer than the answer
     // whatever order the two happen to complete in.
     const epochAtRequest = creationEpoch;
+    const landingAtRequest = notifNav.landing;
     const backendWorkspaces = await service.listUserWorkspaces();
     assertListingSession(session, 'the community rows');
     const validChannelConversationIds: string[] = [];
@@ -391,7 +442,8 @@ export function useChannelWorkspaces() {
       epochAtRequest,
       validChannelConversationIds,
       validWorkspaceSlugs,
-      session
+      session,
+      landingAtRequest
     );
   }
 
@@ -408,49 +460,50 @@ export function useChannelWorkspaces() {
     validChannelConversationIds: string[],
     session: number
   ): Promise<void> {
-    // Joining the community's Graine key-distribution group is done HERE, and AWAITED, for a
-    // reason beyond tidiness: it is what registers the group id locally, and until it is
-    // registered a seed frame arriving on that group is treated as an unknown conversation and
-    // answered with a welcome_request nobody will ever send. Awaiting closes that window instead
-    // of leaving one spurious recovery per community per start.
-    //
-    // Never fatal to the load: a community that fails to prepare must still appear in the
-    // sidebar, and its salons then refuse to SEND with a named cause rather than the whole
-    // community vanishing. The failure is logged with its cause by
-    // `ensureCommunityDistributionGroup`, which is all a best-effort path leaves behind.
-    if (ctx.ensureMls) {
-      const mls = await ctx.ensureMls();
-      assertListingSession(session, `the key group of ${workspaceId}`);
-      await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log);
-      assertListingSession(session, `the salon listing of ${workspaceId}`);
-    }
+    // THE KEY GROUP AND THE SALON ROWS GO SIDE BY SIDE (F3, 2026-10-14). The salons used to be
+    // listed only once the key group had answered - `distribution-group`, then `members`, then the
+    // roster comparison: two serial round trips between the rail and the salon rows, 466 ms on
+    // Wi-Fi and 1.8 s on a slow link with a 4x renderer (Mi 9T), 1.4 s with ten communities. The
+    // reason for awaiting the key group is about RECEIVING (below), never about drawing a row.
+    // Settled into a value at once, so a chain that fails while the salon listing is still on the
+    // wire is HELD, not reported as an unhandled rejection; it is rethrown below where it is read.
+    const keyGroupJoined = joinCommunityKeyGroup(ctx, workspaceId, session).then(
+      () => ({ failed: false as const }),
+      (error: unknown) => ({ failed: true as const, error })
+    );
 
-    const channels = await service.listChannels(workspaceId);
+    let channels: ChannelDto[];
+    try {
+      channels = (await service.listChannels(workspaceId)) as ChannelDto[];
+    } catch (error) {
+      // SETTLED, NOT RACED (see `executeWorkspaceLoadAttempt`): the key-group chain is still this
+      // attempt's, and a retry must not start beside it.
+      const join = await keyGroupJoined;
+      if (join.failed) {
+        ctx.log(
+          `[WORKSPACE-LOAD] key group of ${workspaceId} also ended in failure: ${String(join.error)}`
+        );
+      }
+      throw error;
+    }
     assertListingSession(session, `the salons of ${workspaceId}`);
-    for (const channel of channels as ChannelDto[]) {
+
+    // THE ROWS ARE DRAWN ON THE SALON LISTING'S ANSWER. A send typed into one of them waits for the
+    // ENTRY below (`salonSendGate`), so drawing a row early offers nothing the gate does not hold.
+    const salons: { actualId: string; isPrivate: boolean; viewerHasAccess: boolean }[] = [];
+    for (const channel of channels) {
       const actualId = channel.id || channel._id;
       if (!actualId) continue;
 
       const isPrivate = channel.visibility === 'private';
+      const viewerHasAccess = channel.viewerHasAccess !== false;
+      salons.push({ actualId, isPrivate, viewerHasAccess });
 
       // Which group a salon's seeds travel on is the one fact the send path cannot derive: a
       // channel id alone reaches every send site, and the seal needs the roster the seed is
-      // sealed to - the community for a public salon, the salon itself for a private one.
+      // sealed to - the community for a public salon, the salon itself for a private one. A pure
+      // map write, so it goes with the row: a seed repair asked from the row needs it.
       registerChannelWorkspace(actualId, workspaceId, isPrivate);
-
-      // A PRIVATE SALON HAS ITS OWN GROUP, and this is one of the three moments this device
-      // enters it. This is the only one that meets a salon the viewer may merely SEE, so it is the
-      // only one that passes anything but `true` - see `enterPrivateSalonGroup` for why declining
-      // has to be as loud as entering.
-      await enterPrivateSalonGroup(service, workspaceId, actualId, {
-        isPrivate,
-        viewerHasAccess: channel.viewerHasAccess !== false,
-        ensureMls: ctx.ensureMls,
-        log: ctx.log,
-      });
-      assertListingSession(session, `the salon ${actualId}`);
-      // ENTERED: a send typed into this salon before the walk reached it goes now (`salonSendGate`).
-      openSalonSendGate(actualId);
 
       const channelConversationId = `channel_${actualId}`;
       if (!validChannelConversationIds.includes(channelConversationId)) {
@@ -460,14 +513,14 @@ export function useChannelWorkspaces() {
         id: channelConversationId,
         name: channel.name,
         isPrivate,
-        hasAccess: channel.viewerHasAccess !== false,
+        hasAccess: viewerHasAccess,
         canWrite: channel.viewerCanWrite !== false,
       });
 
       // AN UNJOINED SALON GETS NO CONVERSATION, and that is the point: a conversation row is what
       // every read path keys off, and this viewer may not read it. The sidebar row exists so the
       // join is reachable, and the join is what turns it into a conversation.
-      if (channel.viewerHasAccess === false) continue;
+      if (!viewerHasAccess) continue;
 
       ctx.conversations.set(
         channelConversationId,
@@ -479,6 +532,60 @@ export function useChannelWorkspaces() {
         })
       );
     }
+
+    // THE ENTRY WAITS FOR THE KEY GROUP, as it always did: a private salon's own group and the send
+    // gate both come after the community's group is registered - and so after MLS is READY, which
+    // the key-group chain awaited.
+    const join = await keyGroupJoined;
+    if (join.failed) throw join.error;
+    assertListingSession(session, `the salon entries of ${workspaceId}`);
+    for (const { actualId, isPrivate, viewerHasAccess } of salons) {
+      // A PRIVATE SALON HAS ITS OWN GROUP, and this is one of the three moments this device
+      // enters it. This is the only one that meets a salon the viewer may merely SEE, so it is the
+      // only one that passes anything but `true` - see `enterPrivateSalonGroup` for why declining
+      // has to be as loud as entering.
+      await enterPrivateSalonGroup(service, workspaceId, actualId, {
+        isPrivate,
+        viewerHasAccess,
+        ensureMls: ctx.ensureMls,
+        log: ctx.log,
+      });
+      assertListingSession(session, `the salon ${actualId}`);
+      // ENTERED: a send typed into this salon before the walk reached it goes now (`salonSendGate`).
+      openSalonSendGate(actualId);
+    }
+  }
+
+  /**
+   * Joins the community's Graine key-distribution group once MLS is READY. A context with no MLS
+   * at all (a background caller) joins nothing.
+   *
+   * Done in the listing, and AWAITED before any salon is entered, for a reason beyond tidiness: it is
+   * what registers the group id locally, and until it is registered a seed frame arriving on that
+   * group is treated as an unknown conversation and answered with a welcome_request nobody will ever
+   * send. Awaiting closes that window instead of leaving one spurious recovery per community per
+   * start.
+   *
+   * WAITS FOR `whenMlsReady`, NOT `ensureMls` (F2): the listing may start on the access token, before
+   * the login has initialised MLS, and `ensureMls()` would hand back a client nobody has opened. A
+   * sign-out while it waits rejects it (`MlsSessionEndedError`), and the listing stops there.
+   *
+   * Never fatal to the load: a community that fails to prepare must still appear in the sidebar, and
+   * its salons then refuse to SEND with a named cause rather than the whole community vanishing. The
+   * failure is logged with its cause by `ensureCommunityDistributionGroup`, which is all a
+   * best-effort path leaves behind.
+   */
+  async function joinCommunityKeyGroup(
+    ctx: ChannelWorkspaceContext,
+    workspaceId: string,
+    session: number
+  ): Promise<void> {
+    if (!ctx.ensureMls) return;
+    await whenMlsReady();
+    assertListingSession(session, `the key group of ${workspaceId}`);
+    const mls = await ctx.ensureMls();
+    assertListingSession(session, `the key group of ${workspaceId}`);
+    await ensureCommunityDistributionGroup(mls, service, workspaceId, ctx.log);
   }
 
   /**
@@ -490,7 +597,8 @@ export function useChannelWorkspaces() {
     epochAtRequest: number,
     validChannelConversationIds: string[],
     validWorkspaceSlugs: Set<string>,
-    session: number
+    session: number,
+    landingAtRequest: number
   ): Promise<void> {
     // NEWER THAN THE QUESTION IS NOT ABSENT FROM THE ANSWER. A salon created while this listing
     // was in flight is missing from it by construction, and deleting it here destroys a salon the
@@ -530,6 +638,44 @@ export function useChannelWorkspaces() {
     }
     assertListingSession(session, 'pruning the communities');
 
+    // A SALON ROW WITH NO CONVERSATION IS PRUNED TOO. The loop above walks the conversations, and a
+    // row drawn from the saved snapshot (F1) has none until a listing names it - so a salon deleted,
+    // or closed to this member, since the snapshot was written would stay on the rail for ever.
+    // Only in the communities this listing answered for: a community created after it was asked
+    // keeps its salons for the same reason it is kept itself.
+    let staleRows = 0;
+    channelWorkspaces = channelWorkspaces.map((ws) => {
+      if (!validWorkspaceSlugs.has(ws.id)) return ws;
+      const channels = ws.channels.filter(
+        (c) => validChannelConversationIds.includes(c.id) || bornAfterTheRequest(c.id)
+      );
+      staleRows += ws.channels.length - channels.length;
+      return channels.length === ws.channels.length ? ws : { ...ws, channels };
+    });
+    if (staleRows > 0) {
+      ctx.log(`[WORKSPACE-LOAD] removed ${staleRows} salon row(s) the server no longer lists`);
+    }
+
+    // A LANDING ON A SALON THIS ANSWER DOES NOT NAME ENDS HERE, when it was published before the
+    // question was asked - a saved row tapped before the session (F1) for a salon closed to the
+    // member since. The landing would otherwise ask for a second full listing before giving up
+    // (`landingRecovery`), and that listing could only repeat this answer. A landing published
+    // after the request (a notification for a salon this listing could not know) keeps its refresh.
+    const landing = notifNav.pending;
+    if (
+      landing !== null &&
+      isChannelConversationId(landing) &&
+      notifNav.landing <= landingAtRequest &&
+      !validChannelConversationIds.includes(landing) &&
+      !bornAfterTheRequest(landing)
+    ) {
+      ctx.log(
+        `[WORKSPACE-LOAD] landing on salon ${landing.slice(0, 16)} abandoned: the listing asked after it does not name it`
+      );
+      notifNav.clear();
+      if (selectedChannelConversationId === landing) selectedChannelConversationId = '';
+    }
+
     // Prune workspaces that no longer exist on the server - EXCEPT the ones that did not exist
     // when this listing was requested, which are missing from it for a reason that is not deletion.
     const spared = channelWorkspaces.filter(
@@ -541,9 +687,18 @@ export function useChannelWorkspaces() {
           spared.map((ws) => ws.id).join(', ')
       );
     }
-    channelWorkspaces = channelWorkspaces.filter(
+    const kept = channelWorkspaces.filter(
       (ws) => validWorkspaceSlugs.has(ws.id) || (ws.createdEpoch ?? 0) > epochAtRequest
     );
+    // THE INVALIDATION OF THE SAVED LIST IS THIS LINE: a community the member lost since the
+    // snapshot was written leaves here, on the server's answer, and the snapshot is rewritten from
+    // what is left (the effect on `channelWorkspaces`). No clock decides it.
+    if (kept.length < channelWorkspaces.length) {
+      ctx.log(
+        `[WORKSPACE-LOAD] removed ${channelWorkspaces.length - kept.length} community(ies) the server no longer lists`
+      );
+    }
+    channelWorkspaces = kept;
   }
 
   /**
@@ -993,6 +1148,74 @@ export function useChannelWorkspaces() {
   }
 
   /**
+   * Makes `owner` the account the list belongs to. A list held for ANOTHER account is emptied first:
+   * a sign-in that did not go through a sign-out (a refresh naming someone else) must never show the
+   * previous account's communities while its own listing runs.
+   */
+  function adoptListOwner(owner: string | null, log: (msg: string) => void): void {
+    if (workspacesOwner !== null && workspacesOwner !== owner) {
+      log("[WORKSPACE-SNAPSHOT] the list on screen was another account's - emptied before listing");
+      channelWorkspaces = [];
+      selectedChannelConversationId = '';
+      workspacesConfirmed = false;
+    }
+    workspacesOwner = owner;
+  }
+
+  /**
+   * Draws the community list this account was last shown, from the device, before any session or
+   * network (F1). Called once at boot by the app shell with the account saved on the device.
+   *
+   * Does nothing when a list is already in memory (a listing got there first) or when the account
+   * has no snapshot. The list it draws is NOT confirmed: the first listing of the session replaces
+   * it through the same upsert-and-prune path, and the sidebar shows it as being refreshed until
+   * then. Logged once, here and when the listing answers.
+   */
+  function hydrateFromSnapshot(userId: string | null, log: (msg: string) => void): void {
+    if (!userId) return;
+    if (channelWorkspaces.length > 0) {
+      log('[WORKSPACE-SNAPSHOT] not drawn: a community list is already in memory');
+      return;
+    }
+    const saved = readWorkspaceSnapshot(userId);
+    if (saved === null) {
+      log('[WORKSPACE-SNAPSHOT] no saved community list for this account - the listing draws it');
+      return;
+    }
+    channelWorkspaces = saved;
+    workspacesOwner = userId;
+    workspacesConfirmed = false;
+    const salons = saved.reduce((sum, ws) => sum + ws.channels.length, 0);
+    log(
+      `[WORKSPACE-SNAPSHOT] drew ${saved.length} community(ies) and ${salons} salon(s) saved by the last listing - shown as being refreshed until this session's listing answers`
+    );
+  }
+
+  /**
+   * The account signed out: its community list leaves the screen and the memory, and every wait
+   * started for it ends.
+   *
+   * THE SESSION BOUNDARY IS DRAWN HERE TOO (`resetSalonSendGate`), because a listing now starts on
+   * the access token (F2), before any live session exists - and a sign-out with no live session (the
+   * PIN gate, a login still decrypting) runs no teardown, so the listing would otherwise survive into
+   * the next account's session. Bumping the generation stops it at its next write, and abandoning
+   * the MLS waiters wakes the one waiting for a key group that will never come.
+   */
+  function forgetAccount(log: (msg: string) => void): void {
+    resetSalonSendGate();
+    const abandoned = abandonMlsReadyWaiters('signed out');
+    if (abandoned > 0) log(`[WORKSPACE-LOAD] signed out: ${abandoned} key-group wait(s) abandoned`);
+    if (channelWorkspaces.length > 0) {
+      log(`[WORKSPACE-SNAPSHOT] signed out: ${channelWorkspaces.length} community(ies) forgotten`);
+    }
+    workspacesOwner = null;
+    workspacesConfirmed = false;
+    lastSnapshotText = '';
+    channelWorkspaces = [];
+    selectedChannelConversationId = '';
+  }
+
+  /**
    * Fetches all workspaces and their channels from the backend, hydrates channel encryption keys,
    * and prunes stale local channel entries.
    *
@@ -1020,6 +1243,7 @@ export function useChannelWorkspaces() {
         '[WORKSPACE-LOAD] the listing in flight belongs to a session that signed out - superseded'
       );
     }
+    adoptListOwner(currentUserId(), ctx.log);
     isLoadingWorkspaces = true;
     workspacesLoadError = null;
     lastGiveUpUnreachable = false;
@@ -1049,6 +1273,12 @@ export function useChannelWorkspaces() {
           }
           workspacesLoadError = null;
           ctx.log(`[WORKSPACE-LOAD] communities/channels loaded (attempt ${attempt + 1})`);
+          if (!workspacesConfirmed) {
+            workspacesConfirmed = true;
+            ctx.log(
+              `[WORKSPACE-SNAPSHOT] the list on screen is the server's now (${channelWorkspaces.length} community(ies))`
+            );
+          }
           // THE SALONS EXIST NOW, and what is unread in them is the server's to say: the live tally
           // this device keeps is empty after any reload. See `salonUnread.ts`.
           // NOT awaited: this runs under `isLoadingWorkspaces`, and a slow answer must not make
@@ -2119,6 +2349,18 @@ export function useChannelWorkspaces() {
     get workspacesLoadError() {
       return workspacesLoadError;
     },
+    /** The account the list belongs to, or null - see the state's own note. */
+    get workspacesOwner() {
+      return workspacesOwner;
+    },
+    /** False while the list on screen is the saved snapshot, not yet confirmed by a listing. */
+    get workspacesConfirmed() {
+      return workspacesConfirmed;
+    },
+    /** Draws this account's saved community list before any session or network (boot only). */
+    hydrateFromSnapshot,
+    /** A sign-out: the list, its owner and every wait of the leaving account end. */
+    forgetAccount,
     /** Conversation ID of the channel currently highlighted in the sidebar. */
     get selectedChannelConversationId() {
       return selectedChannelConversationId;
