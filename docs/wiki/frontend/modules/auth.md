@@ -311,8 +311,9 @@ domain-separated PBKDF2-SHA256 derivations over the same server-issued salt:
 | `deriveDeviceKeyB64` | `crypto/deviceKey.ts` | 310 000 | 32-byte at-rest key (`deviceKeyB64`) - the only thing that decrypts `mls.bin` and local messages |
 
 `deviceKeyB64` is the single at-rest key: `mls.bin` is ChaCha20-Poly1305 (`[nonce 12 || ct]`),
-local messages are AES-256-GCM (`[iv 12 || ct]`). Rotating the PIN re-derives the key and
-re-encrypts both (`utils/chat/pinChange.ts`).
+local messages, Graine seeds and outbox payloads are AES-256-GCM (`[iv 12 || ct]`). Rotating the
+PIN re-derives the key and re-seals all of them (`utils/chat/pinChange.ts`) - every store is in
+[the table below](#what-the-device-key-seals-and-what-a-pin-change-does-with-each).
 
 **PIN policy** (`utils/chat/pinValidation.ts`): at least 4 characters, no upper bound and no
 character-set restriction, checked by the single `isValidPin` on every path (first setup, PIN
@@ -580,6 +581,71 @@ unlock off behind the user's back - a settings toggle silently flipped by an unr
 What it does instead is pick the destination: biometrics on -> keep the keystore authoritative and
 `clearDeviceKeyAndWrapKey()` so the next launch still takes the biometric path rather than a silent
 vault login; biometrics off -> `saveDeviceKey` into the local vault.
+
+### What the device key seals, and what a PIN change does with each
+
+A PIN change reaches a device in two ways: the user changes it HERE (`changePinImpl`), or it was
+changed on ANOTHER device and this one recovers with the old and the new PIN (`recoverPinImpl`).
+**The old device key is derivable in both**: it is PBKDF2 of the old PIN over the SAME server salt
+(`pin-change` rotates the verifier, never the salt), so nothing has to be dropped and re-asked for.
+Both therefore go through ONE function, `performPinChange`, and differ only in where the MLS state
+comes from - the callback `resealMlsState`: `IMlsService.changeDeviceKey` on the live client for a
+change, `IMlsService.recoverAndRekey` (the stored blob opened non-destructively with the old key) for
+a recovery.
+
+| Store sealed under the device key | Where | Change (before 2026-10-15) | Recovery (before 2026-10-15) | Both, now |
+|---|---|---|---|---|
+| Messages (incl. salon pages kept without a conversation row) | `IStorage` `messages` | re-encrypted | re-encrypted | re-sealed by `resealDeviceKeyStores` |
+| **Graine seeds** | `IStorage` `graine` | re-encrypted | **NOT re-encrypted - lost** | re-sealed by `resealDeviceKeyStores` |
+| **Outbox payloads** (text, reply, control frame, the blob KEY of an attachment) | `IStorage` `outbox` | **NOT re-encrypted** | **NOT re-encrypted** | re-sealed by `resealDeviceKeyStores` |
+| Outbox attachment bytes | `CanariDBOutbox_<userId>` | sealed by a per-blob key held in the outbox payload, not by the device key: follows the payload | same | same |
+| MLS state | `mls.bin` (native), `CanariDBMls_<userId>` (web) | `changeDeviceKey` | `recoverAndRekey` -> `changeDeviceKey` | `resealMlsState`, AFTER the stores |
+| Keystore entry + background copy | platform keystore (native) | rewritten by `changeDeviceKey` (Tauri) | same | same |
+| Vault slot | `canari_device_key_vault:v2:<userId>` | `applyNewDeviceKeyLocally` | same | same |
+| Graine native mirror | `graine_seeds.json` (native) | not sealed (app-private plaintext): nothing to do | same | same |
+| Feed cache | memory only (`posts/feedCache.ts`) | not sealed, not persisted | same | same |
+| Exported backup file | wherever the user saved it | NOT re-sealed: a file the device no longer holds; its import refuses it as "a different device key" | same | same |
+
+**What went wrong, and why both paths are now one.** The rule "what the device key seals, the
+change must re-seal" was honoured by the change for the seeds (2026-09, [channel-encryption
+§Phase 2](../../protocols/channel-encryption.md)) and never by the recovery, which had its own copy of
+the message pass. After a recovery every seed stayed under the old key, and since the server holds no
+seed, the channel history was gone from that device unless a member re-sent the seed - and a seed
+request goes to members who may be offline. The outbox was missing from BOTH: a queued text was
+skipped silently by `getOutboxQueue` and a queued attachment parked as "cannot be decrypted". Two
+copies of a list drift; one cannot. `IStorage` now names its sealed stores (`SealedStore`), and
+`resealDeviceKeyStores` iterates a `Record<SealedStore, true>`, so a store added to the union without
+being re-sealed fails `check`.
+
+**Resumable, because it cannot be atomic.** SQLite through the Tauri plugin has no multi-statement
+transaction (`sqliteBatch.ts`), so a history of thousands of rows cannot be swapped in one step, and
+a phone can be killed half way. Each row is classified by the key its own GCM tag verifies under -
+the only record of which key sealed it: under the old key it is re-sealed, under the new key it is
+DONE, under neither it is damaged and left exactly as it is. A run cut anywhere leaves every row
+under one of the two keys, and the next run with the same two PINs finishes it. **Which is why the
+stores go BEFORE the MLS state**: the recovery's entry point is opening the MLS state with the OLD
+key, so as long as that state has not moved, the recovery is offered and completes the stores. In
+the old order (MLS first) a kill in the message pass left the MLS state under the new key and the
+remaining rows under a key no path would ever ask for again. A wrong old key is refused with the
+typed `DeviceKeyMismatchError` when NO sealed row opens under either key, before anything is
+written; each caller words it (`profile_pin_error_local_decrypt`, `auth_pin_old_incorrect`).
+
+**Each write is a compare-and-swap** (`IStorage.swapSealedPayloads`): the row changes only if it
+still holds the ciphertext it was read with. The change runs with the session live, and an upsert
+would bring back an outbox row the flusher had just sent and deleted - a duplicate message. The
+plaintext BYTES are re-sealed (`openSealedBytes` / `sealBytes`), never parsed and re-serialised.
+
+**What is tested, and what is not.** `pinChange.test.ts` runs against the real IndexedDB backend
+(fake-indexeddb): all three stores moved, a wrong key refused with nothing written, a run killed at
+its second batch then finished, a damaged row left as is, a deleted outbox row not resurrected, the
+stores before the MLS state, and both PIN paths pinned in the source to `performPinChange`. The
+SQLite statement (`sealedSwapStatement`) is unit-tested for its shape; it was run once by hand
+against a real SQLite (`node:sqlite`, 2026-10-15: a full 166-row batch swapped 166, a stale and a
+deleted row untouched) and has **not** run on a device yet.
+
+**Still open**: during an in-session change, a row written under the old key AFTER the store pass
+read the table (a message arriving in that window) stays under the old key once the session adopts
+the new one ([backlog](../../backlog.md#p2---an-in-session-pin-change-strands-a-row-written-during-its-own-store-pass)).
 
 ### An at-rest format change needs its own reader, in the same commit
 

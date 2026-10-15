@@ -1,245 +1,311 @@
-import type {
-  EncryptedGraineRow,
-  EncryptedMessageRow,
-  IStorage,
-  StoredGraineSession,
-  StoredMessage,
-} from '$lib/db';
-import { encryptData, decryptData } from '$lib/encryption';
-import {
-  graineClearColumns,
-  encodeGraineSensitive,
-  decodeGraineSession,
-} from '$lib/db/graineCodec';
-import { reencryptGraineSessions, reencryptLocalMessages } from './pinChange';
-import { setLocale } from '$lib/paraglide/runtime';
+/**
+ * The device key change, exercised against the REAL IndexedDB backend (fake-indexeddb): the
+ * re-seal reads and compare-and-swaps rows through `getSealedPayloads` / `swapSealedPayloads`, and a
+ * hand-written double of those two would be exactly the part that could be wrong silently.
+ */
+import 'fake-indexeddb/auto';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { IndexedDbStorage } from '$lib/db/indexeddb';
+import { decryptData } from '$lib/encryption';
+import type { OutboxEntry, SealedStore, StoredGraineSession, StoredMessage } from '$lib/db';
 
-/** In-memory IStorage stub that persists real encrypted rows (no IndexedDB). */
-function makeEncryptedStorage(): IStorage & {
-  rows: EncryptedMessageRow[];
-  graineRows: EncryptedGraineRow[];
-} {
-  const rows: EncryptedMessageRow[] = [];
-  const graineRows: EncryptedGraineRow[] = [];
+const storageForUser = new Map<string, IndexedDbStorage>();
+vi.mock('$lib/db', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/db')>()),
+  getStorage: async (userId: string) => storageForUser.get(userId)!,
+}));
+vi.mock('$lib/utils/deviceKeyVault', () => ({
+  saveDeviceKey: vi.fn().mockResolvedValue(undefined),
+  clearDeviceKeyAndWrapKey: vi.fn(),
+}));
+
+const { DeviceKeyMismatchError, performPinChange, resealDeviceKeyStores } =
+  await import('./pinChange');
+
+const OLD = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+const NEW = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=';
+const WRONG = 'CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC=';
+const SEED = 'c2VlZC1vbmUtdGhpcnR5LXR3by1ieXRlcy0wMDAwMDA=';
+
+let dbCounter = 0;
+
+async function freshStorage(): Promise<IndexedDbStorage> {
+  const storage = new IndexedDbStorage(`pin-change-test-${dbCounter++}`);
+  await storage.init();
+  return storage;
+}
+
+function message(id: string): StoredMessage {
   return {
-    rows,
-    graineRows,
-    isOpen: true,
-    init: vi.fn().mockResolvedValue(undefined),
-    close: vi.fn().mockResolvedValue(undefined),
-    saveConversation: vi.fn().mockResolvedValue(undefined),
-    getConversations: vi.fn().mockResolvedValue([]),
-    getConversation: vi.fn().mockResolvedValue(null),
-    deleteConversation: vi.fn().mockResolvedValue(undefined),
-    deleteMessagesForConversation: vi.fn().mockResolvedValue(undefined),
-    deleteMessage: vi.fn().mockResolvedValue(undefined),
-    saveMessage: vi.fn(),
-    saveMessages: vi.fn(async (msgs: StoredMessage[], deviceKeyB64: string) => {
-      for (const msg of msgs) {
-        const payload: Record<string, unknown> = {
-          senderId: msg.senderId,
-          content: msg.content,
-        };
-        const encrypted = await encryptData(payload, deviceKeyB64);
-        const row: EncryptedMessageRow = {
-          id: msg.id,
-          conversationId: msg.conversationId,
-          timestamp: msg.timestamp,
-          iv: encrypted.iv,
-          cipherText: encrypted.cipherText,
-        };
-        const idx = rows.findIndex((r) => r.id === row.id);
-        if (idx >= 0) rows[idx] = row;
-        else rows.push(row);
-      }
-    }),
-    updateMessage: vi.fn().mockResolvedValue(undefined),
-    // Not modelled, like the other reads on this stub: a PIN change re-encrypts rows it gets from
-    // `getAllEncryptedRows`, and never looks one up by id.
-    getMessage: vi.fn().mockResolvedValue(null),
-    getMessages: vi.fn(),
-    countMessages: vi.fn(),
-    getMessageConversationIds: vi.fn(),
-    getMessagesPage: vi.fn(),
-    deleteOldMessages: vi.fn().mockResolvedValue(0),
-    getAllEncryptedRows: vi.fn(async () => rows.slice()),
-    mergeConversation: vi.fn().mockResolvedValue(undefined),
-    importEncryptedRow: vi.fn().mockResolvedValue(undefined),
-    saveOutboxEntry: vi.fn().mockResolvedValue(undefined),
-    saveMessageWithOutboxEntry: vi.fn().mockResolvedValue(undefined),
-    getOutboxQueue: vi.fn().mockResolvedValue([]),
-    getOutboxEntry: vi.fn().mockResolvedValue(null),
-    getOutboxEntriesForConversation: vi.fn().mockResolvedValue([]),
-    updateOutboxEntry: vi.fn().mockResolvedValue(undefined),
-    deleteOutboxEntry: vi.fn().mockResolvedValue(undefined),
-    sweepOutboxBlobs: vi.fn().mockResolvedValue(0),
-    // Graine: really encrypted, like the messages above, so a re-encryption can be OBSERVED
-    // rather than asserted on a spy call.
-    saveGraineSession: vi.fn(async (session: StoredGraineSession, deviceKeyB64: string) => {
-      const encrypted = await encryptData(encodeGraineSensitive(session), deviceKeyB64);
-      const row: EncryptedGraineRow = { ...graineClearColumns(session), ...encrypted };
-      const idx = graineRows.findIndex((r) => r.sessionId === row.sessionId);
-      if (idx >= 0) graineRows[idx] = row;
-      else graineRows.push(row);
-    }),
-    getGraineSessions: vi.fn().mockResolvedValue([]),
-    getGraineSession: vi.fn().mockResolvedValue(null),
-    getGraineSessionsForWorkspace: vi.fn().mockResolvedValue([]),
-    deleteGraineSessionsForWorkspace: vi.fn().mockResolvedValue(0),
-    deleteGraineSessions: vi.fn().mockResolvedValue(0),
-    getAllEncryptedGraineRows: vi.fn(async () => graineRows.slice()),
-    importEncryptedGraineRow: vi.fn().mockResolvedValue(undefined),
-    savePendingGroupExit: vi.fn().mockResolvedValue(undefined),
-    getPendingGroupExits: vi.fn().mockResolvedValue([]),
-    deletePendingGroupExit: vi.fn().mockResolvedValue(undefined),
-    saveDistributionGroup: vi.fn().mockResolvedValue(undefined),
-    getDistributionGroups: vi.fn().mockResolvedValue([]),
-    deleteDistributionGroup: vi.fn().mockResolvedValue(undefined),
-    clear: vi.fn().mockResolvedValue(undefined),
+    id,
+    conversationId: 'conv-1',
+    senderId: 'alice',
+    content: `{"type":"text","body":"${id}"}`,
+    timestamp: 1_700_000_000_000 + Number(id.replace(/\D/g, '') || 0),
   };
 }
 
-/** A session whose only interesting field is the seed the re-encryption has to preserve. */
-function makeSession(sessionId: string, seedB64: string): StoredGraineSession {
+function session(sessionId: string): StoredGraineSession {
   return {
     workspaceId: 'w1',
     channelId: 'c1',
     sessionId,
     senderId: 'u1',
-    seedB64,
+    seedB64: SEED,
     firstIndex: 0,
     createdAt: 1_700_000_000_000,
     sentCount: 3,
   };
 }
 
-describe('reencryptLocalMessages', () => {
-  // The expected sentence is French, so the locale is PINNED rather than inherited: the
-  // resolution order ends in `preferredLanguage`, and happy-dom prefers English - which made
-  // this assertion depend on a dependency's default instead of on the code.
-  beforeEach(() => setLocale('fr', { reload: false }));
+function queued(id: string): OutboxEntry {
+  return {
+    id,
+    conversationId: 'conv-1',
+    sentAt: 1_700_000_000_000,
+    kind: 'text',
+    status: 'pending',
+    attempts: 0,
+    createdAt: 1_700_000_000_000,
+    text: `queued ${id}`,
+  } as OutboxEntry;
+}
 
-  const oldKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
-  const newKey = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=';
+/** A device holding some of everything the device key seals, all under `key`. */
+async function populated(key: string, messages = 3): Promise<IndexedDbStorage> {
+  const storage = await freshStorage();
+  await storage.saveMessages(
+    Array.from({ length: messages }, (_, i) => message(`m${i}`)),
+    key
+  );
+  await storage.saveGraineSession(session('s1'), key);
+  await storage.saveGraineSession(session('s2'), key);
+  await storage.saveOutboxEntry(queued('o1'), key);
+  return storage;
+}
 
-  it('re-encrypts stored messages so the new device key can read them', async () => {
-    const storage = makeEncryptedStorage();
-    await storage.saveMessages(
-      [
-        {
-          id: 'msg-1',
-          conversationId: 'conv-1',
-          senderId: 'alice',
-          content: '{"type":"text","body":"hello"}',
-          timestamp: 1_700_000_000_000,
-        },
-      ],
-      oldKey
+/** Which key every sealed row of `store` opens under. */
+async function keysOf(storage: IndexedDbStorage, store: SealedStore): Promise<string[]> {
+  const rows = await storage.getSealedPayloads(store);
+  return Promise.all(
+    rows.map(async (r) => {
+      for (const [name, key] of [
+        ['old', OLD],
+        ['new', NEW],
+      ] as const) {
+        if (
+          await decryptData(r.cipherText, r.iv, key).then(
+            () => true,
+            () => false
+          )
+        )
+          return name;
+      }
+      return 'neither';
+    })
+  );
+}
+
+async function everyRowUnder(storage: IndexedDbStorage, which: 'old' | 'new'): Promise<void> {
+  for (const store of ['messages', 'graine', 'outbox'] as const) {
+    const keys = await keysOf(storage, store);
+    expect(keys.length).toBeGreaterThan(0);
+    expect(
+      keys.every((k) => k === which),
+      `${store}: ${keys.join(',')}`
+    ).toBe(true);
+  }
+}
+
+describe('resealDeviceKeyStores', () => {
+  it('moves messages, Graine seeds AND the outbox to the new key, payloads intact', async () => {
+    const storage = await populated(OLD);
+
+    const report = await resealDeviceKeyStores(storage, OLD, NEW);
+
+    expect(report.resealed).toEqual({ messages: 3, graine: 2, outbox: 1 });
+    await everyRowUnder(storage, 'new');
+    expect(await storage.getGraineSession('s1', NEW)).toEqual(session('s1'));
+    expect((await storage.getMessages('conv-1', NEW)).map((m) => m.content)).toEqual(
+      ['m0', 'm1', 'm2'].map((id) => message(id).content)
     );
-
-    const count = await reencryptLocalMessages(storage, oldKey, newKey);
-    expect(count).toBe(1);
-    expect(storage.rows).toHaveLength(1);
-
-    const { decryptData } = await import('$lib/encryption');
-    const row = storage.rows[0]!;
-    await expect(decryptData(row.cipherText, row.iv, oldKey)).rejects.toThrow();
-    const payload = await decryptData(row.cipherText, row.iv, newKey);
-    expect((payload as Record<string, unknown>).content).toBe('{"type":"text","body":"hello"}');
+    expect((await storage.getOutboxEntry('o1', NEW))?.text).toBe('queued o1');
   });
 
-  it('throws when no message decrypts with the old device key', async () => {
-    const storage = makeEncryptedStorage();
-    await storage.saveMessages(
-      [
-        {
-          id: 'msg-2',
-          conversationId: 'conv-1',
-          senderId: 'alice',
-          content: 'secret',
-          timestamp: 1_700_000_000_001,
-        },
-      ],
-      oldKey
-    );
+  it('refuses a wrong old key with a typed error and writes NOTHING', async () => {
+    const storage = await populated(OLD);
+    const before = await storage.getSealedPayloads('graine');
 
-    await expect(
-      reencryptLocalMessages(storage, 'wrong-key-base64-string-aaaaaaaaaaaaaa=', newKey)
-    ).rejects.toThrow(/Impossible de déchiffrer les messages locaux/);
+    const err = await resealDeviceKeyStores(storage, WRONG, NEW).catch((e) => e);
+
+    expect(err).toBeInstanceOf(DeviceKeyMismatchError);
+    expect(await storage.getSealedPayloads('graine')).toEqual(before);
+    await everyRowUnder(storage, 'old');
+  });
+
+  it('finishes a run killed half way: a row already under the new key is done, not damaged', async () => {
+    const storage = await populated(OLD, 450);
+    // The kill: the second write batch never lands.
+    const real = storage.swapSealedPayloads.bind(storage);
+    let calls = 0;
+    const spy = vi.spyOn(storage, 'swapSealedPayloads').mockImplementation(async (store, swaps) => {
+      if (++calls === 2) throw new Error('killed');
+      return real(store, swaps);
+    });
+    await expect(resealDeviceKeyStores(storage, OLD, NEW)).rejects.toThrow('killed');
+    spy.mockRestore();
+    // Half moved: some messages under each key, and the seeds not reached at all.
+    const half = await keysOf(storage, 'messages');
+    expect(half).toContain('old');
+    expect(half).toContain('new');
+    expect(await keysOf(storage, 'graine')).toEqual(['old', 'old']);
+
+    const report = await resealDeviceKeyStores(storage, OLD, NEW);
+
+    expect(report.alreadyNew).toBe(200);
+    expect(report.unreadable).toBe(0);
+    await everyRowUnder(storage, 'new');
+  });
+
+  it('accepts a store that is already entirely under the new key (a retry after the last batch)', async () => {
+    const storage = await populated(NEW);
+
+    const report = await resealDeviceKeyStores(storage, OLD, NEW);
+
+    expect(report.alreadyNew).toBe(6);
+    await everyRowUnder(storage, 'new');
+  });
+
+  it('leaves a row that opens under neither key exactly as it is, and moves the rest', async () => {
+    const storage = await populated(OLD);
+    await storage.saveGraineSession(session('damaged'), WRONG);
+    const damaged = (await storage.getSealedPayloads('graine')).find((r) => r.id === 'damaged')!;
+
+    const report = await resealDeviceKeyStores(storage, OLD, NEW);
+
+    expect(report.unreadable).toBe(1);
+    expect(report.resealed.graine).toBe(2);
+    const after = (await storage.getSealedPayloads('graine')).find((r) => r.id === 'damaged')!;
+    expect(after).toEqual(damaged);
+  });
+
+  it('never brings back an outbox row deleted (sent) between the read and the write', async () => {
+    const storage = await populated(OLD);
+    const read = storage.getSealedPayloads.bind(storage);
+    vi.spyOn(storage, 'getSealedPayloads').mockImplementation(async (store) => {
+      const rows = await read(store);
+      if (store === 'outbox') await storage.deleteOutboxEntry('o1');
+      return rows;
+    });
+
+    const report = await resealDeviceKeyStores(storage, OLD, NEW);
+
+    expect(report.changedSinceRead).toBe(1);
+    expect(await storage.getOutboxEntry('o1', NEW)).toBeNull();
   });
 
   it('is a no-op when old and new device key are identical', async () => {
-    const storage = makeEncryptedStorage();
-    await storage.saveMessages(
-      [
-        {
-          id: 'msg-3',
-          conversationId: 'conv-1',
-          senderId: 'alice',
-          content: 'same',
-          timestamp: 1_700_000_000_002,
-        },
-      ],
-      oldKey
-    );
-    const before = storage.rows[0]!.cipherText.slice();
+    const storage = await populated(OLD);
+    const before = await storage.getSealedPayloads('messages');
 
-    const count = await reencryptLocalMessages(storage, oldKey, oldKey);
-    expect(count).toBe(0);
-    expect(storage.rows[0]!.cipherText).toEqual(before);
+    await resealDeviceKeyStores(storage, OLD, OLD);
+
+    expect(await storage.getSealedPayloads('messages')).toEqual(before);
   });
 });
 
-describe('reencryptGraineSessions', () => {
-  const oldKey = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
-  const newKey = 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=';
-  const seedB64 = 'c2VlZC1vbmUtdGhpcnR5LXR3by1ieXRlcy0wMDAwMDA=';
+describe('both PIN paths go through performPinChange', () => {
+  // `recoverPinImpl` and `changePinImpl` run over dozens of module-level dependencies (token, salt,
+  // verifier, login), so WHICH path they take is pinned in the source, as `signOutEndsLiveSession`
+  // does; WHAT that path does is the behaviour tested below. The recovery used to call
+  // `reencryptLocalMessages` on its own and never re-sealed a seed.
+  const read = (rel: string) => readFileSync(fileURLToPath(new URL(rel, import.meta.url)), 'utf8');
+  const sessionAuth = read('../../composables/session/sessionAuth.ts');
+  const body = (head: string) => {
+    const from = sessionAuth.indexOf(head);
+    expect(from).toBeGreaterThan(-1);
+    return sessionAuth.slice(from, sessionAuth.indexOf('\n}\n', from));
+  };
 
-  it('re-seals every seed under the new key, seed and clear columns intact', async () => {
-    const storage = makeEncryptedStorage();
-    await storage.saveGraineSession(makeSession('sess-1', seedB64), oldKey);
+  it.each(['export async function recoverPinImpl(', 'export async function changePinImpl('])(
+    '%s re-seals through performPinChange and nothing else',
+    (head) => {
+      const fn = body(head);
+      expect(fn).toContain('await performPinChange(');
+      expect(fn).not.toMatch(/reencrypt|saveGraineSession|saveMessages|swapSealedPayloads/);
+    }
+  );
+});
 
-    const count = await reencryptGraineSessions(storage, oldKey, newKey);
+describe('performPinChange - the one path of the change AND the recovery', () => {
+  function options(userId: string, resealMlsState: (k: string) => Promise<void>) {
+    return { userId, resealMlsState, setDeviceKey: vi.fn(), log: () => {} };
+  }
 
-    expect(count).toBe(1);
-    const row = storage.graineRows[0]!;
-    const payload = await decryptData(row.cipherText, row.iv, newKey);
-    expect(decodeGraineSession(row, payload)).toEqual(makeSession('sess-1', seedB64));
+  it('recovery with seeds present: every seed opens under the new key afterwards', async () => {
+    // The defect: `recoverPinImpl` moved the messages and the MLS state and left every seed under
+    // the old key - channel history this device could no longer open, and the server holds none.
+    storageForUser.set('u-recover', await populated(OLD));
+    const recoverAndRekey = vi.fn().mockResolvedValue(true);
+    const opts = options('u-recover', async (k) => {
+      if (!(await recoverAndRekey('u-recover', OLD, k))) throw new Error('old PIN');
+    });
+
+    await performPinChange(opts, OLD, NEW);
+
+    const storage = storageForUser.get('u-recover')!;
+    await everyRowUnder(storage, 'new');
+    expect(await storage.getGraineSession('s2', NEW)).toEqual(session('s2'));
+    expect(opts.setDeviceKey).toHaveBeenCalledWith(NEW);
   });
 
-  it('leaves nothing readable under the old key', async () => {
-    const storage = makeEncryptedStorage();
-    await storage.saveGraineSession(makeSession('sess-1', seedB64), oldKey);
+  it('re-seals the stores BEFORE the MLS state, so a kill in the stores leaves the recovery open', async () => {
+    const storage = await populated(OLD);
+    storageForUser.set('u-order', storage);
+    const order: string[] = [];
+    const real = storage.swapSealedPayloads.bind(storage);
+    vi.spyOn(storage, 'swapSealedPayloads').mockImplementation(async (store, swaps) => {
+      order.push(store);
+      return real(store, swaps);
+    });
 
-    await reencryptGraineSessions(storage, oldKey, newKey);
+    await performPinChange(
+      options('u-order', async () => {
+        order.push('mls');
+      }),
+      OLD,
+      NEW
+    );
 
-    const row = storage.graineRows[0]!;
-    await expect(decryptData(row.cipherText, row.iv, oldKey)).rejects.toThrow();
+    expect(order).toEqual(['messages', 'graine', 'outbox', 'mls']);
   });
 
-  it('skips a corrupt seed and keeps going, rather than stranding the rest', async () => {
-    const storage = makeEncryptedStorage();
-    await storage.saveGraineSession(makeSession('sess-good', seedB64), oldKey);
-    await storage.saveGraineSession(makeSession('sess-bad', seedB64), oldKey);
-    // Corrupt one row's ciphertext in place: it can no longer authenticate under any key.
-    storage.graineRows[1]!.cipherText[0] ^= 0xff;
+  it('a failure in the stores never reaches the MLS state or the session key', async () => {
+    const storage = await populated(OLD);
+    storageForUser.set('u-kill', storage);
+    vi.spyOn(storage, 'swapSealedPayloads').mockRejectedValueOnce(new Error('disk full'));
+    const resealMls = vi.fn().mockResolvedValue(undefined);
+    const opts = options('u-kill', resealMls);
 
-    const count = await reencryptGraineSessions(storage, oldKey, newKey);
+    await expect(performPinChange(opts, OLD, NEW)).rejects.toThrow('disk full');
 
-    expect(count).toBe(1);
-    const good = storage.graineRows.find((r) => r.sessionId === 'sess-good')!;
-    const payload = await decryptData(good.cipherText, good.iv, newKey);
-    expect((payload as { seedB64: string }).seedB64).toBe(seedB64);
+    expect(resealMls).not.toHaveBeenCalled();
+    expect(opts.setDeviceKey).not.toHaveBeenCalled();
+    // And the same two keys finish it - which is what the recovery does next.
+    await performPinChange(opts, OLD, NEW);
+    await everyRowUnder(storage, 'new');
   });
 
-  it('is a no-op when old and new device key are identical', async () => {
-    const storage = makeEncryptedStorage();
-    await storage.saveGraineSession(makeSession('sess-1', seedB64), oldKey);
-    const before = storage.graineRows[0]!.cipherText.slice();
+  it('a wrong old key is refused before anything moves, MLS state included', async () => {
+    storageForUser.set('u-wrong', await populated(OLD));
+    const resealMls = vi.fn().mockResolvedValue(undefined);
 
-    const count = await reencryptGraineSessions(storage, oldKey, oldKey);
+    await expect(
+      performPinChange(options('u-wrong', resealMls), WRONG, NEW)
+    ).rejects.toBeInstanceOf(DeviceKeyMismatchError);
 
-    expect(count).toBe(0);
-    expect(storage.graineRows[0]!.cipherText).toEqual(before);
+    expect(resealMls).not.toHaveBeenCalled();
+    await everyRowUnder(storageForUser.get('u-wrong')!, 'old');
   });
 });

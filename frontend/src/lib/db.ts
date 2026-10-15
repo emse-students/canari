@@ -14,6 +14,9 @@ export type {
   OutboxEntry,
   OutboxMediaPayload,
   OutboxMediaUploadedRef,
+  SealedPayload,
+  SealedPayloadSwap,
+  SealedStore,
   StoredGraineSession,
   StoredMessage,
 } from './db/types';

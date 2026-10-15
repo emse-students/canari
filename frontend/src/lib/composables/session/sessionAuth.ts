@@ -13,9 +13,8 @@ import { getStorage, type IStorage } from '$lib/db';
 import { resetSalonUnread } from '$lib/utils/chat/salonUnread';
 import { computePinVerifier } from '$lib/utils/chat/auth';
 import {
-  applyNewDeviceKeyLocally,
+  DeviceKeyMismatchError,
   performPinChange,
-  reencryptLocalMessages,
   type PinProgressCallback,
 } from '$lib/utils/chat/pinChange';
 import { deriveDeviceKeyB64, isValidDeviceKeyB64 } from '$lib/crypto/deviceKey';
@@ -1992,8 +1991,8 @@ export function prefetchPinSaltImpl(ctx: SessionContext, log: (msg: string) => v
  *     then fails, the account already expects the new PIN and the user can finish with
  *     {@link recoverPinImpl} (old PIN -> new PIN). The reverse order would leave the
  *     account on the old PIN with local state sealed under the new key -- unrecoverable.
- *  2. Re-derive this device's key from the new PIN and re-encrypt the MLS state plus every
- *     locally stored message under it ({@link performPinChange}).
+ *  2. Re-derive this device's key from the new PIN and re-seal every device-key-sealed store
+ *     (messages, Graine seeds, outbox) and the MLS state under it ({@link performPinChange}).
  *
  * The other devices keep their old key locally and will hit a verifier mismatch at their
  * next login; {@link recoverPinImpl} is what gets them across. That is inherent: the device
@@ -2038,26 +2037,38 @@ export async function changePinImpl(
     deriveDeviceKeyB64(userId, newPin, salt),
   ]);
 
-  await performPinChange(
-    {
-      userId,
-      mlsService: ctx.ensureMls(),
-      setDeviceKey: (k: string) => ctx.setDeviceKey(k),
-      log,
-      onProgress,
-    },
-    currentDeviceKeyB64,
-    newDeviceKeyB64
-  );
+  const mls = ctx.ensureMls();
+  try {
+    await performPinChange(
+      {
+        userId,
+        // The live client: its state is already open in memory, under the current key.
+        resealMlsState: (k: string) => mls.changeDeviceKey(k),
+        setDeviceKey: (k: string) => ctx.setDeviceKey(k),
+        log,
+        onProgress,
+      },
+      currentDeviceKeyB64,
+      newDeviceKeyB64
+    );
+  } catch (e) {
+    if (e instanceof DeviceKeyMismatchError) {
+      log(`[PIN_CHANGE] Local rows do not open under the current key: ${e.message}`);
+      throw new LocalizedError(m.profile_pin_error_local_decrypt());
+    }
+    throw e;
+  }
   log('[PIN_CHANGE] Complete - local state re-encrypted under the new PIN.');
 }
 
 /**
  * "PIN changed on another device" recovery. The account PIN was rotated elsewhere, so
- * this device's local MLS state is still sealed under the OLD pin while the server now
- * expects the NEW one. Decrypts the local state with the OLD device key (non-destructively),
- * re-encrypts it under the NEW one, then logs in normally - preserving every local message
- * instead of falling back to a fresh-start.
+ * this device's local state is still sealed under the OLD pin while the server now expects the
+ * NEW one. Both keys derive from the same salt, so the old one is still derivable here: every
+ * sealed store (messages, Graine seeds, outbox) and the MLS state (opened non-destructively with
+ * the old key) move to the new one through `performPinChange`, the in-session change's own path,
+ * then a normal login follows - preserving everything instead of falling back to a fresh start.
+ * It is also how an in-session change killed half way is finished (see `performPinChange`).
  *
  * Throws a user-facing message when the new PIN is wrong, the old PIN does not decrypt
  * the local state, or there is no local state to recover.
@@ -2105,26 +2116,34 @@ export async function recoverPinImpl(
     deriveDeviceKeyB64(userId, newPin, salt),
   ]);
 
-  onProgress?.({ percent: 15, stage: 'mls' });
-  // Non-destructively decrypt local state with the old key, then re-encrypt under the new.
+  // THE SAME PATH AS AN IN-SESSION CHANGE (`performPinChange`): every sealed store - messages,
+  // Graine seeds, outbox - then the MLS state, then the unlock key. Only the MLS step differs: the
+  // stored blob is opened (non-destructively) with the old key and re-sealed under the new one.
   const mls = ctx.ensureMls();
-  const ok = await mls.recoverAndRekey(userId, oldDeviceKeyB64, newDeviceKeyB64, state);
-  if (!ok) {
-    throw new LocalizedError(m.auth_pin_old_incorrect());
+  try {
+    await performPinChange(
+      {
+        userId,
+        resealMlsState: async (k: string) => {
+          const ok = await mls.recoverAndRekey(userId, oldDeviceKeyB64, k, state);
+          if (!ok) throw new LocalizedError(m.auth_pin_old_incorrect());
+        },
+        setDeviceKey: (k: string) => ctx.setDeviceKey(k),
+        log: cb.log,
+        onProgress,
+      },
+      oldDeviceKeyB64,
+      newDeviceKeyB64
+    );
+  } catch (e) {
+    if (e instanceof DeviceKeyMismatchError) {
+      cb.log(`[PIN_RECOVER] Local rows do not open under the old key: ${e.message}`);
+      throw new LocalizedError(m.auth_pin_old_incorrect());
+    }
+    throw e;
   }
-  cb.log('[PIN_RECOVER] MLS state re-encrypted with the new device key.');
-
-  const storage = await getStorage(userId);
-  await reencryptLocalMessages(storage, oldDeviceKeyB64, newDeviceKeyB64, cb.log, onProgress, {
-    start: 20,
-    end: 82,
-  });
-  cb.log('[PIN_RECOVER] Local messages re-encrypted with the new device key.');
-
-  onProgress?.({ percent: 88, stage: 'finalize' });
-  await applyNewDeviceKeyLocally(ctx.getUserId(), newDeviceKeyB64, cb.log);
   ctx.setPin(newPin);
-  ctx.setDeviceKey(newDeviceKeyB64);
+  cb.log('[PIN_RECOVER] Local state re-sealed with the new device key.');
 
   onProgress?.({ percent: 92, stage: 'login' });
   // Continue with a normal login. init() is a no-op (recoverAndRekey already marked the

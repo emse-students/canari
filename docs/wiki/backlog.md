@@ -971,6 +971,17 @@ MUT under rule 33 ([detail](cross-client-harness-findings.md#the-bubble-action-a
 
 Same wholesale moment: convert all eight and re-run together ([detail](cross-client-harness-findings.md#eight-runners-open-indexeddb-by-hand-and-idbmjs-exists)).
 
+### P2 - an in-session PIN change strands a row written during its own store pass
+
+Found 2026-10-15 while making both PIN paths one ([auth](frontend/modules/auth.md#what-the-device-key-seals-and-what-a-pin-change-does-with-each)).
+`changePinImpl` re-seals with the session LIVE: a message, seed or outbox row written under the old
+key after `resealDeviceKeyStores` read its table, and before `setDeviceKey` adopts the new key,
+stays under the old key and is unreadable afterwards. The compare-and-swap stops the pass from
+clobbering such a row, not from leaving it behind. Pre-existing (the old message pass had the same
+window). The fix is to stop the writers for the duration (outbox flusher, message pipeline, Graine
+runtime), not a second pass that heals the race. Not measured: how often a write lands in that
+window.
+
 ### P2 - re-registering the PIN verifier strands every other client SILENTLY, and only its next unlock finds out (2026-09-04)
 
 Open: nothing tells an unlocked client its vault material was replaced; every HEAL-NEW row strands W1/W2.

@@ -14,6 +14,9 @@ import type {
   IStorage,
   OutboxEntry,
   PendingGroupExit,
+  SealedPayload,
+  SealedPayloadSwap,
+  SealedStore,
   StoredDistributionGroup,
   StoredGraineSession,
   StoredMessage,
@@ -48,7 +51,14 @@ import {
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { SCHEMA_VERSION, isFreshDatabase, legacyBlobPurgeStatement } from './sqliteMigrations';
 import { fromMessagePayload, mergeStoredMessage, toMessagePayload } from './messagePayload';
-import { MESSAGE_ROWS_PER_STATEMENT, chunk, messageInsertSql } from './sqliteBatch';
+import {
+  MESSAGE_ROWS_PER_STATEMENT,
+  SEALED_SWAP_ROWS_PER_STATEMENT,
+  chunk,
+  messageInsertSql,
+  sealedStoreTable,
+  sealedSwapStatement,
+} from './sqliteBatch';
 
 function rowTimestampMs(raw: unknown): number {
   return readStoredTimestampMs(raw) ?? 0;
@@ -1147,6 +1157,49 @@ export class SqliteStorage implements IStorage {
         uint8ToBase64(row.cipherText),
       ]
     );
+  }
+
+  // -- Device key change ---------------------------------------------------
+
+  /** See {@link IStorage.getSealedPayloads}. */
+  async getSealedPayloads(store: SealedStore): Promise<SealedPayload[]> {
+    const { table, key } = sealedStoreTable(store);
+    const rows: any[] = await this.db.select(`SELECT ${key} AS id, iv, cipher_text FROM ${table}`);
+    return rows.map((row) => ({
+      id: row.id,
+      iv: base64ToUint8(row.iv),
+      cipherText: base64ToUint8(row.cipher_text),
+    }));
+  }
+
+  /**
+   * See {@link IStorage.swapSealedPayloads}. One statement per batch (`sealedSwapStatement`): each
+   * statement is atomic, the whole is not, and that is safe here because every swap is a
+   * compare-and-swap - a batch that never ran leaves its rows under the old key, where the next
+   * re-seal finds them.
+   */
+  async swapSealedPayloads(
+    store: SealedStore,
+    swaps: readonly SealedPayloadSwap[]
+  ): Promise<number> {
+    if (swaps.length === 0) return 0;
+    // A message write must drop the reconciliation's cached state key (see IStorage).
+    if (store === 'messages') invalidateAllHistoryStateKeys();
+    let swapped = 0;
+    for (const batch of chunk(swaps, SEALED_SWAP_ROWS_PER_STATEMENT)) {
+      const { sql, params } = sealedSwapStatement(
+        store,
+        batch.map((s) => ({
+          id: s.id,
+          expected: uint8ToBase64(s.expected),
+          iv: uint8ToBase64(s.iv),
+          cipherText: uint8ToBase64(s.cipherText),
+        }))
+      );
+      const result = await this.db.execute(sql, params);
+      swapped += result?.rowsAffected ?? 0;
+    }
+    return swapped;
   }
 
   // -- Misc ----------------------------------------------------------------
