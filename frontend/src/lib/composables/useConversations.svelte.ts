@@ -1411,9 +1411,8 @@ export function useConversations() {
     if (mobileConvoHistoryClose) {
       // Clear state synchronously so any rapid click on a new conversation after
       // pressing back pushes a fresh history overlay rather than reusing the stale one.
-      // abandonHistoryOverlay removes the entry from the stack and calls history.back()
-      // with ignoreNextPop=true, preventing the old close callback from firing and
-      // accidentally clearing a newly-selected conversation.
+      // abandonHistoryOverlay takes the entry off the stack without calling its close, so the
+      // old callback can never clear a newly-selected conversation; the entry stays as a ghost.
       selectedContact = null;
       isConversationDrawerOpen = false;
       const ref = mobileConvoHistoryClose;

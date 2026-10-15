@@ -93,6 +93,22 @@ async function drainTraversals(model: ReturnType<typeof installHistoryModel>) {
   }
 }
 
+/** One left-edge swipe past the threshold, on `from`, committed on `layer`'s slide-out end. */
+function edgeSwipe(from: HTMLElement, layer: HTMLElement) {
+  for (const [type, clientX] of [
+    ['touchstart', 5],
+    ['touchmove', 150],
+    ['touchend', 150],
+  ] as const) {
+    const e = new Event(type, { bubbles: true, cancelable: true });
+    const list = [{ clientX, clientY: 300 }];
+    Object.defineProperty(e, 'touches', { value: list });
+    Object.defineProperty(e, 'changedTouches', { value: list });
+    from.dispatchEvent(e);
+  }
+  layer.dispatchEvent(new Event('transitionend'));
+}
+
 let teardown: () => void = () => {};
 const mounted: Record<string, unknown>[] = [];
 
@@ -279,6 +295,59 @@ describe('CameraOverlay history', () => {
     expect(closeConversation).not.toHaveBeenCalled();
     unmount(app);
     await drainTraversals(model);
+  });
+
+  it('the left-edge swipe over a review is a Back: it ASKS, discards the take, and a second one closes the camera (iPhone 12, v1.2.9-alpha.2)', async () => {
+    // A phone layout: the swipe is the iOS app's only Back.
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query: string) =>
+        ({
+          matches: true,
+          media: query,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList
+    );
+    installHistoryModel();
+    const closeConversation = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    let open = true;
+    const app = mount(CameraOverlay, {
+      target,
+      props: {
+        destination: 'chat',
+        session: new CameraSession(() => Promise.resolve(stream())),
+        oncapture: vi.fn(),
+        onclose: () => {
+          open = false;
+          unmount(app);
+        },
+      },
+    });
+    await settle();
+    const video = document.querySelector('video')!;
+    Object.defineProperty(video, 'videoWidth', { value: 720, configurable: true });
+    video.dispatchEvent(new Event('loadeddata'));
+    await settle();
+    const shutter = document.querySelector<HTMLButtonElement>('[data-reel-shutter]')!;
+    shutter.dispatchEvent(new PointerEvent('pointerdown', { pointerId: 1, bubbles: true }));
+    shutter.dispatchEvent(new PointerEvent('pointerup', { pointerId: 1, bubbles: true }));
+    await settle();
+    const layer = document.querySelector<HTMLElement>('[role="dialog"]')!;
+
+    edgeSwipe(document.querySelector<HTMLElement>('[data-reel-review]')!, layer);
+    await settle();
+    expect(showConfirm).toHaveBeenCalledTimes(1);
+    expect(document.querySelector('[data-reel-review]')).toBeNull();
+    expect(open).toBe(true);
+
+    edgeSwipe(layer, layer);
+    await settle();
+    expect(open).toBe(false);
+    expect(closeConversation).not.toHaveBeenCalled();
+    expect(historyOverlayStackDepth()).toBe(1);
   });
 
   it('a chat camera refused does not ask the member to allow the microphone it never asked for', async () => {

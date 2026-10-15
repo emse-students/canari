@@ -23,6 +23,11 @@
    * 1.2.9-alpha.1, 2026-10-15). They hide while a surface is registered there, as under every modal -
    * the post composer's camera was clean only because its modal already was one.
    *
+   * THE LEFT-EDGE SWIPE IS ITS BACK TOO. The iOS app has no system Back: its only one is the swipe the
+   * conversation draws (`swipeBack`), and this layer is portalled OUT of the conversation, so a swipe
+   * over the review reached nothing (iPhone 12, v1.2.9-alpha.2, 2 of 2). The layer carries the same
+   * gesture, and it closes the TOP overlay - the take first (which asks), then the camera.
+   *
    * THERE IS NO FALLBACK. A camera that cannot open (permission, no device) shows its own refusal
    * screen in CameraScreen; the member closes the layer and uses the gallery picker.
    */
@@ -32,7 +37,13 @@
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { CaptureDestination } from '$lib/reels/reelCapture';
-  import { abandonHistoryOverlay, pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
+  import {
+    abandonHistoryOverlay,
+    backHistoryOverlayFromGesture,
+    pushHistoryOverlay,
+  } from '$lib/utils/historyOverlayStack';
+  import { swipeBack } from '$lib/actions/swipeBack';
+  import { isNarrowChatLayout } from '$lib/utils/viewport';
   import type { CameraSession } from '$lib/reels/cameraSession.svelte';
 
   interface Props {
@@ -47,6 +58,9 @@
   }
 
   let { destination, oncapture, onclose, session }: Props = $props();
+
+  /** A phone layout, where the edge swipe is a Back - read once: the layer lives for one take. */
+  const narrow = isNarrowChatLayout();
 
   const entry = () => {
     console.debug(`[camera-overlay] Back closes the camera (${destination})`);
@@ -74,6 +88,7 @@
 <div
   use:portal
   use:coversScreen
+  use:swipeBack={{ onBack: () => void backHistoryOverlayFromGesture(), enabled: narrow }}
   class="fixed inset-0 z-(--z-viewer) bg-black text-white"
   role="dialog"
   aria-modal="true"

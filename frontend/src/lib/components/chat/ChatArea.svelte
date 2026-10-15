@@ -49,6 +49,7 @@
   import type { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
   import { getKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import { swipeBack } from '$lib/actions/swipeBack';
+  import { backHistoryOverlayFromGesture } from '$lib/utils/historyOverlayStack';
   import { typingUsersFor } from '$lib/stores/typingStore.svelte';
   import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -1152,6 +1153,18 @@
       root.style.removeProperty('--chat-chrome-bottom');
     };
   });
+
+  /**
+   * THE EDGE SWIPE IS A BACK, so it closes what is ON TOP: the composer's "+" menu, a sheet, the side
+   * panel - and the conversation only when nothing is open over it (on a phone it holds an entry of
+   * its own, so the stack closes it exactly as Android's Back does). Calling `onBack` directly closed
+   * the conversation from under an open menu with ONE swipe (iPhone 12, v1.2.9-alpha.2, 2 of 2).
+   * `onBack` is left for a layout where nothing, the conversation included, holds an entry.
+   */
+  function onSwipedBack() {
+    if (backHistoryOverlayFromGesture()) return;
+    onBack?.();
+  }
 </script>
 
 <section
@@ -1161,7 +1174,7 @@
     : ''} relative flex min-h-0 min-w-0 flex-1 flex-col bg-transparent {isHidden
     ? 'hidden md:flex'
     : ''}"
-  use:swipeBack={{ onBack: onBack ?? (() => {}), enabled: _isMobile && !!onBack }}
+  use:swipeBack={{ onBack: onSwipedBack, enabled: _isMobile && !!onBack }}
 >
   {#if chatView}
     <!--

@@ -1,5 +1,6 @@
 import {
   abandonHistoryOverlay,
+  backHistoryOverlayFromGesture,
   drainHistoryOverlayStack,
   pushHistoryOverlay,
   closeHistoryOverlayFromUi,
@@ -419,6 +420,60 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
     expect(closeCamera).toHaveBeenCalledWith('back');
     expect(closeConversation).not.toHaveBeenCalled();
     expect(h.index).toBe(1);
+  });
+
+  it('the iOS edge swipe with the "+" menu open closes the menu, not the conversation (iPhone 12, v1.2.9-alpha.2)', () => {
+    fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closeConversation = vi.fn();
+    const closeMenu = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeMenu);
+
+    expect(backHistoryOverlayFromGesture()).toBe(true);
+    expect(closeMenu).toHaveBeenCalledWith('back');
+    expect(closeConversation).not.toHaveBeenCalled();
+    expect(historyOverlayStackDepth()).toBe(1);
+
+    expect(backHistoryOverlayFromGesture()).toBe(true);
+    expect(closeConversation).toHaveBeenCalledWith('back');
+    // Nothing open: the gesture is its owner's again.
+    expect(backHistoryOverlayFromGesture()).toBe(false);
+  });
+
+  it('the edge swipe over the camera review closes the take (which asks), then the camera, never the conversation', () => {
+    fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closeConversation = vi.fn();
+    const closeCamera = vi.fn();
+    const closeTake = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeCamera);
+    pushHistoryOverlay(closeTake);
+
+    backHistoryOverlayFromGesture();
+    expect(closeTake).toHaveBeenCalledWith('back');
+    expect(closeCamera).not.toHaveBeenCalled();
+    backHistoryOverlayFromGesture();
+    expect(closeCamera).toHaveBeenCalledWith('back');
+    expect(closeConversation).not.toHaveBeenCalled();
+  });
+
+  it('a gesture Back leaves a ghost the next overlay takes, and a system Back after it still closes only the top', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closeConversation = vi.fn();
+    const closeMenu = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeMenu);
+    backHistoryOverlayFromGesture();
+    const closeSheet = vi.fn();
+    pushHistoryOverlay(closeSheet);
+    expect(h.index).toBe(2);
+
+    await h.pressBack();
+    expect(closeSheet).toHaveBeenCalledWith('back');
+    expect(closeConversation).not.toHaveBeenCalled();
   });
 
   it('reads an entry left by an earlier page load as the router entry below every live overlay', () => {

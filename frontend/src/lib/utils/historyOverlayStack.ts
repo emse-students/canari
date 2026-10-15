@@ -225,6 +225,27 @@ export function closeHistoryOverlayFromUi(close: () => void): void {
 }
 
 /**
+ * A Back the APP'S OWN gesture carries - the left-edge swipe, which is the only Back the iOS app has
+ * (its WKWebView does not enable the back-forward swipe, so no `popstate` ever comes from the edge).
+ * It closes exactly the TOP overlay, as a system Back does, and tells it so (`'back'`, which is what
+ * makes a held take ASK). Its entry stays as a ghost, like every close here (no traversal).
+ *
+ * Returns false when no overlay is open: the gesture then belongs to whatever drew it. Without this,
+ * the conversation's swipe closed the conversation from under its own "+" menu, and a swipe over a
+ * portalled layer (the camera's review) reached nothing at all (iPhone 12, v1.2.9-alpha.2, 2 of 2).
+ */
+export function backHistoryOverlayFromGesture(): boolean {
+  const top = stack.pop();
+  if (!top) {
+    Log.d('historyOverlay', 'gesture Back with no overlay open - the gesture owner decides');
+    return false;
+  }
+  Log.d('historyOverlay', `gesture Back closes overlay ${top.id}, ${stack.length} left open`);
+  top.close('back');
+  return true;
+}
+
+/**
  * Removes an overlay from the stack when it is dismissed indirectly (opening a conversation closes
  * the list drawer, a take handed back closes the camera). Its entry stays as a ghost - see
  * {@link releaseHistoryOverlay}, which this now is: a traversal to remove it raced the next push.
