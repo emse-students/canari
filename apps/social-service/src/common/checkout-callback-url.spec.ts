@@ -3,12 +3,12 @@ import { isAllowedCheckoutCallbackUrl } from './checkout-callback-url';
 const FRONT = 'https://canari.emse.fr';
 
 describe('isAllowedCheckoutCallbackUrl - the app deep link', () => {
-  it.each(['payment', 'stripe'])('accepts fr.emse.canari://%s/success and /cancel', (host) => {
-    expect(isAllowedCheckoutCallbackUrl(`fr.emse.canari://${host}/success?x=1`, FRONT)).toBe(true);
-    expect(isAllowedCheckoutCallbackUrl(`fr.emse.canari://${host}/cancel`, FRONT)).toBe(true);
+  it('accepts fr.emse.canari://payment/success and /cancel', () => {
+    expect(isAllowedCheckoutCallbackUrl('fr.emse.canari://payment/success?x=1', FRONT)).toBe(true);
+    expect(isAllowedCheckoutCallbackUrl('fr.emse.canari://payment/cancel', FRONT)).toBe(true);
   });
 
-  it.each(['callback', 'chat', 'evil'])('refuses the host %s', (host) => {
+  it.each(['stripe', 'callback', 'chat', 'evil'])('refuses the host %s', (host) => {
     expect(isAllowedCheckoutCallbackUrl(`fr.emse.canari://${host}/success`, FRONT)).toBe(false);
   });
 

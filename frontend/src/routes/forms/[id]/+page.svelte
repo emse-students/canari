@@ -719,8 +719,7 @@
       {/each}
     </div>
 
-    <!-- ── Payment method (cash vs online). `online` is the wire value; clients older than the
-         Stripe removal sent `stripe`, which the server still accepts (legacy-compatibility). ── -->
+    <!-- ── Payment method (cash vs online). `online` is the wire value. ── -->
     {#if calculateTotal() > 0 && form.allowCashPayment && !submitted}
       <div class="border-cn-border mt-4 rounded-2xl border bg-(--cn-surface) p-5">
         <p class="text-text-muted mb-3 text-xs font-bold tracking-wide uppercase">

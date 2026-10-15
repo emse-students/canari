@@ -59,27 +59,16 @@ working clients to protect them from a warning that was accurate all along - see
 
 ## The diary
 
-### No date yet - the `fr.emse.canari://stripe/...` checkout return host, from a build older than 2026-10-09
+### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 
-**Site:** `isAllowedCheckoutCallbackUrl` in `apps/social-service/src/common/checkout-callback-url.ts` and
-`LEGACY_CHECKOUT_RETURN_HOST` in `frontend/src/lib/utils/checkoutCallbacks.ts`, read by `hooks.client.ts`.
-**Shim:** the checkout return now uses the host `payment` (declared in `tauri.conf.json` and the
-Android manifest, pinned by `deepLinkHostsDeclared.test.ts`). A build older than that registered and
-sends `stripe`, so the server still ACCEPTS it and the client still ROUTES it. Nothing emits it any more.
-**Removal condition:** `minClientVersion` at or above the first release carrying the `payment` host,
-both stores serving it; then the server check, the client constant and the `stripe` entry of
-`tauri.conf.json` and the manifest go together ([stripe-archive](stripe-archive.md)).
-
-### No date yet - a `paymentMethod` of `stripe`, from a client older than the Stripe removal
-
-**Site:** `@IsIn(['online', 'stripe', 'cash'])` in `apps/social-service/src/forms/dto/form.dto.ts`, and
-`PurchasePaymentMethod` in `users/entities/purchase-record.entity.ts`.
-**Shim:** the form submission still ACCEPTS `stripe` and means `online`; purchase rows written
-before 2026-10-08 hold `stripe` and are read as `online`. Nothing writes `stripe` any more
-([stripe-archive](stripe-archive.md)).
-**Removal condition:** the input goes when `minClientVersion` is at or above the first release
-carrying the removal, both stores serving it. The stored value is data at rest and goes only with a
-data migration of `purchase_records`.
+**Site:** `PurchasePaymentMethod` in `apps/social-service/src/users/entities/purchase-record.entity.ts`,
+and the `'stripe'` arms of the client's `paymentMethod` types and labels (`EditAchatsTab`,
+`EditDelegationTab`, `account/purchases`).
+**Shim:** purchase rows written before 2026-10-08 hold `stripe` and are read as `online`. Nothing
+writes `stripe` any more, and since floor 1.2.7 nothing may SEND it either: the form input and the
+`fr.emse.canari://stripe` return host are gone ([stripe-archive](stripe-archive.md)).
+**Removal condition:** data at rest, so a data migration of `purchase_records` (`stripe` -> `online`)
+and no version: then the type and the client arms go.
 
 ### No date yet - MiConnect's `formation` and `promo` claims, derived from the profile
 

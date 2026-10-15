@@ -45,12 +45,6 @@
           "scheme": [
             "fr.emse.canari"
           ],
-          "host": "stripe"
-        },
-        {
-          "scheme": [
-            "fr.emse.canari"
-          ],
           "host": "payment"
         },
         {

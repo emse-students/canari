@@ -23,7 +23,7 @@ import { captureConsoleLine, installAppLogFlushTriggers } from '$lib/utils/appLo
 import { apiServiceOrigins } from '$lib/utils/apiUrl';
 import { createRoutedFetch } from '$lib/utils/fetchRouting';
 import { MOBILE_APP_PROTOCOL, OIDC_SIGNED_OUT_HOST } from '$lib/mobile/appSiteAssociation';
-import { CHECKOUT_RETURN_HOSTS } from '$lib/utils/checkoutCallbacks';
+import { CHECKOUT_RETURN_HOST } from '$lib/utils/checkoutCallbacks';
 
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
 // web logs stay as readable as adb ones - and hand every non-debug line to the in-app log, the only
@@ -267,9 +267,8 @@ if (isTauriRuntime()) {
               continue;
             }
 
-            // Checkout return: fr.emse.canari://payment/success|cancel?… A build older than the
-            // payment host still sends `stripe` (docs/wiki/legacy-compatibility.md), so both are read.
-            if (u.protocol === MOBILE_APP_PROTOCOL && CHECKOUT_RETURN_HOSTS.has(u.host)) {
+            // Checkout return: fr.emse.canari://payment/success|cancel?…
+            if (u.protocol === MOBILE_APP_PROTOCOL && u.host === CHECKOUT_RETURN_HOST) {
               const path = u.pathname.replace(/\/$/, '') || '/';
               const sessionId = u.searchParams.get('session_id');
               const submissionId = u.searchParams.get('submission_id');

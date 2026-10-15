@@ -15,8 +15,8 @@ import { describe, expect, it } from 'vitest';
  */
 const SERVER_HOSTS = ['chat', 'post', 'form', 'posts', 'calendar', 'admin-agenda', 'proposals'];
 
-/** The checkout return: `payment` is emitted, `stripe` is what builds before 2026-10-09 still send. */
-const CHECKOUT_HOSTS = ['payment', 'stripe'];
+/** The checkout return. `stripe`, its name in builds below 1.2.4, is retired. */
+const CHECKOUT_HOSTS = ['payment'];
 
 /**
  * MiConnect's way back from a sign-out (`OIDC_MOBILE_POST_LOGOUT_URI`). Opened by the Custom Tab, not
