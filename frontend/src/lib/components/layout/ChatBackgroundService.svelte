@@ -113,7 +113,10 @@
     landingStep,
     openInvitedChannel,
   } from '$lib/utils/chat/notificationRouting';
-  import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
+  import {
+    CHANNEL_CONVERSATION_PREFIX,
+    isChannelConversationId,
+  } from '$lib/utils/chat/channelCrypto';
   import { setGraineRepairListener } from '$lib/utils/graine/runtime';
   import { channelService } from '$lib/services/ChannelService';
   import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
@@ -842,6 +845,9 @@
       saveConversation: (name: string) => globalConvs.saveConversation(name, convCtx()),
       deleteConversation: (name: string) =>
         globalSession.storage?.deleteConversation(name) ?? Promise.resolve(),
+      storedSalonPageIds: () =>
+        globalSession.storage?.getMessageConversationIds(CHANNEL_CONVERSATION_PREFIX) ??
+        Promise.resolve([]),
       selectConversation: globalConvs.selectConversation,
       ensureMls: globalSession.ensureMls,
       startDirectConversation: (targetUserId: string, opts?: { silent?: boolean }) =>

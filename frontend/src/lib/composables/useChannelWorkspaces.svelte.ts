@@ -173,6 +173,11 @@ export interface ChannelWorkspaceContext {
   reloadChannelHistory?: (channelConversationId: string) => Promise<void>;
   /** Drops cached channel history so the next open refetches from the API. */
   invalidateChannelHistoryCache?: (channelConversationId: string) => void;
+  /**
+   * The salons whose last page this device stores (F4), conversation ids. Optional: a context with
+   * no store has nothing at rest to sweep.
+   */
+  storedSalonPageIds?: () => Promise<string[]>;
   /** Appends a message to the debug log panel. */
   log: (msg: string) => void;
 }
@@ -589,6 +594,47 @@ export function useChannelWorkspaces() {
   }
 
   /**
+   * Deletes the stored page (F4) of every salon this listing does not name. The loop over the
+   * conversations cannot reach them: a salon gets a conversation only once it is listed in this
+   * process, so the page of a salon the member lost, or that was deleted, while the app was closed
+   * would stay at rest for ever. The boot used to erase every salon's rows, which was the only sweep
+   * before F4 kept them. A salon created on this device after the request is spared, as above.
+   *
+   * Never fatal: a store that cannot be read leaves the sweep to the next listing, said in the log.
+   */
+  async function sweepStoredSalonPages(
+    ctx: ChannelWorkspaceContext,
+    validChannelConversationIds: string[],
+    bornAfterTheRequest: (id: string) => boolean,
+    session: number
+  ): Promise<void> {
+    if (!ctx.storedSalonPageIds || !ctx.deleteConversation) return;
+    let stored: string[];
+    try {
+      stored = await ctx.storedSalonPageIds();
+    } catch (error) {
+      ctx.log(
+        `[WORKSPACE-LOAD] stored salon pages not swept - the next listing does: ${String(error)}`
+      );
+      return;
+    }
+    const listed = new SvelteSet(validChannelConversationIds);
+    const orphans = stored.filter((id) => !listed.has(id) && !bornAfterTheRequest(id));
+    if (orphans.length === 0) return;
+    assertListingSession(session, 'sweeping the stored salon pages');
+    ctx.log(
+      `[WORKSPACE-LOAD] ${orphans.length} stored salon page(s) the listing no longer names deleted`
+    );
+    for (const id of orphans) {
+      await ctx
+        .deleteConversation(id)
+        .catch((error: unknown) =>
+          ctx.log(`[WORKSPACE-LOAD] stored page of ${id} not deleted: ${String(error)}`)
+        );
+    }
+  }
+
+  /**
    * What a load ends with: the salons and communities the listing did not name are deleted, except
    * those created on this device after it was requested.
    */
@@ -637,6 +683,7 @@ export function useChannelWorkspaces() {
         );
     }
     assertListingSession(session, 'pruning the communities');
+    await sweepStoredSalonPages(ctx, validChannelConversationIds, bornAfterTheRequest, session);
 
     // A SALON ROW WITH NO CONVERSATION IS PRUNED TOO. The loop above walks the conversations, and a
     // row drawn from the saved snapshot (F1) has none until a listing names it - so a salon deleted,

@@ -28,12 +28,14 @@ vi.mock('$lib/utils/chat/channelCrypto', () => ({
 const listUserWorkspaces = vi.fn();
 const listChannels = vi.fn();
 const listUnreadCounts = vi.fn().mockResolvedValue([]);
+const createChannel = vi.fn();
 vi.mock('$lib/services/ChannelService', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/services/ChannelService')>()),
   ChannelService: class MockChannelService {
     listUserWorkspaces = listUserWorkspaces;
     listChannels = listChannels;
     listUnreadCounts = listUnreadCounts;
+    createChannel = createChannel;
   },
 }));
 
@@ -334,6 +336,66 @@ describe('F1 - the saved community list', () => {
     expect(store.workspacesConfirmed).toBe(true);
     expect(readWorkspaceSnapshot(ALICE)!.map((w) => w.id)).toEqual(['one']);
     expect(readWorkspaceSnapshot(ALICE)![0].channels.map((c) => c.id)).toEqual(['channel_c1']);
+  });
+
+  // Review of #1892 (2026-10-15): a salon's stored page (F4) has no conversation until a listing
+  // names it in this process, so the loop over the conversations never reaches the page of a salon
+  // lost while the app was closed - and the boot no longer erases salon rows.
+  it('deletes the stored page of every salon the listing no longer names, and only those', async () => {
+    listUserWorkspaces.mockResolvedValue([ws('ws1', 'One', 'one')]);
+    listChannels.mockResolvedValue([salon('c1', 'general')]);
+    const deleteConversation = vi.fn().mockResolvedValue(undefined);
+    const store = useChannelWorkspaces();
+
+    await store.loadChannelWorkspacesFromBackend(
+      makeContext({
+        deleteConversation,
+        storedSalonPageIds: vi.fn().mockResolvedValue(['channel_c1', 'channel_lost']),
+      })
+    );
+
+    expect(deleteConversation).toHaveBeenCalledTimes(1);
+    expect(deleteConversation).toHaveBeenCalledWith('channel_lost');
+  });
+
+  it('spares the stored page of a salon created on this device while the listing was in flight', async () => {
+    listUserWorkspaces.mockResolvedValue([ws('ws1', 'One', 'one')]);
+    let answerSalons!: (salons: ChannelDto[]) => void;
+    listChannels.mockReturnValue(new Promise((resolve) => (answerSalons = resolve)));
+    createChannel.mockResolvedValue({ id: 'born', name: 'new' });
+    const deleteConversation = vi.fn().mockResolvedValue(undefined);
+    const store = useChannelWorkspaces();
+    const ctx = makeContext({
+      deleteConversation,
+      storedSalonPageIds: vi.fn().mockResolvedValue(['channel_born', 'channel_lost']),
+    });
+
+    const loading = store.loadChannelWorkspacesFromBackend(ctx);
+    await vi.waitFor(() => expect(listChannels).toHaveBeenCalled());
+    // Created after the question was asked: missing from the answer for a reason that is not loss.
+    await store.createNewChannel('ws1', 'new', ctx);
+    answerSalons([salon('c1', 'general')]);
+    await loading;
+
+    expect(deleteConversation.mock.calls.map(([id]) => id)).toEqual(['channel_lost']);
+  });
+
+  it('sweeps no stored page when the listing failed', async () => {
+    listUserWorkspaces.mockResolvedValue([ws('ws1', 'One', 'one')]);
+    listChannels.mockRejectedValue(new Error('offline'));
+    const deleteConversation = vi.fn().mockResolvedValue(undefined);
+    const store = useChannelWorkspaces();
+
+    await store
+      .loadChannelWorkspacesFromBackend(
+        makeContext({
+          deleteConversation,
+          storedSalonPageIds: vi.fn().mockResolvedValue(['channel_c1']),
+        })
+      )
+      .catch(() => {});
+
+    expect(deleteConversation).not.toHaveBeenCalled();
   });
 
   it('a listing that fails keeps the saved list on screen, unconfirmed', async () => {

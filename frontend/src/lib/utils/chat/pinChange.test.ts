@@ -59,6 +59,7 @@ function makeEncryptedStorage(): IStorage & {
     getMessage: vi.fn().mockResolvedValue(null),
     getMessages: vi.fn(),
     countMessages: vi.fn(),
+    getMessageConversationIds: vi.fn(),
     getMessagesPage: vi.fn(),
     deleteOldMessages: vi.fn().mockResolvedValue(0),
     getAllEncryptedRows: vi.fn(async () => rows.slice()),

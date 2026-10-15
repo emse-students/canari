@@ -347,6 +347,76 @@ Same protocol and instrument as sections 1 and 5.
   `deleteMessagesForConversation` that runs before every salon load, on a SQLite store busy with the
   boot (inferred, not profiled). F4 removes that delete.
 
+### F4: built 2026-10-15
+
+**What changed.**
+- A salon's last page is kept on the device as a COPY: the page the last load drew, sealed under the
+  device key like a DM's rows.
+- `loadChannelHistory` sends the server request first. While that request is in flight, it draws the
+  stored page (`drawStoredSalonPage`), only on the salon's first draw in the process. When the
+  server page answers, it merges as before.
+  - EVERY row drawn from the store that the fresh page does not name is withdrawn, wherever it sits
+    and even when the page is empty. The server HARD-deletes a salon message (no tombstone), so a
+    missing row is the only sign that it is gone. A message that arrived live after the draw is
+    kept, because it was not drawn from the store. Review of #1892 (2026-10-15) found what the first
+    version missed: it withdrew only rows OLDER than the page, while the merge keeps rows newer
+    than a page as live arrivals. A deleted newest message, or an emptied salon, therefore
+    reappeared from the copy for the life of the process.
+  - Only then is the copy replaced in the store (`storeSalonPage`: delete, then save).
+- Nothing is deleted BEFORE the server answers any more. That includes the boot restore, which used
+  to erase every salon's rows (`conversations.ts`).
+- An open that fails keeps the copy on screen and in the store, so the salon can be read offline.
+
+**What is unchanged.**
+- The server stays the source of truth: the copy is replaced at every load.
+- Live salon messages are still not written one by one (`skipDbSave`).
+- A pre-session landing still has no salon preview (`landingPreview.ts`).
+- A salon pruned by the listing is deleted with its rows (`deleteConversation`).
+
+**The sweep that replaced the boot delete.** A salon gets a conversation only once a listing names it
+in this process. The prune's loop over the conversations therefore never reaches the stored page
+of a salon the member lost, or that was deleted, while the app was closed. Each complete listing
+now deletes the stored page of every salon it does not name, except a salon created on this device
+after the request (`sweepStoredSalonPages`, over `IStorage.getMessageConversationIds`). A listing
+that failed sweeps nothing.
+
+**Two narrow windows left open on purpose (P3, review of #1892, 2026-10-15).**
+- **Another tab stores a newer page between this load's request and its draw.** This load then
+  draws that newer copy. Its own server answer, older than that copy, withdraws the rows the copy
+  has and the answer lacks, then writes its older page back over the copy. The screen shows what
+  this tab's server answer said, which is correct for that answer. A row posted in between is
+  missing only until the live stream delivers it or the next load runs. Closing the window would
+  need a version on the stored page that both tabs compare. One web user with two tabs, on the
+  same salon, inside one round trip, does not justify that.
+- **A tap's load that is still in flight when the sweep deletes its salon's page writes that page
+  back.** The load was asked before the listing answered and does not know the salon is gone. The
+  orphan page is sealed, belongs to this account only, and is never drawn: no listing names the
+  salon, so nothing opens it. The next listing's sweep deletes it. Closing this window would mean
+  checking the listing generation inside `storeSalonPage`, which is a second source of truth about
+  membership.
+
+**What a sign-out does not sweep, deliberately.** A sign-out keeps the message database: the user
+chose "deconnecter seulement, garder l'etat" (`ChatBackgroundService`, the PIN gate's exit). A salon
+copy follows the same rule as a DM's rows: sealed under the device key, in the account's own
+database. Account DELETION (`SettingsDangerZone`) also leaves that whole database, DMs included, at
+rest. That is a question about the database as a whole, not about salons, and it is owed in
+[backlog](../backlog.md).
+
+**Measured** on the Mi 9T (2026-10-15). Both builds are 1.2.8, measured with
+`tools/cold-start/community-open.mjs` on target `BancOuverture-1`. The baseline is #1886's head;
+the F4 build adds this change on top. Each figure is the median of 3 runs, in ms.
+
+| Condition | salon>msgs before | salon>msgs F4 | reopen>msgs before | reopen>msgs F4 |
+| --- | --- | --- | --- | --- |
+| none, 1x | 4177 | 978 | 911 | 572 |
+| none, 4x | 14190 | 4246 | 3587 | 2003 |
+| slow3g, 4x | 17404 | 3832 | 3643 | 2089 |
+| airplane, 1x | never | 606 | never | 646 |
+
+The tab (`tap>salons`) is unchanged within noise: 556/619, 1765/1719 and 1851/1902. That is
+expected, because F4 only touches the salon pane. In the airplane condition, one run of three timed
+out at `tap>target salons` in both builds, so the airplane medians cover 2 runs.
+
 ### Reaching under 200 ms: the tab, and a cached salon's first messages
 
 What the measurements say is already within reach, and what stands between it and 200 ms:
