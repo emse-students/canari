@@ -18,6 +18,8 @@ import {
   PAYMENT_REQUEST_LIFETIME_SECONDS,
   PREVIOUS_PAYMENT_OPEN,
   SETTLED_PAYMENT_STATUSES,
+  CONFIRMABLE_PAYMENT_STATUSES,
+  LYDIA_REQUEST_UUID_RE,
   livePendingWhere,
   lockFormSeats,
   overCapacityFirst,
@@ -1386,7 +1388,8 @@ export class FormsService {
     );
     return new ConflictException({
       code: PREVIOUS_PAYMENT_OPEN,
-      message: 'The previous payment request is still open. Try again in a moment.',
+      message:
+        'The previous payment request is still open. Try again once it has expired, at most 30 minutes after it was started.',
     });
   }
 
@@ -1448,13 +1451,14 @@ export class FormsService {
    * not, and the organiser refunds it outside the application. Two late payments queue on the lock,
    * so they cannot both take the last seat.
    *
-   * A SECOND CALL ON A SETTLED ROW IS A REPLAY: the status does not move. It is the ordinary case -
-   * the Lydia callback and the payer's `verify-session` both land here for one payment. Before
-   * 2026-10-15 each call re-granted and wrote ANOTHER purchase record; now the effects run from
-   * durable flags (`fulfilPayment`), so a replay only finishes what is missing.
+   * A SECOND CALL ON A SETTLED ROW IS A REPLAY: the status does not move. The Lydia callback and
+   * the payer's return (`confirmPayment`, while the row is still `pending`) can both land here for
+   * one payment, in either order, and Lydia may repeat a callback. Before 2026-10-15 each call
+   * re-granted and wrote ANOTHER purchase record; now the effects run from durable flags
+   * (`fulfilPayment`), so a replay only finishes what is missing.
    *
    * THE REQUEST ID NEVER DECIDES THE STATUS, BUT A FOREIGN ONE IS ACCUSED. The two callers carry two
-   * DIFFERENT ids for one payment - the callback's numeric `request_id`, `verify-session`'s
+   * DIFFERENT ids for one payment - the callback's numeric `request_id`, `confirmPayment`'s
    * `request_uuid` - and the row stores both (`paymentRequestId`, `stripeSessionId`), so a replay
    * naming neither is a second request paid for one answer: logged at ERROR, status unchanged (the
    * money already landed; refusing would only hide it). The id that settled the row is kept in
@@ -1462,8 +1466,12 @@ export class FormsService {
    *
    * ONE ANSWER PER PERSON: on a single-answer form, a late payment whose payer already has another
    * row holding a seat or paid lands `paid_over_capacity`, logged at ERROR.
+   *
+   * `onlyIfRowNames` (the payer's return, `confirmPayment`): the request was read paid OUTSIDE
+   * this lock, so the row must still name that very uuid once locked. If a retry replaced it in
+   * between, the retry's own settle already read that request and decided it - nothing is written.
    */
-  async markPaid(submissionId: string, sessionId?: string) {
+  async markPaid(submissionId: string, sessionId?: string, onlyIfRowNames = false) {
     const found = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!found) throw new NotFoundException('Submission not found');
 
@@ -1476,6 +1484,9 @@ export class FormsService {
           lock: { mode: 'pessimistic_write' },
         });
         if (!submission) throw new NotFoundException('Submission not found');
+        if (onlyIfRowNames && submission.stripeSessionId !== sessionId) {
+          return { submission, status: submission.paymentStatus, replay: true, stale: true };
+        }
         if (SETTLED_PAYMENT_STATUSES.has(submission.paymentStatus)) {
           return { submission, status: submission.paymentStatus, replay: true };
         }
@@ -1532,6 +1543,14 @@ export class FormsService {
       }
     );
     const { submission } = outcome;
+
+    if ('stale' in outcome) {
+      this.logger.warn(
+        `[Forms] markPaid on submission ${submissionId}: request ${sessionId} was read paid, but the ` +
+          `row now names ${submission.stripeSessionId ?? 'no request'} - a retry replaced it and settled it; nothing written`
+      );
+      return { ok: false };
+    }
 
     if (outcome.replay) {
       // The row now names its request by BOTH ids (`paymentRequestId`, the numeric one callbacks
@@ -1606,6 +1625,83 @@ export class FormsService {
         s.paymentRequestId === submission.paymentRequestId &&
         s.stripeSessionId === submission.stripeSessionId
     );
+  }
+
+  /**
+   * Asks the provider whether an online answer was paid, from the request the ROW names, and
+   * records the payment if so - the payer's return page calls it (`confirm-payment`), so a
+   * payment whose confirm callback never arrived is still confirmed while the payer is looking.
+   *
+   * Asked of a `pending` row AND of an `expired` or `cancelled` one that names a request: a
+   * payment made at the end of the hold whose callback is lost leaves the row `expired` with no
+   * seat, and `markPaid` already decides a late payment from the row (`paid` while the form has
+   * room, else `paid_over_capacity`). The row is re-checked under its lock to still name the uuid
+   * that was read (`markPaid`'s `onlyIfRowNames`).
+   *
+   * It is the only confirmation besides the callback. `verify-session` used to be the other one
+   * and never worked: it took the submission from the `order_ref` Lydia's `request/state` was
+   * supposed to echo, and no variant of that call echoes it (sandbox, 2026-10-15, payments.md).
+   * Here nothing comes from the client but the submission id the caller is allowed to read: the
+   * request is the row's own uuid and the answer is Lydia's, read server to server.
+   *
+   * Anything short of `paid` leaves the row as it is (the callback, the next read or the expiry
+   * job decides), and a failed read is logged at WARN and answered with the row unchanged: this
+   * is a read the payer repeats, never the path that releases or charges anything.
+   */
+  async confirmPayment(submissionId: string) {
+    const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    if (!submission) throw new NotFoundException('Submission not found');
+    const sessionId = submission.stripeSessionId;
+    if (
+      CONFIRMABLE_PAYMENT_STATUSES.has(submission.paymentStatus) &&
+      sessionId &&
+      !LYDIA_REQUEST_UUID_RE.test(sessionId)
+    ) {
+      // A Stripe-era row (`cs_...`): Lydia never issued it, so there is nothing to ask - and core
+      // would refuse it with a 400 on every poll.
+      this.logger.log(
+        `[Forms] confirmPayment ${submissionId}: ${submission.paymentStatus} row holds a non-Lydia request id, nothing to ask the provider`
+      );
+    } else if (CONFIRMABLE_PAYMENT_STATUSES.has(submission.paymentStatus) && sessionId) {
+      const form = await this.formRepo.findOne({ where: { id: submission.formId } });
+      const connectAccountId = form?.associationId
+        ? await this.associationsService.getPaymentAccountId(form.associationId)
+        : null;
+      if (!connectAccountId) {
+        this.logger.warn(
+          `[Forms] confirmPayment ${submissionId}: the form has no payment account to read request ${sessionId} with`
+        );
+      } else {
+        try {
+          const { data } = await axios.post(
+            coreUrl('payments/request-state'),
+            { sessionId, connectAccountId },
+            internalCoreRequestConfig()
+          );
+          if (data?.state === 'paid') {
+            this.logger.log(
+              `[Forms] confirmPayment ${submissionId}: request ${sessionId} is PAID at the provider - recorded`
+            );
+            await this.markPaid(submissionId, sessionId, true);
+          } else {
+            this.logger.debug(
+              `[Forms] confirmPayment ${submissionId}: request ${sessionId} is ${data?.state ?? 'unknown'} (${data?.raw ?? ''})`
+            );
+          }
+        } catch (err: unknown) {
+          this.logger.warn(
+            `[Forms] confirmPayment ${submissionId}: could not read request ${sessionId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
+      }
+    } else {
+      this.logger.debug(
+        `[Forms] confirmPayment ${submissionId}: ${submission.paymentStatus}, nothing to ask the provider`
+      );
+    }
+    return this.getSubmissionById(submissionId);
   }
 
   /**
