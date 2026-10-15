@@ -359,6 +359,8 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
 
 ## Outbound delivery -> [chat](frontend/modules/chat.md), [history-reconciliation](protocols/history-reconciliation.md), [chat-delivery](services/chat-delivery.md), [mobile](frontend/mobile.md)
 
+- **AN MLS APPLICATION FRAME IS PAID FOR BY EVERY RECEIVER, SO A FRAME THAT SAYS NOTHING NEW IS NOT SENT.** A receiver cannot skip decrypting a frame, nor the full checkpoint that follows it: 50 of 135 cold-start checkpoints on a Pixel 6a followed watermark-only drains, and every message sent emitted one that told nobody anything (the mark moved over the sender's own send). Cut on the SENDER: a latest-wins frame supersedes its unsent predecessor in the queue, WRITE-BEFORE-WITHDRAW so a crash between costs a spare frame and never both, and a value an unsent one covers is not queued. Ending a reading DELIVERS what it owes; it never zeroes it. [history-reconciliation](protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)
+
 - **A ROW WRITTEN BY MORE THAN ONE PATH NEEDS AN IDENTITY CARRIED BY THE EVENT, NEVER MINTED BY THE
   WRITER - AND THE ONLY IDENTITY THAT CONVERGES ACROSS DEVICES IS THE SENDER'S.** A visible system
   notice is written by live delivery AND by the archive replay, and copied between devices by a

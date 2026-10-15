@@ -5,6 +5,7 @@ import {
   isUnreadForUser,
   mergeReadWatermark,
   mergeReadWatermarks,
+  readMarkTarget,
   readersOf,
   seenByAnchors,
   watermarkAfterReading,
@@ -354,5 +355,35 @@ describe('withOwnReadAdvanced - the count follows my own read point', () => {
   it('returns the same object when nothing moves, so a repeat costs no re-render', () => {
     const c = convo(0, { me: 3000 });
     expect(withOwnReadAdvanced(c, 'me', 3000)).toBe(c);
+  });
+});
+
+describe('readMarkTarget - the sender says only what is new', () => {
+  it("does not move a DM mark over the reader's own send, so sending emits no watermark", () => {
+    // Read the peer up to 2000, then reply at 3000: before this rule the mark became 3000 and a
+    // frame went out 2 s later carrying nothing a receiver did not already know.
+    const msgs = [msg('a', 1000), msg('b', 2000), msg('mine', 3000, ME)];
+    expect(readMarkTarget(msgs, 2000, false)).toBe(2000);
+    expect(watermarkAfterReading(msgs, 2000)).toBe(3000);
+  });
+
+  it("still moves a DM mark over a foreign message that arrives after the reader's own", () => {
+    const msgs = [msg('mine', 3000, ME), msg('late', 2500)];
+    expect(readMarkTarget(msgs, 2000, false)).toBe(2500);
+  });
+
+  it('counts unread exactly as before: an own message never was unread', () => {
+    const msgs = [msg('a', 1000), msg('mine', 3000, ME)];
+    expect(countUnreadForUser(msgs, readMarkTarget(msgs, 0, false))).toBe(0);
+  });
+
+  it('leaves a salon unchanged - own and system rows still move its server mark (#1619, #1820)', () => {
+    const msgs = [
+      msg('a', 1000),
+      msg('mine', 3000, ME),
+      msg('notice', 4000, 'system', { isSystem: true }),
+    ];
+    expect(readMarkTarget(msgs, 0, true)).toBe(watermarkAfterReading(msgs, 0, true));
+    expect(readMarkTarget(msgs, 0, true)).toBe(4000);
   });
 });
