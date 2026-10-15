@@ -630,6 +630,41 @@ export interface IStorage {
    */
   importEncryptedGraineRow(row: EncryptedGraineRow): Promise<void>;
 
-  /** Wipe all conversations, messages, outbox entries and Graine sessions (tests / account reset). */
+  // The feed's stored first pages (sealed with the device key; see `$lib/posts/feedStore`)
+
+  /**
+   * Seal `payload` (any JSON value) under the device key and keep it as the stored feed page `key`,
+   * replacing the previous one. It is a COPY the server's next answer replaces, never a source of
+   * truth, and it is not carried by a backup.
+   */
+  saveFeedPage(key: string, payload: unknown, deviceKeyB64: string): Promise<void>;
+  /**
+   * The stored feed page `key`, opened, or `null` when there is none. A row that cannot be opened
+   * (sealed under another device key, damaged) rejects with {@link FeedPageUnreadableError}, so the
+   * caller can tell "nothing stored" from "something stored that must go" and delete it.
+   */
+  getFeedPage(key: string, deviceKeyB64: string): Promise<unknown>;
+  /** Delete every stored feed page, returning how many went. Needs no key. */
+  deleteFeedPages(): Promise<number>;
+
+  /**
+   * Wipe all conversations, messages, outbox entries, Graine sessions and stored feed pages (tests /
+   * account reset).
+   */
   clear(): Promise<void>;
+}
+
+/**
+ * A stored feed page is there and cannot be opened: sealed under a device key this device no longer
+ * uses, or damaged. Typed at the throw so `readStoredFeedPage` deletes it instead of meeting it again
+ * at every launch.
+ */
+export class FeedPageUnreadableError extends Error {
+  constructor(
+    readonly key: string,
+    options?: { cause?: unknown }
+  ) {
+    super(`stored feed page ${key} cannot be opened`, options);
+    this.name = 'FeedPageUnreadableError';
+  }
 }

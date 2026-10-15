@@ -14,6 +14,7 @@ import { resetSalonUnread } from '$lib/utils/chat/salonUnread';
 import { computePinVerifier } from '$lib/utils/chat/auth';
 import {
   applyNewDeviceKeyLocally,
+  dropStoredFeedPages,
   performPinChange,
   reencryptLocalMessages,
   type PinProgressCallback,
@@ -2120,6 +2121,7 @@ export async function recoverPinImpl(
     end: 82,
   });
   cb.log('[PIN_RECOVER] Local messages re-encrypted with the new device key.');
+  await dropStoredFeedPages(storage, cb.log);
 
   onProgress?.({ percent: 88, stage: 'finalize' });
   await applyNewDeviceKeyLocally(ctx.getUserId(), newDeviceKeyB64, cb.log);

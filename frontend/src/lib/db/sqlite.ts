@@ -19,6 +19,7 @@ import type {
   StoredMessage,
   StoredMessagePatch,
 } from './types';
+import { FeedPageUnreadableError } from './types';
 import {
   attachOutboxBlob,
   clearOutboxBlobsLast,
@@ -248,6 +249,16 @@ export class SqliteStorage implements IStorage {
             )
         `);
 
+    // The feed's stored first pages (`$lib/posts/feedStore`): one sealed page per feed tab, a COPY the
+    // server's next answer replaces. Only the key is clear; it names a tab, never a post.
+    await this.db.execute(`
+            CREATE TABLE IF NOT EXISTS feed_pages (
+                feed_key     TEXT PRIMARY KEY,
+                iv           TEXT,
+                cipher_text  TEXT
+            )
+        `);
+
     // A database created by the statements above has no history to migrate. Stamp it at the
     // current version and skip every branch below: they are written against schemas this file
     // never had, and running them is how "no such column: salt" broke every fresh install.
@@ -390,6 +401,14 @@ export class SqliteStorage implements IStorage {
       }
       // Stamped at 12, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
       await this.db.execute('PRAGMA user_version = 12');
+    }
+
+    if (currentVersion < 13) {
+      // v12->v13: `feed_pages`, created unconditionally above like `distribution_groups`, so this
+      // branch only records it. EMPTY on every existing database: the next feed answer writes it.
+      //
+      // Stamped at 13, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
+      await this.db.execute('PRAGMA user_version = 13');
     }
   }
 
@@ -1149,11 +1168,46 @@ export class SqliteStorage implements IStorage {
     );
   }
 
+  // -- Stored feed pages ---------------------------------------------------
+
+  /** Seal and replace one stored feed page. See {@link IStorage.saveFeedPage}. */
+  async saveFeedPage(key: string, payload: unknown, deviceKeyB64: string): Promise<void> {
+    const encrypted = await encryptData(payload, deviceKeyB64);
+    await this.db.execute(
+      'INSERT OR REPLACE INTO feed_pages (feed_key, iv, cipher_text) VALUES ($1, $2, $3)',
+      [key, uint8ToBase64(encrypted.iv), uint8ToBase64(encrypted.cipherText)]
+    );
+  }
+
+  /** One stored feed page, opened, or `null`. See {@link IStorage.getFeedPage}. */
+  async getFeedPage(key: string, deviceKeyB64: string): Promise<unknown> {
+    const rows: any[] = await this.db.select(
+      'SELECT iv, cipher_text FROM feed_pages WHERE feed_key = $1',
+      [key]
+    );
+    const row = rows[0];
+    if (!row) return null;
+    try {
+      return await decryptData(base64ToUint8(row.cipher_text), base64ToUint8(row.iv), deviceKeyB64);
+    } catch (error) {
+      throw new FeedPageUnreadableError(key, { cause: error });
+    }
+  }
+
+  /** Delete every stored feed page. See {@link IStorage.deleteFeedPages}. */
+  async deleteFeedPages(): Promise<number> {
+    const rows: Array<{ n: number | string }> = await this.db.select(
+      'SELECT COUNT(*) AS n FROM feed_pages'
+    );
+    await this.db.execute('DELETE FROM feed_pages');
+    return Number(rows[0]?.n ?? 0);
+  }
+
   // -- Misc ----------------------------------------------------------------
 
   /**
-   * Delete every row from the messages, conversations, outbox, graine, owed-exit and distribution
-   * tables, then the outbox blob store (account reset / testing). Rejects with
+   * Delete every row from the messages, conversations, outbox, graine, owed-exit, distribution and
+   * feed-page tables, then the outbox blob store (account reset / testing). Rejects with
    * `OutboxBlobClearError` when only the blob store failed - every table is empty by then.
    */
   async clear(): Promise<void> {
@@ -1167,6 +1221,8 @@ export class SqliteStorage implements IStorage {
     await this.db.execute('DELETE FROM pending_group_exits');
     // The seeds go with the reset, so the classification that routes to them goes too.
     await this.db.execute('DELETE FROM distribution_groups');
+    // A copy of the feed is the account's content too; a reset leaves none of it behind.
+    await this.db.execute('DELETE FROM feed_pages');
     // LAST, and only once every row above is gone: a separate database that may refuse to open
     // must not be able to skip the deletes of the seeds (see `clearOutboxBlobsLast`).
     await clearOutboxBlobsLast(this.blobs);

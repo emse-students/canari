@@ -1423,3 +1423,211 @@ less (Mi 9T reading of `v1.2.4-alpha.2`). It asks with the app's `showConfirm` (
 returns `'declined'` without a request, and rejects on a failed request so each caller shows its own error
 (the post card its error line, the scheduled panel a line under the strip).
 Pinned by `postDeletion.test.ts`.
+
+## The feed is drawn from the device first, then the server page merges over it (2026-10-15)
+
+**The decision (user, 2026-10-15).** The feed is LOCAL-FIRST like the Communities tab (F1 and F4 of
+[community-open-budget](../community-open-budget.md)). Offline, the feed used to say "Impossible de
+charger les posts" for content the device had shown an hour earlier. The target: the feed draws in
+under 0.2 s from a stored copy, even on a slow network or a weak phone, and the server's page then
+merges over it.
+
+### What is stored
+
+- **The first page of each bare tab** (`associations`, `followed`, `all`, `custom`), as the server
+  last answered it: the 20 rows of the route's first request, or the 10 of a refresh. Later pages of
+  the infinite scroll are not stored. A tab opened with `promo` or `formation` (a shared link) is
+  not stored either, so the store holds at most four pages, bounded by construction rather than by
+  an eviction rule.
+- **In the account's own database, sealed under the device key**, like a salon's page (F4): a
+  `feedPages` object store on IndexedDB, a `feed_pages` table on SQLite (`IStorage.saveFeedPage`,
+  `getFeedPage`, `deleteFeedPages`). The payload repeats its owner, and a page naming another
+  account is deleted, never drawn. `IStorage.clear()` empties it with the rest; a backup export does
+  not carry it.
+- **Without any of the reader's served rights.** Every `can*` field (`canManage`, `canPin`,
+  `canReport`, `canUnmaskAnonymous`, `canRepublish`, `canProposeRepublication`,
+  `canUnrepublishAs`) is removed before the page is sealed, and `canVote` is stored as `false`. A
+  card drawn from the device therefore offers no edit, no delete, no pin, no vote and no
+  republication until the server's own answer says who this reader is. A reader holding a nominative
+  read grant (#1606) can never be offered a vote from the copy. The reason is the same as F1's for
+  `viewerCanManage`: a copy would grant controls on the strength of a right the reader may have lost.
+
+### When it is drawn
+
+- **At mount, when this page instance holds nothing for the tab** (the in-memory `feedCache` of a tab
+  switch still wins: it is younger), **and the server's answer has not arrived yet.** An answer that
+  lands before the read finishes wins, and the read draws nothing.
+- **Only while no unlock is pending for this account**: the session is up, or this account's unlock
+  prompts nobody (`unlockUnattendedFor() === currentUserId()`, the F1 fact), and the session holds
+  the device key for the account on screen. A device that owes a PIN or a fingerprint is locked, and
+  nothing is drawn under the gate, before it, or after it is left for another page. The key itself
+  enforces most of this: nothing sealed can be read before the PIN path has derived it.
+- **The infinite scroll waits for the server.** While the stored copy is on screen, no next page is
+  asked (an offset counted on a copy is an offset into a list nobody confirmed), and "Tout est
+  charge" is not said.
+
+### What the server's answer does to it
+
+**THE SERVER PAGE IS AUTHORITATIVE FOR EVERYTHING IT COULD HAVE RETURNED, AND A FIRST PAGE COULD
+HAVE RETURNED EVERY ROW OF THE COPY.** The copy is itself a first page, so the answer REPLACES every
+row drawn from the device, wherever it sits, including when the answer is empty:
+
+- a post deleted, hidden, moderated or unpublished since, and a post the reader can no longer read
+  (an association left, an audience narrowed, a nominative grant revoked), disappears at the first
+  answer that does not name it, on screen and in the store;
+- a post pushed below the first page by newer ones is withdrawn too, exactly like F4's rows older
+  than a full page: it comes back through the infinite scroll, from the server;
+- reaction counts, poll tallies, comment counts and the pinned order are the answer's.
+
+The store is then rewritten from that answer, so the next launch draws what the server last said.
+
+**A card already drawn takes the answer's row (review of #1896).** The list is keyed by post id, so
+the card drawn from the copy is KEPT when the answer replaces its row, and `PostCard` used to copy
+its prop once: the vote stayed refused (`canVote: false`), the owner's and moderator's menu never
+appeared, and counts, tallies and text stayed as stored for the whole session. The card now ADOPTS
+a row whenever its prop is a different object (`PostCardLedger.adopt`, `lib/posts/postCardSync.ts`),
+which happens only when the server hands a new row: the feed's own edits (a filter on delete, the
+infinite scroll's append) keep each row's proxy. Adopting on identity rather than remounting keeps
+an open comment thread and a half-typed comment.
+
+**A ROW SAYS WHAT THE SERVER HELD WHEN ITS READ WAS ISSUED, NOT WHEN IT LANDED (second review).**
+The first version kept a field only while a write on it was pending, so a feed GET sent before a
+heart, landing after the heart's POST answered, erased the heart (and a vote's tally, while the
+selection kept the choice). Both sides now sit on ONE order, a counter of the tab: a read takes
+its point when it is ISSUED (`listPosts`, `searchPosts` and `getPost` stamp their rows through
+`stampServed`, a non-enumerable symbol that `JSON`, `structuredClone` and a spread all drop, so a
+stored or cached copy is unstamped, the oldest point); a write takes its point when it ANSWERS. A
+row speaks for a field only when its read was issued after the field's last write answered and no
+write on it is pending. No clock: the order is the program's own. EVERY write of the card goes
+through the ledger: reactions, votes, new comments and comment likes (optimistic: `begin`/`end`),
+and comment edit and delete, pin, unmask and a post edit (applied on the answer: `answered`). A
+failed reaction or vote restores ONLY its field, and to the newest served value if a row was
+adopted while it was out, not to the pre-tap one. A failed COMMENT write is narrower still: the
+comment list carries several writes of the reader at once (a heart on one comment while another
+comment is sending), so a failed comment removes only its own pending row and a failed heart puts
+back only that comment (third review). A post edit's answer is taken for every field EXCEPT the
+comments: an edit changes none, and its answer's list could collapse an expanded thread. **The expanded thread is HELD**: a feed row carries the first
+comments only, so once the reader loaded the whole thread a feed row no longer replaces it, and a
+new row asks for the thread again (`getPost`, merged through the same rule). The poll selection is
+read from the card's polls, never from the prop, so it says what the tally says.
+
+**A refused answer ends the copy.** A `401` or a `403` from the feed is an answer about this reader:
+the copy leaves the screen (the existing no-audience or error state takes over) and every stored
+page of the account is made unreadable. So does an audience verdict of `false`
+(`revalidateFeedAudience`, `isOutsideFeedAudience`). The page's decisions are pure functions in
+`feedStore.ts` so they are tested without rendering: `storedCopyMayDraw` (nothing is drawn once the
+answer or a refusal is in, or while something is on screen), `firstPageFailure` (a refusal
+withdraws and ends the copy, a transport failure keeps it unconfirmed) and `feedMayLoadMore` (no
+infinite scroll while the copy shows).
+
+**A failed refresh is not an answer.** A transport failure or a 5xx keeps the copy on screen,
+marked unconfirmed: a line above the feed with a spinner says it is being refreshed, then that it
+could not be refreshed, with a retry. It is logged once per tab load. The error screen is shown only
+when there is nothing to draw, as before. Nothing signs out on a transport failure.
+
+### How a sign-out and a change of account end it: an epoch, not an asynchronous delete
+
+Every stored page carries an EPOCH, a random id kept per account in `localStorage`
+(`canari_feed_store_epoch:v1:<userId>`). A page is drawn only when its epoch is the account's
+current one. `clearUserLocally` (every sign-out, "Rester connecte" or not) and a change of account in
+`saveUserLocally` erase every epoch SYNCHRONOUSLY, in the same call that erases the F1 community
+list. From that instant nothing stored is drawable, whatever happens to the database afterwards.
+The bytes themselves are deleted the next time the account's store is read or written: a read that
+meets a dead epoch deletes every page, and the first write after a sign-in starts a new epoch and
+deletes the old pages first. A write is refused when the device's sign-in record
+(`canari_saved_user`) names another account or nobody, so a tab signed out elsewhere does not write
+its feed back.
+
+**The write decides its epoch BEFORE it awaits the storage** (`feedWriteEpoch`, synchronous), and
+re-checks it after: a refusal or a sign-out that erases the epochs while the write waits on
+`getStorage` used to let the write start a NEW epoch and seal a page drawable after the refusal.
+Now the write finds its epoch gone and seals nothing.
+
+**A page the read cannot open is deleted by that read.** `getFeedPage` rejects with a typed
+`FeedPageUnreadableError` (another device key, damaged bytes) on both backends, and
+`readStoredFeedPage` deletes every page of the store on it, logged at debug: a page left under an
+old key costs one delete, not a warning on every launch.
+
+**The main IndexedDB connection lets go of an upgrade.** A tab still running the previous bundle
+holds a v9 connection; without an `onversionchange` handler the v10 open of a newer tab is BLOCKED
+(`StorageOpenError(blocked)`). `IndexedDbStorage` now closes its connection on a version change
+(logged), and reloads the page so that tab runs the new bundle rather than a closed store. A
+`deleteDatabase` from another tab (`newVersion === null`) is left as before: reopening would
+recreate a database being wiped.
+
+**THE RELOAD DROPS WHAT THE OLD TAB HELD ONLY IN MEMORY, AND THAT IS DECIDED, NOT GUARDED (second
+review of #1896).** It happens on the WEB only, and only when a newer bundle opens the same account's
+database in another tab of the same browser: the phone and desktop apps have one WebView and use
+SQLite. What the old tab loses is a chat composer's unsent text and a PIN prompt in progress; the
+post composer's draft is in `localStorage` (`postComposerDraft.ts`) and the messages already handed
+to the outbox are rows of this very database, so both survive. The two other
+choices were worse. Keeping the connection blocks the NEW tab's open (`StorageOpenError(blocked)`)
+until the old one is closed by hand, so the tab the reader just opened cannot start at all. Closing
+without reloading (what `outboxBlob.ts` and `appLog.ts` do for their own small stores) leaves the
+old bundle running against a closed store whose schema it does not know, so every later save fails
+in it. A guard that waits for the tab to be hidden would keep exactly that broken tab on screen,
+where the text it protects could not be sent anyway.
+
+### Rejected options
+
+- **`localStorage`, like F1's community list.** A synchronous read at module load is what made F1
+  fast, but a feed page is the reader's whole first screen of posts (text, poll voters, comment
+  bodies): kept in clear text, outside the database the device key seals, it would be the one copy
+  of a reader's content readable without the key. The device key is in hand at the same instant the
+  unlock gate opens (the vault path sets both together), so the sealed store costs one store read
+  and one decryption, not a wait.
+- **Deleting the pages at sign-out with an asynchronous `deleteFeedPages`.** It would open the
+  account's database at the moment a revoked-device wipe may be closing and deleting it (an open
+  handle blocks `indexedDB.deleteDatabase`), and a write still in flight could land after the
+  delete. The epoch makes the sign-out a synchronous fact and leaves the physical delete to a
+  moment when the store is known to be open for this account.
+- **Merging the answer row by row (keep stored rows the answer did not mention).** That is what F4's
+  first version did, and review found deleted messages coming back. A first page has no rows "the
+  server could not have returned", so there is nothing to keep.
+- **Keeping the served rights in the copy.** Rejected for the reason above: a revoked grant would
+  keep its controls offline.
+- **A freshness clock ("draw only if younger than N hours").** A clock says nothing about whether a
+  post still exists or is still readable; only the server's answer does, and it replaces the copy
+  whatever its age. An age limit would also empty the feed offline, exactly when it is needed.
+- **Detecting a grant change on the device before drawing.** The device cannot learn that a grant
+  was revoked elsewhere without asking the server. What the device does know (a refused answer, an
+  audience verdict of `false`) ends the copy. What it cannot know is bounded by the first answer:
+  until then the reader sees again what the server last served them, never anything new.
+
+**A PIN change or a PIN recovery drops the stored pages** (`dropStoredFeedPages`, `pinChange.ts`)
+instead of re-sealing them: they are a copy the next answer rewrites, and a page left under the old
+key would fail to open on every later read.
+
+### Measured (2026-10-15), and what is still owed
+
+`tools/cold-start` is Android-only and the Mi 9T was taken by another measurement, so the DATA path
+was measured on the desktop: a bench page (scratch, not committed) replaying exactly the read
+`loadStoredFeed` makes - a fresh IndexedDB connection, one `get`, AES-256-GCM decryption, `JSON.parse`
+and the rights strip - on a synthetic page shaped like a real one (a 600-character body, five
+comments, thirty reactions, a media ref, a poll on every fourth post). Chrome on OXYGEN, 7 reads,
+median (max):
+
+| page | sealed size | CPU 1x | CPU 6x |
+| --- | --- | --- | --- |
+| 20 posts (what `load` stores) | 82 kB | 0.8 ms | 3.8 ms (4.2) |
+| 60 posts | 245 kB | - | 7.2 ms (9.4) |
+
+So the stored copy costs under 10 ms of the 200 ms budget even at 6x, and the rest is the first
+mount of three cards (`progressiveCount`), which is unchanged by this work. **OWED ON THE PHONE**:
+`tap -> Fil, first card` cold and warm, Wi-Fi and airplane, on the Mi 9T and on SQLite (whose read
+goes over the Tauri bridge, which this bench does not cross), with the APK of this branch.
+
+### What is unchanged
+
+Reactions, votes and comments act on the server as before; no offline queue is added. Search is
+not stored. The scheduled-posts strip is not stored. The in-memory tab cache (`feedCache.ts`) keeps
+its role for a tab switch.
+
+`lib/posts/feedStore.ts` (the sealed page, its owner, its epoch, the rights it drops, the gate),
+`lib/posts/feedStoreEpoch.ts` (the synchronous erase) and `routes/posts/+page.svelte` (the draw and
+the merge). Pinned by `feedStore.test.ts`, `db/feedPages.test.ts` (the v9 -> v10 upgrade with data
+in place, and the version-change release), `postCardSync.test.ts` and
+`components/posts/PostCard.served.svelte.test.ts` (the same id redrawn with rights opens the vote; a
+row read before a reaction or a vote answered, or landing while it is out, does not erase it; a
+failed reaction rolls back its field only, to the row adopted meanwhile). `feedStore.test.ts` calls
+the real `saveStoredFeed` for the two write races.
