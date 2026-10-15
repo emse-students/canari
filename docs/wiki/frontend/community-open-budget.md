@@ -337,7 +337,9 @@ Same protocol and instrument as sections 1 and 5.
   airplane mode, with no request at all, the rail takes 415 ms and the salon rows 571 ms after the
   tap, against 160-170 ms for a `switch` once the hub is mounted. What remains is the FIRST MOUNT of
   the communities page (a 220-260 ms long task at 1x, 1.4 s at 4x). That is a render cost, the next
-  package, and not a data cost any more.
+  package, and not a data cost any more. It was profiled and cut on 2026-10-15
+  ([the first mount](#the-first-mount-profiled-and-cut-2026-10-15)), and most of that task was not the
+  communities page at all.
 - **`salon>msgs` is longer, but the messages arrive at the same moment.** The member now reaches the
   salon about 1-3 s earlier. The salon open then overlaps the boot work (MLS initialisation, ten
   key-group chains, roster checks) instead of following it. Counted from the tap on the tab, the
@@ -447,6 +449,84 @@ checkpoint per bulk ingest, read watermarks included, is the parked decision of
 [open-questions](../open-questions.md#decision-owed---may-a-drain-that-only-received-application-frames-skip-its-full-checkpoint-2026-10-13)
 (94-238 ms each, off the JavaScript thread since #1826); the 45 identical `[HISTORY_RECONCILE] ...
 asked 30s ago` lines in 250 ms are a noise defect (P3) - one line per sweep, not one per group.
+
+### The first mount: profiled and cut, 2026-10-15
+
+**Method.** The Mi 9T on `1.2.8`, account BancOuverture-1, at 1x CPU. `community-open.mjs` now takes
+three new options: `--profile` (a V8 CPU profile sampled every 200 us, from the tab tap to the target
+salon's rows), `--trace` (a Chrome trace over the same window, with the run's marks) and
+`--before-tap <js>` (an expression evaluated in the page before the tap). `profile-summary.mjs` and
+`trace-summary.mjs` read both files, aligned on the `touchstart` dispatch. A local bundle cannot
+reach the phone: Tauri serves `tauri.localhost` from `shouldInterceptRequest`, which CDP `Fetch`
+does not see (0 requests paused). Building a local APK would need the release keystore and an
+uninstall. So each cut was first EMULATED on the installed build through `--before-tap`, in arms
+interleaved run by run, and the built code reaches the phone with the next pre-release.
+
+**What the 220-260 ms task was made of.** Most of it was not the communities page.
+- **The click waited for a double tap.** The bottom bar sits outside `.page-scroll-wrap`. That
+  wrapper's `pan-y pinch-zoom` turns double-tap zoom off for the page, but not for the bar. Chrome
+  therefore held the click ~120 ms after `touchend`. In the trace, `click` lands 266 ms after
+  `touchstart`, and 158 ms after with `touch-action: manipulation` on the bar (`gesturetap` 27 ms
+  after `touchend` instead of 120).
+- **Every navigation re-preloaded every visible tab.** `data-sveltekit-preload-code="viewport"` is
+  re-scanned after each navigation and calls the route's node loaders again. Each call goes through
+  Vite's `__vitePreload`, which resolves ~250 dependency URLs BEFORE its cache check. That cost
+  60-118 ms of main thread per tab tap, for modules loaded since boot. The layout's swipe-neighbour
+  `preloadCode` did the same on each arrival.
+- **The feed mounted a panel it never draws on a phone.** `ConversationsMiniPanel` is `hidden
+  xl:flex`, yet it was mounted at every width. It cost 45 ms in the cold-tap profile, inside the
+  feed's teardown and mount.
+- **What is the communities page itself** is ~130 ms: the feed's teardown (25-35), `MainChatPage` +
+  `Sidebar` (35), SvelteKit's focus reset forcing a layout (33), and `ChatArea` (12).
+
+**The cuts.**
+- `touch-manipulation` on `#bottom-nav`. It is set on the bar and NOT on `html`, because the
+  drag-and-drop rows were not measured under it.
+- One code preload per route per document: `preloadRouteCodeOnce`
+  (`src/lib/navigation/routeCodePreload.ts`). It is a memo of the promise. A failure is logged and
+  forgotten, so the next caller retries. The bar and the sidebar now use `use:preloadRouteOnView`,
+  which preloads the first time a link is on screen. The layout's swipe neighbours go through the
+  same memo.
+- The feed mounts `ConversationsMiniPanel` only when `overlayLayout()` is false. That is the `xl`
+  boundary, read through a reactive `matchMedia` (`phoneViewport.svelte.ts`).
+
+**Measured.** Medians of 5 interleaved runs, in ms. `s0` is a tap as soon as the bar shows; `s6` is
+a tap 6 s after it. The arms are emulations on the installed build:
+- `manip` injects `#bottom-nav{touch-action:manipulation}`;
+- `manip+nopre` also removes the bar's preload attribute.
+
+The mini panel is not in either arm (its 45 ms is attribution only), and neither is the
+swipe-neighbour memo. The gain of the built code is therefore at least what is shown.
+
+| Tap | tap>rail = tap>salons, base | manip | manip+nopre |
+| --- | --- | --- | --- |
+| cold (`s0`) | 453 | 359 | **343** |
+| settled (`s6`) | 449 | 394 | **389** |
+
+**The instrument was lying by up to 120 ms (fixed).** `until()` armed a mark only after the
+PREVIOUS mark had been polled. A mark drawn in the same frame as the previous one was therefore
+timed at the next poll, never at its frame. With arming moved BEFORE each tap, the salon rows land
+in the rail's own frame (`tap>rail` = `tap>salons`). The earlier `tap>salons` figures on this page
+are 80-120 ms high. `reopen>msgs` is ~370 ms with the fixed arming, where F4's table says 572 (and the old arming read
+~540 on the same day).
+The rule is in [durable-rules](../durable-rules.md).
+
+**What remains above 200 ms (~340-390 at 1x), and why.**
+- **The press itself, ~150 ms.** The CDP press takes ~125 ms, plus 27 ms of gesture detection.
+  While navigation starts on `click`, a 200 ms budget counted from the finger landing is nearly out
+  of reach. Counted from `click`, the tab is ~190-230 ms.
+- **SvelteKit's navigation chain, ~55 ms.**
+- **The mount, ~130 ms** (above). SvelteKit's focus reset forcing a layout is the largest single
+  item that is not ours to delete.
+- **Paint, ~30-50 ms**, plus the instrument's per-frame rAF probe.
+
+Not changed, and noted: the hub does not remember the selected community across mounts.
+`Sidebar`'s `selectedCommunityWorkspaceId` is local, so a return to the tab opens the first
+community.
+
+**Owed:** the same table on the phone with the built code, from the next pre-release. Evidence is in
+`F:/Programmation/canari-harness/a1-bench/r1015-first-mount/`: `runs.ndjson`, the profiles, the
+traces, and `src128/` (the dumped `1.2.8` chunks the profiles resolve against).
 
 ## 7. Not measured, and owed
 

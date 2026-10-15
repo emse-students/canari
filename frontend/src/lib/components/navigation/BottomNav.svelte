@@ -4,6 +4,7 @@
   import { placeBadge } from '$lib/navigation/placeBadge.svelte';
   import { m } from '$lib/paraglide/messages';
   import { page } from '$app/state';
+  import { preloadRouteOnView } from '$lib/actions/preloadRouteOnView';
 
   const pathname = $derived(page.url.pathname);
   const activePlaceId = $derived(resolveActivePlaceId(pathname));
@@ -41,10 +42,17 @@
   NO ACTIVE UNDERLINE. It was `h-1 w-8` of amber with an 8 px glow, pinned to a bottom edge that is
   now 16 px closer to the glyph, saying what the amber tint and the 2.5 stroke on the glyph itself
   already say. Instagram marks its own tab with the glyph and nothing else.
+
+  `touch-manipulation` BECAUSE A TAB TAP WAITED FOR A DOUBLE TAP THAT NEVER COMES. The bar sits
+  outside `.page-scroll-wrap`, whose `pan-y pinch-zoom` is what turns double-tap zoom off for the
+  page (app.css), so a tap here was held until the double-tap window closed: on the Mi 9T's trace the
+  `click` came 120 ms after `touchend`, ~300 ms after the finger landed. `manipulation` keeps pinch
+  and pan and drops only the double tap; with it the click followed `touchend` by 27 ms (2026-10-15,
+  community-open-budget).
 -->
 <nav
   id="bottom-nav"
-  class="bg-cn-surface fixed inset-x-0 bottom-0 z-30 border-t border-black/5 shadow-[0_-4px_24px_rgba(0,0,0,0.02)] md:hidden dark:border-white/10 dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]"
+  class="bg-cn-surface fixed inset-x-0 bottom-0 z-30 touch-manipulation border-t border-black/5 shadow-[0_-4px_24px_rgba(0,0,0,0.02)] md:hidden dark:border-white/10 dark:shadow-[0_-4px_24px_rgba(0,0,0,0.2)]"
   style="padding-bottom: var(--safe-area-inset-bottom, 0px)"
 >
   <div class="flex h-12 items-stretch justify-around">
@@ -55,7 +63,7 @@
 
       <a
         href={place.href}
-        data-sveltekit-preload-code="viewport"
+        use:preloadRouteOnView={place.href}
         class="group relative flex min-w-0 flex-1 items-center justify-center transition-all duration-200 active:scale-95
  {isActive ? 'text-amber-600 dark:text-amber-400' : 'text-text-muted hover:text-text-main'}"
       >

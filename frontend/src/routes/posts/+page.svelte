@@ -27,6 +27,7 @@
   import PostCornerBadge from '$lib/components/posts/PostCornerBadge.svelte';
   import ScheduledPostsPanel from '$lib/components/posts/ScheduledPostsPanel.svelte';
   import ConversationsMiniPanel from '$lib/components/posts/ConversationsMiniPanel.svelte';
+  import { overlayLayout } from '$lib/stores/phoneViewport.svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import Button from '$lib/components/ui/Button.svelte';
@@ -505,7 +506,13 @@
 
 <PageContainer>
   {#snippet aside()}
-    <ConversationsMiniPanel />
+    <!-- MOUNTED ONLY WHERE IT IS DRAWN. The panel is `hidden xl:flex`, and under `xl` - every phone -
+         it was still mounted: a read of the stored conversations at boot and twenty rows, each
+         segmenting its preview into graphemes. On the Mi 9T that was 45 ms of the main thread inside
+         a tap on "Communautes" made as the app opened (CPU profile, 2026-10-15). -->
+    {#if !overlayLayout()}
+      <ConversationsMiniPanel />
+    {/if}
   {/snippet}
 
   <!--

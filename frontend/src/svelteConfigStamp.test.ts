@@ -6,6 +6,10 @@ import { resolve } from 'node:path';
  * A build loads `svelte.config.js` more than once (kit, then vite-plugin-svelte). #1476 stamped
  * `kit.version.name` at every load, so one output carried two build ids and the bundle check
  * refused it. The stamp must be computed ONCE per process: two loads, one name.
+ *
+ * The work under test IS two cold evaluations of the config and its adapter graph: ~1 s alone, and
+ * it passed the default 5 s budget only until the full suite (826 files) shared the CPU with it
+ * (timed out 2026-10-15, green alone in 2 s). The budget names that cost, it does not wait on a clock.
  */
 describe('svelte.config.js build stamp', () => {
   it('is the same name on every load within one process, in the <ms>-<sha9> shape', async () => {
@@ -15,5 +19,5 @@ describe('svelte.config.js build stamp', () => {
     const second = (await import(/* @vite-ignore */ `${url}?load=2`)).default.kit.version.name;
     expect(first).toMatch(/^\d+-[0-9a-f]{9}$/);
     expect(second).toBe(first);
-  });
+  }, 30_000);
 });

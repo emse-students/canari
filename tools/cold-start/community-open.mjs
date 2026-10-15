@@ -30,6 +30,16 @@
  *   --cpu 1|4|6           CDP `Emulation.setCPUThrottlingRate` (the WebView renderer only)
  *   --settle <ms>         wait this long after the nav appears before the first tap (default 0)
  *   --timeout <ms>        per milestone (default 60000)
+ *   --profile             a V8 CPU profile (200 us sampling) from the tab tap to the salon rows,
+ *                         written to `<out>/profile-<label>-<run>.cpuprofile` - what the first
+ *                         mount of the page is made of (`profile-summary.mjs` reads it)
+ *   --before-tap <js>     an expression evaluated in the page once the nav is on screen, before the
+ *                         tap: a CSS or DOM change tried on the INSTALLED build (an APK carries its
+ *                         own bundle, so this is the only way to read a candidate on the phone
+ *                         before a pre-release). Label such a run as the emulation it is.
+ *   --trace               the renderer's trace over the same window (`trace-<label>-<run>.json`):
+ *                         input dispatch, script, style, layout, paint - what a profile files under
+ *                         `(program)` (`trace-summary.mjs` reads it)
  *
  * WHAT A COLD RUN CANNOT THROTTLE: everything before the attach (~350 ms after `timeOrigin` on the
  * Mi 9T). `attach` is printed so a reader knows how much ran unthrottled.
@@ -59,11 +69,26 @@ const TARGET = opt('community', null);
 const LABEL = opt('label', `${START}-${NET}-cpu${CPU}`);
 const OUT = opt('out', join(tmpdir(), `community-open-${Date.now()}`));
 const PORT = Number(opt('port', 9333));
+const PROFILE = args.includes('--profile');
+const BEFORE_TAP = opt('before-tap', null);
+const TRACE = args.includes('--trace');
+/** What `--trace` records: the renderer's timeline (input, script, style, layout, paint) and V8's script work. */
+const TRACE_CATEGORIES = [
+  'devtools.timeline',
+  'disabled-by-default-devtools.timeline',
+  'v8.execute',
+  'v8',
+  'blink.user_timing',
+  'loading',
+  'input',
+  'latencyInfo',
+].join(',');
 mkdirSync(OUT, { recursive: true });
 
 const NETWORKS = { none: null, slow3g: { rtt: 400, bps: 50000 }, airplane: null };
 if (!(NET in NETWORKS)) throw new Error(`--net ${NET}: one of ${Object.keys(NETWORKS).join(', ')}`);
-if (!TARGET) throw new Error('--community <name>: the community whose salon is opened and reopened');
+if (!TARGET)
+  throw new Error('--community <name>: the community whose salon is opened and reopened');
 
 const serial = await deviceSerial();
 console.log(`device ${serial}, ${RUNS} run(s), ${LABEL}, target ${TARGET}, evidence in ${OUT}`);
@@ -175,7 +200,11 @@ async function attach() {
     if (pid) {
       const unix = await adb(serial, ['shell', 'cat', '/proc/net/unix']).catch(() => '');
       if (unix.includes(`webview_devtools_remote_${pid}`)) {
-        await adb(serial, ['forward', `tcp:${PORT}`, `localabstract:webview_devtools_remote_${pid}`]);
+        await adb(serial, [
+          'forward',
+          `tcp:${PORT}`,
+          `localabstract:webview_devtools_remote_${pid}`,
+        ]);
         const targets = await listTargets(PORT).catch(() => []);
         const page = targets.find((t) => t.url.startsWith('http://tauri.localhost'));
         if (page) {
@@ -190,9 +219,25 @@ async function attach() {
   throw new Error('the app WebView never opened a devtools socket');
 }
 
-/** Arms a page-side watch and polls for its mark; null after `--timeout`. */
+/**
+ * Arms a page-side watch: from the next frame on, the page marks the frame in which it first holds.
+ *
+ * ARMED BEFORE THE TAP THAT CAUSES IT, together with every mark the same tap produces. Until
+ * 2026-10-15 each watch was armed by `until` after the previous mark had been POLLED (every 100 ms,
+ * plus a CDP round trip), so `salons` could not be marked before ~100 ms after `rail` even when the
+ * rows were drawn in the same frame - measured on the Mi 9T: rows on screen from the rail's frame,
+ * marked 120 ms later. `messages` after `pane` carried the same floor.
+ */
+async function arm(cx, name, predicate) {
+  await evaluate(
+    cx,
+    `window.__cob.watch[${JSON.stringify(name)}] = function () { return ${predicate}; }, 1`
+  );
+}
+
+/** Arms a page-side watch (unless already armed) and polls for its mark; null after `--timeout`. */
 async function until(cx, name, predicate) {
-  await evaluate(cx, `window.__cob.watch[${JSON.stringify(name)}] = function () { return ${predicate}; }, 1`);
+  if (predicate) await arm(cx, name, predicate);
   const deadline = Date.now() + TIMEOUT;
   while (Date.now() < deadline) {
     const m = JSON.parse(await evaluate(cx, 'JSON.stringify(window.__cob.marks)'));
@@ -212,7 +257,10 @@ async function tap(cx, elementExpr) {
   );
   if (!rect) return null;
   const before = Number(await evaluate(cx, 'window.__cob.taps.length'));
-  await cx.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x: rect.x, y: rect.y, id: 1 }] });
+  await cx.send('Input.dispatchTouchEvent', {
+    type: 'touchStart',
+    touchPoints: [{ x: rect.x, y: rect.y, id: 1 }],
+  });
   await waitMs(60);
   await cx.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   for (let i = 0; i < 80; i++) {
@@ -228,15 +276,19 @@ async function setNetwork(on) {
     ['svc', 'wifi', on ? 'enable' : 'disable'],
     ['svc', 'data', on ? 'enable' : 'disable'],
   ]) {
-    await adb(serial, ['shell', ...svc]).catch((e) => console.log(`  ${svc.join(' ')}: ${e.message}`));
+    await adb(serial, ['shell', ...svc]).catch((e) =>
+      console.log(`  ${svc.join(' ')}: ${e.message}`)
+    );
   }
 }
 
 /** Opens `name`'s first salon from the hub; returns [tap, pane, messages?]. */
 async function openFirstSalon(cx, key, withMessages) {
+  await arm(cx, `${key}Pane`, PRED.pane);
+  if (withMessages) await arm(cx, `${key}Messages`, PRED.messages);
   const tapped = await tap(cx, FIRST_ROW);
-  const pane = await until(cx, `${key}Pane`, PRED.pane);
-  const messages = withMessages ? await until(cx, `${key}Messages`, PRED.messages) : null;
+  const pane = await until(cx, `${key}Pane`);
+  const messages = withMessages ? await until(cx, `${key}Messages`) : null;
   return [tapped, pane, messages];
 }
 
@@ -266,7 +318,8 @@ async function oneRun(index, warmCx) {
     // resume lands where a member's would and the nav is there to tap.
     await tap(cx, BACK);
     await waitMs(600);
-    if ((await tap(cx, FEED_TAB)) === null) throw new Error('no Feed tab to leave the communities by');
+    if ((await tap(cx, FEED_TAB)) === null)
+      throw new Error('no Feed tab to leave the communities by');
     await waitMs(1500);
     await adb(serial, ['shell', 'input', 'keyevent', '3']);
     await waitMs(10000);
@@ -284,22 +337,74 @@ async function oneRun(index, warmCx) {
   const armed = JSON.parse(await evaluate(cx, PROBE));
   if (START === 'warm') await launch(serial);
   const timeOrigin = armed.origin;
-  const row = { ...row0, label: LABEL, run: index, start: START, net: NET, cpu: CPU, pid, at: new Date().toISOString() };
+  const row = {
+    ...row0,
+    label: LABEL,
+    run: index,
+    start: START,
+    net: NET,
+    cpu: CPU,
+    pid,
+    at: new Date().toISOString(),
+  };
   row.attachMs = Math.round(armed.now);
   say(`attached pid ${pid} at +${row.attachMs}`);
 
   row.nav = await until(cx, 'nav', PRED.nav);
+  if (BEFORE_TAP) row.beforeTap = await evaluate(cx, BEFORE_TAP);
   if (SETTLE) await waitMs(SETTLE);
+  if (PROFILE) {
+    await cx.send('Profiler.enable');
+    await cx.send('Profiler.setSamplingInterval', { interval: 200 });
+    await cx.send('Profiler.start');
+  }
+  const traceFrom = cx.events.length;
+  if (TRACE)
+    await cx.send('Tracing.start', { categories: TRACE_CATEGORIES, transferMode: 'ReportEvents' });
+  await arm(cx, 'rail', PRED.rail);
+  await arm(cx, 'salons', PRED.salons);
   row.tapHub = await tap(cx, NAV_TAB);
-  row.rail = await until(cx, 'rail', PRED.rail);
-  row.salons = await until(cx, 'salons', PRED.salons);
+  row.rail = await until(cx, 'rail');
+  row.salons = await until(cx, 'salons');
   row.hubName = await evaluate(cx, HUB_NAME);
   say(`hub ${row.hubName}: rail ${row.rail} salons ${row.salons}`);
   if (row.hubName !== TARGET) {
+    await arm(cx, 'targetSalons', hubOf(TARGET));
     row.tapTarget = await tap(cx, railButton(TARGET));
-    row.targetSalons = await until(cx, 'targetSalons', hubOf(TARGET));
+    row.targetSalons = await until(cx, 'targetSalons');
   } else {
     row.targetSalons = row.salons;
+  }
+  // The capture spans the tab tap to the TARGET's salons: what the first mount leaves running is
+  // paid by the member's next tap, so it belongs in the same picture.
+  if (PROFILE) {
+    const { profile } = await cx.send('Profiler.stop');
+    writeFileSync(join(OUT, `profile-${LABEL}-${index}.cpuprofile`), JSON.stringify(profile));
+  }
+  if (TRACE) {
+    await cx.send('Tracing.end');
+    for (
+      let i = 0;
+      i < 200 && !cx.events.slice(traceFrom).some((e) => e.method === 'Tracing.tracingComplete');
+      i++
+    )
+      await waitMs(50);
+    const traceEvents = cx.events
+      .slice(traceFrom)
+      .filter((e) => e.method === 'Tracing.dataCollected')
+      .flatMap((e) => e.params.value);
+    const marks = {
+      tapHub: row.tapHub,
+      rail: row.rail,
+      salons: row.salons,
+      tapTarget: row.tapTarget,
+      targetSalons: row.targetSalons,
+      timeOrigin,
+    };
+    writeFileSync(
+      join(OUT, `trace-${LABEL}-${index}.json`),
+      JSON.stringify({ traceEvents, marks })
+    );
   }
   [row.tapSalon, row.pane, row.messages] = await openFirstSalon(cx, 'first', true);
   say(`salon pane ${row.pane} messages ${row.messages}`);
@@ -309,8 +414,9 @@ async function oneRun(index, warmCx) {
   const other = JSON.parse(await evaluate(cx, RAIL_NAMES)).find((n) => n !== TARGET) ?? null;
   row.other = other;
   if (other) {
+    await arm(cx, 'otherSalons', hubOf(other));
     row.tapOther = await tap(cx, railButton(other));
-    row.otherSalons = await until(cx, 'otherSalons', hubOf(other));
+    row.otherSalons = await until(cx, 'otherSalons');
     [row.tapOtherSalon, row.otherPane] = await openFirstSalon(cx, 'other', false);
     // THE SAME SALON AGAIN: what a member pays for a salon already opened in this session.
     await backToHub(cx, 'b2');
@@ -322,15 +428,26 @@ async function oneRun(index, warmCx) {
   await waitMs(1500);
 
   const page = JSON.parse(
-    await evaluate(cx, 'JSON.stringify({ api: window.__cobNet ? window.__cobNet.log : [], hb: window.__cob.hb, lt: window.__cob.lt, res: performance.getEntriesByType("resource").map(function (e) { return [e.name, Math.round(e.startTime)]; }) })')
+    await evaluate(
+      cx,
+      'JSON.stringify({ api: window.__cobNet ? window.__cobNet.log : [], hb: window.__cob.hb, lt: window.__cob.lt, res: performance.getEntriesByType("resource").map(function (e) { return [e.name, Math.round(e.startTime)]; }) })'
+    )
   );
   const ev = cx.events.slice(eventsFrom);
   row.console = ev
     .filter((e) => e.method === 'Runtime.consoleAPICalled' || e.method === 'Log.entryAdded')
     .map((e) =>
       e.method === 'Log.entryAdded'
-        ? [Math.round(e.params.entry.timestamp - timeOrigin), e.params.entry.level, e.params.entry.text]
-        : [Math.round(e.params.timestamp - timeOrigin), e.params.type, e.params.args.map((a) => a.value ?? a.description ?? '').join(' ')]
+        ? [
+            Math.round(e.params.entry.timestamp - timeOrigin),
+            e.params.entry.level,
+            e.params.entry.text,
+          ]
+        : [
+            Math.round(e.params.timestamp - timeOrigin),
+            e.params.type,
+            e.params.args.map((a) => a.value ?? a.description ?? '').join(' '),
+          ]
     )
     .sort((a, b) => a[0] - b[0]);
   // Requests: `wallTime` (epoch s) anchors each one on the page's axis; its monotonic timestamps
@@ -340,7 +457,13 @@ async function oneRun(index, warmCx) {
     const p = e.params;
     const r = reqs.get(p?.requestId);
     if (e.method === 'Network.requestWillBeSent') {
-      reqs.set(p.requestId, { url: p.request.url, method: p.request.method, start: Math.round(p.wallTime * 1000 - timeOrigin), mono: p.timestamp, bytes: 0 });
+      reqs.set(p.requestId, {
+        url: p.request.url,
+        method: p.request.method,
+        start: Math.round(p.wallTime * 1000 - timeOrigin),
+        mono: p.timestamp,
+        bytes: 0,
+      });
     } else if (!r) continue;
     else if (e.method === 'Network.responseReceived') r.status = p.response.status;
     else if (e.method === 'Network.dataReceived') r.bytes += p.dataLength ?? 0;
@@ -359,7 +482,9 @@ async function oneRun(index, warmCx) {
     if (g > 150) row.gaps.push([page.hb[i - 1], g]);
   }
   row.resourcesBeforeAttach = page.res.filter((r) => r[1] < row.attachMs).length;
-  const log = await adb(serial, ['logcat', '-d', '-v', 'epoch', '--pid', String(pid ?? '')]).catch(() => '');
+  const log = await adb(serial, ['logcat', '-d', '-v', 'epoch', '--pid', String(pid ?? '')]).catch(
+    () => ''
+  );
   row.logcat = log
     .split('\n')
     .map((l) => {
@@ -369,14 +494,19 @@ async function oneRun(index, warmCx) {
     .filter(Boolean);
   if (NET === 'airplane') await setNetwork(true);
   appendFileSync(join(OUT, 'runs.ndjson'), JSON.stringify(row) + '\n');
-  console.log(`run ${index}: ${Object.entries(derive(row)).map(([k, v]) => `${k}=${v ?? 'TIMEOUT'}`).join(' ')}`);
+  console.log(
+    `run ${index}: ${Object.entries(derive(row))
+      .map(([k, v]) => `${k}=${v ?? 'TIMEOUT'}`)
+      .join(' ')}`
+  );
   if (START === 'cold') cx.close();
   return row;
 }
 
 /** Kind of a request: a server call, a native IPC command (named), or a bundled asset. */
 export function kindOf(url) {
-  if (url.startsWith('http://ipc.localhost/')) return `ipc:${decodeURIComponent(url.slice(21).split('?')[0])}`;
+  if (url.startsWith('http://ipc.localhost/'))
+    return `ipc:${decodeURIComponent(url.slice(21).split('?')[0])}`;
   if (url.startsWith('http://tauri.localhost/')) return 'asset';
   return 'api';
 }
@@ -401,7 +531,8 @@ function derive(r) {
     'reopen>msgs': d(r.reopenMessages, r.tapReopen),
     'api calls': api.length,
     'api kB': Math.round(api.reduce((s, q) => s + (Number(q[3]) || 0), 0) / 1024),
-    'ipc calls': reqs.filter((q) => kindOf(q.url).startsWith('ipc:') && q.method !== 'OPTIONS').length,
+    'ipc calls': reqs.filter((q) => kindOf(q.url).startsWith('ipc:') && q.method !== 'OPTIONS')
+      .length,
     'longtask ms': r.longTasks.filter(([s]) => inOpen(s)).reduce((s, [, dur]) => s + dur, 0),
     'max gap': Math.max(0, ...r.gaps.filter(([t]) => inOpen(t)).map(([, g]) => g)),
   };

@@ -12,6 +12,7 @@
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { afterNavigate } from '$app/navigation';
+  import { preloadRouteOnView } from '$lib/actions/preloadRouteOnView';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
@@ -162,7 +163,7 @@
 
       <a
         href={place.href}
-        data-sveltekit-preload-code="viewport"
+        use:preloadRouteOnView={place.href}
         title={isExpanded ? undefined : place.label()}
         aria-current={isActive ? 'page' : undefined}
         class="group relative flex h-12 w-full items-center gap-4 overflow-hidden rounded-2xl px-3 text-left transition-all duration-200
@@ -230,7 +231,7 @@
     <div class="border-t border-black/5 p-3 dark:border-white/10">
       <a
         href="/settings"
-        data-sveltekit-preload-code="viewport"
+        use:preloadRouteOnView={'/settings'}
         title={isExpanded ? undefined : m.settings_page_title()}
         aria-current={settingsActive ? 'page' : undefined}
         class="group relative flex h-12 w-full items-center gap-4 overflow-hidden rounded-2xl px-3 text-left transition-all duration-200
