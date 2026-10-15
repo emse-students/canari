@@ -9,7 +9,11 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 import CreatePostForm from './CreatePostForm.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import { m } from '$lib/paraglide/messages';
-import { holdPostComposerMedia } from '$lib/posts/postComposerDraft';
+import {
+  forgetPostComposerMedia,
+  heldPostComposerMedia,
+  holdPostComposerMedia,
+} from '$lib/posts/postComposerDraft';
 
 vi.mock('$lib/forms/api', () => ({ getForms: () => Promise.resolve([]) }));
 vi.mock('$lib/posts/postIdentity', async (orig) => ({
@@ -27,19 +31,24 @@ vi.mock('$lib/posts/api', async (orig) => ({
 afterAll(adoptTransitionAnimations());
 
 const mounted: Record<string, unknown>[] = [];
+const revoked: string[] = [];
 
 beforeEach(() => {
   localStorage.setItem('canari_saved_user', 'user-a');
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.stubGlobal(
     'URL',
-    Object.assign(URL, { createObjectURL: () => 'blob:pick', revokeObjectURL: () => {} })
+    Object.assign(URL, {
+      createObjectURL: () => 'blob:pick',
+      revokeObjectURL: (url: string) => revoked.push(url),
+    })
   );
 });
 
 afterEach(() => {
   while (mounted.length) unmount(mounted.pop()!);
   holdPostComposerMedia([]);
+  revoked.length = 0;
   document.body.innerHTML = '';
   localStorage.clear();
   vi.unstubAllGlobals();
@@ -93,6 +102,25 @@ describe('CreatePostForm - closing keeps the media', () => {
 
     const third = await open();
     expect(third.target.querySelectorAll('[role="listitem"]')).toHaveLength(0);
+  });
+
+  it('a close gives back the previews it made: the held FILE stays, its object URL does not', async () => {
+    const first = await open();
+    pick(first.target, new File(['take'], 'canari-video-1.webm', { type: 'video/webm' }));
+    expect(revoked).toEqual([]);
+    unmount(mounted.pop()!);
+    expect(revoked).toEqual(['blob:pick']);
+    expect(heldPostComposerMedia()).toHaveLength(1);
+  });
+
+  it('a sign-out drops the held media from memory', async () => {
+    const first = await open();
+    pick(first.target, new File(['take'], 'canari-video-1.webm', { type: 'video/webm' }));
+    unmount(mounted.pop()!);
+    forgetPostComposerMedia();
+    expect(heldPostComposerMedia()).toEqual([]);
+    const second = await open();
+    expect(second.target.querySelectorAll('[role="listitem"]')).toHaveLength(0);
   });
 
   it('another account never opens the first one media', async () => {

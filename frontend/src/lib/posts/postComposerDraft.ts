@@ -200,6 +200,17 @@ export function holdPostComposerMedia(files: readonly File[]): void {
   heldMedia = { userId, files: [...files] };
 }
 
+/**
+ * Drops the held media at sign-out: the files are the leaving account's, and nothing of theirs stays
+ * in memory for the next one (the account check in {@link heldPostComposerMedia} would hide them, but
+ * hidden is not gone).
+ */
+export function forgetPostComposerMedia(): void {
+  if (heldMedia)
+    console.log(`[POST_COMPOSER] sign-out: ${heldMedia.files.length} held media dropped`);
+  heldMedia = null;
+}
+
 /** The media held for the signed-in account, or an empty list. */
 export function heldPostComposerMedia(): File[] {
   const userId = getSavedUserId();

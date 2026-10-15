@@ -51,10 +51,12 @@ const framed = vi.hoisted(() => ({
   stop: vi.fn(),
   start: vi.fn(),
   photo: vi.fn(),
+  thumbnail: vi.fn(),
 }));
 vi.mock('$lib/reels/framedCapture', async (orig) => ({
   ...(await orig<typeof import('$lib/reels/framedCapture')>()),
   takeFramedPhoto: framed.photo,
+  takeFramedThumbnail: framed.thumbnail,
   FramedStream: { start: framed.start },
 }));
 
@@ -475,9 +477,9 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
     expect(target.querySelector('[data-reel-sound]')).toBeNull();
   });
 
-  it('a filmed post take carries its first picture as its thumbnail (Mi 9T, v1.2.9-alpha.1)', async () => {
+  it('a filmed post take carries its first picture as its thumbnail, taken BEFORE the recorder starts (Mi 9T, v1.2.9-alpha.1)', async () => {
     const still = new Blob(['first-frame'], { type: 'image/jpeg' });
-    framed.photo.mockResolvedValue(still);
+    framed.thumbnail.mockReturnValue(still);
     const oncapture = vi.fn();
     const { target, hold } = await render({ destination: 'post', oncapture, onclose: vi.fn() });
     await hold();
@@ -487,6 +489,12 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
     const file = oncapture.mock.calls[0][0] as File;
     expect(file.type).toMatch(/^video\//);
     expect(capturePosterOf(file)).toBe(still);
+    // Its encode shares the main thread with nothing the take draws: no drawing loop yet.
+    expect(framed.thumbnail.mock.invocationCallOrder[0]).toBeLessThan(
+      framed.start.mock.invocationCallOrder[0]
+    );
+    // A full-size photo is never encoded for it.
+    expect(framed.photo).not.toHaveBeenCalled();
   });
 
   it('a post camera whose microphone was refused still takes photos: a hold is a photo, and it is said', async () => {

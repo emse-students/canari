@@ -81,6 +81,21 @@ describe('CameraSession', () => {
     expect(session.fault).toBe('denied');
   });
 
+  it('an open that FAILS while the app is away (not refused) is opened again on the return', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open);
+    const started = session.start();
+    session.suspend();
+    calls[0].reject(new CameraAccessError('busy', 'busy'));
+    await started;
+    expect(session.phase).toBe('stopped');
+
+    session.resume();
+    expect(calls).toHaveLength(2);
+    expect(session.phase).toBe('starting');
+  });
+
   it('an open granted while the app is away is released, and the return opens it again', async () => {
     const { open, calls } = deferredOpener();
     const session = new CameraSession(open);

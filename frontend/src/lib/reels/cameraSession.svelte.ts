@@ -129,12 +129,22 @@ export class CameraSession {
       this.phase = 'live';
     } catch (err) {
       if (generation !== this.#generation) return;
-      // A refusal is the member's ANSWER, whether or not the app was away while it was given: it is
-      // shown once, as the refusal screen, and never asked again behind their back.
+      const away = this.#suspended;
       this.#suspended = false;
       const fault = err instanceof CameraAccessError ? err.fault : 'unavailable';
       if (!(err instanceof CameraAccessError)) {
         console.error('[camera-session] the opener threw something untyped', err);
+      }
+      // A REFUSAL is the member's answer, whether or not the app was away while it was given (the
+      // permission dialog backgrounds it): shown once, never asked again behind their back. Any OTHER
+      // failure while away is the background's (Android will not start a camera for a hidden app),
+      // not the member's: the session is stopped, and the return opens it again (`resume`).
+      if (away && fault !== 'denied') {
+        console.warn(
+          `[camera-session] #${generation} failed while the app was away (${fault}) - reopened on return`
+        );
+        this.phase = 'stopped';
+        return;
       }
       this.fault = fault;
       this.phase = 'error';

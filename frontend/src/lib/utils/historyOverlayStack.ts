@@ -96,11 +96,24 @@ let initialized = false;
  */
 let skipPops = 0;
 /**
- * Traversals this module started (`history.back()` from an abandon, a UI close or a walk) whose
- * `popstate` has not arrived yet. While one is in flight, a push is HELD (`pending`), see
- * {@link pushHistoryOverlay}.
+ * The entry each of our entries was pushed ABOVE: the id of an entry of this load, or 0 for the
+ * router's own (or an earlier load's). It is where a `history.back()` from that entry lands, which
+ * is what lets a landing be recognised as OURS (`awaited`).
  */
-let traversalsInFlight = 0;
+const below = new Map<number, number>();
+/**
+ * Traversals this module started (`history.back()` from an abandon, a UI close or a walk) and has
+ * not seen land, oldest first, each as the entry it will land on. While one is in flight, a push is
+ * HELD (`pending`), see {@link pushHistoryOverlay}.
+ *
+ * ONLY A TRAVERSAL PROVEN TO LAND IS AWAITED: one that leaves an entry of ours, which was pushed
+ * above another and so has one below it. A `history.back()` from the router's entry may be at the
+ * history's FIRST entry, where it moves nothing and fires no `popstate` - a hold waiting for it would
+ * never end, and every later overlay would get no entry at all (review of #1925). And a landing ends
+ * the hold only when it arrives WHERE our traversal goes (`to`): a member's Back landing elsewhere
+ * is theirs, never counted as ours.
+ */
+const awaited: { to: number }[] = [];
 /**
  * Overlays opened while a traversal was in flight: on the JS side they are open, but their history
  * entry is written only once that traversal has landed (`flushPending`), in the order they opened.
@@ -128,9 +141,17 @@ export function initHistoryOverlayStack(): () => void {
   initialized = true;
 
   const onPopState = (event: PopStateEvent) => {
-    if (traversalsInFlight > 0) traversalsInFlight--;
+    const arrival = readArrival(event.state).id;
+    if (awaited.length > 0 && awaited[0].to === arrival) {
+      awaited.shift();
+    } else if (pending.length > 0) {
+      // The member's Back while overlays are held: those are what is on screen, on top of
+      // everything with an entry, so they close first - never an overlay below them.
+      Log.d('historyOverlay', `a Back during a hold closes the ${pending.length} held overlay(s)`);
+      while (pending.length > 0) pending.pop()?.('back');
+    }
     settlePopState(event);
-    if (traversalsInFlight === 0) flushPending();
+    if (awaited.length === 0) flushPending();
   };
 
   const settlePopState = (event: PopStateEvent) => {
@@ -159,7 +180,8 @@ export function initHistoryOverlayStack(): () => void {
     initialized = false;
     stack.length = 0;
     skipPops = 0;
-    traversalsInFlight = 0;
+    awaited.length = 0;
+    below.clear();
     pending.length = 0;
     here = 0;
     hereHref = '';
@@ -175,16 +197,13 @@ export function initHistoryOverlayStack(): () => void {
  * camera) wrote its entry FIRST, and the abandon's traversal then went back off THAT entry: the
  * pointer sat on the menu's ghost, the next push truncated the camera's entry, and one Back on the
  * camera's review closed the review AND the camera (Mi 9T, v1.2.9-alpha.1, `Back closed 2
- * overlay(s)`, 2 of 2). The order is a fact this module holds (`traversalsInFlight`), so the entry
- * is written when the traversal has landed - never after a delay.
+ * overlay(s)`, 2 of 2). The order is a fact this module holds (`awaited`), so the entry is
+ * written when the traversal has landed - never after a delay.
  */
 export function pushHistoryOverlay(close: OverlayClose): void {
   if (!isBrowser) return;
-  if (traversalsInFlight > 0) {
-    Log.d(
-      'historyOverlay',
-      `push held until ${traversalsInFlight} traversal(s) in flight have landed`
-    );
+  if (awaited.length > 0) {
+    Log.d('historyOverlay', `push held until ${awaited.length} traversal(s) in flight have landed`);
     pending.push(close);
     return;
   }
@@ -196,6 +215,7 @@ function writeEntry(close: OverlayClose): void {
   const id = ++lastId;
   stack.push({ close, id });
   history.pushState({ [STATE_KEY]: id, [LOAD_KEY]: LOAD_ID }, '');
+  below.set(id, here);
   here = id;
   hereHref = currentHref();
 }
@@ -205,6 +225,20 @@ function flushPending(): void {
   if (pending.length === 0) return;
   Log.d('historyOverlay', `the traversal landed - writing ${pending.length} held entry(ies)`);
   for (const close of pending.splice(0)) writeEntry(close);
+}
+
+/**
+ * `history.back()`, awaited when it is proven to land (`awaited`): it leaves an entry of ours, so
+ * the entry it lands on is the one that entry was pushed above.
+ */
+function goBack(): void {
+  const to = below.get(here);
+  if (to === undefined) {
+    Log.d('historyOverlay', 'going back from an entry not ours - its landing is not awaited');
+  } else {
+    awaited.push({ to });
+  }
+  history.back();
 }
 
 /** Takes `close` out of the held pushes; true when it was there (it has no history entry yet). */
@@ -269,8 +303,7 @@ function settleArrival(state: unknown, leftGhost: boolean): void {
         : 'the router entry from a ghost above it';
     Log.d('historyOverlay', `Back landed on ${where} - walking one more`);
     walking = true;
-    traversalsInFlight++;
-    history.back();
+    goBack();
   }
 }
 
@@ -295,8 +328,7 @@ export function closeHistoryOverlayFromUi(close: () => void): void {
   if (idx === stack.length - 1) {
     // Do NOT increment skipPops here: the resulting popstate SHOULD reach
     // `onPopState` so it pops the stack entry and calls close().
-    traversalsInFlight++;
-    history.back();
+    goBack();
     return;
   }
   stack.splice(idx, 1);
@@ -320,8 +352,7 @@ export function abandonHistoryOverlay(close: () => void): void {
   stack.splice(idx, 1);
   if (wasTop) {
     skipPops++;
-    traversalsInFlight++;
-    history.back();
+    goBack();
   }
 }
 
@@ -379,7 +410,8 @@ export function clearHistoryOverlayStack(): void {
   stack.length = 0;
   pending.length = 0;
   skipPops = 0;
-  traversalsInFlight = 0;
+  awaited.length = 0;
+  below.clear();
   here = 0;
   hereHref = '';
   walking = false;

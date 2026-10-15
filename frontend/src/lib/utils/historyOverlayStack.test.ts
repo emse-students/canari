@@ -128,6 +128,10 @@ function fakeHistory() {
       // Every landing may walk one more entry; let each one settle.
       for (let i = 0; i < 6; i++) await Promise.resolve();
     },
+    /** A `popstate` landing on `state`, delivered now, with no traversal behind it. */
+    fire(state: unknown) {
+      listener?.({ state } as PopStateEvent);
+    },
   };
 }
 
@@ -280,6 +284,66 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
     for (let i = 0; i < 6; i++) await Promise.resolve();
     expect(h.index).toBe(0);
     expect(historyOverlayStackDepth()).toBe(0);
+  });
+
+  it('a back that cannot land (the history first entry) holds nothing: the next overlay gets its entry at once', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closePicker = vi.fn();
+    pushHistoryOverlay(closePicker);
+    releaseHistoryOverlay(closePicker);
+    // Back on the ghost lands on the router entry, which is the FIRST one: the walk off it goes
+    // nowhere and no popstate ever comes.
+    await h.pressBack();
+    expect(h.index).toBe(0);
+
+    const closeNext = vi.fn();
+    pushHistoryOverlay(closeNext);
+    expect(h.index).toBe(1);
+    await h.pressBack();
+    expect(closeNext).toHaveBeenCalledWith('back');
+  });
+
+  it('a popstate that is not our traversal never ends the hold, and closes the held overlay on screen', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closeConversation = vi.fn();
+    const closeMenu = vi.fn();
+    const closeCamera = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeMenu);
+    abandonHistoryOverlay(closeMenu);
+    pushHistoryOverlay(closeCamera);
+    // A landing somewhere our traversal does not go (the router entry): the member's.
+    h.fire({ sveltekit: 0 });
+    expect(closeCamera).toHaveBeenCalledWith('back');
+    // Still held: our traversal has not landed, so nothing was written.
+    const closeNext = vi.fn();
+    pushHistoryOverlay(closeNext);
+    expect(h.index).toBe(2);
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    // Ours landed (on the conversation, which that Back had closed, so one walk more): only THEN is
+    // the held overlay written, and Back closes it.
+    expect(h.index).toBe(1);
+    await h.pressBack();
+    expect(closeNext).toHaveBeenCalledWith('back');
+  });
+
+  it('the member pressing Back while the camera is held closes the camera, not the conversation under it', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closeConversation = vi.fn();
+    const closeMenu = vi.fn();
+    const closeCamera = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeMenu);
+    abandonHistoryOverlay(closeMenu);
+    pushHistoryOverlay(closeCamera);
+    // Queued behind our traversal: it lands after the camera's entry was written.
+    await h.pressBack();
+    expect(closeCamera).toHaveBeenCalledWith('back');
+    expect(closeConversation).not.toHaveBeenCalled();
+    expect(h.index).toBe(1);
   });
 
   it('reads an entry left by an earlier page load as the router entry below every live overlay', () => {

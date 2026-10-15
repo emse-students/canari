@@ -125,8 +125,8 @@
   let recorder: ReelRecorder | null = null;
   /** The preview's crop being drawn for the take in progress (framedCapture.ts). */
   let framed: FramedStream | null = null;
-  /** The take in progress's first picture (`ReelClip.poster`), asked for as the recording starts. */
-  let takePoster: Promise<Blob | null> | null = null;
+  /** The take in progress's first picture (`ReelClip.poster`), taken before the recorder starts. */
+  let takePoster: Blob | null = null;
   /** Armed by a press; its firing makes the press a video (reelCapture.ts). */
   let holdTimer: ReturnType<typeof setTimeout> | null = null;
   let limitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -324,6 +324,9 @@
       send({ type: 'failed' });
       return;
     }
+    // The take's thumbnail for a composer (`ReelClip.poster`), taken NOW: before the drawing loop and
+    // the recorder exist, so its encode costs the take no frame. The reel publish step needs none.
+    takePoster = rules.handsBackFile ? (camera?.thumbnail() ?? null) : null;
     framed = camera?.startFramedStream() ?? null;
     if (!framed) {
       showToast(m.reels_capture_record_error(), 'error');
@@ -344,14 +347,6 @@
     }
     buzz(15);
     holdTakeEntry();
-    // The take's thumbnail for a composer (`ReelClip.poster`): the same crop, now, while the preview
-    // runs. The reel publish step draws its take itself and needs none.
-    if (rules.handsBackFile) {
-      takePoster = (camera?.photo() ?? Promise.resolve(null)).catch((err: unknown) => {
-        console.error('[reel-capture] the take thumbnail could not be taken', err);
-        return null;
-      });
-    }
     elapsedMs = 0;
     // THE CAP IS THE PRODUCT'S RULE (C4), so it is a deadline by definition: the ring is full when
     // the take is as long as the server allows, and that ends it exactly as a second tap would.
@@ -379,11 +374,10 @@
       send({ type: 'failed' });
       return;
     }
-    const posterOfTake = takePoster;
+    const poster = takePoster;
     takePoster = null;
     try {
       const blob = await ending.stop();
-      const poster = posterOfTake ? await posterOfTake : null;
       send({ type: 'stopped', clip: { blob, source: 'camera', poster } });
     } catch (err) {
       const fault = err instanceof ReelRecorderError ? err.fault : 'record';

@@ -3,7 +3,7 @@
   import { Log } from '$lib/utils/Log';
   import { FileText, Film, Music, CalendarCheck, CircleAlert } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { MediaService, preparePostMedia } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import { createPost, type CreatePostPayload, type PostFeed } from '$lib/posts/api';
@@ -101,6 +101,11 @@
   /** Closing the composer keeps its media for the next open, as the text draft keeps its text. */
   $effect(() => {
     holdPostComposerMedia(selectedFiles);
+  });
+  // The FILES are held, never their previews: each open makes its own object URLs, and gives them
+  // back when it closes, or every close would leak one URL per held media.
+  onDestroy(() => {
+    filePreviews.forEach((url) => url && URL.revokeObjectURL(url));
   });
 
   // --- Optional sections ---

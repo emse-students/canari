@@ -27,6 +27,7 @@
     FramedStream,
     shouldMirrorCapture,
     takeFramedPhoto,
+    takeFramedThumbnail,
     type CameraCapture,
     type PreviewBox,
   } from '$lib/reels/framedCapture';
@@ -126,6 +127,13 @@
         return Promise.resolve(null);
       }
       return takeFramedPhoto(video, previewBox(video));
+    },
+    thumbnail() {
+      if (!video || !frameReady) {
+        console.warn('[camera] a thumbnail was asked for before the first frame');
+        return null;
+      }
+      return takeFramedThumbnail(video, previewBox(video));
     },
     startFramedStream() {
       if (!video || !frameReady) {

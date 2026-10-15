@@ -33,10 +33,11 @@ vi.mock('$lib/utils/appVersion', () => ({
 vi.mock('$lib/components/shared/VideoPlayer.svelte', async () => ({
   default: (await import('./VideoPlayerStub.test-helper.svelte')).default,
 }));
-const framed = vi.hoisted(() => ({ photo: vi.fn(), start: vi.fn() }));
+const framed = vi.hoisted(() => ({ photo: vi.fn(), start: vi.fn(), thumbnail: vi.fn() }));
 vi.mock('$lib/reels/framedCapture', async (orig) => ({
   ...(await orig<typeof import('$lib/reels/framedCapture')>()),
   takeFramedPhoto: framed.photo,
+  takeFramedThumbnail: framed.thumbnail,
   FramedStream: { start: framed.start },
 }));
 
