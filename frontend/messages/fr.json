@@ -2977,6 +2977,8 @@
   "sidebar_select_community_first": "Veuillez sélectionner une communauté d'abord",
   "sidebar_add_community_title": "Ajouter une communauté",
   "sidebar_communities_fallback": "Communautés",
+  "sidebar_communities_refreshing": "Mise à jour de vos communautés...",
+  "communities_wait_for_session": "Connexion en cours - réessayez dans un instant.",
   "sidebar_community_settings_title": "Paramètres de la communauté",
   "sidebar_no_conversations_title": "Aucune discussion",
   "sidebar_start_writing": "Commencez à écrire à quelqu'un !",

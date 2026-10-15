@@ -12,6 +12,7 @@
 
 import { saveUserLocally, clearUserLocally, currentUserId } from '$lib/stores/user';
 import { setGlobalAdmin } from '$lib/stores/userState.svelte';
+import { noteSessionAnswered } from '$lib/stores/sessionAnswer.svelte';
 import {
   IdentitySplitError,
   checkTokenIdentity,
@@ -442,6 +443,8 @@ export async function handleOidcCallback(
   await flushAndroidCookies('login');
 
   saveUserLocally(data.user);
+  // After the save, so the account it names is already the signed-in one when a reader compares.
+  noteSessionAnswered(data.user.id);
   await rememberMiconnectIdToken(data.id_token);
   console.debug('[auth] handleOidcCallback complete');
 
@@ -676,6 +679,7 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
     if (res.status === 401 || res.status === 403) {
       // The proof, latched: only a new credential can change this answer.
       _refreshCredentialProvenDead = true;
+      noteSessionAnswered(null);
       notifySessionExpired();
       throw new SessionExpiredError();
     }
@@ -743,6 +747,9 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
     if (decoded.sub && !currentUserId()) {
       saveUserLocally({ id: decoded.sub, admin: !!decoded.admin });
     }
+    // The token is this account's (`identityOk`, or the split above would have thrown): what may
+    // start on a token alone - the community listing - may start now.
+    if (decoded.sub && identityOk) noteSessionAnswered(decoded.sub);
   }
 
   const expIn = tokenExp ? tokenExp - Math.floor(Date.now() / 1000) : null;
@@ -780,6 +787,7 @@ export function setToken(token: string): void {
   setWsSessionCookie(token);
   // Whoever supplied this token supplied a live session with it.
   noteRefreshCredentialAlive();
+  noteSessionAnswered(decodeTokenClaims(token)?.sub ?? null);
 }
 
 /**
@@ -801,6 +809,7 @@ export async function clearAuth(): Promise<void> {
     alog('clear with no sign-out handler registered - no live session to end');
   }
   _accessToken = null;
+  noteSessionAnswered(null);
   clearWsSessionCookie();
   clearIdentitySplit();
   // Drop persisted message ACKs so a next user on this tab can't ACK the previous user's ids.
