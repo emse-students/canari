@@ -2475,6 +2475,14 @@ The fix is `tauri-plugin-customtabs` (`frontend/src-tauri/plugins/tauri-plugin-c
 
 **Why this needed a real plugin and not a few lines of Rust JNI.** This app already has a working Rust → Kotlin JNI call (`flush_webview_cookies` in `commands/cookies.rs`, calling `CookieManager.getInstance()`/`.flush()`), and its own comment explains exactly why that pattern does not generalise: a JNI-attached native thread has no Java frames on its stack, so `FindClass` only reaches boot-classpath **framework** classes. `android.webkit.CookieManager` is one; `androidx.browser.customtabs.CustomTabsIntent` (bundled into the APK's own dex, like `MainActivity` itself) is not, and would fail to resolve the same way calling into `MainActivity` directly would. Tauri's own plugin-invocation mechanism (`@TauriPlugin`, `Plugin(activity)`) runs Kotlin code with the correct classloader context for exactly this reason, which is why the fix is a full (if minimal) mobile plugin, following `patches/tauri-plugin-keystore`'s structure - `Cargo.toml`/`build.rs`/`src/mobile.rs` on the Rust side, `CustomTabsPlugin.kt` + a Gradle module on the Android side - rather than extending the raw-JNI pattern.
 
+**A modal's focused field is revealed again once its overlay stops moving (iPhone 12, 2026-10-15).**
+`[data-keyboard-aware-overlay]` animates its height for 180 ms, and the reveal after a keyboard rise
+runs one frame after the resize - into a scrollport still shrinking. In the PIN change dialog the
+focused field then settled half under the footer's submit button, and a tap where the next field
+stood submitted the form; the iOS keyboard drops and rises between two fields, so every move paid
+it. `initKeyboardViewport` redoes the reveal on the overlay's `transitionend` for `height`
+(`overlaySettledAroundFocus`). Not yet read on the phone.
+
 `keyboardViewport.svelte.ts` pins the shell to the visual viewport while the keyboard is up:
 
 ```
