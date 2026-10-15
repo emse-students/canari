@@ -29,6 +29,7 @@ afterEach(() => {
 function raise() {
   const props = $state({
     open: true,
+    pin: '',
     isLoading: false,
     externalError: '',
     onSubmit: vi.fn(),
@@ -55,22 +56,25 @@ function type(field: HTMLInputElement, value: string) {
 }
 
 describe('PinModal - an attempt refused with the gate still up', () => {
-  it('empties the field, so the next PIN is not appended to the last one', () => {
+  // The REFUSAL empties the field, through the bound `pin` the parent clears where it refuses
+  // (`refusePinAttempt` in ChatBackgroundService) - never an effect guessing from the spinner.
+  it('empties the field when the parent clears the bound PIN, so the next one is not appended', () => {
     const { props, field } = raise();
     type(field, '123456');
 
-    props.isLoading = true;
-    flushSync();
-    props.isLoading = false;
+    props.pin = '';
     props.externalError = 'server unreachable';
     flushSync();
 
     expect(field.value).toBe('');
   });
 
-  it('leaves what is being typed alone when no attempt ended', () => {
+  it('leaves what is being typed alone when the spinner merely comes and goes', () => {
     const { props, field } = raise();
     type(field, '1234');
+    props.isLoading = true;
+    flushSync();
+    props.isLoading = false;
     props.externalError = 'something else';
     flushSync();
 

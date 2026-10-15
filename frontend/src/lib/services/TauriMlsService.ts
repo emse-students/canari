@@ -9,6 +9,7 @@ import {
   detectRuntimeDeviceOs,
   MLS_LOCAL_STATE_UNDECRYPTABLE,
   VaultOwnerUnprovenError,
+  LocalStateNotReadyError,
   type MlsInitOptions,
 } from '$lib/mls-client';
 import {
@@ -72,6 +73,11 @@ export class TauriMlsService extends BaseMlsService {
   private static readonly MAX_MISSED_HEARTBEATS = 3;
   /** Cache of locally known MLS group IDs, populated after init and updated on group changes. */
   private _knownGroups: Set<string> = new Set();
+  /**
+   * Whether {@link _knownGroups} was filled from the native manager since the state was loaded.
+   * Reset by every load: a cache from the previous state, or none, says nothing about this one.
+   */
+  private _groupsListed = false;
   /** Last known MLS epoch per group (native); keeps sync `getEpoch()` meaningful on Tauri. */
   private _epochByGroupId: Map<string, number> = new Map();
   /**
@@ -794,6 +800,7 @@ export class TauriMlsService extends BaseMlsService {
     // carries a newer fact than this listing - it is left to that call, listed or not.
     const settled = groups.filter((groupId) => this.untouchedSince(groupId, listStamp));
     for (const groupId of settled) this._knownGroups.add(groupId);
+    this._groupsListed = true;
     for (const groupId of new Set([...this._knownGroups, ...this._epochByGroupId.keys()])) {
       if (listed.has(groupId) || !this.untouchedSince(groupId, listStamp)) continue;
       this._knownGroups.delete(groupId);
@@ -819,14 +826,19 @@ export class TauriMlsService extends BaseMlsService {
    * failed with "already present locally" - until the next cold start listed it.
    */
   protected override async afterStateOpened(): Promise<void> {
+    let groups: number;
     try {
-      const groups = await this.syncGroupCachesFromNative();
-      console.log(`[MLS][Tauri] state opened by the recovery - ${groups} group(s) listed`);
+      groups = await this.syncGroupCachesFromNative();
     } catch (e) {
-      // As at start-up: the state opened, so the recovery goes on; the restore check that follows
-      // will then report the groups this listing could not name.
-      console.error('[MLS][Tauri] listing the held groups after the recovery failed:', String(e));
+      // REFUSED, NOT LOGGED AND RUN ON: a login over an unlisted cache is the whole cascade above.
+      throw new LocalStateNotReadyError(e);
     }
+    console.log(`[MLS][Tauri] state opened by the recovery - ${groups} group(s) listed`);
+  }
+
+  /** See {@link BaseMlsService.heldGroupsKnown}: true once the native manager's groups were listed. */
+  override heldGroupsKnown(): boolean {
+    return this._groupsListed;
   }
 
   /** Tauri-native `invoke` wrapper - calls `creer_groupe` in Rust and updates the local known-groups cache. */
@@ -965,6 +977,7 @@ export class TauriMlsService extends BaseMlsService {
     stateOnDisk?: boolean,
     unattendedKeyRead?: boolean
   ): Promise<void> {
+    this._groupsListed = false;
     await this.invokeInit(deviceKeyB64, state, undefined, stateOnDisk, unattendedKeyRead);
   }
 

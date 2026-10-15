@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, tick, untrack } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import PinAccountField from './PinAccountField.svelte';
   import {
@@ -73,6 +73,14 @@
     onRecoverPin?: () => void;
     /** The signed-in account's id, filed with the PIN by a password manager (see `PinAccountField`). */
     account?: string;
+    /**
+     * The PIN being typed, two-way bound so the caller EMPTIES it where it refuses an attempt - a
+     * wrong PIN or no server to ask. The digits used to stay and the next ones were APPENDED: iPhone
+     * 12, 2026-10-16, an offline attempt left six dots, six more were typed once back online, and the
+     * twelve-digit PIN cost a "PIN incorrect" (an offline refusal costs no attempt - nothing reached
+     * the server - but the PIN typed after it did).
+     */
+    pin?: string;
   }
 
   let {
@@ -92,9 +100,9 @@
     resetWithheldNotice = '',
     onRecoverPin,
     account = '',
+    pin = $bindable(''),
   }: Props = $props();
 
-  let pin = $state('');
   let internalError = $state('');
   /**
    * The `<form>`'s id, so the submit button can live in the modal FOOTER and still submit it.
@@ -139,29 +147,6 @@
 
   $effect(() => {
     if (externalError) internalError = '';
-  });
-
-  /**
-   * AN ATTEMPT THAT ENDS WITH THE GATE STILL UP EMPTIES THE FIELD, whatever refused it.
-   *
-   * The gate closes on success, so `isLoading` going back to false with the gate open is a refusal -
-   * a wrong PIN, or no server to ask. The digits used to stay, and the next ones were APPENDED:
-   * iPhone 12, 2026-10-16, an offline attempt left six dots, the member typed six more once back
-   * online, and the twelve-digit PIN cost a "PIN incorrect" (an offline refusal costs no attempt -
-   * nothing reached the server - but the PIN typed after it did).
-   */
-  let attemptInFlight = false;
-  $effect(() => {
-    if (isLoading) {
-      attemptInFlight = true;
-      return;
-    }
-    if (!attemptInFlight) return;
-    attemptInFlight = false;
-    if (untrack(() => pin)) {
-      Log.d('[pin-modal] attempt refused - the field is emptied for the next try');
-      pin = '';
-    }
   });
 
   /**
