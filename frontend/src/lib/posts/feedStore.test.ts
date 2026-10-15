@@ -18,6 +18,7 @@ import {
   firstPageFailure,
   listAfterFirstPage,
   readStoredFeedPage,
+  saveStoredFeed,
   storableFeedRow,
   storedCopyMayDraw,
   storedFeedKey,
@@ -25,10 +26,17 @@ import {
   type FeedStoreAccess,
 } from './feedStore';
 import { currentFeedEpoch, forgetStoredFeeds } from './feedStoreEpoch';
+import { getStorage } from '$lib/db';
+import type { IStorage } from '$lib/db/types';
 
 vi.mock('$lib/posts/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/posts/api')>()),
   fetchFeedAudience: vi.fn(),
+}));
+// `saveStoredFeed` is called for real below, with the account's store handed over when the test says.
+vi.mock('$lib/db', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/db')>()),
+  getStorage: vi.fn(),
 }));
 
 /** A write as `saveStoredFeed` makes it: the epoch decided first, then the store written. */
@@ -46,6 +54,7 @@ const KEY = 'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=';
 const OTHER_KEY = 'AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE=';
 const ALICE: FeedStoreAccess = { userId: 'alice', deviceKeyB64: KEY };
 const ALL = { feed: 'all' as const };
+const FOLLOWED = { feed: 'followed' as const };
 let n = 0;
 
 function post(id: string, extra: Partial<PostEntity> = {}): PostEntity {
@@ -286,6 +295,43 @@ describe('ended by what the device learns, and never revived by a write already 
 
     expect(currentFeedEpoch('alice')).toBeNull();
     expect(await readStoredFeedPage(storage, ALICE, ALL)).toBeNull();
+  });
+
+  it('saveStoredFeed: a refusal while the store is still opening leaves nothing drawable', async () => {
+    const storage = await openStore();
+    const opening = Promise.withResolvers<IStorage>();
+    vi.mocked(getStorage).mockReturnValueOnce(opening.promise);
+
+    const saving = saveStoredFeed(ALICE, ALL, [post('p1')]);
+    // The refusal lands while `getStorage` is still being awaited.
+    firstPageFailure(new ApiRefusalError(403, null, 'post-service 403'), true);
+    opening.resolve(storage);
+    await saving;
+
+    expect(currentFeedEpoch('alice')).toBeNull();
+    expect(await storage.getFeedPage('feed:all', KEY)).toBeNull();
+  });
+
+  it('saveStoredFeed: a write from before a refusal does not make the next read delete a fresh page', async () => {
+    const storage = await openStore();
+    vi.mocked(getStorage).mockResolvedValue(storage);
+    await saveStoredFeed(ALICE, ALL, [post('p1')]);
+
+    // A refresh of "all" takes the current epoch, then waits for the store...
+    const opening = Promise.withResolvers<IStorage>();
+    vi.mocked(getStorage).mockReturnValueOnce(opening.promise);
+    const stale = saveStoredFeed(ALICE, ALL, [post('p-stale')]);
+    // ...a refusal ends that epoch, and the next answer is stored under a new one...
+    firstPageFailure(new ApiRefusalError(403, null, 'post-service 403'), true);
+    await saveStoredFeed(ALICE, FOLLOWED, [post('p-new')]);
+    // ...then the stale write gets its store.
+    opening.resolve(storage);
+    await stale;
+
+    expect(await readStoredFeedPage(storage, ALICE, ALL)).toBeNull();
+    expect((await readStoredFeedPage(storage, ALICE, FOLLOWED))?.map((p) => p.id)).toEqual([
+      'p-new',
+    ]);
   });
 
   it('a page this device can no longer open is deleted, so no later launch meets it again', async () => {

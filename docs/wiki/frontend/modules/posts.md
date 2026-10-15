@@ -1478,14 +1478,27 @@ The store is then rewritten from that answer, so the next launch draws what the 
 the card drawn from the copy is KEPT when the answer replaces its row, and `PostCard` used to copy
 its prop once: the vote stayed refused (`canVote: false`), the owner's and moderator's menu never
 appeared, and counts, tallies and text stayed as stored for the whole session. The card now ADOPTS
-a row whenever its prop is a different object (`adoptServedPost`, `lib/posts/postCardSync.ts`),
+a row whenever its prop is a different object (`PostCardLedger.adopt`, `lib/posts/postCardSync.ts`),
 which happens only when the server hands a new row: the feed's own edits (a filter on delete, the
-infinite scroll's append) keep each row's proxy, so a reaction the reader completed is not
-overwritten by an older row. Adopting on identity rather than remounting keeps an open comment
-thread and a half-typed comment. **A field with a write in flight is not adopted** (reactions,
-polls, comments, counted per field): the row may predate the write, and that write's own answer
-lands the server's verdict on it. Each write's rollback restores ONLY its own field, so an
-adopted row is not reverted by a failure that predates it.
+infinite scroll's append) keep each row's proxy. Adopting on identity rather than remounting keeps
+an open comment thread and a half-typed comment.
+
+**A ROW SAYS WHAT THE SERVER HELD WHEN ITS READ WAS ISSUED, NOT WHEN IT LANDED (second review).**
+The first version kept a field only while a write on it was pending, so a feed GET sent before a
+heart, landing after the heart's POST answered, erased the heart (and a vote's tally, while the
+selection kept the choice). Both sides now sit on ONE order, a counter of the tab: a read takes
+its point when it is ISSUED (`listPosts`, `searchPosts` and `getPost` stamp their rows through
+`stampServed`, a non-enumerable symbol that `JSON`, `structuredClone` and a spread all drop, so a
+stored or cached copy is unstamped, the oldest point); a write takes its point when it ANSWERS. A
+row speaks for a field only when its read was issued after the field's last write answered and no
+write on it is pending. No clock: the order is the program's own. EVERY write of the card goes
+through the ledger: reactions, votes, new comments and comment likes (optimistic: `begin`/`end`),
+and comment edit and delete, pin, unmask and a post edit (applied on the answer: `answered`). A
+failed write restores ONLY its field, and to the newest served value if a row was adopted while it
+was out, not to the pre-tap one. **The expanded thread is HELD**: a feed row carries the first
+comments only, so once the reader loaded the whole thread a feed row no longer replaces it, and a
+new row asks for the thread again (`getPost`, merged through the same rule). The poll selection is
+read from the card's polls, never from the prop, so it says what the tally says.
 
 **A refused answer ends the copy.** A `401` or a `403` from the feed is an answer about this reader:
 the copy leaves the screen (the existing no-audience or error state takes over) and every stored
@@ -1530,6 +1543,19 @@ holds a v9 connection; without an `onversionchange` handler the v10 open of a ne
 (logged), and reloads the page so that tab runs the new bundle rather than a closed store. A
 `deleteDatabase` from another tab (`newVersion === null`) is left as before: reopening would
 recreate a database being wiped.
+
+**THE RELOAD DROPS WHAT THE OLD TAB HELD ONLY IN MEMORY, AND THAT IS DECIDED, NOT GUARDED (second
+review of #1896).** It happens on the WEB only, and only when a newer bundle opens the same account's
+database in another tab of the same browser: the phone and desktop apps have one WebView and use
+SQLite. What the old tab loses is a chat composer's unsent text and a PIN prompt in progress; the
+post composer's draft is in `localStorage` (`postComposerDraft.ts`) and the messages already handed
+to the outbox are rows of this very database, so both survive. The two other
+choices were worse. Keeping the connection blocks the NEW tab's open (`StorageOpenError(blocked)`)
+until the old one is closed by hand, so the tab the reader just opened cannot start at all. Closing
+without reloading (what `outboxBlob.ts` and `appLog.ts` do for their own small stores) leaves the
+old bundle running against a closed store whose schema it does not know, so every later save fails
+in it. A guard that waits for the tab to be hidden would keep exactly that broken tab on screen,
+where the text it protects could not be sent anyway.
 
 ### Rejected options
 
@@ -1590,4 +1616,7 @@ its role for a tab switch.
 `lib/posts/feedStoreEpoch.ts` (the synchronous erase) and `routes/posts/+page.svelte` (the draw and
 the merge). Pinned by `feedStore.test.ts`, `db/feedPages.test.ts` (the v9 -> v10 upgrade with data
 in place, and the version-change release), `postCardSync.test.ts` and
-`components/posts/PostCard.served.svelte.test.ts` (the same id redrawn with rights opens the vote).
+`components/posts/PostCard.served.svelte.test.ts` (the same id redrawn with rights opens the vote; a
+row read before a reaction or a vote answered, or landing while it is out, does not erase it; a
+failed reaction rolls back its field only, to the row adopted meanwhile). `feedStore.test.ts` calls
+the real `saveStoredFeed` for the two write races.

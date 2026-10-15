@@ -27,7 +27,7 @@
   import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import { publishFailureMessage } from '$lib/posts/publishFailure';
-  import { adoptServedPost, noInteractionsInFlight } from '$lib/posts/postCardSync';
+  import { PostCardLedger, servedAt } from '$lib/posts/postCardSync';
   import { getForm, checkSubmission } from '$lib/forms/api';
   import Card from '$lib/components/ui/Card.svelte';
   import PostHeader from './PostHeader.svelte';
@@ -55,7 +55,10 @@
    * and updates it optimistically after each user interaction.
    */
   interface Props {
-    /** The post data to render. The card keeps a local copy and does NOT auto-sync on prop changes. */
+    /**
+     * The post data to render. The card keeps a local copy; a NEW row object replaces it, field by
+     * field, through `PostCardLedger` (a field this card wrote more recently is kept).
+     */
     post: PostEntity;
     /** ID of the authenticated user, used to gate edit/delete/reaction controls. */
     currentUserId: string;
@@ -91,26 +94,28 @@
   let localPost = $state.raw<PostEntity>(untrack(() => ({ ...postProp })));
 
   /**
-   * The served row the copy was last taken from, and the writes still in flight on this card.
+   * This card's writes, and the rule deciding what a new served row may replace.
    *
-   * A NEW ROW FROM THE PARENT REPLACES THE COPY (`adoptServedPost`). The copy used to be taken once,
-   * so a card drawn from the feed's stored page kept no rights and `canVote: false` for the whole
-   * session after the server's page replaced its row - the keyed list keeps the card (review of
-   * #1896). What a write of this reader is still carrying is kept until that write answers. A row
+   * A NEW ROW FROM THE PARENT REPLACES THE COPY (`PostCardLedger.adopt`). The copy used to be taken
+   * once, so a card drawn from the feed's stored page kept no rights and `canVote: false` for the
+   * whole session after the server's page replaced its row - the keyed list keeps the card (review
+   * of #1896). A field a write of this card still carries, or answered AFTER the row's read was
+   * issued, is kept: a feed GET sent before a tap can land after the tap's own POST answered. A row
    * keeps its identity while the parent only re-slices or filters its list (Svelte's proxies), so
-   * only a real answer is adopted.
+   * only a real answer is adopted. EVERY WRITE BELOW GOES THROUGH THE LEDGER.
    */
-  let adoptedRow = untrack(() => postProp);
-  const inFlight = noInteractionsInFlight();
+  const ledger = new PostCardLedger(untrack(() => postProp));
+  /** Whether the reader expanded the whole thread, which a feed row (the first few) cannot carry. */
+  let fullThread = false;
   $effect.pre(() => {
     const served = postProp;
-    if (served === adoptedRow) return;
-    adoptedRow = served;
-    localPost = adoptServedPost(
+    if (served === ledger.served) return;
+    localPost = ledger.adopt(
       untrack(() => localPost),
-      served,
-      inFlight
+      served
     );
+    // The thread was kept from the card; ask for it again so it is as new as the row.
+    if (fullThread) untrack(() => void loadAllComments());
   });
 
   let actionMessage = $state('');
@@ -150,9 +155,11 @@
     const ids = new Set(poll.options.map((o) => o.id));
     return selectedOptions.filter((id) => ids.has(id));
   }
-  // Sync selectedOptions from the served row (a new row from the parent carries the server's votes).
+  // Sync selectedOptions from the card's polls - not the prop's: a served row older than this
+  // reader's last vote is not adopted for the polls, and the selection must say what the tally says.
+  const localPolls = $derived(localPost.polls);
   $effect(() => {
-    const serverVotes = (postProp.polls ?? []).flatMap((p) => p.votesByUser?.[currentUserId] ?? []);
+    const serverVotes = (localPolls ?? []).flatMap((p) => p.votesByUser?.[currentUserId] ?? []);
     if (serverVotes.length > 0) {
       selectedOptions = serverVotes;
     }
@@ -306,17 +313,17 @@
     const previousPolls = localPost.polls;
     localPost = applyPostPollVote(localPost, pollId, currentUserId, optionIds);
     actionMessage = optionIds.length === 0 ? m.post_vote_retire() : m.post_vote_enregistre();
-    inFlight.polls++;
+    const token = ledger.begin(['polls']);
     try {
       await votePoll(localPost.id, pollId, { optionIds });
     } catch (err) {
       Log.d('PostCard.submitVote failed', err);
-      // Only the polls go back: a served row adopted meanwhile keeps everything else it said.
-      localPost = { ...localPost, polls: previousPolls };
+      // Only the polls go back, and to the newest served tally if one arrived meanwhile.
+      localPost = ledger.rollback(localPost, 'polls', previousPolls, token);
       actionMessage = '';
       errorMessage = m.post_unable_to_vote();
     } finally {
-      inFlight.polls--;
+      ledger.end(['polls']);
     }
   }
 
@@ -342,7 +349,7 @@
     localPost = { ...localPost, reactions: newReactions };
     showReactionPicker = false;
 
-    inFlight.reactions++;
+    const token = ledger.begin(['reactions']);
     try {
       // Still never sent to a server certain to refuse it: when nothing is known, this asks -
       // behind a picker that has already closed and a tally that has already moved.
@@ -357,10 +364,10 @@
       // `publishFailureMessage` keeps that line for the refusal and says "could not reach the
       // server" for the transport.
       Log.d('handleReaction failed', err);
-      localPost = { ...localPost, reactions: prevReactions };
+      localPost = ledger.rollback(localPost, 'reactions', prevReactions, token);
       errorMessage = publishFailureMessage(err, m.post_reaction_error());
     } finally {
-      inFlight.reactions--;
+      ledger.end(['reactions']);
     }
   }
 
@@ -371,6 +378,8 @@
 
   /** Called by EditPostForm on successful save; merges the updated post and closes edit mode. */
   function onPostSaved(updated: PostEntity) {
+    // Applied on the answer: a feed row read before it must not put the old text back.
+    ledger.answered(Object.keys(updated) as (keyof PostEntity)[]);
     localPost = { ...localPost, ...updated };
     editingPost = false;
   }
@@ -389,13 +398,19 @@
     }
   }
 
-  /** Fetches the full post (with all comments) to replace the truncated comment list returned by the feed endpoint. */
+  /**
+   * Fetches the full post (with all comments) to replace the truncated comment list returned by the
+   * feed endpoint. From then on the card HOLDS the thread: a feed row carries only its first few
+   * comments, so adopting it would collapse the thread - a new row asks for the thread again instead.
+   */
   async function loadAllComments() {
+    fullThread = true;
+    ledger.hold('comments');
     try {
       const full = await getPost(localPost.id);
-      localPost = { ...localPost, comments: full.comments };
-    } catch {
-      // silent
+      localPost = ledger.mergeRead(localPost, { comments: full.comments }, servedAt(full));
+    } catch (err) {
+      Log.d('PostCard.loadAllComments failed - the thread shown is kept', err);
     }
   }
 
@@ -434,7 +449,7 @@
     commentText = '';
     submittingComment = true;
 
-    inFlight.comments++;
+    const token = ledger.begin(['comments']);
     try {
       await assertNotMuted();
       const result = await addComment(localPost.id, { text, parentId, media });
@@ -447,14 +462,16 @@
       // first is about the reader, and only the second is about the comment. Either way the row
       // goes, and the text goes back where the reader can send it again.
       console.error('[POST_CARD] comment refused', err);
-      localPost = {
-        ...localPost,
-        comments: (localPost.comments ?? []).filter((c) => c.id !== pendingId),
-      };
+      localPost = ledger.rollback(
+        localPost,
+        'comments',
+        (localPost.comments ?? []).filter((c) => c.id !== pendingId),
+        token
+      );
       if (!commentText.trim()) commentText = text;
       errorMessage = publishFailureMessage(err, m.post_unable_to_comment());
     } finally {
-      inFlight.comments--;
+      ledger.end(['comments']);
       pendingCommentIds.delete(pendingId);
       submittingComment = false;
     }
@@ -466,7 +483,7 @@
     // server answered, and a failure was swallowed - so on a bad link a tap did nothing at all and
     // said nothing either.
     const previousComments = localPost.comments;
-    inFlight.comments++;
+    const token = ledger.begin(['comments']);
     localPost = {
       ...localPost,
       comments: (localPost.comments ?? []).map((c) =>
@@ -489,9 +506,9 @@
     } catch (err) {
       // Put the heart back rather than leaving a count this device invented - the comments only.
       Log.d('handleLikeComment failed', err);
-      localPost = { ...localPost, comments: previousComments };
+      localPost = ledger.rollback(localPost, 'comments', previousComments, token);
     } finally {
-      inFlight.comments--;
+      ledger.end(['comments']);
     }
   }
 
@@ -499,6 +516,7 @@
   async function handleEditComment(commentId: string, text: string) {
     try {
       const result = await editCommentApi(localPost.id, commentId, text);
+      ledger.answered(['comments']);
       localPost = {
         ...localPost,
         comments: (localPost.comments ?? []).map((c) => (c.id === commentId ? result.comment : c)),
@@ -513,6 +531,7 @@
   async function handleDeleteComment(commentId: string) {
     try {
       await deleteCommentApi(localPost.id, commentId);
+      ledger.answered(['comments']);
       localPost = {
         ...localPost,
         comments: (localPost.comments ?? []).filter(
@@ -530,6 +549,7 @@
     try {
       const fn = localPost.pinned ? unpinPostApi : pinPostApi;
       const res = await fn(localPost.id);
+      ledger.answered(['pinned']);
       localPost = { ...localPost, pinned: res.pinned };
       actionMessage = res.pinned ? m.post_epingle() : m.post_unpinned();
     } catch (err) {
@@ -542,6 +562,7 @@
   async function unmaskAnonymous() {
     try {
       await unmaskPostApi(localPost.id);
+      ledger.answered(['anonymous']);
       localPost = { ...localPost, anonymous: false };
       actionMessage = m.post_anonymous_removed();
     } catch (err) {
@@ -561,7 +582,7 @@
   async function reloadAfterRepublication() {
     try {
       const fresh = await getPost(localPost.id);
-      localPost = { ...localPost, ...fresh };
+      localPost = ledger.mergeRead(localPost, fresh, servedAt(fresh));
     } catch (err) {
       Log.d('PostCard', `post reload after republication failed: ${String(err)}`);
     }

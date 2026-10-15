@@ -158,6 +158,8 @@ export class IndexedDbStorage implements IStorage {
    * which a member with a forgotten tab never does. The old bundle cannot reopen the upgraded
    * database either (it asks for the version below), so closing and reloading onto the new bundle is
    * the only state it can continue from. `db.close()` lets the transactions already running finish.
+   * The reload drops what this tab held only in memory (a chat composer's text, a PIN prompt); that
+   * is decided, not overlooked - why no guard defers it is in docs/wiki/frontend/modules/posts.md.
    *
    * A DELETE (`newVersion === null`, the revoked-device wipe of another tab) is deliberately left as
    * it was: this tab reopening would re-create the database the wipe is removing.
