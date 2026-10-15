@@ -61,21 +61,10 @@
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
-    <!-- The camera app must be VISIBLE to this one, or the composer's camera chips open the photo
-         picker instead. A file input carrying `capture` reaches wry's
-         `RustWebChromeClient.onShowFileChooser`, which launches MediaStore.ACTION_IMAGE_CAPTURE /
-         ACTION_VIDEO_CAPTURE only if `resolveActivity()` finds a handler - and since API 30
-         package visibility hides every other app unless the manifest QUERIES for it. Measured on
-         the Mi 9T, 2026-09-29: logcat `Tauri/FileChooser: Media capture intent could not be
-         launched. Falling back to default file picker.` Guarded by androidCaptureManifest.test.ts. -->
-    <queries>
-        <intent>
-            <action android:name="android.media.action.IMAGE_CAPTURE" />
-        </intent>
-        <intent>
-            <action android:name="android.media.action.VIDEO_CAPTURE" />
-        </intent>
-    </queries>
+    <!-- NO `<queries>` FOR THE SYSTEM CAMERA (user, 2026-10-11, D-camera): the app never launches
+         ACTION_IMAGE_CAPTURE / ACTION_VIDEO_CAPTURE - its only camera is the in-app one (getUserMedia).
+         Guarded by androidCaptureManifest.test.ts, which fails if the queries or the capture
+         FileProvider root come back. -->
 
     <application
         android:name=".CanariApplication"

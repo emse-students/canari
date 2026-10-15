@@ -45,6 +45,11 @@ export class CameraSession {
   /** Read from the open track, never assumed: the front lenses measured have no torch. */
   torchAvailable = $state(false);
 
+  /** The open stream carries a LIVE microphone: false with none, or once its track ended. */
+  microphone = $state(false);
+  /** Removes the `ended` listeners of the tracks in hand; replaced at each open, run at each release. */
+  #trackListeners: AbortController | null = null;
+
   /** Bumped by every open and every stop; an acquisition that returns to another number is stale. */
   #generation = 0;
   readonly #open: CameraOpener;
@@ -71,7 +76,41 @@ export class CameraSession {
         return;
       }
       this.stream = stream;
-      this.torchAvailable = torchSupported(stream.getVideoTracks()[0]);
+      const lens = stream.getVideoTracks()[0];
+      this.torchAvailable = torchSupported(lens);
+      const listening = new AbortController();
+      this.#trackListeners = listening;
+      // THE OS CAN TAKE THE LENS BACK under a live preview - another app opening the camera, the
+      // permission revoked in the settings. The track then ENDS, and a session still saying `live`
+      // would draw a frozen frame with an armed shutter. The end is the fact; it is read here. It
+      // does not say WHICH of the two took it, so the fault says only that the camera was
+      // interrupted - never "busy", which would be a guess.
+      lens?.addEventListener?.(
+        'ended',
+        () => {
+          if (generation !== this.#generation) return;
+          console.warn(`[camera-session] #${generation} the lens ended under a live preview`);
+          ++this.#generation;
+          this.#releaseCurrent();
+          this.fault = 'interrupted';
+          this.phase = 'error';
+        },
+        { signal: listening.signal }
+      );
+      // The microphone can end the same way while the lens stays: the session then films no more.
+      const live = stream.getAudioTracks().filter((t) => t.readyState !== 'ended');
+      this.microphone = live.length > 0;
+      for (const track of live) {
+        track.addEventListener?.(
+          'ended',
+          () => {
+            if (generation !== this.#generation) return;
+            console.warn(`[camera-session] #${generation} the microphone ended - photos only`);
+            this.microphone = false;
+          },
+          { signal: listening.signal }
+        );
+      }
       this.phase = 'live';
     } catch (err) {
       if (generation !== this.#generation) return;
@@ -119,8 +158,11 @@ export class CameraSession {
   }
 
   #releaseCurrent(): void {
+    this.#trackListeners?.abort();
+    this.#trackListeners = null;
     releaseCamera(this.stream);
     this.stream = null;
+    this.microphone = false;
     this.torchOn = false;
     this.torchAvailable = false;
   }

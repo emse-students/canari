@@ -12,20 +12,22 @@ import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion'
  * that sheet. So the second menu is not a bug of ours to tune away: it is what a file input IS on iOS,
  * and the only way to one menu is to not open a file input for the entries the sheet duplicates.
  *
+ * THE CAMERA IS CANARI'S OWN (user, 2026-10-11, D-camera: *"je ne veux pas d'acces a la camera
+ * native, pas besoin de photos de qualite (et ca soulagera le stockage)"*). No entry opens a system
+ * camera any more: no `<input capture>`, no capture intent. The ONE `camera` entry opens the in-app
+ * CanaReel camera as an overlay (`CameraOverlay`); the gallery picker stays. In a chat it takes PHOTOS
+ * ONLY until the reel message exists (docs/wiki/frontend/modules/reels-in-chat.md).
+ *
  * What each entry opens, per runtime:
  *
  * | runtime | library | camera | files |
  * | --- | --- | --- | --- |
- * | iOS app | native PHPicker (`tauri-plugin-dialog`) | input + `capture` (WebKit opens the camera directly) | native document picker |
- * | Android app, phone browser on Android | input `image/*,video/*` (the system photo picker) | two inputs + `capture`: photo, video | input, every type |
- * | phone browser on iOS | NO Canari menu: one input, and WebKit's sheet IS the menu | - | - |
+ * | iOS app | native PHPicker (`tauri-plugin-dialog`) | the in-app camera | native document picker |
+ * | Android app, phone browser on Android | input `image/*,video/*` (the system photo picker) | the in-app camera | input, every type |
+ * | phone browser on iOS | NO Canari menu: one input, and WebKit's sheet IS the menu (it offers the system camera, which a web page cannot remove) | - | - |
  * | desktop | NO menu: the paperclip opens the file dialog | - | - |
- *
- * Android needs two camera entries because its capture intents are one or the other: with both
- * types accepted, wry's `RustWebChromeClient.onShowFileChooser` launches the VIDEO recorder only.
- * iOS's camera switches between photo and video itself, so one entry.
  */
-export type AttachSource = 'library' | 'camera' | 'camera-photo' | 'camera-video' | 'files';
+export type AttachSource = 'library' | 'camera' | 'files';
 
 /** Where the composer runs, as far as picking a file is concerned. */
 export type AttachRuntime = 'ios-app' | 'android-app' | 'ios-web' | 'android-web' | 'desktop';
@@ -33,29 +35,19 @@ export type AttachRuntime = 'ios-app' | 'android-app' | 'ios-web' | 'android-web
 /** Every type the composer can send - the "all files" entry, and the desktop dialog. */
 export const ALL_FILES_ACCEPT = 'image/*,video/*,audio/*,application/pdf,.doc,.docx,.zip';
 
-/** What an `<input>` opened for `source` accepts. */
-export function acceptFor(source: AttachSource): string {
+/** What an `<input>` opened for `source` accepts. The camera opens no input: it is the in-app overlay. */
+export function acceptFor(source: Exclude<AttachSource, 'camera'>): string {
   switch (source) {
     case 'library':
-    case 'camera':
       return 'image/*,video/*';
-    case 'camera-photo':
-      return 'image/*';
-    case 'camera-video':
-      return 'video/*';
     case 'files':
       return ALL_FILES_ACCEPT;
   }
 }
 
-/** Whether an `<input>` for `source` carries `capture` - the camera, never a chooser. */
-export function capturesFor(source: AttachSource): boolean {
-  return source === 'camera' || source === 'camera-photo' || source === 'camera-video';
-}
-
-/** Whether `source` may pick several files at once (a camera takes one). */
-export function multipleFor(source: AttachSource): boolean {
-  return !capturesFor(source);
+/** Whether `source` opens Canari's own camera overlay rather than a picker. */
+export function opensInAppCamera(source: AttachSource): boolean {
+  return source === 'camera';
 }
 
 /**
@@ -94,10 +86,9 @@ export function currentAttachRuntime(narrow: boolean): AttachRuntime {
 export function attachSourcesFor(runtime: AttachRuntime): AttachSource[] {
   switch (runtime) {
     case 'ios-app':
-      return ['library', 'camera', 'files'];
     case 'android-app':
     case 'android-web':
-      return ['library', 'camera-photo', 'camera-video', 'files'];
+      return ['library', 'camera', 'files'];
     case 'ios-web':
     case 'desktop':
       return [];

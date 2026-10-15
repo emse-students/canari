@@ -7,6 +7,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   CameraAccessError,
   classifyCameraError,
+  openPhotoCamera,
+  postCameraOpener,
   openReelCamera,
   releaseCamera,
   torchSupported,
@@ -41,6 +43,83 @@ describe('classifyCameraError', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(classifyCameraError(new Error('odd'))).toBe('unavailable');
     expect(warn).toHaveBeenCalled();
+  });
+});
+
+describe('openPhotoCamera (a chat photo never asks for the microphone)', () => {
+  it('requests the lens with audio: false', async () => {
+    vi.stubGlobal('screen', { width: 393, height: 851 });
+    const getUserMedia = vi.fn().mockResolvedValue({ getVideoTracks: () => [{ label: 'front' }] });
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+
+    await openPhotoCamera('user');
+
+    expect(getUserMedia.mock.calls[0][0].audio).toBe(false);
+    expect(getUserMedia.mock.calls[0][0].video.facingMode).toEqual({ exact: 'user' });
+  });
+});
+
+describe('postCameraOpener (a refused microphone leaves the photos)', () => {
+  const lensTrack = { label: 'back', kind: 'video' };
+  const lens = { getVideoTracks: () => [lensTrack], getAudioTracks: () => [] };
+
+  it('asks the lens ALONE first, then the microphone on its own, and joins both', async () => {
+    vi.stubGlobal('screen', { width: 393, height: 851 });
+    const micTrack = { kind: 'audio' };
+    const getUserMedia = vi
+      .fn()
+      .mockResolvedValueOnce(lens)
+      .mockResolvedValueOnce({ getAudioTracks: () => [micTrack] });
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+    vi.stubGlobal(
+      'MediaStream',
+      class {
+        constructor(readonly tracks: unknown[]) {}
+      }
+    );
+
+    const stream = (await postCameraOpener()('environment')) as unknown as { tracks: unknown[] };
+
+    expect(getUserMedia.mock.calls[0][0].audio).toBe(false);
+    expect(getUserMedia.mock.calls[1][0].video).toBeUndefined();
+    expect(stream.tracks).toEqual([lensTrack, micTrack]);
+  });
+
+  it('a refused microphone is NOT a refused camera: the lens comes back, photos only', async () => {
+    vi.stubGlobal('screen', { width: 393, height: 851 });
+    const getUserMedia = vi
+      .fn()
+      .mockResolvedValueOnce(lens)
+      .mockRejectedValueOnce(new DOMException('no', 'NotAllowedError'));
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+
+    await expect(postCameraOpener()('environment')).resolves.toBe(lens);
+  });
+
+  it('a lens flip after a refused microphone does not ask for it again (same session)', async () => {
+    vi.stubGlobal('screen', { width: 393, height: 851 });
+    const getUserMedia = vi
+      .fn()
+      .mockResolvedValueOnce(lens)
+      .mockRejectedValueOnce(new DOMException('no', 'NotAllowedError'))
+      .mockResolvedValueOnce(lens);
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+    const open = postCameraOpener();
+
+    await open('environment');
+    await open('user');
+
+    expect(getUserMedia).toHaveBeenCalledTimes(3);
+    expect(getUserMedia.mock.calls[2][0].audio).toBe(false);
+  });
+
+  it('a refused lens is the camera refusal, and the microphone is never asked', async () => {
+    vi.stubGlobal('screen', { width: 393, height: 851 });
+    const getUserMedia = vi.fn().mockRejectedValueOnce(new DOMException('no', 'NotAllowedError'));
+    vi.stubGlobal('navigator', { mediaDevices: { getUserMedia } });
+
+    await expect(postCameraOpener()('environment')).rejects.toMatchObject({ fault: 'denied' });
+    expect(getUserMedia).toHaveBeenCalledTimes(1);
   });
 });
 

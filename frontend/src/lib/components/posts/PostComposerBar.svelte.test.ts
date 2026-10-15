@@ -4,7 +4,8 @@
  * The accept list is the whole fix for the photo button that opened Android's generic file
  * browser: one input accepting images, video, audio, PDF and Office together cannot be answered
  * with a photo picker. So the property pinned here is the attribute each input carries - the OS
- * reads nothing else - and that `capture` is on the two camera inputs and nowhere else.
+ * reads nothing else - and that NO input carries `capture` (D-camera, 2026-10-11: the camera chip opens
+ * Canari's own camera overlay, whose takes come back through `onFiles`).
  *
  * The reset is pinned because the callers APPEND: an input that kept its selection would hand the
  * previous pick over again on the next change, and the composer would show every photo twice.
@@ -13,9 +14,30 @@ import { it, expect, afterEach, vi } from 'vitest';
 import { createRawSnippet, flushSync, mount, unmount } from 'svelte';
 import PostComposerBar from './PostComposerBar.svelte';
 
+// The camera chip mounts the real capture screen: no server for its cap, no lens to open. Both are
+// answered here, or every run prints a refused connection and a missing `getUserMedia`.
+vi.mock('$lib/posts/api', () => ({
+  getReelLimits: () =>
+    Promise.resolve({ maxDurationMs: 90_000, retentionDays: 30, warningWindowDays: 7 }),
+}));
+vi.mock('$lib/reels/cameraAccess', async (orig) => ({
+  ...(await orig<typeof import('$lib/reels/cameraAccess')>()),
+  postCameraOpener: () => () => new Promise<MediaStream>(() => {}),
+}));
+
+const runtime = vi.hoisted(() => ({ iosApp: false }));
+vi.mock('$lib/utils/appVersion', async (orig) => ({
+  ...(await orig<typeof import('$lib/utils/appVersion')>()),
+  isIosTauriRuntime: () => runtime.iosApp,
+}));
+const pickNatively = vi.hoisted(() => vi.fn());
+vi.mock('$lib/utils/chat/nativeAttachPicker', () => ({ pickNatively }));
+
 const mounted: (() => void)[] = [];
 
 afterEach(() => {
+  runtime.iosApp = false;
+  pickNatively.mockReset();
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';
 });
@@ -47,7 +69,7 @@ function fileInputs(target: HTMLElement) {
   return Array.from(target.querySelectorAll<HTMLInputElement>('input[type="file"]'));
 }
 
-it('asks photos, the two cameras and documents from four separate choosers', () => {
+it('asks photos and documents from two separate choosers, and none captures', () => {
   const { target } = mountBar();
   const inputs = fileInputs(target).map((i) => ({
     accept: i.getAttribute('accept'),
@@ -56,8 +78,6 @@ it('asks photos, the two cameras and documents from four separate choosers', () 
 
   expect(inputs).toEqual([
     { accept: 'image/*,video/*', capture: null },
-    { accept: 'image/*', capture: 'environment' },
-    { accept: 'video/*', capture: 'environment' },
     {
       accept: 'audio/*,.pdf,.doc,.docx,.odt,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.txt,.rtf,.zip,.epub',
       capture: null,
@@ -114,4 +134,34 @@ it('keeps focus in the editor when a formatting button is pressed', () => {
   target.querySelector('[role="toolbar"] button')!.dispatchEvent(down);
 
   expect(down.defaultPrevented).toBe(true);
+});
+
+it('has ONE camera chip, a button opening the in-app overlay for a POST - never a capture input', () => {
+  const { target } = mountBar();
+  expect(target.querySelectorAll('input[capture]')).toHaveLength(0);
+  const chips = target.querySelectorAll<HTMLButtonElement>('button[data-post-camera]');
+  expect(chips).toHaveLength(1);
+  expect(chips[0].textContent?.trim()).toBe('Ouvrir la caméra');
+
+  chips[0].click();
+  flushSync();
+
+  expect(document.querySelector('[data-camera-overlay]')?.getAttribute('data-camera-overlay')).toBe(
+    'post'
+  );
+});
+
+it('in the iOS app "Photo/video" is the native library: no input WebKit would answer with its camera', async () => {
+  runtime.iosApp = true;
+  const photo = new File(['x'], 'IMG_1.jpg', { type: 'image/jpeg' });
+  pickNatively.mockResolvedValue([photo]);
+  const { target, props } = mountBar();
+
+  expect(target.querySelectorAll('input[accept*="image"], input[accept*="video"]')).toHaveLength(0);
+  target.querySelector<HTMLButtonElement>('button[data-post-library]')!.click();
+  await Promise.resolve();
+  await Promise.resolve();
+
+  expect(pickNatively).toHaveBeenCalledWith('library');
+  expect(props.onFiles).toHaveBeenCalledWith([photo]);
 });

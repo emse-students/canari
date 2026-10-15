@@ -57,6 +57,11 @@
      * progress can be ended - and kept - while its tracks still flow.
      */
     onBeforeRelease?: () => void;
+    /**
+     * Closes the camera when it was opened as an OVERLAY (a composer's camera, `CameraOverlay`): the
+     * owner unmounts it. Absent on the tab, where close navigates back to the origin tab.
+     */
+    onclose?: () => void;
   }
 
   let {
@@ -65,6 +70,7 @@
     controls,
     paused = false,
     onBeforeRelease,
+    onclose,
     capture = $bindable(),
   }: Props = $props();
 
@@ -135,8 +141,13 @@
    * sits below, which landed on the Dashboard (Mi 9T, 2026-10-06).
    */
   function close() {
-    console.debug(`[camera] close, back to ${origin}`);
     session.stop();
+    if (onclose) {
+      console.debug('[camera] close, overlay');
+      onclose();
+      return;
+    }
+    console.debug(`[camera] close, back to ${origin}`);
     void goto(resolve(origin as '/'), { replaceState: true });
   }
 
@@ -195,6 +206,10 @@
     denied: { title: m.reels_camera_denied_title, body: m.reels_camera_denied_body },
     unavailable: { title: m.reels_camera_unavailable_title, body: m.reels_camera_unavailable_body },
     busy: { title: m.reels_camera_busy_title, body: m.reels_camera_busy_body },
+    interrupted: {
+      title: m.reels_camera_interrupted_title,
+      body: m.reels_camera_interrupted_body,
+    },
   };
 
   /**

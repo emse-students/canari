@@ -17,6 +17,7 @@ function fakeStream(torch = false) {
   const stream = {
     getTracks: () => [video],
     getVideoTracks: () => [video],
+    getAudioTracks: () => [],
   } as unknown as MediaStream;
   return { stream, stop, video };
 }
@@ -123,5 +124,66 @@ describe('CameraSession', () => {
     video.applyConstraints.mockRejectedValueOnce(new Error('no'));
     await session.toggleTorch();
     expect(session.torchOn).toBe(true);
+  });
+
+  it('leaves `live` when the OS ends the lens under it, and an ended stale lens changes nothing', async () => {
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open);
+    const listeners: (() => void)[] = [];
+    const signals: AbortSignal[] = [];
+    const first = fakeStream();
+    Object.assign(first.video, {
+      addEventListener: (type: string, fn: () => void, opts: { signal: AbortSignal }) => {
+        if (type !== 'ended') return;
+        listeners.push(fn);
+        signals.push(opts.signal);
+      },
+    });
+    const started = session.start();
+    calls[0].resolve(first.stream);
+    await started;
+    expect(session.phase).toBe('live');
+
+    // Another app takes the camera (or the permission goes): the track ends. Which of the two is not
+    // known, so the fault says "interrupted", never "busy".
+    listeners[0]();
+    expect(session.phase).toBe('error');
+    expect(session.fault).toBe('interrupted');
+    // Its listener is removed with the release.
+    expect(signals[0].aborted).toBe(true);
+    expect(session.stream).toBeNull();
+    expect(first.stop).toHaveBeenCalled();
+
+    // A retry opens a new lens; the OLD track's end, arriving late, must not take it down.
+    const second = fakeStream();
+    const retried = session.start();
+    calls[1].resolve(second.stream);
+    await retried;
+    listeners[0]();
+    expect(session.phase).toBe('live');
+    expect(session.stream).toBe(second.stream);
+  });
+
+  it('a microphone that ends mid-session is no longer counted: the session films no more', async () => {
+    const { open, calls } = deferredOpener();
+    const session = new CameraSession(open);
+    const { stream, video } = fakeStream();
+    let micEnded: () => void = () => {};
+    const mic = {
+      kind: 'audio',
+      readyState: 'live',
+      stop: vi.fn(),
+      addEventListener: (type: string, fn: () => void) => type === 'ended' && (micEnded = fn),
+    };
+    Object.assign(stream, { getAudioTracks: () => [mic], getTracks: () => [video, mic] });
+    const started = session.start();
+    calls[0].resolve(stream);
+    await started;
+    expect(session.microphone).toBe(true);
+
+    micEnded();
+
+    expect(session.microphone).toBe(false);
+    expect(session.phase).toBe('live');
   });
 });

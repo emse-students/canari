@@ -55,14 +55,23 @@ export function mimeForPickedName(name: string): string {
 /**
  * Opens the native picker and resolves with what was picked - `[]` when the reader cancelled. A pick
  * whose bytes cannot be read is logged at error level and left out; the others still arrive.
+ *
+ * EVERY PICK IS READ WHOLE INTO MEMORY before any caller can check it: the picker hands back paths
+ * only - no size, no duration - so a ceiling (a reel's 90 s) is applied AFTER the read. `single`
+ * lets a caller that keeps one file (the CanaReels gallery) make the picker offer one, so nothing it
+ * would throw away is ever read.
  */
-export async function pickNatively(kind: 'library' | 'files'): Promise<File[]> {
-  Log.d('NativeAttachPicker', `open ${kind}`);
+export async function pickNatively(
+  kind: 'library' | 'files',
+  options: { single?: boolean } = {}
+): Promise<File[]> {
+  const multiple = !options.single;
+  Log.d('NativeAttachPicker', `open ${kind}${multiple ? '' : ' (one file)'}`);
   const { open } = await import('@tauri-apps/plugin-dialog');
   const picked =
     kind === 'library'
-      ? await open({ multiple: true, pickerMode: 'media' })
-      : await open({ multiple: true, fileAccessMode: 'copy' });
+      ? await open({ multiple, pickerMode: 'media' })
+      : await open({ multiple, fileAccessMode: 'copy' });
   const paths = picked === null ? [] : Array.isArray(picked) ? picked : [picked];
   Log.d('NativeAttachPicker', `${kind}: ${paths.length} picked`);
   const files: File[] = [];

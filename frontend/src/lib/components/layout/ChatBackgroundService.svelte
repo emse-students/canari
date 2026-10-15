@@ -682,6 +682,8 @@
     // After the teardown, and whether or not there was a live session to tear down: the community
     // list of the leaving account goes, and a listing started on its token stops (F1/F2).
     globalChannels.forgetAccount(appendLog);
+    // ...and so do its staged attachments and armed replies, keyed by ids the next account may share.
+    globalMessaging.forgetAccount(appendLog);
     _loginInProgress = false;
   }
 

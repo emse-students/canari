@@ -24,6 +24,11 @@ describe('ChatBackgroundService - the community listing trigger', () => {
     const handler = source.slice(source.indexOf('function handleSignedOut'));
     expect(handler.slice(0, 1500)).toContain('globalChannels.forgetAccount(appendLog)');
   });
+
+  it('forgets the staged attachments and armed replies on sign-out', () => {
+    const handler = source.slice(source.indexOf('function handleSignedOut'));
+    expect(handler.slice(0, 1500)).toContain('globalMessaging.forgetAccount(appendLog)');
+  });
 });
 
 const page = readFileSync(join(process.cwd(), 'src/lib/components/MainChatPage.svelte'), 'utf8');

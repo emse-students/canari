@@ -44,7 +44,7 @@ afterEach(() => {
  */
 function stream(torch: boolean): MediaStream {
   const track = { stop: vi.fn(), getCapabilities: () => (torch ? { torch: true } : {}) };
-  const s = { getTracks: () => [track], getVideoTracks: () => [track] };
+  const s = { getTracks: () => [track], getVideoTracks: () => [track], getAudioTracks: () => [] };
   Object.setPrototypeOf(s, MediaStream.prototype);
   return s as unknown as MediaStream;
 }

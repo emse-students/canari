@@ -9,13 +9,16 @@
     Images,
     Paperclip,
     ALargeSmall,
-    Video,
     X,
   } from '@lucide/svelte';
+  import CameraOverlay from '$lib/components/reels/CameraOverlay.svelte';
   import MarkdownComposerToolbar from '$lib/components/shared/MarkdownComposerToolbar.svelte';
   import DateTimeField from '$lib/components/ui/DateTimeField.svelte';
   import { toDatetimeLocalValue } from '$lib/utils/dates';
   import { Log } from '$lib/utils/Log';
+  import { currentAttachRuntime, opensNatively } from '$lib/utils/chat/attachSources';
+  import { pickNatively } from '$lib/utils/chat/nativeAttachPicker';
+  import { showToast } from '$lib/stores/toast.svelte';
   import { getLocale } from '$lib/paraglide/runtime';
   import { m } from '$lib/paraglide/messages';
 
@@ -31,13 +34,21 @@
    * away: it swaps the chip row for the formatting row instead of adding a third row, because in a
    * composer pinned above the keyboard every row is taken from the text.
    *
-   * WHY FOUR FILE INPUTS AND NOT ONE. A single input accepting images, video, audio, PDF, Office and
+   * WHY TWO FILE INPUTS AND NOT ONE. A single input accepting images, video, audio, PDF, Office and
    * zip together is what made Android open its generic file browser ("Recents", Audio, Documents)
    * instead of the photo picker: the accept list decides which chooser the OS can offer. So photos
-   * and videos have their own input, documents theirs, and the two capture inputs carry `capture` -
-   * which the Android app's WebView (wry's `RustWebChromeClient.onShowFileChooser`) turns into the
-   * system camera for `image/*` and the video recorder for `video/*`, as a phone browser does.
-   * Capture means nothing to a mouse, so those two chips are not drawn for a fine pointer.
+   * and videos have their own input and documents theirs.
+   *
+   * THERE IS NO CAPTURE INPUT (user, 2026-10-11, D-camera: *"je ne veux pas d'acces a la camera
+   * native"*). The ONE camera chip opens Canari's own camera as an overlay (`CameraOverlay`) and a photo
+   * OR a video taken there comes back as a file through `onFiles`, so it is attached - and retained -
+   * as any picked post media, never as a reel. A mouse has no camera chip: `pointer-fine:hidden`.
+   *
+   * IN THE iOS APP "Photo/video" OPENS THE NATIVE PHOTO LIBRARY, as the chat's "Phototheque" does
+   * (`opensNatively`): an input accepting images or videos is answered by WebKit's sheet, whose
+   * "Prendre une photo ou une video" is the SYSTEM camera - the one D-camera removed (PR #1859
+   * review, 2026-10-15). The documents input stays an input: its accept list holds no image or video,
+   * so WebKit opens the document picker directly.
    */
   interface Props {
     /** Files picked through any of the inputs, in the order picked. Always an ADDITION. */
@@ -69,6 +80,24 @@
   }: Props = $props();
 
   let formatting = $state(false);
+  /** The in-app camera is open over the composer. */
+  let cameraOpen = $state(false);
+  /** The photo library is the native picker (the iOS app), never a file input. */
+  const nativeLibrary = opensNatively(currentAttachRuntime(false), 'library');
+
+  /** The iOS app's photo library: PHPicker, its picks handed over like an input's. */
+  function pickLibraryNatively() {
+    Log.d('POST_COMPOSER', 'photo library: the native picker');
+    pickNatively('library')
+      .then((files) => {
+        Log.d('POST_COMPOSER', `${files.length} file(s) picked via the native library`);
+        if (files.length > 0) onFiles(files);
+      })
+      .catch((error: unknown) => {
+        console.error(`[POST_COMPOSER] the native library picker failed: ${String(error)}`);
+        showToast(m.chat_attach_picker_failed());
+      });
+  }
 
   /** Formatted for the chip, in the reader's locale; the input keeps its own value. */
   const scheduledLabel = $derived.by(() => {
@@ -114,6 +143,17 @@
     'audio/*,.pdf,.doc,.docx,.odt,.xls,.xlsx,.ods,.ppt,.pptx,.odp,.txt,.rtf,.zip,.epub';
 </script>
 
+{#if cameraOpen}
+  <CameraOverlay
+    destination="post"
+    oncapture={(file) => {
+      Log.d('POST_COMPOSER', `camera take handed over (${file.type}, ${file.size} bytes)`);
+      onFiles([file]);
+    }}
+    onclose={() => (cameraOpen = false)}
+  />
+{/if}
+
 <div class="flex flex-col gap-2">
   <div class="flex min-h-9 items-center">
     {#if formatting}
@@ -123,39 +163,41 @@
         use:scrollFades
         class="no-scrollbar -my-1 flex w-full items-center gap-2 overflow-x-auto px-0.5 py-1"
       >
-        <label class="{chipClass} {idleChip}">
-          <Images size={16} strokeWidth={2.25} class="text-emerald-600 dark:text-emerald-400" />
-          {m.post_composer_photo_video()}
-          <input
-            type="file"
-            accept="image/*,video/*"
-            multiple
-            class="sr-only"
-            onchange={(e) => takeFiles(e, 'gallery')}
-          />
-        </label>
-        <label class="{chipClass} {idleChip} pointer-fine:hidden">
+        {#if nativeLibrary}
+          <button
+            type="button"
+            class="{chipClass} {idleChip}"
+            data-post-library
+            onclick={pickLibraryNatively}
+          >
+            <Images size={16} strokeWidth={2.25} class="text-emerald-600 dark:text-emerald-400" />
+            {m.post_composer_photo_video()}
+          </button>
+        {:else}
+          <label class="{chipClass} {idleChip}">
+            <Images size={16} strokeWidth={2.25} class="text-emerald-600 dark:text-emerald-400" />
+            {m.post_composer_photo_video()}
+            <input
+              type="file"
+              accept="image/*,video/*"
+              multiple
+              class="sr-only"
+              onchange={(e) => takeFiles(e, 'gallery')}
+            />
+          </label>
+        {/if}
+        <button
+          type="button"
+          class="{chipClass} {idleChip} pointer-fine:hidden"
+          data-post-camera
+          onclick={() => {
+            Log.d('POST_COMPOSER', 'in-app camera opened');
+            cameraOpen = true;
+          }}
+        >
           <Camera size={16} strokeWidth={2.25} class="text-sky-600 dark:text-sky-400" />
           {m.post_composer_camera()}
-          <input
-            type="file"
-            accept="image/*"
-            capture="environment"
-            class="sr-only"
-            onchange={(e) => takeFiles(e, 'camera')}
-          />
-        </label>
-        <label class="{chipClass} {idleChip} pointer-fine:hidden">
-          <Video size={16} strokeWidth={2.25} class="text-rose-600 dark:text-rose-400" />
-          {m.post_composer_record_video()}
-          <input
-            type="file"
-            accept="video/*"
-            capture="environment"
-            class="sr-only"
-            onchange={(e) => takeFiles(e, 'video capture')}
-          />
-        </label>
+        </button>
         <button
           type="button"
           class="{chipClass} {pollActive ? activeChip : idleChip}"

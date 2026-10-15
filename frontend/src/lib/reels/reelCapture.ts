@@ -172,3 +172,64 @@ export function formatTakeTime(ms: number): string {
   const total = Math.max(0, Math.floor(ms / 1000));
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')}`;
 }
+
+/**
+ * WHERE A TAKE IS GOING (user, 2026-10-11, D-camera: the in-app CanaReel camera is the ONLY capture
+ * path - no native camera app, no `<input capture>`).
+ *
+ * - `feed`: the CanaReels tab; the take goes on to the publish step ({@link ReelCapture}).
+ * - `post`: the new-post composer; a photo OR a video comes back as a FILE for the composer's ordinary
+ *   attachment path, so it keeps the post retention class, never the `reel` one.
+ * - `chat`: a conversation composer; PHOTOS ONLY for now. A video filmed in a chat is the reel
+ *   message (RC-3..RC-5, not built - docs/wiki/frontend/modules/reels-in-chat.md), so until then the
+ *   shutter takes no video there and the photo goes out as an ordinary image message.
+ */
+export type CaptureDestination = 'feed' | 'post' | 'chat';
+
+/** What a destination changes about the capture screen - one table, so no call site re-decides it. */
+export interface DestinationRules {
+  /** A hold on the shutter does NOT start a video. */
+  photoOnly: boolean;
+  /** The take is handed back as a file instead of opening the reel publish step. */
+  handsBackFile: boolean;
+  /** The gallery shortcut (reel clips only) is drawn. */
+  gallery: boolean;
+  /**
+   * How the microphone is asked. `with-lens`: in the lens's own request (the reel always has sound,
+   * so a refused microphone is a refused camera). `separate`: after the lens, on its own, so a refused
+   * microphone leaves the photos (`postCameraOpener`). `never`: a photo-only destination.
+   */
+  microphone: 'with-lens' | 'separate' | 'never';
+  /** The review offers to remove the sound (only the reel publish applies it). */
+  soundRemoval: boolean;
+}
+
+/** {@link DestinationRules} for `destination`. */
+export function destinationRules(destination: CaptureDestination): DestinationRules {
+  return {
+    photoOnly: destination === 'chat',
+    microphone:
+      destination === 'feed' ? 'with-lens' : destination === 'post' ? 'separate' : 'never',
+    handsBackFile: destination !== 'feed',
+    gallery: destination === 'feed',
+    soundRemoval: destination === 'feed',
+  };
+}
+
+/**
+ * The take as a `File` for a composer's attachment path: the extension follows the blob's own type
+ * (a Chromium WebView records WebM, iOS an MP4), because the composers classify by name AND type.
+ */
+export function captureFileFrom(blob: Blob, now: number = Date.now()): File {
+  const type = blob.type.split(';')[0] || 'application/octet-stream';
+  const ext =
+    type === 'image/jpeg'
+      ? 'jpg'
+      : type === 'video/webm'
+        ? 'webm'
+        : type === 'video/mp4'
+          ? 'mp4'
+          : 'bin';
+  const kind = type.startsWith('image/') ? 'photo' : 'video';
+  return new File([blob], `canari-${kind}-${now}.${ext}`, { type: blob.type || type });
+}

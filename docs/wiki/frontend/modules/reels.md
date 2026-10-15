@@ -169,7 +169,7 @@ once the swipe back reached `/posts`. On both phones the shutter stayed disabled
 
 ## The capture screen (C4)
 
-The app's own, never the system camera (`components/reels/ReelCapture.svelte` over `CameraScreen`):
+The app's own, never the system camera (`components/reels/ReelCapture.svelte` over `CameraScreen`). **It is also the ONLY capture path of the composers (user, 2026-10-11, D-camera)**: `ReelCapture` takes a `destination` - `feed` (this tab: the review leads to the publish step), `post` (photo or video, handed back as a FILE to the post composer, post retention) or `chat` (PHOTOS ONLY, handed back to the chat as an ordinary image message) - and a composer mounts it inside `CameraOverlay`, a full-screen layer over the page, never the `/camera` tab ([reels-in-chat](reels-in-chat.md#1-entering-the-camera-from-a-conversation)). The tab:
 a full-screen preview, the close and lens controls at the top (switch, and the torch where the lens
 has one), the gallery bottom-left, and the shutter in the middle.
 

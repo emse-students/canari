@@ -177,7 +177,45 @@ export function useMessaging() {
    * that is open, so opening another one never carries the quote along.
    */
   const replyByConversation = new SvelteMap<string, ChatMessage>();
-  let pendingMediaFiles = $state<import('$lib/media').PendingMediaFile[]>([]);
+  /**
+   * The files STAGED in each conversation's composer, keyed by conversation id - the same rule as
+   * {@link replyByConversation}. It was ONE queue for every conversation, so a photo staged in A
+   * and not sent sat in B's composer after a switch, and B's next Send posted it there (PR #1859
+   * review, 2026-10-15: the in-app camera made staging a photo and walking away an ordinary act).
+   */
+  const pendingByConversation = new SvelteMap<string, import('$lib/media').PendingMediaFile[]>();
+
+  /** The staged files of `conversationKey`, oldest first ([] when none or no conversation). */
+  function pendingMediaFilesFor(
+    conversationKey: string | null | undefined
+  ): import('$lib/media').PendingMediaFile[] {
+    return conversationKey ? (pendingByConversation.get(conversationKey) ?? []) : [];
+  }
+
+  /**
+   * THE ACCOUNT SIGNED OUT: its staged files and armed replies leave the memory. This composable is
+   * a singleton that outlives a sign-out without a page reload, and both maps are keyed by
+   * conversation ids the NEXT account may open too - a DM between the two accounts, a salon of a
+   * shared community - whose composer would then show, and send, what the previous one staged.
+   */
+  function forgetAccount(log: (msg: string) => void): void {
+    const staged = pendingByConversation.size;
+    const replies = replyByConversation.size;
+    pendingByConversation.clear();
+    replyByConversation.clear();
+    log(
+      `[MEDIA] signed out: staging of ${staged} and replies of ${replies} conversation(s) forgotten`
+    );
+  }
+
+  /** Replaces the staged files of `conversationKey`; an empty list removes its entry. */
+  function setPendingMediaFiles(
+    conversationKey: string,
+    files: import('$lib/media').PendingMediaFile[]
+  ) {
+    if (files.length === 0) pendingByConversation.delete(conversationKey);
+    else pendingByConversation.set(conversationKey, files);
+  }
   /** A picked video being re-encoded on the device before it joins the queue (decision C3). */
   const videoPreparation = new VideoPreparationState();
   /** The video preparations queued behind each other - see `prepareChatVideo`. */
@@ -1236,7 +1274,7 @@ export function useMessaging() {
   ): Promise<boolean | undefined> {
     const text = messageText.trim();
     const sendsQueue = !opts?.files;
-    const filesToSend = opts?.files ?? [...pendingMediaFiles];
+    const filesToSend = opts?.files ?? [...pendingMediaFilesFor(ctx.selectedContact)];
     const fileEntries = filesToSend;
     const mediaCaption = text || undefined;
     let sentMediaMessageCount = 0;
@@ -1311,7 +1349,14 @@ export function useMessaging() {
 
     if (fileEntries.length > 0) {
       // Only the queue's own send empties it; a voice note never entered it.
-      if (sendsQueue) pendingMediaFiles = [];
+      // ONLY WHAT THIS SEND TOOK leaves the staging: the membership barrier above awaits, and a file
+      // staged in the same conversation meanwhile belongs to the NEXT send, not to this one's clear.
+      if (sendsQueue) {
+        setPendingMediaFiles(
+          sentFrom,
+          pendingMediaFilesFor(sentFrom).filter((entry) => !fileEntries.includes(entry))
+        );
+      }
       try {
         for (let index = 0; index < fileEntries.length; index++) {
           const entry = fileEntries[index];
@@ -1470,9 +1515,9 @@ export function useMessaging() {
                 ? m.chat_media_send_error_storage_full()
                 : m.chat_media_send_error_generic()));
         const unsent = fileEntries.length - sentMediaMessageCount;
-        // THE STAGING IS ONE QUEUE FOR EVERY CONVERSATION, so where an unsent file goes back is a
-        // question of WHICH conversation is on screen - a held salon upload may be refused long after
-        // the click.
+        // The staging is per conversation, but the refusal is said on the banner of the conversation
+        // ON SCREEN, and a held salon upload may be refused long after the click: an unsent file goes
+        // back only where the member still is, so the banner and the file are seen together.
         if (error instanceof SalonNotLoadableError && error.reason === 'session-ended') {
           // THE ACCOUNT THAT MADE THIS SEND HAS LEFT. Nothing of it may reach the next account: this
           // composable outlives a sign-out, so a re-staged file would sit in the NEXT account's
@@ -1484,16 +1529,19 @@ export function useMessaging() {
           );
         } else if (ctx.selectedContact === sentFrom) {
           if (unsent > 0) {
-            pendingMediaFiles = [...fileEntries.slice(sentMediaMessageCount), ...pendingMediaFiles];
+            setPendingMediaFiles(sentFrom, [
+              ...fileEntries.slice(sentMediaMessageCount),
+              ...pendingMediaFilesFor(sentFrom),
+            ]);
           }
           ctx.setSendError(mediaRefusal);
           ctx.log(
             `[MEDIA] send failed (status=${status ?? 'none'}), ${unsent} file(s) re-staged: ${String(error)}`
           );
         } else {
-          // THE MEMBER MOVED ON. Re-staged here, the file would sit in ANOTHER conversation's
-          // composer and its next Send would post it there. Dropped, and said so on the banner of
-          // the conversation now on screen, with the cause.
+          // THE MEMBER MOVED ON. The refusal can only be said on the banner of the conversation now
+          // on screen, so the file is dropped and that banner names the cause, rather than waiting
+          // unexplained in a composer the member is not looking at.
           ctx.setSendError(m.chat_media_dropped_other_conversation({ cause: mediaRefusal }));
           ctx.log(
             `[MEDIA] send failed (status=${status ?? 'none'}), ${unsent} file(s) DROPPED, not re-staged: the conversation changed since the send: ${String(error)}`
@@ -1684,8 +1732,17 @@ export function useMessaging() {
 
   /** Stages picked files in the pending queue, to be sent with the next message. */
   async function handleFilesSelected(files: File[], ctx: MessagingContext) {
+    // The conversation the files were picked IN, read before the preparation (a video re-encode)
+    // gives the member time to open another one.
+    const stagedIn = ctx.selectedContact;
+    if (!stagedIn) {
+      ctx.log(`[MEDIA] ${files.length} file(s) not staged: no conversation is open`);
+      return;
+    }
     const readyFiles = await prepareMediaFiles(files, ctx);
-    if (readyFiles.length > 0) pendingMediaFiles = [...pendingMediaFiles, ...readyFiles];
+    if (readyFiles.length === 0) return;
+    ctx.log(`[MEDIA] ${readyFiles.length} file(s) staged in ${stagedIn}`);
+    setPendingMediaFiles(stagedIn, [...pendingMediaFilesFor(stagedIn), ...readyFiles]);
   }
 
   /**
@@ -1713,8 +1770,12 @@ export function useMessaging() {
   }
 
   /** Removes a staged (not yet sent) file from the pending media queue by its index. */
-  function removePendingMediaFile(index: number) {
-    pendingMediaFiles = pendingMediaFiles.filter((_, i) => i !== index);
+  function removePendingMediaFile(conversationKey: string | null, index: number) {
+    if (!conversationKey) return;
+    setPendingMediaFiles(
+      conversationKey,
+      pendingMediaFilesFor(conversationKey).filter((_, i) => i !== index)
+    );
   }
 
   // ── Reactions / edit / delete ─────────────────────────────────────────────
@@ -2072,10 +2133,10 @@ export function useMessaging() {
 
     /** The message the user is replying to IN a given conversation (null when none is pending there). */
     replyFor,
-    /** Files staged for sending in the next handleSendChat call. */
-    get pendingMediaFiles() {
-      return pendingMediaFiles;
-    },
+    /** The files staged IN a given conversation, sent by its next handleSendChat. */
+    pendingMediaFilesFor,
+    /** Forgets every staged file and armed reply of the account that signed out. */
+    forgetAccount,
     videoPreparation,
     /** True while a media file is being encrypted and uploaded. */
     get isUploadingMedia() {
