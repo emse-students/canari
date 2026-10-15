@@ -58,7 +58,6 @@
           if (!(px > 0)) return;
           var scale = Math.min(2, Math.max(1, Math.round((px / 17) * 100) / 100));
           document.documentElement.style.setProperty('--type-scale', String(scale));
-          document.documentElement.style.setProperty('--text-zoom', String(scale));
         } catch (_) {}
       })();
     </script>

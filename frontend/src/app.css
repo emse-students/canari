@@ -1388,9 +1388,11 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
    scales font sizes and leaves lengths alone, so at 200 % avatar initials came out twice the size
    of their circle and were cut by it (Mi 9T, 2026-09-30). `--text-zoom` is that factor, measured by
    `publishTextZoom` (`lib/utils/textZoom.ts`); `zoom` undoes it on the glyph alone. Reading text is
-   never exempt - only a mark whose box cannot grow. */
+   never exempt - only a mark whose box cannot grow. `--text-zoom` means "the engine inflated every font"
+   (Android, 1 on iOS); `--type-scale` is the app's own Dynamic Type factor (iOS, 1 elsewhere); a font
+   that is neither inflated nor token-sized (the reel overlay, `cqmin`) divides by `--text-zoom` only. */
 .text-zoom-exempt {
-  zoom: calc(1 / var(--text-zoom, 1));
+  zoom: calc(1 / (var(--text-zoom, 1) * var(--type-scale, 1)));
 }
 
 /* THE OTHER ANSWER: A BOX THAT GROWS WITH ITS TEXT. When the glyph in a fixed box is READING text
@@ -1399,12 +1401,12 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
    spacing scale as `size-*` and `w-*`, so no length is written at a call site. At 200 % today's day
    number (40px) overran its 36px circle in the agenda (Mi 9T, 2026-10-13). */
 @utility text-zoom-size-* {
-  width: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1));
-  height: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1));
+  width: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1) * var(--type-scale, 1));
+  height: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1) * var(--type-scale, 1));
 }
 
 @utility text-zoom-w-* {
-  width: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1));
+  width: calc(var(--spacing) * --value(integer) * var(--text-zoom, 1) * var(--type-scale, 1));
 }
 
 /* THE STATUS STRIP ABOVE THE PHONE HEADER IS PAINTED WITH THE HEADER'S SURFACE, so the top reads as

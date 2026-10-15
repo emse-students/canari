@@ -24,3 +24,13 @@ describe('type scale tokens', () => {
     expect(css).toMatch(/--composer-field-height: calc\(var\(--text-sm--line-height\) \+/);
   });
 });
+
+describe('boxes and glyphs that follow the text size', () => {
+  it('divide or multiply by BOTH --text-zoom (Android) and --type-scale (iOS)', () => {
+    expect(css).toMatch(/zoom: calc\(1 \/ \(var\(--text-zoom, 1\) \* var\(--type-scale, 1\)\)\)/);
+    const boxes = css.match(
+      /--value\(integer\) \* var\(--text-zoom, 1\) \* var\(--type-scale, 1\)/g
+    );
+    expect(boxes).toHaveLength(3);
+  });
+});

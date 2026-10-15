@@ -1149,8 +1149,7 @@ WKWebView ignores the system text size for ordinary CSS (read 2026-10-13: the la
 drew exactly as the default). A font declared `-apple-system-body` does resolve to the user's current
 body size, so `publishIosTypeScale` (`lib/utils/textZoom.ts`) reads a hidden probe styled that way,
 divides by 17px (the default "Large" body), clamps to `[1, 2]` and publishes `--type-scale`, which
-the eight `--text-*` tokens of `app.css` AND their `--text-*--line-height` multiply by (a size growing inside a fixed line box overlaps its lines and clips the composer; `typeScaleRatio.test.ts` keeps the two in step). No Swift. Spacing and boxes stay fixed, as on Android's WebView, and `--text-zoom` carries the same
-factor so `.text-zoom-exempt` keeps avatar initials in their circle
+the eight `--text-*` tokens of `app.css` AND their `--text-*--line-height` multiply by (a size growing inside a fixed line box overlaps its lines and clips the composer; `typeScaleRatio.test.ts` keeps the two in step). No Swift. Spacing and boxes stay fixed, as on Android's WebView, and `.text-zoom-exempt` and `text-zoom-size-N` divide/multiply by `--type-scale` as well as `--text-zoom`, so avatar initials stay in their circle
 ([phone-comparison](../phone-comparison.md)).
 
 - **Bound: 2.** Android's 200 % is the largest scale rows, composer, nav, bubbles and the agenda were
@@ -1161,6 +1160,8 @@ factor so `.text-zoom-exempt` keeps avatar initials in their circle
   authority and is a no-op off iOS - an ungated probe would read Chromium's 16px and overwrite
   Android's measured `--text-zoom`. **Unproven until the iPhone reading: that `-apple-system-body`
   resolves live to Dynamic Type in WKWebView.** Nothing here can settle it.
+- **`--text-zoom` stays 1 on iOS** (it means "the engine inflated every font"; only Android does). The reel overlay's `cqmin` size divides by `--text-zoom` alone, so it keeps matching the export canvas at any Dynamic Type size.
+- **A size changed from Control Center while the app is in front fires no `visibilitychange`**, so it applies at the next return to the foreground; no timer polls for it.
 - Read at start-up and on each return to the foreground (`visibilitychange`), since the setting is
   changed outside the app without a reload.
 - **Owed - one reading on the iPhone 12 bench** (nothing here can render WKWebView): Settings >

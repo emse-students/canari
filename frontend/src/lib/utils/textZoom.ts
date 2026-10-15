@@ -63,7 +63,9 @@ export function iosTypeScale(bodyPx: number): number {
  * font sizes grow, lengths stay. WKWebView ignores the setting for ordinary CSS, but a font declared
  * `-apple-system-body` resolves to the user's current body size, so a hidden probe reads it back -
  * no native bridge. Publishes `--type-scale` (multiplied into every `--text-*` token in `app.css`)
- * and `--text-zoom` (so `.text-zoom-exempt` undoes it on avatar glyphs, as on Android).
+ * only: `--text-zoom` keeps meaning "the engine inflated every font" (1 on iOS), so a font the
+ * engine does not inflate and the tokens do not size (the reel overlay) is not shrunk. `app.css`
+ * divides avatar glyphs by BOTH factors.
  *
  * Call it again when the app comes back to the foreground: the setting changes outside the app.
  *
@@ -78,7 +80,6 @@ export function publishIosTypeScale(doc: Document = document): number {
   const scale = iosTypeScale(bodyPx);
   const root = doc.documentElement;
   root.style.setProperty('--type-scale', String(scale));
-  root.style.setProperty('--text-zoom', String(scale));
   Log.d(`textZoom: iOS body ${bodyPx}px -> --type-scale ${scale}`);
   return scale;
 }
@@ -86,7 +87,7 @@ export function publishIosTypeScale(doc: Document = document): number {
 /**
  * Wires Dynamic Type for the platform that has it, and does NOTHING anywhere else. The gate is
  * load-bearing: Chromium rejects the `-apple-system-body` shorthand, so an ungated probe reads the
- * default 16px and would overwrite Android's measured `--text-zoom` with 1.
+ * default 16px and would publish a 1 where Android needs its own factor untouched.
  *
  * Publishes now and again each time the app returns to the foreground (the setting is changed
  * outside the app and does not reload the page).
