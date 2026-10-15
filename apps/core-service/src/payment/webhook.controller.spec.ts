@@ -300,3 +300,27 @@ describe('a multipart callback through the REAL signature check', () => {
     expect(res.status).toBe(400);
   });
 });
+
+describe('a callback that fails verification says which fields it carried', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('logs the received and the verified field names, never a value', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const controller = makeController(false);
+
+    await expect(
+      controller.handleLydiaRequestCallback(
+        'cancel',
+        { request_id: '9', sig: 'abc', order_ref: 'form:secret-ref', amount: '5.00', state: '3' },
+        'multipart/form-data; boundary=x'
+      )
+    ).rejects.toThrow(/Invalid signature/);
+
+    const line = String(errorSpy.mock.calls[0]?.[0]);
+    expect(line).toContain('outcome=cancel');
+    expect(line).toContain('5 field(s)=[request_id,sig,order_ref,amount,state]');
+    expect(line).toContain('verified-over=[request_id,amount,currency,order_ref,vendor_token]');
+    expect(line).not.toContain('secret-ref');
+    expect(line).not.toContain('abc');
+  });
+});
