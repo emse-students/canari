@@ -33,7 +33,15 @@ import {
 import { RETENTION_WINDOW_MS } from '../retention.constants';
 import { resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
-import { ensureGroupMember } from '../utils/group-membership';
+import {
+  ensureGroupMember,
+  endGroupMembership,
+  exclusionWindows,
+  openMissingIntervals,
+  partingKey,
+  type ExclusionWindow,
+} from '../utils/group-membership';
+import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 
 /**
  * The most groups `POST /api/mls/group-rosters` answers in one request.
@@ -678,17 +686,56 @@ export class MembersController {
       false
     );
 
-    // Remove all per-device memberships for this user in the group to keep
-    // server-side metadata aligned with the MLS remove commit semantics.
+    // A REMOVAL BY SOMEBODY ELSE IS RECORDED HERE BEFORE ITS MLS COMMIT, and the commit is fanned out
+    // from the device rows deleted just below - so the removed person's devices are named PARTING
+    // first (`partingKey`): the commit declaring their removal is queued to them too. A self-leave
+    // makes no commit, and gets no entry.
+    //
+    // WRITTEN BEFORE THE DELETE, because the rows it is derived from are gone after it: written
+    // after, a crash in between lost it silently, and a retry found no rows to derive it from
+    // (fourth review of #1878). Redis cannot join the Postgres transaction, so the order is what
+    // makes it crash-safe. An entry for a removal that then fails is HARMLESS, and that is what
+    // allows this order: it names devices that are still members, which the fan-out reaches as
+    // members and never twice, and only a commit declaring this person's removal consumes it.
+    const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    if (caller && caller !== safeUserId) {
+      const partingDevices = await this.deviceGroupRepo.find({
+        where: { groupId: safeGroupId, userId: safeUserId },
+        select: { userId: true, deviceId: true },
+      });
+      if (partingDevices.length > 0) {
+        const fields = partingDevices.flatMap((d) => [`${d.userId}:${d.deviceId}`, caller]);
+        await this.redis
+          .hset(partingKey(safeGroupId), ...fields)
+          .catch((e: unknown) =>
+            this.logger.warn(
+              `[REMOVE_MEMBER] group=${safeGroupId.slice(0, 8)} user=${safeUserId.slice(0, 8)} parting devices NOT recorded - the removal commit will not reach them: ${String(e)}`
+            )
+          );
+      }
+    }
+
+    // Remove all per-device memberships for this user in the group: from here on no application
+    // frame is queued for them, and no frame they send is accepted.
     const deviceMembershipDelete = await this.deviceGroupRepo.delete({
       groupId: safeGroupId,
       userId: safeUserId,
     });
 
-    await this.groupMemberRepo.delete({
-      groupId: safeGroupId,
-      userId: safeUserId,
-    });
+    // The live row goes and the membership interval closes in ONE transaction: the interval is what
+    // makes this removal hold against a later re-add (user, 2026-10-14), so a removal that deleted
+    // the row and not the interval would be a removal a re-add silently undoes.
+    const ended = await this.dataSource.transaction((manager) =>
+      endGroupMembership(manager, safeGroupId, safeUserId)
+    );
+    if (ended.deleted > 0 && ended.closed === 0) {
+      // A member with no open interval: enrolled by a writer running pre-030 code during the deploy
+      // that applied the migration. Their exclusion window starts nowhere, so a re-add will NOT
+      // withhold what is sent from now on - which is exactly the loss this line exists to show.
+      this.logger.error(
+        `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} had NO open membership interval - this removal is not recorded as an exclusion`
+      );
+    }
 
     // Remove all devices of this user from the Redis set
     const members = await this.redis.smembers(`group:members:${safeGroupId}`);
@@ -698,8 +745,115 @@ export class MembersController {
     }
 
     this.logger.log(
-      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${deviceMembershipDelete.affected ?? 0}`
+      `[REMOVE_MEMBER] group=${safeGroupId} user=${safeUserId} redisRemoved=${toRemove.length} deviceMembershipsDeleted=${deviceMembershipDelete.affected ?? 0} intervalClosed=${ended.closed}`
     );
     return { status: 'removed' };
+  }
+
+  /**
+   * The windows during which each CURRENT member of `groupId` was out of it - what a member
+   * answering a history request must withhold (user, 2026-10-14: a Remove holds against a later
+   * re-add).
+   *
+   * **EVERY CURRENT MEMBER, NOT ONLY THE ASKER.** A `history_bundle` is an MLS group broadcast: every
+   * member decrypts it, whoever it is addressed to. Withholding a window from the asker alone would
+   * hand it to a re-admitted member reading somebody else's answer, so the answering client
+   * withholds the union of everybody's windows. Members with no window are omitted.
+   *
+   * **CURRENT MEMBERS ONLY MAY ASK**, and no branch lets anybody else through: no global-admin
+   * bypass, and no unidentified caller (the legacy no-op of `assertCallerIsGroupMember` is not
+   * copied). The answer names who was removed and when, which is group metadata only a member may
+   * hold - and only a member answers history anyway.
+   *
+   * Times are server milliseconds from this service's clock, the clock that stamps
+   * `queued_message.createdAt` - the `serverTimestamp` the client compares them with.
+   *
+   * **A CURRENT MEMBER WITH NO OPEN INTERVAL IS REPAIRED HERE, ONCE.** It can only be somebody
+   * enrolled by a container still running pre-030 code while the migration was applied. The repair
+   * opens the interval from the member row's own `joinedAt` - exactly what the migration's backfill
+   * does - so the ERROR line that reports it fires on the call that heals it and never again, rather
+   * than on every read for ever. It writes nothing for anybody already consistent.
+   *
+   * No line per answer: the decision this route feeds is made, and logged, by the client
+   * (`[HISTORY_ENTITLEMENT]`). Only a refusal and a repair are events here.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Get('mls/groups/:groupId/exclusions')
+  async getGroupExclusions(
+    @Param('groupId') groupId: string,
+    @Headers('x-user-id') headerUserId?: string
+  ): Promise<{ exclusions: Record<string, ExclusionWindow[]> }> {
+    const safeGroupId = sanitizeQueryValue(groupId, 'groupId');
+    const caller = sanitizeOptionalQueryValue(headerUserId, 'x-user-id');
+    const members = await this.groupMemberRepo.find({
+      where: { groupId: safeGroupId },
+      select: { userId: true, joinedAt: true },
+    });
+    const memberIds = new Set(members.map((m) => m.userId));
+    if (!caller || !memberIds.has(caller)) {
+      this.logger.warn(
+        `[GROUP_EXCLUSIONS] REFUSED group=${safeGroupId} caller=${caller ? caller.slice(0, 8) : 'unidentified'} - not a current member`
+      );
+      throw new ForbiddenException('Caller is not a member of this group');
+    }
+
+    // WHOSE WINDOWS COUNT: every roster member, AND every person holding a device row in the group,
+    // WHATEVER ITS STATUS. The status enum is `pending | active` and both mean a device the tree
+    // admitted: a re-add records the person's devices `pending` in the transaction that accepts the
+    // commit (`ValidateCommitBody.admits`) - BEFORE their roster row exists, the enrolment following
+    // the Welcome. In between they can open every frame sealed at the new epoch, so a roster-only
+    // answer would hand them their own window. Their intervals then end closed, so the window reads as
+    // open-ended until the enrolment closes it - wider, never narrower. Authorisation above stays
+    // roster-only.
+    //
+    // DISTINCT users, not device rows: the answerer re-reads this route once per bundle CHUNK, and
+    // what it costs is three indexed reads on `groupId` - the same order as the chunk's own send,
+    // which inserts one queued row per recipient device.
+    const admittedRows = await this.deviceGroupRepo
+      .createQueryBuilder('d')
+      .select('d.userId', 'userId')
+      .distinct(true)
+      .where('d.groupId = :groupId', { groupId: safeGroupId })
+      .getRawMany<{ userId: string }>();
+    const counted = new Set([...memberIds, ...admittedRows.map((r) => r.userId)]);
+
+    const readByUser = async () => {
+      const rows = await this.dataSource.manager.find(GroupMembershipInterval, {
+        where: { groupId: safeGroupId, userId: In([...counted]) },
+        select: { userId: true, joinedAt: true, leftAt: true },
+      });
+      const grouped = new Map<string, GroupMembershipInterval[]>();
+      for (const row of rows) {
+        const list = grouped.get(row.userId) ?? [];
+        list.push(row);
+        grouped.set(row.userId, list);
+      }
+      return grouped;
+    };
+    let byUser = await readByUser();
+
+    // Members outside every open interval - see the docstring. Repaired before the answer is built,
+    // so the answer already carries the window between their last close and their arrival.
+    const unopened = members
+      .filter((m) => !(byUser.get(m.userId) ?? []).some((r) => r.leftAt === null))
+      .map((m) => m.userId);
+    if (unopened.length > 0) {
+      const opened = await openMissingIntervals(this.dataSource.manager, safeGroupId, unopened);
+      if (opened.length > 0) {
+        this.logger.error(
+          `[GROUP_EXCLUSIONS] group=${safeGroupId.slice(0, 8)} opened ${opened.length} missing interval(s) - member(s) enrolled by pre-030 code or by an interrupted enrolment; a window they were out for before that is not recorded`
+        );
+      }
+      // Re-read rather than patch: a concurrent repair may have opened one instead, and a removal
+      // may have closed it since - the table is the only answer to both.
+      byUser = await readByUser();
+    }
+
+    const exclusions: Record<string, ExclusionWindow[]> = {};
+    for (const userId of counted) {
+      const windows = exclusionWindows(byUser.get(userId) ?? []);
+      if (windows.length > 0) exclusions[userId] = windows;
+    }
+    return { exclusions };
   }
 }

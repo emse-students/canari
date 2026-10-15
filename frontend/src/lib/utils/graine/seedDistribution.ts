@@ -115,6 +115,6 @@ export async function distributeGraineSeed(
     ...mkGraine(toWireSeed(session)),
     sentAt: session.createdAt,
   });
-  const sealed = await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.keyMaterial);
+  const { sealed } = await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.keyMaterial);
   return { groupId, protoB64: toBase64(sealed) };
 }

@@ -945,6 +945,14 @@ export class PushController {
     });
 
     this.logger.log(`[BG_SEND][${traceId}] DONE queued=${result.queued} sent=${result.sent}`);
-    return { status: 'sent', queued: result.queued, sent: result.sent };
+    // `receivedAt` as on the foreground route: the instant every recipient's copy is dated by. The
+    // native senders do not store it yet, so a copy they sent stays undated on the sender's side
+    // (history-reconciliation, "A Remove holds against a later re-add").
+    return {
+      status: 'sent',
+      queued: result.queued,
+      sent: result.sent,
+      receivedAt: result.receivedAt,
+    };
   }
 }

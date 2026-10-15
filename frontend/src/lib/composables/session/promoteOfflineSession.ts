@@ -19,6 +19,7 @@ import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { startPushService } from '$lib/services/PushNotificationService';
 import { initializeConnection, getIsTabLeader } from '$lib/utils/chat/connection';
+import type { AbsentGroupVerdicts } from '$lib/utils/chat/groupSweep';
 import { flushOutbox, applyOutboxPendingStatuses } from '$lib/utils/chat/outbox';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { runGroupDiscoveryImpl, startConnectionWatchdogImpl } from './sessionConnection';
@@ -123,8 +124,10 @@ async function runPromotion(
   // 3. The WebSocket and the post-connect reconciliation: the same sequence login runs, so the
   //    KeyPackages get published, `fetchPendingMessages` drains everything the server queued while
   //    we were away, and group state is reconciled under its own anti-purge guard.
+  //    Its answers about absent local groups go to the discovery of step 5, the same pass.
+  let passVerdicts: AbsentGroupVerdicts | undefined;
   try {
-    await initializeConnection(makeConnectionDeps());
+    passVerdicts = await initializeConnection(makeConnectionDeps());
   } catch (e) {
     cb.log(`[PROMOTE] Connection failed: ${String(e)}`);
     // initializeConnection already scheduled its own reconnect backoff; the watchdogs below take
@@ -149,7 +152,7 @@ async function runPromotion(
   //    earlier would have burnt the reconnect budget against a network that was not there and left
   //    the circuit open.
   if (getIsTabLeader()) {
-    runGroupDiscoveryImpl(ctx, cb, ctx.ensureMls());
+    runGroupDiscoveryImpl(ctx, cb, ctx.ensureMls(), '', passVerdicts);
     startSyncWatchdogImpl(ctx, cb);
     startConnectionWatchdogImpl(ctx, cb);
   }
@@ -159,7 +162,8 @@ async function runPromotion(
 
 /**
  * Subscribes the promotion to connectivity being regained. Called once per login; the returned
- * teardown also runs from `logoutImpl` so a stale context cannot be promoted after sign-out.
+ * teardown also runs from `endSessionImpl` (every sign-out, through `clearAuth`) so a stale context
+ * cannot be promoted after sign-out.
  */
 export function registerOfflinePromotion(
   ctx: SessionContext,

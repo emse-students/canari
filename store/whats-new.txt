@@ -1,3 +1,3 @@
-version: 1.2.7
+version: 1.2.8
 
-Un message envoyé dans un salon encore en chargement attend et part tout seul. Un appui long (ou clic droit) sur une communauté propose « Marquer tout comme lu ». La liste de ceux qui ont réagi s'ouvre sur la réaction touchée, et la bulle « écrit... » ne passe plus sous la zone de saisie. Toucher un salon n'ouvre plus le message dessous. Les conversations s'ouvrent plus vite, les messages manquants se rattrapent mieux, et un journal de diagnostic peut être enregistré depuis les réglages.
+Chaque groupe et chaque message privé a maintenant son niveau de notification : toutes, seulement quand on vous mentionne, ou aucune. La notification affiche le nom de la personne qui écrit, et plus celui du groupe. Les salons s'ouvrent plus vite, le glisser pour répondre est plus facile sur vos propres messages, et changer de compte sur un même téléphone ne mélange plus les codes de verrouillage.

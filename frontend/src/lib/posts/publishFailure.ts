@@ -28,7 +28,7 @@
  */
 import { m } from '$lib/paraglide/messages';
 import { MutedError } from '$lib/moderation/muteCheck';
-import { isTransportFailure } from '$lib/stores/connectivity.svelte';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 import { localizedMessage } from '$lib/utils/localizedError';
 import { isVideoPrepareError } from '$lib/video/prepareVideoForUpload';
 import { videoPrepareFailureMessage } from '$lib/video/videoPrepareMessages';

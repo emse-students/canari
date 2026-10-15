@@ -1,4 +1,10 @@
-import { clampWindowStart, resolveRenderWindow, stepWindowOlder } from './renderWindow';
+import {
+  clampWindowStart,
+  entryWindowStart,
+  resolveRenderWindow,
+  stepWindowOlder,
+  widenedEntryStart,
+} from './renderWindow';
 
 /**
  * WP-EMPTYVIEW-1. The defect these pin is not "the window is off by a few groups", it is a
@@ -117,5 +123,35 @@ describe('the window is anchored to the newest message', () => {
 
   it('refuses a zero step, which would make pagination a no-op loop', () => {
     expect(stepWindowOlder(10, 0)).toBe(9);
+  });
+});
+
+describe('entry window - the first frame mounts the viewport tail only', () => {
+  it('opens on the last N groups of a 56-row page, not on the whole entry window', () => {
+    const start = entryWindowStart(56, 20);
+    const w = resolveRenderWindow(start, 56, 20);
+    expect(w.end - w.start).toBe(20);
+  });
+
+  it('is not clamped back to the wider entry window by the read side', () => {
+    // resolveRenderWindow clamps against the size it is given: passing the FULL size would pull a
+    // 20-group first frame back to 60 groups, which is the long task this exists to avoid.
+    expect(resolveRenderWindow(36, 56, 60).end - resolveRenderWindow(36, 56, 60).start).toBe(56);
+    expect(resolveRenderWindow(36, 56, 20).end - resolveRenderWindow(36, 56, 20).start).toBe(20);
+  });
+
+  it('shows everything of a list shorter than the first frame', () => {
+    expect(entryWindowStart(7, 20)).toBe(0);
+  });
+
+  it('widens to the full entry size after the first frame', () => {
+    expect(widenedEntryStart(36, 56, 60)).toBe(0);
+    expect(widenedEntryStart(180, 200, 60)).toBe(140);
+  });
+
+  it('never narrows a window the reader already widened, and has nothing to do when full', () => {
+    expect(widenedEntryStart(10, 200, 60)).toBeNull();
+    expect(widenedEntryStart(0, 56, 60)).toBeNull();
+    expect(widenedEntryStart(140, 200, 60)).toBeNull();
   });
 });

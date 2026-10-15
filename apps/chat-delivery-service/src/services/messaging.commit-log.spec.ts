@@ -115,6 +115,10 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
     del: jest.fn(),
     sadd: jest.fn(() => Promise.resolve(1)),
     xrange: jest.fn(() => Promise.resolve([])),
+    // The parting hint (`partingKey`): read for a commit that declares removals, cleared for a
+    // device back in the tree.
+    hgetall: jest.fn(() => Promise.resolve({} as Record<string, string>)),
+    hdel: jest.fn(() => Promise.resolve(0)),
   };
 
   /**
@@ -177,7 +181,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
       const fanOut = jest
         .spyOn(service, 'sendMessage')
-        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
       const res = await service.validateCommit({
         groupId: 'group-1',
@@ -208,7 +212,10 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
           proto: 'Y29tbWl0',
           isCommit: true,
           excludeDeviceIds: ['user-1:device-1'],
-        })
+        }),
+        undefined,
+        // A commit declaring no removal reaches no parted device.
+        []
       );
     });
 
@@ -223,7 +230,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
       jest
         .spyOn(service, 'sendMessage')
-        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
       const res = await service.validateCommit({
         groupId: 'group-1',
@@ -255,7 +262,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
       jest
         .spyOn(service, 'sendMessage')
-        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
       const res = await service.validateCommit({
         groupId: 'group-1',
@@ -298,7 +305,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       deviceGroupRepo.findOne.mockResolvedValue(null);
       jest
         .spyOn(service, 'sendMessage')
-        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
       const res = await service.validateCommit({
         groupId: 'group-1',
@@ -335,7 +342,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       deviceGroupRepo.findOne.mockResolvedValue({ status: 'active' });
       jest
         .spyOn(service, 'sendMessage')
-        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
       await service.validateCommit({
         groupId: 'group-1',
@@ -358,7 +365,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       revokedDeviceRepo.findOne.mockResolvedValue({ id: 'r1' });
       jest
         .spyOn(service, 'sendMessage')
-        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
       const res = await service.validateCommit({
         groupId: 'group-1',
@@ -381,7 +388,7 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
       keyPackageRepo.findOne.mockResolvedValue(null);
       jest
         .spyOn(service, 'sendMessage')
-        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0 });
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
 
       await service.validateCommit({
         groupId: 'group-1',
@@ -640,6 +647,67 @@ describe('MessagingService - commit-log (rung-1 backbone)', () => {
 
       expect(keyPackageRepo.find).not.toHaveBeenCalled();
       expect(txMembershipRepo.update).not.toHaveBeenCalled();
+    });
+
+    it('ends the parting entry of a device it puts back in the tree, and of the committer', async () => {
+      keyPackageRepo.find.mockResolvedValue([{ userId: 'user-2', deviceId: 'phone-2' }]);
+      jest
+        .spyOn(service, 'sendMessage')
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
+
+      await accept([{ userId: 'user-2', deviceId: 'phone-2' }]);
+
+      expect(redis.hdel).toHaveBeenCalledWith(
+        'group:parting:group-1',
+        'user-2:phone-2',
+        'user-1:device-1'
+      );
+    });
+  });
+
+  /**
+   * A COMMIT REACHES WHOEVER IT REMOVES, found by what it DECLARES (third review of #1878): the
+   * removal deleted their device rows before the commit, so the fan-out is handed them from the
+   * parting hint - only the ones this commit names.
+   */
+  describe('the devices a commit removes', () => {
+    it('hands the fan-out the parted devices of the person the commit declares, and only them', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
+      redis.hgetall.mockResolvedValue({ 'bob:b1': 'user-1', 'carol:c1': 'user-1' });
+      const fanOut = jest
+        .spyOn(service, 'sendMessage')
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
+
+      await service.validateCommit({
+        groupId: 'group-1',
+        deviceId: 'device-1',
+        baseEpoch: 5,
+        proto: 'Y29tbWl0',
+        senderId: 'user-1',
+        removes: [{ userId: 'bob' }],
+      });
+
+      expect(fanOut).toHaveBeenCalledWith(expect.objectContaining({ isCommit: true }), undefined, [
+        { userId: 'bob', deviceId: 'b1' },
+      ]);
+    });
+
+    it('a commit declaring nothing reaches no parted device', async () => {
+      groupRepo.findOne.mockResolvedValue({ id: 'group-1', activeEpoch: 5 });
+      redis.hgetall.mockResolvedValue({ 'bob:b1': 'user-1' });
+      const fanOut = jest
+        .spyOn(service, 'sendMessage')
+        .mockResolvedValue({ status: 'processed', queued: 0, sent: 0, receivedAt: 0 });
+
+      await service.validateCommit({
+        groupId: 'group-1',
+        deviceId: 'device-1',
+        baseEpoch: 5,
+        proto: 'Y29tbWl0',
+        senderId: 'user-1',
+      });
+
+      expect(fanOut).toHaveBeenCalledWith(expect.anything(), undefined, []);
     });
   });
 });

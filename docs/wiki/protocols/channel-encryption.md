@@ -3061,6 +3061,8 @@ an endorsed v2 seed). The Swift and Kotlin log lines are not compiled on a works
 reading is owed on a device. **On a real estate** the rig rows GRAINE-AUTH-5 (the live unsigned row,
 refused at ERROR, nothing asked) and GRAINE-AUTH-6 (the same row from history, warn, the notice once)
 are `PASS` since 2026-10-13 ([board](../cross-client-testing.md#20---graine---an-author-that-is-proven)).
+Since §21.8 the server refuses that POST, so GRAINE-AUTH-5 has no arm any more and GRAINE-AUTH-6
+inserts its row in the database.
 **First shipped in the stable `v1.2.6` (2026-10-13)**: a store build older than that still accepts a v1
 seed, which is the receiving-side gap the floor (`1.0.3`) does not close.
 
@@ -3100,8 +3102,11 @@ NOT use this route, and is therefore untouched:
   (no `/api/channels` in `src-tauri/`);
 - the server itself: `sendMessage` is the only code that inserts a `channel_messages` row; no bot,
   service or internal route writes one;
-- the cross-client harness: only archived probes post here, and `graineauth.mjs`'s replay arm posts a
-  SIGNED row, so it still gets its 409.
+- the cross-client harness: only archived probes post here. `graineauth.mjs`'s replay arm posts a
+  SIGNED row, so it still gets its 409. Its v1 arm posted an UNSIGNED row on purpose, and this change
+  broke it: the arm now reads the 400 itself (GRAINE-AUTH-7), and the history arm writes its row in
+  the database (GRAINE-AUTH-6). GRAINE-AUTH-5, the live arm, has no runner any more: a database
+  insert publishes no event.
 
 A client below the floor cannot unlock MLS, so it holds no seed and cannot seal a salon row in the
 first place. The one population that could still send unsigned is a process UNLOCKED before the floor
@@ -3137,7 +3142,14 @@ FROM channel_messages WHERE "createdAt" > '2026-10-05' GROUP BY 1 ORDER BY 1;
 with `CHANNEL_SIGNATURE_REQUIRED` at ERROR, nothing saved or published; a non-member still gets its
 403; and the floor boundary, as the two tags put a row on the wire - the five shapes `v1.0.3` posts
 (text with its seed frame, silent reaction or edit, poll, system notice, mention) are accepted signed,
-and the same five as `v1.0.2` posted them, unsigned, are refused.
+and the same five as `v1.0.2` posted them, unsigned, are refused. **On a real estate**: the rig row
+GRAINE-AUTH-7 (the 400, the ERROR line, nothing stored), not yet run
+([board](../cross-client-testing.md#20---graine---an-author-that-is-proven)).
+
+**Where it stands (2026-10-14).** Merged as #1802, on dev since `v1.2.7-alpha.1`; production gets it
+with the next stable. Production still held **373 unsigned rows in 15 salons** (none pinned), the
+oldest from 2026-09-02 and the newest from 2026-10-09, and none written in the four days before. The
+v1 reader goes when that count is 0 ([legacy-compatibility](../legacy-compatibility.md)).
 
 ## 22. A key group's backlog was refused on every load - the classification is device state - FIXED 2026-09-28
 

@@ -195,7 +195,9 @@
           aria-disabled={option.disabled}
           class="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left transition-colors outline-none hover:bg-black/5 focus-visible:bg-black/5 disabled:cursor-default disabled:opacity-45 disabled:hover:bg-transparent dark:hover:bg-white/10 dark:focus-visible:bg-white/10 {isSelected
             ? 'text-amber-700 dark:text-amber-400'
-            : 'text-text-main'}"
+            : option.muted
+              ? 'text-text-muted'
+              : 'text-text-main'}"
           onclick={() => pick(option)}
         >
           {#if leading}

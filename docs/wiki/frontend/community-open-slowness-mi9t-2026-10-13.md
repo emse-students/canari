@@ -111,6 +111,22 @@ audit's checkpoint levers (faster seal, no checkpoint for a receive-only drain, 
 for the duty cycle; batching the history exchange of a rejoin into one drain would remove two of the
 four checkpoints per group.
 
+**Found while reading this storm (2026-10-14)**: a `flush` made during a running checkpoint was handed
+that checkpoint, so `externalJoin` - which awaits its checkpoint so a reload cannot rejoin and fork -
+was told its join was durable when it was not, for most joins of a storm like this one. Fixed:
+[mls-desync-prevention](../protocols/mls-desync-prevention.md#the-checkpoint-a-caller-awaits-is-the-one-that-exported-after-its-change-2026-10-14).
+
+> **2026-10-14: one leg of each rejoin is gone.** A device whose store is empty for a group now opens
+> with its digest rather than its state key. The responder answers that probe directly, so the
+> `history_digest_request` round trip disappears (send state key, receive request, send digest,
+> receive bundle) and one of the drains per rejoin goes with it
+> ([history-reconciliation](../protocols/history-reconciliation.md#a-device-that-holds-nothing-opens-with-its-digest-not-its-state-key-2026-10-14)).
+>
+> The bundle and the coverage still arrive as separate frames. Skipping the checkpoint for a
+> receive-only drain is the open decision
+> ([open-questions](../open-questions.md)), and it was left untouched. **Owed:** one sign-in on the
+> Mi 9T that counts the checkpoints per rejoined group.
+
 ## Finding 3 - every message bubble resolves its readers' names, visible or not, and re-runs itself
 
 `components/messages/MessageInfoTooltip.svelte:39-55` is mounted by EVERY bubble
@@ -164,13 +180,22 @@ this session (or which byte length/etag), and skip the rest.
   A face without a photo is no longer requested; owed once shipped, the same walk's count (expected 0
   avatar `404`s where there were 37).
 - **496 `[GRAINE] v2 endorsement of session ... verified ... from the tree`** debug lines, the
-  largest tag of the capture.
+  largest tag of the capture. **Fixed 2026-10-13**: a verification that succeeds is a seed being
+  stored, and the caller already says that once per distributed seed or once per bundle, so the
+  key that proved it (tree, or the server's published keys) is named in THAT line and the
+  verification has no line of its own. A 20-seed bundle prints 1 `[GRAINE]` line instead of 21
+  (`graine/frameHandler.test.ts`); a refusal still prints at error, unchanged.
 - **`[HISTORY_COVERAGE] ... 1735 d short of what we asked`** x49: the new device asks every rejoined
   group for history from `2021-10-14` and the account's own web device answers that it covers from
   `2026-07-15`; each answer re-enters the ask (`lf` -> `of`, i.e. one more `groupe_actif`) before
   `every reachable member (1) has stated its coverage - nothing more to ask` closes it.
 - Expected and not a defect here: `[GRAINE] REFUSED 4 / 14 v1 seed(s)` (v1 seeds are refused since
   G2-5) and `[CHANNEL] 5 message(s) of 61d765e1 are unreadable` that follow from it.
+
+> **2026-10-14: the store build, measured.** The same open, timed per condition (cold, warm, a slow
+> link, 4x/6x CPU, offline) on `1.2.7-alpha.3` with a reproducible instrument: the hub and the salon
+> history are network-gated, five serial requests sit on the first-paint path, and the budget is
+> [community-open-budget](community-open-budget.md).
 
 ## What this did not measure
 

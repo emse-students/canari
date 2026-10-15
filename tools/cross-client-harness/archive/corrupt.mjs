@@ -43,7 +43,8 @@ import { record, exitOnRecorded } from '../results.mjs';
 import { PORTS } from '../names.mjs';
 import { bringToReady } from './ready-repair.mjs';
 
-const BLOB_KEY = 'canari_device_key_vault';
+/** Every account has its own vault slot since 2026-10-14 (`deviceKeyVault.ts`); the signed-in one's is read below. */
+const SLOT_PREFIX = 'canari_device_key_vault:v2:';
 const WRAP_KEY = 'canari_device_key_vault_key';
 const PERSIST_KEY = 'canari_device_key_persist';
 
@@ -59,6 +60,12 @@ const w1 = await client(PORTS.W1, APP_TAB, { focus: false });
 const storeName = await evaluate(
   w1,
   `localStorage.getItem('${PERSIST_KEY}') === 'true' ? 'localStorage' : 'sessionStorage'`
+);
+
+/** The slot of the account W1 is signed in as - the only one the app will read. */
+const BLOB_KEY = await evaluate(
+  w1,
+  `Object.keys(${storeName}).find((k) => k.startsWith('${SLOT_PREFIX}')) ?? '${SLOT_PREFIX}(none)'`
 );
 
 const before = JSON.parse(

@@ -147,6 +147,9 @@ local and receipts are only what OTHERS see. `Sidebar.communityUnreadDot.svelte.
 
 ### Unread counts of salons: the server counts, this device only merges (2026-10-08)
 
+**The chantier these three sections belong to is CLOSED (2026-10-14)**: every path that can move a
+salon's read mark, with its evidence, is on [read-receipt-privacy](../../read-receipt-privacy.md).
+
 **Reported by the user** (*"messages marked read though I never opened the community's salon"*), and
 **measured before anything was fixed**, with `tools/cross-client-harness/unread-communities.mjs` on the
 local estate: ten communities, 2-5 salons each (public, private and not joined), a reader (W2) and an
@@ -166,7 +169,7 @@ in the app marks a salon read that was not opened: the server mark moves only on
 the SELECTED salon (`MainChatPage`, behind the focus and visibility guard), `onSelectCommunity` clears the
 selection, and no effect, history load, reconnect or visibility change selects or marks anything. What the
 user saw is the other half: **a salon's `unreadCount` was a tally of what arrived while this device was
-listening** - salon messages are never stored here and the count was never persisted - so a reload, a
+listening** - salon messages were not stored here (since F4 only a copy of the last loaded page is kept) and the count was never persisted - so a reload, a
 cold start, a phone asleep or a socket that was down left every badge at zero while the server's mark
 said the salon was unread. The user reads that as "marked read".
 
@@ -271,7 +274,8 @@ single message, so the clear moves a PRIVATE mark instead: `channel_members."cle
 (migration 082), which `listUnreadCounts` adds to the floor of what it counts, and which is never
 published to anyone but the member's own devices. Opening a salon afterwards sends the ordinary
 receipt, because that IS reading. (The shade's "Marquer comme lu" keeps moving the receipt: there the
-reader saw the message in the banner. Not changed here.)
+reader saw the message in the banner. Not changed here - and since 2026-10-14 not offered at all on a
+BLIND banner, where the reader saw nothing: [read-receipt-privacy](../../read-receipt-privacy.md).)
 
 | Piece | Where |
 |---|---|
@@ -627,6 +631,11 @@ none, so the control's only possible effect was on the text. **Offering a contro
 anything is how a reader learns by being ignored what a fact could have told them**, and two pickers
 here already excluded the reader for the same reason - `SidebarNewChatModal` and `ChatGroupPanel`.
 This was the last one that did not.
+
+**Tab completes the open @mention list (2026-10-13).** `useMentionAutocomplete.handleKeydown` treats Tab
+like Enter on a row: the highlighted suggestion, else the first, through the same `select`. Shift+Tab,
+a modified Tab, a Tab during IME composition, and any Tab with the list closed or empty are left to
+the browser. No string is involved; touch keyboards have no Tab.
 
 **The exclusion lives in `useMentionAutocomplete`, not in its three callers.** `ChatComposer`,
 `PostComments` and `MarkdownComposerField` all reach the composable through
@@ -2610,6 +2619,18 @@ render, and every consumer - the slice, the hidden-above count, `loadOlderGroups
 `fillViewportThenPin`, `navigateToMessage` - reads the clamped value while pagination keeps writing
 the raw state. The invariant it guarantees is the one worth remembering: **a non-empty list always
 yields a non-empty window.** `renderWindow.test.ts` pins it across every combination of stored index
+
+**The entry window is 20 groups, then 60 (2026-10-14).** Mounting a page of rows is one task that
+scales with the rows (339-635 ms for 56-200 rows on a Mi 9T) and nothing paints until it ends. So an
+ENTRY mounts the last `ENTRY_FIRST_FRAME_GROUPS` (20) groups, `fillViewportThenPin` widens straight to
+`INITIAL_RENDER_GROUPS` (60) only if that does not fill the pane (never a 140 page, which mounted 160
+one-line rows), and `widenEntryWindow` completes the 60 after the first frame, compensating `scrollTop`
+by the height added above. The 20-group floor of `resolveRenderWindow` applies only while `entering`;
+otherwise a replaced, shorter list settles on the full 60 floor. A re-pin of the entry only ever LOWERS
+the start. Known duplication: that scroll compensation repeats what `observeThreadGrowth` does for
+growth above the viewport; folding the two is a note, not done. The salon skeleton raised by a history
+request issued at the tap is keyed by its salon (`skeletonSalon`). `ChatArea.entryWindow.svelte.test.ts`
+pins the row counts under a modelled geometry.
 and list length, which is the assertion that fails against the old arithmetic.
 
 The replacement itself - the reason the window and the list could disagree at all - is gone as of
@@ -2763,7 +2784,7 @@ the same message twice, once from the display and once from the badge.
 
 ### A salon copy is stale when the live stream had a gap, never when a clock says so (2026-10-01)
 
-A salon is never persisted: its in-memory copy is the REST page plus every live socket event since.
+A salon's in-memory copy is the REST page plus every live socket event since. Live events are never persisted one by one; since F4 the device keeps only a copy of the last page a load drew, replaced at every load and drawn before the next one answers ([community-open-budget F4](../community-open-budget.md#f4-built-2026-10-15)).
 It used to be trusted for five minutes after its load (`CHANNEL_HISTORY_CACHE_TTL_MS`), which proves
 nothing. **Measured on a Mi 9T, 2026-10-01:** A1 on `#general`, HOME, a peer posts, the push decrypts
 and notifies (`seed source=mirror`), the tap resumes the app - the socket reconnects and NO
@@ -3468,7 +3489,9 @@ A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), a
 
 - `ready`: the salon was ENTERED this session. `openSalonSendGate` is called where an entry ends, after the private salon's own group is joined, not at the scope registration (a private salon registered but not yet entered would refuse its seal `key-group-not-held`). There are four call sites: the listing walk, `registerJoinedChannel`, community creation and salon creation.
 - `wait`: a listing is in flight, or none has settled since the session began. The row stays `pending` ("En attente"), nothing is sealed, the text is in the unsent ledger, and there is no banner.
-- refused: a listing settled without entering it (`not-listed` if it answered, `listing-failed` if it gave up), its community was purged (`forgetWorkspaceGraineState` -> `left`), or the session ended (`setGraineRuntime(null)` -> `session-ended`). The row turns `error` with its Retry, and the banner names the cause (`salonGateRefusalMessage`, four Paraglide sentences).
+- refused: a listing settled without entering it (`not-listed` if it answered, `listing-failed` if the SERVER failed it - a 4xx, or 5xx after the retries), its community was purged (`forgetWorkspaceGraineState` -> `left`), or the session ended (`setGraineRuntime(null)` -> `session-ended`). The row turns `error` with its Retry, and the banner names the cause (`salonGateRefusalMessage`, four Paraglide sentences).
+
+**A listing that reached NOBODY refuses nothing (2026-10-14).** Offline, the listing gives up `unreachable` (`isTransportFailure` on its last error): no server decided anything, so held sends keep waiting, as the offline banner says, and `retryFailedListing` - called on `connectivity.onReconnect` and on the foreground - lists again and settles them. A reconnect that lands while a listing is still running is OWED to it and taken up only if that listing gives up. Bounded: one reconnect retry per give-up, none after a reconnect's own listing gives up, none owed while the listing's own request is on the wire; the foreground always lists again ([offline-and-weak-network](../offline-and-weak-network.md#14-a-transport-failure-is-one-type-on-every-platform-2026-10-14)). Measured on the Mi 9T (`v1.2.7-alpha.1`): before this, an offline start refused every salon send `listing-failed` for 2.5 min after the network came back ([offline-and-weak-network](../offline-and-weak-network.md#14-a-transport-failure-is-one-type-on-every-platform-2026-10-14)).
 
 **The wait has no timer.** Each way out is an event (entered, listing settled, purge, sign-out), and a listing always settles because it has a bounded retry ladder. `settleSalonListing` refuses waiters only when NO listing is left in flight, and it runs after the reload owed to a join has begun, so a held send waits for that reload too. A listing that began before a sign-out carries the previous session's token, and its settle is ignored.
 
@@ -3544,3 +3567,20 @@ correct, the notices simply were never coverable. **Fix:** `watermarkAfterReadin
 is true for a salon (its notice is dated by the server's `createdAt`, unlike a DM's, which is stamped by
 the device clock and still skipped) and the salon `serverAt` includes system rows. Self-heals: the
 next open of the salon sends the mark. No data repair needed.
+
+## Reading the ADD_MSG selected flag against CHAT_VIEW
+
+Added 2026-10-14 for a web report (Firefox, window visible but unfocused) where a message reached the
+list preview and badge but not the open pane until a refresh; not reproduced in Chrome. Two lines
+bracket the unknown stretch between the conversation map and the pane DOM:
+
+- `[ADD_MSG] Batch into "<id>": N added, M upgraded, selected=<bool>` - `selected` is
+  `ctx.selectedContact === <conversation id>` at flush time.
+- `[CHAT_VIEW] <id8> messages N (hasNewMessage=<bool>, response=<respondToNewMessage>)` - logged by
+  `ChatArea`'s `conversation` effect once per change of the DISPLAYED count (not per run, not on a
+  switch); `response` is `n/a` for a shrink.
+
+**Reading.** `selected=true` with no following `[CHAT_VIEW]` of N+1: the map-to-prop chain is broken
+(the pane never received the grown conversation). `[CHAT_VIEW]` N+1 with the row still missing:
+rendering or scroll (`windowStart`, the pin), not data flow. `selected=false` while the pane is open
+means `selectedContact` and the pane disagree.

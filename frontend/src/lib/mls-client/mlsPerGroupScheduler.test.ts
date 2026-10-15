@@ -330,6 +330,41 @@ describe('MlsPerGroupScheduler', () => {
       expect(scheduler.isIdle()).toBe(true);
     });
 
+    it('says a window opened once, and the count once when it closes - never once per frame', async () => {
+      // Pixel 6a, prod 1.2.7, 2026-10-14: 150 frames parked behind one redelivered Welcome printed
+      // 150 identical "Buffering" lines, then the release line that already carried the count.
+      const lines: string[] = [];
+      vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+        lines.push(args.map(String).join(' '));
+      });
+      const scheduler = new MlsPerGroupScheduler('web');
+      scheduler.enqueue(msg('group-a', 'w', { isWelcome: true }));
+      for (let i = 0; i < 150; i++) scheduler.enqueue(msg('group-a', String(i % 10)));
+
+      await drainReleasing(scheduler, []);
+
+      expect(lines.filter((l) => l.includes('Buffering'))).toHaveLength(1);
+      expect(lines.filter((l) => l.includes('re-queued 150 buffered message(s)'))).toHaveLength(1);
+      vi.restoreAllMocks();
+    });
+
+    it('opens a new window with its own line once the previous one has closed', async () => {
+      const lines: string[] = [];
+      vi.spyOn(console, 'log').mockImplementation((...args: unknown[]) => {
+        lines.push(args.map(String).join(' '));
+      });
+      const scheduler = new MlsPerGroupScheduler('web');
+      for (const round of ['w', 'W']) {
+        scheduler.enqueue(msg('group-a', round, { isWelcome: true }));
+        scheduler.enqueue(msg('group-a', '1'));
+        scheduler.enqueue(msg('group-a', '2'));
+        await drainReleasing(scheduler, []);
+      }
+
+      expect(lines.filter((l) => l.includes('Buffering'))).toHaveLength(2);
+      vi.restoreAllMocks();
+    });
+
     it('re-queues rather than drops when the window closes on a FAILED Welcome', async () => {
       const scheduler = new MlsPerGroupScheduler('web');
       scheduler.enqueue(msg('group-a', 'w', { isWelcome: true }));

@@ -19,8 +19,11 @@ import {
   KEY_PACKAGE_ROUND_DEADLINE_MS,
   raceDeadline,
   NotAGroupMemberError,
+  type GroupExclusions,
+  type SentFrame,
   type GroupRosterBatch,
   type MlsDeliveryFetch,
+  type CommitRemoval,
 } from '$lib/mls-client/mlsDeliveryApi';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import {
@@ -112,7 +115,7 @@ import {
 } from '$lib/utils/chat/history';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
-import { commitAdmits } from '$lib/mls-client/commitAdmits';
+import { commitAdmits, commitRemovals } from '$lib/mls-client/commitAdmits';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
 
 /**
@@ -2829,6 +2832,10 @@ export abstract class BaseMlsService implements IMlsService {
     return this.delivery.getGroupUserMembers(groupId);
   }
 
+  async getGroupExclusions(groupId: string): Promise<GroupExclusions> {
+    return this.delivery.getGroupExclusions(groupId);
+  }
+
   async getGroupRosters(groupIds: string[]): Promise<GroupRosterBatch> {
     return this.delivery.fetchGroupRosters(groupIds);
   }
@@ -3165,7 +3172,7 @@ export abstract class BaseMlsService implements IMlsService {
       addedDeviceIds?: string[];
       skipped?: SkippedDevice[];
     }>,
-    opts: { excludeDeviceIds?: string[]; exportTree?: boolean } = {}
+    opts: { excludeDeviceIds?: string[]; exportTree?: boolean; removes?: CommitRemoval[] } = {}
   ): Promise<{
     welcome?: Uint8Array;
     ratchetTree?: Uint8Array;
@@ -3203,7 +3210,10 @@ export abstract class BaseMlsService implements IMlsService {
           toBase64(staged.commit),
           opts.excludeDeviceIds,
           toBase64(staged.groupInfo),
-          admits
+          admits,
+          // Whom this commit removes, so the server queues it to the devices its half of the
+          // removal already parted (`commitRemovals`).
+          opts.removes
         );
         if (!validation.accepted) {
           // Rejected: roll back the staged commit. The local epoch never moved, so there is NO fork.
@@ -4485,12 +4495,16 @@ export abstract class BaseMlsService implements IMlsService {
   }
 
   async removeMember(groupId: string, userIds: string[]): Promise<void> {
-    await this.runCommitTransaction(groupId, () => this.stageRemoveMembers(groupId, userIds));
+    await this.runCommitTransaction(groupId, () => this.stageRemoveMembers(groupId, userIds), {
+      removes: commitRemovals({ userIds }),
+    });
   }
 
   async removeMemberDevice(groupId: string, deviceIdentities: string[]): Promise<void> {
-    await this.runCommitTransaction(groupId, () =>
-      this.stageRemoveMembersByDevice(groupId, deviceIdentities)
+    await this.runCommitTransaction(
+      groupId,
+      () => this.stageRemoveMembersByDevice(groupId, deviceIdentities),
+      { removes: commitRemovals({ deviceIdentities }) }
     );
   }
 
@@ -4526,7 +4540,7 @@ export abstract class BaseMlsService implements IMlsService {
     messageBytes: Uint8Array,
     _messageId?: string,
     frameDelivery: FrameDelivery = DELIVERY.visible
-  ): Promise<Uint8Array> {
+  ): Promise<SentFrame> {
     await this.waitForCatchUpIdle();
     // ...and nothing straddles a LOCAL epoch advance either: a frame encrypted at epoch N and posted
     // after this device's own commit moved the group to N+1 is a past-epoch frame for every
@@ -4547,7 +4561,7 @@ export abstract class BaseMlsService implements IMlsService {
     groupId: string,
     messageBytes: Uint8Array,
     frameDelivery: FrameDelivery
-  ): Promise<Uint8Array> {
+  ): Promise<SentFrame> {
     const encryptedBytes = await this.encryptForSend(groupId, messageBytes);
     this.noteLiveMutation();
     // DURABLE, AND BEFORE THE POST. The ratchet has moved by now and stays moved whether or not the
@@ -4561,8 +4575,8 @@ export abstract class BaseMlsService implements IMlsService {
     // on the phone - to buy a guarantee that is already held, so the trade is refused.
     scheduleOutboundMlsPersist();
     const proto = toBase64(encryptedBytes);
-    await this.delivery.postApplicationMessage(groupId, proto, frameDelivery);
-    return encryptedBytes;
+    const receivedAt = await this.delivery.postApplicationMessage(groupId, proto, frameDelivery);
+    return { sealed: encryptedBytes, receivedAt };
   }
   abstract processIncomingMessage(
     groupId: string,

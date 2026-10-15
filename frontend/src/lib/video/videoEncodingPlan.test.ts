@@ -31,7 +31,7 @@ describe('outputDimensions', () => {
 
 describe('budgetedVideoBitrate', () => {
   it('is the C3 target for a 90 s reel - about 28 MB, under the ceiling', () => {
-    const rate = budgetedVideoBitrate(90, true, CEILING);
+    const rate = budgetedVideoBitrate(90, AUDIO_BITRATE, CEILING);
     expect(rate).toBe(VIDEO_TARGET_BITRATE);
     const bytes = ((rate! + AUDIO_BITRATE) * 90) / 8;
     expect(bytes / MB).toBeGreaterThan(27);
@@ -39,24 +39,30 @@ describe('budgetedVideoBitrate', () => {
   });
 
   it('is lowered, never raised, so a long video still fits', () => {
-    const rate = budgetedVideoBitrate(300, true, CEILING)!;
+    const rate = budgetedVideoBitrate(300, AUDIO_BITRATE, CEILING)!;
     expect(rate).toBeLessThan(VIDEO_TARGET_BITRATE);
     expect(((rate + AUDIO_BITRATE) * 300) / 8).toBeLessThanOrEqual(CEILING * VIDEO_BUDGET_SHARE);
   });
 
   it('refuses a video that would need less than the floor', () => {
     const seconds = (CEILING * 8 * VIDEO_BUDGET_SHARE) / (VIDEO_MIN_BITRATE + AUDIO_BITRATE) + 1;
-    expect(budgetedVideoBitrate(seconds, true, CEILING)).toBeNull();
+    expect(budgetedVideoBitrate(seconds, AUDIO_BITRATE, CEILING)).toBeNull();
   });
 
   it('keeps the target when the ceiling is unknown - the server 413 stays the refusal', () => {
-    expect(budgetedVideoBitrate(3600, true, undefined)).toBe(VIDEO_TARGET_BITRATE);
+    expect(budgetedVideoBitrate(3600, AUDIO_BITRATE, undefined)).toBe(VIDEO_TARGET_BITRATE);
   });
 
   it('gives a silent video the audio share', () => {
-    expect(budgetedVideoBitrate(400, false, CEILING)!).toBeGreaterThan(
-      budgetedVideoBitrate(400, true, CEILING)!
+    expect(budgetedVideoBitrate(400, 0, CEILING)!).toBeGreaterThan(
+      budgetedVideoBitrate(400, AUDIO_BITRATE, CEILING)!
     );
+  });
+
+  it('takes a copied audio track out of the budget at its own bitrate', () => {
+    // A 320 kb/s AAC-LC source is copied, not re-encoded at 128 kb/s, so it costs 320 kb/s.
+    const totalPerSecond = (CEILING * 8 * VIDEO_BUDGET_SHARE) / 400;
+    expect(budgetedVideoBitrate(400, 320_000, CEILING)).toBe(Math.floor(totalPerSecond - 320_000));
   });
 });
 
@@ -66,7 +72,7 @@ describe('planVideoEncoding', () => {
     displayHeight: 1920,
     durationSeconds: 20,
     frameRate: 60,
-    hasAudio: true,
+    audioBitrate: AUDIO_BITRATE,
   };
 
   it('resamples 60 fps to 30 and leaves 30 alone', () => {

@@ -1,6 +1,6 @@
 {
   "name": "social-service",
-  "version": "1.2.7-alpha.1",
+  "version": "1.2.8-alpha.2",
   "private": true,
   "scripts": {
     "start": "ts-node src/main.ts",
@@ -33,18 +33,18 @@
     "pg": "^8.23.1",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
-    "typeorm": "^1.1.1"
+    "typeorm": "^1.1.2"
   },
   "devDependencies": {
     "@nestjs/cli": "^12.0.8",
     "@nestjs/schematics": "^12.0.6",
     "@types/jest": "^30.0.0",
     "@types/multer": "^2.3.0",
-    "@types/node": "^26.6.4",
+    "@types/node": "^26.6.5",
     "jest": "^30.5.2",
-    "oxfmt": "^0.71.0",
-    "oxlint": "^1.86.0",
-    "oxlint-tsgolint": "^7.0.2003",
+    "oxfmt": "^0.72.0",
+    "oxlint": "^1.87.0",
+    "oxlint-tsgolint": "^7.0.2004",
     "ts-jest": "^29.4.14",
     "ts-node": "^10.9.2",
     "typescript": "^6.0.3"

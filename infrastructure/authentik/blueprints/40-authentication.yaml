@@ -1,4 +1,4 @@
-# Signing in (miconnect-auth, CAS only), its failure page, the password flow the test campaign uses, and the MINO logout redirect.
+# Signing in (miconnect-auth, CAS only), its failure page, the password flow the test campaign uses, Canari's sign-out flow and the MINO logout redirect.
 #
 # Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
 # (instantiate: false) - see infrastructure/authentik/README.md. Every reference is a !Find on a
@@ -59,6 +59,19 @@ entries:
       name: "miconnect-invalidation-mino"
       title: "Tu es déconnecté de %(app)s."
       designation: "invalidation"
+  # Canari's sign-out (user decision 2026-10-14): end-session on the three Canari providers runs THIS
+  # flow, which ENDS the MiConnect session, so the next sign-in asks who you are instead of answering
+  # with the account that just left. `default-provider-invalidation-flow` is stageless and only
+  # forgets the provider's tokens. The way back to the app is the request's post_logout_redirect_uri,
+  # checked against the provider's `logout` redirect URIs (docs/wiki/infrastructure/authentik.md).
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "miconnect-invalidation-signout"
+    attrs:
+      name: "miconnect-invalidation-signout"
+      title: "Tu es déconnecté de MiConnect."
+      designation: "invalidation"
+      authentication: "none"
   - model: authentik_stages_identification.identificationstage
     identifiers:
       name: "miconnect-identification"
@@ -108,6 +121,11 @@ entries:
       target: !Find [authentik_flows.flow, [slug, "password-login"]]
       stage: !Find [authentik_stages_user_login.userloginstage, [name, "default-source-authentication-login"]]
       order: 20
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-signout"]]
+      stage: !Find [authentik_stages_user_logout.userlogoutstage, [name, "default-invalidation-logout"]]
+      order: 10
   - model: authentik_flows.flowstagebinding
     identifiers:
       target: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-mino"]]

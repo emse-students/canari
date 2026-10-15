@@ -19,7 +19,7 @@ export function createMlsServiceStub(
       skipped: [],
     }),
     processWelcome: vi.fn().mockResolvedValue('gid'),
-    sendMessage: vi.fn().mockResolvedValue(new Uint8Array()),
+    sendMessage: vi.fn().mockResolvedValue({ sealed: new Uint8Array(), receivedAt: null }),
     processIncomingMessage: vi.fn().mockResolvedValue(null),
     createDecryptSession: vi.fn().mockResolvedValue({
       decryptPage: vi.fn().mockResolvedValue([]),
@@ -102,6 +102,7 @@ export function createMlsServiceStub(
     getGroupMembers: vi.fn().mockResolvedValue([]),
     getGroupMemberIdentities: vi.fn().mockResolvedValue([]),
     getGroupUserMembers: vi.fn().mockResolvedValue([]),
+    getGroupExclusions: vi.fn().mockResolvedValue(new Map()),
     getGroupRosters: vi.fn().mockResolvedValue({ rosters: new Map(), refused: new Set() }),
     getUserGroups: vi.fn().mockResolvedValue([]),
     getGroupMeta: vi.fn().mockResolvedValue(null),

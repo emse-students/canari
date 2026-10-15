@@ -504,7 +504,7 @@ The legacy per-channel/per-role override system (`channel_permission_overrides`,
 `GET /:channelId/messages` returns the newest messages first, capped at 200 per page. Passing
 `before=<ISO createdAt>` returns only strictly-older messages (keyset pagination on `createdAt`),
 so clients page back through the whole channel by following the oldest `createdAt` of the previous
-page until an empty page is returned. Channel messages are never persisted client-side, so full-text
+page until an empty page is returned. Channel messages are not persisted one by one client-side (only a copy of the last page a load drew is kept, [F4](../frontend/community-open-budget.md#f4-built-2026-10-15)), so full-text
 search fetches and decrypts the entire history on demand (`ChannelService.fetchAllChannelMessages`
 -> `useConversations.searchChannelHistory`, capped at ~2000 messages) and merges the decrypted rows
 into the open conversation so a hit older than the loaded page can be scrolled to. The server only
@@ -530,9 +530,11 @@ uuid no native surface can turn into a community name (there is no workspace mir
 `graine_seeds.json` mirrors the seeds); `workspaceName` replaced it because it is what the title
 actually needs. `messageId` / `createdAt` cannot repeat what the MLS path does
 with them: that path writes `fcm_message_cache.ndjson` so a background-decrypted message is already
-in the store at open, whereas a channel message is DELIBERATELY never persisted locally
+in the store at open, whereas a channel message is DELIBERATELY never persisted one by one
 (`useMessaging` skips the DB save for a `channel_` conversation - channels are server-authoritative
-and refetched over HTTP), so the cache has nowhere to inject. Fewer bytes also buys headroom under
+and refetched over HTTP; only a copy of the last page a load drew is kept, replaced by every load,
+[community-open-budget F4](../frontend/community-open-budget.md#f4-built-2026-10-15)), so the cache
+has nowhere to inject. Fewer bytes also buys headroom under
 the same ~4 KB FCM cap the inlined ciphertext competes for (over 3000 chars it is omitted and the
 notification degrades to the generic body). The whole contract is pinned in both directions by
 `frontend/src/lib/mobile/channelPushFields.test.ts`, which reads the four source files.

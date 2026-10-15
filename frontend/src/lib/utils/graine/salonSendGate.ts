@@ -17,7 +17,15 @@
  *   it, the community is forgotten, or the session ends. Each of those is a proof, so the wait is
  *   bounded with no timer.
  * - refused: a listing settled and did not enter it (`not-listed` when it answered, `listing-failed`
- *   when it gave up), it was forgotten (`left`), or the session ended (`session-ended`).
+ *   when the server answered with a failure), it was forgotten (`left`), or the session ended
+ *   (`session-ended`).
+ *
+ * A LISTING THAT REACHED NOBODY REFUSES NOTHING (2026-10-14). Offline, or on a link that answers
+ * nothing, the listing gives up `unreachable`: no server decided anything, so the salon is not
+ * "not loadable", it is not loaded YET. The sends keep waiting, exactly what the offline banner
+ * promises ("partiront dès le retour du réseau"), and the next listing - started by the reconnect
+ * (`retryFailedListing`) - settles them. Refusing them is what the Mi 9T showed on `v1.2.7-alpha.1`:
+ * every salon send and Retry refused `listing-failed` while the phone was offline, then online.
  *
  * The SEAL KEEPS ITS OWN REFUSAL: this gate decides when to try, never whether the row may go
  * unsigned. A held message is held as cleartext in memory and sealed and signed only when it is
@@ -47,8 +55,19 @@ export class SalonNotLoadableError extends Error {
 /** The gate's answer at the instant it is asked. */
 export type SalonGateReading = SalonGateOutcome | { kind: 'wait' };
 
-/** How the last community listing of this session ended; `none` until one has. */
-type ListingOutcome = 'none' | 'loaded' | 'failed';
+/**
+ * How the last community listing of this session ended; `none` until one has. `unreachable` is a
+ * listing that got no answer at all, which waits like `none`: nothing was decided.
+ */
+type ListingOutcome = 'none' | 'loaded' | 'failed' | 'unreachable';
+
+/** How a listing can end, as its caller reports it to {@link settleSalonListing}. */
+export type SettledListing = Exclude<ListingOutcome, 'none'>;
+
+/** Whether no settled listing has decided anything yet, so a salon not entered still waits. */
+function undecided(): boolean {
+  return lastListing === 'none' || lastListing === 'unreachable';
+}
 
 /** Salons entered in this session, raw uuid. */
 const opened = new Set<string>();
@@ -56,6 +75,12 @@ const opened = new Set<string>();
 const waiters = new Map<string, ((outcome: SalonGateOutcome) => void)[]>();
 let listingsInFlight = 0;
 let lastListing: ListingOutcome = 'none';
+/** Readers waiting for a salon's entry to be decided ({@link whenSalonEntryDecided}). */
+const entryWaiters = new Set<() => void>();
+/** Releases every {@link whenSalonEntryDecided} waiter; each re-reads the gate itself. */
+function wakeEntryWaiters(): void {
+  for (const wake of entryWaiters) wake();
+}
 /**
  * Which session the counters belong to. A listing that began before a sign-out settles into the
  * NEXT session otherwise, and would refuse that session's first sends before its own listing ran.
@@ -90,7 +115,7 @@ function listingRefusal(): SalonGateOutcome {
 export function readSalonSendGate(channelId: string): SalonGateReading {
   const channel = raw(channelId);
   if (opened.has(channel)) return READY;
-  if (listingsInFlight > 0 || lastListing === 'none') return { kind: 'wait' };
+  if (listingsInFlight > 0 || undecided()) return { kind: 'wait' };
   return listingRefusal();
 }
 
@@ -123,6 +148,7 @@ export function openSalonSendGate(channelId: string): void {
   const channel = raw(channelId);
   opened.add(channel);
   settle(channel, READY);
+  wakeEntryWaiters();
 }
 
 /**
@@ -152,9 +178,11 @@ export function currentSalonSession(): number {
 
 /**
  * A community listing ended. When none is left in flight, every salon still waiting is refused:
- * the listing that could have entered it answered without it (`loaded`) or gave up (`failed`).
+ * the listing that could have entered it answered without it (`loaded`) or the server failed it
+ * (`failed`). A listing that reached nobody (`unreachable`) refuses nothing: the waiters wait for
+ * the next listing, which the reconnect starts.
  */
-export function settleSalonListing(token: number, outcome: 'loaded' | 'failed'): void {
+export function settleSalonListing(token: number, outcome: SettledListing): void {
   endInFlight(token, outcome);
 }
 
@@ -180,11 +208,12 @@ export function settleSalonEntry(token: number): void {
 }
 
 /** One in-flight listing or entry ended; refuses the waiters once nothing left could open them. */
-function endInFlight(token: number, outcome: 'loaded' | 'failed' | null): void {
+function endInFlight(token: number, outcome: SettledListing | null): void {
   if (token !== generation) return;
   listingsInFlight = Math.max(0, listingsInFlight - 1);
   if (outcome !== null) lastListing = outcome;
-  if (listingsInFlight > 0 || lastListing === 'none') return;
+  if (listingsInFlight === 0) wakeEntryWaiters();
+  if (listingsInFlight > 0 || undecided()) return;
   const refusal = listingRefusal();
   for (const channel of waiters.keys()) settle(channel, refusal);
 }
@@ -211,9 +240,38 @@ export function resetSalonSendGate(): void {
   opened.clear();
   listingsInFlight = 0;
   lastListing = 'none';
+  wakeEntryWaiters();
   for (const channel of waiters.keys()) {
     settle(channel, { kind: 'refused', reason: 'session-ended' });
   }
+}
+
+/**
+ * Resolves once nothing in flight can still ENTER `channelId`: it is entered, or no listing or entry
+ * is running. Unlike {@link whenSalonSendable} it never waits for a listing that has not started, so
+ * a reader is held only by work that will end.
+ *
+ * WHY A READER WAITS AT ALL (F3 of community-open-budget, 2026-10-14). A salon's rows are drawn, and
+ * a restored conversation may be opened, before the listing has registered its community's key
+ * group. Decoding a history page then would ask for its missing seeds on a group this device has not
+ * registered - the repair refuses (`key-group-unregistered`) and the want is lost until the next
+ * load. The history load fetches its page meanwhile and decodes it after this resolves.
+ *
+ * @param channelId Raw uuid or `channel_`-prefixed.
+ * @returns whether it had to wait, for the caller's log.
+ */
+export function whenSalonEntryDecided(channelId: string): Promise<boolean> {
+  const channel = raw(channelId);
+  const decided = () => opened.has(channel) || listingsInFlight === 0;
+  if (decided()) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    const wake = () => {
+      if (!decided()) return;
+      entryWaiters.delete(wake);
+      resolve(true);
+    };
+    entryWaiters.add(wake);
+  });
 }
 
 /** How many sends wait on `channelId` - for tests and the log. */

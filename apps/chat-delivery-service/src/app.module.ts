@@ -34,6 +34,7 @@ import { NotificationPreferencesController } from './controllers/notification-pr
 import { RevokedDevice } from './entities/revoked-device.entity';
 import { MlsCommitLog } from './entities/mls-commit-log.entity';
 import { MlsGroupInfo } from './entities/mls-group-info.entity';
+import { GroupMembershipInterval } from './entities/group-membership-interval.entity';
 import Redis from 'ioredis';
 
 const RedisProvider: Provider = {
@@ -94,6 +95,7 @@ class RedisShutdown implements OnModuleDestroy {
         MlsGroupInfo,
         DeviceSignatureKey,
         NotificationPreference,
+        GroupMembershipInterval,
       ],
       synchronize: process.env.NODE_ENV !== 'production',
     }),
@@ -113,6 +115,7 @@ class RedisShutdown implements OnModuleDestroy {
       MlsGroupInfo,
       DeviceSignatureKey,
       NotificationPreference,
+      GroupMembershipInterval,
     ]),
   ],
   controllers: [

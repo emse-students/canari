@@ -86,8 +86,9 @@ function fakeMls(epoch: number | null) {
         webCryptoEngine.signWithSessionKey(DEVICE_SECRET, message),
       sendMessage: async (groupId: string, bytes: Uint8Array) => {
         sent.push({ groupId, bytes });
-        // What MLS would hand back: the sealed frame, which the session keeps (section 19).
-        return new Uint8Array([0xca, 0xfe]);
+        // What MLS would hand back: the sealed frame, which the session keeps (section 19), and the
+        // server's receive time.
+        return { sealed: new Uint8Array([0xca, 0xfe]), receivedAt: 1 };
       },
     } as never,
   };

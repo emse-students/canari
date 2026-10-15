@@ -479,6 +479,83 @@ describe('AuthController sessions', () => {
     });
   });
 
+  /**
+   * THE SIGN-OUT NEEDS MICONNECT'S id_token, AND ONLY THIS EXCHANGE EVER SEES IT. Authentik's
+   * end-session refuses a return address without an `id_token_hint`, so a callback that drops it
+   * leaves every sign-out unable to end the MiConnect session (user decision, 2026-10-14).
+   */
+  describe('oidc callback', () => {
+    let fetchSpy: jest.SpyInstance;
+
+    function callbackController(): AuthController {
+      process.env.AUTHENTIK_BASE_URL = 'https://auth.example';
+      process.env.AUTHENTIK_CLIENT_ID = 'client';
+      process.env.AUTHENTIK_CLIENT_SECRET = 'secret';
+      const users = {
+        findOrCreateFromOidc: jest.fn().mockResolvedValue({ id: 'user-1', admin: false }),
+        claimLegacyCotisations: jest.fn().mockResolvedValue(undefined),
+      };
+      const platform = {
+        getConfig: jest.fn().mockResolvedValue({}),
+        isAccessBlockedByMaintenance: jest.fn().mockReturnValue(false),
+      };
+      return new AuthController(
+        users as never,
+        platform as never,
+        sessions as unknown as AuthSessionsService,
+        { enabled: false } as never
+      );
+    }
+
+    /** Authentik's token endpoint (with or without an id_token), then its userinfo. */
+    function authentikAnswers(idToken?: string) {
+      fetchSpy = jest
+        .spyOn(global, 'fetch')
+        .mockResolvedValueOnce(
+          new globalThis.Response(
+            JSON.stringify({
+              access_token: 'ak-access',
+              ...(idToken ? { id_token: idToken } : {}),
+            }),
+            { status: 200 }
+          )
+        )
+        .mockResolvedValueOnce(
+          new globalThis.Response(JSON.stringify({ sub: 'user-1' }), { status: 200 })
+        );
+    }
+
+    afterEach(() => {
+      fetchSpy?.mockRestore();
+      delete process.env.AUTHENTIK_BASE_URL;
+      delete process.env.AUTHENTIK_CLIENT_ID;
+      delete process.env.AUTHENTIK_CLIENT_SECRET;
+    });
+
+    it("hands MiConnect's id_token to the client, for the sign-out's id_token_hint", async () => {
+      authentikAnswers('h.idtoken.s');
+      const body = await callbackController().oidcCallback(
+        { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+        makeReq({ origin: 'https://canari.example' }),
+        makeRes().res
+      );
+      expect(body.id_token).toBe('h.idtoken.s');
+    });
+
+    it('says so when Authentik sent none, since that sign-out cannot end MiConnect', async () => {
+      authentikAnswers();
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+      const body = await callbackController().oidcCallback(
+        { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+        makeReq({ origin: 'https://canari.example' }),
+        makeRes().res
+      );
+      expect(body.id_token).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('no id_token'));
+      warn.mockRestore();
+    });
+  });
+
   describe('session management', () => {
     it('flags the session the request came from', async () => {
       sessions.listForUser.mockResolvedValue([

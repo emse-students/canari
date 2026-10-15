@@ -21,7 +21,7 @@
     FolderOpen,
   } from '@lucide/svelte';
   import { goto } from '$app/navigation';
-  import { clearAuth } from '$lib/stores/auth';
+  import { clearAuth, leaveSignedOut } from '$lib/stores/auth';
   import { isGlobalAdmin } from '$lib/stores/user';
   import { getReviewerAccess } from '$lib/associations/api';
   import { adminScopeLabels, ensureMayOpenAdmin } from '$lib/admin/access';
@@ -89,7 +89,7 @@
 
   async function handleLogout() {
     await clearAuth();
-    void goto(resolve('/login'), { replaceState: true });
+    await leaveSignedOut();
   }
 </script>
 

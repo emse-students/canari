@@ -198,7 +198,7 @@ import {
   type XhrUploadOptions,
   type UploadProgress,
 } from '$lib/utils/uploadXhr';
-import { isTransportFailure } from '$lib/stores/connectivity.svelte';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 import { fetchWithAnswerDeadline } from '$lib/utils/uploadDeadline';
 
 /** How many times `complete` is asked for ONE uploadId when its answer is lost. */

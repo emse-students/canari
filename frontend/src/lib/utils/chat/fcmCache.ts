@@ -236,6 +236,17 @@ export async function consumeFcmCache(
       );
       continue;
     }
+    // A SYSTEM EVENT IS A BANNER, NEVER A ROW. The native text for it is a bare predicate ("a ajoute
+    // un membre au groupe") with no subject, and stored under the actor's id it drew as a message
+    // THE ACTOR TYPED - a yellow own bubble when the actor was this user (reported 2026-10-14). The
+    // MLS pipeline renders the real notice from the same frame, naming who did what through the
+    // single name resolver, so the preview adds nothing but the wrong line.
+    if (entry.type === 'system') {
+      appendLog(
+        `[FCM_CACHE] = id=${entry.messageId.slice(0, 8)} is a system event, banner only: the pipeline renders the notice`
+      );
+      continue;
+    }
     const msg: StoredMessage = {
       id: entry.messageId,
       conversationId: entry.groupId,

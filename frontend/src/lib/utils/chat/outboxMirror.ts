@@ -67,7 +67,15 @@ export function toMirrorEntry(entry: OutboxEntry): OutboxMirrorEntry | null {
   // text/reply and control (reaction/edit/delete/read). Control is mirrored now that C1/C2 make
   // background mls.bin writes safe - notably `delete`, so a retraction is not stuck behind an
   // already-sent body until the app reopens.
-  const proto = buildOutboxProto(entry);
+  // A REPLY IS MIRRORED QUOTING BY ID ONLY. Whether its quote text may leave is decided against the
+  // server's exclusion windows (`decideQuote` in `outbox.ts`), which the native sender does not read;
+  // so the copy it may send is the one that is always allowed. The foreground flush, which decides,
+  // sends the text whenever it is entitled - and whichever copy lands first, the id is the same.
+  const mirrored =
+    entry.kind === 'reply' && entry.replyTo?.preview
+      ? { ...entry, replyTo: { ...entry.replyTo, preview: '' } }
+      : entry;
+  const proto = buildOutboxProto(mirrored);
   if (!proto) return null;
   const { silent, durable } = deliveryForOutboxEntry(entry);
   return {

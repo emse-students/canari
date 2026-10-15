@@ -982,10 +982,10 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
     }
 
     for (const meta of mergedConvMetas) {
-      if (isChannelConversationId(meta.id)) {
-        await ctx.storage.deleteMessagesForConversation(meta.id).catch(() => {});
-        continue;
-      }
+      // A SALON'S STORED PAGE IS KEPT (F4 of community-open-budget): it is the copy its next open
+      // draws before the server page, which replaces it (`loadChannelHistory`). It used to be
+      // erased here at every boot, which is what made a salon's first open network-only.
+      if (isChannelConversationId(meta.id)) continue;
       try {
         const existingConvo = ctx.conversations.get(meta.id);
         if (existingConvo && !isChannelConversationId(meta.id) && serverGroupIndex) {

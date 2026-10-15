@@ -543,11 +543,10 @@
       return;
     }
 
-    const { x, y } = pointerCoords(e);
+    const { x } = pointerCoords(e);
     const dx = x - replyGesture.startX;
-    const dy = y - replyGesture.startY;
 
-    if (shouldTriggerReplySwipe(dx, dy, isOwn, replyGesture.phase)) {
+    if (shouldTriggerReplySwipe(dx, isOwn, replyGesture.phase)) {
       swipeHandled = true;
       onReply?.(messageId);
       if (
@@ -557,6 +556,11 @@
       ) {
         navigator.vibrate(12);
       }
+    } else if (replyGesture.phase === 'horizontal') {
+      Log.d(
+        'MESSAGE',
+        `reply swipe released short on ${messageId.slice(0, 8)} (dx ${Math.round(dx)})`
+      );
     }
 
     replyGesture = null;
