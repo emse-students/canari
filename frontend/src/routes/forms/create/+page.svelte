@@ -42,6 +42,11 @@
   import { fetchFormations, type FormationOption } from '$lib/pricing/criteriaOptions';
   import { firstEmptyCondition } from '$lib/forms/audience';
   import { toFormItemsPayload } from '$lib/forms/itemsPayload';
+  import {
+    FILE_RETENTION_DEFAULT_DAYS,
+    fileQuestionProblem,
+    hasFileQuestion,
+  } from '$lib/forms/fileQuestion';
   import { CircleAlert, FileText } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -61,6 +66,7 @@
   let associationId = $state(page.url.searchParams.get('association') ?? '');
   let allowCashPayment = $state(false);
   let cashPaymentExpiryDays = $state<number | undefined>(undefined);
+  let fileRetentionDays = $state(FILE_RETENTION_DEFAULT_DAYS);
   let cotisation = $state(emptyCotisationSettings());
   let priceMatrix = $state<PriceMatrix | null>(null);
   /** Formation values in use, for the formation criterion. Loaded once. */
@@ -169,6 +175,8 @@
     })
   );
 
+  const formHasFile = $derived(hasFileQuestion(items));
+
   async function handleSave() {
     if (titleMissing) {
       error = m.form_error_title_required();
@@ -176,6 +184,17 @@
     }
     if (requiresPayment && !associationId) {
       error = m.form_error_association_required();
+      return;
+    }
+    const fileProblem = fileQuestionProblem({
+      items,
+      isPublic,
+      anonymous,
+      fileRetentionDays,
+      submitCondition,
+    });
+    if (fileProblem) {
+      error = fileProblem;
       return;
     }
     const empty = firstEmptyCondition(submitCondition, items);
@@ -218,6 +237,7 @@
         ...(requiresPayment && allowCashPayment && cashPaymentExpiryDays != null
           ? { cashPaymentExpiryDays }
           : {}),
+        ...(formHasFile ? { fileRetentionDays } : {}),
       };
       const created = await createForm(payload);
       if (fromPostComposer) {
@@ -320,6 +340,8 @@
     {formations}
     {grantBlocker}
     associationName={selectedAssociation?.name ?? ''}
+    hasFileQuestion={formHasFile}
+    bind:fileRetentionDays
   />
 
   <FormSaveBar
