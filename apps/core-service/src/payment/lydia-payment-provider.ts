@@ -5,6 +5,7 @@ import { parseLydiaOrderRef, orderRefToMetadata } from './lydia-order-ref';
 import type { ConnectAccountStatusResponse } from './payment-provider.interface';
 import type {
   CancelRequestOutcome,
+  CheckoutRequestState,
   CheckoutSessionInfo,
   CheckoutSessionResult,
   ConnectBalanceSummary,
@@ -233,8 +234,10 @@ export class LydiaPaymentProvider implements PaymentProvider {
   /**
    * Cancels a request via `POST /api/request/cancel` (measured on the sandbox 2026-10-15,
    * payments.md): the NUMERIC `request_id` plus the Business's `vendor_token`, no signature. Lydia
-   * then moves the request to state 6 and calls its `cancel_url`. Error 2 means the request was
-   * already cancelled or had expired - the goal (not payable any more) holds, so it is an answer.
+   * then moves the request to state 6 and calls its `cancel_url`. Error 2 ("transaction deja
+   * traitee") was measured on cancelled and expired requests; a PAID one very probably answers the
+   * same, so it comes back as `already-settled` - processed, not necessarily unpaid - and the caller
+   * reads `getCheckoutRequestState` before treating the request as dead.
    * Any other refusal throws, like every call through `postForm`.
    */
   async cancelCheckoutRequest(
@@ -258,6 +261,33 @@ export class LydiaPaymentProvider implements PaymentProvider {
       String(data.error ?? '0') === LYDIA_CANCEL_ALREADY_SETTLED ? 'already-settled' : 'cancelled';
     this.logger.log(`Lydia request ${requestId} cancel: ${outcome}`);
     return outcome;
+  }
+
+  /**
+   * Reads a request's state via `POST /api/request/state` with `request_uuid` AND the Business's
+   * `vendor_token`, the pair measured on the sandbox 2026-10-15 (payments.md; the answer is
+   * `{state, used_ease_of_payment, signature}`). State 1 is paid; 6 is what a cancel and an expiry
+   * both leave; 0 is still payable. Any other code is reported as `other`, never guessed.
+   */
+  async getCheckoutRequestState(
+    sessionId: string,
+    connectAccountId: string
+  ): Promise<CheckoutRequestState> {
+    if (!this.providerToken) throw new BadRequestException('Lydia not configured');
+    if (!connectAccountId) {
+      throw new BadRequestException('Lydia request/state requires the vendor_token');
+    }
+    const data = await this.postForm<{ state?: string | number }>('/api/request/state', {
+      request_uuid: sessionId,
+      vendor_token: connectAccountId,
+    });
+    const raw = data.state === undefined || data.state === null ? '' : String(data.state);
+    const state: CheckoutRequestState['state'] =
+      raw === '1' ? 'paid' : raw === '6' ? 'closed' : raw === '0' ? 'open' : 'other';
+    if (state === 'other') {
+      this.logger.warn(`Lydia request ${sessionId} is in unmeasured state "${raw}"`);
+    }
+    return { state, raw };
   }
 
   /**

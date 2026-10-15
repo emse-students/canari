@@ -1,6 +1,7 @@
 /* eslint-disable */
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -14,7 +15,8 @@ import { Form } from './entities/form.entity';
 import { retireForms } from './retire-forms';
 import {
   PENDING_HOLD_CUTOFF_SQL,
-  PENDING_PAYMENT_HOLD_SECONDS,
+  PAYMENT_REQUEST_LIFETIME_SECONDS,
+  PREVIOUS_PAYMENT_OPEN,
   SETTLED_PAYMENT_STATUSES,
   livePendingWhere,
   lockFormSeats,
@@ -952,28 +954,75 @@ export class FormsService {
     // READ with no lock, which prevents neither: two snapshots each count the seat as free and
     // each insert, a write skew that isolation level does not detect. READ COMMITTED is required
     // by the lock (`lockFormSeats`), and late payments (`markPaid`) queue on the same lock.
+    // Reuse an existing pending submission to avoid double-charge, unless multiple submissions are
+    // allowed (e.g. order forms where each submit is a new purchase). Only one still holding its
+    // seat: a row past the hold is not counted below, so reviving it would take a seat the count
+    // never saw, and it stays for the expiry job (and a late payment).
+    const reuses = !form.anonymous && !guest && totalCents > 0 && !form.allowMultipleSubmissions;
+    const liveRow = () =>
+      ({
+        where: livePendingWhere(id, { userId: input.userId }),
+        order: { createdAt: 'DESC' },
+      }) as const;
+
+    // D2: the request a live row is waiting on is SETTLED at the provider before anything else is
+    // issued for that row - cancelled, or found paid (then the person has paid and the retry stops
+    // here). The row keeps naming that request until this is known: it is cleared in the
+    // transaction below, after the answer, never before. A request that cannot be settled refuses
+    // the retry (`PREVIOUS_PAYMENT_OPEN`) rather than leave two payable requests for one answer.
+    const previous = reuses ? await this.submissionRepo.findOne(liveRow()) : null;
+    if (previous) {
+      const settled = await this.settleOpenRequest(previous, form);
+      if (settled === 'paid') return { submissionId: previous.id, alreadyPaid: true };
+    }
+
     let savedSubmission!: Submission;
-    // The provider id of the request a reused row was waiting on, cancelled below before any new one.
-    let supersededRequestId: string | null = null;
     await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
       await lockFormSeats(manager, id);
 
-      // Reuse an existing pending submission to avoid double-charge, unless multiple
-      // submissions are allowed (e.g. order forms where each submit is a new purchase). Only one
-      // still holding its seat: a row past the hold is not counted below, so reviving it would
-      // take a seat the count never saw, and it stays for the expiry job (and a late payment).
       // Looked up BEFORE the capacity check: the row already holds this person's seat, so a retry
       // on a form it filled is a retry, not a new answer - it used to be refused as "Form is full".
-      const existingPending =
-        !form.anonymous && !guest && totalCents > 0 && !form.allowMultipleSubmissions
-          ? await manager.findOne(Submission, {
-              where: livePendingWhere(id, { userId: input.userId }),
-              order: { createdAt: 'DESC' },
-              lock: { mode: 'pessimistic_write' },
-            })
-          : null;
+      let existingPending: Submission | null = null;
+      if (previous) {
+        // The row whose request was settled above, re-read under its lock. It must still name that
+        // request (anything else is a concurrent submit issuing its own). It may have LEFT
+        // `pending` meanwhile: Lydia calls `cancel_url` for the request this retry cancelled, and
+        // that report names the row's request, so it cancels the row - a cancel this retry caused
+        // and now takes back. A row that left `pending` holds no seat, so the capacity check runs.
+        existingPending = await manager.findOne(Submission, {
+          where: { id: previous.id },
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (
+          !existingPending ||
+          !['pending', 'cancelled', 'expired'].includes(existingPending.paymentStatus) ||
+          existingPending.paymentRequestId !== previous.paymentRequestId ||
+          existingPending.stripeSessionId !== previous.stripeSessionId
+        ) {
+          throw this.previousPaymentOpen(
+            previous.id,
+            'the row changed while its request was being settled'
+          );
+        }
+      } else if (reuses) {
+        const concurrent = await manager.findOne(Submission, {
+          ...liveRow(),
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (concurrent) {
+          throw this.previousPaymentOpen(
+            concurrent.id,
+            'a concurrent submit is issuing its request'
+          );
+        }
+      }
+      const holdsSeat =
+        !!existingPending &&
+        (await manager.count(Submission, {
+          where: livePendingWhere(id, { id: existingPending.id }),
+        })) > 0;
 
-      if (form.maxSubmissions && !existingPending) {
+      if (form.maxSubmissions && !holdsSeat) {
         const count = await manager.count(Submission, { where: seatHoldingWhere(id) });
         if (count >= form.maxSubmissions) throw new BadRequestException('Form is full');
       }
@@ -1025,15 +1074,16 @@ export class FormsService {
       }
 
       if (existingPending) {
-        supersededRequestId = existingPending.paymentRequestId;
         existingPending.answers = input.answers;
         existingPending.totalPaid = totalCents;
         existingPending.email = input.email;
-        // The row stops naming its old request NOW, in the same transaction: Lydia reports the
-        // cancel issued below, and a report about a request the row no longer names changes nothing
-        // (`cancelPendingSubmission`). The new request's ids are written once the provider answers.
+        // Its old request is settled (above), so the row stops naming it: a late report about it
+        // changes nothing (`cancelPendingSubmission`). The new request's ids are written once the
+        // provider answers; until then the row names NO request, which is what makes a concurrent
+        // retry refuse instead of issuing a third one (`settleOpenRequest`).
         existingPending.paymentRequestId = null;
         existingPending.stripeSessionId = null;
+        existingPending.paymentStatus = 'pending';
         savedSubmission = await manager.save(existingPending);
         // A new payment request is about to be issued for this row, so its hold restarts with it,
         // on the database clock like every other read of it (`seat-hold.ts`).
@@ -1057,12 +1107,6 @@ export class FormsService {
         savedSubmission = await manager.save(submission);
       }
     });
-
-    // Before anything else is issued for the row - a new online request, or a switch to cash - the
-    // request it was waiting on stops being payable, so one answer is never payable twice (D2).
-    if (supersededRequestId) {
-      await this.cancelSupersededRequest(savedSubmission.id, supersededRequestId, form);
-    }
 
     // Cash payment shortcut - skip the online checkout entirely
     if (totalCents > 0 && form.allowCashPayment && input.paymentMethod === 'cash') {
@@ -1147,8 +1191,8 @@ export class FormsService {
             connectAccountId,
             idempotencyKey,
             payerEmail: input.payerEmail,
-            // The provider stops the request when the seat stops being held: ONE constant.
-            expireAfterSeconds: PENDING_PAYMENT_HOLD_SECONDS,
+            // The request dies before the seat is released (`seat-hold.ts`).
+            expireAfterSeconds: PAYMENT_REQUEST_LIFETIME_SECONDS,
           },
           internalCoreRequestConfig()
         );
@@ -1159,6 +1203,7 @@ export class FormsService {
         const requestId: string | null = typeof data.requestId === 'string' ? data.requestId : null;
 
         if (!sessionUrl) {
+          await this.releaseUnissuedRow(savedSubmission.id);
           return {
             message: data.message || 'Payment service did not return a checkout URL',
             submissionId: savedSubmission.id,
@@ -1177,6 +1222,8 @@ export class FormsService {
 
         return { checkoutUrl: sessionUrl, submissionId: savedSubmission.id };
       } catch (err: unknown) {
+        // No request was issued, so nothing is payable: the row stops holding a seat for it.
+        await this.releaseUnissuedRow(savedSubmission.id);
         throw mapCorePaymentError(err, this.logger, 'Forms');
       }
     }
@@ -1185,41 +1232,97 @@ export class FormsService {
   }
 
   /**
-   * Cancels, at the provider, the request a reused pending row was waiting on (D2, measured on the
-   * Lydia sandbox 2026-10-15: payments.md). "Already cancelled or expired" is success - the goal is
-   * that it can no longer be paid. Any other failure is LOGGED AND CARRIED ON PAST: the payer is
-   * retrying right now, refusing that retry would not make the old request less payable, and if it
-   * is paid after all, `markPaid` decides it from the row like any late payment (over capacity at
-   * worst, at the top of the manager's list). That residual risk is the one forms.md documents.
+   * Settles, at the provider, the request a live pending row is waiting on, before anything else
+   * is issued for that row (a new request on a retry, a switch to cash) or the row is cancelled by
+   * its submitter (D2). Answers `free` when the request can no longer be paid, or `paid` when it
+   * WAS paid - the row is then marked paid here (`markPaid`, as the callback would) and the caller
+   * stops. Throws `PREVIOUS_PAYMENT_OPEN` (409) whenever that cannot be established:
+   *
+   * - Lydia's cancel answers error 2 (`already-settled`) for a request already processed - measured
+   *   on cancelled and expired ones, and very probably the same for a PAID one. So error 2 is never
+   *   read as "nobody paid": `request/state` (by the uuid) tells paid (1) from closed (6).
+   * - A row naming NO request is one whose request is being issued right now (`submit` clears the
+   *   ids in its transaction and writes the new ones once the provider answers; a failed issue
+   *   releases the row, `releaseUnissuedRow`). Issuing another would leave two payable requests.
+   * - A row written before migration 084 names only the uuid: it cannot be cancelled (`request/
+   *   cancel` takes the numeric id), so it is settled only if its state is already closed or paid.
+   * - Any failure to reach the provider: refusing is the one answer that cannot double-charge.
    */
-  private async cancelSupersededRequest(
-    submissionId: string,
-    requestId: string,
-    form: Form
-  ): Promise<void> {
+  private async settleOpenRequest(row: Submission, form: Form): Promise<'free' | 'paid'> {
+    const requestId = row.paymentRequestId;
+    const sessionId = row.stripeSessionId;
+    if (!requestId && !sessionId) {
+      throw this.previousPaymentOpen(row.id, 'its request is being issued');
+    }
+    const connectAccountId = form.associationId
+      ? await this.associationsService.getPaymentAccountId(form.associationId)
+      : null;
+    if (!connectAccountId) {
+      throw this.previousPaymentOpen(row.id, 'the form has no payment account to cancel it with');
+    }
     try {
-      const connectAccountId = form.associationId
-        ? await this.associationsService.getPaymentAccountId(form.associationId)
-        : null;
-      if (!connectAccountId) {
-        this.logger.warn(
-          `[Forms] submission ${submissionId}: old request ${requestId} NOT cancelled, the form has no payment account - it stays payable`
+      if (requestId) {
+        const { data } = await axios.post(
+          coreUrl('payments/cancel-request'),
+          { requestId, connectAccountId },
+          internalCoreRequestConfig()
         );
-        return;
+        if (data?.outcome === 'cancelled') {
+          this.logger.log(`[Forms] submission ${row.id}: request ${requestId} cancelled`);
+          return 'free';
+        }
+        if (data?.outcome !== 'already-settled') {
+          throw new Error(`unexpected cancel outcome ${JSON.stringify(data?.outcome)}`);
+        }
       }
-      const res = await axios.post(
-        coreUrl('payments/cancel-request'),
-        { requestId, connectAccountId },
+      if (!sessionId) throw new Error('no request_uuid to read the state by');
+      const { data } = await axios.post(
+        coreUrl('payments/request-state'),
+        { sessionId, connectAccountId },
         internalCoreRequestConfig()
       );
-      this.logger.log(
-        `[Forms] submission ${submissionId}: old request ${requestId} ${res.data?.outcome ?? 'cancelled'}`
-      );
+      if (data?.state === 'closed') {
+        this.logger.log(`[Forms] submission ${row.id}: request ${sessionId} already closed`);
+        return 'free';
+      }
+      if (data?.state === 'paid') {
+        // The person paid the request they are now retrying: the answer is paid, and a second
+        // request would charge them twice. Recorded as the callback would record it.
+        this.logger.log(
+          `[Forms] submission ${row.id}: request ${requestId ?? sessionId} was PAID before the retry - marked paid, no new request issued`
+        );
+        await this.markPaid(row.id, requestId ?? sessionId);
+        return 'paid';
+      }
+      throw new Error(`request ${sessionId} is ${data?.state ?? 'unknown'} (${data?.raw ?? ''})`);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : String(err);
-      this.logger.warn(
-        `[Forms] submission ${submissionId}: old request ${requestId} NOT cancelled (${message}) - it stays payable until it expires`
-      );
+      throw this.previousPaymentOpen(row.id, err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /** The typed refusal of `settleOpenRequest`, logged at WARN with its reason. */
+  private previousPaymentOpen(submissionId: string, reason: string): ConflictException {
+    this.logger.warn(
+      `[Forms] submission ${submissionId}: previous payment request still open (${reason}) - refused`
+    );
+    return new ConflictException({
+      code: PREVIOUS_PAYMENT_OPEN,
+      message: 'The previous payment request is still open. Try again in a moment.',
+    });
+  }
+
+  /**
+   * Cancels a `pending` row whose payment request was never issued (the provider refused, the call
+   * failed, payments are off): nothing is payable, so it must not hold a seat for 30 minutes, and a
+   * row naming no request would otherwise read as "being issued" to the next retry. A row that DOES
+   * name a request is left alone.
+   */
+  private async releaseUnissuedRow(submissionId: string): Promise<void> {
+    const outcome = await this.moveLockedSubmission(submissionId, 'pending', 'cancelled', {
+      named: (s) => !s.paymentRequestId && !s.stripeSessionId,
+    });
+    if (typeof outcome === 'object') {
+      this.logger.log(`[Forms] submission ${submissionId} released: no payment request was issued`);
     }
   }
 
@@ -1276,10 +1379,15 @@ export class FormsService {
    * 2026-10-15 each call re-granted and wrote ANOTHER purchase record; now the effects run from
    * durable flags (`fulfilPayment`), so a replay only finishes what is missing.
    *
-   * THE REQUEST ID IS NOT COMPARED, ON PURPOSE. The two callers carry two DIFFERENT ids for one
-   * payment - the callback's `request_id`, `verify-session`'s `request_uuid` - so any comparison of
-   * `sessionId` with the stored one would accuse ordinary payments. Telling two requests for one row
-   * apart waits on one fact about Lydia's API (forms.md).
+   * THE REQUEST ID NEVER DECIDES THE STATUS, BUT A FOREIGN ONE IS ACCUSED. The two callers carry two
+   * DIFFERENT ids for one payment - the callback's numeric `request_id`, `verify-session`'s
+   * `request_uuid` - and the row stores both (`paymentRequestId`, `stripeSessionId`), so a replay
+   * naming neither is a second request paid for one answer: logged at ERROR, status unchanged (the
+   * money already landed; refusing would only hide it). The id that settled the row is kept in
+   * `paymentSettledBy`.
+   *
+   * ONE ANSWER PER PERSON: on a single-answer form, a late payment whose payer already has another
+   * row holding a seat or paid lands `paid_over_capacity`, logged at ERROR.
    */
   async markPaid(submissionId: string, sessionId?: string) {
     const found = await this.submissionRepo.findOne({ where: { id: submissionId } });
@@ -1305,19 +1413,46 @@ export class FormsService {
         if (!holdsSeat) {
           const form = await manager.findOne(Form, {
             where: { id: submission.formId },
-            select: { id: true, maxSubmissions: true },
+            select: { id: true, maxSubmissions: true, allowMultipleSubmissions: true },
           });
           const taken = form?.maxSubmissions
             ? await manager.count(Submission, { where: seatHoldingWhere(submission.formId) })
             : 0;
           if (form?.maxSubmissions && taken >= form.maxSubmissions) status = 'paid_over_capacity';
+          // ONE answer per person: a late payment on an old row, when the same person already has
+          // another row holding a seat or paid (a new answer written after this one's hold), is a
+          // second payment for one answer - never a silent second `paid`.
+          const other =
+            form && !form.allowMultipleSubmissions && submission.userId
+              ? await manager.findOne(Submission, {
+                  where: [
+                    ...seatHoldingWhere(submission.formId, { userId: submission.userId }),
+                    {
+                      formId: submission.formId,
+                      userId: submission.userId,
+                      paymentStatus: 'paid_over_capacity',
+                    },
+                  ],
+                  select: { id: true, paymentStatus: true },
+                })
+              : null;
+          if (other && other.id !== submissionId) {
+            status = 'paid_over_capacity';
+            this.logger.error(
+              `[Forms] Late payment on submission ${submissionId} (form ${submission.formId}, ` +
+                `${submission.totalPaid} cents): the same person already has submission ${other.id} ` +
+                `(${other.paymentStatus}) on this one-answer form - TWO PAYMENTS for one answer, refund owed`
+            );
+          }
           this.logger.log(
             `[Forms] Late payment on submission ${submissionId} (was ${submission.paymentStatus}): ` +
               `${taken}/${form?.maxSubmissions ?? 'unlimited'} seats taken -> ${status}`
           );
         }
         submission.paymentStatus = status;
-        if (sessionId) submission.stripeSessionId = sessionId;
+        // The id that settled the row, in its own column: `stripeSessionId` keeps naming the
+        // request (`request_uuid`) and is no longer overwritten with whichever id arrived first.
+        submission.paymentSettledBy = sessionId ?? null;
         await manager.save(submission);
         return { submission, status, replay: false };
       }
@@ -1325,9 +1460,22 @@ export class FormsService {
     const { submission } = outcome;
 
     if (outcome.replay) {
-      this.logger.debug(
-        `[Forms] markPaid replay on submission ${submissionId}, already ${outcome.status}`
-      );
+      // The row now names its request by BOTH ids (`paymentRequestId`, the numeric one callbacks
+      // carry; `stripeSessionId`, the uuid), so a confirmation naming NEITHER is a second request
+      // paid for one answer. A row written before migration 084 names only the uuid, so the
+      // numeric id of its own callback cannot be told apart and is not accused.
+      const known = [submission.paymentRequestId, submission.stripeSessionId];
+      if (sessionId && submission.paymentRequestId && !known.includes(sessionId)) {
+        this.logger.error(
+          `[Forms] markPaid on submission ${submissionId}, already ${outcome.status} by ` +
+            `${submission.paymentSettledBy ?? 'unknown'}, names ANOTHER request ${sessionId} ` +
+            `(the row's are ${known.join(' / ')}): TWO PAYMENTS for one answer, refund owed`
+        );
+      } else {
+        this.logger.debug(
+          `[Forms] markPaid replay on submission ${submissionId}, already ${outcome.status}`
+        );
+      }
     } else if (outcome.status === 'paid_over_capacity') {
       // The money is the payer's until the organiser refunds it: no cotisation is granted for a
       // seat that was not given. The purchase record below is still written - it is the payer's
@@ -1359,7 +1507,31 @@ export class FormsService {
     if (submission.userId !== callerId) {
       await this.assertFormManager(submission.formId, callerId, isGlobalAdmin);
     }
-    return this.applyPendingCancel(submissionId, 'its submitter or a manager');
+    // An online answer's request is settled first, by the same rules as a retry (D2): cancelling
+    // the row while its request stays payable is how a payment lands on a cancelled answer.
+    if (submission.paymentStatus === 'pending') {
+      if (submission.paymentRequestId || submission.stripeSessionId) {
+        const form = await this.formRepo.findOne({ where: { id: submission.formId } });
+        if (!form) throw new NotFoundException('Form not found');
+        if ((await this.settleOpenRequest(submission, form)) === 'paid') {
+          return { ok: false, alreadyPaid: true };
+        }
+      } else if (
+        (await this.submissionRepo.count({
+          where: livePendingWhere(submission.formId, { id: submissionId }),
+        })) > 0
+      ) {
+        throw this.previousPaymentOpen(submissionId, 'its request is being issued');
+      }
+    }
+    // Only while the row still names the request just settled: a retry may have issued another.
+    return this.applyPendingCancel(
+      submissionId,
+      'its submitter or a manager',
+      (s) =>
+        s.paymentRequestId === submission.paymentRequestId &&
+        s.stripeSessionId === submission.stripeSessionId
+    );
   }
 
   /**

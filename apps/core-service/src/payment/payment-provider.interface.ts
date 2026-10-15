@@ -94,8 +94,22 @@ export interface CheckoutSessionResult {
   requestId: string | null;
 }
 
-/** What cancelling a request achieved: cancelled now, or already cancelled or expired before. */
+/**
+ * What cancelling a request achieved: cancelled now, or ALREADY PROCESSED - Lydia's error 2,
+ * measured on cancelled and expired requests only. A PAID request very probably answers the same,
+ * so `already-settled` never means "nobody paid": the caller reads the request's state next.
+ */
 export type CancelRequestOutcome = 'cancelled' | 'already-settled';
+
+/**
+ * A request's state as the provider reports it: `paid` (Lydia state 1), `closed` (state 6, which
+ * a cancel and an expiry both leave - measured), `open` (state 0, still payable), or `other` for
+ * any code nothing here has measured; `raw` is the provider's own code, for the log.
+ */
+export interface CheckoutRequestState {
+  state: 'paid' | 'closed' | 'open' | 'other';
+  raw: string;
+}
 
 /** Minimal session shape consumed by verify/cancel - decoupled from any provider SDK type. */
 export interface CheckoutSessionInfo {
@@ -133,6 +147,11 @@ export interface PaymentProvider {
   retrieveSession(sessionId: string): Promise<CheckoutSessionInfo>;
   /** Makes a request no longer payable. `requestId` is `CheckoutSessionResult.requestId`. */
   cancelCheckoutRequest(requestId: string, connectAccountId: string): Promise<CancelRequestOutcome>;
+  /** Reads a request's state; `sessionId` is `CheckoutSessionResult.id` (Lydia's `request_uuid`). */
+  getCheckoutRequestState(
+    sessionId: string,
+    connectAccountId: string
+  ): Promise<CheckoutRequestState>;
 }
 
 /**

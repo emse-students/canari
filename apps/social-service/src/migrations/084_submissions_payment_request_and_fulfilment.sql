@@ -8,6 +8,9 @@
 -- "paymentRequestId": the CURRENT request's provider id - Lydia's NUMERIC `request_id`, the one its
 --   callbacks and `request/cancel` carry (the `request_uuid` stays in "stripeSessionId"). Schema
 --   only: NULL on every existing row, filled by the next request.
+-- "paymentSettledBy": the id the confirmation that settled the row carried (numeric `request_id`
+--   or `request_uuid`), so `markPaid` can accuse a later confirmation naming ANOTHER request
+--   instead of overwriting "stripeSessionId" with it. Schema only, NULL on every existing row.
 -- "cotisationGrantedAt" / "purchaseRecordedAt": set when `markPaid` (or the cash validation) has
 --   granted the cotisation / written the purchase record, or found there was nothing to do. A
 --   replayed payment re-runs only what is still NULL: idempotence from the row, never a clock.
@@ -29,7 +32,13 @@
 --   -- 5. the whole status population, for the before/after comparison:
 --   SELECT "paymentStatus", COUNT(*) FROM submissions GROUP BY 1 ORDER BY 1;
 --
--- Idempotent: IF NOT EXISTS, and every UPDATE only fills a NULL.
+-- Idempotent in shape: IF NOT EXISTS, and every UPDATE only fills a NULL. NOT strictly neutral on
+-- a re-run: the flag UPDATE would also mark as fulfilled a row paid AFTER the first run whose grant
+-- failed (its NULL is the retry). It runs once, recorded in the `schema_migrations` ledger
+-- (infrastructure/lib/migrations.sh); a re-run only happens when a deploy fails between this file
+-- and its ledger row. Rows paid in between by the PREVIOUS code had both effects run (it ran them on
+-- every call), so flagging those is right; a row paid by the NEW code with a failed grant in that
+-- window is the one case a re-run would close without retrying - accepted, and named here.
 
 BEGIN;
 
@@ -39,6 +48,7 @@ ALTER TABLE submissions ALTER COLUMN "paymentRequestedAt" SET DEFAULT now();
 ALTER TABLE submissions ALTER COLUMN "paymentRequestedAt" SET NOT NULL;
 
 ALTER TABLE submissions ADD COLUMN IF NOT EXISTS "paymentRequestId" varchar(32);
+ALTER TABLE submissions ADD COLUMN IF NOT EXISTS "paymentSettledBy" varchar(64);
 
 ALTER TABLE submissions ADD COLUMN IF NOT EXISTS "cotisationGrantedAt" timestamptz;
 ALTER TABLE submissions ADD COLUMN IF NOT EXISTS "purchaseRecordedAt" timestamptz;

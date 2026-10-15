@@ -6,15 +6,34 @@ import type { Submission } from './entities/submission.entity';
  * - the instant its CURRENT payment request was issued (migration 084). `createdAt` would be wrong
  * the moment `submit` reuses a live pending row for a new request: the hold must restart with it.
  *
- * The SAME number is the payment request's own lifetime: `submit` sends it to the provider as
- * `expireAfterSeconds` (Lydia's `expire_time`, integer seconds, measured on the sandbox 2026-10-15),
- * so the request stops being payable when the seat stops being held. The provider's expiry is
- * swept about once a minute, so a payment can still land a little after the hold - `markPaid`
- * decides that one from the row (`paid_over_capacity` when the seat went). Too short and a slow
- * payer cannot pay; too long and an abandoned checkout keeps a seat nobody will take. Before
- * 2026-10-15 it was infinite: nothing released an online `pending` row at all.
+ * The payment request's own lifetime is derived from it (`PAYMENT_REQUEST_LIFETIME_SECONDS`), so
+ * the request stops being payable BEFORE the seat stops being held. Too short and a slow payer
+ * cannot pay; too long and an abandoned checkout keeps a seat nobody will take. Before 2026-10-15
+ * it was infinite: nothing released an online `pending` row at all.
  */
 export const PENDING_PAYMENT_HOLD_SECONDS = 30 * 60;
+
+/**
+ * How long Lydia's request may be expired AFTER its deadline: its expiry runs on a sweep, measured
+ * firing +79 s after a 60 s deadline and +61 s after a 120 s one (sandbox, 2026-10-15), plus the
+ * callback's own latency. Two minutes covers both with room.
+ */
+export const PAYMENT_REQUEST_EXPIRY_MARGIN_SECONDS = 120;
+
+/**
+ * The lifetime `submit` asks the provider for (`expireAfterSeconds`, Lydia's `expire_time`, whole
+ * seconds): the hold minus the sweep margin, 1680 s, so the request is dead by the time the seat is
+ * released and a late payment stays the exception `markPaid` handles, not the ordinary case.
+ */
+export const PAYMENT_REQUEST_LIFETIME_SECONDS =
+  PENDING_PAYMENT_HOLD_SECONDS - PAYMENT_REQUEST_EXPIRY_MARGIN_SECONDS;
+
+/**
+ * The `code` of the 409 a retry (or a cancel) gets while the request its answer is waiting on
+ * cannot be shown dead or paid: issuing another would leave two payable requests for one answer.
+ * The client words it through Paraglide (`paymentRefusal.ts`).
+ */
+export const PREVIOUS_PAYMENT_OPEN = 'PREVIOUS_PAYMENT_OPEN';
 
 /**
  * The instant before which a `pending` row no longer holds a seat, as SQL on the DATABASE clock.

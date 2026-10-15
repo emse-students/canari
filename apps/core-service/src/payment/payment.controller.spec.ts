@@ -176,6 +176,44 @@ describe('PaymentController.createCheckout', () => {
   });
 });
 
+describe('PaymentController.requestState', () => {
+  const SECRET = 'internal-secret-for-test';
+  const UUID = '0f8e4c3a-1b2c-4d5e-8f90-123456789abc';
+  beforeAll(() => {
+    process.env.INTERNAL_SECRET = SECRET;
+  });
+
+  it('answers the provider state of the named request', async () => {
+    const read = jest.fn().mockResolvedValue({ state: 'paid', raw: '1' });
+    const controller = new PaymentController({
+      getCheckoutRequestState: read,
+    } as unknown as PaymentService);
+    await expect(
+      controller.requestState({ sessionId: UUID, connectAccountId: 'v' }, SECRET)
+    ).resolves.toEqual({ ok: true, state: 'paid', raw: '1' });
+    expect(read).toHaveBeenCalledWith(UUID, 'v');
+  });
+
+  it.each([[{ sessionId: '48213', connectAccountId: 'v' }], [{ sessionId: UUID }], [{}]])(
+    'refuses %p before any provider call',
+    async (body) => {
+      const read = jest.fn();
+      const controller = new PaymentController({
+        getCheckoutRequestState: read,
+      } as unknown as PaymentService);
+      await expect(controller.requestState(body, SECRET)).rejects.toThrow('Invalid payload');
+      expect(read).not.toHaveBeenCalled();
+    }
+  );
+
+  it('refuses a caller without the internal secret', async () => {
+    const controller = new PaymentController({} as PaymentService);
+    await expect(
+      controller.requestState({ sessionId: UUID, connectAccountId: 'v' }, 'wrong')
+    ).rejects.toThrow('Forbidden');
+  });
+});
+
 describe('PaymentController.cancelRequest', () => {
   const SECRET = 'internal-secret-for-test';
   beforeAll(() => {

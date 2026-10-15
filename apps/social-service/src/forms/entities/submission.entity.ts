@@ -67,6 +67,14 @@ export class Submission {
   @Column({ type: 'varchar', length: 32, nullable: true })
   paymentRequestId: string | null;
 
+  /**
+   * The id the confirmation that SETTLED this row carried (migration 084): the callback's numeric
+   * `request_id` or `verify-session`'s uuid. `markPaid` writes it once, on the transition, so a
+   * later confirmation naming another request can be accused with the evidence beside it.
+   */
+  @Column({ type: 'varchar', length: 64, nullable: true })
+  paymentSettledBy: string | null;
+
   /** When a cash payment expires if not validated (computed from form.cashPaymentExpiryDays). */
   @Column({ type: 'timestamptz', nullable: true })
   cashExpiresAt: Date | null;

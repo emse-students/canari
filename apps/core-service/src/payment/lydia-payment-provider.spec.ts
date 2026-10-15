@@ -190,6 +190,44 @@ describe('LydiaPaymentProvider.createCheckoutSession', () => {
   });
 });
 
+describe('LydiaPaymentProvider.getCheckoutRequestState', () => {
+  afterEach(() => jest.clearAllMocks());
+
+  // The pair measured on the sandbox 2026-10-15: request_uuid AND vendor_token.
+  it('posts request/state with the uuid and the vendor_token', async () => {
+    mockedAxios.post.mockResolvedValue({ data: { state: '1', used_ease_of_payment: '0' } });
+    await makeProvider().getCheckoutRequestState('req-uuid-1', 'vendor-token-abc');
+    const [url, body] = mockedAxios.post.mock.calls[0];
+    expect(url).toBe('https://homologation.lydia-app.com/api/request/state.json');
+    const sent = new URLSearchParams(body as string);
+    expect(Object.fromEntries(sent)).toEqual({
+      request_uuid: 'req-uuid-1',
+      vendor_token: 'vendor-token-abc',
+    });
+  });
+
+  it.each([
+    ['1', 'paid'],
+    [1, 'paid'],
+    ['6', 'closed'],
+    ['0', 'open'],
+    ['5', 'other'],
+    [undefined, 'other'],
+  ])('reads state %p as %s, never guessing an unmeasured code', async (raw, state) => {
+    mockedAxios.post.mockResolvedValue({ data: { state: raw } });
+    await expect(
+      makeProvider().getCheckoutRequestState('req-uuid-1', 'vendor-token-abc')
+    ).resolves.toEqual({ state, raw: raw === undefined ? '' : String(raw) });
+  });
+
+  it('refuses without a vendor_token, before calling Lydia', async () => {
+    await expect(makeProvider().getCheckoutRequestState('req-uuid-1', '')).rejects.toThrow(
+      'vendor_token'
+    );
+    expect(mockedAxios.post.mock.calls).toHaveLength(0);
+  });
+});
+
 describe('LydiaPaymentProvider.cancelCheckoutRequest', () => {
   afterEach(() => jest.clearAllMocks());
 

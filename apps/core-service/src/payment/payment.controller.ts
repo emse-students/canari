@@ -361,8 +361,9 @@ export class PaymentController {
    * `create-checkout-session`: social-service calls it when a retry replaces the request a pending
    * answer was waiting on, BEFORE issuing the new one. `requestId` is the provider's own id (Lydia's
    * numeric `request_id`) and `connectAccountId` the Business that request was issued to.
-   * Answers `{ ok: true, outcome }`, where `already-settled` (already cancelled or expired) is as
-   * good as `cancelled`; a refusal is the provider's typed 400.
+   * Answers `{ ok: true, outcome }`. `already-settled` (Lydia's error 2) means PROCESSED - cancelled,
+   * expired, or very probably PAID - so the caller reads `request-state` before treating the
+   * request as dead. A refusal is the provider's typed 400.
    */
   @Post('cancel-request')
   @HttpCode(200)
@@ -384,6 +385,34 @@ export class PaymentController {
       body.connectAccountId
     );
     return { ok: true, outcome };
+  }
+
+  /**
+   * Reads a payment request's state at the provider. SERVER-TO-SERVER ONLY (internal secret):
+   * social-service asks it when a cancel answered `already-settled`, to tell a request that was
+   * PAID (the answer is then paid, and no new request may be issued) from one cancelled or expired.
+   * `sessionId` is the `request_uuid`; answers `{ ok: true, state, raw }`.
+   */
+  @Post('request-state')
+  @HttpCode(200)
+  async requestState(
+    @Body() body: { sessionId?: string; connectAccountId?: string },
+    @Headers('x-internal-secret') secret?: string
+  ) {
+    assertInternalSecret(secret);
+    if (
+      typeof body?.sessionId !== 'string' ||
+      !SESSION_ID_RE.test(body.sessionId) ||
+      typeof body.connectAccountId !== 'string' ||
+      !body.connectAccountId.trim()
+    ) {
+      throw new BadRequestException('Invalid payload');
+    }
+    const { state, raw } = await this.paymentService.getCheckoutRequestState(
+      body.sessionId,
+      body.connectAccountId
+    );
+    return { ok: true, state, raw };
   }
 
   /** Verifies a completed checkout session and marks the linked form submission as paid. */
