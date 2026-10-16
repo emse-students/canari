@@ -1533,9 +1533,6 @@
   "docreview_granted_on": "Authorized on {date}",
   "docreview_revoke_button": "Revoke",
   "docreview_revoke_confirm": "Revoke {name}'s reviewer access?",
-  "reviewer_docs_dashboard_heading": "Review",
-  "reviewer_docs_dashboard_label": "Association documents",
-  "reviewer_docs_dashboard_desc": "Browse every association's public administrative documents.",
   "reviewer_docs_title": "Association documents",
   "reviewer_docs_subtitle": "Public administrative documents uploaded by associations, grouped by association.",
   "reviewer_docs_empty": "No association has made a document public yet.",
@@ -2675,15 +2672,21 @@
   "assoc_new_create_btn": "Create association",
   "dashboard_subtitle": "Quick access to all sections",
   "dashboard_account_heading": "Account",
-  "dashboard_profile_btn": "Profile",
-  "dashboard_settings_btn": "Settings",
-  "dashboard_theme_btn": "Theme",
-  "dashboard_logout_btn": "Sign out",
-  "dashboard_profile_title": "My profile",
-  "dashboard_settings_title": "Account settings",
-  "dashboard_theme_title": "Change theme (automatic, light, dark)",
-  "dashboard_logout_title": "Sign out",
   "dashboard_explore_heading": "Explore",
+  "dashboard_identity_summary": "View my profile",
+  "dashboard_profile_label": "My profile",
+  "dashboard_managed_heading": "My associations",
+  "dashboard_signout_label": "Sign out",
+  "dashboard_unread_notifications_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} unread notification",
+        "countPlural=other": "{count} unread notifications"
+      }
+    }
+  ],
   "assoc_list_heading": "Associations",
   "assoc_list_subtitle": "Discover the community's associations",
   "assoc_list_load_error_fallback": "Failed to load associations",

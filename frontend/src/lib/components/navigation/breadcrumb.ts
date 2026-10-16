@@ -20,15 +20,29 @@ export function foldedCrumbCount(total: number, keep = 2): number {
   return Math.max(0, total - keep);
 }
 
-/** One row of a hub: a section the reader can go INTO. */
-export interface HubRow {
+/** What every hub row carries, whatever selecting it does. */
+interface HubRowBase {
   /** Stable key, also the test hook (`data-hub-row`). */
   key: string;
-  href: string;
   label: string;
   icon: import('svelte').Component<{ size?: number }>;
   /** One line under the label, only where it is already known (a count, a state). */
   summary?: string;
   /** `danger` draws the row in the destructive colour. */
   tone?: 'default' | 'danger';
+  /** A count already held by a store (never fetched for the row); drawn as a pill when above 0. */
+  badge?: number;
+  /** The localized name of `badge` for assistive technology; required for the pill to be read. */
+  badgeLabel?: string;
+  /** Draws this person's avatar in place of `icon`: the reader's own identity row. */
+  avatarUserId?: string;
 }
+
+/**
+ * One row of a hub: a section the reader can go INTO (`href`, a real link), or - for the one
+ * gesture that is not a place, signing out - an ACTION (`onSelect`, a button). Never both.
+ */
+export type HubRow = HubLinkRow | (HubRowBase & { onSelect: () => void; href?: never });
+
+/** A hub row that is a place: what every area hub but the dashboard's sign-out is made of. */
+export type HubLinkRow = HubRowBase & { href: string; onSelect?: never };

@@ -1,0 +1,276 @@
+/**
+ * THE DASHBOARD: THE APP'S ONE HUB, ITS GROUPS, ITS ROWS AND WHO SEES EACH.
+ *
+ * On a phone the dashboard is the fourth tab and the ONLY way to Agenda, Associations, Boutique,
+ * Formulaires and Administration (they are `mobileNav: false` in `places.ts`): it is the app's
+ * menu. It was a launcher of tiles, buttons calling `goto` and a theme toggle; it is now one
+ * `SectionHub` per group, rows as real links, the same shape on a phone and on a desktop
+ * (docs/wiki/frontend/section-navigation.md, UI-1 of the 2026-10-16 UI redesign audit).
+ *
+ * ONE table, read by the page and by its test, so a row and the rule that shows it are one
+ * decision. This table only LINKS: who may OPEN a page is each page's own guard, unchanged here.
+ * The directory is linked where it was linked before (the reader who reaches the admin hub, whose
+ * shortcuts carry it), not wider.
+ *
+ * Every fact below is already held when the page renders or arrives from a probe the page made
+ * before this hub existed - no row costs a request of its own.
+ */
+import type { Component } from 'svelte';
+import {
+  Bell,
+  BookUser,
+  Building2,
+  CalendarDays,
+  ClipboardList,
+  FolderOpen,
+  Landmark,
+  LogOut,
+  Settings,
+  Shield,
+  ShoppingBag,
+  UserRound,
+  Users,
+} from '@lucide/svelte';
+import { m } from '$lib/paraglide/messages';
+import type { Association } from '$lib/associations/api';
+import { editSectionHref } from '$lib/associations/editSections';
+import type { AdminScopeLabels } from '$lib/admin/access';
+import type { HubRow } from '$lib/components/navigation/breadcrumb';
+
+/** The groups, top to bottom; the conditional ones sit BELOW the static ones so nothing shifts up. */
+export type DashboardGroupKey = 'identity' | 'explore' | 'managed' | 'admin' | 'account';
+
+/** What the dashboard knows about its reader. */
+export interface DashboardFacts {
+  /** The signed-in reader, for the identity row; `null` draws it without an avatar. */
+  userId: string | null;
+  /** The saved display name, or `null` before one is known. */
+  displayName: string | null;
+  /** Unread notifications, from `postNotifStore` - never fetched for the dashboard. */
+  unreadNotifications: number;
+  /** `ensureMayOpenAdmin()`: the same predicate the `/admin` layout admits on. */
+  mayOpenAdmin: boolean;
+  /** What the console is called for this reader (`adminScopeLabels`). */
+  adminScope: AdminScopeLabels;
+  /** `getReviewerAccess()`: may read every association's public documents. */
+  isReviewer: boolean;
+  /** The reader's memberships (`ensureMyAssociations`), `[]` until they arrive. */
+  memberships: readonly Association[];
+}
+
+/** The page's handlers for the action rows; a table cannot hold a closure over page state. */
+export interface DashboardActions {
+  signOut: () => void;
+}
+
+interface DashboardEntry {
+  key: string;
+  group: Exclude<DashboardGroupKey, 'managed'>;
+  /** A route, or `signOut` for the one row that is an action rather than a place. */
+  target: string | { action: keyof DashboardActions };
+  label: (f: DashboardFacts) => string;
+  summary?: (f: DashboardFacts) => string;
+  icon: Component<{ size?: number }>;
+  tone?: HubRow['tone'];
+  /** Who sees the row; absent means every signed-in reader. */
+  may?: (f: DashboardFacts) => boolean;
+}
+
+/** Every static row, in the order its group lists it. */
+const ENTRIES: readonly DashboardEntry[] = [
+  {
+    key: 'profile',
+    group: 'identity',
+    target: '/profile',
+    label: (f) => f.displayName || m.profile_default_name(),
+    summary: () => m.dashboard_identity_summary(),
+    icon: UserRound,
+  },
+  {
+    key: 'calendar',
+    group: 'explore',
+    target: '/calendar',
+    label: () => m.nav_calendar_label(),
+    summary: () => m.nav_calendar_desc(),
+    icon: CalendarDays,
+  },
+  {
+    key: 'associations',
+    group: 'explore',
+    target: '/associations',
+    label: () => m.assoc_list_heading(),
+    summary: () => m.assoc_list_subtitle(),
+    icon: Users,
+  },
+  {
+    key: 'lists',
+    group: 'explore',
+    target: '/lists',
+    label: () => m.list_heading(),
+    summary: () => m.list_subtitle(),
+    icon: Building2,
+  },
+  {
+    key: 'institutions',
+    group: 'explore',
+    target: '/institutions',
+    label: () => m.inst_heading(),
+    summary: () => m.inst_subtitle(),
+    icon: Landmark,
+  },
+  {
+    key: 'shop',
+    group: 'explore',
+    target: '/shop',
+    label: () => m.nav_shop_label(),
+    summary: () => m.nav_shop_desc(),
+    icon: ShoppingBag,
+  },
+  {
+    key: 'forms',
+    group: 'explore',
+    target: '/forms',
+    label: () => m.nav_forms_label(),
+    summary: () => m.nav_forms_desc(),
+    icon: ClipboardList,
+  },
+  {
+    key: 'notifications',
+    group: 'explore',
+    target: '/notifications',
+    label: () => m.nav_notifications_label(),
+    summary: () => m.nav_notifications_desc(),
+    icon: Bell,
+  },
+  {
+    key: 'directory',
+    group: 'explore',
+    target: '/directory',
+    label: () => m.directory_heading(),
+    summary: () => m.directory_subtitle(),
+    icon: BookUser,
+    may: (f) => f.mayOpenAdmin,
+  },
+  {
+    key: 'admin',
+    group: 'admin',
+    target: '/admin',
+    label: (f) => f.adminScope.title(),
+    summary: (f) => f.adminScope.description(),
+    icon: Shield,
+    may: (f) => f.mayOpenAdmin,
+  },
+  {
+    key: 'settings',
+    group: 'account',
+    target: '/settings',
+    label: () => m.settings_page_title(),
+    summary: () => m.settings_page_subtitle(),
+    icon: Settings,
+  },
+  {
+    key: 'documents',
+    group: 'account',
+    target: '/documents',
+    label: () => m.reviewer_docs_title(),
+    summary: () => m.reviewer_docs_subtitle(),
+    icon: FolderOpen,
+    may: (f) => f.isReviewer,
+  },
+  // The rarest, most destructive gesture: last, ordinary size, the danger tone the settings hub
+  // gives "Delete my account" - no longer the largest target on the screen.
+  {
+    key: 'sign-out',
+    group: 'account',
+    target: { action: 'signOut' },
+    label: () => m.dashboard_signout_label(),
+    icon: LogOut,
+    tone: 'danger',
+  },
+];
+
+/**
+ * The associations the reader MANAGES: a live membership holding at least one right (`isAdmin`,
+ * which `/api/associations/me/list` sets from the bitmask) - the same test the association page
+ * applies to its own "Manage" link for a member. A list's management area lives under `/lists`.
+ */
+function managedRows(memberships: readonly Association[]): HubRow[] {
+  return memberships
+    .filter((a) => a.isAdmin && !a.archived)
+    .map((a) => ({
+      key: `managed-${a.id}`,
+      href: editSectionHref(a.slug, null, a.type === 'list' ? '/lists' : '/associations'),
+      label: a.name,
+      summary: a.role || undefined,
+      icon: a.type === 'list' ? Building2 : Users,
+    }));
+}
+
+/** The heading of each group; the identity row stands alone, under no heading. */
+function groupLabel(key: DashboardGroupKey, f: DashboardFacts): string {
+  switch (key) {
+    case 'identity':
+      return m.dashboard_profile_label();
+    case 'explore':
+      return m.dashboard_explore_heading();
+    case 'managed':
+      return m.dashboard_managed_heading();
+    case 'admin':
+      return f.adminScope.title();
+    case 'account':
+      return m.dashboard_account_heading();
+  }
+}
+
+const GROUP_ORDER: readonly DashboardGroupKey[] = [
+  'identity',
+  'explore',
+  'managed',
+  'admin',
+  'account',
+];
+
+/** One group as the page draws it. `heading: false` for the identity row, which needs none. */
+export interface DashboardGroup {
+  key: DashboardGroupKey;
+  label: string;
+  heading: boolean;
+  rows: HubRow[];
+}
+
+/** The groups the dashboard draws for `facts`, each with only its visible rows; empty ones vanish. */
+export function dashboardHubGroups(
+  facts: DashboardFacts,
+  actions: DashboardActions
+): DashboardGroup[] {
+  return GROUP_ORDER.map((key) => {
+    const rows =
+      key === 'managed'
+        ? managedRows(facts.memberships)
+        : ENTRIES.filter((e) => e.group === key && (e.may?.(facts) ?? true)).map((e) =>
+            toRow(e, facts, actions)
+          );
+    return { key, label: groupLabel(key, facts), heading: key !== 'identity', rows };
+  }).filter((g) => g.rows.length > 0);
+}
+
+/** An entry as a hub row: a link, or the action the page handed in. */
+function toRow(e: DashboardEntry, f: DashboardFacts, actions: DashboardActions): HubRow {
+  const base = {
+    key: e.key,
+    label: e.label(f),
+    summary: e.summary?.(f),
+    icon: e.icon,
+    tone: e.tone,
+  };
+  const row: HubRow =
+    typeof e.target === 'string'
+      ? { ...base, href: e.target }
+      : { ...base, onSelect: actions[e.target.action] };
+  if (e.key === 'profile' && f.userId) row.avatarUserId = f.userId;
+  if (e.key === 'notifications' && f.unreadNotifications > 0) {
+    row.badge = f.unreadNotifications;
+    row.badgeLabel = m.dashboard_unread_notifications_label({ count: f.unreadNotifications });
+  }
+  return row;
+}

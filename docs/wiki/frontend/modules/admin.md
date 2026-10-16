@@ -52,7 +52,7 @@ agenda route, so the shell refuses that account as well. `access.test.ts` pins t
 | `/admin/cercle` | Cercle top-up product | Platform admin |
 | `/admin/storage` | Storage usage | Platform admin |
 
-**The way in is the dashboard's tile**, shown on exactly the predicate the layout admits on, plus a
+**The way in is the dashboard's Administration row** (`lib/navigation/dashboardSections.ts`), shown on exactly the predicate the layout admits on, plus a
 direct link to `/admin/agenda` from the calendar for users who can validate events. Nothing else
 links into this tree.
 
@@ -65,7 +65,7 @@ given a read-only queue whose validation actions they cannot execute.
 from one predicate - a heading and its subtitle that branch separately are two places to change and
 one to forget. The description was already truthful ("Moderation de l'agenda de vos associations"),
 so the heading follows the description rather than the description being questioned. The same pair
-titles the dashboard tile, which is why `dashboard_admin_heading`, `dashboard_admin_generic_label`
+titles the dashboard row and its group, which is why `dashboard_admin_heading`, `dashboard_admin_generic_label`
 and `dashboard_admin_generic_desc` are gone: three keys saying "Administration" where two already
 said the truth.
 
