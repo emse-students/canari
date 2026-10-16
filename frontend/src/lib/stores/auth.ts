@@ -33,6 +33,8 @@ import { clearPersistedPendingAcks } from '$lib/mls-client/ackRetry';
 import { forgetPinSaltAhead } from '$lib/composables/session/pinSaltAhead';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
+import { DEADLINE_MS, RequestDeadlineError } from '$lib/utils/requestDeadline';
+import { trackedFetch } from '$lib/utils/trackedFetch';
 import { flushAndroidCookies } from '$lib/utils/androidCookies';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
 import {
@@ -93,7 +95,31 @@ let _pendingRefresh: Promise<string> | null = null;
  * The transport failure of the refresh SENT while the browser reported no network: the proof every
  * later caller of the same spell is answered from (see `refresh`). Null when no spell is proven.
  */
-let _noNetworkSpellFailure: TransportFailureError | null = null;
+let _noNetworkSpellFailure: TransportFailureError | RequestDeadlineError | null = null;
+
+/**
+ * How long a refresh waits for its response head before it is a transport failure
+ * ({@link RequestDeadlineError}), never an answer - so it can never log anyone out.
+ *
+ * THE ROTATION IS WHAT PICKS THE NUMBER. The server rotates the refresh token on RECEIPT, so a
+ * deadline can abandon a refresh the server already executed and lose the new token. That loses the
+ * RESPONSE, not the session: the replaced token stays valid for `ROTATION_GRACE_SECONDS` (60 s,
+ * `apps/core-service/src/auth/auth-sessions.service.ts`), and presenting it again inside that window
+ * is answered with the CURRENT token, rotating nothing. So the deadline must leave most of the grace
+ * to the next refresh, and the read class's 20 s leaves at least 40 s. With NO deadline the same lost
+ * response is worse, not safer: an engine that gives up after minutes has also spent the grace, and
+ * the next refresh is read as a replay and revokes the session.
+ *
+ * No retry is made here: the next `getToken` caller is the retry, single-flight like every refresh,
+ * and it presents the same stored token - one rotation at most, whatever happened to this one.
+ */
+export const REFRESH_DEADLINE_MS = DEADLINE_MS.read;
+
+/**
+ * How long a sign-out waits for the server's revocation before the local sign-out goes on without
+ * it. The write class's base: the revocation is a small POST, and the user is watching the button.
+ */
+export const LOGOUT_DEADLINE_MS = DEADLINE_MS.write;
 /** A refresh was answered from that proof since the spell began - so the line is said once a spell. */
 let _refreshHeldForNoNetwork = false;
 
@@ -692,27 +718,38 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
   // connectivity probe. A transport failure here means "no network"; an HTTP status - any status -
   // means the server answered and the session question is decided below. Keeping the two apart is
   // what lets an offline launch unlock instead of being reported as an expired session.
+  //
+  // UNDER A DEADLINE, like every first-party request: `trackedFetch` bounds the wait for the head
+  // (see `REFRESH_DEADLINE_MS` for why that is safe with a rotating token) and tells the
+  // connectivity store what happened - an answer is reachability, a transport failure is not, and a
+  // deadline expiry counts as a stall. Without it a stalled or captive link held every request of a
+  // cold open behind this one for as long as the engine tolerates, minutes.
   let res: Response;
   try {
-    res = await fetchImpl(endpoint, {
-      method: 'POST',
-      // `credentials` still says `include` on every platform: where the cookie works it IS the
-      // credential, and where it does not the header carries it and the flag costs nothing.
-      credentials: 'include',
-      headers: carried ? { [REFRESH_HEADER]: carried } : undefined,
-    });
-    connectivity.notifyServerReachable();
+    res = await trackedFetch(
+      fetchImpl,
+      endpoint,
+      {
+        method: 'POST',
+        // `credentials` still says `include` on every platform: where the cookie works it IS the
+        // credential, and where it does not the header carries it and the flag costs nothing.
+        credentials: 'include',
+        headers: carried ? { [REFRESH_HEADER]: carried } : undefined,
+      },
+      { requestClass: 'write', deadlineMs: REFRESH_DEADLINE_MS }
+    );
   } catch (e) {
     _accessToken = null;
     clearWsSessionCookie();
     awarn(`refresh✗transport ${Date.now() - t0}ms: ${String(e)}`);
     if (!isTransportFailure(e)) throw e;
-    connectivity.notifyServerUnreachable();
-    // TYPED AT THE THROW. The refresh carries the cookie, so it always takes the WebView's own
-    // `fetch`, whose transport failure is the contract's bare `TypeError: Failed to fetch` - and every
-    // caller of `getToken` (the MLS delivery client, the history pulls) printed that raw object, stack
-    // and all. The one class `transportFailure.ts` defines says "no answer" by its NAME.
-    const failure = e instanceof TransportFailureError ? e : new TransportFailureError(e);
+    // TYPED AT THE THROW, by `trackedFetch`: a `TransportFailureError` when nothing answered, a
+    // `RequestDeadlineError` when the head did not come back in time. Both say "no answer" by their
+    // NAME, so no caller of `getToken` reads a raw `TypeError` or a sentence.
+    const failure =
+      e instanceof TransportFailureError || e instanceof RequestDeadlineError
+        ? e
+        : new TransportFailureError(e);
     // The proof the spell gate in `refresh` answers later callers from - see there.
     if (connectivity.browserReportsNoNetwork()) _noNetworkSpellFailure = failure;
     throw failure;
@@ -871,12 +908,31 @@ export async function clearAuth(): Promise<void> {
   // Tell the backend to REVOKE the session row - the cookie is the least of it. The credential has
   // to travel the same way it does on a refresh, or the server cannot name the row to delete and a
   // logout on iOS would clear the local copy while leaving the session alive for seven more days.
+  //
+  // AWAITED, BUT UNDER A DEADLINE. Awaited because a web sign-out navigates the document to
+  // MiConnect's end-session next (`leaveSignedOut`), which would abort a request still in flight;
+  // bounded because on a stalled link it used to hold the sign-out, with no feedback, for as long as
+  // the engine tolerates. Past the deadline the local sign-out goes on - that is what signing out
+  // IS - and the line says the server did not revoke, because the session row then lives on.
   const carried = usesBodyRefreshTransport() ? await readNativeRefreshToken() : null;
-  await fetch(`${coreUrl()}/api/auth/logout`, {
-    method: 'POST',
-    credentials: 'include',
-    headers: carried ? { [REFRESH_HEADER]: carried } : undefined,
-  }).catch((e) => awarn('logout✗ ' + e));
+  const t0 = Date.now();
+  try {
+    const res = await trackedFetch(
+      fetch,
+      `${coreUrl()}/api/auth/logout`,
+      {
+        method: 'POST',
+        credentials: 'include',
+        headers: carried ? { [REFRESH_HEADER]: carried } : undefined,
+      },
+      { requestClass: 'write', deadlineMs: LOGOUT_DEADLINE_MS }
+    );
+    alog(`logout✓${res.status} ${Date.now() - t0}ms`);
+  } catch (e) {
+    awarn(
+      `logout✗ ${Date.now() - t0}ms: ${String(e)} - signed out locally, the server did NOT revoke the session`
+    );
+  }
   // Same reasoning as the rotation: the cookie DELETION must reach disk too, or a process death
   // resurrects a revoked cookie at the next launch.
   await flushAndroidCookies('logout');
