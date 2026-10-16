@@ -651,3 +651,23 @@ decide from it, is measured on [profiles-and-access](../profiles-and-access.md#1
 - [`infrastructure/nginx.md`](nginx.md) — `auth_request` configuration
 - [`infrastructure/backup.md`](backup.md) — Backup and restore procedures
 - [`infrastructure/MIGRATION.md`](../../../infrastructure/MIGRATION.md) — Server bootstrap and migration
+
+## The terms of use are a stage of the authorization flow (2026-10-16)
+
+**Decision (user, 2026-10-16):** signing in through the CAS or the Alumni source is a consent to the
+collection of name and first name, as one required tick, for new AND existing accounts.
+
+- **Where:** `blueprints/45-consent.yaml`, flow `miconnect-authorization`, which the eight OAuth2
+  providers now name instead of `default-provider-authorization-implicit-consent`. The enrolment flow
+  would have been wrong: it runs once, at the first sign-in, so existing accounts and a new version
+  of the text would never be asked.
+- **State:** `attributes.cgu_version` and `attributes.cgu_accepted_at` on the account. The stages
+  (prompt, then user write) are bound to the policy `miconnect-consent-needed`, which is true while
+  the stored version differs from the current one - so each version is asked once, for all services.
+- **The version is a literal in TWO places** in that file (the policy, the hidden prompt) and the
+  `updated` date of `frontend/src/routes/legal/miconnect/+page.svelte`. Change the text => change all
+  three, or the stage re-asks forever / never.
+- **The text** is `/legal/miconnect` on canari.emse.fr, hardcoded French like the other legal pages
+  ([open-questions](../open-questions.md)). Controller named: Association Rootz - confirm.
+- **Production reaches it** with `infrastructure/authentik/apply-blueprints.sh` (`snapshot`,
+  `dry-run`, `apply`), a production write on the identity provider.
