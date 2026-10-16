@@ -14,9 +14,9 @@
 
   // THE APP'S ONE HUB (`dashboardSections.ts` is the table). Identity, Explorer and Compte render on
   // the first frame from what is already held - sign-out is reachable whatever a probe does. The
-  // probed groups wait for EVERY probe to settle (`allSettled`: a failure settles too), with a
-  // placeholder above Compte holding their place; a probe that never answers leaves the placeholder
-  // and nothing else.
+  // probed groups wait for EVERY probe to settle (`allSettled`: a failure settles too) and are then
+  // inserted above Compte with NO space reserved, so Compte can only move DOWN (manager, staff) and
+  // never for a member; a probe that never answers leaves only a screen-reader status.
   let mayOpenAdmin = $state(false);
   let isReviewer = $state(false);
   let memberships = $state<Association[]>([]);
@@ -92,18 +92,10 @@
 </PageContainer>
 
 {#snippet pending()}
-  <!-- The place of the probed groups (managed associations, administration, documents): one
-       row, the size of the commonest answer. It sits ABOVE Compte, which never waits; resolving
-       it is the only shift the page makes. Nothing in it can be tapped. -->
-  <div data-dashboard-pending aria-hidden="true" class="animate-pulse">
-    <div
-      class="border-cn-border bg-cn-surface flex items-center gap-3 overflow-hidden rounded-2xl border px-4 py-3.5"
-    >
-      <div class="bg-cn-border size-5 rounded-full"></div>
-      <div class="flex-1 space-y-1.5">
-        <div class="bg-cn-border h-3 w-1/3 rounded-full"></div>
-        <div class="bg-cn-border h-2.5 w-1/2 rounded-full"></div>
-      </div>
-    </div>
-  </div>
+  <!-- The probed groups (managed associations, administration, documents) are still being asked
+       for. NOTHING IS RESERVED: a reserved row collapsed for the commonest reader (a member, who
+       gets no probed group) and Compte jumped UP, bringing sign-out under a finger aimed at
+       settings. With no height here, a probed group can only push Compte DOWN, and only for a
+       manager or staff. Out of the flow (`sr-only`): a status for assistive technology alone. -->
+  <span data-dashboard-pending role="status" class="sr-only">{m.common_loading_label()}</span>
 {/snippet}

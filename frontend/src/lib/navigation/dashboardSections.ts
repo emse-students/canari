@@ -42,8 +42,9 @@ import type { HubRow } from '$lib/components/navigation/breadcrumb';
  * the first frame - Compte above all: SIGN-OUT IS ALWAYS REACHABLE, whatever a probe does, even one
  * that never answers. The probed groups (managed associations, administration, the reviewer's
  * documents) sit between Explorer and Compte and draw once every probe has SETTLED - answered,
- * failed or given up; until then the page holds a placeholder in their place, so the only shift is
- * that placeholder resolving, never a row arriving one at a time.
+ * failed or given up - all at once, never a row at a time, and with no space reserved for them, so
+ * their arrival can only push Compte DOWN (a reserved row collapsing for a member pulled sign-out up
+ * under a finger aimed at settings).
  */
 export type DashboardGroupKey = 'identity' | 'explore' | 'managed' | 'admin' | 'review' | 'account';
 

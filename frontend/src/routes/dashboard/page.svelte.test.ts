@@ -188,19 +188,18 @@ describe('dashboard hub', () => {
     expect(loadNotifs).toHaveBeenCalledOnce();
   });
 
-  it('draws Compte at once and holds the probed groups in a placeholder above it until they settle', async () => {
+  it('draws Compte at once and reserves NO space for the probed groups, so Compte only moves down', async () => {
     let release!: () => void;
     state.hold = new Promise<void>((r) => (release = r));
     state.mayOpenAdmin = true;
     await render();
     expect(keys().slice(-3)).toEqual(['notifications', 'settings', 'sign-out']);
+    // While waiting: a screen-reader status only, out of the flow - nothing that could collapse
+    // later and pull sign-out up under a finger.
     const pending = document.querySelector('[data-dashboard-pending]');
-    expect(pending).not.toBeNull();
-    // The placeholder sits ABOVE Compte, never below it.
-    const settings = document.querySelector('[data-hub-row="settings"]')!;
-    expect(
-      pending!.compareDocumentPosition(settings) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy();
+    expect(pending?.getAttribute('role')).toBe('status');
+    expect(pending?.classList.contains('sr-only')).toBe(true);
+    expect(pending?.children).toHaveLength(0);
 
     release();
     for (let i = 0; i < 5; i++) {
@@ -212,7 +211,7 @@ describe('dashboard hub', () => {
     expect(keys()).toContain('directory');
   });
 
-  it('settles on a probe that REJECTS: the placeholder resolves and the rest still draws', async () => {
+  it('settles on a probe that REJECTS: the status clears and the rest still draws', async () => {
     state.reviewerFails = true;
     state.mayOpenAdmin = true;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
