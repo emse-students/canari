@@ -52,10 +52,15 @@ log_stamp_days_ago() {
 # removed; anything else is reported and left, because its age is unknown. Returns 1 when an entry
 # could not be judged or a removal did not take, so the daily run can go red on it.
 prune_log_archive() {
-  local root="$1" project="$2" cutoff name status=0
+  local root="$1" project="$2" cutoff name listing status=0
   [ -d "$root/$project" ] || return 0
   cutoff="$(log_stamp_days_ago "$LOG_ARCHIVE_WINDOW_DAYS")"
-  for name in $(find "$root/$project" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort); do
+  # Listed first, so a `find` that fails is a red run rather than an empty loop that passes.
+  if ! listing="$(find "$root/$project" -mindepth 1 -maxdepth 1 -printf '%f\n')"; then
+    printf '::error::log-retention: cannot list %s/%s - its archives were not pruned\n' "$root" "$project" >&2
+    return 1
+  fi
+  for name in $(printf '%s\n' "$listing" | sort); do
     if ! [[ "$name" =~ ^[0-9]{8}T[0-9]{6}Z$ ]] || [ ! -d "$root/$project/$name" ]; then
       printf '::warning::log-retention: %s/%s is not an archive this script wrote - left in place, and its age is unknown\n' \
         "$project" "$name" >&2

@@ -12,7 +12,7 @@
 #  - a log holding an old line fails, and the report names the container and the line's date;
 #  - a line older than the promise itself is reported as the promise BROKEN, not merely near it;
 #  - a log the CLI cannot read fails as UNREADABLE, never as old (an inability to measure is not a
-#    failing measurement);
+#    failing measurement) - judged by docker's exit status, so a failure that prints nothing counts;
 #  - the question asked is `--until <LOG_LIVE_MAX_DAYS x 24>h`, and the window leaves slack under
 #    the promise.
 #
@@ -55,6 +55,9 @@ logs)
   old) printf '%s.123456789Z GET /api/version\n' "$RECENT_OLD" ;;
   ancient) printf '%s.000000001Z GET /\n' "$PAST_PROMISE" ;;
   broken) printf 'Error response from daemon: configured logging driver does not support reading\n' >&2; exit 1 ;;
+  mute) exit 1 ;;
+  # What a real old log does: `head` takes the first line and closes, and docker dies of SIGPIPE.
+  piped) printf '%s.123456789Z GET /api/version\n' "$RECENT_OLD"; kill -PIPE $$ ;;
   esac
   ;;
 esac
@@ -103,6 +106,22 @@ else
   fail "an unreadable log was misreported (status=$status): $(cat "$TMP/out")"
 fi
 if grep -q "fresh holds nothing older" "$TMP/out"; then ok "a container after an unreadable one is still judged"; else fail "the report stopped at the unreadable log"; fi
+
+run "mute"
+status=$?
+if [ "$status" -ne 0 ] && grep -q "could not read the log of mute" "$TMP/out" && ! grep -q "mute holds nothing" "$TMP/out"; then
+  ok "a CLI that fails with NO output is unreadable, not a log holding nothing old"
+else
+  fail "a silent docker failure passed as a clean log (status=$status): $(cat "$TMP/out")"
+fi
+
+run "piped"
+status=$?
+if [ "$status" -ne 0 ] && grep -q "piped holds a line from ${RECENT_OLD}Z" "$TMP/out" && ! grep -q "could not read the log of piped" "$TMP/out"; then
+  ok "docker killed by SIGPIPE after its first line (141) is a READ, reported as old"
+else
+  fail "a SIGPIPE'd read was misreported (status=$status): $(cat "$TMP/out")"
+fi
 
 if [ "$LOG_LIVE_MAX_DAYS" -lt "$LOG_PROMISE_DAYS" ]; then
   ok "the ceiling ($LOG_LIVE_MAX_DAYS days) leaves $((LOG_PROMISE_DAYS - LOG_LIVE_MAX_DAYS)) days to act before the promise"
