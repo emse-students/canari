@@ -243,6 +243,11 @@ Where each part of that lives:
   old `cells[key] ?? baseCents` was exactly the fallback that would have priced an unavailable
   combination; it now refuses instead, greys out the options that lead to a closed cell (shown, not
   hidden - an option that vanishes reads as a bug), and disables the submit button.
+  **A required priced question not answered yet has chosen no cell** (`pricedQuestionsAwaitingAnswer`,
+  `forms/fillAnswers.ts`): until it is, the page shows the neutral footer - no total, no
+  "Combinaison indisponible" - and closes no option of ANOTHER priced question. Its blank used to fall
+  in the "others" group and called "Cotisation BDE 2026" unavailable before any answer (Mi 9T,
+  v1.2.9-alpha.3). An OPTIONAL priced question left blank still prices as "others", as the server does.
 
 ### What the app knows about a person, and why a price may rest on it
 

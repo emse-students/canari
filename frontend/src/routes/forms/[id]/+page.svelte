@@ -38,6 +38,7 @@
     initialSelections,
     isItemAnswered,
     missingAnswerMessage,
+    pricedQuestionsAwaitingAnswer,
     visibleAnswers,
     visibleItems as visibleItemsOf,
   } from '$lib/forms/fillAnswers';
@@ -328,7 +329,20 @@
    * The combination they have landed on does not exist, so there is nothing to pay and nothing to
    * submit. Distinct from `!maySubmit`, which is about who they ARE: this one moves as they answer.
    */
-  const priceUnavailable = $derived(baseCents === null);
+  /**
+   * The priced questions still to be answered: until they are, no cell is chosen, so the page says
+   * nothing about the price - neither a total nor "unavailable" (`pricedQuestionsAwaitingAnswer`).
+   */
+  const awaitingPricedAnswers = $derived(
+    pricing
+      ? pricedQuestionsAwaitingAnswer(
+          visibleItems,
+          pricing.answerDimensions.map((d) => d.questionId),
+          selections
+        )
+      : new Set<string>()
+  );
+  const priceUnavailable = $derived(baseCents === null && awaitingPricedAnswers.size === 0);
 
   /** The price, once known to exist. Zero for a free form, so the display stays arithmetic. */
   const priceCents = $derived(baseCents ?? 0);
@@ -346,6 +360,12 @@
     const current = view.answerDimensions.map((d) => bucketIdOf(d, selections[d.questionId]));
     return new Set(
       view.answerDimensions.flatMap((dimension, index) => {
+        // Another priced question not answered yet leaves this one's cell undecided: nothing is
+        // closed until it is (an "others" stand-in would close options the person can reach).
+        const othersPending = view.answerDimensions.some(
+          (other, j) => j !== index && awaitingPricedAnswers.has(other.questionId)
+        );
+        if (othersPending) return [];
         const item = form?.items.find((i) => i.id === dimension.questionId);
         const closed: string[] = [];
         for (const option of item?.options ?? []) {
