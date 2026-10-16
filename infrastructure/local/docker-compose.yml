@@ -371,6 +371,10 @@ services:
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
       AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-}
       LIVE_REPORT_SIGNING_KEY: ${LIVE_REPORT_SIGNING_KEY:-}
+      # Encrypts each association's Lydia Business private token at rest (migration 086). Unset, a
+      # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still
+      # confirms). Rotating it makes every stored key unreadable: managers must enter them again.
+      LYDIA_KEY_ENCRYPTION_SECRET: ${LYDIA_KEY_ENCRYPTION_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-dev-internal-shared-secret-change-me}
       DELIVERY_INTERNAL_URL: http://chat-delivery-service:3010

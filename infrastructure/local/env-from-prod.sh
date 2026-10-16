@@ -95,7 +95,11 @@ TURN_USERNAME"
 BLANK="MICONNECT_EDITOR_TOKEN"
 
 # Regenerated per local stack: these mint or verify credentials.
-REGENERATE="AGENDA_SIGNING_KEY CALL_ROOM_SECRET INTERNAL_SECRET INTERNAL_SHARED_SECRET JWT_SECRET LIVE_REPORT_SIGNING_KEY"
+# LYDIA_KEY_ENCRYPTION_SECRET is here and NOT in KEEP: kept, a laptop holding a production dump
+# could decrypt every association's Lydia Business key. Regenerated, the dumped keys simply do not
+# open locally (their callbacks are refused), which is the intended outcome.
+REGENERATE="AGENDA_SIGNING_KEY CALL_ROOM_SECRET INTERNAL_SECRET INTERNAL_SHARED_SECRET JWT_SECRET
+LIVE_REPORT_SIGNING_KEY LYDIA_KEY_ENCRYPTION_SECRET"
 
 # Decided by the local topology. The values are written below, not taken from the snapshot.
 LOCAL="ALLOW_ORIGIN DELIVERY_PORT DOMAIN FRONTEND_HOST_PORT FRONTEND_URL

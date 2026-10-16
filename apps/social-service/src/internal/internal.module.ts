@@ -7,6 +7,7 @@ import { InternalLegacyCotisationsController } from './internal-legacy-cotisatio
 import { InternalProfileNotificationsController } from './internal-profile-notifications.controller';
 import { InternalChannelReadController } from './internal-channel-read.controller';
 import { InternalPresenceController } from './internal-presence.controller';
+import { InternalLydiaKeyController } from './internal-lydia-key.controller';
 import { PostsModule } from '../posts/posts.module';
 import { FormsModule } from '../forms/forms.module';
 import { AssociationsModule } from '../associations/associations.module';
@@ -56,6 +57,7 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
     InternalProfileNotificationsController,
     InternalChannelReadController,
     InternalPresenceController,
+    InternalLydiaKeyController,
   ],
 })
 export class InternalModule {}

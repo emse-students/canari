@@ -1404,10 +1404,11 @@ export class FormsService {
   /**
    * Records that a submission has been paid, and grants everything that payment buys.
    *
-   * THE CALLER IS THE AUTHORISATION, WHICH IS WHY THIS TAKES NO CALLER. Its only route is the
-   * internal `X-Internal-Secret` controller, reached from core-service after the payment provider's callback
-   * signature has been verified - so by the time this runs, the payment is a fact established
-   * somewhere that cannot be spoofed by a client. It used to accept `callerId`/`isGlobalAdmin` and
+   * THE CALLER IS THE AUTHORISATION, WHICH IS WHY THIS TAKES NO CALLER. No route reaches it: it
+   * runs only once Lydia itself, asked server to server about the row's OWN request, answered paid
+   * (`settleFromProvider`, from the payer's return or a verified callback; `settleOpenRequest`, from
+   * a retry) - so by the time this runs, the payment is a fact established somewhere that cannot be
+   * spoofed by a client. It used to accept `callerId`/`isGlobalAdmin` and
    * run `assertSubmissionAccess` only `if (callerId)`: a check that quietly did not happen when the
    * argument was absent, behind a public route the SUBMITTER could reach. Both are gone.
    *
@@ -1618,18 +1619,8 @@ export class FormsService {
   async confirmPayment(submissionId: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
-    const sessionId = submission.stripeSessionId;
-    if (
-      CONFIRMABLE_PAYMENT_STATUSES.has(submission.paymentStatus) &&
-      sessionId &&
-      !LYDIA_REQUEST_UUID_RE.test(sessionId)
-    ) {
-      // A Stripe-era row (`cs_...`): Lydia never issued it, so there is nothing to ask - and core
-      // would refuse it with a 400 on every poll.
-      this.logger.log(
-        `[Forms] confirmPayment ${submissionId}: ${submission.paymentStatus} row holds a non-Lydia request id, nothing to ask the provider`
-      );
-    } else if (CONFIRMABLE_PAYMENT_STATUSES.has(submission.paymentStatus) && sessionId) {
+    const sessionId = this.lydiaRequestToRead(submission, 'confirmPayment');
+    if (sessionId) {
       const form = await this.formRepo.findOne({ where: { id: submission.formId } });
       const connectAccountId = form?.associationId
         ? await this.associationsService.getPaymentAccountId(form.associationId)
@@ -1639,36 +1630,144 @@ export class FormsService {
           `[Forms] confirmPayment ${submissionId}: the form has no payment account to read request ${sessionId} with`
         );
       } else {
-        try {
-          const { data } = await axios.post(
-            coreUrl('payments/request-state'),
-            { sessionId, connectAccountId },
-            internalCoreRequestConfig()
-          );
-          if (data?.state === 'paid') {
-            this.logger.log(
-              `[Forms] confirmPayment ${submissionId}: request ${sessionId} is PAID at the provider - recorded`
-            );
-            await this.markPaid(submissionId, sessionId, true);
-          } else {
-            this.logger.debug(
-              `[Forms] confirmPayment ${submissionId}: request ${sessionId} is ${data?.state ?? 'unknown'} (${data?.raw ?? ''})`
-            );
-          }
-        } catch (err: unknown) {
-          this.logger.warn(
-            `[Forms] confirmPayment ${submissionId}: could not read request ${sessionId}: ${
-              err instanceof Error ? err.message : String(err)
-            }`
-          );
-        }
+        await this.settleFromProvider(submissionId, sessionId, connectAccountId, 'confirmPayment');
       }
-    } else {
-      this.logger.debug(
-        `[Forms] confirmPayment ${submissionId}: ${submission.paymentStatus}, nothing to ask the provider`
-      );
     }
     return this.getSubmissionById(submissionId);
+  }
+
+  /**
+   * A Lydia confirm callback, VERIFIED by core-service with the Business key of `vendorToken`, used
+   * as a TRIGGER and nothing more: the row settles from its OWN stored request uuid, read at Lydia
+   * with that Business (`settleFromProvider`, the very read the payer's return makes). Nothing the
+   * callback carries - amount, request id - decides the status.
+   *
+   * CROSS-ASSOCIATION CHECK FIRST: the row's payee account (its form's association, or that
+   * association's approved parent) must be `vendorToken`. Without it, an authentic callback of
+   * association A's request naming a submission of association B in its `order_ref` would settle
+   * B's row - A's key is genuine, the row is not A's. Refused rows are logged at ERROR: they are
+   * either a forged `order_ref` signed by a real Business, or a delegation that moved mid-payment.
+   *
+   * Answers `{ outcome }` for core-service's log: the state read, or why nothing was read.
+   */
+  async confirmPaymentFromCallback(
+    submissionId: string,
+    callback: { vendorToken: string; requestId?: string }
+  ): Promise<{ outcome: string }> {
+    const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    if (!submission) throw new NotFoundException('Submission not found');
+    if (!(await this.isCallbackPayee(submission, callback.vendorToken, 'confirm'))) {
+      return { outcome: 'other-account' };
+    }
+    if (
+      callback.requestId &&
+      submission.paymentRequestId &&
+      submission.paymentRequestId !== callback.requestId
+    ) {
+      // Expected never: a retry cancels the old request before issuing the next, and settles it
+      // first if it was paid (`settleOpenRequest`). A confirm for a request the row no longer names
+      // is a payment nothing will record - ERROR, so the refund is not owed in silence.
+      this.logger.error(
+        `[Forms] confirm callback for submission ${submissionId} names request ${callback.requestId}, ` +
+          `the row's is ${submission.paymentRequestId}: if Lydia took that payment, a refund is owed - reading the row's own request`
+      );
+    }
+    const sessionId = this.lydiaRequestToRead(submission, 'confirm callback');
+    if (!sessionId) return { outcome: `nothing-to-read (${submission.paymentStatus})` };
+    return {
+      outcome: await this.settleFromProvider(
+        submissionId,
+        sessionId,
+        callback.vendorToken,
+        'confirm callback'
+      ),
+    };
+  }
+
+  /**
+   * Whether `vendorToken` - the Business whose key verified a callback - is the account this row's
+   * money is paid into. Logs the refusal at ERROR (see `confirmPaymentFromCallback`).
+   */
+  private async isCallbackPayee(
+    submission: Submission,
+    vendorToken: string,
+    what: string
+  ): Promise<boolean> {
+    const form = await this.formRepo.findOne({
+      where: { id: submission.formId },
+      select: { id: true, associationId: true },
+    });
+    const payee = form?.associationId
+      ? await this.associationsService.getLydiaPayeeAccountId(form.associationId)
+      : null;
+    if (payee && payee === vendorToken) return true;
+    this.logger.error(
+      `[Forms] ${what} callback for submission ${submission.id} REFUSED: verified for a Business ` +
+        `that is not the row's payee (${payee ? 'the form pays into another account' : 'the form has no Lydia payee'}) - nothing written`
+    );
+    return false;
+  }
+
+  /**
+   * The Lydia `request_uuid` a row's payment can be read with, or null (logged) when there is
+   * nothing to ask the provider: a status that cannot become paid, no stored request, or a
+   * Stripe-era `cs_...` id that core would refuse with a 400 on every poll.
+   */
+  private lydiaRequestToRead(submission: Submission, by: string): string | null {
+    const sessionId = submission.stripeSessionId;
+    if (!CONFIRMABLE_PAYMENT_STATUSES.has(submission.paymentStatus) || !sessionId) {
+      this.logger.debug(
+        `[Forms] ${by} ${submission.id}: ${submission.paymentStatus}, nothing to ask the provider`
+      );
+      return null;
+    }
+    if (!LYDIA_REQUEST_UUID_RE.test(sessionId)) {
+      this.logger.log(
+        `[Forms] ${by} ${submission.id}: ${submission.paymentStatus} row holds a non-Lydia request id, nothing to ask the provider`
+      );
+      return null;
+    }
+    return sessionId;
+  }
+
+  /**
+   * Reads the row's own request at the provider and records it if paid (`markPaid` under the row
+   * lock, re-checking the row still names `sessionId`). The ONE settle both confirmations share -
+   * the payer's return and the verified callback. Answers the state read, `stale` when a retry
+   * replaced the request meanwhile, or `unreadable` when the read failed (WARN: the payer repeats
+   * it, the callback is retried by Lydia or the expiry job decides).
+   */
+  private async settleFromProvider(
+    submissionId: string,
+    sessionId: string,
+    connectAccountId: string,
+    by: string
+  ): Promise<string> {
+    try {
+      const { data } = await axios.post(
+        coreUrl('payments/request-state'),
+        { sessionId, connectAccountId },
+        internalCoreRequestConfig()
+      );
+      if (data?.state === 'paid') {
+        this.logger.log(
+          `[Forms] ${by} ${submissionId}: request ${sessionId} is PAID at the provider - recorded`
+        );
+        const { ok } = await this.markPaid(submissionId, sessionId, true);
+        return ok ? 'paid' : 'stale';
+      }
+      this.logger.debug(
+        `[Forms] ${by} ${submissionId}: request ${sessionId} is ${data?.state ?? 'unknown'} (${data?.raw ?? ''})`
+      );
+      return String(data?.state ?? 'unknown');
+    } catch (err: unknown) {
+      this.logger.warn(
+        `[Forms] ${by} ${submissionId}: could not read request ${sessionId}: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+      return 'unreadable';
+    }
   }
 
   /**
@@ -1682,10 +1781,14 @@ export class FormsService {
    * cancels the old one first, which makes Lydia call back about the OLD one: applying that would
    * cancel the answer the payer is paying for right now. A row that has no stored id names no
    * request, so no report can match it - it leaves `pending` through the expiry job instead.
+   *
+   * `vendorToken` is the Business whose key verified the callback: a report about a row whose
+   * money goes to another account changes nothing (`isCallbackPayee`).
    */
   async cancelPendingSubmission(
     submissionId: string,
-    request: { requestId?: string; sessionId?: string }
+    request: { requestId?: string; sessionId?: string },
+    vendorToken: string
   ): Promise<{ ok: boolean }> {
     if (!request.requestId && !request.sessionId) {
       this.logger.warn(
@@ -1693,6 +1796,12 @@ export class FormsService {
       );
       throw new BadRequestException('A cancel report must name its request');
     }
+    const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    if (!submission) {
+      this.logger.warn(`[Forms] cancel: submission ${submissionId} not found`);
+      return { ok: false };
+    }
+    if (!(await this.isCallbackPayee(submission, vendorToken, 'cancel'))) return { ok: false };
     const named = (submission: Submission) =>
       (!!request.requestId && submission.paymentRequestId === request.requestId) ||
       (!!request.sessionId && submission.stripeSessionId === request.sessionId);
