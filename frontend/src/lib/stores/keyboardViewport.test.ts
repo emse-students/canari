@@ -5,6 +5,8 @@ import {
   keyboardSafeAreaBottomOverride,
   overlaySettledAroundFocus,
   pinSafeAreaBottom,
+  revealBlockFor,
+  scrollFocusedFieldIntoView,
   type ViewportMeasurement,
 } from './keyboardViewport.svelte';
 
@@ -307,5 +309,43 @@ describe('overlaySettledAroundFocus - the reveal redone once the overlay stops m
       false
     );
     expect(overlaySettledAroundFocus('height', overlay, null)).toBe(false);
+  });
+});
+
+describe('revealBlockFor - the field after the focused one stays in view (iPhone 12, v1.2.9-alpha.4)', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  it('centres a field inside a keyboard-aware overlay and leaves a page field at nearest', () => {
+    const overlay = document.createElement('div');
+    overlay.setAttribute('data-keyboard-aware-overlay', '');
+    const inModal = document.createElement('input');
+    overlay.appendChild(inModal);
+    const onPage = document.createElement('input');
+    expect(revealBlockFor(inModal)).toBe('center');
+    expect(revealBlockFor(onPage)).toBe('nearest');
+  });
+
+  it('the reveal of a focused modal field scrolls it to the centre of its scrollport', () => {
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      cb(0);
+      return 0;
+    });
+    const overlay = document.createElement('div');
+    overlay.setAttribute('data-keyboard-aware-overlay', '');
+    const field = document.createElement('input');
+    const scrollIntoView = vi.fn();
+    field.scrollIntoView = scrollIntoView;
+    overlay.appendChild(field);
+    document.body.appendChild(overlay);
+    field.focus();
+    scrollFocusedFieldIntoView('auto');
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      block: 'center',
+      inline: 'nearest',
+      behavior: 'auto',
+    });
   });
 });

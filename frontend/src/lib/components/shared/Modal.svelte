@@ -254,7 +254,16 @@
         </div>
 
         {#if footer}
-          <div class="flex shrink-0 justify-end gap-2 px-6 pb-4">
+          <!-- THE FOOTER IS AN EDGE, NOT A LAYER: a border and its own top room, so whatever the
+               body scrolls ends at a line 12 px above the footer's button and never against it.
+               Without it the cut row of a taller body read as covered BY the button - the PIN
+               gate's keypad rows 7-9 at the largest text size, the confirm field of the PIN change
+               with the keyboard up (iPhone 12, v1.2.9-alpha.4). The title bar's `border-b` is the
+               same edge at the top. -->
+          <div
+            class="border-cn-border flex shrink-0 justify-end gap-2 border-t px-6 pt-3 pb-4"
+            data-modal-footer
+          >
             {@render footer?.()}
           </div>
         {/if}

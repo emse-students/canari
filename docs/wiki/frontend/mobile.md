@@ -2525,7 +2525,18 @@ runs one frame after the resize - into a scrollport still shrinking. In the PIN 
 focused field then settled half under the footer's submit button, and a tap where the next field
 stood submitted the form; the iOS keyboard drops and rises between two fields, so every move paid
 it. `initKeyboardViewport` redoes the reveal on the overlay's `transitionend` for `height`
-(`overlaySettledAroundFocus`). Not yet read on the phone.
+(`overlaySettledAroundFocus`). Read on v1.2.9-alpha.4: the focused field was then in view, but the
+NEXT one (the confirm field) stood cut under the button and was reachable only after blurring.
+
+**Inside a keyboard-aware overlay the focused field is CENTRED, not `nearest` (v1.2.9-alpha.4).**
+`nearest` puts the field on the bottom edge of a scrollport the keyboard made short, which is
+exactly where the next field is cut. `revealBlockFor` answers `center` inside
+`[data-keyboard-aware-overlay]` and `nearest` on a page (which scrolls the whole document, where
+moving further than needed is a jump). And `Modal`'s footer is an EDGE (`border-t`, `pt-3`,
+`data-modal-footer`): what the body scrolls ends at a line above the button, never against it - the
+same cut that read as the unlock button covering keypad rows 7-9 on the PIN gate at the largest text
+size. Owed one reading on the iPhone: the PIN change with the keyboard up, the PIN gate at the
+largest size.
 
 `keyboardViewport.svelte.ts` pins the shell to the visual viewport while the keyboard is up:
 

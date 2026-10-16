@@ -1,12 +1,12 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, tick, untrack } from 'svelte';
   import { CircleCheck, CircleX, Loader } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { confirmSubmissionPayment } from '$lib/forms/api';
   import { paymentReturnVerdict } from '$lib/forms/paymentReturn';
   import { SocialApiError } from '$lib/associations/api';
-  import { setPageTitle } from '$lib/seo/pageTitle.svelte';
+  import { announcePageTitle, setPageTitle } from '$lib/seo/pageTitle.svelte';
 
   /**
    * Lydia's return carries the submission id (it cannot fill in a session id). Each read asks the
@@ -19,7 +19,13 @@
   const MAX_POLLS = 10;
   const POLL_INTERVAL_MS = 3000;
 
-  let status = $state<'loading' | 'confirmed' | 'pending' | 'overCapacity' | 'error'>('loading');
+  /**
+   * A return with no submission starts on its answer, so the title the route announcer reads at the
+   * navigation is already the right one and nothing has to be announced again.
+   */
+  let status = $state<'loading' | 'confirmed' | 'pending' | 'overCapacity' | 'error'>(
+    untrack(() => submissionId) ? 'loading' : 'error'
+  );
   let formId = $state<string | null>(null);
 
   /**
@@ -36,6 +42,20 @@
   };
   $effect(() => {
     setPageTitle(STATUS_TITLE[status]());
+  });
+
+  /**
+   * THE ROUTE ANNOUNCER FOLLOWS THE ANSWER. It reads the title once per navigation, and here that
+   * was still "Verification du paiement..." (iPhone 12, v1.2.9-alpha.4). When the page leaves
+   * `loading` - once, after the server answered - the title above is written in the same flush and
+   * the announcer is asked to read it again. A page that never was `loading` (no submission) never
+   * asks: its first title was its answer, and on a cold load the router has not started yet.
+   */
+  let wasLoading = untrack(() => status === 'loading');
+  $effect(() => {
+    if (status === 'loading' || !wasLoading) return;
+    wasLoading = false;
+    void tick().then(announcePageTitle);
   });
   onDestroy(() => setPageTitle(null));
 
@@ -64,7 +84,6 @@
   onMount(async () => {
     if (!submissionId) {
       console.warn('[forms/success] reached without a submission_id');
-      status = 'error';
       return;
     }
     try {
