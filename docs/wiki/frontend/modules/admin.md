@@ -43,7 +43,7 @@ agenda route, so the shell refuses that account as well. `access.test.ts` pins t
 | `/admin` | Home (cards) | Any BDE super-admin, content moderator, event validator, or platform admin |
 | `/admin/agenda` | Pending agenda events | BDE event validator (`VALIDATE_EVENTS`) or platform admin; a BDE sees and decides the events of the associations its spaces reach (`canValidate` per row) |
 | `/admin/moderation` | Reports, hidden posts, mutes | Content moderator or platform admin |
-| `/admin/document-reviewers` | Public-document reviewer grants | BDE super-admin or platform admin |
+| `/admin/read-access` | Two tabs: named readers (platform admin only) and public-document reviewers ([below](#read-access-adminread-access)) | BDE super-admin (reviewers tab only) or platform admin |
 | `/admin/carte` | Carte de la Vie Asso | BDE super-admin or platform admin |
 | `/admin/spaces` | Spaces & audiences: three sections (associations, lists, institutions), the BDE star | Platform admin |
 | `/admin/platform` | Maintenance, minimum client version | Platform admin |
@@ -80,6 +80,67 @@ while the server had `MODERATE` accepted on the reports, mutes and comment endpo
 the flag could reach none of it, and the whole tier was reachable only by someone who already knew
 the URL. Whenever a permission is added to a server-side check, the matching screen is part of the
 same change.
+
+## Read access (`/admin/read-access`)
+
+Two unrelated access lists, one tab each (`SegmentedControl`, `?tab=readers|reviewers`). A BDE
+super-admin sees the reviewers alone, with no tab bar: the named readers are a platform admin's (D24,
+[profiles-and-access](../../profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08)).
+
+**ONE TEMPLATE FOR BOTH (user, 2026-10-16: "uniformiser, rendre plus clair").** `components/admin/access/AccessSection.svelte`
+draws each tab in the same order: a one-line summary with the full explanation behind "En savoir
+plus", a person search with ONE primary `Button` (never drawn disabled - with nothing picked it focuses
+the field), the list as cards or the shared `EmptyState`, and the journal folded under the list as a
+`<details>` whose summary carries the count (`Journal (n)`). `ReadAccessPanel` and
+`DocumentReviewersPanel` own the data; `lib/admin/readAccess.ts` holds the pure part (cell keys, the
+grouping of a person's cells, the reviewers' journal).
+
+The decisions, taken by the user on 2026-10-16:
+
+- **Named readers are cards, not a grid.** The person x (2 campuses x 6 scopes) table could not fit a
+  phone. A card lists what the person reads as chips grouped by campus (`ReadGrantCard`), and
+  "Modifier" opens a sheet (`ReadGrantSheet`, the shared `Modal`: bottom sheet on a phone, focus
+  trap, Escape, Back) with one checkbox group per campus. "Ajouter" opens the same sheet for the
+  picked person; they get a card once they hold a cell.
+- **Every change saves at once and offers "Annuler" in a toast** (`showUndoToast`, 6 s; the toast
+  store gained an optional action button). There is no undo endpoint: undo is the INVERSE call.
+  For a reader cell that is `PUT /read-grants` with the opposite state, journalled by the server like
+  any change. For a reviewer it is `POST`/`DELETE /document-reviewers`, so **a removal undone is a
+  new grant, dated now and authored by whoever undid it**. The undo itself offers no undo.
+- **Removing a reviewer asks first** (`showConfirm`, danger) and the button carries its word
+  ("Révoquer"), not a bare trash icon.
+- **The reviewers' fold is labelled for what it is, "Accès en cours (n)"**: the server keeps no
+  history for that capability, only the grants in force (who authorized whom, when), so a removal
+  leaves no trace and a line says so. The readers' "Journal (n)" is the server's append-only
+  `read_grant_journal`, of which `GET /read-grants` returns the latest `JOURNAL_PAGE` (200) lines:
+  a full page reads "200+" (`journalCountLabel`; a test reads the server constant).
+
+**What the review of #1957 fixed (2026-10-16).**
+
+- **RE-READS ANSWER IN ANY ORDER.** Tick A then B: A's re-read, sent before B was written, could
+  land after B's and draw B unticked while the server held it - and the next click REVOKED it.
+  `loadGrants` numbers each re-read when SENT and drops an answer older than the one on screen; a
+  write's optimistic overlay goes once its own re-read returns, by which point the screen shows that
+  answer or a newer one.
+- **Inside the sheet's focus trap a keyboard cannot reach the toast**, so the last change and its
+  "Annuler" are also a row in the sheet; a failed save is said in the sheet, not on the dimmed page.
+  That row goes only into the sheet of the person changed: a write landing after its sheet closed
+  (another person's may be open) keeps its toast and draws nothing in the sheet on screen.
+- **A box being saved is `aria-disabled` + `aria-busy`, dimmed with a spinner - never `disabled`**,
+  which drops focus to the page body behind the sheet; a click on it is put back. An undo that meets
+  a write still in flight for that cell or person says so in a toast instead of doing nothing; the
+  reviewers' writes are tracked per person, so an undo for one never waits on an add for another.
+- **A failed add keeps the person in the search field** (`onAdd` answers whether it succeeded).
+
+Tests: `readAccess.test.ts` (grouping, "200+", the server's page size), `ReadGrantCard.svelte.test.ts`
+(chips), `ReadAccessPanel.svelte.test.ts` (save at once, undo = inverse write, the re-read race -
+checked to FAIL with the sequence guard removed - busy box, undo in the sheet, failed save inside
+the sheet, the folded journal and its cap), `DocumentReviewersPanel.svelte.test.ts` (confirmation,
+undo re-grants, the in-force label, a failed add keeps the person picked and the field clears only
+on success - checked to FAIL when the field clears unconditionally; the readers' "Ajouter" opens
+the sheet, then clears; `src/test/pickUser.ts` picks through the real search), `routes/admin/read-access/page.tabs.svelte.test.ts` (two tabs
+for a global admin, the reviewers alone and no read-grants request for a BDE super-admin, the hub
+for anyone else).
 
 ## Cercle top-ups (`/admin/cercle`)
 
