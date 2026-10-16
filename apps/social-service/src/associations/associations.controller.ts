@@ -1,3 +1,4 @@
+import { Throttle } from '@nestjs/throttler';
 import {
   BadRequestException,
   Body,
@@ -22,6 +23,7 @@ import {
 import type { Response } from 'express';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import {
   PERM_FLAG_KEY,
   GlobalAdminOrAssociationRoleGuard,
@@ -76,6 +78,13 @@ import {
 import { isInternalSecret } from '../internal/is-internal-secret.util';
 
 const LOGO_UPLOAD_MB = 2;
+
+/**
+ * Writes of a Lydia Business key per user AND association per minute. A wrong key is only found
+ * by the first callback it fails to verify, so the route must not become a loop; a manager
+ * correcting a paste needs a handful.
+ */
+export const LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE = 5;
 
 /** Manages association resources including membership, logo, payout onboarding, follow relationships, and boutique products. */
 @Controller('associations')
@@ -550,9 +559,12 @@ export class AssociationsController {
   /**
    * Stores the association's Lydia Business private token (encrypted at rest), the key its Lydia
    * callbacks are verified with. MANAGE_PAYOUT_ACCOUNT only. Answers `{ set: true }` - never the
-   * value, which no route returns to a browser. Replaces any key already stored.
+   * value, which no route returns to a browser. Replaces any key already stored. Throttled per
+   * user and association (`LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE`): nothing checks the key against
+   * Lydia here, the first callback it verifies is what proves it.
    */
-  @UseGuards(NginxAuthGuard)
+  @UseGuards(NginxAuthGuard, UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE, ttl: 60_000 } })
   @Put(':id/lydia-business-key')
   async setLydiaBusinessKey(
     @Headers('x-user-id') userId: string,
@@ -1760,8 +1772,10 @@ export class AssociationsController {
   }
 
   /**
-   * Called by core-service when a product purchase completes, from a Lydia callback verified with
-   * the Business key of `vendorToken` - refused unless that Business is the product's payee.
+   * Fulfils a product purchase - refused unless `vendorToken` is the product's payee. NO CALLER
+   * since 2026-10-16: core-service refuses to fulfil a product from a Lydia callback until a
+   * boutique checkout is a stored row to settle from (lot B3, payments.md "What confirms a
+   * payment"). Kept as the entry point B3 wires back.
    */
   @Post('products/:productId/purchase-completed')
   purchaseCompleted(

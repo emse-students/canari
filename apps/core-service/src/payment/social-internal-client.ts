@@ -59,8 +59,3 @@ export function internalPaymentAccountUrl(associationId: string): string {
 export function internalLydiaCallbackKeyUrl(): string {
   return socialUrl('internal/associations/lydia-callback-key');
 }
-
-/** Docker-network route to fulfill a boutique purchase after PaymentIntent success. */
-export function productPurchaseCompletedUrl(productId: string): string {
-  return socialUrl(`associations/products/${encodeURIComponent(productId)}/purchase-completed`);
-}

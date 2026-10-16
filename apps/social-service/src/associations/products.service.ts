@@ -1442,9 +1442,9 @@ export class ProductsService {
    *
    * `vendorToken` is the Business whose key verified the callback: unless it is the account the
    * product's association is paid into (its own, or its approved parent's), nothing is granted -
-   * an authentic callback of one association never fulfils another's product. KNOWN GAP: a
-   * boutique checkout stores no row naming its request, so the amount is the verified callback's
-   * and cannot be re-read from our side (payments.md).
+   * an authentic callback of one association never fulfils another's product. Not reached from a
+   * Lydia callback since 2026-10-16: a boutique checkout stores no row naming its request, so
+   * nothing of ours could settle it, and core-service refuses until one exists (lot B3, payments.md).
    */
   async handlePurchaseCompleted(
     productId: string,
