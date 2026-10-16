@@ -11,12 +11,13 @@
    * CANVAS (`paintBlurredBackdrop`) once per source and left alone: no timer, no animation frame, no
    * CSS `filter` for the compositor to re-run.
    *
-   * WHEN IT IS READ IS AN EVENT, NEVER A READINESS FLAG. A video is read on its first PRESENTED frame
-   * after `playing` (one `requestVideoFrameCallback`), not on `loadeddata`: WKWebView can report
-   * HAVE_CURRENT_DATA and still hand a canvas a black picture. A read that comes back blank paints
-   * nothing and waits for the next presented frame, at most `BLANK_READS` of them (a count, not a
-   * clock). An image is read on `load`. The source is keyed on the `srcObject` itself, so the camera
-   * switching lens on the same element repaints.
+   * WHEN IT IS READ IS AN EVENT, NEVER A READINESS FLAG. A video is read on its next PRESENTED frame
+   * (one `requestVideoFrameCallback`) after `playing` or `loadeddata`, never on the flag itself:
+   * WKWebView can report HAVE_CURRENT_DATA and still hand a canvas a black picture. A read that comes
+   * back blank paints nothing and waits for the next presented frame, at most `BLANK_READS` of them
+   * (a count, not a clock). A video found PAUSED on a frame already on screen is read at once - no
+   * new frame will come. An image is read on `load`. The source is keyed on the `srcObject` itself,
+   * so the camera switching lens on the same element repaints; a new source cancels the old chain.
    *
    * NO SECOND DECODER: it reads the picture the frame's own video or image element already decoded,
    * found in `host`, so the camera, the review, the editor and the viewer all use it unchanged. It
@@ -39,26 +40,34 @@
   let canvas = $state<HTMLCanvasElement | null>(null);
 
   let warned = false;
-  /** The source last painted (a `MediaStream` or a URL): the same one is never read twice. */
-  let paintedSource: unknown = null;
-  /** The source a frame callback is already pending for, so a second `playing` asks no other. */
-  let pendingSource: unknown = null;
+  /**
+   * The source that needs nothing more (a `MediaStream` or a URL): painted, or given up after
+   * `BLANK_READS` blank reads, or unreadable on this engine. The same source is never read again.
+   */
+  let settledSource: unknown = null;
+  /** The frame callback in flight, cancelled on a source change and on cleanup. */
+  let pending: { video: HTMLVideoElement; source: unknown; handle: number } | null = null;
   let blankReads = 0;
 
   function sourceOf(media: HTMLVideoElement | HTMLImageElement): unknown {
     return (media instanceof HTMLVideoElement && media.srcObject) || media.currentSrc || null;
   }
 
+  function cancelPending() {
+    if (!pending) return;
+    pending.video.cancelVideoFrameCallback?.(pending.handle);
+    pending = null;
+  }
+
   /** Reads `media` once into the canvas; true when nothing more is to be done for its source. */
   function paint(media: HTMLVideoElement | HTMLImageElement): boolean {
     if (!canvas) return true;
     const source = sourceOf(media);
-    if (source !== null && source === paintedSource) return true;
+    if (source !== null && source === settledSource) return true;
     try {
       const result = paintBlurredBackdrop(canvas, media);
       if (result === 'painted') {
-        paintedSource = source;
-        blankReads = 0;
+        settledSource = source;
         console.debug('[reel-backdrop] painted');
         return true;
       }
@@ -71,51 +80,71 @@
     }
   }
 
-  /** Reads the video on its next presented frame, and again on a blank read, `BLANK_READS` at most. */
+  /**
+   * Reads the video on its next PRESENTED frame, and again on a blank read, `BLANK_READS` at most.
+   * One chain per source: a new source cancels the old chain and starts from zero.
+   */
   function paintOnPresentedFrame(video: HTMLVideoElement) {
     const source = sourceOf(video);
-    if (source === null || source === paintedSource || source === pendingSource) return;
+    if (source === null || source === settledSource || pending?.source === source) return;
+    cancelPending();
     if (typeof video.requestVideoFrameCallback !== 'function') {
       console.warn('[reel-backdrop] no requestVideoFrameCallback: the backdrop stays dark');
+      settledSource = source;
       return;
     }
-    pendingSource = source;
+    blankReads = 0;
     const onFrame = () => {
+      const chain = pending;
+      if (!chain || chain.source !== source) return;
       if (sourceOf(video) !== source) {
-        pendingSource = null;
+        // The element took another source without an event yet; its `loadeddata` re-arms.
+        pending = null;
         return;
       }
       const done = paint(video);
-      if (done || ++blankReads >= BLANK_READS) {
-        if (!done)
-          console.warn(`[reel-backdrop] ${BLANK_READS} blank reads: the backdrop stays dark`);
-        pendingSource = null;
+      if (!done && ++blankReads < BLANK_READS) {
+        chain.handle = video.requestVideoFrameCallback(onFrame);
         return;
       }
-      video.requestVideoFrameCallback(onFrame);
+      if (!done) {
+        console.warn(`[reel-backdrop] ${BLANK_READS} blank reads: the backdrop stays dark`);
+        settledSource = source;
+      }
+      pending = null;
     };
-    video.requestVideoFrameCallback(onFrame);
+    pending = { video, source, handle: video.requestVideoFrameCallback(onFrame) };
   }
 
   $effect(() => {
     if (!active || !host || !canvas) return;
-    // `load` and `playing` do not bubble: capture them on the host to catch the media's own.
-    const onPlaying = (e: Event) => {
+    // `load`, `loadeddata` and `playing` do not bubble: capture them on the host. `loadeddata`
+    // covers a video that stays PAUSED on its first frame (review, editor): that frame is
+    // presented once, so the frame callback fires for it too.
+    const onVideo = (e: Event) => {
       if (e.target instanceof HTMLVideoElement) paintOnPresentedFrame(e.target);
     };
     const onLoad = (e: Event) => {
       if (e.target instanceof HTMLImageElement) paint(e.target);
     };
-    host.addEventListener('playing', onPlaying, true);
+    host.addEventListener('playing', onVideo, true);
+    host.addEventListener('loadeddata', onVideo, true);
     host.addEventListener('load', onLoad, true);
     const media = host.querySelector<HTMLVideoElement | HTMLImageElement>('video, img');
-    if (media instanceof HTMLVideoElement && !media.paused) paintOnPresentedFrame(media);
-    else if (media instanceof HTMLImageElement && media.complete) paint(media);
+    if (media instanceof HTMLVideoElement && media.paused && media.readyState >= 2) {
+      // Paused on a frame already on screen: no new frame will be presented, so it is read now.
+      paint(media);
+    } else if (media instanceof HTMLVideoElement && !media.paused) {
+      paintOnPresentedFrame(media);
+    } else if (media instanceof HTMLImageElement && media.complete) {
+      paint(media);
+    }
     return () => {
-      host.removeEventListener('playing', onPlaying, true);
+      host.removeEventListener('playing', onVideo, true);
+      host.removeEventListener('loadeddata', onVideo, true);
       host.removeEventListener('load', onLoad, true);
-      paintedSource = null;
-      pendingSource = null;
+      cancelPending();
+      settledSource = null;
       blankReads = 0;
     };
   });

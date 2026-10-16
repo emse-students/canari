@@ -186,9 +186,9 @@ shows is what the editor shows and what viewers see; no crop that differs, no ov
   `rounded-2xl` (`--radius-2xl`, 12 px, "the larger card": the scale has no larger media step) over the
   backdrop; **within 2 % of the screen's shape it is the WHOLE stage instead - cover ON PURPOSE**, square
   corners, no backdrop sliver, the media cropped by at most 1 % per side (`data-reel-frame-fills`).
-- **`ReelBackdrop`**: the frame's own video or image, read ONCE per source (a video on its first
-  presented frame after `playing`, a blank read retried on the next frame 5 times at most; an image
-  on `load`), blurred on the canvas (`reels/reelBackdropPaint.ts`: shrunk to 12 px across, then three
+- **`ReelBackdrop`**: the frame's own video or image, read ONCE per source (a video on its next
+  presented frame after `playing` or `loadeddata`, or at once when paused on a frame already shown;
+  a blank read retried on the next frame 5 times at most; an image on `load`), blurred on the canvas (`reels/reelBackdropPaint.ts`: shrunk to 12 px across, then three
   bilinear doublings to 96 px, a chain of tent filters close to a Gaussian), stretched with
   `object-cover` and dimmed - NO second decoder, NO timer, NO animation frame, NO CSS `filter` for the
   compositor to re-run. It exists ONLY when the frame leaves stage uncovered. **Why once (Mi 9T,

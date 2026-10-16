@@ -682,11 +682,13 @@ Read through the app's DevTools socket with the viewer left open, evidence in
   holes** (the first half second). The published reel the user filmed carried the same pattern (65
   frames in 3.45 s, holes every ~250 ms, 16 fps in its last half second).
 
-**Fix**: the picture is read ONCE per source, on an EVENT: a video on its first presented frame
-after `playing` (one `requestVideoFrameCallback`; not `loadeddata`, whose HAVE_CURRENT_DATA can still
-hand WKWebView's canvas a black picture), an image on `load`. A read that comes back blank (every
-pixel 0) paints nothing and is retried on the next presented frame, 5 at most - a count, not a clock.
-The source is the `srcObject` itself or the URL, so a lens switch on the camera's element repaints.
+**Fix**: the picture is read ONCE per source, on an EVENT: a video on its next presented frame
+after `playing` or `loadeddata` (one `requestVideoFrameCallback`; never on the readiness flag, whose
+HAVE_CURRENT_DATA can still hand WKWebView's canvas a black picture), an image on `load`. A video
+found paused on a frame already on screen (review, editor) is read at once: no new frame will come.
+A read that comes back blank (every pixel 0) paints nothing and is retried on the next presented
+frame, 5 at most per source - a count, not a clock. The source is the `srcObject` itself or the URL,
+so a lens switch on the camera's element cancels the old frame callback and repaints.
 It is blurred on the canvas (`reels/reelBackdropPaint.ts`: 12 px across then three bilinear
 doublings to 96 px, a near-Gaussian), shown `object-cover` and dimmed. No timer, no animation frame,
 no CSS `filter` (nothing for the compositor, WebView or WKWebView, to blur per frame). Live-patched on

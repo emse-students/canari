@@ -1,8 +1,8 @@
 /**
  * The backdrop paints ONCE per source, on an event, and has no per-frame work: no timer, no animation
  * frame, no second video (Mi 9T, 2026-10-16: a 250 ms re-sample cost ~25 ms a read and holed the
- * camera's take). A video is read on its first presented frame after `playing`; a blank read waits
- * for the next presented frame, a bounded number of times.
+ * camera's take). A video is read on its next presented frame after `playing` / `loadeddata`; a blank
+ * read waits for the next presented frame, a bounded number of times, per source.
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
@@ -23,12 +23,27 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+interface FakeOptions {
+  src?: unknown;
+  paused?: boolean;
+  readyState?: number;
+  frameCallbacks?: boolean;
+}
+
 /** A video whose presented frames the test delivers by hand. */
-function fakeVideo(src: unknown = 'blob:reel-1') {
+function fakeVideo({
+  src = 'blob:reel-1',
+  paused = false,
+  readyState = 0,
+  frameCallbacks = true,
+}: FakeOptions = {}) {
   const video = document.createElement('video');
-  const callbacks: (() => void)[] = [];
+  const callbacks = new Map<number, () => void>();
+  const cancelled: number[] = [];
+  let nextHandle = 1;
   let source = src;
-  Object.defineProperty(video, 'paused', { configurable: true, get: () => true });
+  Object.defineProperty(video, 'paused', { configurable: true, get: () => paused });
+  Object.defineProperty(video, 'readyState', { configurable: true, get: () => readyState });
   Object.defineProperty(video, 'currentSrc', {
     configurable: true,
     get: () => (typeof source === 'string' ? source : ''),
@@ -37,15 +52,30 @@ function fakeVideo(src: unknown = 'blob:reel-1') {
     configurable: true,
     get: () => (typeof source === 'string' ? null : source),
   });
-  Object.assign(video, {
-    requestVideoFrameCallback: (cb: () => void) => callbacks.push(cb),
-  });
+  if (frameCallbacks) {
+    Object.assign(video, {
+      requestVideoFrameCallback: (cb: () => void) => {
+        const handle = nextHandle++;
+        callbacks.set(handle, cb);
+        return handle;
+      },
+      cancelVideoFrameCallback: (handle: number) => {
+        cancelled.push(handle);
+        callbacks.delete(handle);
+      },
+    });
+  }
   return {
     video,
+    cancelled,
     setSource: (next: unknown) => (source = next),
-    pendingFrames: () => callbacks.length,
+    pendingFrames: () => callbacks.size,
     /** Presents one frame: runs the callbacks registered so far. */
-    present: () => callbacks.splice(0).forEach((cb) => cb()),
+    present: () => {
+      const due = [...callbacks.values()];
+      callbacks.clear();
+      due.forEach((cb) => cb());
+    },
   };
 }
 
@@ -63,7 +93,7 @@ function setup(active: boolean, media: HTMLElement) {
 }
 
 it('renders and listens nothing when the frame fills the stage', () => {
-  const { video } = fakeVideo();
+  const { video } = fakeVideo({ paused: true });
   const { target, addSpy } = setup(false, video);
   expect(target.querySelector('[data-reel-backdrop]')).toBeNull();
   expect(addSpy).not.toHaveBeenCalled();
@@ -71,7 +101,7 @@ it('renders and listens nothing when the frame fills the stage', () => {
 });
 
 it('reads a video on its first presented frame after playing, not before, and once', () => {
-  const fake = fakeVideo();
+  const fake = fakeVideo({ paused: true });
   setup(true, fake.video);
   expect(paint).not.toHaveBeenCalled();
   fake.video.dispatchEvent(new Event('playing'));
@@ -88,33 +118,75 @@ it('retries a blank read on the next presented frame, a bounded number of times'
   paint.mockReturnValue('blank');
   const fake = fakeVideo();
   setup(true, fake.video);
-  fake.video.dispatchEvent(new Event('playing'));
   for (let i = 0; i < 10; i++) fake.present();
   expect(paint).toHaveBeenCalledTimes(5);
   expect(fake.pendingFrames()).toBe(0);
+  // Given up for this source: another `playing` does not start a new chain.
+  fake.video.dispatchEvent(new Event('playing'));
+  expect(fake.pendingFrames()).toBe(0);
+});
+
+it('gives a new source its own full count after the old one ran out', () => {
+  paint.mockReturnValue('blank');
+  const fake = fakeVideo({ src: { id: 'front' } });
+  setup(true, fake.video);
+  for (let i = 0; i < 5; i++) fake.present();
+  expect(paint).toHaveBeenCalledTimes(5);
+  fake.setSource({ id: 'rear' });
+  fake.video.dispatchEvent(new Event('loadeddata'));
+  for (let i = 0; i < 10; i++) fake.present();
+  expect(paint).toHaveBeenCalledTimes(10);
 });
 
 it('stops retrying as soon as a read paints', () => {
   paint.mockReturnValueOnce('blank').mockReturnValue('painted');
   const fake = fakeVideo();
   setup(true, fake.video);
-  fake.video.dispatchEvent(new Event('playing'));
   fake.present();
   fake.present();
   fake.present();
   expect(paint).toHaveBeenCalledTimes(2);
 });
 
-it('repaints when the same element is handed another stream (a lens switch)', () => {
-  const first = { id: 'front' };
-  const fake = fakeVideo(first);
+it('cancels the pending frame callback when the element takes another stream (a lens switch)', () => {
+  const fake = fakeVideo({ src: { id: 'front' } });
   setup(true, fake.video);
-  fake.video.dispatchEvent(new Event('playing'));
-  fake.present();
+  expect(fake.pendingFrames()).toBe(1);
   fake.setSource({ id: 'rear' });
+  fake.video.dispatchEvent(new Event('playing'));
+  expect(fake.cancelled).toEqual([1]);
+  expect(fake.pendingFrames()).toBe(1);
+  fake.present();
+  expect(paint).toHaveBeenCalledTimes(1);
+  fake.setSource({ id: 'front-again' });
   fake.video.dispatchEvent(new Event('playing'));
   fake.present();
   expect(paint).toHaveBeenCalledTimes(2);
+});
+
+it('reads a video paused on a frame already on screen at once (review, editor)', () => {
+  const fake = fakeVideo({ paused: true, readyState: 2 });
+  setup(true, fake.video);
+  expect(paint).toHaveBeenCalledTimes(1);
+  expect(fake.pendingFrames()).toBe(0);
+});
+
+it('reads a paused video on the frame its loadeddata presents', () => {
+  const fake = fakeVideo({ paused: true });
+  setup(true, fake.video);
+  fake.video.dispatchEvent(new Event('loadeddata'));
+  fake.present();
+  expect(paint).toHaveBeenCalledTimes(1);
+});
+
+it('warns once per source when the engine has no frame callback', () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  const fake = fakeVideo({ paused: true, frameCallbacks: false });
+  setup(true, fake.video);
+  fake.video.dispatchEvent(new Event('playing'));
+  fake.video.dispatchEvent(new Event('playing'));
+  expect(warn).toHaveBeenCalledTimes(1);
+  expect(paint).not.toHaveBeenCalled();
 });
 
 it('reads an image on load, once', () => {
@@ -134,7 +206,6 @@ it('has no per-frame work: no timer, no animation frame, no second video', () =>
   const raf = vi.spyOn(globalThis, 'requestAnimationFrame');
   const fake = fakeVideo();
   const { target, host } = setup(true, fake.video);
-  fake.video.dispatchEvent(new Event('playing'));
   fake.present();
   expect(interval).not.toHaveBeenCalled();
   expect(timeout).not.toHaveBeenCalled();
@@ -143,10 +214,12 @@ it('has no per-frame work: no timer, no animation frame, no second video', () =>
   expect(host.querySelectorAll('video')).toHaveLength(1);
 });
 
-it('removes its listeners on unmount', () => {
-  const { video } = fakeVideo();
-  const { component, removeSpy } = setup(true, video);
+it('removes its listeners and cancels its frame callback on unmount', () => {
+  const fake = fakeVideo();
+  const { component, removeSpy } = setup(true, fake.video);
   void unmount(component);
   expect(removeSpy).toHaveBeenCalledWith('playing', expect.any(Function), true);
+  expect(removeSpy).toHaveBeenCalledWith('loadeddata', expect.any(Function), true);
   expect(removeSpy).toHaveBeenCalledWith('load', expect.any(Function), true);
+  expect(fake.cancelled).toEqual([1]);
 });
