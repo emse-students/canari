@@ -1,4 +1,6 @@
-# The terms of use (CGU): one tick, asked once per version, before ANY application receives the person.
+# The terms of use (CGU): one tick of ACCEPTANCE, asked once per version, before ANY application receives the person.
+# The legal basis of the processing is the performance of the service (the account), not this tick: the tick proves
+# the person was informed of the terms and of the list of data (decided by the user, 2026-10-16).
 #
 # Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
 # (instantiate: false) - see infrastructure/authentik/README.md. Every reference is a !Find on a
@@ -34,13 +36,13 @@ entries:
       label: "Information"
       type: "static"
       order: 1
-      initial_value: "<p>MiConnect te connecte aux services des associations de l'École avec ton compte du CAS ou des Alumni. Pour cela, nous enregistrons ton <strong>nom</strong>, ton <strong>prénom</strong>, ton identifiant, ton campus, ta formation, ta promotion et tes appartenances, et nous les transmettons aux services auxquels tu te connectes.</p><p><a href=\"https://canari.emse.fr/legal/miconnect\" target=\"_blank\" rel=\"noopener\">Lire les conditions d'utilisation et la politique de données</a></p>"
+      initial_value: "<p>MiConnect te connecte aux services des associations de l'École avec ton compte du CAS ou des Alumni. Pour cela, nous enregistrons ton <strong>nom</strong>, ton <strong>prénom</strong>, ton identifiant, ton campus, ta ou tes formations, ton année d'entrée et tes appartenances, et nous les transmettons aux services auxquels tu te connectes (Canari, Sky, MiGallery, Le Cercle, les archives). C'est nécessaire pour te reconnaître : sans cela, la connexion est impossible.</p><p><a href=\"https://canari.emse.fr/legal/miconnect\" target=\"_blank\" rel=\"noopener\">Lire les conditions d'utilisation et la politique de données</a></p>"
   - model: authentik_stages_prompt.prompt
     identifiers:
       name: "miconnect-consent-prompt-accept"
     attrs:
       field_key: "cgu_accept"
-      label: "J'ai lu et j'accepte les conditions d'utilisation de MiConnect et la collecte de mes nom et prénom."
+      label: "J'ai lu les conditions d'utilisation de MiConnect, qui décrivent les données enregistrées à ma connexion, et je les accepte."
       type: "checkbox"
       order: 2
       required: true

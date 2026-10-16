@@ -4,12 +4,14 @@
 
   /** Numbered here because the DOCUMENT numbers its sections - the rail renders the label verbatim. */
   const sections = [
-    { id: 'objet', label: '1. Objet' },
+    { id: 'objet', label: '1. Objet et responsable' },
     { id: 'donnees', label: '2. Données enregistrées' },
-    { id: 'services', label: '3. Services concernés' },
-    { id: 'consentement', label: '4. Ton consentement' },
-    { id: 'droits', label: '5. Tes droits' },
-    { id: 'modifications', label: '6. Modifications' },
+    { id: 'base', label: '3. Pourquoi, et sur quelle base' },
+    { id: 'services', label: '4. Qui les reçoit' },
+    { id: 'conservation', label: '5. Durée de conservation' },
+    { id: 'acceptation', label: '6. Ton acceptation' },
+    { id: 'droits', label: '7. Tes droits' },
+    { id: 'modifications', label: '8. Modifications' },
   ];
 </script>
 
@@ -22,14 +24,18 @@
   {sections}
 >
   <section id="objet">
-    <h2>1. Objet</h2>
+    <h2>1. Objet et responsable</h2>
     <p>
       <strong>MiConnect</strong> est le service de connexion des associations de l'École des Mines de
       Saint-Étienne. Il te permet d'ouvrir une session avec ton compte du CAS de l'École, ou avec celui
-      de l'association des Alumni, et de la réutiliser dans les services listés ci-dessous.
+      de l'association des Alumni, et de la réutiliser dans les services listés plus bas.
     </p>
     <div class="legal-block">
       <p><strong>Responsable du traitement :</strong> Association Rootz - EMSE</p>
+      <p>
+        Maison des Élèves de l'École des Mines, 20 Boulevard Alexandre de Fraissinette, 42100
+        Saint-Étienne
+      </p>
       <p>
         <strong>Contact :</strong>
         <a href="mailto:bureau@rootz-emse.fr">bureau@rootz-emse.fr</a>
@@ -50,49 +56,81 @@
         d'entrée et tes appartenances (élève, personnel de l'École, de la Maison des Élèves ou des
         Alumni) ;
       </li>
-      <li>la version des présentes conditions que tu as acceptée, et la date.</li>
+      <li>la version de ces conditions que tu as acceptée, et la date ;</li>
+      <li>
+        des journaux techniques de connexion (adresse IP, date, service demandé), conservés 90 jours
+        au plus.
+      </li>
     </ul>
     <p>
       MiConnect ne reçoit ni ne stocke jamais ton mot de passe : il reste chez le CAS ou les Alumni.
+      Les services reçoivent une adresse e-mail technique, pas ton adresse personnelle.
+    </p>
+  </section>
+
+  <section id="base">
+    <h2>3. Pourquoi, et sur quelle base</h2>
+    <p>
+      Ces données servent à te reconnaître et à afficher ton profil dans les services auxquels tu te
+      connectes, et à protéger les comptes. La base légale est l'<strong
+        >exécution du service</strong
+      >
+      que tu demandes en te connectant : sans ces données, la connexion est impossible. Ce n'est pas un
+      consentement que tu pourrais refuser en gardant l'accès : c'est pourquoi la case ne sert qu'à garder
+      la preuve que tu as pris connaissance de ce texte. Ce que les services te proposent en plus (photo,
+      annuaire, reconnaissance de visage...) reste soumis à leur propre accord, demandé séparément.
     </p>
   </section>
 
   <section id="services">
-    <h2>3. Services concernés</h2>
+    <h2>4. Qui les reçoit</h2>
     <p>
       Ces données sont transmises, à chaque connexion, aux services auxquels tu te connectes avec
-      MiConnect : Canari, Sky, MiGallery, le portail des associations, Le Cercle et les archives des
-      Mines. Chacun ne s'en sert que pour te reconnaître et afficher ton profil ; chacun publie ses
-      propres conditions pour le reste de ce qu'il fait.
+      MiConnect : Canari, Sky, MiGallery, Le Cercle et les archives des Mines. Chacun ne s'en sert
+      que pour te reconnaître et afficher ton profil, et publie ses propres conditions pour le reste
+      de ce qu'il fait.
+    </p>
+    <p>
+      MiConnect fonctionne sur le serveur partagé de l'École, administré avec sa direction des
+      systèmes d'information (DSI), et ses sauvegardes sont copiées sur une seconde machine de
+      l'École. Certains anciens noms de domaine passent encore par Cloudflare, qui voit alors les
+      requêtes. Aucune donnée n'est vendue ni utilisée pour de la publicité.
     </p>
   </section>
 
-  <section id="consentement">
-    <h2>4. Ton consentement</h2>
+  <section id="conservation">
+    <h2>5. Durée de conservation</h2>
     <p>
-      En cochant la case lors de ta connexion, tu acceptes ces conditions et la collecte de ces
-      données. Sans cette case, la connexion n'a pas lieu. Tu peux retirer ton consentement à tout
-      moment en écrivant au contact ci-dessus : ton compte MiConnect est alors supprimé, et tu ne
-      peux plus te connecter aux services tant que tu n'as pas de nouveau accepté.
+      Ton compte MiConnect et ses données sont conservés tant que ton compte existe, puis supprimés
+      sur ta demande. Les journaux techniques sont conservés 90 jours au plus. Une suppression se
+      retrouve encore dans les sauvegardes pendant 14 jours au plus, puis disparaît.
     </p>
+  </section>
+
+  <section id="acceptation">
+    <h2>6. Ton acceptation</h2>
     <p>
-      La case est redemandée quand le texte change, et une seule fois par version, pour tous les
-      services à la fois.
+      En cochant la case lors de ta connexion, tu confirmes avoir lu ces conditions. Elle est
+      redemandée quand le texte change, une seule fois par version, pour tous les services à la
+      fois. Tu peux demander la suppression de ton compte MiConnect à tout moment en écrivant au
+      contact ci-dessus ; tu ne pourras plus te connecter aux services tant que tu n'auras pas un
+      nouveau compte.
     </p>
   </section>
 
   <section id="droits">
-    <h2>5. Tes droits</h2>
+    <h2>7. Tes droits</h2>
     <p>
       Conformément au RGPD, tu peux demander l'accès à tes données, leur rectification, leur
-      effacement, la limitation du traitement et leur portabilité. Le nom et le prénom venant du CAS
-      ou des Alumni se corrigent à la source. Tu peux saisir la CNIL si tu estimes que tes droits ne
-      sont pas respectés.
+      effacement, la limitation du traitement, leur portabilité, et t'opposer au traitement. Écris
+      au contact ci-dessus : nous répondons sous un mois. Le nom et le prénom venant du CAS ou des
+      Alumni se corrigent à la source. Tu peux aussi saisir la CNIL (cnil.fr) si tu estimes que tes
+      droits ne sont pas respectés.
     </p>
   </section>
 
   <section id="modifications">
-    <h2>6. Modifications</h2>
+    <h2>8. Modifications</h2>
     <p>
       Si ces conditions changent, la date en haut de cette page change et la case t'est redemandée à
       la connexion suivante.
