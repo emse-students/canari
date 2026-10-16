@@ -155,7 +155,7 @@ Generate strong values: `openssl rand -hex 32` (secrets), `openssl rand -base64 
 > default answers for them. Rows marked `skip` must NOT be created: `CERCLE_API_KEY` is deliberately absent from dev
 > (decided with the user), so that a copy of production's database can never be answered as
 > production by Le Cercle.
-> **Push is NOT among them** - `copy-prod-to-dev.sh` truncates `push_token`, so dev has no real
+> **Push is NOT among them** - dev holds no production row (a fictional seed since 2026-10-16), so it has no real
 > device to reach, and both halves of push (FCM and the three APNs values) are ordinary optional
 > credentials.
 
@@ -315,7 +315,7 @@ from the same build; the CD rebuilds them together for exactly that reason.
 
 **Nothing here is required to bring production up, and on a fresh host there is nothing to do.** The
 second estate is optional. Since 2026-09-01 the pipeline that deploys it exists - three jobs in
-`deploy.yml` plus `dev-refresh.yml` - all gated on the repository variable `DEV_ENVIRONMENT_ENABLED`.
+`deploy.yml` plus a data job (now `scheduled.yml`'s `dev-reset`) - all gated on the repository variable `DEV_ENVIRONMENT_ENABLED`.
 **On THIS repository that variable is `true` since 2026-09-02, with all 14 `required` `DEV_*`
 secrets present and the `canari-dev` Authentik client created; on a fresh host it is absent and
 every dev job skips.** It is recorded here because turning that switch on is a bootstrap concern,
@@ -336,7 +336,7 @@ only copy. What a bootstrap owes:
 | Reverse proxy | one cloudflared ingress rule pointing `dev.canari-emse.fr` at `http://localhost:3080`. GET the tunnel config, save the original, change the single rule, PUT |
 | Secrets | its own value for everything in [section 3](#3-github-secrets) - see the note there |
 | Authentik | its own OIDC client, creatable on the box: `docker exec miconnect-server-1 ak shell -c ...` |
-| Data | `infrastructure/dev/copy-prod-to-dev.sh` on the box. Supports `--dry-run`, which changes nothing and reports what it would do. It refuses to write anywhere but the `canari-dev` compose project, and that refusal is a re-read Docker label rather than a flag |
+| Data | a FICTIONAL seed, never production's rows (owner, 2026-10-16): `infrastructure/dev/reset-dev-to-seed.sh`, run by `scheduled.yml`'s `dev-reset` job on demand. Supports `--dry-run`, which changes nothing and reports what it would do. It refuses to write anywhere but the `canari-dev` compose project, and that refusal is a re-read Docker label rather than a flag. A virgin dev database first needs the owner's SCHEMA-ONLY restore ([dev-environment](../docs/wiki/infrastructure/dev-environment.md#a-virgin-dev-database-the-schema-only-restore-owner-run)) |
 | Deployed from | `/home/canari/canari-dev`, a SEPARATE clone - two estates sharing one working tree would race, a `git reset --hard` for one rewriting the compose file the other is deployed from. `deploy-dev` creates it if absent, so there is nothing to do by hand |
 | Images | the two frontends are dev's own (`frontend:dev`, `frontend-ssr:dev`), because SvelteKit bakes `import.meta.env.*` in at build time; **every backend image is shared with production**, which is deliberate - it means a behavioural difference between the estates can never be blamed on a different build |
 | Deploy order | dev deploys BEFORE production, and a failed dev deploy stops production's. Setting `DEV_ENVIRONMENT_ENABLED` to anything but `true` is the escape hatch |

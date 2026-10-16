@@ -2863,7 +2863,7 @@
   "status_pill_offline": "Hors-ligne",
   "admin_maintenance_banner_text": "Mode maintenance actif - seuls les administrateurs ont accès.",
   "env_banner_test_label": "Environnement de test",
-  "env_banner_test_detail": "Les données sont une copie de la production. Rien de ce que vous faites ici n'atteint les vrais comptes.",
+  "env_banner_test_detail": "Les personnes et les associations sont fictives. Rien de ce que vous faites ici n'atteint la vraie application.",
   "md_toolbar_aria_label": "Mise en forme",
   "md_toolbar_bold": "Gras",
   "md_toolbar_italic": "Italique",

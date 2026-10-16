@@ -528,10 +528,10 @@
       <div>
         <dt>Environnement de test</dt>
         <dd>
-          Une version de test (dev.canari-emse.fr), sur le même serveur, utilise une copie de la
-          base de production pour vérifier chaque nouvelle version avant sa diffusion. Les données
-          de paiement et les fichiers en sont retirés ; les messages y restent chiffrés. Seuls les
-          comptes MiConnect peuvent s'y connecter.
+          Une version de test (dev.canari-emse.fr), sur le même serveur, sert à vérifier chaque
+          nouvelle version avant sa diffusion. Elle ne contient aucune donnée de la production :
+          des personnes et des associations fictives, et ce que les testeurs y créent eux-mêmes.
+          Seuls les comptes MiConnect peuvent s'y connecter.
         </dd>
       </div>
       <div>
