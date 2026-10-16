@@ -1,3 +1,3 @@
 ### Changed - Lydia callbacks are verified with the association's own Business key, and only trigger a read of the row's request
 
-The key is entered write-only by the payout manager and encrypted at rest (migration 086); an association without one has its callbacks refused and its form payments confirmed on the payer's return. The dev-only observation of #1928 is removed ([payments](docs/wiki/frontend/modules/payments.md#what-confirms-a-payment-2026-10-16)).
+The key is entered write-only by the payout manager and encrypted at rest (migration 086, new REQUIRED secret `LYDIA_KEY_ENCRYPTION_SECRET`); an association without one has its callbacks refused and its form payments confirmed on the payer's return. A boutique purchase is no longer fulfilled from a callback until its checkout is a stored row. The dev-only observation of #1928 is removed ([payments](docs/wiki/frontend/modules/payments.md#what-confirms-a-payment-2026-10-16)).

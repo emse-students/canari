@@ -2,9 +2,13 @@ import { Logger, Module, ParseUUIDPipe, type INestApplication } from '@nestjs/co
 import { GUARDS_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { NestFactory } from '@nestjs/core';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
 import { SECRET_BOX_ENV } from '../common/secret-box';
 import { InternalLydiaKeyController } from '../internal/internal-lydia-key.controller';
-import { AssociationsController } from './associations.controller';
+import {
+  AssociationsController,
+  LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE,
+} from './associations.controller';
 import { AssociationsService } from './associations.service';
 import type { ProductsService } from './products.service';
 import type { PartnershipsService } from './partnerships.service';
@@ -145,6 +149,17 @@ describe('AssociationsService - the Lydia Business key', () => {
     expect(table.every((r) => r.sealed === null)).toBe(true);
   });
 
+  it('THROWS a 503 when the server lost its encryption secret - a config failure, not a null verdict', async () => {
+    const { service } = makeService([{ id: ASSO_A, lydiaAccountId: 'vendor-a', sealed: null }]);
+    await service.setLydiaBusinessKey(ASSO_A, KEY_A, 'u1');
+    delete process.env[SECRET_BOX_ENV];
+    const logs = await loggedDuring(async () =>
+      expect(service.lydiaCallbackKey('vendor-a')).rejects.toMatchObject({ status: 503 })
+    );
+    expect(logs).toContain('LYDIA_KEY_ENCRYPTION_SECRET is not configured');
+    expect(logs).not.toContain(KEY_A);
+  });
+
   it('refuses rather than guesses when two associations hold a key for one vendor token', async () => {
     const { service, table } = makeService([
       { id: ASSO_A, lydiaAccountId: 'vendor-x', sealed: null },
@@ -191,6 +206,16 @@ describe('AssociationsController - the Business key routes are MANAGE_PAYOUT_ACC
       expect(id?.pipes).toContain(ParseUUIDPipe);
     }
   );
+
+  it('throttles the key WRITE per user and association', () => {
+    const guards = Reflect.getMetadata(
+      GUARDS_METADATA,
+      (AssociationsController.prototype as unknown as Record<string, object>).setLydiaBusinessKey
+    ) as unknown[];
+    expect(guards).toEqual([NginxAuthGuard, UserResourceThrottlerGuard]);
+    expect(LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE).toBeGreaterThanOrEqual(1);
+    expect(LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE).toBeLessThanOrEqual(10);
+  });
 
   it('refuses a non-manager with a 403, and the service is never asked to write or read', async () => {
     const { controller, service } = makeController(false);

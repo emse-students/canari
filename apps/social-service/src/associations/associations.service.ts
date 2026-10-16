@@ -9,7 +9,12 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { describeHttpError } from '../common/http-error-log';
-import { isSecretBoxConfigured, openSecret, sealSecret } from '../common/secret-box';
+import {
+  SecretBoxUnavailableError,
+  isSecretBoxConfigured,
+  openSecret,
+  sealSecret,
+} from '../common/secret-box';
 import { HttpService } from '@nestjs/axios';
 import { InjectRepository } from '@nestjs/typeorm';
 import { isUUID } from 'class-validator';
@@ -3008,8 +3013,9 @@ ${rejectionReason}`
    * The DECRYPTED Business private token of the association holding `vendorToken`, for
    * core-service to verify a Lydia callback with (internal route only). Null when no association
    * holds that token with a key, when two do (ambiguous: refuse rather than guess), or when the
-   * ciphertext does not open (another secret, or sealed for another vendor token). The value is
-   * never logged, never cached.
+   * ciphertext does not open (another secret, or sealed for another vendor token). THROWS a 503
+   * when the server has no encryption secret: a configuration failure is not a verdict about the
+   * callback. The value is never logged, never cached.
    */
   async lydiaCallbackKey(vendorToken: string): Promise<string | null> {
     if (!vendorToken) return null;
@@ -3037,6 +3043,15 @@ ${rejectionReason}`
         row.sealed
       );
     } catch (err: unknown) {
+      if (err instanceof SecretBoxUnavailableError) {
+        // A CONFIGURATION failure, not a verdict about this key: thrown so the internal route
+        // answers 5xx and core-service a 503 Lydia may retry, never the 400 of a bad signature.
+        this.logger.error(
+          `[LYDIA] callback key of association ${sanitizeLog(row.id)} cannot be opened: ` +
+            `LYDIA_KEY_ENCRYPTION_SECRET is not configured`
+        );
+        throw new ServiceUnavailableException('Business key storage is not configured');
+      }
       this.logger.error(
         `[LYDIA] callback key of association ${sanitizeLog(row.id)} does not open ` +
           `(${err instanceof Error ? err.name : 'unknown'}) - its callbacks are refused until a manager re-enters it`

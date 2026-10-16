@@ -89,7 +89,7 @@ describe('PaymentWebhookController.handleLydiaRequestCallback', () => {
     expect(body).toEqual({ vendorToken: VENDOR, requestId: 'r1' });
   });
 
-  it('answers non-2xx when social-service could not read the row request, so nothing claims it was handled', async () => {
+  it('answers a retryable 503 when social-service could not read the row request, so nothing claims it was handled', async () => {
     mockedAxios.post.mockResolvedValue({ data: { outcome: 'unreadable' } });
     jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const controller = makeController(VERIFIED);
@@ -99,29 +99,40 @@ describe('PaymentWebhookController.handleLydiaRequestCallback', () => {
         order_ref: 'form:sub-1',
         sig: 'valid-sig',
       })
-    ).rejects.toThrow(/Failed to process callback/);
+    ).rejects.toMatchObject({ status: 503, message: 'Failed to process callback' });
   });
 
-  it('fulfills a boutique purchase naming the verified Business', async () => {
-    mockedAxios.post.mockResolvedValue({ data: {} });
+  it('answers a retryable 503 when the fan-out to social-service fails', async () => {
+    mockedAxios.post.mockRejectedValue(new Error('ECONNREFUSED'));
+    jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const controller = makeController(VERIFIED);
+    await expect(
+      controller.handleLydiaRequestCallback('expire', {
+        request_id: 'r1',
+        order_ref: 'form:sub-1',
+        sig: 'valid-sig',
+      })
+    ).rejects.toMatchObject({ status: 503 });
+  });
+
+  it('fulfils NOTHING on a verified product confirm, and logs why at ERROR (no stored checkout until B3)', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     const controller = makeController(VERIFIED);
 
-    await controller.handleLydiaRequestCallback('confirm', {
+    const result = await controller.handleLydiaRequestCallback('confirm', {
       request_id: 'r1',
       amount: '12.34',
       order_ref: `product:${PRODUCT_ID}:${USER_ID}`,
       sig: 'valid-sig',
     });
 
-    expect(mockedAxios.post.mock.calls).toHaveLength(1);
-    const [url, body] = mockedAxios.post.mock.calls[0];
-    expect(url).toContain(`/products/${PRODUCT_ID}/purchase-completed`);
-    expect(body).toEqual({
-      userId: USER_ID,
-      amountCents: 1234,
-      paymentIntentId: 'r1',
-      vendorToken: VENDOR,
-    });
+    expect(result).toEqual({ received: true });
+    expect(mockedAxios.post.mock.calls).toHaveLength(0);
+    const line = String(errorSpy.mock.calls[0]?.[0]);
+    expect(line).toContain(`product ${PRODUCT_ID}`);
+    expect(line).toContain('NOT fulfilled');
+    expect(line).toContain('stores no row');
+    errorSpy.mockRestore();
   });
 
   it('cancels a pending submission naming its request and the verified Business', async () => {

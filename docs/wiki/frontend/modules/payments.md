@@ -206,8 +206,8 @@ pending submission. Since 2026-10-15 each of those reads is `confirm-payment`, w
 Lydia about the row's own request, so a payment whose callback was lost is confirmed while the payer
 looks; the cancel page shows a paid answer as paid and a still-open request as such
 ([forms](forms.md#an-online-payment-holds-its-seat-for-30-minutes-and-a-late-one-is-decided-from-the-row-2026-10-15)).
-The boutique needs none of this: its return URLs carry no session id and its fulfilment is the
-callback.
+The boutique has none of this: its return URLs carry no session id, and since 2026-10-16 a Lydia
+callback does not fulfil it either (see "What confirms a payment" below).
 
 **Not verified, and owed to Lydia or a phone**: whether Lydia appends parameters to
 `browser_success_url`, whether it accepts the `fr.emse.canari://` deep link the phone app sends,
@@ -447,8 +447,10 @@ routes). Resolving the key FROM the body is sound because the signature is the p
 a public vendor token, nobody but the Business can sign for it. **Every failure is ONE 400 `Invalid
 signature`** - unknown association, no key, wrong key, wrong field set, a non-string value - so the
 route says nothing about which associations hold a key; the reason (`unsignable-body`,
-`no-vendor-token`, `no-key`, `mismatch`) goes to the server log only. Failing to reach social-service is
-a 503: not a verdict, and Lydia may retry it.
+`no-vendor-token`, `no-key`, `mismatch`) goes to the server log only. Failing to READ the key (social
+unreachable, or social without `LYDIA_KEY_ENCRYPTION_SECRET`, which throws rather than answering null)
+and failing to APPLY a verified callback (fan-out error, the row's request unreadable at Lydia) are a
+503: not a verdict about the callback, and the status Lydia may retry.
 
 **A verified callback is a TRIGGER, never the payment.** For a form, core posts `{ vendorToken,
 requestId }` to `internal/forms/submissions/:id/provider-confirm`; social-service first checks the row's
@@ -462,10 +464,15 @@ payment nothing would record). The internal `mark-paid` route is gone. A cancel 
 posts `{ requestId, vendorToken }` to `cancel-pending`, which applies only to the row's current
 request AND only if `vendorToken` is its payee.
 
-**KNOWN GAP - the boutique.** A product checkout stores no row naming its request, so there is nothing
-of ours to read back: `purchase-completed` is refused unless `vendorToken` is the product's payee, and
-the amount recorded is the verified callback's. Closing it needs a stored product checkout (a table),
-not done here.
+**The boutique is REFUSED on the callback path until lot B3.** A product checkout stores no row naming
+its request, so there is nothing of ours to settle from - and a verified signature proves only that the
+key the payout manager TYPED signed it. Settling from the callback would let that manager grant any tag,
+fire any Cercle webhook and record any purchase with no money moved, even with payments disabled. So a
+verified `product:` confirm fulfils nothing: core logs it at ERROR, naming request, product and user
+for a human to settle, and answers 2xx (no retry changes the answer). `purchase-completed` keeps its
+payee check and has no caller until B3 stores a product checkout to settle from. **Consequence:** a
+boutique Lydia payment is taken and not fulfilled automatically - as before this change, when no
+callback verified at all.
 
 **Where the key comes from: the payout manager types it.** `PUT /api/associations/:id/lydia-business-key`
 (`MANAGE_PAYOUT_ACCOUNT`, the permission of every other Lydia route) stores it ENCRYPTED in
@@ -486,5 +493,10 @@ so `api_token_id` stays unpersisted and redacted from logs.
 
 **No key yet: the designed state.** The Lydia panel shows "Non renseignee" and says callbacks cannot be
 verified yet. Every callback of that association is refused (400); a FORM payment is still confirmed
-when the payer comes back (`confirm-payment`), and a boutique purchase is not confirmed at all until a
-key is set.
+when the payer comes back (`confirm-payment`). Nothing checks a key when it is saved - a wrong one shows
+only at the first refused callback - so the panel says so, and the PUT is throttled per user and
+association (`LYDIA_BUSINESS_KEY_WRITES_PER_MINUTE`, `UserResourceThrottlerGuard`).
+
+**The secret is REQUIRED on both estates** (`env-manifest.tsv`, like `AGENDA_SIGNING_KEY`): a deploy
+without `LYDIA_KEY_ENCRYPTION_SECRET` / `DEV_LYDIA_KEY_ENCRYPTION_SECRET`, or with one under 32
+characters, fails its render naming the secret rather than starting a service that cannot store a key.

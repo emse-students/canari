@@ -36,6 +36,19 @@ describe('UserResourceThrottlerGuard', () => {
     expect(again).toBe(first);
   });
 
+  it('keys a route that names its resource `:id` on that id too', async () => {
+    const tracker = (id: string) =>
+      guard.getTracker({
+        ip: '172.25.0.1',
+        method: 'PUT',
+        url: `/api/associations/${id}/lydia-business-key`,
+        headers: { 'x-user-id': 'user-a' },
+        params: { id },
+      });
+    expect(await tracker('asso-1')).toBe('user-a:asso-1');
+    expect(await tracker('asso-2')).not.toBe(await tracker('asso-1'));
+  });
+
   it('falls to the socket, at ERROR, when no user was named', async () => {
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     expect(await guard.getTracker(req(undefined, 'sub-1'))).toBe('172.25.0.1:sub-1');
