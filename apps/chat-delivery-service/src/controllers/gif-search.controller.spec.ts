@@ -4,7 +4,9 @@
  * THE GIF SEARCH ROUTE: THE QUERY STAYS OURS, ONLY AN ANSWER IS CACHED, AND THE GUARDS RUN IN ORDER.
  *
  * Pinned: a malformed query or page is a 400 before KLIPY is asked; an estate without a key says so
- * as a 503; a KLIPY failure is a 502 and is NOT remembered; the query text never reaches a log line;
+ * as a 503 with its own code, once in the log; a KLIPY failure is a 502, carries no cache header and is
+ * NOT remembered; the query text never reaches this service's log (nginx drops it from its own,
+ * `access-log-redaction.test.mjs`);
  * and the per-user throttler runs AFTER the guard that proves the user id it keys on.
  */
 import {
@@ -20,10 +22,15 @@ jest.mock('../utils/klipy', () => {
   return { ...actual, fetchKlipyPage: jest.fn() };
 });
 
-import { GifSearchController } from './gif-search.controller';
+import { GIF_SEARCH_NOT_CONFIGURED, GifSearchController } from './gif-search.controller';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { UserThrottlerGuard } from '../guards/user-throttler.guard';
-import { KlipyHttpError, fetchKlipyPage } from '../utils/klipy';
+import {
+  KlipyHttpError,
+  KlipyMalformedAnswerError,
+  KlipyUnreachableError,
+  fetchKlipyPage,
+} from '../utils/klipy';
 
 const fetchMock = fetchKlipyPage as jest.MockedFunction<typeof fetchKlipyPage>;
 
@@ -55,6 +62,7 @@ describe('GifSearchController', () => {
   beforeEach(() => {
     process.env.KLIPY_API_KEY = 'server-key';
     GifSearchController.cache.clear();
+    GifSearchController.missingKeyReported = false;
     fetchMock.mockReset();
     logged = [];
     for (const level of ['log', 'debug', 'warn', 'error'] as const) {
@@ -109,33 +117,48 @@ describe('GifSearchController', () => {
     ['a fractional page', 'a', '1.5'],
     ['a page past the cap', 'a', '51'],
     ['a non-numeric page', 'a', 'two'],
+    ['an array page', 'a', ['2']],
   ])('refuses %s with a 400 before asking KLIPY', async (_label, q, page) => {
-    await expect(controller.search(q as string, page, makeRes())).rejects.toBeInstanceOf(
-      BadRequestException
-    );
+    await expect(controller.search(q, page, makeRes())).rejects.toBeInstanceOf(BadRequestException);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('says 503 when the estate has no KLIPY key', async () => {
+  it('says 503 WITH its own code when the estate has no key, and says it once per process', async () => {
     delete process.env.KLIPY_API_KEY;
-    await expect(controller.search('a', '1', makeRes())).rejects.toBeInstanceOf(
-      ServiceUnavailableException
-    );
+    const error = await controller.search('a', '1', makeRes()).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(ServiceUnavailableException);
+    // The code is what tells it from a 503 nginx or the edge made: the client reads it.
+    expect((error as ServiceUnavailableException).getResponse()).toMatchObject({
+      code: GIF_SEARCH_NOT_CONFIGURED,
+    });
+    await controller.search('b', '1', makeRes()).catch(() => undefined);
+    expect(logged.filter((l) => l.includes('not configured'))).toHaveLength(1);
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('maps a KLIPY error to 502 and does NOT remember it', async () => {
+  it('maps a KLIPY error to 502, with no cache header, and does NOT remember it', async () => {
     fetchMock.mockRejectedValueOnce(new KlipyHttpError(500)).mockResolvedValueOnce(PAGE);
-    await expect(controller.search('a', '1', makeRes())).rejects.toBeInstanceOf(
-      BadGatewayException
+    const res = makeRes();
+    await expect(controller.search('a', '1', res)).rejects.toBeInstanceOf(BadGatewayException);
+    expect((res as unknown as { headers: Record<string, string> }).headers['Cache-Control']).toBe(
+      undefined
     );
     await expect(controller.search('a', '1', makeRes())).resolves.toEqual(PAGE.page);
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('maps a transport failure to 502 as well', async () => {
-    fetchMock.mockRejectedValue(new TypeError('fetch failed'));
+  it.each([
+    ['KLIPY unreachable', new KlipyUnreachableError(new TypeError('fetch failed')), 'unreachable'],
+    [
+      'a malformed answer',
+      new KlipyMalformedAnswerError('not JSON (3 bytes)'),
+      'answered 200 with',
+    ],
+    ['an unexpected failure', new RangeError('bug'), 'unexpected failure'],
+  ])('maps %s to 502 and names it apart in the log', async (_label, thrown, line) => {
+    fetchMock.mockRejectedValue(thrown);
     await expect(controller.search('', '1', makeRes())).rejects.toBeInstanceOf(BadGatewayException);
+    expect(logged.some((l) => l.includes(line))).toBe(true);
   });
 });
 

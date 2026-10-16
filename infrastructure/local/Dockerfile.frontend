@@ -65,7 +65,11 @@ RUN printf '# THE ACCESS LOG NEVER RECORDS A BEARER TOKEN (prod 2026-10-06: ever
 # is WRITTEN is rewritten - `$request` is replaced by the same three parts with the `token` value\n\
 # redacted, on every route and whichever position it has. The rest of the line is the stock `main`\n\
 # format. The format has its own name because redefining `main` is a duplicate-name error.\n\
+# A GIF SEARCH IS NOT LOGGED EITHER (2026-10-16): `/api/mls/gifs?q=` exists so a reader'"'"'s search is\n\
+# never tied to their address, and this line carries both - so its whole query is dropped. FIRST,\n\
+# because a map takes the first rule that matches.\n\
 map $request_uri $logged_request_uri {\n\
+    "~^/api/mls/gifs(?:[?/]|$)" "/api/mls/gifs?query-redacted";\n\
     "~^(?<uri_before_token>.*[?&])token=[^&]*(?<uri_after_token>.*)$" "${uri_before_token}token=redacted${uri_after_token}";\n\
     default $request_uri;\n\
 }\n\

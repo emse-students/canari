@@ -60,6 +60,22 @@ export class KlipyHttpError extends Error {
   }
 }
 
+/** KLIPY said NOTHING: a DNS or connect failure, a reset, or the outbound budget running out. */
+export class KlipyUnreachableError extends Error {
+  constructor(cause: unknown) {
+    super(String(cause));
+    this.name = 'KlipyUnreachableError';
+  }
+}
+
+/** KLIPY answered 2xx with a body that is not the JSON it documents - an answer, but unusable. */
+export class KlipyMalformedAnswerError extends Error {
+  constructor(detail: string) {
+    super(detail);
+    this.name = 'KlipyMalformedAnswerError';
+  }
+}
+
 type RawRendition = { gif?: { url?: unknown; width?: unknown; height?: unknown } };
 
 function rendition(raw: RawRendition | undefined): GifRendition | null {
@@ -111,20 +127,40 @@ export function klipyPageUrl(apiKey: string, query: string, page: number): strin
 /**
  * Fetches and maps one page from KLIPY. The request carries no header naming the reader - no
  * `X-Forwarded-For`, no user agent of theirs - so the only address KLIPY can log is this server's.
- * Bounded by the repository's one outbound budget. Throws `KlipyHttpError` on a non-2xx answer and
- * lets a transport failure propagate as itself.
+ * Bounded by the repository's one outbound budget. Throws `KlipyHttpError` on a non-2xx answer,
+ * `KlipyUnreachableError` when KLIPY said nothing, and `KlipyMalformedAnswerError` on a body that is
+ * not JSON.
  */
 export async function fetchKlipyPage(
   apiKey: string,
   query: string,
   page: number
 ): Promise<{ page: GifPage; received: number; dropped: number }> {
-  const res = await fetch(klipyPageUrl(apiKey, query, page), {
-    signal: AbortSignal.timeout(OUTBOUND_BUDGET_MS),
-    headers: { accept: 'application/json', 'user-agent': 'CanariGifSearch/1.0' },
-  });
+  // Each failure is typed where it happens, so the caller never reads a message to tell "KLIPY
+  // never answered" from "KLIPY answered something unusable".
+  let res: Response;
+  try {
+    res = await fetch(klipyPageUrl(apiKey, query, page), {
+      signal: AbortSignal.timeout(OUTBOUND_BUDGET_MS),
+      headers: { accept: 'application/json', 'user-agent': 'CanariGifSearch/1.0' },
+    });
+  } catch (error) {
+    throw new KlipyUnreachableError(error);
+  }
   if (!res.ok) throw new KlipyHttpError(res.status);
-  const json = (await res.json()) as { data?: { data?: unknown[]; has_next?: unknown } };
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (error) {
+    // The body died mid-read (a reset, or the budget expiring): no answer was received.
+    throw new KlipyUnreachableError(error);
+  }
+  let json: { data?: { data?: unknown[]; has_next?: unknown } };
+  try {
+    json = JSON.parse(text) as typeof json;
+  } catch {
+    throw new KlipyMalformedAnswerError(`a body that is not JSON (${text.length} bytes)`);
+  }
   const items = Array.isArray(json?.data?.data) ? json.data.data : [];
   const { gifs, dropped } = mapKlipyItems(items);
   // `has_next` when KLIPY sends it; a short page is the end either way.

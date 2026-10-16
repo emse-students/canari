@@ -12,6 +12,8 @@ import {
   GIF_PAGE_SIZE,
   KLIPY_SHARED_CUSTOMER_ID,
   KlipyHttpError,
+  KlipyMalformedAnswerError,
+  KlipyUnreachableError,
   fetchKlipyPage,
   klipyPageUrl,
   mapKlipyItems,
@@ -126,6 +128,15 @@ describe('fetchKlipyPage', () => {
       async () => new Response(JSON.stringify({ data: { data: [] } }), { status: 200 })
     ) as typeof fetch;
     expect((await fetchKlipyPage('KEY', '', 1)).page.hasNext).toBe(false);
+  });
+
+  it('types a transport failure as unreachable and a non-JSON body as malformed', async () => {
+    global.fetch = jest.fn(async () => {
+      throw new TypeError('fetch failed');
+    }) as typeof fetch;
+    await expect(fetchKlipyPage('KEY', 'x', 1)).rejects.toBeInstanceOf(KlipyUnreachableError);
+    global.fetch = jest.fn(async () => new Response('<html>', { status: 200 })) as typeof fetch;
+    await expect(fetchKlipyPage('KEY', 'x', 1)).rejects.toBeInstanceOf(KlipyMalformedAnswerError);
   });
 
   it('throws a typed KlipyHttpError on a non-2xx answer', async () => {

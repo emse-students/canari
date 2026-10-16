@@ -39,8 +39,26 @@ export interface GifPage {
 }
 
 /**
- * The estate has no GIF provider key (the server answered 503). A TYPE, so the grid shows "not
- * configured" rather than "could not load" without reading a message.
+ * The `code` chat-delivery puts on its 503 when the estate has no KLIPY key
+ * (`GIF_SEARCH_NOT_CONFIGURED` in `gif-search.controller.ts`). A 503 ALONE does not say it: nginx
+ * and the edge answer 503 of their own when an upstream is down, and that is a load failure.
+ */
+export const GIF_SEARCH_NOT_CONFIGURED = 'gif_search_not_configured';
+
+/** Whether a 503 is chat-delivery saying the estate has no key, read from its body's `code`. */
+async function isNotConfiguredAnswer(res: Response): Promise<boolean> {
+  try {
+    const body = (await res.clone().json()) as { code?: unknown } | null;
+    return body?.code === GIF_SEARCH_NOT_CONFIGURED;
+  } catch {
+    // Not JSON: not chat-delivery's answer, so an upstream failure - the caller says "could not load".
+    return false;
+  }
+}
+
+/**
+ * The estate has no GIF provider key (chat-delivery's 503 with `GIF_SEARCH_NOT_CONFIGURED`). A
+ * TYPE, so the grid shows "not configured" rather than "could not load" without reading a message.
  */
 export class GifSearchUnavailableError extends Error {
   constructor() {
@@ -90,7 +108,9 @@ export async function fetchGifPage(
   const params = new URLSearchParams({ page: String(page) });
   if (trimmed) params.set('q', trimmed);
   const res = await apiFetch(`${deliveryUrl()}/api/mls/gifs?${params.toString()}`, { signal });
-  if (res.status === 503) throw new GifSearchUnavailableError();
+  if (res.status === 503 && (await isNotConfiguredAnswer(res))) {
+    throw new GifSearchUnavailableError();
+  }
   if (!res.ok) throw new Error(`GIF search HTTP ${res.status}`);
   const result = readGifPage(await res.json());
   Log.d(

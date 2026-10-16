@@ -1591,7 +1591,7 @@ parity row.
 | GET | `/api/mls/link-preview` | Fetch safe external URL preview |
 | GET | `/api/mls/link-preview/image?url=` | Proxy a preview's `og:image` or favicon |
 | GET | `/api/mls/link-safety?url=` | Google Safe Browsing verdict for a URL (WP-SAFELINK-1) |
-| GET | `/api/mls/gifs?q=&page=` | The GIF picker's search/trending, asked of KLIPY by the server with `KLIPY_API_KEY`; per-user throttled, the query never logged ([chat](../frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
+| GET | `/api/mls/gifs?q=&page=` | The GIF picker's search/trending, asked of KLIPY by the server with `KLIPY_API_KEY`; per-user throttled; the query reaches no log line, nginx's access line included ([chat](../frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
 
 #### Who carries the MiGallery key, and who does not
 

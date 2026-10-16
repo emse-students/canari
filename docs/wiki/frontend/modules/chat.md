@@ -489,11 +489,22 @@ reader's.
 - **Authenticated and rate-limited per USER**: nginx's `auth_request`, `HeaderAuthGuard`, then
   `UserThrottlerGuard` (60 a minute), which keys on the proven `x-user-id` - the stock throttler keys
   on the address, and behind nginx every reader has the same one.
-- **The query is never logged**, only its length; answers are cached in-process for 10 minutes
-  (500 entries), failures never. 400 on a malformed query or page, 502 when KLIPY did not answer,
-  **503 when the estate has no key** - which the client classifies as `GifSearchUnavailableError`
-  and the grid shows as "not configured". The GIF button is always offered: whether an estate has a
-  key is the server's fact, so there is no build-time flag to drift from it.
+- **The query reaches no log line.** chat-delivery logs only its length, and **nginx drops this
+  route's whole query** from its access line (`$logged_request_uri` writes
+  `/api/mls/gifs?query-redacted`, asserted by `access-log-redaction.test.mjs`) - that line carries
+  the reader's address, so writing the query there would rebuild in our own log the very
+  association this route removes from KLIPY. The first review of this change caught it.
+- **Answers are cached in-process for 10 minutes** (500 entries), failures never, and only an answer
+  carries `Cache-Control: private, max-age=300` - a 502 carries none. The cache is shared across
+  users, keyed on the query: a hit's latency can tell a reader that SOMEBODY searched the same words
+  in the last ten minutes, never who. Accepted: the alternative is a KLIPY call per reader per page.
+- **400** on a malformed query or page, **502** when KLIPY did not answer (unreachable, a non-2xx,
+  or a 200 that is not JSON - three typed errors, three distinct log lines), **503 with
+  `code: 'gif_search_not_configured'`** when the estate has no key, reported once per process. The
+  CODE is what the client reads (`GifSearchUnavailableError`, the grid's "not configured"): nginx
+  and the edge answer 503 of their own when the service is down, and that is a load failure. The
+  GIF button is always offered: whether an estate has a key is the server's fact, so there is no
+  build-time flag to drift from it.
 - **`klipy_cid` is deleted at startup** by `retiredKlipyCustomerId.ts`, called from the root layout's
   mount - a shim with a removal condition in [legacy-compatibility](../../legacy-compatibility.md).
 - **CSP**: `connect-src` no longer names `https://api.klipy.com`; `csp.test.ts` asserts it stays out.
@@ -508,7 +519,7 @@ reader's.
 | --- | --- | --- |
 | The picker grid's thumbnails (`<img src>` = `preview.url`) | the person searching | their IP and user agent, and which results they were shown - not the query text, though a results set can hint at it |
 | A comment's GIF bytes (`PostComments.handleGifSelected`, `connect-src`) | the person attaching it | their IP, once, at attach time; the bytes are then encrypted and uploaded, so readers never touch KLIPY |
-| **A GIF sent in a chat** (`MessageTextBody`, `<img src>` = the sent URL) | **every recipient, on every render that misses the browser cache** | each reader's IP, user agent and the moment the message came into view - the leak `previewImageProxy.ts` closed for link previews, still open for GIFs. `isGifUrl` matches any `.gif` URL, so a GIF from any host behaves the same |
+| **A GIF sent in a chat** (`GifEmbed`, mounted by `MessageTextBody`; `<img src>` = the sent URL) | **every recipient, on every render that misses the browser cache** | each reader's IP, user agent and the moment the message came into view - the leak `previewImageProxy.ts` closed for link previews, still open for GIFs. `isGifUrl` matches any `.gif` URL, so a GIF from any host behaves the same |
 
 The proxy that would close the last row exists - `/api/mls/link-preview/image` (ticket-gated,
 SSRF-guarded, `image/*` only, [chat-delivery](../../services/chat-delivery.md)) - but routing GIFs

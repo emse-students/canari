@@ -301,11 +301,6 @@ VITE_FRONTEND_URL=http://localhost:1420
 VITE_AUTHENTIK_URL=$(value_of AUTHENTIK_BASE_URL)
 VITE_AUTHENTIK_CLIENT_ID=${CANARI_LOCAL_OIDC_CLIENT_ID:-}
 
-# Klipy (GIF picker) has no value in infrastructure/.env: it is a BUILD-TIME frontend variable that
-# CI injects from the GitHub secret KLIPY_API_KEY, and a GitHub secret cannot be read back. Empty
-# means the GIF picker is off locally; paste a key here to exercise it.
-VITE_KLIPY_KEY=
-
 # Mobile only, and both are build-time identities rather than secrets: the Android App Links
 # certificate fingerprint and the Apple team id. CI injects them; they are empty here because an
 # App Link cannot point at localhost anyway (see the campaign pages - the phone reaches the local

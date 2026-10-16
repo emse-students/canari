@@ -4,7 +4,12 @@ const apiFetch = vi.hoisted(() => vi.fn());
 vi.mock('$lib/utils/apiFetch', () => ({ apiFetch }));
 vi.mock('$lib/utils/apiUrl', () => ({ deliveryUrl: () => 'https://canari.test' }));
 
-import { fetchGifPage, GifSearchUnavailableError, readGifPage } from './gifSearch';
+import {
+  fetchGifPage,
+  GIF_SEARCH_NOT_CONFIGURED,
+  GifSearchUnavailableError,
+  readGifPage,
+} from './gifSearch';
 import { dropRetiredKlipyCustomerId } from './retiredKlipyCustomerId';
 
 const R = (name: string, width = 4, height = 3) => ({
@@ -38,13 +43,20 @@ describe('fetchGifPage', () => {
     expect(url.searchParams.has('q')).toBe(false);
   });
 
-  it('throws the typed "not configured" error on a 503, and a plain error otherwise', async () => {
-    apiFetch.mockResolvedValueOnce(json({}, 503));
+  it('says "not configured" only on chat-delivery\'s OWN 503, never on an upstream one', async () => {
+    apiFetch.mockResolvedValueOnce(json({ statusCode: 503, code: GIF_SEARCH_NOT_CONFIGURED }, 503));
     await expect(fetchGifPage('a', 1)).rejects.toBeInstanceOf(GifSearchUnavailableError);
-    apiFetch.mockResolvedValueOnce(json({}, 502));
-    const error = await fetchGifPage('a', 1).catch((e: unknown) => e);
-    expect(error).toBeInstanceOf(Error);
-    expect(error).not.toBeInstanceOf(GifSearchUnavailableError);
+    // nginx's own 503 when the service is down, and an edge page that is not JSON at all.
+    for (const res of [
+      json({ message: 'upstream unavailable' }, 503),
+      new Response('<html>503</html>', { status: 503 }),
+      json({}, 502),
+    ]) {
+      apiFetch.mockResolvedValueOnce(res);
+      const error = await fetchGifPage('a', 1).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(Error);
+      expect(error).not.toBeInstanceOf(GifSearchUnavailableError);
+    }
   });
 });
 

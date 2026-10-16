@@ -178,7 +178,7 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 The search itself goes through Canari since 2026-10-16 (`GET /api/mls/gifs`); what is left is
 `static.klipy.com` learning each RECIPIENT's IP, user agent and reading time on every render of a
-GIF message, plus the searcher's thumbnails and a comment GIF's one byte fetch. Not proxied yet
+GIF message, plus the searcher's thumbnails and the one fetch of a comment GIF's bytes. Not proxied yet
 because the existing image proxy's 3 MB ceiling and small-image cache were never measured against
 KLIPY's renditions. The substance, the table of the three paths and the route it needs are in
 [chat](frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16). Owed first: a
