@@ -255,16 +255,48 @@ export function closeHistoryOverlayFromUi(close: () => void): void {
  * Returns false when no overlay is open: the gesture then belongs to whatever drew it. Without this,
  * the conversation's swipe closed the conversation from under its own "+" menu, and a swipe over a
  * portalled layer (the camera's review) reached nothing at all (iPhone 12, v1.2.9-alpha.2, 2 of 2).
+ *
+ * `arm` is {@link armHistoryOverlayGesture}'s record from the touch's start: when the overlay on top
+ * then is no longer on top, the gesture is SPENT and closes nothing more (returns true, so the
+ * owner does not act either). Without it, a menu closed by anything during the stroke left the
+ * conversation on top for the commit to close.
  */
-export function backHistoryOverlayFromGesture(): boolean {
+export function backHistoryOverlayFromGesture(arm?: HistoryGestureArm): boolean {
+  const topId = stack.length > 0 ? stack[stack.length - 1].id : 0;
+  if (arm && arm.topId !== topId) {
+    // ONE GESTURE, ONE CLOSE. The overlay on top when the finger came down is gone (something
+    // else closed it during the stroke: a tap-outside, a keyboard, its own owner): the gesture has
+    // been spent on it, and it must not go on to close what lay UNDER it - the conversation under
+    // the "+" menu (iPhone 12, v1.2.9-alpha.2 and alpha.3, 3 of 3). Info, not debug: the in-app
+    // log records no debug, and the alpha.3 reading could not be diagnosed without this line.
+    console.info(
+      `[historyOverlay] gesture Back spent: overlay ${arm.topId} was on top at the touch, ${topId || 'nothing'} is now - nothing more closed`
+    );
+    return true;
+  }
   const top = stack.pop();
   if (!top) {
     Log.d('historyOverlay', 'gesture Back with no overlay open - the gesture owner decides');
     return false;
   }
-  Log.d('historyOverlay', `gesture Back closes overlay ${top.id}, ${stack.length} left open`);
+  console.info(`[historyOverlay] gesture Back closes overlay ${top.id}, ${stack.length} left open`);
   top.close('back');
   return true;
+}
+
+/** What the overlay stack looked like when a gesture Back's finger came down. */
+export interface HistoryGestureArm {
+  /** The id of the overlay on top then, or 0 when none was open. */
+  readonly topId: number;
+}
+
+/**
+ * Records the stack's top as a Back gesture arms (its touch STARTS), for
+ * {@link backHistoryOverlayFromGesture} to check at the commit: a gesture closes at most the
+ * overlay that was on top when it began - never two things, whatever closed the first meanwhile.
+ */
+export function armHistoryOverlayGesture(): HistoryGestureArm {
+  return { topId: stack.length > 0 ? stack[stack.length - 1].id : 0 };
 }
 
 /**

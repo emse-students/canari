@@ -49,7 +49,11 @@
   import type { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
   import { getKeyboardViewport } from '$lib/stores/keyboardViewport.svelte';
   import { swipeBack } from '$lib/actions/swipeBack';
-  import { backHistoryOverlayFromGesture } from '$lib/utils/historyOverlayStack';
+  import {
+    armHistoryOverlayGesture,
+    backHistoryOverlayFromGesture,
+    type HistoryGestureArm,
+  } from '$lib/utils/historyOverlayStack';
   import { typingUsersFor } from '$lib/stores/typingStore.svelte';
   import { pinnedMessageIds } from '$lib/stores/pinStore.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
@@ -1181,9 +1185,17 @@
    * instead of the conversation. One predicate for the swipe and the entries.
    */
   function onSwipedBack() {
-    if (overlayLayout && backHistoryOverlayFromGesture()) return;
+    const arm = gestureArm ?? undefined;
+    gestureArm = null;
+    if (overlayLayout && backHistoryOverlayFromGesture(arm)) return;
     onBack?.();
   }
+  /**
+   * The stack's top when the swipe's finger came down: ONE swipe closes at most that overlay. With
+   * the "+" menu open, a swipe closed the menu AND the conversation under it on the iPhone 12
+   * (v1.2.9-alpha.3, 3 of 3) - the menu was gone by the commit, and the commit closed what was left.
+   */
+  let gestureArm: HistoryGestureArm | null = null;
 </script>
 
 <section
@@ -1193,7 +1205,11 @@
     : ''} relative flex min-h-0 min-w-0 flex-1 flex-col bg-transparent {isHidden
     ? 'hidden md:flex'
     : ''}"
-  use:swipeBack={{ onBack: onSwipedBack, enabled: _isMobile && !!onBack }}
+  use:swipeBack={{
+    onBack: onSwipedBack,
+    onArm: () => (gestureArm = armHistoryOverlayGesture()),
+    enabled: _isMobile && !!onBack,
+  }}
 >
   {#if chatView}
     <!--

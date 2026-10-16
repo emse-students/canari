@@ -39,7 +39,9 @@
   import type { CaptureDestination } from '$lib/reels/reelCapture';
   import {
     abandonHistoryOverlay,
+    armHistoryOverlayGesture,
     backHistoryOverlayFromGesture,
+    type HistoryGestureArm,
     isMobileOverlayLayout,
     pushHistoryOverlay,
   } from '$lib/utils/historyOverlayStack';
@@ -83,6 +85,9 @@
     pushHistoryOverlay(entry);
   });
 
+  /** The stack's top when the swipe's finger came down: one swipe closes at most that layer. */
+  let gestureArm: HistoryGestureArm | null = null;
+
   onDestroy(() => {
     // A no-op when Back already took the entry off the stack.
     abandonHistoryOverlay(entry);
@@ -92,7 +97,15 @@
 <div
   use:portal
   use:coversScreen
-  use:swipeBack={{ onBack: () => void backHistoryOverlayFromGesture(), enabled: narrow }}
+  use:swipeBack={{
+    onBack: () => {
+      const arm = gestureArm ?? undefined;
+      gestureArm = null;
+      void backHistoryOverlayFromGesture(arm);
+    },
+    onArm: () => (gestureArm = armHistoryOverlayGesture()),
+    enabled: narrow,
+  }}
   class="fixed inset-0 z-(--z-viewer) bg-black text-white"
   role="dialog"
   aria-modal="true"

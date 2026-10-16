@@ -21,6 +21,13 @@
  * never on a timer. After the write, the oldest records are deleted until the total is under
  * {@link MAX_PERSISTED_CHARS}: the ring is bounded by SIZE.
  *
+ * A WRITE CUT SHORT BY LEAVING THE SCREEN IS NOT A STORAGE FAILURE. WebKit aborts the IndexedDB
+ * transactions in flight when it suspends a backgrounded WebView (it must not hold the SQLite lock
+ * while suspended), so on iOS the leave-screen flush loses that race (read on the iPhone 12,
+ * 1.2.9-alpha.3). Off screen is KNOWN here, from the same signal that asked for the flush: such a
+ * failure keeps its lines, drops the connection, and writes them when the app is back on screen.
+ * Only a failure ON screen stops persistence.
+ *
  * IT NEVER LOGS THROUGH THE CONSOLE FROM INSIDE A CAPTURE (that would recurse); its own failures
  * are written as lines of the log itself and printed through the console outside the capture.
  */
@@ -69,6 +76,13 @@ let dbPromise: Promise<IDBDatabase> | null = null;
 let flushChain: Promise<void> = Promise.resolve();
 let capturing = false;
 let lifecycleInstalled = false;
+/** The app has left the screen and not come back - set by {@link installAppLogFlushTriggers}. */
+let offScreen = false;
+/**
+ * A write was cut short off screen: the batch thresholds stop asking for writes until the app is
+ * back on screen, so a suspended WebView is not asked again for every line that arrives.
+ */
+let holdingForScreen = false;
 
 /** Turns one console call's arguments into the text of a line. */
 function renderArgs(args: readonly unknown[]): string {
@@ -97,7 +111,11 @@ function push(line: string): void {
     pendingChars -= oldest.length + 1;
     droppedLines++;
   }
-  if (persistence === 'ok' && (pendingChars >= FLUSH_CHARS || pending.length >= FLUSH_LINES)) {
+  if (
+    persistence === 'ok' &&
+    !holdingForScreen &&
+    (pendingChars >= FLUSH_CHARS || pending.length >= FLUSH_LINES)
+  ) {
     void flushAppLog();
   }
 }
@@ -182,6 +200,14 @@ function writeChunk(db: IDBDatabase, chunk: Chunk): Promise<number> {
   });
 }
 
+/** Closes the log database's connection, if one is open, so the next write opens a fresh one. */
+function dropConnection(): void {
+  if (!dbPromise) return;
+  const closing = dbPromise;
+  dbPromise = null;
+  void closing.then((db) => db.close()).catch(() => undefined);
+}
+
 /**
  * Writes the pending batch as one record. Serialised: a flush asked for while one runs waits for
  * it, so two batches never race for the same eviction. Resolves once everything pending at the
@@ -192,6 +218,7 @@ export function flushAppLog(): Promise<void> {
     if (persistence !== 'ok' || pending.length === 0) return;
     const lines = pending;
     const chars = pendingChars;
+    const offScreenAtStart = offScreen;
     pending = [];
     pendingChars = 0;
     try {
@@ -202,13 +229,25 @@ export function flushAppLog(): Promise<void> {
       // and the state stays `discarded` rather than reading as a storage failure.
       // (The cast: the narrowing above does not see `discardAppLog` running during the await.)
       if ((persistence as PersistenceState) === 'discarded') return;
-      // Stop FIRST, so re-queuing below cannot ask for another flush.
-      persistence = typeof indexedDB === 'undefined' ? 'unavailable' : 'failed';
-      persistenceError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      const reason = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+      // Whatever broke, this connection is not reused: a suspended WebView may have lost it.
+      dropConnection();
       // The lines go back in front of whatever arrived meanwhile, under the same memory bound.
       const arrived = pending;
       pending = [];
       pendingChars = 0;
+      if (offScreenAtStart || offScreen) {
+        // Cut short by the suspension (module doc): held, and written once back on screen.
+        holdingForScreen = true;
+        for (const line of [...lines, ...arrived]) push(line);
+        console.info(
+          `[APPLOG] a write was cut short as the app left the screen (${reason}) - ${lines.length} lines kept for the return`
+        );
+        return;
+      }
+      // Stop FIRST, so re-queuing below cannot ask for another flush.
+      persistence = typeof indexedDB === 'undefined' ? 'unavailable' : 'failed';
+      persistenceError = reason;
       for (const line of [...lines, ...arrived]) push(line);
       // Once, outside any capture (this runs after an await), so it enters the log like any line.
       console.error(
@@ -247,6 +286,16 @@ function redactStoredLine(stored: string): RedactedLine {
   return { line: `${match[1]}${line}`, redactions };
 }
 
+/** Every stored record, in key order. */
+async function readChunks(): Promise<Chunk[]> {
+  const db = await openDb();
+  return new Promise<Chunk[]>((resolve, reject) => {
+    const request = db.transaction(STORE, 'readonly').objectStore(STORE).getAll();
+    request.onsuccess = () => resolve(request.result as Chunk[]);
+    request.onerror = () => reject(request.error ?? new Error('log read failed'));
+  });
+}
+
 /**
  * Reads the whole log: flushes the batch, then reads every record in key order - and redacts every
  * line AGAIN on the way out. Redaction at write time protects only what is written from then on;
@@ -256,14 +305,18 @@ function redactStoredLine(stored: string): RedactedLine {
 export async function readAppLog(): Promise<AppLogSnapshot> {
   await flushAppLog();
   const parts: string[] = [];
+  // A ring that stopped being WRITTEN still holds what was written before: an export after a failed
+  // write carried only the memory tail (19 KB) while 191 KB sat on disk (iPhone, 1.2.9-alpha.3).
   if (persistence === 'ok') {
-    const db = await openDb();
-    const chunks = await new Promise<Chunk[]>((resolve, reject) => {
-      const request = db.transaction(STORE, 'readonly').objectStore(STORE).getAll();
-      request.onsuccess = () => resolve(request.result as Chunk[]);
-      request.onerror = () => reject(request.error ?? new Error('log read failed'));
-    });
-    for (const chunk of chunks) parts.push(chunk.text);
+    for (const chunk of await readChunks()) parts.push(chunk.text);
+  } else if (persistence === 'failed') {
+    try {
+      for (const chunk of await readChunks()) parts.push(chunk.text);
+    } catch (error) {
+      // The storage that refused the write refuses the read too: the memory tail is all there is.
+      // Printed after the awaits above, so outside any capture.
+      console.error('[APPLOG] the stored log could not be read after a failed write', error);
+    }
   }
   if (pending.length > 0) parts.push(pending.join('\n'));
   const stored = parts.join('\n');
@@ -307,21 +360,32 @@ export function discardAppLog(): void {
   persistence = 'discarded';
   pending = [];
   pendingChars = 0;
-  if (dbPromise) {
-    void dbPromise.then((db) => db.close()).catch(() => undefined);
-    dbPromise = null;
-  }
+  dropConnection();
 }
 
 /**
  * Flushes when the app leaves the screen (backgrounded, tab hidden, page unloading): the moment
- * after which the process may be killed without another word. Idempotent.
+ * after which the process may be killed without another word. Records that it is off screen, which
+ * is what classifies a write the suspension cuts short, and writes what such a write kept once the
+ * app is back. Idempotent.
  */
 export function installAppLogFlushTriggers(): void {
   if (lifecycleInstalled || typeof window === 'undefined') return;
   lifecycleInstalled = true;
   onAppScreenChange((onScreen) => {
-    if (!onScreen) void flushAppLog();
+    offScreen = !onScreen;
+    if (!onScreen) {
+      void flushAppLog();
+      return;
+    }
+    // Back on screen: what a cut-short write kept is written now.
+    if (holdingForScreen) {
+      holdingForScreen = false;
+      void flushAppLog();
+    }
   });
-  window.addEventListener('pagehide', () => void flushAppLog());
+  window.addEventListener('pagehide', () => {
+    offScreen = true;
+    void flushAppLog();
+  });
 }

@@ -1,11 +1,12 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { CircleCheck, CircleX, Loader } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { confirmSubmissionPayment } from '$lib/forms/api';
   import { paymentReturnVerdict } from '$lib/forms/paymentReturn';
   import { SocialApiError } from '$lib/associations/api';
+  import { setPageTitle } from '$lib/seo/pageTitle.svelte';
 
   /**
    * Lydia's return carries the submission id (it cannot fill in a session id). Each read asks the
@@ -20,6 +21,23 @@
 
   let status = $state<'loading' | 'confirmed' | 'pending' | 'overCapacity' | 'error'>('loading');
   let formId = $state<string | null>(null);
+
+  /**
+   * THE TITLE SAYS WHAT THE PAGE SAYS. The path's own title is neutral ("Retour de paiement"): this
+   * page is reached before anything is known, and it read "Paiement reussi" over "Paiement
+   * introuvable" for an unknown submission (iPhone 12, v1.2.9-alpha.3).
+   */
+  const STATUS_TITLE: Record<typeof status, () => string> = {
+    loading: () => m.form_success_verifying(),
+    confirmed: () => m.form_success_confirmed_heading(),
+    pending: () => m.form_success_pending_heading(),
+    overCapacity: () => m.form_success_over_capacity_heading(),
+    error: () => m.form_success_not_found_heading(),
+  };
+  $effect(() => {
+    setPageTitle(STATUS_TITLE[status]());
+  });
+  onDestroy(() => setPageTitle(null));
 
   async function confirmBySubmission(id: string) {
     for (let attempt = 0; attempt < MAX_POLLS; attempt++) {

@@ -42,6 +42,12 @@ function startsOnCompetingGesture(target: EventTarget | null): boolean {
 export interface SwipeBackOptions {
   /** Called when the gesture is confirmed (swipe right past threshold). */
   onBack: () => void;
+  /**
+   * Called once when a touch ARMS the gesture (it started in the edge zone, on nothing excluded) -
+   * where a caller records the state the commit must be judged against
+   * (`armHistoryOverlayGesture`): a Back closes what was on top when the finger came down.
+   */
+  onArm?: () => void;
   /** Whether the gesture is currently active (e.g. only on mobile view). */
   enabled?: boolean;
   /** Width of the left-edge activation zone in px (default 28). */
@@ -97,6 +103,7 @@ export function swipeBack(node: HTMLElement, options: SwipeBackOptions) {
     tracking = true;
     committed = false;
     console.debug(`[swipeBack] armed at x=${Math.round(startX)}`);
+    opts.onArm?.();
   }
 
   function onTouchMove(e: TouchEvent) {
@@ -146,28 +153,34 @@ export function swipeBack(node: HTMLElement, options: SwipeBackOptions) {
       // Slide out to the right then invoke callback.
       node.style.transition = 'transform 0.18s ease-out';
       node.style.transform = `translate3d(${node.offsetWidth * 0.35}px, 0, 0)`;
-      node.addEventListener(
-        'transitionend',
-        () => {
-          node.style.removeProperty('transform');
-          node.style.removeProperty('transition');
-          opts.onBack();
-        },
-        { once: true }
-      );
+      onOwnTransitionEnd(() => {
+        node.style.removeProperty('transform');
+        node.style.removeProperty('transition');
+        opts.onBack();
+      });
     } else {
       // Snap back.
       node.style.transition = 'transform 0.2s ease-out';
       node.style.transform = 'translate3d(0, 0, 0)';
-      node.addEventListener(
-        'transitionend',
-        () => {
-          node.style.removeProperty('transform');
-          node.style.removeProperty('transition');
-        },
-        { once: true }
-      );
+      onOwnTransitionEnd(() => {
+        node.style.removeProperty('transform');
+        node.style.removeProperty('transition');
+      });
     }
+  }
+
+  /**
+   * Runs `then` once, on the end of the NODE'S OWN transition. `transitionend` bubbles: a
+   * descendant's (a menu entry fading, a button's colour) ended the slide-out early and committed
+   * the Back from it, mid-animation.
+   */
+  function onOwnTransitionEnd(then: () => void) {
+    const handler = (e: Event) => {
+      if (e.target !== node) return;
+      node.removeEventListener('transitionend', handler);
+      then();
+    };
+    node.addEventListener('transitionend', handler);
   }
 
   node.addEventListener('touchstart', onTouchStart, { passive: true });

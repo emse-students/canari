@@ -2082,7 +2082,7 @@
   "form_cancel_still_open_title": "Demande de paiement encore ouverte",
   "form_cancel_unconfirmed_title": "Annulation non confirmée",
   "form_cancel_unconfirmed_desc": "Nous n'avons pas pu annuler votre demande de paiement. Si vous ne la payez pas, votre réponse est libérée au plus tard 30 minutes après le lancement du paiement.",
-  "form_success_title": "Paiement réussi",
+  "form_success_title": "Retour de paiement",
   "form_success_verifying": "Vérification du paiement…",
   "form_success_pending_heading": "Paiement en cours de confirmation",
   "form_success_pending_desc": "Votre paiement n'est pas encore confirmé. Cela peut prendre un moment : revenez sur le formulaire dans quelques minutes.",
