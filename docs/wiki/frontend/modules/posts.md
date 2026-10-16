@@ -1438,7 +1438,10 @@ merges over it.
 ### What is stored
 
 - **The first page of each bare tab** (`associations`, `followed`, `all`, `custom`), as the server
-  last answered it: the 20 rows of the route's first request, or the 10 of a refresh. Later pages of
+  last answered it: the `FEED_FIRST_PAGE_SIZE` (20) rows of a first page, whether the route's first
+  request or a refresh asked it (`posts/feedPageSize.ts`, the one copy). A refresh used to ask the
+  scroll size (10), so a reconnect drew 10 cards and stored them for the next offline start (Mi 9T,
+  v1.2.9-alpha.3). Later pages of
   the infinite scroll are not stored. A tab opened with `promo` or `formation` (a shared link) is
   not stored either, so the store holds at most four pages, bounded by construction rather than by
   an eviction rule.

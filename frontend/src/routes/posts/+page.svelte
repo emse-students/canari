@@ -24,6 +24,7 @@
     rememberFeedKind,
     type FeedKindFilter,
   } from '$lib/posts/feedKindFilter';
+  import { FEED_FIRST_PAGE_SIZE, FEED_PAGE_SIZE, firstPageHasMore } from '$lib/posts/feedPageSize';
   import { setReelFeedSource } from '$lib/reels/reelFeedSource';
   import FeedKindFilterControl from '$lib/components/posts/FeedKindFilter.svelte';
   import ReelsEmptyState from '$lib/components/posts/ReelsEmptyState.svelte';
@@ -74,9 +75,6 @@
   import { m } from '$lib/paraglide/messages';
 
   const LAST_SEEN_KEY = 'posts_last_seen_ts';
-  const PAGE_SIZE = 10;
-  /** What `load` asks for first (`listPosts({ limit: 20 })`), and so what one stored page holds. */
-  const FIRST_PAGE_SIZE = 20;
 
   let {
     data,
@@ -93,6 +91,13 @@
   let postsOverride = $state<PostEntity[] | null>(null);
   /** Resolved value of data.posts - used as fallback when postsOverride is still null. */
   let initialPostsResolved = $state<PostEntity[] | null>(null);
+  /**
+   * THE LIST ON SCREEN, FROM ONE BLOCK. The `{#await}` used to draw the first answer in its `{:then}`
+   * and the handler then moved it into `postsOverride`, drawn by ANOTHER block: every card mounted
+   * twice, and the reel on screen opened its stream twice and logged its interrupted `play()` (Mi 9T,
+   * v1.2.9-alpha.3). The handler fills one of these two in the same turn as the answer.
+   */
+  const shownPosts = $derived(postsOverride ?? initialPostsResolved);
 
   /**
    * THE LIST ON SCREEN WAS DRAWN FROM THE DEVICE'S STORED COPY (`$lib/posts/feedStore`) AND NO
@@ -462,8 +467,8 @@
       .then((posts) => {
         if (cancelled) return;
         firstPage = 'answered';
-        // The first batch asks for 20 where a page is PAGE_SIZE, so a short answer is the end.
-        const more = posts.length >= FIRST_PAGE_SIZE;
+        // A first page shorter than it asked for is the end.
+        const more = firstPageHasMore(posts.length);
         writeFeedCache(key, { posts, hasMore: more });
         initialPostsResolved = posts;
         storeFirstPage(params, posts);
@@ -556,8 +561,8 @@
    * resolved; the only thing that changes between pages is the offset. The caller passes the tab's
    * params as it took them BEFORE its await, never `data.feedParams` read after it.
    */
-  function buildListOptions(params: FeedCacheParams, offset = 0) {
-    return feedPageOptions(params, offset, PAGE_SIZE);
+  function buildListOptions(params: FeedCacheParams, offset: number) {
+    return feedPageOptions(params, offset, FEED_PAGE_SIZE);
   }
 
   /**
@@ -609,7 +614,8 @@
     hasMore = true;
     const outcome = await refreshFirstPage({
       params: data.feedParams,
-      read: (params) => listPosts(buildListOptions(params)),
+      // The SAME first page the cold start asks and stores - never a scroll page (Mi 9T, alpha.3).
+      read: (params) => listPosts(feedPageOptions(params, 0, FEED_FIRST_PAGE_SIZE)),
       stillCurrent: () => issuedFor === tabLoad,
     });
     if (outcome.kind === 'stale') {
@@ -621,7 +627,7 @@
     if (outcome.kind === 'answered') {
       const { posts, params } = outcome;
       postsOverride = posts;
-      hasMore = posts.length >= PAGE_SIZE;
+      hasMore = firstPageHasMore(posts.length);
       writeFeedCache(feedCacheKey(params), { posts, hasMore });
       // An answer: whatever the device drew is now the server's page, and the store follows it.
       firstPage = 'answered';
@@ -654,7 +660,7 @@
         Log.d('POSTS', 'a next page answered for a tab the reader has left - dropped');
         return;
       }
-      if (more.length === 0 || more.length < PAGE_SIZE) hasMore = false;
+      if (more.length === 0 || more.length < FEED_PAGE_SIZE) hasMore = false;
       // Deduplicate in case new posts were inserted between page fetches.
       const existingIds = new Set(currentPosts.map((p) => p.id));
       const newPosts = more.filter((p) => !existingIds.has(p.id));
@@ -971,13 +977,15 @@
       <div class="space-y-5">
         {#if heldForLanding}
           {@render skeletonCards()}
-        {:else if postsOverride}
-          {@render feedList(postsOverride)}
+        {:else if shownPosts}
+          {@render feedList(shownPosts)}
         {:else}
           {#await data.posts}
             {@render skeletonCards()}
-          {:then initialPosts}
-            {@render feedList(initialPosts)}
+          {:then}
+            <!-- The answer's handler sets `shownPosts` in this same turn; the list is drawn by the
+                 branch above, ONE block, so it does not mount here and again there. -->
+            {@render skeletonCards()}
           {:catch err}
             <!-- A stored copy still being read is about to draw: no error screen flashes before it. -->
             {#if loading || storedReadPending}
@@ -1061,7 +1069,7 @@
                     hasMore,
                   });
                   // The next launch must not draw the post just deleted from the stored page.
-                  storeFirstPage(data.feedParams, postsOverride.slice(0, FIRST_PAGE_SIZE));
+                  storeFirstPage(data.feedParams, postsOverride.slice(0, FEED_FIRST_PAGE_SIZE));
                 }}
               />
             </div>
@@ -1077,7 +1085,7 @@
             <div class="flex justify-center py-4">
               <RefreshCw size={20} class="text-text-muted animate-spin opacity-50" />
             </div>
-          {:else if !hasMore && !fromStore && resolvedPosts.length >= PAGE_SIZE}
+          {:else if !hasMore && !fromStore && resolvedPosts.length >= FEED_PAGE_SIZE}
             <p class="text-text-muted text-2xs py-4 text-center opacity-50">
               {m.posts_all_loaded()}
             </p>

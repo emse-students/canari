@@ -348,7 +348,14 @@ feed video loops from its own buffer. The decrypted pool is capped by BYTES (64 
 least recently used IDLE blob is revoked, a held one - the video playing - never, and a release
 alone evicts nothing, so a page torn down by a tab swipe keeps its grace. Pinned by `segmentedMediaStream.test.ts` (ten unplayed cards fetch 20
 requests, two segments each, of an eight-segment file; close aborts the segment in flight),
-`PostMedia.stream.svelte.test.ts` and `blobUrlPool.test.ts`. NOT measured on a phone with a 30 MB
+`PostMedia.stream.svelte.test.ts` and `blobUrlPool.test.ts`. **A stream opens ONCE per card**
+(Mi 9T, v1.2.9-alpha.3: two `[media-seg] stream` lines 133 ms apart and a `play() refused` per cold
+start): `PostMedia` re-runs its download on a change of the media's VALUE (`mediaIdentity`), not of
+the object carrying it, which the feed's answer replaces with an equal one; and the feed draws its
+list from ONE block (`shownPosts`), where the first answer used to mount in the `{#await}` and again
+in the `postsOverride` branch. The `play()` refused is read as the interrupted load, not an autoplay
+policy (inferred from its timing, 5 ms after the second stream; the reading did not capture its
+`name`), so the warning stays as it is: a refusal that remains after this fix is a real one. NOT measured on a phone with a 30 MB
 reel: the decoder count and the bytes on the wire are owed one reading on the Mi 9T.
 
 **The viewer** (`components/reels/ReelViewer.svelte`) shows the touched reel first, then the reels
