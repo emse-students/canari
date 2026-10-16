@@ -186,10 +186,13 @@ shows is what the editor shows and what viewers see; no crop that differs, no ov
   `rounded-2xl` (`--radius-2xl`, 12 px, "the larger card": the scale has no larger media step) over the
   backdrop; **within 2 % of the screen's shape it is the WHOLE stage instead - cover ON PURPOSE**, square
   corners, no backdrop sliver, the media cropped by at most 1 % per side (`data-reel-frame-fills`).
-- **`ReelBackdrop`**: a 24 px canvas copy of the frame's own video or image, upscaled by the browser
-  (that IS the blur: no CSS filter re-applied per repaint) and dimmed - NO second decoder (5.6 GB
-  phones). It exists and samples ONLY when the frame leaves stage uncovered; a still image once, a video
-  only while it plays on a visible tab; listeners and timer are released with the effect.
+- **`ReelBackdrop`**: the frame's own video or image, read ONCE when it has a picture (`loadeddata`,
+  `load`), blurred on the canvas (`reels/reelBackdropPaint.ts`: shrunk to 12 px across, then three
+  bilinear doublings to 96 px, a chain of tent filters close to a Gaussian), stretched with
+  `object-cover` and dimmed - NO second decoder, NO timer, NO animation frame, NO CSS `filter` for the
+  compositor to re-run. It exists ONLY when the frame leaves stage uncovered. **Why once (Mi 9T,
+  2026-10-16, [reels](reels.md#the-backdrop-is-painted-once-2026-10-16)):** the 250 ms re-sample of a
+  24 px canvas was blocky, stepped 4 times a second, and holed the camera's takes.
 - **The keyboard cannot move the frame, and the camera sees what is visible**: `stageStep` makes the stage
   FOLLOW the measured box, except while `latch` is set - the editor passes `composing !== null`, the text
   field being open - when it keeps the largest height seen; on release it holds until the box grows back
@@ -206,8 +209,7 @@ shows is what the editor shows and what viewers see; no crop that differs, no ov
   caption sits INSIDE the frame above the player's bar, so the two never overlap.
 
 **Not verified (no device, no browser run):** the camera's real recorded size (the constraint is
-`ideal`; the track may answer another mode, and the crop then still yields 9:16); the backdrop on the
-Android WebView; the viewer with a legacy reel and the caption over the bar on 360x800; a real soft
+`ideal`; the track may answer another mode, and the crop then still yields 9:16); the viewer with a legacy reel and the caption over the bar on 360x800; a real soft
 keyboard (the stage latch follows the box, not `visualViewport`, so an engine that does NOT shrink the
 layout viewport is unreleased by that path); the iPhone's `<video>` layer inside a rounded
 `overflow-hidden` box (a WebKit clip bug is possible).
