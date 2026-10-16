@@ -22,8 +22,11 @@
 
 Posts are loaded via `GET /api/posts` (social-service), paginated with infinite scroll (`IntersectionObserver`).
 
-Above the tabs, a "Tous les posts" / "CanaReels" filter (2026-10-15) narrows the open tab to its reels, on the
-server (`?kind=reel`); its decisions are on [reels](reels.md#the-canareels-filter---a-view-on-the-feed-not-a-place-addendum-to-c7-user-2026-10-15).
+The tabs and a clap icon share ONE row (`FeedTabRow`, 2026-10-16): the icon opens the full-screen
+reel viewer at the newest reel, and the feed itself is never filtered to reels - the 2026-10-15
+filter bar is gone ([reels](reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16)).
+The publisher's picture, name and link (`PostAuthorAvatar`, `postAuthorName`, `postAuthorHref`)
+and the text renderer (`PostMarkdown`) are shared by the card and the reel viewer's overlay.
 
 ## An anonymous poll stores a tally and no voters (2026-09-30)
 

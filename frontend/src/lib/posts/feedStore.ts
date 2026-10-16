@@ -72,13 +72,11 @@ export function feedStoreAccess(input: FeedStoreGateInput): FeedStoreAccess | nu
  * The slot a tab's first page is stored under, or `null` for a tab that is not stored.
  *
  * Only the bare tabs are: a `promo` or `formation` filter comes from a shared link, and storing every
- * filter a link ever named would make the store unbounded. The CanaReels filter IS stored, under
- * its own slot (`feed:<tab>:reel`): a filtered first page is not the tab's first page, and drawing
- * one for the other would show reels as the whole feed. Four tabs times two views, eight slots.
+ * filter a link ever named would make the store unbounded. Four tabs, four slots at most.
  */
 export function storedFeedKey(params: FeedCacheParams): string | null {
   if (params.promo !== undefined || params.formation !== undefined) return null;
-  return params.kind ? `feed:${params.feed}:${params.kind}` : `feed:${params.feed}`;
+  return `feed:${params.feed}`;
 }
 
 /** A post as it may be stored: no served verdict on the reader, and no vote offered. */

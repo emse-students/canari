@@ -381,44 +381,53 @@ has finished, the preload is ABORTED and the player fetches (or streams) it alon
 known and accepted: a reel whose FEED card is still streaming when it is opened is fetched a second
 time by the viewer, since an MSE URL feeds one element - the same rule the media viewer lives by.
 
-### The CanaReels filter - a VIEW on the feed, not a place (addendum to C7, user 2026-10-15)
+**The overlay is the post card's, bottom-left, as on Instagram** (user, 2026-10-16;
+`ReelSlide.svelte`). Over a scrim: the publisher's picture and name - `PostAuthorAvatar`,
+`postAuthorName` and `postAuthorHref`, the SAME helpers as `PostHeader`, so an association post shows
+and links the association, a hidden author is "Anonyme" and links nowhere - then the age, then the
+description rendered by `PostMarkdown` (the card's renderer and preprocessing, not a plain-text
+copy). The text folds to two lines; "Voir plus" (`post_voir_plus`, the card's own string) unfolds it
+IN PLACE, scrollable up to half the screen and NEVER taller than the reel's frame (a letterboxed
+landscape frame is shorter than that: the block is a column capped at the frame, and the text is the
+part that shrinks and scrolls, so the author row is never clipped; and it pays the bottom safe-area
+inset only when the frame reaches the screen bottom, `frameReachesBottom`). "Voir moins" or a tap anywhere
+on the slide, letterbox bands included, folds it; while it is unfolded the up/down keys scroll the
+text instead of turning the reel. The fold is
+measured (`watchClampOverflow`, shared with the card), so a short caption has no button. Unfolding
+neither pauses nor turns the reel: the tap-outside layer is a button, and the unfolded text carries
+`data-reel-caption-open`, both in the viewer's `NOT_A_GESTURE`, so a drag there scrolls the text
+(`touch-pan-y`) instead of turning the reel. Anchored to the bottom, above the player's bar, so 2x
+type grows UPWARD. The viewer has nothing else at the bottom-right at 390 px (its step buttons are
+`md:` and mid-height; the save is in the player's bar), so nothing collides.
 
-The user asked for "CanaReels" at the top of the feed, *to get people talking about it*. C7 holds:
-there is still no Reels tab in any bar. What was added is a filter, and these are its decisions.
+### The CanaReels entry - an icon beside the tabs that opens the viewer (user, 2026-10-16)
 
-1. **A reel is a post of `kind = 'reel'`** (`isReel`, `PostKind`), the column migration 069 added.
-   Nothing else identifies one, and no client-side guess (a 9:16 video) is made.
-2. **The SERVER filters, the client never does.** Filtering a paginated feed on the device gives
-   empty pages. `GET /api/posts?kind=reel` already exists (typed `@IsIn(['post','reel'])`, every
-   feed arm, pinned by `posts.service.reels.spec.ts`), and its predicate `kind = 'reel' AND
-   "expiresAt" > NOW()` is the partial index `idx_posts_reels_expiry` (069), bounded by the 30-day
-   life of a reel. **The server did not change; no migration.**
-3. **The filter composes with the tab** (Associations / Suivis / Tout): `load` resolves `kind` as it
-   resolves `feed` - `?kind=`, then the remembered choice, then none - and publishes it in
-   `feedParams`, so the first page, the next pages and the refresh ask the same thing
-   (`feedPageOptions`). A choice writes `kind=reel` OR `kind=all` into the URL, never a bare address,
-   so the URL alone decides the view; the choice is also held for the session, so a storage that
-   reads a stale value but refuses the write cannot undo it.
-4. **It is drawn as `SegmentedControl`** ("Tous les posts" / "CanaReels" - not "Tout", which is
-   already the name of a tab with another meaning), the fixed set of section-navigation, above the
-   tab pills. The choice is a per-viewer convenience (`posts/feedKindFilter.ts`, its
-   storage in `try`/`catch`): the feed renders with no storage at all.
-5. **The local-first copy keeps one slot per (tab, filter)**: `storedFeedKey` is `feed:<tab>` or
-   `feed:<tab>:reel`, the in-memory tab cache likewise - eight slots at most, same epoch and ledger.
-6. **The "new" mark is not advanced by the filtered view** (`advanceLastSeen`): the last-seen time
-   measures the whole feed, and seeing a reel says nothing of the posts between.
-6a. **A post published while filtered lands on the whole feed, for that visit only**
-   (`landingAfterPublish` writes `kind=all`); the next tab switch writes the viewer's CHOICE back
-   (`kindForTabSwitch`), so the publish's `kind` does not stick.
-7. **The viewer follows the filtered list** (`reels/reelFeedSource.ts`, a context the feed page
-   sets while filtering): after the touched reel it reads `kind=reel` on the SAME tab by a CURSOR,
-   the touched reel's `publishedAt`. `GET /api/posts` offers no cursor (offset only), so the loader
-   walks the tab from its top with its own offset and keeps the reels published at or before the
-   touched one: reels published since, or rows deleted above it, cannot shift where it continues. Its
-   one limit is offset paging's own - a reel deleted between two page reads shifts the rest by one, as
-   in the feed's scroll. Anywhere else (a chat, a post page, the unfiltered feed) it lists `feed=all`.
-8. **An empty filtered feed says so honestly** ("Pas encore de CanaReels") with a button to the
-   camera (`CAMERA_PLACE`), the one place a reel is made.
+**SUPERSEDES the 2026-10-15 "CanaReels filter"** (#1920: a "Tous les posts" / "CanaReels" bar above
+the tabs that narrowed the open tab to its reels). On the phone the user found the two stacked bars
+ugly, and then asked for the IGTV shape instead of a filter. C7 still holds: no Reels tab in any bar.
+
+1. **One row**: the three tabs (Associations / Suivis / Tout) and, at its right end, a clap icon
+   (`ReelsEntryButton`, named "Ouvrir les CanaReels"). The row is `FeedTabRow`: when it is too narrow
+   (390 px at 2x text) the TABS scroll sideways with a fade, the icon never wraps or leaves.
+2. **A tap goes STRAIGHT INTO the viewer**, full screen (`coversScreen`: no tabs, no feed chrome, no
+   bottom bar, no native tab bar), at the NEWEST reel. Closing returns to the feed exactly where it
+   was - the feed never left the page.
+3. **The list is every reel the member may see, newest first, whatever tab is open**
+   (`reels/allReels.ts`, `GET /api/posts?kind=reel&feed=all` - the C7 list the viewer already swiped
+   through from a reel). Decided over "the open tab's reels": an entry beside the tabs is not one of
+   them, and the Associations tab rarely carries a reel at all.
+4. **The first page is read BEFORE the viewer opens**, because an empty viewer is no answer: with no
+   reel yet, a small sheet says "Pas encore de CanaReels" and offers the camera (`ReelsEmptyState`,
+   `CAMERA_PLACE`). That page becomes the viewer's own first page (`reelsAfterFirstPage`), not a
+   second request. A failed read is a toast, and nothing opens.
+5. **The filtered-feed mode is DELETED, not hidden**: no `kind` in the feed URL or in `load`, no
+   remembered choice, no `feed:<tab>:reel` stored slot or cache key, no filtered empty state, no
+   feed-level reel source (`reelFeedSource.ts`). The SERVER's `kind=reel` parameter stays - the viewer
+   reads it. What the 1.2.9 alphas left behind is inert: an old `?kind=reel` link draws the whole feed
+   (`page.load.test.ts`) and a tab switch drops its `kind`; the `canari_post_feed_kind` key is
+   dropped by the feed's `load` (`retiredFeedKind.ts`, a shim in
+   [legacy-compatibility](../../legacy-compatibility.md)); and a stored `feed:<tab>:reel`
+   page is never asked for and goes with the other stored pages at the next sign-out.
 
 ## Saving before the deletion (C6)
 
