@@ -45,6 +45,20 @@ P2. From the owner's GDPR review; the substance is [register-of-processing](comp
 
 ---
 
+## P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)
+
+`miconnect-authorization` (blueprint `45-consent.yaml`, 8 providers) is applied by the stable deploy
+like any blueprint, so **do not cut a stable until these hold**, in this order: (1) the page
+`/legal/miconnect` answers 200 on dev (pre-release first), because the prompt links to it; (2) the
+cross-client harness accounts carry `attributes.cgu_version` (read-modify-write of the whole
+attributes bag - the profile editor PATCH replaces it), or `login.mjs` ticks the box, else every
+harness login stalls on the new page; (3) the prompt is READ in a real browser, on the Mi 9T and on
+the iPhone (the CI test proves the HTML reaches the challenge, not that a native auth session renders
+and follows its link). Rollback: re-apply the previous ref's blueprints, or flip the 8 providers back
+to `default-provider-authorization-implicit-consent` in `/if/admin/`. The flow fails OPEN: a broken
+policy skips the consent, it never locks anyone out. Accounts that never sign in again are never
+asked. See [authentik](infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16).
+
 ## Owed a VERIFICATION, and nothing else
 
 Each of these is fixed in the tree; what is left is the measurement that would prove it. **Nothing
