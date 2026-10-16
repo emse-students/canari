@@ -409,7 +409,12 @@
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
-    if (file) await takePickedVideo(file);
+    if (!file) {
+      console.debug('[reel-capture] the gallery answered with no file');
+      return;
+    }
+    console.debug(`[reel-capture] gallery picked ${file.type || 'typeless'} (${file.size} bytes)`);
+    await takePickedVideo(file);
   }
 
   /**
@@ -437,7 +442,10 @@
 
   async function takePickedVideo(file: File) {
     if (!limits) {
+      // The gallery button waits for the cap, so this is a pick the member made and cannot see
+      // taken: it is said, never dropped.
       console.warn('[reel-capture] a gallery pick arrived before the cap was read');
+      showToast(m.reels_capture_pick_before_limits(), 'error');
       return;
     }
     if (!file.type.startsWith('video/')) {
@@ -508,15 +516,6 @@
             >
               <Images size={22} strokeWidth={2} />
             </button>
-            {#if !nativeGallery}
-              <input
-                bind:this={picker}
-                type="file"
-                accept="video/*"
-                class="hidden"
-                onchange={onPicked}
-              />
-            {/if}
           {/if}
         </div>
         <div class="flex flex-col items-center gap-3">
@@ -551,6 +550,22 @@
       {/if}
     {/snippet}
   </CameraScreen>
+
+  <!-- THE GALLERY'S INPUT LIVES HERE, NEVER IN `controls`. The picker backgrounds the app, the camera
+       is released, and CameraScreen drops its controls with the phase: an input inside them was
+       detached when the picker answered, and Svelte's root-delegated `onchange` never reached it - a
+       picked video vanished with no review, no error and no line (Mi 9T, v1.2.9-alpha.4, 3 of 3).
+       Here it lives as long as the screen does, whatever the camera is doing. -->
+  {#if rules.gallery && !nativeGallery}
+    <input
+      bind:this={picker}
+      type="file"
+      accept="video/*"
+      class="hidden"
+      data-reel-gallery-input
+      onchange={onPicked}
+    />
+  {/if}
 
   {#if capture.kind === 'review'}
     {@const clip = capture.clip}

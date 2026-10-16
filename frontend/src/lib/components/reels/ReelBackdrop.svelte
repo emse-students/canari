@@ -23,8 +23,20 @@
    * found in `host`, so the camera, the review, the editor and the viewer all use it unchanged. It
    * renders nothing when the frame fills the stage (`active` false). A frame that cannot be read
    * (tainted canvas) leaves the dark surface, logged once.
+   *
+   * A LIVE CAMERA IS REPAINTED ONCE MORE (Mi 9T, v1.2.9-alpha.4): its first frame is under-exposed,
+   * so the paint above read near black or teal over a grey wall. After it, the stream is read every
+   * few presented frames until two reads agree, and painted from that read - a bounded frame count
+   * (`exposureSettled` in reelBackdropPaint.ts), never a timer. A file's first frame IS its picture.
    */
-  import { paintBlurredBackdrop } from '$lib/reels/reelBackdropPaint';
+  import {
+    blurSampleInto,
+    EXPOSURE_MAX_SAMPLES,
+    EXPOSURE_SAMPLE_STRIDE,
+    exposureSettled,
+    paintBlurredBackdrop,
+    readBackdropSample,
+  } from '$lib/reels/reelBackdropPaint';
 
   /** Presented frames a blank read may be retried on before the dark surface is kept. */
   const BLANK_READS = 5;
@@ -112,6 +124,64 @@
         settledSource = source;
       }
       pending = null;
+      // A live camera's first frame is read before its exposure settles: one repaint follows.
+      if (done && settledSource === source && video.srcObject) repaintOnceSettled(video, source);
+    };
+    pending = { video, source, handle: video.requestVideoFrameCallback(onFrame) };
+  }
+
+  /**
+   * The ONE repaint of a live camera's backdrop, from the first read that agrees with the one before
+   * it (`exposureSettled`), sampled every `EXPOSURE_SAMPLE_STRIDE` presented frames and given up
+   * into a paint of the last read after `EXPOSURE_MAX_SAMPLES` - frames counted, never time. It takes
+   * the same `pending` slot, so a lens switch or the teardown cancels it as it cancels a first read.
+   */
+  function repaintOnceSettled(video: HTMLVideoElement, source: unknown) {
+    let frames = 0;
+    let reads = 0;
+    let previous: [number, number, number] | null = null;
+    const onFrame = () => {
+      const chain = pending;
+      if (!chain || chain.source !== source) return;
+      if (sourceOf(video) !== source) {
+        pending = null;
+        return;
+      }
+      if (++frames % EXPOSURE_SAMPLE_STRIDE !== 0) {
+        chain.handle = video.requestVideoFrameCallback(onFrame);
+        return;
+      }
+      let sample: ReturnType<typeof readBackdropSample>;
+      try {
+        sample = readBackdropSample(video);
+      } catch (error) {
+        console.warn('[reel-backdrop] the settled frame could not be sampled', error);
+        pending = null;
+        return;
+      }
+      reads += 1;
+      if (typeof sample === 'string') {
+        console.debug(`[reel-backdrop] settle read ${reads}: ${sample}`);
+      } else {
+        const settled = previous !== null && exposureSettled(previous, sample.mean);
+        if (settled || reads >= EXPOSURE_MAX_SAMPLES) {
+          pending = null;
+          if (canvas) blurSampleInto(canvas, sample);
+          console.debug(
+            `[reel-backdrop] repainted ${settled ? 'once the exposure settled' : 'from the last read, the exposure never settled'} (${reads} reads, ${frames} frames)`
+          );
+          return;
+        }
+        previous = sample.mean;
+      }
+      if (reads >= EXPOSURE_MAX_SAMPLES) {
+        console.debug(
+          `[reel-backdrop] no readable settle frame in ${reads} reads: first paint kept`
+        );
+        pending = null;
+        return;
+      }
+      chain.handle = video.requestVideoFrameCallback(onFrame);
     };
     pending = { video, source, handle: video.requestVideoFrameCallback(onFrame) };
   }
