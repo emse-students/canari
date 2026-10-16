@@ -13,12 +13,15 @@
  * stored in Cache Storage, which ignores `Cache-Control` and performs no freshness check, so the
  * first photo a device ever drew was the photo it kept FOR EVER. The guard is therefore that
  * NOTHING IS EVER WRITTEN TO CACHE STORAGE and that a later mount asks again - the browser's HTTP
- * cache, and only it, decides whether that question reaches the network.
+ * cache, and only it, decides whether that question reaches the network. Since 2026-10-16 a blob
+ * also outlives its last holder by AVATAR_WARM_MS, so a remount inside that window asks nobody.
  */
 import {
   resolveUserAvatarDisplayUrl,
   releaseUserAvatarDisplayUrl,
   purgeRetiredAvatarCache,
+  AVATAR_WARM_MS,
+  AVATAR_POOL_MAX_ENTRIES,
 } from './userAvatarCache';
 import { mirrorAvatarToNative } from './avatarMirror';
 
@@ -36,9 +39,12 @@ function nextUrl(): string {
 
 let revoked: string[] = [];
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+  // The pool is module state and now keeps idle blobs warm: drop the previous test's, so each test
+  // starts cold (the reader-change hook is the production path that does exactly this).
+  (await import('./sharedCache')).forgetReaderCaches();
   revoked = [];
   let blobCounter = 0;
   // Blob URLs are created by the happy path; jsdom has no implementation.
@@ -126,22 +132,85 @@ describe('resolveUserAvatarDisplayUrl', () => {
     releaseUserAvatarDisplayUrl(url);
   });
 
-  it('asks the server again for a face nothing is displaying any more', async () => {
-    // THE STALE-AVATAR REGRESSION. The old bucket answered the second mount from disk, for ever,
-    // so a photo changed upstream never reached a device that had already drawn the old one.
-    // Whether this second question costs a network round trip is the HTTP cache's decision, made
-    // from the `max-age` the server sent - one lifetime, stated by the only party that knows it.
-    const url = nextUrl();
-    const fetchSpy = vi.fn(async () => new Response(new Blob(['img']), { status: 200 }));
-    vi.stubGlobal('fetch', fetchSpy);
+  describe('the warm window', () => {
+    afterEach(() => vi.useRealTimers());
 
-    const first = await resolveUserAvatarDisplayUrl(url);
-    releaseUserAvatarDisplayUrl(url);
-    const second = await resolveUserAvatarDisplayUrl(url);
-    releaseUserAvatarDisplayUrl(url);
+    it('answers a remount inside the window from memory: no presence wait, no request', async () => {
+      vi.useFakeTimers();
+      const url = nextUrl();
+      const fetchSpy = vi.fn(async () => new Response(new Blob(['img']), { status: 200 }));
+      vi.stubGlobal('fetch', fetchSpy);
+      presence.mockClear();
 
-    expect(fetchSpy).toHaveBeenCalledTimes(2);
-    expect(first).not.toEqual(second);
+      const first = await resolveUserAvatarDisplayUrl(url, 'u-warm');
+      releaseUserAvatarDisplayUrl(url);
+      vi.advanceTimersByTime(AVATAR_WARM_MS - 1);
+      const second = await resolveUserAvatarDisplayUrl(url, 'u-warm');
+      releaseUserAvatarDisplayUrl(url);
+
+      expect(second).toEqual(first);
+      expect(fetchSpy).toHaveBeenCalledTimes(1);
+      expect(presence).toHaveBeenCalledTimes(1);
+      expect(revoked).toEqual([]);
+    });
+
+    it('asks the server again once the window has passed, and revokes the old blob', async () => {
+      // THE STALE-AVATAR GUARD. Staleness is bounded by this window and by nothing else here.
+      vi.useFakeTimers();
+      const url = nextUrl();
+      const fetchSpy = vi.fn(async () => new Response(new Blob(['img']), { status: 200 }));
+      vi.stubGlobal('fetch', fetchSpy);
+
+      const first = await resolveUserAvatarDisplayUrl(url);
+      releaseUserAvatarDisplayUrl(url);
+      vi.advanceTimersByTime(AVATAR_WARM_MS + 1);
+      expect(revoked).toEqual([first.kind === 'blob' ? first.url : '']);
+      const second = await resolveUserAvatarDisplayUrl(url);
+      releaseUserAvatarDisplayUrl(url);
+
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(first).not.toEqual(second);
+    });
+
+    it('never revokes a blob a mount still holds, however long it has been', async () => {
+      vi.useFakeTimers();
+      const url = nextUrl();
+      vi.stubGlobal('fetch', async () => new Response(new Blob(['img']), { status: 200 }));
+      await resolveUserAvatarDisplayUrl(url);
+      vi.advanceTimersByTime(AVATAR_WARM_MS * 10);
+      expect(revoked).toEqual([]);
+      releaseUserAvatarDisplayUrl(url);
+    });
+
+    it('forgets the warm faces when the signed-in reader changes', async () => {
+      vi.useFakeTimers();
+      const { forgetReaderCaches } = await import('./sharedCache');
+      const url = nextUrl();
+      const fetchSpy = vi.fn(async () => new Response(new Blob(['img']), { status: 200 }));
+      vi.stubGlobal('fetch', fetchSpy);
+      await resolveUserAvatarDisplayUrl(url, 'u-a');
+      releaseUserAvatarDisplayUrl(url);
+      forgetReaderCaches();
+      await resolveUserAvatarDisplayUrl(url, 'u-a');
+      releaseUserAvatarDisplayUrl(url);
+      expect(fetchSpy).toHaveBeenCalledTimes(2);
+      expect(revoked).toHaveLength(1);
+    });
+
+    it('is bounded: past the entry cap the idlest warm face is revoked', async () => {
+      vi.useFakeTimers();
+      vi.stubGlobal('fetch', async () => new Response(new Blob(['img']), { status: 200 }));
+      const first = nextUrl();
+      await resolveUserAvatarDisplayUrl(first);
+      releaseUserAvatarDisplayUrl(first);
+      for (let i = 0; i < AVATAR_POOL_MAX_ENTRIES; i++) {
+        vi.advanceTimersByTime(1);
+        const u = nextUrl();
+        await resolveUserAvatarDisplayUrl(u);
+        releaseUserAvatarDisplayUrl(u);
+      }
+      expect(revoked).toHaveLength(1);
+    });
   });
 
   it('costs one request when the same face mounts several times at once', async () => {
@@ -163,9 +232,9 @@ describe('resolveUserAvatarDisplayUrl', () => {
     // exactly once. Releasing on the first unmount is what used to blank the two others.
     releaseUserAvatarDisplayUrl(url);
     releaseUserAvatarDisplayUrl(url);
-    expect(revoked).toEqual([]);
     releaseUserAvatarDisplayUrl(url);
-    expect(revoked).toEqual([a.kind === 'blob' ? a.url : '']);
+    // The last release starts the warm window rather than revoking (see 'the warm window').
+    expect(revoked).toEqual([]);
   });
 
   it('falls back to the element - loudly - only when it could not ask at all', async () => {
