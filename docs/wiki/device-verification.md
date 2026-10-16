@@ -1396,6 +1396,53 @@ camera. **Owed one reading each on the Mi 9T and the iPhone 12:**
 - The overlay over the keyboard and over a conversation with a pending draft; a camera refused
   (permission denied) shows the refusal screen with no native fallback.
 
+## The Mi 9T readings of v1.2.9-alpha.3 (2026-10-16)
+
+Build `1.2.9 (100200903)` (`dumpsys package`), the `v1.2.9-alpha.3` release APK
+(`app-universal-release.apk`, sha256 `935dabda...`, tag commit `a5066d8e2`), installed with
+`adb install -r` over alpha.2 (accepted, account kept), dev estate (deployed by the same release
+run), account `fourth` ("Canari Test Delta"), bench conversations only, vault path. The phone uses
+gesture navigation (`navigation_mode 2`, system Back zones 0-74 px and 1006-1080 px). Same
+instruments as alpha.2 (`feed.mjs`, `reconnect.mjs` with its media probe narrowed to `main img`
+wider than 150 px and `main video`, console over CDP, logcat), plus `st.mjs` (route, open
+conversation, open dialogs, live camera, `history.length`). To give the dev feed media, ONE image
+post (in-app camera photo) and ONE CanaReel (a 9.6 s take from the `/camera` swipe place) were
+published, then both deleted at the end (`DELETE /api/posts/...` 200 each). Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1016-a129a3/` (frames `s*.png`, `feed-runs.ndjson`,
+`reconnect-runs.ndjson`, `cons-*.ndjson`, `logcat-main.txt`).
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1a. CanaReels filter viewer (#1920) | **`PASS`** | Filter "CanaReels": the new reel first, then the two dev reels. A tap on the reel opens the viewer full screen ON that reel, playing (`[reel-viewer] paging the filtered feed "all" from <its publishedAt>`, `opened on 48e7a896...`, `page of 2, 3 loaded`). Drag up: `next: 0 -> 1` (the text-only dev reel); drag down: `prev: 1 -> 0`. ONE Back: `[reel-viewer] closed`, `0 left open`, the feed is still on "CanaReels" + "Tout" |
+| 1b. Media after offline -> online (#1922) | **`PASS`** | n=2, offline cold start then airplane off at t=0: the status line goes and the refreshed page draws at **+6.2-6.3 s**; the photo is loaded (`complete`, `naturalWidth > 0`) at the same sample and the reel's video decodes (`readyState >= 2`) at **+8.2-8.3 s**. Offline, before the refresh, neither media is drawn: the cards show "Reessayer" (`[FEED-STORE] ... drawn, unconfirmed`) |
+| 2a. Chat "+" menu / camera / review Back (#1925, Android unchanged by #1936) | **`PASS`** | One press per layer, `st.mjs` after each: "+" menu open -> Back 1 closes the menu, conversation kept. Camera (no take) -> Back 2 closes the camera. Photo review -> Back 3 shows "Abandonner cette capture ?" over the review; "La garder" keeps it; Back 4 the dialog again; "Abandonner" -> live camera; Back 5 closes the camera (`Back closes the camera (chat)`); Back 6 closes the conversation. Never two layers for one press |
+| 2b. Salon row after Back | **`PASS`** | Bench community, "general": open, Back, n=3: the row's background stays `rgba(0, 0, 0, 0)`, not focused, no `aria-current` |
+| 3. Editor edge gestures (#1936) | **`PASS`** | Reel editor (the `/camera` take) and the photo editor (post composer). Paint strokes starting at x = 120, 90 and 80 px draw and the editor stays. A stroke starting at x = 3 or 40 px is inside Android's own Back zone: it is a system Back (`[swipeBack] touch cancelled`, `Back with the editor open: the editor decides`) - with no edit the editor closes to the review, with an edit it asks "Abandonner vos modifications et revenir a la capture ?" and "Continuer a modifier" keeps them. A sticker dragged to the edge stops at x = 129 px; dragged back from there: reel editor 6 of 6 move, editor never left; photo editor 2 of 6 did not move (no log line, editor stayed), not reproduced afterwards |
+| 4. PIN change, relaunch (#1935) | **`PASS`** | `Re-sealed under the new device key: messages=734 seeds=11 outbox=0; already new=0, unreadable=0, changed since read=0`, `2 stored feed page(s) dropped`, "PIN modifie" in 1.6 s. Kill and relaunch: `Device key restored from PinVault`, no keypad, the DM opens with 54 bubbles and 0 undecrypted, 0 warnings. Changed back: the same counts |
+| 4b. Wrong PIN empties the field (#1935) | **`NOT-OBSERVED`** | The Android vault restores the key on every launch, so the PIN gate (`showPinGate`) is never drawn; reaching it needs a refused or missing vault, which was not destroyed for this |
+| 5a. Online cold first paint | **`PASS`**, unchanged | n=3: first card **2254-2385 ms after `am start`** (page 1641-1693 ms; alpha.2 2397-2798). `[POSTS] stored first page drawn: 20 posts read in 345-372 ms`; the stored-copy line stays 0.39-0.57 s |
+| 5b. Offline cold start noise | **`PASS`**, unchanged | n=3: **10** warnings each, the same ten families as alpha.2 |
+| 6. Forms smoke (#1916/#1930) | **`PASS`** | The one paid form on dev ("Cotisation BDE 2026", private, opened by its id): `GET /api/forms/<id>`, `.../calendar-link`, `.../check` all 200, no crash, 0 warnings. Choosing "ICM" shows "Paiement Canari" / "En especes" and "Payer 60,00 EUR". Nothing paid |
+
+**Findings:**
+
+- **P3 - the paid form says "Combinaison indisponible" before any answer is chosen** (the banner,
+  the footer and the button), with the price only after the first choice (`s51-paid-form.png`).
+- **P3 - the feed mounts the reel's stream twice on a cold start**: two `[media-seg] stream ...
+  through MediaSource` lines 133 ms apart, then `[video] playWhileVisible: play() refused` (once per
+  cold start that draws the reel).
+- **P3 - a camera photo is handed over as `canari-photo-<n>.bin`**: `[reel-capture] a take of an
+  unknown type "image/webp" - named .bin`. The post published and showed the photo.
+- **P3, still open from alpha.2 - back online, the refreshed feed shows 10 cards** where the stored
+  page showed 20, and that page of 10 is now what the next offline start draws.
+- **P3 - the URL does not carry the filter**: `location.search` is empty on "CanaReels", where
+  [reels](frontend/modules/reels.md) decision 3 says a choice writes `kind=reel` into the URL. The
+  filter still holds across the viewer and the cold starts.
+- Observations: the dev banner covers the status bar on `/camera` (`s15-camera-tab.png`); a reel
+  with no media shows a play button that plays nothing in the viewer; the bench salon logs `6
+  message(s) of 87ac63f9 are unreadable - missing seed` (old bench history). Logcat: no `FATAL`, no
+  ANR; 90 `Ignoring status update of camera` (Chromium camera stack).
+
 ## The Mi 9T readings of v1.2.9-alpha.1 (2026-10-15)
 
 Build `1.2.9 (100200901)` (`dumpsys package`), the `v1.2.9-alpha.1` release APK
