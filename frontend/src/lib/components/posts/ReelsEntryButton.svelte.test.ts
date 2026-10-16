@@ -92,8 +92,8 @@ it('at a narrow width the TABS scroll and the icon stays: the row never wraps', 
     expect(pill.classList).toContain('shrink-0');
     expect(pill.classList).toContain('whitespace-nowrap');
   }
-  expect(icon.classList).toContain('shrink-0');
-  expect(icon.classList).toContain('tap-target');
+  // The app's icon-button box (`ui-icon-button`: 44 px touch, 38 px pointer, never shrinks).
+  expect(icon.classList).toContain('ui-icon-button');
 });
 
 it('a tab tap is handed to the page', () => {
