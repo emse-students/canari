@@ -767,6 +767,51 @@ all eight routes that answer a row, so a column added later is private until som
 payout account has its own read, `GET :id/payout-account` (`canManagePayoutAccount`). Story and
 test: [forms](../frontend/modules/forms.md#what-a-client-reads-of-a-submission-is-an-allowlist-2026-10-15).
 
+### Vault key exposure - production counts (2026-10-16)
+
+**The two windows.** From 2026-05-18 (`baf73f1e4`) to 2026-08-05 (`035ef058b`) an UNAUTHENTICATED
+`GET /api/associations` answered every association's `documentVaultKey`. From 2026-08-05 until
+#1932 (merged 2026-10-16, live at the next stable) `me/list` answered the key and
+`notesCiphertext` to every MEMBER of each association, whatever their permissions. With the key, a
+person decrypts the notepad (`CEK = HKDF(key, 'asso-notes')`) and any document without a password
+whose `mediaId` and `(s:)` salt they hold; a `(pw:)` document also needs its password
+(`vaultCrypto.ts`, info `doc-vault-pw`).
+
+**What the key protected, read on production 2026-10-16** (`canari-prod-postgres-1`, `auth_db`,
+`BEGIN READ ONLY`, aggregates only - no key, ciphertext, name or id was selected):
+
+| Measure | Count |
+| --- | --- |
+| associations (active) | 92 (76) |
+| with a `documentVaultKey` | 16 (none archived; 15 of the 16 associations predate 2026-08-05, the key's own date is not stored) |
+| with a non-empty `notesCiphertext` | 1 (row last written 2026-10-05) |
+| key holders with NO document and NO notes | 14 |
+| documents, total | 4 (3.4 MB), in 2 associations (1 and 3) |
+| documents WITHOUT a password | 4 |
+| documents WITH a password | 0 |
+| documents `public` (visible to the 6 reviewer grants by design) | 4 of 4 |
+| documents created before 2026-08-05 | 0 (first 2026-08-22, last 2026-10-01) |
+| distinct members of the 16 key-holding associations (the `me/list` audience) | 93 |
+| distinct members of the 2 associations holding documents | 8 |
+| distinct members of the one association holding notes | 4 |
+
+Two things the table settles. **The unauthenticated window protected no data still stored**: every
+surviving document postdates 2026-08-05 and the one notepad was written on 2026-10-05 (a document
+deleted before then would not be counted). **The member window widened the audience of one notepad
+to 4 people and of 4 documents that are already published to reviewers**: none carries a password,
+and their plaintext is meant to be read by the 6 reviewer accounts anyway.
+
+**What a rotation would touch.** 16 keys. 14 hold nothing: nulling them is enough, because
+`getOrCreateVaultKey` mints a fresh one on next access - but that is a production write. The other 2
+need their 4 documents (3.4 MB) and the notepad re-encrypted under a new key, which today means a
+key-version column and a client or server re-encryption pass; 0 documents need a password owner.
+
+**Recommendation: do not build a rotation.** The scale is 4 public documents and one notepad, and a
+rotation mechanism would be the largest code in the vault for it. What is worth one decision is the
+FORWARD risk: a member who kept a key can read any document uploaded LATER under it whose `mediaId` and salt reach them, so the cheap
+step, if the user wants one, is to null the 14 empty keys (a production write, the user's yes), and
+to ask the one notepad's association whether its 4 members could all read it anyway.
+
 ### The document vault's markers are parsed in two languages, and they disagreed for seven weeks
 
 A vault document's encryption key is never stored. The association holds one
