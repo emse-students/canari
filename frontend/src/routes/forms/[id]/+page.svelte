@@ -326,12 +326,9 @@
   });
 
   /**
-   * The combination they have landed on does not exist, so there is nothing to pay and nothing to
-   * submit. Distinct from `!maySubmit`, which is about who they ARE: this one moves as they answer.
-   */
-  /**
    * The priced questions still to be answered: until they are, no cell is chosen, so the page says
-   * nothing about the price - neither a total nor "unavailable" (`pricedQuestionsAwaitingAnswer`).
+   * nothing about the price - no total, no "from" price, no "unavailable"
+   * (`pricedQuestionsAwaitingAnswer`). The "others" cell they would fall in is not their price.
    */
   const awaitingPricedAnswers = $derived(
     pricing
@@ -342,7 +339,15 @@
         )
       : new Set<string>()
   );
-  const priceUnavailable = $derived(baseCents === null && awaitingPricedAnswers.size === 0);
+
+  /** Whether the answers have chosen a cell: no priced question is left to answer. */
+  const priceDecided = $derived(awaitingPricedAnswers.size === 0);
+
+  /**
+   * The combination they have landed on does not exist, so there is nothing to pay and nothing to
+   * submit. Distinct from `!maySubmit`, which is about who they ARE: this one moves as they answer.
+   */
+  const priceUnavailable = $derived(priceDecided && baseCents === null);
 
   /** The price, once known to exist. Zero for a free form, so the display stays arithmetic. */
   const priceCents = $derived(baseCents ?? 0);
@@ -412,8 +417,9 @@
 
   function calculateTotal(): number {
     // Nothing to total on an unavailable combination: there is no price, and showing zero would
-    // read as free on a form that is going to refuse the submission.
-    if (!form || baseCents === null) return 0;
+    // read as free on a form that is going to refuse the submission. Nor before the cell is chosen:
+    // the "others" cell a blank falls in is not this person's price.
+    if (!form || !priceDecided || baseCents === null) return 0;
     let total = baseCents;
     for (const item of visibleItems) {
       const val = selections[item.id];
@@ -620,7 +626,7 @@
     <!-- ── Header ── -->
     <FormHeader
       {form}
-      priceLabel={!priceUnavailable && priceCents > 0
+      priceLabel={priceDecided && !priceUnavailable && priceCents > 0
         ? m.form_view_from_price({ price: formatCurrency(priceCents, form.currency) }) +
           appliedPricingLabel
         : null}
