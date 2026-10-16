@@ -3,6 +3,7 @@ import { settings } from '$lib/stores/settingsStore.svelte';
 import type { PageLoad } from './$types';
 import { isOutsideFeedAudience, redirectIfNotFeedAudience } from '$lib/posts/feedAudience';
 import { feedKindParam, resolveFeedKind } from '$lib/posts/feedKindFilter';
+import { FEED_FIRST_PAGE_SIZE } from '$lib/posts/feedPageSize';
 
 export const load: PageLoad = async ({ url }) => {
   // THE URL WINS, THEN THE REMEMBERED TAB, THEN THE DEFAULT (user, 2026-09-10: *"L'onglet du fil
@@ -33,7 +34,7 @@ export const load: PageLoad = async ({ url }) => {
   // tab a reader switches to most. The gate is a redirect and not an authorization
   // (`$lib/posts/feedAudience`), so nothing is disclosed by asking early; a reader who does get
   // sent away leaves one wasted GET behind, once, on the only visit where it can happen.
-  const posts = listPosts({ limit: 20, feed, promo, formation, kind });
+  const posts = listPosts({ limit: FEED_FIRST_PAGE_SIZE, feed, promo, formation, kind });
   // Attach a handler so a refused fetch is not an unhandled rejection on the redirect path. The
   // promise itself is still handed over, so `{#await}` sees the same failure it always did.
   posts.catch((err) => void isOutsideFeedAudience(err));
