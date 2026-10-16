@@ -1396,6 +1396,31 @@ camera. **Owed one reading each on the Mi 9T and the iPhone 12:**
 - The overlay over the keyboard and over a conversation with a pending draft; a camera refused
   (permission denied) shows the refusal screen with no native fallback.
 
+## The Mi 9T readings of v1.2.9-alpha.5 (2026-10-17)
+
+Build `1.2.9 (100200905)`, the `v1.2.9-alpha.5` release APK (`app-universal-release.apk` by asset
+id, sha256 `96b09481...`), `adb install -r` over alpha.4 (`firstInstallTime` unchanged: enrolment
+kept; Play Protect's "send for a check" prompt answered "Ne pas envoyer"). Dev estate, account
+`fourth` ("Canari Test Delta"), vault path, bench DM with gamma only. Console over CDP. Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1017-a129a5/` (`cons-all.ndjson`, `cons-2.ndjson`, frames).
+#1977 (warm avatar cache) is NOT in this tag.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1. A gallery video in a chat opens 3 times and plays | **`PASS`** | A 9 s gallery video sent in the DM (prepared 13.8 MB -> 3.2 MB, segmented upload). Opened full screen 3 times in a row (tap off the centre "Lire" button), closed with Back each time: each open has a second `<video>` at 436 px, `readyState 4`, playing (`currentTime` 1.26-1.56 s at +1.5 s, 3.45-3.72 s at +3.5 s), no media error; Back returns to `/chat` with the viewer gone. A tap on the centre button plays inline instead (`InlineVideo: manual play`), by design |
+| 2. ReelBackdrop on the camera paints, then repaints once exposure settles | **`PASS`** | `/camera` from the feed swipe: `[reel-backdrop] painted`, then `repainted once the exposure settled (4 reads, 32 frames)` 1.5 s later; after a lens switch `painted` then `(2 reads, 16 frames)` 0.6 s later. The backdrop canvas is 96x168 shown at 436x861, opacity 0.6. In the reel viewer it paints on open and again on the next reel |
+| 3. Feed "Tout" at 200 % text | **`FAIL` (P3)** | `font_scale 2.0` (root 32 px). Tab row fine (a scroller; Tout and the CanaReels icon stay in view), names truncate, `documentElement` does not overflow. **But the comment sort row (Recents / Anciens / Aimes, beside "Afficher les N commentaires") does not wrap: `.page-scroll-wrap` gets `scrollWidth 553` for `clientWidth 436`** (`overflow-x: auto`), so the whole feed can be shifted 117 px sideways; a `scrollIntoView` on "Anciens" did exactly that (`t200-sort.png`). 17 px over already at 150 %, none at 100 % or 85 % |
+| 4. Posts page tabs and the CanaReels entry | **`PASS`** | Associations / Suivis / Tout each set `?feed=` and draw their list (Suivis: the "Aucun post" empty state). The clap icon opens the viewer at the newest reel (`page of 4, 4 loaded`), playing, author and text over the scrim, a swipe goes to the next reel, the close returns to `/posts?feed=all` |
+| 5. Avatars when switching chats | **`NOT-OBSERVED` for photos** | No conversation or member reachable from this account has a photo avatar (0 `<img>` avatars). Initials avatars sampled every frame across DM -> back -> community -> DM (986 frames): 0 frames with an empty avatar |
+
+**Met on the way:**
+
+- **A system text-size change reloads the WebView, and afterwards `[TAURI] Couldn't find callback id
+  2851905282 ...` is logged as a warning every ~15 s** (15 times in 4 min, same id), an async Rust
+  call still answering the page that went away. Noise by the project rule (P3).
+- The video staged in the composer shows a generic file icon and the name `81.mp4`, not a preview
+  or the gallery name; the sent bubble shows a grey video icon until tapped (P3, cosmetic).
+
 ## The Mi 9T readings of v1.2.9-alpha.1 (2026-10-15)
 
 Build `1.2.9 (100200901)` (`dumpsys package`), the `v1.2.9-alpha.1` release APK
