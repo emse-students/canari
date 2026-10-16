@@ -456,6 +456,25 @@ ugly, and then asked for the IGTV shape instead of a filter. C7 still holds: no 
    [legacy-compatibility](../../legacy-compatibility.md)); and a stored `feed:<tab>:reel`
    page is never asked for and goes with the other stored pages at the next sign-out.
 
+### "Reels 2 and 3 never play" was two reels with no video (iPhone 12, `v1.2.9-alpha.4`, 2026-10-16)
+
+**Not a player defect, and the suspects are REFUTED on the phone.** The reading swiped from reel 1
+(plays) to reels 2 and 3: a play glyph, no player, taps ignored. Dev's `posts` table has three
+reels, and the two by the production member have `images = '[]'`: the copy of production empties
+every post's media (`infrastructure/lib/copy-strips.sh`, strip (d) - dev never receives the blobs),
+which leaves a reel without the one video that IS a reel. `ReelSlide` then draws `VideoPoster`, the
+same glyph a player shows before its first frame - so the screen promised playback that no code path
+could start. Read on the same phone 2026-10-16: a fresh bench reel published first, the earlier
+"Test" reel (with its video) reached by a swipe as slide 2 PLAYS (`Pause`, `0:02 sur 0:03` in the
+accessibility tree), and slide 3 (no video) shows the glyph. So iOS autoplay, the touch layers and
+the first-gesture rule are not it.
+
+**What changed:** an active reel with no video now logs ONE `[reel-viewer] reel <id> carries no
+video` at error level (`ReelSlide.svelte`), which reaches the in-app log - the reading had to find
+this in the database. **What is owed to the user:** the copy should DELETE reels (with their
+`post_notifications`, as the expiry worker does) instead of emptying them; a deletion in the copy
+script waits for the user's yes ([dev-environment](../../infrastructure/dev-environment.md#3-the-data-a-full-copy-of-production-the-two-things-it-strips-and-the-one-it-will-not)).
+
 ## Saving before the deletion (C6)
 
 **The "my reels" list is gone from the client (2026-10-09).** The save used to need it: only the author

@@ -1159,6 +1159,27 @@ Choisir les fichiers sheet followed Canari's menu. The library and files entries
 and the camera an input with `capture`, so iOS shows one menu
 ([chat](modules/chat.md#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)).
 
+**A TOUCH THAT DISMISSES A NATIVE MENU IS THE MENU'S, NEVER THE PAGE'S (2026-10-16).** The web
+knows nothing of a `UIMenu`: the composer's surface never becomes `menu` on iOS, so no overlay entry
+is pushed for the native "+". And the touch that dismissed the menu went on into the WebView. With
+the "+" menu open, ONE edge swipe closed the menu (UIKit) and the conversation (the page's swipe,
+which saw only the conversation open): iPhone 12, `v1.2.9-alpha.4`, 12 of 12. The in-app log proved
+which Back path fired. There was one `gesture Back closes overlay N, 0 left open` per swipe, with N
+going 1, 2, 3 over three open-conversation-open-menu rounds: ONE push per round, the
+conversation's. There was no second path, and #1945's arm had nothing to arm against. So
+`CanariButton` (the patch, `ButtonComponent.swift`) sets the WebView's `isUserInteractionEnabled`
+to false in `willDisplayMenuFor`. **A WebView left held is a dead app**, so the hold is released by
+`willEndFor`, by `apply()` clearing the menu, by the button leaving the window (or being released),
+or by the app becoming active (`didBecomeActive`, after a call or the app switcher tore the menu
+down). No timer is involved. The holders are a SET of buttons by identity, not one flag per button:
+every button shares the one WebView, so one button's release cannot give touch back under another's
+open menu, and a release by a non-holder changes nothing. The dismissing touch is hit-tested while the WebView is out of reach, so it never becomes
+the page's, whatever order `willEnd` and the touch arrive in. A tap outside the menu no longer
+reaches the web button under it either. **Owed on the iPhone (a build is needed, the Swift is only
+compiled here):** with the "+" open in a DM and in a salon, one edge swipe closes only the menu and
+logs NO `gesture Back` line; a second swipe leaves the conversation; a pick ("Photos", the camera)
+still opens its target; the keyboard, if up, stays up.
+
 **Hidden under everything that covers the screen** (`screenCover`, the tab bar's rule - no web layer
 can cover a native view), and while the web piece has no box (the phone header is `md:hidden`). The
 pill's picture is the web avatar RASTERISED: the loaded photo, the channel glyph or the initials,
