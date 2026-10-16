@@ -4619,9 +4619,14 @@ export class ChannelService {
 
 /**
  * Whether a failure is infrastructure (a service down or slow, a database error, a 5xx) rather than
- * a refusal: only an HTTP exception below 500 is a logical answer, everything else may pass by itself.
+ * a refusal or a defect: an HTTP exception below 500 and a TypeError / RangeError / ReferenceError are
+ * logical (the caller logs every failure at error level), everything else may pass by itself.
  */
 export function isTransientFailure(err: unknown): boolean {
   if (err instanceof HttpException) return err.getStatus() >= 500;
+  // A programming error is deterministic: no retry fixes it, so it must not hide as a quiet 503.
+  if (err instanceof TypeError || err instanceof RangeError || err instanceof ReferenceError) {
+    return false;
+  }
   return true;
 }

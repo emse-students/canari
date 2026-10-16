@@ -157,7 +157,7 @@ describe('AccountErasureService', () => {
 
     const failed = queries.find(([sql]) => sql.includes('SET attempts = $2'))!;
     expect(failed[0]).toContain('AND "completedAt" IS NULL');
-    expect(failed[1]).toEqual(['job-1', 3, 'HTTP 503', 'transient', 120]);
+    expect(failed[1]).toEqual(['job-1', 3, 'HTTP 503', 'transient', 120, 1]);
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('kind=transient'));
     expect(queries.some(([sql]) => sql.includes('"completedAt" = now()'))).toBe(false);
   });
@@ -178,6 +178,7 @@ describe('AccountErasureService', () => {
       'HTTP 409 ERASURE_WORKSPACE_REPAIR_FAILED',
       'permanent',
       30,
+      1,
     ]);
     expect(error).toHaveBeenCalledWith(expect.stringContaining('a human must look'));
   });
@@ -189,24 +190,47 @@ describe('AccountErasureService', () => {
 
     expect(axios.delete).not.toHaveBeenCalled();
     const failed = queries.find(([sql]) => sql.includes('SET attempts = $2'))!;
-    expect(failed[1]).toEqual(['job-1', 1, 'UNKNOWN_SERVICE', 'permanent', 30]);
+    expect(failed[1]).toEqual(['job-1', 1, 'UNKNOWN_SERVICE', 'permanent', 30, 1]);
   });
 
-  it('classes the SAME database error of the core pass, repeated, as permanent - and a first one as transient', async () => {
+  it('classes the SAME core-pass error five CONSECUTIVE times as permanent, never a cumulative count', async () => {
     const failure = describeFailure(new Error('syntax error'));
-    const first = make([[job({ service: 'core', attempts: 0, lastError: null })]]);
-    first.dataSource.transaction.mockRejectedValueOnce(new Error('syntax error'));
-    await first.service.drain();
-    expect(first.queries.find(([sql]) => sql.includes('SET attempts = $2'))![1]![3]).toBe(
-      'transient'
-    );
+    const failWith = async (over: Record<string, unknown>, error = new Error('syntax error')) => {
+      const run = make([[job({ service: 'core', ...over })]]);
+      run.dataSource.transaction.mockRejectedValueOnce(error);
+      await run.service.drain();
+      const params = run.queries.find(([sql]) => sql.includes('SET attempts = $2'))![1]!;
+      return { kind: params[3], run: params[5] };
+    };
 
-    const fifth = make([[job({ service: 'core', attempts: 4, lastError: failure })]]);
-    fifth.dataSource.transaction.mockRejectedValueOnce(new Error('syntax error'));
-    await fifth.service.drain();
-    expect(fifth.queries.find(([sql]) => sql.includes('SET attempts = $2'))![1]![3]).toBe(
-      'permanent'
-    );
+    expect(await failWith({ attempts: 0, lastError: null, sameFailureRun: 0 })).toEqual({
+      kind: 'transient',
+      run: 1,
+    });
+    // Nine attempts, but only the previous one matches: the run is 2, not 9.
+    expect(await failWith({ attempts: 9, lastError: failure, sameFailureRun: 1 })).toEqual({
+      kind: 'transient',
+      run: 2,
+    });
+    // A DIFFERENT error restarts the run, however long it was.
+    expect(
+      await failWith({ attempts: 9, lastError: failure, sameFailureRun: 4 }, new Error('other'))
+    ).toEqual({ kind: 'transient', run: 1 });
+    expect(await failWith({ attempts: 4, lastError: failure, sameFailureRun: 4 })).toEqual({
+      kind: 'permanent',
+      run: 5,
+    });
+  });
+
+  it('still reports overdue and blocked jobs when the journal purge fails', async () => {
+    const { service, dataSource } = make();
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    dataSource.query
+      .mockRejectedValueOnce(new Error('purge failed'))
+      .mockResolvedValueOnce([{ pending: 1, blocked: 1, completed24h: 0, closed24h: 0 }])
+      .mockResolvedValueOnce([]);
+    expect(await service.report()).toMatchObject({ pending: 1, blocked: 1 });
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('journal purge failed'));
   });
 
   it('accuses every job pending for more than a day, and every blocked one, at error level', async () => {

@@ -174,8 +174,8 @@ export function subjectDigest(subjectId: string): string {
 
 /**
  * A failure as the journal records it: the status, plus the error CODE a service put in its body
- * (`HTTP 409 ERASURE_WORKSPACE_REPAIR_FAILED`), or the transport's error code - never a URL or a
- * message, which would carry the id.
+ * (`HTTP 409 ERASURE_WORKSPACE_REPAIR_FAILED`), or the transport's error code - never a URL, which
+ * would carry the id. A bare driver error carries its normalised message (see below).
  */
 export function describeFailure(err: unknown): string {
   const e = err as {
@@ -189,5 +189,16 @@ export function describeFailure(err: unknown): string {
     return `HTTP ${e.response.status}${safe}`;
   }
   if (e?.code) return e.code;
-  return (e?.name ?? typeof err).slice(0, 100);
+  // No status and no code (a driver error such as `Connection terminated`): the name alone would
+  // make every such cause compare identical, so the message joins the fingerprint - with anything
+  // that could carry an id (digits, long hex, quoted or parenthesised values) normalised away.
+  const name = (e?.name ?? typeof err).slice(0, 40);
+  const message = (err as { message?: unknown })?.message;
+  if (typeof message !== 'string') return name;
+  const normalised = message
+    .replace(/\([^)]*\)|"[^"]*"|'[^']*'/g, '?')
+    .replace(/[0-9a-f]{8,}/gi, '#')
+    .replace(/\d+/g, 'N')
+    .slice(0, 80);
+  return `${name}: ${normalised}`;
 }

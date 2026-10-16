@@ -55,6 +55,7 @@ interface ClaimedJob {
   credentialsExpireAt: Date;
   lastAttemptAt: Date;
   lastError: string | null;
+  sameFailureRun: number;
 }
 
 /** Where a subject's erasure stands, as the sign-in refusal needs it. */
@@ -233,7 +234,7 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
            LIMIT $2
            FOR UPDATE SKIP LOCKED)
         RETURNING id, "subjectId", service, attempts, "credentialsExpireAt", "lastAttemptAt",
-                  "lastError"`,
+                  "lastError", "sameFailureRun"`,
       [
         CLAIM_LEASE_SECONDS,
         CLAIM_BATCH,
@@ -284,7 +285,7 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
         await this.dataSource.query(
           `UPDATE account_erasure_jobs
               SET "completedAt" = now(), "subjectId" = $2, "lastError" = NULL,
-                  "lastFailureKind" = NULL
+                  "sameFailureRun" = 0, "lastFailureKind" = NULL
             WHERE id = $1 AND "completedAt" IS NULL`,
           [job.id, subjectDigest(job.subjectId)]
         );
@@ -295,7 +296,8 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
       } else {
         await this.dataSource.query(
           `UPDATE account_erasure_jobs
-              SET "nextAttemptAt" = $2, "lastError" = NULL, "lastFailureKind" = NULL
+              SET "nextAttemptAt" = $2, "lastError" = NULL, "sameFailureRun" = 0,
+                  "lastFailureKind" = NULL
             WHERE id = $1 AND "completedAt" IS NULL`,
           [job.id, outcome.at]
         );
@@ -314,13 +316,15 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
     const attempts = job.attempts + 1;
     const delaySeconds = Math.round(retryDelayMs(attempts) / 1000);
     const failure = describeFailure(err);
+    // Consecutive identical failures: the run grows only on the same fingerprint as the previous
+    // attempt, and restarts at 1 on a different one (a success resets it to 0).
+    const sameFailureRun = job.lastError === failure ? job.sameFailureRun + 1 : 1;
     let kind = classifyFailure(err);
     const target = ERASURE_TARGETS.find((t) => t.service === job.service);
     if (
       kind === 'transient' &&
       target?.kind === 'local' &&
-      job.lastError === failure &&
-      attempts >= REPEATED_LOCAL_FAILURE_LIMIT
+      sameFailureRun >= REPEATED_LOCAL_FAILURE_LIMIT
     ) {
       // A local pass has no network to blame: the same database error again and again is a defect.
       kind = 'permanent';
@@ -328,14 +332,14 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
     try {
       await this.dataSource.query(
         `UPDATE account_erasure_jobs
-            SET attempts = $2, "lastError" = $3,
+            SET attempts = $2, "lastError" = $3, "sameFailureRun" = $6,
                 -- STICKY: a job that failed permanent once stays permanent until a pass succeeds, so
                 -- the sign-in message never flips between "wait" and "contact us" with each attempt.
                 "lastFailureKind" = CASE WHEN "lastFailureKind" = 'permanent' THEN 'permanent'
                                          ELSE $4 END,
                 "nextAttemptAt" = now() + make_interval(secs => $5)
           WHERE id = $1 AND "completedAt" IS NULL`,
-        [job.id, attempts, failure, kind, delaySeconds]
+        [job.id, attempts, failure, kind, delaySeconds, sameFailureRun]
       );
     } catch (writeErr) {
       // The lease still runs out, so the job is retried; only this attempt's record is lost.
@@ -381,8 +385,13 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
     overdue: number;
     completed24h: number;
   } | null> {
+    // Its own try: a purge that fails must not take the overdue and blocked accusations with it.
     try {
       await this.purgeJournal();
+    } catch (err) {
+      this.logger.error(`[ERASURE] journal purge failed: ${describeFailure(err)} ${String(err)}`);
+    }
+    try {
       const [summary] = (await this.dataSource.query(
         `SELECT count(*) FILTER (WHERE "completedAt" IS NULL)::int AS pending,
                 count(*) FILTER (WHERE "completedAt" IS NULL

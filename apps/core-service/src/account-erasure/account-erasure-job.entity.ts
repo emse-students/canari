@@ -46,6 +46,10 @@ export class AccountErasureJob {
   @Column({ type: 'varchar', length: 500, nullable: true })
   lastError!: string | null;
 
+  /** Consecutive attempts that ended in the same `lastError`; reset by another error or a success. */
+  @Column({ type: 'int', default: 0 })
+  sameFailureRun!: number;
+
   /** `transient` or `permanent` (`classifyFailure`), cleared on success. */
   @Column({ type: 'varchar', length: 16, nullable: true })
   lastFailureKind!: 'transient' | 'permanent' | null;

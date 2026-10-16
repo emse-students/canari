@@ -67,7 +67,7 @@ describe('erasure policy', () => {
     expect(describeFailure({ code: 'ECONNREFUSED', message: 'connect 10.0.0.1' })).toBe(
       'ECONNREFUSED'
     );
-    expect(describeFailure(new TypeError('boom'))).toBe('TypeError');
+    expect(describeFailure(new TypeError('boom'))).toBe('TypeError: boom');
     // A service's error CODE is kept; anything that is not a bare code is not.
     expect(
       describeFailure({
@@ -93,5 +93,17 @@ describe('erasure policy', () => {
     expect(CORE_ERASURE_STATEMENTS[CORE_ERASURE_STATEMENTS.length - 1].sql).toBe(
       'DELETE FROM users WHERE id = $1'
     );
+  });
+
+  describe('describeFailure fingerprint of a bare driver error', () => {
+    it('tells different causes apart and carries no id', () => {
+      const a = describeFailure(new Error('Connection terminated unexpectedly'));
+      const b = describeFailure(new Error('timeout exceeded when trying to connect'));
+      expect(a).not.toEqual(b);
+      const withId = describeFailure(
+        new Error('duplicate key (subjectId)=(0a0a0a0a0a0a0a0a) 4711')
+      );
+      expect(withId).not.toMatch(/0a0a0a0a|4711|subjectId/);
+    });
   });
 });

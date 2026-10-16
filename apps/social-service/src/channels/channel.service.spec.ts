@@ -2261,6 +2261,15 @@ describe('ChannelService security hardening', () => {
     await expect(refused.service.removeAccountFromWorkspaces('boss')).rejects.toMatchObject({
       status: 409,
     });
+
+    // A programming error is deterministic: permanent, never a quiet 503.
+    const defect = mk();
+    defect.memberRepo.save.mockImplementationOnce(() =>
+      Promise.reject(new TypeError('x is undefined'))
+    );
+    await expect(defect.service.removeAccountFromWorkspaces('boss')).rejects.toMatchObject({
+      status: 409,
+    });
   });
 
   describe('the Graine history floor (WP-34)', () => {

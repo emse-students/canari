@@ -1333,8 +1333,15 @@ export class MediaService {
     // Whenever an entry changed, here or in an earlier call whose write failed: the blob is gone, and
     // a retry that finds nothing left to delete must still get the index to disk.
     if (this.erasureIndexDirty) {
-      await this.persistMetadata();
+      // Cleared BEFORE the write and set again if it fails: an entry changed by a concurrent call
+      // while this one awaited keeps its own flag, instead of being cleared by this one's success.
       this.erasureIndexDirty = false;
+      try {
+        await this.persistMetadata();
+      } catch (err) {
+        this.erasureIndexDirty = true;
+        throw err;
+      }
     }
     this.logger.log(
       `Account deletion for ${ownerId.slice(0, 8)}...: ${deleted} media deleted, ${failed} failed`
@@ -1843,6 +1850,9 @@ export class MediaService {
     }
   }
 
+  /** In-memory index changed by an account erasure and not yet written (a failed write leaves it set). */
+  private erasureIndexDirty = false;
+
   /**
    * Writes the metadata index ATOMICALLY and ONE WRITE AT A TIME.
    *
@@ -1856,9 +1866,6 @@ export class MediaService {
    * serialises the index as it is WHEN ITS TURN COMES, so the last write always carries the latest
    * state. A failed write rejects to ITS caller and does not stop the next one from running.
    */
-  /** In-memory index changed by an account erasure and not yet written (a failed write leaves it set). */
-  private erasureIndexDirty = false;
-
   private persistMetadata(): Promise<void> {
     const previous = this.metadataWrites ?? Promise.resolve();
     // Run after the previous write whatever its outcome: its failure was already handed to the

@@ -203,6 +203,13 @@ leased together would let the last ones' lease run out while the first still ran
 **Sticky classes, and the core pass.** A job's `lastFailureKind` never goes from `permanent` back to
 `transient` while it keeps failing (it clears on a success): the sign-in message must not flip. The
 `core` job's pass is local, so a database error has no network to blame: the SAME failure five
-times in a row is classed `permanent`. social answers 503 (transient) when any community failure was
-infrastructure - chat-delivery down, a database blip - and 409 (permanent) only when every failure
-was a refusal.
+times in a row (`sameFailureRun`, reset by a different fingerprint or a success - not a cumulative
+count) is classed `permanent`. A failure's fingerprint is its status or code, or for a bare driver error
+its name plus a message with digits, long hex and quoted or parenthesised values normalised away.
+social answers 503 (transient) when any community failure was infrastructure - chat-delivery down, a
+database blip - and 409 (permanent) when every failure was a refusal or a programming error
+(TypeError, RangeError, ReferenceError). The daily purge of old journal rows is isolated from the
+report, so a failing purge cannot hide an overdue job.
+
+**CI.** The two integration specs run in `ci.yml`'s `boot-nest-apps` job, after the boot has
+synchronised the schema into its disposable PostgreSQL (a step, not a new workflow).

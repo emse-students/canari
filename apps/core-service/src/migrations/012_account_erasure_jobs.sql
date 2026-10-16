@@ -31,6 +31,9 @@ CREATE TABLE IF NOT EXISTS account_erasure_jobs (
     "nextAttemptAt"       TIMESTAMPTZ NOT NULL DEFAULT now(),
     "lastAttemptAt"       TIMESTAMPTZ,
     "lastError"           VARCHAR(500),
+    -- How many CONSECUTIVE attempts ended in this same `lastError`: reset by a different error or a
+    -- success. The core pass is local, so five in a row is a defect rather than a blip.
+    "sameFailureRun"      INTEGER NOT NULL DEFAULT 0,
     -- 'transient' or 'permanent' (`classifyFailure`): a permanent failure is accused at once and
     -- turns the sign-in refusal into "contact us". Cleared by a success.
     "lastFailureKind"     VARCHAR(16),

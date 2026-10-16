@@ -353,7 +353,8 @@ export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'post_mentions',
     sql: `UPDATE posts
-             SET mentions = COALESCE((SELECT string_agg(m, ',') FROM unnest(string_to_array(mentions, ',')) m
+             SET mentions = COALESCE((SELECT string_agg(m, ',' ORDER BY n)
+                                        FROM unnest(string_to_array(mentions, ',')) WITH ORDINALITY AS t(m, n)
                                        WHERE lower(m) <> lower($1)), '')
            WHERE lower($1) = ANY(string_to_array(lower(mentions), ','))`,
   },
