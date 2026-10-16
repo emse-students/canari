@@ -535,6 +535,20 @@ maybe('bookings schema against PostgreSQL (migration 087)', () => {
       await expect(book(r.id, COMING, DAN)).resolves.toBeDefined();
     });
 
+    it('leaves LIVE a coming booking it made on behalf of someone else: only the id goes', async () => {
+      const { resource: r } = await spaceOf(DAN);
+      const forDan = await book(r.id, COMING, DAN, { bookedById: CAROL });
+
+      const outcome = await deleteBookingsUserData(ds.manager, CAROL);
+
+      expect(outcome.comingBookingsCancelled).toBe(0);
+      const row = await get(forDan.id);
+      expect(row.cancelledAt).toBeNull();
+      expect(row.holderId).toBe(DAN);
+      expect(row.bookedById).toBe(DELETED_ACCOUNT_ID);
+      expect(row.answers).toEqual({ q_year: '2A' });
+    });
+
     it('tombstones what it did as organiser: booked on behalf, cancelled, blocked', async () => {
       const { resource: r } = await spaceOf(DAN);
       const onBehalf = await book(r.id, PAST, DAN, { bookedById: CAROL });

@@ -180,7 +180,7 @@ spaces go with the association.
 | `booking_availability_exceptions` | whole local days removed, `fromDate`..`toDate` both INCLUDED | D11 |
 | `booking_blocks` | "Indisponible" `[startsAt, endsAt)`, `reason`, `reasonVisible`, `createdById` | D10, D20 |
 | `bookings` | `resourceId`, holder (id + name snapshot), `bookedById`, UTC `[startsAt, endsAt)`, `answers` + `answersPurgedAt`, `cancelledAt` + `cancelledById` (both or neither) | D4, D7, D15, D18, D20, D25 |
-| `booking_participants` | surrogate `id`, `bookingId`, `userId` (one live row per booking and account: a partial unique index that leaves the `'[deleted]'` tombstones out), name snapshot, `withdrawnAt` | D4, D15, D34 |
+| `booking_participants` | surrogate `id`, `bookingId`, `userId` (one row per booking and account, a withdrawn row included (D36): a partial unique index that leaves the `'[deleted]'` tombstones out), name snapshot, `withdrawnAt` | D4, D15, D34 |
 
 **The rule: `bookings_live_no_overlap`**, `EXCLUDE USING gist ("resourceId" WITH =,
 tstzrange("startsAt", "endsAt", '[)') WITH &&) WHERE ("cancelledAt" IS NULL)`. Half-open, so
@@ -203,7 +203,7 @@ concurrent inserts on one slot gave one winner and seven `40P01` deadlocks, not 
 `SELECT id FROM booking_resources WHERE id = $1 FOR UPDATE` first, in the same transaction, every
 loser is told `23P01` (`isExclusionViolation` in `src/common/pg-errors.ts`). The same lock is what
 must serialise a block against a booking (D29): no constraint stops a block overlapping a live
-booking. Also left to B3: the holder must not also be a participant (no cross-table check), and the
+booking. **For WP-B3: an ASSOCIATION space is managed through `MANAGE_BOOKINGS` on its association (`AssociationsService.mayAct`), NEVER through `ownerId`** - that column names the creator, becomes `'[deleted]'` with the creator's account, and grants nothing; only a PERSONAL space (`associationId` NULL) is managed by its `ownerId`. Also left to B3: the holder must not also be a participant (no cross-table check), and the
 name snapshots are filled at write time. The file of a booking answer (D22) reuses WP-F's mechanism
 in WP-B6, so B1 adds no file table. The poster of D35 is not a column yet: WP-B4 adds it with the
 screen that sets it.
@@ -229,7 +229,7 @@ Indexes beyond the exclusion's own GiST: `bookings ("holderId", "startsAt")` (my
 
 | What the account left | What happens | Why |
 |---|---|---|
-| A PERSONAL space it owns (`associationId` NULL) | deleted, everything under it with it | nobody else can manage it (D2); D27 |
+| A PERSONAL space it owns (`associationId` NULL) | deleted, everything under it with it, **OTHER PEOPLE'S COMING BOOKINGS THERE INCLUDED: hard-deleted, and nobody is told** (no notification in v1, D13) | nobody else can manage it (D2); D27. A known cost, to be said on the booking screen of a personal space (WP-B5) |
 | An association space it created | kept; `ownerId` becomes `'[deleted]'` | the association manages it |
 | A COMING live booking it holds | cancelled, `cancelledById = '[deleted]'`, slot freed | a deleted account will not come |
 | A coming participation | withdrawn (`withdrawnAt`) | same |

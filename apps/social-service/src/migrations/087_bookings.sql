@@ -209,7 +209,8 @@ CREATE INDEX IF NOT EXISTS bookings_ends_idx ON bookings ("endsAt");
 
 -- The people of a booking other than its holder (D4). Withdrawal keeps the row (D15). A surrogate
 -- key, because a deleted account's "userId" becomes '[deleted]' and two of them may share a booking:
--- one live row per (booking, account) is a partial UNIQUE index that leaves the tombstones out.
+-- one row per (booking, account) - a withdrawn row counts, so withdrawing does not re-open the
+-- door (D36) - is a partial UNIQUE index that leaves the tombstones out.
 CREATE TABLE IF NOT EXISTS booking_participants (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   "bookingId" uuid NOT NULL,
