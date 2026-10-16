@@ -160,3 +160,39 @@ it('"Voir moins" folds it back', () => {
   expect(q('[data-reel-caption-toggle]')!.getAttribute('aria-expanded')).toBe('false');
   expect(q('[data-reel-caption-backdrop]')).toBeNull();
 });
+
+it('unfolded on a letterboxed reel, the text never outgrows the frame, and outside covers the slide', () => {
+  // A landscape reel: its frame is far shorter than half the screen. happy-dom lays nothing out,
+  // so this pins the classes that decide it - a column capped at the frame whose TEXT shrinks and
+  // scrolls while the author row and the toggle keep their size.
+  const { q } = render(
+    reel({
+      media: [
+        {
+          type: 'video',
+          mediaId: 'm-r1',
+          key: 'k',
+          iv: 'i',
+          mimeType: 'video/mp4',
+          size: 1,
+          width: 1920,
+          height: 1080,
+        },
+      ],
+    })
+  );
+  q<HTMLButtonElement>('[data-reel-caption-toggle]')!.click();
+  flushSync();
+  const block = q<HTMLElement>('[data-reel-caption]')!;
+  expect(block.closest('[data-reel-frame]')).not.toBeNull();
+  for (const c of ['flex', 'flex-col', 'max-h-full', 'z-20']) expect(block.classList).toContain(c);
+  expect(block.firstElementChild!.classList).toContain('shrink-0');
+  expect(q('[data-reel-caption-open]')!.classList).toContain('min-h-0');
+  expect(q('[data-reel-caption-toggle]')!.classList).toContain('shrink-0');
+  // The tap-outside layer spans the whole slide, letterbox bands included, under the caption.
+  const backdrop = q<HTMLElement>('[data-reel-caption-backdrop]')!;
+  expect(backdrop.parentElement!.hasAttribute('data-reel-slide')).toBe(true);
+  expect(backdrop.closest('[data-reel-frame]')).toBeNull();
+  expect(backdrop.classList).toContain('z-10');
+  expect(backdrop.getAttribute('aria-hidden')).toBe('true');
+});

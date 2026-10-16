@@ -98,29 +98,20 @@
       {/if}
     </div>
 
-    {#if expanded}
-      <!-- TAP OUTSIDE FOLDS THE TEXT. A button, so it is not a viewer gesture (`NOT_A_GESTURE`): a
-           tap or a stray swipe on it neither pauses the video under it nor turns the reel. Out of
-           the tab order - the "Voir moins" below is the keyboard's way. -->
-      <button
-        type="button"
-        class="absolute inset-0 cursor-default"
-        tabindex="-1"
-        aria-label={m.post_voir_moins()}
-        onclick={() => setExpanded(false)}
-        data-reel-caption-backdrop
-      ></button>
-    {/if}
-
     <!-- WHO PUBLISHED IT, AND WHAT THEY WROTE, BOTTOM-LEFT OVER A SCRIM (user, 2026-10-16, as on
          Instagram). Anchored to the bottom, so a longer text or 2x type grows UPWARD, above the
-         player's bar, never off-screen. Pointer-transparent except the author link and the text
-         controls, so a tap anywhere else still reaches the video. -->
+         player's bar. NEVER TALLER THAN THE FRAME: a letterboxed reel's frame can be shorter than
+         half the screen, so the block is a column capped at the frame (`max-h-full`) and the text
+         is the part that SHRINKS (`min-h-0`) and scrolls - the author row and the toggle stay.
+         Above the tap-outside layer (`z-20` over its `z-10`). Pointer-transparent except the
+         author link and the text controls, so a tap anywhere else still reaches the video. -->
     <div
-      class="pointer-events-none absolute inset-x-0 bottom-0 bg-linear-to-t from-black/80 via-black/50 to-transparent px-4 pt-16 pb-[calc(var(--safe-area-inset-bottom,0px)+4.5rem)] text-white"
+      class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col bg-linear-to-t from-black/80 via-black/50 to-transparent px-4 pb-[calc(var(--safe-area-inset-bottom,0px)+4.5rem)] text-white {expanded
+        ? 'pt-4'
+        : 'pt-16'}"
       data-reel-caption
     >
-      <div class="flex min-w-0 items-center gap-2">
+      <div class="flex min-w-0 shrink-0 items-center gap-2">
         {#if authorHref}
           <a
             href={authorHref}
@@ -146,9 +137,9 @@
         <!-- EXPANDED, THE TEXT SCROLLS ITSELF, up to half the screen: `data-reel-caption-open` keeps
              the viewer's swipe off it, and `touch-pan-y` lets the engine scroll it. -->
         <div
-          class="mt-1 {expanded
+          class="mt-1 min-h-0 {expanded
             ? 'pointer-events-auto max-h-[50dvh] touch-pan-y overflow-y-auto overscroll-contain'
-            : ''}"
+            : 'shrink-0'}"
           data-reel-caption-open={expanded ? '' : undefined}
         >
           <PostMarkdown
@@ -160,7 +151,7 @@
         {#if overflows || expanded}
           <button
             type="button"
-            class="tap-target pointer-events-auto mt-1 text-xs font-bold outline-none hover:underline focus-visible:underline"
+            class="tap-target pointer-events-auto mt-1 shrink-0 self-start text-xs font-bold outline-none hover:underline focus-visible:underline"
             aria-expanded={expanded}
             onclick={() => setExpanded(!expanded)}
             data-reel-caption-toggle
@@ -171,4 +162,20 @@
       {/if}
     </div>
   </ReelFrame>
+
+  {#if expanded}
+    <!-- TAP OUTSIDE FOLDS THE TEXT - anywhere on the slide, the letterbox bands included, not only
+         inside the frame. A button, so it is not a viewer gesture (`NOT_A_GESTURE`): a tap or a
+         stray swipe on it neither pauses the video under it nor turns the reel. Hidden from
+         assistive tech and out of the tab order: "Voir moins" is the named way back. Under the
+         caption (`z-10` against its `z-20`). -->
+    <button
+      type="button"
+      class="absolute inset-0 z-10 cursor-default"
+      tabindex="-1"
+      aria-hidden="true"
+      onclick={() => setExpanded(false)}
+      data-reel-caption-backdrop
+    ></button>
+  {/if}
 </div>

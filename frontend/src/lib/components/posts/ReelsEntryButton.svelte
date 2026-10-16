@@ -18,6 +18,7 @@
   import type { PostEntity } from '$lib/posts/api';
   import { REEL_PAGE, listAllReels, reelsAfterFirstPage } from '$lib/reels/allReels';
   import { showToast } from '$lib/stores/toast.svelte';
+  import { isTransportFailure } from '$lib/utils/transportFailure';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -44,7 +45,13 @@
       }
       firstPage = page;
     } catch (err) {
-      console.error('[reels-entry] the first reels could not be loaded', err);
+      // No answer (offline, a dead network) is the member's situation, not a defect: said, not
+      // accused. An ANSWER that refused is a defect and is logged as one.
+      if (isTransportFailure(err)) {
+        console.info('[reels-entry] no answer for the first reels - offline', err);
+      } else {
+        console.error('[reels-entry] the server refused the first reels', err);
+      }
       showToast(m.posts_reels_open_error(), 'error');
     } finally {
       opening = false;

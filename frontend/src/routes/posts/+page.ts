@@ -3,6 +3,7 @@ import { settings } from '$lib/stores/settingsStore.svelte';
 import type { PageLoad } from './$types';
 import { isOutsideFeedAudience, redirectIfNotFeedAudience } from '$lib/posts/feedAudience';
 import { FEED_FIRST_PAGE_SIZE } from '$lib/posts/feedPageSize';
+import { dropRetiredFeedKind } from '$lib/posts/retiredFeedKind';
 
 export const load: PageLoad = async ({ url }) => {
   // THE URL WINS, THEN THE REMEMBERED TAB, THEN THE DEFAULT (user, 2026-09-10: *"L'onglet du fil
@@ -23,6 +24,8 @@ export const load: PageLoad = async ({ url }) => {
   const promoParsed = promoStr !== null && promoStr !== '' ? parseInt(promoStr, 10) : undefined;
   const promo = promoParsed !== undefined && Number.isFinite(promoParsed) ? promoParsed : undefined;
   const formation = url.searchParams.get('formation')?.trim() || undefined;
+  // The 1.2.9 alphas' CanaReels filter choice: nothing reads it any more (`retiredFeedKind.ts`).
+  dropRetiredFeedKind();
 
   // THE REQUEST IS ISSUED BEFORE THE AUDIENCE GATE, NOT BEHIND IT. The gate used to be awaited
   // here, so the posts promise did not exist - and therefore had not left the device - until a

@@ -387,7 +387,11 @@ time by the viewer, since an MSE URL feeds one element - the same rule the media
 and links the association, a hidden author is "Anonyme" and links nowhere - then the age, then the
 description rendered by `PostMarkdown` (the card's renderer and preprocessing, not a plain-text
 copy). The text folds to two lines; "Voir plus" (`post_voir_plus`, the card's own string) unfolds it
-IN PLACE, scrollable up to half the screen, and "Voir moins" or a tap outside folds it. The fold is
+IN PLACE, scrollable up to half the screen and NEVER taller than the reel's frame (a letterboxed
+landscape frame is shorter than that: the block is a column capped at the frame, and the text is the
+part that shrinks and scrolls, so the author row is never clipped). "Voir moins" or a tap anywhere
+on the slide, letterbox bands included, folds it; while it is unfolded the up/down keys scroll the
+text instead of turning the reel. The fold is
 measured (`watchClampOverflow`, shared with the card), so a short caption has no button. Unfolding
 neither pauses nor turns the reel: the tap-outside layer is a button, and the unfolded text carries
 `data-reel-caption-open`, both in the viewer's `NOT_A_GESTURE`, so a drag there scrolls the text
@@ -419,7 +423,9 @@ ugly, and then asked for the IGTV shape instead of a filter. C7 still holds: no 
    remembered choice, no `feed:<tab>:reel` stored slot or cache key, no filtered empty state, no
    feed-level reel source (`reelFeedSource.ts`). The SERVER's `kind=reel` parameter stays - the viewer
    reads it. What the 1.2.9 alphas left behind is inert: an old `?kind=reel` link draws the whole feed
-   (`page.load.test.ts`), the `canari_post_feed_kind` key is never read, and a stored `feed:<tab>:reel`
+   (`page.load.test.ts`) and a tab switch drops its `kind`; the `canari_post_feed_kind` key is
+   dropped by the feed's `load` (`retiredFeedKind.ts`, a shim in
+   [legacy-compatibility](../../legacy-compatibility.md)); and a stored `feed:<tab>:reel`
    page is never asked for and goes with the other stored pages at the next sign-out.
 
 ## Saving before the deletion (C6)

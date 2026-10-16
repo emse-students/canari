@@ -8,6 +8,7 @@ import { afterAll, afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import FeedTabRow from './FeedTabRow.svelte';
 import type { PostEntity } from '$lib/posts/api';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 import { m } from '$lib/paraglide/messages';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
@@ -124,11 +125,25 @@ it('with no reel yet, a sheet says so and offers the camera - no empty viewer', 
   expect(empty.querySelector('a')?.getAttribute('href')).toBe('/camera');
 });
 
-it('a failed read says so and opens nothing', async () => {
-  listPosts.mockRejectedValueOnce(new Error('offline'));
+it('offline: says so, opens nothing, and accuses nobody', async () => {
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  listPosts.mockRejectedValueOnce(new TransportFailureError('Failed to fetch'));
   const { icon } = renderRow();
   icon.click();
   await settle();
   expect(showToast).toHaveBeenCalledWith(m.posts_reels_open_error(), 'error');
   expect(document.querySelector('[data-reel-viewer-stub]')).toBeNull();
+  expect(error).not.toHaveBeenCalled();
+  error.mockRestore();
+});
+
+it('a refusal from the server is logged as the defect it is', async () => {
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  listPosts.mockRejectedValueOnce(new Error('500'));
+  const { icon } = renderRow();
+  icon.click();
+  await settle();
+  expect(showToast).toHaveBeenCalledWith(m.posts_reels_open_error(), 'error');
+  expect(error).toHaveBeenCalled();
+  error.mockRestore();
 });

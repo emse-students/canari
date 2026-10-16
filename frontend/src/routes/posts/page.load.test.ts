@@ -40,10 +40,11 @@ describe('posts load', () => {
     expect(data.feedParams).toEqual({ feed: 'associations' });
   });
 
-  it('a choice the alphas remembered is not read', async () => {
+  it('a choice the alphas remembered is not read, and is dropped', async () => {
     localStorage.setItem('canari_post_feed_kind', 'reel');
     const data = await run('');
     expect(listPosts.mock.calls[0][0]).not.toHaveProperty('kind');
     expect(data.feedParams).not.toHaveProperty('kind');
+    expect(localStorage.getItem('canari_post_feed_kind')).toBeNull();
   });
 });
