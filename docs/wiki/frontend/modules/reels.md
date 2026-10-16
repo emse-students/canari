@@ -409,7 +409,10 @@ time by the viewer, since an MSE URL feeds one element - the same rule the media
 `postAuthorName` and `postAuthorHref`, the SAME helpers as `PostHeader`, so an association post shows
 and links the association, a hidden author is "Anonyme" and links nowhere - then the age, then the
 description rendered by `PostMarkdown` (the card's renderer and preprocessing, not a plain-text
-copy). The text folds to two lines; "Voir plus" (`post_voir_plus`, the card's own string) unfolds it
+copy). The author link is ONE accessible element: named by its `aria-label` ("Voir le profil de
+..."), its picture and name `aria-hidden`, at least 44 px tall (`min-h-11`) - VoiceOver read a
+second "Avatar de" link inside it and a 242 x 869 pt frame around a 20 pt picture (iPhone 12,
+v1.2.9-alpha.4). The text folds to two lines; "Voir plus" (`post_voir_plus`, the card's own string) unfolds it
 IN PLACE, scrollable up to half the screen and NEVER taller than the reel's frame (a letterboxed
 landscape frame is shorter than that: the block is a column capped at the frame, and the text is the
 part that shrinks and scrolls, so the author row is never clipped; and it pays the bottom safe-area

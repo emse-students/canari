@@ -144,14 +144,19 @@
     >
       <div class="flex min-w-0 shrink-0 items-center gap-2">
         {#if authorHref}
+          <!-- ONE NAME AND ONE BOX FOR ASSISTIVE TECH: the link is named by its `aria-label` and its
+               content is hidden from the tree, so VoiceOver no longer reads a second "Avatar de"
+               element inside it, and the link's frame is its own 44 px row rather than a rect
+               unioned from its children (iPhone 12, v1.2.9-alpha.4: the frame read 242 x 869 pt
+               around a 20 pt picture and a 23 pt name). -->
           <a
             href={authorHref}
-            class="pointer-events-auto flex min-w-0 items-center gap-2 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
+            class="pointer-events-auto flex min-h-11 min-w-0 items-center gap-2 rounded-full pr-2 outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
             aria-label={postAuthorLinkLabel(post)}
             data-reel-author
           >
-            <span class="shrink-0"><PostAuthorAvatar {post} size="sm" /></span>
-            <span class="truncate text-sm font-bold">{authorName}</span>
+            <span class="shrink-0" aria-hidden="true"><PostAuthorAvatar {post} size="sm" /></span>
+            <span class="truncate text-sm font-bold" aria-hidden="true">{authorName}</span>
           </a>
         {:else}
           <span class="flex min-w-0 items-center gap-2" data-reel-author>

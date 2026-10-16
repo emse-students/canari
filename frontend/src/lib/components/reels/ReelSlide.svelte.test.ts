@@ -101,6 +101,15 @@ it('shows the author picture and name, linking the profile', () => {
   expect(author.querySelector('[data-avatar-stub="u1"]')).not.toBeNull();
 });
 
+it('the author link is one named element of at least 44 px, its picture and name hidden from assistive tech', () => {
+  const { q } = render(reel());
+  const author = q<HTMLAnchorElement>('a[data-reel-author]')!;
+  expect(author.classList.contains('min-h-11')).toBe(true);
+  const children = Array.from(author.children);
+  expect(children.length).toBeGreaterThan(0);
+  for (const child of children) expect(child.getAttribute('aria-hidden')).toBe('true');
+});
+
 it('a post published as an association shows and links the association', () => {
   const association = { id: 'a1', name: 'BDE Mines', slug: 'bde', logoUrl: null };
   const { q } = render(reel({ association } as Partial<PostEntity>));

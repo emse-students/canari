@@ -567,7 +567,10 @@
     `isLoading`: a submit that hangs is one of the states this button exists for.
   -->
   {#snippet footer()}
-    <div class="mx-auto flex w-full max-w-xs flex-col items-center gap-1">
+    <!-- ITS OWN TOP ROOM, NO LINE (a lock screen draws no frame): the keypad cut by the scrollport
+         ends 12 px above the unlock button rather than against it, where rows 7-9 read as covered
+         BY the button at the largest text size (iPhone 12, v1.2.9-alpha.4). -->
+    <div class="mx-auto flex w-full max-w-xs flex-col items-center gap-1 pt-3" data-pin-footer>
       <button
         type="submit"
         form={FORM_ID}

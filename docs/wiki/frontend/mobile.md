@@ -2546,7 +2546,25 @@ runs one frame after the resize - into a scrollport still shrinking. In the PIN 
 focused field then settled half under the footer's submit button, and a tap where the next field
 stood submitted the form; the iOS keyboard drops and rises between two fields, so every move paid
 it. `initKeyboardViewport` redoes the reveal on the overlay's `transitionend` for `height`
-(`overlaySettledAroundFocus`). Not yet read on the phone.
+(`overlaySettledAroundFocus`). Read on v1.2.9-alpha.4: the focused field was then in view, but the
+NEXT one (the confirm field) stood cut under the button and was reachable only after blurring.
+
+**Inside a keyboard-aware overlay every field carries the room for the NEXT one (v1.2.9-alpha.4).**
+The reveal stays `nearest`, which puts the field on the bottom edge of a scrollport the keyboard
+made short - exactly where the next field is cut. A `scroll-margin-block-end: 6.5rem` on every
+field inside `[data-keyboard-aware-overlay]` (`app.css`; one label and one field box) is honoured
+by `nearest`, so the reveal stops with the next field still in view. A centred reveal was refused
+in review: the reveal runs on every focus, overlay `transitionend` and viewport resize, so it would
+jump the modal on a tap on a field already in view and snap back a hand-scrolled body on a QuickType
+resize. The reveal never animates under `prefers-reduced-motion` (`revealBehavior`).
+
+**A footer edge is opt-in.** `Modal`'s `footerEdge` (`border-t`, `pt-3`) is for a form that
+overflows once the keyboard is up - the PIN change passes it, so the confirm field's cut ends at a
+line rather than against the submit button. A one-line confirmation gets no line. The PIN gate,
+a lock screen with no frame, gives its own footer `pt-3` and no line: the keypad cut by the
+scrollport ends 12 px above "Deverrouiller", where rows 7-9 read as covered by it at the largest
+text size. Owed one reading on the iPhone: the PIN change with the keyboard up, the PIN gate at the
+largest size.
 
 `keyboardViewport.svelte.ts` pins the shell to the visual viewport while the keyboard is up:
 
