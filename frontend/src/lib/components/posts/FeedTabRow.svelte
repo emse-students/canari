@@ -36,28 +36,48 @@
 
   let tabs = $state<HTMLElement | null>(null);
 
-  // THE SELECTED TAB IS IN VIEW, on arrival and on every selection: at 2x text the row overflows and
-  // "Tout" sat under the faded edge by the CanaReels icon (`centredTabScrollLeft`).
+  // THE SELECTED TAB IS IN VIEW, on arrival, on every selection, and whenever the row's layout
+  // changes under it - a resize, or the web font arriving after the first layout was measured with
+  // the fallback's widths: at 2x text the row overflows and "Tout" sat under the faded edge by the
+  // CanaReels icon (`centredTabScrollLeft`).
   $effect(() => {
     const selected = feed;
-    if (!tabs) return;
-    const maxScroll = tabs.scrollWidth - tabs.clientWidth;
+    const row = tabs;
+    if (!row) return;
+    revealTab(row, selected);
+    const observer =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => revealTab(row, feed));
+    if (!observer) console.debug('[feed-tabs] no ResizeObserver - revealed on selection only');
+    observer?.observe(row);
+    let live = true;
+    void document.fonts?.ready.then(() => {
+      if (live) revealTab(row, feed);
+    });
+    return () => {
+      live = false;
+      observer?.disconnect();
+    };
+  });
+
+  /** Scrolls `row` so the tab of `selected` is in full view, when the row overflows at all. */
+  function revealTab(row: HTMLElement, selected: PostFeed) {
+    const maxScroll = row.scrollWidth - row.clientWidth;
     if (maxScroll <= 0) return;
-    const tab = tabs.querySelector<HTMLElement>(`[data-feed-tab="${selected}"]`);
+    const tab = row.querySelector<HTMLElement>(`[data-feed-tab="${selected}"]`);
     if (!tab) {
       console.error(`[feed-tabs] no tab drawn for the selected feed ${selected}`);
       return;
     }
     const next = centredTabScrollLeft(
-      tabs.getBoundingClientRect(),
+      row.getBoundingClientRect(),
       tab.getBoundingClientRect(),
-      tabs.scrollLeft,
+      row.scrollLeft,
       maxScroll
     );
-    if (next === tabs.scrollLeft) return;
+    if (next === row.scrollLeft) return;
     console.debug(`[feed-tabs] the row scrolls to ${next} px to show ${selected}`);
-    tabs.scrollLeft = next;
-  });
+    row.scrollLeft = next;
+  }
 </script>
 
 <div class="flex items-center gap-2" data-feed-tab-row>

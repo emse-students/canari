@@ -3370,6 +3370,7 @@
   "reels_capture_photo_error": "La photo a échoué. Réessayez.",
   "reels_capture_not_a_video": "Ce fichier n'est pas une vidéo.",
   "reels_capture_too_long": "Un CanaReel dure {seconds} secondes au plus.",
+  "reels_capture_take_refused": "Cette prise n'a pas pu être gardée. Réessayez.",
   "reels_capture_pick_before_limits": "La durée maximale d'un CanaReel n'a pas encore pu être lue. Réessayez dans un instant.",
   "reels_capture_limits_error": "Canari est injoignable - toucher pour réessayer",
   "reels_capture_limits_refused": "Les CanaReels ne répondent pas pour l'instant - toucher pour réessayer",

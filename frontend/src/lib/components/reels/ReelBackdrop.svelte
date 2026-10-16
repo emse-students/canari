@@ -166,10 +166,19 @@
         const settled = previous !== null && exposureSettled(previous, sample.mean);
         if (settled || reads >= EXPOSURE_MAX_SAMPLES) {
           pending = null;
-          if (canvas) blurSampleInto(canvas, sample);
-          console.debug(
-            `[reel-backdrop] repainted ${settled ? 'once the exposure settled' : 'from the last read, the exposure never settled'} (${reads} reads, ${frames} frames)`
-          );
+          const why = settled
+            ? 'once the exposure settled'
+            : 'from the last read, the exposure never settled';
+          if (!canvas) {
+            console.debug(`[reel-backdrop] not repainted ${why}: the canvas is gone`);
+            return;
+          }
+          const result = blurSampleInto(canvas, sample);
+          if (result === 'painted') {
+            console.debug(`[reel-backdrop] repainted ${why} (${reads} reads, ${frames} frames)`);
+          } else {
+            console.warn(`[reel-backdrop] not repainted ${why}: ${result}`);
+          }
           return;
         }
         previous = sample.mean;

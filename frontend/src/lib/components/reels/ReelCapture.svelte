@@ -175,7 +175,16 @@
   function send(event: CaptureEvent) {
     const before = capture;
     const after = captureReducer(before, event);
-    if (after === before) return;
+    if (after === before) {
+      // A pick is the member's own act: one the state refuses is said, never lost in silence.
+      if (event.type === 'picked') {
+        console.warn(
+          `[reel-capture] a picked ${event.clip.source} take was refused in ${before.kind}`
+        );
+        showToast(m.reels_capture_take_refused(), 'error');
+      }
+      return;
+    }
     console.debug(`[reel-capture] ${before.kind} -> ${after.kind} on ${event.type}`);
     capture = after;
     if (before.kind === 'pressing') clearHoldTimer();
@@ -501,6 +510,22 @@
     {onclose}
     microphoneAsked={rules.microphone === 'with-lens'}
   >
+    {#snippet faultActions()}
+      <!-- A REFUSED CAMERA KEEPS THE GALLERY: a pick needs no camera, and the input is always
+           mounted, so the member who said no to the camera can still publish a video. -->
+      {#if rules.gallery}
+        <button
+          type="button"
+          class="inline-flex items-center gap-2 rounded-full bg-white/15 px-5 py-2.5 text-sm font-semibold outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
+          disabled={!limits}
+          data-reel-fault-gallery
+          onclick={openGallery}
+        >
+          <Images size={16} strokeWidth={2.5} />
+          {m.reels_capture_gallery()}
+        </button>
+      {/if}
+    {/snippet}
     {#snippet controls()}
       <div class="grid grid-cols-3 items-end px-6">
         <div class="flex justify-start pb-6">

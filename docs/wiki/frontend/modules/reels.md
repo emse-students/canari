@@ -237,8 +237,15 @@ D-camera's: the composer cameras (`CameraOverlay`, `post` and `chat`) draw no ga
 (`PostComposerBar`, `ChatComposer`'s `pickerInputs`) sit outside the camera and outside any
 condition a picker's backgrounding changes. A pick now always ends in the review or a toast with a
 line: `gallery picked <type> (<n> bytes)`, then `not-a-video`, `too-long`, or, should the cap be
-unread, `reels_capture_pick_before_limits`. `ReelCapture.svelte.test.ts` releases the camera as the
-picker does and then fires the change on the input. The rule is in
+unread, `reels_capture_pick_before_limits`; a pick the capture state refuses (an answer arriving
+over a review) is warned `a picked gallery take was refused in <state>` with
+`reels_capture_take_refused`. **A refused camera keeps the gallery**: the refusal screen offers it
+beside "Réessayer" (`CameraScreen`'s `faultActions`), since a pick needs no camera and the input is
+always mounted. `ReelCapture.svelte.test.ts` releases the camera as the picker does and then fires
+the change on the input, and picks from a denied camera. **Not covered: Android killing the app's
+process while the picker is open** (memory pressure; `configChanges` in the manifest covers rotation,
+not that). The relaunched app starts on a fresh page with no input waiting, so the pick is lost - an
+answer delivered to a process that no longer exists, which no WebView page can take back. The rule is in
 [durable-rules](../../durable-rules.md#ui-and-i18n---frontendarchitecture-auth-native-prompts).
 
 ### One shutter, and a capture that IS the preview (2026-10-05)

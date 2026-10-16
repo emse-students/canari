@@ -28,7 +28,8 @@ beforeEach(() => {
   paint.mockReset();
   paint.mockReturnValue('painted');
   read.mockReset();
-  blur.mockClear();
+  blur.mockReset();
+  blur.mockReturnValue('painted');
 });
 
 afterEach(() => {
@@ -279,6 +280,19 @@ it('paints the last read when the exposure never settles within the bound', () =
   expect(read).toHaveBeenCalledTimes(EXPOSURE_MAX_SAMPLES);
   expect(blur).toHaveBeenCalledTimes(1);
   expect(fake.pendingFrames()).toBe(0);
+});
+
+it('says the repaint did not happen when the engine gave no context', () => {
+  const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  read.mockReturnValue(sampleOf([100, 100, 100]));
+  blur.mockReturnValue('no-context');
+  const fake = fakeVideo({ src: { id: 'camera' } });
+  setup(true, fake.video);
+  for (let i = 0; i < 1 + EXPOSURE_SAMPLE_STRIDE * 2; i++) fake.present();
+  expect(blur).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('not repainted'));
+  expect(debug).not.toHaveBeenCalledWith(expect.stringContaining('[reel-backdrop] repainted'));
 });
 
 it('does not re-read a file: its first frame is its picture', () => {
