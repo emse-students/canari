@@ -1,7 +1,7 @@
 import { Logger } from '@nestjs/common';
 import type { DataSource } from 'typeorm';
 import { AccountErasureService } from './account-erasure.service';
-import { CORE_ERASURE_STATEMENTS, ERASURE_TARGETS } from './erasure-policy';
+import { CORE_ERASURE_STATEMENTS, ERASURE_TARGETS, describeFailure } from './erasure-policy';
 
 jest.mock('axios');
 
@@ -192,10 +192,28 @@ describe('AccountErasureService', () => {
     expect(failed[1]).toEqual(['job-1', 1, 'UNKNOWN_SERVICE', 'permanent', 30]);
   });
 
+  it('classes the SAME database error of the core pass, repeated, as permanent - and a first one as transient', async () => {
+    const failure = describeFailure(new Error('syntax error'));
+    const first = make([[job({ service: 'core', attempts: 0, lastError: null })]]);
+    first.dataSource.transaction.mockRejectedValueOnce(new Error('syntax error'));
+    await first.service.drain();
+    expect(first.queries.find(([sql]) => sql.includes('SET attempts = $2'))![1]![3]).toBe(
+      'transient'
+    );
+
+    const fifth = make([[job({ service: 'core', attempts: 4, lastError: failure })]]);
+    fifth.dataSource.transaction.mockRejectedValueOnce(new Error('syntax error'));
+    await fifth.service.drain();
+    expect(fifth.queries.find(([sql]) => sql.includes('SET attempts = $2'))![1]![3]).toBe(
+      'permanent'
+    );
+  });
+
   it('accuses every job pending for more than a day, and every blocked one, at error level', async () => {
     const { service, dataSource } = make();
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     dataSource.query
+      .mockResolvedValueOnce([[], 0]) // the journal purge
       .mockResolvedValueOnce([{ pending: 2, blocked: 1, completed24h: 5, closed24h: 0 }])
       .mockResolvedValueOnce([
         {

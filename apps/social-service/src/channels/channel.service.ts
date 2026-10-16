@@ -5,6 +5,8 @@ import {
   Logger,
   BadRequestException,
   ConflictException,
+  HttpException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { isUniqueViolation } from '../common/pg-errors';
 import { isUnsafeObjectKey } from '../common/object-keys';
@@ -712,9 +714,10 @@ export class ChannelService {
    * account left in it keeps an MLS leaf authorised forever.
    *
    * @returns the number of communities the account was taken out of.
-   * @throws ConflictException `ERASURE_WORKSPACE_REPAIR_FAILED` when a community could not be
-   *   processed: the erasure queue keeps retrying, and classes the answer PERMANENT - a repair that
-   *   failed is not a service that was down, so a human is told at once rather than in a day.
+   * @throws ServiceUnavailableException `ERASURE_WORKSPACE_REPAIR_FAILED` (503) when any failure was
+   *   transport, 5xx or database: the queue classes it TRANSIENT and retries quietly.
+   * @throws ConflictException `ERASURE_WORKSPACE_REPAIR_FAILED` (409) when every failure was a
+   *   logical refusal: the queue classes it PERMANENT, so a human is told at once.
    */
   async removeAccountFromWorkspaces(deletedUserId: string): Promise<number> {
     const workspaceIds = [
@@ -728,6 +731,7 @@ export class ChannelService {
       ),
     ];
     const failed: string[] = [];
+    let transient = false;
     for (const workspaceId of workspaceIds) {
       try {
         await this.cutOffEveryPrivateChannel(workspaceId, deletedUserId, 'account_deleted');
@@ -735,6 +739,7 @@ export class ChannelService {
         await this.memberRepo.delete({ workspaceId, userId: deletedUserId });
       } catch (err) {
         failed.push(workspaceId);
+        transient ||= isTransientFailure(err);
         this.logger.error(
           `[WORKSPACE] account removal failed workspace=${workspaceId} ` +
             `user=${deletedUserId.slice(0, 8)} - left for the erasure retry: ` +
@@ -743,11 +748,15 @@ export class ChannelService {
       }
     }
     if (failed.length > 0) {
-      throw new ConflictException({
+      const body = {
         code: 'ERASURE_WORKSPACE_REPAIR_FAILED',
         message: `account removal incomplete: ${failed.length}/${workspaceIds.length} communities failed`,
         failedWorkspaces: failed,
-      });
+      };
+      // 503 when ANY failure was infrastructure (chat-delivery down, a database blip): the queue
+      // retries it as transient. 409 only when every failure was a refusal no retry is expected to fix.
+      if (transient) throw new ServiceUnavailableException(body);
+      throw new ConflictException(body);
     }
     return workspaceIds.length;
   }
@@ -4606,4 +4615,13 @@ export class ChannelService {
       permissions: role.permissions,
     };
   }
+}
+
+/**
+ * Whether a failure is infrastructure (a service down or slow, a database error, a 5xx) rather than
+ * a refusal: only an HTTP exception below 500 is a logical answer, everything else may pass by itself.
+ */
+export function isTransientFailure(err: unknown): boolean {
+  if (err instanceof HttpException) return err.getStatus() >= 500;
+  return true;
 }

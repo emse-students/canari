@@ -122,12 +122,10 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'posts.reactions': { action: 'anonymise', via: 'reactions' },
   // A vote on somebody else's salon poll: `metadata.poll.votesByUser[userId]`, server-readable.
   'channel_messages.metadata': { action: 'anonymise', via: 'votesByUser' },
-  'posts.mentions': {
-    action: 'kept',
-    reason:
-      "another author's post names the account in its text; the id is that author's content, and " +
-      'a person who returns signs in under the same OIDC subject and is mentioned again',
-  },
+  // The id of a mention is the account's identifier whoever wrote the post: it is removed from the
+  // column and the `@[id]` token is rewritten to `@[deleted]` in the markdown and in comments.
+  'posts.mentions': { action: 'anonymise' },
+  'posts.markdown': { action: 'anonymise' },
   'posts.links': NO_ACCOUNT('link previews (URL, title, image) of a post'),
   'posts.images': NO_ACCOUNT('media references of a post: media ids and dimensions'),
   'posts.forms': NO_ACCOUNT('form references a post embeds'),
@@ -351,6 +349,24 @@ export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
                    array_remove(string_to_array("allowedUsers", ','), lower($1)), ',')
            WHERE lower($1) = ANY(string_to_array("allowedUsers", ','))`,
   },
+  // Its mention on OTHER people's posts: the column (comma-joined, ids compared lower-cased) ...
+  {
+    label: 'post_mentions',
+    sql: `UPDATE posts
+             SET mentions = COALESCE((SELECT string_agg(m, ',') FROM unnest(string_to_array(mentions, ',')) m
+                                       WHERE lower(m) <> lower($1)), '')
+           WHERE lower($1) = ANY(string_to_array(lower(mentions), ','))`,
+  },
+  // ... and the `@[id]` token the text carries, which a reader renders as the person's name.
+  {
+    label: 'post_mention_tokens',
+    // The id is regex-escaped (every non-alphanumeric character), the match is case-insensitive.
+    sql: String.raw`UPDATE posts
+             SET markdown = regexp_replace(markdown,
+                   '@\[' || regexp_replace($1, '([^0-9a-zA-Z])', '\\\1', 'g') || '\]',
+                   '@[deleted]', 'gi')
+           WHERE position(lower('@[' || $1 || ']') in lower(markdown)) > 0`,
+  },
   // A reaction is one key of a map: removed in place, no row needs reading.
   {
     label: 'reactions',
@@ -392,7 +408,7 @@ export const KEPT_POST_MEDIA_SQL = `SELECT m->>'mediaId' AS "mediaId"
  * {@link jsonStringLikePattern} - a candidate filter only; the scrub functions decide.
  */
 export const CANDIDATE_POSTS_SQL = `SELECT id, comments, polls FROM posts
-  WHERE comments::text LIKE $1 OR polls::text LIKE $1
+  WHERE comments::text LIKE $1 OR polls::text LIKE $1 OR comments::text ILIKE $2
   FOR UPDATE`;
 
 /**
@@ -412,6 +428,17 @@ type StoredComment = Record<string, any> & {
   userId?: string;
   parentId?: string | null;
 };
+
+/** The `@[id]` mention token of the account, matched case-insensitively with the id escaped. */
+export function mentionTokenRe(userId: string): RegExp {
+  const escaped = userId.replace(/[.*+?^${}()|[\]\\]/g, (c) => `\\${c}`);
+  return new RegExp(`@\\[${escaped}\\]`, 'gi');
+}
+
+/** The ILIKE pattern finding comments that carry the account's mention token (a candidate filter). */
+export function mentionLikePattern(userId: string): string {
+  return `%@[${userId.replace(/[\\%_]/g, (c) => `\\${c}`)}]%`;
+}
 
 /**
  * The comments of one post without the erased account: its own comments are removed, its likes
@@ -450,6 +477,14 @@ export function scrubComments(
       if (c.parentId && removed.has(c.parentId)) {
         next = { ...next, parentId: survivingParent(c.parentId) };
         changed = true;
+      }
+      // A mention of the account inside somebody else's comment text.
+      if (typeof c.text === 'string') {
+        const text = c.text.replace(mentionTokenRe(userId), '@[deleted]');
+        if (text !== c.text) {
+          next = { ...next, text };
+          changed = true;
+        }
       }
       return next;
     });
@@ -573,7 +608,7 @@ export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<So
   let postsScrubbed = 0;
   const candidates = await db.read<{ id: string; comments: unknown; polls: unknown }>(
     CANDIDATE_POSTS_SQL,
-    [jsonStringLikePattern(userId)]
+    [jsonStringLikePattern(userId), mentionLikePattern(userId)]
   );
   for (const post of candidates) {
     const params = scrubbedPostParams(post, userId);

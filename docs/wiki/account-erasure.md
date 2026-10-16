@@ -66,6 +66,10 @@ and is followed by exactly one more call. An open WebSocket outlives its token, 
 relays ephemeral frames (typing, Welcome requests), and the account's routes are removed from every
 group by the first pass.
 
+**The journal keeps a digest only 30 days.** An unsalted SHA-256 of an identifier guessable from the
+school's directory is still an identifier, so completed rows are DELETED after 30 days (backups
+live 14, so a replay of the erasures they predate still has its digests), by the daily report.
+
 **The journal.** `account_erasure_jobs` is queue and journal at once. A pending row carries the
 OIDC subject (authentik's opaque `hashed_user_id`) because the call is made with it and the sign-in
 refusal looks it up; a completed row carries `sha256:<digest>` and its timestamps only. No name, no
@@ -135,8 +139,12 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   reach into a backup; restoring one would resurrect erased accounts, and the restore procedure owes
   a replay of the completed erasures (their subjects are digests, so the replay must be by digest
   match, which is not built - see [backlog](backlog.md)).
+- **A queued commit or Welcome keeps its `senderId`** in chat-delivery: it is the recipient's protocol
+  state, read when it is delivered (push suppression, routing), and rewriting it was not shown safe.
+  It leaves the queue when delivered.
 - **media `association` documents and public assets survive** the uploader, by design
-  (`survivesAccountDeletion`): a vault document and a logo belong to the association. Blobs uploaded
+  (`survivesAccountDeletion`): a vault document and a logo belong to the association; their
+  `ownerId` is rewritten to `[deleted]`, so nothing attributes them to the account. Blobs uploaded
   before 2026-08-11 carry no owner and cannot be attributed to anyone.
 - **MLS ciphertext in multi-member groups stays**: on the other members' devices, which received it
   and are the only holders of a key, and on the server in the group's shared history stream
@@ -148,8 +156,13 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   Remove - no server purge can change a tree.
 - **Salon messages of OTHER members that quote the account** are their content; only the account's
   own messages are deleted (decision 2026-10-16: erasure beats continuity).
-- **Another author's text that names the account** (a mention, a quote) is that author's content;
-  `posts.mentions` keeps the id.
+- **Another author's text that names the account is ANONYMISED, not kept.** A mention is the
+  account's identifier whoever wrote the post: it is removed from `posts.mentions`, and the
+  `@[<id>]` token becomes `@[deleted]` in `posts.markdown` and in other people's comment text
+  (`scrubComments`; the candidate filter also matches the token). The frontend does not parse
+  `@[deleted]` as a mention (it is not an id), so it shows as that literal text. A QUOTE of the
+  account's words inside another author's free text is not found and stays. Poll question/option
+  text is not scanned for tokens.
 - **The MiConnect (authentik) identity is not deleted**: it is the school's identity provider, not
   Canari's data. Signing in after the erasure creates a new, empty Canari account.
 - **Logs** keep the first eight characters of the subject on the erasure lines, for their retention.
@@ -181,3 +194,15 @@ UPDATE account_erasure_jobs
 ```
 
 Closing a job early only lifts the sign-in refusal and unblocks `media`; it erases nothing.
+
+**Timing constants.** The final pass waits for the access token's TTL plus 120 s of skew (the
+gateways accept a token 60 s past its expiry, so the skew is double that leeway). One job is
+claimed at a time with a 300 s lease: jobs run one after the other, each up to 120 s, so a batch
+leased together would let the last ones' lease run out while the first still ran.
+
+**Sticky classes, and the core pass.** A job's `lastFailureKind` never goes from `permanent` back to
+`transient` while it keeps failing (it clears on a success): the sign-in message must not flip. The
+`core` job's pass is local, so a database error has no network to blame: the SAME failure five
+times in a row is classed `permanent`. social answers 503 (transient) when any community failure was
+infrastructure - chat-delivery down, a database blip - and 409 (permanent) only when every failure
+was a refusal.

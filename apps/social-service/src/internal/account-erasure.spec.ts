@@ -1,4 +1,9 @@
-import { jsonStringLikePattern, scrubComments, scrubPolls } from './account-erasure';
+import {
+  jsonStringLikePattern,
+  mentionLikePattern,
+  scrubComments,
+  scrubPolls,
+} from './account-erasure';
 import { InternalController } from './internal.controller';
 import { ERASURE_STATEMENTS, WRITE_SCRUBBED_POST_SQL } from './account-erasure';
 
@@ -119,6 +124,21 @@ describe('scrubPolls', () => {
       scrubPolls([{ id: 'p', options: [{ id: 'a', votes: ['x'] }], votesByUser: { x: ['a'] } }], ME)
         .changed
     ).toBe(false);
+  });
+});
+
+describe('mentions of the erased account', () => {
+  it('rewrites the token in somebody else comment text, any case, and leaves other mentions', () => {
+    const { comments, changed } = scrubComments(
+      [{ id: 'c', userId: 'x', text: 'hi @[ERASED] and @[other]', likes: [] }],
+      'erased'
+    ) as { comments: Array<{ text: string }>; changed: boolean };
+    expect(changed).toBe(true);
+    expect(comments[0].text).toBe('hi @[deleted] and @[other]');
+  });
+
+  it('escapes the id in the candidate pattern', () => {
+    expect(mentionLikePattern('a_b')).toBe(String.raw`%@[a\_b]%`);
   });
 });
 

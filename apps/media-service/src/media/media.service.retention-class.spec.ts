@@ -216,6 +216,8 @@ describe('retention class: account deletion', () => {
 
     expect(await service.removeAllOwnedBy('departing-member')).toEqual({ deleted: 0, failed: 0 });
     expect(deleted).toEqual([]);
+    // ... but it is no longer attributed to the erased account.
+    expect(items[UUID_DOCUMENT].ownerId).toBe('[deleted]');
   });
 
   it('still SKIPS a public asset - a logo outlives the member who uploaded it', async () => {
@@ -236,6 +238,30 @@ describe('retention class: account deletion', () => {
 });
 
 describe('account deletion is retried until it is complete', () => {
+  it('writes the index on a retry that has nothing left to delete, after a failed write', async () => {
+    const items: Record<string, Entry> = {
+      [UUID_ARCHIVE]: {
+        createdAt: LONG_IDLE,
+        lastAccessAt: Date.now(),
+        retentionClass: 'archive',
+        ownerId: 'departing-member',
+      },
+    };
+    const { service } = serviceWith(items);
+    const internals = service as unknown as ServiceInternals;
+    const persist = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('disk full'))
+      .mockResolvedValue(undefined);
+    internals.persistMetadata = persist;
+
+    // The blob is gone, the index write failed: the call fails and the queue retries.
+    await expect(service.removeAllOwnedBy('departing-member')).rejects.toThrow('disk full');
+    // The retry finds nothing to delete, and still gets the index to disk.
+    expect(await service.removeAllOwnedBy('departing-member')).toEqual({ deleted: 0, failed: 0 });
+    expect(persist).toHaveBeenCalledTimes(2);
+  });
+
   it('leaves an object whose delete FAILED live, so the next call removes it', async () => {
     const items: Record<string, Entry> = {
       [UUID_ARCHIVE]: {

@@ -122,6 +122,8 @@ maybe('account erasure against PostgreSQL', () => {
   async function seed(): Promise<void> {
     for (const [key, d] of Object.entries(ACCOUNT_ERASURE_COVERAGE)) {
       if (d.action === 'kept' || d.action === 'code' || ('via' in d && d.via)) continue;
+      // Seeded as a real token, a column and a comment text by `seedMention`.
+      if (key === 'posts.mentions' || key === 'posts.markdown') continue;
       const [table, column] = key.split('.');
       for (const who of [ERASED, OTHER]) {
         const value = column === 'allowedUsers' ? `${who},third` : who;
@@ -154,6 +156,20 @@ maybe('account erasure against PostgreSQL', () => {
             votesByUser: { [ERASED]: ['a'], [OTHER]: ['a'] },
           },
         ]),
+      ]
+    );
+  }
+
+  /** A post by somebody else that MENTIONS the account: in its column, its text and a comment's. */
+  async function seedMention(): Promise<void> {
+    await client.query(
+      `INSERT INTO posts ("authorId", markdown, mentions, comments)
+       VALUES ($1, $2, $3, $4::jsonb)`,
+      [
+        OTHER,
+        `hello @[${ERASED.toUpperCase()}] and @[${OTHER}]`,
+        `${ERASED},${OTHER}`,
+        JSON.stringify([{ id: 'm1', userId: OTHER, text: `thanks @[${ERASED}]`, likes: [] }]),
       ]
     );
   }
@@ -197,6 +213,7 @@ maybe('account erasure against PostgreSQL', () => {
 
   it('leaves no row naming the account, keeps the other account, and is idempotent', async () => {
     await seed();
+    await seedMention();
     expect((await tablesStillNaming(ERASED)).length).toBeGreaterThan(10);
     const submissionsBefore = (await client.query(`SELECT count(*)::int AS n FROM submissions`))
       .rows[0].n;
@@ -215,6 +232,15 @@ maybe('account erasure against PostgreSQL', () => {
     ]);
     expect(post.polls[0].options[0].votes).toEqual([OTHER]);
     expect(post.reactions).toEqual({ [OTHER]: 'love' });
+    // A mention is anonymised in the column, the text and a comment; the other mention stays.
+    const mention = (
+      await client.query(
+        `SELECT markdown, mentions, comments FROM posts WHERE markdown LIKE 'hello%'`
+      )
+    ).rows[0];
+    expect(mention.markdown).toBe(`hello @[deleted] and @[${OTHER}]`);
+    expect(mention.mentions).toBe(OTHER);
+    expect(mention.comments[0].text).toBe('thanks @[deleted]');
     // A submission keeps its seat and loses its answers and address.
     const subs = await client.query(
       `SELECT count(*)::int AS seats,

@@ -140,6 +140,23 @@ maybe('account erasure queue against PostgreSQL', () => {
     // Nobody completes before every token of the account has expired.
     expect(jobs.every((j: { completedAt: Date | null }) => j.completedAt === null)).toBe(true);
 
+    // A job that failed PERMANENT once stays so while it keeps failing: the sign-in message does not
+    // flip back to "wait" because the next failure happened to be a 503.
+    await ds.query(
+      `UPDATE account_erasure_jobs SET "lastFailureKind" = 'permanent', "nextAttemptAt" = now()
+        WHERE service = 'social'`
+    );
+    expect(await service.erasureState(SUBJECT)).toBe('blocked');
+    axios.delete = jest.fn(async () => {
+      throw Object.assign(new Error('down'), { response: { status: 503 } });
+    });
+    await service.drain();
+    const [social] = await ds.query(
+      `SELECT attempts, "lastFailureKind" FROM account_erasure_jobs WHERE service = 'social'`
+    );
+    expect(social).toEqual({ attempts: 2, lastFailureKind: 'permanent' });
+    axios.delete = jest.fn(async () => ({ data: { ok: true } }));
+
     // Time passes: the tokens expire and every job is due again.
     await ds.query(
       `UPDATE account_erasure_jobs SET "credentialsExpireAt" = now() - interval '1 second',

@@ -465,6 +465,8 @@ interface ChunkSession {
   /** Gives the reserved bytes back; idempotent. */
   release: () => void;
 }
+/** The owner written on an object that outlives the account that uploaded it. */
+const DELETED_OWNER = '[deleted]';
 
 @Injectable()
 export class MediaService {
@@ -1296,7 +1298,12 @@ export class MediaService {
       // the member who uploaded it, but an archived post photo is still that member's and must go
       // with the account. Exemption from the idle sweep is not exemption from erasure, and
       // conflating the two here would have made account deletion silently stop reaching the feed.
-      if (this.survivesAccountDeletion(entry)) continue;
+      if (this.survivesAccountDeletion(entry)) {
+        // The object stays, the person does not: it is no longer attributable to the erased account.
+        this.meta.items[mediaId] = { ...entry, ownerId: DELETED_OWNER };
+        this.erasureIndexDirty = true;
+        continue;
+      }
 
       try {
         await this.storage.delete(mediaId);
@@ -1320,9 +1327,15 @@ export class MediaService {
         purgedAt: Date.now(),
         purgeReason: 'manual_delete',
       };
+      this.erasureIndexDirty = true;
     }
 
-    if (deleted > 0 || failed > 0) await this.persistMetadata();
+    // Whenever an entry changed, here or in an earlier call whose write failed: the blob is gone, and
+    // a retry that finds nothing left to delete must still get the index to disk.
+    if (this.erasureIndexDirty) {
+      await this.persistMetadata();
+      this.erasureIndexDirty = false;
+    }
     this.logger.log(
       `Account deletion for ${ownerId.slice(0, 8)}...: ${deleted} media deleted, ${failed} failed`
     );
@@ -1843,6 +1856,9 @@ export class MediaService {
    * serialises the index as it is WHEN ITS TURN COMES, so the last write always carries the latest
    * state. A failed write rejects to ITS caller and does not stop the next one from running.
    */
+  /** In-memory index changed by an account erasure and not yet written (a failed write leaves it set). */
+  private erasureIndexDirty = false;
+
   private persistMetadata(): Promise<void> {
     const previous = this.metadataWrites ?? Promise.resolve();
     // Run after the previous write whatever its outcome: its failure was already handed to the

@@ -29,8 +29,23 @@ const CLAIM_LEASE_SECONDS = 300;
 /** Above the slowest downstream erasure measured, below the lease. */
 const CALL_TIMEOUT_MS = 120_000;
 /** Seconds added to the token TTL before the final pass, for clock skew between the hosts. */
-const CREDENTIAL_SKEW_SECONDS = 60;
-const CLAIM_BATCH = 10;
+const CREDENTIAL_SKEW_SECONDS = 120;
+/**
+ * ONE job per claim: jobs run one after the other, each up to {@link CALL_TIMEOUT_MS}, so a batch
+ * leased together would let the last ones' lease run out while the first still ran.
+ */
+const CLAIM_BATCH = 1;
+/**
+ * A completed row keeps a digest of the subject for this long, then is deleted: an unsalted hash of
+ * an identifier that is guessable from the school's own directory is an identifier, kept for ever.
+ * Backups are kept 14 days, so 30 covers a replay of the erasures they predate.
+ */
+const JOURNAL_RETENTION_DAYS = 30;
+/**
+ * Identical consecutive failures of the `core` job (a database statement, deterministic) after which
+ * it is classed PERMANENT: a deployment's SQL that fails the same way N times will not pass by itself.
+ */
+const REPEATED_LOCAL_FAILURE_LIMIT = 5;
 
 interface ClaimedJob {
   id: string;
@@ -39,6 +54,7 @@ interface ClaimedJob {
   attempts: number;
   credentialsExpireAt: Date;
   lastAttemptAt: Date;
+  lastError: string | null;
 }
 
 /** Where a subject's erasure stands, as the sign-in refusal needs it. */
@@ -216,7 +232,8 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
            ORDER BY "nextAttemptAt"
            LIMIT $2
            FOR UPDATE SKIP LOCKED)
-        RETURNING id, "subjectId", service, attempts, "credentialsExpireAt", "lastAttemptAt"`,
+        RETURNING id, "subjectId", service, attempts, "credentialsExpireAt", "lastAttemptAt",
+                  "lastError"`,
       [
         CLAIM_LEASE_SECONDS,
         CLAIM_BATCH,
@@ -297,11 +314,25 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
     const attempts = job.attempts + 1;
     const delaySeconds = Math.round(retryDelayMs(attempts) / 1000);
     const failure = describeFailure(err);
-    const kind = classifyFailure(err);
+    let kind = classifyFailure(err);
+    const target = ERASURE_TARGETS.find((t) => t.service === job.service);
+    if (
+      kind === 'transient' &&
+      target?.kind === 'local' &&
+      job.lastError === failure &&
+      attempts >= REPEATED_LOCAL_FAILURE_LIMIT
+    ) {
+      // A local pass has no network to blame: the same database error again and again is a defect.
+      kind = 'permanent';
+    }
     try {
       await this.dataSource.query(
         `UPDATE account_erasure_jobs
-            SET attempts = $2, "lastError" = $3, "lastFailureKind" = $4,
+            SET attempts = $2, "lastError" = $3,
+                -- STICKY: a job that failed permanent once stays permanent until a pass succeeds, so
+                -- the sign-in message never flips between "wait" and "contact us" with each attempt.
+                "lastFailureKind" = CASE WHEN "lastFailureKind" = 'permanent' THEN 'permanent'
+                                         ELSE $4 END,
                 "nextAttemptAt" = now() + make_interval(secs => $5)
           WHERE id = $1 AND "completedAt" IS NULL`,
         [job.id, attempts, failure, kind, delaySeconds]
@@ -325,6 +356,18 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
     }
   }
 
+  /** Deletes completed journal rows older than {@link JOURNAL_RETENTION_DAYS}. */
+  private async purgeJournal(): Promise<number> {
+    const [, deleted] = (await this.dataSource.query(
+      `DELETE FROM account_erasure_jobs
+        WHERE "completedAt" < now() - make_interval(days => $1)`,
+      [JOURNAL_RETENTION_DAYS]
+    )) as [unknown, number];
+    if (deleted > 0)
+      this.logger.log(`[ERASURE] journal: ${deleted} completed row(s) past retention purged`);
+    return deleted;
+  }
+
   /**
    * The daily report: one summary line, and one ERROR line per job pending longer than
    * {@link OVERDUE_AFTER_HOURS} hours - an erasure owed for a day is either a service that has been
@@ -339,6 +382,7 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
     completed24h: number;
   } | null> {
     try {
+      await this.purgeJournal();
       const [summary] = (await this.dataSource.query(
         `SELECT count(*) FILTER (WHERE "completedAt" IS NULL)::int AS pending,
                 count(*) FILTER (WHERE "completedAt" IS NULL

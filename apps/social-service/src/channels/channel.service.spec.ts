@@ -2239,6 +2239,30 @@ describe('ChannelService security hardening', () => {
     expect(rows.map((r) => r.userId)).not.toContain('boss');
   });
 
+  it('a transient failure (chat-delivery down, a database blip) answers 503, a refusal answers 409', async () => {
+    const mk = () => {
+      const repos = makeService();
+      arrangeGovernedCommunity(repos, [
+        { userId: 'boss', roleIds: ['r-admin'] },
+        { userId: 'mod', roleIds: ['r-mod'] },
+      ]);
+      return repos;
+    };
+    const blip = mk();
+    blip.memberRepo.save.mockImplementationOnce(() => Promise.reject(new Error('db blip')));
+    await expect(blip.service.removeAccountFromWorkspaces('boss')).rejects.toMatchObject({
+      status: 503,
+    });
+
+    const refused = mk();
+    refused.memberRepo.save.mockImplementationOnce(() =>
+      Promise.reject(new ForbiddenException('refused'))
+    );
+    await expect(refused.service.removeAccountFromWorkspaces('boss')).rejects.toMatchObject({
+      status: 409,
+    });
+  });
+
   describe('the Graine history floor (WP-34)', () => {
     /**
      * WHERE A MEMBER'S PAST STOPS, computed on the server because only the server holds both halves.
