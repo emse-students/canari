@@ -18,7 +18,7 @@
   } from '$lib/associations/api';
   import { reviewerJournal, type JournalLine } from '$lib/admin/readAccess';
   import { showConfirm } from '$lib/stores/confirm.svelte';
-  import { showUndoToast } from '$lib/stores/toast.svelte';
+  import { showToast, showUndoToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
   import AccessSection from './AccessSection.svelte';
   import ReviewerCard from './ReviewerCard.svelte';
@@ -36,7 +36,8 @@
   let loading = $state(true);
   let adding = $state(false);
   let error = $state<string | null>(null);
-  const removing = new SvelteSet<string>();
+  /** People with a write in flight - per person, so an undo for one never waits on another. */
+  const busy = new SvelteSet<string>();
 
   const journalLines = $derived<JournalLine[]>(
     reviewerJournal(reviewers).map((line) => ({
@@ -53,10 +54,25 @@
     names.resolve(list.flatMap((r) => [r.userId, r.grantedBy]));
   }
 
-  /** Grants, then lists the new row. `undoable` offers removing it again. */
-  async function grant(userId: string, undoable: boolean) {
-    if (adding) return;
-    adding = true;
+  /**
+   * Says why a call did nothing: a write for this person is still in flight. Reached by an undo
+   * pressed meanwhile; the form's own button is busy-disabled and the card's remove button too.
+   */
+  function refuseBusy(userId: string): boolean {
+    if (!busy.has(userId)) return false;
+    Log.d('admin.document-reviewers.write refused, still saving', { userId });
+    showToast(m.readaccess_busy(), 'warning');
+    return true;
+  }
+
+  /**
+   * Grants, then lists the new row. `undoable` offers removing it again. Answers whether it
+   * succeeded, so the search keeps the person picked when it did not.
+   */
+  async function grant(userId: string, undoable: boolean): Promise<boolean> {
+    if (refuseBusy(userId)) return false;
+    busy.add(userId);
+    if (undoable) adding = true;
     error = null;
     Log.d('admin.document-reviewers.grant', { userId, undoable });
     try {
@@ -66,9 +82,10 @@
     } catch (e) {
       Log.d('admin.document-reviewers.grant failed', e);
       error = m.common_generic_error_label();
-      return;
+      return false;
     } finally {
-      adding = false;
+      busy.delete(userId);
+      if (undoable) adding = false;
     }
     if (undoable) {
       showUndoToast(m.docreview_added_toast({ name: names.nameOf(userId) }), () => {
@@ -76,12 +93,13 @@
         void revoke(userId, false);
       });
     }
+    return true;
   }
 
   /** Revokes, then drops the row. `undoable` offers granting it again. */
   async function revoke(userId: string, undoable: boolean) {
-    if (removing.has(userId)) return;
-    removing.add(userId);
+    if (refuseBusy(userId)) return;
+    busy.add(userId);
     error = null;
     Log.d('admin.document-reviewers.revoke', { userId, undoable });
     try {
@@ -92,7 +110,7 @@
       error = m.common_delete_error();
       return;
     } finally {
-      removing.delete(userId);
+      busy.delete(userId);
     }
     if (undoable) {
       showUndoToast(m.docreview_removed_toast({ name: names.nameOf(userId) }), () => {
@@ -146,6 +164,7 @@
   emptyTitle={m.docreview_empty()}
   emptyDescription={m.docreview_empty_desc()}
   journal={journalLines}
+  journalLabel={m.docreview_current_summary({ count: reviewers.length })}
   journalEmpty={m.docreview_journal_empty()}
   journalNote={m.docreview_journal_note()}
 >
@@ -155,7 +174,7 @@
         name={names.nameOf(row.userId)}
         actorName={names.nameOf(row.grantedBy)}
         grantedAt={row.createdAt}
-        removing={removing.has(row.userId)}
+        removing={busy.has(row.userId)}
         onRemove={() => void confirmRevoke(row.userId)}
       />
     {/each}

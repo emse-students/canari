@@ -28,8 +28,11 @@
     inputId: string;
     /** Users the search must not offer (already in the list). */
     excludeIds?: string[];
-    /** Called with the picked user id; the field clears once it resolves. */
-    onAdd: (userId: string) => void | Promise<void>;
+    /**
+     * Called with the picked user id. The field clears only when it answers `true`: a failed add
+     * keeps the person picked, so trying again is one press (the panel shows the error).
+     */
+    onAdd: (userId: string) => boolean | Promise<boolean>;
     adding?: boolean;
     loading: boolean;
     count: number;
@@ -41,6 +44,11 @@
     /** A line under the list (a footnote about the data). */
     footnote?: string;
     journal: JournalLine[];
+    /**
+     * The journal's summary, count included, worded by the caller - what the list IS differs per
+     * tab (a capped server journal, or the grants in force), so the template does not guess.
+     */
+    journalLabel: string;
     journalEmpty: string;
     /** A line inside the journal saying what it cannot show. */
     journalNote?: string;
@@ -65,6 +73,7 @@
     list,
     footnote,
     journal,
+    journalLabel,
     journalEmpty,
     journalNote,
   }: Props = $props();
@@ -81,7 +90,7 @@
       document.getElementById(inputId)?.focus();
       return;
     }
-    await onAdd(userId);
+    if (!(await onAdd(userId))) return;
     picked = '';
     fieldGeneration += 1;
   }
@@ -128,7 +137,7 @@
         />
       {/key}
     </div>
-    <Button type="submit" loading={adding} class="shrink-0">
+    <Button type="submit" loading={adding} aria-busy={adding} class="shrink-0">
       {#if !adding}<UserPlus size={16} />{/if}
       {addLabel}
     </Button>
@@ -160,7 +169,7 @@
 
   <details class="border-cn-border rounded-lg border" data-testid="access-journal">
     <summary class="text-text-main cursor-pointer px-4 py-3 text-sm font-semibold select-none">
-      {m.readaccess_journal_summary({ count: journal.length })}
+      {journalLabel}
     </summary>
     <div class="border-cn-border space-y-2 border-t px-4 py-3">
       {#if journal.length === 0}

@@ -111,7 +111,7 @@ it('a box in the sheet saves at once, and the toast undoes it with the inverse w
   expect(toastStore.toasts).toHaveLength(1);
 });
 
-it('a failed save puts the box back and says so', async () => {
+it('a failed save puts the box back and says so INSIDE the sheet, not on the page behind', async () => {
   api.setReadGrant.mockRejectedValueOnce(new Error('boom'));
   const target = await render();
   target.querySelector<HTMLButtonElement>('[data-testid="read-grant-card"] button')!.click();
@@ -120,8 +120,110 @@ it('a failed save puts the box back and says so', async () => {
   expect(box.checked).toBe(true);
   box.click();
   await vi.waitFor(() =>
-    expect(target.querySelector('[role="alert"]')?.textContent).toBe(m.readaccess_save_error())
+    expect(
+      document.querySelector('[data-testid="read-grant-sheet"] [role="alert"]')?.textContent
+    ).toBe(m.readaccess_save_error())
   );
+  expect(target.querySelector('[role="alert"]')).toBeNull();
   expect(box.checked).toBe(true);
   expect(toastStore.toasts).toHaveLength(0);
+});
+
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((r) => (resolve = r));
+  return { promise, resolve };
+}
+
+const cell = (formation: string | null) => ({ ...GRANT, formation });
+type Listing = { grants: unknown[]; journal: unknown[] };
+
+it('an older re-read landing after a newer one is dropped: B stays ticked, the next click is no revoke', async () => {
+  const target = await render();
+  target.querySelector<HTMLButtonElement>('[data-testid="read-grant-card"] button')!.click();
+  flushSync();
+  // A's re-read is answered LAST, with the server as it was before B was written.
+  const afterA = deferred<Listing>();
+  const afterB = deferred<Listing>();
+  api.listReadGrants.mockReturnValueOnce(afterA.promise).mockReturnValueOnce(afterB.promise);
+
+  const boxA = () =>
+    document.querySelector<HTMLInputElement>('input[data-cell="u1|gardanne|ICM"]')!;
+  const boxB = () =>
+    document.querySelector<HTMLInputElement>('input[data-cell="u1|gardanne|PDIS"]')!;
+  boxA().click();
+  await vi.waitFor(() => expect(api.listReadGrants).toHaveBeenCalledTimes(2));
+  boxB().click();
+  await vi.waitFor(() => expect(api.listReadGrants).toHaveBeenCalledTimes(3));
+
+  afterB.resolve({ grants: [GRANT, cell('ICM'), cell('PDIS')], journal: JOURNAL });
+  await vi.waitFor(() => expect(boxB().getAttribute('aria-busy')).toBe('false'));
+  afterA.resolve({ grants: [GRANT, cell('ICM')], journal: JOURNAL });
+  await vi.waitFor(() => expect(boxA().getAttribute('aria-busy')).toBe('false'));
+  flushSync();
+
+  expect(boxA().checked).toBe(true);
+  expect(boxB().checked).toBe(true);
+  const chips = [...target.querySelectorAll('[data-testid="read-grant-chip"]')].map((c) =>
+    c.textContent!.trim()
+  );
+  expect(chips).toContain('PDIS');
+
+  // The next click on B is a revoke only because B IS held.
+  boxB().click();
+  await vi.waitFor(() =>
+    expect(api.setReadGrant).toHaveBeenLastCalledWith('u1', 'gardanne', 'PDIS', false)
+  );
+});
+
+it('a box still saving is marked busy, and a click on it is put back', async () => {
+  const target = await render();
+  target.querySelector<HTMLButtonElement>('[data-testid="read-grant-card"] button')!.click();
+  flushSync();
+  const write = deferred<void>();
+  api.setReadGrant.mockReturnValueOnce(write.promise);
+  const box = document.querySelector<HTMLInputElement>('input[data-cell="u1|gardanne|ICM"]')!;
+  box.click();
+  flushSync();
+  expect(box.getAttribute('aria-busy')).toBe('true');
+  expect(box.getAttribute('aria-disabled')).toBe('true');
+  expect(box.disabled).toBe(false);
+  box.click();
+  flushSync();
+  expect(box.checked).toBe(true);
+  expect(api.setReadGrant).toHaveBeenCalledTimes(1);
+  write.resolve();
+  await vi.waitFor(() => expect(box.getAttribute('aria-busy')).toBe('false'));
+});
+
+it('the last change is undoable from inside the sheet, where the focus trap keeps a keyboard', async () => {
+  const target = await render();
+  target.querySelector<HTMLButtonElement>('[data-testid="read-grant-card"] button')!.click();
+  flushSync();
+  document.querySelector<HTMLInputElement>('input[data-cell="u1|gardanne|ICM"]')!.click();
+  const row = await vi.waitFor(() => {
+    const el = document.querySelector('[data-testid="read-grant-last-change"]');
+    expect(el).not.toBeNull();
+    return el!;
+  });
+  expect(row.closest('[role="dialog"]')).not.toBeNull();
+  const undo = row.querySelector('button')!;
+  expect(undo.textContent!.trim()).toBe(m.common_undo_label());
+  undo.click();
+  await vi.waitFor(() =>
+    expect(api.setReadGrant).toHaveBeenLastCalledWith('u1', 'gardanne', 'ICM', false)
+  );
+  flushSync();
+  expect(document.querySelector('[data-testid="read-grant-last-change"]')).toBeNull();
+});
+
+it('a full journal page is counted as "200+", not as the whole history', async () => {
+  api.listReadGrants.mockResolvedValue({
+    grants: [GRANT],
+    journal: Array.from({ length: 200 }, (_, i) => ({ ...JOURNAL[0], at: `2026-10-16T10:${i}` })),
+  });
+  const target = await render();
+  expect(target.querySelector('[data-testid="access-journal"] summary')!.textContent!.trim()).toBe(
+    m.readaccess_journal_summary({ count: '200+' })
+  );
 });

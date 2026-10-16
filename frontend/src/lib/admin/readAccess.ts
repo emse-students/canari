@@ -78,6 +78,18 @@ export function reviewerJournal(grants: readonly DocumentReviewerGrant[]): Revie
     .sort((a, b) => b.at.localeCompare(a.at));
 }
 
+/**
+ * How many journal lines `GET /read-grants` returns at most - `JOURNAL_PAGE` in
+ * `apps/social-service/src/read-grants/read-grants.service.ts`. A full page is the latest lines,
+ * not all of them, so its count is shown as "200+".
+ */
+export const READ_GRANT_JOURNAL_PAGE = 200;
+
+/** The count a journal summary shows: the number of lines, or "<page>+" for a full page. */
+export function journalCountLabel(lines: number, page: number = READ_GRANT_JOURNAL_PAGE): string {
+  return lines >= page ? `${page}+` : String(lines);
+}
+
 /** One journal line of an access section, already worded by the caller. */
 export interface JournalLine {
   /** Unique within the journal. */

@@ -16,18 +16,18 @@
     type ReadGrant,
     type ReadGrantJournalEntry,
   } from '$lib/associations/api';
-  import { cellKey, grantees, type JournalLine } from '$lib/admin/readAccess';
+  import { cellKey, grantees, journalCountLabel, type JournalLine } from '$lib/admin/readAccess';
   import {
     campusLabel,
     formationLabel,
     type Campus,
     type Formation,
   } from '$lib/profile/miconnectProfile';
-  import { showUndoToast } from '$lib/stores/toast.svelte';
+  import { showToast, showUndoToast } from '$lib/stores/toast.svelte';
   import { m } from '$lib/paraglide/messages';
   import AccessSection from './AccessSection.svelte';
   import ReadGrantCard from './ReadGrantCard.svelte';
-  import ReadGrantSheet from './ReadGrantSheet.svelte';
+  import ReadGrantSheet, { type LastChange } from './ReadGrantSheet.svelte';
   import { createNameBook } from './nameBook.svelte';
 
   interface Props {
@@ -44,6 +44,9 @@
   let error = $state<string | null>(null);
   /** The person whose sheet is open. */
   let editing = $state<string | null>(null);
+  /** The last change saved from the open sheet, offered for undo inside it. */
+  // `raw`: compared by identity in its own undo, which a deep proxy would never equal.
+  let lastChange = $state.raw<LastChange | null>(null);
   const saving = new SvelteSet<string>();
   /** A cell's state while its write is in flight, so the box shows the click at once. */
   const optimistic = new SvelteMap<string, boolean>();
@@ -81,8 +84,26 @@
     })
   );
 
+  /** Numbers each re-read in the order it was SENT. */
+  let refreshSent = 0;
+  /** The number of the newest re-read whose answer is on screen. */
+  let refreshApplied = 0;
+
+  /**
+   * Re-reads the grants and the journal. ANSWERS ARRIVE IN ANY ORDER: toggle A then B, and A's
+   * re-read - sent before B was written - may land after B's, so applying it would draw B unticked
+   * while the server holds it, and the next click would REVOKE it. An answer older than the one on
+   * screen is dropped. Once a write's own re-read returns, the screen shows that answer or a newer
+   * one, so the write is on it and its optimistic overlay may go.
+   */
   async function loadGrants() {
+    const seq = ++refreshSent;
     const res = await listReadGrants();
+    if (seq < refreshApplied) {
+      Log.d('admin.read-access.refresh superseded', { seq, applied: refreshApplied });
+      return;
+    }
+    refreshApplied = seq;
     grants = res.grants;
     journal = res.journal;
     names.resolve([
@@ -104,7 +125,12 @@
     undoable: boolean
   ) {
     const key = cellKey(userId, campus, formation);
-    if (saving.has(key)) return;
+    if (saving.has(key)) {
+      // Only an undo reaches here (the sheet puts a busy box back itself): say why nothing happened.
+      Log.d('admin.read-access.write refused, cell still saving', { key });
+      showToast(m.readaccess_busy(), 'warning');
+      return;
+    }
     saving.add(key);
     optimistic.set(key, granted);
     error = null;
@@ -133,19 +159,33 @@
       campus: campusLabel(campus),
       scope: scopeLabel(formation),
     };
-    showUndoToast(
-      granted ? m.readaccess_granted_toast(args) : m.readaccess_revoked_toast(args),
-      () => {
+    const text = granted ? m.readaccess_granted_toast(args) : m.readaccess_revoked_toast(args);
+    const change: LastChange = {
+      text,
+      undo: () => {
         Log.d('admin.read-access.undo', { userId, campus, formation, granted: !granted });
+        if (lastChange === change) lastChange = null;
         void writeCell(userId, campus, formation, !granted, false);
-      }
-    );
+      },
+    };
+    // The toast for a pointer, the row inside the sheet for a keyboard held by its focus trap.
+    lastChange = change;
+    showUndoToast(text, change.undo);
   }
 
-  function openSheet(userId: string) {
+  function openSheet(userId: string): boolean {
     Log.d('admin.read-access.openSheet', { userId });
     names.resolve([userId]);
+    lastChange = null;
+    error = null;
     editing = userId;
+    return true;
+  }
+
+  function closeSheet() {
+    Log.d('admin.read-access.closeSheet', { userId: editing });
+    editing = null;
+    lastChange = null;
   }
 
   onMount(async () => {
@@ -160,7 +200,8 @@
   });
 </script>
 
-{#if error}
+<!-- While the sheet is open the error is said inside it; the page behind is dimmed. -->
+{#if error && !editing}
   <p class="text-red-err mb-4 text-sm" role="alert">{error}</p>
 {/if}
 
@@ -179,6 +220,7 @@
   emptyTitle={m.readaccess_empty()}
   emptyDescription={m.readaccess_empty_desc()}
   journal={journalLines}
+  journalLabel={m.readaccess_journal_summary({ count: journalCountLabel(journal.length) })}
   journalEmpty={m.readaccess_journal_empty()}
 >
   {#snippet list()}
@@ -208,6 +250,8 @@
         !held.has(cellKey(userId, campus, formation)),
         true
       )}
-    onClose={() => (editing = null)}
+    {error}
+    {lastChange}
+    onClose={closeSheet}
   />
 {/if}

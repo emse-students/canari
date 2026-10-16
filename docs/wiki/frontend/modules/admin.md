@@ -109,13 +109,34 @@ The decisions, taken by the user on 2026-10-16:
   new grant, dated now and authored by whoever undid it**. The undo itself offers no undo.
 - **Removing a reviewer asks first** (`showConfirm`, danger) and the button carries its word
   ("Révoquer"), not a bare trash icon.
-- **The reviewers' journal is the grants in force** (who authorized whom, when): the server keeps no
-  history for that capability, so a removal leaves no trace, and the journal says so in a line.
-  The readers' journal is the server's append-only `read_grant_journal`.
+- **The reviewers' fold is labelled for what it is, "Accès en cours (n)"**: the server keeps no
+  history for that capability, only the grants in force (who authorized whom, when), so a removal
+  leaves no trace and a line says so. The readers' "Journal (n)" is the server's append-only
+  `read_grant_journal`, of which `GET /read-grants` returns the latest `JOURNAL_PAGE` (200) lines:
+  a full page reads "200+" (`journalCountLabel`; a test reads the server constant).
 
-Tests: `readAccess.test.ts`, `ReadGrantCard.svelte.test.ts` (chips), `ReadAccessPanel.svelte.test.ts`
-(save at once, undo = inverse write, failed save restores the box, journal folded with its count),
-`DocumentReviewersPanel.svelte.test.ts` (confirmation, undo re-grants, journal note).
+**What the review of #1957 fixed (2026-10-16).**
+
+- **RE-READS ANSWER IN ANY ORDER.** Tick A then B: A's re-read, sent before B was written, could
+  land after B's and draw B unticked while the server held it - and the next click REVOKED it.
+  `loadGrants` numbers each re-read when SENT and drops an answer older than the one on screen; a
+  write's optimistic overlay goes once its own re-read returns, by which point the screen shows that
+  answer or a newer one.
+- **Inside the sheet's focus trap a keyboard cannot reach the toast**, so the last change and its
+  "Annuler" are also a row in the sheet; a failed save is said in the sheet, not on the dimmed page.
+- **A box being saved is `aria-disabled` + `aria-busy`, dimmed with a spinner - never `disabled`**,
+  which drops focus to the page body behind the sheet; a click on it is put back. An undo that meets
+  a write still in flight for that cell or person says so in a toast instead of doing nothing; the
+  reviewers' writes are tracked per person, so an undo for one never waits on an add for another.
+- **A failed add keeps the person in the search field** (`onAdd` answers whether it succeeded).
+
+Tests: `readAccess.test.ts` (grouping, "200+", the server's page size), `ReadGrantCard.svelte.test.ts`
+(chips), `ReadAccessPanel.svelte.test.ts` (save at once, undo = inverse write, the re-read race -
+checked to FAIL with the sequence guard removed - busy box, undo in the sheet, failed save inside
+the sheet, the folded journal and its cap), `DocumentReviewersPanel.svelte.test.ts` (confirmation,
+undo re-grants, the in-force label), `routes/admin/read-access/page.tabs.svelte.test.ts` (two tabs
+for a global admin, the reviewers alone and no read-grants request for a BDE super-admin, the hub
+for anyone else).
 
 ## Cercle top-ups (`/admin/cercle`)
 

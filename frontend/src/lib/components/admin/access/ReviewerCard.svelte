@@ -35,6 +35,7 @@
     type="button"
     onclick={onRemove}
     disabled={removing}
+    aria-busy={removing}
     aria-label={m.docreview_revoke_aria({ name })}
     class="border-red-err/30 text-red-err hover:bg-red-err/10 inline-flex shrink-0 items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-semibold transition-colors disabled:opacity-50"
   >

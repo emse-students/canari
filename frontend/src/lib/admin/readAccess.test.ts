@@ -1,5 +1,17 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { cellKey, grantees, groupGrantsByCampus, reviewerJournal } from './readAccess';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import {
+  READ_GRANT_JOURNAL_PAGE,
+  cellKey,
+  grantees,
+  groupGrantsByCampus,
+  journalCountLabel,
+  reviewerJournal,
+} from './readAccess';
+
+// Kept in a variable: Vite rewrites `new URL('<literal>', import.meta.url)` into an asset URL.
+const SERVICE_REL = '../../../../apps/social-service/src/read-grants/read-grants.service.ts';
 import type { ReadGrant } from '$lib/associations/api';
 
 const grant = (userId: string, campus: string, formation: string | null): ReadGrant => ({
@@ -30,6 +42,19 @@ describe('groupGrantsByCampus', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     expect(groupGrantsByCampus([grant('u', 'paris', null)])).toEqual([]);
     expect(warn).toHaveBeenCalledOnce();
+  });
+});
+
+describe('the journal count', () => {
+  it('is the line count, or "<page>+" for a full page', () => {
+    expect(journalCountLabel(0)).toBe('0');
+    expect(journalCountLabel(199)).toBe('199');
+    expect(journalCountLabel(200)).toBe('200+');
+  });
+
+  it('uses the page size the server actually returns', () => {
+    const service = readFileSync(fileURLToPath(new URL(SERVICE_REL, import.meta.url)), 'utf8');
+    expect(service).toMatch(new RegExp(`export const JOURNAL_PAGE = ${READ_GRANT_JOURNAL_PAGE};`));
   });
 });
 

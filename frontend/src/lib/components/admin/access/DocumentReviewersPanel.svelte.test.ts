@@ -90,12 +90,12 @@ it('a confirmed removal drops the card, and its undo grants again', async () => 
   );
 });
 
-it('the journal is folded, counts the grants in force and says a removal is not kept', async () => {
+it('the list of grants in force is folded, labelled as such and says a removal is not kept', async () => {
   const target = await render();
   const journal = target.querySelector<HTMLDetailsElement>('[data-testid="access-journal"]')!;
   expect(journal.open).toBe(false);
   expect(journal.querySelector('summary')!.textContent!.trim()).toBe(
-    m.readaccess_journal_summary({ count: 1 })
+    m.docreview_current_summary({ count: 1 })
   );
   expect(journal.textContent).toContain(
     m.docreview_journal_grant({ actor: 'Name admin', name: 'Name r1' })
