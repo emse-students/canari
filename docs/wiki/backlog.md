@@ -59,6 +59,32 @@ to `default-provider-authorization-implicit-consent` in `/if/admin/`. The flow f
 policy skips the consent, it never locks anyone out. Accounts that never sign in again are never
 asked. See [authentik](infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16).
 
+## Decided by the user on 2026-10-16 - the GDPR pass over the whole ecosystem
+
+Source: a read-only DPO-style review of Canari, MiConnect, MiGallery, Sky, Le Cercle, Portail-etu and
+the estate (the register is [register-of-processing](compliance/register-of-processing.md)). Decisions,
+verbatim in substance: **controller** Association Rootz - EMSE for Canari and MiConnect, MiTV for
+MiGallery (bureau@mitv.fr); **MiConnect basis** = performance of the service, the tick only proves the
+terms were read; **the school HAS a DPO** (ask them to review once the work is solid; the
+[dossier](compliance/dso-dossier.md) is ready); **no written agreement with the DSI** beyond the two
+school charters (IT charter 2020, AI charter 2026) and ticket exchanges; **MiGallery faces STAY** with
+a DPIA, a recorded consent (existing links are `consent_source='legacy'`, the owner holds the proof),
+real erasure; an unlisted album serves only its own photos (fixed); **Le Cercle** legacy database is
+kept OUT of git (history rewrite approved after a local mirror; the GitLab project is readable by every
+school account), the balance is not refunded and the rule is stated where a member tops up and on the
+delete card; **logs** 90 days; **KLIPY** through our server (done); **dev** holds fictional data only
+(done, the wipe of the old copy is owed to the user); **push** payload content stays and is declared;
+**export** is a manual 30-day procedure; **Sky** placeholder people get a notice only; **backups** keep
+a deletion 14 days, stated, dumps to be encrypted; legacy cotisations of ~1400 non-users are kept with
+no purge date (flagged to the DPO); account deletion is a durable queue (PR in progress).
+
+**Open at the time of writing:** account erasure PR #1965 (two review rounds, blocking defects being
+fixed, NOT armed); MiGallery face consent and erasure PR #392 (review: the proof that the person's
+faces are gone is circular, the admin paths can relink a withdrawn person, wiki claims to correct);
+the MiConnect terms PR #1955 (armed; the stable that ships it needs the three conditions above);
+the Le Cercle history rewrite (owed: the permission system refused the destructive git step, the user
+runs it or approves it explicitly); sending the DPO dossier; the DSI log-retention request.
+
 ## Owed a VERIFICATION, and nothing else
 
 Each of these is fixed in the tree; what is left is the measurement that would prove it. **Nothing
