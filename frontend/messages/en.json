@@ -2834,7 +2834,7 @@
   "status_pill_offline": "Offline",
   "admin_maintenance_banner_text": "Maintenance mode active - only administrators have access.",
   "env_banner_test_label": "Test environment",
-  "env_banner_test_detail": "The data is a copy of production. Nothing you do here reaches the real accounts.",
+  "env_banner_test_detail": "The people and associations here are fictional. Nothing you do here reaches the real app.",
   "md_toolbar_aria_label": "Formatting",
   "md_toolbar_bold": "Bold",
   "md_toolbar_italic": "Italic",

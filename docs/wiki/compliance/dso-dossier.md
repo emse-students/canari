@@ -84,8 +84,9 @@ Destinataires hors de l'association, pour Canari :
    (nom, prénom, promotion, association), conservées **sans date de fin** pour leur permettre de
    récupérer leur cotisation. Nous souhaitons votre avis sur une durée, et sur l'information de
    ces personnes (art. 14) : n'ayant pas de compte, la politique de Canari ne les atteint pas.
-2. **Environnement de test** : une copie complète de la base de production (sans données de
-   paiement ni fichiers) sert à tester chaque version. Faut-il la pseudonymiser ?
+2. **Environnement de test** : il ne contient plus aucune donnée de la production depuis le
+   2026-10-16 (des personnes et associations fictives, et les comptes des testeurs qui s'y
+   connectent). Pour information ; plus de question sur ce point.
 3. **Notifications** : le nom de l'expéditeur et du groupe part en clair vers Google et Apple ;
    c'est un choix technique assumé, déclaré dans la politique.
 4. **Âge minimum** : 15 ans, fixé par référence à l'art. 45 de la loi Informatique et Libertés

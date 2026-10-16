@@ -476,7 +476,8 @@ the first-gesture rule are not it.
 video` at error level (`ReelSlide.svelte`), which reaches the in-app log - the reading had to find
 this in the database. **What is owed to the user:** the copy should DELETE reels (with their
 `post_notifications`, as the expiry worker does) instead of emptying them; a deletion in the copy
-script waits for the user's yes ([dev-environment](../../infrastructure/dev-environment.md#3-the-data-a-full-copy-of-production-the-two-things-it-strips-and-the-one-it-will-not)).
+script waits for the user's yes. Since 2026-10-16 that copy reaches only a developer's LOCAL stack -
+dev holds a fictional seed with no reel ([dev-environment](../../infrastructure/dev-environment.md#what-the-copy-was-kept-so-nobody-rebuilds-it)).
 
 ## Saving before the deletion (C6)
 

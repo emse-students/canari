@@ -18,7 +18,7 @@ alteration, unauthorised disclosure of, or access to, personal data. Three famil
 
 | Family | Examples on this estate |
 | --- | --- |
-| Confidentiality | a database dump or a backup archive read by someone not entitled to it; an API route answering another user's data; a log line carrying a personal field copied off the host; the dev estate (a copy of production) exposed |
+| Confidentiality | a database dump or a backup archive read by someone not entitled to it; an API route answering another user's data; a log line carrying a personal field copied off the host; the dev estate exposed (testers' own accounts; it holds no production row since 2026-10-16) |
 | Integrity | rows altered by an attacker or by a faulty migration; a forged session acting as a user |
 | Availability | `auth_db` or the media store lost with no restorable backup; ransomware on the shared host |
 

@@ -44,7 +44,7 @@ the school's).
 | C12 | Reports, blocks, moderation | enforce the terms of use | `content_reports`, `user_blocks`, `user_moderation` | 6.1.f | handled reports 90 days after handling; pending kept | [moderation-and-blocking](../moderation-and-blocking.md) |
 | C13 | Technical logs | security, diagnosis | nginx access log (IP, time, URI with `token=` redacted, UA), container logs | 6.1.f | **policy 90 days max (owner decision); today the container logs are bounded by size and the deploy archive by a COUNT of deploys, not a clock - enforcement in progress (OPEN)** | [logging](../infrastructure/logging.md) |
 | C14 | In-app notifications | activity list | `post_notifications` | 6.1.b | 90 days | `forms-reminder.scheduler.ts` |
-| C15 | Pre-release (dev) estate | test a version on realistic data | **a full copy of production's database**, payment columns and media references stripped | 6.1.f | until the next copy | [dev-environment](../infrastructure/dev-environment.md#3-the-data-a-full-copy-of-production-the-two-things-it-strips-and-the-one-it-will-not) - **proportionality to be validated by the DPO (OPEN)** |
+| C15 | Pre-release (dev) estate | test a version before it ships | **no production row** (owner, 2026-10-16): a generated fictional seed, plus the accounts testers create by signing in and what they post there; the copy of production is deleted from the code, and the copy dev still held is wiped by the owner's `dev-reset` (**OPEN until run**) | 6.1.f | until the next reset | [dev-environment](../infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16) |
 | C16 | Device-side storage | run the client | IndexedDB / SQLite (messages, MLS state, outbox encrypted under the PIN-derived device key; the conversation list in clear), cookies `canari_refresh` (HttpOnly, 7 d), `canari_ws_token` (session), `canari_adminer` (admins), preferences, in-app log (redacted, 2 MB) | 6.1.b; ePrivacy: strictly necessary, **except `klipy_cid`, which serves a third party's analytics (OPEN, disappears with the KLIPY proxy)** | on the device | privacy policy section 7 |
 
 **Account deletion** (`DELETE /api/users/me`, Settings > Supprimer mon compte) is immediate and fans
@@ -148,7 +148,7 @@ director and the host (**OPEN**, owed by a human).
 5. Database backup dumps encrypted.
 6. KLIPY through the server, with no identifier; `klipy_cid` removed.
 7. Legacy cotisations kept with no end date - the DPO's opinion.
-8. The dev estate's full copy of production - the DPO's opinion, or a pseudonymised copy.
+8. The dev estate's full copy of production - REPLACED by a fictional seed in the code (2026-10-16); the owner's one-off wipe of the copy dev still holds closes it.
 9. `submissions` retention rule.
 10. MiGallery: the DPIA's measures ([dpia-migallery-faces](dpia-migallery-faces.md#6-open-measures)).
 11. Le Cercle: controller, privacy page, leaderboard visibility.
