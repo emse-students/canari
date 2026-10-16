@@ -46,6 +46,14 @@ export class AccountErasureJob {
   @Column({ type: 'varchar', length: 500, nullable: true })
   lastError!: string | null;
 
+  /** `transient` or `permanent` (`classifyFailure`), cleared on success. */
+  @Column({ type: 'varchar', length: 16, nullable: true })
+  lastFailureKind!: 'transient' | 'permanent' | null;
+
   @Column({ type: 'timestamptz', nullable: true })
   completedAt!: Date | null;
+
+  /** Set only by an operator closing a stuck job by hand: what was done and why. */
+  @Column({ type: 'varchar', length: 500, nullable: true })
+  resolution!: string | null;
 }

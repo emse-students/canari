@@ -422,6 +422,10 @@ export async function handleOidcCallback(
         // would recreate it under the same identity (docs/wiki/account-erasure.md).
         console.warn('[auth] sign-in refused: account erasure pending');
         message = m.auth_account_erasure_pending();
+      } else if (code === 'ACCOUNT_ERASURE_BLOCKED') {
+        // A permanent failure the server could not fix by retrying: only a human finishes it.
+        console.warn('[auth] sign-in refused: account erasure blocked');
+        message = m.auth_account_erasure_blocked();
       } else if (nested) {
         message = nested;
       }

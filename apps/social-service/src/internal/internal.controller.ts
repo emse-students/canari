@@ -19,16 +19,9 @@ import { UserFollow } from '../follows/entities/user-follow.entity';
 import { ChannelService } from '../channels/channel.service';
 import { RedisService } from '../common/redis/redis.service';
 import { invalidatePostListCache } from '../posts/post-list-cache';
-import {
-  CANDIDATE_POSTS_SQL,
-  ERASURE_STATEMENTS,
-  REMOVE_REACTIONS_SQL,
-  erasureParams,
-  WRITE_SCRUBBED_POST_SQL,
-  jsonStringLikePattern,
-  scrubComments,
-  scrubPolls,
-} from './account-erasure';
+import { PostMediaRetentionService } from '../posts/post-media-retention.service';
+import { type ErasureDb, eraseSocialRows, keptPostMediaIds } from './account-erasure';
+import type { EntityManager } from 'typeorm';
 
 /**
  * Internal-only user data deletion endpoint - called by core-service during account deletion.
@@ -51,7 +44,8 @@ export class InternalController {
     @InjectRepository(UserFollow)
     private readonly userFollowRepo: Repository<UserFollow>,
     private readonly channelService: ChannelService,
-    private readonly redis: RedisService
+    private readonly redis: RedisService,
+    private readonly postMediaRetention: PostMediaRetentionService
   ) {}
 
   /**
@@ -228,10 +222,13 @@ export class InternalController {
    *  1. the account leaves every community, each one repaired before the row goes
    *     (`ChannelService.removeAccountFromWorkspaces` - it throws when a community could not be
    *     processed, so the queue retries rather than closing the job);
-   *  2. ONE transaction runs {@link ERASURE_STATEMENTS} and scrubs what the account left inside
-   *     other people's posts (comments, likes, reactions, poll votes) - all or nothing, so a
-   *     failure leaves nothing half-done that a retry could miss;
-   *  3. the cached feed pages are dropped, so a deleted post does not linger for a TTL.
+   *  2. the media of the posts it published AS an association - which stay - are re-classed so
+   *     media-service's part keeps them (it throws on failure, so the queue retries);
+   *  3. ONE transaction runs `eraseSocialRows`: every statement, and the scrub of what the account
+   *     left inside other people's posts (comments, likes, reactions, poll votes) - all or nothing,
+   *     so a failure leaves nothing half-done that a retry could miss;
+   *  4. the salons whose pinned message was erased are told, and the cached feed pages are dropped,
+   *     so a deleted post does not linger for a TTL.
    *
    * What each column gets, and why, is {@link ACCOUNT_ERASURE_COVERAGE}, asserted against the
    * schema. "Preserved" for an anonymised row means the ROW survives the account, not forever: a
@@ -248,46 +245,32 @@ export class InternalController {
 
     const workspaces = await this.channelService.removeAccountFromWorkspaces(userId);
 
-    const counts: Record<string, number> = {};
-    let postsScrubbed = 0;
-    await this.postRepo.manager.transaction(async (manager) => {
-      for (const statement of ERASURE_STATEMENTS) {
-        const [, affected] = (await manager.query(
-          statement.sql,
-          erasureParams(statement, userId)
-        )) as [unknown, number];
-        if (affected > 0) counts[statement.label] = affected;
-      }
+    // The association posts stay; their media must be out of the class media's part deletes
+    // BEFORE that part runs (core runs it after this one completes). A failure throws: retried.
+    const keptMedia = await keptPostMediaIds(erasureDb(this.postRepo.manager), userId);
+    await this.postMediaRetention.keepForAssociation(keptMedia);
 
-      const [, reactions] = (await manager.query(REMOVE_REACTIONS_SQL, [userId])) as [
-        unknown,
-        number,
-      ];
-      if (reactions > 0) counts.reactions = reactions;
+    const result = await this.postRepo.manager.transaction((manager) =>
+      eraseSocialRows(erasureDb(manager), userId)
+    );
 
-      // Comments, likes and poll votes need the structure, so the candidates are read and locked.
-      const candidates = (await manager.query(CANDIDATE_POSTS_SQL, [
-        jsonStringLikePattern(userId),
-      ])) as Array<{ id: string; comments: unknown; polls: unknown }>;
-      for (const post of candidates) {
-        const c = scrubComments(post.comments, userId);
-        const p = scrubPolls(post.polls, userId);
-        if (!c.changed && !p.changed) continue;
-        await manager.query(WRITE_SCRUBBED_POST_SQL, [
-          post.id,
-          JSON.stringify(c.comments),
-          JSON.stringify(p.polls),
-        ]);
-        postsScrubbed += 1;
-      }
-    });
-
+    const pins = await this.channelService.announceErasedPins(result.pinsRemoved);
     const dropped = await invalidatePostListCache(this.redis);
 
     this.logger.log(
       `[INTERNAL_DELETE] done social data for user=${who} workspaces=${workspaces} ` +
-        `postsScrubbed=${postsScrubbed} feedKeysDropped=${dropped} rows=${JSON.stringify(counts)}`
+        `associationMediaKept=${keptMedia.length} pinsAnnounced=${pins}/${result.pinsRemoved.length} ` +
+        `postsScrubbed=${result.postsScrubbed} feedKeysDropped=${dropped} ` +
+        `rows=${JSON.stringify(result.counts)}`
     );
     return { ok: true };
   }
+}
+
+/** The erasure's database port over a TypeORM manager, whose raw `query` answers a write `[rows, count]`. */
+function erasureDb(manager: EntityManager): ErasureDb {
+  return {
+    write: async (sql, params) => ((await manager.query(sql, params)) as [unknown, number])[1],
+    read: async <T>(sql: string, params: unknown[]) => (await manager.query(sql, params)) as T[],
+  };
 }

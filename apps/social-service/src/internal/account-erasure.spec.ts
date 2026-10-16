@@ -1,10 +1,6 @@
 import { jsonStringLikePattern, scrubComments, scrubPolls } from './account-erasure';
 import { InternalController } from './internal.controller';
-import {
-  ERASURE_STATEMENTS,
-  REMOVE_REACTIONS_SQL,
-  WRITE_SCRUBBED_POST_SQL,
-} from './account-erasure';
+import { ERASURE_STATEMENTS, WRITE_SCRUBBED_POST_SQL } from './account-erasure';
 
 /**
  * WHAT AN ERASED ACCOUNT LEFT ON OTHER PEOPLE'S POSTS: its comments, its likes, its poll votes.
@@ -152,13 +148,18 @@ describe('InternalController.deleteUserData', () => {
       }),
     };
     const postRepo = {
-      manager: { transaction: jest.fn(async (cb: (m: typeof manager) => unknown) => cb(manager)) },
+      manager: {
+        query: manager.query,
+        transaction: jest.fn(async (cb: (m: typeof manager) => unknown) => cb(manager)),
+      },
     };
+    const postMediaRetention = { keepForAssociation: jest.fn(async () => undefined) };
     const channelService = {
       removeAccountFromWorkspaces: jest.fn(async () => {
         if (opts.workspacesFail) throw new Error('account removal incomplete: 1/1');
         return 2;
       }),
+      announceErasedPins: jest.fn(async () => 0),
     };
     const redis = { deleteByPattern: jest.fn(async () => 0) };
     const controller = new InternalController(
@@ -168,7 +169,8 @@ describe('InternalController.deleteUserData', () => {
       {} as never,
       {} as never,
       channelService as never,
-      redis as never
+      redis as never,
+      postMediaRetention as never
     );
     return { controller, queries, postRepo, channelService, manager };
   }
@@ -179,7 +181,6 @@ describe('InternalController.deleteUserData', () => {
 
     expect(postRepo.manager.transaction).toHaveBeenCalledTimes(1);
     for (const s of ERASURE_STATEMENTS) expect(queries).toContain(s.sql);
-    expect(queries).toContain(REMOVE_REACTIONS_SQL);
   });
 
   it('rewrites only the posts the account actually touched', async () => {

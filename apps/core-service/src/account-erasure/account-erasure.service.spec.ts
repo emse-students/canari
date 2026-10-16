@@ -23,42 +23,48 @@ describe('AccountErasureService', () => {
   });
   afterEach(() => jest.restoreAllMocks());
 
-  function make(claims: unknown[][] = []) {
+  /** `state` scripts what a read of the job table answers: pending jobs, and how many are blocked. */
+  function make(claims: unknown[][] = [], state = { pending: 0, blocked: 0 }) {
     const queries: Array<[string, unknown[] | undefined]> = [];
     const txQueries: Array<[string, unknown[] | undefined]> = [];
+    const answer = (sql: string): unknown =>
+      sql.includes('AS pending,') && sql.includes('AS blocked') && !sql.includes('completed24h')
+        ? [state]
+        : [[], 1];
     const manager = {
       query: jest.fn(async (sql: string, params?: unknown[]) => {
         txQueries.push([sql, params]);
-        return [[], 1];
+        return answer(sql);
       }),
     };
     let claim = 0;
     const dataSource = {
+      manager,
       transaction: jest.fn(async (cb: (m: typeof manager) => unknown) => cb(manager)),
       query: jest.fn(async (sql: string, params?: unknown[]): Promise<unknown> => {
         queries.push([sql, params]);
         if (sql.includes('RETURNING id')) return [claims[claim++] ?? [], 0];
-        if (sql.startsWith('SELECT 1')) return [];
-        return [[], 1];
+        return answer(sql);
       }),
     };
     const service = new AccountErasureService(dataSource as unknown as DataSource);
     return { service, dataSource, manager, queries, txQueries };
   }
 
-  it('deactivates the account in ONE transaction: core data, one job per service, the user row', async () => {
+  it('deactivates the account in ONE transaction, under the subject lock: core data, one job per part, the user row', async () => {
     const { service, dataSource, txQueries } = make();
     await service.requestErasure('subject-1');
 
     expect(dataSource.transaction).toHaveBeenCalledTimes(1);
     const sqls = txQueries.map(([sql]) => sql);
+    expect(sqls[0]).toContain('pg_advisory_xact_lock');
     for (const s of CORE_ERASURE_STATEMENTS) expect(sqls).toContain(s.sql);
     const jobs = txQueries.filter(([sql]) => sql.includes('INSERT INTO account_erasure_jobs'));
     expect(jobs.map(([, p]) => p?.[1])).toEqual(ERASURE_TARGETS.map((t) => t.service));
-    // The user row goes LAST, inside the same transaction: nothing nominative stays in `users`.
-    expect(sqls[sqls.length - 1]).toBe('DELETE FROM users WHERE id = $1');
-    // No downstream call is made inside the transaction - only the worker calls out.
-    await service.drain();
+    // core's own part is a job too: a token valid for another hour can still write in core.
+    expect(jobs.map(([, p]) => p?.[1])).toContain('core');
+    // The user row goes inside the same transaction: nothing nominative stays in `users`.
+    expect(sqls).toContain('DELETE FROM users WHERE id = $1');
   });
 
   it('binds exactly the parameters each core statement names', async () => {
@@ -70,12 +76,27 @@ describe('AccountErasureService', () => {
     }
   });
 
-  it('says an erasure is pending exactly while a job row is', async () => {
-    const { service, dataSource } = make();
-    dataSource.query.mockResolvedValueOnce([{ '?column?': 1 }]);
-    expect(await service.isErasurePending('s')).toBe(true);
-    dataSource.query.mockResolvedValueOnce([]);
-    expect(await service.isErasurePending('s')).toBe(false);
+  it('reads none, pending, or blocked (a permanent failure) from the pending jobs', async () => {
+    expect(await make([], { pending: 0, blocked: 0 }).service.erasureState('s')).toBe('none');
+    expect(await make([], { pending: 4, blocked: 0 }).service.erasureState('s')).toBe('pending');
+    expect(await make([], { pending: 4, blocked: 1 }).service.erasureState('s')).toBe('blocked');
+  });
+
+  it('a sign-in that raced a deletion is seen under the lock, and what it wrote is erased again', async () => {
+    const { service, txQueries } = make([], { pending: 4, blocked: 0 });
+
+    expect(await service.confirmAfterSignIn('subject-1')).toBe('pending');
+
+    const sqls = txQueries.map(([sql]) => sql);
+    expect(sqls[0]).toContain('pg_advisory_xact_lock');
+    expect(sqls).toContain('DELETE FROM auth_sessions WHERE "userId" = $1');
+    expect(sqls).toContain('DELETE FROM users WHERE id = $1');
+  });
+
+  it('a sign-in with no erasure pending writes nothing', async () => {
+    const { service, txQueries } = make();
+    expect(await service.confirmAfterSignIn('subject-1')).toBe('none');
+    expect(txQueries.some(([sql]) => sql.startsWith('DELETE'))).toBe(false);
   });
 
   const job = (over: Record<string, unknown> = {}) => ({
@@ -99,7 +120,19 @@ describe('AccountErasureService', () => {
       expect.objectContaining({ headers: { 'x-internal-secret': expect.any(String) } })
     );
     const done = queries.find(([sql]) => sql.includes('"completedAt" = now()'))!;
+    expect(done[0]).toContain('AND "completedAt" IS NULL');
     expect(done[1]![1]).toMatch(/^sha256:/);
+  });
+
+  it("runs core's own part in-process, again at its final pass, without calling out", async () => {
+    const { service, queries, txQueries } = make([[job({ service: 'core' })]]);
+
+    await service.drain();
+
+    expect(axios.delete).not.toHaveBeenCalled();
+    const sqls = txQueries.map(([sql]) => sql);
+    for (const s of CORE_ERASURE_STATEMENTS) expect(sqls).toContain(s.sql);
+    expect(queries.some(([sql]) => sql.includes('"completedAt" = now()'))).toBe(true);
   });
 
   it('schedules ONE final pass when the first success came while a token could still act', async () => {
@@ -111,25 +144,59 @@ describe('AccountErasureService', () => {
 
     expect(queries.some(([sql]) => sql.includes('"completedAt" = now()'))).toBe(false);
     const next = queries.find(([sql]) => sql.includes('"nextAttemptAt" = $2'))!;
+    expect(next[0]).toContain('AND "completedAt" IS NULL');
     expect(next[1]).toEqual(['job-1', expiry]);
   });
 
-  it('records a failure with its backoff and keeps the job pending', async () => {
+  it('records a transient failure with its backoff, at warn, and keeps the job pending', async () => {
     const { service, queries } = make([[job({ attempts: 2 })]]);
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     axios.delete.mockRejectedValue({ response: { status: 503 } });
 
     await service.drain();
 
     const failed = queries.find(([sql]) => sql.includes('SET attempts = $2'))!;
-    expect(failed[1]).toEqual(['job-1', 3, 'HTTP 503', 120]);
+    expect(failed[0]).toContain('AND "completedAt" IS NULL');
+    expect(failed[1]).toEqual(['job-1', 3, 'HTTP 503', 'transient', 120]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('kind=transient'));
     expect(queries.some(([sql]) => sql.includes('"completedAt" = now()'))).toBe(false);
   });
 
-  it('accuses every job pending for more than a day, at error level', async () => {
+  it('accuses a permanent failure at once, with the code the service gave', async () => {
+    const { service, queries } = make([[job()]]);
+    const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    axios.delete.mockRejectedValue({
+      response: { status: 409, data: { code: 'ERASURE_WORKSPACE_REPAIR_FAILED' } },
+    });
+
+    await service.drain();
+
+    const failed = queries.find(([sql]) => sql.includes('SET attempts = $2'))!;
+    expect(failed[1]).toEqual([
+      'job-1',
+      1,
+      'HTTP 409 ERASURE_WORKSPACE_REPAIR_FAILED',
+      'permanent',
+      30,
+    ]);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('a human must look'));
+  });
+
+  it('records a job naming an unknown service as a permanent failure, not a silent re-claim', async () => {
+    const { service, queries } = make([[job({ service: 'gone-service' })]]);
+
+    await service.drain();
+
+    expect(axios.delete).not.toHaveBeenCalled();
+    const failed = queries.find(([sql]) => sql.includes('SET attempts = $2'))!;
+    expect(failed[1]).toEqual(['job-1', 1, 'UNKNOWN_SERVICE', 'permanent', 30]);
+  });
+
+  it('accuses every job pending for more than a day, and every blocked one, at error level', async () => {
     const { service, dataSource } = make();
     const error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
     dataSource.query
-      .mockResolvedValueOnce([{ pending: 2, completed24h: 5 }])
+      .mockResolvedValueOnce([{ pending: 2, blocked: 1, completed24h: 5, closed24h: 0 }])
       .mockResolvedValueOnce([
         {
           service: 'media',
@@ -137,14 +204,20 @@ describe('AccountErasureService', () => {
           requestedAt: new Date('2026-10-14T00:00:00Z'),
           attempts: 17,
           lastError: 'HTTP 503',
+          lastFailureKind: 'transient',
         },
       ]);
 
-    expect(await service.report()).toEqual({ pending: 2, overdue: 1, completed24h: 5 });
+    expect(await service.report()).toEqual({
+      pending: 2,
+      blocked: 1,
+      overdue: 1,
+      completed24h: 5,
+    });
     expect(error).toHaveBeenCalledWith(expect.stringContaining('OVERDUE service=media'));
     expect(error).toHaveBeenCalledWith(expect.stringContaining('lastError=HTTP 503'));
     expect(error).toHaveBeenCalledWith(
-      expect.stringContaining('daily report: pending=2 overdue=1')
+      expect.stringContaining('daily report: pending=2 blocked=1 overdue=1')
     );
   });
 });

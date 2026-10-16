@@ -712,7 +712,9 @@ export class ChannelService {
    * account left in it keeps an MLS leaf authorised forever.
    *
    * @returns the number of communities the account was taken out of.
-   * @throws Error naming every community that could not be processed - the caller answers 5xx.
+   * @throws ConflictException `ERASURE_WORKSPACE_REPAIR_FAILED` when a community could not be
+   *   processed: the erasure queue keeps retrying, and classes the answer PERMANENT - a repair that
+   *   failed is not a service that was down, so a human is told at once rather than in a day.
    */
   async removeAccountFromWorkspaces(deletedUserId: string): Promise<number> {
     const workspaceIds = [
@@ -741,11 +743,45 @@ export class ChannelService {
       }
     }
     if (failed.length > 0) {
-      throw new Error(
-        `account removal incomplete: ${failed.length}/${workspaceIds.length} communities failed (${failed.join(', ')})`
-      );
+      throw new ConflictException({
+        code: 'ERASURE_WORKSPACE_REPAIR_FAILED',
+        message: `account removal incomplete: ${failed.length}/${workspaceIds.length} communities failed`,
+        failedWorkspaces: failed,
+      });
     }
     return workspaceIds.length;
+  }
+
+  /**
+   * Tells each salon that a pin is gone because its message was erased with its author's account.
+   * Every member's client keeps the pin set it loaded and updates it only from `channel.pin`, so
+   * without this a phantom pin stays in the banner until the salon is reopened.
+   *
+   * After the erasure's transaction, so a pin is never announced gone while the row could still be
+   * rolled back. A live notification, not state: a salon that cannot be told is logged, and its
+   * members read the truth at the next open. Each salon in its own `try`.
+   */
+  async announceErasedPins(pins: Array<{ id: string; channelId: string }>): Promise<number> {
+    let announced = 0;
+    for (const { id, channelId } of pins) {
+      try {
+        const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+        if (!channel) continue;
+        const audience = await this.channelAudience(channel);
+        await this.redis.publishChannelEvent(
+          'channel.pin',
+          { channelId, messageId: id, pinned: false },
+          audience
+        );
+        announced += 1;
+      } catch (err) {
+        this.logger.warn(
+          `[CHANNEL] erased pin not announced channel=${channelId} message=${id} - its members ` +
+            `see it gone at the next open: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+    return announced;
   }
 
   /**

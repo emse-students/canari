@@ -8,6 +8,7 @@
   "auth_test_login_password": "Connexion externe (service-account)",
   "auth_secure_login": "Connexion sécurisée via votre compte Mines",
   "auth_account_erasure_pending": "Ce compte est en cours de suppression. Réessayez plus tard pour en créer un nouveau.",
+  "auth_account_erasure_blocked": "La suppression de ce compte est bloquée. Écrivez à bureau@rootz-emse.fr, nous la terminerons.",
   "auth_privacy": "Confidentialité",
   "auth_terms": "CGU",
   "auth_get_app_prompt": "Obtenez l'application Canari",

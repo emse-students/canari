@@ -1,11 +1,14 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, EntityManager } from 'typeorm';
 import axios from 'axios';
 import { ACCESS_TOKEN_TTL_SECONDS } from '../auth/token-lifetimes';
 import {
   CORE_ERASURE_STATEMENTS,
+  ERASURE_ORDER,
   ERASURE_TARGETS,
+  UNKNOWN_SERVICE,
   afterSuccess,
+  classifyFailure,
   describeFailure,
   retryDelayMs,
   subjectDigest,
@@ -38,22 +41,27 @@ interface ClaimedJob {
   lastAttemptAt: Date;
 }
 
+/** Where a subject's erasure stands, as the sign-in refusal needs it. */
+export type ErasureState = 'none' | 'pending' | 'blocked';
+
 /**
  * THE ACCOUNT ERASURE, AS A DURABLE QUEUE: an account is deactivated at once and erased everywhere
  * eventually, and "eventually" is a guarantee rather than a hope.
  *
  * `requestErasure` runs ONE transaction: core's own data about the account goes
- * ({@link CORE_ERASURE_STATEMENTS}), one job per downstream service is recorded, and the `users` row
- * is deleted - so nothing nominative is left in `users`, no session can be refreshed, and the
- * account can no longer sign in (`isErasurePending`, checked by the OIDC callback, because a new
- * sign-in would recreate the account under the same OIDC subject while its old data was still being
- * erased). The worker then calls each service's idempotent internal DELETE until it answers 2xx,
- * with backoff ({@link retryDelayMs}), and completes the job only after a call that started once
- * every token the account held had expired ({@link afterSuccess}).
+ * ({@link CORE_ERASURE_STATEMENTS}, the `users` row last), and one job per part of the erasure is
+ * recorded - core's own part included, because a token still valid for up to an hour can write a
+ * block or a correction request after the request ran. No session can be refreshed, and the account
+ * can no longer sign in ({@link erasureState}, checked by the OIDC callback: a new sign-in would
+ * recreate the account under the same OIDC subject while its old data was still being erased). The
+ * worker then runs each part until it succeeds, with backoff ({@link retryDelayMs}), and completes
+ * the job only after a pass that started once every token the account held had expired
+ * ({@link afterSuccess}).
  *
- * What would make it wrong is reported, not guessed at: every failed attempt is a `warn` line naming
- * the service and the next attempt, and a daily report accuses at `error` level every job pending
- * longer than {@link OVERDUE_AFTER_HOURS} hours.
+ * What would make it wrong is reported, not guessed at: every failed attempt is logged with its
+ * failure and its class ({@link classifyFailure}) - a PERMANENT one at `error` at once - and a daily
+ * report accuses at `error` level every job pending longer than {@link OVERDUE_AFTER_HOURS} hours and
+ * every job blocked on a permanent failure.
  */
 @Injectable()
 export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
@@ -87,19 +95,17 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
    * Deactivates the account and queues its erasure everywhere, in ONE transaction: either all of it
    * happens or nothing does, and the caller's error is the person's to retry.
    *
-   * Idempotent: a second request finds no user row and a pending job per service, and adds nothing.
+   * Idempotent: a second request finds no user row and a pending job per part, and adds nothing.
    */
   async requestErasure(subjectId: string): Promise<void> {
     const who = subjectId.slice(0, 8);
     this.logger.log(`[ERASURE] requested user=${who}`);
 
-    const counts: Record<string, number> = {};
+    let counts: Record<string, number> = {};
     await this.dataSource.transaction(async (manager) => {
-      for (const s of CORE_ERASURE_STATEMENTS) {
-        const params = s.replacement === undefined ? [subjectId] : [subjectId, s.replacement];
-        const [, affected] = (await manager.query(s.sql, params)) as [unknown, number];
-        if (affected > 0) counts[s.label] = affected;
-      }
+      // Held to the commit: a sign-in's `confirmAfterSignIn` waits for it, then sees the jobs.
+      await lockSubject(manager, subjectId);
+      counts = await eraseCoreRows(manager, subjectId);
       for (const target of ERASURE_TARGETS) {
         await manager.query(
           `INSERT INTO account_erasure_jobs ("subjectId", service, "credentialsExpireAt")
@@ -108,11 +114,6 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
           [subjectId, target.service, ACCESS_TOKEN_TTL_SECONDS + CREDENTIAL_SKEW_SECONDS]
         );
       }
-      const [, users] = (await manager.query(`DELETE FROM users WHERE id = $1`, [subjectId])) as [
-        unknown,
-        number,
-      ];
-      counts.users = users;
     });
 
     this.logger.log(
@@ -124,13 +125,51 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
     void this.drain();
   }
 
-  /** Whether an erasure of this subject is still running - a sign-in must be refused until it ends. */
-  async isErasurePending(subjectId: string): Promise<boolean> {
-    const rows = (await this.dataSource.query(
-      `SELECT 1 FROM account_erasure_jobs WHERE "subjectId" = $1 AND "completedAt" IS NULL LIMIT 1`,
+  /**
+   * Where an erasure of this subject stands. A sign-in is refused while it is not `none`; `blocked`
+   * (a pending job whose last failure is permanent) is the case a retry has not been shown to fix,
+   * so the person is told to contact us rather than to wait.
+   */
+  async erasureState(
+    subjectId: string,
+    manager: EntityManager = this.dataSource.manager
+  ): Promise<ErasureState> {
+    const [row] = (await manager.query(
+      `SELECT count(*)::int AS pending,
+              count(*) FILTER (WHERE "lastFailureKind" = 'permanent')::int AS blocked
+         FROM account_erasure_jobs WHERE "subjectId" = $1 AND "completedAt" IS NULL`,
       [subjectId]
-    )) as unknown[];
-    return rows.length > 0;
+    )) as Array<{ pending: number; blocked: number }>;
+    if (!row || row.pending === 0) return 'none';
+    return row.blocked > 0 ? 'blocked' : 'pending';
+  }
+
+  /**
+   * Closes the race the first refusal cannot: an OIDC callback that read {@link erasureState} BEFORE
+   * a `DELETE /users/me` committed, then wrote the user row and a session AFTER it. Called once the
+   * session exists, and before any token leaves the server.
+   *
+   * It takes the subject's erasure lock - the one `requestErasure` holds for its whole transaction -
+   * so exactly one of two orders is possible, and both are safe: the erasure committed first, and it
+   * is seen here (what the sign-in wrote is erased again, in this transaction, and the caller
+   * refuses); or it starts after, and its own transaction deletes this session and the user row, and
+   * its final pass is due after this sign-in's access token expires. No long-held connection: the
+   * lock lives as long as this short transaction.
+   *
+   * @returns the state found; `none` means the sign-in may proceed.
+   */
+  async confirmAfterSignIn(subjectId: string): Promise<ErasureState> {
+    return this.dataSource.transaction(async (manager) => {
+      await lockSubject(manager, subjectId);
+      const state = await this.erasureState(subjectId, manager);
+      if (state === 'none') return state;
+      this.logger.warn(
+        `[ERASURE] a sign-in raced an erasure user=${subjectId.slice(0, 8)} state=${state} - ` +
+          `the rows it wrote are erased again`
+      );
+      await eraseCoreRows(manager, subjectId);
+      return state;
+    });
   }
 
   /**
@@ -166,44 +205,81 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
         WHERE id IN (
           SELECT id FROM account_erasure_jobs
            WHERE "completedAt" IS NULL AND "nextAttemptAt" <= now()
+             -- A part runs only once the part it follows has COMPLETED for the same subject (a
+             -- completed job carries a digest, so only a job still owed can match).
+             AND NOT EXISTS (
+               SELECT 1 FROM account_erasure_jobs prior
+                WHERE prior."subjectId" = account_erasure_jobs."subjectId"
+                  AND prior."completedAt" IS NULL
+                  AND (account_erasure_jobs.service, prior.service) IN
+                      (SELECT * FROM unnest($3::text[], $4::text[])))
            ORDER BY "nextAttemptAt"
            LIMIT $2
            FOR UPDATE SKIP LOCKED)
         RETURNING id, "subjectId", service, attempts, "credentialsExpireAt", "lastAttemptAt"`,
-      [CLAIM_LEASE_SECONDS, CLAIM_BATCH]
+      [
+        CLAIM_LEASE_SECONDS,
+        CLAIM_BATCH,
+        ERASURE_ORDER.map(([service]) => service),
+        ERASURE_ORDER.map(([, after]) => after),
+      ]
     )) as [ClaimedJob[], number];
     return rows ?? [];
   }
 
-  /** One call to one service, and the job's next state. Never throws: the outcome is the job row. */
-  private async attempt(job: ClaimedJob): Promise<void> {
+  /**
+   * One pass of one part of the erasure: core's own rows in-process, or one service's internal
+   * DELETE. Throws what failed; the answer it returns is for the log line only.
+   */
+  private async run(job: ClaimedJob): Promise<string> {
     const target = ERASURE_TARGETS.find((t) => t.service === job.service);
-    const who = job.subjectId.slice(0, 8);
     if (!target) {
-      // A row naming a service this build does not know cannot be completed by any retry.
-      this.logger.error(`[ERASURE] unknown service=${job.service} job=${job.id} user=${who}`);
-      return;
-    }
-    try {
-      const res = await axios.delete(target.url(job.subjectId), {
-        headers: { 'x-internal-secret': this.internalSecret },
-        timeout: CALL_TIMEOUT_MS,
+      // A row naming a part this build does not know cannot be completed by any retry: a PERMANENT
+      // failure, journalled like any other so the report and the sign-in refusal both see it.
+      throw Object.assign(new Error(`no erasure target named ${job.service}`), {
+        code: UNKNOWN_SERVICE,
       });
+    }
+    if (target.kind === 'local') {
+      const counts = await this.dataSource.transaction((manager) =>
+        eraseCoreRows(manager, job.subjectId)
+      );
+      return JSON.stringify(counts);
+    }
+    const res = await axios.delete(target.url(job.subjectId), {
+      headers: { 'x-internal-secret': this.internalSecret },
+      timeout: CALL_TIMEOUT_MS,
+    });
+    return JSON.stringify(res.data ?? null).slice(0, 200);
+  }
+
+  /**
+   * One pass of one job, and the job's next state. Never throws: the outcome is the job row. Every
+   * write is guarded by `"completedAt" IS NULL`, so a pass that outlived its lease, or a job an
+   * operator closed meanwhile, cannot reopen or rewrite a finished row.
+   */
+  private async attempt(job: ClaimedJob): Promise<void> {
+    const who = job.subjectId.slice(0, 8);
+    try {
+      const answer = await this.run(job);
       const outcome = afterSuccess(new Date(job.lastAttemptAt), new Date(job.credentialsExpireAt));
       if (outcome.kind === 'complete') {
         await this.dataSource.query(
           `UPDATE account_erasure_jobs
-              SET "completedAt" = now(), "subjectId" = $2, "lastError" = NULL
-            WHERE id = $1`,
+              SET "completedAt" = now(), "subjectId" = $2, "lastError" = NULL,
+                  "lastFailureKind" = NULL
+            WHERE id = $1 AND "completedAt" IS NULL`,
           [job.id, subjectDigest(job.subjectId)]
         );
         this.logger.log(
           `[ERASURE] complete service=${job.service} user=${who} attempts=${job.attempts} ` +
-            `answer=${JSON.stringify(res.data ?? null).slice(0, 200)}`
+            `answer=${answer}`
         );
       } else {
         await this.dataSource.query(
-          `UPDATE account_erasure_jobs SET "nextAttemptAt" = $2, "lastError" = NULL WHERE id = $1`,
+          `UPDATE account_erasure_jobs
+              SET "nextAttemptAt" = $2, "lastError" = NULL, "lastFailureKind" = NULL
+            WHERE id = $1 AND "completedAt" IS NULL`,
           [job.id, outcome.at]
         );
         this.logger.log(
@@ -212,38 +288,68 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
         );
       }
     } catch (err) {
-      const attempts = job.attempts + 1;
-      const delayMs = retryDelayMs(attempts);
-      const failure = describeFailure(err);
+      await this.recordFailure(job, err);
+    }
+  }
+
+  private async recordFailure(job: ClaimedJob, err: unknown): Promise<void> {
+    const who = job.subjectId.slice(0, 8);
+    const attempts = job.attempts + 1;
+    const delaySeconds = Math.round(retryDelayMs(attempts) / 1000);
+    const failure = describeFailure(err);
+    const kind = classifyFailure(err);
+    try {
       await this.dataSource.query(
         `UPDATE account_erasure_jobs
-            SET attempts = $2, "lastError" = $3,
-                "nextAttemptAt" = now() + make_interval(secs => $4)
-          WHERE id = $1`,
-        [job.id, attempts, failure, Math.round(delayMs / 1000)]
+            SET attempts = $2, "lastError" = $3, "lastFailureKind" = $4,
+                "nextAttemptAt" = now() + make_interval(secs => $5)
+          WHERE id = $1 AND "completedAt" IS NULL`,
+        [job.id, attempts, failure, kind, delaySeconds]
       );
-      this.logger.warn(
-        `[ERASURE] attempt failed service=${job.service} user=${who} attempts=${attempts} ` +
-          `error=${failure} - retried in ${Math.round(delayMs / 1000)}s`
+    } catch (writeErr) {
+      // The lease still runs out, so the job is retried; only this attempt's record is lost.
+      this.logger.error(
+        `[ERASURE] could not record a failure service=${job.service} user=${who}: ` +
+          `${describeFailure(writeErr)}`
       );
+    }
+    const line =
+      `[ERASURE] attempt failed service=${job.service} user=${who} attempts=${attempts} ` +
+      `error=${failure} kind=${kind} - retried in ${delaySeconds}s`;
+    // A permanent failure is accused NOW: waiting a day for the report is a day of a person locked
+    // out by something no retry is expected to fix.
+    if (kind === 'permanent') {
+      this.logger.error(`${line} - a human must look (docs/wiki/account-erasure.md#operating-it)`);
+    } else {
+      this.logger.warn(line);
     }
   }
 
   /**
    * The daily report: one summary line, and one ERROR line per job pending longer than
    * {@link OVERDUE_AFTER_HOURS} hours - an erasure owed for a day is either a service that has been
-   * refusing all that time or a defect, and the line carries the service, the attempts and the last
-   * failure that tell the two apart.
+   * refusing all that time or a defect, and the line carries the service, the attempts, the last
+   * failure and its class that tell the two apart. The summary is itself an error while any job is
+   * blocked on a permanent failure, or overdue.
    */
-  async report(): Promise<{ pending: number; overdue: number; completed24h: number } | null> {
+  async report(): Promise<{
+    pending: number;
+    blocked: number;
+    overdue: number;
+    completed24h: number;
+  } | null> {
     try {
       const [summary] = (await this.dataSource.query(
         `SELECT count(*) FILTER (WHERE "completedAt" IS NULL)::int AS pending,
-                count(*) FILTER (WHERE "completedAt" > now() - interval '24 hours')::int AS completed24h
+                count(*) FILTER (WHERE "completedAt" IS NULL
+                                   AND "lastFailureKind" = 'permanent')::int AS blocked,
+                count(*) FILTER (WHERE "completedAt" > now() - interval '24 hours')::int AS completed24h,
+                count(*) FILTER (WHERE "completedAt" > now() - interval '24 hours'
+                                   AND resolution IS NOT NULL)::int AS closed24h
            FROM account_erasure_jobs`
-      )) as Array<{ pending: number; completed24h: number }>;
+      )) as Array<{ pending: number; blocked: number; completed24h: number; closed24h: number }>;
       const overdue = (await this.dataSource.query(
-        `SELECT service, "subjectId", "requestedAt", attempts, "lastError"
+        `SELECT service, "subjectId", "requestedAt", attempts, "lastError", "lastFailureKind"
            FROM account_erasure_jobs
           WHERE "completedAt" IS NULL AND "requestedAt" < now() - make_interval(hours => $1)
           ORDER BY "requestedAt"`,
@@ -254,21 +360,24 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
         requestedAt: Date;
         attempts: number;
         lastError: string | null;
+        lastFailureKind: string | null;
       }>;
       for (const job of overdue) {
         this.logger.error(
           `[ERASURE] OVERDUE service=${job.service} user=${job.subjectId.slice(0, 8)} ` +
             `requested=${new Date(job.requestedAt).toISOString()} attempts=${job.attempts} ` +
-            `lastError=${job.lastError ?? 'none'}`
+            `lastError=${job.lastError ?? 'none'} kind=${job.lastFailureKind ?? 'none'}`
         );
       }
       const line =
-        `[ERASURE] daily report: pending=${summary.pending} overdue=${overdue.length} ` +
-        `completed24h=${summary.completed24h}`;
-      if (overdue.length > 0) this.logger.error(line);
+        `[ERASURE] daily report: pending=${summary.pending} blocked=${summary.blocked} ` +
+        `overdue=${overdue.length} completed24h=${summary.completed24h} ` +
+        `closedByOperator24h=${summary.closed24h}`;
+      if (overdue.length > 0 || summary.blocked > 0) this.logger.error(line);
       else this.logger.log(line);
       return {
         pending: summary.pending,
+        blocked: summary.blocked,
         overdue: overdue.length,
         completed24h: summary.completed24h,
       };
@@ -278,4 +387,34 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
       return null;
     }
   }
+}
+
+/**
+ * The per-subject erasure lock, held until the caller's transaction ends: `requestErasure` and a
+ * sign-in's `confirmAfterSignIn` exclude each other on it, so neither can interleave with the other.
+ */
+async function lockSubject(manager: EntityManager, subjectId: string): Promise<void> {
+  await manager.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+    `account-erasure:${subjectId}`,
+  ]);
+}
+
+/**
+ * core-service's own rows about the account ({@link CORE_ERASURE_STATEMENTS}, the `users` row last),
+ * inside the caller's transaction. Run by the request, by every pass of the `core` job, and by a
+ * sign-in that raced the request - idempotent, so any of them may run it again.
+ *
+ * @returns the rows each statement changed, by label, for the log line.
+ */
+export async function eraseCoreRows(
+  manager: EntityManager,
+  subjectId: string
+): Promise<Record<string, number>> {
+  const counts: Record<string, number> = {};
+  for (const s of CORE_ERASURE_STATEMENTS) {
+    const params = s.replacement === undefined ? [subjectId] : [subjectId, s.replacement];
+    const [, affected] = (await manager.query(s.sql, params)) as [unknown, number];
+    if (affected > 0) counts[s.label] = affected;
+  }
+  return counts;
 }

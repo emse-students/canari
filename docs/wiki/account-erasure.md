@@ -104,8 +104,9 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
 ### The dispositions, and why
 
 - **Deleted**: the account's own content and standing - posts, memberships, follows, mutes, tags,
-  moderation state, reminders, respondent marks, notifications to OR from it, minesweeper, reviewer
-  grants, read grants, its key packages, devices, PIN verifier, push tokens, signature keys,
+  moderation state, reminders, respondent marks, form files (the row here, the blob in media),
+  notifications to OR from it, minesweeper, reviewer grants, read grants, **its community salon
+  messages (reactions and pins included; the salons are told a pin is gone)**, its key packages, devices, PIN verifier, push tokens, signature keys,
   notification preferences, dismissal markers, DMs (tombstoned for the other party), queued
   messages to it and queued APPLICATION messages from it; in core, blocks, sessions, the profile
   trail and correction requests, announcement readership.
@@ -113,11 +114,15 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   to the nearest surviving ancestor (another person's reply is theirs); its likes and reactions are
   removed; a vote on a NAMED poll is removed (the tally drops by one); on an ANONYMOUS poll the tally
   is kept - nothing ever recorded which option was theirs - and the account leaves `voters`.
+- **Kept on purpose: posts published AS an association** (user decision, 2026-10-16). They are the
+  association's communication; only their `authorId` becomes `[deleted]`, and their media are
+  re-classed `association` by social BEFORE media's part runs.
 - **Anonymised to `[deleted]`** (NULL where the column allows and the meaning survives): rows that
-  also belong to other people or are accounting records - community salon messages, purchase
+  also belong to other people or are accounting records - purchase
   records, webhook deliveries, a submission (its seat and payment fields stay; `userId`, `email` and
-  `answers` go), a form's owner, a form file's uploader and file name, a consumed partnership code
-  (NULL would hand the code to the next student), reports filed by or about it, and every authorship
+  `answers` go), a form's owner, a consumed partnership code (NULL would hand the code to the next
+  student, and a constant would collide on the partial unique index `(cardId, claimedByUserId)`:
+  the replacement is `[deleted]:<row id>`), reports filed by or about it, and every authorship
   column (`createdBy`, `grantedBy`, `decidedBy`, `republishedBy`, ...). In core, an admin's edit of
   somebody else's profile keeps that person's history with `actorId = '[deleted]'`, and an
   announcement's author becomes the nil UUID.
@@ -141,10 +146,38 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   commit or Welcome still queued is left to be delivered (deleting it would fork the group for its
   recipient). The account's MLS LEAF stays in each group's ratchet tree until a member commits a
   Remove - no server purge can change a tree.
-- **Community salon messages are anonymised, not deleted**: the ciphertext stays for the salon's
-  continuity under `[deleted]`.
+- **Salon messages of OTHER members that quote the account** are their content; only the account's
+  own messages are deleted (decision 2026-10-16: erasure beats continuity).
 - **Another author's text that names the account** (a mention, a quote) is that author's content;
   `posts.mentions` keeps the id.
 - **The MiConnect (authentik) identity is not deleted**: it is the school's identity provider, not
   Canari's data. Signing in after the erasure creates a new, empty Canari account.
 - **Logs** keep the first eight characters of the subject on the erasure lines, for their retention.
+
+## Ordering, failure classes and operating it
+
+**Four jobs per subject**: `core` (core's own rows, once more after the tokens expire), `chat-delivery`,
+`social` and `media`. `media` is claimed only once `social` has COMPLETED for the subject
+(`ERASURE_TARGETS`' `after`, enforced in the claim's `NOT EXISTS`): social re-classes the media of
+the posts that stay, and media deleting first would delete them under a live post. The claim is
+`FOR UPDATE SKIP LOCKED` with a lease, so several workers never run one job twice at once; a
+completion write is guarded by `"completedAt" IS NULL`, so a pass that outlived its lease cannot
+reopen a finished row. A job naming a service this build does not know fails as `UNKNOWN_SERVICE`.
+
+**Failures are classed** (`classifyFailure`): `transient` (5xx, timeout, connection, database) is
+retried with backoff (30 s doubling, 6 h cap) and reported when owed 24 h; `permanent` (4xx other
+than 408/429, unknown service) is STILL retried but accused at once with an `error` line, and a
+sign-in is then refused with `ACCOUNT_ERASURE_BLOCKED` - "contact bureau@rootz-emse.fr" - instead of
+"try again later" (`ACCOUNT_ERASURE_PENDING`), because waiting is not expected to help.
+
+**Operator escape hatch.** Find the job (`SELECT id, service, attempts, "lastError",
+"lastFailureKind" FROM account_erasure_jobs WHERE "completedAt" IS NULL`), do by hand what its service
+could not, then close it with the reason, which the daily report counts as `closedByOperator24h`:
+
+```sql
+UPDATE account_erasure_jobs
+   SET "completedAt" = now(), "subjectId" = 'sha256:<digest>', resolution = 'what was done, why'
+ WHERE id = '<job id>' AND "completedAt" IS NULL;
+```
+
+Closing a job early only lifts the sign-in refusal and unblocks `media`; it erases nothing.

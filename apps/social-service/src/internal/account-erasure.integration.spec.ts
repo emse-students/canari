@@ -17,17 +17,7 @@
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
-import {
-  ACCOUNT_ERASURE_COVERAGE,
-  CANDIDATE_POSTS_SQL,
-  ERASURE_STATEMENTS,
-  erasureParams,
-  REMOVE_REACTIONS_SQL,
-  WRITE_SCRUBBED_POST_SQL,
-  jsonStringLikePattern,
-  scrubComments,
-  scrubPolls,
-} from './account-erasure';
+import { ACCOUNT_ERASURE_COVERAGE, ERASURE_STATEMENTS, eraseSocialRows } from './account-erasure';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -182,20 +172,15 @@ maybe('account erasure against PostgreSQL', () => {
   }
 
   async function eraseInTransaction(): Promise<void> {
-    for (const s of ERASURE_STATEMENTS) await client.query(s.sql, erasureParams(s, ERASED));
-    await client.query(REMOVE_REACTIONS_SQL, [ERASED]);
-    const candidates = await client.query(CANDIDATE_POSTS_SQL, [jsonStringLikePattern(ERASED)]);
-    for (const post of candidates.rows) {
-      const c = scrubComments(post.comments, ERASED);
-      const p = scrubPolls(post.polls, ERASED);
-      if (c.changed || p.changed) {
-        await client.query(WRITE_SCRUBBED_POST_SQL, [
-          post.id,
-          JSON.stringify(c.comments),
-          JSON.stringify(p.polls),
-        ]);
-      }
-    }
+    // The ONE implementation the route runs, over this connection.
+    await eraseSocialRows(
+      {
+        write: async (sql, params) => (await client.query(sql, params)).rowCount ?? 0,
+        read: async <T>(sql: string, params: unknown[]) =>
+          (await client.query(sql, params)).rows as T[],
+      },
+      ERASED
+    );
   }
 
   async function tablesStillNaming(id: string): Promise<string[]> {

@@ -118,11 +118,11 @@ maybe('account erasure queue against PostgreSQL', () => {
     expect(
       await count(`profile_changes WHERE "userId" = $1 AND "actorId" = '[deleted]'`, [OTHER])
     ).toBe(1);
-    expect(await service.isErasurePending(SUBJECT)).toBe(true);
+    expect(await service.erasureState(SUBJECT)).toBe('pending');
 
     // A second request (an old token replaying DELETE /users/me) adds nothing.
     await service.requestErasure(SUBJECT);
-    expect(await count(`account_erasure_jobs`)).toBe(3);
+    expect(await count(`account_erasure_jobs`)).toBe(4);
 
     const jobs = await ds.query(
       `SELECT service, attempts, "lastError", "completedAt" FROM account_erasure_jobs ORDER BY service`
@@ -130,10 +130,13 @@ maybe('account erasure queue against PostgreSQL', () => {
     expect(jobs.map((j: { service: string; attempts: number }) => [j.service, j.attempts])).toEqual(
       [
         ['chat-delivery', 0],
+        ['core', 0],
         ['media', 0],
         ['social', 1],
       ]
     );
+    // Media waits for social: it would delete the media of the posts social keeps for an association.
+    expect(axios.delete.mock.calls.some(([url]: [string]) => url.includes('media'))).toBe(false);
     // Nobody completes before every token of the account has expired.
     expect(jobs.every((j: { completedAt: Date | null }) => j.completedAt === null)).toBe(true);
 
@@ -145,12 +148,12 @@ maybe('account erasure queue against PostgreSQL', () => {
     await service.drain();
 
     const done = await ds.query(`SELECT "subjectId", "completedAt" FROM account_erasure_jobs`);
-    expect(done).toHaveLength(3);
+    expect(done).toHaveLength(4);
     for (const j of done) {
       expect(j.completedAt).not.toBeNull();
       expect(j.subjectId).toMatch(/^sha256:/);
     }
-    expect(await service.isErasurePending(SUBJECT)).toBe(false);
-    expect(await service.report()).toEqual({ pending: 0, overdue: 0, completed24h: 3 });
+    expect(await service.erasureState(SUBJECT)).toBe('none');
+    expect(await service.report()).toEqual({ pending: 0, blocked: 0, overdue: 0, completed24h: 4 });
   }, 60_000);
 });

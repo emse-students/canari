@@ -12,21 +12,41 @@ import { chatDeliveryUrl, mediaUrl, socialUrl } from '../internal/service-urls';
  * disposition are on docs/wiki/account-erasure.md.
  */
 
-/** The services that hold an account's data, each erased by one idempotent internal DELETE. */
+/**
+ * Every part of an account erasure, each a durable job of its own.
+ *
+ * `core` is core-service's OWN data, run in-process ({@link CORE_ERASURE_STATEMENTS}): it is erased
+ * once inside the request's transaction, and that is not enough - for up to an hour a token issued
+ * before the deletion can still write a block, a correction request or an announcement receipt, and
+ * nothing would erase them afterwards. As a job it gets the same final pass as the others. The three
+ * others are each one idempotent internal DELETE.
+ */
 export const ERASURE_TARGETS = [
+  { service: 'core', kind: 'local' },
   {
     service: 'chat-delivery',
+    kind: 'http',
     url: (subjectId: string) => chatDeliveryUrl(`internal/users/${encodeURIComponent(subjectId)}`),
   },
   {
     service: 'social',
+    kind: 'http',
     url: (subjectId: string) => socialUrl(`internal/users/${encodeURIComponent(subjectId)}`),
   },
   {
     service: 'media',
+    kind: 'http',
+    // Social re-classes the media of the posts that STAY (published as an association) before media
+    // deletes what the account uploaded; run first, media would delete them under a live post.
+    after: 'social',
     url: (subjectId: string) => mediaUrl(`media/internal/users/${encodeURIComponent(subjectId)}`),
   },
 ] as const;
+
+/** `[service, after]` for every target that must wait for another part of the SAME subject. */
+export const ERASURE_ORDER: ReadonlyArray<readonly [string, string]> = ERASURE_TARGETS.flatMap(
+  (t) => ('after' in t ? [[t.service, t.after] as const] : [])
+);
 
 export type ErasureService = (typeof ERASURE_TARGETS)[number]['service'];
 
@@ -83,7 +103,37 @@ export const CORE_ERASURE_STATEMENTS: readonly {
   },
   // The refresh tokens die here, so no session can be renewed from this moment.
   { label: 'auth_sessions', sql: `DELETE FROM auth_sessions WHERE "userId" = $1` },
+  // Last, and in the job as well as in the request: nothing nominative is left in `users`.
+  { label: 'users', sql: `DELETE FROM users WHERE id = $1` },
 ];
+
+/**
+ * Whether a failure is one a retry can be expected to fix. `permanent` is not "give up" - every job
+ * keeps being retried - it is what the report ACCUSES at once and what the sign-in refusal tells the
+ * person honestly ("contact us"), instead of waiting a day to find out:
+ *
+ * - an HTTP 4xx other than 408 and 429: the route refused the request itself - a missing prefix
+ *   (404), a secret that does not match (401/403), or a refusal the service classifies as needing a
+ *   human (social's 409 `ERASURE_WORKSPACE_REPAIR_FAILED`);
+ * - a job naming a service this build does not know (`UNKNOWN_SERVICE`).
+ *
+ * Everything else - a 5xx, a timeout, a refused connection, a database error in core's own pass - is
+ * `transient`: the service was down or busy, and the backoff is the answer.
+ */
+export type FailureKind = 'transient' | 'permanent';
+
+/** A job naming a service this build has no target for: no retry can complete it. */
+export const UNKNOWN_SERVICE = 'UNKNOWN_SERVICE';
+
+export function classifyFailure(err: unknown): FailureKind {
+  const e = err as { response?: { status?: number }; code?: string };
+  if (e?.code === UNKNOWN_SERVICE) return 'permanent';
+  const status = e?.response?.status;
+  if (status && status >= 400 && status < 500 && status !== 408 && status !== 429) {
+    return 'permanent';
+  }
+  return 'transient';
+}
 
 /**
  * How long after a failed attempt the next one is due: 30 s, doubling, capped at 6 h.
@@ -122,10 +172,22 @@ export function subjectDigest(subjectId: string): string {
   return `sha256:${createHash('sha256').update(subjectId).digest('hex')}`;
 }
 
-/** A failure as the journal records it: the status or the error code, never a URL or a body. */
+/**
+ * A failure as the journal records it: the status, plus the error CODE a service put in its body
+ * (`HTTP 409 ERASURE_WORKSPACE_REPAIR_FAILED`), or the transport's error code - never a URL or a
+ * message, which would carry the id.
+ */
 export function describeFailure(err: unknown): string {
-  const e = err as { response?: { status?: number }; code?: string; name?: string };
-  if (e?.response?.status) return `HTTP ${e.response.status}`;
+  const e = err as {
+    response?: { status?: number; data?: { code?: unknown } };
+    code?: string;
+    name?: string;
+  };
+  if (e?.response?.status) {
+    const code = e.response.data?.code;
+    const safe = typeof code === 'string' && /^[A-Z][A-Z0-9_]{0,63}$/.test(code) ? ` ${code}` : '';
+    return `HTTP ${e.response.status}${safe}`;
+  }
   if (e?.code) return e.code;
   return (e?.name ?? typeof err).slice(0, 100);
 }

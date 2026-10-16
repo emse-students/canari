@@ -129,7 +129,10 @@ describe('AuthController sessions', () => {
       platform as never,
       sessions as unknown as AuthSessionsService,
       { enabled: false } as never,
-      { isErasurePending: jest.fn().mockResolvedValue(false) } as never
+      {
+        erasureState: jest.fn().mockResolvedValue('none'),
+        confirmAfterSignIn: jest.fn().mockResolvedValue('none'),
+      } as never
     );
   });
 
@@ -153,7 +156,10 @@ describe('AuthController sessions', () => {
         } as never,
         sessions as unknown as AuthSessionsService,
         { enabled: false } as never,
-        { isErasurePending: jest.fn().mockResolvedValue(false) } as never
+        {
+          erasureState: jest.fn().mockResolvedValue('none'),
+          confirmAfterSignIn: jest.fn().mockResolvedValue('none'),
+        } as never
       );
 
     const cookieOptionsFor = async (origin: string): Promise<Record<string, unknown>> => {
@@ -491,7 +497,7 @@ describe('AuthController sessions', () => {
     let fetchSpy: jest.SpyInstance;
 
     function callbackController(
-      erasurePending = false,
+      erasure: { before: string; after: string } = { before: 'none', after: 'none' },
       users = {
         findOrCreateFromOidc: jest.fn().mockResolvedValue({ id: 'user-1', admin: false }),
         claimLegacyCotisations: jest.fn().mockResolvedValue(undefined),
@@ -509,7 +515,10 @@ describe('AuthController sessions', () => {
         platform as never,
         sessions as unknown as AuthSessionsService,
         { enabled: false } as never,
-        { isErasurePending: jest.fn().mockResolvedValue(erasurePending) } as never
+        {
+          erasureState: jest.fn().mockResolvedValue(erasure.before),
+          confirmAfterSignIn: jest.fn().mockResolvedValue(erasure.after),
+        } as never
       );
     }
 
@@ -552,26 +561,54 @@ describe('AuthController sessions', () => {
      * `users.id` IS the OIDC subject: a sign-in while the erasure is still running would recreate
      * the account under the same id, and the erasure's next pass would delete what it then wrote.
      */
-    it('refuses a sign-in while the account erasure is pending, before any account is made', async () => {
+    it.each([
+      ['pending', 'ACCOUNT_ERASURE_PENDING'],
+      ['blocked', 'ACCOUNT_ERASURE_BLOCKED'],
+    ])(
+      'refuses a sign-in while the account erasure is %s, before any account is made',
+      async (state, code) => {
+        authentikAnswers('h.idtoken.s');
+        const users = {
+          findOrCreateFromOidc: jest.fn(),
+          claimLegacyCotisations: jest.fn(),
+        };
+        const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+        const err = await callbackController({ before: state, after: state }, users)
+          .oidcCallback(
+            { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
+            makeReq({ origin: 'https://canari.example' }),
+            makeRes().res
+          )
+          .catch((e: unknown) => e);
+        expect(err).toBeInstanceOf(ForbiddenException);
+        expect((err as ForbiddenException).getResponse()).toMatchObject({ code });
+        expect(users.findOrCreateFromOidc).not.toHaveBeenCalled();
+        expect(sessions.create).not.toHaveBeenCalled();
+        warn.mockRestore();
+      }
+    );
+
+    /**
+     * The race the first check cannot see: the deletion committed while this sign-in was writing the
+     * user row and its session. The confirmation runs under the erasure's lock, before any token
+     * leaves; the sign-in is refused and no cookie is set.
+     */
+    it('refuses a sign-in that raced a deletion, after the session but before any token leaves', async () => {
       authentikAnswers('h.idtoken.s');
-      const users = {
-        findOrCreateFromOidc: jest.fn(),
-        claimLegacyCotisations: jest.fn(),
-      };
       const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
-      const err = await callbackController(true, users)
+      const { res, cookies } = makeRes();
+      const err = await callbackController({ before: 'none', after: 'pending' })
         .oidcCallback(
           { code: 'c', redirect_uri: 'https://canari.example/auth/callback' } as never,
           makeReq({ origin: 'https://canari.example' }),
-          makeRes().res
+          res
         )
         .catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ForbiddenException);
       expect((err as ForbiddenException).getResponse()).toMatchObject({
         code: 'ACCOUNT_ERASURE_PENDING',
       });
-      expect(users.findOrCreateFromOidc).not.toHaveBeenCalled();
-      expect(sessions.create).not.toHaveBeenCalled();
+      expect(cookies).toEqual({});
       warn.mockRestore();
     });
 

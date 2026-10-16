@@ -3,7 +3,7 @@
 -- Decision of 2026-10-16: deleting an account is COMPLETE and GUARANTEED, not best effort. Core used
 -- to call chat-delivery, social and media once each with `.catch(warn)` and delete the user row
 -- regardless, so a service that was down at that moment orphaned the account's data for ever with
--- no retry. Now the request writes ONE ROW PER SERVICE here, in the same transaction that deletes
+-- no retry. Now the request writes ONE ROW PER SERVICE here (core's own data included), in the same transaction that deletes
 -- the user row, and `AccountErasureService` retries each call with backoff until it answers 2xx
 -- (docs/wiki/account-erasure.md).
 --
@@ -31,7 +31,14 @@ CREATE TABLE IF NOT EXISTS account_erasure_jobs (
     "nextAttemptAt"       TIMESTAMPTZ NOT NULL DEFAULT now(),
     "lastAttemptAt"       TIMESTAMPTZ,
     "lastError"           VARCHAR(500),
-    "completedAt"         TIMESTAMPTZ
+    -- 'transient' or 'permanent' (`classifyFailure`): a permanent failure is accused at once and
+    -- turns the sign-in refusal into "contact us". Cleared by a success.
+    "lastFailureKind"     VARCHAR(16),
+    "completedAt"         TIMESTAMPTZ,
+    -- NULL for a job the worker completed. Set ONLY by an operator who closed a stuck job by hand
+    -- (the statements are in docs/wiki/account-erasure.md): what was done and why, never who the
+    -- subject was.
+    resolution            VARCHAR(500)
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS "UQ_account_erasure_pending"

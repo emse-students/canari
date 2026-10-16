@@ -1,19 +1,39 @@
 import {
   CORE_ERASURE_STATEMENTS,
   ERASURE_TARGETS,
+  UNKNOWN_SERVICE,
   afterSuccess,
+  classifyFailure,
   describeFailure,
   retryDelayMs,
   subjectDigest,
 } from './erasure-policy';
 
 describe('erasure policy', () => {
-  it('reaches the three services that hold account data, each by its internal DELETE', () => {
-    expect(ERASURE_TARGETS.map((t) => t.service)).toEqual(['chat-delivery', 'social', 'media']);
-    const urls = ERASURE_TARGETS.map((t) => t.url('u/1'));
+  it("erases core's own part in-process and reaches the three services by their internal DELETE", () => {
+    expect(ERASURE_TARGETS.map((t) => t.service)).toEqual([
+      'core',
+      'chat-delivery',
+      'social',
+      'media',
+    ]);
+    expect(ERASURE_TARGETS[0].kind).toBe('local');
+    const urls = ERASURE_TARGETS.flatMap((t) => (t.kind === 'http' ? [t.url('u/1')] : []));
     expect(urls[0]).toMatch(/\/api\/internal\/users\/u%2F1$/);
     expect(urls[1]).toMatch(/\/api\/internal\/users\/u%2F1$/);
     expect(urls[2]).toMatch(/\/api\/media\/internal\/users\/u%2F1$/);
+  });
+
+  it('calls a refusal of the request itself permanent, and a service down or busy transient', () => {
+    for (const status of [400, 401, 403, 404, 409, 422]) {
+      expect(classifyFailure({ response: { status } })).toBe('permanent');
+    }
+    for (const status of [408, 429, 500, 502, 503]) {
+      expect(classifyFailure({ response: { status } })).toBe('transient');
+    }
+    expect(classifyFailure({ code: 'ECONNREFUSED' })).toBe('transient');
+    expect(classifyFailure({ code: UNKNOWN_SERVICE })).toBe('permanent');
+    expect(classifyFailure(new Error('database blip'))).toBe('transient');
   });
 
   it('backs off from 30 s, doubling, and never waits more than 6 h', () => {
@@ -48,6 +68,15 @@ describe('erasure policy', () => {
       'ECONNREFUSED'
     );
     expect(describeFailure(new TypeError('boom'))).toBe('TypeError');
+    // A service's error CODE is kept; anything that is not a bare code is not.
+    expect(
+      describeFailure({
+        response: { status: 409, data: { code: 'ERASURE_WORKSPACE_REPAIR_FAILED' } },
+      })
+    ).toBe('HTTP 409 ERASURE_WORKSPACE_REPAIR_FAILED');
+    expect(describeFailure({ response: { status: 409, data: { code: 'user u1 failed' } } })).toBe(
+      'HTTP 409'
+    );
   });
 
   it('binds a replacement only to the statements that name $2', () => {
@@ -61,5 +90,8 @@ describe('erasure policy', () => {
     expect(sql).toContain('DELETE FROM profile_changes WHERE "userId" = $1');
     expect(sql).toContain('DELETE FROM profile_correction_requests WHERE "userId" = $1');
     expect(sql).toContain('DELETE FROM auth_sessions WHERE "userId" = $1');
+    expect(CORE_ERASURE_STATEMENTS[CORE_ERASURE_STATEMENTS.length - 1].sql).toBe(
+      'DELETE FROM users WHERE id = $1'
+    );
   });
 });

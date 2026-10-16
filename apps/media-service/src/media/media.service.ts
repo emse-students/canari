@@ -1323,7 +1323,9 @@ export class MediaService {
     }
 
     if (deleted > 0 || failed > 0) await this.persistMetadata();
-    this.logger.log(`Account deletion for ${ownerId}: ${deleted} media deleted, ${failed} failed`);
+    this.logger.log(
+      `Account deletion for ${ownerId.slice(0, 8)}...: ${deleted} media deleted, ${failed} failed`
+    );
     return { deleted, failed };
   }
 
