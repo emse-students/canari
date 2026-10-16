@@ -169,7 +169,10 @@
       },
     };
     // The toast for a pointer, the row inside the sheet for a keyboard held by its focus trap.
-    lastChange = change;
+    // Only into the sheet the change was made in: a write that lands after its sheet closed (and
+    // maybe another person's opened) keeps its toast, never a row in the wrong sheet.
+    if (editing === userId) lastChange = change;
+    else Log.d('admin.read-access.change landed after its sheet closed', { userId, editing });
     showUndoToast(text, change.undo);
   }
 

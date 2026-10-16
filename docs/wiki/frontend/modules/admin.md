@@ -124,6 +124,8 @@ The decisions, taken by the user on 2026-10-16:
   answer or a newer one.
 - **Inside the sheet's focus trap a keyboard cannot reach the toast**, so the last change and its
   "Annuler" are also a row in the sheet; a failed save is said in the sheet, not on the dimmed page.
+  That row goes only into the sheet of the person changed: a write landing after its sheet closed
+  (another person's may be open) keeps its toast and draws nothing in the sheet on screen.
 - **A box being saved is `aria-disabled` + `aria-busy`, dimmed with a spinner - never `disabled`**,
   which drops focus to the page body behind the sheet; a click on it is put back. An undo that meets
   a write still in flight for that cell or person says so in a toast instead of doing nothing; the

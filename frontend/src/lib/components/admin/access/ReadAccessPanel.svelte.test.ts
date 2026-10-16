@@ -246,3 +246,38 @@ it('"Ajouter" opens the sheet for the person picked, and only then clears the fi
   await vi.waitFor(() => expect(addForm(FIELD).input.value).toBe(''));
   expect(api.setReadGrant).not.toHaveBeenCalled();
 });
+
+it("a write landing after its sheet closed never puts its undo row in another person's sheet", async () => {
+  const other = { ...GRANT, userId: 'u2' };
+  api.listReadGrants.mockResolvedValue({ grants: [GRANT, other], journal: JOURNAL });
+  const target = await render();
+  await vi.waitFor(() =>
+    expect(target.querySelectorAll('[data-testid="read-grant-card"]')).toHaveLength(2)
+  );
+  const edit = (i: number) =>
+    target.querySelectorAll<HTMLButtonElement>('[data-testid="read-grant-card"] button')[i];
+
+  edit(0).click();
+  flushSync();
+  const write = deferred<void>();
+  api.setReadGrant.mockReturnValueOnce(write.promise);
+  document.querySelector<HTMLInputElement>('input[data-cell="u1|gardanne|ICM"]')!.click();
+  flushSync();
+  // Close u1's sheet with the write still in flight, and open u2's.
+  [...document.querySelectorAll<HTMLButtonElement>('button')]
+    .find((b) => b.textContent!.trim() === m.readaccess_sheet_done())!
+    .click();
+  flushSync();
+  edit(1).click();
+  flushSync();
+  await vi.waitFor(() =>
+    expect(document.querySelector('input[data-cell="u2|gardanne|ICM"]')).not.toBeNull()
+  );
+
+  write.resolve();
+  await vi.waitFor(() => expect(toastStore.toasts).toHaveLength(1));
+  flushSync();
+  // The toast still offers the undo; u2's sheet shows nothing of u1's change.
+  expect(toastStore.toasts[0].message).toContain('Name u1');
+  expect(document.querySelector('[data-testid="read-grant-last-change"]')).toBeNull();
+});
