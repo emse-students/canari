@@ -27,28 +27,44 @@ export function backdropSampleSize(
 }
 
 /**
+ * What a paint did. `no-size`: the media has no picture size yet. `no-context`: the engine gave no
+ * 2D context. `blank`: the read came back with no picture at all (every pixel 0, as a video read
+ * before its frame is really presented can on WKWebView) and `target` was left untouched.
+ */
+export type BackdropPaintResult = 'painted' | 'no-size' | 'no-context' | 'blank';
+
+/** Whether a read holds no picture: every channel of every pixel is 0 except, at most, alpha. */
+export function isBlankSample(data: ArrayLike<number>): boolean {
+  for (let i = 0; i < data.length; i += 4) {
+    if (data[i] !== 0 || data[i + 1] !== 0 || data[i + 2] !== 0) return false;
+  }
+  return true;
+}
+
+/**
  * Paints `media`'s current picture, blurred, into `target` (resized to the final blur size).
  *
- * @returns false when the media has no picture size yet (nothing was drawn); true once painted.
  * @throws whatever `drawImage` throws for a picture it may not read (a tainted source).
  */
 export function paintBlurredBackdrop(
   target: HTMLCanvasElement,
   media: HTMLVideoElement | HTMLImageElement
-): boolean {
+): BackdropPaintResult {
   const isVideo = media instanceof HTMLVideoElement;
   const sourceWidth = isVideo ? media.videoWidth : media.naturalWidth;
   const sourceHeight = isVideo ? media.videoHeight : media.naturalHeight;
-  if (!sourceWidth || !sourceHeight) return false;
+  if (!sourceWidth || !sourceHeight) return 'no-size';
 
   let { width, height } = backdropSampleSize(sourceWidth, sourceHeight);
   let current = document.createElement('canvas');
   current.width = width;
   current.height = height;
   const first = current.getContext('2d');
-  if (!first) return false;
+  if (!first) return 'no-context';
   first.imageSmoothingQuality = 'high';
   first.drawImage(media, 0, 0, width, height);
+  // A dozen pixels across: reading them back costs nothing next to the media read above.
+  if (isBlankSample(first.getImageData(0, 0, width, height).data)) return 'blank';
 
   for (let step = 0; step < BACKDROP_UPSCALE_STEPS; step++) {
     const isLast = step === BACKDROP_UPSCALE_STEPS - 1;
@@ -58,11 +74,11 @@ export function paintBlurredBackdrop(
     next.width = width;
     next.height = height;
     const ctx = next.getContext('2d');
-    if (!ctx) return false;
+    if (!ctx) return 'no-context';
     ctx.imageSmoothingEnabled = true;
     ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(current, 0, 0, width, height);
     current = next;
   }
-  return true;
+  return 'painted';
 }

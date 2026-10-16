@@ -682,8 +682,12 @@ Read through the app's DevTools socket with the viewer left open, evidence in
   holes** (the first half second). The published reel the user filmed carried the same pattern (65
   frames in 3.45 s, holes every ~250 ms, 16 fps in its last half second).
 
-**Fix**: the picture is read ONCE per media (`loadeddata` / `load`, and not again for the same
-source), blurred on the canvas (`reels/reelBackdropPaint.ts`: 12 px across then three bilinear
+**Fix**: the picture is read ONCE per source, on an EVENT: a video on its first presented frame
+after `playing` (one `requestVideoFrameCallback`; not `loadeddata`, whose HAVE_CURRENT_DATA can still
+hand WKWebView's canvas a black picture), an image on `load`. A read that comes back blank (every
+pixel 0) paints nothing and is retried on the next presented frame, 5 at most - a count, not a clock.
+The source is the `srcObject` itself or the URL, so a lens switch on the camera's element repaints.
+It is blurred on the canvas (`reels/reelBackdropPaint.ts`: 12 px across then three bilinear
 doublings to 96 px, a near-Gaussian), shown `object-cover` and dimmed. No timer, no animation frame,
 no CSS `filter` (nothing for the compositor, WebView or WKWebView, to blur per frame). Live-patched on
 the phone with the same algorithm: the bands are a smooth blur, one read of ~18-46 ms when the reel

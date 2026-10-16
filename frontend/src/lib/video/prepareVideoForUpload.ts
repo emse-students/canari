@@ -159,6 +159,7 @@ export async function prepareVideoForUpload(
   console.debug(
     `[video-prep] start: ${source.type || 'unknown'}, ${source.size} bytes` +
       (removeAudio ? ', audio removed' : '') +
+      (trimToVideo ? ', trim to video' : '') +
       (maxSeconds !== undefined ? `, max ${maxSeconds} s` : '') +
       (maxBytes !== undefined ? `, max ${maxBytes} bytes` : '')
   );
@@ -208,6 +209,11 @@ export async function prepareVideoForUpload(
           ` of ${durationSeconds.toFixed(3)} s`
       );
       durationSeconds = trim.end - trim.start;
+    } else if (trimToVideo) {
+      console.debug(
+        `[video-prep] trim to video asked, nothing to cut: the video spans the whole` +
+          ` ${durationSeconds.toFixed(3)} s`
+      );
     }
     if (maxSeconds !== undefined && durationSeconds > maxSeconds + VIDEO_DURATION_GRACE_SECONDS) {
       console.warn(`[video-prep] refused: ${durationSeconds.toFixed(2)} s over ${maxSeconds} s`);
