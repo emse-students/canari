@@ -72,16 +72,29 @@ never an answer, so it can never log anyone out.
 **The refresh's number comes from the rotation, not from the link.** The server rotates on RECEIPT,
 so a deadline can abandon a refresh it already executed and lose the new token. That loses the
 response, not the session: the replaced `jti` is answered with the CURRENT token for
-`ROTATION_GRACE_SECONDS` (60 s, see above), rotating nothing. `REFRESH_DEADLINE_MS` is the read
-class's 20 s so that at least 40 s of the grace is left to the next refresh, which is simply the next
-`getToken` caller, single-flight - **no retry is added inside the refresh**, so a deadline can never
-cause a second rotation. No deadline is the worse case: an engine giving up after minutes has lost
-the same response AND spent the grace, and the next refresh is a replay that revokes the session.
+`ROTATION_GRACE_SECONDS` (60 s, see above), rotating nothing - **provided the old token is presented
+again inside that window.** "The next `getToken` caller is the retry" does not guarantee that,
+because there may be no next caller: a cold start's `hasStoredSession` swallows the failure and
+leaves the user on the login screen, the no-network gate holds refreshes until a reconnect, and a
+backgrounded app makes no call. A slow-but-alive refresh abandoned at its deadline could then be
+followed by nothing until the grace ran out, and the next refresh would revoke the session as a
+replay - where before the deadline it simply succeeded (adversarial review of #1966, 2026-10-16).
+
+**So a refresh whose head missed its deadline is re-sent ONCE, at once, with the SAME credential**,
+inside the shared single-flight promise. The server makes that safe by construction: if the first
+request never arrived, the re-send rotates normally; if it did, the re-send gets the grace answer.
+Never a double rotation. `REFRESH_DEADLINE_MS` is the read class's 20 s, and the call is labelled
+`read`, because what the policy needs is a call that may be re-sent once without a second effect -
+what a GET is, and what this POST is inside the grace; two deadlines are 40 s, inside the 60 s. A
+second deadline rejects as a `RequestDeadlineError`, and a 401 on the re-send is the dead session it
+always was. No deadline is the worse case: an engine giving up after minutes has lost the same
+response AND spent the grace.
 
 **The sign-out is awaited, under `LOGOUT_DEADLINE_MS` (the write class's 30 s), and the local sign-out
-completes whatever the server did.** Awaited because the web sign-out navigates the document to
+completes whatever the server did.** The button says it is busy for that wait and ignores a second
+tap, which would send a second logout (`Navbar.svelte`). Awaited because the web sign-out navigates the document to
 MiConnect's end-session next ([auth](frontend/modules/auth.md#signing-out-ends-the-miconnect-session-2026-10-14)),
-which would abort a request in flight. A sign-out past the deadline says `the server did NOT revoke
+which would abort a request in flight. A sign-out past the deadline, or answered with a non-2xx, says `the server did NOT revoke
 the session` at `warn`, because the row then lives on: where the cookie is the credential (web,
 Android) it is still in the jar, since only the server's `Set-Cookie` clears an HttpOnly cookie. On
 the native transport (iOS) the stored copy is cleared locally either way.

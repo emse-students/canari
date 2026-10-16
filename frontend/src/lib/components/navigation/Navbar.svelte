@@ -9,9 +9,21 @@
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { m } from '$lib/paraglide/messages';
 
+  /** A sign-out is under way: it can wait up to the logout deadline, and a second tap is ignored. */
+  let signingOut = $state(false);
+
   async function handleLogout() {
-    await clearAuth();
-    await leaveSignedOut();
+    if (signingOut) {
+      console.log('[NAV] sign-out already under way - tap ignored');
+      return;
+    }
+    signingOut = true;
+    try {
+      await clearAuth();
+      await leaveSignedOut();
+    } finally {
+      signingOut = false;
+    }
   }
 </script>
 
@@ -48,7 +60,7 @@
       {#if globalSession.isLoggedIn}
         <EcosystemLauncher />
       {/if}
-      <SessionActionButtons onLogout={handleLogout} />
+      <SessionActionButtons onLogout={handleLogout} busy={signingOut} />
       {#if globalSession.isLoggedIn && globalSession.userId}
         <button
           type="button"

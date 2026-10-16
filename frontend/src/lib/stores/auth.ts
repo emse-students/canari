@@ -105,15 +105,28 @@ let _noNetworkSpellFailure: TransportFailureError | RequestDeadlineError | null 
  * deadline can abandon a refresh the server already executed and lose the new token. That loses the
  * RESPONSE, not the session: the replaced token stays valid for `ROTATION_GRACE_SECONDS` (60 s,
  * `apps/core-service/src/auth/auth-sessions.service.ts`), and presenting it again inside that window
- * is answered with the CURRENT token, rotating nothing. So the deadline must leave most of the grace
- * to the next refresh, and the read class's 20 s leaves at least 40 s. With NO deadline the same lost
- * response is worse, not safer: an engine that gives up after minutes has also spent the grace, and
- * the next refresh is read as a replay and revokes the session.
+ * is answered with the CURRENT token, rotating nothing - PROVIDED it is presented again inside
+ * that window.
  *
- * No retry is made here: the next `getToken` caller is the retry, single-flight like every refresh,
- * and it presents the same stored token - one rotation at most, whatever happened to this one.
+ * NOTHING ELSE GUARANTEES A NEXT REFRESH, so the refresh re-sends itself, ONCE, at once, with the
+ * SAME credential ({@link REFRESH_DEADLINE_RESENDS}). A cold start's `hasStoredSession` swallows the
+ * failure and leaves the user on the login screen, the no-network gate holds refreshes until a
+ * reconnect, and a backgrounded app makes no call at all - so "the next caller is the retry" could
+ * leave a rotation lost until the grace ran out and the next refresh revoked the session as a replay.
+ * The re-send is safe by the server's construction: a first request that never arrived means the
+ * re-send rotates normally; one that did arrive means the re-send gets the grace answer. Never a
+ * double rotation. Two deadlines are therefore at most 40 s, inside the 60 s grace.
+ *
+ * It is the read class's number and the call is labelled `read`, on purpose: what the deadline policy
+ * needs is a call that may be re-sent once without a second effect, which is what a GET is and what
+ * this POST is inside the grace. With NO deadline the same lost response is worse, not safer: an
+ * engine that gives up after minutes has also spent the grace, and the next refresh is read as a
+ * replay and revokes the session.
  */
 export const REFRESH_DEADLINE_MS = DEADLINE_MS.read;
+
+/** How many times a refresh whose head missed its deadline is re-sent - see {@link REFRESH_DEADLINE_MS}. */
+const REFRESH_DEADLINE_RESENDS = 1;
 
 /**
  * How long a sign-out waits for the server's revocation before the local sign-out goes on without
@@ -724,9 +737,12 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
   // connectivity store what happened - an answer is reachability, a transport failure is not, and a
   // deadline expiry counts as a stall. Without it a stalled or captive link held every request of a
   // cold open behind this one for as long as the engine tolerates, minutes.
-  let res: Response;
-  try {
-    res = await trackedFetch(
+  //
+  // A head that missed its deadline is re-sent ONCE, at once, with the SAME credential (`carried` is
+  // read once above, and an aborted request delivered no `Set-Cookie`), inside this shared promise so
+  // the single flight holds - see `REFRESH_DEADLINE_MS` for why that can never rotate twice.
+  const send = (): Promise<Response> =>
+    trackedFetch(
       fetchImpl,
       endpoint,
       {
@@ -736,8 +752,23 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
         credentials: 'include',
         headers: carried ? { [REFRESH_HEADER]: carried } : undefined,
       },
-      { requestClass: 'write', deadlineMs: REFRESH_DEADLINE_MS }
+      { requestClass: 'read', deadlineMs: REFRESH_DEADLINE_MS }
     );
+  let res: Response;
+  try {
+    let resends = 0;
+    for (;;) {
+      try {
+        res = await send();
+        break;
+      } catch (e) {
+        if (!(e instanceof RequestDeadlineError) || resends >= REFRESH_DEADLINE_RESENDS) throw e;
+        resends++;
+        awarn(
+          `refresh✗deadline ${Date.now() - t0}ms - re-sent once with the same credential, so a rotation the server made is answered from its grace`
+        );
+      }
+    }
   } catch (e) {
     _accessToken = null;
     clearWsSessionCookie();
@@ -927,7 +958,13 @@ export async function clearAuth(): Promise<void> {
       },
       { requestClass: 'write', deadlineMs: LOGOUT_DEADLINE_MS }
     );
-    alog(`logout✓${res.status} ${Date.now() - t0}ms`);
+    // A status is an answer, but only a 2xx says the row was revoked: a 5xx is the server saying it
+    // could not, and the session then lives on exactly as after a deadline.
+    if (res.ok) alog(`logout✓${res.status} ${Date.now() - t0}ms`);
+    else
+      awarn(
+        `logout✗${res.status} ${Date.now() - t0}ms - signed out locally, the server did NOT revoke the session`
+      );
   } catch (e) {
     awarn(
       `logout✗ ${Date.now() - t0}ms: ${String(e)} - signed out locally, the server did NOT revoke the session`
