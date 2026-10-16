@@ -1519,6 +1519,43 @@ opened onto the feed. Bench community "Bench126" only; nothing sent, no account 
 | 4. Reply swipe (#1880) and back gesture | **`PASS`** | A rightward drag on a peer bubble ("Canari Test Delta") stages "Repondre a Canari Test Delta" and the conversation stays open; a leftward drag from x=350 of 390 on an own bubble stages "Repondre a Canari Test Gamma"; both cancelled with "Annuler la reponse". A left-edge drag (x=2 to 260) from the salon returns to the community's salon list |
 | 5. In-app log export | **`NOT-OBSERVED`** | "Enregistrer le journal" opens the system "Enregistrer sous" picker (canari-log-1.2.8-alpha.1...) over an empty "Sur mon iPhone"; dismissed without saving. The file cannot be read off the TestFlight container from the workstation, so the absence of message text was not checked on iOS (the Android export of the same build is `PASS`) |
 
+## The iPhone 12 readings of v1.2.9-alpha.4 (2026-10-16)
+
+TestFlight build `1.2.9 (100200904)`, Settings > A propos reads "Version de Canari 1.2.9-alpha.4",
+account `canari-test-gamma`, dev estate, driven over WDA (`tools/ios-device`). Evidence (screenshots,
+the three in-app log exports read in Files Quick Look, a syslog capture) is under
+`canari-harness/ios-bench/r1017-a129a4/` on the bench workstation. Nothing sent, nothing paid.
+
+**Delivery.** Release run 38888170609 finished green at about 12:53; at 13:02 TestFlight offered the
+build with "Mettre a jour" (auto-update had not taken it yet), installed by 13:04. The app came back
+on the PIN gate, not signed out.
+
+**Instrument note.** `ios.mjs swipe` is an XCUI press-and-drag: it draws no paint stroke and its
+second swipe on the photo review did nothing 3 of 3. A W3C `gesture` touch sequence (x=2 to 260)
+does both, so 1c and 1d are read with it; 1a was read with both and they agree.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1a. "+" menu open, ONE edge swipe (DM x3, salon x3) | **`FAIL` (P2)** | 12 of 12 (6 XCUI, 6 W3C): the swipe closes the menu AND leaves the conversation. The in-app log has one `I [historyOverlay] gesture Back closes overlay N, 0 left open` per swipe (13:07:20.438, 13:07:51.685, 13:08:07.118, ...) and 0 `gesture Back spent`: the menu was on top at the commit and was closed by the overlay owner, and a SECOND Back path then left the conversation, one the in-app log does not name (candidates, not proven: the WKWebView back-forward swipe, or the conversation's own swipe owner also committing) |
+| 1b. Edge swipe with nothing open | **`PASS`** | Leaves the conversation, in the DM and in the salon |
+| 1c. Photo review "Abandonner ?" | **`PASS`** | The swipe asks "Abandonner cette capture ?"; "La garder" keeps the review and a second swipe asks again; the review's X asks, "Abandonner" returns to the live camera, the next swipe closes the camera and stays in the conversation |
+| 1d. Paint stroke from the left edge | **`PASS`** | A stroke from x=2 draws and the editor stays; its back arrow asks "Abandonner vos modifications et revenir a la capture ?" |
+| 2. In-app log across Settings at the largest text size | **`PASS`** | Export at 13:32 after the trip: header `# stored: ok`, 2974 lines, 241 KB, sessions back to 2026-10-14 kept. The 14:21 export (262 KB) carries `13:32:15.602 I [APPLOG] a write was cut short as the app left the screen (Error: log write failed) - 23 lines kept, for the return`, then a clean resume |
+| 3. PIN gate at the largest text size | **`PASS`** | At the end of the scroll "Rester connecte sur cet appareil" is fully visible above Deverrouiller, with "Saisie manuelle" and "PIN oublie ?"; rows 7-0 reachable and the unlock from the scrolled keypad works. P3: before scrolling, Deverrouiller (y 665-742 pt) overlaps rows 7-9 (654-732) |
+| 4. `payment/success?submission_id=<unknown>` | **`PASS`** | Deep link with a nil UUID: WebView title "Paiement introuvable - Canari", heading "Paiement introuvable", link "Retour aux formulaires". P3: the hidden route announcer still reads "Verification du paiement... - Canari" |
+| 5a. Feed header | **`PASS`** | One row: Associations / Suivis / Tout and the "Ouvrir les CanaReels" icon at the right, 44x44 pt; at the largest size the tabs scroll and the icon stays |
+| 5b. Reel viewer | **`PASS`** | The clap opens the full-screen viewer at the newest reel; avatar and name bottom-left over a scrim; the backdrop is PAINTED on the first reel (mean RGB top 85,83,75, bottom 55,57,50, not black); it loops, a 16-frame burst shows no still longer than 0.6 s; the left-edge swipe returns to the feed |
+| 5c. Swipe to the next reel | **`FAIL` (P2)** | The swipe moves, but reels 2 and 3 (another author's, 9 and 8 Oct.) show only the yellow play button on a dark gradient: no "Lecteur video" in the AX tree, a tap on play does nothing; reel 1 plays again when swiped back. Cause NOT read: a Quick Look search of the export found no line at the minute of the swipe. P3: the author link's AX rect is 16,-196 242x869 |
+| 5d. "Voir plus", caption scroll, tap folds | **`NOT-OBSERVABLE`** | No reel on dev has a caption past 2 lines, and posting one is outside this reading |
+| 6a. PIN change + relaunch | **`PASS`** | "PIN modifie..."; after terminate + launch the old PIN is refused and the new one opens the feed with no restore banner, the DM reads; changed back. P2 still present: with the keyboard up the confirm field sits behind the sticky "Changer mon PIN" button and is reachable only after blurring |
+| 6b. Refused PIN empties the field | **`PASS`** | "PIN incorrect : ce PIN ne correspond pas..." and the field returns to its placeholder |
+| 6c. Text size on return | **`PASS`** | Back from Settings at the largest size, the "A propos" link measures 126x42 pt, no cold start |
+| 6d. Offline cold start | **`PASS`** | Airplane mode, terminate + launch: a calm PIN gate; an unlock reads "Impossible de contacter le serveur. Verifiez votre connexion puis reessayez.", the field empties, stable after 20 s; airplane off, the unlock reaches the feed |
+
+**State left behind.** Canari unlocked in front on dev (Settings > A propos), default text size,
+airplane mode off, the bench account's PIN as in the harness file, composer drafts empty. Three log
+exports remain in Files > Sur mon iPhone.
+
 ## The bench readings of v1.2.7-alpha.2 (2026-10-14)
 
 **Mi 9T**: build `1.2.7 (100200702)`, the release's `app-universal-release.apk` (sha256
