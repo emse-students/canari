@@ -213,7 +213,8 @@ the page hands it to `SeoHead` through `lib/seo/pageTitle.svelte.ts`, which stay
 `<title>`. Lists already redirected to `/lists`. A title set AFTER the navigation is not heard by
 SvelteKit's hidden route announcer, which copies `document.title` at the navigation only: a page
 whose answer arrives later announces it ITSELF, through its own polite status region present from
-the first frame. The payment return does (`role="status"` on its answer block) - the announcer read
+the first frame. The payment return does (`role="status"` on its heading and sentence only, the icon and the link
+outside it) - the announcer read
 "Verification du paiement..." over "Paiement introuvable" (iPhone 12, v1.2.9-alpha.4). Making the
 router re-read the title by a shallow `replaceState` was refused in review: it rewrites the history
 entry, notifies every page-store subscriber, and throws before the router has started.

@@ -91,45 +91,52 @@
 <!--
   THE ANSWER IS ANNOUNCED BY THE PAGE ITSELF. SvelteKit's route announcer reads the title once, at
   the navigation, when it is still "Verification du paiement..." (iPhone 12, v1.2.9-alpha.4: it went
-  on reading that over "Paiement introuvable"). The block is a polite status region, present from
-  the first frame, so the answer that replaces the verifying line is what a screen reader hears.
+  on reading that over "Paiement introuvable"). The heading and its sentence are a polite status
+  region, present from the first frame, so the answer that replaces the verifying line is what a
+  screen reader hears. The icon and the link stay OUTSIDE it: a status reads its text, not a way out.
 -->
 <div class="flex min-h-screen items-center justify-center px-4">
-  <div class="w-full max-w-md space-y-6 text-center" role="status" data-payment-answer>
+  <div class="w-full max-w-md space-y-6 text-center">
     {#if status === 'loading'}
       <div class="flex justify-center">
         <div class="bg-cn-border/30 animate-pulse rounded-full p-4">
           <Loader size={48} class="text-text-muted animate-spin" />
         </div>
       </div>
-      <p class="text-text-muted">{m.form_success_verifying()}</p>
-    {:else if status === 'pending'}
-      <div>
-        <h1 class="text-text-main text-2xl font-bold tracking-tight">
-          {m.form_success_pending_heading()}
-        </h1>
-        <p class="text-text-muted mt-2">{m.form_success_pending_desc()}</p>
-      </div>
-      <a
-        href={formId ? `/forms/${formId}` : '/forms'}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
-      >
-        {m.form_success_back_to_form()}
-      </a>
     {:else if status === 'confirmed'}
       <div class="flex justify-center">
         <div class="bg-green-ok/15 rounded-full p-4">
           <CircleCheck size={48} class="text-green-ok" />
         </div>
       </div>
-      <div>
+    {:else if status === 'error'}
+      <div class="flex justify-center">
+        <div class="bg-red-err/20 rounded-full p-4">
+          <CircleX size={48} class="text-red-500" />
+        </div>
+      </div>
+    {/if}
+
+    <div role="status" data-payment-answer>
+      {#if status === 'loading'}
+        <p class="text-text-muted">{m.form_success_verifying()}</p>
+      {:else}
         <h1 class="text-text-main text-2xl font-bold tracking-tight">
-          {m.form_success_confirmed_heading()}
+          {STATUS_TITLE[status]()}
         </h1>
         <p class="text-text-muted mt-2">
-          {m.form_success_confirmed_desc()}
+          {status === 'confirmed'
+            ? m.form_success_confirmed_desc()
+            : status === 'pending'
+              ? m.form_success_pending_desc()
+              : status === 'overCapacity'
+                ? m.form_success_over_capacity_desc()
+                : m.form_success_not_found_desc()}
         </p>
-      </div>
+      {/if}
+    </div>
+
+    {#if status === 'pending' || status === 'confirmed'}
       <a
         href={formId ? `/forms/${formId}` : '/forms'}
         class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
@@ -137,32 +144,13 @@
         {m.form_success_back_to_form()}
       </a>
     {:else if status === 'overCapacity'}
-      <div>
-        <h1 class="text-text-main text-2xl font-bold tracking-tight">
-          {m.form_success_over_capacity_heading()}
-        </h1>
-        <p class="text-text-muted mt-2">{m.form_success_over_capacity_desc()}</p>
-      </div>
       <a
         href={formId ? `/forms/${formId}` : '/forms'}
         class="bg-cn-border/40 text-text-main hover:bg-cn-border/60 inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold transition-all"
       >
         {m.form_success_back_to_form()}
       </a>
-    {:else}
-      <div class="flex justify-center">
-        <div class="bg-red-err/20 rounded-full p-4">
-          <CircleX size={48} class="text-red-500" />
-        </div>
-      </div>
-      <div>
-        <h1 class="text-text-main text-2xl font-bold tracking-tight">
-          {m.form_success_not_found_heading()}
-        </h1>
-        <p class="text-text-muted mt-2">
-          {m.form_success_not_found_desc()}
-        </p>
-      </div>
+    {:else if status === 'error'}
       <a
         href="/forms"
         class="bg-cn-border/40 text-text-main hover:bg-cn-border/60 inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold transition-all"

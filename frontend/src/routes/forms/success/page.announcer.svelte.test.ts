@@ -69,6 +69,20 @@ describe('the payment return announces its own answer', () => {
     expect(before.textContent).not.toContain(m.form_success_verifying());
   });
 
+  it('reads the heading and its sentence only - the way back is outside the region', async () => {
+    answer.confirm.mockResolvedValue({ formId: 'f1', paymentStatus: 'paid' });
+    const { region, settle } = await render();
+    await settle();
+    const link = [...document.querySelectorAll('a')].find(
+      (a) => a.textContent?.trim() === m.form_success_back_to_form()
+    );
+    expect(link, 'the way back is drawn').toBeTruthy();
+    expect(region().contains(link!)).toBe(false);
+    expect(region().querySelector('a')).toBeNull();
+    expect(region().textContent).toContain(m.form_success_confirmed_heading());
+    expect(region().textContent).toContain(m.form_success_confirmed_desc());
+  });
+
   it('never rewrites the history entry to make the router re-read the title', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
     answer.confirm.mockRejectedValue(new Error('not found'));
