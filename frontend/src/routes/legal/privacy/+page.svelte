@@ -529,9 +529,9 @@
         <dt>Environnement de test</dt>
         <dd>
           Une version de test (dev.canari-emse.fr), sur le même serveur, sert à vérifier chaque
-          nouvelle version avant sa diffusion. Elle ne contient aucune donnée de la production :
-          des personnes et des associations fictives, et ce que les testeurs y créent eux-mêmes.
-          Seuls les comptes MiConnect peuvent s'y connecter.
+          nouvelle version avant sa diffusion. Elle ne contient aucune donnée de la production : des
+          personnes et des associations fictives, et ce que les testeurs y créent eux-mêmes. Seuls
+          les comptes MiConnect peuvent s'y connecter.
         </dd>
       </div>
       <div>
