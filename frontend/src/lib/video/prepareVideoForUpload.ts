@@ -99,6 +99,13 @@ export interface PrepareVideoOptions {
    * would still ship the sound. The size budget is planned without the audio's share.
    */
   removeAudio?: boolean;
+  /**
+   * Cuts the output to the VIDEO track's own span, its first frame to its last frame's end. A reel
+   * loops, and audio before the first frame or past the last one is time the player holds a still
+   * picture on every pass (Mi 9T, 2026-10-16: a camera take's video started 67 ms after its audio and
+   * ended 71 ms before it). Left off for an attachment, whose sound past the picture is content.
+   */
+  trimToVideo?: boolean;
   /** Called with the share done, from 0 to 1, as frames are encoded. */
   onProgress?: (fraction: number) => void;
   /** Aborting it stops the encoder and rejects with the `aborted` fault. */
@@ -141,7 +148,14 @@ export async function prepareVideoForUpload(
   source: Blob,
   options: PrepareVideoOptions = {}
 ): Promise<PreparedVideo> {
-  const { maxSeconds, maxBytes, onProgress, signal, removeAudio = false } = options;
+  const {
+    maxSeconds,
+    maxBytes,
+    onProgress,
+    signal,
+    removeAudio = false,
+    trimToVideo = false,
+  } = options;
   console.debug(
     `[video-prep] start: ${source.type || 'unknown'}, ${source.size} bytes` +
       (removeAudio ? ', audio removed' : '') +
@@ -180,6 +194,20 @@ export async function prepareVideoForUpload(
     if (!videoTrack) {
       console.warn('[video-prep] refused: no video track');
       throw new VideoPrepareError('no-video-track', 'video: the file has no video track');
+    }
+    const trim = trimToVideo
+      ? videoSpanTrim(
+          await videoTrack.getFirstTimestamp(),
+          await videoTrack.computeDuration(),
+          durationSeconds
+        )
+      : null;
+    if (trim) {
+      console.debug(
+        `[video-prep] trimmed to the video: ${trim.start.toFixed(3)}-${trim.end.toFixed(3)} s` +
+          ` of ${durationSeconds.toFixed(3)} s`
+      );
+      durationSeconds = trim.end - trim.start;
     }
     if (maxSeconds !== undefined && durationSeconds > maxSeconds + VIDEO_DURATION_GRACE_SECONDS) {
       console.warn(`[video-prep] refused: ${durationSeconds.toFixed(2)} s over ${maxSeconds} s`);
@@ -271,6 +299,7 @@ export async function prepareVideoForUpload(
         forceTranscode: true,
       },
       audio: audioConversionOptions(mb, audioRoute),
+      ...(trim ? { trim } : {}),
     });
     // A dropped track is a refusal, never a quieter video: an engine that cannot decode the source
     // or encode the target says so here, as a FACT read before a frame is touched. The ONE track
@@ -333,6 +362,26 @@ export async function prepareVideoForUpload(
     signal?.removeEventListener('abort', onAbort);
     input.dispose();
   }
+}
+
+/**
+ * The trim that keeps only the video's span of a container, or null when the container already
+ * starts and ends with its video (nothing to cut, so no `trim` reaches the conversion).
+ *
+ * @param videoStart The video track's first timestamp, in seconds (a negative one is presented from 0).
+ * @param videoEnd The end of the video track's last frame, in seconds.
+ * @param containerDuration The whole container's duration, every track included.
+ */
+export function videoSpanTrim(
+  videoStart: number,
+  videoEnd: number,
+  containerDuration: number
+): { start: number; end: number } | null {
+  const start = Math.max(0, videoStart);
+  const end = Math.min(videoEnd, containerDuration);
+  if (end <= start) return null;
+  if (start === 0 && end >= containerDuration) return null;
+  return { start, end };
 }
 
 /** The codec string of AAC-LC, the one audio format the output carries. */

@@ -693,3 +693,27 @@ and does not see the page's main thread. Tests: `ReelBackdrop.svelte.test.ts` pi
 animation frame, no second video, one paint per source". **Not read**: the iPhone (WKWebView reads a
 video into a canvas through its own path; the blur needs no CSS filter, so its cost there is the one
 read) and a landscape reel on the phone (the code path is the same `object-cover`).
+
+### The end of a reel looked frozen (2026-10-16)
+
+Same session, the user's second report: "la fin de la video semble toujours figee - ca devrait boucler".
+It DOES loop: the player's `<video>` has `loop`, `duration` 3.52 s, `seekable` and `buffered` 0-3.52,
+and every pass fires `seeking` / `waiting` / `seeked` at 0, no `ended`, never paused. Measured with
+`requestVideoFrameCallback` over 25 s (6.5 passes) and ffprobe on the very blob the player was fed
+(a Mediabunny fragmented MP4, H.264 + AAC):
+
+- **The file itself was low and uneven**: 65 frames in 3.45 s, 10-24 fps per half second and **16 fps
+  in its last half second**, holes of 93-231 ms every ~250 ms. That is the backdrop's re-sample during
+  the take (previous section), fixed by it: 28.9 fps once the reads stop.
+- **The seam**: the last frame (3.423 s) stays 133-217 ms - the audio runs to 3.52 s, the video ended
+  at 3.449 s, and the video started 67 ms after the audio; then the first frame after the wrap is held
+  **383-433 ms** for a 128 ms span. Re-muxed variants of the same file, played in the viewer: audio
+  trimmed to the video **317-333 ms**; no audio track at all **83 ms** (= the file). The extra ~210 ms
+  is the WebView's audio pre-roll after its loop seek.
+
+**Fix, at capture time**: a reel is prepared with `trimToVideo` (`prepareVideoForUpload`,
+`videoSpanTrim`): the output is cut to the video track's own span, so no pass shows a still picture
+over audio (~100 ms per loop on this take). **Not fixed**: the ~210 ms audio pre-roll at each wrap -
+a seek-free loop (re-appending the segments to MSE) is a design of its own, in
+[backlog](../../backlog.md#p3---a-reels-loop-holds-its-first-frame-210-ms-longer-than-the-file-says-on-the-mi-9t-measured-2026-10-16-not-built).
+A manual `currentTime = 0` on `ended` would seek too and pre-roll the same way.
