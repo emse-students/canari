@@ -18,7 +18,7 @@
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { PostEntity } from '$lib/posts/api';
-  import { getReelFeedSource, reelPageLoader } from '$lib/reels/reelFeedSource';
+  import { REEL_PAGE as PAGE, listAllReels, type ReelPageLoader } from '$lib/reels/allReels';
   import {
     mergeReelPage,
     mountedReelIndices,
@@ -41,31 +41,21 @@
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
-    /** The reel that was touched: shown first. */
+    /** The reel shown first: the one touched, or the newest when opened from the feed's icon. */
     startPost: PostEntity;
     authToken: string;
     onClose: () => void;
-    /**
-     * The next page of reels; injectable for tests. By default the feed filtered to CanaReels when
-     * the viewer was opened from it (`reels/reelFeedSource.ts`), else every reel (C7).
-     */
-    loadPage?: (offset: number, limit: number) => Promise<PostEntity[]>;
+    /** The next page of reels: the C7 list (`reels/allReels.ts`) unless the opener has its own. */
+    loadPage?: ReelPageLoader;
   }
 
-  // Read at initialisation, as a context must be: the source the feed page set, if any.
-  const feedSource = getReelFeedSource();
+  let { startPost, authToken, onClose, loadPage = listAllReels }: Props = $props();
 
-  let {
-    startPost,
-    authToken,
-    onClose,
-    loadPage = reelPageLoader(feedSource, startPost),
-  }: Props = $props();
-
-  /** How many reels one page asks for. */
-  const PAGE = 10;
-  /** Touches on these belong to them: the player's bar seeks, a button is pressed. */
-  const NOT_A_GESTURE = 'button, [data-video-controls]';
+  /**
+   * Touches on these belong to them: the player's bar seeks, a button is pressed, and an EXPANDED
+   * caption scrolls its own text (`ReelSlide`) - a swipe there must not turn the reel.
+   */
+  const NOT_A_GESTURE = 'button, [data-video-controls], [data-reel-caption-open]';
 
   let reels = $state<PostEntity[]>([]);
   let index = $state(0);
