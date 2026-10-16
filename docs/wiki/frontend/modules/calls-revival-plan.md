@@ -380,6 +380,35 @@ Ranked by value over cost; none is decided, each would get its own plan. The liv
 5. **Walkie-talkie / push-to-talk in a DM** - effort medium, risk medium: the background-audio problem
    of WP-C6 again, with no CallKit to lean on.
 
+## 13. What works with no port opened by the DSI (2026-10-16)
+
+**F1 is answered, and it is NO**: the host cannot send UDP out, so the current design (both ends
+relay-only, the Rust SFU on the host in the middle) cannot connect from production. **But the
+clients CAN reach Cloudflare TURN over every transport** (PC and Mi 9T on Wi-Fi, measured), so
+every path that keeps media OFF the host needs nothing from the DSI. The measurements, the four
+paths and their costs are on [realtime-media-feasibility section 8](../../infrastructure/realtime-media-feasibility.md#8-what-works-with-no-port-opened-by-the-dsi-measured-2026-10-16),
+the only copy. What it changes here:
+
+- **1:1 (the revival's scope) goes PEER TO PEER**, Cloudflare TURN as the last resort, signalling
+  over the existing `/api/call` WebSocket with `call-service` reduced to a relay of
+  `Offer`/`Answer`/`IceCandidate` between the two room members. E2E is unchanged (the transform and
+  the `exportSecret` key do not care what is on the other end). **A new WP-C1a precedes WP-C1**: the
+  P2P mode in `CallService.ts` (`iceTransportPolicy`, polite/impolite roles) and the relay in
+  `main.rs`; WP-C1's Tier A then runs on it. **Two decisions for the user:** `iceTransportPolicy:
+  'all'` (a contact learns your public IP; direct calls cost nothing) or `'relay'` (every call through
+  Cloudflare, IP hidden, billed); and whether the TURN estimator (`CALL_RELAY_KBPS_PER_DEVICE`) counts
+  only calls whose `[CALL_REPORT]` `pair=` says `relay`.
+- **WP-C4 narrows to the GROUP question**: Cloudflare Realtime SFU (no DSI, no host uplink, TURN
+  free with it, 1 000 GB/month free shared, a new app + two secrets) versus keeping the Rust SFU on
+  the old `canari` VM (its UDP reaches Cloudflare, measured; but it is the documented rollback VM)
+  versus the DSI rule. **The webrtc-rs TURN-over-TCP/TLS route is closed** - 0.20.5 skips non-UDP
+  TURN URLs explicitly, as 0.17 did.
+- **WP-C0 is half done**: reachability per transport is measured for PC and Mi 9T on home Wi-Fi.
+  Owed: mobile data (no SIM in the Mi 9T), campus Wi-Fi, the iPhone (the probe page needs a public
+  origin), and a CREDENTIALED allocation - **dev has no Cloudflare TURN pair**, so dev's
+  `/api/calls/ice-servers` answers 503 until the user gives it one.
+- **The DSI rule (UDP 3478 out from `.67`) is needed only if the Rust SFU stays on the host.**
+
 ## See also
 
 - [calls](calls.md) - the module and the held-off state
