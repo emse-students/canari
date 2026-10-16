@@ -4,6 +4,7 @@ import { ThrottlerModule } from '@nestjs/throttler';
 import { AppController } from './app.controller';
 import { HealthController } from './controllers/health.controller';
 import { SecurityController } from './controllers/security.controller';
+import { GifSearchController } from './controllers/gif-search.controller';
 import { GroupsController } from './controllers/groups.controller';
 import { MembersController } from './controllers/members.controller';
 import { DevicesController } from './controllers/devices.controller';
@@ -122,6 +123,7 @@ class RedisShutdown implements OnModuleDestroy {
     AppController,
     HealthController,
     SecurityController,
+    GifSearchController,
     GroupsController,
     MembersController,
     DevicesController,

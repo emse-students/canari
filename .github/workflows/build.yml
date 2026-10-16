@@ -279,7 +279,6 @@ jobs:
           DEV_AUTHENTIK_CLIENT_ID: ${{ secrets.DEV_AUTHENTIK_CLIENT_ID }}
           ANDROID_APP_LINK_SHA256: ${{ secrets.ANDROID_APP_LINK_SHA256 }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -339,10 +338,6 @@ jobs:
           fi
           if [ -n "$APPLE_TEAM_ID" ]; then
             echo "VITE_APPLE_TEAM_ID=${APPLE_TEAM_ID}" >> .env
-          fi
-          # In-app GIF picker (KLIPY). Optional - the GIF button is hidden when unset.
-          if [ -n "$KLIPY_API_KEY" ]; then
-            echo "VITE_KLIPY_KEY=${KLIPY_API_KEY}" >> .env
           fi
 
       - name: Build frontend

@@ -1,17 +1,21 @@
 import { Log } from '$lib/utils/Log';
+import { apiFetch } from '$lib/utils/apiFetch';
+import { deliveryUrl } from '$lib/utils/apiUrl';
 
 /**
- * KLIPY, THE GIF PROVIDER (Tenor stopped issuing keys; Giphy's free tier is 100 requests an hour).
- * The key is optional: with none the composer offers no GIF entry at all.
+ * THE GIF SEARCH, ASKED OF CANARI AND NEVER OF THE PROVIDER (owner decision 2026-10-16).
  *
- * WHAT A RESULT MUST CARRY: a URL to show in the grid, a URL to send, and the SIZE of each. The size
- * is what lets the grid reserve every tile before it loads (`gifMasonry.ts`), and what the MediaFrame
- * contract asks a picker to send with its URL (`docs/wiki/frontend/media-frame.md`, section 3). A
- * result without one cannot be laid out without a shift, so it is LEFT OUT and counted at warn level -
- * a provider that stopped declaring sizes is then a number in the log, not a grid that jumps.
+ * The picker used to call KLIPY's API from the browser, which handed KLIPY the search terms, the
+ * reader's IP and a persistent per-install `customer_id`, and shipped the API key inside every
+ * bundle. Now it calls chat-delivery's `GET /api/mls/gifs`, which asks KLIPY with the server's key
+ * and one shared customer id, and answers only an id, two URLs and their sizes per result
+ * (`apps/chat-delivery-service/src/utils/klipy.ts`). The client no longer knows KLIPY's format.
+ *
+ * WHAT A RESULT CARRIES: a URL to show in the grid, a URL to send, and the SIZE of each - what lets
+ * the grid reserve every tile before it loads (`gifMasonry.ts`) and what the MediaFrame contract
+ * asks a picker to send with its URL (`docs/wiki/frontend/media-frame.md`, section 3). The server
+ * leaves out a result without one.
  */
-
-export const KLIPY_KEY = (import.meta.env as Record<string, string | undefined>).VITE_KLIPY_KEY;
 
 /** One rendition of a GIF: where it is and how big it is. */
 export interface GifRendition {
@@ -34,89 +38,64 @@ export interface GifPage {
   hasNext: boolean;
 }
 
-/** Results per page: three screens of a two-column phone grid. */
-export const GIF_PAGE_SIZE = 24;
-
-type RawRendition = { gif?: { url?: unknown; width?: unknown; height?: unknown } };
-
-function rendition(raw: RawRendition | undefined): GifRendition | null {
-  const g = raw?.gif;
-  if (!g || typeof g.url !== 'string' || !g.url) return null;
-  const width = Number(g.width);
-  const height = Number(g.height);
-  if (!(width > 0) || !(height > 0)) return null;
-  return { url: g.url, width, height };
+/**
+ * The estate has no GIF provider key (the server answered 503). A TYPE, so the grid shows "not
+ * configured" rather than "could not load" without reading a message.
+ */
+export class GifSearchUnavailableError extends Error {
+  constructor() {
+    super('GIF search is not configured on this estate');
+    this.name = 'GifSearchUnavailableError';
+  }
 }
 
-/** Maps KLIPY's items to results, leaving out (and counting) any without a sized rendition. */
-export function mapKlipyItems(items: unknown[]): { gifs: GifResult[]; dropped: number } {
-  const gifs: GifResult[] = [];
-  let dropped = 0;
-  for (const raw of items ?? []) {
-    const item = raw as { id?: string | number; file?: Record<string, RawRendition> };
-    const file = item.file ?? {};
-    const preview = rendition(file.sm) ?? rendition(file.xs) ?? rendition(file.md);
-    const full = rendition(file.md) ?? rendition(file.hd) ?? rendition(file.sm);
-    const id = String(item.id ?? '');
-    if (!id || !preview || !full) {
-      dropped++;
-      continue;
-    }
-    gifs.push({ id, preview, full });
-  }
-  return { gifs, dropped };
-}
-
-/** A stable anonymous id: KLIPY's API expects a `customer_id` per user for its own analytics. */
-function customerId(): string {
-  try {
-    let id = localStorage.getItem('klipy_cid');
-    if (!id) {
-      id = crypto.randomUUID();
-      localStorage.setItem('klipy_cid', id);
-    }
-    return id;
-  } catch (error) {
-    console.warn(
-      `[GifSearch] no storage for the KLIPY customer id, sent anonymous: ${String(error)}`
-    );
-    return 'anonymous';
-  }
+function isRendition(value: unknown): value is GifRendition {
+  const r = value as GifRendition | null;
+  return (
+    !!r && typeof r.url === 'string' && /^https:\/\//i.test(r.url) && r.width > 0 && r.height > 0
+  );
 }
 
 /**
- * Fetches one page of trending GIFs (empty `query`) or of a search. Throws on a transport failure or
- * a non-2xx answer; the caller shows its error state.
+ * Keeps the results whose shape the grid can use. The server already filters; this is the client's
+ * own check on what reaches an `<img src>`, and a count at warn level if it ever drops anything.
+ */
+export function readGifPage(body: unknown): GifPage {
+  const raw = (body ?? {}) as { gifs?: unknown; hasNext?: unknown };
+  const items = Array.isArray(raw.gifs) ? raw.gifs : [];
+  const gifs = items.filter(
+    (g): g is GifResult =>
+      !!g &&
+      typeof (g as GifResult).id === 'string' &&
+      isRendition((g as GifResult).preview) &&
+      isRendition((g as GifResult).full)
+  );
+  if (gifs.length < items.length) {
+    console.warn(`[GifSearch] ${items.length - gifs.length} of ${items.length} results malformed`);
+  }
+  return { gifs, hasNext: raw.hasNext === true };
+}
+
+/**
+ * Fetches one page of trending GIFs (empty `query`) or of a search, through Canari. Throws
+ * `GifSearchUnavailableError` when the estate has no provider key, and an `Error` on a transport
+ * failure or any other non-2xx answer; the caller shows the matching state.
  */
 export async function fetchGifPage(
   query: string,
   page: number,
   signal?: AbortSignal
 ): Promise<GifPage> {
-  if (!KLIPY_KEY) return { gifs: [], hasNext: false };
   const trimmed = query.trim();
-  const cid = encodeURIComponent(customerId());
-  const base = `https://api.klipy.com/api/v1/${KLIPY_KEY}`;
-  const paging = `per_page=${GIF_PAGE_SIZE}&page=${page}&customer_id=${cid}`;
-  const url = trimmed
-    ? `${base}/gifs/search?q=${encodeURIComponent(trimmed)}&${paging}`
-    : `${base}/gifs/trending?${paging}`;
-  const res = await fetch(url, { signal });
-  if (!res.ok) throw new Error(`KLIPY HTTP ${res.status}`);
-  const json = (await res.json()) as { data?: { data?: unknown[]; has_next?: unknown } };
-  const items = json?.data?.data ?? [];
-  const { gifs, dropped } = mapKlipyItems(items);
-  if (dropped > 0) {
-    console.warn(
-      `[GifSearch] ${dropped} of ${items.length} results declared no size and were left out`
-    );
-  }
-  // `has_next` when KLIPY sends it; a short page is the end either way.
-  const hasNext =
-    typeof json?.data?.has_next === 'boolean' ? json.data.has_next : items.length >= GIF_PAGE_SIZE;
+  const params = new URLSearchParams({ page: String(page) });
+  if (trimmed) params.set('q', trimmed);
+  const res = await apiFetch(`${deliveryUrl()}/api/mls/gifs?${params.toString()}`, { signal });
+  if (res.status === 503) throw new GifSearchUnavailableError();
+  if (!res.ok) throw new Error(`GIF search HTTP ${res.status}`);
+  const result = readGifPage(await res.json());
   Log.d(
     'GifSearch',
-    `${trimmed ? 'search' : 'trending'} p${page}: ${gifs.length} (next: ${hasNext})`
+    `${trimmed ? 'search' : 'trending'} p${page}: ${result.gifs.length} (next: ${result.hasNext})`
   );
-  return { gifs, hasNext };
+  return result;
 }

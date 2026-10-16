@@ -1591,6 +1591,7 @@ parity row.
 | GET | `/api/mls/link-preview` | Fetch safe external URL preview |
 | GET | `/api/mls/link-preview/image?url=` | Proxy a preview's `og:image` or favicon |
 | GET | `/api/mls/link-safety?url=` | Google Safe Browsing verdict for a URL (WP-SAFELINK-1) |
+| GET | `/api/mls/gifs?q=&page=` | The GIF picker's search/trending, asked of KLIPY by the server with `KLIPY_API_KEY`; per-user throttled, the query never logged ([chat](../frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
 
 #### Who carries the MiGallery key, and who does not
 
@@ -1742,8 +1743,9 @@ Client-side the rewrite is one helper, `frontend/src/lib/utils/previewImageProxy
 nothing server-side would have rewritten them. It skips URLs already on our own origin, which is
 what keeps the MiGallery cover proxy from being proxied twice.
 
-The CSP `img-src` is deliberately **not** tightened to match: Klipy GIFs and other remote sources
-still need auditing, and that is a separate change.
+The CSP `img-src` is deliberately **not** tightened to match: KLIPY GIFs and other remote sources
+still load directly. What a GIF in a chat tells KLIPY's CDN, and why this proxy does not carry it
+yet, is on [chat](../frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16).
 
 #### A relative reference belongs to the page that answered, not to the link that was written (2026-09-23)
 
@@ -2079,6 +2081,7 @@ be pushed is a population question, answered by `tools/cross-client-harness/devi
 | `INTERNAL_SECRET` | yes | Shared secret for internal service-to-service routes |
 | `CALL_ROOM_SECRET` | yes, for calls | HS256 secret signing the 5-minute room token. Unset, `/api/calls/initiate` answers 503 |
 | `MEDIA_SERVICE_URL` | no | media-service base URL (rich media notification proxy) |
+| `KLIPY_API_KEY` | no | KLIPY key for `GET /api/mls/gifs`; unset, that route answers 503 and the picker says GIF search is not configured |
 | `APNS_VOIP_KEY_P8` | no | APNs auth key (.p8, raw PEM or base64) for direct VoIP pushes (CallKit) |
 | `APNS_VOIP_KEY_ID` | no | Key ID of the APNs auth key |
 | `APNS_VOIP_TEAM_ID` | no | Apple Developer Team ID (`4CLNB8SR6L`) |

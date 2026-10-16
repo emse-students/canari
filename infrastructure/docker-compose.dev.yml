@@ -213,6 +213,9 @@ services:
       # Server-side Safe Browsing lookup for shared links (WP-SAFELINK-1). Optional and
       # fails open: unset means no check, never a blocked link.
       GOOGLE_SAFE_BROWSING_API_KEY: ${GOOGLE_SAFE_BROWSING_API_KEY:-}
+      # The GIF picker's search (chat-delivery /api/mls/gifs): the server asks KLIPY so a reader's
+      # query, IP and identifier never reach it. Unset: the picker says GIF search is not configured.
+      KLIPY_API_KEY: ${KLIPY_API_KEY:-}
     depends_on:
       redis:
         condition: service_healthy

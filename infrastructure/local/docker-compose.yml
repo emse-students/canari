@@ -153,6 +153,8 @@ services:
       # A link in a message is scanned before it renders, so without this key local behaviour and
       # production behaviour diverge on the very thing the test campaign checks.
       GOOGLE_SAFE_BROWSING_API_KEY: ${GOOGLE_SAFE_BROWSING_API_KEY:-}
+      # The GIF picker's search goes through chat-delivery (/api/mls/gifs), never the browser.
+      KLIPY_API_KEY: ${KLIPY_API_KEY:-}
       MIGALLERY_API_URL: ${MIGALLERY_API_URL:-https://gallery.mitv.fr}
       MIGALLERY_API_KEY: ${MIGALLERY_API_KEY:-}
       # VoIP push, iOS only, and inert while `CALLS_ENABLED` is false - forwarded anyway so that
