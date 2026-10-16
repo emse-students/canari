@@ -532,6 +532,55 @@ export class AssociationsController {
     return this.service.getPayoutAccount(id);
   }
 
+  /**
+   * Whether the association's Lydia Business private token is stored - `{ set }` and NOTHING else,
+   * ever: the key is write-only. MANAGE_PAYOUT_ACCOUNT only, like the payout account it belongs to.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/lydia-business-key')
+  async lydiaBusinessKeyStatus(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Param('id', ParseUUIDPipe) id: string
+  ): Promise<{ set: boolean }> {
+    await this.assertPayoutAccountManager(userId, ga, id, 'Business key status read');
+    return { set: await this.service.isLydiaBusinessKeySet(id) };
+  }
+
+  /**
+   * Stores the association's Lydia Business private token (encrypted at rest), the key its Lydia
+   * callbacks are verified with. MANAGE_PAYOUT_ACCOUNT only. Answers `{ set: true }` - never the
+   * value, which no route returns to a browser. Replaces any key already stored.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Put(':id/lydia-business-key')
+  async setLydiaBusinessKey(
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga: string | undefined,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() body: { businessPrivateToken?: unknown }
+  ): Promise<{ set: true }> {
+    await this.assertPayoutAccountManager(userId, ga, id, 'Business key write');
+    await this.service.setLydiaBusinessKey(id, body?.businessPrivateToken, userId);
+    return { set: true };
+  }
+
+  /** Refuses anyone but a MANAGE_PAYOUT_ACCOUNT holder of the association (403). */
+  private async assertPayoutAccountManager(
+    userId: string,
+    ga: string | undefined,
+    id: string,
+    what: string
+  ): Promise<void> {
+    const allowed = await this.service.canManagePayoutAccount(userId, id, {
+      isGlobalAdmin: ga === 'true',
+    });
+    if (!allowed) {
+      this.logger.debug(`[PERM] ${what} refused on ${sanitizeLog(id)}`);
+      throw new ForbiddenException('MANAGE_PAYOUT_ACCOUNT permission required');
+    }
+  }
+
   /** Recent posts and forms for this association (picker when linking calendar ↔ content). */
   @SetMetadata(PERM_FLAG_KEY, AssociationPermissionFlag.PROPOSE_EVENT)
   @UseGuards(NginxAuthGuard, GlobalAdminOrAssociationRoleGuard)
@@ -1710,19 +1759,29 @@ export class AssociationsController {
     return this.service.clearLydiaAccount(id);
   }
 
-  /** Called by core-service when a product purchase completes. */
+  /**
+   * Called by core-service when a product purchase completes, from a Lydia callback verified with
+   * the Business key of `vendorToken` - refused unless that Business is the product's payee.
+   */
   @Post('products/:productId/purchase-completed')
   purchaseCompleted(
     @Param('productId') productId: string,
-    @Body() body: { userId: string; amountCents: number; paymentIntentId: string },
+    @Body()
+    body: { userId: string; amountCents: number; paymentIntentId: string; vendorToken?: unknown },
     @Headers('x-internal-secret') internalSecret: string
   ) {
     assertInternalSecret(internalSecret);
+    const vendorToken = typeof body?.vendorToken === 'string' ? body.vendorToken : '';
+    if (!vendorToken) {
+      this.logger.warn(`[SHOP] purchase-completed refused: no vendorToken`);
+      throw new BadRequestException('vendorToken is required');
+    }
     return this.productsService.handlePurchaseCompleted(
       productId,
       body.userId,
       body.amountCents,
-      body.paymentIntentId
+      body.paymentIntentId,
+      vendorToken
     );
   }
 }

@@ -452,6 +452,10 @@ services:
       # Signs the calendar subscription URLs; unset, the signing route answers 503 and every
       # selection feed is refused (fails closed). Rotating it ends every saved subscription URL.
       AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-}
+      # Encrypts each association's Lydia Business private token at rest (migration 086). Unset, a
+      # manager's key entry answers 503 and every Lydia callback is refused (the payer's return still
+      # confirms). Rotating it makes every stored key unreadable: managers must enter them again.
+      LYDIA_KEY_ENCRYPTION_SECRET: ${LYDIA_KEY_ENCRYPTION_SECRET:-}
     healthcheck:
       # `/api/health` since 2026-09-24, like the other three services. It probed
       # `/api/channels/health` - a route that belongs to ChannelsController and answers about the

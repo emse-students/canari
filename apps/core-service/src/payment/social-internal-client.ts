@@ -30,7 +30,7 @@ export function internalSocialRequestConfig(): Pick<
  */
 export function internalSubmissionUrl(
   submissionId: string,
-  suffix?: 'mark-paid' | 'cancel-pending'
+  suffix?: 'provider-confirm' | 'cancel-pending'
 ): string {
   const base = `internal/forms/submissions/${encodeURIComponent(submissionId)}`;
   return socialUrl(suffix ? `${base}/${suffix}` : base);
@@ -49,6 +49,15 @@ export function internalUserAssociationsUrl(userId: string): string {
 /** Internal route reading an association's payment-account fields (Stripe and Lydia ids and flags). */
 export function internalPaymentAccountUrl(associationId: string): string {
   return socialUrl(`internal/associations/${encodeURIComponent(associationId)}/payment-account`);
+}
+
+/**
+ * Internal route answering the decrypted Lydia Business private token of the association holding a
+ * `vendor_token`, to verify a callback with. Under `/api/internal/`, which nginx does not route
+ * (`location /` serves the app shell for it), and X-Internal-Secret guarded on top.
+ */
+export function internalLydiaCallbackKeyUrl(): string {
+  return socialUrl('internal/associations/lydia-callback-key');
 }
 
 /** Docker-network route to fulfill a boutique purchase after PaymentIntent success. */

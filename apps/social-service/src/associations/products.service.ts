@@ -1439,12 +1439,19 @@ export class ProductsService {
    * Called by the payment callback (via core-service) after a successful product purchase.
    * Grants membership tags, dispatches Cercle webhooks, and records the purchase.
    * Idempotent: skips processing if payment intent was already recorded.
+   *
+   * `vendorToken` is the Business whose key verified the callback: unless it is the account the
+   * product's association is paid into (its own, or its approved parent's), nothing is granted -
+   * an authentic callback of one association never fulfils another's product. KNOWN GAP: a
+   * boutique checkout stores no row naming its request, so the amount is the verified callback's
+   * and cannot be re-read from our side (payments.md).
    */
   async handlePurchaseCompleted(
     productId: string,
     userId: string,
     amountCents: number,
-    paymentIntentId: string
+    paymentIntentId: string,
+    vendorToken: string
   ): Promise<void> {
     const existing = await this.purchaseRecordService.findByPaymentIntent(paymentIntentId);
     if (existing) {
@@ -1455,6 +1462,15 @@ export class ProductsService {
     const product = await this.productRepo.findOne({ where: { id: productId } });
     if (!product) {
       this.logger.error(`[SHOP] product ${productId} not found for purchase ${paymentIntentId}`);
+      return;
+    }
+
+    const payee = await this.associationsService.getLydiaPayeeAccountId(product.associationId);
+    if (!payee || payee !== vendorToken) {
+      this.logger.error(
+        `[SHOP] purchase ${paymentIntentId} of product ${productId.slice(0, 8)} REFUSED: verified for a ` +
+          `Business that is not the product's payee (${payee ? 'another account' : 'no Lydia payee'}) - nothing granted`
+      );
       return;
     }
 

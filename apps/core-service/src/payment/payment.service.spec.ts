@@ -1,5 +1,4 @@
 import { PaymentService } from './payment.service';
-import { signLydiaParams } from './lydia-signature';
 import type { PlatformService, PlatformConfigPublic } from '../platform/platform.service';
 
 function makeService(paymentProvider: 'lydia' | 'disabled') {
@@ -54,43 +53,5 @@ describe('PaymentService provider selection', () => {
     await expect(service.getActiveProviderId()).resolves.toBe('disabled');
     config.paymentProvider = 'lydia';
     await expect(service.getActiveProviderId()).resolves.toBe('lydia');
-  });
-});
-
-describe('PaymentService.verifyLydiaRequestCallback', () => {
-  const prevToken = process.env.LYDIA_PROVIDER_PRIVATE_TOKEN;
-
-  beforeEach(() => {
-    process.env.LYDIA_PROVIDER_PRIVATE_TOKEN = 'provider-private-token';
-  });
-
-  afterEach(() => {
-    process.env.LYDIA_PROVIDER_PRIVATE_TOKEN = prevToken;
-  });
-
-  it('verifies against the Lydia provider while it is the active one', () => {
-    const service = makeService('lydia');
-    const fields = { request_id: 'req-1', amount: '12.00', currency: 'EUR', order_ref: 'form:s1' };
-    const sig = signLydiaParams(fields, 'provider-private-token');
-    expect(service.verifyLydiaRequestCallback(fields, sig)).toBe(true);
-    expect(service.verifyLydiaRequestCallback(fields, 'wrong')).toBe(false);
-  });
-});
-
-describe('PaymentService.verifyLydiaRequestCallback while payments are disabled', () => {
-  const prevToken = process.env.LYDIA_PROVIDER_PRIVATE_TOKEN;
-  beforeEach(() => {
-    process.env.LYDIA_PROVIDER_PRIVATE_TOKEN = 'provider-private-token';
-  });
-  afterEach(() => {
-    process.env.LYDIA_PROVIDER_PRIVATE_TOKEN = prevToken;
-  });
-
-  it('still verifies a callback for a payment already in flight', () => {
-    const service = makeService('disabled');
-    const fields = { request_id: 'req-1', amount: '12.00', currency: 'EUR', order_ref: 'form:s1' };
-    const sig = signLydiaParams(fields, 'provider-private-token');
-    expect(service.verifyLydiaRequestCallback(fields, sig)).toBe(true);
-    expect(service.verifyLydiaRequestCallback(fields, 'wrong')).toBe(false);
   });
 });

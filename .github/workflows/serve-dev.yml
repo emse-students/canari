@@ -168,6 +168,9 @@ jobs:
           # on dev. `LYDIA_ENV=homologation` is pinned in docker-compose.dev.yml, not read from here.
           DEV_LYDIA_PROVIDER_TOKEN: ${{ secrets.DEV_LYDIA_PROVIDER_TOKEN }}
           DEV_LYDIA_PROVIDER_PRIVATE_TOKEN: ${{ secrets.DEV_LYDIA_PROVIDER_PRIVATE_TOKEN }}
+          # Encrypts the Business keys managers enter on dev. Dev's OWN value: the copy of
+          # production's rows then holds keys dev cannot open, by design.
+          DEV_LYDIA_KEY_ENCRYPTION_SECRET: ${{ secrets.DEV_LYDIA_KEY_ENCRYPTION_SECRET }}
           DEV_APNS_VOIP_KEY_P8: ${{ secrets.DEV_APNS_VOIP_KEY_P8 }}
           DEV_APNS_VOIP_KEY_ID: ${{ secrets.DEV_APNS_VOIP_KEY_ID }}
           DEV_APNS_VOIP_TEAM_ID: ${{ secrets.DEV_APNS_VOIP_TEAM_ID }}

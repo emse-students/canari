@@ -189,6 +189,7 @@ compute_garage_admin_host_port() {
 min_length() {
   case "$1" in
   AGENDA_SIGNING_KEY) printf '32' ;;
+  LYDIA_KEY_ENCRYPTION_SECRET) printf '32' ;;
   esac
 }
 

@@ -1,5 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
+import axios from 'axios';
 import { LydiaPaymentProvider } from './lydia-payment-provider';
+import { verifyLydiaCallback, type LydiaCallbackVerdict } from './lydia-callback-verification';
+import { internalLydiaCallbackKeyUrl, internalSocialRequestConfig } from './social-internal-client';
 import { DisabledPaymentProvider } from './disabled-payment-provider';
 import { PlatformService } from '../platform/platform.service';
 
@@ -26,7 +29,8 @@ export type { ConnectBalanceSummary };
  * straight from Postgres on every call with no caching (same pattern as maintenanceEnabled /
  * minClientVersion), so flipping the switch in the admin UI takes effect immediately, no restart.
  * The Lydia provider is built once at startup from its env-held secrets
- * (LYDIA_PROVIDER_TOKEN/_PRIVATE_TOKEN) - only the choice of WHETHER it is live moves to the DB.
+ * (LYDIA_PROVIDER_TOKEN) - only the choice of WHETHER it is live moves to the DB. Callbacks verify
+ * with each association's own Business key, never a platform secret (`verifyLydiaRequestCallback`).
  *
  * Line items are translated here from the `price_data` wire contract (still used by
  * payment.controller.ts and social-service) into the types in payment-provider.interface.ts.
@@ -41,8 +45,6 @@ export class PaymentService {
     this.lydiaProvider = new LydiaPaymentProvider({
       LYDIA_ENV: process.env.LYDIA_ENV,
       LYDIA_PROVIDER_TOKEN: process.env.LYDIA_PROVIDER_TOKEN,
-      LYDIA_PROVIDER_PRIVATE_TOKEN: process.env.LYDIA_PROVIDER_PRIVATE_TOKEN,
-      LYDIA_OBSERVE_KEYS: process.env.LYDIA_OBSERVE_KEYS,
     });
   }
 
@@ -64,18 +66,35 @@ export class PaymentService {
   }
 
   /**
-   * Verifies a `confirm_url`/`cancel_url`/`expire_url` callback signature from Lydia's
-   * `request/do` (webhook.controller.ts). Independent of which provider is currently ACTIVE - a
-   * Lydia payment in flight must still be verifiable against the Lydia provider's own private
-   * token even if the admin disables payments before it resolves.
+   * Verifies a `confirm_url`/`cancel_url`/`expire_url` callback from Lydia's `request/do`
+   * (webhook.controller.ts) with the BUSINESS private token of the association its `vendor_token`
+   * names, over every received field but `sig` (`verifyLydiaCallback`). Independent of which
+   * provider is currently ACTIVE: a payment in flight must still be verifiable after an admin
+   * disables payments. A failure to REACH social-service throws - it is not a verdict.
    */
-  verifyLydiaRequestCallback(fields: Record<string, string>, signature: string): boolean {
-    return this.lydiaProvider.verifyRequestCallback(fields, signature);
+  async verifyLydiaRequestCallback(
+    body: Record<string, unknown> | undefined
+  ): Promise<LydiaCallbackVerdict> {
+    return verifyLydiaCallback(body, (vendorToken) => this.fetchLydiaBusinessKey(vendorToken));
   }
 
-  /** What a callback that failed verification would have matched with the candidate keys (names only). */
-  observeLydiaRequestCallback(body: Record<string, unknown>, signature: string): string | null {
-    return this.lydiaProvider.observeRequestCallback(body, signature);
+  /**
+   * The decrypted Business private token of the association holding `vendorToken`, from
+   * social-service's internal route (X-Internal-Secret, never routed by nginx). Null when no
+   * association holds that token or it has no key. NEVER logged, never cached, never returned.
+   */
+  private async fetchLydiaBusinessKey(vendorToken: string): Promise<string | null> {
+    const { data } = await axios.post<{ businessPrivateToken?: unknown }>(
+      internalLydiaCallbackKeyUrl(),
+      { vendorToken },
+      {
+        ...internalSocialRequestConfig(),
+        timeout: 10_000,
+        validateStatus: (s) => s >= 200 && s < 300,
+      }
+    );
+    const key = data?.businessPrivateToken;
+    return typeof key === 'string' && key ? key : null;
   }
 
   /** Creates or resumes a Connect-style onboarding link for the given association. */
