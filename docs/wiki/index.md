@@ -108,6 +108,14 @@
 - [Cotisations](cotisations.md) — Membership dues: cotisant tags, boutique products, form member pricing
 - [Carte de la Vie Asso](carte-vie-asso.md) — Editable poster generator (drag & drop canvas, PDF export)
 
+### Compliance (GDPR)
+
+- [Register of processing](compliance/register-of-processing.md) - the Art. 30 register: one row per processing across Canari, MiConnect, MiGallery, Sky, Le Cercle and Portail-etu, the processors, and the OPEN gaps
+- [DPIA: MiGallery face recognition](compliance/dpia-migallery-faces.md) - the AIPD: description, necessity, risks (non-members' faces first), measures, residual risk
+- [Breach procedure](compliance/breach-procedure.md) - Art. 33/34 runbook: detection, the 72 h clock, who decides, the CNIL notification, the French user notice, the breach register template
+- [Data-subject requests](compliance/data-subject-requests.md) - the manual procedure for access, export, erasure and objection within 30 days, the request log, the tables to read per service
+- [Dossier for the school's DPO](compliance/dso-dossier.md) - French: the three questions only the DPO can answer, the recipients, the points flagged
+
 ### Development & operations
 
 - [Durable rules](durable-rules.md) — the constraints, grouped by area, each linked to the page carrying its reasoning
