@@ -122,7 +122,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | GET | `/api/users/me/notes-key` | JWT | Caller's notepad key (32 bytes hex), generated on first use |
 | GET | `/api/users/:id` | JWT | Get public profile (`me` resolves to caller) |
 | PATCH | `/api/users/me` | JWT | Update caller's profile |
-| DELETE | `/api/users/me` | JWT | Permanently delete account and all data across services |
+| DELETE | `/api/users/me` | JWT | Deactivate at once and queue a guaranteed erasure in every service ([account-erasure](../account-erasure.md)) |
 | GET | `/api/users/admin/list` | global admin | List all users with admin status |
 | PATCH | `/api/users/:id/admin` | global admin | Set/clear admin flag (cannot self-revoke) |
 

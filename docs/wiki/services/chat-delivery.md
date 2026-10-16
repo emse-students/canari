@@ -1919,7 +1919,7 @@ how to read it are on [`call-service`](call-service.md#the-call-record) - keep n
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | POST | `/api/internal/push/notify` | InternalSecret | Send push via internal secret |
-| DELETE | `/api/internal/users/:userId` | InternalSecret | Delete all user MLS/device data |
+| DELETE | `/api/internal/users/:userId` | InternalSecret | Idempotent account erasure, every column in `ACCOUNT_ERASURE_COVERAGE` ([account-erasure](../account-erasure.md)) |
 | GET | `/api/health` | none | Liveness probe |
 
 ## Notification categories - one switch per kind, decided before the send

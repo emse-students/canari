@@ -40,6 +40,7 @@
 - [reels](services/reels.md) — CanaReels server half: the `reel` post kind, its 30-day deletion, the API contract
 - [Community rework](services/community-rework.md) — the master plan for the community subsystem: what triggered it, the three axes, and the crypto axis still to do
 - [NestJS framework](services/nestjs-framework.md) — which major each of the four services runs, why they differ, and what an ESM-only framework did to jest
+- [Account erasure](account-erasure.md) — `DELETE /users/me` as a durable, retried, journalled queue; every service's delete set asserted against its schema; what is NOT covered
 - [Reporting and blocking](moderation-and-blocking.md) — the one report store, and what a block does and does not close
 - [Read receipt privacy](read-receipt-privacy.md) — every path that can move a salon's "Lu par", its evidence, and the closed chantier (2026-10-14)
 
