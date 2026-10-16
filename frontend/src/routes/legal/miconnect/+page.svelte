@@ -58,8 +58,8 @@
       </li>
       <li>la version de ces conditions que tu as acceptée, et la date ;</li>
       <li>
-        des journaux techniques de connexion (adresse IP, date, service demandé), conservés 90 jours
-        au plus.
+        des journaux techniques de connexion (adresse IP, date, service demandé), conservés pour la
+        sécurité pendant une durée limitée (90 jours visés).
       </li>
     </ul>
     <p>
@@ -94,7 +94,7 @@
       MiConnect fonctionne sur le serveur partagé de l'École, administré avec sa direction des
       systèmes d'information (DSI), et ses sauvegardes sont copiées sur une seconde machine de
       l'École. Certains anciens noms de domaine passent encore par Cloudflare, qui voit alors les
-      requêtes. Aucune donnée n'est vendue ni utilisée pour de la publicité.
+      requêtes.
     </p>
   </section>
 
@@ -102,8 +102,9 @@
     <h2>5. Durée de conservation</h2>
     <p>
       Ton compte MiConnect et ses données sont conservés tant que ton compte existe, puis supprimés
-      sur ta demande. Les journaux techniques sont conservés 90 jours au plus. Une suppression se
-      retrouve encore dans les sauvegardes pendant 14 jours au plus, puis disparaît.
+      sur ta demande. Les journaux techniques sont conservés pendant une durée limitée (90 jours
+      visés). Une suppression peut encore apparaître dans les sauvegardes quelques semaines au plus,
+      puis disparaît.
     </p>
   </section>
 
