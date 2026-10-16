@@ -38,15 +38,17 @@ import type { AdminScopeLabels } from '$lib/admin/access';
 import type { HubRow } from '$lib/components/navigation/breadcrumb';
 
 /**
- * The groups, top to bottom. Identity and Explorer depend on nothing asked and draw on the first
- * frame; everything below them depends on the probes (memberships, admin tier, reviewer access),
- * so it is drawn only once they have ALL answered, and the page holds a placeholder in its place
- * until then. Drawn earlier, Compte would slide down under a finger as each group arrived.
+ * The groups, top to bottom. Identity, Explorer and Compte read nothing a probe returns and draw on
+ * the first frame - Compte above all: SIGN-OUT IS ALWAYS REACHABLE, whatever a probe does, even one
+ * that never answers. The probed groups (managed associations, administration, the reviewer's
+ * documents) sit between Explorer and Compte and draw once every probe has SETTLED - answered,
+ * failed or given up; until then the page holds a placeholder in their place, so the only shift is
+ * that placeholder resolving, never a row arriving one at a time.
  */
-export type DashboardGroupKey = 'identity' | 'explore' | 'managed' | 'admin' | 'account';
+export type DashboardGroupKey = 'identity' | 'explore' | 'managed' | 'admin' | 'review' | 'account';
 
-/** The groups drawn before the probes answer: they read nothing a probe returns. */
-const SETTLED_FREE: readonly DashboardGroupKey[] = ['identity', 'explore'];
+/** The groups drawn before the probes settle: they read nothing a probe returns. */
+const SETTLED_FREE: readonly DashboardGroupKey[] = ['identity', 'explore', 'account'];
 
 /** What the dashboard knows about its reader. */
 export interface DashboardFacts {
@@ -180,8 +182,9 @@ const ENTRIES: readonly DashboardEntry[] = [
     icon: Settings,
   },
   {
+    // Not in Compte: it hangs on a probe, and arriving there it would push sign-out down.
     key: 'documents',
-    group: 'account',
+    group: 'review',
     target: '/documents',
     label: () => m.reviewer_docs_title(),
     summary: () => m.reviewer_docs_subtitle(),
@@ -228,6 +231,8 @@ function groupLabel(key: DashboardGroupKey, f: DashboardFacts): string {
       return m.dashboard_managed_heading();
     case 'admin':
       return f.adminScope.title();
+    case 'review':
+      return m.reviewer_docs_title();
     case 'account':
       return m.dashboard_account_heading();
   }
@@ -238,15 +243,16 @@ const GROUP_ORDER: readonly DashboardGroupKey[] = [
   'explore',
   'managed',
   'admin',
+  'review',
   'account',
 ];
 
 /**
- * Groups drawn with no visible heading: the identity row stands alone, and the admin group's one
- * row already says what the heading would (`adminScope.title()`), so a heading would repeat it.
- * The label still names the list for assistive technology.
+ * Groups drawn with no visible heading: the identity row stands alone, and the admin and review
+ * groups' one row already says what the heading would, so a heading would repeat it. The label
+ * still names the list for assistive technology.
  */
-const HEADINGLESS: readonly DashboardGroupKey[] = ['identity', 'admin'];
+const HEADINGLESS: readonly DashboardGroupKey[] = ['identity', 'admin', 'review'];
 
 /** One group as the page draws it. */
 export interface DashboardGroup {

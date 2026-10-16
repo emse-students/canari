@@ -15,6 +15,10 @@ const state = vi.hoisted(() => ({
   memberships: [] as unknown[],
   /** When set, the membership probe waits for `release()`: a cold cache on a slow link. */
   hold: null as null | Promise<void>,
+  /** The reviewer probe rejects. */
+  reviewerFails: false,
+  /** The admin probe never answers (a refresh with no deadline on a dead link). */
+  adminHangs: false,
 }));
 const signOutByChoice = vi.hoisted(() => vi.fn());
 const loadNotifs = vi.hoisted(() => vi.fn());
@@ -39,7 +43,8 @@ vi.mock('$lib/associations/api', async (importOriginal) => ({
     if (state.hold) await state.hold;
     return state.memberships;
   },
-  getReviewerAccess: () => Promise.resolve(state.reviewer),
+  getReviewerAccess: () =>
+    state.reviewerFails ? Promise.reject(new Error('503')) : Promise.resolve(state.reviewer),
 }));
 // The identity row's avatar resolves a name and a picture; neither is what is under test here.
 vi.mock('$lib/utils/users/displayName', () => ({
@@ -52,7 +57,8 @@ vi.mock('$lib/utils/userAvatarCache', () => ({
 }));
 vi.mock('$lib/admin/access', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/admin/access')>()),
-  ensureMayOpenAdmin: () => Promise.resolve(state.mayOpenAdmin),
+  ensureMayOpenAdmin: () =>
+    state.adminHangs ? new Promise<boolean>(() => {}) : Promise.resolve(state.mayOpenAdmin),
 }));
 
 import Page from './+page.svelte';
@@ -79,6 +85,8 @@ beforeEach(() => {
     unread: 0,
     memberships: [],
     hold: null,
+    reviewerFails: false,
+    adminHangs: false,
   });
   signOutByChoice.mockReset().mockResolvedValue(undefined);
   loadNotifs.mockReset().mockResolvedValue(undefined);
@@ -158,7 +166,8 @@ describe('dashboard hub', () => {
     expect(rows()).toContainEqual(['admin', '/admin']);
     expect(document.querySelector('section[aria-labelledby="group-admin"]')).toBeNull();
     expect(rows()).toContainEqual(['directory', '/directory']);
-    expect(keys().slice(-3)).toEqual(['settings', 'documents', 'sign-out']);
+    // Documents sits with the probed groups, above Compte: arriving, it never pushes sign-out.
+    expect(keys().slice(-4)).toEqual(['admin', 'documents', 'settings', 'sign-out']);
   });
 
   it('carries the unread notification count from the store, and no pill at zero', async () => {
@@ -179,15 +188,19 @@ describe('dashboard hub', () => {
     expect(loadNotifs).toHaveBeenCalledOnce();
   });
 
-  it('holds the place of the probed groups until every probe answers: nothing moves under a finger', async () => {
+  it('draws Compte at once and holds the probed groups in a placeholder above it until they settle', async () => {
     let release!: () => void;
     state.hold = new Promise<void>((r) => (release = r));
     state.mayOpenAdmin = true;
     await render();
-    expect(keys()).not.toContain('settings');
-    expect(keys()).not.toContain('sign-out');
-    expect(document.querySelector('[data-dashboard-pending]')).not.toBeNull();
-    expect(keys().at(-1)).toBe('notifications');
+    expect(keys().slice(-3)).toEqual(['notifications', 'settings', 'sign-out']);
+    const pending = document.querySelector('[data-dashboard-pending]');
+    expect(pending).not.toBeNull();
+    // The placeholder sits ABOVE Compte, never below it.
+    const settings = document.querySelector('[data-hub-row="settings"]')!;
+    expect(
+      pending!.compareDocumentPosition(settings) & Node.DOCUMENT_POSITION_FOLLOWING
+    ).toBeTruthy();
 
     release();
     for (let i = 0; i < 5; i++) {
@@ -195,8 +208,33 @@ describe('dashboard hub', () => {
       flushSync();
     }
     expect(document.querySelector('[data-dashboard-pending]')).toBeNull();
-    expect(keys().slice(-2)).toEqual(['settings', 'sign-out']);
+    expect(keys().slice(-3)).toEqual(['admin', 'settings', 'sign-out']);
     expect(keys()).toContain('directory');
+  });
+
+  it('settles on a probe that REJECTS: the placeholder resolves and the rest still draws', async () => {
+    state.reviewerFails = true;
+    state.mayOpenAdmin = true;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await render();
+    expect(document.querySelector('[data-dashboard-pending]')).toBeNull();
+    expect(keys()).not.toContain('documents');
+    expect(keys()).toContain('admin');
+    expect(keys().slice(-2)).toEqual(['settings', 'sign-out']);
+    expect(warn).toHaveBeenCalledWith(
+      expect.stringContaining('reviewer access probe failed'),
+      expect.any(Error)
+    );
+  });
+
+  it('keeps sign-out reachable when a probe NEVER answers', async () => {
+    state.adminHangs = true;
+    await render();
+    expect(document.querySelector('[data-dashboard-pending]')).not.toBeNull();
+    expect(keys().slice(-2)).toEqual(['settings', 'sign-out']);
+    document.querySelector<HTMLElement>('[data-hub-row="sign-out"]')!.click();
+    await tick();
+    expect(signOutByChoice).toHaveBeenCalledOnce();
   });
 
   it('draws no pill when nothing is unread', async () => {
