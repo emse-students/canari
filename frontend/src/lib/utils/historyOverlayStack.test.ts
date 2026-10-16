@@ -1,5 +1,6 @@
 import {
   abandonHistoryOverlay,
+  armHistoryOverlayGesture,
   backHistoryOverlayFromGesture,
   drainHistoryOverlayStack,
   pushHistoryOverlay,
@@ -430,15 +431,37 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
     pushHistoryOverlay(closeConversation);
     pushHistoryOverlay(closeMenu);
 
-    expect(backHistoryOverlayFromGesture()).toBe(true);
+    expect(backHistoryOverlayFromGesture(armHistoryOverlayGesture())).toBe(true);
     expect(closeMenu).toHaveBeenCalledWith('back');
     expect(closeConversation).not.toHaveBeenCalled();
     expect(historyOverlayStackDepth()).toBe(1);
 
-    expect(backHistoryOverlayFromGesture()).toBe(true);
+    expect(backHistoryOverlayFromGesture(armHistoryOverlayGesture())).toBe(true);
     expect(closeConversation).toHaveBeenCalledWith('back');
     // Nothing open: the gesture is its owner's again.
-    expect(backHistoryOverlayFromGesture()).toBe(false);
+    expect(backHistoryOverlayFromGesture(armHistoryOverlayGesture())).toBe(false);
+  });
+
+  it('a second commit of one gesture (no arm left) closes nothing - never the menu AND the conversation', () => {
+    fakeHistory();
+    stop = initHistoryOverlayStack({ systemBack: false });
+    const closeConversation = vi.fn();
+    const closeMenu = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeMenu);
+
+    // The caller hands its arm over once: the first commit takes it, a second gets null.
+    let arm: ReturnType<typeof armHistoryOverlayGesture> | null = armHistoryOverlayGesture();
+    const commit = () => {
+      const held = arm;
+      arm = null;
+      return backHistoryOverlayFromGesture(held);
+    };
+    expect(commit()).toBe(true);
+    expect(commit()).toBe(true);
+    expect(closeMenu).toHaveBeenCalledTimes(1);
+    expect(closeConversation).not.toHaveBeenCalled();
+    expect(historyOverlayStackDepth()).toBe(1);
   });
 
   it('the edge swipe over the camera review closes the take (which asks), then the camera, never the conversation', () => {
@@ -451,10 +474,10 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
     pushHistoryOverlay(closeCamera);
     pushHistoryOverlay(closeTake);
 
-    backHistoryOverlayFromGesture();
+    backHistoryOverlayFromGesture(armHistoryOverlayGesture());
     expect(closeTake).toHaveBeenCalledWith('back');
     expect(closeCamera).not.toHaveBeenCalled();
-    backHistoryOverlayFromGesture();
+    backHistoryOverlayFromGesture(armHistoryOverlayGesture());
     expect(closeCamera).toHaveBeenCalledWith('back');
     expect(closeConversation).not.toHaveBeenCalled();
   });
@@ -466,7 +489,7 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
     const closeMenu = vi.fn();
     pushHistoryOverlay(closeConversation);
     pushHistoryOverlay(closeMenu);
-    backHistoryOverlayFromGesture();
+    backHistoryOverlayFromGesture(armHistoryOverlayGesture());
     const closeSheet = vi.fn();
     pushHistoryOverlay(closeSheet);
     expect(h.index).toBe(2);
@@ -484,7 +507,7 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
       for (const close of closes) pushHistoryOverlay(close);
       expect(historyOverlayStackDepth()).toBe(3);
       for (let i = closes.length - 1; i >= 0; i--) {
-        expect(backHistoryOverlayFromGesture()).toBe(true);
+        expect(backHistoryOverlayFromGesture(armHistoryOverlayGesture())).toBe(true);
         expect(closes[i]).toHaveBeenCalledWith('back');
       }
     }

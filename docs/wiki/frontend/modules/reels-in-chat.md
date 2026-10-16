@@ -62,6 +62,18 @@ What the review of #1936 added:
 
 Pinned by `ChatArea.swipeBack.svelte.test.ts`, `CameraOverlay.svelte.test.ts`, `ReelCapture.svelte.test.ts`, `swipeBack.test.ts`, `useConversations.backOutOfLanding.svelte.test.ts` and `historyOverlayStack.test.ts`; the model check gained the gesture Back as an operation (177,155 sequences to length 5, 41,370 with router and bfcache to 4) and an iOS mode with no entries (579,194 sequences to length 5, router, shallow and bfcache included), no failure. **NOT covered, named:** a `Modal` or sheet portalled over a conversation still gets no swipe on iOS - the same mechanism, filed in [backlog](../../backlog.md#p3---ios-a-modal-or-sheet-over-a-conversation-has-no-edge-swipe-found-2026-10-16). **Owed on the iPhone 12:** the two sequences above, then a swipe on the review answered "La garder" (the review stays, a second swipe asks again).
 
+### The iPhone 12 reading of v1.2.9-alpha.3 - one gesture, one close (2026-10-16)
+
+**With the "+" menu open, ONE swipe still closed the menu AND left the conversation (3 of 3, DM and salon); a tap at the edge closed only the menu.** The commit closed the stack's top AT THE END of the stroke, and the logic is right on a model: mounting `ChatArea` with the real composer, opening "+" and swiping leaves the conversation open in happy-dom. So on the device the menu is already off the stack by the commit, and the conversation, now on top, is what the swipe closes. What takes the menu off mid-stroke is NOT read (the `[historyOverlay]` lines were debug, which the in-app log does not record), so the fix holds whatever it is:
+
+- **A gesture closes at most the overlay that was on top when its finger came down.** `swipeBack` gained `onArm`, where `ChatArea` and `CameraOverlay` record `armHistoryOverlayGesture()`; `backHistoryOverlayFromGesture(arm)` closes nothing when that overlay is gone by the commit - the gesture was spent on it - and the owner does not act either.
+- **The commit waits for the panel's OWN `transitionend`, or its `transitioncancel`.** The event bubbles, and the `{ once: true }` listener committed the Back on the first transition any descendant ended. A node hidden mid-slide fires only `transitioncancel`.
+- **One stroke commits once.** At most one release handler waits, and a new gesture that arms drops it. The arm is handed over ONCE: a second commit gets `null`, which is spent too. Unarmed, it would close the next overlay down, which is exactly "the menu AND the conversation".
+- **The one real candidate for the device cause, unproven:** a `keyboardOpened` flicker (`ChatComposer.svelte`'s keyboard effect, `composerSurface.ts`: `menu` + `keyboardOpened` -> `idle`). A `visualViewport` change during the stroke would close the menu mid-gesture. The info line tells it apart: `gesture Back spent` says something closed the menu before the commit.
+- **The two decisions log at `info`** (`[historyOverlay] gesture Back closes overlay N` / `gesture Back spent: ...`), one line per committed swipe, so the next reading names which one ran.
+
+Pinned by `ChatArea.swipeBack.svelte.test.ts` (a menu closed during the stroke; a descendant's transition). **Owed on the iPhone 12:** the "+" menu open, one swipe: only the menu closes, in a DM and in a salon; then the in-app log names `gesture Back closes overlay` or `gesture Back spent`. A `spent` line means something else closed the menu during the stroke, and that closer is the next thing to find.
+
 **An OVERLAY over the conversation, never the `/camera` tab.** The tab is a swipe place left of the feed
 (`CAMERA_PLACE`, [reels](reels.md#the-tab-c5)) and its origin logic (`cameraOriginFrom`) returns to a
 PATH. A conversation is selected by state, not by a route a Back can restore (`notifNav`, the

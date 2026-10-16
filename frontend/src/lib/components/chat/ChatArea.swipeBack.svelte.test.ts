@@ -16,6 +16,7 @@ import {
   historyOverlayStackDepth,
   initHistoryOverlayStack,
   pushHistoryOverlay,
+  releaseHistoryOverlay,
 } from '$lib/utils/historyOverlayStack';
 
 vi.mock('$lib/utils/users/displayName', async (importOriginal) => ({
@@ -87,13 +88,17 @@ function mountArea(onBack: () => void): HTMLElement {
   return target.querySelector<HTMLElement>('.chat-thread-panel')!;
 }
 
-/** One left-edge swipe past the threshold, committed on the panel's slide-out end. */
-function edgeSwipe(panel: HTMLElement) {
+/**
+ * One left-edge swipe past the threshold, committed on the panel's slide-out end. `duringStroke`
+ * runs after the finger came down and before it lifts.
+ */
+function edgeSwipe(panel: HTMLElement, duringStroke: () => void = () => {}) {
   for (const [type, clientX] of [
     ['touchstart', 5],
     ['touchmove', 150],
     ['touchend', 150],
   ] as const) {
+    if (type === 'touchmove') duringStroke();
     const e = new Event(type, { bubbles: true, cancelable: true });
     const list = [{ clientX, clientY: 300 }];
     Object.defineProperty(e, 'touches', { value: list });
@@ -123,6 +128,49 @@ describe('ChatArea edge swipe', () => {
     edgeSwipe(panel);
     expect(closeConversation).toHaveBeenCalledWith('back');
     expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it('a menu closed DURING the stroke spends the swipe: the conversation under it stays (iPhone, alpha.3, 3 of 3)', () => {
+    const onBack = vi.fn();
+    const closeConversation = vi.fn();
+    const closeMenu = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    const panel = mountArea(onBack);
+    pushHistoryOverlay(closeMenu);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+
+    // Whatever closes the menu while the finger is down (its own tap-outside, a keyboard), it
+    // leaves the conversation on top - and the commit used to close that.
+    edgeSwipe(panel, () => releaseHistoryOverlay(closeMenu));
+
+    expect(closeConversation).not.toHaveBeenCalled();
+    expect(onBack).not.toHaveBeenCalled();
+    expect(historyOverlayStackDepth()).toBe(1);
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('gesture Back spent'));
+
+    // The next swipe is a fresh gesture: it closes the conversation.
+    edgeSwipe(panel);
+    expect(closeConversation).toHaveBeenCalledWith('back');
+  });
+
+  it('a transition ending INSIDE the panel does not commit the swipe early', () => {
+    const onBack = vi.fn();
+    const panel = mountArea(onBack);
+    for (const [type, clientX] of [
+      ['touchstart', 5],
+      ['touchmove', 150],
+      ['touchend', 150],
+    ] as const) {
+      const e = new Event(type, { bubbles: true, cancelable: true });
+      const list = [{ clientX, clientY: 300 }];
+      Object.defineProperty(e, 'touches', { value: list });
+      Object.defineProperty(e, 'changedTouches', { value: list });
+      panel.dispatchEvent(e);
+    }
+    panel.firstElementChild?.dispatchEvent(new Event('transitionend', { bubbles: true }));
+    expect(onBack).not.toHaveBeenCalled();
+    panel.dispatchEvent(new Event('transitionend'));
+    expect(onBack).toHaveBeenCalledTimes(1);
   });
 
   it('on a wide touch screen (no overlay layout, the conversation holds no entry) the swipe is onBack, never the stack top', () => {
