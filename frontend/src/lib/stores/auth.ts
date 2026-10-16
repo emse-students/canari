@@ -22,6 +22,7 @@ import {
 import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { coreUrl } from '$lib/utils/apiUrl';
+import { m } from '$lib/paraglide/messages';
 import {
   OIDC_MOBILE_POST_LOGOUT_URI,
   OIDC_MOBILE_REDIRECT_URI,
@@ -416,6 +417,11 @@ export async function handleOidcCallback(
       if (code === 'MAINTENANCE') {
         message =
           nested || 'Canari est en maintenance. Seuls les administrateurs peuvent se connecter.';
+      } else if (code === 'ACCOUNT_ERASURE_PENDING') {
+        // The account was deleted and its erasure is still running on the server: signing in now
+        // would recreate it under the same identity (docs/wiki/account-erasure.md).
+        console.warn('[auth] sign-in refused: account erasure pending');
+        message = m.auth_account_erasure_pending();
       } else if (nested) {
         message = nested;
       }

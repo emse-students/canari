@@ -12,20 +12,23 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { assertInternalSecret } from './internal-secret.util';
 import { Post as PostEntity } from '../posts/entities/post.entity';
-import { ChannelMember } from '../channels/entities/channel-member.entity';
-import { ChannelMessage } from '../channels/entities/channel-message.entity';
 import { Association } from '../associations/entities/association.entity';
 import { AssociationMember } from '../associations/entities/association-member.entity';
 import { AssociationRoleHistory } from '../associations/entities/association-role-history.entity';
 import { UserFollow } from '../follows/entities/user-follow.entity';
-import { AssociationFollow } from '../follows/entities/association-follow.entity';
-import { UserTag } from '../users/entities/user-tag.entity';
-import { PurchaseRecord } from '../users/entities/purchase-record.entity';
-import { UserModeration } from '../moderation/entities/user-moderation.entity';
-import { ContentReport } from '../moderation/entities/content-report.entity';
 import { ChannelService } from '../channels/channel.service';
 import { RedisService } from '../common/redis/redis.service';
 import { invalidatePostListCache } from '../posts/post-list-cache';
+import {
+  CANDIDATE_POSTS_SQL,
+  ERASURE_STATEMENTS,
+  REMOVE_REACTIONS_SQL,
+  erasureParams,
+  WRITE_SCRUBBED_POST_SQL,
+  jsonStringLikePattern,
+  scrubComments,
+  scrubPolls,
+} from './account-erasure';
 
 /**
  * Internal-only user data deletion endpoint - called by core-service during account deletion.
@@ -39,10 +42,6 @@ export class InternalController {
   constructor(
     @InjectRepository(PostEntity)
     private readonly postRepo: Repository<PostEntity>,
-    @InjectRepository(ChannelMember)
-    private readonly channelMemberRepo: Repository<ChannelMember>,
-    @InjectRepository(ChannelMessage)
-    private readonly channelMessageRepo: Repository<ChannelMessage>,
     @InjectRepository(Association)
     private readonly assocRepo: Repository<Association>,
     @InjectRepository(AssociationMember)
@@ -51,16 +50,6 @@ export class InternalController {
     private readonly roleHistoryRepo: Repository<AssociationRoleHistory>,
     @InjectRepository(UserFollow)
     private readonly userFollowRepo: Repository<UserFollow>,
-    @InjectRepository(AssociationFollow)
-    private readonly assoFollowRepo: Repository<AssociationFollow>,
-    @InjectRepository(UserTag)
-    private readonly userTagRepo: Repository<UserTag>,
-    @InjectRepository(PurchaseRecord)
-    private readonly purchaseRepo: Repository<PurchaseRecord>,
-    @InjectRepository(UserModeration)
-    private readonly moderationRepo: Repository<UserModeration>,
-    @InjectRepository(ContentReport)
-    private readonly reportRepo: Repository<ContentReport>,
     private readonly channelService: ChannelService,
     private readonly redis: RedisService
   ) {}
@@ -231,20 +220,22 @@ export class InternalController {
   }
 
   /**
-   * Deletes or anonymises all social data for the given user.
-   * Hard-deletes: posts, memberships, follows, tags, moderation records.
-   * Anonymises (keeps record): channel messages, purchase records, content reports
-   * - these are preserved for conversation continuity or legal/financial obligations.
+   * Deletes or anonymises all social data for the given user - the social half of an account
+   * erasure, called by core-service's durable erasure queue until it answers 2xx, then once more
+   * after every token the account held has expired.
    *
-   * "Preserved" here means the ROW SURVIVES THE ACCOUNT, not that it survives forever: a handled
-   * content report is deleted 90 days after a moderator answered it, by the weekly cron in
-   * `forms-reminder.scheduler`. This docblock claimed indefinite retention while a 7-day lazy purge
-   * was quietly deleting the same rows on every moderator page load - three statements, one table.
+   * Three steps, each idempotent:
+   *  1. the account leaves every community, each one repaired before the row goes
+   *     (`ChannelService.removeAccountFromWorkspaces` - it throws when a community could not be
+   *     processed, so the queue retries rather than closing the job);
+   *  2. ONE transaction runs {@link ERASURE_STATEMENTS} and scrubs what the account left inside
+   *     other people's posts (comments, likes, reactions, poll votes) - all or nothing, so a
+   *     failure leaves nothing half-done that a retry could miss;
+   *  3. the cached feed pages are dropped, so a deleted post does not linger for a TTL.
    *
-   * Community memberships are deleted here directly, which is the ONE path that bypasses
-   * `leaveWorkspace` and its governance guards - so the workspaces involved are captured first and
-   * repaired afterwards, or a deleted account would leave communities with no admin, or with no
-   * members at all, that nothing could recover.
+   * What each column gets, and why, is {@link ACCOUNT_ERASURE_COVERAGE}, asserted against the
+   * schema. "Preserved" for an anonymised row means the ROW survives the account, not forever: a
+   * handled content report is still deleted 90 days after a moderator answered it.
    */
   @Delete('users/:userId')
   async deleteUserData(
@@ -252,56 +243,50 @@ export class InternalController {
     @Headers('x-internal-secret') headerSecret: string
   ) {
     assertInternalSecret(headerSecret);
+    const who = userId.slice(0, 8);
+    this.logger.log(`[INTERNAL_DELETE] starting social data for user=${who}`);
 
-    this.logger.log(`[INTERNAL_DELETE] starting social data for user=${userId}`);
+    const workspaces = await this.channelService.removeAccountFromWorkspaces(userId);
 
-    const affectedWorkspaceIds = (
-      await this.channelMemberRepo.find({ where: { userId }, select: { workspaceId: true } })
-    ).map((m) => m.workspaceId);
+    const counts: Record<string, number> = {};
+    let postsScrubbed = 0;
+    await this.postRepo.manager.transaction(async (manager) => {
+      for (const statement of ERASURE_STATEMENTS) {
+        const [, affected] = (await manager.query(
+          statement.sql,
+          erasureParams(statement, userId)
+        )) as [unknown, number];
+        if (affected > 0) counts[statement.label] = affected;
+      }
 
-    await Promise.all([
-      // Hard deletes - user's own content and memberships
-      this.postRepo.delete({ authorId: userId }),
-      this.channelMemberRepo.delete({ userId }),
-      this.assocMemberRepo.delete({ userId }),
-      this.roleHistoryRepo.delete({ userId }),
-      this.userFollowRepo.delete({ followerUserId: userId }),
-      this.userFollowRepo.delete({ followedUserId: userId }),
-      this.assoFollowRepo.delete({ followerUserId: userId }),
-      this.userTagRepo.delete({ userId }),
-      this.moderationRepo.delete({ userId }),
-      // A report whose entire subject is this account has nothing left to moderate once the account
-      // is gone. Reports on their CONTENT are left alone: those rows describe a post or a comment,
-      // and are anonymised on the reporter side below like every other one.
-      this.reportRepo.delete({ contentType: 'user', contentId: userId }),
+      const [, reactions] = (await manager.query(REMOVE_REACTIONS_SQL, [userId])) as [
+        unknown,
+        number,
+      ];
+      if (reactions > 0) counts.reactions = reactions;
 
-      // Anonymise - preserve records for legal/accounting obligations or conversation continuity
-      this.channelMessageRepo.update({ authorId: userId }, { authorId: '[deleted]' }),
-      this.purchaseRepo.update({ userId }, { userId: '[deleted]' }),
-      this.reportRepo.update({ reporterId: userId }, { reporterId: '[deleted]' }),
-    ]);
+      // Comments, likes and poll votes need the structure, so the candidates are read and locked.
+      const candidates = (await manager.query(CANDIDATE_POSTS_SQL, [
+        jsonStringLikePattern(userId),
+      ])) as Array<{ id: string; comments: unknown; polls: unknown }>;
+      for (const post of candidates) {
+        const c = scrubComments(post.comments, userId);
+        const p = scrubPolls(post.polls, userId);
+        if (!c.changed && !p.changed) continue;
+        await manager.query(WRITE_SCRUBBED_POST_SQL, [
+          post.id,
+          JSON.stringify(c.comments),
+          JSON.stringify(p.polls),
+        ]);
+        postsScrubbed += 1;
+      }
+    });
 
-    // Nominative read grants (WP7): no foreign key crosses services, so the standing grant of a
-    // deleted account is removed here - an id re-issued later must not inherit it. The journal is
-    // history and stays, with the account anonymised on both of its sides.
-    await this.postRepo.manager.query(`DELETE FROM read_grants WHERE user_id = $1`, [userId]);
-    // Push mutes are the account's own preference and carry no foreign key to it: purge them.
-    await this.postRepo.manager.query(`DELETE FROM association_push_mutes WHERE "userId" = $1`, [
-      userId,
-    ]);
-    await this.postRepo.manager.query(
-      `UPDATE read_grant_journal SET user_id = '[deleted]' WHERE user_id = $1`,
-      [userId]
-    );
-    await this.postRepo.manager.query(
-      `UPDATE read_grant_journal SET actor = '[deleted]' WHERE actor = $1`,
-      [userId]
-    );
-
-    await this.channelService.repairWorkspacesAfterAccountDeletion(affectedWorkspaceIds, userId);
+    const dropped = await invalidatePostListCache(this.redis);
 
     this.logger.log(
-      `[INTERNAL_DELETE] done social data for user=${userId} workspaces=${affectedWorkspaceIds.length}`
+      `[INTERNAL_DELETE] done social data for user=${who} workspaces=${workspaces} ` +
+        `postsScrubbed=${postsScrubbed} feedKeysDropped=${dropped} rows=${JSON.stringify(counts)}`
     );
     return { ok: true };
   }

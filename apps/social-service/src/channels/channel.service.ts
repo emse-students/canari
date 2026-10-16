@@ -685,8 +685,18 @@ export class ChannelService {
   }
 
   /**
-   * Repairs the communities a deleted account leaves behind. Called by the internal account
-   * deletion route with the workspaces the user belonged to, AFTER their membership rows are gone.
+   * Takes an erased account out of every community it is in, repairing each one BEFORE removing it.
+   * Called by the internal account-erasure route, which core-service's durable queue retries until
+   * it succeeds.
+   *
+   * THE ORDER IS WHAT MAKES THE RETRY WORK. This used to delete every membership row first and
+   * repair afterwards from a list captured in memory, swallowing a failed repair - so a community
+   * whose repair failed was left without an admin, or empty, and the retry found no membership left
+   * to point at it. Now, per community: the private salons are cut (idempotent), the community is
+   * repaired AS IF the account were already gone, and only then is the account's row deleted. A
+   * failure at any step leaves the row, so the next attempt starts that community over; a repair
+   * that already happened is a no-op the second time. Failures are collected and THROWN after every
+   * community has been tried, so one stuck community neither strands the others nor reports success.
    *
    * This is the one path where the postcondition cannot be a refusal - the account is being
    * deleted and there is nothing left to refuse - so it is the one place a repair exists, and it
@@ -697,39 +707,66 @@ export class ChannelService {
    *    account would be far worse, and leaving it ungoverned is the state everything else here
    *    exists to prevent.
    *
-   * Per workspace isolation: one community failing to repair must not strand the others, and a
-   * swallowed branch that logs nothing would leave no trace at all of what was skipped.
+   * The private salons are cut by name because `allowedUsers` is a separate list from the
+   * membership rows, and `reconcileDistributionGroupRoster` reads exactly that list, so a deleted
+   * account left in it keeps an MLS leaf authorised forever.
    *
-   * `deletedUserId` is carried because the private salons still name them. Their `channel_members`
-   * row is already gone when this runs, but `allowedUsers` is a separate list and nothing above has
-   * touched it - and `reconcileDistributionGroupRoster` reads exactly that list, so a deleted
-   * account left in it keeps an MLS leaf authorised forever, on a group whose seeds nobody can now
-   * be routed. The repair is the only place left that knows who it was.
+   * @returns the number of communities the account was taken out of.
+   * @throws Error naming every community that could not be processed - the caller answers 5xx.
    */
-  async repairWorkspacesAfterAccountDeletion(
-    workspaceIds: string[],
-    deletedUserId: string
-  ): Promise<void> {
+  async removeAccountFromWorkspaces(deletedUserId: string): Promise<number> {
+    const workspaceIds = [
+      ...new Set(
+        (
+          await this.memberRepo.find({
+            where: { userId: deletedUserId },
+            select: { workspaceId: true },
+          })
+        ).map((m) => m.workspaceId)
+      ),
+    ];
+    const failed: string[] = [];
     for (const workspaceId of workspaceIds) {
       try {
         await this.cutOffEveryPrivateChannel(workspaceId, deletedUserId, 'account_deleted');
-        await this.repairOneWorkspaceAfterAccountDeletion(workspaceId);
+        await this.repairOneWorkspaceAfterAccountDeletion(workspaceId, deletedUserId);
+        await this.memberRepo.delete({ workspaceId, userId: deletedUserId });
       } catch (err) {
+        failed.push(workspaceId);
         this.logger.error(
-          `[WORKSPACE] repair failed workspace=${workspaceId}: ${err instanceof Error ? err.message : String(err)}`
+          `[WORKSPACE] account removal failed workspace=${workspaceId} ` +
+            `user=${deletedUserId.slice(0, 8)} - left for the erasure retry: ` +
+            `${err instanceof Error ? err.message : String(err)}`
         );
       }
     }
+    if (failed.length > 0) {
+      throw new Error(
+        `account removal incomplete: ${failed.length}/${workspaceIds.length} communities failed (${failed.join(', ')})`
+      );
+    }
+    return workspaceIds.length;
   }
 
-  private async repairOneWorkspaceAfterAccountDeletion(workspaceId: string): Promise<void> {
-    const members = await this.memberRepo.find({ where: { workspaceId } });
+  /**
+   * Repairs one community for the departure of `leavingUserId`, whose membership row still exists
+   * and is treated as gone. Idempotent: a community that already has another admin is left alone.
+   */
+  private async repairOneWorkspaceAfterAccountDeletion(
+    workspaceId: string,
+    leavingUserId: string
+  ): Promise<void> {
+    const members = (await this.memberRepo.find({ where: { workspaceId } })).filter(
+      (m) => m.userId !== leavingUserId
+    );
     if (members.length === 0) {
       await this.hardDeleteWorkspace(workspaceId, 'account_deletion_left_no_members');
       return;
     }
 
-    const adminIds = await this.listWorkspaceAdminIds(workspaceId);
+    const adminIds = (await this.listWorkspaceAdminIds(workspaceId)).filter(
+      (id) => id !== leavingUserId
+    );
     if (adminIds.length > 0) return;
 
     const roles = await this.roleRepo.find({ where: { workspaceId } });

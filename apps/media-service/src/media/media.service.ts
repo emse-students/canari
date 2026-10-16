@@ -1278,8 +1278,12 @@ export class MediaService {
    * be cited by messages in conversations the deleter cannot see, and the server - holding only
    * ciphertext - can count no references. A deleted message's blob is left to the retention sweep.
    *
+   * IDEMPOTENT, AND A FAILURE IS NOT A COMPLETION. core-service's erasure queue calls this until
+   * it succeeds, so an object whose delete failed keeps its live entry (the retry finds it) and the
+   * controller answers 503 while `failed > 0`. An object already purged is skipped.
+   *
    * @param ownerId  User whose uploads are removed.
-   * @returns Counts for the caller's log: what was deleted, and what could not be.
+   * @returns What was deleted, and what could not be (and will be retried).
    */
   async removeAllOwnedBy(ownerId: string): Promise<{ deleted: number; failed: number }> {
     let deleted = 0;
@@ -1299,12 +1303,15 @@ export class MediaService {
         deleted += 1;
       } catch (err) {
         // Same stranding risk as the retention sweep: say so rather than losing the object.
+        // NOT marked purged: the entry is what lets the erasure queue's retry find this object
+        // again. Marking a failed delete as done is how an object used to be stranded for ever.
         failed += 1;
-        this.logger.warn(
-          `Account deletion could not remove ${mediaId} (object may be stranded): ${
+        this.logger.error(
+          `Account deletion could not remove ${mediaId} - left for the erasure retry: ${
             err instanceof Error ? err.message : String(err)
           }`
         );
+        continue;
       }
 
       this.meta.items[mediaId] = {

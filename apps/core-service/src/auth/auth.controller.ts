@@ -37,6 +37,8 @@ import {
 } from './adminer-access.service';
 import { TAURI_WEBVIEW_ORIGINS } from '../cors-origins';
 import { REFRESH_HEADER, usesBodyRefreshTransport } from './refresh-transport';
+import { ACCESS_TOKEN_TTL_SECONDS } from './token-lifetimes';
+import { AccountErasureService } from '../account-erasure/account-erasure.service';
 
 interface OidcCallbackDto {
   code: string;
@@ -96,7 +98,8 @@ export class AuthController {
     private readonly usersService: UsersService,
     private readonly platformService: PlatformService,
     private readonly authSessions: AuthSessionsService,
-    private readonly adminerAccess: AdminerAccessService
+    private readonly adminerAccess: AdminerAccessService,
+    private readonly accountErasure: AccountErasureService
   ) {
     const secret = process.env.JWT_SECRET;
     if (!secret || secret === 'change-me-in-production') {
@@ -388,7 +391,21 @@ export class AuthController {
       throw new UnauthorizedException('Invalid userinfo response from Authentik');
     }
 
-    // 3. Upsert local user
+    // 3. Refuse an account whose erasure is still running. `users.id` IS the OIDC subject, so a
+    // sign-in now would recreate the account under the same id, and the erasure's next pass would
+    // then delete what the new account wrote. Once every job has completed the person may come back
+    // and gets a new, empty account.
+    if (await this.accountErasure.isErasurePending(userinfo.sub)) {
+      this.logger.warn(
+        `[AUTH] sign-in refused: account erasure pending user=${userinfo.sub.slice(0, 8)}`
+      );
+      throw new ForbiddenException({
+        code: 'ACCOUNT_ERASURE_PENDING',
+        message: 'This account is being deleted. Try again later to create a new one.',
+      });
+    }
+
+    // 4. Upsert local user
     const user = await this.usersService.findOrCreateFromOidc(
       userinfo.sub,
       userinfo.name || null,
@@ -407,14 +424,14 @@ export class AuthController {
       });
     }
 
-    // 3b. Grant any cotisation a legacy estate recorded for them. On every sign-in, not just the
+    // 4b. Grant any cotisation a legacy estate recorded for them. On every sign-in, not just the
     // first: the claim terminates on durable state in social-service, so this is idempotent, and
     // a user who signed in before their association's list was loaded still gets their tag.
     await this.usersService.claimLegacyCotisations(user);
 
-    // 4. Issue internal JWT pair, backed by a session row so the refresh can be revoked
+    // 5. Issue internal JWT pair, backed by a session row so the refresh can be revoked
     const access_token = jwt.sign({ sub: user.id, admin: !!user.admin }, this.jwtSecret, {
-      expiresIn: '1h',
+      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
     });
     const session = await this.authSessions.create(user.id, this.clientInfo(req));
     const refresh_token = this.signRefreshToken(user.id, session.sessionId, session.tokenId);
@@ -583,7 +600,7 @@ export class AuthController {
     const nextTokenId = result.tokenId;
 
     const access_token = jwt.sign({ sub: payload.sub, admin: isAdmin }, this.jwtSecret, {
-      expiresIn: '1h',
+      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
     });
     const new_refresh = this.signRefreshToken(payload.sub, sessionId, nextTokenId);
 
