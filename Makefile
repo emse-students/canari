@@ -326,6 +326,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/ceiling.test.sh
 	@bash .github/scripts/tests/compose-wiring.test.sh
 	@bash .github/scripts/tests/compose-logging.test.sh
+	@bash .github/scripts/tests/log-retention.test.sh
 	@bash .github/scripts/tests/dev-copy-guards.test.sh
 	@bash .github/scripts/tests/dev-gap.test.sh
 	@bash .github/scripts/tests/deploy-env.test.sh

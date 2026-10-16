@@ -103,6 +103,12 @@ export class AuthSession {
    * Client IP of the last refresh. It exists so the owner can recognise a
    * session that is not theirs; it is never used for authorization, and it
    * disappears with the row (7 days idle at most).
+   *
+   * That disappearance IS the privacy policy's "IP logs kept 90 days at most":
+   * every write of this column also moves {@link expiresAt}, and the hourly
+   * sweep deletes the row past it - so the value is never older than the idle
+   * TTL plus one sweep interval. A write that set the IP without the deadline
+   * would break that bound; `auth-sessions.service.spec.ts` asserts it.
    */
   @Column({ type: 'varchar', length: 45, nullable: true })
   lastIp?: string | null;
