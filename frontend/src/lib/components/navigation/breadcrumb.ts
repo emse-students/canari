@@ -47,7 +47,13 @@ type HubRowLead = { icon: HubIcon; avatarUserId?: never } | { avatarUserId: stri
  */
 export type HubRow =
   | HubLinkRow
-  | (HubRowBase & HubRowLead & { onSelect: () => void; href?: never });
+  | (HubRowBase &
+      HubRowLead & {
+        onSelect: () => void;
+        /** The action is running: the button is disabled and `aria-busy`, so a second tap is inert. */
+        busy?: boolean;
+        href?: never;
+      });
 
 /** A hub row that is a place: what every area hub but the dashboard's sign-out is made of. */
 export type HubLinkRow = HubRowBase & HubRowLead & { href: string; onSelect?: never };

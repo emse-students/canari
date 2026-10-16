@@ -21,6 +21,21 @@
   let isReviewer = $state(false);
   let memberships = $state<Association[]>([]);
   let probesSettled = $state(false);
+  /** A sign-out can wait up to 30 s; a second tap must not send a second logout. */
+  let signingOut = $state(false);
+
+  async function signOut() {
+    if (signingOut) {
+      Log.d('[dashboard] sign-out ignored: one is already running');
+      return;
+    }
+    signingOut = true;
+    try {
+      await signOutByChoice();
+    } finally {
+      signingOut = false;
+    }
+  }
 
   onMount(() => {
     Log.d('[dashboard] mount: probing memberships, admin tier and reviewer access');
@@ -63,8 +78,9 @@
         isReviewer,
         memberships,
         probesSettled,
+        signingOut,
       },
-      { signOut: () => void signOutByChoice() }
+      { signOut: () => void signOut() }
     )
   );
 </script>

@@ -69,6 +69,8 @@ export interface DashboardFacts {
   memberships: readonly Association[];
   /** Every probe above has answered (or failed, logged); until then only the free groups draw. */
   probesSettled: boolean;
+  /** A sign-out is in flight; the sign-out row is disabled meanwhile. */
+  signingOut?: boolean;
 }
 
 /** The page's handlers for the action rows; a table cannot hold a closure over page state. */
@@ -302,7 +304,7 @@ function toRow(e: DashboardEntry, f: DashboardFacts, actions: DashboardActions):
   const row: HubRow =
     typeof e.target === 'string'
       ? { ...base, ...lead, href: e.target }
-      : { ...base, ...lead, onSelect: actions[e.target.action] };
+      : { ...base, ...lead, onSelect: actions[e.target.action], busy: f.signingOut };
   if (e.key === 'notifications' && f.unreadNotifications > 0) {
     row.badge = f.unreadNotifications;
     row.badgeLabel = m.dashboard_unread_notifications_label({ count: f.unreadNotifications });

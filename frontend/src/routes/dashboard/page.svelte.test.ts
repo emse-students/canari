@@ -252,6 +252,24 @@ describe('dashboard hub', () => {
     expect(signOutByChoice).toHaveBeenCalledOnce();
   });
 
+  it('ignores a second sign-out tap while the first is pending, and marks the row busy', async () => {
+    let finish!: () => void;
+    signOutByChoice.mockReturnValue(new Promise<void>((r) => (finish = r)));
+    await render();
+    const row = document.querySelector<HTMLButtonElement>('[data-hub-row="sign-out"]')!;
+    row.click();
+    await tick();
+    expect(row.disabled).toBe(true);
+    expect(row.getAttribute('aria-busy')).toBe('true');
+    row.click();
+    await tick();
+    expect(signOutByChoice).toHaveBeenCalledOnce();
+    finish();
+    await tick();
+    await tick();
+    expect(row.disabled).toBe(false);
+  });
+
   it('has no theme control any more: the theme lives in settings', async () => {
     await render();
     expect(keys()).not.toContain('theme');

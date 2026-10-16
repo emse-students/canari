@@ -29,7 +29,9 @@
           type="button"
           data-hub-row={row.key}
           onclick={row.onSelect}
-          class="hover:bg-cn-bg flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors {row.tone ===
+          disabled={row.busy}
+          aria-busy={row.busy}
+          class="hover:bg-cn-bg flex w-full items-center gap-3 px-4 py-3.5 text-left transition-colors disabled:opacity-60 {row.tone ===
           'danger'
             ? 'text-red-err'
             : 'text-text-main'}"
