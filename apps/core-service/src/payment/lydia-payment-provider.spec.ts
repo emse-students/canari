@@ -9,7 +9,6 @@ function makeProvider() {
   return new LydiaPaymentProvider({
     LYDIA_ENV: 'homologation',
     LYDIA_PROVIDER_TOKEN: 'provider-token',
-    LYDIA_PROVIDER_PRIVATE_TOKEN: 'provider-private-token',
   });
 }
 
@@ -378,19 +377,6 @@ describe('LydiaPaymentProvider retired/unimplemented methods', () => {
     await expect(provider.getConnectAccountStatus('vendor-token')).rejects.toThrow(
       /live account-status poll/
     );
-  });
-});
-
-describe('LydiaPaymentProvider.verifyRequestCallback', () => {
-  it('accepts a signature computed the same way Lydia computes it', () => {
-    const provider = makeProvider();
-    // md5("amount=12&request_id=124&YOUR_PRIVATE_TOKEN")-shaped check via the shared util,
-    // just confirming the provider wires its own private token into the same signing scheme.
-    const fields = { amount: '12', request_id: '124' };
-    const { signLydiaParams } = jest.requireActual('./lydia-signature');
-    const sig = signLydiaParams(fields, 'provider-private-token');
-    expect(provider.verifyRequestCallback(fields, sig)).toBe(true);
-    expect(provider.verifyRequestCallback(fields, 'wrong-signature')).toBe(false);
   });
 });
 

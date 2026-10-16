@@ -29,6 +29,8 @@ import {
  */
 describe('FormsService - the seat a pending payment holds', () => {
   const HOLD_MS = PENDING_PAYMENT_HOLD_SECONDS * 1000;
+  /** A Lydia `request_uuid`: 32 hex digits, no dash (measured on the sandbox). */
+  const LYDIA_UUID = '00112233445566778899aabbccddeeff';
   const T0 = new Date('2026-10-15T12:00:00Z');
   type Row = {
     id: string;
@@ -246,6 +248,9 @@ describe('FormsService - the seat a pending payment holds', () => {
     const associationsService: any = {
       assertPaymentsReady: jest.fn(async () => undefined),
       getPaymentAccountId: jest.fn(async () => 'vendor'),
+      // The account the form's money is paid into, whatever provider is active: what a verified
+      // callback's Business must be (`isCallbackPayee`).
+      getLydiaPayeeAccountId: jest.fn(async () => 'vendor'),
       // Nobody manages this form through the association: only its submitter may read its answer.
       mayAct: jest.fn(async () => false),
       getActivePaymentProvider: jest.fn(async () => opts.provider ?? 'disabled'),
@@ -701,8 +706,8 @@ describe('FormsService - the seat a pending payment holds', () => {
           row({ id: 'q', paymentStatus: 'paid', paymentRequestId: '2' }),
         ],
       });
-      await service.cancelPendingSubmission('p', { requestId: '1' });
-      await service.cancelPendingSubmission('q', { requestId: '2' });
+      await service.cancelPendingSubmission('p', { requestId: '1' }, 'vendor');
+      await service.cancelPendingSubmission('q', { requestId: '2' }, 'vendor');
       expect(rows.map((r) => r.paymentStatus)).toEqual(['cancelled', 'paid']);
     });
 
@@ -713,10 +718,10 @@ describe('FormsService - the seat a pending payment holds', () => {
         maxSubmissions: 1,
         rows: [row({ id: 'p', paymentRequestId: '600', stripeSessionId: 'uuid-600' })],
       });
-      await service.cancelPendingSubmission('p', { requestId: '555' });
-      await service.cancelPendingSubmission('p', { sessionId: 'uuid-555' });
+      await service.cancelPendingSubmission('p', { requestId: '555' }, 'vendor');
+      await service.cancelPendingSubmission('p', { sessionId: 'uuid-555' }, 'vendor');
       expect(rows[0].paymentStatus).toBe('pending');
-      await service.cancelPendingSubmission('p', { sessionId: 'uuid-600' });
+      await service.cancelPendingSubmission('p', { sessionId: 'uuid-600' }, 'vendor');
       expect(rows[0].paymentStatus).toBe('cancelled');
     });
 
@@ -725,10 +730,10 @@ describe('FormsService - the seat a pending payment holds', () => {
         maxSubmissions: 1,
         rows: [row({ id: 'p', paymentRequestId: null, stripeSessionId: null })],
       });
-      await expect(service.cancelPendingSubmission('p', {})).rejects.toBeInstanceOf(
+      await expect(service.cancelPendingSubmission('p', {}, 'vendor')).rejects.toBeInstanceOf(
         BadRequestException
       );
-      await service.cancelPendingSubmission('p', { requestId: '555' });
+      await service.cancelPendingSubmission('p', { requestId: '555' }, 'vendor');
       expect(rows[0].paymentStatus).toBe('pending');
     });
   });
@@ -877,9 +882,10 @@ describe('FormsService - the seat a pending payment holds', () => {
         provider: 'lydia',
         rows: [mine()],
       });
-      core.duringCancel = () => service.cancelPendingSubmission('mine', { requestId: '555' });
+      core.duringCancel = () =>
+        service.cancelPendingSubmission('mine', { requestId: '555' }, 'vendor');
       await retry(service);
-      await service.cancelPendingSubmission('mine', { requestId: '555' });
+      await service.cancelPendingSubmission('mine', { requestId: '555' }, 'vendor');
       expect(rows[0]).toMatchObject({ paymentStatus: 'pending', paymentRequestId: '1001' });
     });
 
@@ -1158,18 +1164,15 @@ describe('FormsService - the seat a pending payment holds', () => {
   });
 
   /**
-   * THE TWO CONFIRMATIONS OF ONE PAYMENT, THROUGH THE ROUTE CORE-SERVICE CALLS. Since #1910 Lydia's
-   * callbacks are parsed: the confirm callback posts `{ sessionId: <numeric request_id> }`
-   * (webhook.controller.ts) and a cancel or expire callback posts `{ requestId }`. The payer's
-   * return reaches `markPaid` with the `request_uuid` (`confirmPayment` above) - but only when the
-   * row is still `pending` as it arrives, so a payment reaches `markPaid` once or twice, in either
-   * order. The callback bodies are pinned on the core side by its own specs; here they enter
-   * through `InternalFormsController`, the handler they reach, and the uuid stands for the return.
+   * THE TWO CONFIRMATIONS OF ONE PAYMENT, THROUGH THE ROUTES THEY REACH. A Lydia confirm callback,
+   * verified by core-service with the association's Business key, posts `{ vendorToken, requestId }`
+   * to `provider-confirm` (webhook.controller.ts); the payer's return calls `confirmPayment`. BOTH
+   * read the row's own request at Lydia and record it only if Lydia answers paid - the callback is a
+   * trigger, never the payment - so a payment reaches `markPaid` once or twice, in either order. A
+   * cancel or expire callback posts `{ requestId, vendorToken }` to `cancel-pending`.
    */
   describe('through the internal routes, in either order', () => {
     const SECRET = 'internal-secret-for-test';
-    const webhookConfirm = { sessionId: '1001' };
-    const payerReturn = { sessionId: 'uuid-1' };
 
     function makeRoutes(over: Partial<Row> = {}, maxSubmissions = 1, others: Row[] = []) {
       process.env.INTERNAL_SECRET = SECRET;
@@ -1180,27 +1183,32 @@ describe('FormsService - the seat a pending payment holds', () => {
             id: 's1',
             paymentRequestedAt: ago(60_000),
             paymentRequestId: '1001',
-            stripeSessionId: 'uuid-1',
+            stripeSessionId: LYDIA_UUID,
             ...over,
           }),
           ...others,
         ],
       });
+      store.core.stateAnswer = 'paid';
       const routes = new InternalFormsController(store.service);
       return {
         ...store,
-        markPaid: (body: { sessionId: string }) => routes.markPaid('s1', SECRET, body),
-        cancelPending: (body: { requestId: string }) => routes.cancelPending('s1', SECRET, body),
+        routes,
+        callback: (vendorToken = 'vendor', requestId = '1001') =>
+          routes.providerConfirm('s1', SECRET, { vendorToken, requestId }),
+        payerReturn: () => store.service.confirmPayment('s1'),
+        cancelPending: (body: { requestId: string; vendorToken?: string }) =>
+          routes.cancelPending('s1', SECRET, { vendorToken: 'vendor', ...body }),
       };
     }
 
     it.each([
-      ['the webhook, then the payer return', [webhookConfirm, payerReturn]],
-      ['the payer return, then the webhook', [payerReturn, webhookConfirm]],
-    ])('%s: one transition, one grant, one purchase', async (_order, bodies) => {
+      ['the callback, then the payer return', ['callback', 'payerReturn'] as const],
+      ['the payer return, then the callback', ['payerReturn', 'callback'] as const],
+    ])('%s: one transition, one grant, one purchase', async (_order, steps) => {
       const r = makeRoutes();
       const warn = jest.spyOn((r.service as any).logger, 'warn');
-      for (const body of bodies) await r.markPaid(body);
+      for (const step of steps) await r[step]();
       expect(r.rows[0].paymentStatus).toBe('paid');
       expect(r.transitions).toEqual(['s1:pending->paid']);
       expect(r.userTagService.grantCotisant).toHaveBeenCalledTimes(1);
@@ -1210,10 +1218,56 @@ describe('FormsService - the seat a pending payment holds', () => {
 
     it('both at once: one transition, one grant, one purchase', async () => {
       const r = makeRoutes();
-      await Promise.all([r.markPaid(webhookConfirm), r.markPaid(payerReturn)]);
+      await Promise.all([r.callback(), r.payerReturn()]);
       expect(r.transitions).toEqual(['s1:pending->paid']);
       expect(r.userTagService.grantCotisant).toHaveBeenCalledTimes(1);
       expect(r.purchaseRecordService.create).toHaveBeenCalledTimes(1);
+    });
+
+    // THE CALLBACK IS A TRIGGER: a verified confirm on a request Lydia does not answer `paid` for
+    // records nothing. Fails if `provider-confirm` marks the row paid on the callback's word.
+    it('a verified callback records nothing while Lydia does not answer paid for the row', async () => {
+      const r = makeRoutes();
+      r.core.stateAnswer = 'open';
+      const { outcome } = await r.callback();
+      expect(outcome).toBe('open');
+      expect(r.rows[0].paymentStatus).toBe('pending');
+      expect(r.purchaseRecordService.create).not.toHaveBeenCalled();
+      // It read the ROW's own request, with the verified Business - nothing of the callback's.
+      const read = r.core.calls.find((c) => c.route === 'request-state');
+      expect(read?.body).toEqual({ sessionId: LYDIA_UUID, connectAccountId: 'vendor' });
+    });
+
+    // CROSS-ASSOCIATION: association A's genuine callback naming a submission of association B
+    // (whose form pays into 'vendor') never settles it - not even a read is made with A's Business.
+    it('refuses a callback verified for another Business than the row payee', async () => {
+      const r = makeRoutes();
+      const error = jest.spyOn((r.service as any).logger, 'error');
+      const { outcome } = await r.callback('vendor-of-association-a');
+      expect(outcome).toBe('other-account');
+      expect(r.rows[0].paymentStatus).toBe('pending');
+      expect(r.core.calls.filter((c) => c.route === 'request-state')).toHaveLength(0);
+      expect(error.mock.calls.some(([line]) => /REFUSED/.test(String(line)))).toBe(true);
+    });
+
+    it('refuses a cancel verified for another Business, and a report naming none', async () => {
+      const r = makeRoutes();
+      await r.cancelPending({ requestId: '1001', vendorToken: 'vendor-of-association-a' });
+      expect(r.rows[0].paymentStatus).toBe('pending');
+      expect(() => r.routes.cancelPending('s1', SECRET, { requestId: '1001' })).toThrow(
+        BadRequestException
+      );
+      expect(() => r.routes.providerConfirm('s1', SECRET, { requestId: '1001' })).toThrow(
+        BadRequestException
+      );
+      expect(r.rows[0].paymentStatus).toBe('pending');
+    });
+
+    it('refuses a caller without the internal secret', () => {
+      const r = makeRoutes();
+      expect(() =>
+        r.routes.providerConfirm('s1', 'wrong', { vendorToken: 'vendor', requestId: '1001' })
+      ).toThrow(ForbiddenException);
     });
 
     // A cancel or expiry report that lands AFTER the payment never takes it back, and neither does
@@ -1222,9 +1276,9 @@ describe('FormsService - the seat a pending payment holds', () => {
       'a %s callback after the payment leaves it paid',
       async (_outcome) => {
         const r = makeRoutes();
-        await r.markPaid(webhookConfirm);
+        await r.callback();
         await r.cancelPending({ requestId: '1001' });
-        await r.markPaid(payerReturn);
+        await r.payerReturn();
         r.advance(10 * HOLD_MS);
         await r.service.expireStalePendingPayments();
         expect(r.rows[0].paymentStatus).toBe('paid');
@@ -1235,11 +1289,7 @@ describe('FormsService - the seat a pending payment holds', () => {
 
     it('a cancel landing in the middle of the two confirmations changes nothing', async () => {
       const r = makeRoutes();
-      await Promise.all([
-        r.markPaid(webhookConfirm),
-        r.cancelPending({ requestId: '1001' }),
-        r.markPaid(payerReturn),
-      ]);
+      await Promise.all([r.callback(), r.cancelPending({ requestId: '1001' }), r.payerReturn()]);
       // Whichever took the row lock first, a payment is never undone: either the cancel lost the
       // race to a `paid`, or it won and the payment then lands on `cancelled` as a late payment.
       // The form has room either way, so both orders end `paid`.
@@ -1254,8 +1304,8 @@ describe('FormsService - the seat a pending payment holds', () => {
       const r = makeRoutes({}, 1, [row({ id: 'other', paymentStatus: 'pending', userId: 'u2' })]);
       await r.cancelPending({ requestId: '1001' });
       r.rows[1].paymentStatus = 'paid';
-      await r.markPaid(webhookConfirm);
-      await r.markPaid(payerReturn);
+      await r.callback();
+      await r.payerReturn();
       expect(r.rows[0].paymentStatus).toBe('paid_over_capacity');
       expect(r.transitions).toEqual(['s1:pending->cancelled', 's1:cancelled->paid_over_capacity']);
       expect(r.userTagService.grantCotisant).not.toHaveBeenCalled();

@@ -63,7 +63,8 @@ dev_env() {
     DEV_CHANNELS_ENCRYPTION_SECRET=d5 \
     DEV_INTERNAL_SHARED_SECRET=d6 \
     DEV_CALL_ROOM_SECRET=d7 \
-    DEV_AGENDA_SIGNING_KEY=d8-0123456789abcdef0123456789abcdef
+    DEV_AGENDA_SIGNING_KEY=d8-0123456789abcdef0123456789abcdef \
+    DEV_LYDIA_KEY_ENCRYPTION_SECRET=d9-0123456789abcdef0123456789abcdef
 }
 
 prod_env() {
@@ -82,7 +83,8 @@ prod_env() {
     CHANNELS_ENCRYPTION_SECRET=p5 \
     INTERNAL_SHARED_SECRET=p6 \
     CALL_ROOM_SECRET=p7 \
-    AGENDA_SIGNING_KEY=p8-0123456789abcdef0123456789abcdef
+    AGENDA_SIGNING_KEY=p8-0123456789abcdef0123456789abcdef \
+    LYDIA_KEY_ENCRYPTION_SECRET=p9-0123456789abcdef0123456789abcdef
 }
 
 # Run the renderer with an explicit environment built from the lines on stdin.
@@ -481,6 +483,28 @@ elif grep -q 'AGENDA_SIGNING_KEY is set for the prod environment but is only 31 
   pass "a 31-character AGENDA_SIGNING_KEY fails the production render, naming the secret"
 else
   fail "production refused a short AGENDA_SIGNING_KEY without naming it"
+fi
+
+out="$TMP/prod-shortlydia.env"
+# shellcheck disable=SC2046
+render prod "$out" $(prod_env | grep -v '^LYDIA_KEY_ENCRYPTION_SECRET=') LYDIA_KEY_ENCRYPTION_SECRET=0123456789abcdef0123456789abcde >"$TMP/prod-shortlydia.log" || true
+if [ -f "$out" ]; then
+  fail "production rendered with a 31-character LYDIA_KEY_ENCRYPTION_SECRET"
+elif grep -q 'LYDIA_KEY_ENCRYPTION_SECRET is set for the prod environment but is only 31 characters' "$TMP/prod-shortlydia.log"; then
+  pass "a 31-character LYDIA_KEY_ENCRYPTION_SECRET fails the production render, naming the secret"
+else
+  fail "production refused a short LYDIA_KEY_ENCRYPTION_SECRET without naming it"
+fi
+
+out="$TMP/dev-nolydia.env"
+# shellcheck disable=SC2046
+render dev "$out" $(dev_env | grep -v '^DEV_LYDIA_KEY_ENCRYPTION_SECRET=') >"$TMP/dev-nolydia.log" || true
+if [ -f "$out" ]; then
+  fail "dev rendered with no LYDIA_KEY_ENCRYPTION_SECRET"
+elif grep -q 'LYDIA_KEY_ENCRYPTION_SECRET is not set for the dev environment' "$TMP/dev-nolydia.log"; then
+  pass "a missing LYDIA_KEY_ENCRYPTION_SECRET fails the dev render, naming the secret"
+else
+  fail "dev refused a missing LYDIA_KEY_ENCRYPTION_SECRET without naming it"
 fi
 
 out="$TMP/dev-build.env"
