@@ -43,7 +43,7 @@ agenda route, so the shell refuses that account as well. `access.test.ts` pins t
 | `/admin` | Home (cards) | Any BDE super-admin, content moderator, event validator, or platform admin |
 | `/admin/agenda` | Pending agenda events | BDE event validator (`VALIDATE_EVENTS`) or platform admin; a BDE sees and decides the events of the associations its spaces reach (`canValidate` per row) |
 | `/admin/moderation` | Reports, hidden posts, mutes | Content moderator or platform admin |
-| `/admin/document-reviewers` | Public-document reviewer grants | BDE super-admin or platform admin |
+| `/admin/read-access` | Two tabs: named readers (platform admin only) and public-document reviewers ([below](#read-access-adminread-access)) | BDE super-admin (reviewers tab only) or platform admin |
 | `/admin/carte` | Carte de la Vie Asso | BDE super-admin or platform admin |
 | `/admin/spaces` | Spaces & audiences: three sections (associations, lists, institutions), the BDE star | Platform admin |
 | `/admin/platform` | Maintenance, minimum client version | Platform admin |
@@ -80,6 +80,42 @@ while the server had `MODERATE` accepted on the reports, mutes and comment endpo
 the flag could reach none of it, and the whole tier was reachable only by someone who already knew
 the URL. Whenever a permission is added to a server-side check, the matching screen is part of the
 same change.
+
+## Read access (`/admin/read-access`)
+
+Two unrelated access lists, one tab each (`SegmentedControl`, `?tab=readers|reviewers`). A BDE
+super-admin sees the reviewers alone, with no tab bar: the named readers are a platform admin's (D24,
+[profiles-and-access](../../profiles-and-access.md#nominative-read-grants-as-built-wp-c-2026-10-08)).
+
+**ONE TEMPLATE FOR BOTH (user, 2026-10-16: "uniformiser, rendre plus clair").** `components/admin/access/AccessSection.svelte`
+draws each tab in the same order: a one-line summary with the full explanation behind "En savoir
+plus", a person search with ONE primary `Button` (never drawn disabled - with nothing picked it focuses
+the field), the list as cards or the shared `EmptyState`, and the journal folded under the list as a
+`<details>` whose summary carries the count (`Journal (n)`). `ReadAccessPanel` and
+`DocumentReviewersPanel` own the data; `lib/admin/readAccess.ts` holds the pure part (cell keys, the
+grouping of a person's cells, the reviewers' journal).
+
+The decisions, taken by the user on 2026-10-16:
+
+- **Named readers are cards, not a grid.** The person x (2 campuses x 6 scopes) table could not fit a
+  phone. A card lists what the person reads as chips grouped by campus (`ReadGrantCard`), and
+  "Modifier" opens a sheet (`ReadGrantSheet`, the shared `Modal`: bottom sheet on a phone, focus
+  trap, Escape, Back) with one checkbox group per campus. "Ajouter" opens the same sheet for the
+  picked person; they get a card once they hold a cell.
+- **Every change saves at once and offers "Annuler" in a toast** (`showUndoToast`, 6 s; the toast
+  store gained an optional action button). There is no undo endpoint: undo is the INVERSE call.
+  For a reader cell that is `PUT /read-grants` with the opposite state, journalled by the server like
+  any change. For a reviewer it is `POST`/`DELETE /document-reviewers`, so **a removal undone is a
+  new grant, dated now and authored by whoever undid it**. The undo itself offers no undo.
+- **Removing a reviewer asks first** (`showConfirm`, danger) and the button carries its word
+  ("Révoquer"), not a bare trash icon.
+- **The reviewers' journal is the grants in force** (who authorized whom, when): the server keeps no
+  history for that capability, so a removal leaves no trace, and the journal says so in a line.
+  The readers' journal is the server's append-only `read_grant_journal`.
+
+Tests: `readAccess.test.ts`, `ReadGrantCard.svelte.test.ts` (chips), `ReadAccessPanel.svelte.test.ts`
+(save at once, undo = inverse write, failed save restores the box, journal folded with its count),
+`DocumentReviewersPanel.svelte.test.ts` (confirmation, undo re-grants, journal note).
 
 ## Cercle top-ups (`/admin/cercle`)
 
