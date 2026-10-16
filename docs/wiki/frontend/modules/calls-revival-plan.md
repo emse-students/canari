@@ -405,7 +405,7 @@ the only copy. What it changes here:
   TURN URLs explicitly, as 0.17 did.
 - **WP-C0 is half done**: reachability per transport is measured for PC and Mi 9T on home Wi-Fi.
   Owed: mobile data (no SIM in the Mi 9T), campus Wi-Fi, the iPhone (the probe page needs a public
-  origin), and a CREDENTIALED allocation - **dev has no Cloudflare TURN pair**, so dev's
+  origin). A CREDENTIALED allocation is measured since (section 14, Q1). **Dev has no Cloudflare TURN pair**, so dev's
   `/api/calls/ice-servers` answers 503 until the user gives it one.
 - **The DSI rule (UDP 3478 out from `.67`) is needed only if the Rust SFU stays on the host.**
 
@@ -413,32 +413,37 @@ the only copy. What it changes here:
 
 Measured from a standalone probe page (`canari-harness/probes-clients-2026-10-16/`, raw JSON and
 notes, no credential) on the developer PC's home network (Chrome 155) and the Mi 9T on the same
-Wi-Fi (Chrome 154, no SIM), signalling through a local mailbox, ICE servers = public STUN only. The
-servers are probed separately.
+Wi-Fi (Chrome 154, no SIM), signalling through a local mailbox. ICE servers were public STUN only
+for Q2/Q3, and short-lived (2 h) Cloudflare TURN credentials from a probe key for Q1. The servers are
+probed separately.
 
 | Question | Result |
 | --- | --- |
-| Q1 - a CREDENTIALED Cloudflare TURN allocation, RTT and throughput through the relay | **NOT MEASURED.** The stored Cloudflare API token answers `9109 Invalid access token` on `/zones` and `10000 Authentication error` on `/calls/turn_keys` and `/calls/apps`, so no probe TURN key could be created (none exists to delete). Reachability per transport (2026-10-16 night, section 13) stays the only TURN evidence. |
+| Q1 - a CREDENTIALED Cloudflare TURN allocation | **All 12 allocate** (second pass, 14:10-14:20Z, a probe TURN key created with the user's authorisation and deleted after): relay-only gathering yields a relay candidate in 95-135 ms on the PC and 100-155 ms on the Mi 9T, over udp 3478, tcp 3478, tls 5349, tls 443, udp 443 and tcp 80, no `icecandidateerror` |
+| Q1 - RTT and throughput through the relay, one device (two relay-only peers in one page, both legs through Cloudflare) | PC: udp 3478 RTT p50 22.6 ms, 33 Mbit/s; tcp 3478 21.2 ms, 15 Mbit/s; tls 5349 26.4 ms, 51 Mbit/s; tls 443 19.4 ms, 44 Mbit/s. Mi 9T: udp 3478 28.6 ms, 13 Mbit/s (its Wi-Fi carries both legs); tls 443 36.2 ms, throughput not captured. Connect 196-338 ms. One run each: an order of magnitude, not a ranking |
+| Q1 - PC <-> Mi 9T, `iceTransportPolicy: 'relay'` through Cloudflare TURN | udp 3478: relay/relay pair, connected 427 ms, RTT p50 **34.5 ms** (19.6-250), **19.7 Mbit/s** over 21 s. tls 443: connected 452 ms, RTT p50 **35.5 ms** (23-266), **23.6 Mbit/s** over 23 s |
 | Q2 - PC <-> Mi 9T, same Wi-Fi, `iceTransportPolicy: 'all'` | Connected in 1.7 s on a **host/host UDP** pair; data-channel RTT min 4.9 / p50 10.4 / max 133 ms (20 pings); **26 Mbit/s** over 11 s (one SCTP channel) |
-| Q2 - same pair forced to `'relay'` | No relay candidate without TURN credentials: ICE stays `new`, no connection. Says nothing about Cloudflare; it repeats Q1's gap |
+| Q2 - same pair forced to `'relay'` | With STUN only: no relay candidate, ICE stays `new` (by construction). With TURN credentials: see Q1 |
 | Q2 - one side on cellular | Not possible: the Mi 9T has no SIM, the iPhone was not reached (below) |
 | Q3 - mesh, PC sends 720p at 1.5 Mbit/s to 2 receivers (Mi 9T + a Chrome tab) | Holds: each peer 1.45-1.6 Mbit/s, 24-30 fps, 1280x720, `qualityLimitationReason: none`, no loss; **one encode per receiver** (~3.7 ms/frame each); whole-PC CPU 13.2 % vs 9.1 % idle (Ryzen 7 7800X3D). The Mi 9T decoded 25-31 fps, 0 dropped |
 | Q3 - the same mesh with the **Mi 9T as sender** | Each peer 1.2-1.9 Mbit/s but fps **dips to 18-23** every few seconds; encode 19-24 ms/frame **per receiver**; Chrome ~110 % of 800 % in `top`. Two receivers already strain a 2019 phone |
-| Q4 - Cloudflare Realtime on the account | Unreadable with the stored token (same `10000`): SFU app existence, TURN keys and budget use stay **unverified** |
+| Q4 - Cloudflare Realtime on the account | Read 2026-10-16 with the account-scoped stored token (the admin one still answers `10000`): **one TURN key, `canari-calls` (created 2026-05-26), with 0 bytes of usage in 30 days; NO SFU app; no SFU usage.** The only TURN usage in the window is the probe's own (~0.5 GB each way) |
 | Q4 - SFU pricing (developers.cloudflare.com, page dated 2026-09-22) | $0.05/GB egress, first 1 000 GB/month free **shared** by SFU and TURN, ingress free, TURN<->SFU traffic "not charged twice" |
 | Q4 - E2EE through the Cloudflare SFU | Only the RealtimeKit guide describes frame encryption (insertable streams / `RTCRtpScriptTransform`); nothing read states the raw SFU forwards transformed frames - **unverified**, the first thing WP-C4 must test |
 
 What this changes:
 
 - **A 1:1 call on one network goes direct and costs nothing**: host/host in under 2 s, ~10 ms, far
-  more bandwidth than a call needs. That favours `'all'` for the decision in section 13, and only a
-  credentialed relay probe can say what `'relay'` costs in latency.
+  more bandwidth than a call needs. **`'relay'` costs ~25 ms of RTT on the same network** (p50 34.5
+  vs 10.4 ms) and still carries ~20 Mbit/s, far above a call, over UDP 3478 AND over TLS 443 - so the
+  `'all'`/`'relay'` choice of section 13 is privacy against Cloudflare egress, not call quality.
 - **A mesh live is a sender's-uplink AND a sender's-CPU problem**: every receiver is a separate
   encode. A desktop barely notices two; the Mi 9T already drops frames at two. A phone-hosted live
   past one or two viewers needs an SFU (one upload, one encode), which is the group question of
   WP-C4.
-- **Owed, and what blocks each**: a Cloudflare token with Realtime (Calls) read/write, or the user
-  creating the probe TURN key, before Q1 and Q4's account half can be measured; the iPhone needs a
+- **The production TURN key has never carried a byte** (30 days) - consistent with calls being held
+  off, and a WP-C4 Cloudflare SFU would be a NEW app.
+- **Owed, and what blocks each**: the relay over mobile data and campus Wi-Fi; the iPhone needs a
   page origin it can open (LAN serving is refused by this session's permission policy, and an
   Artifact frame refuses WebRTC); cellular needs the iPhone or a SIM in the Mi 9T.
 
