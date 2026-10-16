@@ -21,12 +21,18 @@ vi.mock('$lib/utils/users/displayName', () => ({
   resolveUserDisplayName: async () => null,
 }));
 vi.mock('$lib/utils/apiFetch', () => ({
-  apiFetch: vi.fn(() => Promise.resolve(new Response('[]', { status: 200 }))),
+  // The person search: one candidate, Rita.
+  apiFetch: vi.fn(() =>
+    Promise.resolve(
+      new Response(JSON.stringify([{ id: 'r2', displayName: 'Rita' }]), { status: 200 })
+    )
+  ),
 }));
 
 import DocumentReviewersPanel from './DocumentReviewersPanel.svelte';
 import { toastStore, dismissToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
+import { addForm, pickUser } from '../../../../test/pickUser';
 
 const ROW = { userId: 'r1', grantedBy: 'admin', createdAt: '2026-10-01T09:00:00Z' };
 
@@ -101,4 +107,33 @@ it('the list of grants in force is folded, labelled as such and says a removal i
     m.docreview_journal_grant({ actor: 'Name admin', name: 'Name r1' })
   );
   expect(journal.textContent).toContain(m.docreview_journal_note());
+});
+
+it('a failed add keeps the person picked and says so; the field clears only on success', async () => {
+  const target = await render();
+  const FIELD = 'add-reviewer-autocomplete';
+  await pickUser(FIELD, 'Ri');
+  expect(addForm(FIELD).input.value).toBe('Rita');
+
+  api.addDocumentReviewer.mockRejectedValueOnce(new Error('boom'));
+  addForm(FIELD).submit();
+  await vi.waitFor(() =>
+    expect(target.querySelector('[role="alert"]')?.textContent).toBe(m.common_generic_error_label())
+  );
+  expect(api.addDocumentReviewer).toHaveBeenCalledWith('r2');
+  // Still picked: trying again is one press, with no search to redo.
+  expect(addForm(FIELD).input.value).toBe('Rita');
+  expect(toastStore.toasts).toHaveLength(0);
+
+  api.addDocumentReviewer.mockResolvedValueOnce({
+    userId: 'r2',
+    grantedBy: 'admin',
+    createdAt: '2026-10-16T09:00:00Z',
+  });
+  addForm(FIELD).submit();
+  await vi.waitFor(() => expect(api.addDocumentReviewer).toHaveBeenCalledTimes(2));
+  expect(api.addDocumentReviewer).toHaveBeenLastCalledWith('r2');
+  await vi.waitFor(() => expect(addForm(FIELD).input.value).toBe(''));
+  expect(target.querySelector('[role="alert"]')).toBeNull();
+  expect(target.querySelectorAll('[data-testid="reviewer-card"]')).toHaveLength(2);
 });

@@ -18,13 +18,19 @@ vi.mock('$lib/utils/users/displayName', () => ({
   resolveUserDisplayName: async () => null,
 }));
 vi.mock('$lib/utils/apiFetch', () => ({
-  apiFetch: vi.fn(() => Promise.resolve(new Response('[]', { status: 200 }))),
+  // The person search: one candidate, Rita.
+  apiFetch: vi.fn(() =>
+    Promise.resolve(
+      new Response(JSON.stringify([{ id: 'r2', displayName: 'Rita' }]), { status: 200 })
+    )
+  ),
 }));
 
 import ReadAccessPanel from './ReadAccessPanel.svelte';
 import { toastStore, dismissToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { adoptTransitionAnimations } from '../../../../test/adoptTransitionAnimations';
+import { addForm, pickUser } from '../../../../test/pickUser';
 
 afterAll(adoptTransitionAnimations());
 
@@ -226,4 +232,17 @@ it('a full journal page is counted as "200+", not as the whole history', async (
   expect(target.querySelector('[data-testid="access-journal"] summary')!.textContent!.trim()).toBe(
     m.readaccess_journal_summary({ count: '200+' })
   );
+});
+
+it('"Ajouter" opens the sheet for the person picked, and only then clears the field', async () => {
+  await render();
+  const FIELD = 'add-read-grantee-autocomplete';
+  await pickUser(FIELD, 'Ri');
+  expect(addForm(FIELD).input.value).toBe('Rita');
+  addForm(FIELD).submit();
+  await vi.waitFor(() =>
+    expect(document.querySelector('input[data-cell="r2|gardanne|ICM"]')).not.toBeNull()
+  );
+  await vi.waitFor(() => expect(addForm(FIELD).input.value).toBe(''));
+  expect(api.setReadGrant).not.toHaveBeenCalled();
 });

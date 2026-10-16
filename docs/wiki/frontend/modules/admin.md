@@ -134,7 +134,9 @@ Tests: `readAccess.test.ts` (grouping, "200+", the server's page size), `ReadGra
 (chips), `ReadAccessPanel.svelte.test.ts` (save at once, undo = inverse write, the re-read race -
 checked to FAIL with the sequence guard removed - busy box, undo in the sheet, failed save inside
 the sheet, the folded journal and its cap), `DocumentReviewersPanel.svelte.test.ts` (confirmation,
-undo re-grants, the in-force label), `routes/admin/read-access/page.tabs.svelte.test.ts` (two tabs
+undo re-grants, the in-force label, a failed add keeps the person picked and the field clears only
+on success - checked to FAIL when the field clears unconditionally; the readers' "Ajouter" opens
+the sheet, then clears; `src/test/pickUser.ts` picks through the real search), `routes/admin/read-access/page.tabs.svelte.test.ts` (two tabs
 for a global admin, the reviewers alone and no read-grants request for a BDE super-admin, the hub
 for anyone else).
 
