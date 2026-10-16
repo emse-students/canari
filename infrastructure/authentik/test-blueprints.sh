@@ -96,3 +96,13 @@ if ! run_ak_shell "$worker" <"$here/test-profile-editor.py" 2>&1 | tee >(cat >&2
   exit 1
 fi
 echo "the profile editor reads and changes users, and nothing else"
+
+# THE TERMS OF USE, AGREED TO. Applying 45-consent.yaml proves the stages exist; only a real
+# authorization through the executor shows the page, the refusal without the tick, the account
+# written and the next sign-in let through (infrastructure/authentik/test-consent-flow.py).
+echo "terms of use: driving an authorization through the executor"
+if ! run_ak_shell "$worker" <"$here/test-consent-flow.py" 2>&1 | tee >(cat >&2) | grep -qx 'CONSENT-OK'; then
+  echo "::error::the terms-of-use stage did not behave - read the assertion above"
+  exit 1
+fi
+echo "the terms are asked once per version, refused without the tick, and every provider completes after"

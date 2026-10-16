@@ -667,6 +667,17 @@ collection of name and first name, as one required tick, for new AND existing ac
 - **The version is a literal in TWO places** in that file (the policy, the hidden prompt) and the
   `updated` date of `frontend/src/routes/legal/miconnect/+page.svelte`. Change the text => change all
   three, or the stage re-asks forever / never.
+- **Driven, not only applied** (`test-consent-flow.py`, run by `test-blueprints.sh` in CI): a real
+  password sign-in, then `/application/o/authorize/` on every provider. It proves the notice and
+  link reach the challenge, a POST without the tick is refused and writes nothing, the tick writes
+  the version and an ISO date and ends on a code, a second authorization skips the page, an older
+  version is asked again. **Two authentik behaviours it caught, both silent on apply:** a checkbox's
+  `required` is NOT checked by the server (authentik builds it as a `BooleanField(required=False)`;
+  only the browser enforces it), so the tick is checked by the validation policy
+  `miconnect-consent-validate-accept`; and a HIDDEN field writes its INITIAL value - a
+  `placeholder_expression` is never evaluated for the write, so the date was stored as the
+  expression's source text until it became `initial_value_expression`. The hidden values are taken
+  from the server-side definition, never from the POST, so a client cannot forge the version.
 - **The text** is `/legal/miconnect` on canari.emse.fr, hardcoded French like the other legal pages
   ([open-questions](../open-questions.md)). Controller named: Association Rootz - confirm.
 - **Production reaches it** with `infrastructure/authentik/apply-blueprints.sh` (`snapshot`,
