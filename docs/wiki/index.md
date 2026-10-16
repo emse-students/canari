@@ -84,7 +84,8 @@
 ### Infrastructure
 
 - [Docker & services](infrastructure/docker.md) — Docker Compose setup, service dependencies
-- [Container logs](infrastructure/logging.md) - the bounded json-file stanza on every service, and the per-deploy archive that keeps a log past the container a deploy recreates
+- [Container logs](infrastructure/logging.md) - the bounded json-file stanza on every service, and the per-deploy archive that keeps a log past the container a deploy recreates, and the privacy policy's 90-day ceiling: what is enforced, what is only reported
+- [DSI log retention request](infrastructure/dsi-log-retention-request.md) - what the shared host logs that names a client (journald, nginx, CrowdSec, AIDE, EDR), the exact setting asked of the DSI for each, and the request in French, drafted 2026-10-16 and not sent
 - [Host WAF body limit](infrastructure/host-waf-body-limit.md) - the school-managed CrowdSec drops any request body over 10 MiB; why every upload body stays under 8 MiB
 - [Nginx routing](infrastructure/nginx.md) — Route table (source of truth), auth_request
 - [Authentik (OIDC)](infrastructure/authentik.md) — Identity provider, OIDC flow, deployment

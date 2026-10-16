@@ -2,7 +2,12 @@
 
 import { Logger } from '@nestjs/common';
 
-import { AuthSessionsService, ROTATION_GRACE_SECONDS } from './auth-sessions.service';
+import {
+  AuthSessionsService,
+  ROTATION_GRACE_SECONDS,
+  SESSION_TTL_SECONDS,
+  SWEEP_INTERVAL_MS,
+} from './auth-sessions.service';
 import { AuthSession } from './entities/auth-session.entity';
 
 /**
@@ -512,6 +517,46 @@ describe('AuthSessionsService', () => {
 
       await expect(service.bindDevice('user-1', mine.sessionId, 'web-a-b')).resolves.toBe(true);
       expect(repo.rows.map((r) => r.id)).toEqual([mine.sessionId, theirs.sessionId]);
+    });
+  });
+
+  describe('the stored IP is bounded by the idle deadline (privacy policy: 90 days at most)', () => {
+    const TTL_MS = SESSION_TTL_SECONDS * 1000;
+
+    it('moves the deadline exactly one TTL past the moment a session first records an IP', async () => {
+      const { service, repo } = makeService();
+      await service.create('user-1', { ip: '10.0.0.1' });
+
+      const row = repo.rows[0];
+      expect(row.lastIp).toBe('10.0.0.1');
+      expect(row.expiresAt.getTime() - row.lastUsedAt.getTime()).toBe(TTL_MS);
+    });
+
+    it('moves the deadline with every rotation that rewrites the IP', async () => {
+      const { service, repo } = makeService();
+      const opened = await service.create('user-1', { ip: '10.0.0.1' });
+
+      await service.rotate(opened.sessionId, opened.tokenId, { ip: '10.0.0.2' });
+
+      const row = repo.rows[0];
+      expect(row.lastIp).toBe('10.0.0.2');
+      expect(row.expiresAt.getTime() - row.lastUsedAt.getTime()).toBe(TTL_MS);
+    });
+
+    it('never touches the IP or the deadline when a device is bound', async () => {
+      const { service, repo } = makeService();
+      const opened = await service.create('user-1', { ip: '10.0.0.1' });
+      const before = { ip: repo.rows[0].lastIp, expiresAt: repo.rows[0].expiresAt.getTime() };
+
+      await service.bindDevice('user-1', opened.sessionId, 'device-a');
+
+      expect(repo.rows[0].lastIp).toBe(before.ip);
+      expect(repo.rows[0].expiresAt.getTime()).toBe(before.expiresAt);
+    });
+
+    it('keeps a stored IP far inside the 90 days the privacy policy promises', () => {
+      const promiseMs = 90 * 24 * 60 * 60 * 1000;
+      expect(TTL_MS + SWEEP_INTERVAL_MS).toBeLessThan(promiseMs);
     });
   });
 

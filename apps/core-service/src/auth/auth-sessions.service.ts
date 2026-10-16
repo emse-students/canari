@@ -17,8 +17,15 @@ export const SESSION_TTL_SECONDS = 7 * 24 * 60 * 60;
  */
 export const ROTATION_GRACE_SECONDS = 60;
 
-/** How often expired rows are swept. Purely housekeeping - an expired row is already refused. */
-const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+/**
+ * How often expired rows are swept. An expired row is already refused, so for AUTHENTICATION this is
+ * housekeeping - but the sweep is also what deletes `lastIp` and `userAgent`, and the privacy
+ * policy promises IP logs are kept 90 days at most. Every write of `lastIp` moves `expiresAt` to
+ * `SESSION_TTL_SECONDS` later in the same statement, so a stored IP is never older than the TTL
+ * plus this interval: 7 days and 1 hour, with no job of its own
+ * (docs/wiki/infrastructure/logging.md, "the 90-day ceiling").
+ */
+export const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
 
 /** Client facts recorded on the session, refreshed on every rotation. */
 export interface SessionClientInfo {
