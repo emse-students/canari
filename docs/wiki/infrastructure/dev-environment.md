@@ -181,6 +181,14 @@ environment, so the script needs no compose file, no `.env` and no path to be co
 The copy still leaves the column alone until the strip itself is changed to write `'disabled'`, so
 dev keeps presenting Stripe as live until then.
 
+**A COPIED REEL ARRIVES WITHOUT ITS VIDEO** (2026-10-16). Strip (d) of `copy-strips.sh` empties
+every post's `images`, reels included, and a reel IS its one video - the create path refuses any
+other shape. Dev's CanaReels viewer then lists two production reels it can only draw as a play glyph
+([reels](../frontend/modules/reels.md#reels-2-and-3-never-play-was-two-reels-with-no-video-iphone-12-v129-alpha4-2026-10-16)).
+The fix is for the strip to DELETE reels (their `post_notifications` first, as
+`reel-retention.scheduler.ts` does) and for `COPY_STRIPS_MEDIA_RESIDUE_SQL` to count any reel left;
+it is a deletion in a copy script, so it waits for the user's yes.
+
 [`dev-copy-guards.test.sh`](../../../.github/scripts/tests/dev-copy-guards.test.sh) DERIVES the
 column list in (b) from the entity declarations and fails if a payment column is added without being
 stripped, so a schema change cannot disarm the step silently.

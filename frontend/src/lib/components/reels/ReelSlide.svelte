@@ -73,6 +73,20 @@
     return watchClampOverflow(textEl, (value) => (overflows = value));
   });
 
+  /**
+   * A REEL ON SCREEN WITH NO VIDEO IS A ROW THE SERVER WOULD NEVER HAVE CREATED - a reel IS its one
+   * video (`assertCreateKindShape`). The slide can only draw the poster, a play glyph nothing can
+   * play, so the line accuses the data upstream: dev's copy of production emptied two reels' media
+   * and the iPhone 12 reading of v1.2.9-alpha.4 read them as "reels 2 and 3 never play".
+   */
+  $effect(() => {
+    if (active && !video) {
+      console.error(
+        `[reel-viewer] reel ${post.id} carries no video - a reel is its one video, nothing can play`
+      );
+    }
+  });
+
   $effect(() => {
     if (!preload || active || !video || !authToken) return;
     const ahead = new ReelPreload(video);
