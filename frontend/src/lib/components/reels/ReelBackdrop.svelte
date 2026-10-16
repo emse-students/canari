@@ -1,18 +1,34 @@
 <script lang="ts">
   /**
-   * The rest of the screen around a reel's frame, painted from the reel itself: a tiny canvas copy of
-   * the frame's picture, upscaled by the browser (which is the blur - no CSS filter to re-apply on
-   * every repaint) and dimmed, so the screen is never black bands (user, 2026-10-11).
+   * The rest of the screen around a reel's frame, painted from the reel itself: a blurred, dimmed
+   * copy of the frame's picture, so the screen is never black bands (user, 2026-10-11).
    *
-   * NO SECOND DECODER: it draws the picture the frame's own video or image element already decoded,
-   * 24 px wide - the audit found decoder count is what hurts a 5.6 GB phone. It reads the element out
-   * of `host`, so the camera, the review, the editor and the viewer (whose player is a component) all
-   * use it unchanged.
+   * IT IS PAINTED ONCE PER PICTURE AND NEVER AGAIN (Mi 9T, 2026-10-16). It used to re-sample the
+   * playing video every 250 ms into a 24 px canvas the browser stretched 45x: the bands were blocky
+   * ("pixelise") and stepped four times a second ("saccade"), and each `drawImage` of a video cost
+   * ~25 ms on the main thread - in the viewer a dropped frame per sample, in the CAMERA a 100-150 ms
+   * hole in the recorded take every 250 ms (20 fps instead of 29). The picture is now blurred ON THE
+   * CANVAS (`paintBlurredBackdrop`) once per source and left alone: no timer, no animation frame, no
+   * CSS `filter` for the compositor to re-run.
    *
-   * IT SAMPLES ONLY WHEN IT CAN BE SEEN: `active` is false when the frame fills the stage, so nothing
-   * is mounted or timed then. A still image is sampled once (on load); a video only while it plays, on
-   * a visible tab. A frame that cannot be sampled (tainted canvas) leaves the dark surface, logged once.
+   * WHEN IT IS READ IS AN EVENT, NEVER A READINESS FLAG. A video is read on its next PRESENTED frame
+   * (one `requestVideoFrameCallback`) after `playing` or `loadeddata`, never on the flag itself:
+   * WKWebView can report HAVE_CURRENT_DATA and still hand a canvas a black picture. A read that comes
+   * back blank paints nothing and waits for the next presented frame, at most `BLANK_READS` of them
+   * (a count, not a clock). A video found PAUSED on a frame already on screen is read at once - no
+   * new frame will come. An image is read on `load`. The source is keyed on the `srcObject` itself,
+   * so the camera switching lens on the same element repaints; a new source cancels the old chain.
+   *
+   * NO SECOND DECODER: it reads the picture the frame's own video or image element already decoded,
+   * found in `host`, so the camera, the review, the editor and the viewer all use it unchanged. It
+   * renders nothing when the frame fills the stage (`active` false). A frame that cannot be read
+   * (tainted canvas) leaves the dark surface, logged once.
    */
+  import { paintBlurredBackdrop } from '$lib/reels/reelBackdropPaint';
+
+  /** Presented frames a blank read may be retried on before the dark surface is kept. */
+  const BLANK_READS = 5;
+
   interface Props {
     /** The element holding the frame's media; searched for the first video or image. */
     host: HTMLElement | null;
@@ -23,53 +39,113 @@
   let { host, active }: Props = $props();
   let canvas = $state<HTMLCanvasElement | null>(null);
 
-  /** Width of the sampled copy: the upscale blurs it, so detail is wasted. */
-  const SAMPLE_WIDTH = 24;
-  /** Refresh period while a video plays; cosmetic, nothing depends on it being right. */
-  const REFRESH_MS = 250;
-
   let warned = false;
+  /**
+   * The source that needs nothing more (a `MediaStream` or a URL): painted, or given up after
+   * `BLANK_READS` blank reads, or unreadable on this engine. The same source is never read again.
+   */
+  let settledSource: unknown = null;
+  /** The frame callback in flight, cancelled on a source change and on cleanup. */
+  let pending: { video: HTMLVideoElement; source: unknown; handle: number } | null = null;
+  let blankReads = 0;
 
-  function sample() {
-    const media = host?.querySelector<HTMLVideoElement | HTMLImageElement>('video, img');
-    if (!media || !canvas) return;
-    const isVideo = media instanceof HTMLVideoElement;
-    const sourceWidth = isVideo ? media.videoWidth : media.naturalWidth;
-    const sourceHeight = isVideo ? media.videoHeight : media.naturalHeight;
-    if (!sourceWidth || !sourceHeight) return;
-    if (isVideo && media.readyState < 2) return;
-    canvas.width = SAMPLE_WIDTH;
-    canvas.height = Math.max(1, Math.round((SAMPLE_WIDTH * sourceHeight) / sourceWidth));
+  function sourceOf(media: HTMLVideoElement | HTMLImageElement): unknown {
+    return (media instanceof HTMLVideoElement && media.srcObject) || media.currentSrc || null;
+  }
+
+  function cancelPending() {
+    if (!pending) return;
+    pending.video.cancelVideoFrameCallback?.(pending.handle);
+    pending = null;
+  }
+
+  /** Reads `media` once into the canvas; true when nothing more is to be done for its source. */
+  function paint(media: HTMLVideoElement | HTMLImageElement): boolean {
+    if (!canvas) return true;
+    const source = sourceOf(media);
+    if (source !== null && source === settledSource) return true;
     try {
-      canvas.getContext('2d')?.drawImage(media, 0, 0, canvas.width, canvas.height);
+      const result = paintBlurredBackdrop(canvas, media);
+      if (result === 'painted') {
+        settledSource = source;
+        console.debug('[reel-backdrop] painted');
+        return true;
+      }
+      console.debug(`[reel-backdrop] not painted: ${result}`);
+      return result !== 'blank';
     } catch (error) {
       if (!warned) console.warn('[reel-backdrop] the frame could not be sampled', error);
       warned = true;
+      return true;
     }
   }
 
-  /** Whether the first media of the host is a video that is playing: the only case needing a timer. */
-  function videoPlaying(): boolean {
-    const video = host?.querySelector('video');
-    return !!video && !video.paused && !video.ended;
+  /**
+   * Reads the video on its next PRESENTED frame, and again on a blank read, `BLANK_READS` at most.
+   * One chain per source: a new source cancels the old chain and starts from zero.
+   */
+  function paintOnPresentedFrame(video: HTMLVideoElement) {
+    const source = sourceOf(video);
+    if (source === null || source === settledSource || pending?.source === source) return;
+    cancelPending();
+    if (typeof video.requestVideoFrameCallback !== 'function') {
+      console.warn('[reel-backdrop] no requestVideoFrameCallback: the backdrop stays dark');
+      settledSource = source;
+      return;
+    }
+    blankReads = 0;
+    const onFrame = () => {
+      const chain = pending;
+      if (!chain || chain.source !== source) return;
+      if (sourceOf(video) !== source) {
+        // The element took another source without an event yet; its `loadeddata` re-arms.
+        pending = null;
+        return;
+      }
+      const done = paint(video);
+      if (!done && ++blankReads < BLANK_READS) {
+        chain.handle = video.requestVideoFrameCallback(onFrame);
+        return;
+      }
+      if (!done) {
+        console.warn(`[reel-backdrop] ${BLANK_READS} blank reads: the backdrop stays dark`);
+        settledSource = source;
+      }
+      pending = null;
+    };
+    pending = { video, source, handle: video.requestVideoFrameCallback(onFrame) };
   }
 
   $effect(() => {
     if (!active || !host || !canvas) return;
-    console.debug('[reel-backdrop] sampling on');
-    // `load` and `loadeddata` do not bubble: capture them on the host to catch the media's own.
-    const onLoaded = () => sample();
-    host.addEventListener('load', onLoaded, true);
-    host.addEventListener('loadeddata', onLoaded, true);
-    sample();
-    const timer = setInterval(() => {
-      if (!document.hidden && videoPlaying()) sample();
-    }, REFRESH_MS);
+    // `load`, `loadeddata` and `playing` do not bubble: capture them on the host. `loadeddata`
+    // covers a video that stays PAUSED on its first frame (review, editor): that frame is
+    // presented once, so the frame callback fires for it too.
+    const onVideo = (e: Event) => {
+      if (e.target instanceof HTMLVideoElement) paintOnPresentedFrame(e.target);
+    };
+    const onLoad = (e: Event) => {
+      if (e.target instanceof HTMLImageElement) paint(e.target);
+    };
+    host.addEventListener('playing', onVideo, true);
+    host.addEventListener('loadeddata', onVideo, true);
+    host.addEventListener('load', onLoad, true);
+    const media = host.querySelector<HTMLVideoElement | HTMLImageElement>('video, img');
+    if (media instanceof HTMLVideoElement && media.paused && media.readyState >= 2) {
+      // Paused on a frame already on screen: no new frame will be presented, so it is read now.
+      paint(media);
+    } else if (media instanceof HTMLVideoElement && !media.paused) {
+      paintOnPresentedFrame(media);
+    } else if (media instanceof HTMLImageElement && media.complete) {
+      paint(media);
+    }
     return () => {
-      clearInterval(timer);
-      host.removeEventListener('load', onLoaded, true);
-      host.removeEventListener('loadeddata', onLoaded, true);
-      console.debug('[reel-backdrop] sampling off');
+      host.removeEventListener('playing', onVideo, true);
+      host.removeEventListener('loadeddata', onVideo, true);
+      host.removeEventListener('load', onLoad, true);
+      cancelPending();
+      settledSource = null;
+      blankReads = 0;
     };
   });
 </script>
@@ -77,7 +153,7 @@
 {#if active}
   <canvas
     bind:this={canvas}
-    class="pointer-events-none absolute inset-0 h-full w-full opacity-60"
+    class="pointer-events-none absolute inset-0 h-full w-full object-cover opacity-60"
     aria-hidden="true"
     data-reel-backdrop
   ></canvas>

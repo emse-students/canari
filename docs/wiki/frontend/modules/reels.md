@@ -667,3 +667,66 @@ The camera preview, the review, the editor and the viewer share `ReelFrame` (9:1
 `--radius-2xl` over a blurred backdrop when the screen's shape differs, edge to edge when it matches),
 and the camera records that frame, not the screen box. Detail and what is unverified:
 [reel-editor](reel-editor.md#one-frame-for-capture-edit-and-publish-2026-10-11-replaces-the-cover-and-crop-of-1739).
+
+### The backdrop is painted once (2026-10-16)
+
+User report on the Mi 9T (`1.2.9-alpha.3`): around the video the viewer was "pixelise et saccade".
+Read through the app's DevTools socket with the viewer left open, evidence in
+`F:/Programmation/canari-harness/a1-bench/r1016-reelbg/` (out of tree):
+
+- **What was drawn**: one `<canvas>` 24x43 stretched to 436x945 CSS px (1080x2340 device px, 45x),
+  `opacity: 0.6`, no `filter`, over `cn-scrim`; one `<video>` in the frame (718x1278, `contain`). No
+  second decoder, no `backdrop-filter`. A 45x bilinear stretch of 24 px draws each pixel as a square:
+  the "pixelated".
+- **Why it stepped**: `ReelBackdrop` re-sampled the playing video every 250 ms, so the bands changed
+  4 times a second: the "janky". Each `drawImage(video)` into that small (CPU) canvas took **24.9 ms
+  on average on the main thread** (20 reads in 5 s). rAF over 5 s: longest frame **33.4 ms, 5 frames
+  over 25 ms**; the same 5 s with the reads made no-ops: **17.5 ms, 0**.
+- **And it holed every take on this phone.** `ReelFrame` is also the camera's, and on a 20:9 screen
+  the 9:16 frame never fills it, so the camera re-sampled the live preview every 250 ms while the
+  canvas recorder drew its own frames. Two 4 s takes, same scene, read with ffprobe: reads ON, **80
+  frames, 20.4 fps, 16 holes of 101-150 ms, one every ~250 ms**; reads OFF, **115 frames, 28.9 fps, 2
+  holes** (the first half second). The published reel the user filmed carried the same pattern (65
+  frames in 3.45 s, holes every ~250 ms, 16 fps in its last half second).
+
+**Fix**: the picture is read ONCE per source, on an EVENT: a video on its next presented frame
+after `playing` or `loadeddata` (one `requestVideoFrameCallback`; never on the readiness flag, whose
+HAVE_CURRENT_DATA can still hand WKWebView's canvas a black picture), an image on `load`. A video
+found paused on a frame already on screen (review, editor) is read at once: no new frame will come.
+A read that comes back blank (every pixel 0) paints nothing and is retried on the next presented
+frame, 5 at most per source - a count, not a clock. The source is the `srcObject` itself or the URL,
+so a lens switch on the camera's element cancels the old frame callback and repaints.
+It is blurred on the canvas (`reels/reelBackdropPaint.ts`: 12 px across then three bilinear
+doublings to 96 px, a near-Gaussian), shown `object-cover` and dimmed. No timer, no animation frame,
+no CSS `filter` (nothing for the compositor, WebView or WKWebView, to blur per frame). Live-patched on
+the phone with the same algorithm: the bands are a smooth blur, one read of ~18-46 ms when the reel
+starts, then **longest frame 17.9 ms, 0 over 25 ms** over 5 s. `dumpsys gfxinfo` is NOT the measure
+here: it counts the activity's own HWUI frames under `screenrecord` (69 % "janky" before, 75 % after)
+and does not see the page's main thread. Tests: `ReelBackdrop.svelte.test.ts` pins "no interval, no
+animation frame, no second video, one paint per source". **Not read**: the iPhone (WKWebView reads a
+video into a canvas through its own path; the blur needs no CSS filter, so its cost there is the one
+read) and a landscape reel on the phone (the code path is the same `object-cover`).
+
+### The end of a reel looked frozen (2026-10-16)
+
+Same session, the user's second report: "la fin de la video semble toujours figee - ca devrait boucler".
+It DOES loop: the player's `<video>` has `loop`, `duration` 3.52 s, `seekable` and `buffered` 0-3.52,
+and every pass fires `seeking` / `waiting` / `seeked` at 0, no `ended`, never paused. Measured with
+`requestVideoFrameCallback` over 25 s (6.5 passes) and ffprobe on the very blob the player was fed
+(a Mediabunny fragmented MP4, H.264 + AAC):
+
+- **The file itself was low and uneven**: 65 frames in 3.45 s, 10-24 fps per half second and **16 fps
+  in its last half second**, holes of 93-231 ms every ~250 ms. That is the backdrop's re-sample during
+  the take (previous section), fixed by it: 28.9 fps once the reads stop.
+- **The seam**: the last frame (3.423 s) stays 133-217 ms - the audio runs to 3.52 s, the video ended
+  at 3.449 s, and the video started 67 ms after the audio; then the first frame after the wrap is held
+  **383-433 ms** for a 128 ms span. Re-muxed variants of the same file, played in the viewer: audio
+  trimmed to the video **317-333 ms**; no audio track at all **83 ms** (= the file). The extra ~210 ms
+  is the WebView's audio pre-roll after its loop seek.
+
+**Fix, at capture time**: a reel is prepared with `trimToVideo` (`prepareVideoForUpload`,
+`videoSpanTrim`): the output is cut to the video track's own span, so no pass shows a still picture
+over audio (~100 ms per loop on this take). **Not fixed**: the ~210 ms audio pre-roll at each wrap -
+a seek-free loop (re-appending the segments to MSE) is a design of its own, in
+[backlog](../../backlog.md#p3---a-reels-loop-holds-its-first-frame-210-ms-longer-than-the-file-says-on-the-mi-9t-measured-2026-10-16-not-built).
+A manual `currentTime = 0` on `ended` would seek too and pre-roll the same way.
