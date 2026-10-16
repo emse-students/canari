@@ -35,9 +35,9 @@ the school's).
 | C3 | Private and group messaging | deliver end-to-end encrypted messages | MLS ciphertext; in clear: members, group name (`dm_groups.name`), sender, device, time, size; devices (`key_package`: device name, OS, app version) | 6.1.b | `queued_message` deleted on ACK, 90 days max; Redis history 90 days, 8000 entries | [chat-delivery](../services/chat-delivery.md), [SECURITY.md](../../../SECURITY.md#what-the-server-knows) |
 | C4 | Communities and salons | community discussion | Graine ciphertext; in clear: community/salon names, members, read marks shown to the salon | 6.1.b | salon messages 365 days except pinned (`channel-retention.scheduler.ts`) | [channel-encryption](../protocols/channel-encryption.md), [read-receipt-privacy](../read-receipt-privacy.md) |
 | C5 | Feed: posts, comments, reactions, polls, reels | publish to a chosen audience | `posts` (author, markdown, mentions, media refs, polls; comments and reactions as JSON in the row) | 6.1.b | until deleted; reels 30 days | [posts](../frontend/modules/posts.md), [reels](../services/reels.md) |
-| C6 | Media | store attachments | client-encrypted blobs; index: owner, class, size, dates | 6.1.b | `ephemeral` 90 days idle, `chat-reel` 30 days, `reel` with its post, `form-file` 1-30 days (default 7), `archive` and `association` kept (association documents survive the uploader's deletion) | [media-service](../services/media-service.md) |
+| C6 | Media | store attachments | client-encrypted blobs; index: owner, class, size, dates | 6.1.b | `ephemeral` 90 days idle, `chat-reel` 30 days, `reel` with its post, `form-file` 1-30 days (default 7), `archive` and `association` kept (association documents survive the uploader's deletion); UNCLASSIFIED objects (before 2026-10-01, or from older clients) kept for ever - **OPEN** | [media-service](../services/media-service.md) |
 | C7 | Push notifications | tell the member a message or an activity arrived | `push_token` (token, platform, locale); payload to FCM/APNs: ciphertext plus **sender and group names in clear**; social pushes: actor name and up to 60 characters of the text | 6.1.b | token deleted at logout (best effort) and at account deletion; 90 days without renewal | `apps/chat-delivery-service/src/services/push-payload.ts`, `apps/social-service/src/push/push-content.ts` |
-| C8 | Associations, cotisations, forms, payments | memberships, sign-ups, purchases | `association_members`, `user_tags`, `submissions` (answers, amounts, Lydia request ids), `form_files` (plaintext, readable by the association), `purchase_records`, `webhook_deliveries` (to Le Cercle) | 6.1.b; accounting 6.1.c | submissions: **no rule (OPEN)**; purchases anonymised at account deletion, kept for accounting; webhook deliveries 30 days | [cotisations](../cotisations.md), [forms](../frontend/modules/forms.md), [payments](../frontend/modules/payments.md) |
+| C8 | Associations, cotisations, forms, payments | memberships, sign-ups, purchases | `association_members`, `user_tags`, `submissions` (answers, amounts, Lydia request ids; an `email` column the current client leaves empty - older rows to count, OPEN), `form_files` (plaintext, readable by the association), `purchase_records`, `webhook_deliveries` (to Le Cercle) | 6.1.b; accounting 6.1.c | submissions: **no rule (OPEN)**; purchases anonymised at account deletion, kept for accounting; webhook deliveries 30 days | [cotisations](../cotisations.md), [forms](../frontend/modules/forms.md), [payments](../frontend/modules/payments.md) |
 | C9 | Legacy cotisations | give pre-Canari cotisants their dues back | `legacy_cotisations`: match key (last name, first name, promo), label, association, source metadata; **about 1400 people, most with no account** | 6.1.f | **no end date (owner decision 2026-10-16; flagged for the DPO)** | [cotisations](../cotisations.md#seeding-from-a-legacy-estate-legacy_cotisations) |
 | C10 | Link previews and Safe Browsing | preview a link; warn before an unsafe one | the URL (the server sees links shared in E2E conversations when previewed); full URL to Google Safe Browsing Lookup API when a link is OPENED | 6.1.f | in-process cache: previews TTL, verdicts 30 min (5 min on failure) | [chat-delivery](../services/chat-delivery.md#link-safety-is-its-own-endpoint-deliberately-not-a-field-on-the-preview-wp-safelink-1) |
 | C11 | GIF search (KLIPY) | in-app GIF picker | query and a random `klipy_cid` sent by the CLIENT to KLIPY; KLIPY sees the device IP | 6.1.b | KLIPY's | `frontend/src/lib/utils/chat/gifSearch.ts` - **a server proxy with no identifier is decided (owner 2026-10-16) and not built (OPEN)** |
@@ -120,7 +120,7 @@ director and the host (**OPEN**, owed by a human).
 | Hosting agreement | **none written (OPEN)** - roles, access, incident notice, end of hosting | [dso-dossier](dso-dossier.md) |
 | Legacy names | `canari-emse.fr`, `dev.canari-emse.fr`, the archives and MiGallery still pass through Cloudflare (TLS terminated at the edge) | [cloudflare-edge](../infrastructure/cloudflare-edge.md) |
 | Database backups | nightly `auth_db` + `authentik_db` dumps, 14 days, local and mirrored to a second school VM; **to be encrypted (owner decision, OPEN)** | [backup](../infrastructure/backup.md) |
-| Media backups | restic (encrypted repository), 14 daily / 8 weekly / 6 monthly snapshots: **a deleted blob can survive 6 months** (blobs are client-encrypted) | `infrastructure/backup/backup-objects.sh` |
+| Media backups | restic (encrypted repository), 14 daily / 8 weekly / 6 monthly snapshots: **a deleted blob can survive 6 months**; most blobs are client-encrypted, but `form-file` objects (CVs) and association public assets (logos) are plaintext | `infrastructure/backup/backup-objects.sh` |
 | Logs | nginx `canari_redacted` format; json-file 10 MB x 3 per Canari container; deploy archive of the last 10 deploys; host `/var/log` under logrotate; **non-Canari containers unbounded** | [logging](../infrastructure/logging.md), [storage-and-retention](../infrastructure/storage-and-retention.md) |
 
 ## 8. Processors and recipients
@@ -129,14 +129,14 @@ director and the host (**OPEN**, owed by a human).
 | --- | --- | --- | --- | --- |
 | The school's DSI | hosting provider / administrator of the shared host | everything at rest on the host | France | **agreement to write (OPEN)** |
 | Google Firebase Cloud Messaging | processor | push token, push payload (ciphertext, sender and group names, social excerpt) | USA | **to be confirmed** (Firebase data processing terms; DPF / SCC not documented here) |
-| Apple Push Notification service | processor | device token, alert title (sender or group name) | USA | **to be confirmed** |
+| Apple Push Notification service | processor | device token, alert title (sender or group name); the data FCM relays to it | USA | **to be confirmed** |
 | Cloudflare | processor (legacy names only) | requests, IPs, payloads outside E2E content | USA / global edge | **to be confirmed** |
 | Google Safe Browsing | recipient | URLs of opened links, server IP only | USA | **to be confirmed**; no user identifier sent |
 | KLIPY | recipient (client-side today) | GIF queries, random id, device IP | **to be confirmed** | **to be confirmed**; proxy decided |
 | Lydia | payment service, separate controller for the payment | payer e-mail, amount, product names | France / EU | its own terms; partnership contract unsigned (backlog) |
 | MiGallery (MiTV) | separate controller | avatar requests by user id | France (school host) | ecosystem |
 | MiConnect / Authentik | Rootz's own service | profile claims | France (school host) | internal |
-| Le Cercle | separate service | purchase webhooks (user id, amount, payment id) | France (school host) | internal |
+| Le Cercle | separate service | balance top-up webhooks (user id, amount, payment id) | France (school host) | internal |
 | CrowdSec (operated by the DSI) | the DSI's security tool | IPs of requests | France | **to confirm whether signals leave the host (OPEN)** |
 
 ## 9. OPEN items (summary)
@@ -153,4 +153,5 @@ director and the host (**OPEN**, owed by a human).
 10. MiGallery: the DPIA's measures ([dpia-migallery-faces](dpia-migallery-faces.md#6-open-measures)).
 11. Le Cercle: controller, privacy page, leaderboard visibility.
 12. Portail-etu: legal notice fields.
-13. A record of each data-subject request ([data-subject-requests](data-subject-requests.md#4-the-request-log)) and of each breach ([breach-procedure](breach-procedure.md#7-the-breach-register-art-335)), kept off the repository.
+13. Unclassified media (before 2026-10-01, or from older clients) kept for ever; a `submissions.email` count on production; a restriction flag.
+14. A record of each data-subject request ([data-subject-requests](data-subject-requests.md#4-the-request-log)) and of each breach ([breach-procedure](breach-procedure.md#7-the-breach-register-art-335)), kept off the repository.

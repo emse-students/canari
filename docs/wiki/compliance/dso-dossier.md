@@ -82,13 +82,16 @@ Destinataires hors de l'association, pour Canari :
 
 1. **Cotisations des anciennes bases** : environ 1 400 personnes, pour la plupart sans compte
    (nom, prénom, promotion, association), conservées **sans date de fin** pour leur permettre de
-   récupérer leur cotisation. Nous souhaitons votre avis sur une durée.
+   récupérer leur cotisation. Nous souhaitons votre avis sur une durée, et sur l'information de
+   ces personnes (art. 14) : n'ayant pas de compte, la politique de Canari ne les atteint pas.
 2. **Environnement de test** : une copie complète de la base de production (sans données de
    paiement ni fichiers) sert à tester chaque version. Faut-il la pseudonymiser ?
 3. **Notifications** : le nom de l'expéditeur et du groupe part en clair vers Google et Apple ;
    c'est un choix technique assumé, déclaré dans la politique.
-4. **Âge minimum** : 15 ans (art. 45 de la loi Informatique et Libertés) ; pas de contrôle d'âge
-   dans l'application, la population étant celle de l'École.
+4. **Âge minimum** : 15 ans, fixé par référence à l'art. 45 de la loi Informatique et Libertés
+   (qui vise le consentement, alors que nos bases sont le contrat et l'intérêt légitime : votre
+   avis est bienvenu) ; pas de contrôle d'âge dans l'application, la population étant celle de
+   l'École.
 5. **Sauvegardes** : les bases sont gardées 14 jours, les fichiers (chiffrés côté client) jusqu'à
    6 mois ; le chiffrement des sauvegardes de bases est en cours.
 6. **Journaux** : 90 jours au plus, mise en oeuvre en cours.

@@ -57,8 +57,8 @@
     </p>
     <p>
       En accédant au Service, vous déclarez avoir l'âge minimum requis et être autorisé à accepter
-      les présentes CGU. Un mineur de 15 ans ou plus peut utiliser le Service et accepter seul le
-      traitement de ses données (article 45 de la loi Informatique et Libertés).
+      les présentes CGU. Cet âge minimum est fixé par référence à l'article 45 de la loi
+      Informatique et Libertés ; un mineur de 15 ans ou plus peut utiliser le Service.
     </p>
   </section>
 

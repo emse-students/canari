@@ -31,7 +31,7 @@ the CNIL and the courts as remedies. Free of charge in every case.
 | Rectification (Art. 16) | MiConnect profile (formation, promo, campus) via the MiConnect editor or the in-app correction request; name: at the source (the school's CAS) | - |
 | Erasure (Art. 17) | Canari: the person deletes the account in the app, or the admin performs the same deletion (the account's `DELETE /api/users/me` fan-out); other services below | backups keep deleted data 14 days (databases) and up to 6 months (client-encrypted media); accounting rows are kept detached from the account; a new sign-in re-creates an account |
 | Objection (Art. 21) | stop the processing based on 6.1.f for that person: e.g. delete their `legacy_cotisations` row, remove them from the Portail-etu showcase (30 days), hide them in Sky | the controller may refuse only on compelling legitimate grounds, written |
-| Restriction (Art. 18) | mark the account (moderation mute) and stop processing other than storage | - |
+| Restriction (Art. 18) | freeze the account: no processing other than storage (today by hand: a moderation mute stops posting, the rest is a written commitment) | no restriction flag exists in code (OPEN) |
 
 ## 3. Per-service extraction
 
@@ -98,7 +98,7 @@ from the association's roster in Canari, or hide them; takedown within 30 days (
 ## 4. The request log
 
 **Kept off the public repository** (it names people). One row per request; keep rows 5 years after
-closing, as proof of compliance (CNIL practice), then delete.
+closing, as proof of compliance (a duration we propose, to confirm with the DPO), then delete.
 
 | Field | Content |
 | --- | --- |
@@ -124,8 +124,8 @@ de bout en bout : il n'est lisible que sur vos appareils, et sa sauvegarde se fa
 l'application (Paramètres > Sauvegarde).
 
 [Effacement :] Votre compte et les données associées ont été supprimés le [date]. Certaines
-données subsistent dans nos sauvegardes pendant 14 jours au plus (6 mois pour les fichiers, qui
-sont chiffrés), puis disparaissent ; vos achats restent dans la comptabilité des associations,
+données subsistent dans nos sauvegardes pendant 14 jours au plus (6 mois pour les fichiers,
+dans un dépôt chiffré), puis disparaissent ; vos achats restent dans la comptabilité des associations,
 détachés de votre compte.
 
 Les finalités, destinataires et durées de conservation sont décrits dans notre politique de

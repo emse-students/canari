@@ -70,8 +70,9 @@
         <dd>
           Prénom, nom, identifiant de connexion, promotion, formation, campus, parcours et
           appartenances (élève, personnel, Maison des Élèves), transmis par MiConnect à chaque
-          connexion ; la biographie que vous écrivez. Canari n'enregistre ni votre adresse e-mail ni
-          votre mot de passe. Votre photo de profil est servie par MiGallery.
+          connexion ; la biographie que vous écrivez. Canari ne reçoit pas votre adresse e-mail
+          personnelle et ne connaît pas votre mot de passe. Votre photo de profil est servie par
+          MiGallery.
         </dd>
       </div>
       <div>
@@ -228,8 +229,11 @@
       </table>
     </div>
     <p>
-      Vos données ne sont ni vendues, ni louées, ni utilisées à des fins publicitaires. Vous pouvez
-      vous opposer à un traitement fondé sur l'intérêt légitime (section 10).
+      Les données de profil transmises par MiConnect sont nécessaires à l'ouverture du compte : sans
+      elles, le service ne peut pas être fourni. Canari ne prend aucune décision automatisée
+      produisant des effets juridiques à votre égard. Vos données ne sont ni vendues, ni louées, ni
+      utilisées à des fins publicitaires. Vous pouvez vous opposer à un traitement fondé sur
+      l'intérêt légitime (section 10).
     </p>
   </section>
 
@@ -249,11 +253,12 @@
         </p>
         <p>
           Acheminent les notifications vers votre téléphone (Google LLC et Apple Inc., États-Unis).
-          Ils reçoivent le jeton de l'appareil et la notification elle-même : le message chiffré, et
-          <strong>en clair</strong> le nom de l'expéditeur et le nom du groupe ou du salon. Pour une activité
-          sur le fil (commentaire, mention, événement), la notification contient aussi en clair le nom
-          de l'auteur et le début du texte, 60 caractères au plus. Ce choix technique permet d'afficher
-          une notification lisible ; le contenu des messages privés n'y figure jamais en clair.
+          Google reçoit le jeton de l'appareil et la notification elle-même : le message chiffré, et
+          <strong>en clair</strong> le nom de l'expéditeur et le nom du groupe ou du salon. Apple reçoit
+          le jeton et le titre affiché (nom de l'expéditeur ou du groupe). Pour une activité sur le fil
+          (commentaire, mention, événement), la notification contient aussi en clair le nom de l'auteur
+          et le début du texte, 60 caractères au plus. Ce choix technique permet d'afficher une notification
+          lisible ; le contenu des messages privés n'y figure jamais en clair.
         </p>
       </li>
       <li>
@@ -294,8 +299,8 @@
         <p>
           <strong>MiConnect</strong> (connexion) transmet votre profil à Canari.
           <strong>MiGallery</strong> (association MiTV) fournit les photos de profil.
-          <strong>Le Cercle</strong> reçoit, pour les achats qui le concernent (cotisation, rechargement),
-          l'identifiant du compte et le montant.
+          <strong>Le Cercle</strong> reçoit, pour un rechargement de votre solde au bar, l'identifiant
+          du compte, le montant et la référence du paiement.
         </p>
       </li>
       <li>
@@ -355,10 +360,14 @@
           </tr>
           <tr>
             <td>Fichiers envoyés dans une conversation (chiffrés)</td>
-            <td>90 jours sans consultation ; CanaReels de conversation : 30 jours</td>
+            <td>
+              90 jours sans consultation ; CanaReels de conversation : 30 jours. Les fichiers
+              envoyés avant octobre 2026, ou par une version de l'application antérieure, sont pour
+              l'instant conservés sans limite
+            </td>
           </tr>
           <tr>
-            <td>Publications, commentaires, photos de publication</td>
+            <td>Publications, commentaires, médias des publications</td>
             <td>Jusqu'à leur suppression ou celle du compte ; CanaReels du fil : 30 jours</td>
           </tr>
           <tr>
@@ -370,7 +379,14 @@
           </tr>
           <tr>
             <td>Fichiers déposés dans un formulaire</td>
-            <td>1 à 30 jours selon le formulaire (7 jours par défaut)</td>
+            <td>
+              1 à 30 jours selon le formulaire (7 jours par défaut), puis jusqu'à 6 mois dans les
+              sauvegardes
+            </td>
+          </tr>
+          <tr>
+            <td>Réponses aux formulaires</td>
+            <td>Aucune durée n'est encore fixée : elle est en cours de définition</td>
           </tr>
           <tr>
             <td>Jeton de notification</td>
@@ -396,7 +412,10 @@
           </tr>
           <tr>
             <td>Journaux techniques (IP, date, requête)</td>
-            <td>90 jours au plus</td>
+            <td
+              >90 jours au plus ; cette limite est en cours de mise en place sur l'ensemble des
+              journaux</td
+            >
           </tr>
           <tr>
             <td>Cotisations des anciennes bases</td>
@@ -413,9 +432,11 @@
       <p>
         La base de données est sauvegardée chaque nuit et chaque sauvegarde est gardée 14 jours :
         une donnée supprimée peut donc subsister jusqu'à 14 jours dans les sauvegardes, puis
-        disparaît. Les fichiers (chiffrés avant l'envoi) sont sauvegardés à part, avec des copies
+        disparaît. Les fichiers sont sauvegardés à part, dans un dépôt chiffré, avec des copies
         quotidiennes, hebdomadaires et mensuelles : un fichier supprimé peut y subsister
-        <strong>jusqu'à 6 mois</strong>. Une sauvegarde n'est relue que pour restaurer le service.
+        <strong>jusqu'à 6 mois</strong>. La plupart des fichiers sont chiffrés sur votre appareil
+        avant l'envoi ; les fichiers déposés dans un formulaire et les logos des associations ne le
+        sont pas. Une sauvegarde n'est relue que pour restaurer le service.
       </p>
     </div>
   </section>
@@ -425,7 +446,8 @@
     <h2>7. Cookies et stockage local</h2>
     <p>
       Canari n'utilise aucun cookie publicitaire ni de mesure d'audience. Ce qu'il enregistre dans
-      votre navigateur ou sur votre appareil sert au fonctionnement du service :
+      votre navigateur ou sur votre appareil sert au fonctionnement du service, à une exception
+      près, signalée dans le tableau :
     </p>
     <div class="legal-table-wrap">
       <table class="legal-table">
@@ -466,7 +488,11 @@
           </tr>
           <tr>
             <td>Identifiant aléatoire <code>klipy_cid</code></td>
-            <td>Transmis à KLIPY avec les recherches de GIF (section 4)</td>
+            <td>
+              Transmis à KLIPY avec les recherches de GIF, qui s'en sert pour ses propres
+              statistiques (section 4). Il n'est pas nécessaire au service et sera supprimé quand
+              les recherches passeront par notre serveur, ce qui est en cours
+            </td>
             <td>Jusqu'à son effacement</td>
           </tr>
           <tr>
@@ -537,10 +563,10 @@
       Canari est réservé aux membres de la communauté de l'École des Mines de Saint-Étienne qui
       disposent d'un compte MiConnect. <strong
         >Il n'est pas destiné aux personnes de moins de 15 ans</strong
-      >, l'âge à partir duquel le droit français permet à un mineur de consentir seul au traitement
-      de ses données par un service en ligne. Un élève mineur de 15 ans ou plus peut utiliser Canari
-      ; il exerce lui-même ses droits (section 10). Si vous pensez qu'une personne de moins de 15
-      ans utilise Canari, écrivez à
+      >
+      : cet âge minimum est fixé par référence à l'article 45 de la loi Informatique et Libertés. Un élève
+      mineur de 15 ans ou plus peut utiliser Canari et exercer lui-même ses droits (section 10). Si vous
+      pensez qu'une personne de moins de 15 ans utilise Canari, écrivez à
       <a href="mailto:bureau@rootz-emse.fr">bureau@rootz-emse.fr</a> : son compte sera supprimé.
     </p>
   </section>
@@ -550,7 +576,7 @@
     <h2>10. Vos droits et comment les exercer</h2>
     <p>Conformément au RGPD, vous disposez des droits suivants :</p>
     <dl class="legal-terms">
-      {#each [['Accès et copie', 'Obtenir la confirmation que nous traitons vos données et une copie de celles-ci.'], ['Portabilité', 'Recevoir les données que vous nous avez fournies dans un format structuré et lisible par machine (JSON).'], ['Rectification', "Corriger une donnée inexacte. Le nom, le prénom et le profil venant de MiConnect se corrigent dans MiConnect ou par une demande de correction dans l'application."], ['Effacement', 'Supprimer votre compte vous-même ou nous le demander (voir ci-dessous).'], ['Limitation', 'Demander le gel temporaire du traitement de vos données.'], ['Opposition', "Vous opposer à un traitement fondé sur l'intérêt légitime, par exemple à la conservation de votre ligne dans les cotisations des anciennes bases."]] as [droit, desc], i (i)}
+      {#each [['Accès et copie', 'Obtenir la confirmation que nous traitons vos données et une copie de celles-ci.'], ['Portabilité', 'Recevoir les données que vous nous avez fournies dans un format structuré et lisible par machine (JSON).'], ['Rectification', "Corriger une donnée inexacte. Le nom, le prénom et le profil venant de MiConnect se corrigent dans MiConnect ou par une demande de correction dans l'application."], ['Effacement', 'Supprimer votre compte vous-même ou nous le demander (voir ci-dessous).'], ['Limitation', 'Demander le gel temporaire du traitement de vos données.'], ['Opposition', "Vous opposer à un traitement fondé sur l'intérêt légitime, par exemple à la conservation de votre ligne dans les cotisations des anciennes bases."], ['Directives après le décès', "Définir des directives sur la conservation, l'effacement et la communication de vos données après votre décès (article 85 de la loi Informatique et Libertés)."]] as [droit, desc], i (i)}
         <div>
           <dt>{droit}</dt>
           <dd>{desc}</dd>
@@ -565,9 +591,11 @@
         est immédiate : profil, publications, adhésions, appareils, jetons de notification et
         messages en attente sont effacés. Vos messages dans les salons et vos achats sont conservés
         sous une forme détachée de votre compte (auteur « supprimé »), pour ne pas trouer les
-        conversations des autres membres ni la comptabilité des associations. Vos commentaires et
-        réactions sur les publications d'autres membres sont en cours d'intégration à cette
-        suppression : vous pouvez en demander l'effacement par e-mail dès maintenant.
+        conversations des autres membres ni la comptabilité des associations. Certaines données ne
+        sont pas encore atteintes par cette suppression, notamment vos réponses aux formulaires, vos
+        commentaires et réactions sur les publications d'autres membres et l'historique des
+        modifications de votre profil : leur intégration est en cours, et vous pouvez en demander
+        l'effacement par e-mail dès maintenant.
       </p>
       <p class="legal-fineprint">
         Les données supprimées subsistent dans les sauvegardes pendant la durée indiquée en section
