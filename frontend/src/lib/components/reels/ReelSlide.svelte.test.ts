@@ -210,6 +210,9 @@ it('a reel on screen with no video draws the poster and accuses the row', () => 
     expect(q('[data-post-media-stub]')).toBeNull();
     expect(error).toHaveBeenCalledTimes(1);
     expect(String(error.mock.calls[0][0])).toContain('reel r-empty carries no video');
+    // A return to the same reel (its slide rebuilt) says nothing new about the same row.
+    render(reel({ id: 'r-empty', media: [], images: [] }));
+    expect(error).toHaveBeenCalledTimes(1);
   } finally {
     error.mockRestore();
   }

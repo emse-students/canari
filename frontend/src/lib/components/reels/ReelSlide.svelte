@@ -1,3 +1,9 @@
+<script lang="ts" module>
+  /** The reels already reported as carrying no video - shared by every slide, never read reactively. */
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a log's memory, never rendered
+  const reportedWithoutVideo = new Set<string>();
+</script>
+
 <script lang="ts">
   /**
    * One reel in the full-screen viewer (C7): its video filling the screen, and who published it with
@@ -78,9 +84,12 @@
    * video (`assertCreateKindShape`). The slide can only draw the poster, a play glyph nothing can
    * play, so the line accuses the data upstream: dev's copy of production emptied two reels' media
    * and the iPhone 12 reading of v1.2.9-alpha.4 read them as "reels 2 and 3 never play".
+   * ONCE PER REEL for the page's life: a return to it, or a refetch that rebuilds the slide, says
+   * nothing new about the same row.
    */
   $effect(() => {
-    if (active && !video) {
+    if (active && !video && !reportedWithoutVideo.has(post.id)) {
+      reportedWithoutVideo.add(post.id);
       console.error(
         `[reel-viewer] reel ${post.id} carries no video - a reel is its one video, nothing can play`
       );

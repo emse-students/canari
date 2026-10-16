@@ -1168,8 +1168,12 @@ which Back path fired. There was one `gesture Back closes overlay N, 0 left open
 going 1, 2, 3 over three open-conversation-open-menu rounds: ONE push per round, the
 conversation's. There was no second path, and #1945's arm had nothing to arm against. So
 `CanariButton` (the patch, `ButtonComponent.swift`) sets the WebView's `isUserInteractionEnabled`
-to false in `willDisplayMenuFor` and back to true in `willEndFor`, or when the button leaves the
-window. The dismissing touch is hit-tested while the WebView is out of reach, so it never becomes
+to false in `willDisplayMenuFor`. **A WebView left held is a dead app**, so the hold is released by
+`willEndFor`, by `apply()` clearing the menu, by the button leaving the window (or being released),
+or by the app becoming active (`didBecomeActive`, after a call or the app switcher tore the menu
+down). No timer is involved. The holders are a SET of buttons by identity, not one flag per button:
+every button shares the one WebView, so one button's release cannot give touch back under another's
+open menu, and a release by a non-holder changes nothing. The dismissing touch is hit-tested while the WebView is out of reach, so it never becomes
 the page's, whatever order `willEnd` and the touch arrive in. A tap outside the menu no longer
 reaches the web button under it either. **Owed on the iPhone (a build is needed, the Swift is only
 compiled here):** with the "+" open in a DM and in a salon, one edge swipe closes only the menu and
