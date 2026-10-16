@@ -100,4 +100,4 @@ if (failures.length > 0) {
   for (const f of failures) console.error(`  FAIL  ${f}`);
   process.exit(1);
 }
-console.log('access-log-redaction: the access log cannot record a token');
+console.log('access-log-redaction: the access log cannot record a token, nor a GIF search');

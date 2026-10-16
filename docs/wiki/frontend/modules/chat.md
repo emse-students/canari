@@ -493,7 +493,10 @@ reader's.
   route's whole query** from its access line (`$logged_request_uri` writes
   `/api/mls/gifs?query-redacted`, asserted by `access-log-redaction.test.mjs`) - that line carries
   the reader's address, so writing the query there would rebuild in our own log the very
-  association this route removes from KLIPY. The first review of this change caught it.
+  association this route removes from KLIPY. The first review of this change caught it. The map
+  keys on the RAW `$request_uri`, so a hand-spelled `/api//mls/gifs` or `/api/mls/%67ifs` reaches
+  the same location and is logged in clear (measured in a local nginx) - accepted: the app never
+  sends it, so only the person typing such a URL exposes their own search.
 - **Answers are cached in-process for 10 minutes** (500 entries), failures never, and only an answer
   carries `Cache-Control: private, max-age=300` - a 502 carries none. The cache is shared across
   users, keyed on the query: a hit's latency can tell a reader that SOMEBODY searched the same words
