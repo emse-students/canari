@@ -12,6 +12,10 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
+
+# The terms-of-use version is one value in four files; checked before any container starts.
+bash "$here/check-consent-version.sh"
+
 project="miconnect-blueprint-test"
 work="$(mktemp -d)"
 

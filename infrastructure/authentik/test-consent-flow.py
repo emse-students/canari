@@ -20,16 +20,19 @@ What it proves, in order:
      initial-value expression, evaluated - a placeholder expression would have written its source
      text) and nothing else, then the authorization ends on the redirect URI with a code;
   4. a second authorization for the same user skips the page and ends on the code at once;
-  5. a user whose `cgu_version` is an older text is asked again;
+     The person's other attributes (the enrolment profile) survive the write unchanged;
+  5. a user whose `cgu_version` is an older text is asked again, and FORGED hidden values in the
+     POST are ignored for the server's; an IMPERSONATED session is neither shown nor written;
   6. every provider authorizing through this flow ends on a code once the terms are accepted.
 """
+import copy
 import json
 from datetime import datetime
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from django.test import Client
 
-from authentik.core.models import Application, User
+from authentik.core.models import Application, Group, User
 from authentik.providers.oauth2.models import OAuth2Provider, RedirectURIType
 from authentik.tenants.models import Tenant
 
@@ -38,7 +41,9 @@ VERSION = "2026-10-16"
 TERMS_URL = "https://canari.emse.fr/legal/miconnect"
 PASSWORD = "consent-test-Password-0123456789"
 PREFIX = "consent-e2e-"
-PROMPT_KEYS = ["cgu_notice", "cgu_accept", "attributes.cgu_version", "attributes.cgu_accepted_at"]
+# What enrolment leaves on an account; the consent write must keep every key of it unchanged.
+PROFILE = {"profile": {"version": 1, "campus": "saint-etienne", "cursus": [], "posts": []}, "school_status": "Elève", "promo": 2024, "formation": "ICM"}
+PROMPT_KEYS =["cgu_notice", "cgu_accept", "attributes.cgu_version", "attributes.cgu_accepted_at"]
 
 
 def check(condition, message):
@@ -112,13 +117,22 @@ def fields(challenge):
     return {field["field_key"]: field for field in challenge.get("fields", [])}
 
 
-def accept(client, challenge, query, tick=True):
-    """POSTs the prompt the way the browser does: every field it was given, the box as chosen."""
+def accept(client, challenge, query, tick=True, forged=None):
+    """POSTs the prompt the way the browser does: every field it was given, the box as chosen.
+
+    `forged` overrides fields in the POST, the way a client that edits the hidden inputs would."""
     payload = {"component": "ak-stage-prompt"}
     for key, field in fields(challenge).items():
         payload[key] = field.get("initial_value")
     payload["cgu_accept"] = tick
+    payload.update(forged or {})
     return executor(client, SLUG, payload, query)
+
+
+def recent(stamp):
+    """True when `stamp` is an aware ISO date within five minutes of now."""
+    moment = datetime.fromisoformat(stamp)
+    return moment.tzinfo is not None and abs((datetime.now(moment.tzinfo) - moment).total_seconds()) < 300
 
 
 with Tenant.objects.get(ready=True):
@@ -128,7 +142,7 @@ with Tenant.objects.get(ready=True):
 
     try:
         # 1 - a person who never accepted is shown the page, with everything on it.
-        user, client = signed_in(PREFIX + "a")
+        user, client = signed_in(PREFIX + "a", copy.deepcopy(PROFILE))
         redirect, page, query = authorize(client, canari)
         check(page.get("component") == "ak-stage-prompt", f"a first authorization stops on the prompt (got {page.get('component') or page})")
         shown = fields(page)
@@ -154,8 +168,10 @@ with Tenant.objects.get(ready=True):
         user.refresh_from_db()
         check(user.attributes.get("cgu_version") == VERSION, f"cgu_version is written ({user.attributes.get('cgu_version')})")
         accepted = datetime.fromisoformat(user.attributes.get("cgu_accepted_at", ""))
-        check(accepted.tzinfo is not None and abs((datetime.now(accepted.tzinfo) - accepted).total_seconds()) < 300, f"cgu_accepted_at is the time of acceptance ({user.attributes.get('cgu_accepted_at')})")
-        check(set(user.attributes) == {"cgu_version", "cgu_accepted_at"}, f"nothing else lands on the account ({sorted(user.attributes)})")
+        check(recent(user.attributes["cgu_accepted_at"]), f"cgu_accepted_at is the time of acceptance ({user.attributes.get('cgu_accepted_at')})")
+        check(set(user.attributes) == set(PROFILE) | {"cgu_version", "cgu_accepted_at"}, f"nothing else lands on the account ({sorted(user.attributes)})")
+        kept = {key: user.attributes[key] for key in PROFILE}
+        check(kept == PROFILE, f"the profile attributes survive the write unchanged ({kept})")
 
         # 4 - a second authorization does not ask again.
         _, again, _ = authorize(client, canari)
@@ -167,9 +183,26 @@ with Tenant.objects.get(ready=True):
         old, old_client = signed_in(PREFIX + "b", {"cgu_version": "2000-01-01", "cgu_accepted_at": "2000-01-01T00:00:00+00:00"})
         _, page, query = authorize(old_client, canari)
         check(page.get("component") == "ak-stage-prompt", "a user who accepted an older text is asked again")
-        done = accept(old_client, page, query)
+        # ...with FORGED hidden values in the POST, which the server must ignore for its own.
+        done = accept(old_client, page, query, forged={"attributes.cgu_version": "9999", "attributes.cgu_accepted_at": "1999-01-01T00:00:00+00:00"})
+        check("external" in done, f"the forged POST still completes the authorization ({done.get('component')})")
         old.refresh_from_db()
-        check(old.attributes["cgu_version"] == VERSION and not old.attributes["cgu_accepted_at"].startswith("2000"), "accepting again replaces the version and the date")
+        check(old.attributes["cgu_version"] == VERSION, f"a forged version is ignored for the server's ({old.attributes['cgu_version']})")
+        check(recent(old.attributes["cgu_accepted_at"]), f"a forged date is ignored for the server's ({old.attributes['cgu_accepted_at']})")
+
+        # 5b - an impersonated session neither shows the terms nor writes them on the person
+        # impersonated: only the person may accept, never an administrator acting as them.
+        admin, admin_client = signed_in(PREFIX + "admin")
+        admin.groups.add(Group.objects.get(name="authentik Admins"))
+        target = User.objects.create(username=PREFIX + "c", name="Consent Impersonated")
+        started = admin_client.post(f"/api/v3/core/users/{target.pk}/impersonate/", data=json.dumps({"reason": "consent-e2e"}), content_type="application/json")
+        check(started.status_code in (200, 201, 204), f"the administrator impersonates the person (got {started.status_code})")
+        target_redirect, seen, _ = authorize(admin_client, canari)
+        check(ended_on_code(seen, target_redirect), f"an impersonated authorization is not shown the terms ({seen.get('external') or seen.get('component')})")
+        target.refresh_from_db()
+        check("cgu_version" not in target.attributes and "cgu_accepted_at" not in target.attributes, f"nothing is written on the impersonated person ({sorted(target.attributes)})")
+        admin.refresh_from_db()
+        check("cgu_version" not in admin.attributes, "nor on the administrator")
 
         # 6 - every application signs the accepted user in.
         for provider in providers:

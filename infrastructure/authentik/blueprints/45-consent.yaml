@@ -12,6 +12,8 @@
 # runs once, at the first sign-in) and every future version of the text. The answer is stored on the
 # account: `cgu_version` (which text) and `cgu_accepted_at` (when). THE VERSION IS WRITTEN IN TWO
 # PLACES BELOW, the policy and the hidden prompt - change both, or the stage re-asks forever.
+# check-consent-version.sh (run by test-blueprints.sh in CI) fails while they, the page's `updated`
+# date and the test's VERSION disagree.
 version: 1
 metadata:
   name: miconnect-consent
@@ -77,7 +79,14 @@ entries:
     attrs:
       execution_logging: true
       # True = the stage is shown. The literal is THE CURRENT VERSION (see the header).
+      # NEVER IN AN IMPERSONATED SESSION: there request.user is the person impersonated, so the
+      # administrator would be shown the terms and their tick written on THAT person's account
+      # (driven 2026-10-16 by test-consent-flow.py). Only the person may accept.
       expression: |-
+        session = request.http_request.session if request.http_request else {}
+        if "authentik/impersonate/user" in session:
+            ak_logger.info("miconnect-consent: impersonated session, terms neither shown nor written")
+            return False
         return request.user.attributes.get("cgu_version") != "2026-10-16"
   # THE TICK IS CHECKED HERE, because `required` on a checkbox is not: authentik builds a checkbox as
   # a BooleanField with required=False, so `required: true` above only reaches the browser's form,

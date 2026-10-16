@@ -59,6 +59,11 @@ FAILS printing the leftovers, their status and the worker's error lines. **The t
 named yet** - the next warning in a CI log will name it, and THAT is the evidence to act on (a retry that
 keeps being needed is a race to fix, not a path to keep). The wait is proved against a fake `docker` in
 `.github/scripts/tests/wait-default-blueprints.test.sh`.
+**A locally reproduced 30/31 (2026-10-16): `Default - Out-of-box-experience flow=error`** - and the wait
+FAILED at its 10-minute deadline without ever re-applying it, because the deadline was applied even after
+the count had moved: each `ak shell` probe took ~20 s on a loaded workstation, so 600 s ran out before
+the stall rule had counted its 12 polls. The deadline now bounds only a boot where NOTHING has applied,
+as the rule above says; the stall rule bounds the rest. A test case pins it.
 
 **THE PROOF THAT THE FILES DESCRIBE PRODUCTION, and how to take it again.** `snapshot` prints every
 object the blueprints name, with relations replaced by natural names and secrets by a digest. On
@@ -666,7 +671,9 @@ collection of name and first name, as one required tick, for new AND existing ac
   the stored version differs from the current one - so each version is asked once, for all services.
 - **The version is a literal in TWO places** in that file (the policy, the hidden prompt) and the
   `updated` date of `frontend/src/routes/legal/miconnect/+page.svelte`. Change the text => change all
-  three, or the stage re-asks forever / never.
+  three, or the stage re-asks forever / never - plus `VERSION` in `test-consent-flow.py`.
+  `check-consent-version.sh`, the first step of `test-blueprints.sh` in CI, fails while the four
+  disagree.
 - **Driven, not only applied** (`test-consent-flow.py`, run by `test-blueprints.sh` in CI): a real
   password sign-in, then `/application/o/authorize/` on every provider. It proves the notice and
   link reach the challenge, a POST without the tick is refused and writes nothing, the tick writes
@@ -677,7 +684,14 @@ collection of name and first name, as one required tick, for new AND existing ac
   `miconnect-consent-validate-accept`; and a HIDDEN field writes its INITIAL value - a
   `placeholder_expression` is never evaluated for the write, so the date was stored as the
   expression's source text until it became `initial_value_expression`. The hidden values are taken
-  from the server-side definition, never from the POST, so a client cannot forge the version.
+  from the server-side definition, never from the POST, so a client cannot forge the version (a
+  forged version and date in the POST are asserted ignored), and the write keeps every other
+  attribute (`profile`, `school_status`, `promo`, `formation` asserted unchanged).
+- **Never in an impersonated session.** There `request.user` is the person impersonated, so an
+  administrator was shown the terms and their tick would have landed on THAT account (driven
+  2026-10-16). `miconnect-consent-needed` returns false when the session carries
+  `authentik/impersonate/user`, so neither stage runs; the test impersonates through the API and
+  asserts the authorization completes and nothing is written on either account.
 - **The text** is `/legal/miconnect` on canari.emse.fr, hardcoded French like the other legal pages
   ([open-questions](../open-questions.md)). Controller named: Association Rootz - confirm.
 - **Production reaches it** with `infrastructure/authentik/apply-blueprints.sh` (`snapshot`,
