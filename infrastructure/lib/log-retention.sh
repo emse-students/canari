@@ -31,12 +31,18 @@ LOG_LIVE_MAX_DAYS=60
 LOG_RETENTION_PROJECTS="canari-prod canari-dev"
 
 # log_oldest_line_before <docker-cli> <container> <hours> - prints the first line of the container's
-# log older than <hours>, empty when there is none. A CLI error comes out as a line that does not
-# start with a timestamp, which the caller tells apart.
+# log older than <hours>, empty when there is none, and RETURNS docker's own verdict: non-zero when
+# the log could not be read. The status decides "unreadable", never the shape of the output - a CLI
+# that fails silently would otherwise read as a log holding nothing old, a green run.
 log_oldest_line_before() {
-  local docker_cli="$1" id="$2" hours="$3"
+  local docker_cli="$1" id="$2" hours="$3" out rc
   # shellcheck disable=SC2086 # DOCKER_CLI may be "sudo docker"
-  $docker_cli logs --timestamps --until "${hours}h" "$id" 2>&1 | head -n 1 || true
+  out="$($docker_cli logs --timestamps --until "${hours}h" "$id" 2>&1 | head -n 1
+    exit "${PIPESTATUS[0]}")"
+  rc=$?
+  printf '%s' "$out"
+  # 141 is docker killed by SIGPIPE once `head` had its line: the read succeeded.
+  [ "$rc" -eq 0 ] || [ "$rc" -eq 141 ]
 }
 
 # report_live_log_age <docker-cli> <project> - prints one line per container of the estate and
@@ -60,14 +66,19 @@ report_live_log_age() {
     # shellcheck disable=SC2086
     name="$($docker_cli inspect -f '{{.Name}}' "$id" 2>/dev/null | sed 's|^/||')"
     [ -n "$name" ] || name="$id"
-    first="$(log_oldest_line_before "$docker_cli" "$id" "$((LOG_LIVE_MAX_DAYS * 24))")"
+    if ! first="$(log_oldest_line_before "$docker_cli" "$id" "$((LOG_LIVE_MAX_DAYS * 24))")"; then
+      # An inability to measure is not a failing measurement: it is named as what it is.
+      printf '::error::log-retention: could not read the log of %s, so its age is unknown: %s\n' "$name" "${first:-docker logs failed with no output}" >&2
+      status=1
+      continue
+    fi
     if [ -z "$first" ]; then
       printf 'log-retention: %s holds nothing older than %s days\n' "$name" "$LOG_LIVE_MAX_DAYS"
       continue
     fi
     if ! [[ "$first" =~ ^([0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}) ]]; then
-      # An inability to measure is not a failing measurement: it is named as what it is.
-      printf '::error::log-retention: could not read the log of %s, so its age is unknown: %s\n' "$name" "$first" >&2
+      # A read docker called successful whose first line carries no timestamp: unknown age too.
+      printf '::error::log-retention: the log of %s answered a line with no timestamp, so its age is unknown: %s\n' "$name" "$first" >&2
       status=1
       continue
     fi

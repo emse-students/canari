@@ -40,7 +40,8 @@ not control. What it DOES control is enforced or reported since 2026-10-16
 - **Authentik's own event log.** Every `login`, `login_failed` and `authorize_application` event
   stores `client_ip`; the default retention is `days=365`. Admin interface > System > Settings >
   *Event retention*: set `days=90` (or shorter). It is a production write on the identity provider,
-  hence the user's. The nightly backup carries `authentik_db.sql.gz` for 14 days, so once the events
+  hence the user's. The nightly backup carries `authentik_db.sql.gz` for about 15 days (`-mtime +14` deletes a file only once it is 15
+whole days old, and only when the nightly run happens), so once the events
   are bounded the archive is too ([backup](backup.md)).
 - **Authentik's container logs** (`miconnect` stack, `infrastructure/authentik/compose.yml`):
   capped at 30 MB each, but not bounded in time, for the reason [logging](logging.md#the-90-day-ceiling-2026-10-16)
@@ -68,8 +69,11 @@ rotation - with `MaxFileSec=7day`, at most 75 + 7 + 7 = 89 days. Verify:
 drop after the first weekly rotation, not immediately).
 
 **nginx (logrotate).** In `/etc/logrotate.d/nginx`, the stanza covering `/var/log/nginx/*.log`
-keeps `daily` and a `rotate` of at most 89, and gains `maxage 89` so a file rotated earlier is
-removed even if the count would keep it. Verify: `logrotate -d /etc/logrotate.d/nginx` (dry run),
+keeps `daily` and a `rotate` of at most 80, and gains `maxage 80` so a file rotated earlier is
+removed even if the count would keep it. **80, not 89, for the same slack journald and CrowdSec
+get**: with `daily` and 89 rotated files plus the live one the oldest line is already ~90 days old,
+`maxage` judges a file by its mtime (its NEWEST line, not its oldest), and one skipped rotation
+(`notifempty`, a missed timer) pushes it over. Verify: `logrotate -d /etc/logrotate.d/nginx` (dry run),
 then `ls -l --time-style=+%F /var/log/nginx/ | sort -k6 | head -n 3`.
 
 **CrowdSec logs.** In `/etc/crowdsec/config.yaml`, `common:` section:
@@ -80,8 +84,14 @@ common:
   log_max_age: 80   # days; rotated files older than this are deleted
 ```
 
-CrowdSec rotates through lumberjack, which dates a rotated file by its ROTATION time, and a file
-spans the days since the previous rotation (~2 days measured), so 80 leaves the slack. The same key
+**Ask before prescribing: WHICH mechanism rotates these files is not established.** CrowdSec's own
+file logger (lumberjack) rotates on `log_max_size` and keeps `log_max_files` by COUNT next to
+`log_max_age`; its defaults (500 MB, 3 files, 28 days) cannot produce what was measured - a ~1.1 MB
+gz every ~2 days beside a 12 MB live file, accumulating since 2026-09-15 - so either the DSI set
+those keys explicitly or `logrotate` does it. The rotated files' names tell the two apart
+(`crowdsec_api-<timestamp>.log.gz` is lumberjack, `crowdsec_api.log.N.gz` is logrotate). If it is
+logrotate, `log_max_age` changes nothing and the stanza wants `maxage 80` as for nginx. Either way a
+rotated file covers the days since the previous rotation, so 80 leaves the slack. The same key
 exists in the bouncer's own configuration if it logs to a file. Verify: `systemctl restart crowdsec`,
 then `ls -l --time-style=+%F /var/log/ | grep -i crowdsec`; nothing older than 90 days.
 
@@ -116,6 +126,9 @@ not a gesture. Canari's and Authentik's services already carry this per service.
 
 ## The request, ready to send (French)
 
+Written in ASCII because this repository is; **restore the accents when sending it**
+("Durées", "conservés", "supprimés"...).
+
 > Objet : Durees de conservation des journaux sur le serveur Portail-etu (demande, aucune action de
 > notre part)
 >
@@ -135,10 +148,13 @@ not a gesture. Canari's and Authentik's services already carry this per service.
 >    `systemd-journald` (75 + 2 x 7 jours reste sous 90, journald ne supprimant que des fichiers
 >    entiers lors d'une rotation).
 > 2. **nginx** : confirmer que `/etc/logrotate.d/nginx` (qui couvre `canari-prod.access.log`,
->    `canari-dev.access.log` et `authentik.access.log`) est en `daily` avec `rotate` <= 89, et y
->    ajouter `maxage 89`.
-> 3. **CrowdSec** : regler `common.log_max_age: 80` dans `/etc/crowdsec/config.yaml` (les archives
->    `crowdsec_api.log` s'accumulent depuis le 15/09 sans suppression), et confirmer
+>    `canari-dev.access.log` et `authentik.access.log`) est en `daily` avec `rotate` <= 80, et y
+>    ajouter `maxage 80` (la marge couvre une rotation sautee : `maxage` juge un fichier sur sa
+>    ligne la plus recente).
+> 3. **CrowdSec** : nous indiquer d'abord ce qui fait tourner `crowdsec_api.log` (les valeurs
+>    `log_max_size` / `log_max_files` / `log_max_age` de `/etc/crowdsec/config.yaml`, ou un
+>    fichier `logrotate`), puisque les archives s'accumulent depuis le 15/09 sans suppression ;
+>    puis borner a 80 jours par ce mecanisme (`common.log_max_age: 80`, ou `maxage 80`), et confirmer
 >    `db_config.flush.max_age` <= 90 jours (7 jours par defaut). Nous notons aussi, pour votre
 >    registre, que le partage de signaux vers l'API centrale CrowdSec transmet des adresses IP a un
 >    tiers.
