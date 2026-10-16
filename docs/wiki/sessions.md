@@ -80,12 +80,17 @@ backgrounded app makes no call. A slow-but-alive refresh abandoned at its deadli
 followed by nothing until the grace ran out, and the next refresh would revoke the session as a
 replay - where before the deadline it simply succeeded (adversarial review of #1966, 2026-10-16).
 
-**So a refresh whose head missed its deadline is re-sent ONCE, at once, with the SAME credential**,
-inside the shared single-flight promise. The server makes that safe by construction: if the first
-request never arrived, the re-send rotates normally; if it did, the re-send gets the grace answer.
-Never a double rotation. `REFRESH_DEADLINE_MS` is the read class's 20 s, and the call is labelled
-`read`, because what the policy needs is a call that may be re-sent once without a second effect -
-what a GET is, and what this POST is inside the grace; two deadlines are 40 s, inside the 60 s. A
+**So a refresh whose head missed its deadline is re-sent ONCE, at once, with the SAME credential**
+(the stored copy where the client carries it in `X-Canari-Refresh`, the jar's current cookie
+otherwise), inside the shared single-flight promise. The server makes that safe by construction: if
+the first request never arrived, the re-send rotates normally; if it did, the re-send gets the grace
+answer. Never a double rotation. `REFRESH_DEADLINE_MS` is the read class's 20 s, and the call is
+labelled `read`, because what the policy needs is a call that may be re-sent once without a second
+effect - what a GET is, and what this POST is inside the grace. The bound that must fit in the 60 s
+grace is the RE-SEND'S ARRIVAL, about one deadline (20 s) after the rotation the first request
+caused - not the 40 s the two deadlines take in total. **One case is accepted:** an abandoned
+original delivered to the server MORE than 60 s after the re-send rotated would read as a replay
+and revoke the session; any retry of a rotating request has that case, and no deadline removes it. A
 second deadline rejects as a `RequestDeadlineError`, and a 401 on the re-send is the dead session it
 always was. No deadline is the worse case: an engine giving up after minutes has lost the same
 response AND spent the grace.

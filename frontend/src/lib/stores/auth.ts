@@ -109,13 +109,16 @@ let _noNetworkSpellFailure: TransportFailureError | RequestDeadlineError | null 
  * that window.
  *
  * NOTHING ELSE GUARANTEES A NEXT REFRESH, so the refresh re-sends itself, ONCE, at once, with the
- * SAME credential ({@link REFRESH_DEADLINE_RESENDS}). A cold start's `hasStoredSession` swallows the
+ * SAME credential ({@link REFRESH_DEADLINE_RESENDS}) - the stored copy where the client carries it
+ * (`X-Canari-Refresh`), the jar's current cookie otherwise. A cold start's `hasStoredSession` swallows the
  * failure and leaves the user on the login screen, the no-network gate holds refreshes until a
  * reconnect, and a backgrounded app makes no call at all - so "the next caller is the retry" could
  * leave a rotation lost until the grace ran out and the next refresh revoked the session as a replay.
  * The re-send is safe by the server's construction: a first request that never arrived means the
  * re-send rotates normally; one that did arrive means the re-send gets the grace answer. Never a
- * double rotation. Two deadlines are therefore at most 40 s, inside the 60 s grace.
+ * double rotation. The bound that must fit in the 60 s grace is the RE-SEND'S ARRIVAL, which the
+ * server sees about one deadline (20 s) after the rotation the first request caused - not the 40 s
+ * the two deadlines take in total.
  *
  * It is the read class's number and the call is labelled `read`, on purpose: what the deadline policy
  * needs is a call that may be re-sent once without a second effect, which is what a GET is and what
@@ -738,8 +741,9 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
   // deadline expiry counts as a stall. Without it a stalled or captive link held every request of a
   // cold open behind this one for as long as the engine tolerates, minutes.
   //
-  // A head that missed its deadline is re-sent ONCE, at once, with the SAME credential (`carried` is
-  // read once above, and an aborted request delivered no `Set-Cookie`), inside this shared promise so
+  // A head that missed its deadline is re-sent ONCE, at once, with the SAME credential - the stored
+  // copy where we carry it (`carried` is read once above), the jar's current cookie otherwise (an
+  // aborted request delivered no `Set-Cookie`) - inside this shared promise so
   // the single flight holds - see `REFRESH_DEADLINE_MS` for why that can never rotate twice.
   const send = (): Promise<Response> =>
     trackedFetch(
