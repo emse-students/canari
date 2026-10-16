@@ -5,14 +5,9 @@
   import SessionActionButtons from './SessionActionButtons.svelte';
   import Avatar from '../shared/Avatar.svelte';
   import { goto } from '$app/navigation';
-  import { clearAuth, leaveSignedOut } from '$lib/stores/auth';
+  import { signOutByChoice } from '$lib/stores/auth';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { m } from '$lib/paraglide/messages';
-
-  async function handleLogout() {
-    await clearAuth();
-    await leaveSignedOut();
-  }
 </script>
 
 <!--
@@ -48,7 +43,7 @@
       {#if globalSession.isLoggedIn}
         <EcosystemLauncher />
       {/if}
-      <SessionActionButtons onLogout={handleLogout} />
+      <SessionActionButtons onLogout={() => void signOutByChoice()} />
       {#if globalSession.isLoggedIn && globalSession.userId}
         <button
           type="button"

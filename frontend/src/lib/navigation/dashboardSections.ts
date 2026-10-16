@@ -37,8 +37,16 @@ import { editSectionHref } from '$lib/associations/editSections';
 import type { AdminScopeLabels } from '$lib/admin/access';
 import type { HubRow } from '$lib/components/navigation/breadcrumb';
 
-/** The groups, top to bottom; the conditional ones sit BELOW the static ones so nothing shifts up. */
+/**
+ * The groups, top to bottom. Identity and Explorer depend on nothing asked and draw on the first
+ * frame; everything below them depends on the probes (memberships, admin tier, reviewer access),
+ * so it is drawn only once they have ALL answered, and the page holds a placeholder in its place
+ * until then. Drawn earlier, Compte would slide down under a finger as each group arrived.
+ */
 export type DashboardGroupKey = 'identity' | 'explore' | 'managed' | 'admin' | 'account';
+
+/** The groups drawn before the probes answer: they read nothing a probe returns. */
+const SETTLED_FREE: readonly DashboardGroupKey[] = ['identity', 'explore'];
 
 /** What the dashboard knows about its reader. */
 export interface DashboardFacts {
@@ -56,6 +64,8 @@ export interface DashboardFacts {
   isReviewer: boolean;
   /** The reader's memberships (`ensureMyAssociations`), `[]` until they arrive. */
   memberships: readonly Association[];
+  /** Every probe above has answered (or failed, logged); until then only the free groups draw. */
+  probesSettled: boolean;
 }
 
 /** The page's handlers for the action rows; a table cannot hold a closure over page state. */
@@ -149,7 +159,8 @@ const ENTRIES: readonly DashboardEntry[] = [
     label: () => m.directory_heading(),
     summary: () => m.directory_subtitle(),
     icon: BookUser,
-    may: (f) => f.mayOpenAdmin,
+    // Arrives with the probed groups, not alone: one change below Explorer, never two.
+    may: (f) => f.probesSettled && f.mayOpenAdmin,
   },
   {
     key: 'admin',
@@ -230,7 +241,14 @@ const GROUP_ORDER: readonly DashboardGroupKey[] = [
   'account',
 ];
 
-/** One group as the page draws it. `heading: false` for the identity row, which needs none. */
+/**
+ * Groups drawn with no visible heading: the identity row stands alone, and the admin group's one
+ * row already says what the heading would (`adminScope.title()`), so a heading would repeat it.
+ * The label still names the list for assistive technology.
+ */
+const HEADINGLESS: readonly DashboardGroupKey[] = ['identity', 'admin'];
+
+/** One group as the page draws it. */
 export interface DashboardGroup {
   key: DashboardGroupKey;
   label: string;
@@ -238,20 +256,30 @@ export interface DashboardGroup {
   rows: HubRow[];
 }
 
-/** The groups the dashboard draws for `facts`, each with only its visible rows; empty ones vanish. */
+/**
+ * The groups the dashboard draws for `facts`, each with only its visible rows; empty ones vanish.
+ * Before the probes settle, only the groups that read none of them (`SETTLED_FREE`).
+ */
 export function dashboardHubGroups(
   facts: DashboardFacts,
   actions: DashboardActions
 ): DashboardGroup[] {
-  return GROUP_ORDER.map((key) => {
-    const rows =
-      key === 'managed'
-        ? managedRows(facts.memberships)
-        : ENTRIES.filter((e) => e.group === key && (e.may?.(facts) ?? true)).map((e) =>
-            toRow(e, facts, actions)
-          );
-    return { key, label: groupLabel(key, facts), heading: key !== 'identity', rows };
-  }).filter((g) => g.rows.length > 0);
+  return GROUP_ORDER.filter((key) => facts.probesSettled || SETTLED_FREE.includes(key))
+    .map((key) => {
+      const rows =
+        key === 'managed'
+          ? managedRows(facts.memberships)
+          : ENTRIES.filter((e) => e.group === key && (e.may?.(facts) ?? true)).map((e) =>
+              toRow(e, facts, actions)
+            );
+      return {
+        key,
+        label: groupLabel(key, facts),
+        heading: !HEADINGLESS.includes(key),
+        rows,
+      };
+    })
+    .filter((g) => g.rows.length > 0);
 }
 
 /** An entry as a hub row: a link, or the action the page handed in. */
@@ -260,14 +288,14 @@ function toRow(e: DashboardEntry, f: DashboardFacts, actions: DashboardActions):
     key: e.key,
     label: e.label(f),
     summary: e.summary?.(f),
-    icon: e.icon,
     tone: e.tone,
   };
+  // The reader's own row leads with their avatar; without a known id, with the glyph.
+  const lead = e.key === 'profile' && f.userId ? { avatarUserId: f.userId } : { icon: e.icon };
   const row: HubRow =
     typeof e.target === 'string'
-      ? { ...base, href: e.target }
-      : { ...base, onSelect: actions[e.target.action] };
-  if (e.key === 'profile' && f.userId) row.avatarUserId = f.userId;
+      ? { ...base, ...lead, href: e.target }
+      : { ...base, ...lead, onSelect: actions[e.target.action] };
   if (e.key === 'notifications' && f.unreadNotifications > 0) {
     row.badge = f.unreadNotifications;
     row.badgeLabel = m.dashboard_unread_notifications_label({ count: f.unreadNotifications });

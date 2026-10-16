@@ -2709,6 +2709,7 @@
   "dashboard_profile_label": "Mon profil",
   "dashboard_managed_heading": "Mes associations",
   "dashboard_signout_label": "Se déconnecter",
+  "auth_signout_failed": "La déconnexion n'a pas abouti. Réessayez.",
   "dashboard_unread_notifications_label": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

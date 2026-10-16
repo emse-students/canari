@@ -25,7 +25,6 @@ interface HubRowBase {
   /** Stable key, also the test hook (`data-hub-row`). */
   key: string;
   label: string;
-  icon: import('svelte').Component<{ size?: number }>;
   /** One line under the label, only where it is already known (a count, a state). */
   summary?: string;
   /** `danger` draws the row in the destructive colour. */
@@ -34,15 +33,21 @@ interface HubRowBase {
   badge?: number;
   /** The localized name of `badge` for assistive technology; required for the pill to be read. */
   badgeLabel?: string;
-  /** Draws this person's avatar in place of `icon`: the reader's own identity row. */
-  avatarUserId?: string;
 }
+
+/** A row's glyph: a Lucide component. */
+export type HubIcon = import('svelte').Component<{ size?: number }>;
+
+/** What leads a row: a glyph, or - for the reader's own identity row - their avatar. Never both. */
+type HubRowLead = { icon: HubIcon; avatarUserId?: never } | { avatarUserId: string; icon?: never };
 
 /**
  * One row of a hub: a section the reader can go INTO (`href`, a real link), or - for the one
  * gesture that is not a place, signing out - an ACTION (`onSelect`, a button). Never both.
  */
-export type HubRow = HubLinkRow | (HubRowBase & { onSelect: () => void; href?: never });
+export type HubRow =
+  | HubLinkRow
+  | (HubRowBase & HubRowLead & { onSelect: () => void; href?: never });
 
 /** A hub row that is a place: what every area hub but the dashboard's sign-out is made of. */
-export type HubLinkRow = HubRowBase & { href: string; onSelect?: never };
+export type HubLinkRow = HubRowBase & HubRowLead & { href: string; onSelect?: never };

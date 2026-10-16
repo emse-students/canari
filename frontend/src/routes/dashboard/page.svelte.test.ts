@@ -13,11 +13,13 @@ const state = vi.hoisted(() => ({
   reviewer: false,
   unread: 0,
   memberships: [] as unknown[],
+  /** When set, the membership probe waits for `release()`: a cold cache on a slow link. */
+  hold: null as null | Promise<void>,
 }));
-const clearAuth = vi.hoisted(() => vi.fn());
-const leaveSignedOut = vi.hoisted(() => vi.fn());
+const signOutByChoice = vi.hoisted(() => vi.fn());
+const loadNotifs = vi.hoisted(() => vi.fn());
 
-vi.mock('$lib/stores/auth', () => ({ clearAuth, leaveSignedOut }));
+vi.mock('$lib/stores/auth', () => ({ signOutByChoice }));
 vi.mock('$lib/stores/user', () => ({
   currentUserId: () => 'u-1',
   getSavedDisplayName: () => 'Ada Lovelace',
@@ -28,11 +30,15 @@ vi.mock('$lib/stores/postNotifStore.svelte', () => ({
     get unread() {
       return state.unread;
     },
+    load: loadNotifs,
   },
 }));
 vi.mock('$lib/associations/api', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/associations/api')>()),
-  ensureMyAssociations: () => Promise.resolve(state.memberships),
+  ensureMyAssociations: async () => {
+    if (state.hold) await state.hold;
+    return state.memberships;
+  },
   getReviewerAccess: () => Promise.resolve(state.reviewer),
 }));
 // The identity row's avatar resolves a name and a picture; neither is what is under test here.
@@ -72,9 +78,10 @@ beforeEach(() => {
     reviewer: false,
     unread: 0,
     memberships: [],
+    hold: null,
   });
-  clearAuth.mockReset().mockResolvedValue(undefined);
-  leaveSignedOut.mockReset().mockResolvedValue(undefined);
+  signOutByChoice.mockReset().mockResolvedValue(undefined);
+  loadNotifs.mockReset().mockResolvedValue(undefined);
   vi.spyOn(console, 'debug').mockImplementation(() => {});
 });
 afterEach(() => {
@@ -146,8 +153,10 @@ describe('dashboard hub', () => {
     state.mayOpenAdmin = true;
     state.reviewer = true;
     await render();
-    expect(groupHeadings()).toEqual(['explore', 'admin', 'account']);
+    // The admin group has no visible heading: its one row already says it.
+    expect(groupHeadings()).toEqual(['explore', 'account']);
     expect(rows()).toContainEqual(['admin', '/admin']);
+    expect(document.querySelector('section[aria-labelledby="group-admin"]')).toBeNull();
     expect(rows()).toContainEqual(['directory', '/directory']);
     expect(keys().slice(-3)).toEqual(['settings', 'documents', 'sign-out']);
   });
@@ -157,8 +166,37 @@ describe('dashboard hub', () => {
     await render();
     const badge = document.querySelector('[data-hub-row="notifications"] [data-hub-badge]');
     expect(badge?.textContent?.trim()).toBe('3');
-    expect(badge?.getAttribute('aria-label')).toBeTruthy();
+    // The pill is hidden from assistive technology; a sentence is read in its place.
+    expect(badge?.getAttribute('aria-hidden')).toBe('true');
+    const said = document.querySelector('[data-hub-row="notifications"] [data-hub-badge-label]');
+    expect(said?.classList.contains('sr-only')).toBe(true);
+    expect(said?.textContent).toContain('3');
     expect(document.querySelectorAll('[data-hub-badge]')).toHaveLength(1);
+  });
+
+  it('asks the notification store to load on mount, so a cold open has a count', async () => {
+    await render();
+    expect(loadNotifs).toHaveBeenCalledOnce();
+  });
+
+  it('holds the place of the probed groups until every probe answers: nothing moves under a finger', async () => {
+    let release!: () => void;
+    state.hold = new Promise<void>((r) => (release = r));
+    state.mayOpenAdmin = true;
+    await render();
+    expect(keys()).not.toContain('settings');
+    expect(keys()).not.toContain('sign-out');
+    expect(document.querySelector('[data-dashboard-pending]')).not.toBeNull();
+    expect(keys().at(-1)).toBe('notifications');
+
+    release();
+    for (let i = 0; i < 5; i++) {
+      await tick();
+      flushSync();
+    }
+    expect(document.querySelector('[data-dashboard-pending]')).toBeNull();
+    expect(keys().slice(-2)).toEqual(['settings', 'sign-out']);
+    expect(keys()).toContain('directory');
   });
 
   it('draws no pill when nothing is unread', async () => {
@@ -174,9 +212,7 @@ describe('dashboard hub', () => {
     expect(keys().at(-1)).toBe('sign-out');
     row.click();
     await tick();
-    await tick();
-    expect(clearAuth).toHaveBeenCalledOnce();
-    expect(leaveSignedOut).toHaveBeenCalledOnce();
+    expect(signOutByChoice).toHaveBeenCalledOnce();
   });
 
   it('has no theme control any more: the theme lives in settings', async () => {

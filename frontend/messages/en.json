@@ -2677,6 +2677,7 @@
   "dashboard_profile_label": "My profile",
   "dashboard_managed_heading": "My associations",
   "dashboard_signout_label": "Sign out",
+  "auth_signout_failed": "Signing out did not finish. Try again.",
   "dashboard_unread_notifications_label": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

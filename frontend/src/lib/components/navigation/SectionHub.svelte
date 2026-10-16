@@ -54,10 +54,10 @@
 </ul>
 
 {#snippet content(row: HubRow)}
-  {@const Icon = row.icon}
   {#if row.avatarUserId}
     <Avatar userId={row.avatarUserId} size="sm" />
-  {:else}
+  {:else if row.icon}
+    {@const Icon = row.icon}
     <Icon size={20} />
   {/if}
   <!-- A label WRAPS and a summary keeps two lines: at 200 % text a 390 px row cut a person's name
@@ -69,13 +69,18 @@
     {/if}
   </span>
   {#if row.badge && row.badge > 0}
-    <!-- The sidebar's count pill: the same number, the same look, in a row. -->
+    <!-- The sidebar's count pill: the same number, the same look, in a row. A label on a plain
+         span is not read, so the pill is hidden from assistive technology and the sentence is
+         read in its place. -->
     <span
       data-hub-badge
-      aria-label={row.badgeLabel}
+      aria-hidden="true"
       class="text-2xs inline-flex shrink-0 items-center justify-center rounded-full bg-red-500 px-2 py-0.5 leading-none font-bold text-white"
     >
       {row.badge > 99 ? '99+' : row.badge}
     </span>
+    {#if row.badgeLabel}
+      <span class="sr-only" data-hub-badge-label>{row.badgeLabel}</span>
+    {/if}
   {/if}
 {/snippet}
