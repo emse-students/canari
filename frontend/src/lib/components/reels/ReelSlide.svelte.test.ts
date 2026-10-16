@@ -187,6 +187,10 @@ it('unfolded on a letterboxed reel, the text never outgrows the frame, and outsi
   expect(block.closest('[data-reel-frame]')).not.toBeNull();
   for (const c of ['flex', 'flex-col', 'max-h-full', 'z-20']) expect(block.classList).toContain(c);
   expect(block.firstElementChild!.classList).toContain('shrink-0');
+  // A frame that does not reach the screen bottom (here: unmeasured) owes no safe-area inset; when
+  // it does is `frameReachesBottom`'s, tested on its own (`reelFrame.test.ts`).
+  expect(block.getAttribute('data-reel-caption-inset')).toBe('none');
+  expect(block.classList).toContain('pb-18');
   expect(q('[data-reel-caption-open]')!.classList).toContain('min-h-0');
   expect(q('[data-reel-caption-toggle]')!.classList).toContain('shrink-0');
   // The tap-outside layer spans the whole slide, letterbox bands included, under the caption.

@@ -56,6 +56,8 @@
   let textEl = $state<HTMLDivElement | undefined>();
   /** Whether the folded text hides lines - measured, so a short caption shows no "Voir plus". */
   let overflows = $state(false);
+  /** Whether the reel's frame reaches the screen bottom (`ReelFrame`): only then is the inset owed. */
+  let frameReachesBottom = $state(true);
 
   function setExpanded(next: boolean) {
     console.debug(`[reel-viewer] caption ${next ? 'expanded' : 'folded'} on ${post.id}`);
@@ -89,7 +91,7 @@
   <!-- THE SAME FRAME AS THE CAMERA, THE REVIEW AND THE EDITOR: what is published is what was framed,
        in the reel's own shape (a legacy reel was captured to a screen box, a gallery import has its
        own). The caption is INSIDE the frame, above the player's bar, so the two never overlap. -->
-  <ReelFrame {ratio}>
+  <ReelFrame {ratio} bind:reachesBottom={frameReachesBottom}>
     <div class="flex h-full w-full items-center justify-center">
       {#if active && video}
         <PostMedia media={video} {authToken} galleryMode {barActions} />
@@ -104,12 +106,18 @@
          half the screen, so the block is a column capped at the frame (`max-h-full`) and the text
          is the part that SHRINKS (`min-h-0`) and scrolls - the author row and the toggle stay.
          Above the tap-outside layer (`z-20` over its `z-10`). Pointer-transparent except the
-         author link and the text controls, so a tap anywhere else still reaches the video. -->
+         author link and the text controls, so a tap anywhere else still reaches the video.
+         The bottom safe-area inset is paid ONLY when the frame reaches the screen bottom: a
+         letterboxed frame sits well above the home indicator, and the inset there would leave the
+         caption about one line. -->
     <div
-      class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col bg-linear-to-t from-black/80 via-black/50 to-transparent px-4 pb-[calc(var(--safe-area-inset-bottom,0px)+4.5rem)] text-white {expanded
+      class="pointer-events-none absolute inset-x-0 bottom-0 z-20 flex max-h-full flex-col bg-linear-to-t from-black/80 via-black/50 to-transparent px-4 text-white {expanded
         ? 'pt-4'
-        : 'pt-16'}"
+        : 'pt-16'} {frameReachesBottom
+        ? 'pb-[calc(var(--safe-area-inset-bottom,0px)+4.5rem)]'
+        : 'pb-18'}"
       data-reel-caption
+      data-reel-caption-inset={frameReachesBottom ? 'safe-area' : 'none'}
     >
       <div class="flex min-w-0 shrink-0 items-center gap-2">
         {#if authorHref}

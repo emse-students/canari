@@ -389,7 +389,8 @@ description rendered by `PostMarkdown` (the card's renderer and preprocessing, n
 copy). The text folds to two lines; "Voir plus" (`post_voir_plus`, the card's own string) unfolds it
 IN PLACE, scrollable up to half the screen and NEVER taller than the reel's frame (a letterboxed
 landscape frame is shorter than that: the block is a column capped at the frame, and the text is the
-part that shrinks and scrolls, so the author row is never clipped). "Voir moins" or a tap anywhere
+part that shrinks and scrolls, so the author row is never clipped; and it pays the bottom safe-area
+inset only when the frame reaches the screen bottom, `frameReachesBottom`). "Voir moins" or a tap anywhere
 on the slide, letterbox bands included, folds it; while it is unfolded the up/down keys scroll the
 text instead of turning the reel. The fold is
 measured (`watchClampOverflow`, shared with the card), so a short caption has no button. Unfolding
