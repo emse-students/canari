@@ -89,8 +89,11 @@ nginx: the access log
 image symlinks `/var/log/nginx/*.log` there - so no log FILE is written inside any container, and
 they live in the container log and its archives. No NestJS or Rust service logs an address (swept
 2026-10-16: no logger line names `ip`, `X-Real-IP` or a peer address). The other services' logs
-carry user ids, which is why the ceiling is applied to every container, not only the frontend. Third-party containers of the estate log PEER addresses of their own - garage's S3 request lines, adminer's `php -S` access lines, postgres connection logs - which today are
-container-network addresses, not clients; the ceiling below covers every container regardless.
+carry user ids, which is why the ceiling is applied to every container, not only the frontend.
+Third-party containers of the estate log PEER addresses of their own - garage's S3 request lines,
+adminer's `php -S` access lines, postgres connection logs when `log_connections` is on - which
+today are container-network addresses, not clients; the ceiling below covers every container
+regardless.
 
 **A SIZE CAP IS NOT AN AGE CAP.** `max-size: 10m` / `max-file: "3"` bounds the bytes, so the oldest
 line held is the one written 30 MB ago. A busy container rolls that over in minutes
@@ -106,7 +109,7 @@ its log. So there is no proof from the size cap, and none is claimed.
 | The deploy-log archive | an archive holds at most the 30 days before its deploy (`docker logs --since 720h`) and is deleted at 30 days, so a line lives at most 60 days + the gap between two prunes | `prune_log_archive`, at every deploy (`archive_logs`) and daily (`log-retention-report.sh`); allowlist: only a directory named like a stamp it writes is ever removed, anything else is reported |
 | A live container log | **REPORTED, not enforced**: a line older than 60 days turns the daily run red, naming the container and the line's date; one older than 90 days is reported as the promise broken | `report_live_log_age` asks each log `docker logs --until 1440h` - the log itself is the evidence, so a busy container whose rotation already dropped its old lines is not reported |
 | `auth_sessions."lastIp"` / `"userAgent"` | at most 7 days + 1 hour old | every write of `lastIp` moves `expiresAt` to `SESSION_TTL_SECONDS` later in the same statement, and the hourly sweep deletes the row past it - no job of its own, asserted in `auth-sessions.service.spec.ts` |
-| The nightly backup archive (`postgres_auth_db.sql.gz` holds `auth_sessions`) | about 15 days (`BACKUP_RETENTION_DAYS=14` with `find -mtime +14`, which deletes a file once it is 15 whole days old) + the 7-day row bound | `backup.sh`, locally and on `mitv`; restic holds only object volumes, no log and no IP ([backup](backup.md)) |
+| The nightly backup archive (`postgres_auth_db.sql.gz` holds `auth_sessions`) | up to ~16 days (`BACKUP_RETENTION_DAYS=14` with `find -mtime +14`, which deletes a file once it is 15 whole days old, at the next nightly run) + the 7-day row bound | `backup.sh`, locally and on `mitv`; restic holds only object volumes, no log and no IP ([backup](backup.md)) |
 
 **Why the live half is a report.** The only operation that deletes a live line is recreating its
 container, which on production is a restart nobody watches. Automating it was drafted on

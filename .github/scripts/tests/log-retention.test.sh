@@ -56,6 +56,8 @@ logs)
   ancient) printf '%s.000000001Z GET /\n' "$PAST_PROMISE" ;;
   broken) printf 'Error response from daemon: configured logging driver does not support reading\n' >&2; exit 1 ;;
   mute) exit 1 ;;
+  # What a real old log does: `head` takes the first line and closes, and docker dies of SIGPIPE.
+  piped) printf '%s.123456789Z GET /api/version\n' "$RECENT_OLD"; kill -PIPE $$ ;;
   esac
   ;;
 esac
@@ -111,6 +113,14 @@ if [ "$status" -ne 0 ] && grep -q "could not read the log of mute" "$TMP/out" &&
   ok "a CLI that fails with NO output is unreadable, not a log holding nothing old"
 else
   fail "a silent docker failure passed as a clean log (status=$status): $(cat "$TMP/out")"
+fi
+
+run "piped"
+status=$?
+if [ "$status" -ne 0 ] && grep -q "piped holds a line from ${RECENT_OLD}Z" "$TMP/out" && ! grep -q "could not read the log of piped" "$TMP/out"; then
+  ok "docker killed by SIGPIPE after its first line (141) is a READ, reported as old"
+else
+  fail "a SIGPIPE'd read was misreported (status=$status): $(cat "$TMP/out")"
 fi
 
 if [ "$LOG_LIVE_MAX_DAYS" -lt "$LOG_PROMISE_DAYS" ]; then

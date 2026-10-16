@@ -40,9 +40,9 @@ not control. What it DOES control is enforced or reported since 2026-10-16
 - **Authentik's own event log.** Every `login`, `login_failed` and `authorize_application` event
   stores `client_ip`; the default retention is `days=365`. Admin interface > System > Settings >
   *Event retention*: set `days=90` (or shorter). It is a production write on the identity provider,
-  hence the user's. The nightly backup carries `authentik_db.sql.gz` for about 15 days (`-mtime +14` deletes a file only once it is 15
-whole days old, and only when the nightly run happens), so once the events
-  are bounded the archive is too ([backup](backup.md)).
+  hence the user's. The nightly backup carries `authentik_db.sql.gz` for up to ~16 days
+  (`-mtime +14` deletes a file only once it is 15 whole days old, and only when the nightly run
+  happens), so once the events are bounded the archive is too ([backup](backup.md)).
 - **Authentik's container logs** (`miconnect` stack, `infrastructure/authentik/compose.yml`):
   capped at 30 MB each, but not bounded in time, for the reason [logging](logging.md#the-90-day-ceiling-2026-10-16)
   gives; the daily report does not read this stack because nothing deploys it. Recreated by hand.
@@ -89,7 +89,7 @@ file logger (lumberjack) rotates on `log_max_size` and keeps `log_max_files` by 
 `log_max_age`; its defaults (500 MB, 3 files, 28 days) cannot produce what was measured - a ~1.1 MB
 gz every ~2 days beside a 12 MB live file, accumulating since 2026-09-15 - so either the DSI set
 those keys explicitly or `logrotate` does it. The rotated files' names tell the two apart
-(`crowdsec_api-<timestamp>.log.gz` is lumberjack, `crowdsec_api.log.N.gz` is logrotate). If it is
+(`crowdsec_api-<timestamp>.log.gz` is lumberjack, `crowdsec_api.log.N.gz`, or `crowdsec_api.log-YYYYMMDD.gz` with `dateext`, is logrotate). If it is
 logrotate, `log_max_age` changes nothing and the stanza wants `maxage 80` as for nginx. Either way a
 rotated file covers the days since the previous rotation, so 80 leaves the slack. The same key
 exists in the bouncer's own configuration if it logs to a file. Verify: `systemctl restart crowdsec`,
