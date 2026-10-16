@@ -120,10 +120,11 @@ ceiling_ecosystem_from_ref() {
 # Prints the major dev is declared to run for image "$1", IF AND ONLY IF that gap has been proven by
 # an in-place upgrade of production's OWN data directory. Prints nothing in every other case.
 #
-# IT FAILS CLOSED, AND THE REASON IS A MEASUREMENT RATHER THAN CAUTION. The dev environment is loaded
-# by `infrastructure/dev/copy-prod-to-dev.sh`, which is a LOGICAL copy - `pg_dump` replayed into a
-# cluster the new major initialised itself, from empty. So "dev runs 18 and serves" is evidence about
-# a SCHEMA, not about a data directory, and it cannot fail the way production failed on 2026-09-01.
+# IT FAILS CLOSED, AND THE REASON IS A MEASUREMENT RATHER THAN CAUTION. The dev environment holds a
+# fictional seed loaded by SQL (`infrastructure/dev/reset-dev-to-seed.sh`; until 2026-10-16 it held a
+# `pg_dump` of production, which was no better) - rows replayed into a cluster the new major
+# initialised itself, from empty. So "dev runs 18 and serves" is evidence about a SCHEMA, not about a
+# data directory, and it cannot fail the way production failed on 2026-09-01.
 # Accepting it here would have re-armed that outage behind a gate that reads as proof. Of the four
 # `evidence` values in `version-gap.yml` only `in_place_upgrade` answers the question this arm asks,
 # and a row claiming it without a `proof` is a claim nobody can check, so it is refused too.

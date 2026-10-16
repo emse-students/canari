@@ -5,8 +5,11 @@ import {
   keyboardSafeAreaBottomOverride,
   overlaySettledAroundFocus,
   pinSafeAreaBottom,
+  revealBehavior,
+  scrollFocusedFieldIntoView,
   type ViewportMeasurement,
 } from './keyboardViewport.svelte';
+import { readFileSync } from 'node:fs';
 
 describe('hasVirtualKeyboard', () => {
   it('is false on desktop, where a shorter window is a resize and not a keyboard', () => {
@@ -307,5 +310,58 @@ describe('overlaySettledAroundFocus - the reveal redone once the overlay stops m
       false
     );
     expect(overlaySettledAroundFocus('height', overlay, null)).toBe(false);
+  });
+});
+
+describe('the reveal of a focused field (iPhone 12, v1.2.9-alpha.4)', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+    vi.restoreAllMocks();
+  });
+
+  function focusedModalField(): ReturnType<typeof vi.fn> {
+    vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb) => {
+      cb(0);
+      return 0;
+    });
+    const overlay = document.createElement('div');
+    overlay.setAttribute('data-keyboard-aware-overlay', '');
+    const field = document.createElement('input');
+    const scrollIntoView = vi.fn();
+    field.scrollIntoView = scrollIntoView;
+    overlay.appendChild(field);
+    document.body.appendChild(overlay);
+    field.focus();
+    return scrollIntoView;
+  }
+
+  it('stays `nearest` inside a modal, so a field already in view never jumps', () => {
+    const scrollIntoView = focusedModalField();
+    scrollFocusedFieldIntoView('auto');
+    expect(scrollIntoView).toHaveBeenCalledWith({
+      block: 'nearest',
+      inline: 'nearest',
+      behavior: 'auto',
+    });
+  });
+
+  it('never animates for someone who asked for reduced motion', () => {
+    expect(revealBehavior('smooth', true)).toBe('auto');
+    expect(revealBehavior('smooth', false)).toBe('smooth');
+    expect(revealBehavior('auto', false)).toBe('auto');
+    vi.spyOn(window, 'matchMedia').mockImplementation(
+      (query: string) => ({ matches: query.includes('reduce'), media: query }) as MediaQueryList
+    );
+    const scrollIntoView = focusedModalField();
+    scrollFocusedFieldIntoView('smooth');
+    expect(scrollIntoView).toHaveBeenCalledWith(expect.objectContaining({ behavior: 'auto' }));
+  });
+
+  it('a modal field carries the scroll margin that keeps the NEXT field above the footer', () => {
+    const css = readFileSync('src/app.css', 'utf8');
+    const rule = css.match(/\[data-keyboard-aware-overlay\]\s*:is\(([^{]+)\)\s*\{([^}]*)\}/);
+    expect(rule, 'the overlay field rule is gone from app.css').not.toBeNull();
+    expect(rule![1]).toContain('input');
+    expect(rule![2]).toMatch(/scroll-margin-block-end:\s*6\.5rem/);
   });
 });

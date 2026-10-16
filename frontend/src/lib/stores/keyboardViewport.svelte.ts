@@ -262,13 +262,34 @@ function isFocusableField(el: HTMLElement): boolean {
   );
 }
 
-/** Scrolls the focused field into the visible viewport (above the virtual keyboard). */
+/**
+ * How a reveal moves: never animated for someone who asked the system for reduced motion.
+ *
+ * @param requested what the caller asked for (`auto` after a keyboard rise, `smooth` otherwise).
+ * @param reducedMotion whether `prefers-reduced-motion: reduce` matches.
+ */
+export function revealBehavior(requested: ScrollBehavior, reducedMotion: boolean): ScrollBehavior {
+  return reducedMotion ? 'auto' : requested;
+}
+
+/**
+ * Scrolls the focused field into the visible viewport (above the virtual keyboard).
+ *
+ * `nearest`, so a field already in view does not move. The room for the field AFTER it is not
+ * decided here: inside `[data-keyboard-aware-overlay]` every field carries a `scroll-margin-block-end`
+ * (`app.css`) that `nearest` honours, so the reveal stops with the next field's label and box still
+ * above the footer (the PIN change's confirm field stood cut under the submit button, iPhone 12,
+ * v1.2.9-alpha.4).
+ */
 export function scrollFocusedFieldIntoView(behavior: ScrollBehavior = 'smooth'): void {
   const el = document.activeElement;
   if (!(el instanceof HTMLElement) || !isFocusableField(el)) return;
   if (el.closest('.chat-composer-footer, .app-layout')) return;
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+  const how = revealBehavior(behavior, reduced);
+  Log.d('keyboardViewport', `revealing the focused field (${how})`);
   requestAnimationFrame(() => {
-    el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior });
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: how });
   });
 }
 

@@ -4,13 +4,11 @@ import type { UserBlocksService } from './user-blocks.service';
 import { User } from './entities/user.entity';
 
 /**
- * Blocking is exercised by `user-blocks.service.spec.ts`; here it only has to be present.
- * `deleteAllFor` is the one method this service calls, and it is asserted in the deletion suite -
- * a block row naming a deleted account would keep hiding a live person from somebody's search.
+ * Blocking is exercised by `user-blocks.service.spec.ts`; here it only has to be present. An
+ * account's blocks are erased with it by `AccountErasureService` (`CORE_ERASURE_STATEMENTS`).
  */
 function makeBlocksStub() {
   return {
-    deleteAllFor: jest.fn().mockResolvedValue(undefined),
     invisibleUserIdsFor: jest.fn().mockResolvedValue([]),
   } as unknown as UserBlocksService;
 }
@@ -103,52 +101,6 @@ describe('UsersService notepad', () => {
     // A second read must not rotate the key: every stored note would be lost.
     await expect(service.getOrCreateNotesKey('u1')).resolves.toBe(key);
     expect(save).toHaveBeenCalledTimes(1);
-  });
-});
-
-/**
- * Account deletion fans out to three services before the user row goes. Nothing type-checks
- * those URLs or the header that authorises them, so the shape is pinned here - and so is the
- * property that made the fan-out best-effort in the first place: a service being down must not
- * leave an account that can still log in.
- */
-jest.mock('axios');
-
-describe('UsersService.deleteUser fan-out', () => {
-  function makeService() {
-    const del = jest.fn().mockResolvedValue({ data: { deleted: 0 } });
-
-    const axios = jest.requireMock('axios') as { delete: jest.Mock };
-    axios.delete = del;
-
-    const remove = jest.fn().mockResolvedValue({ affected: 1 });
-    const userRepository = {
-      findOne: jest.fn().mockResolvedValue({ id: 'u1' }),
-      delete: remove,
-    } as unknown as Repository<User>;
-    return {
-      service: new UsersService(userRepository, {} as DataSource, makeBlocksStub()),
-      del,
-      remove,
-    };
-  }
-
-  it('asks media-service to delete the account owner uploads, with the internal secret', async () => {
-    const { service, del } = makeService();
-    await service.deleteUser('u1');
-
-    const call = del.mock.calls.find(([url]: [string]) => String(url).includes('/api/media/'));
-    expect(call).toBeDefined();
-    expect(call[0]).toContain('/api/media/internal/users/u1');
-    expect(call[1].headers).toHaveProperty('x-internal-secret');
-  });
-
-  it('still deletes the user row when every downstream call fails', async () => {
-    const { service, del, remove } = makeService();
-    del.mockRejectedValue(new Error('service down'));
-
-    await expect(service.deleteUser('u1')).resolves.toBeUndefined();
-    expect(remove).toHaveBeenCalledWith({ id: 'u1' });
   });
 });
 

@@ -409,7 +409,10 @@ time by the viewer, since an MSE URL feeds one element - the same rule the media
 `postAuthorName` and `postAuthorHref`, the SAME helpers as `PostHeader`, so an association post shows
 and links the association, a hidden author is "Anonyme" and links nowhere - then the age, then the
 description rendered by `PostMarkdown` (the card's renderer and preprocessing, not a plain-text
-copy). The text folds to two lines; "Voir plus" (`post_voir_plus`, the card's own string) unfolds it
+copy). The author link is ONE accessible element: named by its `aria-label` ("Voir le profil de
+..."), its picture and name `aria-hidden`, at least 44 px tall (`min-h-11`) - VoiceOver read a
+second "Avatar de" link inside it and a 242 x 869 pt frame around a 20 pt picture (iPhone 12,
+v1.2.9-alpha.4). The text folds to two lines; "Voir plus" (`post_voir_plus`, the card's own string) unfolds it
 IN PLACE, scrollable up to half the screen and NEVER taller than the reel's frame (a letterboxed
 landscape frame is shorter than that: the block is a column capped at the frame, and the text is the
 part that shrinks and scrolls, so the author row is never clipped; and it pays the bottom safe-area
@@ -455,6 +458,26 @@ ugly, and then asked for the IGTV shape instead of a filter. C7 still holds: no 
    dropped by the feed's `load` (`retiredFeedKind.ts`, a shim in
    [legacy-compatibility](../../legacy-compatibility.md)); and a stored `feed:<tab>:reel`
    page is never asked for and goes with the other stored pages at the next sign-out.
+
+### "Reels 2 and 3 never play" was two reels with no video (iPhone 12, `v1.2.9-alpha.4`, 2026-10-16)
+
+**Not a player defect, and the suspects are REFUTED on the phone.** The reading swiped from reel 1
+(plays) to reels 2 and 3: a play glyph, no player, taps ignored. Dev's `posts` table has three
+reels, and the two by the production member have `images = '[]'`: the copy of production empties
+every post's media (`infrastructure/lib/copy-strips.sh`, strip (d) - dev never receives the blobs),
+which leaves a reel without the one video that IS a reel. `ReelSlide` then draws `VideoPoster`, the
+same glyph a player shows before its first frame - so the screen promised playback that no code path
+could start. Read on the same phone 2026-10-16: a fresh bench reel published first, the earlier
+"Test" reel (with its video) reached by a swipe as slide 2 PLAYS (`Pause`, `0:02 sur 0:03` in the
+accessibility tree), and slide 3 (no video) shows the glyph. So iOS autoplay, the touch layers and
+the first-gesture rule are not it.
+
+**What changed:** an active reel with no video now logs ONE `[reel-viewer] reel <id> carries no
+video` at error level (`ReelSlide.svelte`), which reaches the in-app log - the reading had to find
+this in the database. **What is owed to the user:** the copy should DELETE reels (with their
+`post_notifications`, as the expiry worker does) instead of emptying them; a deletion in the copy
+script waits for the user's yes. Since 2026-10-16 that copy reaches only a developer's LOCAL stack -
+dev holds a fictional seed with no reel ([dev-environment](../../infrastructure/dev-environment.md#what-the-copy-was-kept-so-nobody-rebuilds-it)).
 
 ## Saving before the deletion (C6)
 

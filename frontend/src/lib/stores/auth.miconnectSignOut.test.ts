@@ -186,6 +186,31 @@ describe('from sign-in to sign-out', () => {
   });
 });
 
+describe('a sign-in refused while the account is being erased', () => {
+  it('shows the localised reason, not the server text, and says why in the log', async () => {
+    const { m } = await import('$lib/paraglide/messages');
+    localStorage.setItem('canari_oidc_state', 'st');
+    // core-service's ForbiddenException body: the code is what the client keys on.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ code: 'ACCOUNT_ERASURE_PENDING', message: 'server text' }),
+            { status: 403 }
+          )
+      )
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(handleOidcCallback('code', 'st')).rejects.toThrow(
+      m.auth_account_erasure_pending()
+    );
+    expect(warn).toHaveBeenCalledWith('[auth] sign-in refused: account erasure pending');
+    warn.mockRestore();
+  });
+});
+
 describe('which sign-outs end MiConnect', () => {
   const src = (p: string) => readFileSync(resolvePath(__dirname, '..', '..', p), 'utf8');
 

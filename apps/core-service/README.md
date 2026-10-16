@@ -41,7 +41,7 @@ User profiles, search, and directory:
 
 - **Profile**: public profile with `displayName`, `promo`, `formation`, `bio`, avatar. `GET /api/users/:id` (use `me` for caller).
 - **Edit profile**: `PATCH /api/users/me`.
-- **Account deletion**: `DELETE /api/users/me` — permanently deletes the account and all data across all services.
+- **Account deletion**: `DELETE /api/users/me` — deactivates the account at once and queues a guaranteed, retried erasure in every service ([account-erasure](../../docs/wiki/account-erasure.md)).
 - **Avatar**: fetched from an external service, proxied through `GET /api/users/:id/avatar`.
 - **Private notepad**: Markdown notes per user (`GET/PUT /api/users/me/notes`).
 - **Search**: `GET /api/users/search?q=...` — autocomplete, accent- and case-insensitive, typo-tolerant via `pg_trgm` trigram similarity. Excludes accounts a block stands between, in either direction.
