@@ -187,15 +187,20 @@ final class CanariButton: UIButton {
         activeObserver = NotificationCenter.default.addObserver(
             forName: UIApplication.didBecomeActiveNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            self?.holdPage(false, why: "the app became active")
+            // Delivered on the main queue (`queue: .main`), so the main actor holds by construction.
+            MainActor.assumeIsolated { self?.holdPage(false, why: "the app became active") }
         }
         if #available(iOS 16.0, *) { preferredMenuElementOrder = .fixed }
         apply(props)
     }
 
+    /// `deinit` is nonisolated, and a UIView is released on the main thread: the main actor holds,
+    /// which `assumeIsolated` states (and traps on, were it ever false) instead of a silent race.
     deinit {
-        if let activeObserver { NotificationCenter.default.removeObserver(activeObserver) }
-        holdPage(false, why: "the button was released")
+        MainActor.assumeIsolated {
+            if let activeObserver { NotificationCenter.default.removeObserver(activeObserver) }
+            holdPage(false, why: "the button was released")
+        }
     }
 
     /// CANARI PATCH: A TOUCH THAT DISMISSES THE MENU IS THE MENU'S, NEVER THE PAGE'S.
