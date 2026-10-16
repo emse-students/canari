@@ -98,6 +98,14 @@ export function swipeBack(node: HTMLElement, options: SwipeBackOptions) {
     const t = e.touches[0];
     const edgeZone = opts.edgeZonePx ?? 28;
     if (t.clientX > edgeZone) return;
+    // A release still waiting for its slide to end is superseded by this gesture: it must not
+    // commit later, against the stack THIS touch armed on.
+    if (pendingEnd) {
+      console.debug('[swipeBack] a pending release is dropped: a new gesture armed');
+      dropPendingEnd();
+      node.style.removeProperty('transform');
+      node.style.removeProperty('transition');
+    }
     startX = t.clientX;
     startY = t.clientY;
     tracking = true;
@@ -175,12 +183,29 @@ export function swipeBack(node: HTMLElement, options: SwipeBackOptions) {
    * the Back from it, mid-animation.
    */
   function onOwnTransitionEnd(then: () => void) {
+    dropPendingEnd();
     const handler = (e: Event) => {
       if (e.target !== node) return;
-      node.removeEventListener('transitionend', handler);
+      dropPendingEnd();
       then();
     };
+    // A CANCELLED transition ends it too: a node hidden mid-slide (`display: none`) or restyled
+    // fires `transitioncancel` and never `transitionend`, and the handler stayed pending for the
+    // next gesture's transition to fire.
     node.addEventListener('transitionend', handler);
+    node.addEventListener('transitioncancel', handler);
+    pendingEnd = () => {
+      node.removeEventListener('transitionend', handler);
+      node.removeEventListener('transitioncancel', handler);
+    };
+  }
+
+  /** The end handler of the last release, while it waits: AT MOST ONE, so one stroke commits once. */
+  let pendingEnd: (() => void) | null = null;
+
+  function dropPendingEnd() {
+    pendingEnd?.();
+    pendingEnd = null;
   }
 
   node.addEventListener('touchstart', onTouchStart, { passive: true });

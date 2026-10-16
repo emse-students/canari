@@ -237,12 +237,16 @@ export function flushAppLog(): Promise<void> {
       pending = [];
       pendingChars = 0;
       if (offScreenAtStart || offScreen) {
-        // Cut short by the suspension (module doc): held, and written once back on screen.
-        holdingForScreen = true;
+        // Cut short by the suspension (module doc). WebKit delivers that abort on RESUME, so the
+        // app may already be back: holding then would stop every batch write until the next
+        // background. Held only while still off screen; otherwise written again at once.
+        const stillOff = offScreen;
+        holdingForScreen = stillOff;
         for (const line of [...lines, ...arrived]) push(line);
         console.info(
-          `[APPLOG] a write was cut short as the app left the screen (${reason}) - ${lines.length} lines kept for the return`
+          `[APPLOG] a write was cut short as the app left the screen (${reason}) - ${lines.length} lines kept, ${stillOff ? 'for the return' : 'written again now'}`
         );
+        if (!stillOff) void flushAppLog();
         return;
       }
       // Stop FIRST, so re-queuing below cannot ask for another flush.

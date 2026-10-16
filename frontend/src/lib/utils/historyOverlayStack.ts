@@ -261,16 +261,23 @@ export function closeHistoryOverlayFromUi(close: () => void): void {
  * owner does not act either). Without it, a menu closed by anything during the stroke left the
  * conversation on top for the commit to close.
  */
-export function backHistoryOverlayFromGesture(arm?: HistoryGestureArm): boolean {
+export function backHistoryOverlayFromGesture(arm: HistoryGestureArm | null): boolean {
+  if (!arm) {
+    // A commit no touch armed - a second commit of a gesture already spent (two pending slide-out
+    // ends): unarmed, it would close the next overlay down, which is "the menu AND the conversation".
+    Log.i('historyOverlay', 'gesture Back with no armed touch - spent, nothing closed');
+    return true;
+  }
   const topId = stack.length > 0 ? stack[stack.length - 1].id : 0;
-  if (arm && arm.topId !== topId) {
+  if (arm.topId !== topId) {
     // ONE GESTURE, ONE CLOSE. The overlay on top when the finger came down is gone (something
     // else closed it during the stroke: a tap-outside, a keyboard, its own owner): the gesture has
     // been spent on it, and it must not go on to close what lay UNDER it - the conversation under
     // the "+" menu (iPhone 12, v1.2.9-alpha.2 and alpha.3, 3 of 3). Info, not debug: the in-app
     // log records no debug, and the alpha.3 reading could not be diagnosed without this line.
-    console.info(
-      `[historyOverlay] gesture Back spent: overlay ${arm.topId} was on top at the touch, ${topId || 'nothing'} is now - nothing more closed`
+    Log.i(
+      'historyOverlay',
+      `gesture Back spent: overlay ${arm.topId} was on top at the touch, ${topId || 'nothing'} is now - nothing more closed`
     );
     return true;
   }
@@ -279,7 +286,7 @@ export function backHistoryOverlayFromGesture(arm?: HistoryGestureArm): boolean 
     Log.d('historyOverlay', 'gesture Back with no overlay open - the gesture owner decides');
     return false;
   }
-  console.info(`[historyOverlay] gesture Back closes overlay ${top.id}, ${stack.length} left open`);
+  Log.i('historyOverlay', `gesture Back closes overlay ${top.id}, ${stack.length} left open`);
   top.close('back');
   return true;
 }

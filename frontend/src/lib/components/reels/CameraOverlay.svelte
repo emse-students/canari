@@ -99,7 +99,7 @@
   use:coversScreen
   use:swipeBack={{
     onBack: () => {
-      const arm = gestureArm ?? undefined;
+      const arm = gestureArm;
       gestureArm = null;
       void backHistoryOverlayFromGesture(arm);
     },

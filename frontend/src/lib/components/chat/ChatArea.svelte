@@ -1185,9 +1185,10 @@
    * instead of the conversation. One predicate for the swipe and the entries.
    */
   function onSwipedBack() {
-    const arm = gestureArm ?? undefined;
+    const arm = gestureArm;
     gestureArm = null;
-    if (overlayLayout && backHistoryOverlayFromGesture(arm)) return;
+    // No arm: a second commit of a spent gesture - it closes nothing, wherever it runs.
+    if (overlayLayout ? backHistoryOverlayFromGesture(arm) : !arm) return;
     onBack?.();
   }
   /**

@@ -334,6 +334,32 @@ describe('a write the WebView suspension cuts short (iPhone, 1.2.9-alpha.3)', ()
     const snapshot = await appLog.readAppLog();
     expect(snapshot.persistence).toBe('ok');
   });
+
+  it('an abort delivered on RESUME, after the app is back, is written again at once - no hold', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    appLog.installAppLogFlushTriggers();
+    appLog.captureConsoleLine('log', ['[A] before']);
+    await appLog.flushAppLog();
+
+    // WebKit: the write began off screen, the screen-on event ran, THEN the abort arrived.
+    vi.spyOn(FakeDatabase.prototype, 'transaction').mockImplementationOnce(() => {
+      screen.change(true);
+      throw new DOMException('Transaction aborted', 'AbortError');
+    });
+    appLog.captureConsoleLine('log', ['[LIFECYCLE] App in background']);
+    screen.change(false);
+    await appLog.flushAppLog();
+    await appLog.flushAppLog();
+    expect(error).not.toHaveBeenCalled();
+    expect((await records()).map((r) => r.text).join('\n')).toContain('App in background');
+
+    // Not held: the batch thresholds write again on their own.
+    const added = vi.spyOn(FakeObjectStore.prototype, 'add');
+    for (let i = 0; i < appLog.FLUSH_LINES; i++) appLog.captureConsoleLine('log', [`[B] ${i}`]);
+    await appLog.flushAppLog();
+    expect(added).toHaveBeenCalled();
+  });
 });
 
 describe('the device wipe', () => {
