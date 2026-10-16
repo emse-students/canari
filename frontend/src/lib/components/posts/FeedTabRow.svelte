@@ -5,13 +5,15 @@
    *
    * ONE BUTTON, THREE TIMES, IS ONE BUTTON: the pill is written once, so a change to its state
    * colours, padding or aria is made once. When the row is too narrow (390 px with 2x text) the TABS
-   * scroll sideways, faded at the edge that has more (`scrollFades`); the icon never wraps, shrinks
+   * scroll sideways, faded at the edge that has more (`scrollFades`), the selected one scrolled into
+   * full view (`centredTabScrollLeft`); the icon never wraps, shrinks
    * or leaves the row. The scroller's vertical padding keeps the pills' 44 px touch target inside
    * it, since a horizontal scroller clips both axes. What a tab tap does is the feed page's.
    */
   import { scrollFades } from '$lib/actions/scrollFades';
   import ReelsEntryButton from './ReelsEntryButton.svelte';
   import type { PostFeed } from '$lib/posts/api';
+  import { centredTabScrollLeft } from '$lib/posts/feedTabScroll';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -31,10 +33,56 @@
     { feed: 'followed', label: m.posts_tab_followed },
     { feed: 'all', label: m.posts_tab_all },
   ];
+
+  let tabs = $state<HTMLElement | null>(null);
+
+  // THE SELECTED TAB IS IN VIEW, on arrival, on every selection, and whenever the row's layout
+  // changes under it - a resize, or the web font arriving after the first layout was measured with
+  // the fallback's widths: at 2x text the row overflows and "Tout" sat under the faded edge by the
+  // CanaReels icon (`centredTabScrollLeft`).
+  $effect(() => {
+    const selected = feed;
+    const row = tabs;
+    if (!row) return;
+    revealTab(row, selected);
+    const observer =
+      typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(() => revealTab(row, feed));
+    if (!observer) console.debug('[feed-tabs] no ResizeObserver - revealed on selection only');
+    observer?.observe(row);
+    let live = true;
+    void document.fonts?.ready.then(() => {
+      if (live) revealTab(row, feed);
+    });
+    return () => {
+      live = false;
+      observer?.disconnect();
+    };
+  });
+
+  /** Scrolls `row` so the tab of `selected` is in full view, when the row overflows at all. */
+  function revealTab(row: HTMLElement, selected: PostFeed) {
+    const maxScroll = row.scrollWidth - row.clientWidth;
+    if (maxScroll <= 0) return;
+    const tab = row.querySelector<HTMLElement>(`[data-feed-tab="${selected}"]`);
+    if (!tab) {
+      console.error(`[feed-tabs] no tab drawn for the selected feed ${selected}`);
+      return;
+    }
+    const next = centredTabScrollLeft(
+      row.getBoundingClientRect(),
+      tab.getBoundingClientRect(),
+      row.scrollLeft,
+      maxScroll
+    );
+    if (next === row.scrollLeft) return;
+    console.debug(`[feed-tabs] the row scrolls to ${next} px to show ${selected}`);
+    row.scrollLeft = next;
+  }
 </script>
 
 <div class="flex items-center gap-2" data-feed-tab-row>
   <div
+    bind:this={tabs}
     class="no-scrollbar -my-1.5 flex min-w-0 flex-1 gap-2 overflow-x-auto py-1.5"
     data-feed-tabs
     use:scrollFades
@@ -42,6 +90,7 @@
     {#each FEED_TABS as tab (tab.feed)}
       <button
         type="button"
+        data-feed-tab={tab.feed}
         onclick={() => onFeed(tab.feed)}
         aria-pressed={feed === tab.feed}
         class="tap-target shrink-0 rounded-full border px-3.5 py-1.5 text-sm font-medium whitespace-nowrap transition-colors {feed ===
