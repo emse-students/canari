@@ -263,29 +263,33 @@ function isFocusableField(el: HTMLElement): boolean {
 }
 
 /**
- * Where a revealed field lands in its scrollport.
+ * How a reveal moves: never animated for someone who asked the system for reduced motion.
  *
- * INSIDE A KEYBOARD-AWARE OVERLAY THE FIELD IS CENTRED, so the field AFTER it is in view too. With
- * `nearest`, a modal's focused field landed on the bottom edge of a scrollport the keyboard had
- * made short, and the next one stood cut under the footer's submit button: in the PIN change
- * dialog the confirm field was reachable only after blurring (iPhone 12, v1.2.9-alpha.4), and a tap
- * where it stood had already submitted the form once (2026-10-15). Centring leaves half the
- * scrollport below the focused field, which is the room the next one needs. A page keeps
- * `nearest`: it scrolls the whole document, and moving it further than needed is a jump.
+ * @param requested what the caller asked for (`auto` after a keyboard rise, `smooth` otherwise).
+ * @param reducedMotion whether `prefers-reduced-motion: reduce` matches.
  */
-export function revealBlockFor(el: Element): ScrollLogicalPosition {
-  return el.closest('[data-keyboard-aware-overlay]') ? 'center' : 'nearest';
+export function revealBehavior(requested: ScrollBehavior, reducedMotion: boolean): ScrollBehavior {
+  return reducedMotion ? 'auto' : requested;
 }
 
-/** Scrolls the focused field into the visible viewport (above the virtual keyboard). */
+/**
+ * Scrolls the focused field into the visible viewport (above the virtual keyboard).
+ *
+ * `nearest`, so a field already in view does not move. The room for the field AFTER it is not
+ * decided here: inside `[data-keyboard-aware-overlay]` every field carries a `scroll-margin-block-end`
+ * (`app.css`) that `nearest` honours, so the reveal stops with the next field's label and box still
+ * above the footer (the PIN change's confirm field stood cut under the submit button, iPhone 12,
+ * v1.2.9-alpha.4).
+ */
 export function scrollFocusedFieldIntoView(behavior: ScrollBehavior = 'smooth'): void {
   const el = document.activeElement;
   if (!(el instanceof HTMLElement) || !isFocusableField(el)) return;
   if (el.closest('.chat-composer-footer, .app-layout')) return;
-  const block = revealBlockFor(el);
-  Log.d('keyboardViewport', `revealing the focused field (${block})`);
+  const reduced = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+  const how = revealBehavior(behavior, reduced);
+  Log.d('keyboardViewport', `revealing the focused field (${how})`);
   requestAnimationFrame(() => {
-    el.scrollIntoView({ block, inline: 'nearest', behavior });
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: how });
   });
 }
 

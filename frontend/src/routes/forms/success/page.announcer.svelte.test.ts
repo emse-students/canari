@@ -1,8 +1,8 @@
 /**
- * THE ROUTE ANNOUNCER FOLLOWS THE PAYMENT RETURN'S ANSWER (iPhone 12, v1.2.9-alpha.4: the hidden
- * announcer still read "Verification du paiement..." over "Paiement introuvable"). SvelteKit's
- * announcer re-reads `document.title` on a page-store update, so the page asks for one, through a
- * shallow `replaceState` of the current url, once its answer is known.
+ * THE PAYMENT RETURN ANNOUNCES ITS ANSWER ITSELF (iPhone 12, v1.2.9-alpha.4: SvelteKit's route
+ * announcer, which reads the title once at the navigation, still said "Verification du paiement..."
+ * over "Paiement introuvable"). The answer block is a polite status region present from the first
+ * frame, so what replaces the verifying line is announced; the router is never asked to re-read.
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
@@ -46,34 +46,42 @@ async function render() {
   const app = mount(Page, { target });
   mounted.push(() => void unmount(app));
   flushSync();
-  for (let i = 0; i < 5; i++) await tick();
-  flushSync();
+  return {
+    region: () => document.querySelector<HTMLElement>('[data-payment-answer]')!,
+    settle: async () => {
+      for (let i = 0; i < 5; i++) await tick();
+      flushSync();
+    },
+  };
 }
 
-describe('the payment return and the route announcer', () => {
-  it('asks the announcer to read the title again once the answer is known, the title already written', async () => {
+describe('the payment return announces its own answer', () => {
+  it('the verifying line and the answer that replaces it live in ONE status region', async () => {
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    vi.spyOn(console, 'debug').mockImplementation(() => {});
-    let titleWhenAsked: string | null = null;
-    answer.replaceState.mockImplementation(() => (titleWhenAsked = pageTitle.current));
     answer.confirm.mockRejectedValue(new Error('not found'));
-    await render();
-    expect(answer.replaceState).toHaveBeenCalledTimes(1);
-    expect(answer.replaceState).toHaveBeenCalledWith('', {});
-    expect(titleWhenAsked).toBe(pageTitle.current);
+    const { region, settle } = await render();
+    const before = region();
+    expect(before.getAttribute('role')).toBe('status');
+    expect(before.textContent).toContain(m.form_success_verifying());
+    await settle();
+    expect(region()).toBe(before);
+    expect(before.textContent).toContain(m.form_success_not_found_heading());
+    expect(before.textContent).not.toContain(m.form_success_verifying());
   });
 
-  it('never asks while the page is still verifying', async () => {
-    answer.confirm.mockReturnValue(new Promise(() => {}));
-    await render();
+  it('never rewrites the history entry to make the router re-read the title', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    answer.confirm.mockRejectedValue(new Error('not found'));
+    const { settle } = await render();
+    await settle();
     expect(answer.replaceState).not.toHaveBeenCalled();
   });
 
-  it('never asks when the return carries no submission - nothing was learned after the navigation', async () => {
+  it('a return with no submission starts on its answer - its first title is already right', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     answer.url.current = new URL('https://canari.test/forms/success');
-    await render();
+    const { region } = await render();
     expect(pageTitle.current).toBe(m.form_success_not_found_heading());
-    expect(answer.replaceState).not.toHaveBeenCalled();
+    expect(region().textContent).not.toContain(m.form_success_verifying());
   });
 });

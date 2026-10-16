@@ -69,6 +69,14 @@
      * that draws its own heading (the PIN gate is a lock screen, not a form under a bar).
      */
     showTitleBar?: boolean;
+    /**
+     * Draw the footer as an EDGE: a border and 12 px of its own room, so a body that scrolls ends
+     * at a line above the footer's button and never against it. For a modal whose body is a form
+     * that overflows once the keyboard is up - the PIN change's confirm field read as covered BY
+     * its submit button (iPhone 12, v1.2.9-alpha.4). Opt-in: a one-line confirmation does not
+     * overflow and gets no line; the title bar's `border-b` is the same edge at the top.
+     */
+    footerEdge?: boolean;
     onClose: () => void;
     children?: Snippet;
     footer?: Snippet;
@@ -85,6 +93,7 @@
     topAnchored = false,
     phoneFullScreen = false,
     showTitleBar = true,
+    footerEdge = false,
     onClose,
     children,
     footer,
@@ -254,15 +263,12 @@
         </div>
 
         {#if footer}
-          <!-- THE FOOTER IS AN EDGE, NOT A LAYER: a border and its own top room, so whatever the
-               body scrolls ends at a line 12 px above the footer's button and never against it.
-               Without it the cut row of a taller body read as covered BY the button - the PIN
-               gate's keypad rows 7-9 at the largest text size, the confirm field of the PIN change
-               with the keyboard up (iPhone 12, v1.2.9-alpha.4). The title bar's `border-b` is the
-               same edge at the top. -->
           <div
-            class="border-cn-border flex shrink-0 justify-end gap-2 border-t px-6 pt-3 pb-4"
+            class="flex shrink-0 justify-end gap-2 px-6 pb-4 {footerEdge
+              ? 'border-cn-border border-t pt-3'
+              : ''}"
             data-modal-footer
+            data-modal-footer-edge={footerEdge ? '' : undefined}
           >
             {@render footer?.()}
           </div>

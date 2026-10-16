@@ -1,12 +1,12 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { onDestroy, onMount, tick, untrack } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { CircleCheck, CircleX, Loader } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { confirmSubmissionPayment } from '$lib/forms/api';
   import { paymentReturnVerdict } from '$lib/forms/paymentReturn';
   import { SocialApiError } from '$lib/associations/api';
-  import { announcePageTitle, setPageTitle } from '$lib/seo/pageTitle.svelte';
+  import { setPageTitle } from '$lib/seo/pageTitle.svelte';
 
   /**
    * Lydia's return carries the submission id (it cannot fill in a session id). Each read asks the
@@ -20,8 +20,8 @@
   const POLL_INTERVAL_MS = 3000;
 
   /**
-   * A return with no submission starts on its answer, so the title the route announcer reads at the
-   * navigation is already the right one and nothing has to be announced again.
+   * A return with no submission starts on its answer: its first title, the one the route announcer
+   * reads at the navigation, is already "Paiement introuvable".
    */
   let status = $state<'loading' | 'confirmed' | 'pending' | 'overCapacity' | 'error'>(
     untrack(() => submissionId) ? 'loading' : 'error'
@@ -42,20 +42,6 @@
   };
   $effect(() => {
     setPageTitle(STATUS_TITLE[status]());
-  });
-
-  /**
-   * THE ROUTE ANNOUNCER FOLLOWS THE ANSWER. It reads the title once per navigation, and here that
-   * was still "Verification du paiement..." (iPhone 12, v1.2.9-alpha.4). When the page leaves
-   * `loading` - once, after the server answered - the title above is written in the same flush and
-   * the announcer is asked to read it again. A page that never was `loading` (no submission) never
-   * asks: its first title was its answer, and on a cold load the router has not started yet.
-   */
-  let wasLoading = untrack(() => status === 'loading');
-  $effect(() => {
-    if (status === 'loading' || !wasLoading) return;
-    wasLoading = false;
-    void tick().then(announcePageTitle);
   });
   onDestroy(() => setPageTitle(null));
 
@@ -102,8 +88,14 @@
   });
 </script>
 
+<!--
+  THE ANSWER IS ANNOUNCED BY THE PAGE ITSELF. SvelteKit's route announcer reads the title once, at
+  the navigation, when it is still "Verification du paiement..." (iPhone 12, v1.2.9-alpha.4: it went
+  on reading that over "Paiement introuvable"). The block is a polite status region, present from
+  the first frame, so the answer that replaces the verifying line is what a screen reader hears.
+-->
 <div class="flex min-h-screen items-center justify-center px-4">
-  <div class="w-full max-w-md space-y-6 text-center">
+  <div class="w-full max-w-md space-y-6 text-center" role="status" data-payment-answer>
     {#if status === 'loading'}
       <div class="flex justify-center">
         <div class="bg-cn-border/30 animate-pulse rounded-full p-4">

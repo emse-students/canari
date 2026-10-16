@@ -49,20 +49,21 @@ it('keeps the padded, scrolling body by default', () => {
   expect(body.classList.contains('overflow-y-auto')).toBe(true);
 });
 
-it('draws the footer as an edge with its own top room, in both shapes', () => {
+it('draws the footer as an edge only when asked (`footerEdge`), never by default', () => {
   const footer = createRawSnippet(() => ({ render: () => '<button data-testid="f">ok</button>' }));
-  for (const phoneFullScreen of [true, false]) {
+  for (const footerEdge of [true, false]) {
     const target = document.createElement('div');
     document.body.appendChild(target);
     const component = mount(Modal, {
       target,
-      props: { open: true, title: 'T', phoneFullScreen, onClose: () => {}, children, footer },
+      props: { open: true, title: 'T', footerEdge, onClose: () => {}, children, footer },
     });
     flushSync();
     const edge = document.querySelector<HTMLElement>('[data-modal-footer]')!;
     expect(edge.contains(document.querySelector('[data-testid="f"]'))).toBe(true);
-    expect(edge.classList.contains('border-t')).toBe(true);
-    expect(edge.classList.contains('pt-3')).toBe(true);
+    expect(edge.classList.contains('border-t')).toBe(footerEdge);
+    expect(edge.classList.contains('pt-3')).toBe(footerEdge);
+    expect(edge.hasAttribute('data-modal-footer-edge')).toBe(footerEdge);
     unmount(component);
     document.body.innerHTML = '';
   }
