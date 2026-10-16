@@ -46,6 +46,7 @@ the school's).
 | C14 | In-app notifications | activity list | `post_notifications` | 6.1.b | 90 days | `forms-reminder.scheduler.ts` |
 | C15 | Pre-release (dev) estate | test a version before it ships | **no production row** (owner, 2026-10-16): a generated fictional seed, plus the accounts testers create by signing in and what they post there; the copy of production is deleted from the code, and the copy dev still held is wiped by the owner's `dev-reset` (**OPEN until run**) | 6.1.f | until the next reset | [dev-environment](../infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16) |
 | C16 | Device-side storage | run the client | IndexedDB / SQLite (messages, MLS state, outbox encrypted under the PIN-derived device key; the conversation list in clear), cookies `canari_refresh` (HttpOnly, 7 d), `canari_ws_token` (session), `canari_adminer` (admins), preferences, in-app log (redacted, 2 MB) | 6.1.b; ePrivacy: strictly necessary, **except `klipy_cid`, which serves a third party's analytics (OPEN, disappears with the KLIPY proxy)** | on the device | privacy policy section 7 |
+| C17 | Bookings of rooms and slots (**built, not yet in use**: no route before WP-B3) | let members book a room or an appointment run by a person or an association | `booking_spaces` (owner), `booking_resources` (optional linked account), `bookings` (holder id and name, who booked, UTC range, answers to the space's questions, who cancelled), `booking_participants` (id and name), `booking_blocks` (author) | 6.1.b | answers purged N days after the slot (1-30, default 7, D18/D23); everything one year after the slot (D19) - both purges built in WP-B6; account deletion: personal spaces deleted, coming bookings cancelled, answers purged, ids tombstoned, name snapshots kept until the one-year purge | [bookings-chantier](../bookings-chantier.md#a-deleted-account-2026-10-16-review-of-1963) |
 
 **Account deletion** (`DELETE /api/users/me`, Settings > Supprimer mon compte) is immediate and fans
 out to every service. **Its completeness and a retry queue are being built by another work package
@@ -53,7 +54,7 @@ out to every service. **Its completeness and a retry queue are being built by an
 reactions inside other people's posts, `minesweeper_*`, calendar events, `post_notifications`,
 `profile_changes`, `profile_correction_requests`, `notification_preference`,
 `device_signature_key`, the Redis history of other groups), and a failed downstream call is only
-logged.
+logged. The bookings tables (C17) ARE reached, by `deleteBookingsUserData`.
 
 **Recipients and processors**: section 8. **Transfers**: Google, Apple, Cloudflare, KLIPY (section 8).
 

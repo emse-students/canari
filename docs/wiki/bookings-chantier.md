@@ -148,9 +148,9 @@ when each is opened (083 on 2026-10-15). Only Master marks ready, merges and rel
 | **WP-F** (DRAFT PR #1908, 2026-10-15, migration 084: built; the media class `form-file` and its two internal routes `internal/form-file` and `internal/form-file-purge` are reusable as they are; the purge to reuse is `purgeExpiredFiles` in `apps/social-service/src/forms/file-retention-purge.ts`, each candidate `{ fileId, ownerId, start, retentionDays }` so for bookings `start` is the slot end; size cap 8 MiB because the host firewall drops bodies over 10 MiB; a file question is refused on PUBLIC and on ANONYMOUS forms, the second being the agent's choice to confirm with the user: the file row and the blob owner name the uploader) | FILE question type for forms: type everywhere it must exist, server validation of ownership, size and type, a new media retention class, a manager-gated read, expiry and purge, refused on a public form (D40) | `frontend/src/lib/forms/questionTypes.ts`, `FormBuilder.svelte` (`hasOptions` denylist), `FormQuestion.svelte`, `apps/media-service/.../media.service.ts` `RetentionClass`, `apps/social-service/src/posts/reel-retention.scheduler.ts` as the scheduler pattern | A manager downloads a file; a stranger holding the id gets nothing readable; a purged file leaves the row; a second purge changes nothing |
 | **WP-B0** (MERGED as #1904, 2026-10-15: the backfill migration is `083_manage_bookings.sql`; a list's role editor needed NO change, so the list roster work moves to WP-B4, which adds an `EditSection` key, an `editRights` entry and a `mayOpenEditSection` case, and changes the 'list has three sections' test) | `MANAGE_BOOKINGS`: bit `1 << 11`, both enums, role-editor row, Paraglide labels, backfill of `MANAGE_FORMS` holders (D39), the list roster (D38) | `association-member.entity.ts`, `frontend/src/lib/associations/api.ts`, `AssociationMemberRow.svelte` `FLAG_LABELS`, `editSections.ts` | `permissions.test.ts` and the DTO spec pass; the right is grantable from the editor |
 | **WP-B1** (DRAFT PR, 2026-10-16, migration `087_bookings.sql` because #1940 holds 086: see [WP-B1 as built](#wp-b1-as-built-2026-10-16)) | Data model and migration: space, resource, availability rules, exceptions, blocked ranges, booking, participants; `btree_gist` and an EXCLUDE constraint on (resource, time range) among live bookings; deletion of a space deletes everything (D27) | `apps/social-service/src/migrations/` (next free number), `docs/wiki/infrastructure/databases.md` rules | Two concurrent inserts on the last slot: exactly one wins, in a real database |
-| **WP-B2** | Slot generation on demand (step or predefined slots), booking window, quotas, withdrawal delay, zone handling, the rule that refuses an availability edit with bookings inside (D29) | A new `bookings` module beside `forms`; `AssociationsService.mayAct` as the only rights policy | Table-driven tests across a daylight-saving change |
+| **WP-B2** | Slot generation on demand (step or predefined slots), booking window, quotas, withdrawal delay, zone handling, the rule that refuses an availability edit with bookings inside (D29). **A window crossing midnight is TWO rules** (22:00-24:00 and 00:00-02:00 the next day): `booking_availability_rules_order` requires `startTime < endTime`, and generation must join them back into one window | A new `bookings` module beside `forms`; `AssociationsService.mayAct` as the only rights policy | Table-driven tests across a daylight-saving change |
 | **WP-B3** | API: book, cancel, participant withdraws, organiser blocks, books on behalf, cancels (D20); frozen history (D15); block honoured (`isBlockedBetween`); private fields returned only to the booking's people (D32) | `apps/social-service/src/common/user-blocks.ts`, `forms.service.ts` `assertFormManager` as the guard shape | A past booking refuses every write; a stranger never receives a private field |
-| **WP-B4** | Organiser screens: five settings sections (D35), resources, availability, questions reused from forms, the entity tab | `editSections.ts`, `routes/associations/[slug]/edit/[[section]]/+page.svelte`, `FormSection.svelte` and `FormAdvancedSettings.svelte` as the pattern | Seen at 390 and 1280 on a real build |
+| **WP-B4** | Organiser screens: five settings sections (D35), resources, availability, questions reused from forms, the entity tab. The availability editor writes a window crossing midnight as two rules (see WP-B2) | `editSections.ts`, `routes/associations/[slug]/edit/[[section]]/+page.svelte`, `FormSection.svelte` and `FormAdvancedSettings.svelte` as the pattern | Seen at 390 and 1280 on a real build |
 | **WP-B5** | Booker screens: grid and planning (D14), my bookings, the dashboard card (D37), the sidebar entry, link and QR code, "Add to my calendar" with a hosted ICS route (D13) | `routes/calendar/+page.svelte`, `viewport.ts`, `AddEventToCalendarButton.svelte`, `navigation/places.ts`, `QrCodeModal.svelte`, `pageWidth.ts` | Read on the Mi 9T and the iPhone |
 | **WP-B6** | Purge of files and answers after N days, the platform maximum age of one year (D19, D23), XLSX export (D24) | `reel-retention.scheduler.ts`, `forms/export-labels.ts`, `forms.service.ts` `exportSubmissions` | A purge run twice changes nothing; the export parses back |
 | **WP-B7** | Device readings, a concurrency run with two real clients on one slot, the wiki page of the module, the user guide in French | `docs/wiki/frontend/modules/`, `docs/user-guide/` | Both phones read; the board of readings recorded |
@@ -180,7 +180,7 @@ spaces go with the association.
 | `booking_availability_exceptions` | whole local days removed, `fromDate`..`toDate` both INCLUDED | D11 |
 | `booking_blocks` | "Indisponible" `[startsAt, endsAt)`, `reason`, `reasonVisible`, `createdById` | D10, D20 |
 | `bookings` | `resourceId`, holder (id + name snapshot), `bookedById`, UTC `[startsAt, endsAt)`, `answers` + `answersPurgedAt`, `cancelledAt` + `cancelledById` (both or neither) | D4, D7, D15, D18, D20, D25 |
-| `booking_participants` | (`bookingId`, `userId`), name snapshot, `withdrawnAt` | D4, D15, D34 |
+| `booking_participants` | surrogate `id`, `bookingId`, `userId` (one live row per booking and account: a partial unique index that leaves the `'[deleted]'` tombstones out), name snapshot, `withdrawnAt` | D4, D15, D34 |
 
 **The rule: `bookings_live_no_overlap`**, `EXCLUDE USING gist ("resourceId" WITH =,
 tstzrange("startsAt", "endsAt", '[)') WITH &&) WHERE ("cancelledAt" IS NULL)`. Half-open, so
@@ -213,6 +213,31 @@ screen that sets it.
 WAITING on a lock (`pg_stat_activity`) and then refused `23P01` once the first commits, or accepted
 once it rolls back; eight racers over twenty rounds, exactly one winner, all losers `23P01` with the
 lock; adjacent ranges, another resource, a cancellation; the checks; deleting a space or its
-association empties every child table and touches no other space. Control: with the exclusion
-disabled, 6 of those tests fail. Gated on `SOCIAL_IT_DATABASE_URL` like the other integration
+association empties every child table and touches no other space. Controls: with the exclusion's
+predicate made false, 6 tests fail; with the constraint absent, 8 (the two that read it from the
+catalogue and the entity parity join them). Gated on `SOCIAL_IT_DATABASE_URL` like the other integration
 specs; CI runs it once #1915's `test-social-integration` job is on `main`, and skips it until then.
+
+Indexes beyond the exclusion's own GiST: `bookings ("holderId", "startsAt")` (my bookings),
+`("resourceId", "startsAt")` (a resource's bookings in time order, the D29 refusal) and `("endsAt")`
+(the purges of D18 and D19 select on the slot's end).
+
+### A deleted account (2026-10-16, review of #1963)
+
+`InternalController.deleteUserData` calls `deleteBookingsUserData`
+(`apps/social-service/src/bookings/bookings-account-deletion.ts`), one transaction:
+
+| What the account left | What happens | Why |
+|---|---|---|
+| A PERSONAL space it owns (`associationId` NULL) | deleted, everything under it with it | nobody else can manage it (D2); D27 |
+| An association space it created | kept; `ownerId` becomes `'[deleted]'` | the association manages it |
+| A COMING live booking it holds | cancelled, `cancelledById = '[deleted]'`, slot freed | a deleted account will not come |
+| A coming participation | withdrawn (`withdrawnAt`) | same |
+| The answers of every booking it held | purged now (`answers` NULL, `answersPurgedAt`) | its own data; nothing needs them any more (D18 applied early) |
+| Its ids in history: holder, booked by, cancelled by, participant, block author | `'[deleted]'`, the tombstone every other social table uses | the history stays frozen (D15) without a link to a person |
+| Its name snapshots (`holderName`, `userName`) | KEPT | D15: "a deleted account leaves the name it had"; bounded by the one-year maximum age of D19 (purge built in WP-B6) |
+| A resource linked to it | unlinked (`linkedUserId` NULL) | the link grants a view, it is not history |
+
+Proved on a real PostgreSQL by `bookings.integration.spec.ts` (one test per line above, two
+tombstoned participants in one booking, and a second run changing nothing). Recorded as row C17 of
+the [register of processing](compliance/register-of-processing.md).

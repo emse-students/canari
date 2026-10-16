@@ -25,13 +25,18 @@ export const BOOKINGS_NO_OVERLAP_EXPRESSION = `USING gist ("resourceId" WITH =, 
  * One occurrence booked on one resource (D28, migration 087).
  *
  * LIVE means `cancelledAt` IS NULL, and PostgreSQL holds one live booking per resource and instant
- * (D12, D33): a concurrent second insert fails with SQLSTATE 23P01 (`isExclusionViolation`), never
- * on a client check. A cancellation keeps the row, and who cancelled, as history (D15), and frees
- * the range. Names are snapshots taken at booking time, so a deleted account leaves its name.
+ * (D12, D33), never a client check: of concurrent inserts exactly one wins. The losers get SQLSTATE
+ * 23P01 (`isExclusionViolation`) ONLY when the writer locked the resource row first
+ * (`SELECT ... FOR UPDATE`); bare concurrent inserts may get 40P01 (deadlock) instead - measured
+ * 2026-10-16, see `bookings.integration.spec.ts`. A cancellation keeps the row, and who cancelled,
+ * as history (D15), and frees the range. Names are snapshots taken at booking time, so a deleted
+ * account leaves its name (bounded by the one-year maximum age, D19).
  */
 @Entity('bookings')
 @Exclusion(BOOKINGS_NO_OVERLAP, BOOKINGS_NO_OVERLAP_EXPRESSION)
 @Index('bookings_holder_idx', ['holderId', 'startsAt'])
+@Index('bookings_resource_starts_idx', ['resourceId', 'startsAt'])
+@Index('bookings_ends_idx', ['endsAt'])
 @Check('bookings_order', `"startsAt" < "endsAt"`)
 @Check('bookings_cancellation_pair', `("cancelledAt" IS NULL) = ("cancelledById" IS NULL)`)
 export class Booking {

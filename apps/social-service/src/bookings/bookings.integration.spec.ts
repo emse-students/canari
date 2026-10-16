@@ -6,8 +6,9 @@
  * this file runs migration 087 (twice: the deploy may replay it) on a real connection and races real
  * transactions on the last slot. It also proves what the constraint must NOT refuse - adjacent
  * half-open ranges, another resource, a range freed by a cancellation - and that deleting a space
- * (or its association) deletes everything under it (D27). The entities read and write the tables,
- * which pins their column names to the migration's.
+ * (or its association) deletes everything under it (D27), and what a deleted ACCOUNT leaves behind
+ * (`deleteBookingsUserData`). The entities read and write the tables, which pins their column names
+ * to the migration's.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files: without it the file reports
  * as skipped rather than passing. Run it against a throwaway PostgreSQL:
@@ -30,6 +31,8 @@ import { BookingResource } from './entities/booking-resource.entity';
 import { BookingParticipant } from './entities/booking-participant.entity';
 import { isExclusionViolation } from '../common/pg-errors';
 import { Association } from '../associations/entities/association.entity';
+import { deleteBookingsUserData } from './bookings-account-deletion';
+import { DELETED_ACCOUNT_ID } from './deleted-account';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -428,6 +431,184 @@ maybe('bookings schema against PostgreSQL (migration 087)', () => {
 
       expect(await ds.getRepository(BookingSpace).findOneBy({ id: s.id })).toBeNull();
       expect(await ds.getRepository(Booking).countBy({ resourceId })).toBe(0);
+    });
+  });
+
+  describe('a deleted account (deleteBookingsUserData)', () => {
+    // Past and coming are read against the server's now(), so the fixtures sit far on either side
+    // of any date this test may run on - never near a wall clock.
+    const PAST = {
+      startsAt: new Date('2020-03-02T10:00:00Z'),
+      endsAt: new Date('2020-03-02T11:00:00Z'),
+    };
+    const COMING = {
+      startsAt: new Date('2099-03-02T10:00:00Z'),
+      endsAt: new Date('2099-03-02T11:00:00Z'),
+    };
+    const CAROL = 'c'.repeat(64);
+    const DAN = 'd'.repeat(64);
+
+    /** A space owned by `ownerId` (personal unless an association is given) with one resource. */
+    async function spaceOf(ownerId: string, associationId: string | null = null) {
+      const s = await ds.getRepository(BookingSpace).save({
+        ownerId,
+        associationId,
+        name: 'x',
+        stepMinutes: 30,
+        maxSteps: 4,
+      });
+      return { space: s, resource: await resource(s.id) };
+    }
+
+    async function book(
+      resourceId: string,
+      when: { startsAt: Date; endsAt: Date },
+      holderId: string,
+      extra: Partial<Booking> = {}
+    ): Promise<Booking> {
+      return ds.getRepository(Booking).save({
+        resourceId,
+        holderId,
+        holderName: `name of ${holderId.slice(0, 1)}`,
+        bookedById: holderId,
+        answers: { q_year: '2A' },
+        ...when,
+        ...extra,
+      });
+    }
+
+    const get = (id: string) => ds.getRepository(Booking).findOneByOrFail({ id });
+
+    it('deletes a PERSONAL space of the account with everything under it, and no other', async () => {
+      const mine = await spaceOf(CAROL);
+      const someoneElses = await spaceOf(DAN);
+      await book(mine.resource.id, PAST, DAN);
+
+      const outcome = await deleteBookingsUserData(ds.manager, CAROL);
+
+      expect(outcome.personalSpacesDeleted).toBe(1);
+      expect(await ds.getRepository(BookingSpace).findOneBy({ id: mine.space.id })).toBeNull();
+      expect(await ds.getRepository(Booking).countBy({ resourceId: mine.resource.id })).toBe(0);
+      expect(
+        await ds.getRepository(BookingSpace).findOneBy({ id: someoneElses.space.id })
+      ).not.toBeNull();
+    });
+
+    it('keeps an ASSOCIATION space it created, under the tombstone', async () => {
+      const association = randomUUID();
+      await q(`INSERT INTO associations (id) VALUES ($1)`, [association]);
+      const { space: s } = await spaceOf(CAROL, association);
+
+      await deleteBookingsUserData(ds.manager, CAROL);
+
+      expect((await ds.getRepository(BookingSpace).findOneByOrFail({ id: s.id })).ownerId).toBe(
+        DELETED_ACCOUNT_ID
+      );
+    });
+
+    it('freezes a PAST booking it held: id tombstoned, name kept, answers purged', async () => {
+      const { resource: r } = await spaceOf(DAN);
+      const past = await book(r.id, PAST, CAROL);
+
+      await deleteBookingsUserData(ds.manager, CAROL);
+
+      const row = await get(past.id);
+      expect(row.holderId).toBe(DELETED_ACCOUNT_ID);
+      expect(row.bookedById).toBe(DELETED_ACCOUNT_ID);
+      expect(row.holderName).toBe('name of c');
+      expect(row.answers).toBeNull();
+      expect(row.answersPurgedAt).not.toBeNull();
+      expect(row.cancelledAt).toBeNull();
+    });
+
+    it('cancels a COMING booking it held, which frees the slot', async () => {
+      const { resource: r } = await spaceOf(DAN);
+      const coming = await book(r.id, COMING, CAROL);
+
+      const outcome = await deleteBookingsUserData(ds.manager, CAROL);
+
+      expect(outcome.comingBookingsCancelled).toBe(1);
+      const row = await get(coming.id);
+      expect(row.cancelledAt).not.toBeNull();
+      expect(row.cancelledById).toBe(DELETED_ACCOUNT_ID);
+      expect(row.holderId).toBe(DELETED_ACCOUNT_ID);
+      await expect(book(r.id, COMING, DAN)).resolves.toBeDefined();
+    });
+
+    it('tombstones what it did as organiser: booked on behalf, cancelled, blocked', async () => {
+      const { resource: r } = await spaceOf(DAN);
+      const onBehalf = await book(r.id, PAST, DAN, { bookedById: CAROL });
+      const cancelled = await book(r.id, PAST, DAN, {
+        startsAt: new Date('2020-03-03T10:00:00Z'),
+        endsAt: new Date('2020-03-03T11:00:00Z'),
+        cancelledAt: new Date('2020-03-01T00:00:00Z'),
+        cancelledById: CAROL,
+      });
+      await q(
+        `INSERT INTO booking_blocks ("resourceId", "startsAt", "endsAt", "createdById") VALUES ($1, $2, $3, $4)`,
+        [r.id, PAST.startsAt, PAST.endsAt, CAROL]
+      );
+
+      await deleteBookingsUserData(ds.manager, CAROL);
+
+      expect((await get(onBehalf.id)).bookedById).toBe(DELETED_ACCOUNT_ID);
+      expect((await get(onBehalf.id)).holderId).toBe(DAN);
+      expect((await get(cancelled.id)).cancelledById).toBe(DELETED_ACCOUNT_ID);
+      const blocks = await q(`SELECT "createdById" FROM booking_blocks WHERE "resourceId" = $1`, [
+        r.id,
+      ]);
+      expect(blocks).toEqual([{ createdById: DELETED_ACCOUNT_ID }]);
+    });
+
+    it('tombstones its participations, withdraws the coming one, and two tombstones share a booking', async () => {
+      const { resource: r } = await spaceOf(DAN);
+      const past = await book(r.id, PAST, DAN);
+      const coming = await book(r.id, COMING, DAN);
+      const participants = ds.getRepository(BookingParticipant);
+      await participants.save([
+        { bookingId: past.id, userId: CAROL, userName: 'Carol' },
+        { bookingId: past.id, userId: BOB, userName: 'Bob' },
+        { bookingId: coming.id, userId: CAROL, userName: 'Carol' },
+      ]);
+
+      const outcome = await deleteBookingsUserData(ds.manager, CAROL);
+      // A second deleted account in the SAME booking: the partial unique index lets both tombstones be.
+      await deleteBookingsUserData(ds.manager, BOB);
+
+      expect(outcome.comingParticipationsWithdrawn).toBe(1);
+      const pastRows = await participants.find({
+        where: { bookingId: past.id },
+        order: { userName: 'ASC' },
+      });
+      expect(pastRows.map((p) => [p.userId, p.userName, p.withdrawnAt])).toEqual([
+        [DELETED_ACCOUNT_ID, 'Bob', null],
+        [DELETED_ACCOUNT_ID, 'Carol', null],
+      ]);
+      const comingRow = await participants.findOneByOrFail({ bookingId: coming.id });
+      expect(comingRow.userId).toBe(DELETED_ACCOUNT_ID);
+      expect(comingRow.withdrawnAt).not.toBeNull();
+      // A LIVE account still appears once per booking.
+      await participants.save({ bookingId: past.id, userId: DAN, userName: 'Dan' });
+      await expect(
+        participants.save({ bookingId: past.id, userId: DAN, userName: 'Dan', id: undefined })
+      ).rejects.toThrow(/booking_participants_booking_user_uq/);
+    });
+
+    it('unlinks a resource linked to the account, and a second run changes nothing', async () => {
+      const { resource: r } = await spaceOf(DAN);
+      await ds.getRepository(BookingResource).update(r.id, { linkedUserId: CAROL });
+
+      await deleteBookingsUserData(ds.manager, CAROL);
+      const again = await deleteBookingsUserData(ds.manager, CAROL);
+
+      expect(
+        (await ds.getRepository(BookingResource).findOneByOrFail({ id: r.id })).linkedUserId
+      ).toBeNull();
+      expect(again).toEqual({
+        personalSpacesDeleted: 0,
+        comingBookingsCancelled: 0,
+        comingParticipationsWithdrawn: 0,
+      });
     });
   });
 });

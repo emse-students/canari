@@ -14,10 +14,16 @@
 --
 -- ONE LIVE BOOKING PER RESOURCE AND INSTANT (D12, D33), held by PostgreSQL and never by a client
 -- check: `bookings_live_no_overlap` is an EXCLUSION constraint on (resource =, time range &&) among
--- the rows whose "cancelledAt" IS NULL. Two concurrent inserts on the last slot: the second waits
--- for the first, then fails with SQLSTATE 23P01 (`isExclusionViolation`). Ranges are HALF-OPEN
--- `[start, end)`, so 10:00-10:30 and 10:30-11:00 are both bookable. A cancelled booking stays as
--- history (D15) and frees its range.
+-- the rows whose "cancelledAt" IS NULL. Concurrent inserts on the last slot: exactly one wins,
+-- always. What the LOSERS are told depends on the writer (measured 2026-10-16, PostgreSQL 18.6):
+-- with the resource row locked first (`SELECT ... FOR UPDATE`, the shape WP-B3 must use) every
+-- loser gets SQLSTATE 23P01 (`isExclusionViolation`); with bare concurrent inserts they may get
+-- 40P01 (deadlock_detected) instead. Ranges are HALF-OPEN `[start, end)`, so 10:00-10:30 and
+-- 10:30-11:00 are both bookable. A cancelled booking stays as history (D15) and frees its range.
+--
+-- A DELETED ACCOUNT (`deleteBookingsUserData`): its personal spaces are deleted; elsewhere its ids
+-- become '[deleted]' (a linked resource is unlinked) and its name snapshots stay, bounded by the
+-- one-year maximum age (D15, D19).
 --
 -- `=` on a uuid inside a GiST index needs the `btree_gist` extension. It is a contrib extension
 -- shipped in the official postgres image, TRUSTED since PostgreSQL 13, and the deploy applies
@@ -196,17 +202,25 @@ CREATE TABLE IF NOT EXISTS bookings (
 );
 
 CREATE INDEX IF NOT EXISTS bookings_holder_idx ON bookings ("holderId", "startsAt");
+-- A resource's bookings in time order (the grid, the planning, the D29 refusal).
+CREATE INDEX IF NOT EXISTS bookings_resource_starts_idx ON bookings ("resourceId", "startsAt");
+-- The purges select on the slot's end: answers N days after it (D18), everything a year after (D19).
+CREATE INDEX IF NOT EXISTS bookings_ends_idx ON bookings ("endsAt");
 
--- The people of a booking other than its holder (D4). Withdrawal keeps the row (D15).
+-- The people of a booking other than its holder (D4). Withdrawal keeps the row (D15). A surrogate
+-- key, because a deleted account's "userId" becomes '[deleted]' and two of them may share a booking:
+-- one live row per (booking, account) is a partial UNIQUE index that leaves the tombstones out.
 CREATE TABLE IF NOT EXISTS booking_participants (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   "bookingId" uuid NOT NULL,
   "userId" varchar(255) NOT NULL,
   "userName" varchar(255) NOT NULL,
   "addedAt" timestamptz NOT NULL DEFAULT now(),
-  "withdrawnAt" timestamptz NULL,
-  PRIMARY KEY ("bookingId", "userId")
+  "withdrawnAt" timestamptz NULL
 );
 
+CREATE UNIQUE INDEX IF NOT EXISTS booking_participants_booking_user_uq
+  ON booking_participants ("bookingId", "userId") WHERE "userId" <> '[deleted]';
 CREATE INDEX IF NOT EXISTS booking_participants_user_idx ON booking_participants ("userId");
 
 -- Constraints with no IF NOT EXISTS: one guarded block, each looked up in the CURRENT schema only.

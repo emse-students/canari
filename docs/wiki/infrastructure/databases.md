@@ -169,6 +169,13 @@ Taking `SELECT ... FOR UPDATE` on the parent row (the resource) first, in the sa
 serialises the writers and every loser gets `23P01` (`isExclusionViolation`). Both shapes are run
 by `bookings.integration.spec.ts`.
 
+**A DECLARED DRIFT: CI's boot probe runs PostgreSQL 16, production 18.6.** `boot-nest-apps` in
+`ci.yml` uses `postgres:16-alpine` (unpinned), while the compose files pin `18-alpine` by digest; the
+social-service integration job of #1915 uses production's digest. So the boot probe proves the
+`synchronize` path (extensions included) on a major production does not run. `btree_gist` and the
+exclusion behave the same on both (contrib, trusted since 13), but a feature added after 16 would
+pass there only by luck: align the boot probe on the compose digest when it is next touched.
+
 **A DATABASE WITH NO LEDGER MUST NEVER BE HANDED THE LOOP.** The local estate runs
 `NODE_ENV=development`, so `synchronize` builds its schema from the entities on every boot and it
 carries no `schema_migrations` table at all. Sourcing `infrastructure/lib/migrations.sh` against it
