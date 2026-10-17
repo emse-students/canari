@@ -59,7 +59,7 @@ All frames are JSON-encoded `SignalMessage`:
 | `Join { room_id, room_token, mode? }` | Client → Server | Join a room. `room_token` is a short-lived HS256 JWT issued by chat-delivery-service (`/api/calls/initiate`) proving group membership; always required (`CALL_ROOM_SECRET` is mandatory at boot). `mode` is `"p2p"` or `"sfu"`; absent means `"sfu"`. |
 | `PeerReady { initiator }` | Server → Client | P2P only: both parties are in the room; `initiator` offers, the other is the polite side. Re-sent to the remaining peer when the other's device is replaced. |
 | `PeerLeft` | Server → Client | P2P only: the other party's socket ended, or THIS device was replaced by a sibling. |
-| `Refused { reason }` | Server → Client | The Join was refused: `room-full` (P2P, two other users hold it) or `mode-mismatch` (the room id exists in the other mode). |
+| `Refused { reason }` | Server → Client | The Join was refused: `room-full` (P2P, two other users hold it), `group-mismatch` (P2P, the token names another group than the seated peer's) or `mode-mismatch` (the room id exists in the other mode). |
 | `Joined { room_id }` | Server → Client | Room join acknowledged; client is now ready to send `Offer`. |
 | `Offer { sdp }` | Server → Client | Renegotiation offer when tracks are added to a room. |
 | `Offer { sdp }` | Client → Server | Initial offer from the joining peer (first peer in room). |
@@ -95,6 +95,17 @@ peer connection** - nothing in this mode touches webrtc-rs, TURN or a port - and
   first (the replaced one gets `PeerLeft`, its record `sibling-evicted`; the other party gets a new
   `PeerReady`). A third user gets `Refused { room-full }` and the room is left untouched - the
   capacity check runs before the eviction.
+- **One group per room:** the room token's `group_id` claim (required since #1997) is stored on
+  each seat, and a `Join` whose token names another group than the seated peer's gets `Refused {
+  group-mismatch }` BEFORE any eviction - not seated, so never paired and never sent a candidate.
+  chat-delivery binds the room id to its group at `initiate` and refuses a `room-token` for another
+  group, so this is the second of two locks: knowing a room id buys nothing.
+- **The relay never waits on a partner:** a frame is handed over with `try_send` (`p2p::deliver`).
+  Awaiting room in the partner's bounded queue would let a peer that stopped reading freeze the
+  sender's own socket task; a full or closed queue drops the frame with a `p2p ... DROPPED` warning
+  (and `ice_out_failed` on the partner's record for a candidate).
+- **Frame size:** 64 KiB per message and per frame (`MAX_SIGNAL_MESSAGE_BYTES`, both modes); a
+  larger one ends the socket. The largest legitimate frame is an SDP, a few KiB.
 - **Roles:** arrival order, decided under the room's lock: the first in (the caller) is the
   initiator. Both ends are told in one `PeerReady` each.
 - **Lifetime:** kept in `AppState.p2p_rooms`, apart from SFU rooms, and **never reaped on a clock**:

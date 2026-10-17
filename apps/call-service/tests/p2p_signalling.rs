@@ -93,9 +93,13 @@ fn session_token(user: &str) -> String {
 }
 
 fn room_token(user: &str, room: &str) -> String {
+    room_token_for_group(user, room, "g")
+}
+
+fn room_token_for_group(user: &str, room: &str, group: &str) -> String {
     encode(
         &Header::default(),
-        &json!({ "sub": user, "room_id": room, "group_id": "g", "exp": exp() }),
+        &json!({ "sub": user, "room_id": room, "group_id": group, "exp": exp() }),
         &EncodingKey::from_secret(ROOM_SECRET.as_bytes()),
     )
     .unwrap()
@@ -237,6 +241,70 @@ async fn a_second_device_replaces_the_first_and_both_ends_are_told() {
         recv(&mut alice).await,
         json!({ "type": "PeerReady", "initiator": true })
     );
+}
+
+/// Knowing the room id is not enough: a VALID token for that id, signed for another conversation,
+/// is refused before it is seated - so it is never paired and never receives a candidate - and
+/// the real callee still pairs afterwards, the room untouched by the attempt.
+#[tokio::test]
+async fn a_token_for_another_group_is_refused_and_the_callee_still_pairs() {
+    let svc = start().await;
+    let room = "room-group";
+
+    let mut alice = join(&svc, "alice", room).await;
+    recv(&mut alice).await; // Joined
+
+    let mut mallory = connect(&svc, "mallory").await;
+    send(
+        &mut mallory,
+        json!({ "type": "Join", "room_id": room, "room_token": room_token_for_group("mallory", room, "other"), "mode": "p2p" }),
+    )
+    .await;
+    assert_eq!(
+        recv(&mut mallory).await,
+        json!({ "type": "Refused", "reason": "group-mismatch" })
+    );
+
+    let mut bob = join(&svc, "bob", room).await;
+    assert_eq!(
+        recv(&mut bob).await,
+        json!({ "type": "Joined", "room_id": room })
+    );
+    assert_eq!(
+        recv(&mut bob).await,
+        json!({ "type": "PeerReady", "initiator": false })
+    );
+    // Alice's FIRST frame after her Joined is Bob's pairing: Mallory never produced one.
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "PeerReady", "initiator": true })
+    );
+}
+
+/// A frame above the 64 KiB cap ends that socket instead of being parsed and forwarded.
+#[tokio::test]
+async fn an_oversized_frame_closes_the_socket() {
+    let svc = start().await;
+    let mut alice = join(&svc, "alice", "room-big").await;
+    recv(&mut alice).await; // Joined
+
+    let sdp = "a".repeat(65 * 1024);
+    // The write itself may already fail once the server closes; only the ending is asserted.
+    let _ = alice
+        .send(Message::Text(
+            json!({ "type": "Offer", "sdp": sdp }).to_string().into(),
+        ))
+        .await;
+    let ended = timeout(LIVENESS, async {
+        loop {
+            match alice.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                Some(Ok(_)) => continue,
+            }
+        }
+    })
+    .await;
+    assert!(ended.is_ok(), "an oversized frame must end the socket");
 }
 
 #[tokio::test]

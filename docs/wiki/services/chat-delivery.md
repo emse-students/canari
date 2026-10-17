@@ -1901,8 +1901,8 @@ answers "not an address" and skips the literal check entirely. `unbracketHost` s
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/calls/initiate` | Verify membership, return a room token + room ID for the in-repo `call-service` SFU |
-| GET | `/api/calls/room-token` | Get room token for recipient |
+| POST | `/api/calls/initiate` | Verify membership, bind the room ID to the group (Redis `call:room:<id>`, TTL = 60 s ring window + 4 h), return a room token + room ID + `ringTimeoutMs` for the in-repo `call-service` |
+| GET | `/api/calls/room-token` | Get room token for recipient: 403 for a room bound to another group, 410 for an unknown/expired room or after the ring window ([calls lot 1](../frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)) |
 | GET | `/api/calls/ice-servers` | Get ICE server configuration |
 | POST | `/api/calls/presence` | Report device presence in call |
 | GET | `/api/calls/sibling-status` | Check sibling device call status |

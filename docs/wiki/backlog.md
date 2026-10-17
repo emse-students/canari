@@ -161,7 +161,6 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
-| **create the two dev TURN secrets** so a dev call can connect: GitHub secrets `DEV_CLOUDFLARE_CALLS_API_TOKEN` (a Cloudflare API token allowed to mint Realtime TURN credentials) and `DEV_CLOUDFLARE_TURN_KEY_ID` (a TURN key id - a new dev key, or production's `canari-calls`), then deploy a pre-release. `serve-dev.yml` already reads them; until then dev answers 503 on `/api/calls/ice-servers` | 2 secrets | [calls lot 1](frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only) |
 | **send the DPO dossier to the school's DPO** and bring back the answers to its three questions (the school's role, the hosting agreement with the DSI, the MiGallery DPIA); MiTV keeps the proof of each member's face-recognition consent | 1 e-mail, 1 conversation | [the GDPR entry](#p2---gdpr-compliance-the-open-items-of-the-register-2026-10-16), [dso-dossier](compliance/dso-dossier.md) |
 | **wipe the real-data copy dev still holds, once the fictional seed has merged and a pre-release has moved `dev-deployed`, and BEFORE the next stable - that stable ships the privacy page and dev banner saying dev holds no production data, which is false until this wipe has run and verified** (owner, 2026-10-16, GDPR): run `scheduled.yml` `job=dev-reset` with `dry_run=true`, then `false`; delete any leftover copy dump (`/tmp/canari-copy.*`) and the copy-era dev log archives on the host; grant your own dev row `admin` after signing in. A production-estate write, the owner's | 1 dispatch, 1 ssh session | [dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16) |
 | **decide the LOCAL copy of production** (`pull-prod-dump.sh` + `restore-into-local.sh`, PII included onto a developer's machine) - the one copy of production left after the dev copy was deleted on 2026-10-16 | 1 decision | [dev-environment](infrastructure/dev-environment.md#what-the-copy-was-kept-so-nobody-rebuilds-it), [databases](infrastructure/databases.md) |
@@ -919,6 +918,15 @@ NestJS services to `bun test` waits for the campaign ladder to reach the bottom
 Calls are UNVERIFIED, not broken; it becomes P1 the day calling is revived. What settles it is one
 relay-path call, two peers, audio and video, TURN as production configures it, taken by hand (the in-process half of it runs in CI since 2026-10-09: `apps/call-service/tests/relay_path.rs`)
 ([calls](frontend/modules/calls.md#the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)).
+
+### P1 (blocks `CALLS_COMPILED`, not dev) - four things owed before production calls (review of #1997, 2026-10-17)
+
+Lot 1 calls dev builds only. Before the production switch flips: F4, the IP exposure of
+`iceTransportPolicy: 'all'` and Cloudflare TURN as a recipient, written into
+`compliance/register-of-processing.md` and `/legal/privacy`; F5, a key-epoch/fingerprint agreement
+between the two ends, or a visible "decrypt failing" toast; one AES-GCM key used in both directions
+with no AAD; and the `fp=` log line printing 4 bytes of the key, to become a hash
+([calls](frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)).
 
 ### P2 - what made the profile fetches fail on that device at that moment
 

@@ -94,6 +94,17 @@ export class CallService {
   private polite = false;
   private makingOffer = false;
   private ignoreOffer = false;
+  /**
+   * The ring window's timer, on either side. Its LENGTH is never this file's: it is the
+   * `ringTimeoutMs` chat-delivery returned to the caller, relayed to the callee in the invite. A
+   * wrong timer only stops a ring early or late; whether a callee may still answer is decided by
+   * the server's own deadline (`room-token` answers 410), which no timer here can overrule.
+   */
+  private ringTimer: number | null = null;
+  /** The invite reached the group, so an unanswered end IS a missed call (F7). */
+  private inviteSent = false;
+  /** The relay paired the two parties: the ring is over whatever the media then does. */
+  private peerArrived = false;
   private localStream: MediaStream | null = null;
   private encryptionWorker: Worker | null = null;
   private workerKeyReady: Promise<void> | null = null;
@@ -192,12 +203,22 @@ export class CallService {
         return;
       }
       if (get(this.callState) !== 'idle') return;
+      // An invite with no window comes from a build before the ring window existed: it would
+      // ring here for as long as nobody touched it. Calls are dev-only, so it is refused, named.
+      const ringTimeoutMs = callMsg.ringTimeoutMs ?? 0;
+      if (ringTimeoutMs <= 0) {
+        appendLog(
+          `[Call] WARN invite ${callMsg.callId} carries no ring window - an older build, not rung`
+        );
+        return;
+      }
 
       this.currentCallId = callMsg.callId;
       this.currentGroupId = groupId;
       this.incomingCallerId = senderNorm;
       this.incomingHasVideo = callMsg.hasVideo !== false;
       this.callState.set('incoming');
+      this.armRingTimer(callMsg.callId, ringTimeoutMs, 'incoming');
 
       // WP-XP-5: the user may have ALREADY answered this call on a system surface (Android
       // CallStyle notification deep link / iOS CallKit) before the app was unlocked and the
@@ -213,6 +234,32 @@ export class CallService {
   /** Stops an incoming ring without notifying the group (sibling device answered). */
   private dismissIncomingCall() {
     this.cleanup();
+  }
+
+  /**
+   * Ends the ring when the server's window closes. On the caller nobody answered: the call ends
+   * as a missed one, for both parties (hangup + ring-end). On the callee the caller's own timer
+   * does the same, so this only covers a caller that vanished without saying so - the ring stops
+   * and nothing is written, the missed-call line being the caller's to write.
+   */
+  private armRingTimer(callId: string, ringTimeoutMs: number, side: 'calling' | 'incoming') {
+    this.clearRingTimer();
+    this.ringTimer = window.setTimeout(() => {
+      this.ringTimer = null;
+      if (this.currentCallId !== callId || get(this.callState) !== side || this.peerArrived) {
+        return;
+      }
+      appendLog(`[Call] ring window (${ringTimeoutMs} ms) closed unanswered - call=${callId}`);
+      if (side === 'calling') this.endCall(true);
+      else this.dismissIncomingCall();
+    }, ringTimeoutMs);
+  }
+
+  private clearRingTimer() {
+    if (this.ringTimer !== null) {
+      window.clearTimeout(this.ringTimer);
+      this.ringTimer = null;
+    }
   }
 
   /** Starts an outgoing call in the given MLS group. */
@@ -236,7 +283,7 @@ export class CallService {
     try {
       this.callState.set('calling');
       // Get server-issued room ID and access token before connecting.
-      const { roomId, roomToken } = await this.fetchInitiateCall(groupId);
+      const { roomId, roomToken, ringTimeoutMs } = await this.fetchInitiateCall(groupId);
       this.currentCallId = roomId;
       this.currentRoomToken = roomToken;
       // Before ringing: a server without TURN credentials (503) fails the call here, not after
@@ -248,7 +295,14 @@ export class CallService {
       // The caller joins first, so the relay makes it the initiator when the callee arrives.
       await this.connectSignalling(this.currentCallId!);
       const deviceId = this.mlsService.getDeviceId();
-      await this.sendMlsNotification(groupId, mkCallInvite(this.currentCallId!, video, deviceId));
+      await this.sendMlsNotification(
+        groupId,
+        mkCallInvite(this.currentCallId!, video, deviceId, ringTimeoutMs)
+      );
+      // From here on the other party has been asked: an unanswered end is a missed call. Before
+      // it (initiate refused, no ICE servers, no microphone) nobody was rung and nothing is missed.
+      this.inviteSent = true;
+      this.armRingTimer(this.currentCallId!, ringTimeoutMs, 'calling');
       // WP-XP-5: explicit cleartext ring for killed/background devices - the server cannot
       // read the MLS invite, so it fans out call_ring (Android) / APNs VoIP (iOS CallKit).
       void this.triggerServerRing(groupId, this.currentCallId!, video);
@@ -269,6 +323,8 @@ export class CallService {
 
     this.currentGroupId = groupId;
     this.currentCallId = callId;
+    // Answered: the server's deadline, not this timer, now decides (a late token is a 410).
+    this.clearRingTimer();
     const useVideo = video ?? this.incomingHasVideo;
 
     try {
@@ -319,7 +375,9 @@ export class CallService {
     }
     if (groupId && callId) {
       void this.chatNotifier?.onCallEnded(groupId, callId);
-      if (wasCalling) {
+      // Missed only if someone was actually rung: a call that failed before its invite (the
+      // initiate refused, no ICE servers, no microphone) rang nobody and missed nothing.
+      if (wasCalling && this.inviteSent) {
         const ctx = getCallSystemMessageContext();
         const callerId = ctx?.userId ?? '';
         void recordCallMissed(ctx, groupId, callId, callerId);
@@ -370,6 +428,9 @@ export class CallService {
   }
 
   private cleanup() {
+    this.clearRingTimer();
+    this.inviteSent = false;
+    this.peerArrived = false;
     this.removeBackgroundHandler();
     this.syncCallPresence(false);
     this.callState.set('idle');
@@ -461,7 +522,9 @@ export class CallService {
    * Asks chat-delivery-service to create a new call room.
    * Returns the server-generated `roomId` and a signed `roomToken` proving group membership.
    */
-  private async fetchInitiateCall(groupId: string): Promise<{ roomId: string; roomToken: string }> {
+  private async fetchInitiateCall(
+    groupId: string
+  ): Promise<{ roomId: string; roomToken: string; ringTimeoutMs: number }> {
     const { historyUrl } = resolveMlsPublicUrls();
     const url = new URL('/api/calls/initiate', historyUrl);
     const res = await apiFetch(url.toString(), {
@@ -480,7 +543,7 @@ export class CallService {
         `calls/initiate failed (${res.status})${detail ? `: ${detail}` : ''}`
       );
     }
-    return res.json() as Promise<{ roomId: string; roomToken: string }>;
+    return res.json() as Promise<{ roomId: string; roomToken: string; ringTimeoutMs: number }>;
   }
 
   /**
@@ -792,6 +855,8 @@ export class CallService {
    */
   private async onPeerReady(initiator: boolean): Promise<void> {
     this.polite = !initiator;
+    this.peerArrived = true;
+    this.clearRingTimer();
     appendLog(`[Call] peer ready - this side is ${initiator ? 'initiator' : 'polite'}`);
     if (this.pc) {
       appendLog('[Call] the other device was replaced - rebuilding the peer connection');

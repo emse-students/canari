@@ -33,12 +33,18 @@ vi.mock('$lib/mls-client/mlsDeliveryHttp', () => ({
 }));
 
 const ICE = [{ urls: 'turn:turn.cloudflare.com:3478', username: 'u', credential: 'c' }];
+/** What the fake server answers; each test that needs another answer sets it, `beforeEach` resets. */
+const server = { ringTimeoutMs: 60_000, initiateStatus: 200, iceStatus: 200 };
 vi.mock('$lib/utils/apiFetch', () => ({
   apiFetch: vi.fn(async (url: string) => {
-    const json = (body: unknown) => new Response(JSON.stringify(body), { status: 200 });
-    if (url.includes('/api/calls/initiate')) return json({ roomId: 'room-1', roomToken: 'rt-1' });
+    const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
+    if (url.includes('/api/calls/initiate'))
+      return json(
+        { roomId: 'room-1', roomToken: 'rt-1', ringTimeoutMs: server.ringTimeoutMs },
+        server.initiateStatus
+      );
     if (url.includes('/api/calls/room-token')) return json({ roomToken: 'rt-2' });
-    if (url.includes('/api/calls/ice-servers')) return json({ iceServers: ICE });
+    if (url.includes('/api/calls/ice-servers')) return json({ iceServers: ICE }, server.iceStatus);
     return json({});
   }),
 }));
@@ -157,6 +163,9 @@ const fakeMls = {
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => {
+  server.ringTimeoutMs = 60_000;
+  server.initiateStatus = 200;
+  server.iceStatus = 200;
   FakeSocket.instances = [];
   FakePeerConnection.instances = [];
   vi.stubGlobal('WebSocket', FakeSocket);
@@ -262,7 +271,13 @@ describe('a peer-to-peer call, client side', () => {
     service.handleCallSignal(
       'peer@example.org',
       'group-1',
-      { callId: 'room-1', offerSdp: 'START', hasVideo: false, deviceId: 'device-2' },
+      {
+        callId: 'room-1',
+        offerSdp: 'START',
+        hasVideo: false,
+        deviceId: 'device-2',
+        ringTimeoutMs: 60_000,
+      },
       'me@example.org',
       'device-1'
     );
@@ -318,5 +333,95 @@ describe('a peer-to-peer call, client side', () => {
 
     expect(FakePeerConnection.instances).toHaveLength(2);
     expect(FakePeerConnection.instances[0].closed).toBe(true);
+  });
+});
+
+/**
+ * The ring window (F2). Its length comes from the server's `initiate` answer and travels to the
+ * callee inside the invite; these tests shrink it to a few milliseconds and wait for the timer as
+ * an EVENT - registered before the wait, shorter than it - never asserting a wall clock.
+ */
+describe('the ring window, both sides', () => {
+  const pastWindow = () => new Promise((r) => setTimeout(r, 30));
+  const invite = (ringTimeoutMs?: number) => ({
+    callId: 'room-1',
+    offerSdp: 'START',
+    hasVideo: false,
+    deviceId: 'device-2',
+    ringTimeoutMs,
+  });
+
+  it('relays the server window in the invite, and ends an unanswered call as missed', async () => {
+    server.ringTimeoutMs = 5;
+    const { recordCallMissed } = await import('$lib/utils/chat/callSystemMessages');
+    vi.mocked(recordCallMissed).mockClear();
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+
+    await pastWindow();
+
+    expect(['ended', 'idle']).toContain(get(service.callState));
+    expect(recordCallMissed).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the call once the other party has arrived', async () => {
+    server.ringTimeoutMs = 5;
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+
+    await pastWindow();
+
+    expect(get(service.callState)).toBe('calling');
+  });
+
+  it('stops ringing the callee when the window closes, and writes nothing', async () => {
+    const { recordCallMissed } = await import('$lib/utils/chat/callSystemMessages');
+    vi.mocked(recordCallMissed).mockClear();
+    const service = new CallService(fakeMls);
+    service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      invite(5),
+      'me@example.org',
+      'device-1'
+    );
+    expect(get(service.callState)).toBe('incoming');
+
+    await pastWindow();
+
+    expect(get(service.callState)).toBe('idle');
+    expect(recordCallMissed).not.toHaveBeenCalled();
+  });
+
+  it('does not ring for an invite that carries no window', () => {
+    const service = new CallService(fakeMls);
+    service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      invite(undefined),
+      'me@example.org',
+      'device-1'
+    );
+    expect(get(service.callState)).toBe('idle');
+  });
+});
+
+/** F7: a call that failed before its invite rang nobody, so nothing was missed. */
+describe('no missed call for a call that never rang', () => {
+  it.each([
+    ['the ICE servers are refused', () => (server.iceStatus = 503)],
+    ['the initiate is refused', () => (server.initiateStatus = 403)],
+  ])('writes no missed call when %s', async (_, arrange) => {
+    arrange();
+    const { recordCallMissed } = await import('$lib/utils/chat/callSystemMessages');
+    vi.mocked(recordCallMissed).mockClear();
+    const service = new CallService(fakeMls);
+
+    await expect(service.startCall('group-1', false)).rejects.toThrow();
+
+    expect(recordCallMissed).not.toHaveBeenCalled();
+    expect(FakeSocket.instances).toHaveLength(0);
   });
 });

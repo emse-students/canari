@@ -73,6 +73,11 @@ impl RoomMode {
 /// has connected - so without this, every 1:1 call would lose its socket a minute in.
 const KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(25);
 
+/// The largest signalling frame accepted. The biggest legitimate one is an SDP offer, a few KiB
+/// for audio and well under 16 KiB with video; the library default (64 MiB) would let one socket
+/// make the server buffer, parse and - in peer-to-peer mode - forward a frame of that size.
+const MAX_SIGNAL_MESSAGE_BYTES: usize = 64 * 1024;
+
 /// JWT payload (`sub` = user id).
 #[derive(Serialize, Deserialize)]
 struct Claims {
@@ -87,6 +92,10 @@ struct RoomClaims {
     room_id: String,
     /// User ID of the token holder.
     sub: String,
+    /// The conversation the room was opened in. chat-delivery-service binds the room to it at
+    /// `initiate` and signs only that value, so a peer-to-peer room seats two holders of the SAME
+    /// group and nobody else (see [`p2p::P2pRoom::join`]).
+    group_id: String,
     exp: usize,
 }
 
@@ -780,7 +789,9 @@ async fn ws_handler(
         Ok(token_data) => {
             let user_id = token_data.claims.sub;
             info!("Authenticated WebSocket upgrade for user {}", user_id);
-            ws.on_upgrade(move |socket| handle_socket(socket, state, user_id))
+            ws.max_message_size(MAX_SIGNAL_MESSAGE_BYTES)
+                .max_frame_size(MAX_SIGNAL_MESSAGE_BYTES)
+                .on_upgrade(move |socket| handle_socket(socket, state, user_id))
         }
         Err(e) => {
             error!("JWT validation failed: {}", e);
@@ -946,9 +957,11 @@ async fn handle_signal(
             room_token,
             mode,
         } => {
-            if !authorize_join(state, user_id, peer_id, &room_id, room_token.as_deref()) {
+            let Some(group_id) =
+                authorize_join(state, user_id, peer_id, &room_id, room_token.as_deref())
+            else {
                 return;
-            }
+            };
 
             // Reject if peer is already in a room - prevents multi-room joins.
             if let Some(existing) = &session.room_id {
@@ -982,7 +995,10 @@ async fn handle_signal(
             }
 
             if mode == RoomMode::P2p {
-                p2p_join(state, user_id, peer_id, session, room_id, notify_tx).await;
+                p2p_join(
+                    state, user_id, peer_id, &group_id, session, room_id, notify_tx,
+                )
+                .await;
                 return;
             }
 
@@ -1466,19 +1482,22 @@ async fn handle_signal(
 /// Checks a `Join`'s room token: signed by chat-delivery-service with `CALL_ROOM_SECRET`, for THIS
 /// room and THIS user. Every refusal is named, because a refused Join is otherwise a client waiting
 /// out its timeout with nothing anywhere saying why.
+///
+/// Returns the token's `group_id` when the token is good: the group is what a peer-to-peer room
+/// compares between its two seats.
 fn authorize_join(
     state: &Arc<AppState>,
     user_id: &str,
     peer_id: &str,
     room_id: &str,
     room_token: Option<&str>,
-) -> bool {
+) -> Option<String> {
     let Some(token) = room_token else {
         warn!(
             "[auth] Peer {} attempted Join without room_token - rejected",
             peer_id
         );
-        return false;
+        return None;
     };
     let key = DecodingKey::from_secret(state.call_room_secret.as_bytes());
     let validation = Validation::new(Algorithm::HS256);
@@ -1488,19 +1507,19 @@ fn authorize_join(
                 "[auth] Peer {} room_id mismatch: token={} requested={}",
                 peer_id, data.claims.room_id, room_id
             );
-            false
+            None
         }
         Ok(data) if data.claims.sub != user_id => {
             warn!(
                 "[auth] Peer {} user_id mismatch: token={} ws={}",
                 peer_id, data.claims.sub, user_id
             );
-            false
+            None
         }
-        Ok(_) => true,
+        Ok(data) => Some(data.claims.group_id),
         Err(e) => {
             warn!("[auth] Peer {} invalid room_token: {}", peer_id, e);
-            false
+            None
         }
     }
 }
@@ -1514,6 +1533,7 @@ async fn p2p_join(
     state: &Arc<AppState>,
     user_id: &str,
     peer_id: &str,
+    group_id: &str,
     session: &mut PeerSession,
     room_id: RoomId,
     notify_tx: mpsc::Sender<SignalMessage>,
@@ -1526,6 +1546,7 @@ async fn p2p_join(
     let me = P2pPeer {
         peer_id: peer_id.to_string(),
         user_id: user_id.to_string(),
+        group_id: group_id.to_string(),
         tx: notify_tx.clone(),
         ledger: ledger.clone(),
     };
@@ -1543,6 +1564,20 @@ async fn p2p_join(
             let _ = notify_tx
                 .send(SignalMessage::Refused {
                     reason: "room-full".to_string(),
+                })
+                .await;
+            return;
+        }
+        JoinOutcome::OtherGroup => {
+            // A valid token for THIS room id but another conversation: someone who learnt the id
+            // and holds a token minted elsewhere. Seated, it would receive the call's candidates.
+            warn!(
+                "[auth] {} refused from p2p room {}: its token names group {}, the room holds another",
+                peer_id, room_id, group_id
+            );
+            let _ = notify_tx
+                .send(SignalMessage::Refused {
+                    reason: "group-mismatch".to_string(),
                 })
                 .await;
             return;
@@ -1658,7 +1693,7 @@ async fn p2p_relay(
         return;
     };
     let name = frame.kind();
-    match partner.tx.send(frame).await {
+    match p2p::deliver(&partner, frame) {
         Ok(()) => {
             if let Some(ledger) = &session.ledger {
                 count_relayed(kind, ledger, &partner.ledger);
@@ -1670,10 +1705,21 @@ async fn p2p_relay(
                 );
             }
         }
-        Err(e) => warn!(
-            "[call] p2p {} NOT relayed room={} from={} to={}: {}",
-            name, room_id, peer_id, partner.peer_id, e
-        ),
+        Err(e) => {
+            // Counted only for ICE, the one kind that column was written for; a dropped offer or
+            // answer is rarer and fatal to the negotiation, and this line carries it.
+            if kind == RelayedKind::Ice {
+                bump(&partner.ledger.ice_out_failed);
+            }
+            warn!(
+                "[call] p2p {} DROPPED room={} from={} to={}: {}",
+                name,
+                room_id,
+                peer_id,
+                partner.peer_id,
+                e.as_str()
+            );
+        }
     }
 }
 
