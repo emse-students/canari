@@ -1357,6 +1357,36 @@ account never sees that slot - [the vault names its account](#the-vault-names-it
 vault was never cleared by any live path, `v1.2.6` included. Whether a sign-out should end "Rester
 connecte" is a decision for the user, not a defect of this fix.
 
+### One sign-out sent two logouts, and the vault logged the user back in during it - FIXED 2026-10-17
+
+**Found on the Mi 9T bench of `1.2.9-alpha.7`** ([device-verification](../../device-verification.md),
+evidence `canari-harness/a1-bench/r1017-a129a7/signout.json`). One tap on "Se deconnecter": `[A]
+clear`, `[LOGOUT] MLS client retired`, then **`[PIN] Device key restored from PinVault - auto-login`
+17 ms later**, its `refresh->` racing the logout, `refresh✗401`, `[AUTH] Session expired - logging out
+and redirecting to /login?returnTo=%2Fdashboard`, a second `clear` and a second `POST
+/api/auth/logout`. There was no page reload: the `Initialised in TAURI mode` line is the shell's
+user-id effect calling `initServices` before `startLoginFlow`.
+
+**The cause is an ORDER in `clearAuth`, not the vault.** The sign-out handler sets `isLoggedIn` false
+synchronously, but `clearUserLocally()` ran LAST, after the awaited logout. For the whole round trip
+the shell saw "a saved user, nobody logged in" - exactly what its unlock triggers (the user-id
+`$effect`, `afterNavigate`) start the unlock on - and the vault slot of that user unlocked without a
+person. Its refresh met the revocation, and `notifySessionExpired`, gated on a saved user, announced
+it.
+
+**The fix is the order, so nothing has to be latched or timed.** `clearAuth` drops the local identity
+right after the handler, BEFORE its first `await`. No unlock can start (every trigger needs a saved
+user), and a 401 met during the sign-out announces nothing (`notifySessionExpired` is silent with no
+saved user, as it is during a login). Tests: `stores/auth.test.ts`, "the local identity at sign-out"
+(both fail on the previous order).
+
+**The contract, unchanged:** a deliberate sign-out keeps the vault slot (see above), and it never
+unlocks it again by itself. Only a NEW sign-in of the same account reopens it without the PIN.
+**What only a device reading proves**: that one tap sends ONE `POST /api/auth/logout`, logs no
+`[PIN] Device key restored` and no `[AUTH] Session expired` after `[A] signout requested by the
+user`, and lands on `/login` (not `?returnTo=`), on the Mi 9T on the vault path. The ordering is
+proven here; the Svelte effect scheduling on the real WebView is not.
+
 **What a sign-out does NOT keep: the saved community list (2026-10-14).** The rail and salon rows
 the last listing drew are saved per account (`canari_workspace_snapshot:v1:<userId>`,
 [community-open-budget](../community-open-budget.md#f1-f3-built-2026-10-14)) so the next launch

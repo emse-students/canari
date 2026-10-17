@@ -11,11 +11,15 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const currentUserId = vi.fn<() => string | null>(() => 'user-1');
+// Models the real store: dropping the local identity is what `currentUserId()` reads afterwards.
+const clearUserLocally = vi.fn(() => {
+  currentUserId.mockReturnValue(null);
+});
 
 vi.mock('$lib/stores/user', () => ({
   currentUserId: () => currentUserId(),
   saveUserLocally: vi.fn(),
-  clearUserLocally: vi.fn(),
+  clearUserLocally: () => clearUserLocally(),
 }));
 
 const { refresh, setSessionExpiredHandler, setToken, isRefreshCredentialProvenDead, clearAuth } =
@@ -38,7 +42,7 @@ function liveToken(): string {
   return `h.${claims}.s`;
 }
 
-const fetchMock = vi.fn<() => Promise<Response>>();
+const fetchMock = vi.fn<(...args: unknown[]) => Promise<Response>>();
 
 beforeEach(() => {
   fetchMock.mockReset();
@@ -273,5 +277,53 @@ describe('the sign-out handler', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(error).toHaveBeenCalledWith(expect.stringContaining('sign-out handler failed'));
     error.mockRestore();
+  });
+});
+
+/**
+ * ONE SIGN-OUT, ONE LOGOUT (Mi 9T, `1.2.9-alpha.7`, 2026-10-17). The local identity outlived the
+ * sign-out's round trip: for its whole length the app shell saw "a saved user, nobody logged in" and
+ * started the "Rester connecte" unlock, whose refresh met the revocation (401), and the
+ * session-expired path ran a SECOND `clearAuth` - a second `POST /api/auth/logout`, landing on
+ * `/login?returnTo=/dashboard`. The identity now goes before anything is awaited.
+ */
+describe('the local identity at sign-out', () => {
+  it('is gone before the server is asked to revoke the session', async () => {
+    setToken(liveToken());
+    clearUserLocally.mockClear();
+    let identityAtLogout: string | null | undefined;
+    fetchMock.mockImplementation(async () => {
+      identityAtLogout = currentUserId();
+      return new Response('', { status: 200 });
+    });
+
+    await clearAuth();
+
+    expect(identityAtLogout).toBeNull();
+    expect(clearUserLocally).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a 401 met while the logout is in flight announce nothing - no second sign-out', async () => {
+    // A live credential, so the refresh below is really sent and really refused.
+    setToken(liveToken());
+    const expired = vi.fn();
+    setSessionExpiredHandler(expired);
+    let logouts = 0;
+    fetchMock.mockImplementation(async (...args: unknown[]) => {
+      const url = String(args[0]);
+      if (url.includes('/api/auth/logout')) {
+        logouts++;
+        // What the vault auto-login did on the phone: ask for a token while the revocation is out.
+        await expect(refresh()).rejects.toThrow();
+        return new Response('', { status: 200 });
+      }
+      return answer(401);
+    });
+
+    await clearAuth();
+    setSessionExpiredHandler(null);
+
+    expect(logouts).toBe(1);
+    expect(expired).not.toHaveBeenCalled();
   });
 });

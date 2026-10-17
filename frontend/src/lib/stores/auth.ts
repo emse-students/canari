@@ -961,6 +961,15 @@ export async function clearAuth(): Promise<void> {
   } else {
     alog('clear with no sign-out handler registered - no live session to end');
   }
+  // THE LOCAL IDENTITY GOES NOW, BEFORE THE FIRST AWAIT - never after the revocation below. The
+  // handler has just set `isLoggedIn` false, and every unlock trigger in the app shell (the user-id
+  // effect, `afterNavigate`) starts the unlock on "a saved user, nobody logged in". Left until the
+  // end, that state held for the whole logout round trip: on the Mi 9T (`1.2.9-alpha.7`, 2026-10-17)
+  // the "Rester connecte" vault logged the user straight back in, its refresh met the logout and came
+  // back 401, and the session-expired path signed out a SECOND time (two `POST /api/auth/logout`,
+  // landing on `/login?returnTo=/dashboard`). With no saved user, no unlock starts and a 401 met
+  // during the sign-out announces nothing (`notifySessionExpired` is gated on a saved user).
+  clearUserLocally();
   _accessToken = null;
   noteSessionAnswered(null);
   clearWsSessionCookie();
@@ -1008,7 +1017,6 @@ export async function clearAuth(): Promise<void> {
   await flushAndroidCookies('logout');
   // And the copy we carry ourselves, which no `Set-Cookie` can clear.
   if (usesBodyRefreshTransport()) await clearNativeRefreshToken();
-  clearUserLocally();
 }
 
 /**
