@@ -443,6 +443,8 @@ export class MlsDeliveryApi {
 
   private readonly getToken: () => Promise<string>;
   private readonly f: MlsDeliveryFetch;
+  /** Key-package 404 reasons this build did not know and has already warned about (once each). */
+  private readonly unknownKeyPackageReasonsWarned = new Set<string>();
 
   constructor(opts: MlsDeliveryApiOptions) {
     this.historyUrl = opts.historyUrl;
@@ -735,8 +737,11 @@ export class MlsDeliveryApi {
       // The reason is the server's, classified where it is known, and every delivery service since
       // 2026-09-16 sends one. A 404 WITHOUT one is therefore not the delivery service answering (a
       // proxy, a missing route): it establishes nothing about the device, so it is `unanswered`,
-      // and the caller logs its `detail` (once). A reason this build does not know IS an answer -
-      // a newer server refusing for a cause added after this build - so it is `unrecognized`.
+      // and the caller logs its `detail` (once per sweep). A reason this build does not know IS an
+      // answer - a newer server refusing for a cause added after this build - so it is
+      // `unrecognized`, which retires nothing (`refusalRetiresInvitation`). It is warned about ONCE
+      // per reason for this client's life: every sweep meets it again, and the state change is
+      // what a reader needs, not the heartbeat.
       const raw = await res
         .json()
         .then((b: { reason?: unknown }) => b?.reason)
@@ -747,9 +752,13 @@ export class MlsDeliveryApi {
       if (raw === 'revoked' || raw === 'unregistered' || raw === 'expired') {
         return { kind: 'none', reason: raw };
       }
-      console.warn(
-        `[MLS] key-package 404 names a reason this build does not know: ${sanitizeForLog(raw.slice(0, 40))}`
-      );
+      const shown = sanitizeForLog(raw.slice(0, 40));
+      if (!this.unknownKeyPackageReasonsWarned.has(shown)) {
+        this.unknownKeyPackageReasonsWarned.add(shown);
+        console.warn(
+          `[MLS] key-package 404 names a reason this build does not know: ${shown} - nothing is retired on it`
+        );
+      }
       return { kind: 'none', reason: 'unrecognized' };
     }
 

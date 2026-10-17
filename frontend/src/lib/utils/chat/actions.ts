@@ -26,7 +26,7 @@ import { pendingGroupExitIds } from '$lib/utils/chat/pendingGroupExits';
 import { welcomeSentAt } from '$lib/utils/chat/welcomeSent';
 import { ensureConversationForServerGroup } from '$lib/utils/chat/serverGroupConversation';
 import { retireConversation } from '$lib/utils/chat/conversations';
-import { refusalIsTemporary } from '$lib/mls-client/deviceKeyPackage';
+import { refusalIsTemporary, refusalRetiresInvitation } from '$lib/mls-client/deviceKeyPackage';
 import {
   classifyServerStatus,
   decideAbsentGroupFate,
@@ -217,6 +217,17 @@ export async function processPendingInvitations(params: {
             if (answer.kind === 'unanswered') {
               log(
                 `[PENDING] Device ${inv.deviceId}: the server did not answer (${answer.detail}) - ` +
+                  `invitation kept, next sweep retries`
+              );
+              continue;
+            }
+
+            // A REASON THIS BUILD CANNOT JUDGE RETIRES NOTHING. Retiring is destructive, so only
+            // the allowlisted refusals do it; an `unrecognized` one keeps the row and the next
+            // sweep asks again (the delivery client warned once about the unknown reason itself).
+            if (answer.kind === 'none' && !refusalRetiresInvitation(answer.reason)) {
+              log(
+                `[PENDING] Device ${inv.deviceId}: refusal (${answer.reason}) this build cannot judge - ` +
                   `invitation kept, next sweep retries`
               );
               continue;

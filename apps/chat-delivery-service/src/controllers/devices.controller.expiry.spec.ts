@@ -273,6 +273,25 @@ describe('DevicesController - a key package past its lifetime', () => {
       expect(saved[0].notAfter!.getTime()).toBeGreaterThan(Date.now());
     });
 
+    it('accuses an undated entry at warn, and logs a fully dated batch at log', async () => {
+      // Every admitted client dates each entry, so `undated` above zero is a defect to find.
+      const { controller } = await build({
+        otkpRepo: { create: (row: unknown) => row, save: async (rows: unknown[]) => rows },
+      });
+      const warn = jest.mocked(controller['logger'].warn);
+      const log = jest.mocked(controller['logger'].log);
+      const send = (keyPackages: unknown) =>
+        controller.registerDevicePrekeys({ userId: 'u1', deviceId: 'd1', keyPackages }, 'u1');
+
+      await send([{ keyPackage: 'AAA' }]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('undated=1'));
+
+      warn.mockClear();
+      await send([{ keyPackage: 'BBB', notAfter: new Date(Date.now() + HOUR).toISOString() }]);
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('REGISTER_PREKEYS'));
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('undated=0'));
+    });
+
     it('still refuses a batch with no key package in it', async () => {
       await expect(publish([{ notAfter: new Date().toISOString() }])).rejects.toThrow(
         /non-empty base64/

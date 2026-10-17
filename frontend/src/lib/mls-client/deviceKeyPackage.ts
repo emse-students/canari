@@ -24,11 +24,32 @@ export type DeviceKeyPackage = {
 /**
  * Why there is no package. The first three mirror `KeyPackageRefusal` in the delivery service;
  * `unrecognized` is a reason the server DID name but this build does not know (a cause added after
- * it shipped - the server deploys before the stores update). That is still an answer, and it
- * promises nothing about a return. A 404 naming no reason at all is not the delivery service
- * answering and is `unanswered`, not a refusal.
+ * it shipped - the server deploys before the stores update). It is an answer, but not one this
+ * build can judge, so nothing destructive is done on it (see {@link refusalRetiresInvitation}). A
+ * 404 naming no reason at all is not the delivery service answering and is `unanswered`, not a
+ * refusal.
  */
 export type DeviceKeyPackageRefusal = 'revoked' | 'unregistered' | 'expired' | 'unrecognized';
+
+/**
+ * The refusals that retire a pending invitation - an ALLOWLIST, because retiring is destructive.
+ *
+ * `revoked` and `unregistered` are final for this device id. `expired` retires too, because it is
+ * self-healing elsewhere: the device mints a fresh package on its next connection and
+ * `registerDevice` re-creates the membership. Anything else - `unrecognized` today, any reason
+ * added later - KEEPS the invitation and is retried on the next sweep; a server that wants a new
+ * reason to retire ships it behind a client floor first.
+ */
+const RETIRING_REFUSALS: ReadonlySet<DeviceKeyPackageRefusal> = new Set([
+  'revoked',
+  'unregistered',
+  'expired',
+]);
+
+/** Whether a refusal may retire the pending invitation it answered (see {@link RETIRING_REFUSALS}). */
+export function refusalRetiresInvitation(reason: DeviceKeyPackageRefusal): boolean {
+  return RETIRING_REFUSALS.has(reason);
+}
 
 /**
  * The answer, or the statement that there was none.
