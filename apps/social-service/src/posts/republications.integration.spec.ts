@@ -8,8 +8,8 @@
  * rights come from the members table (a stand-in for `mayAct` reading the same bit), and the
  * notifications are recorded rather than sent.
  *
- * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files: CI provides no database, and
- * the file reports as skipped rather than passing. Run it against a throwaway PostgreSQL:
+ * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files; CI's
+ * `test-social-integration` sets it. Locally, against a throwaway PostgreSQL:
  *
  *   SOCIAL_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- republications.integration
  *

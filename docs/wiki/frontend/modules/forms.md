@@ -830,11 +830,11 @@ byte-identical). Front: `fileQuestion.test.ts` (empty type, HEIC), `FormQuestion
 migration 085 to a throwaway schema and drives the real service and scheduler - a claim past the
 window, by another uploader, of a purged row, from another form, two submissions racing for one
 file (exactly one wins), `attachedAt` on a reused submission, twelve parallel uploads (exactly ten
-kept), the purge run twice and a lowered retention. **IT NEVER RUNS IN CI** - no workflow sets
-`SOCIAL_IT_DATABASE_URL`, so CI reports it skipped - and it is the ONLY test guarding the
-`GREATEST(...)` on `attachedAt`, the advisory lock and the claim SQL as Postgres executes it. Run it
-by hand before merging any change to `form-files.service.ts`, `form-file-retention.scheduler.ts` or
-migration 085:
+kept), the purge run twice and a lowered retention. It is the ONLY test guarding the `GREATEST(...)`
+on `attachedAt`, the advisory lock and the claim SQL as Postgres executes it, and **it runs in CI on
+every pull request touching social-service** (`test-social-integration`, against production's
+PostgreSQL, failing on any skipped test - [cicd](../../cicd.md#package-1-opening-a-pull-request-ciyml)).
+Locally:
 
 ```sh
 docker run -d --rm --name formfiles-pg -e POSTGRES_PASSWORD=it -p 55432:5432 postgres:18-alpine

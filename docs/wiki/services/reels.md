@@ -206,7 +206,7 @@ read - the same reasoning as the media sweep's own `overdueCount`.
 - **Unit**: the rules, the service paths, the worker (fake store with the media service's
   vocabulary and ownership allowlist), the media service's claim and purge.
 - **Real PostgreSQL**: `reel-retention.integration.spec.ts`, gated on `SOCIAL_IT_DATABASE_URL`
-  (skipped in CI, which has no database): migration 069 applied twice, nothing existing becomes a
+  (run in CI by `test-social-integration` since 2026-10-15): migration 069 applied twice, nothing existing becomes a
   reel, the CHECK refuses a reel stated in pieces, only the due reel is selected and deleted, a
   failed transaction leaves the row AND its notifications, a failing blob keeps only its own reel.
 - **Running local estate**: this branch's media-service and social-service against the estate's

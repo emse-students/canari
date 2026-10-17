@@ -619,6 +619,99 @@ jobs:
         run: node --run test -- account-erasure.integration
 
   # =================================================================================================
+  # SOCIAL-SERVICE AGAINST A REAL POSTGRESQL
+  # =================================================================================================
+  # `*.integration.spec.ts` run the SQL a mock cannot judge - a claim's `UPDATE ... RETURNING`, an
+  # advisory lock, a migration applied over the schema an entity built. Each one is gated on
+  # `SOCIAL_IT_DATABASE_URL` and reports SKIPPED without it, and until 2026-10-15 nothing here set
+  # it: every one of them was skipped on every pull request, and `CI passed` was green for the
+  # reason that they had not run. The cost was measured the day this job was written: the migration
+  # 082 spec had failed on EVERY run since it was merged (#1913), and nothing said so.
+  #
+  # THE SAME POSTGRES AS PRODUCTION, BY DIGEST - the pin the three compose files carry. A test of SQL
+  # semantics against another major proves those semantics on a server production does not run.
+  # Bump it WITH the compose files, never alone (`ci-passed-gate.test.mjs` compares them).
+  #
+  # A SKIP IS A FAILURE HERE. `--passWithNoTests` (the `test` script's) and the gate itself both
+  # turn "ran nothing" into a pass, so the last step reads jest's own report and refuses unless
+  # every `*.integration.spec.ts` on disk ran and not one test in them was skipped.
+  test-social-integration:
+    name: Social-service integration specs (PostgreSQL)
+    needs: [changes]
+    if: ${{ contains(needs.changes.outputs.ts-matrix, 'apps/social-service') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
+        env:
+          POSTGRES_USER: canari
+          POSTGRES_PASSWORD: it-probe
+          POSTGRES_DB: social_it
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U canari"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version-file: .bun-version
+
+      # jest runs under node, for the reason given on `Run Test` in the matrix below.
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+
+      - name: Install Dependencies
+        working-directory: apps/social-service
+        run: bun install --frozen-lockfile
+
+      # In band: each spec works in its own throwaway schema, but one database serves them all, and
+      # a run whose order is fixed is one whose failure can be reproduced.
+      # ONE spec is NOT run here, and only one: `internal/account-erasure.integration.spec.ts` copies
+      # EVERY social table out of `public`, so it needs the schema `synchronize` builds - which this
+      # empty database has not got. It runs in `boot-nest-apps`, right after the boot built that
+      # schema ("Account erasure SQL against PostgreSQL"), on the same digest. Both steps below name
+      # it, so the count still refuses any OTHER spec the pattern stops selecting.
+      - name: Run every integration spec
+        working-directory: apps/social-service
+        env:
+          SOCIAL_IT_DATABASE_URL: postgres://canari:it-probe@localhost:5432/social_it
+        run: >-
+          node --run test -- --runInBand --testPathPatterns '\.integration\.spec\.ts$'
+          --testPathIgnorePatterns '/node_modules/' 'account-erasure\.integration\.spec\.ts$'
+          --json --outputFile "$RUNNER_TEMP/social-it.json"
+
+      - name: Every integration spec ran, and none was skipped
+        working-directory: apps/social-service
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/social-it.json"
+          on_disk="$(find src -name '*.integration.spec.ts' ! -path 'src/internal/account-erasure.integration.spec.ts' | wc -l)"
+          suites="$(jq '.numTotalTestSuites' "$report")"
+          tests="$(jq '.numTotalTests' "$report")"
+          skipped="$(jq '.numPendingTests + .numTodoTests' "$report")"
+          echo "on disk: $on_disk spec(s); jest ran $suites suite(s), $tests test(s), $skipped skipped"
+          if [ "$on_disk" -eq 0 ] || [ "$suites" -ne "$on_disk" ]; then
+            echo "::error::jest ran $suites integration suite(s) and $on_disk exist - the pattern no longer selects them all"
+            exit 1
+          fi
+          if [ "$tests" -eq 0 ] || [ "$skipped" -ne 0 ]; then
+            echo "::error::$skipped integration test(s) skipped - with the database set, a skip means a spec did not run"
+            jq -r '.testResults[] | select(any(.assertionResults[]; .status != "passed")) | .name' "$report"
+            exit 1
+          fi
+
+  # =================================================================================================
   # TYPESCRIPT BACKEND MATRIX
   # =================================================================================================
   test-typescript-backend:
@@ -1215,7 +1308,7 @@ jobs:
     name: CI passed
     if: always()
     needs:
-      [changes, test-rust, boot-nest-apps, test-typescript-backend, test-frontend, test-android, test-harness,
+      [changes, test-rust, boot-nest-apps, test-social-integration, test-typescript-backend, test-frontend, test-android, test-harness,
       test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, security, dependency-audit]
     runs-on: ubuntu-latest
     steps:

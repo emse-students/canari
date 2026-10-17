@@ -8,8 +8,8 @@
  * `clearedMarks` (`select`/`update: false`): a membership read and a membership save must not name
  * the column, because the deploy runs them BEFORE migration 082 exists.
  *
- * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files: CI provides no database, and
- * the file reports as skipped rather than passing. Run it against a throwaway PostgreSQL:
+ * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files; CI's
+ * `test-social-integration` sets it. Locally, against a throwaway PostgreSQL:
  *
  *   SOCIAL_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- channel-unread-clear.integration
  *

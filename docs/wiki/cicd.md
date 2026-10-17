@@ -18,10 +18,26 @@ split in half. The order, which the file's own header states:
 | # | job | what |
 |---|---|---|
 | 1 | `changes` | reads the modified paths and decides which of the jobs below run at all |
-| 2 | the test jobs | Rust, the four NestJS apps' real AppModule, TS, frontend, the two self-test suites - in parallel, each behind its own path filter |
+| 2 | the test jobs | Rust, the four NestJS apps' real AppModule, TS, social-service's integration specs on a real PostgreSQL, frontend, the two self-test suites - in parallel, each behind its own path filter |
 | 2b | `dependency-ceiling` | ONLY on a Dependabot pull request: does a gate HERE exist that would see this update fail? A human's pull request carries no `updated-dependencies` block to decide on, so it skips |
 | 3 | `ci-passed` | aggregates them. `success` AND `skipped` both pass. The ONE check the ruleset requires |
 | 4 | `arm-auto-merge` | in **parallel** with 1-3, not after |
+
+**SOCIAL-SERVICE'S `*.integration.spec.ts` RUN IN CI SINCE 2026-10-15** (`test-social-integration`,
+a job in this file, not a fifth visible workflow). Each spec is gated on `SOCIAL_IT_DATABASE_URL`
+and reports SKIPPED without it - and until that day nothing set it, so every one was skipped on
+every pull request and `CI passed` was green for the reason that they had not run. The day the job
+was written, the migration 082 spec turned out to have failed on EVERY run since its merge (#1913).
+The job runs them in band against production's PostgreSQL, pinned by the digest the compose files
+carry, and its last step FAILS unless jest ran as many suites as there are files on disk and skipped
+none: `--passWithNoTests` and the gate itself would otherwise turn "ran nothing" back into a pass.
+**ONE spec is excluded from it, by name in both steps: `internal/account-erasure.integration.spec.ts`**,
+which copies every social table out of `public` and so needs the schema `synchronize` builds; it runs
+in `boot-nest-apps` right after the boot built that schema (2026-10-17, found by rebasing on the
+merged account erasure: on this job's empty database it failed with "no table ... in public").
+`ci-passed-gate.test.mjs` holds the rest - every job is a need of `ci-passed`, `ci-passed` keeps
+`if: always()`, the aggregation refuses `failure` AND `cancelled` (run, not read), and the job's
+image equals production's.
 
 **`arm-auto-merge` HAS NO `needs:`, AND THAT IS DELIBERATE.** `--auto` hands the decision to
 GitHub, which merges the instant the required check passes and never before, so arming is a
