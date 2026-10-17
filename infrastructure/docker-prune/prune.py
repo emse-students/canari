@@ -3,7 +3,7 @@
 
 WHY THIS EXISTS
 
-Checked on 2026-08-27, `canari` held 57 dangling images and 64 dangling volumes and `mitv` held 6
+Checked on 2026-08-27, the production host held 57 dangling images and 64 dangling volumes and the second host held 6
 and 77, because **no prune runs at all** on either host. Neither is near its edge - that is exactly
 why this is a slope to be measured rather than an incident to be cleared.
 

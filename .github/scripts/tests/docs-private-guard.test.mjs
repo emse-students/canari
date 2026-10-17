@@ -30,36 +30,7 @@ export function violations(text) {
   return PATTERNS.filter(([, re]) => re.test(text)).map(([label]) => label);
 }
 
-const PENDING_CLEANUP = new Set([
-  'docs/PROD-TEST-CERCLE.md',
-  'docs/user-guide/workflow-developpement.md',
-  'docs/wiki/backlog.md',
-  'docs/wiki/cotisations.md',
-  'docs/wiki/device-verification.md',
-  'docs/wiki/durable-rules.md',
-  'docs/wiki/ecosystem-convergence.md',
-  'docs/wiki/frontend/offline-and-weak-network.md',
-  'docs/wiki/infrastructure/authentik.md',
-  'docs/wiki/infrastructure/backup.md',
-  'docs/wiki/infrastructure/cloudflare-edge.md',
-  'docs/wiki/infrastructure/databases.md',
-  'docs/wiki/infrastructure/dev-environment.md',
-  'docs/wiki/infrastructure/dsi-log-retention-request.md',
-  'docs/wiki/infrastructure/estate-migration.md',
-  'docs/wiki/infrastructure/host-updates.md',
-  'docs/wiki/infrastructure/host-waf-body-limit.md',
-  'docs/wiki/infrastructure/logging.md',
-  'docs/wiki/infrastructure/mino-access.md',
-  'docs/wiki/infrastructure/prod-queue-and-epoch-audit-2026-10-12.md',
-  'docs/wiki/infrastructure/storage-and-retention.md',
-  'docs/wiki/profiles-and-access.md',
-  'docs/wiki/testing-methodology.md',
-  'docs/wiki/workflow-migration.md',
-  'infrastructure/MIGRATION.md',
-  'infrastructure/authentik/README.md',
-  'infrastructure/backup/README.md',
-  'infrastructure/docker-prune/README.md',
-]);
+const PENDING_CLEANUP = new Set([]);
 
 let failed = 0;
 const fail = (msg) => {

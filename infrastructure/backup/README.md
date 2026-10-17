@@ -1,7 +1,7 @@
 # Sauvegarde et restauration Canari
 
 Sauvegarde complete de toutes les donnees persistantes, avec une copie locale
-(restauration rapide) et une copie offsite sur le serveur LAN `mitv`
+(restauration rapide) et une copie offsite sur un serveur LAN
 (protection contre la perte du serveur de production).
 
 ## Ce qui est sauvegarde
@@ -36,10 +36,10 @@ terminer en annoncant une restauration complete qui aurait saute 87 % des donnee
 ## Stockage et retention
 
 - Local : `/home/canari/backups`, retention `BACKUP_RETENTION_DAYS` jours (14 par defaut).
-- Offsite : `canaribackup@10.0.0.4:/srv/canari-backups` (serveur `mitv`), meme retention.
+- Offsite : `<utilisateur-backup>@<hote-offsite>:<dossier-offsite>`, meme retention.
 
 L acces offsite utilise la cle SSH de `canari` (`~/.ssh/id_ed25519`), autorisee
-pour l utilisateur dedie `canaribackup` (membre du groupe `_ssh`) sur `mitv`.
+pour l utilisateur dedie, non privilegie, du serveur offsite.
 
 ## Installation (serveur de production)
 
@@ -79,8 +79,8 @@ journalctl -u canari-backup.service -f
 | --- | --- | --- |
 | `BACKUP_DIR` | `/home/canari/backups` | dossier local des archives |
 | `BACKUP_RETENTION_DAYS` | `14` | retention locale et offsite |
-| `BACKUP_SSH_HOST` | `canaribackup@10.0.0.4` | cible offsite (vide = desactive) |
-| `BACKUP_SSH_PATH` | `/srv/canari-backups` | dossier offsite sur mitv |
+| `BACKUP_SSH_HOST` | `<utilisateur-backup>@<hote-offsite>` | cible offsite (vide = desactive) |
+| `BACKUP_SSH_PATH` | `<dossier-offsite>` | dossier offsite |
 | `MICONNECT_PG_CONTAINER` | `miconnect-postgresql-1` | conteneur PG Authentik (vide = exclu) |
 | `MICONNECT_SSH_HOST` | vide | machine qui porte Authentik (vide = conteneur local, le cas depuis le 2026-09-24) |
 | `CANARI_COMPOSE_PROJECT` | `canari-prod` | nom du projet compose (`docker-compose.prod.yml`'s `name:`) - les volumes ci-dessus sont montes par un `docker run` brut, en dehors de `docker compose`, donc rien ne le resout depuis le fichier |
@@ -175,7 +175,7 @@ sauvegarde dedupliquee change tout. Le modele chiffre est dans
 `${CANARI_COMPOSE_PROJECT}_garage_meta` et `${CANARI_COMPOSE_PROJECT}_media_meta` dans un depot
 **restic** (image jetable, aucune dependance hote),
 applique une retention 14 jours / 8 semaines / 6 mois, verifie l integrite du depot, puis
-miroite le depot sur `mitv`. Planifie a **04:00**, apres le tar.
+miroite le depot sur le serveur offsite. Planifie a **04:00**, apres le tar.
 
 **L etape `backup` lit en root, et elle seule** (2026-09-30) : Garage ecrit
 `garage_meta/node_key` en `root:root 0600`, aucun instantane ne l avait jamais contenu, et
@@ -214,7 +214,7 @@ l unique historique de sauvegarde des bases.
 | Mesure | Avant | Apres |
 | --- | --- | --- |
 | `/home/canari/backups` | 1019 Mo | **133 Mo** (dont 46 Mo de depot restic) |
-| Miroir offsite `mitv` | 1019 Mo | **133 Mo** |
+| Miroir offsite | 1019 Mo | **133 Mo** |
 | Archive nocturne type | 70-76 Mo | 3-4 Mo |
 
 Le gain immediat en disque est modeste (87 Go etaient libres). Ce que la bascule change est
@@ -244,7 +244,7 @@ docker run --rm --user "$(id -u):$(id -g)" \
    **Elle ne demarre PAS Authentik** - aucun pipeline ne l a jamais fait depuis
    son demenagement, et cette ligne le pretendait jusqu au 2026-09-24. La stack
    `miconnect` se remonte a la main, cf [../authentik/](../authentik/).
-2. Restaurer la derniere sauvegarde depuis mitv :
+2. Restaurer la derniere sauvegarde depuis le serveur offsite :
 
 ```bash
 ./infrastructure/backup/restore.sh --latest-from-mitv --yes
@@ -295,7 +295,7 @@ sauvegarde qui reussit et qui ment.
 
 | Geste | Verification |
 | --- | --- |
-| Sauvegarde manuelle immediate, avant tout le reste | 230 `CREATE TABLE`, gzip valide, copiee sur mitv |
+| Sauvegarde manuelle immediate, avant tout le reste | 230 `CREATE TABLE`, gzip valide, copiee sur le serveur offsite |
 | `git pull` du checkout | passe de `0.18.22` a `21cbf3d4e` |
 | Cle dediee `~/.ssh/authentik_backup` sur la boite applicative | ed25519, sans phrase de passe |
 | `authentik-pg-dump` installe sur l hote cible, commande forcee + `restrict` | dump de 230 tables obtenu depuis `canari` |

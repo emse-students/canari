@@ -10,7 +10,7 @@
 # (`apps/core-service/src/users/miconnect-profile.ts`): promo/formation are the first cursus entry
 # and a missing one clears them.
 #
-# From a workstation: AK_REMOTE="ssh portail-etu-direct" PG_REMOTE="ssh portail-etu-direct". The
+# From a workstation: AK_REMOTE="ssh <production-host>" PG_REMOTE="ssh <production-host>". The
 # postgres container is selected by COMPOSE LABEL, never by name: a dev copy holds the same data
 # (docs/wiki/infrastructure/databases.md).
 set -euo pipefail

@@ -31,7 +31,7 @@ idempotent either (a lost answer leaves the client with no `mediaId` and a stage
 
 ## 2. MiGallery - what to take, what to leave
 
-Read in `F:/Programmation/EMSE/MiGallery`: `src/lib/album-operations.ts` (client) and
+Read in `<workstation>/MiGallery`: `src/lib/album-operations.ts` (client) and
 `src/routes/api/immich/[...path]/+server.ts` (`handleChunkedUpload`).
 
 | Mechanism | MiGallery (read) | For Canari |

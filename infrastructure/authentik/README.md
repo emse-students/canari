@@ -5,16 +5,16 @@ Fournisseur d identite OIDC de Canari.
 ## Ou elle tourne, et par quoi elle est deployee : la stack a la main, sa configuration par la release
 
 **Cette stack a rejoint l hote mutualise le 2026-09-24** : elle tourne dans
-`/srv/miconnect/` sur `193.49.175.67`, publiee sur `127.0.0.1:9000`, et le nginx
+dans le dossier de la stack sur l hote de production, publiee sur `127.0.0.1:9000`, et le nginx
 de l hote termine TLS devant elle. Elle a eu sa propre VM du 2026-06-22 au
-2026-09-24 (`10.0.0.7`), et **aucun pipeline ne la deploie**, avant comme apres.
+2026-09-24, et **aucun pipeline ne la deploie**, avant comme apres.
 
 > **L ancienne VM n est pas vide, et ce n est pas un oubli.** Son PostgreSQL y
 > tourne encore avec une copie FIGEE de la base, comme retour arriere ; seuls
 > `server` et `worker` sont arretes. Elle porte aussi le RELAIS qui fait suivre
 > `9000` vers l hote cible, parce que le tunnel Cloudflare y pointe toujours -
 > c est ce qui rend la bascule, et son retour, locaux a cette machine.
-> **Consequence a ne pas rater : une sauvegarde qui viserait encore `10.0.0.7`
+> **Consequence a ne pas rater : une sauvegarde qui viserait encore l ancienne VM
 > reussirait en copiant une base morte.**
 
 Ce fichier annoncait le contraire jusqu au 2026-09-24 : il decrivait un job
@@ -66,7 +66,7 @@ bash apply-blueprints.sh dry-run    # applique dans une transaction, affiche le 
 bash apply-blueprints.sh apply      # la meme chose, et valide
 bash apply-blueprints.sh snapshot   # l etat normalise de chaque objet nomme, sans rien changer
 # depuis un poste de travail :
-AK_REMOTE="ssh portail-etu-direct" bash apply-blueprints.sh dry-run
+AK_REMOTE="ssh <production-host>" bash apply-blueprints.sh dry-run
 ```
 
 Le profil des comptes (WP1, `docs/wiki/profiles-and-access.md`) s ecrit avec
@@ -107,9 +107,8 @@ reste une connexion de service qui pointe vers un socket absent - elle
 n orchestre rien et s affichera en erreur dans l admin.
 
 **Le port `9443` n est plus publie, et il n avait aucun consommateur.** L ingress
-du tunnel atteint `http://10.0.0.7:9000`, en clair - lu sur le
-connecteur lui-meme (`curl http://127.0.0.1:20241/config` sur la boite qui le
-fait tourner, l API Cloudflare ne voyant pas les tunnels). Sur l hote partage,
+du tunnel atteint la stack en clair - lu sur le
+connecteur lui-meme (l API Cloudflare ne voyant pas les tunnels). Sur l hote partage,
 TLS est termine par le nginx de l hote avec le certificat DSI, comme pour les
 autres estates.
 

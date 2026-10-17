@@ -39,7 +39,7 @@ stays valid in both orders.
 
 **Question: what reaches the host from the internet?**
 
-Documented, with a control, on 2026-09-24 ([estate-migration](estate-migration.md#the-network-shape-settled-2026-09-24---only-22-80-and-443-enter-the-target-from-anywhere)):
+Documented, with a control, on 2026-09-24 ([estate-migration](estate-migration.md)):
 **only 22, 80 and 443 enter, and 22 only from the campus network** - a container published on a
 high port answered from the host itself and timed out from outside. The filter is the School's
 network border, not the host. That page also records **TCP 7844 blocked OUTBOUND** (the reason no
@@ -246,6 +246,204 @@ Live option C has no UDP at all: segments are HTTPS on 443, the most permissive 
 | SFU CPU per forwarded stream | the by-hand call [calls](../frontend/modules/calls.md) already owes, with `docker stats` beside it |
 | Whether webrtc-rs 0.20 speaks TURN over TLS (option B) | reading the `rtc` crate's TURN client at the time of the port |
 
+## 8. What works with no port opened by the DSI (measured 2026-10-16)
+
+> **The question** (user, 2026-10-16): *"Il faut que la DSI ouvre des ports ? On ne peut pas faire
+> sans ? Peut-etre avec le TURN Cloudflare, mais c'est moins bien ?"*
+>
+> **The answer: no port is needed IF the media never touches this host.** Sections 1-3 measured that
+> the HOST cannot reach a TURN relay; the CLIENTS can, over every transport (table 8.1). The one
+> design that needs the DSI is the one we have - an SFU on the host that must leave over UDP. Move
+> the media off the host (peer to peer for 1:1, a managed SFU for groups) and the host only carries
+> signalling over the 443 it already serves. Cloudflare TURN is not "less good" as a relay: it is
+> anycast to the nearest PoP (9-16 ms measured), and it is only used when a direct path fails.
+
+### 8.1 What was measured, and from where
+
+Every probe below is read-only: STUN Binding requests (`stun_probe.py`, section "The two probes"),
+or a browser page that builds one `RTCPeerConnection` per server URL and gives TURN a deliberately
+WRONG credential - so **a TURN error 400 means the relay was reached over that transport and
+answered**, and no credential was minted or printed. Evidence:
+`F:/Programmation/canari-harness/ice-probe-2026-10-16/` (the page, the raw outputs).
+
+| Where, 2026-10-16 UTC | UDP 3478 (STUN/TURN) | UDP 53 | UDP 443 | TCP 3478 / 80 | TLS 5349 / 443 | Candidate types |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Portail-etu host** (`.67`), 00:50 re-run | **no** | **no** | **no** (00:49) | no / yes | no / yes | - (server) |
+| **Old `canari` VM** (Proxmox VM 101, NAT via an EMSE `<school-range>`), 00:48 | **yes, 16 ms** (Google STUN too) | no | no | yes / yes | yes / yes | - (server) |
+| OXYGEN, raw STUN, home line, 00:48 | yes, 10 ms | yes | yes | yes / yes | yes / yes | - |
+| OXYGEN, Chrome 155, 00:54 | yes (TURN reached) | **no answer** (raw STUN on 53 from the same PC did answer - a Chrome-on-Windows quirk, not the network) | not tried | reached / reached | reached / reached | host/udp, srflx/udp |
+| Mi 9T, Chrome 154 on Android 10, home Wi-Fi, 00:52 | yes (TURN reached) | yes | not tried | reached / reached | reached / reached | host/udp, srflx/udp |
+| Mi 9T on **mobile data** | **not measured** - no SIM in the phone (`gsm.sim.state ABSENT`) | | | | | |
+| iPhone 12, Safari | **not measured** - the page must be served on the LAN or a public origin, and serving it on the LAN was refused by the session's permission policy; a public copy is one step | | | | | |
+| Campus Wi-Fi, a French 4G carrier | **not measured** - a human on campus, a SIM | | | | | |
+
+**Reading.** The two clients measured reach Cloudflare TURN over all six transports and get a
+server-reflexive (`srflx`) candidate, i.e. a direct peer-to-peer path is at least attempted. **That
+is ONE home network**; whether campus Wi-Fi and the carriers leave UDP open is exactly what the
+missing rows settle (the page is ready for them). A client that loses UDP still has TLS 443 to
+Cloudflare, the transport the host's own border lets through.
+
+**And one fact that changes the cost of option C:** dev's `chat-delivery-service` and
+`call-service` carry **no** `CLOUDFLARE_CALLS_API_TOKEN` / `CLOUDFLARE_TURN_KEY_ID` (prod carries
+both; `docker exec ... env`, values never printed). `GET /api/calls/ice-servers` on dev therefore
+answers 503, so **no credentialed TURN allocation was measured** - only reachability. Giving dev the
+pair (or a dev-only TURN key) is a one-off for the user, owed before WP-C0's allocation half.
+
+### 8.2 The four paths, compared
+
+**(A) 1:1 calls peer to peer - FEASIBLE with no DSI change; a client change.**
+
+- **Today the SFU is mandatory, even for two people.** `CallService.connectToSfu` always opens
+  `wss://<origin>/api/call`, sends `Join`, then `initPeerConnection` offers to the SFU, which
+  terminates the peer connection and re-sends the media (`apps/call-service/src/main.rs`,
+  `SignalMessage` = `Join | Joined | Offer | Answer | IceCandidate`, no peer addressing). There is
+  no P2P mode in the code.
+- **What a P2P mode needs**, smallest first:
+  1. **Signalling between the two peers.** The cheapest is to keep `call-service` as a SIGNALLING
+     RELAY for a two-person room: it already authenticates `Join` with the room token, so it
+     forwards `Offer`/`Answer`/`IceCandidate` to the other peer instead of terminating them, and
+     opens no peer connection itself (no webrtc-rs on the media path at all). The alternative,
+     signalling as MLS application messages over chat-gateway, is E2E but adds ordering and latency
+     work for no gain - the SDP carries no secret the frame key depends on.
+  2. **The client** offers to the other peer (one polite / one impolite role for glare), and sets
+     `iceTransportPolicy` to `all` instead of `relay`, so ICE tries host, then `srflx`, then the
+     Cloudflare relay last. **Privacy trade, a decision for the user:** `all` lets each party learn
+     the other's public IP address; keeping `relay` makes every call go through Cloudflare (still
+     no host involvement, still no DSI) at TURN cost and one extra hop.
+  3. **E2E is unchanged.** `RTCRtpScriptTransform` sits on the sender and the receiver of the SAME
+     `RTCPeerConnection` whoever is on the other side, and the key is still
+     `exportSecret(groupId, 'mls-webrtc-media', callId, 32)`. P2P is in fact the simpler case: DTLS-SRTP
+     already ends at the other phone, and a TURN relay cannot read DTLS either. Every E2E defect the
+     revival plan lists (whole-frame encryption under H.264, the asymmetric legacy path) is the same
+     in both modes.
+- **Quality.** Direct is the lowest latency possible (no hop) and costs nothing. When NAT forbids a
+  direct path - symmetric NAT and carrier-grade NAT are common on mobile networks - ICE falls back to
+  Cloudflare TURN, which adds one anycast hop (9-16 ms measured to it from here) and is billed.
+  **What share of mobile calls will need the relay is unmeasured here** (published figures for
+  WebRTC are of the order of one call in five, not verified for French carriers); the
+  `[CALL_REPORT]` `pair=` field of the revival plan measures it on our own calls.
+- **Budget.** The 950 GB estimator in `calls.service.ts` assumes EVERY call is relayed at
+  3000 kb/s per device (~700 device-hours a month). In P2P only relayed calls cost, so the estimator
+  must learn which pair was selected (from the client report) or it refuses calls long before the
+  real spend.
+
+**(B) Group calls, screen share and live through a MANAGED SFU (Cloudflare Realtime SFU) -
+FEASIBLE with no DSI change; the largest code change.**
+
+- **The host only makes HTTPS calls**: the backend holds the SFU app secret and calls
+  `https://rtc.live.cloudflare.com/v1/apps/{appId}/...`; the clients do ICE with Cloudflare
+  directly ([connection patterns](https://developers.cloudflare.com/realtime/sfu/get-started/connection-patterns/)).
+  Measured: the host reaches `rtc.live.cloudflare.com` over 443 (`curl`, HTTP answer in 1.0 s,
+  2026-10-16). The host's uplink, its ~100 Mb/s ceiling (section 4) and its 15-person arithmetic
+  stop mattering - media never crosses it.
+- **Price** ([SFU pricing](https://developers.cloudflare.com/realtime/sfu/pricing/)): 1 000 GB
+  of egress free per month, **shared** with TURN, then $0.05/GB; ingress is free; **TURN is free
+  when used together with the SFU** ([TURN](https://developers.cloudflare.com/realtime/turn/)).
+  A live at 2.5 Mb/s costs ~1.1 GB per viewer-hour, so 40 viewers for one hour is ~45 GB.
+- **E2E.** Cloudflare's own E2EE demo (Orange Meets) encrypts frames with MLS in a WASM worker - the
+  shape of ours - and reports the SFU needed no change
+  ([blog, 2025-06-26](https://blog.cloudflare.com/orange-me2eets-we-made-an-end-to-end-encrypted-video-calling-app-and-it-was/)).
+  It keeps the first bytes of each VP8 frame in clear; **whether the SFU itself needs them
+  (keyframe detection, simulcast) is not in the product docs - UNVERIFIED**, and it is the same
+  header-in-clear question as the revival plan's WP-C3.
+- **Accounts.** An SFU is a separate Realtime "app" (App ID + App Secret), created in the
+  dashboard; **our TURN key does not give us one** - a one-off for the user, plus two secrets.
+  Client transports to the SFU (UDP, TCP, TLS 443) are not stated on the pages read - UNVERIFIED,
+  settled by the same probe page once an app exists.
+- **Limits** ([limits](https://developers.cloudflare.com/realtime/sfu/platform/limits/)): 64 tracks
+  per API call, 50 API requests/s per session, no stated participant cap; simulcast is listed.
+- **Code.** The client's signalling moves from our WebSocket to sessions/tracks calls proxied by our
+  backend, and the multi-stream client of WP-C11 is owed in any case. In exchange the Rust SFU, its
+  six never-placed webrtc majors and the 0.20 rewrite all leave the project.
+
+**(C) Keep the in-repo Rust SFU without the DSI.**
+
+- **C1 - TURN over TCP/TLS 443 from the host: BLOCKED in the library, every version.** 0.17.2 has
+  the TCP/TLS relay as a commented-out `TODO` (section 2), and **0.20.5 refuses them explicitly**:
+  `webrtc-0.20.5/src/peer_connection/transports/turn_relayer.rs` logs `Skipping unsupported secure
+  TURN url` and `Skipping unsupported non-UDP TURN url` (read from the crate source in the local
+  cargo registry, 2026-10-16). Only a fork with our own TURN-over-TCP client would do it - not a
+  realistic path. UDP 443 is no exit either: the host drops it (8.1).
+- **C2 - the SFU on the old `canari` VM: the NETWORK works, the VM's FUTURE does not.** From that VM
+  UDP 3478 reaches Cloudflare TURN and STUN in 14-21 ms (8.1), so the current relay-only design
+  would connect from there **with no code change to the media path**. It is idle (6 vCPU, 16 GB,
+  load 0.00), `call-service` is stateless (env only: `JWT_SECRET`, `CALL_ROOM_SECRET`, the TURN pair,
+  `PORT`), and the VM already runs the Cloudflare connector, so its WebSocket can be published as a
+  tunnel ingress on a `canari-emse.fr` name with no inbound port. **Against it:** that VM is
+  documented as the ROLLBACK, kept "for a while" ([estate-migration](estate-migration.md)); giving it a
+  permanent role reverses that decision. Its UDP exit is a policy of the School network we did not
+  ask for and can lose without notice. Both legs still relay through TURN (double the budget of P2P),
+  and the 0.17 "never placed a call" risk is untouched.
+
+**(D) The DSI ask (section 3, option A) - the fallback.** One outbound rule: UDP 3478 from
+`<host-egress-ip>` to Cloudflare TURN. Cloudflare's TURN page lists no fixed ranges; its guidance is to
+allowlist what `turn.cloudflare.com` resolves to, fixed addresses being an enterprise-plan matter -
+**so the two /24 of section 3 stay UNVERIFIED** and the ticket should name the hostname as well. It
+is needed ONLY if the in-repo SFU stays on this host.
+
+### 8.3 Recommendation, feature by feature
+
+| Feature | Recommended path | DSI | Quality | Cost |
+| --- | --- | --- | --- | --- |
+| **1:1 audio/video** | **(A) peer to peer**, Cloudflare TURN as last resort, signalling over the existing `/api/call` WebSocket | none | best: direct, no hop; relayed calls +1 anycast hop | only relayed calls are billed; the estimator must learn which |
+| **Group call (3+)** | **(B) managed SFU** | none | one hop to the nearest PoP for everyone, no host uplink ceiling | 1 000 GB/month free shared with TURN, then $0.05/GB; TURN free with the SFU |
+| **Screen share** | follows its call: (A) in a 1:1, (B) in a group | none | as its call | as its call |
+| **Live, option A (WebRTC)** | **(B) managed SFU** | none | sub-second | ~1.1 GB per viewer-hour at 2.5 Mb/s |
+| Live, option C (segments) | unchanged: HTTPS on the host (section 5) | none | seconds of delay | the host's ~100 Mb/s |
+| Keep the Rust SFU | (C2) on the old VM, or (D) the DSI rule | (D) only | as today | both legs relayed |
+
+**Is TURN "less good"?** Only as the PATH OF EVERY CALL, as today: two relayed legs plus an SFU hop.
+As the last resort of a peer-to-peer call it is the standard design, and Cloudflare's is close
+(anycast) and reachable on TLS 443 from networks that block UDP. **What decides the order of work
+is (A): it removes the DSI from the 1:1 revival and needs no new provider account.** (B) and (C2) are
+choices for WP-C4, the revival plan's decision step.
+
+## 9. Probes of 2026-10-16: servers
+
+> **The question** (user, 2026-10-16): settle with REAL probes, not readings, how calls and live can
+> run without Cloudflare or the DSI - this section is the SERVER half (the clients and TURN are
+> section 8.1). Taken 09:41-09:51 UTC from `OXYGEN` (a home line). Production host: read-only
+> commands only (`sudo -n` was used to READ `firewall-cmd`, `nft`, `iptables -S` and `nginx -T`;
+> nothing written, nothing listened). Old VM: read-only, plus ONE listener for 90 s, recorded below.
+> Evidence: `F:/Programmation/canari-harness/probes-servers-2026-10-16/`.
+
+| # | Question | Method | Result | Verdict |
+| --- | --- | --- | --- | --- |
+| 1a | Which inbound ports does the HOST itself accept? | `sudo -n firewall-cmd --list-all-zones`, `nft list chain inet firewalld filter_INPUT`, `iptables -S` | zone `public` (default, holds `ens18`): services `ssh http https zabbix-agent` (22, 80, 443, 10050), nothing else; INPUT ends in `reject with icmpx admin-prohibited`. `iptables` INPUT adds only the `CROWDSEC_CHAIN` drop lists. `ss -tulpn`: public TCP 22, 80, 443, 10050 (+ rpcbind 111 and three host high ports, all refused by the zone); every Canari port on `127.0.0.1`; **no UDP 443 listener, so no HTTP/3** | **22/80/443 (+10050 monitoring) - host rule and School border agree** (border measured 2026-09-24 and section 1) |
+| 1b | Public path of each front door | `curl -w '%{remote_ip}'` x5, response headers | `canari.emse.fr` -> `<canari-public-ip>`, `Server: nginx`, no `cf-ray`: **host nginx directly, no tunnel**. `dev.canari-emse.fr` -> a Cloudflare anycast address, `Server: cloudflare`, `cf-ray ...-MRS`: **edge -> tunnel on the old VM -> its relay (`127.0.0.1:3080` there) -> host over the private network** | as documented ([estate-migration](estate-migration.md)) |
+| 1c | Is the host's OUTBOUND UDP drop the host's own rule? | `nft list chain inet firewalld filter_OUTPUT` and its `filter_OUT_public_*` sub-chains | policy `accept`; `pre/log/deny/allow/post` all **empty** | **the drop of section 1 is the School border, not the host** - nothing on the host to change, and nothing a host-side setting would fix |
+| 2a | Prod egress on 443, from outside | `bun throughput.mjs` on the 2 125 099-byte `mls_wasm_bg.*.wasm`, identity encoding; control `speed.cloudflare.com` 25 MB = **279 Mb/s** | 1 conn x3: **41.3 Mb/s**; 5 conns x2: **66.7 Mb/s**; 20 conns x1: **99.1 Mb/s** (TTFB median 42 / 245 / 305 ms); all `200` | **same ~100 Mb/s ceiling as 2026-10-15** (section 4), a second hour, same client |
+| 2b | Dev egress, same test | same, dev's own wasm | 38.9 / 160.5 / **182.1 Mb/s** - but `cf-cache-status: HIT`: **those numbers are Cloudflare's cache, not our host**. Re-run with a unique query per request (`MISS`, through the tunnel): 1 conn **17.8**, 5 conns **18.7**, 20 conns **18.7 Mb/s** (TTFB median 2.35 s at 20) | **the tunnel path caps at ~19 Mb/s whatever the parallelism** - five times below the direct path; live segments must not be served through the old VM's tunnel |
+| 2c | Latency to each front door | `curl -w` x5 on `/_app/version.json` | prod: TCP connect **~38 ms**, TLS done ~100 ms, TTFB ~135 ms. Dev: connect ~16 ms (to the CDN), TTFB ~55-73 ms (edge-cached file) | the direct path is ~38 ms RTT from here; a segment's first byte is ~1 RTT after a warm connection |
+| 3a | Who administers the old VM, and what is it? | `systemd-detect-virt`, `id`, `ip route`, [cloudflare-edge](cloudflare-edge.md#the-tunnel-drops-in-the-22h-band-and-nothing-on-this-page-can-fix-it) | an **LXC container** (Proxmox CT 101, not a full VM) at `<private-ip>/16`, default route `<private-ip>` = **the School's Stormshield border firewall** (`fw-ste.emse.fr`), public NAT address `<old-vm-public-ip>`. Our account is in `sudo` and `docker`; its own `nft` ruleset is accept-all (Docker's chains only) | **the box is ours, its network is not**: any inbound path is a NAT rule on the School's firewall, i.e. a DSI request - the same as the host |
+| 3b | Can the old VM RECEIVE from the Internet on a high port? | `listen_probe.py` (below) on the VM, TCP+UDP `47391`, **90 s, 09:46:53-09:48:23 UTC, exited by itself** (`ss` afterwards: 0 sockets on 47391). From OXYGEN `send_probe.py <old-vm-public-ip> 47391`: 1 TCP connect + 3 UDP datagrams. Control from the VM to `<private-ip>:47391` | OXYGEN: **TCP timeout, UDP no reply x3, and the listener logged NOTHING from outside**. Control: TCP connected and UDP answered | **NO inbound, TCP or UDP** - by construction (no DNAT on the border) and now measured. A self-hosted coturn or a non-relay SFU there needs the DSI exactly as on the host |
+| 3c | Can it SEND UDP? | section 8.1 (STUN to Cloudflare TURN and Google) | yes, 14-21 ms | **outbound UDP works from the VM** (the School's policy differs by subnet, and we did not ask for it - section 8.2 C2) |
+| 3d | Capacity for a coturn or SFU | `nproc`, `free -m`, `uptime`, `df`; `curl` to `speed.cloudflare.com` from the VM | 6 cores, 16 GB (16.1 GB available), load 0.00, disk 18 % (98 GB free), **no container running**. Download 389-487 Mb/s. **Upload 4.0-4.4 Mb/s on a single TCP flow** (three runs, 10-25 MB; OXYGEN's control upload to the same endpoint: 56 Mb/s); a 20 MB stream VM -> OXYGEN over ssh: 6.8 Mb/s | CPU and RAM are plenty; **the UPLINK is the weak point** - ~4 Mb/s per TCP flow, ~19 Mb/s aggregate through the tunnel (2b). Whether the cap is per flow (four tunnel connections x ~4.5 would fit 19) or for the box, and what UDP gets, is **not measured** - an SFU there should be assumed to have ~15-20 Mb/s of egress until it is |
+| 3e | Is it the documented rollback? | [estate-migration](estate-migration.md) | **no longer**: the 23 Canari containers and 10 volumes were destroyed 2026-09-25 (*"Tout supprimer maintenant"*). What it still carries: the Cloudflare connector (every `canari-emse.fr` name, dev, `ssh <old-vm>`), the relay to the host, the legacy names' `301`s, and the jump to `<prod-host>`. | a change there risks **dev, the legacy redirects and our SSH path to production**, not a rollback. A permanent role (8.2 C2) must not share its fate with those |
+| 4a | WebSocket through the host nginx | `nginx -T` (`canari.conf`), client code | `proxy_http_version 1.1`, `Upgrade`/`Connection` forwarded; **no `proxy_read_timeout` anywhere, so the default 60 s applies** in front of the container's 3600 s on `/api/call` and 120 s on `/api/ws`. The web client's heartbeat is every 8 s (`WebMlsService.ts`), so `/api/ws` never idles 60 s. Upgrade without a token answers `401` on both `/api/ws` and `/api/call` (auth before upgrade), so **an idle socket could not be held open unauthenticated to measure the cut** | **WS works** (it carries chat today); a call-signalling socket must ping under 60 s or the host nginx closes it - the container's 3600 s is not what binds |
+| 4b | Long-lived chunked streaming (live segments) | `nginx -T`, `Dockerfile.frontend` | host `canari.conf`: **`proxy_buffering` not set = ON**, `proxy_request_buffering off`, `proxy_buffers 4 256k`, `client_max_body_size 2G`, `worker_connections 768`; `http2 on`; CrowdSec Lua bouncer. Container: `proxy_buffering off` server-wide, `tcp_nodelay on`, `client_max_body_size 100m`, `/api/media` `proxy_read_timeout 300s`. The container nginx CONSUMES an upstream `X-Accel-Buffering` header (nginx does not forward `X-Accel-*`), so a backend cannot unbuffer the host from inside | **segments as ordinary files: FEASIBLE today** (that is what 2a measured). **A single long chunked response (LL-HLS part streaming, SSE-style) is NOT safe as configured**: the host buffers it and cuts any gap over 60 s; fixing it is either `add_header X-Accel-Buffering no` on that container location (ours, no DSI) or a line in the host vhost (the DSI's file). **Not measured end to end** - no unauthenticated streaming endpoint exists |
+
+**What was NOT tested, and why.**
+
+- **The Mi 9T against the old VM's listener**: it sits on the same home Wi-Fi as OXYGEN, and the
+  inbound result is decided by the School border's NAT, not by the client - a second client on the
+  same line adds no information. A phone on mobile data would (the bench Mi 9T has no SIM, 8.1).
+- **An idle WebSocket held past 60 s** and **a slow chunked response through the host**: both need
+  an authenticated session or an endpoint we would have to deploy; the verdicts in 4a/4b are read
+  from configuration, not observed.
+- **UDP egress capacity of the old VM** (what a TURN/SFU leg would actually use) and **whether the
+  ~4 Mb/s is per flow**: needs a UDP sink we control on the Internet side, which does not exist.
+- **Prod throughput from campus or 4G**: same open item as section 7, unchanged.
+- **The host firewall's border rules** (as opposed to the host's own): the Stormshield is the
+  School's, outside every access this project holds.
+
+**What this changes in section 8.** It confirms (A) and (B): neither needs an inbound port, and the
+host's own rules are not the obstacle anywhere. It weakens **C2** (the SFU on the old VM): the
+network lets its UDP out, but the box receives nothing from outside, uploads ~4 Mb/s per flow and
+~19 Mb/s through its tunnel, and also carries dev and our SSH path - a group call's SFU forwarding
+N x (N-1) x 0.4 Mb/s would hit that ceiling at about 7 people. And it bounds **live option C**: serve
+segments from `canari.emse.fr` directly (~100 Mb/s), never through the tunnel (~19 Mb/s).
+
 ## The two probes
 
 Both lived in a scratch directory and are not committed; they are described here precisely enough to
@@ -259,4 +457,12 @@ on the command line. Run on the host as `ssh <prod-host> 'python3 -' < stun_prob
 
 `throughput.mjs` (bun) runs N concurrent workers, each fetching one URL M times with
 `accept-encoding: identity`, and prints the status counts, bytes, elapsed time and Mb/s. Invoked as
-`bun throughput.mjs <url> <concurrency> <per-worker>`.
+`bun throughput.mjs <url> <concurrency> <per-worker>`. Section 9 added `BUST=1`, which appends a
+unique query to each request so a Cloudflare-fronted name answers `MISS` and the bytes come from
+our host, not the edge cache.
+
+Section 9's inbound test adds a pair: `listen_probe.py <port> <secs>` binds one TCP and one UDP
+socket on `0.0.0.0:<port>`, logs the source of every connection and datagram, answers each with a
+fixed string and exits after `<secs>`; it was run as `ssh <old-vm> 'python3 - 47391 90' <
+listen_probe.py`. `send_probe.py <host> <port>` makes one TCP connect (4 s timeout) and sends three
+UDP datagrams (2 s each), printing any answer.

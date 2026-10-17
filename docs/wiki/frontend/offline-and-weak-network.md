@@ -824,7 +824,7 @@ Tests: `transportFailure.test.ts`, `fetchRouting.test.ts` (the bare string from 
 
 ## 15. An offline cold start sends nothing it knows will fail (2026-10-15)
 
-**Measured on the Mi 9T, `v1.2.9-alpha.1`, airplane mode** ([device-verification](../device-verification.md), PR #1917; console in `F:/Programmation/canari-harness/a1-bench/r1015-a129/cons-feed.ndjson`): **70 warning/error lines in the first 6 s.** Grouped by emitter, each family and what was done:
+**Measured on the Mi 9T, `v1.2.9-alpha.1`, airplane mode** ([device-verification](../device-verification.md), PR #1917; console in `<harness-dir>/a1-bench/r1015-a129/cons-feed.ndjson`): **70 warning/error lines in the first 6 s.** Grouped by emitter, each family and what was done:
 
 | Family (lines) | Verdict | What changed |
 | --- | --- | --- |

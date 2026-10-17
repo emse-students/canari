@@ -1085,7 +1085,7 @@ A refusal here means some OTHER overlay is still registered: read `historyOverla
 header's "Publier" (the modal closed by itself 658-1099 ms after the click), then at once one
 `adb input swipe 200 1200 1000 1200 180`: `/camera` every time. The swipe is injected, not a finger;
 the same swipe opens the camera from a feed nobody published on. The bench posts were deleted
-afterwards. Evidence: `F:/Programmation/canari-harness/a1-bench/r1013-owed/checkV*.json` and frames.
+afterwards. Evidence: `<harness-dir>/a1-bench/r1013-owed/checkV*.json` and frames.
 
 ## iPad and rotation - owed on an iPad\n\nSwitching into Canari from another app does not rotate the window on an iPad (reported 2026-08-28); it needs an iPad. The Android phone rotation is decided and shipped: portrait under 600 dp, free on a tablet (`canari_lock_portrait`, [mobile](frontend/mobile.md#the-window-layout-the-keyboard-and-the-orientation-lock)).\n
 
@@ -1126,7 +1126,7 @@ layer is not: for five or six frames (~250 ms) it is drawn about one keyboard he
 slides up. The web composer is hidden behind the rising keyboard, the "+" floats alone, and the dev
 banner slides from y=333-353 pt up over the glass header. In points per frame: banner
 333/282/204/117/72/60, composer 713/642/592/546/501/487. Frames:
-`F:/Programmation/canari-harness/ios-bench/r1011/kbd2`, `kbd3`, and the contact sheets
+`<harness-dir>/ios-bench/r1011/kbd2`, `kbd3`, and the contact sheets
 `kbd2-contact*.png`.
 
 **Mi 9T, `v1.2.6-alpha.1`, 2026-10-13: `PASS` with the system keyboard (AOSP LatinIME), 5 of 5
@@ -1139,7 +1139,7 @@ literally, fails - and `computeSnapshot` absorbs it, which is the fix this check
 `keyboardOpenThresholdPx`, so `layoutGaveUpKeyboard` is false and the double report is trusted: in
 2 of 5 rises the composer spends one frame (~60 ms) at 702.1 before resting at 791.8, and in the
 other 3 it spends 24 ms at 881.5. No real IME on this phone is that short; a floating or
-one-row keyboard would be. Evidence: `F:/Programmation/canari-harness/a1-bench/r1013-owed/checkW-mi9t.json`
+one-row keyboard would be. Evidence: `<harness-dir>/a1-bench/r1013-owed/checkW-mi9t.json`
 (the LatinIME run; the ADB-keyboard numbers above are the only record of that run).
 
 ## The iPhone 12 owed-readings inventory (2026-10-11)
@@ -1150,7 +1150,7 @@ which is `v1.2.3-alpha.5`, signed *TestFlight Beta Distribution* (aps `productio
 `get-task-allow`, so NOT inspectable and no app log in the syslog), on `dev.canari-emse.fr`, signed
 in through "Connexion externe (service-account)" as `canari-test-gamma`. Driven with
 `tools/ios-device/ios.mjs` over WDA, timed from WDA's MJPEG stream on port 9100. Evidence:
-`F:/Programmation/canari-harness/ios-bench/r1011/`. **Delete a row when its reading is taken on
+`<harness-dir>/ios-bench/r1011/`. **Delete a row when its reading is taken on
 the build it names.**
 
 | Reading owed | Source | Status on 2026-10-11 |
@@ -1192,7 +1192,7 @@ Build `1.2.4 (100200402)`, the `v1.2.4-alpha.2` release APK, on `dev.canari-emse
 the `fourth` account (shown as "Canari Test Delta"). It was already installed when the readings
 started, and nothing was reinstalled. The WebView is inspectable, so every number below comes from
 CDP (console, heap, DOM geometry) and screenshots, and every timestamp is the phone's. Evidence:
-`F:/Programmation/canari-harness/a1-bench/r1012-alpha2/` (frames, `send13.jsonl`, `slow.jsonl`,
+`<harness-dir>/a1-bench/r1012-alpha2/` (frames, `send13.jsonl`, `slow.jsonl`,
 `dom*.log`). Frames that showed a tester's face were not kept.
 
 | Reading | Verdict | What was seen |
@@ -1217,7 +1217,7 @@ GitHub release), installed with `adb install -r` over alpha.2. Play Protect's up
 declined. The enrolment survived the upgrade, so there was no new sign-in: same `fourth` account
 ("Canari Test Delta") on `dev.canari-emse.fr`. Every number comes from CDP on the inspectable
 WebView, and every timestamp is the phone's. Evidence:
-`F:/Programmation/canari-harness/a1-bench/r1012-alpha3/` (frames `a3_*.png`, `a3_pdfm.json`,
+`<harness-dir>/a1-bench/r1012-alpha3/` (frames `a3_*.png`, `a3_pdfm.json`,
 `a3-cold-*.json`, `tap-summary.ndjson`).
 
 | Reading | Verdict | What was seen |
@@ -1240,7 +1240,7 @@ Build `1.2.6 (100200601)`, the `v1.2.6-alpha.1` release APK (`app-universal-rele
 so this was an **uninstall and a fresh install**: a NEW device, signed in again as the `fourth`
 account ("Canari Test Delta"), with "Rester connecte" unticked, so every cold open asks for the PIN.
 The peer is `canari-test-gamma` in the `chrome-w2` dev tab. Every number comes from CDP on the
-inspectable WebView. Evidence: `F:/Programmation/canari-harness/a1-bench/r1013-a126/` (run JSONs,
+inspectable WebView. Evidence: `<harness-dir>/a1-bench/r1013-a126/` (run JSONs,
 `cycle-a126.ndjson`, the console captures `cons-*.ndjson`, frames). The salon items ran in a bench
 community, `Bench126`, created by gamma for this pass (gamma administrator, delta member).
 
@@ -1294,7 +1294,7 @@ Both bench phones, dev estate, bench accounts only. **Mi 9T**: the same `v1.2.6-
 as the section above, account `fourth` ("Canari Test Delta"), every number from CDP on the
 inspectable WebView. **iPhone 12**: TestFlight `1.2.3 (100200305)` = `v1.2.3-alpha.5`, account
 `canari-test-gamma`, driven over WDA (not inspectable). Evidence:
-`F:/Programmation/canari-harness/a1-bench/r1013-owed/` and `.../ios-bench/r1013/`. Frames in which a
+`<harness-dir>/a1-bench/r1013-owed/` and `.../ios-bench/r1013/`. Frames in which a
 third-party app's heads-up notification showed a real person's message were deleted and re-taken
 under Do Not Disturb.
 
@@ -1338,7 +1338,7 @@ a **fresh install and a new device**, signed in through the service-account link
 `chrome-w2` dev tab. Numbers come from CDP on the inspectable WebView and from logcat (the Rust
 lines reach logcat, the WebView console does not). Dev still sends no push
 (`DEV_FIREBASE_SERVICE_ACCOUNT_JSON` absent), so the notification is its exact intent fired with
-`am start`. Evidence: `F:/Programmation/canari-harness/a1-bench/r1013-a127/` (frames, `cons-*.ndjson`,
+`am start`. Evidence: `<harness-dir>/a1-bench/r1013-a127/` (frames, `cons-*.ndjson`,
 `logcat-*.txt`, `inapp-log*.txt`, `notif-runs2.ndjson`).
 
 **Another session drove this phone during the pass** (00:02-00:05: three force-stops from a shell,
@@ -1402,7 +1402,7 @@ Build `1.2.9 (100200905)`, the `v1.2.9-alpha.5` release APK (`app-universal-rele
 id, sha256 `96b09481...`), `adb install -r` over alpha.4 (`firstInstallTime` unchanged: enrolment
 kept; Play Protect's "send for a check" prompt answered "Ne pas envoyer"). Dev estate, account
 `fourth` ("Canari Test Delta"), vault path, bench DM with gamma only. Console over CDP. Evidence:
-`F:/Programmation/canari-harness/a1-bench/r1017-a129a5/` (`cons-all.ndjson`, `cons-2.ndjson`, frames).
+`<harness-dir>/a1-bench/r1017-a129a5/` (`cons-all.ndjson`, `cons-2.ndjson`, frames).
 #1977 (warm avatar cache) is NOT in this tag.
 
 | Reading | Verdict | What was seen |
@@ -1433,7 +1433,7 @@ playing reel's `requestVideoFrameCallback` across two loops) and `cap.mjs` (the 
 scroller, whether the reel plays). Two dev reels were published to have a long caption and a
 landscape frame (a 6 s in-app take, and a 1280x720 test pattern from the gallery), both deleted at
 the end (`DELETE /api/posts/...` 200 each); nothing was published on production. Evidence:
-`F:/Programmation/canari-harness/a1-bench/r1016-a129a4/` (frames `s*.png`, `reelperf.ndjson`,
+`<harness-dir>/a1-bench/r1016-a129a4/` (frames `s*.png`, `reelperf.ndjson`,
 `feed-runs.ndjson`, `reconnect-runs.ndjson`, `cons-main.ndjson`, `applog.txt`, `logcat-main.txt`).
 
 | Reading | Verdict | What was seen |
@@ -1490,7 +1490,7 @@ wider than 150 px and `main video`, console over CDP, logcat), plus `st.mjs` (ro
 conversation, open dialogs, live camera, `history.length`). To give the dev feed media, ONE image
 post (in-app camera photo) and ONE CanaReel (a 9.6 s take from the `/camera` swipe place) were
 published, then both deleted at the end (`DELETE /api/posts/...` 200 each). Evidence:
-`F:/Programmation/canari-harness/a1-bench/r1016-a129a3/` (frames `s*.png`, `feed-runs.ndjson`,
+`<harness-dir>/a1-bench/r1016-a129a3/` (frames `s*.png`, `feed-runs.ndjson`,
 `reconnect-runs.ndjson`, `cons-*.ndjson`, `logcat-main.txt`).
 
 | Reading | Verdict | What was seen |
@@ -1534,7 +1534,7 @@ Delta"), bench conversations only, vault path. Offline means airplane mode (the 
 data). Same instruments as alpha.1 (`feed.mjs`, console over CDP, logcat for the whole pass), plus
 `reconnect.mjs` (offline cold start, 10 s, airplane mode off, 40 one-second samples) and `frames.mjs`
 (the `mediaTime` of every presented frame of a take). Evidence:
-`F:/Programmation/canari-harness/a1-bench/r1015-a129a2/` (frames `s*.png`, `feed-runs.ndjson`,
+`<harness-dir>/a1-bench/r1015-a129a2/` (frames `s*.png`, `feed-runs.ndjson`,
 `reconnect-runs.ndjson`, `cons-camera.ndjson`, `frames-video1.json`, `logcat-main.txt`).
 
 | Reading | Verdict | What was seen |
@@ -1573,7 +1573,7 @@ Build `1.2.9 (100200901)` (`dumpsys package`), the `v1.2.9-alpha.1` release APK
 (accepted, account kept), dev estate, account `fourth` ("Canari Test Delta"), bench conversations
 only, vault path. Settings > A propos reads "Version de Canari 1.2.9-alpha.1". The app console was
 streamed over CDP and logcat captured for the whole pass. Evidence:
-`F:/Programmation/canari-harness/a1-bench/r1015-a129/` (frames `s*.png`, `cons-*.ndjson`,
+`<harness-dir>/a1-bench/r1015-a129/` (frames `s*.png`, `cons-*.ndjson`,
 `logcat-main.txt`, `co-banc1/`, `feed-runs.ndjson`, `heart-runs.ndjson`, `flicker.txt`).
 
 | Reading | Verdict | What was seen |
@@ -1641,7 +1641,7 @@ Build `1.2.8` (`versionName` from `dumpsys package`), the `v1.2.8-alpha.1` relea
 `adb install -r` over the `1.2.7-alpha.3` build (accepted, no signature or downgrade refusal, account
 kept), dev estate, account `fourth` ("Canari Test Delta"), bench conversations only. The phone is on
 the vault path ("Rester connecte"), so no PIN gate was drawn. Evidence:
-`F:/Programmation/canari-harness/a1-bench/r1015-a128/` (`runs.ndjson`, summaries). Dev has no push,
+`<harness-dir>/a1-bench/r1015-a128/` (`runs.ndjson`, summaries). Dev has no push,
 so reading 5 could not be taken.
 
 | Reading | Verdict | What was seen |
@@ -1663,7 +1663,7 @@ Build `1.2.8` (`versionName`), the `v1.2.8-alpha.2` release APK (`app-universal-
 downgrade refusal, account kept), dev estate, account `fourth` ("Canari Test Delta"), bench
 conversations only, vault path (no PIN gate drawn). The only delta since alpha.1 is #1889: a salon
 message over the socket honours the salon's notification level. Evidence:
-`F:/Programmation/canari-harness/a1-bench/r1015-a128a2/` (`runs.ndjson`, summary, frames, `log.txt`).
+`<harness-dir>/a1-bench/r1015-a128a2/` (`runs.ndjson`, summary, frames, `log.txt`).
 Dev has no push, so what #1889 changes (a notification suppressed or kept) could not be observed.
 
 | Reading | Verdict | What was seen |
@@ -1840,7 +1840,7 @@ exports remain in Files > Sur mon iPhone.
 logcat and the in-app log export. **iPhone 12**: TestFlight `1.2.7 (100200702)`, account
 `canari-test-gamma`, driven over WDA; the native lines read from the device syslog
 (`pymobiledevice3 syslog live -pn Canari`). Dev still sends no push. Evidence:
-`F:/Programmation/canari-harness/a1-bench/r1014-a127a2/` (frames, `cons-*.ndjson`, `logcat-*.txt`,
+`<harness-dir>/a1-bench/r1014-a127a2/` (frames, `cons-*.ndjson`, `logcat-*.txt`,
 `inapp-log.txt`) and `.../ios-bench/r1014-a127a2/` (frames, `syslog-canari.txt`).
 
 **How the iPhone got the build.** TestFlight's app page offered `1.2.7 (100200702)` with "Mettre a
@@ -1899,7 +1899,7 @@ tab highlighted on `/notifications` (P3, cosmetic). The Mi 9T is LEFT on a fresh
 `fourth` survived, PIN gate first. **iPhone 12**: TestFlight offered `1.2.7 (100200703)` with
 "Mettre a jour" although automatic updates were ON (the build was ~30 min old); one tap updated it
 and the enrolment of `canari-test-gamma` survived (PIN gate). Evidence:
-`F:/Programmation/canari-harness/a1-bench/r1014-a127a3/` (`export1-3.txt`, `export-*.json`,
+`<harness-dir>/a1-bench/r1014-a127a3/` (`export1-3.txt`, `export-*.json`,
 `ring-*.txt`, `cons-offline.ndjson`, `logcat-main.txt`, frames) and `.../ios-bench/r1014-a127a3/`
 (frames, `syslog-canari.txt`).
 
@@ -1937,7 +1937,7 @@ Mi 9T is LEFT on the vault path ("Rester connecte" ticked) - mind the sign-out P
 TestFlight build `1.2.9 (100200905)`, account `canari-test-gamma`, dev estate, driven over WDA
 (`tools/ios-device`), native lines from the device syslog (`pymobiledevice3 syslog live -pn
 Canari`). The PIN gate was unlocked with the bench PIN. Evidence:
-`F:/Programmation/canari-harness/ios-bench/r1017-a129a5/` (frames, `syslog-canari.txt`). Frames
+`<harness-dir>/ios-bench/r1017-a129a5/` (frames, `syslog-canari.txt`). Frames
 showing a face, a personal photo library or the iOS password-autofill sheet were deleted.
 
 **How the build arrived.** Automatic updates did their job: TestFlight listed `1.2.9 (100200905)`
