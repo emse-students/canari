@@ -251,6 +251,17 @@ measurement of the `md` rendition sizes over trending and a few searches.
 
 The WebView's own `loop` seeks to 0 and the audio renderer pre-rolls before the clock restarts: the first frame after the wrap is held 317-433 ms where the file spans 107-128 ms. Without an audio track the hold is the file's (83 ms for 107 ms), so it is the audio pre-roll, not the decoder. The audio outside the picture is trimmed since 2026-10-16 (`trimToVideo`, ~100 ms per loop). A seamless loop needs NO seek: re-append the same segments to the MSE buffer the streaming reader already uses, `timestampOffset` advanced by the duration. Owed: the design, then the iPhone's reading of the same seam. [reels](frontend/modules/reels.md#the-end-of-a-reel-looked-frozen-2026-10-16)
 
+## P2 - In a DM, the iPhone's native chrome stands one keyboard too high (2026-10-17)
+
+iPhone 12, `v1.2.9-alpha.7`. A DM whose last message is a tall video, and the keyboard rising from
+closed. Every native glass piece then stood 301 pt (the overlap) above its web twin: the "+"
+mid-thread, the header off-screen. The salon was right, and so was a later keyboard change in the
+same DM. It is not new in 1.2.9. The cause is not measured. Owed: one reading of the
+`keyboard settled:` syslog line on the next build, which names one of the three causes. The fix
+follows from that line. The analysis is in
+[mobile](frontend/mobile.md#the-dm-whose-chrome-stands-one-keyboard-too-high-2026-10-17), and the
+procedure in [device-verification](device-verification.md#the-iphone-12-readings-of-v129-alpha7-2026-10-17).
+
 ## P3 - Accepted: the native "+" menu drops the keyboard (2026-10-17)
 
 Opening the composer's native `UIMenu` ends the WebView's input session, 8 of 8 on the iPhone 12 (`v1.2.9-alpha.5`). The cause is UIKit's context-menu presentation turning on the focus system, about 70 ms BEFORE the #1953 hold acts, not the hold ([mobile](frontend/mobile.md#the-conversations-native-glass-chrome) has the syslog order).

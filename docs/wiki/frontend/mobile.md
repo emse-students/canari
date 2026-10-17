@@ -1226,6 +1226,55 @@ halves agreeing field by field (`systemComponentsPatch.test.ts`); the Swift comp
 **Owed on an iPhone:** the pieces over their CSS twins pixel for pixel, the "+" following the keyboard
 without a lag the eye sees, the picker opening, and VoiceOver reading the four names.
 
+#### The DM whose chrome stands one keyboard too high (2026-10-17)
+
+**OPEN, P2, CAUSE NOT YET MEASURED.** This was found on the iPhone 12 with `v1.2.9-alpha.7`
+([device-verification](../device-verification.md#the-iphone-12-readings-of-v129-alpha7-2026-10-17), 3b).
+The conversation was a DM whose last message is a tall video. The keyboard rose
+(`overlap=301 -> webview height 543`). The web composer was drawn at 487 pt, where it belongs.
+The native "+" was at 186 pt, and the glass header was off the top of the screen. That is EVERY
+native piece shifted up by exactly the overlap. Two control cases came out right:
+
+- the salon, with the same 301 pt keyboard (`16-salon-kbd.png`);
+- the same DM after the keyboard changed while open, to the emoji keyboard (301 -> 388,
+  `11-dmkbd-menu-open.png`, syslog 13:50:58).
+
+So only the rise from CLOSED goes wrong. The clamp (`CanariClampDocumentScroll`) never logged in
+either process, so UIKit's offset was never outside its range.
+
+**The pieces are placed at the page's `getBoundingClientRect()`**, so the page's coordinates and the
+screen disagreed by 301. Three causes fit, and the source cannot choose between them:
+
+1. **WebKit's own state is stale.** The page holds `scrollY` 301 while UIKit's offset is 0, which
+   is the reveal of the focused field against the not-yet-shrunk frame, never handed back to the page.
+2. **The DM's document kept a scroll range.** The offset then sits legally at
+   `contentSize - bounds` = 844 - 543 = 301, where the clamp leaves it alone.
+3. **The page laid the composer out at 186 itself.** Both scrolls are 0, and the
+   `--app-viewport-height` / `--keyboard-layout-inset-bottom` arithmetic is wrong for this one shape.
+
+**One syslog line now separates them.** After every settled keyboard change, `canari_ios.mm`
+(`CanariReportSettledKeyboardGeometry`) logs `keyboard settled: native offset= content= bounds= |
+page scrollY= scrollHeight= innerHeight= vvHeight= vvOffsetTop= vvPageTop= composerTop=`. The
+store build's WebView cannot be inspected, so this line is the measurement. Reading it:
+
+- `offset` 0 with `scrollY` 301 is cause 1;
+- `content - bounds` = 301 with `offset` 301 is cause 2;
+- `composerTop` 186 with both at 0 is cause 3.
+
+No fix is written until the line has named one.
+
+**Not new in 1.2.9, by reading.** Between `v1.2.8` and `v1.2.9-alpha.7`, none of these changed:
+
+- the keyboard layout and the clamp in `canari_ios.mm` (that file changed only for Dynamic Type
+  and the accessory bar);
+- `nativeGlassPiece.svelte.ts`, `ChatHeader.svelte` and the composer's footer CSS;
+- the composer's reveal. `keyboardViewport.svelte.ts` (#1952) returns early for
+  `.chat-composer-footer`, and its new `transitionend` re-reveal is for
+  `[data-keyboard-aware-overlay]` only.
+
+The plugin patch changed only the menu hold (`ButtonComponent.swift`, #1953). The DM's last message
+became the tall video on 2026-10-17, which is why no earlier reading met it.
+
 ### The iPhone follows Dynamic Type (decided by the user 2026-10-14)
 
 WKWebView ignores the system text size for ordinary CSS (read 2026-10-13: the largest standard size
