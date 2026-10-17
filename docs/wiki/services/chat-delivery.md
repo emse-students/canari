@@ -1239,11 +1239,18 @@ covered the builder field by field and none of it applied to a caller that never
 
 **Which iOS process a push reaches is decided here.** `mutable-content: 1` (alert) runs the
 Notification Service Extension; `content-available: 1` (background) is meant for the app
-(`canari_push.mm` `CanariHandleFcmData`) and never goes to the extension - **but the app hook taking
-it is not installed (2026-10-15), so no Canari native code acts on it, background or foreground**
-([mobile](../frontend/mobile.md), [backlog](../backlog.md)). So a silent type — today only
-`channel_read` — is acted on by the app alone, and listing one in the NSE's switch is a branch that
-cannot execute. `frontend/src/lib/mobile/channelPushFields.test.ts` pins both directions across the
+(`canari_push.mm` `CanariHandleBackgroundFrame`, an allowlist of dismissals since 2026-10-17 -
+before that the hook taking it was never installed, see
+[mobile](../frontend/mobile.md#silent-frames-reach-the-app-through-a-method-canari-adds-2026-10-17))
+and never goes to the extension. So a silent type such as `channel_read` is acted on by the app
+alone, and listing one in the NSE's switch is a branch that cannot execute.
+
+**The alert's `sound` names a palette-A trill** (`IOS_NOTIFICATION_SOUND`, bundled in the app and
+the extension, [sounds](../frontend/sounds.md)): the "message" trill on an MLS alert (a `mentions`
+frame stays soundless and the extension sets the "mention" trill once it reads a mention); on an
+internal alert, the trill of the Android channel the same push lands on - a salon message "mention"
+or "message" by the per-recipient `mentioned`, a message reaction "reaction", and posts, comments and
+forms the system default (`canari_social`, `canari_forms`). `frontend/src/lib/mobile/channelPushFields.test.ts` pins both directions across the
 seam.
 
 **Client config & build:** the Firebase client config files are gitignored and injected by CI
