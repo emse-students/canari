@@ -131,7 +131,19 @@ server {\n\
     \n\
     # Utilise le resolver DNS interne de Docker pour la résolution des upstreams\n\
     # Cela évite que nginx refuse de démarrer si un upstream est temporairement absent\n\
-    resolver 127.0.0.11 valid=10s ipv6=off;\n\
+    #\n\
+    # A RELEASE REPLACES A SERVICE WITHOUT A GAP, AND THESE THREE LINES ARE WHAT LET IT (2026-10-17,\n\
+    # docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to). The new replica starts beside\n\
+    # the old one, so a name resolves to BOTH for a while; the old one then stops listening and finishes\n\
+    # what it holds. `valid=2s` is how long an address is kept - the deploy waits that long (it reads\n\
+    # the same number, asserted by deploy-replace.test.sh) before retiring the old replica, so every\n\
+    # request after it already knows the new one. A connect REFUSED by the old replica is handed to the\n\
+    # next address with no byte sent, POSTs included; `proxy_connect_timeout 2s` bounds the one case that\n\
+    # is not a refusal - an address whose container has just gone, still cached for at most 2 s - where\n\
+    # the default would hold a member for 60 s. A connect on this bridge takes well under a millisecond.\n\
+    resolver 127.0.0.11 valid=2s ipv6=off;\n\
+    proxy_connect_timeout 2s;\n\
+    proxy_next_upstream error timeout;\n\
     # EVERY VISITOR ARRIVES FROM THE DOCKER GATEWAY, SO $remote_addr NAMED NOBODY.\n\
     # The host proxy in front of this container sets X-Real-IP to the real client\n\
     # (after its own real_ip), and until 2026-09-30 every location overwrote it with\n\
@@ -295,6 +307,15 @@ server {\n\
     # own. An exact location skips that machinery entirely.\n\
     location = / {\n\
     try_files /nonexistent @ssr;\n\
+    }\n\
+    \n\
+    # The compose healthcheck of THIS container (2026-10-17): it answers from here alone, so healthy\n\
+    # means this configuration loaded and the server listens - the moment the edge may send it\n\
+    # traffic and a release may retire the replica it replaces. Not logged: a line every 30 s per\n\
+    # replica would be noise that names nobody.\n\
+    location = /nginx-health {\n\
+    access_log off;\n\
+    return 200;\n\
     }\n\
     \n\
     # The emoji pictures (docs/wiki/frontend/emoji.md). Their directory is a hash\n\

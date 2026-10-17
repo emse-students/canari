@@ -195,10 +195,61 @@ async fn main() {
         }
     };
 
-    if let Err(e) = axum::serve(listener, app).await {
+    if let Err(e) = serve_until(listener, app, terminate_signal()).await {
         tracing::error!("Erreur serveur axum: {}", e);
         std::process::exit(1);
     }
+    tracing::info!("[DRAIN] every request in flight was answered - exiting");
+}
+
+/// Serves `app` until `shutdown` resolves, then stops ACCEPTING and returns once every request
+/// already in flight has been answered.
+///
+/// WHY (2026-10-17, docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to): a release
+/// starts the new gateway beside this one and retires this one with SIGTERM. This binary runs as
+/// PID 1, where a signal with no handler is ignored, so the old gateway kept accepting until Docker
+/// SIGKILLed it ten seconds later, mid-request. With the listener closed, a new connection is
+/// REFUSED and nginx hands it to the new replica. An upgraded WebSocket is not "in flight" - its
+/// connection left hyper at the upgrade - so it closes when the process exits and the client
+/// reconnects, through nginx, to the new gateway.
+async fn serve_until(
+    listener: tokio::net::TcpListener,
+    app: Router,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> std::io::Result<()> {
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown)
+        .await
+}
+
+/// Resolves on SIGTERM - what `docker stop` sends. Off Unix (a developer's build only) on Ctrl-C.
+async fn terminate_signal() {
+    #[cfg(unix)]
+    {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sigterm) => {
+                sigterm.recv().await;
+            }
+            Err(e) => {
+                // Without the handler the process is back to ignoring SIGTERM as PID 1 and is killed
+                // mid-request at the stop timeout - say so, loudly, and keep serving.
+                tracing::error!(
+                    "[DRAIN] cannot listen for SIGTERM ({e}) - a release will kill this gateway mid-request"
+                );
+                std::future::pending::<()>().await;
+            }
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::error!("[DRAIN] cannot listen for Ctrl-C ({e})");
+            std::future::pending::<()>().await;
+        }
+    }
+    tracing::info!(
+        "[DRAIN] SIGTERM - closing the listener; requests in flight are answered, then the process exits"
+    );
 }
 
 #[cfg(test)]
@@ -247,6 +298,49 @@ mod tests {
             .headers()
             .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
             .map(|v| v.to_str().unwrap().to_string())
+    }
+
+    /// Sends one raw `GET /slow` and returns the status line, or the transport error.
+    async fn raw_get(addr: SocketAddr) -> std::io::Result<String> {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let mut stream = tokio::net::TcpStream::connect(addr).await?;
+        stream
+            .write_all(b"GET /slow HTTP/1.1\r\nHost: t\r\nConnection: close\r\n\r\n")
+            .await?;
+        let mut response = String::new();
+        stream.read_to_string(&mut response).await?;
+        Ok(response.lines().next().unwrap_or_default().to_string())
+    }
+
+    /// A gateway a release retires answers what it accepted and refuses what it has not: a refused
+    /// connect is what nginx hands to the new replica (docs/wiki/cicd.md).
+    #[tokio::test]
+    async fn serve_until_answers_in_flight_and_refuses_new_connections() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let app = Router::new().route(
+            "/slow",
+            get(|| async {
+                tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                "done"
+            }),
+        );
+        let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+        let server = tokio::spawn(serve_until(listener, app, async {
+            let _ = stopped.await;
+        }));
+
+        let in_flight = tokio::spawn(raw_get(addr));
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        stop.send(()).unwrap();
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+        assert!(
+            tokio::net::TcpStream::connect(addr).await.is_err(),
+            "a new connection must be refused once the drain has begun"
+        );
+        assert_eq!(in_flight.await.unwrap().unwrap(), "HTTP/1.1 200 OK");
+        server.await.unwrap().unwrap();
     }
 
     #[test]

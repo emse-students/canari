@@ -492,7 +492,11 @@ The palette-A trills reach the app's tones and the three Android channels ([soun
 
 ### P1 - a tab or app open across a production deploy sees the outage as "Échec de l'envoi"
 
-The 1-2 min a prod deploy takes answers `502`, and a send in that window shows "Échec de l'envoi". Clients older than `1.2.1` then stayed blocked by the key-group epoch bug ([channel-encryption §22.3](protocols/channel-encryption.md#223-the-native-app-read-every-held-key-group-as-epoch-0-and-re-joined-them-all---fixed-2026-10-09)), but the deploy outage is user-visible on its own: whether the deploy library can be zero-downtime is the open question ([cicd](cicd.md)).
+The 1-2 min a prod deploy takes answers `502`, and a send in that window shows "Échec de l'envoi". Clients older than `1.2.1` then stayed blocked by the key-group epoch bug ([channel-encryption §22.3](protocols/channel-encryption.md#223-the-native-app-read-every-held-key-group-as-epoch-0-and-re-joined-them-all---fixed-2026-10-09)), but the deploy outage is user-visible on its own. **BUILT 2026-10-17 (PK6): a release starts each new replica beside the old one and drains the old one** ([cicd](cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)); a fixture test sends throughout and sees no failure. **Owed:** a pre-release deploy to dev with a client sending throughout (no `502`, no "Échec de l'envoi", and the edge taking port `3080` on that first deploy), then the same reading on the first stable.
+
+### P2 - media-service and call-service still have a gap on each release
+
+Both are `exclusive` in the deploy ([cicd](cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)): media-service keeps its metadata index as one JSON file on the `media_meta` volume, which two replicas would both write, and call-service keeps rooms in memory. An upload or a call started in those few seconds fails. Closing it means moving the index into Postgres (media) and accepting that a release ends a call, or handing rooms over.
 
 ### P2 - the dev estate cannot send a push
 
