@@ -71,7 +71,6 @@ REST: those rows need a count, then a migration.
 
 | Shim (entry below) | Condition | Met at floor 1.2.7? | Data at rest | Removal size | Disposition |
 | --- | --- | --- | --- | --- | --- |
-| Whole-list role PUT + `RETIRED_PERMISSIONS` | client floor past the PATCH (2026-08-20) and the key removal (2026-08-19) | YES (`v0.14.1`) | none (migration 044 already stripped the keys) | ~-200 lines, server + one uncalled client method | removed with the floor (server only) |
 | `stripe` checkout return host | floor >= first release with `payment` | YES (`v1.2.4`) | none | ~-40 lines, server + client + `tauri.conf.json` + manifest | removed with the floor |
 | `paymentMethod: 'stripe'` INPUT | floor >= Stripe removal | YES (`v1.2.0`) | - | 1 line | removed with the floor |
 | `paymentMethod: 'stripe'` STORED | rows written before 2026-10-08 | no - data | `purchase_records` and `submissions` | type + 3 client arms, after a migration | owed: count + migration (user) |
