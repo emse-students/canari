@@ -246,6 +246,14 @@ Proved on a real PostgreSQL by `bookings.integration.spec.ts` (one test per line
 tombstoned participants in one booking, and a second run changing nothing). Recorded as row C17 of
 the [register of processing](compliance/register-of-processing.md).
 
+**The statements run in the booking path's lock order: spaces, then resources, then bookings**
+(review of #2002). Run the other way, an erasure racing a booking on a resource LINKED to the
+account deadlocked: the booking held the space and resource and waited on the booking row the
+erasure had just cancelled, while the erasure went on to unlink that resource. Measured, not
+argued: `bookings.service.integration.spec.ts` runs both orders against a live booking; the right
+one lets the booking land, the old one makes PostgreSQL abort the booking with `40P01`. A stray
+`40P01` in `book` is answered 409 `try-again` (the transaction was rolled back whole), never a 500.
+
 ## WP-B2 as built (2026-10-17)
 
 Pure functions, with no clock and no database, so every case is a table-driven test. One service
@@ -339,10 +347,10 @@ per request; `BookingsService` takes that `nowMs`, so no rule reads a wall clock
 | `GET spaces/:id` | the audience (D6, D31) or the organiser; no private text | `space-not-found`, `audience` |
 | `GET spaces/:id/slots?from&to` | same; each booking cut to what the viewer may read (D9) | `slot-range` |
 | `GET spaces/:id/bookings?offset&limit` | the organiser: names and answers, by start, pages of at most 200 (`{ items, nextOffset }`) | `not-manager`, `offset` |
-| `POST spaces/:id/bookings` | the audience; the organiser alone books on behalf (`holderId`, outside quotas) | `range`, `holder-is-participant`, `answer-required`, `resource-not-found`, `space-changed`, `too-many-people`, `outside-availability`, `misaligned`, `too-many-steps`, `not-open-yet`, `started`, `notice`, `beyond-horizon`, `blocked`, `unknown-account`, `participant-blocked`, `active-bookings`, `minutes-per-period`, `slot-taken` |
+| `POST spaces/:id/bookings` | the audience; the organiser alone books on behalf (`holderId`, outside quotas) | `range`, `holder-is-participant`, `answer-required`, `resource-not-found`, `space-changed`, `too-many-people`, `outside-availability`, `misaligned`, `too-many-steps`, `not-open-yet`, `started`, `notice`, `beyond-horizon`, `blocked`, `unknown-account`, `participant-blocked`, `active-bookings`, `minutes-per-period`, `slot-taken`, `try-again` (a deadlock: send it again) |
 | `POST :id/cancel` | the holder or the organiser, ANY TIME before the start (D5) | `not-yours`, then `already-cancelled`, `history-frozen` |
 | `POST :id/withdraw` | a participant still in, until `participantWithdrawMinMinutes` before the start (D5) | `not-a-participant`, then `already-cancelled`, `history-frozen`, `withdrawal-delay` |
-| `POST resources/:id/blocks` | the organiser or the resource's linked account (D10) | `not-manager`, `history-frozen` (a start in the past), `range` (over 366 days), `bookings-inside-block` (with `bookingIds`, D29) |
+| `POST resources/:id/blocks` | the organiser or the resource's linked account (D10) | `not-manager`, `history-frozen` (a start more than `NEAR_NOW_MS`, 10 s, behind the server's now; a nearer one is the screen's "from now" and moves up to the server's now), `range` (over 366 days, or empty once moved up), `bookings-inside-block` (with `bookingIds`, D29) |
 | `DELETE blocks/:id` | the organiser any; the linked account only a block IT created | `block-not-found`, `not-yours`, `history-frozen` (ended) |
 
 - **THE LOCK ORDER: the SPACE row, then the RESOURCE row, both `FOR UPDATE`, in every colliding

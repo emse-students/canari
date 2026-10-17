@@ -19,7 +19,12 @@ import { HttpException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { Client } from 'pg';
 import { BOOKING_ENTITIES } from './bookings.module';
-import { BookingsService, type Actor } from './bookings.service';
+import { BookingsService, NEAR_NOW_MS, type Actor } from './bookings.service';
+import {
+  BOOKINGS_ERASURE_STATEMENTS,
+  runErasureStatements,
+  type ErasureStatement,
+} from '../internal/account-erasure';
 import { BookingSlotsService } from './booking-slots.service';
 import { BookingSpace } from './entities/booking-space.entity';
 import { BookingResource } from './entities/booking-resource.entity';
@@ -252,6 +257,84 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
         holder: true,
       });
     });
+  });
+
+  describe('an account erased while its resource is being booked', () => {
+    // The erasure reads past and coming against the server's now(), so this day sits far ahead of
+    // any date the test may run on, and `book` is handed a now just before it.
+    const DAY = '2099-03-02';
+    const DAY_NOW = Date.parse('2099-03-01T12:00:00Z');
+    const slot = (resourceId: string) => ({
+      resourceId,
+      startsAt: on('14:00', DAY),
+      endsAt: on('14:30', DAY),
+    });
+    const LINKED_FIRST = new Set(['bookings_space_owner', 'bookings_linked_resource']);
+    /** The order before review: space and resource rows rewritten AFTER the bookings. */
+    const BROKEN_ORDER: readonly ErasureStatement[] = [
+      ...BOOKINGS_ERASURE_STATEMENTS.filter((s) => !LINKED_FIRST.has(s.label)),
+      ...BOOKINGS_ERASURE_STATEMENTS.filter((s) => LINKED_FIRST.has(s.label)),
+    ];
+
+    /** Resolves once some backend of this database waits on a lock. */
+    async function someoneWaitsOnALock() {
+      for (let i = 0; i < 500; i++) {
+        const { rows } = await admin.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock'`
+        );
+        if (rows[0].n > 0) return;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      throw new Error('no backend ever waited on a lock');
+    }
+
+    /**
+     * CAROL is linked to the resource and holds a coming booking on it. Her erasure runs
+     * `statements` in ONE transaction on its own connection; once her booking is cancelled (and
+     * before the transaction ends), ALICE books the same slot. What ALICE's booking came to.
+     */
+    async function race(statements: readonly ErasureStatement[]) {
+      const { space, resourceIds } = await setup();
+      const r = resourceIds[0];
+      await q(`UPDATE booking_resources SET "linkedUserId" = $1 WHERE id = $2`, [CAROL, r]);
+      await service.book(space.id, slot(r), as(CAROL), DAY_NOW);
+      const c = new Client({ connectionString: URL, options: `-c search_path=${schema}` });
+      await c.connect();
+      const db = {
+        write: async (sql: string, params: unknown[]) => (await c.query(sql, params)).rowCount ?? 0,
+        read: async <T>(sql: string, params: unknown[]) => (await c.query(sql, params)).rows as T[],
+      };
+      let booking: Promise<PromiseSettledResult<unknown>> | null = null;
+      try {
+        await c.query('BEGIN');
+        for (const statement of statements) {
+          await runErasureStatements(db, [statement], CAROL);
+          if (statement.label === 'bookings_coming_cancelled') {
+            booking = Promise.allSettled([
+              service.book(space.id, slot(r), as(ALICE), DAY_NOW),
+            ]).then(([o]) => o);
+            await someoneWaitsOnALock();
+          }
+        }
+        await c.query('COMMIT');
+      } finally {
+        await c.end();
+      }
+      return booking!;
+    }
+
+    it('the erasure takes space, resource, booking like the booking path: no deadlock, the booking lands', async () => {
+      const outcome = await race(BOOKINGS_ERASURE_STATEMENTS);
+      expect(outcome.status).toBe('fulfilled');
+    }, 30_000);
+
+    it('a writer that breaks the order: the booker is told try-again, never a 500', async () => {
+      const outcome = await race(BROKEN_ORDER);
+      expect(outcome.status).toBe('rejected');
+      const reason = (outcome as PromiseRejectedResult).reason as HttpException;
+      expect(reason.getResponse()).toEqual({ code: 'try-again' });
+    }, 30_000);
   });
 
   describe('booking', () => {
@@ -606,6 +689,38 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       await expect(
         service.addBlock(r, { startsAt: on('10:15'), endsAt: on('12:00') }, as(ORGA), at1015)
       ).resolves.toHaveProperty('id');
+    });
+
+    it('a start just behind the server clock is "from now" and moves up to it; an older one is refused', async () => {
+      const { resourceIds } = await setup();
+      const r = resourceIds[0];
+      const now = Date.parse(on('10:15'));
+      const late = new Date(now - NEAR_NOW_MS).toISOString();
+      const { id } = await service.addBlock(
+        r,
+        { startsAt: late, endsAt: on('12:00') },
+        as(ORGA),
+        now
+      );
+      const row = await ds.getRepository(BookingBlock).findOneByOrFail({ id });
+      expect(row.startsAt.toISOString()).toBe(on('10:15'));
+      const tooLate = new Date(now - NEAR_NOW_MS - 1).toISOString();
+      expect(
+        await refusal(
+          service.addBlock(r, { startsAt: tooLate, endsAt: on('13:00') }, as(ORGA), now)
+        )
+      ).toEqual({ code: 'history-frozen' });
+      // Moved up to now, a block that ended before the server's now is empty.
+      expect(
+        await refusal(
+          service.addBlock(
+            r,
+            { startsAt: late, endsAt: new Date(now - 1).toISOString() },
+            as(ORGA),
+            now
+          )
+        )
+      ).toEqual({ code: 'range' });
     });
 
     it('lifting a block under way ends it now and keeps its past part', async () => {
