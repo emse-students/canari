@@ -2038,6 +2038,21 @@ it ("Ouvrir"), then a `terminate` and a relaunch. Settings > A propos read "Vers
 **Left on the bench:** signed in as `canari-test-gamma` on `1.2.9-alpha.7`, unlocked, on the feed.
 Dynamic Type and 200 % text were not read (not owed by this build).
 
+**3b, read again from the same evidence.** The emoji keyboard opened over the already-open DM
+keyboard (`overlap=388`, 13:50:58), and `11-dmkbd-menu-open.png` then shows the header and the "+"
+in place. Only the rise from a CLOSED keyboard goes wrong. The analysis and the three candidate
+causes are in [mobile](frontend/mobile.md#the-dm-whose-chrome-stands-one-keyboard-too-high-2026-10-17).
+**Owed on the next build that carries `keyboard settled:` (one reading names the cause):**
+
+1. Run `pymobiledevice3 syslog live -pn Canari`, grepping for `[CanariIOS] keyboard`.
+2. Open the same DM (last message a tall video) and tap the composer field with the keyboard
+   closed. Then run `bun tools/ios-device/ios.mjs shot` and `bun tools/ios-device/ios.mjs webview`
+   (543 tall expected), and `find "Ajouter"` for the native "+" rect.
+3. Copy the `keyboard settled:` line that follows `overlap=301`.
+4. Control 1: the salon "general", same steps.
+5. Control 2: the DM after the emoji keyboard. Switch to it, then back.
+6. Close and reopen the keyboard three times in the DM. One line per rise is the measurement.
+
 ## Traps that outlived the work that found them
 
 Kept because each one costs a full device pass to rediscover.
