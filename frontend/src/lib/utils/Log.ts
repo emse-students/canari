@@ -86,4 +86,18 @@ function d(tag: string, payload?: unknown): void {
   console.debug(`[${ts}] [${tag}] ${renderLogPayload(payload)}`);
 }
 
-export const Log = { d } as const;
+/**
+ * Logs an info-level line: a DECISION a device reading must be able to name. Unlike {@link d} it
+ * enters the in-app log (`appLog.ts` records no debug), so it is for one line per user gesture or
+ * per state change, never per function entry. The in-app log stamps the line itself.
+ */
+function i(tag: string, payload?: unknown): void {
+  if (typeof window === 'undefined') return;
+  if (payload === undefined) {
+    console.info(`[${tag}]`);
+    return;
+  }
+  console.info(`[${tag}] ${typeof payload === 'string' ? payload : renderLogPayload(payload)}`);
+}
+
+export const Log = { d, i } as const;

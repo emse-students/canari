@@ -11,9 +11,13 @@ import { ProfileEditService } from './profile-edit.service';
 import { ProfileCorrectionService } from './profile-correction.service';
 import { ProfileCorrectionRequest } from './entities/profile-correction-request.entity';
 import { MiconnectEditorClient } from './miconnect-editor.client';
+import { AccountErasureModule } from '../account-erasure/account-erasure.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([User, UserBlock, ProfileChange, ProfileCorrectionRequest])],
+  imports: [
+    TypeOrmModule.forFeature([User, UserBlock, ProfileChange, ProfileCorrectionRequest]),
+    AccountErasureModule,
+  ],
   providers: [
     UsersService,
     AvatarService,

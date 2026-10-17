@@ -1,5 +1,5 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
-import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { BadRequestException, ForbiddenException, ParseUUIDPipe } from '@nestjs/common';
+import { GUARDS_METADATA, ROUTE_ARGS_METADATA } from '@nestjs/common/constants';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminOrBdeSuperAdminGuard } from './guards/global-admin-or-bde-super-admin.guard';
@@ -101,25 +101,46 @@ describe('AssociationsController cotisation config gating (D5)', () => {
 });
 
 /**
- * The three association reads all spread the entity, and none of them carries a guard, so the
- * document vault master key was reachable without a session at all.
+ * WHAT A MEMBER READS OF AN ASSOCIATION IS AN ALLOWLIST (2026-10-15).
+ *
+ * The reads spread the entity through a denylist that nulled the vault key and the notes, and so
+ * answered `lydiaAccountId` - the Lydia `vendor_token`, all `request/cancel` needs besides a
+ * sequential request id - to every signed-in member; `me/list` skipped even the denylist. Every
+ * private column here carries a recognisable value, and each route that answers a row must carry
+ * none of them, by value or by key name.
  */
-describe('AssociationsController secret stripping', () => {
+describe('AssociationsController response shape', () => {
+  const VENDOR_TOKEN = 'vendor_tok_LEAK_9f8e7d';
+  const DASHBOARD_URL = 'https://lydia.example/dashboard/LEAK';
+  const VAULT_KEY = 'b'.repeat(64);
+  const NOTES = 'notes-ciphertext-LEAK';
   const row = {
     id: 'asso1',
     slug: 'bde',
     name: 'BDE',
+    type: 'association' as const,
     memberCount: 3,
+    parentName: null,
     lydiaOnboardingComplete: true,
-    documentVaultKey: 'a'.repeat(64),
-    notesCiphertext: 'encrypted-notes',
+    cotisationEnabled: false,
+    lydiaAccountId: VENDOR_TOKEN,
+    lydiaDashboardUrl: DASHBOARD_URL,
+    documentVaultKey: VAULT_KEY,
+    notesCiphertext: NOTES,
   };
+  const membership = { ...row, role: 'Treasurer', permissions: 512, isAdmin: true };
 
   function makeController() {
     const service = {
       list: jest.fn(() => Promise.resolve([row])),
       findBySlug: jest.fn(() => Promise.resolve(row)),
       findById: jest.fn(() => Promise.resolve(row)),
+      listByUser: jest.fn(() => Promise.resolve([membership])),
+      create: jest.fn(() => Promise.resolve(row)),
+      update: jest.fn(() => Promise.resolve(row)),
+      setLogoFromUpload: jest.fn(() => Promise.resolve(row)),
+      clearStoredLogo: jest.fn(() => Promise.resolve(row)),
+      callerHasAnyBdeFlag: jest.fn(() => Promise.resolve(true)),
     };
     return new AssociationsController(
       service as unknown as AssociationsService,
@@ -132,17 +153,148 @@ describe('AssociationsController secret stripping', () => {
     );
   }
 
-  it.each([
-    ['list', async (c: AssociationsController) => (await c.list('u1'))[0]],
-    ['findBySlug', (c: AssociationsController) => c.findBySlug('bde')],
-    ['findOne', (c: AssociationsController) => c.findOne('asso1')],
-  ])('never lets %s answer with the vault key or the private notes', async (_name, read) => {
-    const result = await read(makeController());
+  const file = { buffer: Buffer.from('x'), mimetype: 'image/png', size: 1 };
 
-    expect(result.documentVaultKey).toBeNull();
-    expect(result.notesCiphertext).toBeNull();
-    // The rest of the row still has to reach the app - the fix is a strip, not an allowlist.
+  it.each([
+    ['GET /', async (c: AssociationsController) => (await c.list('u1'))[0]],
+    ['GET slug/:slug', (c: AssociationsController) => c.findBySlug('bde')],
+    ['GET :id', (c: AssociationsController) => c.findOne('asso1')],
+    ['GET me/list', async (c: AssociationsController) => (await c.myAssociations('u1'))[0]],
+    [
+      'POST /',
+      (c: AssociationsController) => c.create('u1', 'true', { name: 'BDE', slug: 'bde' } as never),
+    ],
+    ['PATCH :id', (c: AssociationsController) => c.update('asso1', 'u1', 'true', { name: 'BDE' })],
+    ['POST :id/logo', (c: AssociationsController) => c.uploadLogo('asso1', 'Bearer t', file)],
+    ['DELETE :id/logo', (c: AssociationsController) => c.deleteLogo('asso1', 'Bearer t')],
+  ])('%s answers no payout account, vault key or notes', async (_route, read) => {
+    const result = (await read(makeController())) as Record<string, unknown>;
+    const body = JSON.stringify(result);
+
+    for (const secret of [VENDOR_TOKEN, DASHBOARD_URL, VAULT_KEY, NOTES]) {
+      expect(body).not.toContain(secret);
+    }
+    expect(
+      Object.keys(result).filter((k) => /account|vendor|token|dashboard|vault|notes/i.test(k))
+    ).toEqual([]);
+    // What the app reads still reaches it.
     expect(result).toMatchObject({ id: 'asso1', name: 'BDE', lydiaOnboardingComplete: true });
+  });
+
+  it('keeps the caller own membership on me/list', async () => {
+    const [mine] = await makeController().myAssociations('u1');
+    expect(mine).toMatchObject({ role: 'Treasurer', permissions: 512, isAdmin: true });
+  });
+
+  it('answers only { ok: true } to the internal POST :id/lydia-account, even if the service hands back the row', async () => {
+    const previous = process.env.INTERNAL_SECRET;
+    process.env.INTERNAL_SECRET = 'internal-secret-for-tests';
+    try {
+      const controller = makeController();
+      const service = (controller as unknown as { service: Record<string, jest.Mock> }).service;
+      // The service USED to return `{ ...asso, ...update }`; a row coming back must not get out.
+      service.setLydiaAccountId = jest.fn(() => Promise.resolve(row));
+      const result = await controller.setLydiaAccount(
+        'asso1',
+        { lydiaAccountId: VENDOR_TOKEN, lydiaDashboardUrl: DASHBOARD_URL },
+        'internal-secret-for-tests'
+      );
+      expect(result).toEqual({ ok: true });
+      const body = JSON.stringify(result);
+      for (const secret of [VENDOR_TOKEN, DASHBOARD_URL, VAULT_KEY, NOTES]) {
+        expect(body).not.toContain(secret);
+      }
+    } finally {
+      if (previous === undefined) delete process.env.INTERNAL_SECRET;
+      else process.env.INTERNAL_SECRET = previous;
+    }
+  });
+});
+
+/**
+ * A MALFORMED ID IS A 400, NEVER A 500. The two payout-account routes hand `:id` to `mayAct`, whose
+ * SQL compares it with a `uuid` column, so a non-UUID reached Postgres as a syntax error.
+ */
+describe('AssociationsController payout routes validate the id', () => {
+  type ArgMeta = { index: number; data?: unknown; pipes?: unknown[] };
+
+  function idPipes(handler: 'payoutAccount' | 'managePermission'): unknown[] {
+    const meta = (Reflect.getMetadata(ROUTE_ARGS_METADATA, AssociationsController, handler) ??
+      {}) as Record<string, ArgMeta>;
+    const id = Object.values(meta).find((arg) => arg.data === 'id');
+    return id?.pipes ?? [];
+  }
+
+  it.each(['payoutAccount', 'managePermission'] as const)(
+    '%s parses :id with ParseUUIDPipe',
+    (handler) => {
+      expect(idPipes(handler)).toContain(ParseUUIDPipe);
+    }
+  );
+
+  it('and that pipe answers 400 to a malformed id', async () => {
+    await expect(
+      new ParseUUIDPipe().transform('not-a-uuid', { type: 'param', data: 'id' })
+    ).rejects.toBeInstanceOf(BadRequestException);
+  });
+});
+
+/**
+ * THE PAYOUT ACCOUNT HAS ITS OWN READ, AT THE PERMISSION THE LYDIA PANEL ALREADY NEEDS.
+ *
+ * `canManagePayoutAccount` is what core-service asks before an onboarding or a disconnect, and it
+ * withholds MANAGE_PAYOUT_ACCOUNT from a BDE super-admin. A member without it gets a 403 and the
+ * service is never asked for the columns.
+ */
+describe('AssociationsController payout account read', () => {
+  const account = {
+    lydiaAccountId: 'vendor_tok_x',
+    lydiaDashboardUrl: 'https://lydia.example/d',
+    lydiaOnboardingComplete: false,
+  };
+
+  function makeController(allowed: boolean) {
+    const service = {
+      canManagePayoutAccount: jest.fn(() => Promise.resolve(allowed)),
+      getPayoutAccount: jest.fn(() => Promise.resolve(account)),
+    };
+    const controller = new AssociationsController(
+      service as unknown as AssociationsService,
+      {} as ProductsService,
+      {} as PartnershipsService,
+      {} as FollowsService,
+      {} as UserTagService,
+      {} as UserProfileService,
+      {} as never
+    );
+    return { controller, service };
+  }
+
+  it('is behind the sign-in guard', () => {
+    const guards = Reflect.getMetadata(
+      GUARDS_METADATA,
+      AssociationsController.prototype['payoutAccount']
+    ) as unknown[] | undefined;
+    expect(guards).toContain(NginxAuthGuard);
+  });
+
+  it('refuses a member without MANAGE_PAYOUT_ACCOUNT with a 403', async () => {
+    const { controller, service } = makeController(false);
+    await expect(controller.payoutAccount('member', undefined, 'asso1')).rejects.toMatchObject({
+      status: 403,
+    });
+    expect(service.canManagePayoutAccount).toHaveBeenCalledWith('member', 'asso1', {
+      isGlobalAdmin: false,
+    });
+    expect(service.getPayoutAccount).not.toHaveBeenCalled();
+  });
+
+  it('answers the account to a holder, and hands the admin header to the same predicate', async () => {
+    const { controller, service } = makeController(true);
+    await expect(controller.payoutAccount('admin', 'true', 'asso1')).resolves.toEqual(account);
+    expect(service.canManagePayoutAccount).toHaveBeenCalledWith('admin', 'asso1', {
+      isGlobalAdmin: true,
+    });
   });
 });
 
@@ -201,8 +353,8 @@ describe('AssociationsController directory scope (D37)', () => {
 });
 
 /**
- * Stripping the two secrets was only half the fix. The three reads still answer the whole row -
- * `lydiaAccountId`, `createdBy`, the document quota, the cotisation configuration - and nginx
+ * The allowlist is only half the fix. The three reads still answer what a member reads -
+ * `createdBy`, the document quota, the cotisation configuration - and nginx
  * lets an anonymous request through `/api/associations` because `AuthController.check()` answers
  * 200 for anonymous. The guard is therefore load-bearing, and it is a decorator: nothing in the
  * type system notices when one goes missing, so the metadata Nest reads is what has to be asserted.

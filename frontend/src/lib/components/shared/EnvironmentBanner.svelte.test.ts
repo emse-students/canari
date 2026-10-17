@@ -1,6 +1,6 @@
 /**
  * THE TEST-ENVIRONMENT BANNER CLOSES FOR THE SESSION, AND ONLY THE SESSION (user, 2026-09-30).
- * It was permanent because dev holds a copy of production; it became closable because on a phone it
+ * It was permanent because dev held a copy of production; it became closable because on a phone it
  * cost ~180 px of every screen. What these pin is the half that keeps the old reason alive: the
  * dismissal is in `sessionStorage`, so a new launch shows the banner again.
  */

@@ -22,6 +22,26 @@ export class StalledRequestError extends Error {
   }
 }
 
+/**
+ * The answer STARTED - a status and a head came back - and its body died before the end: a link lost
+ * mid-transfer, a proxy timing out on a large page, the WebView's `network error` on a read.
+ *
+ * NOT a `TypeError` on purpose. A browser rejects a cut body read with one, and Tauri's plugin with a
+ * bare string, so without this type the same event read as "no answer at all" on one platform and as
+ * something else on the other. It is an ANSWER too big to arrive whole, which is the size question the
+ * pending pull's halving exists for, and is told apart from a request nobody answered HERE, where the
+ * phase is known.
+ */
+export class BodyInterruptedError extends Error {
+  constructor(
+    readonly bytesReceived: number,
+    readonly cause: unknown
+  ) {
+    super(`the body stopped after ${bytesReceived} byte(s): ${String(cause)}`);
+    this.name = 'BodyInterruptedError';
+  }
+}
+
 /** A 2xx carries the parsed body; anything else carries only its status, and its body is dropped. */
 export type ProgressDeadlineResult<T> =
   | { ok: true; status: number; body: T }
@@ -59,6 +79,7 @@ export async function fetchJsonUnderProgressDeadline<T>(
   const ctrl = new AbortController();
   let stalled = false;
   let headReceived = false;
+  let readingBody = false;
   let bytesReceived = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
 
@@ -108,6 +129,7 @@ export async function fetchJsonUnderProgressDeadline<T>(
 
     reader = res.body.getReader();
     const chunks: Uint8Array[] = [];
+    readingBody = true;
     for (;;) {
       const { done, value } = await Promise.race([reader.read(), abortedWhileReading]);
       if (done) break;
@@ -116,6 +138,7 @@ export async function fetchJsonUnderProgressDeadline<T>(
       chunks.push(value);
       heard();
     }
+    readingBody = false;
     clearTimeout(timer);
 
     const merged = new Uint8Array(bytesReceived);
@@ -137,6 +160,10 @@ export async function fetchJsonUnderProgressDeadline<T>(
       // with it: half a JSON array is not a smaller answer, it is no answer.
       await reader?.cancel().catch(() => {});
       throw new StalledRequestError(stallMs, headReceived, bytesReceived);
+    }
+    if (readingBody) {
+      await reader?.cancel().catch(() => {});
+      throw new BodyInterruptedError(bytesReceived, e);
     }
     throw e;
   } finally {

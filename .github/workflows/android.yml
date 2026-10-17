@@ -230,7 +230,6 @@ jobs:
           DEV_BASE_URL: ${{ secrets.DEV_BASE_URL }}
           DEV_AUTHENTIK_URL: ${{ secrets.DEV_AUTHENTIK_URL }}
           DEV_AUTHENTIK_CLIENT_ID: ${{ secrets.DEV_AUTHENTIK_CLIENT_ID }}
-          KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -284,9 +283,6 @@ jobs:
             # The same banner the dev web estate carries, for the same reason: `deployEnvironment()`
             # treats UNSET as production, so a tester holding an alpha must be told which one it is.
             echo "VITE_DEPLOY_ENVIRONMENT=development" >> .env
-          fi
-          if [ -n "$KLIPY_API_KEY" ]; then
-            echo "VITE_KLIPY_KEY=${KLIPY_API_KEY}" >> .env
           fi
 
       - name: Verify frontend env for Android build

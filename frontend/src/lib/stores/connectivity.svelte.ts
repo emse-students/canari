@@ -159,6 +159,23 @@ class ConnectivityStore {
     });
   }
 
+  /**
+   * True when the BROWSER says there is no network at all (`navigator.onLine` false, kept by the
+   * `online`/`offline` events). The one negative it gives is reliable - no interface, airplane
+   * mode - and its return is announced by an `online` event, which re-runs every reconnect listener
+   * and the probe. So a request that needs the server may be refused on this fact without being
+   * sent: it could only fail, and the event that ends the condition is guaranteed to be heard.
+   *
+   * A NEGATIVE ONLY: `false` here proves nothing about reachability (captive portal, server down).
+   * Measured on the Mi 9T, airplane mode, `v1.2.9-alpha.1` (2026-10-15): the cold start's refresh
+   * failed and no failure probe ran, so `isOnline` was already false; the `online` event came when
+   * the radio did.
+   */
+  browserReportsNoNetwork(): boolean {
+    this.ensureGlobalListeners();
+    return !this.isOnline;
+  }
+
   /** Records that a request reached the server (whatever it answered). */
   notifyServerReachable(): void {
     this.ensureGlobalListeners();

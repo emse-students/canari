@@ -1,241 +1,117 @@
 <script lang="ts">
-  import { internalPath } from '$lib/utils/internalPath';
-  import { resolve } from '$app/paths';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
+  import SectionHub from '$lib/components/navigation/SectionHub.svelte';
   import { onMount } from 'svelte';
-  import {
-    MessageCircle,
-    Newspaper,
-    Users,
-    CalendarDays,
-    ShoppingBag,
-    FileText,
-    User,
-    SlidersHorizontal,
-    Moon,
-    Monitor,
-    Sun,
-    LogOut,
-    Shield,
-    FolderOpen,
-  } from '@lucide/svelte';
-  import { goto } from '$app/navigation';
-  import { clearAuth, leaveSignedOut } from '$lib/stores/auth';
-  import { isGlobalAdmin } from '$lib/stores/user';
-  import { getReviewerAccess } from '$lib/associations/api';
+  import { signOutByChoice } from '$lib/stores/auth';
+  import { currentUserId, getSavedDisplayName, isGlobalAdmin } from '$lib/stores/user';
+  import { ensureMyAssociations, getReviewerAccess, type Association } from '$lib/associations/api';
   import { adminScopeLabels, ensureMayOpenAdmin } from '$lib/admin/access';
-  import { themeStore } from '$lib/stores/themeStore.svelte';
+  import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
+  import { dashboardHubGroups } from '$lib/navigation/dashboardSections';
+  import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
 
-  interface Section {
-    label: string;
-    description: string;
-    href: string;
-    icon:
-      | 'users'
-      | 'newspaper'
-      | 'message-circle'
-      | 'calendar-days'
-      | 'shopping-bag'
-      | 'file-text'
-      | 'shield';
+  // THE APP'S ONE HUB (`dashboardSections.ts` is the table). Identity, Explorer and Compte render on
+  // the first frame from what is already held - sign-out is reachable whatever a probe does. The
+  // probed groups wait for EVERY probe to settle (`allSettled`: a failure settles too) and are then
+  // inserted above Compte with NO space reserved, so Compte can only move DOWN (manager, staff) and
+  // never for a member; a probe that never answers leaves only a screen-reader status.
+  let mayOpenAdmin = $state(false);
+  let isReviewer = $state(false);
+  let memberships = $state<Association[]>([]);
+  let probesSettled = $state(false);
+  /** A sign-out can wait up to 30 s; a second tap must not send a second logout. */
+  let signingOut = $state(false);
+
+  async function signOut() {
+    if (signingOut) {
+      Log.d('[dashboard] sign-out ignored: one is already running');
+      return;
+    }
+    signingOut = true;
+    try {
+      await signOutByChoice();
+    } finally {
+      signingOut = false;
+    }
   }
 
-  /** Items reachable from the desktop nav but absent from the mobile nav. */
-  const exploreItems = $derived<Section[]>([
-    {
-      label: m.nav_calendar_label(),
-      description: m.nav_calendar_desc(),
-      href: '/calendar',
-      icon: 'calendar-days',
-    },
-    {
-      label: m.nav_shop_label(),
-      description: m.nav_shop_desc(),
-      href: '/shop',
-      icon: 'shopping-bag',
-    },
-    {
-      label: m.assoc_list_heading(),
-      description: m.assoc_list_subtitle(),
-      href: '/associations',
-      icon: 'users',
-    },
-    {
-      label: m.nav_forms_label(),
-      description: m.nav_forms_desc(),
-      href: '/forms',
-      icon: 'file-text',
-    },
-  ]);
-
-  let showAdminSection = $state(false);
-  // The heading, the card label and the sentence under it, chosen together - see
-  // `adminScopeLabels`. A reader who can only moderate an agenda is not offered "Administration".
-  const scope = $derived(adminScopeLabels(isGlobalAdmin()));
-  /** True when the user may review associations' public documents (school/MDE staff, admins, BDE). */
-  let hasReviewerAccess = $state(false);
-
-  onMount(async () => {
-    // Reviewer access is independent of admin/association status (external staff).
-    void getReviewerAccess()
-      .then((v) => (hasReviewerAccess = v))
-      .catch(() => (hasReviewerAccess = false));
-    // The SAME predicate `/admin` admits on, so the dashboard cannot offer a console that has no
-    // actionable panel for the current account.
-    showAdminSection = await ensureMayOpenAdmin();
+  onMount(() => {
+    Log.d('[dashboard] mount: probing memberships, admin tier and reviewer access');
+    // The unread count is the store's. Its only other loader is the bell, mounted on the Feed
+    // alone on a phone, so a cold open here would show no count and a later visit a stale one.
+    // `load()` drops a call while one is in flight; no timer of our own.
+    void postNotifStore.load();
+    void Promise.allSettled([
+      // Reviewer access is independent of association status (external school/MDE staff).
+      getReviewerAccess().then((v) => (isReviewer = v)),
+      // ONE membership request, memoized: `ensureMayOpenAdmin` awaits the same promise for any
+      // reader who is not a platform admin.
+      ensureMyAssociations().then((list) => (memberships = list)),
+      // The SAME predicate `/admin` admits on, so no console is offered that would refuse its reader.
+      ensureMayOpenAdmin().then((v) => (mayOpenAdmin = v)),
+    ]).then((results) => {
+      // A failed probe hides only what it gates (its state keeps its `false` / `[]` default).
+      for (const [i, r] of results.entries()) {
+        if (r.status === 'rejected') {
+          const probe = ['reviewer access', 'memberships', 'admin tier'][i];
+          console.warn(
+            `[dashboard] ${probe} probe failed, the rows it gates stay hidden`,
+            r.reason
+          );
+        }
+      }
+      Log.d('[dashboard] probes settled', { mayOpenAdmin, isReviewer, n: memberships.length });
+      probesSettled = true;
+    });
   });
 
-  async function handleLogout() {
-    await clearAuth();
-    await leaveSignedOut();
-  }
+  const groups = $derived(
+    dashboardHubGroups(
+      {
+        userId: currentUserId(),
+        displayName: getSavedDisplayName(),
+        unreadNotifications: postNotifStore.unread,
+        mayOpenAdmin,
+        adminScope: adminScopeLabels(isGlobalAdmin()),
+        isReviewer,
+        memberships,
+        probesSettled,
+        signingOut,
+      },
+      { signOut: () => void signOut() }
+    )
+  );
 </script>
-
-{#snippet card(s: Section)}
-  <a
-    href={resolve(internalPath(s.href))}
-    class="group border-cn-border hover:border-cn-yellow flex items-start gap-4 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
-  >
-    <span
-      class="border-cn-border group-hover:border-cn-yellow shrink-0 rounded-xl border bg-(--surface-elevated) p-2.5 transition-colors"
-    >
-      {#if s.icon === 'users'}
-        <Users size={20} class="text-text-muted" />
-      {:else if s.icon === 'newspaper'}
-        <Newspaper size={20} class="text-text-muted" />
-      {:else if s.icon === 'message-circle'}
-        <MessageCircle size={20} class="text-text-muted" />
-      {:else if s.icon === 'calendar-days'}
-        <CalendarDays size={20} class="text-text-muted" />
-      {:else if s.icon === 'shopping-bag'}
-        <ShoppingBag size={20} class="text-text-muted" />
-      {:else if s.icon === 'file-text'}
-        <FileText size={20} class="text-text-muted" />
-      {:else if s.icon === 'shield'}
-        <Shield size={20} class="text-text-muted" />
-      {/if}
-    </span>
-    <span>
-      <span class="text-text-main block font-semibold">{s.label}</span>
-      <span class="text-text-muted mt-0.5 block text-sm">{s.description}</span>
-    </span>
-  </a>
-{/snippet}
 
 <PageContainer>
   <PageHeader title={m.nav_dashboard_label()} subtitle={m.dashboard_subtitle()} />
-
-  <!-- Account quick actions. Shown on every viewport: desktop also has the sidebar gear, but the
-       dashboard is a discoverable hub where users expect profile / settings / theme / logout too. -->
-  <section class="mb-8">
-    <h2 class="text-text-muted mb-3 text-xs font-semibold tracking-widest uppercase">
-      {m.dashboard_account_heading()}
-    </h2>
-    <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-      <button
-        type="button"
-        onclick={() => goto('/profile')}
-        class="border-cn-border hover:border-cn-yellow flex flex-col items-center gap-2 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
-        title={m.dashboard_profile_title()}
-      >
-        <User size={22} class="text-text-muted" />
-        <span class="text-text-main text-sm font-medium">{m.dashboard_profile_btn()}</span>
-      </button>
-
-      <button
-        type="button"
-        onclick={() => goto('/settings')}
-        class="border-cn-border hover:border-cn-yellow flex flex-col items-center gap-2 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
-        title={m.dashboard_settings_title()}
-      >
-        <SlidersHorizontal size={22} class="text-text-muted" />
-        <span class="text-text-main text-sm font-medium">{m.dashboard_settings_btn()}</span>
-      </button>
-
-      <button
-        type="button"
-        onclick={() => themeStore.cycle()}
-        class="border-cn-border hover:border-cn-yellow flex flex-col items-center gap-2 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
-        title={m.dashboard_theme_title()}
-      >
-        {#if themeStore.preference === 'light'}
-          <Sun size={22} class="text-text-muted" />
-        {:else if themeStore.preference === 'dark'}
-          <Moon size={22} class="text-text-muted" />
-        {:else}
-          <Monitor size={22} class="text-text-muted" />
+  <div class="space-y-6">
+    {#each groups as group (group.key)}
+      {#if group.key === 'account' && !probesSettled}
+        {@render pending()}
+      {/if}
+      <section class="space-y-2" aria-labelledby={group.heading ? `group-${group.key}` : undefined}>
+        {#if group.heading}
+          <h2
+            id="group-{group.key}"
+            class="text-text-muted scroll-mt-4 px-1 text-xs font-bold tracking-wide uppercase"
+          >
+            {group.label}
+          </h2>
         {/if}
-        <span class="text-text-main text-sm font-medium">{m.dashboard_theme_btn()}</span>
-      </button>
-
-      <button
-        type="button"
-        onclick={handleLogout}
-        class="text-red-err flex flex-col items-center gap-2 rounded-2xl border border-red-400/40 bg-red-500/5 p-4 transition-colors hover:bg-red-500/10"
-        title={m.dashboard_logout_title()}
-      >
-        <LogOut size={22} />
-        <span class="text-sm font-medium">{m.dashboard_logout_btn()}</span>
-      </button>
-    </div>
-  </section>
-
-  <!-- Explorer (Agenda, Boutique, Associations, Formulaires) -->
-  <section class="mb-8">
-    <h2 class="text-text-muted mb-3 text-xs font-semibold tracking-widest uppercase">
-      {m.dashboard_explore_heading()}
-    </h2>
-    <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
-      {#each exploreItems as s (s.href)}
-        {@render card(s)}
-      {/each}
-    </div>
-  </section>
-
-  <!-- Reviewer des documents administratifs (personnel Ecole/MDE, admins, BDE) -->
-  {#if hasReviewerAccess}
-    <section class="mb-8">
-      <h2 class="text-text-muted mb-3 text-xs font-semibold tracking-widest uppercase">
-        {m.reviewer_docs_dashboard_heading()}
-      </h2>
-      <a
-        href={resolve('/documents')}
-        class="border-cn-border hover:border-cn-yellow flex items-start gap-4 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
-      >
-        <span
-          class="bg-cn-yellow/15 text-cn-dark flex h-10 w-10 shrink-0 items-center justify-center rounded-xl"
-        >
-          <FolderOpen size={20} />
-        </span>
-        <span class="min-w-0 flex-1">
-          <span class="text-text-main block font-bold">{m.reviewer_docs_dashboard_label()}</span>
-          <span class="text-text-muted mt-0.5 block text-sm">
-            {m.reviewer_docs_dashboard_desc()}
-          </span>
-        </span>
-      </a>
-    </section>
-  {/if}
-
-  <!-- Administration (admins d'association et admins globaux) -->
-  {#if showAdminSection}
-    <section class="mb-8">
-      <h2 class="text-text-muted mb-3 text-xs font-semibold tracking-widest uppercase">
-        {scope.title()}
-      </h2>
-      <div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <a
-          href={resolve('/admin')}
-          class="border-cn-border hover:border-cn-yellow flex flex-col items-center gap-2 rounded-2xl border bg-(--cn-surface) p-4 transition-colors hover:bg-[color-mix(in_srgb,var(--cn-yellow)_8%,var(--cn-surface))]"
-          title={scope.title()}
-        >
-          <Shield size={22} class="text-text-muted" />
-          <span class="text-text-main text-sm font-medium">{scope.title()}</span>
-          <span class="text-text-muted text-center text-xs">{scope.description()}</span>
-        </a>
-      </div>
-    </section>
-  {/if}
+        <SectionHub rows={group.rows} label={group.label} />
+      </section>
+    {/each}
+  </div>
 </PageContainer>
+
+{#snippet pending()}
+  <!-- The probed groups (managed associations, administration, documents) are still being asked
+       for. NOTHING IS RESERVED: a reserved row collapsed for the commonest reader (a member, who
+       gets no probed group) and Compte jumped UP, bringing sign-out under a finger aimed at
+       settings. With no height here, a probed group can only push Compte DOWN, and only for a
+       manager or staff. Out of the flow (`sr-only`): a status for assistive technology alone. -->
+  <span data-dashboard-pending role="status" class="sr-only">{m.common_loading_label()}</span>
+{/snippet}

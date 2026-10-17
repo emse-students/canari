@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Snippet } from 'svelte';
+  import { untrack, type Snippet } from 'svelte';
   import { arbitratePlayback } from '$lib/actions/playbackArbiter';
   import { FileText, Download, Image as ImageIcon, Mic } from '@lucide/svelte';
   import MediaLoadFailure from '$lib/components/shared/MediaLoadFailure.svelte';
@@ -148,15 +148,9 @@
 
   const isPdf = $derived(mediaType === 'file' && isPdfAttachment(media.mimeType, media.fileName));
 
-  $effect(() => {
-    void attempt;
-    if (!authToken) {
-      loading = false;
-      authMissing = true;
-      return;
-    }
-    authMissing = false;
-    const mediaRef: MediaRef = {
+  /** The media as the download reads it - built from the prop, never tracked through it. */
+  function buildMediaRef(): MediaRef {
+    return {
       type: mediaType,
       mediaId: media.mediaId,
       key: media.key,
@@ -168,6 +162,28 @@
       height: media.height,
       ...(media.encoding ? { encoding: media.encoding } : {}),
     };
+  }
+
+  /**
+   * WHAT THE DOWNLOAD DEPENDS ON, AS A VALUE. The feed replaces its list with the server's answer -
+   * the stored copy, then the page - and every post in it is a NEW object carrying the SAME media.
+   * Tracked through the object, that re-ran the effect: the stream closed and reopened on the same
+   * `<video>`, whose `play()` the reload interrupted (two `[media-seg] stream` lines 133 ms apart and
+   * one `play() refused` per cold start, Mi 9T v1.2.9-alpha.3). A string changes only when the media
+   * does.
+   */
+  const mediaIdentity = $derived(JSON.stringify(buildMediaRef()));
+
+  $effect(() => {
+    void attempt;
+    void mediaIdentity;
+    if (!authToken) {
+      loading = false;
+      authMissing = true;
+      return;
+    }
+    authMissing = false;
+    const mediaRef = untrack(buildMediaRef);
 
     // A deferred VIDEO holds nothing, not even a warm blob: a mounted `<video>` with a source is a
     // decoder, and a card outside the band is one nobody sees. The poster draws the same either

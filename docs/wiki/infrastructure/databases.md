@@ -18,11 +18,11 @@ the failure looks like a permissions problem.
 
 **THE CONTAINER NAME IS THE ONLY THING THAT SAYS WHICH ESTATE YOU ARE IN, so read it before you
 write.** The same host carries a second Postgres for `dev.canari-emse.fr` - compose project
-`canari-dev`, so container `canari-dev-postgres-1`, holding a full copy of production's data
-([dev-environment](dev-environment.md)). Two containers, the same user, the same database name, the
-same table contents: nothing in a `psql` prompt distinguishes them. Prefer selecting by compose
-label over typing a name, which is what `infrastructure/dev/copy-prod-to-dev.sh` does and why it
-cannot be pointed at production:
+`canari-dev`, so container `canari-dev-postgres-1`, holding production's SCHEMA and a fictional
+seed, never its rows ([dev-environment](dev-environment.md)). Two containers, the same user, the
+same database name, the same tables: nothing in a `psql` prompt distinguishes them. Prefer
+selecting by compose label over typing a name, which is what
+`infrastructure/dev/reset-dev-to-seed.sh` does and why it cannot be pointed at production:
 
 ```
 docker ps --filter label=com.docker.compose.project=canari-prod \
@@ -316,8 +316,8 @@ The 2026-09-01 failure at least crash-looped at once; this one comes up green an
 **DEV CROSSES FIRST, AND NOT AS A REHEARSAL.** A stable is refused unless a pre-release served dev at
 that same commit (`release-preconditions.sh`), so the pre-release is not optional and it deploys dev.
 If `canari-dev-postgres-1` has not crossed by then, the dev deploy dies at the same guard and the
-stable can never be cut. Dev holds a logical copy of production (95 MB, 2026-09-18) and
-`infrastructure/dev/copy-prod-to-dev.sh` rebuilds it from nothing, so dev needs no dump of its own.
+stable can never be cut. Dev holds a fictional seed that
+`infrastructure/dev/reset-dev-to-seed.sh` reloads on demand, so dev needs no dump of its own.
 
 **The sequence on the box.** `ssh canari`; the checkout is `/home/canari/canari` and
 `infrastructure/.env` already carries `TAG`, so compose needs nothing added on the command line
@@ -440,8 +440,8 @@ not as a tar archive. See [backup](backup.md).
 
 ### Finding every media reference a COPY carries but cannot serve
 
-A copy of production - into `dev.canari-emse.fr` or into a local stack - fetches a Postgres dump and
-nothing else. Neither touches Garage, so every media id in the restored rows names a blob that
+The copy of production into a local stack - the only one left since 2026-10-16, when the copy into
+`dev.canari-emse.fr` was deleted - fetches a Postgres dump and nothing else. It never touches Garage, so every media id in the restored rows names a blob that
 exists only in production's store, and `infrastructure/lib/copy-strips.sh` clears them all and then
 COUNTS what is left, refusing the restore unless the answer is zero.
 
@@ -453,7 +453,7 @@ level below anything a column list can see. The feed 404ed while the copy's own 
 **What settles it is asking the database rather than reading harder.** This walks every text and
 jsonb column, and it is what found that one - run it against a fresh copy after any schema change
 that adds a place a media reference can hide, and add whatever it names to BOTH the strip and the
-count in `copy-strips.sh` (which deliberately cannot run this itself: `dev-copy-guards.test.sh`
+count in `copy-strips.sh` (which deliberately cannot run this itself: `local-copy-guards.test.sh`
 fails the build if that file so much as mentions `docker exec` or `psql`, because the allowlist of
 writable targets belongs in the script that owns the target):
 

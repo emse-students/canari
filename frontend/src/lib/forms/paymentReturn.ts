@@ -14,3 +14,21 @@ export function paymentReturnVerdict(paymentStatus: string): PaymentReturnVerdic
   if (paymentStatus === 'paid_over_capacity') return 'overCapacity';
   return 'failed';
 }
+
+/**
+ * What the page the payer lands on after LEAVING Lydia shows. `stillOpen` and `unconfirmed` are
+ * set by the page itself from the cancel's refusal; this maps a status read from the row.
+ */
+export type PaymentCancelView = 'cancelled' | 'paid' | 'overCapacity' | 'stillOpen' | 'unconfirmed';
+
+/**
+ * The cancel page's reading of a submission's status, before its cancel (a callback may already
+ * have confirmed the payment) and after one answered `alreadyPaid` (the request was found paid at
+ * Lydia). A paid answer is never shown as cancelled: until 2026-10-15 it was, whatever the row said.
+ */
+export function paymentCancelView(paymentStatus: string): 'cancelled' | 'paid' | 'overCapacity' {
+  const verdict = paymentReturnVerdict(paymentStatus);
+  if (verdict === 'confirmed') return 'paid';
+  if (verdict === 'overCapacity') return 'overCapacity';
+  return 'cancelled';
+}

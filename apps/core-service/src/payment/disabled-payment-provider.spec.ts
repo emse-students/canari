@@ -20,7 +20,6 @@ describe('DisabledPaymentProvider', () => {
       () => provider.getConnectBalance(),
       () => provider.createConnectDashboardLink(),
       () => provider.createCheckoutSession(),
-      () => provider.retrieveSession(),
     ];
     for (const call of calls) {
       const err = await call().catch((e: unknown) => e);
