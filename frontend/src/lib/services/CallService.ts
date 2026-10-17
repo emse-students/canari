@@ -35,6 +35,13 @@ import {
   type MediaSnapshot,
 } from '$lib/utils/callStats';
 import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
+import {
+  DECRYPT_MISMATCH_FAILURES,
+  deriveCallKeys,
+  keyFingerprint,
+  type CallKeys,
+  type CallRole,
+} from '$lib/utils/callKeys';
 
 /** How often a live call writes its `[CALL_REPORT]` (revival plan section 6). */
 const CALL_REPORT_INTERVAL_MS = 10_000;
@@ -138,7 +145,11 @@ export class CallService {
   private workerKeyReady: Promise<void> | null = null;
   /** All remote tracks merged for 1:1 display (audio + video in one MediaStream). */
   private mergedRemoteStream: MediaStream | null = null;
-  private callKeyBytes: Uint8Array | null = null;
+  /** This call's media keys, one per direction (`utils/callKeys.ts`); raw bytes, handed to the worker. */
+  private callKeys: CallKeys | null = null;
+  /** F5: whether any remote frame decrypted this call, and whether the mismatch was shown. */
+  private decryptedAny = false;
+  private mismatchShown = false;
   private pendingRemoteIceCandidates: RTCIceCandidateInit[] = [];
 
   public currentCallId: string | null = null;
@@ -148,7 +159,6 @@ export class CallService {
   /** User id of the peer who rang (incoming); used for avatar when no conversation is selected. */
   public incomingCallerId: string | null = null;
   public incomingHasVideo = true;
-  private callKey: CryptoKey | null = null;
 
   private callHasVideo = false;
   /** `visibilitychange` listener installed during a call; removed on cleanup. */
@@ -320,7 +330,7 @@ export class CallService {
       this.iceServers = await this.fetchIceServers(groupId, roomId);
       await this.setupMedia(video);
       this.installBackgroundHandler();
-      await this.setupEncryption(groupId, this.currentCallId!);
+      await this.setupEncryption(groupId, this.currentCallId!, 'caller');
       // The caller joins first, so the relay makes it the initiator when the callee arrives.
       await this.connectSignalling(this.currentCallId!);
       const deviceId = this.mlsService.getDeviceId();
@@ -379,7 +389,7 @@ export class CallService {
       this.iceServers = await this.fetchIceServers(groupId, callId);
       await this.setupMedia(useVideo);
       this.installBackgroundHandler();
-      await this.setupEncryption(groupId, callId);
+      await this.setupEncryption(groupId, callId, 'callee');
       await this.connectSignalling(callId);
       this.syncCallPresence(true);
     } catch (e) {
@@ -489,8 +499,9 @@ export class CallService {
     this.currentCallId = null;
     this.currentGroupId = null;
     this.incomingCallerId = null;
-    this.callKey = null;
-    this.callKeyBytes = null;
+    this.callKeys = null;
+    this.decryptedAny = false;
+    this.mismatchShown = false;
     this.currentRoomToken = null;
     this.mergedRemoteStream = null;
     this.pendingRemoteIceCandidates = [];
@@ -1234,22 +1245,26 @@ export class CallService {
     }
   }
 
-  private async setupEncryption(groupId: string, callId: string) {
-    const context = new TextEncoder().encode(callId);
-    const secret = await this.mlsService.exportSecret(groupId, 'mls-webrtc-media', context, 32);
-    this.callKeyBytes = Uint8Array.from(secret);
-
-    this.callKey = await crypto.subtle.importKey(
-      'raw',
-      this.callKeyBytes as BufferSource,
-      { name: 'AES-GCM' },
-      false,
-      ['encrypt', 'decrypt']
+  /**
+   * Derives this call's two media keys (one per direction, `utils/callKeys.ts`) and logs their
+   * SHA-256 fingerprints - never key bytes. One side's `send` fingerprint equals the other's
+   * `receive` exactly when the two ends agree, which two exported logs can show.
+   */
+  private async setupEncryption(groupId: string, callId: string, role: CallRole) {
+    const keys = await deriveCallKeys(
+      (g, label, context, len) => this.mlsService.exportSecret(g, label, context, len),
+      groupId,
+      callId,
+      role
     );
-    const fp = Array.from(this.callKeyBytes.slice(0, 4))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-    appendLog(`[Call] encryption key derived from MLS (fp=${fp}…)`);
+    this.callKeys = keys;
+    const [send, receive] = await Promise.all([
+      keyFingerprint(keys.send),
+      keyFingerprint(keys.receive),
+    ]);
+    appendLog(
+      `[Call] media keys derived from MLS (role=${role} send_fp=${send} recv_fp=${receive})`
+    );
   }
 
   private getOrCreateEncryptionWorker(): Worker {
@@ -1261,6 +1276,7 @@ export class CallService {
         const { type, detail, count, mediaKind } = event.data ?? {};
         if (type === 'decryptError') {
           appendLog(`[Call] E2E decrypt failed (${count ?? '?'}): ${detail ?? 'unknown'}`);
+          this.noteDecryptFailures(count ?? 0);
         } else if (type === 'keyError') {
           appendLog(`[Call] E2E worker key error: ${detail ?? 'unknown'}`);
         } else if (type === 'droppedNoKey') {
@@ -1270,6 +1286,7 @@ export class CallService {
         } else if (type === 'encryptOk') {
           appendLog(`[Call] E2E encrypting ${mediaKind ?? '?'} (${count} frame(s))`);
         } else if (type === 'decryptOk') {
+          this.decryptedAny = true;
           appendLog(`[Call] E2E decrypting ${mediaKind ?? '?'} (${count} frame(s))`);
         } else if (type === 'videoKeyframeIn') {
           appendLog(`[Call] remote video keyframe received (#${count})`);
@@ -1281,9 +1298,23 @@ export class CallService {
     return this.encryptionWorker;
   }
 
-  /** Pushes the MLS call key into the encryption worker and waits until it is applied. */
+  /**
+   * F5: the two ends derived different keys (different MLS epochs, a stale group) and the call
+   * "connects" in silence. Proven by a COUNT - `DECRYPT_MISMATCH_FAILURES` failures with not one
+   * frame decrypted, which a working call never reaches - and SHOWN to the user, once per call.
+   */
+  private noteDecryptFailures(count: number) {
+    if (this.decryptedAny || this.mismatchShown || count < DECRYPT_MISMATCH_FAILURES) return;
+    this.mismatchShown = true;
+    appendLog(
+      `[Call] ERROR E2E key mismatch - ${count} frame(s) failed and none decrypted: the two ends hold different keys`
+    );
+    showToast(m.call_e2e_key_mismatch(), 'error');
+  }
+
+  /** Pushes this call's two media keys into the encryption worker and waits until applied. */
   private ensureWorkerKeyReady(): Promise<void> {
-    if (!this.callKey) return Promise.resolve();
+    if (!this.callKeys) return Promise.resolve();
     if (this.workerKeyReady) return this.workerKeyReady;
 
     const worker = this.getOrCreateEncryptionWorker();
@@ -1306,13 +1337,15 @@ export class CallService {
         }
       };
       worker.addEventListener('message', onReady);
-      const keyBytes = this.callKeyBytes;
-      if (!keyBytes) {
-        reject(new Error('no call key bytes'));
+      const keys = this.callKeys;
+      if (!keys) {
+        reject(new Error('no call keys'));
         return;
       }
-      const keyCopy = keyBytes.slice();
-      worker.postMessage({ type: 'setKey', payload: keyCopy.buffer }, [keyCopy.buffer]);
+      // Copies, transferred: the worker owns its bytes, and these copies leave this thread.
+      const send = keys.send.slice().buffer;
+      const receive = keys.receive.slice().buffer;
+      worker.postMessage({ type: 'setKeys', send, receive }, [send, receive]);
     });
     return this.workerKeyReady;
   }
@@ -1323,7 +1356,7 @@ export class CallService {
    */
   private async setupSenderTransform(sender: RTCRtpSender): Promise<void> {
     if (sender.transform) return;
-    if (!this.callKey) throw new Error('no call key for the sender transform');
+    if (!this.callKeys) throw new Error('no call key for the sender transform');
     const worker = this.getOrCreateEncryptionWorker();
     await this.ensureWorkerKeyReady();
     sender.transform = new RTCRtpScriptTransform(worker, { side: 'sender' });
@@ -1333,7 +1366,7 @@ export class CallService {
   /** Attaches the E2E decrypt transform to a receiver. THROWS when it cannot, like the sender. */
   private async setupReceiverTransform(receiver: RTCRtpReceiver, mediaKind = 'unknown') {
     if (receiver.transform) return;
-    if (!this.callKey) throw new Error('no call key for the receiver transform');
+    if (!this.callKeys) throw new Error('no call key for the receiver transform');
     const worker = this.getOrCreateEncryptionWorker();
     await this.ensureWorkerKeyReady();
     receiver.transform = new RTCRtpScriptTransform(worker, { side: 'receiver' });

@@ -498,6 +498,7 @@
   "call_e2e_encrypted_title": "End-to-end encrypted call",
   "call_e2e_unsupported": "This browser cannot encrypt a call end to end, so the call was not started. Update it or use the app.",
   "call_over": "This call is over.",
+  "call_e2e_key_mismatch": "The call's audio cannot be decrypted: your two devices are out of sync. Hang up, open the conversation, then call again.",
   "call_encrypted_label": "Encrypted",
   "call_label": "Call",
   "call_participants_count": "{participants} participants",

@@ -1,0 +1,1 @@
+- **Calls (dev builds only):** one media key per direction with the media kind bound as AES-GCM additional data, a visible message when the two ends hold different keys, a hashed key fingerprint in the log, and the privacy policy and processing register now say who sees what in a call ([calls](docs/wiki/frontend/modules/calls.md)).

@@ -9,7 +9,11 @@ interface TransformEventLike {
   };
 }
 
-let callKey: CryptoKey | null = null;
+import { frameAad } from '../utils/callKeys';
+
+/** One key per direction (`utils/callKeys.ts`): this device encrypts with `send`, decrypts with `receive`. */
+let sendKey: CryptoKey | null = null;
+let receiveKey: CryptoKey | null = null;
 const ivLength = 12;
 let decryptFailures = 0;
 // Per-kind counters so the logs unambiguously show whether *video* (not just audio)
@@ -25,8 +29,10 @@ type RtcTransformWorkerScope = typeof self & {
 
 const workerScope = self as RtcTransformWorkerScope;
 
-/** Receives the AES-GCM key material from the main thread (raw bytes, not CryptoKey). */
-self.onmessage = async (event: MessageEvent<{ type: string; payload?: ArrayBuffer }>) => {
+/** Receives the two AES-GCM keys from the main thread (raw bytes, not CryptoKey). */
+self.onmessage = async (
+  event: MessageEvent<{ type: string; send?: ArrayBuffer; receive?: ArrayBuffer }>
+) => {
   if (event.origin && event.origin !== self.location.origin) return;
   if (event.data?.type === 'getCounters') {
     // The EXACT totals for the call report (WP-C2): the progress messages below are sampled
@@ -42,15 +48,26 @@ self.onmessage = async (event: MessageEvent<{ type: string; payload?: ArrayBuffe
     });
     return;
   }
-  if (event.data?.type === 'setKey') {
-    const raw = event.data.payload;
-    if (!raw || raw.byteLength !== 32) {
-      self.postMessage({ type: 'keyError', detail: `invalid key length ${raw?.byteLength ?? 0}` });
-      return;
+  if (event.data?.type === 'setKeys') {
+    const { send, receive } = event.data;
+    for (const [name, raw] of [
+      ['send', send],
+      ['receive', receive],
+    ] as const) {
+      if (!raw || raw.byteLength !== 32) {
+        self.postMessage({
+          type: 'keyError',
+          detail: `invalid ${name} key length ${raw?.byteLength ?? 0}`,
+        });
+        return;
+      }
     }
     try {
-      callKey = await crypto.subtle.importKey('raw', raw, { name: 'AES-GCM' }, false, [
+      // Each key can do ONE thing: the send key cannot decrypt, the receive key cannot encrypt.
+      sendKey = await crypto.subtle.importKey('raw', send!, { name: 'AES-GCM' }, false, [
         'encrypt',
+      ]);
+      receiveKey = await crypto.subtle.importKey('raw', receive!, { name: 'AES-GCM' }, false, [
         'decrypt',
       ]);
       self.postMessage({ type: 'keyReady' });
@@ -71,7 +88,7 @@ workerScope.onrtctransform = (event: Event) => {
 
   const transform = new TransformStream({
     transform: async (frame, controller) => {
-      if (!callKey) {
+      if (!sendKey || !receiveKey) {
         droppedNoKey++;
         if (droppedNoKey <= 3 || droppedNoKey % 200 === 0) {
           self.postMessage({ type: 'droppedNoKey', count: droppedNoKey });
@@ -81,7 +98,7 @@ workerScope.onrtctransform = (event: Event) => {
       try {
         const mediaKind = frameTypeLabel(frame);
         if (side === 'sender') {
-          await encryptFrame(frame, controller);
+          await encryptFrame(frame, mediaKind, controller);
           encrypted[mediaKind]++;
           if (encrypted[mediaKind] === 1 || encrypted[mediaKind] % 300 === 0) {
             self.postMessage({ type: 'encryptOk', count: encrypted[mediaKind], mediaKind });
@@ -97,7 +114,7 @@ workerScope.onrtctransform = (event: Event) => {
           }
           // Counted only when it decrypted: a failed frame is `decryptError`, and counting it here
           // too made a wrong-key call log `decryptOk` (measured in Chrome 155, 2026-10-17).
-          if (!(await decryptFrame(frame, controller))) return;
+          if (!(await decryptFrame(frame, mediaKind, controller))) return;
           decrypted[mediaKind]++;
           if (decrypted[mediaKind] === 1 || decrypted[mediaKind] % 300 === 0) {
             self.postMessage({ type: 'decryptOk', count: decrypted[mediaKind], mediaKind });
@@ -136,10 +153,15 @@ function isVideoKeyframe(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): bo
 
 async function encryptFrame(
   frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame,
+  kind: 'audio' | 'video',
   controller: TransformStreamDefaultController
 ) {
   const iv = crypto.getRandomValues(new Uint8Array(ivLength));
-  const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, callKey!, frame.data);
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv, additionalData: frameAad(kind) as BufferSource },
+    sendKey!,
+    frame.data
+  );
 
   const packed = new Uint8Array(iv.byteLength + ciphertext.byteLength);
   packed.set(iv, 0);
@@ -152,6 +174,7 @@ async function encryptFrame(
 /** Decrypts one frame and forwards it; `false` when it was dropped (too short, or wrong key). */
 async function decryptFrame(
   frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame,
+  kind: 'audio' | 'video',
   controller: TransformStreamDefaultController
 ): Promise<boolean> {
   const data = new Uint8Array(frame.data);
@@ -166,7 +189,11 @@ async function decryptFrame(
   const ciphertext = data.slice(ivLength);
 
   try {
-    const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, callKey!, ciphertext);
+    const plaintext = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv, additionalData: frameAad(kind) as BufferSource },
+      receiveKey!,
+      ciphertext
+    );
     frame.data = plaintext;
     controller.enqueue(frame);
     return true;
