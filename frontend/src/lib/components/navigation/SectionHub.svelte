@@ -1,6 +1,7 @@
 <script lang="ts">
   import { ChevronRight } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
+  import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
   import type { HubRow } from './breadcrumb';
 
   interface Props {
@@ -58,6 +59,8 @@
 {#snippet content(row: HubRow)}
   {#if row.avatarUserId}
     <Avatar userId={row.avatarUserId} size="sm" />
+  {:else if row.logo?.logoUrl}
+    <AssociationAvatar name={row.logo.name} logoUrl={row.logo.logoUrl} size="sm" />
   {:else if row.icon}
     {@const Icon = row.icon}
     <Icon size={20} />

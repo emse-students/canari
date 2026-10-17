@@ -33,6 +33,7 @@ import {
 } from '@lucide/svelte';
 import { m } from '$lib/paraglide/messages';
 import type { Association } from '$lib/associations/api';
+import { groupAssociationsForSelect } from '$lib/associations/selectGroups';
 import { editSectionHref } from '$lib/associations/editSections';
 import type { AdminScopeLabels } from '$lib/admin/access';
 import type { HubRow } from '$lib/components/navigation/breadcrumb';
@@ -206,21 +207,39 @@ const ENTRIES: readonly DashboardEntry[] = [
   },
 ];
 
+/** One managed organisation as a row: its logo when it has one, its kind's glyph otherwise. */
+function managedRow(a: Association): HubRow {
+  return {
+    key: `managed-${a.id}`,
+    href: editSectionHref(a.slug, null, a.type === 'list' ? '/lists' : '/associations'),
+    label: a.name,
+    summary: a.role || undefined,
+    icon: a.type === 'list' ? Building2 : a.type === 'institution' ? Landmark : Users,
+    logo: { name: a.name, logoUrl: a.logoUrl },
+  };
+}
+
 /**
- * The associations the reader MANAGES: a live membership holding at least one right (`isAdmin`,
- * which `/api/associations/me/list` sets from the bitmask) - the same test the association page
- * applies to its own "Manage" link for a member. A list's management area lives under `/lists`.
+ * The organisations the reader MANAGES (a live membership holding at least one right: `isAdmin`,
+ * which `/api/associations/me/list` sets from the bitmask - the same test the association page
+ * applies to its own "Manage" link), split Associations, Lists, Institutions, an empty one
+ * dropped. THE KIND IS `groupAssociationsForSelect`'s, the ONE classifier every picker uses - not a
+ * second one; it also leaves archived rows out of the three. A list's management area lives under
+ * `/lists`.
  */
-function managedRows(memberships: readonly Association[]): HubRow[] {
-  return memberships
-    .filter((a) => a.isAdmin && !a.archived)
-    .map((a) => ({
-      key: `managed-${a.id}`,
-      href: editSectionHref(a.slug, null, a.type === 'list' ? '/lists' : '/associations'),
-      label: a.name,
-      summary: a.role || undefined,
-      icon: a.type === 'list' ? Building2 : Users,
-    }));
+function managedSections(memberships: readonly Association[]): DashboardSection[] {
+  const { assos, lists, institutions } = groupAssociationsForSelect(
+    memberships.filter((a) => a.isAdmin)
+  );
+  return [
+    { key: 'assos', label: m.asso_select_group_assos(), rows: assos.map(managedRow) },
+    { key: 'lists', label: m.asso_select_group_lists(), rows: lists.map(managedRow) },
+    {
+      key: 'institutions',
+      label: m.asso_select_group_institutions(),
+      rows: institutions.map(managedRow),
+    },
+  ].filter((s) => s.rows.length > 0);
 }
 
 /** The heading of each group; the identity row stands alone, under no heading. */
@@ -263,6 +282,15 @@ export interface DashboardGroup {
   label: string;
   heading: boolean;
   rows: HubRow[];
+  /** The managed group only: its rows under sub-headings; `rows` stays the flat list of them. */
+  sections?: DashboardSection[];
+}
+
+/** A sub-heading of a group and the rows under it. */
+export interface DashboardSection {
+  key: string;
+  label: string;
+  rows: HubRow[];
 }
 
 /**
@@ -275,17 +303,18 @@ export function dashboardHubGroups(
 ): DashboardGroup[] {
   return GROUP_ORDER.filter((key) => facts.probesSettled || SETTLED_FREE.includes(key))
     .map((key) => {
-      const rows =
-        key === 'managed'
-          ? managedRows(facts.memberships)
-          : ENTRIES.filter((e) => e.group === key && (e.may?.(facts) ?? true)).map((e) =>
-              toRow(e, facts, actions)
-            );
+      const sections = key === 'managed' ? managedSections(facts.memberships) : undefined;
+      const rows = sections
+        ? sections.flatMap((s) => s.rows)
+        : ENTRIES.filter((e) => e.group === key && (e.may?.(facts) ?? true)).map((e) =>
+            toRow(e, facts, actions)
+          );
       return {
         key,
         label: groupLabel(key, facts),
         heading: !HEADINGLESS.includes(key),
         rows,
+        ...(sections ? { sections } : {}),
       };
     })
     .filter((g) => g.rows.length > 0);
