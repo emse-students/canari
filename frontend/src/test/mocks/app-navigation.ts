@@ -20,3 +20,5 @@ export function disableScrollHandling(): void {}
 export function pushState(_url: string, _state: unknown): void {}
 
 export function replaceState(_url: string, _state: unknown): void {}
+
+export async function preloadCode(_pathname: string): Promise<void> {}

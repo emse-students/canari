@@ -3,7 +3,7 @@
   import { Log } from '$lib/utils/Log';
   import { FileText, Film, Music, CalendarCheck, CircleAlert } from '@lucide/svelte';
   import { slide, fade } from 'svelte/transition';
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { MediaService, preparePostMedia } from '$lib/media';
   import { getToken } from '$lib/stores/auth';
   import { createPost, type CreatePostPayload, type PostFeed } from '$lib/posts/api';
@@ -26,6 +26,8 @@
     buildCreateFormHref,
     clearPostComposerDraft,
     emptyPostComposerDraft,
+    heldPostComposerMedia,
+    holdPostComposerMedia,
     isPostComposerDraftWorthKeeping,
     loadPostComposerDraft,
     POST_NEW_FORM_ID_KEY,
@@ -82,10 +84,29 @@
 
   // --- Text & media ---
   let markdown = $state('');
-  let selectedFiles = $state<File[]>([]);
-  let filePreviews = $state<string[]>([]);
-  let fileThumbIcons = $state<boolean[]>([]);
-  let mediaCaptions = $state<string[]>([]);
+  /**
+   * The media this composer held when it was last closed (`holdPostComposerMedia`), read before
+   * anything else runs so the hold below never sees an empty list first and forgets them.
+   */
+  const restoredMedia = heldPostComposerMedia();
+  if (restoredMedia.length > 0) {
+    Log.d('POST_COMPOSER', `${restoredMedia.length} media kept from the last close - restored`);
+  }
+  let selectedFiles = $state<File[]>(restoredMedia);
+  let filePreviews = $state<string[]>(
+    restoredMedia.map((f) => (needsThumbIcon(f) ? '' : URL.createObjectURL(f)))
+  );
+  let fileThumbIcons = $state<boolean[]>(restoredMedia.map((f) => needsThumbIcon(f)));
+  let mediaCaptions = $state<string[]>(restoredMedia.map(() => ''));
+  /** Closing the composer keeps its media for the next open, as the text draft keeps its text. */
+  $effect(() => {
+    holdPostComposerMedia(selectedFiles);
+  });
+  // The FILES are held, never their previews: each open makes its own object URLs, and gives them
+  // back when it closes, or every close would leak one URL per held media.
+  onDestroy(() => {
+    filePreviews.forEach((url) => url && URL.revokeObjectURL(url));
+  });
 
   // --- Optional sections ---
   let includePoll = $state(false);
@@ -144,8 +165,10 @@
   let errorMessage = $state('');
   /** A picked video being re-encoded on the device during publish (decision C3). */
   const videoPreparation = new VideoPreparationState();
-  // --- Draft auto-save (full composer state; images are not persisted) ---
-  let draftRestored = $state(false);
+  // --- Draft auto-save (full composer state; media are held in memory only) ---
+  let draftRestored = $state(restoredMedia.length > 0);
+  /** The restored draft brought media back (`holdPostComposerMedia`): the banner says so. */
+  let draftRestoredMedia = $state(restoredMedia.length > 0);
   let draftSaved = $state(false);
   let draftSaveTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -170,7 +193,9 @@
 
   function applyComposerDraft(draft: PostComposerDraft) {
     markdown = draft.markdown;
-    mediaCaptions = draft.imageCaptions ?? [];
+    // One caption per media held: a caption saved for a media that is no longer here is dropped,
+    // or the next media added would take it.
+    mediaCaptions = selectedFiles.map((_, i) => draft.imageCaptions?.[i] ?? '');
     includePoll = draft.includePoll;
     pollQuestion = draft.pollQuestion;
     pollOptions = [...draft.pollOptions];
@@ -432,6 +457,7 @@
       // Reset all state after successful creation
       clearPostComposerDraft();
       draftRestored = false;
+      draftRestoredMedia = false;
       markdown = '';
       filePreviews.forEach((url) => URL.revokeObjectURL(url));
       selectedFiles = [];
@@ -515,14 +541,25 @@
       >
         <span class="text-2xs font-semibold text-amber-700 dark:text-amber-400">
           {m.post_create_draft_restored_label()}
-          <span class="font-medium opacity-70">{m.post_create_draft_restored_detail()}</span>
+          <span class="font-medium opacity-70"
+            >{draftRestoredMedia
+              ? m.post_create_draft_restored_detail_with_media()
+              : m.post_create_draft_restored_detail()}</span
+          >
         </span>
         <button
           type="button"
           onclick={() => {
+            // The draft is all of it: the media it brought back go with the text.
+            filePreviews.forEach((url) => url && URL.revokeObjectURL(url));
+            selectedFiles = [];
+            filePreviews = [];
+            fileThumbIcons = [];
+            captionIndex = null;
             applyComposerDraft(emptyPostComposerDraft());
             clearPostComposerDraft();
             draftRestored = false;
+            draftRestoredMedia = false;
           }}
           class="text-2xs shrink-0 font-bold text-amber-700 outline-none hover:underline focus-visible:underline dark:text-amber-400"
         >

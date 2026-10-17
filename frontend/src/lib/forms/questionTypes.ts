@@ -7,6 +7,7 @@ import {
   SlidersHorizontal,
   LayoutGrid,
   Table2,
+  Paperclip,
 } from '@lucide/svelte';
 import type { Component } from 'svelte';
 import { m } from '$lib/paraglide/messages';
@@ -28,4 +29,6 @@ export const QUESTION_TYPES: QuestionType[] = [
   { value: 'linear_scale', label: () => m.qtype_linear_scale(), Icon: SlidersHorizontal },
   { value: 'matrix_single', label: () => m.qtype_matrix_single(), Icon: LayoutGrid },
   { value: 'matrix_multiple', label: () => m.qtype_matrix_multiple(), Icon: Table2 },
+  // A CV, a certificate: read by the form's managers on the server, purged days after the answer.
+  { value: 'file', label: () => m.qtype_file(), Icon: Paperclip },
 ];

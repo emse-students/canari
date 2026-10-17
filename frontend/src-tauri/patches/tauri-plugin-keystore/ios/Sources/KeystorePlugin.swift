@@ -52,9 +52,31 @@ class KeystorePlugin: Plugin {
     let alias: String
   }
 
-  /// Stores a raw 32-byte key (base64-encoded) in the iOS Keychain under
-  /// the given alias. The key is protected by `.userPresence` access control
-  /// (Face ID / Touch ID or device passcode fallback).
+  /// Whether this device can hold a `.userPresence` item at all, read from the FACT rather than
+  /// learned from a refused write: such an item needs a device passcode, and on a phone with none
+  /// `SecItemAdd` answers `errSecAuthFailed` (-25293, LocalAuthentication -5 "Passcode not set").
+  /// Any other answer (biometry locked out, not enrolled) still leaves the passcode, so the item can
+  /// be written.
+  private func devicePasscodeIsSet() -> Bool {
+    var error: NSError?
+    if LAContext().canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) { return true }
+    return (error as? LAError)?.code != .passcodeNotSet
+  }
+
+  /// Stores a raw 32-byte key (base64-encoded) in the iOS Keychain under the given alias: the
+  /// primary item, protected by `.userPresence` (Face ID / Touch ID or the device passcode), for
+  /// biometric unlock, and the background copy the notification extension reads.
+  ///
+  /// BOTH OLD ITEMS GO FIRST, whatever happens next. A PIN change awaits this write before it moves
+  /// any data (`pointUnattendedUnlockAt`), because an item still holding the OLD key would open the
+  /// MLS state not yet re-sealed without the server PIN check. The old order deleted the primary,
+  /// threw on its add, and never reached the background copy - which kept the old key.
+  ///
+  /// ON A DEVICE WITH NO PASSCODE THERE IS NO PRIMARY ITEM. It cannot exist there (see
+  /// `devicePasscodeIsSet`), and biometric unlock, its only reader, cannot be enabled without a
+  /// passcode either. Writing it anyway threw on every call: every PIN unlock's push context failed
+  /// and every PIN change stopped here after the server had already rotated (iPhone 12 bench,
+  /// 2026-10-15). The background copy is written in both cases.
   @objc public func storeKeyBytes(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(StoreKeyBytesRequest.self)
 
@@ -64,38 +86,50 @@ class KeystorePlugin: Plugin {
         userInfo: [NSLocalizedDescriptionKey: "Invalid base64 key bytes"])
     }
 
-    var error: Unmanaged<CFError>?
-    guard
-      let accessControl = SecAccessControlCreateWithFlags(
-        nil,
-        kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-        .userPresence,
-        &error
-      )
-    else {
-      throw error!.takeRetainedValue() as Error
-    }
-
-    // -- Primary item: biometric-gated (.userPresence), for the app process --
     let deleteQuery: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: kKeychainService,
       kSecAttrAccount as String: "mls_key_\(args.alias)",
     ]
     SecItemDelete(deleteQuery as CFDictionary)
-
-    let addQuery: [String: Any] = [
+    let bgDeleteQuery: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: kKeychainService,
-      kSecAttrAccount as String: "mls_key_\(args.alias)",
-      kSecValueData as String: keyData,
-      kSecAttrAccessControl as String: accessControl,
+      kSecAttrAccount as String: "mls_bg_key_\(args.alias)",
     ]
+    SecItemDelete(bgDeleteQuery as CFDictionary)
 
-    let status = SecItemAdd(addQuery as CFDictionary, nil)
-    guard status == errSecSuccess else {
-      throw NSError(
-        domain: NSOSStatusErrorDomain, code: Int(status), userInfo: nil)
+    // -- Primary item: biometric-gated (.userPresence), for the app process --
+    if devicePasscodeIsSet() {
+      var error: Unmanaged<CFError>?
+      guard
+        let accessControl = SecAccessControlCreateWithFlags(
+          nil,
+          kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
+          .userPresence,
+          &error
+        )
+      else {
+        throw error!.takeRetainedValue() as Error
+      }
+
+      let addQuery: [String: Any] = [
+        kSecClass as String: kSecClassGenericPassword,
+        kSecAttrService as String: kKeychainService,
+        kSecAttrAccount as String: "mls_key_\(args.alias)",
+        kSecValueData as String: keyData,
+        kSecAttrAccessControl as String: accessControl,
+      ]
+
+      let status = SecItemAdd(addQuery as CFDictionary, nil)
+      guard status == errSecSuccess else {
+        NSLog("[KeystorePlugin] storeKeyBytes: primary keychain item failed (status=\(status))")
+        throw NSError(
+          domain: NSOSStatusErrorDomain, code: Int(status), userInfo: nil)
+      }
+    } else {
+      NSLog(
+        "[KeystorePlugin] storeKeyBytes: no device passcode - no biometric item, background copy only")
     }
 
     // -- WP-SEC-1: secondary item, background-accessible for the NSE --
@@ -104,13 +138,6 @@ class KeystorePlugin: Plugin {
     // has been unlocked once (covers the "screen locked, push arrives"
     // case). Shared via the App Group keychain access group so the NSE
     // can read it from its own process.
-    let bgDeleteQuery: [String: Any] = [
-      kSecClass as String: kSecClassGenericPassword,
-      kSecAttrService as String: kKeychainService,
-      kSecAttrAccount as String: "mls_bg_key_\(args.alias)",
-    ]
-    SecItemDelete(bgDeleteQuery as CFDictionary)
-
     let bgAddQuery: [String: Any] = [
       kSecClass as String: kSecClassGenericPassword,
       kSecAttrService as String: kKeychainService,
@@ -244,10 +271,12 @@ class KeystorePlugin: Plugin {
   /// biometric unlock makes sense at all, so prompting here would defeat its purpose.
   ///
   /// The background item (`mls_bg_key_`) is tested first: it carries no access control, so
-  /// matching it needs no authentication. It is written and deleted in the same operations as
-  /// the primary item, which makes its presence equivalent. The primary item is then tried with
-  /// attributes only and `kSecUseAuthenticationUISkip`, which returns a match without decrypting
-  /// - it covers a device enrolled before the background item existed.
+  /// matching it needs no authentication. Its presence is NOT the primary item's: on a device with
+  /// no passcode `storeKeyBytes` writes the background item alone. That still answers "present"
+  /// only where biometric unlock cannot be enabled (it needs the passcode too), so the answer
+  /// offers nothing it should not. The primary item is then tried with attributes only and
+  /// `kSecUseAuthenticationUISkip`, which returns a match without decrypting - it covers a device
+  /// enrolled before the background item existed.
   @objc public func hasKeyBytes(_ invoke: Invoke) throws {
     let args = try invoke.parseArgs(HasKeyBytesRequest.self)
 

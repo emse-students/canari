@@ -39,8 +39,55 @@ P3. The cap (#1721), the stacked faces in the list and day rows, the detail moda
 
 P3. Built in [offline-and-weak-network 13.6](frontend/offline-and-weak-network.md): lazy decode, the `error` parking of an attachment, the banner fix. OWED: (a) a SIZE CAP at compose time for a queued attachment (not recommended, see the P1 section above); the bytes are now OUT of the row ([offline-and-weak-network 13.7](frontend/offline-and-weak-network.md)); (b) a terminal, visible state for a NON-media entry that keeps failing (a text on a persistent 5xx) - it needs a surface a text bubble does not have; (c) a re-read on the Pixel 6a of the freeze with a 13 MB attachment queued (nothing here was run on that phone).
 
+## P2 - GDPR compliance: the open items of the register (2026-10-16)
+
+P2. From the owner's GDPR review; the substance is [register-of-processing](compliance/register-of-processing.md#9-open-items-summary), and what only the school's DPO can answer is [dso-dossier](compliance/dso-dossier.md). OPEN, each with its page: (a) the school's role (joint controller or provider) and a written hosting agreement with the DSI, including incident notice ([dso-dossier](compliance/dso-dossier.md)); (b) the transfer safeguards of Google FCM, Apple APNs, Cloudflare, Google Safe Browsing and KLIPY, documented or left "to be confirmed" in the privacy policy section 5; (c) log retention 90 days enforced, Authentik `event_retention` included (in progress elsewhere); (d) a complete account deletion with retries (in progress elsewhere) - the tables it misses today are listed in the register, section 2; (e) the database dumps encrypted; (f) KLIPY through the server with no identifier, `klipy_cid` removed, then the policy's sections 4 and 7 updated; (g) the legacy cotisations' end date and the dev estate's full copy, the DPO's opinion; (h) a retention rule for `submissions`; (i) MiGallery's DPIA measures ([dpia-migallery-faces](compliance/dpia-migallery-faces.md#6-open-measures)), controller MiTV; (j) Le Cercle: its controller, a privacy page, the leaderboards' visibility; (k) Portail-etu's legal notice fields; (l) where the request log and the breach register live off-repository; (m) unclassified media kept for ever, a production count of non-empty `submissions.email`, and a restriction flag for Art. 18. **The privacy policy is the public face of the register: a change to one is a change to the other.**
 
 ---
+
+## P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)
+
+`miconnect-authorization` (blueprint `45-consent.yaml`, 8 providers) is applied by the stable deploy
+like any blueprint, so **do not cut a stable until these hold**, in this order: (1) the page
+`/legal/miconnect` answers 200 on dev (pre-release first), because the prompt links to it; (2) the
+cross-client harness accounts carry `attributes.cgu_version` (read-modify-write of the whole
+attributes bag - the profile editor PATCH replaces it), or `login.mjs` ticks the box, else every
+harness login stalls on the new page; (3) the prompt is READ in a real browser, on the Mi 9T and on
+the iPhone (the CI test proves the HTML reaches the challenge, not that a native auth session renders
+and follows its link). Rollback: re-apply the previous ref's blueprints, or flip the 8 providers back
+to `default-provider-authorization-implicit-consent` in `/if/admin/`. The flow fails OPEN: a broken
+policy skips the consent, it never locks anyone out. Accounts that never sign in again are never
+asked. See [authentik](infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16).
+
+## Decided by the user on 2026-10-16 - the GDPR pass over the whole ecosystem
+
+Source: a read-only DPO-style review of Canari, MiConnect, MiGallery, Sky, Le Cercle, Portail-etu and
+the estate (the register is [register-of-processing](compliance/register-of-processing.md)). Decisions,
+verbatim in substance: **controller** Association Rootz - EMSE for Canari and MiConnect, MiTV for
+MiGallery (bureau@mitv.fr); **MiConnect basis** = performance of the service, the tick only proves the
+terms were read; **the school HAS a DPO** (ask them to review once the work is solid; the
+[dossier](compliance/dso-dossier.md) is ready); **no written agreement with the DSI** beyond the two
+school charters (IT charter 2020, AI charter 2026) and ticket exchanges; **MiGallery faces STAY** with
+a DPIA, a recorded consent (existing links are `consent_source='legacy'`, the owner holds the proof),
+real erasure; an unlisted album serves only its own photos (fixed); **Le Cercle** legacy database is
+kept OUT of git (history rewrite approved after a local mirror; the GitLab project is readable by every
+school account), the balance is not refunded and the rule is stated where a member tops up and on the
+delete card; **logs** 90 days; **KLIPY** through our server (done); **dev** holds fictional data only
+(done, the wipe of the old copy is owed to the user); **push** payload content stays and is declared;
+**export** is a manual 30-day procedure; **Sky** placeholder people get a notice only; **backups** keep
+a deletion 14 days, stated, dumps to be encrypted; legacy cotisations of ~1400 non-users are kept with
+no purge date (flagged to the DPO); account deletion is a durable queue (PR in progress).
+
+**Open at the time of writing:** account erasure PR #1965 (two review rounds, blocking defects being
+fixed, NOT armed); MiGallery face consent and erasure PR #392 (review: the proof that the person's
+faces are gone is circular, the admin paths can relink a withdrawn person, wiki claims to correct);
+the MiConnect terms PR #1955 (armed; the stable that ships it needs the three conditions above);
+the Le Cercle history rewrite (owed: the permission system refused the destructive git step, the user
+runs it or approves it explicitly); sending the DPO dossier; the DSI log-retention request.
+
+## P3 - `[TAURI] Couldn't find callback id` every ~15 s after a text-size WebView reload (2026-10-17)
+
+One id, repeated at 15 s, from the previous page's callback. Suspect, unproven: the `plugin-websocket` listener of `TauriMlsService` outliving the page (no `pagehide` release). Evidence and next step: [device-verification](device-verification.md#2026-10-17-follow-up-the-sort-row-fixed-and-the-stale-tauri-callback-open-cause-not-proven). Delete this item when the cause is shipped.
 
 ## Owed a VERIFICATION, and nothing else
 
@@ -105,22 +152,31 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
+| **send the DPO dossier to the school's DPO** and bring back the answers to its three questions (the school's role, the hosting agreement with the DSI, the MiGallery DPIA); MiTV keeps the proof of each member's face-recognition consent | 1 e-mail, 1 conversation | [the GDPR entry](#p2---gdpr-compliance-the-open-items-of-the-register-2026-10-16), [dso-dossier](compliance/dso-dossier.md) |
+| **wipe the real-data copy dev still holds, once the fictional seed has merged and a pre-release has moved `dev-deployed`, and BEFORE the next stable - that stable ships the privacy page and dev banner saying dev holds no production data, which is false until this wipe has run and verified** (owner, 2026-10-16, GDPR): run `scheduled.yml` `job=dev-reset` with `dry_run=true`, then `false`; delete any leftover copy dump (`/tmp/canari-copy.*`) and the copy-era dev log archives on the host; grant your own dev row `admin` after signing in. A production-estate write, the owner's | 1 dispatch, 1 ssh session | [dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16) |
+| **decide the LOCAL copy of production** (`pull-prod-dump.sh` + `restore-into-local.sh`, PII included onto a developer's machine) - the one copy of production left after the dev copy was deleted on 2026-10-16 | 1 decision | [dev-environment](infrastructure/dev-environment.md#what-the-copy-was-kept-so-nobody-rebuilds-it), [databases](infrastructure/databases.md) |
 | **when to raise `minClientVersion` to the build that ships "a Remove holds against a later re-add"** - until then an answering member on an older build still sends a re-admitted member's window | decision | [the re-admitted window entry](#p2---a-re-admitted-device-calls-its-own-exclusion-window-a-loss-and-reconciles-for-it-2026-08-26-widened-2026-08-30) |
-| **add `client_max_body_size 100m;` and `proxy_request_buffering off;` to the `server` block of `/etc/nginx/sites-enabled/canari-relay-prod.conf` and `canari-relay-dev.conf` on `ssh canari`, then `sudo nginx -t && sudo systemctl reload nginx`** (the 413 over 1 MiB on `dev.canari-emse.fr` and `canari-emse.fr` is the relay's nginx default, NOT Cloudflare, whose body limit is 100 MB; the app already sends under 8 MiB per request since #1706/#1708/#1710 and chunking under 1 MiB is not an option). Done when a 1.2 MB and a 20 MB upload reach `media-service` on both legacy names | 1 ssh gesture, 2 lines | [cloudflare-edge](infrastructure/cloudflare-edge.md#a-request-body-over-1-mib-is-refused-with-a-413-on-the-legacy-names---it-is-the-relays-nginx-not-cloudflare-measured-2026-10-07-cause-found-2026-10-09) |
+| **raise the body limit (`client_max_body_size`, request buffering off) on the legacy-name relay**, then reload it (the 413 over 1 MiB on `dev.canari-emse.fr` and `canari-emse.fr` is the relay's nginx default, NOT Cloudflare, whose body limit is 100 MB; the app already sends under 8 MiB per request since #1706/#1708/#1710 and chunking under 1 MiB is not an option). Done when a 1.2 MB and a 20 MB upload reach `media-service` on both legacy names. The exact files and commands are kept privately | 1 ssh gesture, 2 lines | [cloudflare-edge](infrastructure/cloudflare-edge.md#a-request-body-over-1-mib-is-refused-with-a-413-on-the-legacy-names---it-is-the-relays-nginx-not-cloudflare-measured-2026-10-07-cause-found-2026-10-09) |
 | **upload the APNs authentication key in the DEVELOPMENT slot of Firebase** (2 minutes): Firebase Console > Project settings > Cloud Messaging > the iOS app `fr.emse.canari` > APNs authentication key - the same `.p8` (Key ID + Team ID) already in the Production slot. The agent then resends the test DM | click | [the iOS push rows](#owed-a-verification-and-nothing-else) |
+| **decide whether to rotate the payment-provider and document-vault secrets that were readable by too many callers before the response allowlist shipped (#1932)** - the exposure windows and the rotation design are kept privately | 2 decisions | [forms](frontend/modules/forms.md#what-a-client-reads-of-a-submission-is-an-allowlist-2026-10-15) |
 | **Lydia's three still-open Livrable A answers** - the KYC document list (channel confirmed: email, not yet arrived), the minimum payable amount, and rate limits/webhook-sandbox testing | blocked upstream | WP-LYDIA-1 |
-| **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** The Play service account holds only `androidpublisher`, not `serviceusage.services.enable`, so no agent can create a project. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [the second package id](#p3---a-second-package-id-so-a-pre-release-can-be-measured-against-production-decided-2026-09-15) |
-| **create the new Cloudflare tunnel on the `rootz-emse.fr` zone.** The project's token answers 200 with an EMPTY list on `cfd_tunnel` and 403 on Access groups, so tunnels are out of its scope. (verify: phase 1 completed for all three estates on 2026-09-24 without it - whether this tunnel is still wanted at all) | 1 dashboard gesture | [estate-migration](infrastructure/estate-migration.md#8-what-is-owed-by-the-user) |
+| **the dev mobile half: a Firebase project for `dev.canari-emse.fr` and a dev keystore, plus where that keystore is backed up.** No agent can create the project with the credentials it holds. Until then a pre-release APK points at dev with production's FCM sender | 1 console visit, 1 decision | [the second package id](#p3---a-second-package-id-so-a-pre-release-can-be-measured-against-production-decided-2026-09-15) |
+| **create the new Cloudflare tunnel on the `rootz-emse.fr` zone** (outside the project token's scope). (verify: phase 1 completed for all three estates on 2026-09-24 without it - whether this tunnel is still wanted at all) | 1 dashboard gesture | [estate-migration](infrastructure/estate-migration.md#8-what-is-owed-by-the-user) |
 | **the spaces release order (WP6b), three gestures in THIS order**: (1) go for the WP3 profile backfill on production once 6a/6d's release ran migration 071 (`backfill-canari-profiles.sh apply`); (2) set every association's real reach and the BDEs at `/admin/spaces` - the seed gave all of them (ICM, saint-etienne) only; (3) only then cut the release carrying 6b. Out of order, ISMIN/Gardanne/FSSS/Autre readers see no existing association post, and anyone not backfilled loses the feed | 1 go, 1 grid, 1 release | [profiles-and-access](profiles-and-access.md), "WP6b as built" |
-| **ask the gala team whether 160 MB on the shared host may go** - a runner workspace holding the only surviving checkout of `emse-students/refonte-gala` (the repository answers `404`). Nothing runs from it; it is somebody else's archive | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
-| **decide whether the host-update report gets a runner key on `mitv`, `cercle`, `miconnect`** (your own old VMs; without it they are unreported) | 1 decision | [the P2](#p2---two-of-the-hosts-that-take-security-updates-are-not-reported-on-and-a-library-nothing-restarts-the-rest-closed-2026-09-03) |
+| **ask a co-tenant of the shared host whether a leftover runner workspace may go** - somebody else's archive; nothing runs from it | 1 conversation | [estate-migration](infrastructure/estate-migration.md#the-host-was-emptied-before-the-move---2026-09-24-and-it-is-done) |
+| **decide whether the host-update report gets a runner key on the old VMs** (your own; without it they are unreported) | 1 decision | [the P2](#p2---two-of-the-hosts-that-take-security-updates-are-not-reported-on-and-a-library-nothing-restarts-the-rest-closed-2026-09-03) |
 | **decide whether `arm-auto-merge.yml` may arm a pull request opened by the `canari-auto-merge` App itself** (a lockfile-refresh superseding a Dependabot pull request, which is how the last class of dependency update that needs a person would merge unattended) | 1 decision | [the P2](#p2---a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will-never-fix) |
 | **set the `DEV_FIREBASE_SERVICE_ACCOUNT_JSON` secret** (environment `development`; today only the repository-level production `FIREBASE_SERVICE_ACCOUNT_JSON` exists): without it dev sends no push and T1, the push-to-banner latency, cannot be measured | 1 secret | [the notification latency P2](#p2---a-notification-tap-takes-27-s-to-a-usable-conversation-when-killed-5-s-behind-the-pin-measured-2026-10-11) |
+| **send the DSI the log-retention request** (the host's logs and security tooling: each kept 90 days at most, as the privacy policy promises) - the text is ready, in French | 1 e-mail | [dsi-log-retention-request](infrastructure/dsi-log-retention-request.md) |
+| **set Authentik's event retention to `days=90`** (System > Settings; default `days=365`, every login event stores the client IP) - a production write on the identity provider | 1 setting | [dsi-log-retention-request](infrastructure/dsi-log-retention-request.md#what-lives-where-and-who-sets-it) |
+| **decide whether a container whose live log is past 60 days is RECREATED unattended** by the daily `log-retention` job (today it only goes red and a human recreates it); it is a production restart, of postgres and redis included | 1 decision | [logging](infrastructure/logging.md#the-90-day-ceiling-2026-10-16) |
 | **decide production's log retention**: the per-message lines at `LOG` level roll the container log over in ~20 minutes, so an incident older than that is unreadable | 1 decision | [2026-10-12](#decided-by-the-user-on-2026-10-12-and-what-the-evening-left-open) |
 | **decide the WebCrypto checkpoint seal** (design only) | 1 decision | [2026-10-12](#decided-by-the-user-on-2026-10-12-and-what-the-evening-left-open) |
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
 | **raise `minClientVersion` to `1.2.1` once BOTH stores serve `1.2.1`** - `1.0.3`-`1.1.2` keep the native key-group epoch bug (a cold start arms an epoch gap, salon sends are refused, the device re-joins 45 s later); the floor is `1.0.3` since 2026-10-11; Apple's order is to wait for 1.2.1's review, then submit 1.2.4 | 1 gesture | [channel-encryption §22.3](protocols/channel-encryption.md#223-the-native-app-read-every-held-key-group-as-epoch-0-and-re-joined-them-all---fixed-2026-10-09), [Graine v2](#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28) |
-| **set `posts=["ME"]` in Authentik for the staff accounts labelled EMSE that are ME** (Aurelie Boyer, Celine Haton), from the table Master hands over | 2 attributes | [profiles-and-access](profiles-and-access.md) |
+| **set `posts=["ME"]` in Authentik for the staff accounts labelled EMSE that are ME** (two school-staff accounts), from the table Master hands over | 2 attributes | [profiles-and-access](profiles-and-access.md) |
+| **set the `DEV_KLIPY_API_KEY` secret** (environment `development`, the same KLIPY key is fine - KLIPY moves no money and believes nothing about production): since the GIF search moved to the server, dev without it answers "GIF search is not configured" | 1 click | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
+| **decide whether to ROTATE the KLIPY key**: it shipped in every web and native bundle as `VITE_KLIPY_KEY` until 2026-10-16, so it is public; rotating it also ends GIF search on native builds installed before the change, which still call KLIPY directly | 1 decision | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
 
 ## The Carte de la Vie Asso chantier - audited 2026-09-27, every decision taken, ready to build
 
@@ -170,17 +226,70 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 **An ephemeral video message filmed in the chat (DMs, groups, salons), E2E, 30 days, like Snapchat** - not a link to a published reel. Study, model, 12 work packages (RC-0 to RC-11) and 11 decisions owed: [reels-in-chat](frontend/modules/reels-in-chat.md). RC-0 (measure a 90 s take, the salon media-access rule) comes first; the upload and outbox half waits on the weak-network PR.
 
+## P2 - A GIF sent in a chat is loaded by every recipient from KLIPY's CDN (found 2026-10-16, GDPR review)
+
+The search itself goes through Canari since 2026-10-16 (`GET /api/mls/gifs`); what is left is
+`static.klipy.com` learning each RECIPIENT's IP, user agent and reading time on every render of a
+GIF message, plus the searcher's thumbnails and the one fetch of a comment GIF's bytes. Not proxied yet
+because the existing image proxy's 3 MB ceiling and small-image cache were never measured against
+KLIPY's renditions. The substance, the table of the three paths and the route it needs are in
+[chat](frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16). Owed first: a
+measurement of the `md` rendition sizes over trending and a few searches.
+
 ## P1 - Opening a community is network-gated: the salons 1.7 s after the tap on Wi-Fi, 6 s on a slow link and phone, never offline (user, 2026-10-14; measured, not built)
 
 **User goal: on a slow network and a poor phone, opening a community is almost instantaneous.** Mi 9T, `1.2.7-alpha.3`, dev, cold, medians: tap -> salons 1.7 s (Wi-Fi), 6.0 s (slow3g + 4x CPU), never in airplane mode (also on the user's Pixel on production); a salon's first messages 1.9 s / 6.2 s after its tap. Budget proposed: rail + salons and a salon opened before **<= 200 ms from local state, with 0 request on the path**. Fixes F1-F7, ranked, none built - F1 (a local workspace list), F4 (a salon's last page kept locally, local-first-ui ledger row 9) and F6 (mount the visible bubbles first) are the ones that reach the budget: [community-open-budget](frontend/community-open-budget.md). Instrument: `bun tools/cold-start/community-open.mjs`. **Owed**: a CPU profile of the warm resume at 4x (2 s before the tap is handled), the history head/body split, iOS.
+
+## P3 - A reel's loop holds its first frame ~210 ms longer than the file says, on the Mi 9T (measured 2026-10-16, not built)
+
+The WebView's own `loop` seeks to 0 and the audio renderer pre-rolls before the clock restarts: the first frame after the wrap is held 317-433 ms where the file spans 107-128 ms. Without an audio track the hold is the file's (83 ms for 107 ms), so it is the audio pre-roll, not the decoder. The audio outside the picture is trimmed since 2026-10-16 (`trimToVideo`, ~100 ms per loop). A seamless loop needs NO seek: re-append the same segments to the MSE buffer the streaming reader already uses, `timestampOffset` advanced by the duration. Owed: the design, then the iPhone's reading of the same seam. [reels](frontend/modules/reels.md#the-end-of-a-reel-looked-frozen-2026-10-16)
+
+## P3 - Accepted: the native "+" menu drops the keyboard (2026-10-17)
+
+Opening the composer's native `UIMenu` ends the WebView's input session, 8 of 8 on the iPhone 12 (`v1.2.9-alpha.5`). The cause is UIKit's context-menu presentation turning on the focus system, about 70 ms BEFORE the #1953 hold acts, not the hold ([mobile](frontend/mobile.md#the-conversations-native-glass-chrome) has the syslog order).
+
+**Accepted for three reasons:**
+- every "+" entry opens a full-screen surface;
+- the native menu decision stands;
+- the only fix at the cause rests on unobserved UIKit behaviour and risks a stuck gate.
+
+**Reopen it if** a menu dismissed WITHOUT a pick turns out to be a common path (a user report, or the in-app log showing `willEnd` with no pick). The candidate fix would then be compiled and read on a pre-release, never shipped on reasoning:
+- the existing `CanariNoInputAccessoryContentView` subclass (`canari_ios.mm`) answers `canResignFirstResponder` = NO while a native menu opens;
+- the gate rises before the focus override (`beginTracking` or `configurationForMenuAtLocation`);
+- it falls on every path the hold already releases on.
+
+Its iPhone reading, through `tools/ios-device`, in a DM and a salon, 8 rounds:
+1. With the composer focused (`keyboard overlap=301`), tap "+". Pass: no `End input session` and no `overlap=0` between the focus override and the hold line, the keyboard visible under the menu, the caret still in the composer after a dismissal.
+2. Re-run #1953: one edge swipe closes only the menu, 7 of 7.
+3. Exercise every release path: a pick (Photos), a tap outside, the app switcher mid-menu and back, and the conversation closed under the menu. After each, the keyboard must still go down normally: a stuck gate shows as a keyboard that cannot be dismissed.
+
+## P3 - iOS: a Modal or sheet over a conversation has no edge swipe (found 2026-10-16)
+
+The iOS app's only Back is the conversation's own left-edge swipe, and a `Modal` is portalled to `document.body`, out of `ChatArea`: a swipe over its backdrop reaches nothing, as the camera review's did ([reels-in-chat](frontend/modules/reels-in-chat.md#the-iphone-12-reading-of-v129-alpha2---the-edge-swipe-is-the-ios-back-2026-10-16)). The fix is the camera's: the layer carries `swipeBack` calling `backHistoryOverlayFromGesture`, enabled only when it is `dismissible` (a gate pushes no entry, so the top overlay would be the one UNDER it). Owed first: one iPhone reading that a swipe over a sheet does nothing today.
 
 ## P2 - A process death inside the 2 s read-receipt window loses that DM receipt (found 2026-10-15, building the sender coalescing)
 
 The local mark is persisted when it moves. The frame is queued only when the window ends, on leave, or when the app leaves the screen. A kill in between leaves nothing that would announce the mark, and the next open finds nothing new. The fix is the salon's shape: write the owed mark durably at decision time and drain it into the outbox at boot ([history-reconciliation](protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)). **Owed with it**: a Pixel or Mi 9T count of received `[READ] ... has read up to` lines and of MLS checkpoints per 3 minutes of a two-person DM exchange, on the coalescing build against the one before it.
 
+## P3 - An iPhone whose passcode is removed with biometric unlock on keeps a key copy that unlocks with no prompt (found 2026-10-15, review of #1923; accepted)
+
+The background keychain copy (`mls_bg_key_`, no access control) is what the 12 h biometric cadence reads (`getKeyBytesUnattended`). A user who turns biometric unlock on, then removes the device passcode, keeps that copy - and since #1923 `storeKeyBytes` writes it alone on a passcode-less phone, so every later PIN login refreshes it instead of failing: the unattended unlock keeps working with no Face ID sheet and no passcode on the phone. Pre-existing (the copy already survived the removal), now permanent. Accepted by review; [auth](frontend/modules/auth.md#a-keychain-that-cannot-hold-the-biometric-item-ios-with-no-passcode-2026-10-15). **Owed, on the iPhone 12 bench**: passcode set, biometrics on in Settings, remove the passcode, relaunch within and past the 12 h window - record whether the app opens with no sheet, what `isConfigured` and `hasKeyBytes` answer, and whether iOS deleted the `.userPresence` primary item (syslog `SecItemCopyMatching` status). If it opens, the fix is to drop the biometric flag when `canEvaluatePolicy(.deviceOwnerAuthentication)` answers `passcodeNotSet`.
+
+## P3 - A PIN change made from a FOLLOWER tab always ends in a recovery prompt (found 2026-10-15, review of #1898)
+
+`performPinChange` re-seals the MLS state with `mls.changeDeviceKey`, which persists the client IN MEMORY. In a follower tab that client was loaded from a snapshot older than the leader's last checkpoint, so the version guard of `saveMlsStateEncrypted` refuses the write (`stale` or `collision`) and the stored state STAYS UNDER THE OLD KEY - it is never overwritten with the older ratchet. Since #1898 the refusal is typed (`MlsStateWriteRefusedError`), the session ends into the recovery and the recovery finishes the move from the STORED state ([auth](frontend/modules/auth.md#the-other-tabs-of-the-account)): no data is lost, but the change costs a recovery prompt. **Owed**: re-seal the state as STORED (read under the exclusive lock, after the leader let go) rather than the follower's memory - or refuse the change outside the leader on the settings screen - and a two-realm test.
+
+## P2 - A backup restore resurrects every account erased since that backup (found 2026-10-16, account erasure)
+
+Backups keep 14 days. Restoring one brings back every account erased after it was taken, and nothing replays those erasures: a completed `account_erasure_jobs` row carries only `sha256:<digest>` of its subject, so the replay cannot be a list of ids - it must hash every `users.id` (and every account column downstream) and match. **Owed**: a replay step in the restore procedure that reads the completed digests from the CURRENT journal (the restored one predates them), re-queues the matching subjects, and a test on a restored copy ([account-erasure](account-erasure.md#what-is-not-covered-and-why)).
+
 ## P2 - Deleting the account leaves its local message database at rest (found 2026-10-15, review of #1892)
 
 `SettingsDangerZone` runs `deleteMyAccount()`, then `clearAuth()`, then `leaveSignedOut()`. None of them deletes `CanariDB_<userId>` / `canari_<userId>.db`, so after the server account is gone, every DM row (and, since F4, every salon's last page) stays on the device, sealed under the device key. A sign-out keeps that database ON PURPOSE (the user's "garder l'etat"). A deletion is the opposite intent, and a salon-only sweep would be the wrong cut ([community-open-budget F4](frontend/community-open-budget.md#f4-built-2026-10-15)). **Owed**: a decision on what a deletion wipes on THIS device (that account's database and its vault slot) and a test, never a blanket `wipeDeviceToFactory`, which takes other accounts' state too.
+
+## P3 - Four things the offline cold start fix left open (Mi 9T, `v1.2.9-alpha.1`, 2026-10-15)
+
+From [offline-and-weak-network section 15](frontend/offline-and-weak-network.md#15-an-offline-cold-start-sends-nothing-it-knows-will-fail-2026-10-15). (a) An answerer holding nothing answers a HISTORY ask by silence, so the requester cannot record an answer and re-asks its named online device once per launch: making it idempotent needs an explicit "I hold nothing" bundle (protocol change, decision owed). (b) The push context written after the MLS init is not re-attempted after an offline start: the native side keeps the previous launch's context until the next start; a retry on reconnect must check the device key has not changed meanwhile. (c) When only OUR OWN other devices could answer a history ask and none is online, nothing re-asks when one comes online in the same session: `parkHistoryUntilOnline` rides `whenAnyComesOnline`, which watches USERS, and our own user is online by definition, so it would fire at once. The fix is a per-device presence waiter (the roster already carries `onlineDevices`); until then the next start re-reads presence. (d) A no-network spell (`auth.refresh`) is ended by the reconnect or the foreground: a STALE `navigator.onLine === false` whose one spell refresh failed while the server was down, followed by the server coming back with no `online` event and no foreground, keeps refusing until one of the two.
 
 ## P3 - 45 identical `[HISTORY_RECONCILE] ... asked 30s ago` lines in 250 ms at a cold start (Pixel 6a, production `1.2.7`, 2026-10-14)
 
@@ -208,6 +317,10 @@ Read in the user's exported log (`F:\Programmation\canari-harness\pixel-r1014\`)
 
 *"Pour la prochaine mise a jour"*: the user decided 1.2.8 is held until both mute and mentions-only ship. A PR is in progress by an agent. **Mentions-only must be decided ON THE DEVICE**: in an E2EE group the server cannot see a mention, so it cannot filter the push itself.
 
+## P2 - An unknown notification type reads as a comment with a dead link on every released client (found 2026-10-15, fixed by PR #1911)
+
+The client half is built (neutral inert row, no link, one warn per type, unknown deep-link host lands on `/notifications` - but a push of a new type still maps its `postId` to `post/<id>` on the server and Android, so a new type MUST send an explicit `deepLink`). **THE MINIMUM CLIENT VERSION MUST COVER THIS FIX BEFORE ANY NEW NOTIFICATION TYPE SHIPS** (the first one waiting: the organiser alert for a paid form that is full): wait for the release carrying PR #1911 to be served by both stores, then raise `minClientVersion` to it. Earlier types (`profile_correction_*`, `coorganise_proposed`, `repost_proposed`) show the comment fallback on older clients. Detail: [legacy-compatibility](legacy-compatibility.md#no-date-yet---a-notification-type-the-client-does-not-know-from-any-new-server-type).
+
 ## Group DM: a remove must hold against a re-add (decided by the user 2026-10-14, in progress)
 
 **Ships in `1.2.9`, not `1.2.8`** (user, 2026-10-14). **OWED STEP OF 1.2.9: raise `minClientVersion`** (today `1.0.3`) once the stable carrying #1878 is served by BOTH stores (`bun tools/play-vitals/vitals.mjs`, and the App Store state), as its own step with the user told: the guarantee is complete only when every answering device runs the new build. This is a deliberate exception to the standing "`minClientVersion` stays `1.0.3`". The user's wording was "a la version 1.2.8", but the guarantee ships in `1.2.9`, so the floor to raise to is `1.2.9`, NOT `1.2.8`: **ask the user to confirm the version when the time comes.**
@@ -220,7 +333,11 @@ Decided: declare system gesture exclusion rects for the right edge band while a 
 
 ## iPhone follows the system text size (Dynamic Type) - DECIDED by the user 2026-10-14, draft PR in progress
 
-Decided: the iPhone app FOLLOWS the system text size, like Android. **Owed: an iPhone 12 reading** (the 2026-10-13 bench pass saw the largest size draw as the default).
+Decided: the iPhone app FOLLOWS the system text size, like Android. Read on `1.2.9-alpha.1` (2026-10-15): cold start PASS; a size changed while backgrounded applied only after a cold start, now carried from native ([mobile](frontend/mobile.md#the-iphone-follows-dynamic-type-decided-by-the-user-2026-10-14)). **Owed: an iPhone 12 reading of the background change, the rail salon name and a long heading at 2x.**
+
+## P2 - iOS silent frames reach no Canari native code, background or foreground (found 2026-10-15, iPhone 12 syslog)
+
+`CanariInstallRemoteNotificationHook` only replaces an EXISTING `application:didReceiveRemoteNotification:fetchCompletionHandler:`; wry's delegate has none and Firebase's proxy found no delegate at configure time, so the hook is never installed (`remote notification hook NOT installed`, every launch since at least 2026-10-14) and no `[CanariPush] onMessage` line was ever seen on the bench. `channel_read` (cross-device dismissal) and every other `content-available` frame are therefore acted on by no native code, backgrounded or in the foreground (`willPresentNotification` fires for alerts only), against what [mobile](frontend/mobile.md) and [chat-delivery](services/chat-delivery.md) described. **Owed**: add the method with `class_replaceMethod` as the APNs token hook does - a change of what iOS wakes the app for (background launch included), so its own pull request, an adversarial review of the background `CanariHandleFcmData` path, and a bench reading of a `channel_read` dismissal.
 
 ## Next chantier after 1.2.8 - speed (user, 2026-10-14)
 
@@ -291,7 +408,7 @@ DMs and groups already have an optimistic row and a durable outbox; **salon writ
 
 ## P2 - The host WAF drops any request body over 10 MiB (found 2026-10-10)
 
-The cause of the user's "endless spinner" on a 13.4 MB PDF: the school-managed CrowdSec AppSec in the host nginx drops any body over 10 MiB and answers a 403 HTML ban page, for every user ([host-waf-body-limit](infrastructure/host-waf-body-limit.md)). **Fixed for every `encryptAndUpload` surface by WP-OFF-8** (8 MiB per request, chunk route above it, a refusal ends the entry). **Still open, same cause**: the association document vault (`AssociationDocumentManager.svelte`, ONE `/api/media/upload` of the packed document through `apiFetch`, no cap) and the raw image uploads (`uploadRaw`, `associations/api.ts` logos/icons/event images, `forms/api.ts` banners): each needs the chunk route or a client cap with a Paraglide message. The host's AppSec limit is not ours to change and nothing is asked of anyone: the client stays under it.
+The cause of the user's "endless spinner" on a 13.4 MB PDF: the school-managed web application firewall on the host refuses large request bodies with a 403 HTML ban page, for every user ([host-waf-body-limit](infrastructure/host-waf-body-limit.md)). **Fixed for every `encryptAndUpload` surface by WP-OFF-8** (8 MiB per request, chunk route above it, a refusal ends the entry). **Still open, same cause**: the association document vault (`AssociationDocumentManager.svelte`, ONE `/api/media/upload` of the packed document through `apiFetch`, no cap) and the raw image uploads (`uploadRaw`, `associations/api.ts` logos/icons/event images, `forms/api.ts` banners): each needs the chunk route or a client cap with a Paraglide message. The host's firewall limit is not ours to change and nothing is asked of anyone: the client stays under it.
 
 ## P2 - Weak network, the attachment path after WP-OFF-8 (audit 2026-10-10)
 
@@ -481,7 +598,7 @@ Read end to end on 2026-10-09 ([authentik](infrastructure/authentik.md#the-hand-
 last bullet): **52 % of the failing requests are server-side probes, not people**, the flow heals itself
 once for a browser, and one Android client failed three times in a row. The CAS is not ours and no request
 goes to its owner (user, 2026-10-10): the remedy is on our side, a MiConnect flow that restarts the
-authorization instead of failing. **Owed**: **`docker logs miconnect-server-1` is unreadable since the
+authorization instead of failing. **Owed**: **the MiConnect server's container log is unreadable since the
 2026-10-07 restart (NUL bytes in the json log)**; a recreate of the container restores it, and only then
 can the browser failure rate be re-counted without the probes.
 
@@ -893,7 +1010,7 @@ the first real `skipped` lines before designing it
 
 ### P1 - the placeholder is GONE from prod; what it may have left in the MLS TREE is not answered
 
-The server estate is clean; whether a leaf survives in `7da231f8-119c-4ce2-884f-55f5c94c903f` (epoch 118) is
+The server estate is clean; whether a leaf survives in the affected conversation (epoch 118) is
 answered only from a member's own client, which reads the tree
 ([detail](protocols/campaign-measured-defects.md#the-placeholder-and-the-mls-tree)).
 
@@ -1069,39 +1186,9 @@ The principle is accepted (user, 2026-08-26) and the work is scheduled AFTER the
 
 **Inventory** (submission id | form id | created, 2026 | payer = first 8 hex of the pseudonymised user id | cents | status). Class A = free (17), B = unpaid, never captured (7), C = paid (5).
 
-| Class | submission id | form id | created | payer | cents | status |
-| --- | --- | --- | --- | --- | --- | --- |
-| A | 5cd7fd8b-d9b2-4821-9fc0-c507abe6da35 | 04a34e21 | 05-18 | 75462313 | 0 | free |
-| A | 7af46369-e87e-45cf-9df0-54eebe20c6e6 | 0e7d38c5 | 05-27 | d82cd226 | 0 | free |
-| A | 547d1d0c-a272-4a85-abf9-58800b94eb58 | 1c54ee8e | 09-21 | 75462313 | 0 | free |
-| A | add45322-a00e-4e52-93f0-cf455b2fa1eb | 3761d37e | 05-21 | 75462313 | 0 | free |
-| A | b0d39c13-45ad-41c4-8a06-777fd23e3a5a | 3761d37e | 05-22 | c69eb4ef | 0 | free |
-| A | be7138ae-bd11-4435-a880-f91ca245b356 | 3761d37e | 05-22 | 3655b848 | 0 | free |
-| A | 321aa3d7-3ee6-4908-9bc7-b44ef9a99db3 | 3761d37e | 05-22 | 353b7909 | 0 | free |
-| A | f7c30e86-59ba-4d7f-b6d3-f32cbabea6d6 | 406b95f4 | 05-15 | 75462313 | 0 | free |
-| A | dda3936a-edc3-4c19-943d-3389d636689e | 406b95f4 | 05-15 | ffa49b96 | 0 | free |
-| A | 25fc0702-2e49-4604-832f-ba16267bf461 | 406b95f4 | 05-15 | 588c063b | 0 | free |
-| A | e2bece93-9b12-49e6-9adb-7ed8fe35f4ee | 562e06d9 | 05-26 | 80a0050b | 0 | free |
-| A | b45b1b3d-076d-4f4f-9530-1b0cd9c124bf | 562e06d9 | 05-26 | d82cd226 | 0 | free |
-| A | 37e1d4ba-3127-481e-9802-2da6d871428a | 97421a50 | 05-13 | 75462313 | 0 | free |
-| A | a8938536-5d6a-4832-a017-61cb41b07879 | 97421a50 | 05-13 | c17aee08 | 0 | free |
-| A | da4deb0e-39f9-4f8d-b69d-d92c12292f9f | 97421a50 | 05-13 | 83ed04d8 | 0 | free |
-| A | e7912684-68be-4469-96a0-9b74101f8640 | 97421a50 | 05-13 | 496d6c7d | 0 | free |
-| A | 0f028685-86a3-473c-a6b0-a441250aead9 | 97421a50 | 05-13 | 588c063b | 0 | free |
-| B | 3360e279-6810-436d-b098-a198eb76b38a | 5c81b216 | 06-03 | 75462313 | 100 | pending |
-| B | 20a5a92e-7be7-49ba-a751-595a20cef602 | bf55350e | 05-16 | 588c063b | 2000 | pending (`cs_test_`) |
-| B | a3b1a25a-e4d7-4cb8-ada7-3fa640f89cb6 | bf55350e | 05-16 | ffa49b96 | 2000 | cancelled (`cs_test_`) |
-| B | 3e28c981-ae01-45c3-9593-537054b27368 | bf55350e | 05-16 | ffa49b96 | 2000 | pending (`cs_test_`) |
-| B | 03936173-422b-40a7-aa4f-ced83bb8049d | bf55350e | 05-18 | 30553e49 | 2000 | pending (`cs_test_`) |
-| B | be94704d-b06f-408a-acf1-2b47f3833195 | bf55350e | 05-20 | e812be1b | 2000 | pending (`cs_test_`) |
-| B | 937bb5b6-aa2a-499b-91dc-23ba413f0b45 | bf55350e | 05-26 | d82cd226 | 2000 | pending (`cs_test_`) |
-| C | 21a1e925-e302-4152-a31a-4319885e15c4 | aa74cfe2 | 05-16 | 75462313 | 1000 | paid, `cs_test_` session |
-| C | 1e3bc807-dbce-4f95-9314-1e4561f8881e | bf55350e | 05-16 | 75462313 | 2000 | paid, `cs_test_` session |
-| C | 11d1e49b-8454-4715-a150-3da6cde6475c | 25d71b8a | 06-04 | d82cd226 | 50 | paid, `cs_live_` session |
-| C | 1fd2eaf6-7fea-4c0c-9450-16a54d6d1fbb | 2788ed51 | 06-06 | 75462313 | 500 | paid, `cs_live_` session |
-| C | 25ed7e01-6fb4-4904-8d40-f836dc00f38b | 916fe840 | 06-06 | 75462313 | 50 | paid, `cs_live_` session |
+The 29 rows (17 free, 7 unpaid and never captured, 5 paid) were listed here by id; they are deleted, and the per-row inventory is kept privately.
 
-**The five paid are almost certainly the developers' own tests, and the "36,00 EUR" is mostly not money:** two are Stripe TEST-mode sessions (30,00 EUR that never moved), and the three live-mode ones total 6,00 EUR (0,50 + 5,00 + 0,50) and each has a `purchase_records` row (`productName` "Formulaire Test", "TEST", "t"; payers `d82cd226` and `75462313`, the latter on 9 of the 29 rows, so a test account). That is an inference from names and amounts, NOT a proof: the user confirms it.
+**The five paid are almost certainly the developers' own tests, and the "36,00 EUR" is mostly not money:** two are Stripe TEST-mode sessions (30,00 EUR that never moved), and the three live-mode ones total 6,00 EUR (0,50 + 5,00 + 0,50) and each has a `purchase_records` row (`productName` "Formulaire Test", "TEST", "t"; two payer accounts, one of them on 9 of the 29 rows, so a test account). That is an inference from names and amounts, NOT a proof: the user confirms it.
 
 **Proposed repair, per class (nothing applied).**
 
@@ -1138,7 +1225,7 @@ fails the day the site stops offending.
 
 ### P2 - MIGALLERY'S ONLY OFFSITE STILL LANDS ON THE OLD CANARI VM
 
-`mitv`'s `backup-offsite.sh` pushes the Immich dump (~2 GB/night) to `canari:~/migallery-offsite`. **Owed:** the user's decision on a destination off `mitv` on the private path, then a MiGallery PR, before the old VM can be wound down. User gestures: a real Sky sign-in with `/admin/legacy` showing the June data, and deleting the stopped `sky-sky-1` container with `/home/mitv/Sky/database` ([estate-migration](infrastructure/estate-migration.md)).
+MiGallery's offsite backup copy still lands on the old VM. **Owed:** the user's decision on a destination off the MiGallery VM, then a MiGallery PR, before the old VM can be wound down. User gestures: a real Sky sign-in with `/admin/legacy` showing the June data, and deleting the stopped Sky container and its old database directory ([estate-migration](infrastructure/estate-migration.md)).
 
 ### P2 - A DEPLOY NO LONGER ERASES THE LOGS, BUT NO ARCHIVE HAS BEEN SEEN YET (merged 2026-10-08)
 
@@ -1146,7 +1233,7 @@ fails the day the site stops offending.
 
 ### P3 - docker-prune is built for the Portail-etu host but not installed there
 
-**Pruned by hand 2026-10-14, 80 % -> 67 %** (2.6 GB unused images + 2.5 GB build cache; three empty orphan volumes `infrastructure_garage_data`, `garage_meta`, `media_meta` removed with the user's go). The cron is still not installed. Measured 2026-10-10: the Portail-etu host is 70 % used (30 G of 45 G, 13 G free; 6.3 GB of 12 GB of images reclaimable, no build cache, 0 reclaimable volume) and it grew 4 G in a day, so 80 % is about two days away at that rate. (The old VM was 18 % on 2026-10-09.) **Standing authorisation (user, 2026-10-09: "Je t'autorise le nettoyage si besoin"; threshold and scope set 2026-10-11, overriding the no-install-without-DSI-agreement rule for this case only):** an agent installs and runs the prune when the host passes 75 %, images and build cache only and never a volume, using the four commands and the one cron entry written out in full with the host's real paths and the facts that make them safe (checked read-only 2026-10-09) in the [README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet). Dangling VOLUMES are never pruned by a flag ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
+**Pruned by hand 2026-10-14, 80 % -> 67 %** (unused images and build cache; three empty orphan volumes removed with the user's go). The cron is still not installed. Measured 2026-10-10: the host's disk was filling at a rate that crosses the threshold within days. **Standing authorisation (user, 2026-10-09: "Je t'autorise le nettoyage si besoin"; threshold and scope set 2026-10-11, overriding the no-install-without-DSI-agreement rule for this case only):** an agent installs and runs the prune when the host passes 75 %, images and build cache only and never a volume, using the four commands and the one cron entry written out in full with the host's real paths and the facts that make them safe (checked read-only 2026-10-09) in the [README](../../infrastructure/docker-prune/README.md#on-the-portail-etu-host-nothing-is-installed-yet). Dangling VOLUMES are never pruned by a flag ([databases](infrastructure/databases.md#reaching-it-from-a-workstation)).
 
 ## What the duplicated group notice left behind (2026-09-16)
 

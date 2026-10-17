@@ -1,4 +1,10 @@
-import { buildAllowedOrigins, isAllowedOrigin, TAURI_WEBVIEW_ORIGINS } from './cors-origins';
+import {
+  buildAllowedOrigins,
+  corsOptions,
+  CORS_PREFLIGHT_MAX_AGE_S,
+  isAllowedOrigin,
+  TAURI_WEBVIEW_ORIGINS,
+} from './cors-origins';
 
 /**
  * Guards the allowlist against the way it broke: a client platform whose origin nobody wrote down.
@@ -59,5 +65,15 @@ describe('cors-origins', () => {
     const trailing = buildAllowedOrigins('https://canari-emse.fr/,');
     expect(isAllowedOrigin('https://canari-emse.fr', trailing)).toBe(true);
     expect(trailing.has('')).toBe(false);
+  });
+
+  // A Bearer read from the phone apps preflights `authorization`; a `*` answer does not cover it.
+  it('names back the preflight headers rather than a wildcard, and caches the preflight', () => {
+    const options = corsOptions(allowed, ['X-Exposed']);
+    expect(options.allowedHeaders).toBeUndefined();
+    expect(options.maxAge).toBe(CORS_PREFLIGHT_MAX_AGE_S);
+    expect(options.credentials).toBe(true);
+    expect(options.exposedHeaders).toEqual(['X-Exposed']);
+    expect(corsOptions(allowed)).not.toHaveProperty('exposedHeaders');
   });
 });

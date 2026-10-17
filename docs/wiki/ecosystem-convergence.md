@@ -218,7 +218,7 @@ interface**, and both were reachable with the access already in hand:
   returned nothing; that absence is a property of `transfer.hideRefs`, not a fact about pipelines,
   which is exactly the distinction a full `ls-remote` settled.)
 - **The host, because the runner is the host.** `cercle-prod` is a SHELL runner on the production
-  box, reachable as `ssh cercle`. `journalctl -u gitlab-runner` carries one line per job with its
+  box. `journalctl -u gitlab-runner` carries one line per job with its
   pipeline id and outcome: **28 jobs across 10 pipelines, 25 succeeded**. The three failures are
   `22096`-`22098`, all between 19:17 and 19:42 on 2026-08-18 - the bring-up hour, when the reserved
   `image:` job name and the `docker login` against a registry that does not exist were being found.
@@ -668,9 +668,8 @@ Operational, not architectural, and each line was learnt by being caught by it.
   (the logs are served as binary and a plain `grep` silently reports "binary file matches"). Flush
   logs with `pm2 flush`, never `rm` - pm2 keeps the descriptor open and an unlinked file grows
   invisibly until the disk is full. **`data-export/` holds PII and is never committed.**
-- **le-cercle (`../le-cercle`, `gitlab.emse.fr:rootz/le-cercle`) moved from Aurel's personal
-  namespace into the `rootz` group on 2026-09-24** (transferred by Aurel; the project ID, 5291,
-  is unchanged). Reading its pipeline needs `glab`, **run from INSIDE that tree** - it resolves the
+- **le-cercle (`../le-cercle`, on the school's GitLab) moved from a former maintainer's personal
+  namespace into the `rootz` group on 2026-09-24** (the project ID is unchanged). Reading its pipeline needs `glab`, **run from INSIDE that tree** - it resolves the
   project from the git remote and answers about Canari from anywhere else.
 - **Canari and Portail-etu are both PUBLIC.** Nothing secret may reach either, in code, in a
   fixture, or in a pasted log.
@@ -865,7 +864,7 @@ Two changes, and the repository's own `AGENTS.md` governs how each landed: it fo
 
 **The security fix is on `main`** (`1b5628f`), pushed on the user's explicit decision of 2026-08-27
 rather than through a merge request - the exception, taken knowingly, because a ReDoS reachable
-unauthenticated on every route was sitting on one laptop. It had to be rebased onto eight of Aurel's
+unauthenticated on every route was sitting on one laptop. It had to be rebased onto eight of a former maintainer's
 commits first; the only conflict was `CHANGELOG.md`, resolved by keeping both entries. Every gate was
 re-run after the rebase before the push.
 

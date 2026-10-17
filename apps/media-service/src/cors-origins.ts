@@ -1,4 +1,5 @@
 import { Logger } from '@nestjs/common';
+import type { CorsOptions } from '@nestjs/common/interfaces/external/cors-options.interface';
 
 /**
  * The origins Canari's own clients present, and the CORS predicate every service applies to them.
@@ -119,5 +120,34 @@ export function corsOriginDelegate(
       );
     }
     callback(null, false);
+  };
+}
+
+/**
+ * How long a browser may reuse an answered preflight, in seconds. Chromium caps it at 2 h and WebKit
+ * at 10 min. Without it Chromium keeps a preflight 5 s, so every read the phone apps make through
+ * the WebView (`frontend/src/lib/utils/fetchRouting.ts`) to a new URL paid one more round trip.
+ * The chat gateway's `CORS_PREFLIGHT_MAX_AGE` is the same value.
+ */
+export const CORS_PREFLIGHT_MAX_AGE_S = 7200;
+
+/**
+ * The options every service hands `app.enableCors`: the allowlist, credentials, the preflight cache,
+ * and the response headers THIS service's clients read beyond the safelisted ones.
+ *
+ * `allowedHeaders` IS ABSENT ON PURPOSE: the `cors` package then names back exactly the headers the
+ * preflight asked for. A `*` would NOT cover `Authorization` (Fetch standard), and every phone read
+ * carries a Bearer token.
+ *
+ * @param allowed - Exact-match allowlist from {@link buildAllowedOrigins}.
+ * @param exposedHeaders - Response headers a cross-origin client must be able to read; a header left
+ *   out reads as `null` on the phone apps, with no error anywhere.
+ */
+export function corsOptions(allowed: Set<string>, exposedHeaders: string[] = []): CorsOptions {
+  return {
+    origin: corsOriginDelegate(allowed),
+    credentials: true,
+    maxAge: CORS_PREFLIGHT_MAX_AGE_S,
+    ...(exposedHeaders.length > 0 && { exposedHeaders }),
   };
 }

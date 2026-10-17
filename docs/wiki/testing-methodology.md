@@ -2385,7 +2385,7 @@ by anyone who has not met them.
   did. When `gh` cannot answer, the record says `deployWindow: unknown - <why>` and the verdict
   stands: a blind spot is reported, never guessed away.
 - **The Cloudflare edge in front of production drops connections in bursts**, and it takes the SSH
-  tunnel with it - so `[ssh] canari: transport failure (255)` and a page of `ERR_CONNECTION_CLOSED`
+  tunnel with it - so `[ssh] <prod alias>: transport failure (255)` and a page of `ERR_CONNECTION_CLOSED`
   arrive together, from one cause, with no deploy anywhere near. Measured 2026-08-21 06:23-06:34
   local: prod's own uptime was 59 days and it answered normally four minutes later. A run in that
   window arms nothing and must be re-run, not diagnosed.
@@ -2564,7 +2564,7 @@ the kind of line a reader learns to skip - and the 500 was three lines away from
 The campaign moved to the local estate on 2026-09-03. `psql` and `redis` were made to follow `SITE`
 that day and `estate.mjs` was written to hold the decision. **`srvlog.mjs` - the THIRD observer, the
 one that reads the platform's own logs - was not, and nobody noticed for two days**, because it
-still spelt `ssh canari docker logs infrastructure-<service>-1` and production is never quiet: every
+still spelt `ssh <prod alias> docker logs <compose project>-<service>-1` and production is never quiet: every
 window it returned was full of real lines, so it read as a working instrument.
 
 **What it costs is not an error, it is a NEGATIVE.** Every predicate of the form "this line is

@@ -86,6 +86,8 @@
         return m.auth_changepin_progress_finalize();
       case 'login':
         return m.auth_changepin_progress_login();
+      case 'waiting_tabs':
+        return m.auth_changepin_progress_waiting_tabs();
       default:
         return isRecover ? m.auth_changepin_recovering() : m.auth_changepin_changing();
     }
@@ -131,7 +133,7 @@
     'w-full rounded-xl border border-cn-border/60 bg-white/5 dark:bg-black/20 px-4 py-3 text-center text-lg tracking-[0.3em] font-mono focus:border-cn-yellow focus:ring-2 focus:ring-cn-yellow/30 focus:outline-none transition-all placeholder:tracking-normal placeholder:text-text-muted/50 disabled:opacity-50';
 </script>
 
-<Modal {open} {title} {onClose}>
+<Modal {open} {title} {onClose} footerEdge>
   <form id={FORM_ID} onsubmit={handleSubmit} class="space-y-5 p-1">
     <PinAccountField {account} />
     <div class="border-cn-yellow/30 bg-cn-yellow/10 rounded-xl border px-4 py-3">

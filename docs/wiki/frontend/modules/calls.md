@@ -47,6 +47,10 @@
 > CALL-13 pass on real hardware** ([board](../../cross-client-testing.md),
 > [backlog](../../backlog.md)). `CallService.callsEnabled.test.ts` already asserts the on state, so
 > the flip has a test the day it happens.
+>
+> **The ordered plan to revive calls** - the decisive tests first, the test matrix, the App Review
+> video and a server-side switch in place of the five above - is
+> [calls-revival-plan](calls-revival-plan.md) (draft, 2026-10-15).
 
 ## Responsibilities
 
@@ -153,17 +157,19 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 
 | Component | Role |
 |---|---|
-| `CallUI.svelte` | Full-screen call UI with video grid, controls (mute, video toggle, speaker, hangup) |
-| `IncomingCallOverlay.svelte` | Incoming call screen (accept/decline) |
-| `CallButton.svelte` | Call initiation button (audio/video) |
-| `CallDuration.svelte` | Live call duration display |
+| `components/chat/CallOverlay.svelte` | The whole call UI: incoming, outgoing, in-call controls, duration, E2E badge |
+
+(Corrected 2026-10-15: this table named `CallUI`, `IncomingCallOverlay`, `CallButton` and
+`CallDuration`, none of which exists.)
 
 ## Key services
 
 | Service | Role |
 |---|---|
-| `CallService.ts` | WebRTC peer connection management, media capture, SFU signaling |
-| `CallNotificationService.ts` | Ring/hangup push triggers via chat-delivery-service |
+| `CallService.ts` | WebRTC peer connection management, media capture, SFU signaling, ring/hangup push triggers |
+| `workers/encryption.worker.ts` | E2E frame transform (AES-GCM, MLS-derived key) |
+| `utils/callAudio.ts`, `utils/callPresence.ts`, `utils/callFailure.ts` | Sender audio parameters, presence, the typed initiate failure |
+| `utils/chat/callSystemMessages.ts` | Call started/ended/missed messages in the timeline |
 
 ## API endpoints (chat-delivery-service)
 
@@ -182,6 +188,7 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 - [`services/call-service.md`](../../services/call-service.md) — SFU WebRTC relay
 - [`services/chat-delivery.md#calls`](../../services/chat-delivery.md#calls) — Backend call endpoints
 - [`protocols/mls-protocol.md`](../../protocols/mls-protocol.md) — E2E encryption for call signaling
+- [`live.md`](live.md) — the livestream plan, built on this SFU once calls are revived
 
 ## The SFU runs six webrtc majors it has never placed a call on (2026-08-27)
 

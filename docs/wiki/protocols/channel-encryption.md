@@ -385,7 +385,10 @@ than by reading the design:
    cost anything. For a seed there is nothing to re-serve, so it would have been permanent, and the
    user would have seen it as "my channel history stopped loading" long after the PIN change.
    `reencryptGraineSessions` closes it, next to the message pass and before the new key is adopted.
-   The rule generalises beyond Graine and is in [durable-rules](../durable-rules.md).
+   The rule generalises beyond Graine and is in [durable-rules](../durable-rules.md). **It closed
+   only one of the two paths**: the recovery after a PIN changed on another device never re-sealed
+   a seed, until both went through one `resealDeviceKeyStores` (2026-10-15,
+   [auth](../frontend/modules/auth.md#what-the-device-key-seals-and-what-a-pin-change-does-with-each)).
 2. **The SQLite v7 branch stamped `SCHEMA_VERSION` rather than `7`** - the exact mistake the comment
    in the v6 branch above it warns against. Harmless only while 7 WAS the latest; the bump to 8 is
    what would have fired it, silently skipping the new migration on every database that had ever run
@@ -2426,7 +2429,7 @@ mapping. The rejection is deliberately not caught - `onChannelMemberJoined` alre
 
 ## 16. A shut phone one commit behind could never catch up, in any community - FIXED 2026-09-27
 
-**Measured on the user's Pixel 6a, production, 2026-09-27.** Every Gala salon push arrived as
+**Measured on a store Pixel 6a, production, 2026-09-27.** Every Gala salon push arrived as
 "Nouveau message dans #general" and stayed that way. The seed frame DID reach the phone; the
 logcat said why it was not opened:
 

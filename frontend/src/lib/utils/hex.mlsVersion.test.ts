@@ -126,7 +126,7 @@ describe('saveMlsStateEncrypted write-if-newer (IndexedDB)', () => {
 
   it('writes a newer tagged snapshot and records its version', async () => {
     const fresh = tagMlsSnapshot(new Uint8Array([1, 2, 3]));
-    await saveMlsStateEncrypted('user-1', fresh);
+    expect(await saveMlsStateEncrypted('user-1', fresh)).toBe('written');
     expect(store.get(MLS_STATE_ENCRYPTED_KEY)).toEqual(new Uint8Array([1, 2, 3]));
     expect(store.get(MLS_STATE_VERSION_KEY)).toBe(mlsSnapshotVersion(fresh));
   });
@@ -136,7 +136,8 @@ describe('saveMlsStateEncrypted write-if-newer (IndexedDB)', () => {
     const newer = tagMlsSnapshot(new Uint8Array([2]));
     // The newer snapshot reaches disk first; the older (slower) flush must then be skipped.
     await saveMlsStateEncrypted('user-1', newer);
-    await saveMlsStateEncrypted('user-1', older);
+    // The refusal is ANSWERED, so a caller whose write must land (a device key change) can fail.
+    expect(await saveMlsStateEncrypted('user-1', older)).toBe('stale');
     expect(store.get(MLS_STATE_ENCRYPTED_KEY)).toEqual(new Uint8Array([2]));
     expect(store.get(MLS_STATE_VERSION_KEY)).toBe(mlsSnapshotVersion(newer));
   });
@@ -160,8 +161,9 @@ describe('saveMlsStateEncrypted write-if-newer (IndexedDB)', () => {
 
     const said: string[] = [];
     const spy = vi.spyOn(console, 'log').mockImplementation((...a) => void said.push(a.join(' ')));
-    await saveMlsStateEncrypted('user-1', theirs);
+    const outcome = await saveMlsStateEncrypted('user-1', theirs);
     spy.mockRestore();
+    expect(outcome).toBe('collision');
 
     // The write is dropped - that is the existing behaviour and this test does not change it.
     expect(store.get(MLS_STATE_ENCRYPTED_KEY)).toEqual(new Uint8Array([1]));

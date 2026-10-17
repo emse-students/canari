@@ -1,6 +1,7 @@
 /* eslint-disable */
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
@@ -12,14 +13,32 @@ import { ConfigService } from '@nestjs/config';
 import * as crypto from 'crypto';
 import { Form } from './entities/form.entity';
 import { retireForms } from './retire-forms';
+import {
+  PENDING_HOLD_CUTOFF_SQL,
+  PAYMENT_REQUEST_LIFETIME_SECONDS,
+  PREVIOUS_PAYMENT_OPEN,
+  SETTLED_PAYMENT_STATUSES,
+  CONFIRMABLE_PAYMENT_STATUSES,
+  LYDIA_REQUEST_UUID_RE,
+  livePendingWhere,
+  lockFormSeats,
+  overCapacityFirst,
+  seatHoldingWhere,
+} from './seat-hold';
 import { Submission } from './entities/submission.entity';
 import { FormReminder } from './entities/form-reminder.entity';
 import { FormRespondent } from './entities/form-respondent.entity';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import axios from 'axios';
 import * as ExcelJS from 'exceljs';
-import { answerText, type AnswerQuestion } from './answer-text';
+import { answerText, type AnswerQuestion, type AnswerWords } from './answer-text';
 import type { ExportLabels } from './export-labels';
+import {
+  FormFilesService,
+  fileAnswersOf,
+  hasFileQuestion,
+  type AnswerFileState,
+} from './form-files.service';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
@@ -27,6 +46,7 @@ import { withSubmissionReturnKey } from './return-url-key';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
+import { toManagerView, toSubmitterView } from './submission.projection';
 import {
   bucketFor,
   dimensionsNeedProfile,
@@ -116,7 +136,8 @@ export class FormsService {
     private readonly userTagService: UserTagService,
     private readonly purchaseRecordService: PurchaseRecordService,
     private readonly pricingFacts: PricingFactsService,
-    @InjectRepository(FormRespondent) private readonly respondentRepo: Repository<FormRespondent>
+    @InjectRepository(FormRespondent) private readonly respondentRepo: Repository<FormRespondent>,
+    private readonly formFiles: FormFilesService
   ) {}
 
   /**
@@ -146,6 +167,33 @@ export class FormsService {
         'An anonymous form must be free: a payment or a cotisation grant identifies the submitter.'
       );
     }
+    // A file is uploaded by an account and kept on a row that names it, and its CONTENT (a CV)
+    // names its author too - the identity the form promised not to keep.
+    if (hasFileQuestion(input.items)) {
+      throw new BadRequestException(
+        'An anonymous form cannot ask for a file: a file is tied to the account that uploads it.'
+      );
+    }
+  }
+
+  /**
+   * Refuses a form that asks for a file AND restricts who may submit by an ANSWER. The file is
+   * uploaded before the answer exists, and the upload is judged on the same `submitCondition`
+   * (`assertMayUploadAnswerFile`) - with no answers yet, an `answer` criterion matches nobody, so
+   * every upload would be a 403. Refused where it is chosen rather than shipped as a form nobody can
+   * fill. A profile criterion (promo, formation, cotisation) is known at upload and stays allowed.
+   */
+  private assertFileQuestionConfigValid(input: {
+    items?: CreateFormDto['items'];
+    submitCondition?: unknown;
+  }): void {
+    if (!hasFileQuestion(input.items)) return;
+    const condition = input.submitCondition as { answer?: unknown } | null | undefined;
+    if (condition?.answer != null) {
+      throw new BadRequestException(
+        'A form that asks for a file cannot restrict who may answer by an answer: the file is sent before the answers exist.'
+      );
+    }
   }
 
   /**
@@ -170,6 +218,13 @@ export class FormsService {
     if (input.allowMultipleSubmissions !== true) {
       throw new BadRequestException(
         'A public form must accept several answers: a guest cannot be recognised a second time.'
+      );
+    }
+    // Decision D40: a file upload needs an account, and an anonymous write of files is the largest
+    // abuse surface a form could open. Refused here rather than at the guest's submit.
+    if (hasFileQuestion(input.items)) {
+      throw new BadRequestException(
+        'A public form cannot ask for a file: a guest has no account to upload it with.'
       );
     }
   }
@@ -332,6 +387,19 @@ export class FormsService {
     throw new ForbiddenException('This form is not open to you.');
   }
 
+  /**
+   * Refuses an upload for a FILE question to a member the form is not open to - the same audience
+   * rule `submit` applies, judged BEFORE the bytes are stored, so a member who may not answer cannot
+   * park files on the form either. Visibility of the question itself (`showIf`) is not judged here:
+   * it may depend on answers not given yet, and `submit` re-reads the whole answer anyway.
+   */
+  async assertMayUploadAnswerFile(formId: string, userId: string): Promise<void> {
+    const form = await this.formRepo.findOne({ where: { id: formId, deletedAt: IsNull() } });
+    if (!form) throw new NotFoundException('Form not found');
+    if (!form.submitCondition) return;
+    this.assertMaySubmit(form, await this.factsFor(form, userId));
+  }
+
   /** Creates a form and assigns stable IDs to all items and options that lack them. */
   async create(input: CreateFormDto, isGlobalAdmin = false) {
     if (input.associationId && !isGlobalAdmin) {
@@ -342,6 +410,7 @@ export class FormsService {
     }
     this.assertAnonymousConfigValid(input);
     this.assertPublicConfigValid(input);
+    this.assertFileQuestionConfigValid(input);
     await this.assertPaidFormAssociationReady(input);
     await this.assertCotisationConfigValid(input, {
       userId: input.ownerId!,
@@ -440,16 +509,12 @@ export class FormsService {
     return { ...form, submissionCount };
   }
 
-  /** The submissions holding a place on the form: answered, paid, or waiting to be. */
+  /**
+   * The submissions holding a place on the form: answered, paid, or waiting to be - an online
+   * `pending` only while it is younger than the hold (`seatHoldingWhere`).
+   */
   private countActiveSubmissions(formId: string): Promise<number> {
-    return this.submissionRepo.count({
-      where: [
-        { formId, paymentStatus: 'paid' },
-        { formId, paymentStatus: 'free' },
-        { formId, paymentStatus: 'pending' },
-        { formId, paymentStatus: 'pending_cash' },
-      ],
-    });
+    return this.submissionRepo.count({ where: seatHoldingWhere(formId) });
   }
 
   /**
@@ -535,10 +600,18 @@ export class FormsService {
         'A form stays anonymous, or not, as it was created. Create a new form to change it.'
       );
     }
-    this.assertAnonymousConfigValid({ ...input, anonymous: form.anonymous });
+    // The questions the form WILL have: an absent list keeps the stored one, file questions included.
+    const items = input.items ?? form.items;
+    this.assertAnonymousConfigValid({ ...input, items, anonymous: form.anonymous });
     // Unlike anonymity, a link can be opened or withdrawn at any time: it promises nothing about
     // the answers already stored. An absent value means "leave it", so the stored one is checked.
-    this.assertPublicConfigValid({ ...input, isPublic: input.isPublic ?? form.isPublic });
+    this.assertPublicConfigValid({ ...input, items, isPublic: input.isPublic ?? form.isPublic });
+    // An absent condition keeps the stored one, which still meets the questions sent now.
+    this.assertFileQuestionConfigValid({
+      items,
+      submitCondition:
+        input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
+    });
 
     await this.assertPaidFormAssociationReady({ ...input, associationId: form.associationId });
     await this.assertCotisationConfigValid(
@@ -599,13 +672,14 @@ export class FormsService {
 
   /** Returns the most recent completed (paid or free) submission for a given user on a form. */
   async getSubmission(formId: string, userId: string) {
-    return this.submissionRepo.findOne({
+    const submission = await this.submissionRepo.findOne({
       where: [
         { formId, userId, paymentStatus: 'paid' },
         { formId, userId, paymentStatus: 'free' },
       ],
       order: { createdAt: 'DESC' },
     });
+    return submission ? toSubmitterView(submission) : null;
   }
 
   /**
@@ -615,21 +689,22 @@ export class FormsService {
    *
    * Best-effort by design: the payment is a fact by the time this runs, so a failure here must not
    * unwind it - but it is logged as an error, because a paid cotisation that granted nothing is a
-   * user who will be told they are not a member.
+   * user who will be told they are not a member. Returns false ONLY when a retry could succeed (the
+   * grant threw), which is what `fulfilPayment` releases its claim on.
    */
   private async grantCotisationIfConfigured(
     form: Pick<Form, 'grantsCotisation' | 'cotisationVariantKey' | 'associationId'>,
     userId: string,
     grantedBy: string,
     metadata: Record<string, unknown>
-  ): Promise<void> {
-    if (!form.grantsCotisation) return;
+  ): Promise<boolean> {
+    if (!form.grantsCotisation) return true;
     if (!form.associationId) {
       this.logger.error(
         '[UserTag] Form grants a cotisation but names no beneficiary association - nothing to be ' +
           'a member of. The create/update DTO must reject this pairing.'
       );
-      return;
+      return true;
     }
     try {
       await this.userTagService.grantCotisant(
@@ -639,13 +714,111 @@ export class FormsService {
         form.cotisationVariantKey,
         metadata
       );
+      return true;
     } catch (e) {
       this.logger.error(
         `[UserTag] Failed to grant cotisation tier "${form.cotisationVariantKey ?? 'base'}" of ` +
           `assoc=${form.associationId.slice(0, 8)} to user=${userId.slice(0, 8)}`,
         e
       );
+      return false;
     }
+  }
+
+  /**
+   * Runs what a landed payment buys - the cotisation (only when a seat was given) and the purchase
+   * record - each AT MOST ONCE, decided by a durable flag on the row (migration 084).
+   *
+   * Both effects run after the payment's own transaction committed, so a crash between the two, or
+   * a failed grant, used to be lost for good, and a replay used to run both again. Now each effect
+   * is CLAIMED first (`claimFulfilment`, a conditional UPDATE only one caller can win) and released
+   * if it failed, so the next replay of the same payment retries exactly what is missing. No clock.
+   */
+  private async fulfilPayment(
+    submission: Pick<Submission, 'id' | 'formId' | 'userId' | 'totalPaid'>,
+    seatGiven: boolean,
+    how: {
+      grantedBy: string;
+      paymentMethod: 'online' | 'cash';
+      metadata: Record<string, unknown>;
+    }
+  ): Promise<void> {
+    const form = await this.formRepo.findOne({
+      where: { id: submission.formId },
+      select: {
+        id: true,
+        title: true,
+        grantsCotisation: true,
+        cotisationVariantKey: true,
+        associationId: true,
+      },
+    });
+    if (!form) {
+      this.logger.error(
+        `[Forms] fulfilment of submission ${submission.id}: form ${submission.formId} not found - ` +
+          'nothing granted, nothing recorded'
+      );
+      return;
+    }
+    if (seatGiven && (await this.claimFulfilment(submission.id, 'cotisationGrantedAt'))) {
+      const granted = await this.grantCotisationIfConfigured(
+        form,
+        submission.userId,
+        how.grantedBy,
+        how.metadata
+      );
+      if (!granted) await this.releaseFulfilment(submission.id, 'cotisationGrantedAt');
+    }
+    if (
+      form.associationId &&
+      submission.totalPaid > 0 &&
+      (await this.claimFulfilment(submission.id, 'purchaseRecordedAt'))
+    ) {
+      try {
+        await this.purchaseRecordService.create({
+          userId: submission.userId,
+          source: 'form',
+          formId: submission.formId,
+          amountCents: submission.totalPaid,
+          paymentMethod: how.paymentMethod,
+          status: 'paid',
+          associationId: form.associationId,
+          productName: form.title ?? 'Formulaire',
+        });
+      } catch (e) {
+        this.logger.error(
+          `[PurchaseRecord] Failed to record ${how.paymentMethod} purchase for submission ` +
+            `${submission.id} - released for the next replay`,
+          e
+        );
+        await this.releaseFulfilment(submission.id, 'purchaseRecordedAt');
+      }
+    }
+  }
+
+  /** Takes a fulfilment flag if nobody has: true for exactly one caller, ever (until released). */
+  private async claimFulfilment(
+    submissionId: string,
+    flag: 'cotisationGrantedAt' | 'purchaseRecordedAt'
+  ): Promise<boolean> {
+    const result = await this.submissionRepo
+      .createQueryBuilder()
+      .update()
+      .set({ [flag]: () => 'now()' })
+      .where('id = :id', { id: submissionId })
+      .andWhere(`"${flag}" IS NULL`)
+      .execute();
+    const won = (result.affected ?? 0) === 1;
+    if (!won) this.logger.debug(`[Forms] ${flag} already set on submission ${submissionId}`);
+    return won;
+  }
+
+  /** Gives a claimed flag back after its effect failed, so a replay retries it. */
+  private async releaseFulfilment(
+    submissionId: string,
+    flag: 'cotisationGrantedAt' | 'purchaseRecordedAt'
+  ): Promise<void> {
+    await this.submissionRepo.update(submissionId, { [flag]: null });
   }
 
   /**
@@ -722,13 +895,10 @@ export class FormsService {
       };
     }
 
+    // The same predicate as the seat count: a checkout abandoned past the hold is no longer "an
+    // answer waiting for its payment", so the person may answer again.
     const submission = await this.submissionRepo.findOne({
-      where: [
-        { formId, userId, paymentStatus: 'paid' },
-        { formId, userId, paymentStatus: 'free' },
-        { formId, userId, paymentStatus: 'pending' },
-        { formId, userId, paymentStatus: 'pending_cash' },
-      ],
+      where: seatHoldingWhere(formId, { userId }),
       order: { createdAt: 'DESC' },
     });
     return {
@@ -764,6 +934,17 @@ export class FormsService {
       if (Array.isArray(value) && (value as unknown[]).length > 50) {
         throw new BadRequestException(`Answer for field ${key} has too many selections (max 50)`);
       }
+    }
+
+    // The files this answer cites: their SHAPE here, their ownership inside the transaction below
+    // (`FormFilesService.attach`), where it is checked and taken in one write. A form that cannot
+    // hold a file question (public, anonymous) never reaches `attach`: refused before anything.
+    const fileAnswers = fileAnswersOf(form.items ?? [], input.answers);
+    if (fileAnswers.length > 0 && (guest || form.anonymous || !input.userId)) {
+      this.logger.warn(
+        `[FORMS] submit refused: a file answer on form=${form.id.slice(0, 8)} without an account`
+      );
+      throw new BadRequestException('This form cannot receive a file without an account.');
     }
 
     // Answers as option-id lists, which is what every criterion reads. A free-text answer is not a
@@ -845,20 +1026,82 @@ export class FormsService {
       }
     }
 
-    // C1+C2: Wrap capacity check + submission upsert in a REPEATABLE READ transaction.
-    // Prevents two concurrent requests from both passing the capacity check (C2) and
-    // from both creating a new submission for the same user/form (C1 double-charge).
+    // C1+C2: the capacity check and the submission upsert are ONE transaction, serialised on the
+    // form's row lock, so two concurrent requests cannot both pass the capacity check (C2) nor both
+    // create a pending submission for the same user (C1 double-charge). It used to be REPEATABLE
+    // READ with no lock, which prevents neither: two snapshots each count the seat as free and
+    // each insert, a write skew that isolation level does not detect. READ COMMITTED is required
+    // by the lock (`lockFormSeats`), and late payments (`markPaid`) queue on the same lock.
+    // Reuse an existing pending submission to avoid double-charge, unless multiple submissions are
+    // allowed (e.g. order forms where each submit is a new purchase). Only one still holding its
+    // seat: a row past the hold is not counted below, so reviving it would take a seat the count
+    // never saw, and it stays for the expiry job (and a late payment).
+    const reuses = !form.anonymous && !guest && totalCents > 0 && !form.allowMultipleSubmissions;
+    const liveRow = () =>
+      ({
+        where: livePendingWhere(id, { userId: input.userId }),
+        order: { createdAt: 'DESC' },
+      }) as const;
+
+    // D2: the request a live row is waiting on is SETTLED at the provider before anything else is
+    // issued for that row - cancelled, or found paid (then the person has paid and the retry stops
+    // here). The row keeps naming that request until this is known: it is cleared in the
+    // transaction below, after the answer, never before. A request that cannot be settled refuses
+    // the retry (`PREVIOUS_PAYMENT_OPEN`) rather than leave two payable requests for one answer.
+    const previous = reuses ? await this.submissionRepo.findOne(liveRow()) : null;
+    if (previous) {
+      const settled = await this.settleOpenRequest(previous, form);
+      if (settled === 'paid') return { submissionId: previous.id, alreadyPaid: true };
+    }
+
     let savedSubmission!: Submission;
-    await this.submissionRepo.manager.transaction('REPEATABLE READ', async (manager) => {
-      if (form.maxSubmissions) {
-        const count = await manager.count(Submission, {
-          where: [
-            { formId: id, paymentStatus: 'paid' },
-            { formId: id, paymentStatus: 'free' },
-            { formId: id, paymentStatus: 'pending' },
-            { formId: id, paymentStatus: 'pending_cash' },
-          ],
+    await this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
+      await lockFormSeats(manager, id);
+
+      // Looked up BEFORE the capacity check: the row already holds this person's seat, so a retry
+      // on a form it filled is a retry, not a new answer - it used to be refused as "Form is full".
+      let existingPending: Submission | null = null;
+      if (previous) {
+        // The row whose request was settled above, re-read under its lock. It must still name that
+        // request (anything else is a concurrent submit issuing its own). It may have LEFT
+        // `pending` meanwhile: Lydia calls `cancel_url` for the request this retry cancelled, and
+        // that report names the row's request, so it cancels the row - a cancel this retry caused
+        // and now takes back. A row that left `pending` holds no seat, so the capacity check runs.
+        existingPending = await manager.findOne(Submission, {
+          where: { id: previous.id },
+          lock: { mode: 'pessimistic_write' },
         });
+        if (
+          !existingPending ||
+          !['pending', 'cancelled', 'expired'].includes(existingPending.paymentStatus) ||
+          existingPending.paymentRequestId !== previous.paymentRequestId ||
+          existingPending.stripeSessionId !== previous.stripeSessionId
+        ) {
+          throw this.previousPaymentOpen(
+            previous.id,
+            'the row changed while its request was being settled'
+          );
+        }
+      } else if (reuses) {
+        const concurrent = await manager.findOne(Submission, {
+          ...liveRow(),
+          lock: { mode: 'pessimistic_write' },
+        });
+        if (concurrent) {
+          throw this.previousPaymentOpen(
+            concurrent.id,
+            'a concurrent submit is issuing its request'
+          );
+        }
+      }
+      const holdsSeat =
+        !!existingPending &&
+        (await manager.count(Submission, {
+          where: livePendingWhere(id, { id: existingPending.id }),
+        })) > 0;
+
+      if (form.maxSubmissions && !holdsSeat) {
+        const count = await manager.count(Submission, { where: seatHoldingWhere(id) });
         if (count >= form.maxSubmissions) throw new BadRequestException('Form is full');
       }
 
@@ -908,22 +1151,26 @@ export class FormsService {
         return;
       }
 
-      // Reuse an existing pending submission to avoid double-charge, unless multiple
-      // submissions are allowed (e.g. order forms where each submit is a new purchase).
-      const existingPending =
-        totalCents > 0 && !form.allowMultipleSubmissions
-          ? await manager.findOne(Submission, {
-              where: { formId: id, userId: input.userId, paymentStatus: 'pending' },
-              order: { createdAt: 'DESC' },
-              lock: { mode: 'pessimistic_write' },
-            })
-          : null;
-
       if (existingPending) {
         existingPending.answers = input.answers;
         existingPending.totalPaid = totalCents;
         existingPending.email = input.email;
+        // Its old request is settled (above), so the row stops naming it: a late report about it
+        // changes nothing (`cancelPendingSubmission`). The new request's ids are written once the
+        // provider answers; until then the row names NO request, which is what makes a concurrent
+        // retry refuse instead of issuing a third one (`settleOpenRequest`).
+        existingPending.paymentRequestId = null;
+        existingPending.stripeSessionId = null;
+        existingPending.paymentStatus = 'pending';
         savedSubmission = await manager.save(existingPending);
+        // A new payment request is about to be issued for this row, so its hold restarts with it,
+        // on the database clock like every other read of it (`seat-hold.ts`).
+        await manager.update(Submission, existingPending.id, {
+          paymentRequestedAt: () => 'now()',
+        });
+        this.logger.debug(
+          `[Forms] submit reuses pending submission ${existingPending.id}: its hold restarts`
+        );
       } else {
         const submission = manager.create(Submission, {
           formId: id,
@@ -937,6 +1184,9 @@ export class FormsService {
         });
         savedSubmission = await manager.save(submission);
       }
+      if (fileAnswers.length > 0) {
+        await this.formFiles.attach(manager, savedSubmission, id, input.userId!, fileAnswers);
+      }
     });
 
     // Cash payment shortcut - skip the online checkout entirely
@@ -948,7 +1198,13 @@ export class FormsService {
       savedSubmission.paymentStatus = 'pending_cash';
       savedSubmission.paymentMethod = 'cash';
       savedSubmission.cashExpiresAt = cashExpiresAt;
-      await this.submissionRepo.save(savedSubmission);
+      // Named columns, never a whole-entity save: the entity still carries the
+      // `paymentRequestedAt` read before the transaction rewrote it, and would write it back.
+      await this.submissionRepo.update(savedSubmission.id, {
+        paymentStatus: 'pending_cash',
+        paymentMethod: 'cash',
+        cashExpiresAt,
+      });
       this.logger.log(`[Forms] Cash payment pending for submission ${savedSubmission.id}`);
       return { submissionId: savedSubmission.id, cashPayment: true };
     }
@@ -1016,6 +1272,8 @@ export class FormsService {
             connectAccountId,
             idempotencyKey,
             payerEmail: input.payerEmail,
+            // The request dies before the seat is released (`seat-hold.ts`).
+            expireAfterSeconds: PAYMENT_REQUEST_LIFETIME_SECONDS,
           },
           internalCoreRequestConfig()
         );
@@ -1023,26 +1281,131 @@ export class FormsService {
         const data = res.data || {};
         const sessionUrl = data.url || data.checkoutUrl || null;
         const sessionId = data.id || data.sessionId || null;
+        const requestId: string | null = typeof data.requestId === 'string' ? data.requestId : null;
 
         if (!sessionUrl) {
+          await this.releaseUnissuedRow(savedSubmission.id);
           return {
             message: data.message || 'Payment service did not return a checkout URL',
             submissionId: savedSubmission.id,
           };
         }
 
-        if (sessionId) {
+        if (sessionId || requestId) {
           savedSubmission.stripeSessionId = sessionId;
-          await this.submissionRepo.save(savedSubmission);
+          savedSubmission.paymentRequestId = requestId;
+          // Named columns: a whole-entity save would write back a stale `paymentRequestedAt`.
+          await this.submissionRepo.update(savedSubmission.id, {
+            stripeSessionId: sessionId,
+            paymentRequestId: requestId,
+          });
         }
 
         return { checkoutUrl: sessionUrl, submissionId: savedSubmission.id };
       } catch (err: unknown) {
+        // No request was issued, so nothing is payable: the row stops holding a seat for it.
+        await this.releaseUnissuedRow(savedSubmission.id);
         throw mapCorePaymentError(err, this.logger, 'Forms');
       }
     }
 
     return { submissionId: savedSubmission.id };
+  }
+
+  /**
+   * Settles, at the provider, the request a live pending row is waiting on, before anything else
+   * is issued for that row (a new request on a retry, a switch to cash) or the row is cancelled by
+   * its submitter (D2). Answers `free` when the request can no longer be paid, or `paid` when it
+   * WAS paid - the row is then marked paid here (`markPaid`, as the callback would) and the caller
+   * stops. Throws `PREVIOUS_PAYMENT_OPEN` (409) whenever that cannot be established:
+   *
+   * - Lydia's cancel answers error 2 (`already-settled`) for a request already processed - measured
+   *   on cancelled and expired ones, and very probably the same for a PAID one. So error 2 is never
+   *   read as "nobody paid": `request/state` (by the uuid) tells paid (1) from closed (6).
+   * - A row naming NO request is one whose request is being issued right now (`submit` clears the
+   *   ids in its transaction and writes the new ones once the provider answers; a failed issue
+   *   releases the row, `releaseUnissuedRow`). Issuing another would leave two payable requests.
+   * - A row written before migration 084 names only the uuid: it cannot be cancelled (`request/
+   *   cancel` takes the numeric id), so it is settled only if its state is already closed or paid.
+   * - Any failure to reach the provider: refusing is the one answer that cannot double-charge.
+   */
+  private async settleOpenRequest(row: Submission, form: Form): Promise<'free' | 'paid'> {
+    const requestId = row.paymentRequestId;
+    const sessionId = row.stripeSessionId;
+    if (!requestId && !sessionId) {
+      throw this.previousPaymentOpen(row.id, 'its request is being issued');
+    }
+    const connectAccountId = form.associationId
+      ? await this.associationsService.getPaymentAccountId(form.associationId)
+      : null;
+    if (!connectAccountId) {
+      throw this.previousPaymentOpen(row.id, 'the form has no payment account to cancel it with');
+    }
+    try {
+      if (requestId) {
+        const { data } = await axios.post(
+          coreUrl('payments/cancel-request'),
+          { requestId, connectAccountId },
+          internalCoreRequestConfig()
+        );
+        if (data?.outcome === 'cancelled') {
+          this.logger.log(`[Forms] submission ${row.id}: request ${requestId} cancelled`);
+          return 'free';
+        }
+        if (data?.outcome !== 'already-settled') {
+          throw new Error(`unexpected cancel outcome ${JSON.stringify(data?.outcome)}`);
+        }
+      }
+      if (!sessionId) throw new Error('no request_uuid to read the state by');
+      const { data } = await axios.post(
+        coreUrl('payments/request-state'),
+        { sessionId, connectAccountId },
+        internalCoreRequestConfig()
+      );
+      if (data?.state === 'closed') {
+        this.logger.log(`[Forms] submission ${row.id}: request ${sessionId} already closed`);
+        return 'free';
+      }
+      if (data?.state === 'paid') {
+        // The person paid the request they are now retrying: the answer is paid, and a second
+        // request would charge them twice. Recorded as the callback would record it.
+        this.logger.log(
+          `[Forms] submission ${row.id}: request ${requestId ?? sessionId} was PAID before the retry - marked paid, no new request issued`
+        );
+        await this.markPaid(row.id, requestId ?? sessionId);
+        return 'paid';
+      }
+      throw new Error(`request ${sessionId} is ${data?.state ?? 'unknown'} (${data?.raw ?? ''})`);
+    } catch (err: unknown) {
+      throw this.previousPaymentOpen(row.id, err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  /** The typed refusal of `settleOpenRequest`, logged at WARN with its reason. */
+  private previousPaymentOpen(submissionId: string, reason: string): ConflictException {
+    this.logger.warn(
+      `[Forms] submission ${submissionId}: previous payment request still open (${reason}) - refused`
+    );
+    return new ConflictException({
+      code: PREVIOUS_PAYMENT_OPEN,
+      message:
+        'The previous payment request is still open. Try again once it has expired, at most 30 minutes after it was started.',
+    });
+  }
+
+  /**
+   * Cancels a `pending` row whose payment request was never issued (the provider refused, the call
+   * failed, payments are off): nothing is payable, so it must not hold a seat for 30 minutes, and a
+   * row naming no request would otherwise read as "being issued" to the next retry. A row that DOES
+   * name a request is left alone.
+   */
+  private async releaseUnissuedRow(submissionId: string): Promise<void> {
+    const outcome = await this.moveLockedSubmission(submissionId, 'pending', 'cancelled', {
+      named: (s) => !s.paymentRequestId && !s.stripeSessionId,
+    });
+    if (typeof outcome === 'object') {
+      this.logger.log(`[Forms] submission ${submissionId} released: no payment request was issued`);
+    }
   }
 
   /** Deletes a submission. Requires form manager access. */
@@ -1058,22 +1421,17 @@ export class FormsService {
     this.logger.log(`[Forms] Submission ${submissionId} deleted by ${callerId}`);
   }
 
-  /** Loads a submission by ID with its payment status and the associated payment account ID (if any). */
+  /**
+   * Loads a submission by ID with its payment status, for its submitter or a manager. It used to
+   * answer `paymentAccountId` too - the Business's Lydia `vendor_token`, which no client read and
+   * which lets anyone cancel that Business's payment requests (`submission.projection.ts`).
+   */
   async getSubmissionById(submissionId: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
     const form = await this.formRepo.findOne({ where: { id: submission.formId } });
-    return {
-      id: submission.id,
-      formId: submission.formId,
-      userId: submission.userId,
-      totalPaid: submission.totalPaid,
-      currency: form?.currency ?? 'eur',
-      paymentStatus: submission.paymentStatus,
-      paymentAccountId: form?.associationId
-        ? await this.associationsService.getPaymentAccountId(form.associationId)
-        : null,
-    };
+    const { id, formId, totalPaid, paymentStatus } = toSubmitterView(submission);
+    return { id, formId, totalPaid, currency: form?.currency ?? 'eur', paymentStatus };
   }
 
   /**
@@ -1085,50 +1443,149 @@ export class FormsService {
    * somewhere that cannot be spoofed by a client. It used to accept `callerId`/`isGlobalAdmin` and
    * run `assertSubmissionAccess` only `if (callerId)`: a check that quietly did not happen when the
    * argument was absent, behind a public route the SUBMITTER could reach. Both are gone.
+   *
+   * A LATE PAYMENT IS DECIDED FROM THE ROW, under the form's seat lock (PP4,
+   * `public-paid-forms-chantier.md`). A row still holding its seat becomes `paid`. A row that holds
+   * none - `expired`, `cancelled`, or `pending` past the hold before the job reached it - becomes
+   * `paid` if the form still has room, else `paid_over_capacity`: the money landed, the seat did
+   * not, and the organiser refunds it outside the application. Two late payments queue on the lock,
+   * so they cannot both take the last seat.
+   *
+   * A SECOND CALL ON A SETTLED ROW IS A REPLAY: the status does not move. The Lydia callback and
+   * the payer's return (`confirmPayment`, while the row is still `pending`) can both land here for
+   * one payment, in either order, and Lydia may repeat a callback. Before 2026-10-15 each call
+   * re-granted and wrote ANOTHER purchase record; now the effects run from durable flags
+   * (`fulfilPayment`), so a replay only finishes what is missing.
+   *
+   * THE REQUEST ID NEVER DECIDES THE STATUS, BUT A FOREIGN ONE IS ACCUSED. The two callers carry two
+   * DIFFERENT ids for one payment - the callback's numeric `request_id`, `confirmPayment`'s
+   * `request_uuid` - and the row stores both (`paymentRequestId`, `stripeSessionId`), so a replay
+   * naming neither is a second request paid for one answer: logged at ERROR, status unchanged (the
+   * money already landed; refusing would only hide it). The id that settled the row is kept in
+   * `paymentSettledBy`.
+   *
+   * ONE ANSWER PER PERSON: on a single-answer form, a late payment whose payer already has another
+   * row holding a seat or paid lands `paid_over_capacity`, logged at ERROR.
+   *
+   * `onlyIfRowNames` (the payer's return, `confirmPayment`): the request was read paid OUTSIDE
+   * this lock, so the row must still name that very uuid once locked. If a retry replaced it in
+   * between, the retry's own settle already read that request and decided it - nothing is written.
    */
-  async markPaid(submissionId: string, sessionId?: string) {
-    const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
-    if (!submission) throw new NotFoundException('Submission not found');
-    submission.paymentStatus = 'paid';
-    if (sessionId) submission.stripeSessionId = sessionId;
-    await this.submissionRepo.save(submission);
+  async markPaid(submissionId: string, sessionId?: string, onlyIfRowNames = false) {
+    const found = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    if (!found) throw new NotFoundException('Submission not found');
 
-    // Grant the configured cotisation tier if any + log purchase record
-    const form = await this.formRepo.findOne({
-      where: { id: submission.formId },
-      select: {
-        id: true,
-        title: true,
-        grantsCotisation: true,
-        cotisationVariantKey: true,
-        associationId: true,
-      },
-    });
-    if (form) {
-      await this.grantCotisationIfConfigured(form, submission.userId, 'system', {
-        submissionId,
-        sessionId: sessionId ?? null,
-      });
-    }
-    if (form?.associationId && submission.totalPaid > 0) {
-      try {
-        await this.purchaseRecordService.create({
-          userId: submission.userId,
-          source: 'form',
-          formId: submission.formId,
-          amountCents: submission.totalPaid,
-          paymentMethod: 'online',
-          status: 'paid',
-          associationId: form.associationId,
-          productName: form.title ?? 'Formulaire',
+    const outcome = await this.submissionRepo.manager.transaction(
+      'READ COMMITTED',
+      async (manager) => {
+        await lockFormSeats(manager, found.formId);
+        const submission = await manager.findOne(Submission, {
+          where: { id: submissionId },
+          lock: { mode: 'pessimistic_write' },
         });
-      } catch (e) {
+        if (!submission) throw new NotFoundException('Submission not found');
+        if (onlyIfRowNames && submission.stripeSessionId !== sessionId) {
+          return { submission, status: submission.paymentStatus, replay: true, stale: true };
+        }
+        if (SETTLED_PAYMENT_STATUSES.has(submission.paymentStatus)) {
+          return { submission, status: submission.paymentStatus, replay: true };
+        }
+        const holdsSeat =
+          (await manager.count(Submission, {
+            where: seatHoldingWhere(submission.formId, { id: submissionId }),
+          })) > 0;
+        let status = 'paid';
+        if (!holdsSeat) {
+          const form = await manager.findOne(Form, {
+            where: { id: submission.formId },
+            select: { id: true, maxSubmissions: true, allowMultipleSubmissions: true },
+          });
+          const taken = form?.maxSubmissions
+            ? await manager.count(Submission, { where: seatHoldingWhere(submission.formId) })
+            : 0;
+          if (form?.maxSubmissions && taken >= form.maxSubmissions) status = 'paid_over_capacity';
+          // ONE answer per person: a late payment on an old row, when the same person already has
+          // another row holding a seat or paid (a new answer written after this one's hold), is a
+          // second payment for one answer - never a silent second `paid`.
+          const other =
+            form && !form.allowMultipleSubmissions && submission.userId
+              ? await manager.findOne(Submission, {
+                  where: [
+                    ...seatHoldingWhere(submission.formId, { userId: submission.userId }),
+                    {
+                      formId: submission.formId,
+                      userId: submission.userId,
+                      paymentStatus: 'paid_over_capacity',
+                    },
+                  ],
+                  select: { id: true, paymentStatus: true },
+                })
+              : null;
+          if (other && other.id !== submissionId) {
+            status = 'paid_over_capacity';
+            this.logger.error(
+              `[Forms] Late payment on submission ${submissionId} (form ${submission.formId}, ` +
+                `${submission.totalPaid} cents): the same person already has submission ${other.id} ` +
+                `(${other.paymentStatus}) on this one-answer form - TWO PAYMENTS for one answer, refund owed`
+            );
+          }
+          this.logger.log(
+            `[Forms] Late payment on submission ${submissionId} (was ${submission.paymentStatus}): ` +
+              `${taken}/${form?.maxSubmissions ?? 'unlimited'} seats taken -> ${status}`
+          );
+        }
+        submission.paymentStatus = status;
+        // The id that settled the row, in its own column: `stripeSessionId` keeps naming the
+        // request (`request_uuid`) and is no longer overwritten with whichever id arrived first.
+        submission.paymentSettledBy = sessionId ?? null;
+        await manager.save(submission);
+        return { submission, status, replay: false };
+      }
+    );
+    const { submission } = outcome;
+
+    if ('stale' in outcome) {
+      this.logger.warn(
+        `[Forms] markPaid on submission ${submissionId}: request ${sessionId} was read paid, but the ` +
+          `row now names ${submission.stripeSessionId ?? 'no request'} - a retry replaced it and settled it; nothing written`
+      );
+      return { ok: false };
+    }
+
+    if (outcome.replay) {
+      // The row now names its request by BOTH ids (`paymentRequestId`, the numeric one callbacks
+      // carry; `stripeSessionId`, the uuid), so a confirmation naming NEITHER is a second request
+      // paid for one answer. A row written before migration 084 names only the uuid, so the
+      // numeric id of its own callback cannot be told apart and is not accused.
+      const known = [submission.paymentRequestId, submission.stripeSessionId];
+      if (sessionId && submission.paymentRequestId && !known.includes(sessionId)) {
         this.logger.error(
-          `[PurchaseRecord] Failed to record online purchase for submission ${submissionId}`,
-          e
+          `[Forms] markPaid on submission ${submissionId}, already ${outcome.status} by ` +
+            `${submission.paymentSettledBy ?? 'unknown'}, names ANOTHER request ${sessionId} ` +
+            `(the row's are ${known.join(' / ')}): TWO PAYMENTS for one answer, refund owed`
+        );
+      } else {
+        this.logger.debug(
+          `[Forms] markPaid replay on submission ${submissionId}, already ${outcome.status}`
         );
       }
+    } else if (outcome.status === 'paid_over_capacity') {
+      // The money is the payer's until the organiser refunds it: no cotisation is granted for a
+      // seat that was not given. The purchase record below is still written - it is the payer's
+      // trace that they paid.
+      this.logger.warn(
+        `[Forms] Payment on submission ${submissionId} landed OVER CAPACITY ` +
+          `(form ${submission.formId}, ${submission.totalPaid} cents): the organiser owes a refund`
+      );
     }
+
+    // Run on a replay too: each effect is flagged on the row, so this finishes only what a previous
+    // call left undone (a failed grant, a crash after the commit) and repeats nothing.
+    await this.fulfilPayment(submission, outcome.status === 'paid', {
+      grantedBy: 'system',
+      paymentMethod: 'online',
+      metadata: { submissionId, sessionId: sessionId ?? null },
+    });
     return { ok: true };
   }
 
@@ -1143,33 +1600,206 @@ export class FormsService {
     if (submission.userId !== callerId) {
       await this.assertFormManager(submission.formId, callerId, isGlobalAdmin);
     }
-    return this.cancelPendingSubmission(submissionId);
+    // An online answer's request is settled first, by the same rules as a retry (D2): cancelling
+    // the row while its request stays payable is how a payment lands on a cancelled answer.
+    if (submission.paymentStatus === 'pending') {
+      if (submission.paymentRequestId || submission.stripeSessionId) {
+        const form = await this.formRepo.findOne({ where: { id: submission.formId } });
+        if (!form) throw new NotFoundException('Form not found');
+        if ((await this.settleOpenRequest(submission, form)) === 'paid') {
+          return { ok: false, alreadyPaid: true };
+        }
+      } else if (
+        (await this.submissionRepo.count({
+          where: livePendingWhere(submission.formId, { id: submissionId }),
+        })) > 0
+      ) {
+        throw this.previousPaymentOpen(submissionId, 'its request is being issued');
+      }
+    }
+    // Only while the row still names the request just settled: a retry may have issued another.
+    return this.applyPendingCancel(
+      submissionId,
+      'its submitter or a manager',
+      (s) =>
+        s.paymentRequestId === submission.paymentRequestId &&
+        s.stripeSessionId === submission.stripeSessionId
+    );
   }
 
   /**
-   * Marks a pending online-payment submission as cancelled without auth checks.
-   * Called by core-service when checkout expires or a charge fails definitively.
+   * Asks the provider whether an online answer was paid, from the request the ROW names, and
+   * records the payment if so - the payer's return page calls it (`confirm-payment`), so a
+   * payment whose confirm callback never arrived is still confirmed while the payer is looking.
+   *
+   * Asked of a `pending` row AND of an `expired` or `cancelled` one that names a request: a
+   * payment made at the end of the hold whose callback is lost leaves the row `expired` with no
+   * seat, and `markPaid` already decides a late payment from the row (`paid` while the form has
+   * room, else `paid_over_capacity`). The row is re-checked under its lock to still name the uuid
+   * that was read (`markPaid`'s `onlyIfRowNames`).
+   *
+   * It is the only confirmation besides the callback. `verify-session` used to be the other one
+   * and never worked: it took the submission from the `order_ref` Lydia's `request/state` was
+   * supposed to echo, and no variant of that call echoes it (sandbox, 2026-10-15, payments.md).
+   * Here nothing comes from the client but the submission id the caller is allowed to read: the
+   * request is the row's own uuid and the answer is Lydia's, read server to server.
+   *
+   * Anything short of `paid` leaves the row as it is (the callback, the next read or the expiry
+   * job decides), and a failed read is logged at WARN and answered with the row unchanged: this
+   * is a read the payer repeats, never the path that releases or charges anything.
    */
-  async cancelPendingSubmission(submissionId: string): Promise<{ ok: boolean }> {
+  async confirmPayment(submissionId: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
-    if (!submission) {
-      this.logger.warn(`[Forms] cancelPendingSubmission: submission ${submissionId} not found`);
+    if (!submission) throw new NotFoundException('Submission not found');
+    const sessionId = submission.stripeSessionId;
+    if (
+      CONFIRMABLE_PAYMENT_STATUSES.has(submission.paymentStatus) &&
+      sessionId &&
+      !LYDIA_REQUEST_UUID_RE.test(sessionId)
+    ) {
+      // A Stripe-era row (`cs_...`): Lydia never issued it, so there is nothing to ask - and core
+      // would refuse it with a 400 on every poll.
+      this.logger.log(
+        `[Forms] confirmPayment ${submissionId}: ${submission.paymentStatus} row holds a non-Lydia request id, nothing to ask the provider`
+      );
+    } else if (CONFIRMABLE_PAYMENT_STATUSES.has(submission.paymentStatus) && sessionId) {
+      const form = await this.formRepo.findOne({ where: { id: submission.formId } });
+      const connectAccountId = form?.associationId
+        ? await this.associationsService.getPaymentAccountId(form.associationId)
+        : null;
+      if (!connectAccountId) {
+        this.logger.warn(
+          `[Forms] confirmPayment ${submissionId}: the form has no payment account to read request ${sessionId} with`
+        );
+      } else {
+        try {
+          const { data } = await axios.post(
+            coreUrl('payments/request-state'),
+            { sessionId, connectAccountId },
+            internalCoreRequestConfig()
+          );
+          if (data?.state === 'paid') {
+            this.logger.log(
+              `[Forms] confirmPayment ${submissionId}: request ${sessionId} is PAID at the provider - recorded`
+            );
+            await this.markPaid(submissionId, sessionId, true);
+          } else {
+            this.logger.debug(
+              `[Forms] confirmPayment ${submissionId}: request ${sessionId} is ${data?.state ?? 'unknown'} (${data?.raw ?? ''})`
+            );
+          }
+        } catch (err: unknown) {
+          this.logger.warn(
+            `[Forms] confirmPayment ${submissionId}: could not read request ${sessionId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
+      }
+    } else {
+      this.logger.debug(
+        `[Forms] confirmPayment ${submissionId}: ${submission.paymentStatus}, nothing to ask the provider`
+      );
+    }
+    return this.getSubmissionById(submissionId);
+  }
+
+  /**
+   * Marks a pending online-payment submission as cancelled without auth checks, when the provider
+   * reports ITS request cancelled or expired (core-service: Lydia's cancel/expire callback, or the
+   * payer returning from the fail URL).
+   *
+   * The report must NAME the request - `requestId` (Lydia's numeric `request_id`, what a callback
+   * carries) or `sessionId` (the `request_uuid`, what the fail URL carries) - and is applied only
+   * when that is the row's CURRENT request. `submit` reuses a pending row for a new request and
+   * cancels the old one first, which makes Lydia call back about the OLD one: applying that would
+   * cancel the answer the payer is paying for right now. A row that has no stored id names no
+   * request, so no report can match it - it leaves `pending` through the expiry job instead.
+   */
+  async cancelPendingSubmission(
+    submissionId: string,
+    request: { requestId?: string; sessionId?: string }
+  ): Promise<{ ok: boolean }> {
+    if (!request.requestId && !request.sessionId) {
+      this.logger.warn(
+        `[Forms] cancelPendingSubmission ${submissionId} refused: the report names no request`
+      );
+      throw new BadRequestException('A cancel report must name its request');
+    }
+    const named = (submission: Submission) =>
+      (!!request.requestId && submission.paymentRequestId === request.requestId) ||
+      (!!request.sessionId && submission.stripeSessionId === request.sessionId);
+    return this.applyPendingCancel(submissionId, 'the provider', named);
+  }
+
+  /** Moves a `pending` row to `cancelled` (see `moveLockedSubmission`) and logs the outcome. */
+  private async applyPendingCancel(
+    submissionId: string,
+    by: string,
+    named?: (submission: Submission) => boolean
+  ): Promise<{ ok: boolean }> {
+    const outcome = await this.moveLockedSubmission(submissionId, 'pending', 'cancelled', {
+      named,
+    });
+    if (outcome === 'missing') {
+      this.logger.warn(`[Forms] cancel: submission ${submissionId} not found`);
       return { ok: false };
     }
-    if (submission.paymentStatus !== 'pending') return { ok: true };
-    submission.paymentStatus = 'cancelled';
-    await this.submissionRepo.save(submission);
-    this.logger.log(`[Forms] Submission ${submissionId} cancelled (payment failed or abandoned)`);
+    if (typeof outcome === 'object') {
+      this.logger.log(`[Forms] Submission ${submissionId} cancelled by ${by}`);
+    }
     return { ok: true };
+  }
+
+  /**
+   * Moves ONE submission from `from` to `to` under its row lock, and only if it is still in `from`.
+   *
+   * The read and the write used to be two statements with nothing between them: a cancel or expiry
+   * callback that read `pending` could then overwrite a `paid` that `markPaid` committed in between,
+   * and a cash validation could be applied twice. The lock makes the check and the move one step.
+   * Takes no form lock: none of these moves changes how many seats are held in a way a count could
+   * race (a cancel only frees one, a cash validation keeps the one it has). `named`, when given, is
+   * read under the same lock: a row whose current request is not the one reported is left as is.
+   */
+  private async moveLockedSubmission(
+    submissionId: string,
+    from: string,
+    to: string,
+    { formId, named }: { formId?: string; named?: (submission: Submission) => boolean } = {}
+  ): Promise<{ moved: Submission } | 'missing' | 'not-in-state' | 'other-request'> {
+    return this.submissionRepo.manager.transaction('READ COMMITTED', async (manager) => {
+      const submission = await manager.findOne(Submission, {
+        where: formId ? { id: submissionId, formId } : { id: submissionId },
+        lock: { mode: 'pessimistic_write' },
+      });
+      if (!submission) return 'missing';
+      if (submission.paymentStatus !== from) {
+        this.logger.debug(
+          `[Forms] submission ${submissionId} is ${submission.paymentStatus}, not ${from} - left as is`
+        );
+        return 'not-in-state';
+      }
+      if (named && !named(submission)) {
+        // Expected after every reuse: the old request was cancelled on purpose, and Lydia reports it.
+        this.logger.log(
+          `[Forms] submission ${submissionId} left ${from}: the reported request is not its current one (${submission.paymentRequestId ?? 'none'})`
+        );
+        return 'other-request';
+      }
+      submission.paymentStatus = to;
+      await manager.save(submission);
+      return { moved: submission };
+    });
   }
 
   /** Lists submissions waiting for cash validation on a given form. Requires form manager rights. */
   async listPendingCash(formId: string, callerId: string, isGlobalAdmin: boolean) {
     await this.assertFormManager(formId, callerId, isGlobalAdmin);
-    return this.submissionRepo.find({
+    const rows = await this.submissionRepo.find({
       where: { formId, paymentStatus: 'pending_cash' },
       order: { createdAt: 'ASC' },
     });
+    return rows.map(toManagerView);
   }
 
   /**
@@ -1183,52 +1813,19 @@ export class FormsService {
     isGlobalAdmin: boolean
   ) {
     await this.assertFormManager(formId, validatedBy, isGlobalAdmin);
-    const submission = await this.submissionRepo.findOne({ where: { id: submissionId, formId } });
-    if (!submission) throw new NotFoundException('Submission not found');
-    if (submission.paymentStatus !== 'pending_cash') {
-      return { ok: true, message: 'Already processed' };
-    }
-    submission.paymentStatus = 'paid';
-    await this.submissionRepo.save(submission);
+    const outcome = await this.moveLockedSubmission(submissionId, 'pending_cash', 'paid', {
+      formId,
+    });
+    if (outcome === 'missing') throw new NotFoundException('Submission not found');
+    if (typeof outcome !== 'object') return { ok: true, message: 'Already processed' };
     this.logger.log(`[Forms] Cash validated for submission ${submissionId} by ${validatedBy}`);
 
-    // Grant the configured cotisation tier if any + log purchase record
-    const form = await this.formRepo.findOne({
-      where: { id: formId },
-      select: {
-        id: true,
-        title: true,
-        grantsCotisation: true,
-        cotisationVariantKey: true,
-        associationId: true,
-      },
+    // Credits the validator rather than `system`, which is why the granter is a parameter.
+    await this.fulfilPayment(outcome.moved, true, {
+      grantedBy: validatedBy,
+      paymentMethod: 'cash',
+      metadata: { submissionId, validatedBy, paymentMethod: 'cash' },
     });
-    if (form) {
-      await this.grantCotisationIfConfigured(form, submission.userId, validatedBy, {
-        submissionId,
-        validatedBy,
-        paymentMethod: 'cash',
-      });
-    }
-    if (form?.associationId && submission.totalPaid > 0) {
-      try {
-        await this.purchaseRecordService.create({
-          userId: submission.userId,
-          source: 'form',
-          formId: submission.formId,
-          amountCents: submission.totalPaid,
-          paymentMethod: 'cash',
-          status: 'paid',
-          associationId: form.associationId,
-          productName: form.title ?? 'Formulaire',
-        });
-      } catch (e) {
-        this.logger.error(
-          `[PurchaseRecord] Failed to record cash purchase for submission ${submissionId}`,
-          e
-        );
-      }
-    }
     return { ok: true };
   }
 
@@ -1240,11 +1837,10 @@ export class FormsService {
     isGlobalAdmin: boolean
   ) {
     await this.assertFormManager(formId, callerId, isGlobalAdmin);
-    const submission = await this.submissionRepo.findOne({ where: { id: submissionId, formId } });
-    if (!submission) throw new NotFoundException('Submission not found');
-    if (submission.paymentStatus !== 'pending_cash') return { ok: true };
-    submission.paymentStatus = 'cancelled';
-    await this.submissionRepo.save(submission);
+    const outcome = await this.moveLockedSubmission(submissionId, 'pending_cash', 'cancelled', {
+      formId,
+    });
+    if (outcome === 'missing') throw new NotFoundException('Submission not found');
     return { ok: true };
   }
 
@@ -1261,6 +1857,30 @@ export class FormsService {
     const count = result.affected ?? 0;
     if (count > 0) {
       this.logger.log(`[Forms] Expired ${count} stale cash payment(s)`);
+    }
+    return count;
+  }
+
+  /**
+   * Moves every online `pending` submission past the hold to `expired` (PP3).
+   *
+   * THE SEAT IS ALREADY FREE BEFORE THIS RUNS: every count reads the hold from the row itself
+   * (`seatHoldingWhere`), so this job only makes the row SAY what it already is, for the manager's
+   * list and the export. It never deletes: the row is the trace a late payment is matched against
+   * (`markPaid`). Idempotent from the row - the `WHERE` names the only state it moves out of, so a
+   * second run, or two overlapping ones, find nothing left to move.
+   */
+  async expireStalePendingPayments(): Promise<number> {
+    const result = await this.submissionRepo
+      .createQueryBuilder()
+      .update()
+      .set({ paymentStatus: 'expired' })
+      .where('"paymentStatus" = :status', { status: 'pending' })
+      .andWhere(`"paymentRequestedAt" <= ${PENDING_HOLD_CUTOFF_SQL}`)
+      .execute();
+    const count = result.affected ?? 0;
+    if (count > 0) {
+      this.logger.log(`[Forms] Expired ${count} online payment(s) left pending past the hold`);
     }
     return count;
   }
@@ -1314,15 +1934,21 @@ export class FormsService {
     return currentTotal;
   }
 
-  /** Returns all submissions for a form enriched with the submitter's first/last name. */
+  /**
+   * Returns all submissions for a form enriched with the submitter's first/last name, a payment
+   * that landed over capacity first (`overCapacityFirst`): it is the one row the organiser owes
+   * something to.
+   */
   async getSubmissions(formId: string) {
     const form = await this.formRepo.findOne({ where: { id: formId } });
     // An anonymous form lists in the order of a random id, never of arrival: the order of insertion
     // is a clock the day-precision `createdAt` was cut to hide.
-    const subs = await this.submissionRepo.find({
-      where: { formId },
-      order: form?.anonymous ? { id: 'ASC' } : { createdAt: 'DESC' },
-    });
+    const subs = overCapacityFirst(
+      await this.submissionRepo.find({
+        where: { formId },
+        order: form?.anonymous ? { id: 'ASC' } : { createdAt: 'DESC' },
+      })
+    );
     const userIds = [...new Set(subs.map((s) => s.userId).filter(Boolean))];
     const nameMap = new Map<string, { firstName: string | null; lastName: string | null }>();
     if (userIds.length > 0) {
@@ -1333,11 +1959,25 @@ export class FormsService {
         );
       rows.forEach((r) => nameMap.set(r.id, { firstName: r.firstName, lastName: r.lastName }));
     }
-    return subs.map((s) => ({
-      ...s,
-      firstName: nameMap.get(s.userId)?.firstName ?? null,
-      lastName: nameMap.get(s.userId)?.lastName ?? null,
-    }));
+    // The files among these answers: a purged one reads "file deleted" instead of offering a
+    // download, a live one is saved under its name. Asked only of a form that has a file question.
+    const files = hasFileQuestion(form?.items)
+      ? await this.formFiles.answerFiles(subs.map((s) => s.id))
+      : new Map<string, AnswerFileState>();
+    return subs.map((s) => {
+      const cited = Object.values(s.answers ?? {}).filter(
+        (value): value is string => typeof value === 'string' && files.has(value)
+      );
+      return {
+        ...toManagerView(s),
+        firstName: nameMap.get(s.userId)?.firstName ?? null,
+        lastName: nameMap.get(s.userId)?.lastName ?? null,
+        deletedFileIds: cited.filter((id) => files.get(id)!.purged),
+        fileNames: Object.fromEntries(
+          cited.filter((id) => !files.get(id)!.purged).map((id) => [id, files.get(id)!.fileName])
+        ),
+      };
+    });
   }
 
   /**
@@ -1359,10 +1999,13 @@ export class FormsService {
     const form = await this.formRepo.findOne({ where: { id: formId } });
     if (!form) throw new NotFoundException('Form not found');
 
-    const submissions = await this.submissionRepo.find({
-      where: { formId },
-      order: form.anonymous ? { id: 'ASC' } : { createdAt: 'DESC' },
-    });
+    // Same order as the responses list, a payment over capacity first.
+    const submissions = overCapacityFirst(
+      await this.submissionRepo.find({
+        where: { formId },
+        order: form.anonymous ? { id: 'ASC' } : { createdAt: 'DESC' },
+      })
+    );
 
     // Batch-fetch first/last names for all submitters
     const userIds = [...new Set(submissions.map((s) => s.userId).filter(Boolean))];
@@ -1405,6 +2048,21 @@ export class FormsService {
 
     sheet.columns = headers;
 
+    // A file question's cell is a WORD - the file itself is never exported. The words are the
+    // client's, like every other one in this file; a form with a file question and a client that
+    // did not send them is refused, not written with the id or with English.
+    let words: AnswerWords | undefined;
+    if (hasFileQuestion(form.items)) {
+      if (!labels.file || !labels.fileDeleted) {
+        throw new BadRequestException('export labels "file" and "fileDeleted" are required');
+      }
+      words = {
+        file: labels.file,
+        fileDeleted: labels.fileDeleted,
+        deletedFiles: await this.formFiles.deletedFileIds(submissions.map((s) => s.id)),
+      };
+    }
+
     submissions.forEach((sub) => {
       const names = (sub.userId && nameMap.get(sub.userId)) || { firstName: null, lastName: null };
       const row: Record<string, unknown> = {
@@ -1427,7 +2085,7 @@ export class FormsService {
       }
 
       form.items.forEach((item: FormItemLike) => {
-        row[item.id] = answerText(sub.answers[item.id], item);
+        row[item.id] = answerText(sub.answers[item.id], item, words);
       });
 
       sheet.addRow(row);

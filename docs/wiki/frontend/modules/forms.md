@@ -22,9 +22,14 @@
   -> POST /api/forms/:id/submit { answers, paymentMethod }
 
 If basePrice > 0 and online payment:
-  -> POST /api/payments/create-checkout-session
-  -> Redirect to Stripe Checkout
-  -> On return: POST /api/payments/verify-session
+  -> social-service: POST /api/payments/create-checkout-session (core, internal)
+  -> Redirect to Lydia's payer page
+  -> Lydia's signed confirm callback marks it paid (core webhook -> social mark-paid)
+  -> On return (/forms/success?submission_id=...):
+       POST /api/forms/submissions/:id/confirm-payment
+       (reads the row's own request at Lydia; records it if paid and still pending)
+  -> On leaving (/forms/cancel?submission_id=...):
+       POST /api/forms/submissions/:id/cancel
 
 If cash payment:
   -> Submit marked as "pending cash"
@@ -238,6 +243,12 @@ Where each part of that lives:
   old `cells[key] ?? baseCents` was exactly the fallback that would have priced an unavailable
   combination; it now refuses instead, greys out the options that lead to a closed cell (shown, not
   hidden - an option that vanishes reads as a bug), and disables the submit button.
+  **A required priced question not answered yet has chosen no cell** (`pricedQuestionsAwaitingAnswer`,
+  `forms/fillAnswers.ts`): until it is (`priceDecided`), the page says nothing about the price - no
+  "from" price in the header, no total in the footer or on the button, no "Combinaison indisponible"
+  - and closes no option of ANOTHER priced question (`page.pricing.svelte.test.ts`). Its blank used to fall
+  in the "others" group and called "Cotisation BDE 2026" unavailable before any answer (Mi 9T,
+  v1.2.9-alpha.3). An OPTIONAL priced question left blank still prices as "others", as the server does.
 
 ### What the app knows about a person, and why a price may rest on it
 
@@ -458,6 +469,75 @@ the page calls them with plain `fetch`, never `apiFetch`, whose refresh-and-retr
 
 Paying guests are **parked behind Lydia** ([backlog](../../backlog.md)).
 
+## The file question (2026-10-15)
+
+A question of type **`file`** asks the member for one file (a CV, a certificate). Unlike every other
+attachment in the app, **it is NOT end-to-end encrypted**: the form's managers read it, so the
+server must be able to hand it to them. That one fact decides the whole design.
+
+| Step | Where | What holds |
+|---|---|---|
+| Pick | `FormQuestion.svelte` | PDF, JPEG, PNG or WebP, 8 MiB at most - the per-request budget under the host WAF ([host-waf-body-limit](../../infrastructure/host-waf-body-limit.md)) (`fileQuestion.ts`); checked before upload to say it in the reader's language. A file with an EMPTY `type` (some Android pickers) is judged by its EXTENSION (`pickedFileType`), and `accept` lists the extensions too; **HEIC is refused with its own sentence**, not converted - only Apple's engine decodes it, so a conversion would work on one phone in two |
+| Upload | `POST /api/forms/:id/files` (social-service, `FormFilesService.upload`) | the member must be ELIGIBLE to answer (`assertMayUploadAnswerFile`: the form's `submitCondition`, the same audience check as submit); the TYPE is read from the bytes, never from the name or the claimed type; the form must exist, be open, NOT public, and the item must be a file question (an `itemId` over 64 characters is a 400); at most 10 unsent uploads per member per form (429), counted again under a `pg_advisory_xact_lock` on (form, uploader) in the transaction that inserts the row, so twelve parallel uploads keep exactly ten - a loser's blob is taken back. Sent through `fetchUpload` (XHR): the card shows the percentage and offers a cancel, and the page REFUSES to send the answer while any file is still travelling (`form_file_wait_upload`) - an optional file question would otherwise go out empty |
+| Store | `POST /media/internal/form-file` (media-service, secret-gated) | retention class `form-file`, the uploader as owner, **no contentType recorded**, an image's EXIF/GPS removed by re-encoding (a PDF is untouched). The STORED size never exceeds 8 MiB - a re-encode can grow a low-quality photo, so the quality steps down - and the manager's download is bounded by that same 8 MiB. An image that does not decode, declares over 40 Mpx, or cannot fit is a 400 "send it as a PDF" - see [media-service](../../services/media-service.md#the-form-file-class-plaintext-read-by-the-server-only-2026-10-15) |
+| Submit | `FormsService.submit` -> `FormFilesService.attach` | the answer is the file's id; one `UPDATE ... RETURNING` inside the submission's transaction claims the `form_files` row, matching id, form, question, UPLOADER, not purged, and either unsent within one day or already this submission's. No row = the whole submission is refused. `attachedAt = GREATEST(NOW(), submission.createdAt)`: a pending submission reused later keeps its old `createdAt`, and the retention must count from the claim. A transaction whose `NOW()` was read just before the one-day edge may claim a file the purge is deleting at that instant - benign: the manager's first download reads "Fichier supprimé" and marks the row purged |
+| Read | `GET /api/forms/:id/files/:fileId` | `assertFormManager` FIRST, then the bytes from `GET /media/internal/form-file/:id` with their own Content-Type, `Content-Disposition: attachment` (ASCII + RFC 5987 name), `nosniff`, `no-store`. Never through `GET /media/:id`, the push proxy's `GET /media/internal/:id` (no per-object ACL - both refuse the class) nor `/media/public` |
+| Purge | `FormFileRetentionScheduler`, hourly at :37 | see below |
+
+**Refused at save**, with the sentence on the save bar (`assertPublicConfigValid`,
+`assertAnonymousConfigValid`, and `fileQuestionProblem` on the page):
+
+- **a public form** (D40): a guest has no account to upload with;
+- **an anonymous form**: the `form_files` row and the blob's owner name the uploader, which would
+  re-join an anonymous answer to its author (confirmed by the user 2026-10-15; "a file without an
+  account" is a future work package);
+- **an ANSWER criterion in `submitCondition`** (`assertFileQuestionConfigValid`, and
+  `form_file_submit_condition_answer` on the page): the upload is judged on the form's audience
+  BEFORE any answer exists, so such a criterion would refuse every upload. A profile criterion
+  (promo, formation, cotisation) is known at upload and stays allowed.
+
+**Cancelling an upload is client-side only.** The card aborts the request, but a file the server had
+already stored keeps its blob and its unsent `form_files` row until the one-day purge, and that row
+holds one of the member's 10 unsent slots meanwhile. Accepted: a member reaching 10 by cancelling
+waits a day, which the 429 sentence says.
+
+**The answer reads as a word, never as its id.** `answerText` (and its declared duplicate
+`answer-text.ts`) takes the reader's `AnswerWords` - "Fichier" / "Fichier supprimé" - and THROWS on
+a file answer without them, so no screen or spreadsheet can print an id by omission. A file is never
+a table column (`COLUMN_TYPES`); the responses panel offers a download under the uploader's cleaned
+name (`Submission.fileNames`, sent with the list because a native shell cannot read
+`Content-Disposition` cross-origin), or "Fichier supprimé" once purged (`deletedFileIds`).
+
+### Retention: `forms.fileRetentionDays` and the purge
+
+`forms.fileRetentionDays` (migration 085, default **7**, CHECK **1..30**) is a row in "Paramètres
+avancés", shown only when a question asks for a file. The purge (`purgeOnce`) has two passes, both
+drawn ONLY from `form_files` rows - that table is the allowlist; nothing else is a candidate:
+
+1. **Answer files** whose `attachedAt + fileRetentionDays` has passed: blob deleted, then `purgedAt`
+   set. The answer stays and reads "Fichier supprimé".
+2. **Unsent uploads** older than one day (the attach window is `createdAt > NOW() - 1 day`, the
+   purge `<=`, so the two never overlap): blob deleted, then the row deleted.
+
+**ONE clock, the database's.** A run reads `SELECT NOW()` once and passes it as a parameter to both
+selections AND to the re-check of each row, and every interval is counted in hours
+(`make_interval(hours => 24 * days)`) like the app's own arithmetic. A box clock a few minutes off the
+database's would otherwise select a row the re-check calls "not due", an ERROR line every hour.
+
+**Lowering the retention applies at once, without confirmation** (user decision 2026-10-15): the
+next run deletes every file already older than the new delay. The settings hint says so.
+
+**The state is the row.** The blob goes first and the row changes only once media-service says the
+blob is gone (or was already absent), so a crash in between leaves a row the next run picks up again.
+A blob that fails to delete leaves its row untouched, logged, retried next hour; within one run it is
+excluded so the run terminates. media-service checks a second allowlist on its side: it deletes only
+an object of class `form-file` OWNED by the named uploader, and refuses anything else even when its
+id sits in an answer. One log per deleted file and per failure (`[FORM_FILE_GC]`).
+
+**For reuse (bookings):** `purgeExpiredFiles` in `apps/social-service/src/forms/file-retention-purge.ts`
+takes each candidate's START date as data (`{ fileId, ownerId, start, retentionDays }`), so a caller
+whose clock starts somewhere else - a booking slot's end - passes that instead of `attachedAt`.
+
 ## A form's association is chosen once, at creation
 
 A form is either personal or an association's, and `update` refuses any change to `associationId`
@@ -649,6 +729,9 @@ would look saved and then do nothing:
 - a `variantKey` the association does not sell;
 - a base-tier grant on an association that sells named tiers only.
 
+A file question is refused on a public or an anonymous form, and `fileRetentionDays` outside 1..30
+([the file question](#the-file-question-2026-10-15)).
+
 ## Sharing a form: the link, and the same link as a QR code
 
 Both `/forms` and the detail screen carry two controls side by side: copy the public link, and show
@@ -730,6 +813,35 @@ which questions become columns, and `FormSubmissionsTable.answers.svelte.test.ts
 component for the part neither file can prove: that a column arrives as a header AND a cell, that the
 panel is shut until opened, and that its `colspan` still spans the whole header.
 
+The file question has its own suites: `form-files.service.spec.ts` (every upload refusal - wrong
+type read from the bytes, too big, closed/public form, not a file question, too many pending - the
+ownership statement at submit, the download's 404/410), `forms.service.file.spec.ts` (refused at
+save on a public or anonymous form, attached inside the submit transaction, the manager list),
+`forms.controller.files.spec.ts` (a non-manager download refused before any byte is read; the
+headers), `form-file-retention.scheduler.spec.ts` (a stateful fake database and media service: the
+purge run twice, a blob that fails, a file of another class whose id sits in an answer left alone),
+and media-service's `media.service.form-file.spec.ts` (the class refused on every client route and
+by `DELETE /media/:id`, the purge allowlist, EXIF/ICC stripped with the orientation applied, a PDF
+byte-identical). Front: `fileQuestion.test.ts` (empty type, HEIC), `FormQuestion.svelte.test.ts`
+(progress, cancel, the busy signal), and the file cases of `answerText.test.ts` and
+`FormSubmissionsTable.answers.svelte.test.ts`.
+
+**What a mock cannot prove runs on a real Postgres**: `form-files.integration.spec.ts` applies
+migration 085 to a throwaway schema and drives the real service and scheduler - a claim past the
+window, by another uploader, of a purged row, from another form, two submissions racing for one
+file (exactly one wins), `attachedAt` on a reused submission, twelve parallel uploads (exactly ten
+kept), the purge run twice and a lowered retention. **IT NEVER RUNS IN CI** - no workflow sets
+`SOCIAL_IT_DATABASE_URL`, so CI reports it skipped - and it is the ONLY test guarding the
+`GREATEST(...)` on `attachedAt`, the advisory lock and the claim SQL as Postgres executes it. Run it
+by hand before merging any change to `form-files.service.ts`, `form-file-retention.scheduler.ts` or
+migration 085:
+
+```sh
+docker run -d --rm --name formfiles-pg -e POSTGRES_PASSWORD=it -p 55432:5432 postgres:18-alpine
+cd apps/social-service && SOCIAL_IT_DATABASE_URL=postgres://postgres:it@localhost:55432/postgres \
+  bun run test -- src/forms/form-files.integration.spec.ts
+```
+
 `frontend/src/lib/utils/qrCode.test.ts` answers the QR claim on PIXELS rather than on the badge's
 arithmetic: it rasterises a symbol in pure JS through the SAME exported geometry the canvas draws
 (`moduleCorners`, `moduleContains`, `finderShapes`, `badgeShape`) and hands the buffer to `jsQR`, a
@@ -743,11 +855,12 @@ Found while scoping it, so it is not re-derived (the paid half itself waits for 
 
 - **The payer's e-mail IS Lydia's `payerRecipient`** - the Lydia payer-address blocker resolves itself for a
   guest form, since the guest types an e-mail. It does not for a logged-in boutique purchase.
-- **`social-service` calls `core-service`'s `create-checkout-session` with no credential** (a bare
-  `axios.post`), and that route sits behind `NginxAuthGuard`, which demands `X-User-Id`. Whether the
-  existing paid-form checkout works at all is NOT verified - read the two services' logs on dev
-  before building on it. A guest has no `X-User-Id` either, so it needs a dedicated internal route
-  guarded by the shared internal secret, as `internal/forms` is.
+- **`social-service` calls `core-service`'s `create-checkout-session` WITH the shared internal
+  secret** (`internalCoreRequestConfig()`, `apps/social-service/src/internal/core-request.ts`), and
+  the route has accepted it since 2026-10-07 (`apps/core-service/src/payment/payment.controller.ts`
+  documents the 401 it used to answer). This line said "no credential" until 2026-10-15, which was
+  stale. A guest needs no `X-User-Id` for the checkout itself; what is still NOT verified is one
+  observed paid form on dev.
 - **Fulfilment must work without a `userId`**: `markPaid` and the cotisation grant both read it.
 - A fixed price only (no grid, no cotisation grant, no cash). The rate limit and the honeypot the
   free half added (`PublicFormsController`) already cover the submission.
@@ -780,3 +893,67 @@ Found while scoping it, so it is not re-derived (the paid half itself waits for 
 - **Respondents and lists never see an archived form**: `list` (admin, owned, association scan), `get`, `getPublic`, `submit` (member and guest), `hasSubmission` and `subscribeReminder` filter `deletedAt IS NULL` and answer 404 / no right to submit.
 - **Staff still do**: `assertFormManager` and `getSubmissions` do not filter, so an archived form's submissions stay readable by id (owner, global admin, MANAGE_FORMS of the association). An archived form keeps its `associationId`; deleting the association archives rather than detaches it, and it appears in no list, so it cannot show as "Personnel".
 - **The migration refuses to run while orphans exist**: it RAISES with their count, so it cannot deploy before the data is cleaned ([backlog](../../backlog.md#p3---submissionsformid-names-a-form-nothing-keeps-and-29-rows-point-at-deleted-ones)). It is idempotent (`IF NOT EXISTS`, a `pg_constraint` check).
+
+
+## An online payment holds its seat for 30 minutes, and a late one is decided from the row (2026-10-15)
+
+Measured on `main` before this: `submit` counted `pending` toward `maxSubmissions` and nothing ever released it, so an abandoned checkout kept its seat for ever (cash had its own expiry, `expireStalecashPayments`). Decisions PP3 and PP4 of the paid public forms chantier (`public-paid-forms-chantier.md`, planning), for ALL forms, then D1-D3 (user, 2026-10-15) after the adversarial review.
+
+- **The hold is read from the row.** `apps/social-service/src/forms/seat-hold.ts` holds the one constant (`PENDING_PAYMENT_HOLD_SECONDS`, 30 min, from which the Lydia request's shorter lifetime is derived, D1 below) and the one SQL fragment (`PENDING_HOLD_CUTOFF_SQL`, on the DATABASE clock: the column is a `timestamp` written by the database's `now()`, and the service process does not run in the same zone - measured +2 h against a UTC session). The hold counts from **`paymentRequestedAt`** (migration 084), the instant the row's CURRENT payment request was issued, not from `createdAt`: `submit` reuses a live pending row and issues a new request, and the hold restarts with it. `seatHoldingWhere` counts `paid`, `free`, `pending_cash` and a `pending` younger than the hold; the seat count, `get`, `getPublic`, `hasSubmission` and the reuse in `submit` all read it, so a seat is free the moment the hold passes, whether or not any job ran.
+- **A retry is not a new answer.** `submit` looks the person's live pending row up BEFORE the capacity check: it already holds their seat, so a retry on a form it filled is reused instead of being refused as "Form is full" (which it was on `main`).
+- **The job only makes the row say it.** `FormReminderScheduler.expireStalePendingPayments` (every 5 min, a `running` flag against self-overlap) moves `pending` past the hold to `expired` - never a delete, the row is the trace a late payment is matched against. Its `WHERE` names the only state it leaves, so a second run moves nothing. `paymentMethod` tells an online `expired` (null) from a cash one (`cash`).
+- **A late payment (`markPaid`) is decided under the form's row lock** (`lockFormSeats`, `SELECT ... FOR UPDATE` on `forms`, READ COMMITTED). A row still holding its seat becomes `paid`; one that holds none (`expired`, `cancelled`, `pending` past the hold) becomes `paid` while the cap has room, else **`paid_over_capacity`**, logged at WARN with the submission, the form and the amount. It grants no cotisation (no seat was given) but keeps its purchase record (the payer's trace). Refunding is the organiser's, outside the application: no refund mechanism exists.
+- **What a payment buys runs from durable flags.** The cotisation grant and the purchase record run after the payment's commit; `cotisationGrantedAt` and `purchaseRecordedAt` (migration 084) are CLAIMED by a conditional `UPDATE` only one caller can win, and released if the effect failed. A replay of the same payment (a repeated Lydia callback, or the callback and the payer's return - `confirmPayment` - both landing in `markPaid`) finishes only what is still NULL: before this, each call re-granted and wrote another purchase record, and a failed grant was lost for good. The migration sets both flags on every row already `paid`, because the old code ran both effects on every call.
+- **The row names its current request by BOTH of Lydia's ids.** `request/do` answers a numeric `request_id` (what the callbacks and `request/cancel` carry) and a `request_uuid` (what `request/state` and the return URL carry), measured on the sandbox 2026-10-15 ([payments](payments.md)). `submit` stores the first in **`paymentRequestId`** (migration 084) and the second in `stripeSessionId`, by named-column `UPDATE`: the whole-entity `save` it replaced wrote the pre-transaction `paymentRequestedAt` back and silently undid the hold restart of a reuse (measured on Postgres 18).
+- **`markPaid` never decides by id, but accuses a foreign one.** One payment can reach it under TWO ids (the callback's `request_id`, `confirmPayment`'s `request_uuid`), and the row now stores BOTH, so idempotence still comes from the row alone (a settled status is a no-op, the two flags) and a replay by either id is silent. The id that settled the row goes in **`paymentSettledBy`** (migration 084) and `stripeSessionId` is no longer overwritten. A confirmation on a settled row naming NEITHER stored id is a second request paid for one answer: logged at ERROR with both sides, status unchanged (the money landed; refusing would hide it). A row written before 084 names only its uuid, so its own callback's numeric id is not accused.
+- **One answer per person, also for a late payment.** On a single-answer form, a late payment whose payer already has another row holding a seat or paid lands `paid_over_capacity`, logged at ERROR: never a silent second `paid`.
+- **`cancel-pending` applies only to the row's CURRENT request.** core-service names the request it reports (the callback's `requestId`), and `cancelPendingSubmission` compares it to the stored id under the row lock: another id leaves the row as is, logged, and a report naming none is refused. A row with no stored id matches no report and leaves `pending` through the expiry job. Since #1910 (merged 2026-10-15) the multipart callbacks are parsed, so every cancel or expiry is reported; the comparison and the settled-row no-op are what make that safe.
+- **What confirms a payment: the callback, and the payer's return when the callback has not (2026-10-15).** It was claimed here that "every payment reaches `markPaid` twice", the callback and `verify-session`. **False, measured on the sandbox** ([payments](payments.md#what-requeststate-answers-and-what-it-does-not-2026-10-15)): `verify-session` took the submission from the `order_ref` it expected `request/state` to echo, and no variant of that call echoes it, so it could never name a submission; and no page reached it anyway, since Lydia does not fill `{CHECKOUT_SESSION_ID}` and the return URL carries `submission_id` instead. The callback was the ONLY confirmation, and a payment whose callback was lost stayed `pending` until the job expired it. `verify-session`, `cancel-session` and `retrieveSession` are deleted. **`POST forms/submissions/:id/confirm-payment`** (submitter or manager) replaces them: on a `pending` row - and on an `expired` or `cancelled` one that names a request, since a payment made at the end of the hold whose callback is lost leaves the row released with no seat (`CONFIRMABLE_PAYMENT_STATUSES`) - it reads the row's OWN `request_uuid` through core-service `payments/request-state` with the Business's vendor token and, on `paid`, calls `markPaid` with that uuid, which decides it like any late payment (`paid` while the form has room, else `paid_over_capacity`) and re-checks UNDER THE ROW LOCK that the row still names the uuid read (`onlyIfRowNames`: a retry that replaced it settled it itself, so nothing is written, at WARN); anything else - `open`, `closed`, an unmeasured code such as 5 - answers the row unchanged, a failed read at WARN. A row whose id is not a Lydia uuid (32 hex digits, `LYDIA_REQUEST_UUID_RE`) - a Stripe-era `cs_...` - is not asked about at all, one INFO line, since core would refuse it with a 400 on every poll. It is throttled per user and submission (`UserResourceThrottlerGuard`, `CONFIRM_PAYMENT_PER_MINUTE` = 12, above the return page's 10-read poll), since each call spends the platform's tokens on Lydia; a 429 ends the poll on "awaiting confirmation". `1 = paid` is Lydia's documentation, unmeasured ([payments](payments.md#what-requeststate-answers-and-what-it-does-not-2026-10-15)): a real sandbox payment is owed before a stable. The success page polls it instead of the plain read, so a payment reaches `markPaid` once (callback, or return) or twice (both, in either order). Nothing comes from the client but the submission id it may already read - unlike the public `mark-paid` deleted on 2026-08-22. The same measurement found `payments/request-state` refusing every real request: it validated the uuid as the dashed RFC 4122 shape, and Lydia issues 32 hex digits with no dash, so every settle that reached the state read (D2 below) answered 409 on `main` from #1906 until this fix, before any release carried it. Fixed (`SESSION_ID_RE`), with a test that fails on the old shape.
+- **The cancel page tells the payer what happened.** It reads the row first and shows a payment the callback already confirmed as paid (or over capacity), never as cancelled; a cancel that found the request PAID at Lydia (`alreadyPaid`) shows the same; the 409 `PREVIOUS_PAYMENT_OPEN` is an answer, shown with its own title and `form_previous_payment_open`, logged at info rather than as an error; anything else says the cancel is not confirmed and when the answer is released. `paymentCancelView` in `paymentReturn.ts` is the one mapping.
+- **Every status move is one locked step.** `submit` takes the form lock too (its REPEATABLE READ transaction prevented neither race its comment named: measured on Postgres 18, four concurrent submits on a 1-seat form took 4 seats on `main`, 1 now). `cancelPendingSubmission`, `validateCashPayment` and `cancelCashPayment` go through `moveLockedSubmission` (row lock, check, write), so a cancel or expiry callback of an old request cannot overwrite a `paid` committed in between.
+- **The manager sees it first.** `getSubmissions` and the XLSX put `paid_over_capacity` rows on top (`overCapacityFirst`); `frontend/src/lib/forms/paymentStatus.ts` labels both new words (the XLSX takes them from the client, as above) and colours an over-capacity pill as refused, not settled. The return page (`paymentReturn.ts`) keeps waiting on `expired` (a late payment may still land) and says "payment received, form full" on `paid_over_capacity` - it says the payment is at the top of the organiser's responses and to contact them about a refund, and promises neither a notification (D3) nor a refund nothing here enforces.
+
+### D1-D3 (user, 2026-10-15) and where each stands
+
+| # | Decision | What it changes | State |
+|---|---|---|---|
+| D1 | The Lydia request dies with the hold | `submit` sends `expireAfterSeconds: PAYMENT_REQUEST_LIFETIME_SECONDS` = hold - `PAYMENT_REQUEST_EXPIRY_MARGIN_SECONDS` = 1800 - 120 = **1680 s** to `create-checkout-session`, and `lydia-payment-provider.ts` puts it in `request/do` as `expire_time` (whole seconds; a value that is not a positive integer is refused there, since Lydia reads 0 as "never"). The margin: Lydia's expiry sweep fired 61-79 s after the deadline on the sandbox, plus the callback's latency, so the request is dead before the seat is released | **DONE** (2026-10-15). A payment landing after the hold anyway is decided from the row like any late payment |
+| D2 | Single-answer form: REUSE the pending row and SETTLE the previous Lydia request first (one row, one payable request) | `settleOpenRequest`, BEFORE the transaction and while the row still names its request: core-service `payments/cancel-request` (numeric `request_id` + vendor token). `cancelled` -> free. Error 2 (`already-settled`) was measured only on cancelled and expired requests and very probably answers a PAID one too, so it is followed by `payments/request-state` (uuid + vendor token, measured): `closed` (6) -> free; **`paid` (1) -> the row is marked paid (`markPaid`) and the retry STOPS with `alreadyPaid`** (the payer paid in the app without coming back; a second request was a second charge). Anything else - a failed call, `open`, an unmeasured state, a row naming NO request (its request is being issued right now), a row written before 084 that names only its uuid and is still open - refuses with **409 `PREVIOUS_PAYMENT_OPEN`** (Paraglide `form_previous_payment_open` on the client) rather than leave two payable requests. **How long a refusal lasts:** at most until the row's hold ends, 30 minutes after `paymentRequestedAt`; past it the row is no longer live, is not reused, and the retry writes a new answer. For a row written BEFORE migration 084, `paymentRequestedAt` was backfilled from `createdAt`, so the bound is 30 minutes after the answer was CREATED - not 30 minutes after the deploy (as #1906's description said), and already over for any answer older than that when 084 ran. The client sentence names that bound ("au plus tard 30 minutes après son lancement"), not "in a moment". Only after a free answer does the transaction clear the ids, re-reading the row under its lock: it must still name the settled request, and a row its own request's cancel callback cancelled meanwhile is taken back (capacity re-checked). A request that is never issued (refused, failed, payments off) releases its row at once (`releaseUnissuedRow`). The submitter's own cancel (`cancelSubmission`) settles by the same rules | **DONE** (2026-10-15). A row past the hold is not reused (left for the job, a new row written); its request died with D1. Lydia's answer to `request/cancel` on a PAID request is not measured - the state read is what makes that unknown harmless |
+| D3 | Notify the organiser actively on `paid_over_capacity`, plus the durable "cotisation granted" flag | the flag is built (`cotisationGrantedAt`); the notification needs a category | **The notification is a SEPARATE work package** (a new category: the closest, `form_reminder`, deep-links to the fill page and carries the opening-reminder copy). The return page's over-capacity sentence promises no notification today and should say so once that package ships |
+
+Tests: `forms.service.seat-hold.spec.ts` runs the service on an in-memory store that evaluates its own `where` clauses and refuses any transaction that is not READ COMMITTED (the boundary one second either side of the hold, two simultaneous submits on the last seat, the reuse restarting the hold on a full form, the job twice, a late payment with and without room, two simultaneous late payments on the last seat with a real per-form mutex, replays, a failed grant retried, one payment confirmed under both ids in both orders, a cancel against a paid row, a cancel naming another request, the request lifetime (1680 s), the old request settled before the new one with the row still naming it, an old request found PAID stopping the retry, a failed cancel / open state / failed state read / request being issued each refused with `PREVIOUS_PAYMENT_OPEN`, the old request's cancel callback landing DURING the retry and taken back, the submitter's cancel settling the request, a confirmation naming another request accused at ERROR, a late payment on a one-answer form whose payer already has a seat or a payment, the payer's return (`confirmPayment`) recording a payment no callback confirmed, then a late callback as a silent replay, and leaving an open/closed/unreadable request pending, and the bodies core-service posts entering through `InternalFormsController`: webhook confirm and the payer return's uuid in both orders and at once, a cancel or expire callback after the payment, one between the two confirmations, a payment after its own expiry - one transition, one grant, one purchase each). Controls (each makes it fail): the lock removed from `markPaid`; REPEATABLE READ put back in `submit`; the cancel comparison removed; error 2 read as cancelled without the state read; a failed settle carried past; the one-answer check removed; the foreign-id accusation removed; the take-back of a self-caused cancel removed. The core half is in `lydia-payment-provider.spec.ts` (`expire_time`, `request_id`, `request/cancel` and its error 2, `request/state` and its codes) and `payment.controller.spec.ts` (`request-state` takes the uuid as Lydia issues it, 32 hex digits; it fails on the old dashed pattern). **Real Postgres is NOT in CI**: the Postgres 18 runs quoted on this page (concurrency, migration 084 twice, the hold restart surviving the id write, the real core controllers wired to the real internal route) were throwaway scripts on the pull request, not committed tests - the committed proof is the in-memory store above. `paymentStatus.test.ts` and `paymentReturn.test.ts` (with `paymentCancelView`) on the client.
+
+## What a client reads of a submission is an allowlist (2026-10-15)
+
+`GET /api/forms/submissions/:id` (the submitter or a manager, read by the payment return pages)
+answered a payment-provider account credential that no client field read. The two submitter reads and the two
+manager lists (`:id/submissions`, `:id/submissions/pending-cash`) also answered the whole row:
+the provider ids (`stripeSessionId`, `paymentRequestId`, `paymentSettledBy`), the hold clock and
+the fulfilment flags.
+
+`apps/social-service/src/forms/submission.projection.ts` now decides, as an ALLOWLIST, so a column
+added later is private until someone adds it there:
+
+- the submitter's view: `id`, `formId`, `answers`, `totalPaid`, `paymentStatus`, `paymentMethod`,
+  `cashExpiresAt`, `createdAt`. `GET submissions/:id` answers `id`, `formId`, `totalPaid`,
+  `currency` and `paymentStatus` only.
+- the manager's view adds `userId` and `email`. Both lists use `userId` to name the submitter
+  (`submitterName`, the pending-cash list), and a manager already reads both on member pages.
+
+`submission.projection.spec.ts` fills every private column (and the vendor token) with a
+recognisable value and fails if any client read carries one, by value or by key name. Control: it
+fails 4/4 against the previous service.
+
+**The association reads had the same leak, closed the same way (2026-10-15).** `GET
+/api/associations` and its siblings answered the same payment credential and other private columns, through a denylist rather than an allowlist.
+`apps/social-service/src/associations/association.projection.ts` (`toAssociationView`) is now an
+allowlist on every route that answers a row: `GET /`, `slug/:slug`, `:id`, `me/list`, `POST /`,
+`PATCH :id` and both logo routes. The token and the dashboard URL have their own read,
+`GET /api/associations/:id/payout-account`, behind `canManagePayoutAccount` (MANAGE_PAYOUT_ACCOUNT,
+the permission the onboarding and the disconnect already ask; a BDE super-admin does not inherit
+it), and the Lydia panel (`LydiaBusinessOnboardingForm.svelte`) is its only reader.
+`associations.controller.spec.ts` fills the token, the dashboard URL, the vault key and the notes
+with recognisable values and fails if any of the eight routes answers one, by value or by key name;
+a member without the flag gets a 403 from the payout read. The token was readable by every member
+until this shipped, so whether it can be rotated is a question for Lydia
+([backlog](../../backlog.md)).

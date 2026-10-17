@@ -8,7 +8,7 @@ export default defineConfig({
     environment: 'happy-dom',
     // The locale is global and some files move it; this gives every file the same starting
     // point. Fourteen assertions depended on worker order until 2026-09-17 - see the file.
-    setupFiles: ['./src/test/locale.ts'],
+    setupFiles: ['./src/test/locale.ts', './src/test/noRealNetwork.ts'],
     globals: true,
     include: ['src/**/*.{test,spec}.ts'],
     coverage: {

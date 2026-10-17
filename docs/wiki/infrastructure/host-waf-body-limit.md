@@ -18,7 +18,7 @@ It is not a slow-link problem and no retry changes it.
 - **The host's own log** (`ssh portail-etu-direct`, `/var/log/crowdsec.log`): `request body exceeds limit
   10485760 bytes, will drop request` and `WAF block: request body exceeded maximum allowed size`.
 - **Do not probe it again with big bodies from a workstation**: each one is an alert on a school-managed
-  security stack. The probe of 2026-10-10 created a CrowdSec alert on IP **90.38.224.160**. Reproduce with
+  security stack. The probe of 2026-10-10 created a CrowdSec alert on the prober's own address (redacted 2026-10-16: this repository is public, and an address names a person). Reproduce with
   the mock instead (`media.bodyBudget.test.ts`).
 
 ## What the app does about it (WP-OFF-8, [offline-and-weak-network](../frontend/offline-and-weak-network.md#13-audit-of-2026-10-10-a-13-mb-attachment-on-a-poor-link-and-what-navigation-waits-for))

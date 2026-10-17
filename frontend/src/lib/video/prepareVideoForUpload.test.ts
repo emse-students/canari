@@ -8,6 +8,7 @@ import {
   chooseAudioRoute,
   prepareVideoForUpload,
   VideoPrepareError,
+  videoSpanTrim,
 } from './prepareVideoForUpload';
 import { AUDIO_BITRATE, VIDEO_BUDGET_SHARE } from './videoEncodingPlan';
 
@@ -21,6 +22,9 @@ interface Script {
   /** What the engine's AAC encoder probe answers (`true` unless a test says otherwise). */
   canEncodeAac?: boolean;
   duration: number;
+  /** The video track's own first timestamp and end (default 0 and `duration`). */
+  videoStart?: number;
+  videoEnd?: number;
   width: number;
   height: number;
   fps: number;
@@ -50,6 +54,8 @@ vi.mock('mediabunny', () => {
         getDisplayWidth: async () => state.script.width,
         getDisplayHeight: async () => state.script.height,
         computePacketStats: async () => ({ averagePacketRate: state.script.fps }),
+        getFirstTimestamp: async () => state.script.videoStart ?? 0,
+        computeDuration: async () => state.script.videoEnd ?? state.script.duration,
       };
     }
     async getPrimaryAudioTrack() {
@@ -142,6 +148,37 @@ beforeEach(() => {
   state.script = { video: true, audio: true, duration: 20, width: 1080, height: 1920, fps: 60 };
   state.init = null;
   state.cancelled = false;
+});
+
+describe('videoSpanTrim', () => {
+  it('cuts the audio before the first frame and past the last one (the Mi 9T take)', () => {
+    expect(videoSpanTrim(0.067, 3.449, 3.52)).toEqual({ start: 0.067, end: 3.449 });
+  });
+
+  it('cuts nothing when the container starts and ends with its video', () => {
+    expect(videoSpanTrim(0, 20, 20)).toBeNull();
+    expect(videoSpanTrim(-0.02, 20, 20)).toBeNull();
+  });
+
+  it('cuts nothing for a video span it cannot believe', () => {
+    expect(videoSpanTrim(5, 5, 20)).toBeNull();
+  });
+});
+
+describe('trimToVideo', () => {
+  it('hands the video span to the conversion and returns its duration', async () => {
+    state.script = { ...state.script, duration: 3.52, videoStart: 0.067, videoEnd: 3.449 };
+    const out = await prepareVideoForUpload(SOURCE, { trimToVideo: true });
+    expect(state.init!.trim).toEqual({ start: 0.067, end: 3.449 });
+    expect(out.durationSeconds).toBeCloseTo(3.382, 6);
+  });
+
+  it('trims nothing when it is not asked (an attachment keeps its sound)', async () => {
+    state.script = { ...state.script, duration: 3.52, videoStart: 0.067, videoEnd: 3.449 };
+    const out = await prepareVideoForUpload(SOURCE, {});
+    expect(state.init!.trim).toBeUndefined();
+    expect(out.durationSeconds).toBe(3.52);
+  });
 });
 
 describe('prepareVideoForUpload', () => {

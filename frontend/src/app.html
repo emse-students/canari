@@ -38,6 +38,31 @@
         } catch (_) {}
       })();
     </script>
+    <!-- iOS Dynamic Type, before first paint so the page never draws at 1 and jumps. Same decision
+         as publishIosTypeScale (lib/utils/textZoom.ts), which re-publishes on mount; every later
+         change (and each activation) is the size UIKit reports, sent by canari_ios.mm as
+         canari:dynamic-type and published by followIosDynamicType: 17px is the default body, the
+         cap is 2.
+         Tauri only, and only an iPhone/iPad user agent (iPadOS reports Macintosh plus touch). -->
+    <script>
+      (function () {
+        try {
+          var ios =
+            /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+            (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+          if (!window.__TAURI_INTERNALS__ || !ios) return;
+          var probe = document.createElement('div');
+          probe.style.cssText =
+            'position:absolute;visibility:hidden;height:0;font:-apple-system-body';
+          document.documentElement.appendChild(probe);
+          var px = parseFloat(getComputedStyle(probe).fontSize);
+          probe.remove();
+          if (!(px > 0)) return;
+          var scale = Math.min(2, Math.max(1, Math.round((px / 17) * 100) / 100));
+          document.documentElement.style.setProperty('--type-scale', String(scale));
+        } catch (_) {}
+      })();
+    </script>
     <style>
       /* THESE THREE LITERALS ARE THE APP'S GROUND, NOT A PLACEHOLDER FOR IT.
 
