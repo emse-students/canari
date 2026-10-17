@@ -37,6 +37,12 @@ describe('relationTo', () => {
   ] as const)('%s (manages: %s) is %s', (viewer, canManage, expected) => {
     expect(relationTo(booking, people, viewer, canManage)).toBe(expected);
   });
+
+  it("makes the account linked to the booking's resource one of its people (D10)", () => {
+    expect(relationTo(booking, people, STRANGER, false, STRANGER)).toBe('people');
+    expect(relationTo(booking, people, STRANGER, false, IN)).toBe('other');
+    expect(relationTo(booking, people, STRANGER, false, null)).toBe('other');
+  });
 });
 
 describe('bookingView', () => {

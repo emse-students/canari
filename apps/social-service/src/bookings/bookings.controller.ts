@@ -1,17 +1,20 @@
 import {
+  BadRequestException,
   Body,
   Controller,
+  DefaultValuePipe,
   Delete,
   Get,
   Headers,
   Param,
+  ParseIntPipe,
   ParseUUIDPipe,
   Post,
   Query,
   UseGuards,
 } from '@nestjs/common';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
-import { BookingsService, type Actor } from './bookings.service';
+import { BookingsService, SPACE_BOOKINGS_PAGE, type Actor } from './bookings.service';
 import { CreateBlockDto, CreateBookingDto } from './dto/booking.dto';
 
 /** The caller nginx authenticated. */
@@ -63,9 +66,12 @@ export class BookingsController {
   spaceBookings(
     @Param('spaceId', ParseUUIDPipe) spaceId: string,
     @Headers('x-user-id') userId: string,
+    @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
+    @Query('limit', new DefaultValuePipe(SPACE_BOOKINGS_PAGE), ParseIntPipe) limit: number,
     @Headers('x-global-admin') ga?: string
   ) {
-    return this.service.spaceBookings(spaceId, actorOf(userId, ga));
+    if (offset < 0) throw new BadRequestException({ code: 'offset' });
+    return this.service.spaceBookings(spaceId, actorOf(userId, ga), offset, limit);
   }
 
   /** Books a range; an organiser may book on behalf of an account. */
@@ -79,7 +85,7 @@ export class BookingsController {
     return this.service.book(spaceId, dto, actorOf(userId, ga), Date.now());
   }
 
-  /** Cancels a coming booking: its holder (within the delay) or the organiser. */
+  /** Cancels a coming booking: its holder or the organiser, at any time before the start (D5). */
   @Post(':bookingId/cancel')
   cancel(
     @Param('bookingId', ParseUUIDPipe) bookingId: string,

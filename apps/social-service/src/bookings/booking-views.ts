@@ -4,7 +4,8 @@
  * (`booking-views.spec.ts`).
  *
  * - The ORGANISER (and a global admin) sees everything: names, answers, private texts.
- * - The booking's PEOPLE (its holder, a participant who has not withdrawn) see the names of their
+ * - The booking's PEOPLE (its holder, a participant who has not withdrawn, the account linked to
+ *   its resource) see the names of their
  *   booking and the private texts of the space and the resource while the booking is LIVE (D32);
  *   never the answers - the holder's answers are the organiser's to read.
  * - ANYONE ELSE sees the names only when the space shows them (`nameVisibility = 'names'`), else
@@ -34,15 +35,22 @@ export interface ParticipantRow {
   withdrawnAt: Date | null;
 }
 
-/** How `viewerId` stands to a booking. */
+/**
+ * How `viewerId` stands to a booking. The account LINKED to the booking's resource (D10, "that
+ * person sees their bookings": the alumni of a column) is one of its people - it reads the names
+ * on an 'occupied' space and the private texts, never the answers. A participant who WITHDREW is
+ * 'other' again: on an 'occupied' space they no longer read the names.
+ */
 export function relationTo(
   booking: BookingRow,
   participants: readonly ParticipantRow[],
   viewerId: string,
-  canManage: boolean
+  canManage: boolean,
+  resourceLinkedUserId: string | null = null
 ): BookingRelation {
   if (canManage) return 'manager';
   if (booking.holderId === viewerId) return 'people';
+  if (resourceLinkedUserId !== null && resourceLinkedUserId === viewerId) return 'people';
   const mine = participants.some(
     (p) => p.bookingId === booking.id && p.userId === viewerId && p.withdrawnAt === null
   );

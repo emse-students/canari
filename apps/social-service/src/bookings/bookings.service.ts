@@ -10,7 +10,6 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository, type EntityManager } from 'typeorm';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
-import { isBlockedBetween } from '../common/user-blocks';
 import { isExclusionViolation } from '../common/pg-errors';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { matchesCondition, needsProfile, type PricingFacts } from '../pricing/audience';
@@ -40,6 +39,16 @@ export type SlotForViewer = Omit<SlotView, 'bookingId' | 'blockId'> & {
 };
 
 const DAY_MS = 86_400_000;
+
+/** `mine` answers at most this many bookings, newest first. */
+export const MINE_LIMIT = 200;
+/** One page of the organiser's list (`spaceBookings`). */
+export const SPACE_BOOKINGS_PAGE = 200;
+/**
+ * How far before `min(now, the new booking's start)` the quota read looks back: the widest period a
+ * quota counts in is an ISO week of LOCAL dates, so seven days plus a zone's offset.
+ */
+const QUOTA_LOOKBACK_MS = 8 * DAY_MS;
 
 /**
  * THE BOOKINGS API'S RULES (WP-B3, docs/wiki/bookings-chantier.md "WP-B3 as built").
@@ -177,60 +186,79 @@ export class BookingsService {
         grid.flatMap((r) => r.units.flatMap((u) => (u.state === 'blocked' ? [u.blockId] : [])))
       ),
     ];
-    const [rows, people, blocks] = await Promise.all([
+    const [rows, people, blocks, resources] = await Promise.all([
       bookingIds.length ? this.bookings.findBy({ id: In(bookingIds) }) : Promise.resolve([]),
       bookingIds.length
         ? this.participants.findBy({ bookingId: In(bookingIds) })
         : Promise.resolve([]),
       blockIds.length ? this.blocks.findBy({ id: In(blockIds) }) : Promise.resolve([]),
+      this.resources.findBy({ spaceId }),
     ]);
     const byId = new Map(rows.map((b) => [b.id, b]));
     const blockById = new Map(blocks.map((b) => [b.id, b]));
+    const linkedOf = new Map(resources.map((r) => [r.id, r.linkedUserId]));
 
     return grid.map((r) => ({
       resourceId: r.resourceId,
-      units: r.units.map((u): SlotForViewer => {
+      units: r.units.flatMap((u): SlotForViewer[] => {
         const { date, startMs, endMs } = u;
         if (u.state === 'booked') {
-          const b = byId.get(u.bookingId)!;
-          const relation = relationTo(b, people, actor.userId, canManage);
-          return {
-            date,
-            startMs,
-            endMs,
-            state: 'booked',
-            booking: bookingView(b, people, relation, space.nameVisibility, actor.userId),
-          };
+          const b = byId.get(u.bookingId);
+          if (!b) {
+            // Gone between the two reads (an account erasure deleting a personal space's rows):
+            // the unit is left out of this answer, never a 500. The next read is whole again.
+            this.logger.warn(`[BOOKINGS] spaceSlots: booking vanished between reads, unit skipped`);
+            return [];
+          }
+          const linked = linkedOf.get(r.resourceId) ?? null;
+          const relation = relationTo(b, people, actor.userId, canManage, linked);
+          return [
+            {
+              date,
+              startMs,
+              endMs,
+              state: 'booked',
+              booking: bookingView(b, people, relation, space.nameVisibility, actor.userId),
+            },
+          ];
         }
         if (u.state === 'blocked') {
           const k = blockById.get(u.blockId);
-          return {
-            date,
-            startMs,
-            endMs,
-            state: 'blocked',
-            blockReason: k && (canManage || k.reasonVisible) ? k.reason : null,
-          };
+          return [
+            {
+              date,
+              startMs,
+              endMs,
+              state: 'blocked',
+              blockReason: k && (canManage || k.reasonVisible) ? k.reason : null,
+            },
+          ];
         }
-        return { date, startMs, endMs, state: 'free' };
+        return [{ date, startMs, endMs, state: 'free' }];
       }),
     }));
   }
 
   /**
-   * The actor's bookings, as holder or as a participant (withdrawn ones included, marked), newest
-   * first, with the private texts of the LIVE ones (D32).
+   * The actor's bookings, newest first, at most {@link MINE_LIMIT}: as holder, as a participant
+   * (withdrawn ones included, marked), and every booking of a resource LINKED to the actor (D10,
+   * `linked: true` - the alumni's own column). Each read through the space's name visibility, with
+   * the private texts of the LIVE ones the actor is one of the people of (D32).
    */
   async mine(actor: Actor) {
     this.logger.debug(`[BOOKINGS] mine user=${actor.userId.slice(0, 8)}`);
-    const asParticipant = await this.participants.findBy({ userId: actor.userId });
-    const ids = asParticipant.map((p) => p.bookingId);
+    const ids: { id: string }[] = await this.bookings.manager.query(
+      `SELECT b.id FROM bookings b JOIN booking_resources r ON r.id = b."resourceId"
+        WHERE b."holderId" = $1 OR r."linkedUserId" = $1
+           OR EXISTS (SELECT 1 FROM booking_participants p WHERE p."bookingId" = b.id AND p."userId" = $1)
+        ORDER BY b."startsAt" DESC LIMIT ${MINE_LIMIT}`,
+      [actor.userId]
+    );
+    if (ids.length === 0) return [];
     const rows = await this.bookings.find({
-      where: [{ holderId: actor.userId }, ...(ids.length ? [{ id: In(ids) }] : [])],
+      where: { id: In(ids.map((r) => r.id)) },
       order: { startsAt: 'DESC' },
-      take: 200,
     });
-    if (rows.length === 0) return [];
     const [people, resources] = await Promise.all([
       this.participants.findBy({ bookingId: In(rows.map((b) => b.id)) }),
       this.resources.findBy({ id: In([...new Set(rows.map((b) => b.resourceId))]) }),
@@ -241,63 +269,84 @@ export class BookingsService {
     });
     const spaceById = new Map(spaces.map((s) => [s.id, s]));
 
-    return rows.map((b) => {
-      const resource = resourceById.get(b.resourceId)!;
-      const space = spaceById.get(resource.spaceId)!;
-      const relation = relationTo(b, people, actor.userId, false);
-      const withdrawn = asParticipant.some((p) => p.bookingId === b.id && p.withdrawnAt !== null);
-      return {
-        ...bookingView(b, people, relation, 'names', actor.userId),
-        withdrawn: b.holderId !== actor.userId && withdrawn,
-        holder: b.holderId === actor.userId,
-        space: { id: space.id, name: space.name, timeZone: space.timeZone },
-        resource: { id: resource.id, name: resource.name },
-        privateInfo: privateInfoFor(relation, b.cancelledAt !== null, space, resource),
-      };
+    return rows.flatMap((b) => {
+      const resource = resourceById.get(b.resourceId);
+      const space = resource && spaceById.get(resource.spaceId);
+      if (!resource || !space) return [];
+      const relation = relationTo(b, people, actor.userId, false, resource.linkedUserId);
+      const withdrawn = people.some(
+        (p) => p.bookingId === b.id && p.userId === actor.userId && p.withdrawnAt !== null
+      );
+      return [
+        {
+          ...bookingView(b, people, relation, space.nameVisibility, actor.userId),
+          withdrawn: b.holderId !== actor.userId && withdrawn,
+          holder: b.holderId === actor.userId,
+          linked: resource.linkedUserId === actor.userId,
+          space: { id: space.id, name: space.name, timeZone: space.timeZone },
+          resource: { id: resource.id, name: resource.name },
+          privateInfo: privateInfoFor(relation, b.cancelledAt !== null, space, resource),
+        },
+      ];
     });
   }
 
-  /** Every booking of a space with names and answers - the organiser's list (D15, D20). */
-  async spaceBookings(spaceId: string, actor: Actor) {
-    this.logger.debug(`[BOOKINGS] spaceBookings space=${spaceId}`);
+  /**
+   * One page of a space's bookings with names and answers, by start - the organiser's list (D15,
+   * D20). `offset` is the position in that order; `nextOffset` is null on the last page.
+   */
+  async spaceBookings(spaceId: string, actor: Actor, offset = 0, limit = SPACE_BOOKINGS_PAGE) {
+    this.logger.debug(`[BOOKINGS] spaceBookings space=${spaceId} offset=${offset}`);
     const space = await this.loadSpace(spaceId);
     if (!(await this.mayManage(space, actor))) {
       throw new ForbiddenException({ code: 'not-manager' });
     }
+    const take = Math.min(Math.max(limit, 1), SPACE_BOOKINGS_PAGE);
     const resources = await this.resources.findBy({ spaceId });
-    if (resources.length === 0) return [];
+    if (resources.length === 0) return { items: [], nextOffset: null };
     const rows = await this.bookings.find({
       where: { resourceId: In(resources.map((r) => r.id)) },
-      order: { startsAt: 'ASC' },
+      order: { startsAt: 'ASC', id: 'ASC' },
+      skip: offset,
+      take: take + 1,
     });
-    const people = rows.length
-      ? await this.participants.findBy({ bookingId: In(rows.map((b) => b.id)) })
+    const page = rows.slice(0, take);
+    const people = page.length
+      ? await this.participants.findBy({ bookingId: In(page.map((b) => b.id)) })
       : [];
-    return rows.map((b) => ({
-      ...bookingView(b, people, 'manager', space.nameVisibility, actor.userId),
-      bookedOnBehalf: b.bookedById !== b.holderId,
-      cancelledByHolder: b.cancelledById !== null && b.cancelledById === b.holderId,
-    }));
+    return {
+      items: page.map((b) => ({
+        ...bookingView(b, people, 'manager', space.nameVisibility, actor.userId),
+        bookedOnBehalf: b.bookedById !== b.holderId,
+        cancelledByHolder: b.cancelledById !== null && b.cancelledById === b.holderId,
+      })),
+      nextOffset: rows.length > take ? offset + take : null,
+    };
   }
 
   // -- Writes ------------------------------------------------------------------------------------
 
   /**
    * Locks the space, then the resource, inside `m`'s transaction - the one order every colliding
-   * write takes (class comment). Answers the resource, or 404 when it is not of this space.
+   * write takes (class comment). Answers BOTH rows as read under the lock, so every setting a write
+   * decides on is the one it holds; 404 when the resource is not of this space.
    */
   private async lockResource(
     m: EntityManager,
     spaceId: string,
     resourceId: string
-  ): Promise<BookingResource> {
-    await m.query(`SELECT id FROM booking_spaces WHERE id = $1 FOR UPDATE`, [spaceId]);
-    const rows: BookingResource[] = await m.query(
-      `SELECT * FROM booking_resources WHERE id = $1 AND "spaceId" = $2 FOR UPDATE`,
-      [resourceId, spaceId]
-    );
-    if (rows.length === 0) throw new NotFoundException({ code: 'resource-not-found' });
-    return rows[0];
+  ): Promise<{ space: BookingSpace; resource: BookingResource }> {
+    const space = await m.findOne(BookingSpace, {
+      where: { id: spaceId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!space) throw new NotFoundException({ code: 'space-not-found' });
+    const resource = await m.findOne(BookingResource, {
+      where: { id: resourceId, spaceId },
+      lock: { mode: 'pessimistic_write' },
+    });
+    if (!resource) throw new NotFoundException({ code: 'resource-not-found' });
+    return { space, resource };
   }
 
   /** Parses a request's range: two instants, the end after the start. */
@@ -318,6 +367,51 @@ export class BookingsService {
     return new Map(
       rows.map((r) => [r.id, [r.firstName, r.lastName].filter(Boolean).join(' ').trim() || r.id])
     );
+  }
+
+  /**
+   * D21 for a whole booking in ONE query: is any participant blocked with any of `sources` (the one
+   * who adds them, and the holder when booked on behalf)? Symmetric, like `isBlockedBetween`, whose
+   * rule this is - batched here because it runs under the space-wide lock.
+   */
+  private async anyBlocked(m: EntityManager, sources: string[], participants: string[]) {
+    if (participants.length === 0) return false;
+    const rows: unknown[] = await m.query(
+      `SELECT 1 FROM user_blocks
+        WHERE ("blockerId" = ANY($1) AND "blockedId" = ANY($2))
+           OR ("blockerId" = ANY($2) AND "blockedId" = ANY($1))
+        LIMIT 1`,
+      [sources, participants]
+    );
+    return rows.length > 0;
+  }
+
+  /**
+   * D17 for a whole booking in ONE query: each person's live bookings of the space that a quota can
+   * still count (ending after `sinceMs`), keyed by person. A person counts as holder or as a
+   * participant who has not withdrawn.
+   */
+  private async liveRangesOf(
+    m: EntityManager,
+    spaceId: string,
+    persons: string[],
+    sinceMs: number
+  ): Promise<Map<string, Range[]>> {
+    const rows: { person: string; startsAt: Date; endsAt: Date }[] = await m.query(
+      `SELECT x.person, b."startsAt", b."endsAt"
+         FROM unnest($2::varchar[]) AS x(person)
+         JOIN bookings b ON b."cancelledAt" IS NULL AND b."endsAt" > $3
+         JOIN booking_resources r ON r.id = b."resourceId" AND r."spaceId" = $1
+        WHERE b."holderId" = x.person OR EXISTS (
+              SELECT 1 FROM booking_participants p
+               WHERE p."bookingId" = b.id AND p."userId" = x.person AND p."withdrawnAt" IS NULL)`,
+      [spaceId, persons, new Date(sinceMs)]
+    );
+    const out = new Map<string, Range[]>(persons.map((p) => [p, []]));
+    for (const r of rows) {
+      out.get(r.person)?.push({ startMs: r.startsAt.getTime(), endMs: r.endsAt.getTime() });
+    }
+    return out;
   }
 
   /**
@@ -353,15 +447,20 @@ export class BookingsService {
    * Books a range of one resource (D4, D7, D12, D17, D20, D21, D26, D33). The organiser may book on
    * behalf of an account (`holderId`), outside the quotas (D17, D20); the window (D26) binds
    * everyone, the organiser included - D26 names no exemption.
+   *
+   * Rights, the audience and the answers are judged BEFORE the lock (the answers may need the
+   * profile service, which a lock must not wait on); every other rule reads the space AS LOCKED. If
+   * the questions changed in between, the answers were judged against the wrong ones: refused
+   * `space-changed`, and the booker retries on the new questions.
    */
   async book(spaceId: string, dto: CreateBookingDto, actor: Actor, nowMs: number) {
     this.logger.debug(`[BOOKINGS] book space=${spaceId} resource=${dto.resourceId}`);
-    const space = await this.loadSpace(spaceId);
-    const canManage = await this.mayManage(space, actor);
+    const before = await this.loadSpace(spaceId);
+    const canManage = await this.mayManage(before, actor);
     const holderId = (dto.holderId ?? actor.userId).trim().toLowerCase();
     const onBehalf = holderId !== actor.userId;
     if (onBehalf && !canManage) throw new ForbiddenException({ code: 'not-manager' });
-    if (!onBehalf) await this.assertMayUse(space, actor, canManage);
+    if (!onBehalf) await this.assertMayUse(before, actor, canManage);
     const range = this.parseRange(dto.startsAt, dto.endsAt);
 
     const participantIds = [
@@ -370,14 +469,18 @@ export class BookingsService {
     if (participantIds.includes(holderId)) {
       throw new BadRequestException({ code: 'holder-is-participant' });
     }
-    if (space.maxPeople !== null && participantIds.length + 1 > space.maxPeople) {
-      throw new BadRequestException({ code: 'too-many-people', maxPeople: space.maxPeople });
-    }
-    const answers = await this.validAnswers(space, holderId, dto.answers ?? {});
+    const answers = await this.validAnswers(before, holderId, dto.answers ?? {});
+    const people = [holderId, ...participantIds];
 
     try {
       return await this.bookings.manager.transaction(async (m) => {
-        const resource = await this.lockResource(m, spaceId, dto.resourceId);
+        const { space, resource } = await this.lockResource(m, spaceId, dto.resourceId);
+        if (JSON.stringify(space.items ?? []) !== JSON.stringify(before.items ?? [])) {
+          throw new ConflictException({ code: 'space-changed' });
+        }
+        if (space.maxPeople !== null && people.length > space.maxPeople) {
+          throw new BadRequestException({ code: 'too-many-people', maxPeople: space.maxPeople });
+        }
 
         // The shape (D3): one slot, or 1..maxSteps steps of one window.
         const [from, to] = datesAround(range, space.timeZone);
@@ -410,40 +513,29 @@ export class BookingsService {
         if (blocked.length) throw new ConflictException({ code: 'blocked' });
 
         // Every account named must exist; names are snapshots taken now (D15).
-        const names = await this.namesOf(m, [holderId, ...participantIds]);
-        const unknown = [holderId, ...participantIds].filter((id) => !names.has(id));
-        if (unknown.length) throw new BadRequestException({ code: 'unknown-account' });
+        const names = await this.namesOf(m, people);
+        if (people.some((id) => !names.has(id))) {
+          throw new BadRequestException({ code: 'unknown-account' });
+        }
 
         // D21: a block between the one who adds and the one added, or the holder and them. Which of
         // the two blocked is never said.
-        for (const p of participantIds) {
-          if (
-            (await isBlockedBetween(m, actor.userId, p)) ||
-            (onBehalf && (await isBlockedBetween(m, holderId, p)))
-          ) {
-            throw new ForbiddenException({ code: 'participant-blocked' });
-          }
+        const sources = onBehalf ? [actor.userId, holderId] : [actor.userId];
+        if (await this.anyBlocked(m, sources, participantIds)) {
+          throw new ForbiddenException({ code: 'participant-blocked' });
         }
 
         // D17: each person of the booking against their own live bookings of this space - under
         // the space lock, so no concurrent booking of theirs elsewhere in the space can slip in.
         if (!onBehalf) {
-          for (const person of [holderId, ...participantIds]) {
-            const theirs: { startsAt: Date; endsAt: Date }[] = await m.query(
-              `SELECT b."startsAt", b."endsAt" FROM bookings b
-                 JOIN booking_resources r ON r.id = b."resourceId"
-                WHERE r."spaceId" = $1 AND b."cancelledAt" IS NULL
-                  AND (b."holderId" = $2 OR EXISTS (
-                        SELECT 1 FROM booking_participants p
-                         WHERE p."bookingId" = b.id AND p."userId" = $2 AND p."withdrawnAt" IS NULL))`,
-              [spaceId, person]
-            );
-            const quota = checkQuotas(
-              space,
-              theirs.map((b) => ({ startMs: b.startsAt.getTime(), endMs: b.endsAt.getTime() })),
-              range,
-              nowMs
-            );
+          const ranges = await this.liveRangesOf(
+            m,
+            spaceId,
+            people,
+            Math.min(nowMs, range.startMs) - QUOTA_LOOKBACK_MS
+          );
+          for (const person of people) {
+            const quota = checkQuotas(space, ranges.get(person) ?? [], range, nowMs);
             if (quota) {
               throw new ConflictException({ code: quota, holder: person === holderId });
             }
@@ -463,14 +555,15 @@ export class BookingsService {
             answers === null ? null : JSON.stringify(answers),
           ]
         );
-        for (const p of participantIds) {
+        if (participantIds.length) {
           await m.query(
-            `INSERT INTO booking_participants ("bookingId", "userId", "userName") VALUES ($1, $2, $3)`,
-            [row.id, p, names.get(p)]
+            `INSERT INTO booking_participants ("bookingId", "userId", "userName")
+             SELECT $1, u, n FROM unnest($2::varchar[], $3::varchar[]) AS x(u, n)`,
+            [row.id, participantIds, participantIds.map((p) => names.get(p))]
           );
         }
         this.logger.log(
-          `[BOOKINGS] booked id=${row.id.slice(0, 8)} resource=${resource.id.slice(0, 8)} onBehalf=${onBehalf} people=${participantIds.length + 1}`
+          `[BOOKINGS] booked id=${row.id.slice(0, 8)} resource=${resource.id.slice(0, 8)} onBehalf=${onBehalf} people=${people.length}`
         );
         return { id: row.id };
       });
@@ -500,18 +593,21 @@ export class BookingsService {
    * Cancels a coming booking (D5 as the user decided on 2026-10-17, D15, D20): its holder or the
    * organiser, AT ANY TIME before the start - no delay binds either. The row stays as history, with
    * who cancelled; nothing past moves.
+   *
+   * WHO is judged BEFORE the booking's state: booking ids are published in the grid, so a stranger
+   * must learn nothing of a booking's state from the refusal - only `not-yours`.
    */
   async cancel(bookingId: string, actor: Actor, nowMs: number) {
     this.logger.debug(`[BOOKINGS] cancel booking=${bookingId}`);
     return this.bookings.manager.transaction(async (m) => {
       const { booking, space } = await this.lockBooking(m, bookingId);
-      if (booking.cancelledAt) throw new ConflictException({ code: 'already-cancelled' });
-      if (new Date(booking.startsAt).getTime() <= nowMs) {
-        throw new ConflictException({ code: 'history-frozen' });
-      }
       const isHolder = booking.holderId === actor.userId;
       if (!isHolder && !(await this.mayManage(space, actor))) {
         throw new ForbiddenException({ code: 'not-yours' });
+      }
+      if (booking.cancelledAt) throw new ConflictException({ code: 'already-cancelled' });
+      if (new Date(booking.startsAt).getTime() <= nowMs) {
+        throw new ConflictException({ code: 'history-frozen' });
       }
       await m.query(`UPDATE bookings SET "cancelledAt" = $2, "cancelledById" = $3 WHERE id = $1`, [
         bookingId,
@@ -525,48 +621,52 @@ export class BookingsService {
 
   /**
    * A participant leaves a coming booking alone (D4), until the space's minimum delay before the
-   * start (D5 as the user decided on 2026-10-17); the row stays, marked (D15).
+   * start (D5 as the user decided on 2026-10-17); the row stays, marked (D15). Whether the actor is
+   * a participant still in is judged first, for the reason `cancel` gives.
    */
   async withdraw(bookingId: string, actor: Actor, nowMs: number) {
     this.logger.debug(`[BOOKINGS] withdraw booking=${bookingId}`);
     return this.bookings.manager.transaction(async (m) => {
       const { booking, space } = await this.lockBooking(m, bookingId);
+      const mine: unknown[] = await m.query(
+        `SELECT 1 FROM booking_participants
+          WHERE "bookingId" = $1 AND "userId" = $2 AND "withdrawnAt" IS NULL FOR UPDATE`,
+        [bookingId, actor.userId]
+      );
+      if (mine.length === 0) throw new NotFoundException({ code: 'not-a-participant' });
       if (booking.cancelledAt) throw new ConflictException({ code: 'already-cancelled' });
       const startMs = new Date(booking.startsAt).getTime();
       if (startMs <= nowMs) throw new ConflictException({ code: 'history-frozen' });
       if (!participantMayWithdraw(space.participantWithdrawMinMinutes, startMs, nowMs)) {
         throw new ConflictException({ code: 'withdrawal-delay' });
       }
-      const result: [unknown, number] = await m.query(
+      await m.query(
         `UPDATE booking_participants SET "withdrawnAt" = $3
           WHERE "bookingId" = $1 AND "userId" = $2 AND "withdrawnAt" IS NULL`,
         [bookingId, actor.userId, new Date(nowMs)]
       );
-      if (result[1] === 0) throw new NotFoundException({ code: 'not-a-participant' });
       this.logger.log(`[BOOKINGS] withdrawn booking=${bookingId.slice(0, 8)}`);
       return { ok: true };
     });
   }
 
-  /** Whether the actor may block or unblock this resource: the organiser, or its linked account (D10). */
-  private async mayBlock(space: BookingSpace, resource: BookingResource, actor: Actor) {
-    return resource.linkedUserId === actor.userId || (await this.mayManage(space, actor));
-  }
-
   /**
-   * "Indisponible" over a coming range (D10, D20). Refused while live bookings fall inside it,
-   * naming them (D29): the organiser cancels them explicitly first.
+   * "Indisponible" over a coming range (D10, D20): the organiser, or the account linked to the
+   * resource. NOTHING ON THE PAST (D15, D20): a block may not START before now - the screen offers
+   * now as its earliest start - so no past instant is ever marked. Refused while COMING live
+   * bookings fall inside it, naming them (D29): the organiser cancels them explicitly first. A
+   * booking already under way cannot be cancelled, so it neither refuses the block nor is named.
    */
   async addBlock(resourceId: string, dto: CreateBlockDto, actor: Actor, nowMs: number) {
     this.logger.debug(`[BOOKINGS] addBlock resource=${resourceId}`);
     const resource = await this.resources.findOneBy({ id: resourceId });
     if (!resource) throw new NotFoundException({ code: 'resource-not-found' });
     const space = await this.loadSpace(resource.spaceId);
-    if (!(await this.mayBlock(space, resource, actor))) {
+    if (resource.linkedUserId !== actor.userId && !(await this.mayManage(space, actor))) {
       throw new ForbiddenException({ code: 'not-manager' });
     }
     const range = this.parseRange(dto.startsAt, dto.endsAt);
-    if (range.endMs <= nowMs) throw new ConflictException({ code: 'history-frozen' });
+    if (range.startMs < nowMs) throw new ConflictException({ code: 'history-frozen' });
     if (range.endMs - range.startMs > 366 * DAY_MS) {
       throw new BadRequestException({ code: 'range' });
     }
@@ -574,8 +674,8 @@ export class BookingsService {
       await this.lockResource(m, space.id, resourceId);
       const inside: { id: string }[] = await m.query(
         `SELECT id FROM bookings WHERE "resourceId" = $1 AND "cancelledAt" IS NULL
-            AND "startsAt" < $3 AND "endsAt" > $2 ORDER BY "startsAt"`,
-        [resourceId, new Date(range.startMs), new Date(range.endMs)]
+            AND "startsAt" > $4 AND "startsAt" < $3 AND "endsAt" > $2 ORDER BY "startsAt"`,
+        [resourceId, new Date(range.startMs), new Date(range.endMs), new Date(nowMs)]
       );
       if (inside.length) {
         throw new ConflictException({
@@ -602,17 +702,28 @@ export class BookingsService {
     });
   }
 
-  /** Lifts a block that has not ended; a past block is history like a past booking (D15). */
+  /**
+   * Lifts a block. The organiser lifts any; the linked account only one IT created - never the
+   * organiser's "Indisponible". Only the part still to come moves (D15): a block under way is
+   * ended NOW, its past part stays as history; a block that has ended is refused.
+   */
   async removeBlock(blockId: string, actor: Actor, nowMs: number) {
     this.logger.debug(`[BOOKINGS] removeBlock block=${blockId}`);
     const block = await this.blocks.findOneBy({ id: blockId });
     if (!block) throw new NotFoundException({ code: 'block-not-found' });
     const resource = await this.resources.findOneByOrFail({ id: block.resourceId });
     const space = await this.loadSpace(resource.spaceId);
-    if (!(await this.mayBlock(space, resource, actor))) {
-      throw new ForbiddenException({ code: 'not-manager' });
+    const ownLinkedBlock =
+      resource.linkedUserId === actor.userId && block.createdById === actor.userId;
+    if (!ownLinkedBlock && !(await this.mayManage(space, actor))) {
+      throw new ForbiddenException({ code: 'not-yours' });
     }
     if (block.endsAt.getTime() <= nowMs) throw new ConflictException({ code: 'history-frozen' });
+    if (block.startsAt.getTime() < nowMs) {
+      await this.blocks.update({ id: blockId }, { endsAt: new Date(nowMs) });
+      this.logger.log(`[BOOKINGS] block ended now id=${blockId.slice(0, 8)}`);
+      return { ok: true };
+    }
     await this.blocks.delete({ id: blockId });
     this.logger.log(`[BOOKINGS] unblocked id=${blockId.slice(0, 8)}`);
     return { ok: true };

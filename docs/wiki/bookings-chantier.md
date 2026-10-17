@@ -335,42 +335,73 @@ per request; `BookingsService` takes that `nowMs`, so no rule reads a wall clock
 
 | Route | Who | Refusal codes |
 |---|---|---|
-| `GET mine` | anyone: their bookings as holder or participant, private texts of the LIVE ones (D32) | - |
+| `GET mine` | anyone: at most 200, newest first - their bookings as holder or participant (withdrawn ones marked), and every booking of a resource LINKED to them (`linked: true`, D10); private texts of the LIVE ones they are one of the people of (D32) | - |
 | `GET spaces/:id` | the audience (D6, D31) or the organiser; no private text | `space-not-found`, `audience` |
 | `GET spaces/:id/slots?from&to` | same; each booking cut to what the viewer may read (D9) | `slot-range` |
-| `GET spaces/:id/bookings` | the organiser: names and answers | `not-manager` |
-| `POST spaces/:id/bookings` | the audience; the organiser alone books on behalf (`holderId`, outside quotas) | `range`, `holder-is-participant`, `too-many-people`, `answer-required`, `resource-not-found`, `outside-availability`, `misaligned`, `too-many-steps`, `not-open-yet`, `started`, `notice`, `beyond-horizon`, `blocked`, `unknown-account`, `participant-blocked`, `active-bookings`, `minutes-per-period`, `slot-taken` |
-| `POST :id/cancel` | the holder or the organiser, ANY TIME before the start (D5) | `already-cancelled`, `history-frozen`, `not-yours` |
-| `POST :id/withdraw` | a participant, until `participantWithdrawMinMinutes` before the start (D5) | `already-cancelled`, `history-frozen`, `withdrawal-delay`, `not-a-participant` |
-| `POST resources/:id/blocks` | the organiser or the resource's linked account (D10) | `not-manager`, `history-frozen`, `range` (over 366 days), `bookings-inside-block` (with `bookingIds`, D29) |
-| `DELETE blocks/:id` | same; a past block is history | `block-not-found`, `history-frozen` |
+| `GET spaces/:id/bookings?offset&limit` | the organiser: names and answers, by start, pages of at most 200 (`{ items, nextOffset }`) | `not-manager`, `offset` |
+| `POST spaces/:id/bookings` | the audience; the organiser alone books on behalf (`holderId`, outside quotas) | `range`, `holder-is-participant`, `answer-required`, `resource-not-found`, `space-changed`, `too-many-people`, `outside-availability`, `misaligned`, `too-many-steps`, `not-open-yet`, `started`, `notice`, `beyond-horizon`, `blocked`, `unknown-account`, `participant-blocked`, `active-bookings`, `minutes-per-period`, `slot-taken` |
+| `POST :id/cancel` | the holder or the organiser, ANY TIME before the start (D5) | `not-yours`, then `already-cancelled`, `history-frozen` |
+| `POST :id/withdraw` | a participant still in, until `participantWithdrawMinMinutes` before the start (D5) | `not-a-participant`, then `already-cancelled`, `history-frozen`, `withdrawal-delay` |
+| `POST resources/:id/blocks` | the organiser or the resource's linked account (D10) | `not-manager`, `history-frozen` (a start in the past), `range` (over 366 days), `bookings-inside-block` (with `bookingIds`, D29) |
+| `DELETE blocks/:id` | the organiser any; the linked account only a block IT created | `block-not-found`, `not-yours`, `history-frozen` (ended) |
 
 - **THE LOCK ORDER: the SPACE row, then the RESOURCE row, both `FOR UPDATE`, in every colliding
   write.** The resource lock turns a losing racer into `23P01`, answered 409 `slot-taken`, rather
   than a deadlock (measured in WP-B1). The space lock makes quotas (D17) and a block against a
   booking hold ACROSS resources. The exclusion constraint stays the last word on overlap.
+- **A booking decides on the space AS LOCKED.** Rights, the audience and the answers are judged
+  before the lock, because the answers may need the profile service and a lock must not wait on
+  it. Every other setting (the ceiling of people, the step, the window, the quotas) is read from
+  the locked row. If the QUESTIONS changed in between, the answers were judged against the wrong
+  ones: `space-changed`, and the booker retries.
+- **Under the lock, a constant number of queries, whatever the party.** The D21 check is ONE
+  `user_blocks` query over every pair (`= ANY`), the D17 read ONE query over every person
+  (`unnest`), bounded to the bookings a quota can still count (ending after `min(now, start)`
+  minus eight days: a week of local dates plus a zone). The participants are inserted in one
+  statement.
 - **Rights.** `mayManage` = a global admin, else `MANAGE_BOOKINGS` on the association
   (`AssociationsService.mayAct`), else the owner of a PERSONAL space. `ownerId` grants nothing on
   an association space.
+- **WHO BEFORE WHAT.** `cancel` and `withdraw` judge the actor before the booking's state: booking
+  ids are published in the grid, so a stranger learns only `not-yours` / `not-a-participant`,
+  never whether a booking is cancelled or started.
 - **What a viewer receives** is decided in `booking-views.ts`, pure. The organiser reads names,
-  answers and private texts. The booking's PEOPLE read their names, and the private texts while it
-  is live, never the answers. Anyone else reads names only when `nameVisibility = 'names'`.
+  answers and private texts. The booking's PEOPLE - its holder, a participant still in, and the
+  account LINKED to its resource (D10: the alumni of a column reads who comes, on an 'occupied'
+  space too) - read the names, and the private texts while it is live, never the answers. Anyone
+  else reads names only when `nameVisibility = 'names'`. **A participant who withdrew is anyone
+  else again**: on an 'occupied' space they no longer read the names, in the grid or in `mine`.
+- **Blocks and the past (D15, D20).** A block may not START before now (the screen offers now as
+  the earliest start), so no past instant is ever marked. A booking already under way can no
+  longer be cancelled, so it neither refuses a block nor is named by one. Lifting a block under way
+  ENDS it now; its past part stays as history. The linked account lifts only the blocks it
+  created, never the organiser's.
 - **The window binds the organiser too** (D26 names no exemption). Quotas do not bind a booking on
   behalf (D17, D20) and count each participant as well as the holder; `holder: false` in the
   refusal says which side broke it.
-- **Blocks between accounts (D21)** are read with `isBlockedBetween`, which is symmetric: between
-  the one who adds and each participant, and, on behalf, between the holder and each participant.
-  Which side blocked is never said.
+- **Blocks between accounts (D21)** are symmetric, as `isBlockedBetween`: between the one who adds
+  and each participant, and, on behalf, between the holder and each participant. Which side
+  blocked is never said.
+- **A booking that vanishes between the grid's two reads** (an account erasure deleting a personal
+  space) is left out of that answer and logged, never a 500.
 
 **Proof.** `booking-views.spec.ts` covers every relation and setting.
-`bookings.service.integration.spec.ts` runs the service against a real PostgreSQL:
+`bookings.service.integration.spec.ts` runs the service against a real PostgreSQL. The rights stub
+answers per account, per association and per flag, as the real policy does. It covers:
 
 - eight simultaneous bookings of one slot, five rounds: one winner, seven `slot-taken`;
 - a quota held across two resources under concurrency;
 - the holder cancelling five minutes before the start against a 120-minute participant delay, and
   the participant refused at the exact boundary;
-- nothing moving once started;
-- a block refused over a live booking and honoured after;
-- names and private texts per viewer.
+- nothing moving once started; a stranger told `not-yours` whatever the state;
+- a block refused over a live booking and honoured after; a block in the past refused; a booking
+  under way ignored; a block under way ended now; a linked account unable to lift the organiser's
+  block;
+- names and private texts per viewer, the linked account, a withdrawn participant;
+- the creator of an association space managing nothing; the organiser of A on B's space; a
+  resource of another space; the audience on every read and write; too many people; the holder as
+  a participant; D21 on behalf;
+- a ceiling and the questions changed between the first read and the lock;
+- the organiser list paged; a booking vanishing between two reads.
 
 It runs in CI with the other integration specs (#1915).
