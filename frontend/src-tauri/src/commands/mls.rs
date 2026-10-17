@@ -107,6 +107,14 @@ pub(crate) async fn initialiser_mls(
                 }
             };
 
+        // THE STATE IS NOW PROVEN TO BE THIS ACCOUNT'S - `load_or_create` refused it otherwise - so
+        // this is the one place the record beside `mls.bin` may name it. A failure to write it costs
+        // only the gate's "another account's messages are here" for a later sign-in, so it is
+        // accused and the session goes on.
+        if let Err(e) = crate::commands::storage::write_mls_state_owner(&app, &user_id) {
+            log::error!("[MLS] Recording the owner of mls.bin failed: {e}");
+        }
+
         let mut lock = manager_state
             .lock()
             .map_err(|_| "Failed to lock state".to_string())?;

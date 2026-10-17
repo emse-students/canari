@@ -508,7 +508,7 @@ Neither the tab nor the salon showed one. Not reproduced.
 The next session shows "Vos messages enregistrés sur cet appareil n'ont pas pu être ouverts", and only a reinstall clears it.
 A candidate cause is fixed in #1862 (the MLS client and its device id survived a sign-out into the next account's login, [auth](frontend/modules/auth.md#a-sign-out-ended-the-session-on-the-server-and-left-it-live-on-the-device---fixed-2026-10-14)); owed one re-reading after it ships.
 **The vault half is fixed (2026-10-14)**: the device-key vault names its account, so B is never handed A's key and never rotates A's `mls.bin` ([auth](frontend/modules/auth.md#the-vault-names-its-account---fixed-2026-10-14)).
-**What is left is the design, not a defect of the vault: on a phone `mls.bin` is one file per install.** When a refused vault PROVED the file foreign, the gate now withholds the reset and says so; but once every vault is labelled, B takes the PIN path, cannot open A's file, lands on this very message, and the reset it offers deletes A's state. Fix shape: a per-account native state, or an owner recorded beside `mls.bin` that the gate reads to withhold the reset and say "another account's messages are here" instead of "damaged". Owed: one A -> B -> A reading on the Mi 9T and the iPhone on a pre-release carrying the fix.
+**The owner record is BUILT (PK1, 2026-10-17, unshipped)**: `initialiser_mls` writes `mls.owner` beside `mls.bin` each time a state OPENS for an account, `delete_mls_state` removes both, and when B's key does not open the file and the record names A, `init` throws `SavedStateOfAnotherAccountError` before any write - the gate says another account's messages are here and withholds the reset, on the keypad path too. An install whose state predates the record has none, so A must sign in once on the new build before B is protected. Owed: one A -> B -> A reading on the Mi 9T and the iPhone on a pre-release carrying it.
 
 ### P2 - a sign-out during a login in progress is not cancelled
 
@@ -673,26 +673,24 @@ garantir la disponibilite"*, scoped to availability rather than deliberate refus
 | --- | --- | --- |
 | an outbox entry with no terminal state | the two permanent dispositions are `group-deleted` and `evicted`; a group nobody can repair is **neither**, so a held entry stays pending for the life of the install | the counter it needs exists (2026-09-14); what is missing is the PROOF a terminal disposition may be taken on, and a clock is not one |
 | `R-E9`, `R-E11` | peer-unresolved; `readWelcomeOwed() === null` | retried for ever, no counter |
-| `DE7` | `MLS_LOCAL_STATE_UNDECRYPTABLE` | the only route offered requires the OLD PIN |
+| `DE7` | a saved state that will not open | the ALTERED half rotates with no PIN since step 2 (PK1, unshipped); a LEGACY blob still offers only the old PIN or the reset until its first rewrite |
 | `G-E10` | `forgetCommunityGraine` with no runtime | warns, returns 0; seeds and joined groups stay |
 
 ### P1 - a damaged local MLS state is reported as a PIN rotation, and the PIN the user actually holds does not get them back in (measured 2026-09-08)
 
 Typed errors, the honest message naming the reset, and the blob-header READER (step 1) shipped in
-`v0.18.18` (#901); the measurements are on
-[mls-protocol](protocols/mls-protocol.md#the-state-blobs-framing---read-first-write-later). **What is
-left is step 2, BLOCKED on one fact**: the one-line writer flip (`state_blob::frame_v1` at
-`save_encrypted_with_key`) plus the `minClientVersion` bump, once the fleet has taken the reader
-(`>= 0.18.18`) - `minClientVersion` is already `1.0.0`, so ONE `play-vitals` and App Store measurement
-settles it, never a date written here. Until then the two causes of `MLS_LOCAL_STATE_UNDECRYPTABLE`
-stay unseparated in the field and `DE7` keeps its old-PIN-only route. When step 2 lands,
-`serverProse.test.ts`'s one `ALLOWED` entry (`sessionAuth.ts`) must stop being allowed - the guard
-FAILS on an entry that stops offending. **Still worth a run once a device's history is expendable**:
-the sign-out half (answered by READING `handlePinSignOut`, not by a run). **Step 2 must NOT become** a
-fallback that re-enrols whenever a decrypt fails: that destroys the history of every user whose PIN
-really was rotated (what `noFreshStart` protects); the two causes are TOLD APART by the fingerprint.
-Board cell CORRUPT-2 on [cross-client-testing](cross-client-testing.md); runner
-`tools/cross-client-harness/archive/corrupt2.mjs`.
+`v0.18.18` (#901). **Step 2 is BUILT (PK1, 2026-10-17, unshipped until a tag carries it)**:
+`minClientVersion` is `1.0.3`, past the reader, so `encrypt_state_blob_with_key` frames every save
+and a failed load is classified from the header - `STATE_KEY_MISMATCH` (`rotated`: the old PIN opens
+it, and the gate now says so) or `STATE_ALTERED` (`altered`: the header names the key in hand, no PIN
+ever opens it, so `init` rotates the device identity like a `mismatch` - DE7's route without the old
+PIN). It is NOT a re-enrol fallback: only the fingerprint routes to the rotation, and a legacy blob
+still pauses as `undecryptable` until its first rewrite. The init throws typed errors
+(`SavedStateUnopenedError`), so `serverProse.test.ts`'s allowlist is empty. The mechanism is on
+[mls-protocol](protocols/mls-protocol.md#the-state-blobs-framing---read-first-write-later). **Owed:
+the CORRUPT-2 rig row on a local estate running the branch** ([cross-client-testing](cross-client-testing.md),
+runner `tools/cross-client-harness/archive/corrupt2.mjs`) - its expected verdict is now a ROTATION
+with no PIN asked, not the old-PIN gate. **Downgrade: no client may be rolled back past `v0.18.18`.**
 
 ### P2 - the legacy cotisation rows are LOADED on both estates, and NOT ONE claim has been observed (shipped 2026-09-11, v0.17.1)
 
@@ -1224,10 +1222,9 @@ and every refused call of `forms/api.ts` and every bare-`fetch` upload, export a
 **Still owed, per endpoint, most-used screens first:** the plain `throw new Error('... failed')` sites of
 `minesweeper/api.ts`, `mls/groupInvites.ts`, `mls-client/mlsDeliveryApi.ts` (key package publish, device
 update, commit submission), `adminerSession.ts`, `vaultDownload.ts`, then the codes themselves (a stable
-name per refusal a user can act on; model: `DEVICE_REVOKED`, `PARTNERSHIP_NO_CODES_LEFT`). One site cannot
-close alone: `sessionAuth.ts` compares against `MLS_LOCAL_STATE_UNDECRYPTABLE`, which collapses `sealed`
-and `unknown`; it closes with the damaged-MLS-state P1, and its allowlist entry in `serverProse.test.ts`
-fails the day the site stops offending.
+name per refusal a user can act on; model: `DEVICE_REVOKED`, `PARTNERSHIP_NO_CODES_LEFT`). The
+`sessionAuth.ts` site closed with step 2 of the damaged-MLS-state P1 (PK1): the init throws typed errors,
+and `serverProse.test.ts`'s allowlist is empty.
 
 ## Infrastructure
 
