@@ -26,3 +26,15 @@ export function isUniqueViolation(err: unknown): boolean {
 export function isExclusionViolation(err: unknown): boolean {
   return sqlState(err) === EXCLUSION_VIOLATION;
 }
+
+/** Postgres error code for a transaction chosen as the victim of a deadlock. */
+const DEADLOCK_DETECTED = '40P01';
+
+/**
+ * Whether a driver error is Postgres breaking a deadlock by aborting THIS transaction. Nothing it
+ * wrote stands, so the same request may simply be sent again - which is how a caller should answer
+ * it, as a typed "try again", never as a 500.
+ */
+export function isDeadlock(err: unknown): boolean {
+  return sqlState(err) === DEADLOCK_DETECTED;
+}

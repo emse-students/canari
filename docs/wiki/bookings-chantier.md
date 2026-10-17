@@ -1,6 +1,6 @@
 # Bookings (reservation of rooms and slots) - the chantier, decisions as taken
 
-**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) is a draft pull request. Decisions are written here the day the
+**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) is a draft pull request; WP-B4's organiser API is a draft stacked on it, its screens next. **Owed by WP-B6, carried from WP-B4: the space poster (D35: column by migration, purge) and the bookings FILE question.** Decisions are written here the day the
 user takes them; the work packages are written last, once every question is closed. Pointer in
 [backlog](backlog.md) to be added when the plan is complete.
 
@@ -152,7 +152,7 @@ when each is opened (083 on 2026-10-15). Only Master marks ready, merges and rel
 | **WP-B3** | API: book, cancel, participant withdraws, organiser blocks, books on behalf, cancels (D20); frozen history (D15); block honoured (`isBlockedBetween`); private fields returned only to the booking's people (D32) | `apps/social-service/src/common/user-blocks.ts`, `forms.service.ts` `assertFormManager` as the guard shape | A past booking refuses every write; a stranger never receives a private field |
 | **WP-B4** | Organiser screens: five settings sections (D35), resources, availability, questions reused from forms, the entity tab. The availability editor writes a window crossing midnight as two rules (see WP-B2) | `editSections.ts`, `routes/associations/[slug]/edit/[[section]]/+page.svelte`, `FormSection.svelte` and `FormAdvancedSettings.svelte` as the pattern | Seen at 390 and 1280 on a real build |
 | **WP-B5** | Booker screens: grid and planning (D14), my bookings, the dashboard card (D37), the sidebar entry, link and QR code, "Add to my calendar" with a hosted ICS route (D13) | `routes/calendar/+page.svelte`, `viewport.ts`, `AddEventToCalendarButton.svelte`, `navigation/places.ts`, `QrCodeModal.svelte`, `pageWidth.ts` | Read on the Mi 9T and the iPhone |
-| **WP-B6** | Purge of files and answers after N days, the platform maximum age of one year (D19, D23), XLSX export (D24) | `reel-retention.scheduler.ts`, `forms/export-labels.ts`, `forms.service.ts` `exportSubmissions` | A purge run twice changes nothing; the export parses back |
+| **WP-B6** | Purge of files and answers after N days, the platform maximum age of one year (D19, D23), XLSX export (D24); **the FILE question for bookings** (refused `file-question-not-yet` until then) and **the space POSTER (D35): its column, by migration, and its purge** - both carried over from WP-B4 | `reel-retention.scheduler.ts`, `forms/export-labels.ts`, `forms.service.ts` `exportSubmissions` | A purge run twice changes nothing; the export parses back |
 | **WP-B7** | Device readings, a concurrency run with two real clients on one slot, the wiki page of the module, the user guide in French | `docs/wiki/frontend/modules/`, `docs/user-guide/` | Both phones read; the board of readings recorded |
 
 Order: **WP-F and WP-B0 can start in parallel** (they share nothing); B1 follows B0; B2 and B3
@@ -245,6 +245,14 @@ column named like these can never ship unclassified:
 Proved on a real PostgreSQL by `bookings.integration.spec.ts` (one test per line above, two
 tombstoned participants in one booking, and a second run changing nothing). Recorded as row C17 of
 the [register of processing](compliance/register-of-processing.md).
+
+**The statements run in the booking path's lock order: spaces, then resources, then bookings**
+(review of #2002). Run the other way, an erasure racing a booking on a resource LINKED to the
+account deadlocked: the booking held the space and resource and waited on the booking row the
+erasure had just cancelled, while the erasure went on to unlink that resource. Measured, not
+argued: `bookings.service.integration.spec.ts` runs both orders against a live booking; the right
+one lets the booking land, the old one makes PostgreSQL abort the booking with `40P01`. A stray
+`40P01` in `book` is answered 409 `try-again` (the transaction was rolled back whole), never a 500.
 
 ## WP-B2 as built (2026-10-17)
 
@@ -339,10 +347,10 @@ per request; `BookingsService` takes that `nowMs`, so no rule reads a wall clock
 | `GET spaces/:id` | the audience (D6, D31) or the organiser; no private text | `space-not-found`, `audience` |
 | `GET spaces/:id/slots?from&to` | same; each booking cut to what the viewer may read (D9) | `slot-range` |
 | `GET spaces/:id/bookings?offset&limit` | the organiser: names and answers, by start, pages of at most 200 (`{ items, nextOffset }`) | `not-manager`, `offset` |
-| `POST spaces/:id/bookings` | the audience; the organiser alone books on behalf (`holderId`, outside quotas) | `range`, `holder-is-participant`, `answer-required`, `resource-not-found`, `space-changed`, `too-many-people`, `outside-availability`, `misaligned`, `too-many-steps`, `not-open-yet`, `started`, `notice`, `beyond-horizon`, `blocked`, `unknown-account`, `participant-blocked`, `active-bookings`, `minutes-per-period`, `slot-taken` |
+| `POST spaces/:id/bookings` | the audience; the organiser alone books on behalf (`holderId`, outside quotas) | `range`, `holder-is-participant`, `answer-required`, `resource-not-found`, `space-changed`, `too-many-people`, `outside-availability`, `misaligned`, `too-many-steps`, `not-open-yet`, `started`, `notice`, `beyond-horizon`, `blocked`, `unknown-account`, `participant-blocked`, `active-bookings`, `minutes-per-period`, `slot-taken`, `try-again` (a deadlock: send it again) |
 | `POST :id/cancel` | the holder or the organiser, ANY TIME before the start (D5) | `not-yours`, then `already-cancelled`, `history-frozen` |
 | `POST :id/withdraw` | a participant still in, until `participantWithdrawMinMinutes` before the start (D5) | `not-a-participant`, then `already-cancelled`, `history-frozen`, `withdrawal-delay` |
-| `POST resources/:id/blocks` | the organiser or the resource's linked account (D10) | `not-manager`, `history-frozen` (a start in the past), `range` (over 366 days), `bookings-inside-block` (with `bookingIds`, D29) |
+| `POST resources/:id/blocks` | the organiser or the resource's linked account (D10) | `not-manager`, `history-frozen` (a start more than `NEAR_NOW_MS`, 10 s, behind the server's now; a nearer one is the screen's "from now" and moves up to the server's now), `range` (over 366 days, or empty once moved up), `bookings-inside-block` (with `bookingIds`, D29) |
 | `DELETE blocks/:id` | the organiser any; the linked account only a block IT created | `block-not-found`, `not-yours`, `history-frozen` (ended) |
 
 - **THE LOCK ORDER: the SPACE row, then the RESOURCE row, both `FOR UPDATE`, in every colliding
@@ -405,3 +413,43 @@ answers per account, per association and per flag, as the real policy does. It c
 - the organiser list paged; a booking vanishing between two reads.
 
 It runs in CI with the other integration specs (#1915).
+
+## WP-B4 as built - the organiser's API (2026-10-17)
+
+`BookingSpacesController` and `BookingSpacesService`, under the same prefix and guard as WP-B3. The
+screens come in a pull request of their own; this half is what they write through.
+
+| Route | Who | Refusal codes |
+|---|---|---|
+| `GET managed?associationId` | the entity's organiser; without the parameter, the actor's PERSONAL spaces | `not-manager` |
+| `POST spaces` | anyone for a personal space (D16); `MANAGE_BOOKINGS` for an entity's (`associationId`) | `not-manager`, and the settings codes below |
+| `GET spaces/:id/manage` | the organiser: every setting, every resource with its linked account, private text and availability | `space-not-found`, `not-manager` |
+| `PATCH spaces/:id` | the organiser; any subset of the settings (D35), `null` clears | `time-zone`, `step-shape`, `quota-pair`, `file-question-not-yet`, `item-id`, `audience-invalid`, `bookings-inside-change` (with `bookingIds`) |
+| `DELETE spaces/:id` | the organiser: the space and EVERYTHING under it (D27) | `not-manager` |
+| `POST spaces/:id/resources`, `PATCH resources/:id` | the organiser; a linked account must exist | `unknown-account` |
+| `DELETE resources/:id` | the organiser; refused while it has COMING live bookings (D29 applied to the whole resource) | `bookings-inside-change` |
+| `PUT resources/:id/availability` | the organiser: the resource's WHOLE availability (weekly and dated lines, closures), replaced | `line-kind`, `line-date`, `line-order`, `exception-range`, `bookings-inside-change` |
+
+- **D29 UNDER THE SPACE LOCK.** A change of availability, of the zone, the mode, the step or the
+  step ceiling, and the deletion of a resource, all take the SPACE row lock - the first lock every
+  booking takes - and only then run `assertAvailabilityChangeAllowed`. No booking can be made
+  between the check and the write; a test races the two and only one ever succeeds.
+- **The database's CHECKs are refused first, as codes** (`step-shape`, `quota-pair`), so a
+  constraint violation is never a 500. Switching to predefined slots clears the step.
+- **Rights** are the module's: `MANAGE_BOOKINGS` on the owning entity, the owner of a personal
+  space, a global admin. Creating an entity's space asks the same right.
+- **The audience and each question's condition** go through the forms' `parseAudienceCondition`,
+  with the entity's cotisation tiers, so a space and a form agree on who an ICM is.
+- **A FILE question is refused (`file-question-not-yet`) until WP-B6** brings the bookings half of
+  WP-F's storage and purge: accepted now, it would be a question nobody could answer.
+- **Times** are stored `HH:MM:SS`, `24:00` included; a window crossing midnight is two lines (WP-B2).
+- **The poster (D35) is SCHEDULED IN WP-B6, not dropped** (Master, 2026-10-17): 087 has no column
+  for it, so WP-B6 adds the column and its purge with a migration; the General section of the
+  editor gains the field then.
+- **Nothing new to erase**: no column was added. The linked account was already covered by
+  `BOOKINGS_ERASURE_STATEMENTS` (WP-B1).
+
+**Proof.** In `bookings.service.integration.spec.ts`, "the organiser (WP-B4)": rights per entity,
+the settings codes, availability written and read back, D29 naming the booking for availability,
+step and resource deletion, a booking racing an availability change (five rounds, never both), a
+linked account that must exist, a space deleted with everything.
