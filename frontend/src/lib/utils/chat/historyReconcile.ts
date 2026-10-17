@@ -951,19 +951,35 @@ export async function reconcileAllGroups(
   // against this list, so the difference between the two - the deferred groups - is exactly what
   // comes back on the next connection.
   const askedGroups: string[] = [];
+  // ONE LINE PER SWEEP, NOT ONE PER GROUP. A group asked inside the coalescing window is the
+  // EXPECTED outcome of a second sweep (measured 2026-10-14: 45 identical "asked 30s ago" lines in
+  // 250 ms at a cold start), so it is counted and reported once in the pass line below. The
+  // per-call line in `reconcileGroup` stays for the single-group triggers, where it explains a
+  // repair that was announced and did not happen.
+  let coalesced = 0;
 
   const worker = async (): Promise<void> => {
     for (;;) {
       const groupId = queue.shift();
       if (groupId === undefined) return;
+      if (recentlyAsked(groupId, Date.now())) {
+        // The same fresh-walk reset `reconcileGroup` performs before it reaches the window check.
+        chased.delete(groupId);
+        coalesced++;
+        continue;
+      }
       if (await reconcileGroup(mlsService, groupId, log)) askedGroups.push(groupId);
     }
   };
 
   const started = Date.now();
   await Promise.all(Array.from({ length: Math.min(ELECTION_CONCURRENCY, total) }, () => worker()));
+  const swallowed =
+    coalesced > 0
+      ? `, ${coalesced} already asked within ${PROBE_COALESCE_MS / 1000}s and not asked again`
+      : '';
   log(
-    `[HISTORY_RECONCILE] reconciliation pass complete - ${askedGroups.length}/${total} group(s) asked in ${Date.now() - started} ms`
+    `[HISTORY_RECONCILE] reconciliation pass complete - ${askedGroups.length}/${total} group(s) asked${swallowed} in ${Date.now() - started} ms`
   );
   return askedGroups;
 }

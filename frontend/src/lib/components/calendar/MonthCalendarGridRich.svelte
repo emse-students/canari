@@ -20,6 +20,7 @@
     eventCardsOnDay,
     eventOwners,
     organiserCentred,
+    eventTooltip,
   } from '$lib/calendar/feedEvents';
   import { localizedWeekdays, monthGridDays } from '$lib/calendar/monthGrid';
   import { isToday } from '$lib/utils/dates';
@@ -305,7 +306,7 @@
                       : ''}"
                     title={ev.status === 'pending'
                       ? m.calendar_event_pending_title({ title: ev.title })
-                      : `${ev.title} - ${ev.associationName}`}
+                      : eventTooltip(ev)}
                   >
                     <!-- Day number on the first slot, IN ITS OWN ROW rather than pinned to the
                          corner. The export does exactly this (`calendarExport.ts`, `DAY_NUM_H = 20`
@@ -403,7 +404,7 @@
                     >
                       <span
                         class="text-center font-bold"
-                        title="{ev.title} - {ev.associationName}"
+                        title={eventTooltip(ev)}
                         style="color:{fg};font-size:{fontToken(
                           fit.fontSize
                         )};line-height:{EVENT_TITLE_LINE_HEIGHT};{fit.clampCss}">{ev.title}</span

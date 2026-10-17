@@ -236,6 +236,7 @@ names joined with " + " in one truncating span. Those rows now draw `OrganiserFa
 circular `AssociationAvatar` faces ringed in the surface colour, then a `+N` pill, carrying the full
 list as its `aria-label` and title. The label is `eventOwnersLabel`: `A`, `A + B`, then `A + N others`
 from three on (`organisersLabel`); the full list is `organisersFullList` and the detail modal.
+The grid cell's tooltip lists every organiser (`eventTooltip`), and a calendar entry's SUMMARY and the share title read `title - A + B`, `A + N others` from three on (`eventSummary` client side, `organisersSummary` in `calendar-ics.util.ts` for the feed, French "autres").
 **Nothing was rendered on a phone**: the stack's ring and overlap, and its look on the row's hover
 background, are owed one reading.
 
