@@ -62,20 +62,34 @@ vi.mock('$lib/utils/apiFetch', () => ({
   }),
 }));
 
-/** The E2E worker: answers `setKey` with `keyReady` and `getCounters` with its totals, as the real one does. */
+/** Every fake worker built, and the keys each was handed - to drive its messages from a test. */
+const workers = vi.hoisted(
+  () =>
+    [] as {
+      onmessage: ((e: MessageEvent) => void) | null;
+      keys: { send: ArrayBuffer; receive: ArrayBuffer } | null;
+    }[]
+);
+
+/** The E2E worker: answers `setKeys` with `keyReady` and `getCounters` with its totals, as the real one does. */
 vi.mock('../workers/encryption.worker?worker', () => ({
   default: class {
     onmessage: ((e: MessageEvent) => void) | null = null;
+    keys: { send: ArrayBuffer; receive: ArrayBuffer } | null = null;
     private listeners: ((e: MessageEvent) => void)[] = [];
+    constructor() {
+      workers.push(this);
+    }
     addEventListener(type: string, l: (e: MessageEvent) => void) {
       if (type === 'message') this.listeners.push(l);
     }
     removeEventListener(_: string, l: (e: MessageEvent) => void) {
       this.listeners = this.listeners.filter((x) => x !== l);
     }
-    postMessage(msg: { type: string }) {
+    postMessage(msg: { type: string; send?: ArrayBuffer; receive?: ArrayBuffer }) {
+      if (msg.type === 'setKeys') this.keys = { send: msg.send!, receive: msg.receive! };
       const data =
-        msg.type === 'setKey'
+        msg.type === 'setKeys'
           ? { type: 'keyReady' }
           : msg.type === 'getCounters'
             ? {
@@ -191,7 +205,10 @@ class FakeTransform {
 const fakeTrack = () => ({ kind: 'audio', stop: vi.fn(), enabled: true });
 const fakeMls = {
   getDeviceId: () => 'device-1',
-  exportSecret: vi.fn(async () => new Uint8Array(32).fill(7)),
+  // A key filled with the context's LAST byte: `...|caller` and `...|callee` give different keys.
+  exportSecret: vi.fn(async (_g: string, _l: string, context: Uint8Array) =>
+    new Uint8Array(32).fill(context[context.length - 1])
+  ),
   sendMessage: vi.fn(async () => {}),
 } as unknown as IMlsService;
 
@@ -200,6 +217,7 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => {
   trail.length = 0;
+  workers.length = 0;
   server.ringTimeoutMs = 60_000;
   server.initiateStatus = 200;
   server.iceStatus = 200;
@@ -238,11 +256,19 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+/**
+ * The signalling socket, once the service has opened it: the key derivation before it is several
+ * awaits deep, so the test waits for the EVENT (the socket exists), not a number of ticks.
+ */
+async function socketCreated() {
+  await vi.waitFor(() => expect(FakeSocket.instances).toHaveLength(1));
+  return FakeSocket.instances[0];
+}
+
 /** Starts a call as the caller and returns its signalling socket, opened and joined. */
 async function callerJoined(service: CallService) {
   const started = service.startCall('group-1', false);
-  await settle();
-  const ws = FakeSocket.instances[0];
+  const ws = await socketCreated();
   ws.open();
   ws.deliver({ type: 'Joined', room_id: 'room-1' });
   await started;
@@ -321,8 +347,7 @@ describe('a peer-to-peer call, client side', () => {
       'device-1'
     );
     const accepted = service.acceptCall('group-1', 'room-1');
-    await settle();
-    const ws = FakeSocket.instances[0];
+    const ws = await socketCreated();
     ws.open();
     ws.deliver({ type: 'Joined', room_id: 'room-1' });
     await accepted;
@@ -355,8 +380,7 @@ describe('a peer-to-peer call, client side', () => {
   it('fails at once on a refused join instead of waiting out the timeout', async () => {
     const service = new CallService(fakeMls);
     const started = service.startCall('group-1', false);
-    await settle();
-    const ws = FakeSocket.instances[0];
+    const ws = await socketCreated();
     ws.open();
     ws.deliver({ type: 'Refused', reason: 'room-full' });
     await expect(started).rejects.toThrow('room-full');
@@ -458,8 +482,7 @@ describe('the ring opens the server window', () => {
     const service = new CallService(fakeMls);
 
     const started = service.startCall('group-1', false);
-    await settle();
-    const ws = FakeSocket.instances[0];
+    const ws = await socketCreated();
     ws.open();
     ws.deliver({ type: 'Joined', room_id: 'room-1' });
 
@@ -579,5 +602,98 @@ describe('the call report', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+/** The media keys: one per direction, logged as a hash, and a mismatch the user SEES (F5). */
+describe('the call keys', () => {
+  const byte = (b: ArrayBuffer) => new Uint8Array(b)[0];
+  const CALLER = 'r'.charCodeAt(0); // the last byte of `room-1|caller`
+  const CALLEE = 'e'.charCodeAt(0); // the last byte of `room-1|callee`
+
+  it('the caller sends with the caller key and decrypts with the callee key', async () => {
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+
+    const { keys } = workers[0];
+    expect(byte(keys!.send)).toBe(CALLER);
+    expect(byte(keys!.receive)).toBe(CALLEE);
+  });
+
+  it('the callee holds the same two keys, the other way round', async () => {
+    const service = new CallService(fakeMls);
+    service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      {
+        callId: 'room-1',
+        offerSdp: 'START',
+        hasVideo: false,
+        deviceId: 'device-2',
+        ringTimeoutMs: 60_000,
+      },
+      'me@example.org',
+      'device-1'
+    );
+    const accepted = service.acceptCall('group-1', 'room-1');
+    const ws = await socketCreated();
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1' });
+    await accepted;
+    ws.deliver({ type: 'PeerReady', initiator: false });
+    await settle();
+
+    const { keys } = workers[0];
+    expect(byte(keys!.send)).toBe(CALLEE);
+    expect(byte(keys!.receive)).toBe(CALLER);
+  });
+
+  it('logs a hash of each key, never key bytes', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+
+    const line = trail.find((l) => l.includes('media keys derived'));
+    expect(line).toMatch(/role=caller send_fp=[0-9a-f]{8} recv_fp=[0-9a-f]{8}\)$/);
+    const hex = (b: number) => b.toString(16).repeat(4);
+    expect(line).not.toContain(hex(CALLER));
+    expect(line).not.toContain(hex(CALLEE));
+  });
+
+  describe('a key mismatch', () => {
+    const fail = (count: number) =>
+      workers[0].onmessage?.({
+        data: { type: 'decryptError', detail: 'OperationError', count },
+      } as MessageEvent);
+
+    async function inCall() {
+      const { showToast } = await import('$lib/stores/toast.svelte');
+      vi.mocked(showToast).mockClear();
+      const service = new CallService(fakeMls);
+      const ws = await callerJoined(service);
+      ws.deliver({ type: 'PeerReady', initiator: true });
+      await settle();
+      return showToast;
+    }
+
+    it('is shown once, when the failures reach the proof and nothing ever decrypted', async () => {
+      const showToast = await inCall();
+      fail(3);
+      expect(showToast).not.toHaveBeenCalled();
+      fail(100);
+      fail(200);
+      expect(showToast).toHaveBeenCalledTimes(1);
+      expect(showToast).toHaveBeenCalledWith(m.call_e2e_key_mismatch(), 'error');
+    });
+
+    it('is never shown once a frame has decrypted', async () => {
+      const showToast = await inCall();
+      workers[0].onmessage?.({
+        data: { type: 'decryptOk', count: 1, mediaKind: 'audio' },
+      } as MessageEvent);
+      fail(100);
+      expect(showToast).not.toHaveBeenCalled();
+    });
   });
 });

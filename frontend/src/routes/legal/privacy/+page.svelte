@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="16/10/2026"
+  updated="18/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -117,6 +117,17 @@
         </dd>
       </div>
       <div>
+        <dt>Appels audio (quand la fonction est ouverte)</dt>
+        <dd>
+          Le son est chiffré de bout en bout entre les deux appareils : ni notre serveur ni
+          Cloudflare ne peuvent l'écouter. Le serveur connaît l'appel lui-même : la conversation,
+          qui appelle, l'heure et la durée, conservées quelques heures au plus. Pour se joindre
+          directement, <strong>les deux appareils échangent leur adresse IP</strong> : chaque participant
+          peut donc connaître celle de l'autre. Quand la connexion directe est impossible, le son chiffré
+          passe par un relais de Cloudflare (section 4).
+        </dd>
+      </div>
+      <div>
         <dt>Liens partagés</dt>
         <dd>
           Quand un lien est affiché avec un aperçu, son adresse est envoyée à notre serveur, qui
@@ -185,6 +196,11 @@
           <tr>
             <td>Publications, réactions, CanaReels, agenda</td>
             <td>Diffuser ce que vous publiez à l'audience choisie</td>
+            <td>Exécution du service (6.1.b)</td>
+          </tr>
+          <tr>
+            <td>Appels audio</td>
+            <td>Établir un appel chiffré entre deux membres d'une conversation</td>
             <td>Exécution du service (6.1.b)</td>
           </tr>
           <tr>
@@ -292,6 +308,12 @@
           (canari-emse.fr et dev.canari-emse.fr) passent par Cloudflare (Cloudflare Inc.,
           États-Unis), qui voit alors les requêtes, votre adresse IP et les données transmises hors
           contenu chiffré. Le nom principal, canari.emse.fr, ne passe pas par Cloudflare.
+        </p>
+        <p>
+          Pour les appels, Cloudflare fournit aussi un relais (TURN) utilisé quand deux appareils ne
+          peuvent pas se joindre directement. Il voit alors les adresses IP des deux appareils, le
+          moment et le volume de l'appel, mais jamais le son, chiffré de bout en bout. Notre serveur
+          ne lui transmet aucun identifiant de compte.
         </p>
       </li>
       <li>

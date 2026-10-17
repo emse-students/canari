@@ -12,7 +12,8 @@
 //! `docs/wiki/infrastructure/realtime-media-feasibility.md` section 8.2 (A).
 //!
 //! WHAT IT DOES NOT CHANGE. The SDP carries no secret the media key depends on: the frame key is
-//! `exportSecret(groupId, 'mls-webrtc-media', callId)` on each client, so forwarding SDP in clear
+//! exported from the conversation's MLS group on each client (one key per direction,
+//! `frontend/src/lib/utils/callKeys.ts`), so forwarding SDP in clear
 //! over the authenticated socket is the same exposure the SFU path already had.
 //!
 //! THE ROLES. The first peer in the room (the caller, who joins before ringing) is told

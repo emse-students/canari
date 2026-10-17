@@ -178,22 +178,27 @@ conversation at level `none` still rings an OPEN app: the in-app ring is the MLS
 socket, which the level does not filter (it filters pushes) - the decision the SEVENTH item above
 asks for is still owed.
 
-**OWED BEFORE `CALLS_COMPILED` FLIPS** (the review of #1997, 2026-10-17; none of it blocks a dev-only
-build, all of it blocks production):
+**WHAT #1997'S REVIEW SAID WAS OWED BEFORE `CALLS_COMPILED` FLIPS IS BUILT (2026-10-18):**
 
-- **F4 - say who sees what.** `iceTransportPolicy: 'all'` lets each party learn the other's public
-  IP, and Cloudflare (TURN) becomes a recipient of call metadata and relayed media. Both belong in
-  `docs/wiki/compliance/register-of-processing.md` and on `/legal/privacy` before production calls.
-- **F5 - a key both ends AGREE on, or a failure the user SEES.** Each side derives its key alone
-  (`exportSecret(groupId, 'mls-webrtc-media', callId)`); two devices at different MLS epochs derive
-  different keys and the call "connects" in silence. Owed: an epoch/fingerprint agreement over the
-  signalling channel, or at least a visible "decrypt failing" toast driven by the worker's
-  `decryptError` count.
-- **One key, both directions, no AAD.** The same AES-GCM key encrypts both parties' frames and the
-  frame header is not bound as additional data; a per-direction key (or the sender's leaf index in
-  the IV/AAD) closes the nonce-collision and reflection questions.
-- **The `fp=` log line prints the first 4 BYTES OF THE KEY** (`CallService.setupEncryption`). Log a
-  hash of the key instead (e.g. the first bytes of SHA-256), never key material.
+- **F4 - who sees what.** Row C18 and a Cloudflare Realtime TURN processor row in
+  [register-of-processing](../../compliance/register-of-processing.md), and the matching paragraphs
+  of `/legal/privacy` (sections 2, 3 and 4): each party learns the other's public IP; a relayed call
+  shows Cloudflare both IPs, time and volume, never the audio.
+- **One key per direction, frames bound to their kind** (`utils/callKeys.ts`). Each direction's key is
+  `exportSecret(groupId, 'mls-webrtc-media-v2', '<callId>|<sender role>', 32)`; the caller sends
+  with `caller` and decrypts with `callee`, the callee the reverse. The worker imports the send key
+  for `encrypt` only and the receive key for `decrypt` only, and every frame carries
+  `canari-call-v2|<audio|video>` as AES-GCM additional data. A reflected frame, a frame of the other
+  kind and a frame of another call all fail (`callKeys.test.ts`, real WebCrypto).
+- **F5 - a mismatch the user SEES.** `DECRYPT_MISMATCH_FAILURES` (100) failures with NOT ONE frame
+  decrypted - a count a matching key never reaches, since it decrypts the first frame - logs an
+  `ERROR E2E key mismatch` and shows `call_e2e_key_mismatch` once per call. A key AGREEMENT over the
+  signalling channel is not built: the relay carries a closed set of frames, and a mismatch is
+  diagnosable from two exported logs, where one side's `send_fp` must equal the other's `recv_fp`.
+- **The key log is a hash.** `media keys derived from MLS (role= send_fp= recv_fp=)`: the first 4
+  bytes of each key's SHA-256, never key bytes.
+
+What still stands between dev and production is the revival plan's campaign, not this list.
 
 ## Responsibilities
 
