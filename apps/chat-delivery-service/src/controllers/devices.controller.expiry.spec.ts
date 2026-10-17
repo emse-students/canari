@@ -278,8 +278,8 @@ describe('DevicesController - a key package past its lifetime', () => {
       const { controller } = await build({
         otkpRepo: { create: (row: unknown) => row, save: async (rows: unknown[]) => rows },
       });
-      const warn = jest.mocked(controller['logger'].warn);
-      const log = jest.mocked(controller['logger'].log);
+      const warn = jest.spyOn(controller['logger'], 'warn');
+      const log = jest.spyOn(controller['logger'], 'log');
       const send = (keyPackages: unknown) =>
         controller.registerDevicePrekeys({ userId: 'u1', deviceId: 'd1', keyPackages }, 'u1');
 
