@@ -74,6 +74,7 @@
 - [Live](frontend/modules/live.md) — Livestream plan (R4/C9): the user's 2026-10-15 decisions, open questions, work packages; not started
 - [Associations module](frontend/modules/associations.md) — Club management, members, calendar, shop, documents
 - [Forms module](frontend/modules/forms.md) — Form builder, submissions, cash/Stripe payments
+- [Calls revival plan](frontend/modules/calls-revival-plan.md) - draft 2026-10-15: decisive tests first, the endpoint x network x call-kind matrix, the App Review video, a server-side switch, WP-C0..C13
 - [Calendar module](frontend/modules/calendar.md) — Events, ICS export, global calendar
 - [Posts module](frontend/modules/posts.md) — Feed, polls, reactions, comments
 - [CanaReels (client)](frontend/modules/reels.md) — The camera tab, the capture screen, publishing a reel, the vertical viewer, save to gallery
