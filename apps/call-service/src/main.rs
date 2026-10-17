@@ -595,6 +595,23 @@ fn end_session(session: &PeerSession, disposition: Disposition) {
     }
 }
 
+/// Validates the room-token secret read from `CALL_ROOM_SECRET`.
+///
+/// WHY AN ERROR AND NOT A WARNING: the join handler only checks the room token when this secret is
+/// non-empty, so an empty one is not a weaker configuration but NO access control. Refusing to boot
+/// makes the misconfiguration an outage that names the variable, instead of an open door.
+fn require_room_secret(raw: Option<String>) -> anyhow::Result<String> {
+    match raw.map(|v| v.trim().to_string()).filter(|v| !v.is_empty()) {
+        Some(secret) => Ok(secret),
+        None => {
+            error!("CALL_ROOM_SECRET is not set or empty - refusing to start: room access control would be disabled");
+            anyhow::bail!(
+                "CALL_ROOM_SECRET must be set to a non-empty value (it signs the room tokens chat-delivery-service issues)"
+            )
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt::init();
@@ -604,10 +621,10 @@ async fn main() -> anyhow::Result<()> {
         String::new()
     });
 
-    let call_room_secret = std::env::var("CALL_ROOM_SECRET").unwrap_or_default();
-    if call_room_secret.is_empty() {
-        warn!("CALL_ROOM_SECRET not set - room access control is DISABLED; any authenticated user can join any room");
-    }
+    // FAIL CLOSED: an empty secret used to switch room access control OFF, so any authenticated
+    // user could join any room. Every estate sets it (env-manifest.tsv, the local compose), so the
+    // service refuses to start rather than run open.
+    let call_room_secret = require_room_secret(std::env::var("CALL_ROOM_SECRET").ok())?;
 
     let state = Arc::new(AppState {
         rooms: DashMap::new(),
@@ -1584,18 +1601,24 @@ async fn fetch_cloudflare_ice_servers() -> Option<Vec<RTCIceServer>> {
 /// Static TURN from env when Cloudflare is not configured (dev only).
 fn ice_servers_from_env() -> Vec<RTCIceServer> {
     let turn_url = std::env::var("TURN_URL").ok();
-    let turn_user = std::env::var("TURN_USERNAME").unwrap_or_else(|_| "user".to_string());
-    let turn_cred = std::env::var("TURN_CREDENTIAL").unwrap_or_else(|_| "password".to_string());
+    let turn_user = std::env::var("TURN_USERNAME").unwrap_or_default();
+    let turn_cred = std::env::var("TURN_CREDENTIAL").unwrap_or_default();
 
     if let Some(urls_raw) = turn_url.filter(|s| !s.trim().is_empty()) {
-        let urls: Vec<String> = urls_raw
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect();
-        if !urls.is_empty() {
-            info!("SFU using TURN_URL env ({} URL(s))", urls.len());
-            return vec![build_rtc_ice_server(urls, Some(turn_user), Some(turn_cred))];
+        // NO DEFAULT CREDENTIAL: a guessable `user`/`password` pair is a TURN relay anyone can use.
+        // A TURN_URL without both credentials is a misconfiguration, accused here and not papered over.
+        if turn_user.is_empty() || turn_cred.is_empty() {
+            error!("[ICE] TURN_URL is set but TURN_USERNAME / TURN_CREDENTIAL are not - the static TURN server is IGNORED");
+        } else {
+            let urls: Vec<String> = urls_raw
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+            if !urls.is_empty() {
+                info!("SFU using TURN_URL env ({} URL(s))", urls.len());
+                return vec![build_rtc_ice_server(urls, Some(turn_user), Some(turn_cred))];
+            }
         }
     }
 
@@ -1815,6 +1838,19 @@ async fn create_peer_connection() -> anyhow::Result<RTCPeerConnection> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn room_secret_is_required() {
+        assert!(require_room_secret(None).is_err());
+        assert!(require_room_secret(Some(String::new())).is_err());
+        assert!(require_room_secret(Some("   ".to_string())).is_err());
+        let err = require_room_secret(None).unwrap_err().to_string();
+        assert!(err.contains("CALL_ROOM_SECRET"));
+        assert_eq!(
+            require_room_secret(Some(" s3cret ".to_string())).unwrap(),
+            "s3cret"
+        );
+    }
 
     fn ledger() -> CallLedger {
         CallLedger::new("room-1".to_string(), "user-1:dev-a".to_string())

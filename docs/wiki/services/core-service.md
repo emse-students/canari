@@ -569,14 +569,14 @@ Merging them is a policy decision: picking one guard as "the" guard silently cha
 
 | Where | Refuses on |
 | --- | --- |
-| `core-service/.../nginx-auth.guard.ts` | empty `x-user-id` |
-| `social-service/.../nginx-auth.guard.ts` | empty `x-user-id`, and a 401 when `NODE_ENV` is UNSET |
+| `core-service/.../nginx-auth.guard.ts` | empty `x-user-id`, an unset `INTERNAL_SHARED_SECRET` or an invalid token, in EVERY environment (2026-10-17) |
+| `social-service/.../nginx-auth.guard.ts` | the same three, in EVERY environment (2026-10-17); `NODE_ENV` no longer matters |
 | `chat-delivery-service/.../header-auth.guard.ts` | `x-user-logged-in !== 'true'` (logs a denial on `/push/` routes) |
 | `chat-gateway/src/presence.rs` | empty `x-user-id` - Rust, stays where it is |
 
-**CodeQL 2547 (`js/user-controlled-bypass`, 2026-10-09) WAS REAL, AND IS CLOSED FOR `chat-delivery-service` ONLY.** Its guard skipped the HMAC when `INTERNAL_SHARED_SECRET` was unset and `NODE_ENV` was not `production`, so `x-user-logged-in: true` alone was the credential (proved by a failing test first). nginx clears and re-sets that header, and prod/dev pin `NODE_ENV=production` with the secret, so no estate was exposed; a bare local run was. The guard now requires the secret, a non-empty `x-user-id` and a valid token in EVERY environment, and the only callers of its routes are nginx-fronted. The remaining guards are tracked in the backlog as a policy decision.
+**CodeQL 2547 (`js/user-controlled-bypass`, 2026-10-09) WAS REAL, AND IS CLOSED FOR `chat-delivery-service` ONLY.** Its guard skipped the HMAC when `INTERNAL_SHARED_SECRET` was unset and `NODE_ENV` was not `production`, so `x-user-logged-in: true` alone was the credential (proved by a failing test first). nginx clears and re-sets that header, and prod/dev pin `NODE_ENV=production` with the secret, so no estate was exposed; a bare local run was. The guard now requires the secret, a non-empty `x-user-id` and a valid token in EVERY environment, and the only callers of its routes are nginx-fronted. core and social followed on 2026-10-17: the secret and the token are required whatever `NODE_ENV` says, and a test that wants the guard supplies a secret (every estate already did: deploy manifest, local compose, CI boot job).
 
-The same decision says whether `X-Internal-Token` is required OUTSIDE production too for core and social (chat-delivery answers yes since 2026-10-09). Presence about an arbitrary user id is not an access-rule question; it is parked in `presence.rs`'s docblock.
+That decision is taken for all three services (2026-10-17). Presence about an arbitrary user id is not an access-rule question; it is parked in `presence.rs`'s docblock.
 
 ## Environment variables
 
