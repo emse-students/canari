@@ -7,7 +7,7 @@ import {
 } from '$lib/utils/chat/salonUnread';
 import { flushSalonReadMarks } from '$lib/utils/chat/salonReadMarkQueue';
 import { ChannelApiError, ChannelService } from '$lib/services/ChannelService';
-import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
+import { RefreshFailedError, SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import type { IMlsService } from '$lib/mlsService';
@@ -819,6 +819,9 @@ export function useChannelWorkspaces() {
    * @param toast When false, skips the toast because the caller surfaces the error itself. Defaults to true.
    */
   function toUiActionError(action: string, error: unknown, toast = true): string {
+    // THE USER IS SIGNING OUT: the action stopped because of what they chose, so no error toast is
+    // raised over the sign-out. The session line is still returned, for the log and an inline field.
+    if (error instanceof SignOutInProgressError) return m.channel_action_error_session({ action });
     const { status, code, detail } = classifyApiError(error);
 
     // A typed refusal is answered from its code, which is more precise than any status.

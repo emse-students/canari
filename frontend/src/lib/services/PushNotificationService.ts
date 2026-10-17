@@ -432,6 +432,9 @@ export async function stopPushService(
         headers: {
           Authorization: `Bearer ${bearerToken}`,
           'x-user-logged-in': 'true',
+          // READ SYNCHRONOUSLY, AND IT RELIES ON CALL ORDER: at a sign-out this runs from the handler
+          // `clearAuth` calls FIRST, and nothing above awaits, so the identity is still saved here.
+          // `clearAuth` drops it on its next line - an `await` added above this read would send ''.
           'x-user-id': currentUserId() ?? '',
         },
       }
