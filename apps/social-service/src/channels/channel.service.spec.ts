@@ -24,6 +24,9 @@ import {
 /** A well-formed Graine v2 signature: every salon row carries one (channel-encryption 21.8). */
 const SIGNATURE = Buffer.alloc(64, 7).toString('base64');
 
+/** A client message id as `crypto.randomUUID()` mints it (migration 088). */
+const CLIENT_ID = '3f1c2b9a-7d4e-4c1a-9b2e-5a6d7c8e9f01';
+
 describe('ChannelService security hardening', () => {
   const previousSecret = process.env.INTERNAL_SECRET;
 
@@ -1212,7 +1215,7 @@ describe('ChannelService security hardening', () => {
         messageIndex: 4,
       };
       const shapes: [string, Record<string, unknown>][] = [
-        ['a text message with its seed frame', { messageId: 'client-1', ...FRAME }],
+        ['a text message with its seed frame', { messageId: CLIENT_ID, ...FRAME }],
         ['a silent reaction or edit', { silent: true }],
         [
           'a poll',
@@ -1273,6 +1276,129 @@ describe('ChannelService security hardening', () => {
         throw new Error('connection reset');
       });
       await expect(done).rejects.toThrow('connection reset');
+    });
+  });
+
+  /**
+   * WP-OFF-3: a send repeated after a lost answer is answered with the row it already made. The
+   * client's durable queue re-posts a salon message whose first POST got no answer; without this the
+   * repeat of a POST that DID land wrote a second row (a duplicate on every member's screen).
+   */
+  describe('a repeated send is answered with its stored row (migration 088)', () => {
+    const STORED = {
+      id: 'm-first',
+      channelId: 'ch1',
+      authorId: 'u1',
+      clientMessageId: CLIENT_ID,
+      createdAt: new Date(1_000),
+    };
+    const send = (
+      extra: Record<string, unknown>,
+      opts: { stored?: unknown; save?: (row: any) => Promise<unknown> } = {}
+    ) => {
+      const repos = makeService();
+      repos.channelRepo.findOne.mockResolvedValue({ id: 'ch1', workspaceId: 'ws1', isPrivate: false });
+      repos.memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
+      repos.memberRepo.find.mockResolvedValue([]);
+      repos.messageRepo.findOne.mockResolvedValue(opts.stored ?? null);
+      repos.messageRepo.create.mockImplementation((row: any) => row);
+      repos.messageRepo.save.mockImplementation(
+        opts.save ?? (async (row: any) => ({ ...row, id: 'm-new', createdAt: new Date(2_000) }))
+      );
+      const done = repos.service.sendMessage('ch1', {
+        senderId: 'u1',
+        ciphertext: 'abc',
+        nonce: 'def',
+        senderSessionId: 'sess-1',
+        messageIndex: 3,
+        signature: SIGNATURE,
+        ...extra,
+      } as never);
+      return { ...repos, done };
+    };
+    const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+    it('stores the client id with a new row', async () => {
+      const { done, messageRepo } = send({ messageId: CLIENT_ID });
+      await expect(done).resolves.toMatchObject({ id: 'm-new' });
+      expect(messageRepo.findOne).toHaveBeenCalledWith({
+        where: { channelId: 'ch1', authorId: 'u1', clientMessageId: CLIENT_ID },
+      });
+      expect(messageRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ clientMessageId: CLIENT_ID })
+      );
+    });
+
+    it('answers a repeat with the STORED row and writes, publishes and pushes nothing', async () => {
+      const { done, messageRepo, redis } = send(
+        // A repeat sealed anew (the roster moved): another session, the same client id.
+        { messageId: CLIENT_ID, senderSessionId: 'sess-2', messageIndex: 0 },
+        { stored: STORED }
+      );
+      await expect(done).resolves.toBe(STORED);
+      await settle();
+      expect(messageRepo.save).not.toHaveBeenCalled();
+      expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+    });
+
+    it('reads the id in either case: the stored key is lower case', async () => {
+      const { done, messageRepo } = send({ messageId: CLIENT_ID.toUpperCase() }, { stored: STORED });
+      await expect(done).resolves.toBe(STORED);
+      expect(messageRepo.findOne).toHaveBeenCalledWith({
+        where: { channelId: 'ch1', authorId: 'u1', clientMessageId: CLIENT_ID },
+      });
+    });
+
+    it('answers the loser of two racing repeats with the winner row, never a 409', async () => {
+      const repos = send(
+        { messageId: CLIENT_ID },
+        {
+          save: async () => {
+            throw Object.assign(new Error('duplicate key value'), { code: '23505' });
+          },
+        }
+      );
+      // Absent at the lookup, present once the insert collided.
+      repos.messageRepo.findOne.mockResolvedValueOnce(null).mockResolvedValueOnce(STORED);
+      await expect(repos.done).resolves.toBe(STORED);
+      await settle();
+      expect(repos.redis.publishChannelEvent).not.toHaveBeenCalled();
+    });
+
+    it('still answers a key reused under ANOTHER client id with the typed 409', async () => {
+      const repos = send(
+        { messageId: CLIENT_ID },
+        {
+          save: async () => {
+            throw Object.assign(new Error('duplicate key value'), { code: '23505' });
+          },
+        }
+      );
+      const error = await repos.done.catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ConflictException);
+    });
+
+    it('leaves a row with no client id alone: a silent row is never looked up', async () => {
+      const { done, messageRepo } = send({ silent: true });
+      await done;
+      expect(messageRepo.findOne).not.toHaveBeenCalled();
+      expect(messageRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ clientMessageId: null })
+      );
+    });
+
+    it.each([
+      ['a string that is not a UUID', 'client-1'],
+      ['a number', 42],
+      ['an empty string', ''],
+    ])('refuses %s as the client id, storing nothing', async (_label, messageId) => {
+      const { done, messageRepo } = send({ messageId });
+      const response = await done.then(
+        () => null,
+        (e: BadRequestException) => e.getResponse() as { code?: string }
+      );
+      expect(response?.code).toBe('CHANNEL_CLIENT_MESSAGE_ID_INVALID');
+      expect(messageRepo.save).not.toHaveBeenCalled();
     });
   });
 

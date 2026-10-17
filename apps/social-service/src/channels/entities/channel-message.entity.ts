@@ -27,6 +27,12 @@ import {
   unique: true,
   where: '"senderSessionId" IS NOT NULL',
 })
+// One row per message its author composed (migration 088): a send repeated after a lost answer is
+// answered with the stored row instead of writing a second one.
+@Index('UQ_channel_messages_author_client_id', ['authorId', 'channelId', 'clientMessageId'], {
+  unique: true,
+  where: '"clientMessageId" IS NOT NULL',
+})
 export class ChannelMessage {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -74,6 +80,15 @@ export class ChannelMessage {
    */
   @Column({ type: 'varchar', length: 88, nullable: true })
   signature: string | null;
+
+  /**
+   * The UUID the AUTHOR minted for this message, the same one sealed inside the ciphertext
+   * (`AppMessage.message_id`). Never the primary key - the server mints that - only what makes a
+   * repeated send idempotent: a second POST of the same author, salon and id returns this row
+   * (WP-OFF-3). Null on a silent row and on every row older than migration 088.
+   */
+  @Column({ type: 'varchar', length: 36, nullable: true })
+  clientMessageId: string | null;
 
   @Column({ type: 'uuid', nullable: true })
   replyTo: string;

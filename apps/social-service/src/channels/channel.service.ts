@@ -88,6 +88,9 @@ const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 /** An Ed25519 signature is 64 bytes, which padded base64 spells in exactly 88 characters. */
 const SIGNATURE_BASE64_CHARS = 88;
 
+/** A client message id is what `crypto.randomUUID()` mints: a canonical UUID, either case. */
+const CLIENT_MESSAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * 400 code: a salon row carrying no Graine v2 signature (channel-encryption section 21.8).
  *
@@ -3194,6 +3197,16 @@ export class ChannelService {
     await this.assertSeedFrame(channel, input);
     this.assertSigned(channel.id, input);
 
+    // A SEND REPEATED AFTER A LOST ANSWER IS ANSWERED WITH THE ROW IT ALREADY MADE (WP-OFF-3). The
+    // client's queue re-posts a message whose first POST got no answer, and only this side knows
+    // whether that POST landed: the id its author minted (and sealed inside the ciphertext) names the
+    // row, so the repeat writes nothing, publishes nothing and pushes nobody.
+    const clientMessageId = this.readClientMessageId(channel.id, input);
+    if (clientMessageId) {
+      const stored = await this.findByClientMessageId(channelId, input.senderId, clientMessageId);
+      if (stored) return stored;
+    }
+
     // A poll is just an encrypted message carrying a label-free descriptor: we
     // store its option IDs/deadline server-side (for tallying + auto-pin) while
     // the question and labels stay in the ciphertext. Auto-pinned so it stays
@@ -3220,12 +3233,16 @@ export class ChannelService {
       senderSessionId: input.senderSessionId,
       messageIndex: input.messageIndex,
       signature: input.signature ?? null,
+      clientMessageId,
       silent: input.silent === true,
       metadata: pollMeta ? { poll: pollMeta } : {},
       pinned: autoPin,
     });
 
-    const savedMsg = await this.saveUnderUnusedKey(msg, input);
+    const saved = await this.saveUnderUnusedKey(msg, input);
+    // Two repeats racing: the other one wrote the row, this one is answered with it.
+    if (saved.replayed) return saved.row;
+    const savedMsg = saved.row;
     if (pollMeta) {
       this.logger.log(
         `[POLL] created channel=${channelId} message=${savedMsg.id} options=${pollMeta.optionIds.length} endsAt=${pollMeta.endsAt ?? 'none'}`
@@ -3330,11 +3347,22 @@ export class ChannelService {
   private async saveUnderUnusedKey(
     msg: ChannelMessage,
     input: SendChannelMessageDto
-  ): Promise<ChannelMessage> {
+  ): Promise<{ row: ChannelMessage; replayed: boolean }> {
     try {
-      return await this.messageRepo.save(msg);
+      return { row: await this.messageRepo.save(msg), replayed: false };
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
+      // THE OTHER UNIQUE INDEX (migration 088): a repeat of this message landed between the lookup in
+      // `sendMessage` and this insert. Read from the ROW, never from the constraint's name in the
+      // driver's message: a row under this author's client id IS the answer.
+      if (msg.clientMessageId) {
+        const stored = await this.findByClientMessageId(
+          msg.channelId,
+          msg.authorId,
+          msg.clientMessageId
+        );
+        if (stored) return { row: stored, replayed: true };
+      }
       this.logger.error(
         `[CHANNEL_KEY_REUSED] refused channel=${msg.channelId} sender=${input.senderId.slice(0, 8)} ` +
           `session=${input.senderSessionId.slice(0, 8)} index=${input.messageIndex} - a replay or a key sealed twice`
@@ -3344,6 +3372,49 @@ export class ChannelService {
         message: 'a message under this session and index already exists',
       });
     }
+  }
+
+  /**
+   * The client id a send carries (`messageId`, the UUID its author sealed inside the ciphertext), or
+   * null when it carries none - a silent row, a system notice. Every shipped client mints it with
+   * `crypto.randomUUID()`, so anything that is not a UUID is refused rather than stored: a value the
+   * idempotence key cannot trust would make two different messages one.
+   */
+  private readClientMessageId(channelId: string, input: SendChannelMessageDto): string | null {
+    const { messageId } = input;
+    if (messageId === undefined || messageId === null) return null;
+    if (typeof messageId !== 'string' || !CLIENT_MESSAGE_ID.test(messageId)) {
+      this.logger.warn(
+        `[CHANNEL_SEND] refused channel=${channelId} sender=${input.senderId.slice(0, 8)}: ` +
+          `messageId is not a UUID (${typeof messageId === 'string' ? `${messageId.length}ch` : typeof messageId})`
+      );
+      throw new BadRequestException({
+        code: 'CHANNEL_CLIENT_MESSAGE_ID_INVALID',
+        message: 'messageId is the UUID the client minted for this message',
+      });
+    }
+    return messageId.toLowerCase();
+  }
+
+  /**
+   * The row this author already wrote in this salon under `clientMessageId`, or null. A hit is a
+   * repeated send (its first answer was lost), logged because it is the only trace the repeat leaves.
+   */
+  private async findByClientMessageId(
+    channelId: string,
+    authorId: string,
+    clientMessageId: string
+  ): Promise<ChannelMessage | null> {
+    const stored = await this.messageRepo.findOne({
+      where: { channelId, authorId, clientMessageId },
+    });
+    if (stored) {
+      this.logger.log(
+        `[CHANNEL_SEND] repeat of client message ${clientMessageId.slice(0, 8)} channel=${channelId} ` +
+          `sender=${authorId.slice(0, 8)} answered with its stored row ${stored.id.slice(0, 8)} - nothing written`
+      );
+    }
+    return stored ?? null;
   }
 
   /**
