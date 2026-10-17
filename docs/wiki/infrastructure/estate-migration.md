@@ -83,6 +83,13 @@ the certificate actually served and never assume it was renewed.
 
 The runner account change and the per-service moves followed one template. The traps that bind code:
 
+### The network shape, settled 2026-09-24 - only 22, 80 and 443 enter the target, from anywhere
+
+Measured with a control: a high port published by a container was reachable from the host itself but
+not from outside, while 22, 80 and 443 answered. The filter is the school's network border, so every
+service stays on loopback behind the host's nginx and nothing else is exposed or can be relied on to
+be reachable (for example, no inbound UDP range).
+
 ### `cercle` HAS MOVED - 2026-09-24, AND IT IS THE SHAPE THE OTHER TWO FOLLOW
 
 A copy, a verification against the old estate, then the traffic switch; rollback stays one line on

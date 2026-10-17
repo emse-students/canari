@@ -741,16 +741,12 @@ broken. *A double that encodes the wrong assumption does not miss a defect, it a
 correct.* The client half is in `frontend/src/lib/components/shop/PartnershipCardList.svelte`: a
 success carrying no code is now refused and logged rather than rendered as an empty code panel.
 
-### An association row carries two secrets, and three reads spread it whole
+### An association row carries secrets, and its reads must pass through one projection
 
-`GET /api/associations`, `/api/associations/:id` and `/api/associations/slug/:slug` sit under the
-controller's `── Public ──` banner and carry **no guard**. nginx puts `/api/associations` behind
-`auth_request`, but that check does not refuse an anonymous request, so those three were reachable without a session. All three returned
-`{ ...asso, memberCount, parentName }` - which spread `documentVaultKey`, the hex 32-byte master
-key every document CEK is derived from, and `notesCiphertext`.
-
-`toSafeAssociation` (`associations/association.projection.ts`) became the single seam that nulled
-both, applied at the three controller reads. Third instance of one rule, after `Channel.masterSecret`
+Association reads once returned the raw row, which includes secret columns (the document vault master
+key and ciphertext notes). **Fixed and shipped**; the exposure window and details are kept in the
+private notes. `toSafeAssociation` (`associations/association.projection.ts`) became the single seam
+that nulls the secrets, applied at the controller reads. Third instance of one rule, after `Channel.masterSecret`
 (since deleted outright) and `AssociationProduct.webhookSecret`: **an entity that carries a secret
 needs one projection, and every read has to pass through it.**
 
@@ -758,10 +754,9 @@ The seam is the controller, not the service, on purpose: `findById` is also used
 (`update`, `resolvePaymentTarget`), and stripping in the service would hand them a row whose key
 column reads null. The three reads are behind `NginxAuthGuard` since 2026-08-05.
 
-**A denylist was the wrong shape, and it leaked the next secret (2026-10-15).** It named two columns,
-so `lydiaAccountId` - the Lydia `vendor_token`, all `request/cancel` needs besides a sequential
-request id - reached every signed-in member, and `me/list`, `POST /`, `PATCH :id` and the logo
-routes answered the raw row, vault key included. `toAssociationView` replaced it: an ALLOWLIST on
+**A denylist was the wrong shape, and it leaked the next secret (2026-10-15, fixed).** It named two
+columns, so another provider identifier reached signed-in members, and some write routes answered the
+raw row. `toAssociationView` replaced it: an ALLOWLIST on
 all eight routes that answer a row, so a column added later is private until someone lists it. The
 payout account has its own read, `GET :id/payout-account` (`canManagePayoutAccount`). Story and
 test: [forms](../frontend/modules/forms.md#what-a-client-reads-of-a-submission-is-an-allowlist-2026-10-15).

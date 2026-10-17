@@ -731,7 +731,7 @@ and the camera records that frame, not the screen box. Detail and what is unveri
 
 User report on the Mi 9T (`1.2.9-alpha.3`): around the video the viewer was "pixelise et saccade".
 Read through the app's DevTools socket with the viewer left open, evidence in
-`F:/Programmation/canari-harness/a1-bench/r1016-reelbg/` (out of tree):
+`<harness-dir>/a1-bench/r1016-reelbg/` (out of tree):
 
 - **What was drawn**: one `<canvas>` 24x43 stretched to 436x945 CSS px (1080x2340 device px, 45x),
   `opacity: 0.6`, no `filter`, over `cn-scrim`; one `<video>` in the frame (718x1278, `contain`). No

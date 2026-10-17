@@ -452,7 +452,7 @@ describe('the inline-proto budget', () => {
   /** The shapes production actually carries, which the old 3 500 constant did not account for. */
   const realistic: PushMessageInput = {
     ...baseInput,
-    groupId: '7da231f8-119c-4ce2-884f-55f5c94c903f',
+    groupId: '00000000-0000-4000-8000-000000000001',
     queuedMessageId: 'c1f0a2b3-4d5e-6f70-8192-a3b4c5d6e7f8',
     senderId: 'd82cd226e4a94b1f8c3d5e6f70819a2b3c4d5e6f708192a3b4c5d6e7f8091a2b',
     senderName: 'Jolan Boudin',

@@ -74,7 +74,7 @@ not add a door - it makes the same door faster.
   for a review, then publish the patch Release (`0.14.16`). The deploy leaves by the normal path.
   Cost: one CI.
 - **The code is right and the estate is broken** (containers lost, box rebooted). That is not a
-  deploy, it is an operation: `ssh canari` then `make update-services-prod`. No version moves,
+  deploy, it is an operation: `make update-services-prod` on the production host. No version moves,
   because nothing changed.
 
 **Consequence, and it is deliberate: `deploy.yml` loses its `workflow_dispatch` as well as its `on:

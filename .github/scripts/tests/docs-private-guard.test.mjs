@@ -30,19 +30,7 @@ export function violations(text) {
   return PATTERNS.filter(([, re]) => re.test(text)).map(([label]) => label);
 }
 
-const PENDING_CLEANUP = new Set([
-  'docs/PROD-TEST-CERCLE.md',
-  'docs/user-guide/workflow-developpement.md',
-  'docs/wiki/backlog.md',
-  'docs/wiki/cotisations.md',
-  'docs/wiki/device-verification.md',
-  'docs/wiki/durable-rules.md',
-  'docs/wiki/ecosystem-convergence.md',
-  'docs/wiki/frontend/offline-and-weak-network.md',
-  'docs/wiki/profiles-and-access.md',
-  'docs/wiki/testing-methodology.md',
-  'docs/wiki/workflow-migration.md',
-]);
+const PENDING_CLEANUP = new Set([]);
 
 let failed = 0;
 const fail = (msg) => {
