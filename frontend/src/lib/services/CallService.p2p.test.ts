@@ -15,8 +15,11 @@ import { m } from '$lib/paraglide/messages';
  * docs/wiki/frontend/modules/calls.md.
  */
 
+/** Every log line and every release, in the order they happened: the end report's ordering is the guarantee. */
+const trail = vi.hoisted(() => [] as string[]);
+
 vi.mock('$lib/features', () => ({ CALLS_ENABLED: true }));
-vi.mock('$lib/utils/sessionLog', () => ({ appendLog: vi.fn() }));
+vi.mock('$lib/utils/sessionLog', () => ({ appendLog: vi.fn((line: string) => trail.push(line)) }));
 vi.mock('$lib/stores/toast.svelte', () => ({ showToast: vi.fn() }));
 vi.mock('$lib/utils/callPresence', () => ({ publishCallPresence: vi.fn(async () => {}) }));
 vi.mock('$lib/utils/chat/callSystemMessages', () => ({
@@ -59,27 +62,38 @@ vi.mock('$lib/utils/apiFetch', () => ({
   }),
 }));
 
-/** The E2E worker: answers `setKey` with `keyReady`, as the real one does. */
+/** The E2E worker: answers `setKey` with `keyReady` and `getCounters` with its totals, as the real one does. */
 vi.mock('../workers/encryption.worker?worker', () => ({
   default: class {
     onmessage: ((e: MessageEvent) => void) | null = null;
     private listeners: ((e: MessageEvent) => void)[] = [];
-    addEventListener(_: string, l: (e: MessageEvent) => void) {
-      this.listeners.push(l);
+    addEventListener(type: string, l: (e: MessageEvent) => void) {
+      if (type === 'message') this.listeners.push(l);
     }
     removeEventListener(_: string, l: (e: MessageEvent) => void) {
       this.listeners = this.listeners.filter((x) => x !== l);
     }
     postMessage(msg: { type: string }) {
-      if (msg.type !== 'setKey') return;
+      const data =
+        msg.type === 'setKey'
+          ? { type: 'keyReady' }
+          : msg.type === 'getCounters'
+            ? {
+                type: 'counters',
+                counters: { encFrames: 7, decFrames: 6, decFail: 1, keyframesIn: 0 },
+              }
+            : null;
+      if (!data) return;
       queueMicrotask(() => {
-        const e = { data: { type: 'keyReady' } } as MessageEvent;
+        const e = { data } as MessageEvent;
         this.onmessage?.(e);
         // A copy: the service removes its listener from inside the callback.
         for (const l of this.listeners.slice()) l(e);
       });
     }
-    terminate() {}
+    terminate() {
+      trail.push('worker.terminate');
+    }
   },
 }));
 
@@ -150,8 +164,20 @@ class FakePeerConnection {
     this.signalingState = sdp.type === 'offer' ? 'have-remote-offer' : 'stable';
   }
   async addIceCandidate() {}
+  connectionState: RTCPeerConnectionState = 'new';
+  iceConnectionState: RTCIceConnectionState = 'checking';
+  async getStats() {
+    return new Map() as unknown as RTCStatsReport;
+  }
   close() {
     this.closed = true;
+    trail.push('pc.close');
+  }
+  /** What the browser does when ICE and DTLS complete. */
+  connect() {
+    this.connectionState = 'connected';
+    this.iceConnectionState = 'connected';
+    (this.onconnectionstatechange as (() => void) | null)?.();
   }
 }
 
@@ -173,6 +199,7 @@ const fakeMls = {
 const settle = () => new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => {
+  trail.length = 0;
   server.ringTimeoutMs = 60_000;
   server.initiateStatus = 200;
   server.iceStatus = 200;
@@ -485,5 +512,72 @@ describe('no missed call for a call that never rang', () => {
 
     expect(recordCallMissed).not.toHaveBeenCalled();
     expect(FakeSocket.instances).toHaveLength(0);
+  });
+});
+
+/** WP-C2: the `[CALL_REPORT]` line, every 10 s of a live call and once at its end. */
+describe('the call report', () => {
+  const reports = (phase: string) =>
+    trail.filter((l) => l.startsWith('[CALL_REPORT]') && l.includes(`phase=${phase}`));
+  /** The "ended" summary stays on screen 1.5 s before the call is released; wait past it. */
+  const pastSummary = async () => {
+    await new Promise((r) => setTimeout(r, 1_600));
+    await settle();
+  };
+
+  it('writes the end report BEFORE it releases the peer connection and the worker', async () => {
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+
+    ws.deliver({ type: 'PeerLeft' });
+    await pastSummary();
+
+    const [end] = reports('end');
+    expect(end).toContain('call=room-1');
+    // The worker's EXACT totals, asked for while it was still alive.
+    expect(end).toContain('enc_frames=7 dec_frames=6 dec_fail=1 keyframes_in=0');
+    const at = trail.indexOf(end);
+    expect(at).toBeLessThan(trail.indexOf('pc.close'));
+    expect(at).toBeLessThan(trail.indexOf('worker.terminate'));
+  });
+
+  it('writes no end report for a call that never built a peer connection', async () => {
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerLeft' });
+    await pastSummary();
+    expect(trail).toContain('[Call] the other party left the call room');
+    expect(reports('end')).toHaveLength(0);
+  });
+
+  it('ticks every 10 s while in a call, and stops at its end', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const service = new CallService(fakeMls);
+      const ws = await callerJoined(service);
+      ws.deliver({ type: 'PeerReady', initiator: true });
+      await settle();
+
+      // Not in a call yet: nothing to report on.
+      vi.advanceTimersByTime(10_000);
+      await settle();
+      expect(reports('tick')).toHaveLength(0);
+
+      FakePeerConnection.instances[0].connect();
+      vi.advanceTimersByTime(10_000);
+      await settle();
+      expect(reports('tick')).toHaveLength(1);
+
+      ws.deliver({ type: 'PeerLeft' });
+      await pastSummary();
+      expect(reports('end')).toHaveLength(1);
+      vi.advanceTimersByTime(30_000);
+      await settle();
+      expect(reports('tick')).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

@@ -178,16 +178,26 @@ GB beyond the free tier **(unverified: current Cloudflare pricing)**. E2E is una
 
 ## 6. Observability - a call report that carries evidence
 
-**Today:** the SFU's `session end` record separates server-side causes; the client logs states but no
-numbers. **Owed (WP-C2):** one `[CALL_REPORT]` line per call per device, through `appendLog` (so the
-in-app log export carries it), at hangup and every 10 s while `incall`, built from `getStats()`:
+**WP-C2 is BUILT (2026-10-18, dev builds only; owed one reading from a phone's exported log).** One
+`[CALL_REPORT]` line per call per device, through `appendLog` (so the in-app log export carries it),
+every 10 s while `incall` and once at the end, built from `getStats()` by `buildCallReport` in
+`frontend/src/lib/utils/callStats.ts` (tests in `callStats.test.ts` and `CallService.p2p.test.ts`):
 
 ```
-[CALL_REPORT] call=<roomId> phase=end dur_ms= setup_ms=<tap->first remote audio> engine=<ua/webview/ios>
-  ice=<state> pair=<relay|srflx|host>/<udp|tcp|tls> rtt_ms= turn_url=<host:port, no credential>
+[CALL_REPORT] call=<roomId> phase=<tick|end> dur_ms= setup_ms=<tap->first remote audio> engine=<chromium-N|webkit-N|gecko-N, tauri-<shell>/ prefix>
+  ice=<state> pair=<local type>/<proto>-><remote type>/<proto> relayed=<yes|no> [relay_proto=] [rtt_ms=] turn=<host:port, no credential>
   out_kbps= in_kbps= loss_in_pct= jitter_ms= audio_level_out= audio_level_in=
-  e2e=<on|refused> enc_frames= dec_frames= dec_fail= keyframes_in= codec_a= codec_v=
+  e2e=on enc_frames= dec_frames= dec_fail= keyframes_in= codec_a= codec_v=
+[CALL_REPORT] call=<roomId|-> phase=refused engine= e2e=refused reason=no-rtp-script-transform
 ```
+
+- A field the stats do not carry is written `-`, never guessed. Rates are computed between two readings
+  on the stats' OWN timestamps, never a wall clock; a rebuilt peer connection restarts them.
+- `enc_frames`/`dec_frames`/`dec_fail`/`keyframes_in` are the worker's EXACT totals (`getCounters`),
+  not the sampled progress lines; a frame too short to carry an IV counts as a `dec_fail`.
+- The end report is stamped when the call ENDS (not when its 1.5 s summary closes) and read BEFORE the
+  peer connection is closed and the worker terminated - the order is the guarantee, not a delay. A
+  call that never built a peer connection writes no end report.
 
 - `call=` is the room id, the same value as the SFU's `room=` - the only join key between the halves
   ([call-service](../../services/call-service.md#the-join-key)). Keep it one value.
@@ -342,7 +352,7 @@ migrations and the adversarial reviews; **sonnet** for mechanical work.
 | --- | --- | --- | --- | --- | --- | --- |
 | **WP-C0** | **TURN reachability probe, no SFU, no app code**: a throwaway page fetches credentials from dev's `/api/calls/ice-servers` and gathers relay candidates per URL (udp/tcp/tls), then a relay-only loopback | a scratch HTML page + `apps/chat-delivery-service/src/services/calls.service.ts` `getIceServers` (read only) | run on E1, E4, E5, E6, E7 over N1, N2, N5 | sonnet + the user for SIMs | F1 (for the SFU half only) | a table: endpoint x network -> which TURN transport yields a relay candidate, and its RTT. **An hour of work that decides F5 before anything is built** |
 | **WP-C1** | **The decisive call, by hand, on dev**: `CALLS_ENABLED` flipped in the LOCAL tree only, a local-only `getStats` dump, Tier A cells (K1, then K2/K3) | `frontend/src/lib/features.ts`, `CallService.ts` `initPeerConnection`; dev's `call-service` logs | Tier A; read `[call] session end` and `ice connected after_ms=` on dev | opus (lead) | **F1, F4**; dev must have the Cloudflare TURN secrets **(unverified)** | Tier A all `PASS` with numbers, or the failing layer NAMED (TURN, DTLS, SFU, E2E). Answers section 5 for 0.17. Nothing committed but the page that records it |
-| WP-C2 | The `[CALL_REPORT]` line (section 6) | `CallService.ts` (new `callStats.ts` util beside `callAudio.ts`) | unit test on a fake `RTCStatsReport`; no wall clock | sonnet | - | the line on every exit path; read once from a phone's exported log |
+| WP-C2 | The `[CALL_REPORT]` line (section 6) - **BUILT 2026-10-18, owed the phone reading** | `CallService.ts` (new `callStats.ts` util beside `callAudio.ts`) | unit test on a fake `RTCStatsReport`; no wall clock | sonnet | - | the line on every exit path; read once from a phone's exported log |
 | WP-C3 | E2E correctness: refuse instead of degrade; fix the asymmetric legacy path; header-in-clear framing per codec (VP8/H.264) or force VP8+Opus; decrypt failures into `appendLog` | `encryption.worker.ts`, `CallService.attachMediaTransforms` / `setupReceiverTransform` | worker unit tests per codec; K2 Chrome <-> WKWebView | opus + adversarial review | WP-C1 (which codecs actually negotiate) | `dec_fail = 0` on every Tier A/B video cell; no engine can join in clear |
 | WP-C4 | **Decision**: keep Rust SFU 0.17 pinned / port to 0.20 / managed SFU | this page section 5, the feasibility page | - | the user, on the lead's recommendation | **F1, F2, F3, F7**, WP-C1 | a recorded decision; if "keep", `webrtc = "=0.17.n"` pinned |
 | WP-C5 | Android: ring and background - FSI back + `canUseFullScreenIntent`, foreground service `phoneCall`, caller name from the device cache (not the payload), notif-level decision, audio routing incl. Bluetooth | `CanariFirebaseMessagingService.kt`, `AndroidManifest.xml`, `androidFcmManifest.test.ts` | K6, K7, K8, K10 on E4; NOTIF rows unaffected | opus | WP-C1 | Tier B Android cells `PASS` |
