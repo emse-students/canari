@@ -322,13 +322,9 @@ export class SubmitFormDto {
   @IsOptional()
   cancelUrl?: string;
 
-  /**
-   * `online` (default) or `cash` (when the form allows it). `stripe` is the retired spelling of
-   * `online`, still sent by clients older than the Stripe removal: it is accepted and means
-   * online (docs/wiki/legacy-compatibility.md).
-   */
+  /** `online` (default) or `cash` (when the form allows it). */
   @IsString()
-  @IsIn(['online', 'stripe', 'cash'])
+  @IsIn(['online', 'cash'])
   @IsOptional()
   paymentMethod?: string;
 }

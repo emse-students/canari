@@ -71,8 +71,6 @@ REST: those rows need a count, then a migration.
 
 | Shim (entry below) | Condition | Met at floor 1.2.7? | Data at rest | Removal size | Disposition |
 | --- | --- | --- | --- | --- | --- |
-| `stripe` checkout return host | floor >= first release with `payment` | YES (`v1.2.4`) | none | ~-40 lines, server + client + `tauri.conf.json` + manifest | removed with the floor |
-| `paymentMethod: 'stripe'` INPUT | floor >= Stripe removal | YES (`v1.2.0`) | - | 1 line | removed with the floor |
 | `paymentMethod: 'stripe'` STORED | rows written before 2026-10-08 | no - data | `purchase_records` and `submissions` | type + 3 client arms, after a migration | owed: count + migration (user) |
 | Carte bare publish body | floor >= fingerprint | YES (`v0.18.28`) | old posters keep a null fingerprint (meaning UNKNOWN, kept) | ~-20 lines, server | removed with the floor (server only); a missing or malformed fingerprint is refused too |
 | Prekeys as bare base64 strings | floor >= `0.18.10` | YES (`v0.18.10`) | undated rows stay covered by their `NULL` arms | ~-10 lines, server | removed with the floor |
@@ -137,27 +135,21 @@ earlier reaches the floor clients as a wrong sentence and a dead link, which no 
 4. Native tables (`composeServerNotification`, NSE, `canari_push.mm`) get its `contentKey`.
 **Removal condition:** none; this is a floor requirement, not a shim.
 
-### No date yet - the `fr.emse.canari://stripe/...` checkout return host, from a build older than 2026-10-09
+### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 
-**Site:** `isAllowedCheckoutCallbackUrl` in `apps/social-service/src/common/checkout-callback-url.ts` and
-`LEGACY_CHECKOUT_RETURN_HOST` in `frontend/src/lib/utils/checkoutCallbacks.ts`, read by `hooks.client.ts`.
-**Shim:** the checkout return now uses the host `payment` (declared in `tauri.conf.json` and the
-Android manifest, pinned by `deepLinkHostsDeclared.test.ts`). A build older than that registered and
-sends `stripe`, so the server still ACCEPTS it and the client still ROUTES it. Nothing emits it any more.
-**Removal condition:** `minClientVersion` at or above the first release carrying the `payment` host,
-both stores serving it; then the server check, the client constant and the `stripe` entry of
-`tauri.conf.json` and the manifest go together ([stripe-archive](stripe-archive.md)).
-
-### No date yet - a `paymentMethod` of `stripe`, from a client older than the Stripe removal
-
-**Site:** `@IsIn(['online', 'stripe', 'cash'])` in `apps/social-service/src/forms/dto/form.dto.ts`, and
-`PurchasePaymentMethod` in `users/entities/purchase-record.entity.ts`.
-**Shim:** the form submission still ACCEPTS `stripe` and means `online`; purchase rows written
-before 2026-10-08 hold `stripe` and are read as `online`. Nothing writes `stripe` any more
-([stripe-archive](stripe-archive.md)).
-**Removal condition:** the input goes when `minClientVersion` is at or above the first release
-carrying the removal, both stores serving it. The stored value is data at rest and goes only with a
-data migration of `purchase_records`.
+**Site:** `PurchasePaymentMethod` in `apps/social-service/src/users/entities/purchase-record.entity.ts`,
+`Submission.paymentMethod` in `apps/social-service/src/forms/entities/submission.entity.ts`, and the
+`'stripe'` arms of the client's `paymentMethod` types and labels (`EditAchatsTab`,
+`EditDelegationTab`, `account/purchases`).
+**Shim:** purchase rows AND form submissions written before 2026-10-08 hold `stripe`, read as
+`online`. Nothing writes `stripe` any more, and since floor 1.2.7 nothing may SEND it either: the
+form input and the `fr.emse.canari://stripe` return host are gone ([stripe-archive](stripe-archive.md)).
+**One known cost of the host's removal:** a checkout STARTED on a build from 1.2.0 to 1.2.3 (Lydia
+already, `stripe` host still) and finished after the phone updated returns to a host the new build
+no longer registers - the payment itself is recorded server-side, only the in-app landing is lost.
+The server's refusal of a `stripe` callback URL is logged (`[CHECKOUT] callback URL REFUSED`).
+**Removal condition:** data at rest, so a data migration of `purchase_records` AND `submissions`
+(`stripe` -> `online`), counted first, and no version: then the type and the client arms go.
 
 ### No date yet - MiConnect's `formation` and `promo` claims, derived from the profile
 
