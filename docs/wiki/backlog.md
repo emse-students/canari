@@ -238,10 +238,21 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 The search itself goes through Canari since 2026-10-16 (`GET /api/mls/gifs`); what is left is
 `static.klipy.com` learning each RECIPIENT's IP, user agent and reading time on every render of a
 GIF message, plus the searcher's thumbnails and the one fetch of a comment GIF's bytes. Not proxied yet
-because the existing image proxy's 3 MB ceiling and small-image cache were never measured against
-KLIPY's renditions. The substance, the table of the three paths and the route it needs are in
-[chat](frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16). Owed first: a
-measurement of the `md` rendition sizes over trending and a few searches.
+because the existing image proxy's 3 MB ceiling does not fit the `md` rendition (measured
+2026-10-18, below). The substance, the table of the three paths and the route it needs are in
+[chat](frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16). 
+
+**Measured 2026-10-18 (PK9), done:** 144 GIFs (trending plus 5 searches), `HEAD` content-length.
+
+| Rendition | p50 | p90 | max | Over 3 MiB |
+| --- | --- | --- | --- | --- |
+| `sm` | 0.36 MB | 0.88 MB | 2.9 MB | 0 of 144 |
+| `md` | 1.1 MB | 4.4 MB | 11.7 MB | 29 of 144 (20%) |
+| `hd` | 1.8 MB | 7.9 MB | 19.9 MB | 48 of 144 |
+
+Routed through the link-preview proxy as it is, `md` would break about one GIF in five; `sm` fits.
+**Still open, the build:** a GIF route with its own measured ceiling (about 12 MB), streaming rather
+than buffering, and a byte cache keyed on the content URL.
 
 ## P1 - Opening a community is network-gated: the salons 1.7 s after the tap on Wi-Fi, 6 s on a slow link and phone, never offline (user, 2026-10-14; measured, not built)
 
