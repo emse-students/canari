@@ -28,6 +28,20 @@ const workerScope = self as RtcTransformWorkerScope;
 /** Receives the AES-GCM key material from the main thread (raw bytes, not CryptoKey). */
 self.onmessage = async (event: MessageEvent<{ type: string; payload?: ArrayBuffer }>) => {
   if (event.origin && event.origin !== self.location.origin) return;
+  if (event.data?.type === 'getCounters') {
+    // The EXACT totals for the call report (WP-C2): the progress messages below are sampled
+    // (first frame, then every 300), so they cannot be summed into a count.
+    self.postMessage({
+      type: 'counters',
+      counters: {
+        encFrames: encrypted.audio + encrypted.video,
+        decFrames: decrypted.audio + decrypted.video,
+        decFail: decryptFailures,
+        keyframesIn: videoKeyframesIn,
+      },
+    });
+    return;
+  }
   if (event.data?.type === 'setKey') {
     const raw = event.data.payload;
     if (!raw || raw.byteLength !== 32) {
@@ -90,7 +104,9 @@ workerScope.onrtctransform = (event: Event) => {
           }
         }
       } catch (e) {
-        console.error('[Worker] Transform error:', e);
+        // Reported to the page, which writes it to the call log: a console line in a worker
+        // reaches no exported log, and a frame lost here is otherwise lost without a trace.
+        self.postMessage({ type: 'transformError', detail: String(e) });
       }
     },
   });
@@ -139,7 +155,12 @@ async function decryptFrame(
   controller: TransformStreamDefaultController
 ): Promise<boolean> {
   const data = new Uint8Array(frame.data);
-  if (data.byteLength < ivLength) return false;
+  if (data.byteLength < ivLength) {
+    // Too short to carry an IV: a frame that was never encrypted (a peer sending in clear). It
+    // is a decrypt failure like any other, or `dec_fail` would read 0 on exactly that call.
+    recordDecryptFailure(`frame of ${data.byteLength} byte(s) is shorter than an IV`);
+    return false;
+  }
 
   const iv = data.slice(0, ivLength);
   const ciphertext = data.slice(ivLength);
@@ -150,11 +171,15 @@ async function decryptFrame(
     controller.enqueue(frame);
     return true;
   } catch (e) {
-    decryptFailures++;
-    if (decryptFailures <= 3 || decryptFailures % 100 === 0) {
-      const detail = String(e);
-      self.postMessage({ type: 'decryptError', detail, count: decryptFailures });
-    }
+    recordDecryptFailure(String(e));
     return false;
+  }
+}
+
+/** Counts one dropped frame, and tells the page about the first three and then every 100th. */
+function recordDecryptFailure(detail: string) {
+  decryptFailures++;
+  if (decryptFailures <= 3 || decryptFailures % 100 === 0) {
+    self.postMessage({ type: 'decryptError', detail, count: decryptFailures });
   }
 }

@@ -116,7 +116,10 @@ Then, on each side:
    each party can learn the other's public IP.
 5. On `connected` the client logs `[Call] selected path pair=<local>/<proto>-><remote>/<proto>
    relayed=yes|no [relay_proto=] [rtt_ms=]` (`utils/callStats.ts`, no address) - the only place
-   that says whether a call was billed.
+   that says whether a call was billed. From then on a `[CALL_REPORT]` line every 10 s and one at
+   the end carries the same pair plus rates, loss, audio levels and the E2E worker's exact frame
+   counts; its fields and ordering guarantees are in
+   [calls-revival-plan section 6](calls-revival-plan.md#6-observability---a-call-report-that-carries-evidence).
 6. `PeerLeft` (the other socket is gone, or this device was replaced by a sibling) ends the call;
    a second `PeerReady` (the other party's device was replaced) rebuilds the peer connection.
 7. **The ring window.** Both sides arm a timer of `ringTimeoutMs`. The caller's, if no `PeerReady`
