@@ -113,3 +113,37 @@ export function mergeFcmMessagesIntoConversations(
 
   return merged;
 }
+
+/**
+ * {@link mergeFcmMessagesIntoConversations}, then ANNOUNCES every conversation row the merge created.
+ *
+ * A row appearing is the event that makes a frame refused `absent-conversation` readable, and the
+ * merge is one of the paths that makes rows appear - for a group the push service joined in the
+ * background, the first one. It announced nothing, so frames waiting on that row sat in the server
+ * queue until some unrelated global re-fetch ran: 1.5 s at a cold start on a Pixel 6a (prod 1.2.7,
+ * 2026-10-14), and on a resume nothing is scheduled at all. `ensureConversationForServerGroup` keeps
+ * the same invariant for the rows it creates.
+ *
+ * A SECOND ENTRANCE FOR NOW, NOT A SECOND POLICY: the login merge in `sessionAuth.ts` still calls the
+ * unannounced one, because that file is being changed by another pull request; it moves here when
+ * that one lands, and the unannounced export becomes private. Until then the login path is covered,
+ * later, by the restore's `notifyConversationsRestored`.
+ *
+ * @param announce called once per created row, with its group id
+ */
+export function mergeFcmMessagesAndAnnounce(
+  injected: StoredMessage[],
+  conversations: Map<string, Conversation>,
+  userId: string,
+  placeholders: ReadonlyMap<string, PushPlaceholder>,
+  announce: (groupId: string) => void
+): number {
+  const absentBefore = new Set(
+    injected.map((m) => m.conversationId).filter((id) => !conversations.has(id))
+  );
+  const merged = mergeFcmMessagesIntoConversations(injected, conversations, userId, placeholders);
+  for (const id of absentBefore) {
+    if (conversations.has(id)) announce(id);
+  }
+  return merged;
+}

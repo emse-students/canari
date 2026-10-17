@@ -143,6 +143,43 @@ describe('a restore after the community load', () => {
     expect(conversations.has('g-kept')).toBe(true);
   });
 
+  /**
+   * A ROW WRITTEN WHILE THE STORE WAS BEING READ IS NOT ONE STORAGE "NO LONGER HOLDS". At a cold
+   * start the redelivered Welcome of a group joined in the background writes its row while the
+   * restore is between its read and its prune (Pixel 6a, prod 1.2.7, 2026-10-14); deleting it sent
+   * every frame of that group back to `absent-conversation`.
+   */
+  it('keeps a row written after the store was read, which the read could not have returned', async () => {
+    const conversations = new SvelteMap<string, Conversation>();
+    const storage = storageWith([]) as unknown as { getConversations: ReturnType<typeof vi.fn> };
+    storage.getConversations.mockImplementation(async () => {
+      conversations.set(
+        'g-joined',
+        buildConversationRow({
+          id: 'g-joined',
+          lifecycle: 'active',
+          identity: { contactName: 'g-joined', displayName: 'Equipe' },
+        })
+      );
+      return [];
+    });
+
+    await loadExistingConversations({
+      storage,
+      mlsService: mls(),
+      conversations,
+      messageReactions: new SvelteMap(),
+      userId: 'u1',
+      deviceKeyB64: 'k',
+      archivedConversationIds: [],
+      historyBaseUrl: '',
+      onArchivedIdsChange: vi.fn(),
+      log: vi.fn(),
+    } as never);
+
+    expect(conversations.get('g-joined')?.name).toBe('Equipe');
+  });
+
   it('restores a stored salon the map does not hold yet', async () => {
     const conversations = new SvelteMap<string, Conversation>();
 

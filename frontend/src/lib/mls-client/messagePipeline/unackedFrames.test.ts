@@ -1,5 +1,8 @@
 import {
+  dischargeRefusedBacklog,
   noteUnackedFrame,
+  refusedBacklogIsQueued,
+  refusedBacklogMark,
   reportUnackedFrames,
   resetUnackedFrames,
   takeGroupsAwaiting,
@@ -113,5 +116,54 @@ describe('the work list behind the retry', () => {
     resetUnackedFrames();
 
     expect(takeGroupsAwaiting('unknown-group')).toEqual([]);
+  });
+});
+
+/**
+ * The gap healer asks whether frames refused for lack of a row are still to come before it replays
+ * commits past their epochs - 47 of them were lost that way (Pixel 6a, prod 1.2.7, 2026-10-14).
+ */
+describe('the refused backlog the gap healer waits behind', () => {
+  it('is marked by an absent-conversation refusal and by nothing else', () => {
+    noteUnackedFrame('g1', 'absent-conversation');
+    noteUnackedFrame('g2', 'unknown-group');
+
+    expect(refusedBacklogIsQueued('g1')).toBe(true);
+    expect(refusedBacklogIsQueued('g2')).toBe(false);
+  });
+
+  it('outlives the re-fetch that is TAKEN for it - the frames it asked for are still on the wire', () => {
+    noteUnackedFrame('g1', 'absent-conversation');
+    takeGroupsAwaiting('absent-conversation');
+
+    expect(refusedBacklogIsQueued('g1')).toBe(true);
+  });
+
+  it('is discharged by a pull that started after the refusal', () => {
+    noteUnackedFrame('g1', 'absent-conversation');
+    const pullStart = refusedBacklogMark();
+
+    dischargeRefusedBacklog(pullStart);
+
+    expect(refusedBacklogIsQueued('g1')).toBe(false);
+  });
+
+  it('survives a pull that started BEFORE the refusal, which cannot have listed that frame', () => {
+    const pullStart = refusedBacklogMark();
+    noteUnackedFrame('g1', 'absent-conversation');
+
+    dischargeRefusedBacklog(pullStart);
+
+    expect(refusedBacklogIsQueued('g1')).toBe(true);
+  });
+
+  it('a frame refused again while the pull is handled marks its group again', () => {
+    noteUnackedFrame('g1', 'absent-conversation');
+    const pullStart = refusedBacklogMark();
+    noteUnackedFrame('g1', 'absent-conversation');
+
+    dischargeRefusedBacklog(pullStart);
+
+    expect(refusedBacklogIsQueued('g1')).toBe(true);
   });
 });

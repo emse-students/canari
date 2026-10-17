@@ -363,7 +363,7 @@ Evidence: `canari-log-1.2.7-20261014-1759.txt` in the harness state dir `pixel-r
 
 ## P2 - A group joined in the background has no conversation row at cold start, and 47 of its 150 queued frames are lost (Pixel 6a, prod 1.2.7, 2026-10-14)
 
-Same log as above, cold start at 17:55:53. Not built: the fix moves when frames are decrypted, which is MLS-adjacent.
+Same log as above, cold start at 17:55:53. **BUILT (PK2, 2026-10-17), all three fixes below** - mechanism on [mls-recovery-ladder](protocols/mls-recovery-ladder.md). **Owed: ONE Mi 9T cold start** with a group created by another device of the same account while the app was killed, reading that no `LOST frame ... past epoch application frame` and no second `Message for absent conversation` pass appear for it. Delete this entry when that reading passes on a shipped build.
 
 **What the log shows, for group `513411dc` (a group the user's own other device created):**
 
@@ -378,11 +378,11 @@ The other high-count lines of that window are per event: 114 `read_watermark` fr
 
 **Cost**: the frames arrive 6.5 s after cold start instead of ~1.5 s; two refusal passes take ~600 ms of drain on the main thread during the restore and first paint; 47 messages depend on a peer's history answer.
 
-**Proposed fix, smallest first:**
+**The fix, as built:**
 
-- The "already held" Welcome branch writes the row when none exists (the same `buildConversationRow` + `upsertConversation` the install path uses) and calls `notifyConversationAvailable`. Then the 150 frames read in order at 17:55:55.4 and nothing is lost. To check first: the restore's prune (`loadExistingConversations` drops non-salon rows absent from storage) must not erase a row written between its storage read and its prune.
-- The FCM-cache merge calls `notifyConversationAvailable` for each row it creates (the invariant `ensureConversationForServerGroup` already keeps).
-- The gap healer should not jump a group past epochs while that group has frames noted `absent-conversation`: they are in the server queue, in order, and will be delivered.
+- The "already held" Welcome branch writes the row when none exists and announces it - from storage when storage holds one the restore has not seeded yet, else the install path's derivation. The restore's prune keeps a row written after its storage read. **Residual, named:** on SQLite a row whose save was issued just BEFORE the restore's read is not proven visible to that read; it would be pruned and re-created by the push-cache merge or discovery - later, not lost (the gap hold below covers the loss).
+- The FCM-cache merge on resume announces each row it creates. The login merge in `sessionAuth.ts` still calls the unannounced one (PK1/PK8 own that file); the restore's re-fetch covers it there.
+- The gap healer holds a live frame while the group has refused frames still queued.
 
 ## P3 - A re-added reader rescans its own dropped tail on every launch (fifth review of #1878, 2026-10-15)
 

@@ -21,7 +21,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { StoredMessage } from '$lib/db/types';
 import type { Conversation } from '$lib/types';
-import { mergeFcmMessagesIntoConversations } from './fcmMemoryMerge';
+import { mergeFcmMessagesAndAnnounce, mergeFcmMessagesIntoConversations } from './fcmMemoryMerge';
 
 /** A cached message as `consumeFcmCache` hands it over, with a real serialized envelope. */
 const message = (over: Partial<StoredMessage> = {}): StoredMessage => ({
@@ -167,5 +167,37 @@ describe('mergeFcmMessagesIntoConversations', () => {
     expect(mergeFcmMessagesIntoConversations([], new Map(), 'me', placeholders())).toBe(0);
     expect(warn).not.toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+/**
+ * A ROW THE MERGE CREATES IS ANNOUNCED. Frames refused `absent-conversation` for a group joined in
+ * the background wait on exactly that row, and on a resume nothing else re-fetches them (Pixel 6a,
+ * prod 1.2.7, 2026-10-14).
+ */
+describe('mergeFcmMessagesAndAnnounce', () => {
+  it('announces the conversation it created, once, for several of its messages', () => {
+    const convs = new Map<string, Conversation>();
+    const announce = vi.fn();
+
+    mergeFcmMessagesAndAnnounce(
+      [message(), message({ id: 'msg-2222-3333' })],
+      convs,
+      'me',
+      placeholders(),
+      announce
+    );
+
+    expect(announce).toHaveBeenCalledOnce();
+    expect(announce).toHaveBeenCalledWith('grp-aaaa-bbbb');
+  });
+
+  it('control: a conversation already in memory is not announced', () => {
+    const convs = new Map([['grp-aaaa-bbbb', existing()]]);
+    const announce = vi.fn();
+
+    mergeFcmMessagesAndAnnounce([message()], convs, 'me', placeholders(), announce);
+
+    expect(announce).not.toHaveBeenCalled();
   });
 });

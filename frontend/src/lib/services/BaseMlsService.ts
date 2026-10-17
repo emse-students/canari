@@ -96,7 +96,9 @@ import {
   type DistributionScope,
 } from '$lib/mls-client/distributionScope';
 import {
+  dischargeRefusedBacklog,
   noteUnackedFrame,
+  refusedBacklogMark,
   reportUnackedFrames,
   takeGroupAwaiting,
   takeGroupsAwaiting,
@@ -1492,8 +1494,10 @@ export abstract class BaseMlsService implements IMlsService {
 
   /** @inheritdoc */
   notifyConversationAvailable(groupId: string): void {
+    // BOTH REASONS, ONE PULL: a frame held `behind-refused-backlog` waits for the same frames the
+    // `absent-conversation` ones are, and the row existing is what makes all of them readable.
     this.refetchFramesLeftBehind(
-      'absent-conversation',
+      ['absent-conversation', 'behind-refused-backlog'],
       `conversation ${groupId.slice(0, 8)}… now exists`,
       groupId
     );
@@ -2001,6 +2005,8 @@ export abstract class BaseMlsService implements IMlsService {
     // Cleared here rather than on failure: what the barrier may trust is a pull that finished, and
     // this one has not started. A pull that dies half-way therefore leaves it false.
     this.mailboxEmptiedByAPull = false;
+    /** The refusals this pull is certain to list: every one marked before it started. */
+    const refusalsCovered = refusedBacklogMark();
 
     let fetched = 0;
     /** Whether THIS pull listed the whole mailbox - the only kind that may settle the initial drain. */
@@ -2091,6 +2097,11 @@ export abstract class BaseMlsService implements IMlsService {
       if (this.pendingPullInFlight === announced) this.pendingPullInFlight = null;
     }
     await this.settleMailbox();
+    // Every frame refused for lack of a conversation row before this pull started has now been
+    // listed AND handled - read, or refused again under a later mark - so the gap healer stops
+    // holding live frames behind it (`refusedBacklogIsQueued`). A pull that died half-way proves
+    // nothing about the pages it did not list.
+    if (emptied) dischargeRefusedBacklog(refusalsCovered);
     // Only now is the answer complete: the rows were enqueued, not handled, so what the handler
     // refused to acknowledge is known only once the queue has drained. Without this, a device that
     // re-fetches the same backlog on every reconnect reports a perfectly healthy pull each time.
