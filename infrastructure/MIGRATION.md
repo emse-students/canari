@@ -11,7 +11,7 @@ Overview:
 Manual bootstrap (this doc)        CD (automatic)               Data
 ─────────────────────────────       ─────────────────────       ──────────────────
 Docker + runner + clone repo   ->   generates .env files    ->   restore.sh
-SSH canari -> mitv (backups)        deploys Canari               (from mitv)
+SSH to the offsite backup host      deploys Canari               (from offsite)
 GitHub secrets present              deploys Authentik
 ```
 
@@ -182,31 +182,23 @@ the history says squash because that is what the automation does.
 secrets: `canari-auto-merge` must be installed on the owning organisation and listed in the
 ruleset's `bypass_actors`. It is not repeated here.
 
-## 4. SSH access for offsite backup (mitv)
+## 4. SSH access for offsite backup
 
-Backups push to `mitv` via SSH. On the new server:
+Backups push to the offsite LAN backup server via SSH. On the new server:
 
 ```bash
 # Server key (if missing)
 sudo -u canari ssh-keygen -t ed25519 -N "" -f /home/canari/.ssh/id_ed25519
 
-# Trust mitv
-sudo -u canari ssh-keyscan -H 10.0.0.4 >> /home/canari/.ssh/known_hosts
+# Trust the offsite host
+sudo -u canari ssh-keyscan -H <offsite-host> >> /home/canari/.ssh/known_hosts
 ```
 
-On `mitv` (once only), authorize the server's public key for the dedicated
-`canaribackup` user (member of `_ssh` group, store `/srv/canari-backups`):
+On the offsite host (once only), authorize the server's public key for a dedicated, unprivileged
+backup user whose home holds only the backup directory (mode `700`, `authorized_keys` mode `600`).
+The user name, the directory and the host are kept in the operators' private notes.
 
-```bash
-useradd -m -s /bin/bash canaribackup 2>/dev/null
-usermod -aG _ssh canaribackup
-install -d -m 700 -o canaribackup -g canaribackup /srv/canari-backups /home/canaribackup/.ssh
-echo "<contents of /home/canari/.ssh/id_ed25519.pub>" >> /home/canaribackup/.ssh/authorized_keys
-chown canaribackup:canaribackup /home/canaribackup/.ssh/authorized_keys
-chmod 600 /home/canaribackup/.ssh/authorized_keys
-```
-
-Test: `sudo -u canari ssh canaribackup@10.0.0.4 'echo ok'`.
+Test: `sudo -u canari ssh <backup-user>@<offsite-host> 'echo ok'`.
 
 ## 5. First deployment
 
@@ -350,9 +342,9 @@ only copy. What a bootstrap owes:
 - [ ] Self-hosted runner registered and active
 - [ ] Repository cloned at `/home/canari/canari`
 - [ ] GitHub secrets created
-- [ ] SSH canari → mitv working
+- [ ] SSH to the offsite backup host working
 - [ ] CD passed green (Canari + Authentik)
-- [ ] Data restored from mitv
+- [ ] Data restored from the offsite backup
 - [ ] Backup cron installed
 - [ ] Egress probe cron installed (`/home/canari/egress/samples.ndjson` growing by one line a minute)
 - [ ] Reverse proxy / DNS / TLS in place

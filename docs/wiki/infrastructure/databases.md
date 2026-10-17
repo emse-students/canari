@@ -8,41 +8,35 @@
 
 ## Reaching it from a workstation
 
-`ssh portail-etu-direct`, then `docker exec` into the container `canari-prod-postgres-1` as user
-`canari` - **since the 2026-09-24 cutover** ([estate-migration](estate-migration.md)). `ssh canari`
-still connects, and the box runs NO container at all now: every `docker exec` there answers
-`No such container`, which reads like a typo rather than the wrong machine (measured 2026-09-27).
+Production's Postgres runs on the production host in the compose project `canari-prod`; reach it
+with `docker exec` into its container as the database user ([estate-migration](estate-migration.md)).
+A box that used to host the estate may still accept a connection and run NO container, so a
+`docker exec` there answers `No such container`, which reads like a typo rather than the wrong
+machine.
 **`auth_db` is the ONLY database** - every service shares it, social-service included, whose
 `DB_DATABASE` default `canari_social` **does not exist on prod**; a command that names it fails and
 the failure looks like a permissions problem.
 
 **THE CONTAINER NAME IS THE ONLY THING THAT SAYS WHICH ESTATE YOU ARE IN, so read it before you
 write.** The same host carries a second Postgres for `dev.canari-emse.fr` - compose project
-`canari-dev`, so container `canari-dev-postgres-1`, holding production's SCHEMA and a fictional
-seed, never its rows ([dev-environment](dev-environment.md)). Two containers, the same user, the
-same database name, the same tables: nothing in a `psql` prompt distinguishes them. Prefer
-selecting by compose label over typing a name, which is what
-`infrastructure/dev/reset-dev-to-seed.sh` does and why it cannot be pointed at production:
+`canari-dev`, holding production's SCHEMA and a fictional seed, never its rows
+([dev-environment](dev-environment.md)). Two containers, the same user, the same database name, the
+same tables: nothing in a `psql` prompt distinguishes them. Prefer selecting by compose label over
+typing a name, which is what `infrastructure/dev/reset-dev-to-seed.sh` does and why it cannot be
+pointed at production:
 
 ```
 docker ps --filter label=com.docker.compose.project=canari-prod \
           --filter label=com.docker.compose.service=postgres --format '{{.Names}}'
 ```
 
-**EITHER TOOL WORKS SINCE 2026-09-02, AND THE RULE THAT SAID "PowerShell, never Bash" NAMED THE
-WRONG CULPRIT.** It was never Bash. MSYS `ssh` execs the cloudflared `ProxyCommand` through
-`/bin/bash` whatever the caller, and it was the BACKSLASHES in that path, spelled Windows-style,
-that were eaten - so the connection died with an opaque error and the tool that happened to be
-running got the blame. `~/.ssh/config` now spells the path with FORWARD SLASHES, which `bash` and
-`cmd` both exec; measured on both.
-
-**The preference now runs the other way for anything binary.** PowerShell text-encodes stdout, so a
+**ANYTHING BINARY MUST NOT PASS THROUGH A TEXT-ENCODING SHELL.** PowerShell text-encodes stdout, so a
 `pg_dump | gzip` routed through it is corrupted on arrival - a backup that restores to nothing. A
-dump, a restore, or any pipe carrying bytes rather than text goes through Bash. Text queries may go
+dump, a restore, or any pipe carrying bytes rather than text goes through Bash; text queries may go
 through either. Quote SQL single-outer, doubled-inner:
 
 ```
-ssh portail-etu-direct 'docker exec canari-prod-postgres-1 psql -U canari -d auth_db -x -c "SELECT ... WHERE id = ''uuid''"'
+ssh <production-host> 'docker exec <prod-postgres-container> psql -U <db-user> -d auth_db -x -c "SELECT ... WHERE id = ''uuid''"'
 ```
 
 Single shared database host for all relational data. The database name is `auth_db`; logical separation is by schema/table prefix, not by database.
@@ -61,7 +55,7 @@ Full schema: see `docs/wiki/architecture.md` (PostgreSQL schema overview section
 ### The `/adminer/` route - the database in a browser, for global admins (2026-10-02)
 
 *"add an adminer route to canari, in a safe way"* (user). **Production only.** Adminer already ran
-there, published on the host's loopback (`127.0.0.1:8888`, reached by an ssh tunnel); the route is a
+there, published on the host loopback only; the route is a
 second, GATED way in through the frontend nginx. The loopback one is unchanged.
 
 **THE PROBLEM IS THE CREDENTIAL, NOT THE PROXY.** A browser that OPENS a page sends no `Authorization`
@@ -105,10 +99,8 @@ permission - the route would be open to the internet.
 - **Audit:** every session opened, every refusal, and every cookie refused for a bad signature or a lost
   role is a `warn` line in core-service's log.
 
-**THE USER CHOSE THE EXISTING FULL-ACCESS DATABASE ACCOUNT** (asked 2026-10-02; the alternative was a
-dedicated read-only role, which was recommended and declined). So whoever passes both doors can write to
-production, and a flaw in this route is a flaw with write access. A `SELECT`-only role - one `CREATE
-ROLE`, one more secret - is the way to narrow it, and is not built.
+**The database account Adminer asks for is the user's decision** (2026-10-02). A `SELECT`-only role
+is the way to narrow the route and is tracked in the [backlog](../backlog.md).
 
 **Web only.** The session is a cookie scoped to the app's own origin; the native apps run on another, so
 the admin page shows an explanation instead of a button there.
@@ -235,7 +227,7 @@ are not built.
 binary pipe, so a `pg_dump` routed through it is a backup that restores to nothing.
 
 ```sh
-ssh portail-etu-direct 'docker exec canari-prod-postgres-1 pg_dump -U canari -d auth_db -Fc' > prod-auth_db.dump
+ssh <production-host> 'docker exec <prod-postgres-container> pg_dump -U <db-user> -d auth_db -Fc' > prod-auth_db.dump
 ```
 
 Measured 2026-09-15: **23,253,358 bytes in 45.8 s**, 282 TOC entries, `Format: CUSTOM`,
@@ -319,14 +311,14 @@ If `canari-dev-postgres-1` has not crossed by then, the dev deploy dies at the s
 stable can never be cut. Dev holds a fictional seed that
 `infrastructure/dev/reset-dev-to-seed.sh` reloads on demand, so dev needs no dump of its own.
 
-**The sequence on the box.** `ssh canari`; the checkout is `/home/canari/canari` and
+**The sequence on the box.** The checkout is the deploy checkout and
 `infrastructure/.env` already carries `TAG`, so compose needs nothing added on the command line
 (production runs `TAG=latest`, dev `TAG=dev`). The stop list is DERIVED, because a typed one goes
 stale the day a service is added - which is the same defect `deploy-environment.sh` fixed for its own
 readiness check.
 
 ```sh
-cd /home/canari/canari
+cd <deploy-checkout>
 dc() { docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env "$@"; }
 
 # 1. Writes stop, and ONLY the writers: postgres 15 keeps running so it can be dumped.

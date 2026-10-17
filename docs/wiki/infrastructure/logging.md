@@ -30,17 +30,16 @@ wrong conclusion was written into a wiki page before it was caught.
 Reports arrive hours to days after the fact and deploys are frequent by design, so the default
 outcome for a user-reported defect was that its evidence was already gone.
 
-## The mechanism, measured gone (2026-10-08, Portail-etu host, read-only)
+## The mechanism, measured gone (2026-10-08, production host, read-only)
 
 - `docker info`: logging driver `json-file`; `/etc/docker/daemon.json` absent.
 - `docker inspect` on all 32 running containers: `json-file`, config `map[]` (no `max-size`, no
   `max-file`). The compose files carried no `logging:` stanza.
-- No collector container on the box; `journald` has a persistent journal (24 MB) but the deploy user
-  (`docker` and `users` groups only) is not in `systemd-journal` and cannot read it, and
-  `sudo -n` is refused - so a journald sink would be written and unreadable by the people who need it.
+- No collector container on the box, and a journald sink would be written and unreadable by the
+  deploy account that needs it.
 - Log volume: the largest files were Authentik's server (42 MB), Garage prod (46 MB) and Garage dev
   (35 MB); the median is ~0.1 MB; production's `social-service` 108 KB and `core-service` 30 KB.
-- Disk: `/` 45 GB, 38 GB used (88 %), 5.5 GB free. `docker system df`: images 12 GB (6.5 GB
+- Disk: nearly full (88 %). `docker system df`: images 12 GB (6.5 GB
   reclaimable), build cache 7 GB (all reclaimable), volumes 1.4 GB.
 
 ## Sizing
@@ -55,8 +54,8 @@ tens of MB. **Disk is tight (88 %), so the figure to watch is the build cache an
 ## Reading an archive
 
 ```sh
-ssh portail-etu-direct
-zcat ~/deploy-log-archive/canari-prod/<stamp>/canari-prod-social-service-1.log.gz | grep 'POST /api/posts'
+# on the production host
+zcat <archive-root>/canari-prod/<stamp>/canari-prod-social-service-1.log.gz | grep 'POST /api/posts'
 ```
 
 The stamp is the moment the deploy STARTED replacing the estate; the archive holds what ran BEFORE
@@ -118,8 +117,8 @@ approved; it is a [backlog](../backlog.md#owed-to-the-user---decisions-rotations
 decision. Until it is taken, a red `log-retention` run is acted on by hand:
 
 ```sh
-ssh portail-etu-direct
-cd /srv/canari   # /srv/canari-dev and docker-compose.dev.yml for the dev estate
+# on the production host
+cd <deploy-path>   # the dev estate's path and docker-compose.dev.yml for dev
 TAG=<the tag the estate runs> docker compose -f infrastructure/docker-compose.prod.yml \
   --env-file infrastructure/.env up -d --no-deps --force-recreate <service>
 ```
@@ -131,7 +130,7 @@ prune runs at every deploy and daily on a GitHub schedule, which delays and drop
 up to 12 h late, `scheduled.yml`'s header), so the 30 days between 60 and 90 are the slack for
 that, not a guarantee. The live logs are bounded only once a human acts on the red run, within the
 30 days the report leaves. **Nothing on the shared host is bounded by this repository** - its
-journald, nginx, CrowdSec, AIDE and EDR are the DSI's, and the request is
+journal, reverse proxy, intrusion-prevention, file-integrity and endpoint agents are the host owner's, and the request is
 [dsi-log-retention-request](dsi-log-retention-request.md).
 
 **Verify.**
@@ -139,5 +138,5 @@ journald, nginx, CrowdSec, AIDE and EDR are the DSI's, and the request is
 ```sh
 gh run list --workflow scheduled.yml --limit 5          # the log-retention job, daily
 gh workflow run scheduled.yml -f job=log-retention      # by hand
-ssh portail-etu-direct 'ls ~/deploy-log-archive/canari-prod/'   # no stamp older than 30 days
+ls <archive-root>/canari-prod/   # on the production host: no stamp older than 30 days
 ```

@@ -7,7 +7,7 @@
 # together with the program, so the host needs neither a mount nor a copy of this directory.
 #
 # From a workstation rather than on the host, prefix the transport:
-#   AK_REMOTE="ssh portail-etu-direct" apply-blueprints.sh snapshot
+#   AK_REMOTE="ssh <production-host>" apply-blueprints.sh snapshot
 #
 # BLUEPRINTS_DIR names another directory of blueprints - test-blueprints.sh applies main's first.
 set -euo pipefail

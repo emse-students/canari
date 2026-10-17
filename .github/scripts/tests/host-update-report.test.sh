@@ -10,8 +10,8 @@
 # Every case below is a host shape that was really met on 2026-09-03, or the one the design is
 # afraid of:
 #
-#   * `mitv` had the periodic switch ON with the package ABSENT.
-#   * `mitv` had wanted a reboot since 12 July, for a KERNEL update, with 8 weeks of uptime.
+#   * One host had the periodic switch ON with the package ABSENT.
+#   * It had wanted a reboot for weeks, for a KERNEL update, with 8 weeks of uptime.
 #   * All four hosts had `apt-daily-upgrade.timer` reported `enabled` while applying nothing.
 #   * The three trixie boxes resolved `label=Debian` into the allowed list, because APT
 #     configuration lists ACCUMULATE across files rather than overriding - so the policy was
@@ -109,7 +109,7 @@ else
   fail "a host with no unattended-upgrades package passed"
 fi
 
-# THIS IS `mitv` AS FOUND. The switch says 1, the package is absent: a configuration that reads as
+# THIS IS THAT HOST AS FOUND. The switch says 1, the package is absent: a configuration that reads as
 # on and does nothing. The report has to name the package, not "updates are off".
 f="$(facts_for 'installed=no' 'version=' 'periodic_upgrade=1')"
 case "$(text_of "$f")" in
@@ -187,7 +187,7 @@ case "$(text_of "$f")" in
   *) pass "'never' is left to the timer check rather than accusing the log" ;;
 esac
 
-# `mitv`: a kernel security update installed since 12 July and never in effect, with nothing saying
+# A kernel security update installed for weeks and never in effect, with nothing saying
 # so. Installed is not running.
 f="$(facts_for 'reboot=yes' 'reboot_pkgs=linux-image-6.12.95+deb12-amd64')"
 case "$(text_of "$f")" in

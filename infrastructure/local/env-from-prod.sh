@@ -35,10 +35,9 @@
 #   infrastructure/local/env-from-prod.sh <path-to-prod-env>
 #   infrastructure/local/env-from-prod.sh -            # read the snapshot from stdin
 #
-# Getting the snapshot is the CALLER's job. `make local-env` does it for you. This comment used to
-# say `ssh canari` worked only through the PowerShell tool; that stopped being true on 2026-09-02,
-# and it named the wrong culprit anyway - MSYS `ssh` execs the cloudflared `ProxyCommand` through
-# `/bin/bash` whatever the caller, and it was the Windows backslashes in that path being eaten.
+# Getting the snapshot is the CALLER's job. `make local-env` does it for you. Either shell works for
+# reaching production; the Windows-style backslashes in a `ProxyCommand` path were the only cause of
+# the old "PowerShell only" advice.
 # `~/.ssh/config` spells it with forward slashes now, so bash reaches production directly.
 set -euo pipefail
 
