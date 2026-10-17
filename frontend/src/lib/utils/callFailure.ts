@@ -30,6 +30,21 @@ export class CallInitiateError extends ApiRefusalError {
 }
 
 /**
+ * This engine cannot encrypt call media end to end, so the call is REFUSED before any request.
+ *
+ * A call's media is encrypted with an MLS-derived key through `RTCRtpScriptTransform`. An engine
+ * without it used to degrade to a call the other party's transform could not decrypt (it sent
+ * cleartext and still tried to decrypt what it received), behind a warning badge. Refusing is the
+ * rule for a fallback here: the user is told, and nothing is sent in the clear.
+ */
+export class CallE2eUnsupportedError extends Error {
+  constructor() {
+    super('RTCRtpScriptTransform is unavailable - end-to-end call encryption is impossible here');
+    this.name = 'CallE2eUnsupportedError';
+  }
+}
+
+/**
  * THE SENTENCE A FAILED CALL SETUP READS AS, chosen from the status and nothing else.
  *
  * 404 is answered BEFORE `describeApiRefusal`, and that is the one deliberate departure: the
@@ -46,6 +61,7 @@ export class CallInitiateError extends ApiRefusalError {
  * @returns A localized sentence, never the thrown message - that belongs in the log.
  */
 export function describeCallFailure(error: unknown): string {
+  if (error instanceof CallE2eUnsupportedError) return m.call_e2e_unsupported();
   const status = refusalStatus(error);
   if (status === 404) return m.chat_call_group_desynced();
   return describeApiRefusal(status, m.chat_call_action_start()) ?? m.chat_call_error_generic();

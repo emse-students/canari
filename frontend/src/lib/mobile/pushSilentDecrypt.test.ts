@@ -66,14 +66,18 @@ function callsEnabledIn(src: string, pattern: RegExp): boolean | null {
 }
 
 describe('a silent push is not decrypted while nothing reads its plaintext', () => {
-  it('the two CALLS_ENABLED switches agree', () => {
+  it('the Kotlin CALLS_ENABLED agrees with the TypeScript CALLS_COMPILED', () => {
+    // CALLS_COMPILED, not CALLS_ENABLED, since 2026-10-17: the TypeScript CALLS_ENABLED is now
+    // also on for a DEV build's IN-APP calls, which ring an open app over the chat socket and need
+    // nothing from the push service. What the push service mirrors is the store binaries' calling,
+    // and that is CALLS_COMPILED.
     const kotlin = callsEnabledIn(service(), /private const val CALLS_ENABLED = (true|false)/);
     const ts = callsEnabledIn(
       readFileSync(FEATURES, 'utf8'),
-      /export const CALLS_ENABLED = (true|false)/
+      /export const CALLS_COMPILED = (true|false)/
     );
     expect(kotlin, 'the Kotlin CALLS_ENABLED was renamed or removed').not.toBeNull();
-    expect(ts, 'the TypeScript CALLS_ENABLED was renamed or removed').not.toBeNull();
+    expect(ts, 'the TypeScript CALLS_COMPILED was renamed or removed').not.toBeNull();
     expect(
       kotlin,
       'CALLS_ENABLED differs between the app and the push service. The service cannot read the ' +

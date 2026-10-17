@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { m } from '$lib/paraglide/messages';
-import { CallInitiateError, describeCallFailure } from './callFailure';
+import { CallE2eUnsupportedError, CallInitiateError, describeCallFailure } from './callFailure';
 
 /**
  * A CALL THAT COULD NOT START SAYS WHAT THE SERVER ANSWERED, NOT WHAT IT WROTE.
@@ -67,5 +67,14 @@ describe('describeCallFailure', () => {
     expect(error.name).toBe('CallInitiateError');
     expect(error).toBeInstanceOf(Error);
     expect(error.message).toBe(SERVER_SENTENCE);
+  });
+
+  it('reads an engine that cannot encrypt as exactly that, by type and never by its message', () => {
+    // The call is refused rather than placed unencrypted, so the reader must be told WHY - and the
+    // English sentence carried for the log must never be what they read.
+    const error = new CallE2eUnsupportedError();
+
+    expect(describeCallFailure(error)).toBe(m.call_e2e_unsupported());
+    expect(describeCallFailure(error)).not.toBe(error.message);
   });
 });
