@@ -1615,6 +1615,43 @@ was SIGNED OUT and asked camera and microphone permission again.
 not the one in `test-accounts.json`, and the iPhone's local store is sealed under the old PIN and
 cannot be opened. Either the account PIN goes back or the harness file follows.
 
+
+
+## The iPhone 12 readings of v1.2.9-alpha.2 (2026-10-16)
+
+TestFlight build `1.2.9` (100200902), About reads "Version de Canari 1.2.9-alpha.2"; account
+`canari-test-gamma`, dev estate, driven over WDA (`tools/ios-device`). Evidence (screens, AX trees,
+syslog, two in-app log exports) is outside the repo in the rig's `ios-bench/r1015-a129a2/`. Bench
+community only; nothing sent. The phone has no device passcode.
+
+**Delivery.** Release run 38809585188 finished at ~23:45. At 23:51 TestFlight offered
+"Mettre a jour" to 100200902; auto-update had not taken it yet, and one tap installed it. This time
+the app was NOT signed out.
+
+**The in-app log CAN be read off a TestFlight build.** Settings > A propos > "Enregistrer le journal"
+saves it to "Sur mon iPhone". The Files app's Quick Look shows it, and WDA's element text on its
+`TextView` returns the whole file (172 KB). So the line in the alpha.1 reading saying "the JS log
+cannot be read off a TestFlight build" was wrong: the log existed. The second export holds every
+session since 2026-10-14, the alpha.1 ones included.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1a. PIN recovery from the alpha.1 left state (#1923) | **`PASS`** + P2 | The server PIN gives "Vos messages ... n'ont pas pu etre ouverts". "Recuperer mes messages" (old PIN -> server PIN) logs `[PIN_RECOVER] Complete - messages preserved` and lands on the feed; the salon's messages read. P2: a banner "Certaines conversations n'ont pas pu etre restaurees" appears, with `[INIT] Partial restore: 0/1 conversation(s) hold their MLS group (missing 3122333c)`. The external join for that same group then fails with `group 3122333c already present locally`, which contradicts "missing". The next cold start applied the queued commit and logged past-epoch frames from the peer as `LOST` |
+| 1b. PIN change, relaunch, change back | **`PASS`** | Scratch -> new PIN: the dialog closes with no error. The syslog shows LocalAuthentication `-5 "Passcode not set"` and then only `SecItemAdd` with no failure. The relaunch unlocks on the new PIN and the salon reads. New -> the `test-accounts.json` PIN: same result. The alpha.1 P2 is fixed: the focused confirm field sits above the submit button with the keyboard up. The alpha.1 P3 is fixed: the key button is now labelled "Changer" |
+| 2a. Text size changed while backgrounded (#1926) | **`PASS`** 4 of 4 | The new size applies on return, with no cold start. "A propos" goes 64x22 -> 86x30 (largest standard) -> 128x42 (largest accessibility), and back to 53 pt filter buttons at default. The PIN gate title is 272x41 on return at the largest standard size. The syslog logs `Dynamic Type body published to the page: 17.0 / 23.0 / 53.0 pt` at each return |
+| 2b. Layout at the largest sizes | **`PASS`** + P2 | The rail salon name now scales ("general" 281x64). Headings hyphenate ("person-/nalisation"), at default too. The CanaReels filter row holds at 390 wide; at the largest size "Tous les posts" wraps onto two lines. Still P2 (from alpha.1): at the largest standard size "Saisie manuelle" and "PIN oublie ?" sit behind the sticky Deverrouiller button, and at the largest accessibility size the keypad's rows 7-0 do too. Still P3: the header wordmark is dropped at the largest size |
+| 3a. Chat camera under the glass chrome (#1926) | **`PASS`** | "+" > "Ouvrir la camera" shows only the camera's own close and flip buttons over the viewfinder. The native back, title pill and menu are hidden |
+| 3b. Back with the camera and the "+" menu (#1925) | **`FAIL`** (P2) | Over the photo review, the left-edge swipe does nothing (2 of 2), although [reels-in-chat](frontend/modules/reels-in-chat.md) says it discards a review and closes the camera. The review's X asks "Abandonner cette capture ?"; "La garder" returns to the review and "Ajouter" stages the photo. After that, ONE Back leaves the conversation, so no ghost entry is left. With the "+" menu open, ONE Back closes the menu AND leaves the conversation (2 of 2), where it should close only the menu. The staged photos survive leaving the conversation as a draft |
+| 4a. Feed offline then online (#1922) | **`PASS`** | Offline in a session, the feed draws under the "Hors connexion." banner. Back online, `GET /api/posts` leaves 0.3 s after `browser reports online` and the banner goes. Sampled for 80 s: no offline/online flap, and no presence or `TransportFailure` line after the reconnect |
+| 4b. CanaReels filter (#1920) | **`PASS`** | Taps switch to "Pas encore de CanaReels" with "Ouvrir la camera", then back |
+| 5a. Native noise at cold start (#1926) | **`PASS`** + P3 | 5 launches: "keyboard accessory bar removed" once each, 0 "NOT removed"; the APNs line once; app lines in English. P3: Firebase's own `<ERROR> Error while reading embedded mobileprovision` once per cold start (no profile in a TestFlight build). "remote notification hook NOT installed" stays as a known item ([backlog](backlog.md)) |
+| 5b. Offline cold start (#1921) | **`PASS`** + P3 | Airplane mode: 22 in-app lines up to the PIN gate, 3 `W`: `refresh✗transport` once, and `[LAYOUT] Profile check did not answer` TWICE, an identical pair (P3). The unlock says "Impossible de contacter le serveur" (by design) and `refresh not sent` is held. No storm. P3: the gate keeps the digits of the failed offline attempt and appends the next ones (12 dots), which costs one "PIN incorrect" |
+| 5c. In-app log | **findings** (P2, P3) | P2: `stored: failed (Error: log write failed)` and `E [APPLOG] the in-app log is no longer written to disk` at 00:07:07, the return from Settings at the largest size. The 00:00 and 00:06 sessions are missing from a later export, which reads `stored: ok`. P3: offline in a session, the WS reconnect loop logs `E [WS] Gateway connection failed` on every attempt (6 in 61 s) while the browser reports offline |
+
+**State left behind.** `canari-test-gamma`'s dev PIN matches `test-accounts.json` again. The
+iPhone's local store opens under it. Text size is at the default, airplane mode is off and the
+composer draft is empty. Two exported logs remain in "Sur mon iPhone".
+
 ## The bench readings of v1.2.7-alpha.2 (2026-10-14)
 
 **Mi 9T**: build `1.2.7 (100200702)`, the release's `app-universal-release.apk` (sha256
