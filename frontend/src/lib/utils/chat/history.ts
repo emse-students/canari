@@ -181,37 +181,8 @@ function saveSeenCipherHashes(userId: string, groupId: string, hashes: Set<strin
     const evictedKey = seenHistoryKey(userId, evicted);
     localStorage.removeItem(evictedKey);
     seenCache.delete(evictedKey);
-    pendingSeenFlush.delete(evictedKey);
-    pendingReplayMarks.delete(evictedKey);
+    pendingCheckpointMarks.delete(evictedKey);
   }
-}
-
-/** Groups whose shared set holds marks not yet written, drained once at the end of the current tick. */
-const pendingSeenFlush = new Map<string, { userId: string; groupId: string }>();
-let seenFlushScheduled = false;
-
-/**
- * Persist the marks accumulated on THIS tick, one write per group.
- *
- * A microtask, never a timer. It is not a delay hoping more marks turn up - it is the end of the
- * current turn, so a drain handing over forty frames pays one `JSON.stringify` instead of forty
- * over a set capped at five thousand entries, and a lone frame is still written before anything can
- * observe the gap. Nothing is load-bearing if it ran late anyway: the in-memory set is already
- * correct the instant the mark is added, and the write only has to survive a reload.
- */
-function scheduleSeenFlush(userId: string, groupId: string): void {
-  pendingSeenFlush.set(seenHistoryKey(userId, groupId), { userId, groupId });
-  if (seenFlushScheduled) return;
-  seenFlushScheduled = true;
-  queueMicrotask(() => {
-    seenFlushScheduled = false;
-    const due = [...pendingSeenFlush.values()];
-    pendingSeenFlush.clear();
-    for (const entry of due) {
-      const set = seenCache.get(seenHistoryKey(entry.userId, entry.groupId));
-      if (set) saveSeenCipherHashes(entry.userId, entry.groupId, set);
-    }
-  });
 }
 
 /**
@@ -233,6 +204,16 @@ function scheduleSeenFlush(userId: string, groupId: string): void {
  * never writes `mls.bin` back (`src-tauri/src/mobile/background.rs`), so the foreground genuinely
  * does read the frame again from its queue; marking it consumed there would skip a message that
  * nobody has read.
+ *
+ * DURABLE WITH THE CHECKPOINT THAT HOLDS ITS ADVANCE, NOT ON ITS OWN (2026-10-17). The in-memory
+ * set answers every question of this session the instant the mark is added; the stored copy only
+ * has to survive a reload, and a reload restores the ratchet as the last checkpoint left it. So
+ * the mark waits for {@link commitPendingHistoryMarks}, like the replay's. It used to be written on
+ * its own microtask, which coalesced only the marks of ONE synchronous turn: a queue drain awaits
+ * between frames, so every frame re-stringified a set capped at five thousand entries into
+ * `localStorage` - and each of those writes declared a fingerprint durable before the ratchet
+ * advance it stands for was, the direction that tells the next replay to skip a frame (see
+ * {@link commitPendingHistoryMarks}).
  */
 export function markHistoryFrameConsumed(
   userId: string,
@@ -243,7 +224,7 @@ export function markHistoryFrameConsumed(
   const seen = loadSeenCipherHashes(userId, groupId);
   if (seen.has(fingerprint)) return;
   seen.add(fingerprint);
-  scheduleSeenFlush(userId, groupId);
+  noteMarksPending(userId, groupId);
 }
 
 /**
@@ -305,35 +286,36 @@ export function hasHistoryFrameBeenConsumed(
 }
 
 /**
- * Groups whose REPLAY has marked frames that no durable write has taken yet.
+ * Groups whose shared set holds marks that no durable write has taken yet - from the archive replay
+ * and from every live consumer alike ({@link markHistoryFrameConsumed}).
  *
- * Distinct from {@link pendingSeenFlush}, which drains on a microtask and belongs to live delivery.
- * A replay's marks deliberately do NOT drain on their own: they may only become durable once the
- * ratchet advance that justifies them has been checkpointed, so they wait for a checkpoint to say so.
+ * They deliberately do NOT drain on their own: a mark may only become durable once the ratchet
+ * advance that justifies it has been checkpointed, so it waits for a checkpoint to say so. That is
+ * also what bounds the writes: one per group per checkpoint, however many frames a drain decrypts.
  */
-const pendingReplayMarks = new Map<string, { userId: string; groupId: string; seq: number }>();
+const pendingCheckpointMarks = new Map<string, { userId: string; groupId: string; seq: number }>();
 
-/** Bumped on every replay mark, so a checkpoint can tell whether a group was marked again since. */
-let replayMarkSeq = 0;
+/** Bumped on every mark, so a checkpoint can tell whether a group was marked again since. */
+let markSeq = 0;
 
 /**
- * Declares that the replay has marked something for this group that is not durable yet.
+ * Declares that something was marked for this group that is not durable yet.
  *
  * Idempotent - it is a `Map.set`, so the walk may call it on every mark without cost, which is
  * exactly why it is called there rather than once at the top: registering before anything is marked
  * would make every checkpoint write a set it did not change.
  */
-function noteReplayMarksPending(userId: string, groupId: string): void {
+function noteMarksPending(userId: string, groupId: string): void {
   if (!userId || !groupId) return;
-  pendingReplayMarks.set(seenHistoryKey(userId, groupId), {
+  pendingCheckpointMarks.set(seenHistoryKey(userId, groupId), {
     userId,
     groupId,
-    seq: ++replayMarkSeq,
+    seq: ++markSeq,
   });
 }
 
 /**
- * The replay marks a checkpoint may declare durable: each pending group's marks AS THEY STOOD when
+ * The marks a checkpoint may declare durable: each pending group's marks AS THEY STOOD when
  * the checkpoint started, never as they stand when it lands. Opaque - only
  * {@link commitPendingHistoryMarks} reads it.
  */
@@ -362,7 +344,7 @@ export interface PendingHistoryMarksSnapshot {
 export function snapshotPendingHistoryMarks(userId: string): PendingHistoryMarksSnapshot {
   const groups: Array<PendingHistoryMarksSnapshot['groups'][number]> = [];
   if (!userId) return { userId, groups };
-  for (const [key, entry] of pendingReplayMarks) {
+  for (const [key, entry] of pendingCheckpointMarks) {
     if (entry.userId !== userId) continue;
     const set = seenCache.get(key);
     if (!set) continue;
@@ -372,7 +354,8 @@ export function snapshotPendingHistoryMarks(userId: string): PendingHistoryMarks
 }
 
 /**
- * Makes the replay's accumulated marks durable, because a checkpoint just made their ratchet durable.
+ * Makes the accumulated marks durable, because a checkpoint just made their ratchet durable - the
+ * replay's and, since 2026-10-17, live delivery's ({@link markHistoryFrameConsumed}).
  *
  * ## The defect this closes, and why the end of the walk was the wrong moment
  *
@@ -420,13 +403,13 @@ export function snapshotPendingHistoryMarks(userId: string): PendingHistoryMarks
  */
 export function commitPendingHistoryMarks(snapshot: PendingHistoryMarksSnapshot): void {
   for (const group of snapshot.groups) {
-    const entry = pendingReplayMarks.get(group.key);
+    const entry = pendingCheckpointMarks.get(group.key);
     // Gone: a later checkpoint or the thunk has written a newer set already, so this one is stale.
     if (!entry) continue;
     if (entry.seq === group.seq) {
       const set = seenCache.get(group.key);
       saveSeenCipherHashes(snapshot.userId, group.groupId, set ?? group.marks);
-      pendingReplayMarks.delete(group.key);
+      pendingCheckpointMarks.delete(group.key);
       continue;
     }
     saveSeenCipherHashes(
@@ -441,10 +424,10 @@ export function commitPendingHistoryMarks(snapshot: PendingHistoryMarksSnapshot)
  * `marks` plus whatever the ledger already holds DURABLY, so writing an older snapshot can never
  * take back a mark another writer has already made durable.
  *
- * The live path flushes this same set on its own microtask ({@link scheduleSeenFlush}), so between a
- * snapshot and its commit the stored ledger can hold marks the snapshot predates. Writing the
- * snapshot verbatim would drop them - a frame this device read live, re-accused as lost on the next
- * walk. The extras go LAST so the bound keeps them as the newest entries; they were already durable,
+ * Another writer can land between a snapshot and its commit - the replay's own thunk writes the
+ * whole shared set, and a second checkpoint can finish before an earlier one commits - so the
+ * stored ledger can hold marks the snapshot predates. Writing the snapshot verbatim would drop
+ * them - a frame this device read, re-accused as lost on the next walk. The extras go LAST so the bound keeps them as the newest entries; they were already durable,
  * so carrying them over makes nothing durable that was not.
  */
 function withDurableMarks(userId: string, groupId: string, marks: Set<string>): Set<string> {
@@ -467,9 +450,7 @@ function withDurableMarks(userId: string, groupId: string, marks: Set<string>): 
 /** @internal Drops the shared sets between Vitest cases, so one case cannot answer another's question. */
 export function resetSeenCipherCacheForTests(): void {
   seenCache.clear();
-  pendingSeenFlush.clear();
-  pendingReplayMarks.clear();
-  seenFlushScheduled = false;
+  pendingCheckpointMarks.clear();
 }
 
 /**
@@ -685,7 +666,7 @@ export async function replayConversationHistory(params: {
      */
     const markSeenUpdated = (): void => {
       seenUpdated = true;
-      noteReplayMarksPending(userId, id);
+      noteMarksPending(userId, id);
     };
 
     // Per-ciphertext retry ledger: how many prior replay runs left this frame un-seen because it

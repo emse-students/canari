@@ -147,13 +147,15 @@ describe('the v9 -> v10 upgrade', () => {
 
   it('a tab holding the older connection lets go when a newer one upgrades, instead of blocking it', async () => {
     const storage = await idbStorage();
-    const name = (storage as unknown as { dbName: string }).dbName;
+    const { dbName: name, db } = storage as unknown as { dbName: string; db: IDBDatabase };
+    // Read, not written down: a literal "next version" goes stale on the next schema bump.
+    const next = db.version + 1;
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const reload = vi.spyOn(window.location, 'reload').mockImplementation(() => {});
 
     // A newer bundle asking for the next version, while this connection is still open.
     const upgraded = await new Promise<number>((resolve, reject) => {
-      const req = indexedDB.open(name, 11);
+      const req = indexedDB.open(name, next);
       req.onblocked = () => reject(new Error('blocked by the older connection'));
       req.onsuccess = () => {
         const version = req.result.version;
@@ -163,7 +165,7 @@ describe('the v9 -> v10 upgrade', () => {
       req.onerror = () => reject(req.error);
     });
 
-    expect(upgraded).toBe(11);
+    expect(upgraded).toBe(next);
     expect(storage.isOpen).toBe(false);
     expect(reload).toHaveBeenCalledTimes(1);
     vi.restoreAllMocks();
