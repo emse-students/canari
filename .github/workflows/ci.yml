@@ -495,7 +495,11 @@ jobs:
         service: ${{ fromJSON(needs.changes.outputs.ts-matrix) }}
     services:
       postgres:
-        image: postgres:16-alpine
+        # PRODUCTION'S POSTGRES, BY DIGEST - the pin the three compose files carry. The boot builds the
+        # schema with `synchronize` (extensions included) and the account-erasure SQL runs on it below:
+        # proving either on another major proves it on a server production does not run. Bump it WITH
+        # the compose files, never alone.
+        image: postgres:18-alpine@sha256:d3e1620b530c944afa6e887d22eb899824da68e19c52024bf98f5220c88a65b2
         env:
           POSTGRES_USER: canari
           POSTGRES_PASSWORD: boot-probe

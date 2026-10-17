@@ -148,7 +148,7 @@ when each is opened (083 on 2026-10-15). Only Master marks ready, merges and rel
 | **WP-F** (DRAFT PR #1908, 2026-10-15, migration 084: built; the media class `form-file` and its two internal routes `internal/form-file` and `internal/form-file-purge` are reusable as they are; the purge to reuse is `purgeExpiredFiles` in `apps/social-service/src/forms/file-retention-purge.ts`, each candidate `{ fileId, ownerId, start, retentionDays }` so for bookings `start` is the slot end; size cap 8 MiB because the host firewall drops bodies over 10 MiB; a file question is refused on PUBLIC and on ANONYMOUS forms, the second being the agent's choice to confirm with the user: the file row and the blob owner name the uploader) | FILE question type for forms: type everywhere it must exist, server validation of ownership, size and type, a new media retention class, a manager-gated read, expiry and purge, refused on a public form (D40) | `frontend/src/lib/forms/questionTypes.ts`, `FormBuilder.svelte` (`hasOptions` denylist), `FormQuestion.svelte`, `apps/media-service/.../media.service.ts` `RetentionClass`, `apps/social-service/src/posts/reel-retention.scheduler.ts` as the scheduler pattern | A manager downloads a file; a stranger holding the id gets nothing readable; a purged file leaves the row; a second purge changes nothing |
 | **WP-B0** (MERGED as #1904, 2026-10-15: the backfill migration is `083_manage_bookings.sql`; a list's role editor needed NO change, so the list roster work moves to WP-B4, which adds an `EditSection` key, an `editRights` entry and a `mayOpenEditSection` case, and changes the 'list has three sections' test) | `MANAGE_BOOKINGS`: bit `1 << 11`, both enums, role-editor row, Paraglide labels, backfill of `MANAGE_FORMS` holders (D39), the list roster (D38) | `association-member.entity.ts`, `frontend/src/lib/associations/api.ts`, `AssociationMemberRow.svelte` `FLAG_LABELS`, `editSections.ts` | `permissions.test.ts` and the DTO spec pass; the right is grantable from the editor |
 | **WP-B1** (DRAFT PR, 2026-10-16, migration `087_bookings.sql` because #1940 holds 086: see [WP-B1 as built](#wp-b1-as-built-2026-10-16)) | Data model and migration: space, resource, availability rules, exceptions, blocked ranges, booking, participants; `btree_gist` and an EXCLUDE constraint on (resource, time range) among live bookings; deletion of a space deletes everything (D27) | `apps/social-service/src/migrations/` (next free number), `docs/wiki/infrastructure/databases.md` rules | Two concurrent inserts on the last slot: exactly one wins, in a real database |
-| **WP-B2** | Slot generation on demand (step or predefined slots), booking window, quotas, withdrawal delay, zone handling, the rule that refuses an availability edit with bookings inside (D29). **A window crossing midnight is TWO rules** (22:00-24:00 and 00:00-02:00 the next day): `booking_availability_rules_order` requires `startTime < endTime`, and generation must join them back into one window | A new `bookings` module beside `forms`; `AssociationsService.mayAct` as the only rights policy | Table-driven tests across a daylight-saving change |
+| **WP-B2** (DRAFT PR stacked on #1963, 2026-10-17: see [WP-B2 as built](#wp-b2-as-built-2026-10-17)) | Slot generation on demand (step or predefined slots), booking window, quotas, withdrawal delay, zone handling, the rule that refuses an availability edit with bookings inside (D29). **A window crossing midnight is TWO rules** (22:00-24:00 and 00:00-02:00 the next day): `booking_availability_rules_order` requires `startTime < endTime`, and generation must join them back into one window | A new `bookings` module beside `forms`; `AssociationsService.mayAct` as the only rights policy | Table-driven tests across a daylight-saving change |
 | **WP-B3** | API: book, cancel, participant withdraws, organiser blocks, books on behalf, cancels (D20); frozen history (D15); block honoured (`isBlockedBetween`); private fields returned only to the booking's people (D32) | `apps/social-service/src/common/user-blocks.ts`, `forms.service.ts` `assertFormManager` as the guard shape | A past booking refuses every write; a stranger never receives a private field |
 | **WP-B4** | Organiser screens: five settings sections (D35), resources, availability, questions reused from forms, the entity tab. The availability editor writes a window crossing midnight as two rules (see WP-B2) | `editSections.ts`, `routes/associations/[slug]/edit/[[section]]/+page.svelte`, `FormSection.svelte` and `FormAdvancedSettings.svelte` as the pattern | Seen at 390 and 1280 on a real build |
 | **WP-B5** | Booker screens: grid and planning (D14), my bookings, the dashboard card (D37), the sidebar entry, link and QR code, "Add to my calendar" with a hosted ICS route (D13) | `routes/calendar/+page.svelte`, `viewport.ts`, `AddEventToCalendarButton.svelte`, `navigation/places.ts`, `QrCodeModal.svelte`, `pageWidth.ts` | Read on the Mi 9T and the iPhone |
@@ -245,3 +245,57 @@ column named like these can never ship unclassified:
 Proved on a real PostgreSQL by `bookings.integration.spec.ts` (one test per line above, two
 tombstoned participants in one booking, and a second run changing nothing). Recorded as row C17 of
 the [register of processing](compliance/register-of-processing.md).
+
+## WP-B2 as built (2026-10-17)
+
+Pure functions, with no clock and no database, so every case is a table-driven test. One service
+reads the tables for them. Nothing here is a route yet (that is WP-B3).
+
+| File | Holds |
+|---|---|
+| `src/bookings/zoned-time.ts` | Local wall time in a zone <-> UTC, with `Intl` alone and no library. The holes are resolved as `Temporal`'s `'compatible'`: a time in a spring-forward GAP moves forward by the gap, and a time that exists TWICE is the EARLIER instant. `24:00` is the next day's 00:00. |
+| `src/bookings/slots.ts` | `availabilityWindows`, `slotUnits`, `checkRangeShape`, `unitStates`, `bookingsOutsideAvailability` (D29) |
+| `src/bookings/booking-rules.ts` | `checkBookingWindow` (D26), `checkQuotas` (D17), `holderMayCancel` (D5), each refusal a CODE |
+| `src/bookings/booking-slots.service.ts` | `spaceSlots(spaceId, from, to)` (at most 62 local days) and `assertAvailabilityChangeAllowed` (409 `bookings-inside-change`, naming the booking ids) |
+
+**Generation.** A line applied to one local date is a PIECE.
+
+- **Step space.** The pieces of a resource are UNITED (overlapping or touching) into windows. A
+  window is cut into steps of ELAPSED time from its start. A booking is 1..`maxSteps` consecutive
+  steps of one window.
+- **Slots space.** Each piece IS a slot. Two pieces join only across midnight (`24:00`, then the
+  next day's `00:00`), so back-to-back interviews stay two slots.
+- **Which day a window belongs to.** A window belongs to the local date it STARTS on. The
+  generation reads one day on either side of the dates asked, so a window crossing midnight (two
+  lines, see the WP table) is whole, and its tail is never a window of the next day.
+- **Change nights.** A 01:00-04:00 line lasts four hours on the fall-back night (eight steps of
+  30 min) and two on the spring-forward night.
+
+**The booking window (D26).** It refuses:
+
+- `started`: a slot that has begun;
+- `notice`: a slot starting sooner than `minNoticeMinutes`;
+- `beyond-horizon`: a slot starting more than `horizonDays` x 24 h away (elapsed time, so the horizon
+  slides with the clock);
+- `not-open-yet`: anything before `opensAt`.
+
+**Quotas (D17).** They count the person's LIVE bookings of the space, as holder or as a
+participant who has not withdrawn.
+
+- `active-bookings` counts the bookings not yet ENDED, so one in progress still counts.
+- `minutes-per-period` sums the bookings STARTING in the same local day, or the same ISO week
+  (keyed by its Monday).
+- The organiser booking on someone's behalf is exempt: the caller (WP-B3) does not run the check.
+
+**Withdrawal (D5).** The holder may cancel until `withdrawalDelayMinutes` before the start
+(0 = until the start). The organiser is not bound by the delay (D20). **Participants are not held
+to it in v1**: D4 lets them withdraw alone, and D5 names only the holder. To confirm with the user.
+
+**D29.** A change of a resource's availability, or of the space's step, mode or step ceiling, is
+checked against the coming LIVE bookings. Any booking that is no longer a bookable shape refuses
+the change and is named. Blocking a free range is not such a change.
+
+**Proof.** `zoned-time.spec.ts`, `slots.spec.ts`, `booking-rules.spec.ts` and
+`booking-slots.service.spec.ts`, all table-driven. They cover both 2026 Paris changes, New York's
+gap, the midnight join in both modes, exceptions, dated lines, alignment, the step ceiling and
+every refusal code.
