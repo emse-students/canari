@@ -18,7 +18,7 @@
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { PostEntity } from '$lib/posts/api';
-  import { getReelFeedSource, reelPageLoader } from '$lib/reels/reelFeedSource';
+  import { REEL_PAGE as PAGE, listAllReels, type ReelPageLoader } from '$lib/reels/allReels';
   import {
     mergeReelPage,
     mountedReelIndices,
@@ -41,31 +41,21 @@
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
-    /** The reel that was touched: shown first. */
+    /** The reel shown first: the one touched, or the newest when opened from the feed's icon. */
     startPost: PostEntity;
     authToken: string;
     onClose: () => void;
-    /**
-     * The next page of reels; injectable for tests. By default the feed filtered to CanaReels when
-     * the viewer was opened from it (`reels/reelFeedSource.ts`), else every reel (C7).
-     */
-    loadPage?: (offset: number, limit: number) => Promise<PostEntity[]>;
+    /** The next page of reels: the C7 list (`reels/allReels.ts`) unless the opener has its own. */
+    loadPage?: ReelPageLoader;
   }
 
-  // Read at initialisation, as a context must be: the source the feed page set, if any.
-  const feedSource = getReelFeedSource();
+  let { startPost, authToken, onClose, loadPage = listAllReels }: Props = $props();
 
-  let {
-    startPost,
-    authToken,
-    onClose,
-    loadPage = reelPageLoader(feedSource, startPost),
-  }: Props = $props();
-
-  /** How many reels one page asks for. */
-  const PAGE = 10;
-  /** Touches on these belong to them: the player's bar seeks, a button is pressed. */
-  const NOT_A_GESTURE = 'button, [data-video-controls]';
+  /**
+   * Touches on these belong to them: the player's bar seeks, a button is pressed, and an EXPANDED
+   * caption scrolls its own text (`ReelSlide`) - a swipe there must not turn the reel.
+   */
+  const NOT_A_GESTURE = 'button, [data-video-controls], [data-reel-caption-open]';
 
   let reels = $state<PostEntity[]>([]);
   let index = $state(0);
@@ -260,9 +250,30 @@
     };
   });
 
+  /** How far one arrow key scrolls an unfolded caption: about two lines of its text. */
+  const CAPTION_LINE_STEP = 40;
+
+  /**
+   * While the current reel's caption is UNFOLDED (`ReelSlide`, `data-reel-caption-open`), the up and
+   * down keys scroll ITS text, as a drag there does, instead of turning the reel. True when it took
+   * the key.
+   */
+  function scrollOpenCaption(e: KeyboardEvent): boolean {
+    const down = e.key === 'ArrowDown' || e.key === 'PageDown';
+    const up = e.key === 'ArrowUp' || e.key === 'PageUp';
+    if (!down && !up) return false;
+    const caption = frame?.querySelector<HTMLElement>('[data-reel-caption-open]');
+    if (!caption) return false;
+    e.preventDefault();
+    const step = e.key.startsWith('Page') ? caption.clientHeight * 0.9 : CAPTION_LINE_STEP;
+    caption.scrollBy({ top: down ? step : -step });
+    return true;
+  }
+
   /** The keyboard: up/down page, Escape closes. A key the player already used is left to it. */
   function onKeydown(e: KeyboardEvent) {
     if (e.defaultPrevented || settling) return;
+    if (scrollOpenCaption(e)) return;
     if (e.key === 'ArrowDown' || e.key === 'PageDown') {
       e.preventDefault();
       go('next');

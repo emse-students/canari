@@ -9,6 +9,7 @@ import type { UsersService } from './users.service';
 import type { UserBlocksService } from './user-blocks.service';
 import type { ProfileEditService } from './profile-edit.service';
 import type { ProfileCorrectionService } from './profile-correction.service';
+import type { AccountErasureService } from '../account-erasure/account-erasure.service';
 
 // Nothing here may leave the machine (see `avatar.service.spec.ts`).
 jest.mock('axios');
@@ -38,7 +39,8 @@ describe('avatar presence', () => {
       avatars,
       {} as UserBlocksService,
       {} as ProfileEditService,
-      {} as ProfileCorrectionService
+      {} as ProfileCorrectionService,
+      {} as AccountErasureService
     );
   }
 

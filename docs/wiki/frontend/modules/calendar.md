@@ -570,7 +570,7 @@ whatever the browser had ready.
 ### THE OUTLINE HAS ROOM AND THE SLOTS SUM TO THE CELL (2026-10-07)
 
 Two defects reproduced by rendering October with two half-day events on the 13th (before/after in
-`F:/Programmation/canari-export-preview/export-bugs-*.png`, outside the repo).
+`<workstation>/canari-export-preview/export-bugs-*.png`, outside the repo).
 
 - **The outline was cut left and right.** A title is `overflow:hidden` for its line clamp, which clips
   at the padding box, while `paint-order:stroke fill` paints the stroke's outer half beyond the glyph.

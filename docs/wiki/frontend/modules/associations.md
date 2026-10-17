@@ -210,7 +210,14 @@ after a delete); components call `wordingFor(kind)` and never ternary over a sen
 new row, and `kindWording.test.ts` fails if an institution sentence says association or club.
 The document title cannot come from the path (`/associations/<slug>/edit` does not say the type), so
 the page hands it to `SeoHead` through `lib/seo/pageTitle.svelte.ts`, which stays the only writer of
-`<title>`. Lists already redirected to `/lists`.
+`<title>`. Lists already redirected to `/lists`. A title set AFTER the navigation is not heard by
+SvelteKit's hidden route announcer, which copies `document.title` at the navigation only: a page
+whose answer arrives later announces it ITSELF, through its own polite status region present from
+the first frame. The payment return does (`role="status"` on its heading and sentence only, the icon and the link
+outside it) - the announcer read
+"Verification du paiement..." over "Paiement introuvable" (iPhone 12, v1.2.9-alpha.4). Making the
+router re-read the title by a shallow `replaceState` was refused in review: it rewrites the history
+entry, notifies every page-store subscriber, and throws before the router has started.
 
 ### The tab title on a DIRECT load, and three sentences that still said "association" (2026-10-07, dev read)
 

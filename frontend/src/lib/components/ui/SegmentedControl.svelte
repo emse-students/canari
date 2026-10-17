@@ -49,7 +49,9 @@
   } as const;
   const IDLE = 'text-text-muted hover:text-text-main hover:bg-black/5 dark:hover:bg-white/5';
 
-  let buttons: HTMLButtonElement[] = [];
+  // `$state`, so `bind:this={buttons[i]}` binds to a reactive slot: a plain array drew Svelte's
+  // `binding_property_non_reactive` warning on every mount of the feed.
+  let buttons = $state<HTMLButtonElement[]>([]);
 
   /** Arrow keys wrap around; Home/End jump. The newly selected tab takes focus. */
   function onKeydown(event: KeyboardEvent, index: number) {

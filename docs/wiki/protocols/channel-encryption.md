@@ -2429,7 +2429,7 @@ mapping. The rejection is deliberately not caught - `onChannelMemberJoined` alre
 
 ## 16. A shut phone one commit behind could never catch up, in any community - FIXED 2026-09-27
 
-**Measured on the user's Pixel 6a, production, 2026-09-27.** Every Gala salon push arrived as
+**Measured on a store Pixel 6a, production, 2026-09-27.** Every Gala salon push arrived as
 "Nouveau message dans #general" and stayed that way. The seed frame DID reach the phone; the
 logcat said why it was not opened:
 

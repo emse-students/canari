@@ -243,6 +243,12 @@ Where each part of that lives:
   old `cells[key] ?? baseCents` was exactly the fallback that would have priced an unavailable
   combination; it now refuses instead, greys out the options that lead to a closed cell (shown, not
   hidden - an option that vanishes reads as a bug), and disables the submit button.
+  **A required priced question not answered yet has chosen no cell** (`pricedQuestionsAwaitingAnswer`,
+  `forms/fillAnswers.ts`): until it is (`priceDecided`), the page says nothing about the price - no
+  "from" price in the header, no total in the footer or on the button, no "Combinaison indisponible"
+  - and closes no option of ANOTHER priced question (`page.pricing.svelte.test.ts`). Its blank used to fall
+  in the "others" group and called "Cotisation BDE 2026" unavailable before any answer (Mi 9T,
+  v1.2.9-alpha.3). An OPTIONAL priced question left blank still prices as "others", as the server does.
 
 ### What the app knows about a person, and why a price may rest on it
 
@@ -920,10 +926,7 @@ Tests: `forms.service.seat-hold.spec.ts` runs the service on an in-memory store 
 ## What a client reads of a submission is an allowlist (2026-10-15)
 
 `GET /api/forms/submissions/:id` (the submitter or a manager, read by the payment return pages)
-answered `paymentAccountId`: the Business's Lydia `vendor_token`. Lydia's `request/cancel` asks
-for nothing else besides the `request_id`, and request ids are sequential (`12115506`,
-[payments](payments.md)), so any submitter could cancel the open payment requests of everyone
-else paying that association. No client field read it. The two submitter reads and the two
+answered a payment-provider account credential that no client field read. The two submitter reads and the two
 manager lists (`:id/submissions`, `:id/submissions/pending-cash`) also answered the whole row:
 the provider ids (`stripeSessionId`, `paymentRequestId`, `paymentSettledBy`), the hold clock and
 the fulfilment flags.
@@ -942,9 +945,7 @@ recognisable value and fails if any client read carries one, by value or by key 
 fails 4/4 against the previous service.
 
 **The association reads had the same leak, closed the same way (2026-10-15).** `GET
-/api/associations` and its siblings answered `lydiaAccountId`, the same vendor token, to any
-signed-in member, through a denylist that nulled only the vault key and the notes; `me/list` did
-not even go through that and answered the vault master key to every member.
+/api/associations` and its siblings answered the same payment credential and other private columns, through a denylist rather than an allowlist.
 `apps/social-service/src/associations/association.projection.ts` (`toAssociationView`) is now an
 allowlist on every route that answers a row: `GET /`, `slug/:slug`, `:id`, `me/list`, `POST /`,
 `PATCH :id` and both logo routes. The token and the dashboard URL have their own read,

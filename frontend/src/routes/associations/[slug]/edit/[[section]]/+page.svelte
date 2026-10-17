@@ -31,7 +31,7 @@
     Globe,
   } from '@lucide/svelte';
   import SectionHub from '$lib/components/navigation/SectionHub.svelte';
-  import type { Crumb, HubRow } from '$lib/components/navigation/breadcrumb';
+  import type { Crumb, HubIcon, HubRow } from '$lib/components/navigation/breadcrumb';
   import {
     editRights,
     editTrail,
@@ -176,7 +176,7 @@
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
-  const SECTION_ICONS: Record<EditSection, HubRow['icon']> = {
+  const SECTION_ICONS: Record<EditSection, HubIcon> = {
     profile: Building2,
     members: Users,
     payments: CreditCard,

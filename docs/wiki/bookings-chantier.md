@@ -80,6 +80,14 @@ see who else booked.
 
 D27 was re-confirmed by the user on 2026-10-15: the history is frozen only while its space exists.
 
+## Accords recorded
+
+User, 2026-10-15, in session (relayed by the planning session, recorded at Master's request),
+covering: D1-D3 of the paid-form chantier, the backfill of migration 083, the data half of migration
+084 before production, `minClientVersion` 1.2.7 (the user's own action), the anonymous-form file
+question refused, and Lydia states 1 and 5 to be measured by hand. No later work package starts
+until the lead session says so.
+
 ## Open
 
 - Validation of the work-package plan below by the user, then the pull request carrying this page and the backlog pointer.
@@ -112,7 +120,7 @@ Paths are relative to the repository root. Line numbers drift; the symbol is the
 | Question types | `frontend/src/lib/forms/questionTypes.ts` `QUESTION_TYPES` (plain `string`, no union), `FormBuilder.svelte` (`hasOptions` is a DENYLIST: a file type falls into the options editor unless added), `itemsPayload.ts` `TYPES_WITHOUT_OPTIONS` (second copy), `FormQuestion.svelte` (an `{#if}` chain with no `{:else}`: an unknown type renders NOTHING), `fillAnswers.ts` (`hasValue`), `submissionTable.ts` `COLUMN_TYPES` (allowlist) | Backend `FormItemDto.type` accepts any string and `forms.service.ts` never validates an answer against its item's type: ownership, size and type checks of a file are new. |
 | Answer reading | `frontend/src/lib/forms/answerText.ts` and `apps/social-service/src/forms/answer-text.ts` | Byte-identical declared duplicates (`declared-duplicates.mjs`): edit both identically. |
 | Answer shape | `apps/social-service/src/forms/dto/form.dto.ts` `IsValidAnswers` (string up to 2000, string[] up to 50, number) | A file answer stored as a media id string fits. Matrix answers are objects: check how they pass before relying on it. |
-| File storage | `apps/media-service/src/media/storage.service.ts` (Garage, bucket `canari-media`); metadata is a JSON file (`media_meta/media_metadata.json`), not Postgres | `GET /media/:id` has NO per-object ACL (any valid JWT holding the id reads the ciphertext); confidentiality is client-side encryption. **No precedent exists for plaintext served only to authorised readers.** |
+| File storage | `apps/media-service/src/media/storage.service.ts` (Garage, bucket `canari-media`); metadata is a JSON file (`media_meta/media_metadata.json`), not Postgres | media reads return ciphertext only; confidentiality is client-side encryption. **No precedent exists for plaintext served only to authorised readers.** |
 | Server-to-server read | `media.controller.ts` `GET /media/internal/:id` (`X-Internal-Secret`) | The nearest building block, with social-service as the gate; it forces `application/octet-stream`. |
 | Retention classes | `media.service.ts` `RetentionClass` (ephemeral, archive, association, reel, reel-pending, chat-reel), `internal/retention-class` special cases; mirror `frontend/src/lib/media.ts` | A new class must be added in all three. The 2026-09 incident: an upload with no class was swept. |
 | Purge precedent | `apps/social-service/src/posts/reel-retention.scheduler.ts` (`@Cron`, "THE STATE IS THE ROW", blobs first then row, a `running` flag), `internal/reel-media.ts`, `media.service.ts` `purgeReels` | **It deletes the row too: there is NO "delete the file, keep the row" precedent.** Bookings need their own predicate (a file id still set and slot end + N days past) and clear the column after the blob is gone. Pattern for the scheduler: `forms/forms-reminder.scheduler.ts`. |

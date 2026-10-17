@@ -175,7 +175,16 @@
   function send(event: CaptureEvent) {
     const before = capture;
     const after = captureReducer(before, event);
-    if (after === before) return;
+    if (after === before) {
+      // A pick is the member's own act: one the state refuses is said, never lost in silence.
+      if (event.type === 'picked') {
+        console.warn(
+          `[reel-capture] a picked ${event.clip.source} take was refused in ${before.kind}`
+        );
+        showToast(m.reels_capture_take_refused(), 'error');
+      }
+      return;
+    }
     console.debug(`[reel-capture] ${before.kind} -> ${after.kind} on ${event.type}`);
     capture = after;
     if (before.kind === 'pressing') clearHoldTimer();
@@ -409,7 +418,12 @@
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
-    if (file) await takePickedVideo(file);
+    if (!file) {
+      console.debug('[reel-capture] the gallery answered with no file');
+      return;
+    }
+    console.debug(`[reel-capture] gallery picked ${file.type || 'typeless'} (${file.size} bytes)`);
+    await takePickedVideo(file);
   }
 
   /**
@@ -437,7 +451,10 @@
 
   async function takePickedVideo(file: File) {
     if (!limits) {
+      // The gallery button waits for the cap, so this is a pick the member made and cannot see
+      // taken: it is said, never dropped.
       console.warn('[reel-capture] a gallery pick arrived before the cap was read');
+      showToast(m.reels_capture_pick_before_limits(), 'error');
       return;
     }
     if (!file.type.startsWith('video/')) {
@@ -493,6 +510,22 @@
     {onclose}
     microphoneAsked={rules.microphone === 'with-lens'}
   >
+    {#snippet faultActions()}
+      <!-- A REFUSED CAMERA KEEPS THE GALLERY: a pick needs no camera, and the input is always
+           mounted, so the member who said no to the camera can still publish a video. -->
+      {#if rules.gallery}
+        <button
+          type="button"
+          class="inline-flex items-center gap-2 rounded-full bg-white/15 px-5 py-2.5 text-sm font-semibold outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
+          disabled={!limits}
+          data-reel-fault-gallery
+          onclick={openGallery}
+        >
+          <Images size={16} strokeWidth={2.5} />
+          {m.reels_capture_gallery()}
+        </button>
+      {/if}
+    {/snippet}
     {#snippet controls()}
       <div class="grid grid-cols-3 items-end px-6">
         <div class="flex justify-start pb-6">
@@ -508,15 +541,6 @@
             >
               <Images size={22} strokeWidth={2} />
             </button>
-            {#if !nativeGallery}
-              <input
-                bind:this={picker}
-                type="file"
-                accept="video/*"
-                class="hidden"
-                onchange={onPicked}
-              />
-            {/if}
           {/if}
         </div>
         <div class="flex flex-col items-center gap-3">
@@ -551,6 +575,22 @@
       {/if}
     {/snippet}
   </CameraScreen>
+
+  <!-- THE GALLERY'S INPUT LIVES HERE, NEVER IN `controls`. The picker backgrounds the app, the camera
+       is released, and CameraScreen drops its controls with the phase: an input inside them was
+       detached when the picker answered, and Svelte's root-delegated `onchange` never reached it - a
+       picked video vanished with no review, no error and no line (Mi 9T, v1.2.9-alpha.4, 3 of 3).
+       Here it lives as long as the screen does, whatever the camera is doing. -->
+  {#if rules.gallery && !nativeGallery}
+    <input
+      bind:this={picker}
+      type="file"
+      accept="video/*"
+      class="hidden"
+      data-reel-gallery-input
+      onchange={onPicked}
+    />
+  {/if}
 
   {#if capture.kind === 'review'}
     {@const clip = capture.clip}

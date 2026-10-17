@@ -51,18 +51,16 @@ Browser / Tauri (Native App)
 Infrastructure: PostgreSQL · Redis · Garage
 ```
 
-> In production, Cloudflare Tunnel terminates TLS and forwards to `localhost:8080` → Nginx.
->
-> The same host also carries a second, complete estate for `dev.canari-emse.fr` — the compose project
-> `canari-dev`, reached on `localhost:3080`, with its own network, volumes and secrets. It is not
-> deployed yet; see [dev-environment](docs/wiki/infrastructure/dev-environment.md).
+> In production, TLS terminates at the edge in front of Nginx. A second, complete estate serves
+> `dev.canari-emse.fr` (the compose project `canari-dev`, with its own network, volumes and secrets);
+> see [dev-environment](docs/wiki/infrastructure/dev-environment.md).
 
 ## Quick start
 
 ### Prerequisites
 
 - Docker + Docker Compose
-- Node.js 24+, [Bun](https://bun.sh/), [Rust ≥ 1.93](https://rustup.rs/)
+- Node.js 24+, [Bun](https://bun.sh/), [Rust ≥ 1.97](https://rustup.rs/)
 - `make`
 
 `make install` also installs `wasm-pack` (pinned, via `scripts/install-wasm-pack.sh`) and generates

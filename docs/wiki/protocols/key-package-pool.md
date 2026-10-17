@@ -626,7 +626,7 @@ these bundles are hours old, not 84 days. The prune bounds the ceiling; this loo
 
 ## A WEB PROFILE HOLDS 1024 BUNDLES, ALL LIVE, AND THAT IS ACCRUAL CORRECT BY CONSTRUCTION (production consoles, 2026-09-16)
 
-The user's own browser on `0.18.4`, read three times the same day from the census line
+A browser on `0.18.4`, read three times the same day from the census line
 `load_or_create` prints once per load (so no `stat mls.bin` is ever needed - groups and bundles are
 separated by reading the log, not by dividing a file size):
 

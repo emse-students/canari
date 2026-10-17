@@ -22,8 +22,9 @@
 # THAT IS NOT WHAT THE DEV ENVIRONMENT WOULD HAVE PROVED, and believing it would have re-armed the
 # outage behind a gate that looks like evidence.
 #
-# `infrastructure/dev/copy-prod-to-dev.sh` copies production with `pg_dump` and restores with `psql`.
-# That is a LOGICAL copy: it replays SQL into a cluster the new major initialised ITSELF, from empty.
+# The dev estate was then loaded by a `pg_dump` of production restored with `psql` (deleted
+# 2026-10-16; dev now holds a fictional seed loaded by `infrastructure/dev/reset-dev-to-seed.sh`).
+# Either way it is LOGICAL: SQL replayed into a cluster the new major initialised ITSELF, from empty.
 # It never touches a data directory written by the old major, so it cannot fail the way production
 # failed - and it would have gone green on PostgreSQL 18 while proving nothing whatsoever about
 # `pg_upgrade` or the 18+ move of the mount point from `/var/lib/postgresql/data` to
@@ -52,8 +53,10 @@
 #                  logical_restore   The new major serves this application's schema and data after a
 #                                    `pg_dump` / restore. Worth having - it catches a schema or a
 #                                    query the new major rejects - but the cluster is still one the
-#                                    new major built itself. It lifts NOTHING, and this is the value
-#                                    the dev environment produces on its own.
+#                                    new major built itself. It lifts NOTHING. Dev produces it with a
+#                                    schema-only restore plus the fictional seed: production's
+#                                    SCHEMA, never its rows, which makes it weaker still as evidence
+#                                    about production's data.
 #
 #                  in_place_upgrade  The new major serves production's OWN data directory, carried
 #                                    across by the documented upgrade path, with the mount layout the
