@@ -51,4 +51,31 @@ describe('TauriMlsService.pauseSocket', () => {
     const svc = new TauriMlsService() as unknown as Internals;
     expect(() => svc.pauseSocket()).not.toThrow();
   });
+
+  it('releases the socket and its listener channel when the page leaves', async () => {
+    // A reload leaves the plugin's Rust-side channel answering a dead page (`Couldn't find
+    // callback id`): the page must hand the socket back as it goes.
+    const NativeWebSocket = (await import('@tauri-apps/plugin-websocket')).default as unknown as {
+      connect: ReturnType<typeof vi.fn>;
+    };
+    const unlisten = vi.fn();
+    const ws = {
+      send: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      addListener: vi.fn().mockReturnValue(unlisten),
+    };
+    NativeWebSocket.connect.mockResolvedValue(ws);
+    const svc = new TauriMlsService() as unknown as Internals & {
+      connect(token?: string): Promise<void>;
+    };
+    await svc.connect('tok');
+    expect(svc.ws).toBe(ws);
+
+    window.dispatchEvent(new Event('pagehide'));
+    await flush();
+
+    expect(unlisten).toHaveBeenCalledTimes(1);
+    expect(ws.disconnect).toHaveBeenCalledTimes(1);
+    expect(svc.ws).toBeNull();
+  });
 });

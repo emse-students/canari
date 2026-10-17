@@ -66,6 +66,8 @@ type ReloadOutcome = 'reloaded' | 'nothing-on-disk' | 'epoch-regression' | 'live
  */
 export class TauriMlsService extends BaseMlsService {
   private ws: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null = null;
+  /** The `pagehide` listener releasing the native socket with its page (see `connect`). */
+  private _pageHideHandler: (() => void) | null = null;
   private wsUnlisten: (() => void) | null = null;
   /** Consecutive pings sent without any incoming data frame from the server. */
   private missedHeartbeats = 0;
@@ -273,6 +275,19 @@ export class TauriMlsService extends BaseMlsService {
       };
       document.addEventListener('visibilitychange', this._visibilityHandler);
       window.addEventListener('online', this._onlineHandler);
+      // THE PAGE LEAVING RELEASES ITS NATIVE SOCKET. The plugin's connection and its `addListener`
+      // channel live in RUST and outlive the document: after a WebView reload (a system text-size
+      // change) the old page's channel id kept being answered into the new page,
+      // `[TAURI] Couldn't find callback id N` every ~15 s (Mi 9T, 2026-10-17). The only recurring
+      // Rust-to-JS channel is this socket's, so it is released with the page - the same release
+      // the backgrounding path performs, and the next page opens its own. The cause is REASONED,
+      // not observed: the reading that closes it is the id no longer repeating after a reload.
+      this._pageHideHandler = () => {
+        if (!this.ws) return;
+        console.log('[WS] page leaving - releasing the native socket and its listener channel');
+        this.pauseSocket();
+      };
+      window.addEventListener('pagehide', this._pageHideHandler);
       // THE EDGE THE VISIBILITY API NEVER FIRES ON A PHONE. A backgrounded Android WebView stays
       // `visible` (measured, see `appForeground.ts`), so the handler above cannot see the user
       // coming back; the activity's own foreground event can. Same decision, honest trigger.
