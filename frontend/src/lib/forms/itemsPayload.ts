@@ -1,7 +1,7 @@
 import type { FormItem } from './api';
 
 /** Question types that carry no option list, so their options are dropped on save. */
-const TYPES_WITHOUT_OPTIONS = ['short_text', 'long_text', 'linear_scale'];
+const TYPES_WITHOUT_OPTIONS = ['short_text', 'long_text', 'linear_scale', 'file'];
 
 /**
  * Converts the builder's questions into the payload the API expects: prices in cents, blank

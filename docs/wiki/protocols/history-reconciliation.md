@@ -525,8 +525,8 @@ about something that did not happen.
 
 ### A digest overheard is evidence: the member that lacks something asks its author (2026-10-13)
 
-**Measured on production 2026-10-13, group `656597dc`.** A user's phone (`mtxpgiiv`) came back
-after ~100 minutes away, asked, and the server elected the same user's other phone (`mv6mmuu1`):
+**Measured on production 2026-10-13, group `656597dc`.** A user's phone (`<device-a>`) came back
+after ~100 minutes away, asked, and the server elected the same user's other phone (`<device-b>`):
 `history_state`, `history_digest_request`, `history_digest` (7 ids), `history_pull`. The user's
 browser (`muh72dix`) is a member, so it received all four legs. It held 6 rows, logged
 `[HISTORY_DIGEST] From ... 7 id(s)`, then logged nothing and sent nothing. The message the phone

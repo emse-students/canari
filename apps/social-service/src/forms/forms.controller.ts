@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Headers,
+  HttpCode,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -18,6 +19,11 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { Throttle } from '@nestjs/throttler';
+import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
+
+/** `confirm-payment` calls allowed per user and submission per minute (the return poll is 10). */
+export const CONFIRM_PAYMENT_PER_MINUTE = 12;
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import { FormsService } from './forms.service';
 import { parseExportLabels } from './export-labels';
@@ -25,6 +31,8 @@ import { AssociationsService } from '../associations/associations.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { UserTagService } from '../users/user-tag.service';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
+import { contentDisposition } from '../common/content-disposition';
+import { FORM_FILE_MAX_BYTES, FormFilesService, type UploadedFormFile } from './form-files.service';
 
 /**
  * Manages form resources including submissions, payment status, XLSX exports, and purchase history.
@@ -42,7 +50,8 @@ export class FormsController {
     private readonly associationsService: AssociationsService,
     private readonly purchaseRecordService: PurchaseRecordService,
     private readonly userTagService: UserTagService,
-    private readonly pricingFacts: PricingFactsService
+    private readonly pricingFacts: PricingFactsService,
+    private readonly formFiles: FormFilesService
   ) {}
 
   /** Creates a new form owned by the calling user. */
@@ -134,6 +143,53 @@ export class FormsController {
   ): Promise<{ imageUrl: string }> {
     if (!file) throw new BadRequestException('No file provided');
     return this.service.uploadItemImage(id, file, xUserId, ga === 'true', authorization);
+  }
+
+  /**
+   * Uploads the file of one FILE question (`itemId` in the multipart body) before the answer is
+   * sent. Only a member the form is OPEN TO may (its audience, as at submit), and the answer may
+   * cite the file only if they are its uploader (`FormFilesService.attach`). The interceptor's
+   * ceiling is one byte above the cap so the service, not Multer, says what the cap is. Returns
+   * `{ fileId, fileName, sizeBytes, contentType }`.
+   */
+  @UseGuards(NginxAuthGuard)
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: FORM_FILE_MAX_BYTES + 1 } }))
+  @Post(':id/files')
+  async uploadAnswerFile(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file: Express.Multer.File,
+    @Body('itemId') itemId: string | undefined,
+    @Headers('x-user-id') xUserId: string
+  ): Promise<UploadedFormFile> {
+    if (!file) throw new BadRequestException('No file provided');
+    await this.service.assertMayUploadAnswerFile(id, xUserId);
+    return this.formFiles.upload(id, itemId, file, xUserId);
+  }
+
+  /**
+   * Streams one answer's file to a MANAGER of its form - the only reader a form file has. Its own
+   * type and name, `attachment` so a browser saves rather than renders it, and `nosniff` so the type
+   * read from the bytes at upload is the type the browser uses. Never through `GET /media/:id`.
+   */
+  @UseGuards(NginxAuthGuard)
+  @Get(':id/files/:fileId')
+  async downloadAnswerFile(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Param('fileId', ParseUUIDPipe) fileId: string,
+    @Res() res: Response,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    await this.service.assertFormManager(id, xUserId, ga === 'true');
+    const { data, contentType, fileName } = await this.formFiles.download(id, fileId);
+    res.set({
+      'Content-Type': contentType,
+      'Content-Disposition': contentDisposition(fileName, fileId.slice(0, 8)),
+      'Content-Length': data.byteLength,
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-store, private',
+    });
+    res.send(data);
   }
 
   /** Removes the banner image from a form. Requires owner, co-owner, or MANAGE_FORMS flag. */
@@ -229,6 +285,29 @@ export class FormsController {
   // `stripe.webhooks.constructEvent` has verified the signature; a form manager takes cash through
   // `POST :id/submissions/:submissionId/validate-cash`, which is scoped to the form they manage;
   // and a free submission is written `'free'` at submit time.
+
+  /**
+   * Asks the provider whether a pending online answer was paid and records it if so, then answers
+   * the submission like the GET above. Requires the submitter or a form manager. NOT a `mark-paid`
+   * (see above): the caller names only the submission, and the payment is Lydia's answer about the
+   * request the row itself stored (`FormsService.confirmPayment`).
+   *
+   * Each call may spend the platform's Lydia tokens on a `request/state`, so it is throttled per
+   * user AND submission: `CONFIRM_PAYMENT_PER_MINUTE` covers the return page's poll (10 reads, 3 s
+   * apart) and nothing like a loop. A 429 stops the page's poll on "awaiting confirmation".
+   */
+  @UseGuards(NginxAuthGuard, UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: CONFIRM_PAYMENT_PER_MINUTE, ttl: 60_000 } })
+  @Post('submissions/:submissionId/confirm-payment')
+  @HttpCode(200)
+  async confirmPayment(
+    @Param('submissionId', ParseUUIDPipe) submissionId: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    await this.service.assertSubmissionAccess(submissionId, xUserId, ga === 'true');
+    return this.service.confirmPayment(submissionId);
+  }
 
   /** Cancels a pending submission. Requires the submitter or a form manager. */
   @UseGuards(NginxAuthGuard)
@@ -354,19 +433,9 @@ export class FormsController {
       parseExportLabels(rawLabels)
     );
 
-    // ASCII fallback (strips accents) + RFC 5987 UTF-8 encoded filename for modern browsers
-    const asciiName =
-      title
-        .normalize('NFD')
-        .replace(/[̀-ͯ]/g, '')
-        .replace(/[^a-zA-Z0-9_\- ]/g, '')
-        .trim()
-        .replace(/\s+/g, '_') || 'export';
-    const encodedName = encodeURIComponent(title);
-
     res.set({
       'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'Content-Disposition': `attachment; filename="${asciiName}.xlsx"; filename*=UTF-8''${encodedName}.xlsx`,
+      'Content-Disposition': contentDisposition(`${title}.xlsx`, 'export'),
       'Content-Length': buffer.byteLength,
     });
 

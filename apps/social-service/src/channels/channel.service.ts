@@ -5,6 +5,8 @@ import {
   Logger,
   BadRequestException,
   ConflictException,
+  HttpException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { isUniqueViolation } from '../common/pg-errors';
 import { isUnsafeObjectKey } from '../common/object-keys';
@@ -39,7 +41,6 @@ import {
   DEFAULT_MODERATOR_PERMISSIONS,
   DEFAULT_MEMBER_PERMISSIONS,
   PIN_REQUIRES_MODERATION,
-  RETIRED_PERMISSIONS,
   roleGrantsChannelManagement,
   roleGrantsModeration,
   writePolicyAllows,
@@ -685,8 +686,18 @@ export class ChannelService {
   }
 
   /**
-   * Repairs the communities a deleted account leaves behind. Called by the internal account
-   * deletion route with the workspaces the user belonged to, AFTER their membership rows are gone.
+   * Takes an erased account out of every community it is in, repairing each one BEFORE removing it.
+   * Called by the internal account-erasure route, which core-service's durable queue retries until
+   * it succeeds.
+   *
+   * THE ORDER IS WHAT MAKES THE RETRY WORK. This used to delete every membership row first and
+   * repair afterwards from a list captured in memory, swallowing a failed repair - so a community
+   * whose repair failed was left without an admin, or empty, and the retry found no membership left
+   * to point at it. Now, per community: the private salons are cut (idempotent), the community is
+   * repaired AS IF the account were already gone, and only then is the account's row deleted. A
+   * failure at any step leaves the row, so the next attempt starts that community over; a repair
+   * that already happened is a no-op the second time. Failures are collected and THROWN after every
+   * community has been tried, so one stuck community neither strands the others nor reports success.
    *
    * This is the one path where the postcondition cannot be a refusal - the account is being
    * deleted and there is nothing left to refuse - so it is the one place a repair exists, and it
@@ -697,39 +708,109 @@ export class ChannelService {
    *    account would be far worse, and leaving it ungoverned is the state everything else here
    *    exists to prevent.
    *
-   * Per workspace isolation: one community failing to repair must not strand the others, and a
-   * swallowed branch that logs nothing would leave no trace at all of what was skipped.
+   * The private salons are cut by name because `allowedUsers` is a separate list from the
+   * membership rows, and `reconcileDistributionGroupRoster` reads exactly that list, so a deleted
+   * account left in it keeps an MLS leaf authorised forever.
    *
-   * `deletedUserId` is carried because the private salons still name them. Their `channel_members`
-   * row is already gone when this runs, but `allowedUsers` is a separate list and nothing above has
-   * touched it - and `reconcileDistributionGroupRoster` reads exactly that list, so a deleted
-   * account left in it keeps an MLS leaf authorised forever, on a group whose seeds nobody can now
-   * be routed. The repair is the only place left that knows who it was.
+   * @returns the number of communities the account was taken out of.
+   * @throws ServiceUnavailableException `ERASURE_WORKSPACE_REPAIR_FAILED` (503) when any failure was
+   *   transport, 5xx or database: the queue classes it TRANSIENT and retries quietly.
+   * @throws ConflictException `ERASURE_WORKSPACE_REPAIR_FAILED` (409) when every failure was a
+   *   logical refusal: the queue classes it PERMANENT, so a human is told at once.
    */
-  async repairWorkspacesAfterAccountDeletion(
-    workspaceIds: string[],
-    deletedUserId: string
-  ): Promise<void> {
+  async removeAccountFromWorkspaces(deletedUserId: string): Promise<number> {
+    const workspaceIds = [
+      ...new Set(
+        (
+          await this.memberRepo.find({
+            where: { userId: deletedUserId },
+            select: { workspaceId: true },
+          })
+        ).map((m) => m.workspaceId)
+      ),
+    ];
+    const failed: string[] = [];
+    let transient = false;
     for (const workspaceId of workspaceIds) {
       try {
         await this.cutOffEveryPrivateChannel(workspaceId, deletedUserId, 'account_deleted');
-        await this.repairOneWorkspaceAfterAccountDeletion(workspaceId);
+        await this.repairOneWorkspaceAfterAccountDeletion(workspaceId, deletedUserId);
+        await this.memberRepo.delete({ workspaceId, userId: deletedUserId });
       } catch (err) {
+        failed.push(workspaceId);
+        transient ||= isTransientFailure(err);
         this.logger.error(
-          `[WORKSPACE] repair failed workspace=${workspaceId}: ${err instanceof Error ? err.message : String(err)}`
+          `[WORKSPACE] account removal failed workspace=${workspaceId} ` +
+            `user=${deletedUserId.slice(0, 8)} - left for the erasure retry: ` +
+            `${err instanceof Error ? err.message : String(err)}`
         );
       }
     }
+    if (failed.length > 0) {
+      const body = {
+        code: 'ERASURE_WORKSPACE_REPAIR_FAILED',
+        message: `account removal incomplete: ${failed.length}/${workspaceIds.length} communities failed`,
+        failedWorkspaces: failed,
+      };
+      // 503 when ANY failure was infrastructure (chat-delivery down, a database blip): the queue
+      // retries it as transient. 409 only when every failure was a refusal no retry is expected to fix.
+      if (transient) throw new ServiceUnavailableException(body);
+      throw new ConflictException(body);
+    }
+    return workspaceIds.length;
   }
 
-  private async repairOneWorkspaceAfterAccountDeletion(workspaceId: string): Promise<void> {
-    const members = await this.memberRepo.find({ where: { workspaceId } });
+  /**
+   * Tells each salon that a pin is gone because its message was erased with its author's account.
+   * Every member's client keeps the pin set it loaded and updates it only from `channel.pin`, so
+   * without this a phantom pin stays in the banner until the salon is reopened.
+   *
+   * After the erasure's transaction, so a pin is never announced gone while the row could still be
+   * rolled back. A live notification, not state: a salon that cannot be told is logged, and its
+   * members read the truth at the next open. Each salon in its own `try`.
+   */
+  async announceErasedPins(pins: Array<{ id: string; channelId: string }>): Promise<number> {
+    let announced = 0;
+    for (const { id, channelId } of pins) {
+      try {
+        const channel = await this.channelRepo.findOne({ where: { id: channelId } });
+        if (!channel) continue;
+        const audience = await this.channelAudience(channel);
+        await this.redis.publishChannelEvent(
+          'channel.pin',
+          { channelId, messageId: id, pinned: false },
+          audience
+        );
+        announced += 1;
+      } catch (err) {
+        this.logger.warn(
+          `[CHANNEL] erased pin not announced channel=${channelId} message=${id} - its members ` +
+            `see it gone at the next open: ${err instanceof Error ? err.message : String(err)}`
+        );
+      }
+    }
+    return announced;
+  }
+
+  /**
+   * Repairs one community for the departure of `leavingUserId`, whose membership row still exists
+   * and is treated as gone. Idempotent: a community that already has another admin is left alone.
+   */
+  private async repairOneWorkspaceAfterAccountDeletion(
+    workspaceId: string,
+    leavingUserId: string
+  ): Promise<void> {
+    const members = (await this.memberRepo.find({ where: { workspaceId } })).filter(
+      (m) => m.userId !== leavingUserId
+    );
     if (members.length === 0) {
       await this.hardDeleteWorkspace(workspaceId, 'account_deletion_left_no_members');
       return;
     }
 
-    const adminIds = await this.listWorkspaceAdminIds(workspaceId);
+    const adminIds = (await this.listWorkspaceAdminIds(workspaceId)).filter(
+      (id) => id !== leavingUserId
+    );
     if (adminIds.length > 0) return;
 
     const roles = await this.roleRepo.find({ where: { workspaceId } });
@@ -4422,7 +4503,8 @@ export class ChannelService {
   /**
    * Grants or revokes ONE permission on a role, applied to the row as it stands.
    *
-   * WHY THIS EXISTS BESIDE THE WHOLE-LIST WRITE. Clicking a cell in the permission grid IS a delta -
+   * WHY IT IS A DELTA AND NOT A WHOLE LIST (the whole-list PUT is gone since `minClientVersion`
+   * 1.2.7). Clicking a cell in the permission grid IS a delta -
    * "grant this one key" - and it was being sent as the role's entire list, computed from whatever
    * the browser happened to be holding. Two administrators toggling two DIFFERENT permissions of one
    * role at the same moment therefore did not race: the second write carried a list built before the
@@ -4484,53 +4566,18 @@ export class ChannelService {
 
     return { roleId: saved.id, roleName: saved.name, permissions: saved.permissions };
   }
+}
 
-  async setRoleBasePermissions(roleId: string, actorUserId: string, permissions: string[]) {
-    const role = await this.roleRepo.findOne({ where: { id: roleId } });
-    if (!role) throw new NotFoundException('Role not found');
-    await this.assertCanManageRoles(role, actorUserId);
-
-    // A KEY THIS SERVER RETIRED IS DROPPED, NOT REFUSED - and it is the only exception.
-    //
-    // `channel.access` and `channel.send` were removed on 2026-08-19 because nothing enforced them.
-    // The fleet is mixed by construction - A1's APK carries its own bundle and no deploy reaches it
-    // - so an old client still renders the eight-row grid and PUTs all eight on any toggle. Refusing
-    // the whole list would turn every role edit on that client into a 400 over two keys the server
-    // itself put in the grid. Accepting them would resurrect them. Dropping them applies exactly
-    // what the admin asked for and nothing else.
-    //
-    // Loud on purpose: this is the only thing that will ever say an old client is still out there,
-    // and the branch goes the day it stops firing (see legacy-compatibility).
-    const retired = permissions.filter((p) => RETIRED_PERMISSIONS.includes(p));
-    if (retired.length > 0) {
-      this.logger.warn(
-        `[ROLE] RETIRED_PERMISSION_SENT role=${roleId} by=${actorUserId.slice(0, 8)} ` +
-          `keys=${retired.join(',')} - a client built before 2026-08-19 is still in the fleet`
-      );
-    }
-    const requested = permissions.filter((p) => !RETIRED_PERMISSIONS.includes(p));
-
-    // Anything else unknown is a real error and still fails the whole update: a permission the
-    // server cannot name is a client asking for a capability that does not exist, and silently
-    // granting the remainder would report success for a request nobody can read back.
-    const validPermissions = Object.values(CHANNEL_PERMISSIONS) as string[];
-    const invalid = requested.filter((p) => !validPermissions.includes(p));
-    if (invalid.length > 0) {
-      throw new BadRequestException(`Invalid permissions: ${invalid.join(', ')}`);
-    }
-
-    role.permissions = requested;
-    await this.roleRepo.save(role);
-
-    this.logger.log(
-      `[ROLE] permissions updated role=${roleId} by=${actorUserId.slice(0, 8)} perms=${requested.length}`
-    );
-    await this.announceRolePermissions(role);
-
-    return {
-      roleId: role.id,
-      roleName: role.name,
-      permissions: role.permissions,
-    };
+/**
+ * Whether a failure is infrastructure (a service down or slow, a database error, a 5xx) rather than
+ * a refusal or a defect: an HTTP exception below 500 and a TypeError / RangeError / ReferenceError are
+ * logical (the caller logs every failure at error level), everything else may pass by itself.
+ */
+export function isTransientFailure(err: unknown): boolean {
+  if (err instanceof HttpException) return err.getStatus() >= 500;
+  // A programming error is deterministic: no retry fixes it, so it must not hide as a quiet 503.
+  if (err instanceof TypeError || err instanceof RangeError || err instanceof ReferenceError) {
+    return false;
   }
+  return true;
 }

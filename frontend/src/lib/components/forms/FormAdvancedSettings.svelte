@@ -60,6 +60,13 @@
     grantBlocker: CotisationGrantBlocker | null;
     /** The beneficiary association's name, for the explanation of what gets granted. */
     associationName: string;
+    /**
+     * Whether the form asks for a file. A file needs an account and names its uploader, so it shuts
+     * the public and anonymous switches - the server's two refusals, said before a save.
+     */
+    hasFileQuestion: boolean;
+    /** Days an answer's file is kept, 1 to 30; shown only when the form asks for a file. */
+    fileRetentionDays: number;
   }
 
   let {
@@ -76,6 +83,8 @@
     formations,
     grantBlocker,
     associationName,
+    hasFileQuestion,
+    fileRetentionDays = $bindable(),
   }: Props = $props();
 
   /** Settings that are actually doing something, so the folded header can say how many. */
@@ -85,7 +94,9 @@
       (anonymous ? 1 : 0) +
       (isPublic ? 1 : 0) +
       (opensAt ? 1 : 0) +
-      (settings.grantsCotisation ? 1 : 0)
+      (settings.grantsCotisation ? 1 : 0) +
+      // A file question puts a deletion delay to work, which is a setting doing something.
+      (hasFileQuestion ? 1 : 0)
   );
 
   const badge = $derived.by(() => {
@@ -125,13 +136,15 @@
          promise it to answers already written with a name. Said in the hint, not left to a refusal. -->
     <Toggle
       bind:checked={anonymous}
-      disabled={anonymousFixed || (requiresPayment && !anonymous)}
+      disabled={anonymousFixed || ((requiresPayment || hasFileQuestion) && !anonymous)}
       label={m.form_anonymous_label()}
       hint={anonymousFixed
         ? m.form_anonymous_hint_fixed()
         : requiresPayment
           ? m.form_anonymous_hint_paid()
-          : m.form_anonymous_hint()}
+          : hasFileQuestion
+            ? m.form_anonymous_hint_file()
+            : m.form_anonymous_hint()}
     />
 
     <!-- A guest is nobody the server can recognise, charge or match against a criterion, so the
@@ -145,12 +158,28 @@
           if (on) allowMultipleSubmissions = true;
         }
       }
-      disabled={!isPublic && (requiresPayment || submitCondition != null)}
+      disabled={!isPublic && (requiresPayment || submitCondition != null || hasFileQuestion)}
       label={m.form_public_label()}
       hint={!isPublic && (requiresPayment || submitCondition != null)
         ? m.form_public_hint_blocked()
-        : m.form_public_hint()}
+        : !isPublic && hasFileQuestion
+          ? m.form_public_hint_blocked_file()
+          : m.form_public_hint()}
     />
+
+    <!-- Shown only when a question asks for a file: a setting about files on a form that takes none
+         would be a number nobody can see the effect of. -->
+    {#if hasFileQuestion}
+      <Input
+        label={m.form_file_retention_label()}
+        type="number"
+        bind:value={fileRetentionDays}
+        min="1"
+        max="30"
+        step="1"
+      />
+      <p class={CONTROL_HINT_CLASS}>{m.form_file_retention_hint()}</p>
+    {/if}
 
     <div>
       <label for="form-opens-at" class={CONTROL_LABEL_CLASS}>{m.form_opens_at_label()}</label>

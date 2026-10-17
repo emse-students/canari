@@ -4,7 +4,7 @@
  * - Injects the Bearer token automatically.
  * - On a 401 response, attempts one silent token refresh and retries.
  * - On a second 401, throws `SessionExpiredError` so the caller can redirect.
- * - Never issues an anonymous request in place of an expired session (see below).
+ * - Never issues an anonymous request: a token that cannot be obtained is rethrown as it came.
  * - Every call has a response-head deadline (a typed `RequestDeadlineError`, a transport failure -
  *   never a logout) and feeds the connectivity store's `slow` reading.
  * - Never flattens a refusal into a sentence: what `refresh()` threw is what callers catch.
@@ -62,14 +62,13 @@ export async function apiFetch(url: string, options: ApiFetchOptions = {}): Prom
   const logUrl = url.replace(/^https?:\/\/[^/]+/, '').split('?')[0];
   const t0 = Date.now();
 
-  let token = '';
+  let token: string;
   try {
     token = await getToken();
   } catch (e) {
     // A dead session is an ANSWER, not a hiccup: retrying anonymously turns "you are logged out"
     // into "there is nothing here", which is what left Android showing an empty feed for a revoked
-    // session (WP-ANDROID-SESS-1). Only a transport failure earns the unauthenticated attempt -
-    // some routes answer without a token, and offline startup depends on that.
+    // session (WP-ANDROID-SESS-1).
     if (e instanceof SessionExpiredError) {
       console.warn(`[API] session expired on ${method} ${logUrl} - no anonymous retry`);
       throw e;
@@ -80,13 +79,16 @@ export async function apiFetch(url: string, options: ApiFetchOptions = {}): Prom
       console.warn(`[API] identity split on ${method} ${logUrl} - request not sent`);
       throw e;
     }
-    // The CAUSE is the whole point of this line. A container restarting mid-deploy needs nothing
-    // and a broken refresh needs everything, and without it the two print the same sentence - which
-    // is what a fallback owes its reader: not that it was taken, but why the primary path failed.
-    const cause = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
-    console.warn(
-      `[API] getToken failed for ${method} ${logUrl} - proceeding without auth (${cause})`
-    );
+    // NOR IS ANY OTHER FAILURE A REASON TO SEND IT ANONYMOUSLY. This branch used to send the request
+    // with no token after a transport failure ("some routes answer without a token, and offline
+    // startup depends on that"). Measured on the Mi 9T, offline cold start of `v1.2.9-alpha.1`
+    // (2026-10-15): 23 requests went out unauthenticated in six seconds, each into the same dead
+    // link the refresh had just failed on, each with its own warn line - and no route the app calls
+    // through here answers a signed-in user without a token, so the attempt could only fail again or
+    // be answered 401. The refresh's failure IS the answer: a transport failure (typed, see
+    // `refresh`) or a refusal (`RefreshFailedError`), rethrown as it came. The refresh already said
+    // why at its own throw; the caller says what it could not do.
+    throw e;
   }
 
   // Do not set a default Content-Type for FormData/Blob bodies - the browser must
@@ -99,9 +101,7 @@ export async function apiFetch(url: string, options: ApiFetchOptions = {}): Prom
     ...init.headers,
   };
 
-  if (token) {
-    headers['Authorization'] = `Bearer ${token}`;
-  }
+  headers['Authorization'] = `Bearer ${token}`;
 
   // Polling routes are demoted to debug to avoid drowning the console.
   const POLL_ROUTES = ['/api/presence', '/api/moderation/me/mute-status'];

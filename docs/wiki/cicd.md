@@ -18,10 +18,26 @@ split in half. The order, which the file's own header states:
 | # | job | what |
 |---|---|---|
 | 1 | `changes` | reads the modified paths and decides which of the jobs below run at all |
-| 2 | the test jobs | Rust, the four NestJS apps' real AppModule, TS, frontend, the two self-test suites - in parallel, each behind its own path filter |
+| 2 | the test jobs | Rust, the four NestJS apps' real AppModule, TS, social-service's integration specs on a real PostgreSQL, frontend, the two self-test suites - in parallel, each behind its own path filter |
 | 2b | `dependency-ceiling` | ONLY on a Dependabot pull request: does a gate HERE exist that would see this update fail? A human's pull request carries no `updated-dependencies` block to decide on, so it skips |
 | 3 | `ci-passed` | aggregates them. `success` AND `skipped` both pass. The ONE check the ruleset requires |
 | 4 | `arm-auto-merge` | in **parallel** with 1-3, not after |
+
+**SOCIAL-SERVICE'S `*.integration.spec.ts` RUN IN CI SINCE 2026-10-15** (`test-social-integration`,
+a job in this file, not a fifth visible workflow). Each spec is gated on `SOCIAL_IT_DATABASE_URL`
+and reports SKIPPED without it - and until that day nothing set it, so every one was skipped on
+every pull request and `CI passed` was green for the reason that they had not run. The day the job
+was written, the migration 082 spec turned out to have failed on EVERY run since its merge (#1913).
+The job runs them in band against production's PostgreSQL, pinned by the digest the compose files
+carry, and its last step FAILS unless jest ran as many suites as there are files on disk and skipped
+none: `--passWithNoTests` and the gate itself would otherwise turn "ran nothing" back into a pass.
+**ONE spec is excluded from it, by name in both steps: `internal/account-erasure.integration.spec.ts`**,
+which copies every social table out of `public` and so needs the schema `synchronize` builds; it runs
+in `boot-nest-apps` right after the boot built that schema (2026-10-17, found by rebasing on the
+merged account erasure: on this job's empty database it failed with "no table ... in public").
+`ci-passed-gate.test.mjs` holds the rest - every job is a need of `ci-passed`, `ci-passed` keeps
+`if: always()`, the aggregation refuses `failure` AND `cancelled` (run, not read), and the job's
+image equals production's.
 
 **`arm-auto-merge` HAS NO `needs:`, AND THAT IS DELIBERATE.** `--auto` hands the decision to
 GitHub, which merges the instant the required check passes and never before, so arming is a
@@ -336,8 +352,9 @@ and `deploy-env.test.sh` now asserts the variable NAME rather than merely that t
 mentioned. Everything about the estate itself is on
 [dev-environment](infrastructure/dev-environment.md), the only copy.
 
-`scheduled.yml`'s `dev-refresh` job copies production's data into dev weekly (Mondays 04:00 UTC) and on demand, behind
-the same gate.
+`scheduled.yml`'s `dev-reset` job empties dev and loads the fictional seed, on demand only (no cron,
+not part of `all`), behind the same gate. Nothing copies production's data into dev since 2026-10-16
+([dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16)).
 
 ### The store arms (`ios.yml`, `android.yml`)
 
@@ -716,8 +733,7 @@ endpoint answered 200 with a silently fail-open verdict rather than an error.
 
 ## Rotating `JWT_SECRET`
 
-One HS256 secret signs every token of all six services, so a leak in the smallest of them mints
-admin tokens for all. Rotating it is already a supported operation — nothing in the workflows needs
+A single secret signs the services' tokens. Rotating it is already a supported operation — nothing in the workflows needs
 changing — but nothing schedules it either, which is why it is written down here.
 
 **The procedure is two steps**, and the second is not optional:
@@ -772,10 +788,9 @@ different commits. Production is deployed by the release's `v<version>`; dev by 
 **THE DEPLOY JOB RUNS ON THE MACHINE IT DEPLOYS, AND AFTER 2026-09-24 THAT IS NOT A PREFERENCE.**
 It reads as one, because the job builds nothing: it checks out, logs in to GHCR, pulls `latest` and
 runs `docker compose up`, all of which a GitHub-hosted runner could do over SSH. **It could not.**
-The migration target's `22` answers from the campus network and times out from anywhere else, while
-`443` answers from the same address that `22` refuses - so it is a per-port filter upstream of the
-host, not a ban on one address, and a GitHub-hosted runner has no route in at all. The measurement
-and the three source addresses it was taken from are on
+The migration target does not accept SSH from GitHub-hosted runners (a per-port filter upstream of the
+host, not a ban on one address), so a GitHub-hosted runner has no route in at all. The measurement
+is on
 [estate-migration](infrastructure/estate-migration.md#canari---moved-2026-09-24-it-was-two-estates-and-a-ci-runner-not-one-estate).
 
 **So the model is the same in all five repositories, and it is one sentence: `release.yml` is the
@@ -788,8 +803,8 @@ across the network.**
 | **Portail-etu** | GitHub | `portail-etu` | ORG, group `portail-etu`, selected to that repository | the target |
 | **Le Cercle** | `gitlab.emse.fr` | `cercle-portail` | project, tag `cercle-portail` | the target, **registered PAUSED** |
 | **MiConnect** | none | - | - | the target, deployed by hand: no pipeline has ever touched it |
-| **Sky** | GitHub | `sky` | REPOSITORY | `mitv` |
-| **MiGallery** | GitHub | `MiGallery` | REPOSITORY | `mitv` |
+| **Sky** | GitHub | `sky` | REPOSITORY | the old VM |
+| **MiGallery** | GitHub | `MiGallery` | REPOSITORY | the old VM |
 
 **Two runners on one machine are kept apart by the GROUP, never by the label.** Every runner here
 carries the same default `self-hosted,Linux,X64`, so a label decides nothing; `visibility=selected`
@@ -808,24 +823,18 @@ listing is a complete map of who may execute code on the target and an incomplet
 estate, which is the one thing to remember when reading it.
 
 **ONE ACCOUNT, DELIBERATELY, AND THE HALF-MEASURE WAS REFUSED** (user, 2026-09-24: *"Soit on
-separe tout, soit on rassemble tout."*). Both GitHub runners on the target run as `gha-runner` - no
-password, no `sudo`, one group - and that group is `docker`, which is root-equivalent. So the group
-decides WHERE a job lands and not what it may touch once there: a Canari job can reach Portail-etu's
-containers and the reverse.
+separe tout, soit on rassemble tout."*). Both GitHub runners on the target run as one
+service account, and its group is `docker`, which is root-equivalent. So the group decides WHERE a job
+lands and not what it may touch once there. The account detail is kept privately.
 
 **A second service account was considered and rejected as exactly the kind of fence that reads as a
-boundary without being one.** It would separate the two `_work` trees, the caches and the runner
+boundary without being one.** It would separate the work trees and the runner
 credential files, and it would separate nothing that matters, because both accounts would still hold
-the same socket. And the socket is already wider than this project: the host's `docker` group
-contains accounts belonging to the machine's other administrators, so a fence between our two
-runners would sit inside a field that is already open. **The only shape that would really separate
-them is a rootless daemon per runner**, which is a chantier on a machine this project does not own,
-with consequences for the volumes, the published ports and the backups of three estates already
-running there. It is named here so that nobody later mistakes the shared account for an oversight.
+the same socket. **The only shape that would really separate them is a rootless daemon per runner**,
+which is a chantier on a machine this project does not own. It is named here so that nobody later mistakes the shared account for an oversight.
 
-On the `canari` box, until it is switched off, the runner instead runs as the `canari` system user,
-reaches the Docker socket the same way, and holds the SSH access to `mitv` that the offsite backup
-needs.
+On the old `canari` box, until it is switched off, the runner runs as a system user of its own and
+reaches the Docker socket the same way.
 
 ### There is one runner, so a workflow that asks for it must say what it may not overlap with
 
@@ -858,12 +867,12 @@ workflow names - there is exactly one such runner, and a typed list would pass o
 adds the third workflow. **"One" is a statement about what is RUNNING, not about what is
 registered**: from 2026-09-24 this repository has two registered runners, and the second is stopped
 and disabled precisely so the sentence stays true. The window in which both run is the flip itself,
-and the old one stops in the same breath as the new one starts. `scheduled.yml`'s `dev-refresh` job carries its own `dev-refresh` group and satisfies the same
+and the old one stops in the same breath as the new one starts. `scheduled.yml`'s `dev-reset` job carries its own `dev-reset` group and satisfies the same
 rule.
 
-**Still open, and not covered by either group:** a dev refresh and a dev deploy can overlap, the
-refresh stopping dev's containers to restore while `deploy-dev` brings them up on new images. A
-workflow may declare only one group, so joining them would put a Monday-04:00 database restore in
+**Still open, and not covered by either group:** a dev reset and a dev deploy can overlap, the
+reset stopping dev's containers to reseed while `deploy-dev` brings them up on new images. A
+workflow may declare only one group, so joining them would put a dev database reset in
 front of a production hotfix - a cost paid on the production path for a dev-only race. It is named
 here rather than fixed silently.
 
@@ -1136,7 +1145,7 @@ directory. 33 minutes down.
 
 **What stands between that update and production now is that nothing deploys at a merge.** An update
 sits on `main` until somebody publishes a release, and a `X.X.X-alpha.N` pre-release deploys the dev
-estate - which still carries a copy of production - before any stable does. The honest difference is
+estate - which holds a fictional seed, not production's data - before any stable does. The honest difference is
 WHO DECIDES: the old mechanism ran with nobody at the keyboard, this one runs when a human publishes
 an alpha. The ceiling in `ci.yml`'s `Dependency ceiling` check is what still refuses the update classes
 this repository cannot see the failure mode of; it is not a substitute for a rehearsal, and
@@ -1379,8 +1388,9 @@ declares it rather than by whoever remembers this file.
 THE CEILING ASKS FOR.** The plan for the dev environment said that PostgreSQL 18 starting in dev on a
 copy of production's data and serving `/api/version` would be the test that retires the `postgres`
 refusal. It would not have been, and believing it would have re-armed the 2026-09-01 outage behind a
-gate that reads as proof. `infrastructure/dev/copy-prod-to-dev.sh` is a **logical** copy - `pg_dump`
-replayed into a cluster the new major initialised itself, from empty - so it never touches a data
+gate that reads as proof. Dev's data was a **logical** copy - `pg_dump` replayed into a cluster the
+new major initialised itself, from empty - and since 2026-10-16 it is a schema plus a fictional seed
+loaded the same way. Neither ever touches a data
 directory written by the old major, and cannot fail the way production failed. It would have gone
 green on 18 while saying nothing about `pg_upgrade` or the 18+ move of the mount point from
 `/var/lib/postgresql/data` to `/var/lib/postgresql`. The next `postgres` major would then have
@@ -1392,7 +1402,7 @@ So each row states WHICH question its gap answers, and only one of the four answ
 | --- | --- | --- |
 | `none` | There is no gap; dev runs production's major. | nothing |
 | `fresh_cluster` | The new major serves a cluster it created from empty. This is what every gate here already proves, and it is the one case that always works. | nothing |
-| `logical_restore` | The new major serves this application's schema and data after a dump and restore. Worth having - it catches a schema or query the new major rejects - but the cluster is still one the new major built. **This is what the dev environment produces on its own.** | nothing |
+| `logical_restore` | The new major serves this application's schema and data loaded into it - a dump and restore, or since 2026-10-16 dev's schema-only restore plus the fictional seed. Worth having - it catches a schema or query the new major rejects - but the cluster is still one the new major built. **This is what the dev environment produces on its own.** | nothing |
 | `in_place_upgrade` | The new major serves production's OWN data directory, carried across by the documented upgrade path, with the mount layout the new image expects. | the refusal named in `lifts` |
 
 It fails closed on every other input, proved against fixtures: the wrong evidence value, an

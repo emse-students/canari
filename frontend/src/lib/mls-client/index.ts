@@ -11,11 +11,14 @@ export type {
   BulkIngestHandle,
   BulkIngestPhase,
   BulkIngestObserver,
+  StateLoadFailure,
+  LocalStateOpenResult,
 } from './IMlsService';
 export {
   MLS_LOCAL_STATE_UNDECRYPTABLE,
   isKeystoreKeyUnavailable,
   VaultOwnerUnprovenError,
+  LocalStateNotReadyError,
   type VaultRefusal,
 } from './IMlsService';
 export {

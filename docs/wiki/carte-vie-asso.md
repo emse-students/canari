@@ -416,11 +416,13 @@ up for things the author never touched, and that was accepted rather than discov
 **The client computes it, because the client builds the document.** `fingerprintPublishedCarte()` is
 the one implementation, so both sides of the comparison come from the same code; the server stores
 what it is given and decides nothing with it. It is a staleness hint, never an access control - a
-malformed value is dropped rather than stored, so a later comparison can never be decided by junk.
+malformed value is refused rather than stored, so a later comparison can never be decided by junk.
 
-**Null means UNKNOWN, never unchanged.** A poster published by a client older than the fingerprint
-has none, and the editor shows nothing rather than claiming the live map is current
-([legacy-compatibility](legacy-compatibility.md#no-date-yet---a-carte-publish-body-that-is-the-bare-document-with-no-fingerprint)).
+**Null means UNKNOWN, never unchanged.** A poster published before the fingerprint (or with a
+malformed one, which was dropped then) has none, and the editor shows nothing rather than claiming
+the live map is current. Since `minClientVersion` 1.2.7 a publish body must be `{ carte, fingerprint }`
+with a 64-character lowercase hex fingerprint, or it is a 400 - the bare document older builds posted
+included.
 
 **It is recomputed when the SAVED state settles**, on load and after each save - never on a pointer
 frame. The document carries the background image, which can be several megabytes.
@@ -538,7 +540,7 @@ the function returns a size instead of promising one.**
 
 **One size per unit.** Not one per poster - that would be the size the SMALLEST bubble can take, and
 one tiny unit would drag every card on the sheet down. Not one per card either: the per-name ladder
-is what printed "Thomas DELLESTABLE" at 4.6 px beside a neighbour at 6.4 px in the same crown.
+is what printed a long member name at 4.6 px beside a neighbour at 6.4 px in the same crown.
 
 The search is a bisection, not a walk, because it runs for every unit on every pointer frame of a
 drag; it is valid because the predicate is monotonic - a larger size only ever grows a card.

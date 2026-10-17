@@ -310,8 +310,9 @@ handled in code, neither seen); the menu's position on screen (the probe page re
 app's CSS); two devices clearing at ONCE (one connection only: argued, not measured - the `UPDATE`
 re-reads the locked row, so the stored mark is right and only the answer's `prev` can be stale, which
 at worst repeats an event and a silent push). **The SQL IS run**, by
-`channel-unread-clear.integration.spec.ts` (gated on `SOCIAL_IT_DATABASE_URL`; at review on PGlite,
-Postgres 17 in WASM, Docker did not answer): microsecond rows clear exactly, a lower or repeated `upTo`
+`channel-unread-clear.integration.spec.ts` (gated on `SOCIAL_IT_DATABASE_URL`, run in CI by
+`test-social-integration` since 2026-10-15; at review on PGlite, Postgres 17 in WASM, Docker did not
+answer - and it failed on every real PostgreSQL until #1913): microsecond rows clear exactly, a lower or repeated `upTo`
 moves nothing, and it found two defects, both fixed. `LEAST` ignores a NULL, so an EMPTY salon took
 `upTo` itself as its mark and a future `upTo` hid that salon's next messages; an empty salon now gets
 no mark. And the column was off the entity, so `synchronize` (every boot outside production) dropped
@@ -452,8 +453,9 @@ up for fifteen seconds, anchored to an input that was `display: none`.
 
 **THE GRID HOLDS EVERY TILE'S SIZE BEFORE IT LOADS** (`GifGrid.svelte`, shared by the phone panel and
 the desktop dialog `GifPickerModal`). KLIPY declares `width` / `height` for each rendition;
-`mapKlipyItems` keeps them and LEAVES OUT, counting at warn level, a result that declares none - it
-could not be laid out without a shift. `gifMasonry.ts` places every tile (shortest column first) from
+`mapKlipyItems` (server-side since 2026-10-16, `apps/chat-delivery-service/src/utils/klipy.ts`)
+keeps them and LEAVES OUT, counting at warn level, a result that declares none - it could not be
+laid out without a shift. `gifMasonry.ts` places every tile (shortest column first) from
 those sizes alone, so the grid never reflows, and only tiles near the scrolled window are mounted -
 the virtualisation. The next page is asked for near the end. **Each tile is a
 [MediaFrame](../media-frame.md) `sizing="intrinsic"`** declared at the box the masonry placed it in,
@@ -470,6 +472,70 @@ entry opens, with which `accept` / `capture`, and the menu closing on pick, outs
 focus), the panel (`ChatComposer.gifPanel.svelte.test.ts`: last in the footer at the remembered
 height, tiles sized from declared dimensions, send closes it, Back closes it, the hand-off), the Rust
 allowlist (`picked_files.rs` tests) and a source pin that the command is registered.
+
+### The GIF search goes through Canari (2026-10-16)
+
+**Owner decision from a GDPR review.** The picker used to call `api.klipy.com` from the browser:
+KLIPY received the search terms, the reader's IP and a random per-install `customer_id` kept in
+`localStorage` under `klipy_cid`, so it could tie one install's searches together - and the API key
+shipped inside every web and native bundle as `VITE_KLIPY_KEY`.
+
+Now `gifSearch.ts` calls chat-delivery's `GET /api/mls/gifs?q=&page=`
+(`controllers/gif-search.controller.ts`), which asks KLIPY with the server's `KLIPY_API_KEY` and
+answers `{ gifs: [{ id, preview, full }], hasNext }` - an id, two URLs and their sizes, nothing else
+KLIPY sends. What KLIPY can still see is chat-delivery's address, the query and ONE constant
+`customer_id` (`canari-server`) shared by every reader. The request carries no header of the
+reader's.
+
+- **Authenticated and rate-limited per USER**: nginx's `auth_request`, `HeaderAuthGuard`, then
+  `UserThrottlerGuard` (60 a minute), which keys on the proven `x-user-id` - the stock throttler keys
+  on the address, and behind nginx every reader has the same one.
+- **The query reaches no log line.** chat-delivery logs only its length, and **nginx drops this
+  route's whole query** from its access line (`$logged_request_uri` writes
+  `/api/mls/gifs?query-redacted`, asserted by `access-log-redaction.test.mjs`) - that line carries
+  the reader's address, so writing the query there would rebuild in our own log the very
+  association this route removes from KLIPY. The first review of this change caught it. The map
+  keys on the RAW `$request_uri`, so a hand-spelled `/api//mls/gifs` or `/api/mls/%67ifs` reaches
+  the same location and is logged in clear (measured in a local nginx) - accepted: the app never
+  sends it, so only the person typing such a URL exposes their own search.
+- **Answers are cached in-process for 10 minutes** (500 entries), failures never, and only an answer
+  carries `Cache-Control: private, max-age=300` - a 502 carries none. The cache is shared across
+  users, keyed on the query: a hit's latency can tell a reader that SOMEBODY searched the same words
+  in the last ten minutes, never who. Accepted: the alternative is a KLIPY call per reader per page.
+- **400** on a malformed query or page, **502** when KLIPY did not answer (unreachable, a non-2xx,
+  or a 200 that is not JSON - three typed errors, three distinct log lines), **503 with
+  `code: 'gif_search_not_configured'`** when the estate has no key, reported once per process. The
+  CODE is what the client reads (`GifSearchUnavailableError`, the grid's "not configured"): nginx
+  and the edge answer 503 of their own when the service is down, and that is a load failure. The
+  GIF button is always offered: whether an estate has a key is the server's fact, so there is no
+  build-time flag to drift from it.
+- **`klipy_cid` is deleted at startup** by `retiredKlipyCustomerId.ts`, called from the root layout's
+  mount - a shim with a removal condition in [legacy-compatibility](../../legacy-compatibility.md).
+- **CSP**: `connect-src` no longer names `https://api.klipy.com`; `csp.test.ts` asserts it stays out.
+- **A native build installed before this change still calls KLIPY directly** with the key it embeds,
+  until it updates. Rotating the key ends that path for them (their search then fails), and is the
+  owner's call ([backlog](../../backlog.md)).
+
+**What the browser still says to KLIPY, and why it is not proxied yet.** Three paths remain, all on
+`static.klipy.com` (the CDN), none carrying a query:
+
+| Path | Who | What KLIPY's CDN learns |
+| --- | --- | --- |
+| The picker grid's thumbnails (`<img src>` = `preview.url`) | the person searching | their IP and user agent, and which results they were shown - not the query text, though a results set can hint at it |
+| A comment's GIF bytes (`PostComments.handleGifSelected`, `connect-src`) | the person attaching it | their IP, once, at attach time; the bytes are then encrypted and uploaded, so readers never touch KLIPY |
+| **A GIF sent in a chat** (`GifEmbed`, mounted by `MessageTextBody`; `<img src>` = the sent URL) | **every recipient, on every render that misses the browser cache** | each reader's IP, user agent and the moment the message came into view - the leak `previewImageProxy.ts` closed for link previews, still open for GIFs. `isGifUrl` matches any `.gif` URL, so a GIF from any host behaves the same |
+
+The proxy that would close the last row exists - `/api/mls/link-preview/image` (ticket-gated,
+SSRF-guarded, `image/*` only, [chat-delivery](../../services/chat-delivery.md)) - but routing GIFs
+through it is not the one-line change it looks like, so it was NOT done here: its ceiling is 3 MB
+(`IMAGE_MAX_BYTES`) and nothing has measured KLIPY's `md` rendition sizes against it, so an
+unmeasured share of GIFs would turn into a broken frame; only images up to `IMAGE_CACHEABLE_BYTES`
+are cached server-side, so every larger GIF would be re-downloaded per reader through Canari's
+bandwidth; and the `#cn-size` fragment the frame reserves from must survive the rewrite. The work is
+a GIF-specific route (an allowlist of `static.klipy.com`, a measured ceiling, a byte cache keyed on
+the content URL, streaming rather than buffering) plus the client rewrite at the three GIF
+renderers ([backlog](../../backlog.md)). The CSP cannot narrow this either way: `img-src` stays
+`https:` because the feed renders arbitrary user-posted images.
 
 ### The GIF search is the whole screen, and a quoted GIF is a picture (2026-10-05)
 

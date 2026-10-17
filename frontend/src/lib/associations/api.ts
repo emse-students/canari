@@ -30,6 +30,7 @@ export enum AssociationPermissionFlag {
   MANAGE_PRODUCTS = 1 << 8,
   MANAGE_PAYOUT_ACCOUNT = 1 << 9,
   MANAGE_PARTNERSHIPS = 1 << 10,
+  MANAGE_BOOKINGS = 1 << 11,
 }
 
 /**
@@ -43,7 +44,8 @@ export const ALL_CORE_FLAGS =
   AssociationPermissionFlag.MANAGE_DOCUMENTS |
   AssociationPermissionFlag.MANAGE_FORMS |
   AssociationPermissionFlag.MANAGE_PRODUCTS |
-  AssociationPermissionFlag.MANAGE_PARTNERSHIPS;
+  AssociationPermissionFlag.MANAGE_PARTNERSHIPS |
+  AssociationPermissionFlag.MANAGE_BOOKINGS;
 
 /** Default admin preset when adding a member (core flags + Stripe Connect). */
 export const ASSOCIATION_ADMIN_PRESET =
@@ -151,15 +153,14 @@ export interface Association {
   description: string | null;
   bioMarkdown: string | null;
   logoUrl: string | null;
-  /** Lydia Business vendor_token. */
-  lydiaAccountId: string | null;
+  /**
+   * Whether the Lydia Business is validated. The account itself (the `vendor_token`, the dashboard
+   * URL) is NOT on this type: it is read by MANAGE_PAYOUT_ACCOUNT holders alone, through
+   * `getAssociationPayoutAccount`.
+   */
   lydiaOnboardingComplete: boolean;
-  /** Handed out once by `business/create` and never re-issuable - persisted so it survives a reload. */
-  lydiaDashboardUrl: string | null;
   /** True if this is the BDE association (unlocks BDE-only permission flags). */
   isBDE: boolean;
-  /** Hex-encoded 32-byte master key for the document vault (MANAGE_DOCUMENTS only). */
-  documentVaultKey?: string | null;
   /** Maximum vault storage in bytes (default 500 MiB). */
   documentQuotaBytes: number;
   createdBy: string;
@@ -2216,6 +2217,27 @@ export function canAssociationReceiveFormPayments(
   provider: PaymentProviderId | null
 ): boolean {
   return isPaymentAccountReady(asso, provider);
+}
+
+/** An association's Lydia Business as its MANAGE_PAYOUT_ACCOUNT holders see it. */
+export interface AssociationPayoutAccount {
+  /** The Lydia Business `vendor_token`; null while no Business is linked. */
+  lydiaAccountId: string | null;
+  /** Handed out once by `business/create` and never re-issuable - persisted so it survives a reload. */
+  lydiaDashboardUrl: string | null;
+  lydiaOnboardingComplete: boolean;
+}
+
+/**
+ * Reads the association's payout account (MANAGE_PAYOUT_ACCOUNT, 403 otherwise). The member reads
+ * never carry it: the `vendor_token` is all Lydia's `request/cancel` needs besides a request id.
+ */
+export async function getAssociationPayoutAccount(
+  associationId: string
+): Promise<AssociationPayoutAccount> {
+  return request<AssociationPayoutAccount>(
+    `/api/associations/${encodeURIComponent(associationId)}/payout-account`
+  );
 }
 
 /**

@@ -34,7 +34,7 @@ export interface GraineRuntime {
   storage: IStorage;
   /**
    * The key the store is sealed with NOW. A function, because this wiring outlives the key: an
-   * in-session PIN change re-seals every seed (`reencryptGraineSessions`) and moves the session's
+   * in-session PIN change re-seals every seed (`resealDeviceKeyStores`) and moves the session's
    * key, and a value captured at login kept sealing every later seed under the abandoned one -
    * unreadable at the next launch, and a seed cannot be re-fetched. Read it at each store access.
    */

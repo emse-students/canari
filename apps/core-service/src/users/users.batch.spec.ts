@@ -7,6 +7,7 @@ import type { UserBlocksService } from './user-blocks.service';
 import type { ProfileEditService } from './profile-edit.service';
 import type { ProfileCorrectionService } from './profile-correction.service';
 import { User } from './entities/user.entity';
+import type { AccountErasureService } from '../account-erasure/account-erasure.service';
 
 /**
  * `GET /users/batch`, AND THE TWO THINGS THAT WOULD SILENTLY UNDO IT.
@@ -29,7 +30,6 @@ describe('GET /users/batch', () => {
     const find = jest.fn().mockResolvedValue(rows);
     const userRepository = { find } as unknown as Repository<User>;
     const blocks = {
-      deleteAllFor: jest.fn(),
       invisibleUserIdsFor: jest.fn().mockResolvedValue([]),
     } as unknown as UserBlocksService;
     const service = new UsersService(userRepository, {} as DataSource, blocks);
@@ -38,7 +38,8 @@ describe('GET /users/batch', () => {
       {} as AvatarService,
       blocks,
       {} as ProfileEditService,
-      {} as ProfileCorrectionService
+      {} as ProfileCorrectionService,
+      {} as AccountErasureService
     );
     return { controller, find };
   }

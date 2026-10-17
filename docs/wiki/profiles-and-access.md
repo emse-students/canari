@@ -10,7 +10,7 @@ inferred from one self-declared string.
 
 ## 1. What exists today (measured on production, 2026-09-29 ~14:36 UTC)
 
-Read with `ak shell` in `miconnect-server-1` on `ssh portail-etu-direct`, read-only. Counts are a
+Read with `ak shell` on the identity-provider host, read-only. Counts are a
 snapshot of a live population ([authentik](infrastructure/authentik.md#database-and-backup)).
 
 **Sign-in.** `miconnect-auth` is an identification stage with NO password field: a source button and
@@ -64,8 +64,8 @@ can sign in to all nine.
 Promo (entry year): 2026 177, 2025 158, 2024 140, 2023 70, 2022 39, then 2021 x2, 2020, 2007 and
 1816 - the validator accepts anything. 6 accounts have no all-capitals word in their name, so their
 `lastName` is empty - **and none of them is a person** (read 2026-09-30): authentik's
-`AnonymousUser`, a `service-account` and the four campaign accounts `canari-test-*`. Every real
-account splits. The `1816` was `les.roots`, an internal admin account the user DELETED as dead the
+`AnonymousUser`, a `service-account` and the four campaign test accounts. Every real
+account splits. The `1816` was an internal admin account the user DELETED as dead the
 same day.
 
 **What each application decides from those claims** - `formation = 'ICM'` is the real access
@@ -207,8 +207,7 @@ built.
 ## 3. Found on the way
 
 - **A MiGallery API key travels in plain text in claims.** The property mapping `avatar` builds a
-  URL carrying it, and it is attached to MinoWiki and Archives MINO, so any user of either can read
-  it in their own id_token or userinfo. The value is not written here. Closed by WP0 on 2026-09-30
+  URL carrying it, and it is attached to MinoWiki and Archives MINO, so it was readable in a claim. The value is not written here. Closed by WP0 on 2026-09-30
   ([section 4](#the-work-packages-in-order)).
 - **The Alumni source's `sso_url` is a placeholder** while the source is enabled and promoted.
   Whether its button renders on the sign-in page was not observed.
@@ -253,7 +252,7 @@ affected.
    `/api/users/<id_user>/avatar?sig=<s>`, where `s = base64url(HMAC-SHA256(key, id_user))`, unpadded.
    A signature opens ONE avatar: a bad one gets `403`, no signature and no key gets `401`.
 2. The `avatar` mapping computes the same value in Python from `MIGALLERY_AVATAR_SIGNING_KEY`, which
-   is passed through `infrastructure/authentik/compose.yml` from `/srv/miconnect/.env`. MiGallery reads
+   is passed through the stack's environment file. MiGallery reads
    the same key as `AVATAR_SIGNING_KEY` from its GitHub secret.
 3. Before saving, the switch evaluated the new expression for one account and fetched the URL.
    MiGallery answered `200`, and only then was the mapping saved.
@@ -268,8 +267,7 @@ Two things are worth knowing next time:
   not signed in since the switch. That URL now gets a `401`. The next sign-in replaces it, and nothing
   is exposed by it.
 
-The `?api_key=` query path that only this mapping used is still accepted by the route. Removing it
-is a MiGallery follow-up.
+Legacy key-in-URL access on the MiGallery side is tracked privately for removal.
 
 **WPA - authentik as code, BEFORE WP1 (user, 2026-09-29: *"on a tout fait à la main, peut-être
 qu'on peut faire mieux et plus propre, homogène"*).** Every custom object - flows, stages, prompts,
@@ -294,7 +292,7 @@ profile editor (WP4) is tried on the production instance with test accounts. **S
 in French in the "tu" register; the Cercle's 30 s / 2 min tokens are KEPT and documented, because it
 reads the verified id_token once at its callback and discards the rest
 (`le-cercle/src/lib/server/auth/authentik/index.ts`), so nothing ever uses those tokens later;
-`akadmin` is KEPT with its password, as the break-glass account if the CAS is down.
+A local break-glass administrator account is kept in case the CAS is down.
 
 **WPA is two pull requests, both MERGED AND APPLIED to production on 2026-09-30.**
 
@@ -366,7 +364,7 @@ reads the verified id_token once at its callback and discards the rest
 - **Proven before any write.** Locally: five accounts shaped like production's, the claims each
   mapping emits, the enrolment policy on a student and a staff submission, a second migration
   writing 0. On production, read-only: the claims today against the claims from the migrated
-  profile, for 607 accounts - the ONLY differences were 14 `Master -> Autre` and `les.roots`' `1816`.
+  profile, for 607 accounts - the ONLY differences were 14 `Master -> Autre` and one deleted admin account's `1816`.
 - **The order on production is forced**: the name, formation and promo claims read the profile
   only, so the migration is written BEFORE the blueprints are applied, and run again after them
   for anyone who enrolled in between.
@@ -465,7 +463,7 @@ filters.
   service account `miconnect-canari-editor`, the role `miconnect-profile-editor` (global permissions
   `view_user` and `change_user`, nothing else), the group `miconnect-profile-editors` that carries the
   role to the account, and its API token (`expiring: false`). The token key is `!Env
-  MICONNECT_EDITOR_TOKEN` from `/srv/miconnect/.env`, declared with `:?` in the stack's `compose.yml`,
+  MICONNECT_EDITOR_TOKEN` from the stack's environment file, declared with `:?` in the stack's `compose.yml`,
   so a `.env` that forgets it fails the start and the applier refuses an unresolved `!Env` before it
   commits. **The same value is the GitHub secret `MICONNECT_EDITOR_TOKEN`** that production's
   core-service reads ([MIGRATION](../../infrastructure/MIGRATION.md)).
@@ -1117,7 +1115,7 @@ Server half of the seven decisions of [the decisions](#the-audiences-chantier---
 - **Default at creation replaces D36's "creator's spaces"**: `AssociationsService.create` writes, in the transaction of the row, ONE rule `(formation NULL, campus = the creator's profile campus)` for an association AND a list. A creator with no valid campus is refused `400 AUDIENCE_CREATOR_CAMPUS_REQUIRED` and the row rolls back (decision 5, never guessed). An institution still gets NO rule: the creating global admin ticks its audience afterwards (`PUT /api/associations/:id/audiences`).
 - **`everyone` refused outside institutions** (decision 6): `setAudiences`, the one write path of the audience (the admin grid and the BDE both call it), refuses any rule with `campus` NULL - a formation across campuses included, which is the multi-campus audience decision 3 rules out - with `400 AUDIENCE_EVERYONE_INSTITUTION_ONLY`, for a global admin too. Creation writes only a campus rule, and `PATCH` cannot change an entity's type, so nothing else writes a rule. Existing everyone rules stay until someone edits that entity.
 - **The BDE star** (decision 7): `PUT /api/associations/:id/audiences` is open to a global admin OR the holder of MANAGE_ASSO in a BDE (`BDE_GOVERNED_CAMPUSES_SQL`: the campuses of the spaces that BDE governs). A star is refused `403` when it is not a star (`AUDIENCE_ADMIN_OR_BDE_REQUIRED`), when the target is an institution (`AUDIENCE_INSTITUTION_ADMIN_ONLY`), or when EITHER what the entity addresses now OR what is submitted leaves its campuses, or the entity has no rule at all (`AUDIENCE_OUTSIDE_BDE_CAMPUS`). `PUT /api/associations/spaces/:id/bde` (the BDE flag) stays global-admin only. `GET .../audiences` is open to a star on the same bound since 2026-10-08 (see WP-B below).
-- **A change applies to everything, past posts included** (decision 4): visibility is computed from the CURRENT rules at read time and nothing is stored on a post (D38). Proof: `reader-spaces.integration.spec.ts` moves an association's audience under a stored post and the post follows (skipped without `SOCIAL_IT_DATABASE_URL`).
+- **A change applies to everything, past posts included** (decision 4): visibility is computed from the CURRENT rules at read time and nothing is stored on a post (D38). Proof: `reader-spaces.integration.spec.ts` moves an association's audience under a stored post and the post follows (gated on `SOCIAL_IT_DATABASE_URL`, which CI's `test-social-integration` sets).
 - **No back-fill migration.** `users` belongs to core-service, so a social migration reading `users.campus` would fail on a fresh database, and an entity D36 left rule-less (creator with no space) was left so on purpose. Measure first, read-only (never run by an agent against production), then decide with the user:
 
 ```sql
@@ -1149,7 +1147,7 @@ The seven decisions of [the decisions](#the-nominative-read-grants---the-decisio
 - **Model** (migration `078_read_grants.sql`): `read_grants(user_id, campus, formation NULL = whole campus, granted_by, created_at)`, unique per cell (`COALESCE(formation, '')`, so NULL repeats are refused), no end date; `read_grant_journal` is append-only (`grant`/`revoke`, `actor`, `at`). A revocation deletes the grant row and writes the journal line in one transaction; setting a state already held writes nothing, so the journal records changes only. API: `GET`/`PUT /api/associations/read-grants` (`read-grants/read-grants.*`), GLOBAL ADMIN ONLY on both - the list is internal, a grantee cannot even read their own row. Granting to an unknown account is a 404.
 - **Visibility plugs into the one predicate**: `readGrantReachesAssociationSql` in `spaces/reader-spaces.ts` - a grant cell contains the OPEN spaces it matches, and an association is reached when one of ITS RULES reaches such a space (any type; an institution addressing Gardanne is reached by a Gardanne cell whatever campus the grantee has). It is spliced through `ReadOpts.readGrants`, which only the `*ToViewerSql` read paths turn on (feed, search, one post, comments, reactions, votes, signed-in agenda, calendar link) and the feed gate (`IN_FEED_AUDIENCE_SQL`, so a named reader with no space and no membership opens the feed). It goes into the ASSOCIATION branch of `postVisibleToUserSql` (and the republisher's), never the personal-post branch: personal posts stay invisible by construction.
 - **Not widened**: `announceRecipientsSql` and `NEWLY_REACHED_BY_REPUBLICATION_SQL` use the plain predicate, so a grantee is NEVER notified; the directory (`associationVisibleToViewerSql`) is unchanged; the agenda signing (D40, `signAgendaFeedSelection`, `READER_SPACES_SQL`) signs the reader's OWN spaces only, a grant adds none, and the anonymous selection has no reader. Publishing is untouched: a grantee publishes through an institution they belong to (D31).
-- **UI**: `/admin/read-access` replaces `/admin/document-reviewers`: a person x (campus x whole-campus/ICM/ISMIN/FSSS/PDIS/Autre) grid of checkboxes (ISTP is FSSS, noted on the page), the journal, and below them the document-reviewer section unchanged (its `document_reviewer_grants` rows were NOT moved: it is a different capability - public documents - and still open to BDE super-admins, who do not see the grid).
+- **UI**: `/admin/read-access` replaces `/admin/document-reviewers`. Since 2026-10-16 it is two tabs drawn by one template - a card per named reader with their campuses and formations as chips, edited in a sheet (ISTP is FSSS, noted there), each change saved at once with an undo toast, the journal folded under the list - and the document reviewers in the other tab ([admin](frontend/modules/admin.md#read-access-adminread-access)). It was first built as a person x (campus x whole-campus/ICM/ISMIN/FSSS/PDIS/Autre) grid of checkboxes; the document-reviewer list stayed a separate capability (its `document_reviewer_grants` rows were NOT moved: it is a different capability - public documents - and still open to BDE super-admins, who do not see the grid).
 - **Proof**: `spaces/read-grants.integration.spec.ts` (real PostgreSQL, `SOCIAL_IT_DATABASE_URL`): per-post matrix over four named readers, personal posts never visible (even with `adminSeesAll`), no-grant readers unchanged, gate, agenda, no notification, directory unwidened, revocation, unique key, idempotent migration; `read-grants.service.spec.ts` for the writes.
 - **THE WRITE BOUNDARY (review of 2026-10-08, user decision "read + react/comment")**: a grant lets its holder **read, react, comment and like a comment: YES; vote in a poll, republish, publish: NO.** `postVisibleToViewerSql` counts the grant by default (every read) and takes an explicit `readGrants: false` for the writes a grant never opened. `PostsService.assertVisible(postId, viewer, intent)` has a REQUIRED intent: `'READ_OR_REACT'` (post by id, calendar link, reaction, comment, comment like) or `'VOTE'` (the poll vote, grant-free). `RepublicationsService.assertVisibleTo` is grant-free: a grantee who also publishes as some association X cannot republish into X a post only the grant shows them (404, like any post they cannot see). Publishing a post is unchanged and stays through an institution (D31). Proof: `read-grants.integration.spec.ts` (read-or-react vs vote over every post and reader), `republications.integration.spec.ts` (a grantee who is POST_AS of an association is refused, no row written), `posts.service.visibility.spec.ts` (the SQL of `'VOTE'` has no `read_grants`), `posts.controller.visibility.spec.ts` (each route passes its intent).
 - **Ids**: `users.id` is the OIDC subject lowercased (`NginxAuthGuard` lowercases `x-user-id`; core-service does the same), so the controller lowercases the grantee id and the actor before storing. No foreign key crosses services, so the account-deletion hook (`InternalController.deleteUserData`) deletes the account's grants and anonymises it (`[deleted]`) in the journal, both as grantee and as actor.
@@ -1158,12 +1156,12 @@ The seven decisions of [the decisions](#the-nominative-read-grants---the-decisio
 
 #### The eight dev checks (2026-10-09, `dev.canari-emse.fr` on `1.2.1-alpha.1`, same code as `v1.2.1`)
 
-Set up through the API as the dev global admin (`canari-test-delta`): two throwaway associations, one with the audience `(campus gardanne, every formation)` holding a post and a poll post, one saint-etienne control. Grantee: `canari-test-gamma` (ICM, saint-etienne), granted the whole gardanne campus with `PUT /api/associations/read-grants`. Every fixture, the grant, the membership and the BDE flag were removed afterwards (re-read in the dev database: 0 left).
+Set up through the API as the dev global admin (a dedicated test account): two throwaway associations, one with the audience `(campus gardanne, every formation)` holding a post and a poll post, one saint-etienne control. Grantee: a dedicated test grantee (ICM, saint-etienne), granted the whole gardanne campus with `PUT /api/associations/read-grants`. Every fixture, the grant, the membership and the BDE flag were removed afterwards (re-read in the dev database: 0 left).
 
 | # | Check | Verdict | Evidence |
 |---|---|---|---|
 | 1 | a grantee sees the association posts of the granted campus | PASS | before the grant `GET /api/posts/:id` 404 for both posts; after it 200, and both are in `GET /api/posts?limit=50` |
-| 2 | no personal post of that campus | PASS, on the predicate | dev has NO personal post by a gardanne author and `canari-test-epsilon`'s credentials are not in `test-accounts.json`, so no end-to-end post. The shipped `postVisibleToViewerSql` was run read-only on the dev database with the grant live, over a personal post by each of the 8 gardanne users: `false` for all 8, `true` for the association post |
+| 2 | no personal post of that campus | PASS, on the predicate | dev has NO personal post by a gardanne author and that test account's credentials are not in the harness state, so no end-to-end post. The shipped `postVisibleToViewerSql` was run read-only on the dev database with the grant live, over a personal post by each of the 8 gardanne users: `false` for all 8, `true` for the association post |
 | 3 | can react | PASS | `POST /reactions` 201 |
 | 4 | can comment | PASS | `POST /comments` 201 |
 | 5 | cannot vote through the grant | PASS | `POST /polls/:pollId/vote` 404 `Post not found`; the stored poll keeps zero votes |

@@ -5,8 +5,9 @@ import { PlatformService } from '../platform/platform.service';
 
 import type {
   BusinessLegalProfile,
+  CancelRequestOutcome,
   CheckoutLineItem,
-  CheckoutSessionInfo,
+  CheckoutRequestState,
   CheckoutSessionResult,
   ConnectAccountStatusResponse,
   ConnectBalanceSummary,
@@ -16,7 +17,7 @@ import type {
   PayerRecipient,
 } from './payment-provider.interface';
 
-export type { CheckoutSessionInfo, ConnectBalanceSummary };
+export type { ConnectBalanceSummary };
 
 /**
  * Orchestrates payment operations against the active PaymentProvider (Lydia, or `disabled`; Stripe
@@ -41,6 +42,7 @@ export class PaymentService {
       LYDIA_ENV: process.env.LYDIA_ENV,
       LYDIA_PROVIDER_TOKEN: process.env.LYDIA_PROVIDER_TOKEN,
       LYDIA_PROVIDER_PRIVATE_TOKEN: process.env.LYDIA_PROVIDER_PRIVATE_TOKEN,
+      LYDIA_OBSERVE_KEYS: process.env.LYDIA_OBSERVE_KEYS,
     });
   }
 
@@ -71,6 +73,11 @@ export class PaymentService {
     return this.lydiaProvider.verifyRequestCallback(fields, signature);
   }
 
+  /** What a callback that failed verification would have matched with the candidate keys (names only). */
+  observeLydiaRequestCallback(body: Record<string, unknown>, signature: string): string | null {
+    return this.lydiaProvider.observeRequestCallback(body, signature);
+  }
+
   /** Creates or resumes a Connect-style onboarding link for the given association. */
   async createConnectOnboarding(params: {
     associationId: string;
@@ -94,6 +101,8 @@ export class PaymentService {
     payerRecipient?: PayerRecipient;
     /** Stable key for idempotency; derived from submission ID or a client-supplied UUID. */
     idempotencyKey?: string;
+    /** The request's lifetime in seconds; the caller's seat hold (social-service `seat-hold.ts`). */
+    expireAfterSeconds?: number;
   }): Promise<CheckoutSessionResult> {
     return (await this.getProvider()).createCheckoutSession({
       lineItems: params.lineItems.map(toGenericLineItem),
@@ -103,7 +112,24 @@ export class PaymentService {
       payerRecipient: params.payerRecipient,
       connectAccountId: params.connectAccountId,
       idempotencyKey: params.idempotencyKey,
+      expireAfterSeconds: params.expireAfterSeconds,
     });
+  }
+
+  /** Makes a payment request no longer payable (`PaymentProvider.cancelCheckoutRequest`). */
+  async cancelCheckoutRequest(
+    requestId: string,
+    connectAccountId: string
+  ): Promise<CancelRequestOutcome> {
+    return (await this.getProvider()).cancelCheckoutRequest(requestId, connectAccountId);
+  }
+
+  /** Reads a payment request's state (`PaymentProvider.getCheckoutRequestState`). */
+  async getCheckoutRequestState(
+    sessionId: string,
+    connectAccountId: string
+  ): Promise<CheckoutRequestState> {
+    return (await this.getProvider()).getCheckoutRequestState(sessionId, connectAccountId);
   }
 
   /** Retrieves the charges-enabled status for a Connect-style account. */
@@ -124,11 +150,6 @@ export class PaymentService {
   /** Returns a URL to manage payouts for a Connect-style account. */
   async createConnectDashboardLink(accountId: string): Promise<string> {
     return (await this.getProvider()).createConnectDashboardLink(accountId);
-  }
-
-  /** Retrieves a checkout session by ID. */
-  async retrieveSession(sessionId: string): Promise<CheckoutSessionInfo> {
-    return (await this.getProvider()).retrieveSession(sessionId);
   }
 }
 

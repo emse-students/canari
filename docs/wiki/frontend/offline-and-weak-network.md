@@ -70,7 +70,7 @@ await the network, and the phone measurement of 2026-09-22 this page extends) an
 | **Open a salon** | Needs HTTP: `GET .../messages?limit=100` | 100 ciphertext rows per open (size unmeasured, sandbox salon is near empty) | Live channel messages are not persisted one by one; the last page a load drew is kept, drawn first at the next open (offline included) and replaced by every load ([F4](community-open-budget.md#f4-built-2026-10-15)) | `ChannelService.ts:869-884`, `social-service channel.service.ts:3383` |
 | **Cold start (web)** | **Browser error page** (`ERR_INTERNET_DISCONNECTED`): no service worker, no cached shell. Recovers on `navigate` once online | See section 3.2 | - | measured; `grep serviceWorker src` is empty; Tauri embeds the frontend (`frontendDist`), so native cold start has no download |
 | **Cold start (session)** | `apiFetch` proceeds without a token on a transport failure; offline unlock exists | `auth/refresh` is the first API call, serial behind the JS bundle | - | `utils/apiFetch.ts:50-68`, [auth](modules/auth.md#what-happens-on-reconnect) |
-| **Feed / notifications / agenda** | Fetch on tab switch; served from `feedCache` when warm (feed only) | 1-3 requests per tab, one RTT deep each (sandbox data tiny) | - | [local-first-ui](local-first-ui.md) section 3; measured section 3.3 |
+| **Feed / notifications / agenda** | Fetch on tab switch; served from `feedCache` when warm, and from the stored first page when cold or offline since 2026-10-15 (feed only, [posts](modules/posts.md#the-feed-is-drawn-from-the-device-first-then-the-server-page-merges-over-it-2026-10-15)) | 1-3 requests per tab, one RTT deep each (sandbox data tiny) | - | [local-first-ui](local-first-ui.md) section 3; measured section 3.3 |
 | **Media view** | Blob cache only; no cache = skeleton/error | Full encrypted blob (chat images up to 2560 px / q 0.92, no thumbnail variant), `no-store` at the server | Aborts handled (`AbortController` in `mediaBlobCache`) | `media.ts:130-134`, `media.controller.ts:546,606` |
 | **Calls** | Held off (`CALLS_ENABLED=false`) | - | - | [calls](modules/calls.md) |
 
@@ -360,7 +360,7 @@ proxy) and compression on, to replace the pessimistic bytes; and on a real salon
 ### 10.1 What production served, read before changing anything
 
 `curl -H 'Accept-Encoding: br,gzip'` and one headless Chrome load of `https://canari.emse.fr/login`
-(read-only, public, no sign-in), 2026-10-09. The name resolves straight to the host (193.49.175.122),
+(read-only, public, no sign-in), 2026-10-09. The name is served directly by the school host,
 **no CDN in front**, so the Cloudflare-era figures of this page (723 kB brotli WASM) no longer describe
 production.
 
@@ -579,10 +579,10 @@ WebSocket), and Android/iOS where `plugin-http` is invisible to CDP.
 
 The user's console export (production web, 2026-10-10) shows `encryptAndUpload: application/pdf,
 14049945 bytes, single block`, an XHR `POST /api/media/upload` answered **403 in ~1 s with an HTML
-body** (`<title>CrowdSec Ban</title>`, 5.75 KB), and the outbox logging `transient failure (attempt N):
+body** (`<title>... Ban</title>`, 5.75 KB), and the outbox logging `transient failure (attempt N):
 MediaUploadError: media upload failed (403 ) - <!DOCTYPE html>` in a loop: the bubble spun for ever
-because **a status code was treated as a transport failure**. The school-managed CrowdSec AppSec in
-the HOST nginx drops ANY request body over 10 MiB (10 485 760 bytes), for every user, whatever the
+because **a status code was treated as a transport failure**. The school-managed web application firewall in
+front of the host refuses large request bodies, for every user, whatever the
 connection: [host-waf-body-limit](../infrastructure/host-waf-body-limit.md). Fixed by WP-OFF-8 (below):
 no body over 8 MiB is ever built, and a refusal ends the entry. The weak-link findings that follow
 are real and independent.
@@ -720,7 +720,7 @@ takes it). The **single-request route (< 8 MiB) has no memo**, a repeat stores a
 45 s bound for the answer instead of the 5 min of a chunked `complete`. A cancel during `complete` is logged
 (the assembled object is then unreferenced). **What releases a session when the app is killed: nothing but the
 24 h sweep** - the DELETE is a best-effort of a live page (it refreshes an expired token through `fetchUpload`).
-**A blocked upload is parked, not ended**: a CrowdSec ban is time-limited, so the entry stays in the queue with
+**A blocked upload is parked, not ended**: a firewall ban is time-limited, so the entry stays in the queue with
 the bubble phase `blocked` (retry + delete), is never retried by the ladder, and a reload makes one new
 attempt.
 Pinned by `media.chunkLifecycle.test.ts` (failure at chunk N, refusal, cancel, slow complete) and
@@ -821,3 +821,27 @@ A Pixel 6a was made unusable by ONE queued 13 MB attachment. #1728 removed the r
 - **The banner says what is true.** `offline_banner_desc` used to promise "les nouveaux messages partiront dès le retour du réseau". That holds for DMs (outbox) and for a salon whose community is not loaded yet (held). It does not hold for a salon that IS loaded: its POST fails at once and the row is `unconfirmed` until WP-OFF-3 gives salons a durable outbox. The banner now says the messages of private conversations will leave and asks the member to wait for the connection before writing in a salon. `chat_send_error_salon_listing_failed` now names the server, since only an answered failure reaches it.
 
 Tests: `transportFailure.test.ts`, `fetchRouting.test.ts` (the bare string from the override), `salonSendGate.test.ts` (`unreachable` keeps waiting), `useChannelWorkspaces.svelte.test.ts` (the plugin's failure is retried; a listing that reached nobody holds sends and the reconnect releases them; a reconnect during a listing is owed; an answered failure still refuses; a persistently failing listing stops after one reconnect retry; a reconnect during the listing's own request is owed nothing), `TauriMlsService.conformedFetch.test.ts` (the delivery client's fetch is conformed), `reconnectListingWiring.test.ts` (source guard on the `onReconnect` wiring). **Owed:** the Mi 9T re-reading of the offline-start sequence.
+
+## 15. An offline cold start sends nothing it knows will fail (2026-10-15)
+
+**Measured on the Mi 9T, `v1.2.9-alpha.1`, airplane mode** ([device-verification](../device-verification.md), PR #1917; console in `<harness-dir>/a1-bench/r1015-a129/cons-feed.ndjson`): **70 warning/error lines in the first 6 s.** Grouped by emitter, each family and what was done:
+
+| Family (lines) | Verdict | What changed |
+| --- | --- | --- |
+| `[A] refresh✗transport` (23) | upstream: one refresh per caller of `getToken`, each into a link the browser had already declared absent | ONE refresh per no-network spell (`connectivity.browserReportsNoNetwork()`, `navigator.onLine` false): the first is SENT and its outcome is the proof - an answer sets reachability and ends the spell (a STALE false, WebKitGTK behind a full-tunnel VPN or a WebView that missed `online` while suspended, therefore recovers on the first call); a transport failure is what every later caller of the spell is answered from, without a request, with ONE `[A]` log line. The reconnect (`online`, or any answered request) and the return to the foreground end the spell - events, no clock. Refusing on the flag alone (the first version of this PR) locked a signed-in user out on a stale false: no token, no request, nothing to answer (review of #1921). A refresh that leaves and gets no answer is re-typed `TransportFailureError` at the throw, and so is every `fetch` call's `TypeError` in `trackedFetch` |
+| `[API] getToken failed ... proceeding without auth` (23) | upstream: the request was SENT, unauthenticated, into the same dead link | `apiFetch` never sends a request without a token: whatever `getToken` threw is rethrown as it came (`TransportFailureError`, `RefreshFailedError`, `SessionExpiredError`, `IdentitySplitError`). The old reason - "some routes answer without a token" - held for no route a signed-in client calls through it |
+| `[PENDING] page did not arrive ... retrying with limit=N` (8) | upstream: a transport failure, and even the token failure (`auth()` sat inside the `try`), walked the halving ladder 250 -> 1 | the token is taken before the `try`, and a request nobody answered is rethrown at once. An answer that STARTED and whose body died (a cut read, a proxy timeout on a big page) is typed `BodyInterruptedError` at the throw (`progressDeadline.ts`, never a `TypeError`, on both platforms) and halves like a stall ([chat-delivery](../services/chat-delivery.md)) |
+| `[DISPLAYNAME] profile fetch failed ... 120s with no retry` (6) | upstream: one accusation per user, a false "no retry" (the reconnect clears the backoff), counted into a rate meant for a REFUSING server | a failure of the transport TYPES (`TransportFailureError`, `RequestDeadlineError` - never `TypeError` at large, which a bug throws too) is said ONCE per spell, not counted as a failed lookup; the reconnect re-arms the line |
+| `Fetch History Error`, `[History] batch ... could not be sent`, `[PENDING] Pending fetch failed`, `[MLS] revocation check unreachable`, `push_context write after init failed` (1 each) | expected and necessary: each names a consequence of no network | one line each, by class (`String(e)`), no stack; a non-transport failure keeps its stack and its `error` level |
+| `[LAYOUT] Profile check` (2), `[postNotifStore]` (1) | expected, one line each | unchanged |
+| `[Posts]`, `[FEED-STORE]` (1 each) | feed path | owned by `fix/feed-local-first-reading`, not touched here |
+
+**Expected after: ~13 lines** - not yet re-read on the phone.
+
+**The history ask at every launch (`[GRAINE] asked <self> (every device) ... no-seed-held`, 8 communities).** `requestCommunityHistory` fell back to asking OUR OWN devices whenever another device of ours sat on the key group, without reading their presence. The request is a transport frame, dropped for a device presence reports offline, so with the bench's only other device (W3) offline each launch sent eight sealed requests nobody could receive, plus their roster reads. Now that fallback needs one of our other devices ONLINE and in the key group's tree (`answeringDevicesOf`); otherwise one info line, filed against the distribution epoch for the session. A server older than 1.2.5 (no per-device presence) keeps the old reading. It is NOT parked until one of our devices comes online, unlike the other members: the presence waiter watches USERS and our own user is online by definition, so nothing re-asks in the same session ([backlog](../backlog.md)).
+
+**Why it is NOT gated on durable state.** "Already asked" is the wrong fact to persist: an answerer holding nothing answers by SILENCE (`frameHandler`: an empty gathering returns before any bundle), so there is no answer to record, and a durable "asked at epoch E" would strand a community whose answerer missed the live frame (a backgrounded phone). What is left when our other device IS online is one request per community per launch, to that named device. Making it idempotent needs the answerer to SAY "I hold nothing" for a history ask - a protocol change, in the [backlog](../backlog.md).
+
+**Open.** The push context written after the MLS init is not re-attempted when an offline start comes back online, so the native side keeps the previous launch's context until the next start. A delayed write must not overwrite a newer device key (a PIN change in between), so it was not added blind ([backlog](../backlog.md)).
+
+Tests: `apiFetch.test.ts` (nothing sent on a transport failure or a refusal; one refresh per no-network spell, sent again after `online`; a stale-false `onLine` with a reachable server recovers), `mlsDeliveryApi.pending.test.ts` (no halving on a transport failure; halving on a body cut after the head, `TypeError` and bare string alike; one token ask), `displayName.transport.test.ts` (a plain `TypeError` still accuses), `repair.test.ts` (our offline devices are not asked; an online one is named). **Owed:** the Mi 9T re-reading of the offline cold start.

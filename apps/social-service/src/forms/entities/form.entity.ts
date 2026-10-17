@@ -131,6 +131,14 @@ export class Form {
   @Column({ type: 'int', nullable: true })
   cashPaymentExpiryDays: number | null;
 
+  /**
+   * How many days the file of a FILE question's answer is kept, counted from the date of the answer
+   * (migration 085, 1 to 30, 7 by default). The answer stays; only the file goes - see
+   * `form-files.service.ts`.
+   */
+  @Column({ type: 'int', default: 7 })
+  fileRetentionDays: number;
+
   /** Public URL of the form header/banner image (served via media-service). */
   @Column({ type: 'varchar', length: 500, nullable: true })
   imageUrl: string | null;

@@ -1,4 +1,10 @@
-import { CanActivate, ExecutionContext, Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  CanActivate,
+  ExecutionContext,
+  Injectable,
+  Logger,
+  UnauthorizedException,
+} from '@nestjs/common';
 import type { Request } from 'express';
 import { verifyInternalToken } from './internal-token';
 
@@ -28,51 +34,27 @@ export class NginxAuthGuard implements CanActivate {
     const request = context.switchToHttp().getRequest<Request>();
     const userId = (request.headers['x-user-id'] as string | undefined)?.trim().toLowerCase();
 
-    // In production, verify the authenticity of the nginx request.
-    // Security: reject requests when NODE_ENV is unset (ambiguous mode)
-    if (!process.env.NODE_ENV) {
-      throw new UnauthorizedException('NODE_ENV must be set to "production" or "development"');
+    // FAILS CLOSED IN EVERY ENVIRONMENT (2026-10-17). The secret is required and the per-minute HMAC
+    // is verified whatever NODE_ENV says: outside production this used to take the bare `X-User-Id`
+    // on trust, and an unset NODE_ENV was refused only because the mode could not be guessed. With
+    // one rule for all modes the mode no longer matters. The local nginx is the same file as
+    // production's and forwards `X-Internal-Token` on every route this service serves, and the
+    // local compose, the dev estate and the CI boot job all set the secret.
+    const internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim();
+    if (!internalSecret) {
+      Logger.error('[AUTH_GUARD] INTERNAL_SHARED_SECRET is not configured - refusing the request');
+      throw new UnauthorizedException(
+        'INTERNAL_SHARED_SECRET is not configured - service cannot verify internal requests'
+      );
+    }
+    if (!userId) {
+      throw new UnauthorizedException(
+        'Missing X-User-Id header - ensure the request passes through nginx auth.'
+      );
     }
 
-    if (process.env.NODE_ENV === 'production') {
-      // FAIL CLOSED, as `core-service` and `chat-delivery-service` already do. This service was the
-      // one that did not, and what it fell back to was not a weaker check but NO check: the branch
-      // below used to read `NGINX_AUTH_SECRET`, a variable NOTHING sets - not a compose file, not an
-      // env template, not the nginx config, and not the production container (measured 2026-09-17,
-      // which reports `INTERNAL_SHARED_SECRET` and `NODE_ENV` and no third name). So its `if` never
-      // fired, the else-branch did nothing at all, and control reached `if (userId) return true` -
-      // meaning that with the real secret absent, any request carrying an `X-User-Id` header was
-      // accepted on the strength of that header alone. It is deleted rather than repaired: a
-      // fallback is a signal and never a path, and this one had already decayed into an open door.
-      const internalSecret = process.env.INTERNAL_SHARED_SECRET?.trim();
-      if (!internalSecret) {
-        throw new UnauthorizedException(
-          'INTERNAL_SHARED_SECRET is not configured - service cannot verify internal requests'
-        );
-      }
-      if (!userId) {
-        throw new UnauthorizedException(
-          'Missing X-User-Id header - ensure the request passes through nginx auth.'
-        );
-      }
-
-      // HMAC token validation: proves the request came through nginx with a valid JWT.
-      verifyInternalToken(request.headers, userId, internalSecret);
-      return true;
-    }
-
-    // Outside production the local nginx is STILL in the path - see the class docblock - so the
-    // header it sets is read the same way, and a caller that arrives without it has bypassed it.
-    //
-    // WHAT IS DELIBERATELY NOT ASSERTED HERE IS THE HMAC, and that is the one thing local still
-    // takes on trust where production does not. Requiring `X-Internal-Token` outside production is
-    // an access-rule change across three services with three different policies, parked as such in
-    // `docs/wiki/backlog.md`; it is not smuggled in behind this deletion.
-    if (userId) {
-      return true;
-    }
-    throw new UnauthorizedException(
-      'Missing X-User-Id header - ensure the request passes through the local nginx.'
-    );
+    // HMAC token validation: proves the request came through nginx with a valid JWT.
+    verifyInternalToken(request.headers, userId, internalSecret);
+    return true;
   }
 }

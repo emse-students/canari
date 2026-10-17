@@ -163,14 +163,74 @@ describe('from sign-in to sign-out', () => {
     expect(gotoMock).toHaveBeenCalledWith('/login', { replaceState: true });
     warn.mockRestore();
   });
+
+  it('a chosen sign-out that fails is logged as an error and told to the user, never swallowed', async () => {
+    const { signOutByChoice } = await import('$lib/stores/auth');
+    const { toastStore } = await import('$lib/stores/toast.svelte');
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(() => Promise.resolve(new Response(null, { status: 204 })))
+    );
+    gotoMock.mockRejectedValue(new Error('router gone'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await signOutByChoice();
+
+    expect(error).toHaveBeenCalledWith(
+      expect.stringContaining('sign-out the user chose failed'),
+      expect.any(Error)
+    );
+    expect(toastStore.toasts.at(-1)?.type).toBe('error');
+    vi.unstubAllGlobals();
+  });
+});
+
+describe('a sign-in refused while the account is being erased', () => {
+  it('shows the localised reason, not the server text, and says why in the log', async () => {
+    const { m } = await import('$lib/paraglide/messages');
+    localStorage.setItem('canari_oidc_state', 'st');
+    // core-service's ForbiddenException body: the code is what the client keys on.
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({ code: 'ACCOUNT_ERASURE_PENDING', message: 'server text' }),
+            { status: 403 }
+          )
+      )
+    );
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(handleOidcCallback('code', 'st')).rejects.toThrow(
+      m.auth_account_erasure_pending()
+    );
+    expect(warn).toHaveBeenCalledWith('[auth] sign-in refused: account erasure pending');
+    warn.mockRestore();
+  });
 });
 
 describe('which sign-outs end MiConnect', () => {
   const src = (p: string) => readFileSync(resolvePath(__dirname, '..', '..', p), 'utf8');
 
+  it.each(['lib/components/navigation/Navbar.svelte', 'routes/dashboard/+page.svelte'])(
+    '%s - a sign-out somebody chose - goes through signOutByChoice',
+    (file) => {
+      const text = src(file);
+      expect(text).toContain('signOutByChoice()');
+      expect(text).not.toContain('leaveSignedOut');
+    }
+  );
+
+  it('signOutByChoice leaves through MiConnect', () => {
+    const text = src('lib/stores/auth.ts');
+    const start = text.indexOf('export async function signOutByChoice(');
+    expect(start).toBeGreaterThan(-1);
+    expect(text.slice(start, text.indexOf('\n}\n', start))).toContain('await leaveSignedOut()');
+  });
+
   it.each([
-    'lib/components/navigation/Navbar.svelte',
-    'routes/dashboard/+page.svelte',
     'lib/components/settings/SettingsDangerZone.svelte',
     'lib/components/shared/PlatformGateOverlay.svelte',
     'lib/components/shared/IdentitySplitOverlay.svelte',

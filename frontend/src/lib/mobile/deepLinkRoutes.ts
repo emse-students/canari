@@ -9,7 +9,7 @@ import { MOBILE_APP_PROTOCOL } from './appSiteAssociation';
  * `admin-agenda`. `posts` is what a payload naming nothing falls back to on the server, and it has
  * no id; the two agenda hosts mirror `notificationHref` (the in-app bell).
  *
- * Returns null for a host this table does not own (chat, callback, stripe and open have their own
+ * Returns null for a host this table does not own (chat, callback, payment and open have their own
  * handling) or for a host that needs an id and has none, so the caller can log instead of guessing.
  */
 export function appRouteForDeepLink(u: URL): string | null {

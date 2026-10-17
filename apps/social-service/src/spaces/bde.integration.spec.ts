@@ -6,9 +6,8 @@
  * answer as a fixture; this file proves the answer itself: a BDE governs exactly the associations
  * whose rules reach a space it is the BDE of.
  *
- * GATED ON `SOCIAL_IT_DATABASE_URL`, like `reader-spaces.integration.spec.ts`: CI provides no
- * database here, and the whole file reports as skipped rather than passing. Run it against any
- * throwaway PostgreSQL:
+ * GATED ON `SOCIAL_IT_DATABASE_URL`, like `reel-retention.integration.spec.ts` and for its reason;
+ * CI's `test-social-integration` sets it. Locally, against any throwaway PostgreSQL:
  *
  *   SOCIAL_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- bde.integration
  *

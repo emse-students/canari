@@ -121,6 +121,32 @@ export class FormReminderScheduler {
     }
   }
 
+  /** Set while `expireStalePendingPayments` runs, so a slow run is not overlapped by the next tick. */
+  private expiringPendingPayments = false;
+
+  /**
+   * Every 5 minutes - marks online payments left `pending` past the hold as `expired`.
+   *
+   * NOT LOAD-BEARING FOR CAPACITY: the seat is released by the row's own age in every count, so a
+   * late or missed run only delays the word the manager reads. The flag stops this process
+   * overlapping itself; the `UPDATE`'s own `WHERE` is what makes any repeat a no-op.
+   */
+  @Cron('*/5 * * * *')
+  async expireStalePendingPayments() {
+    if (this.expiringPendingPayments) {
+      this.logger.debug('[PENDING] previous expiry run still in progress - this tick skipped');
+      return;
+    }
+    this.expiringPendingPayments = true;
+    try {
+      await this.formsService.expireStalePendingPayments();
+    } catch (e) {
+      this.logger.warn('[PENDING] Error expiring stale online payments', e);
+    } finally {
+      this.expiringPendingPayments = false;
+    }
+  }
+
   /** Daily at 03:00 - deletes post notifications older than 90 days. */
   @Cron('0 3 * * *')
   async purgeOldPostNotifications() {

@@ -33,6 +33,7 @@ import {
 } from './dto/user.dto';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
+import { AccountErasureService } from '../account-erasure/account-erasure.service';
 
 /**
  * The most ids one `GET /users/batch` may carry.
@@ -90,7 +91,8 @@ export class UsersController {
     private readonly avatarService: AvatarService,
     private readonly blocksService: UserBlocksService,
     private readonly profileEdit: ProfileEditService,
-    private readonly corrections: ProfileCorrectionService
+    private readonly corrections: ProfileCorrectionService,
+    private readonly accountErasure: AccountErasureService
   ) {}
 
   // -- Blocking -------------------------------------------------------------
@@ -420,15 +422,16 @@ export class UsersController {
   }
 
   /**
-   * Permanently deletes the authenticated user's account and all associated data
-   * across all services (MLS keys, messages, posts, memberships, Stripe customer).
-   * Returns 204 No Content on success.
+   * Deletes the authenticated user's account: deactivated at once, erased everywhere by the durable
+   * queue (`AccountErasureService`). 204 means the account is gone from `users`, its sessions are
+   * revoked, and the erasure of every service is RECORDED - not that every service has finished;
+   * the queue guarantees that part (docs/wiki/account-erasure.md).
    */
   @UseGuards(NginxAuthGuard)
   @Delete('me')
   @HttpCode(204)
   async deleteMe(@Headers('x-user-id') userId: string): Promise<void> {
-    await this.usersService.deleteUser(userId);
+    await this.accountErasure.requestErasure(userId);
   }
 
   /** Updates the authenticated user's profile and returns the updated public DTO. */

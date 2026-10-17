@@ -23,7 +23,7 @@ import { captureConsoleLine, installAppLogFlushTriggers } from '$lib/utils/appLo
 import { apiServiceOrigins } from '$lib/utils/apiUrl';
 import { createRoutedFetch } from '$lib/utils/fetchRouting';
 import { MOBILE_APP_PROTOCOL, OIDC_SIGNED_OUT_HOST } from '$lib/mobile/appSiteAssociation';
-import { CHECKOUT_RETURN_HOSTS } from '$lib/utils/checkoutCallbacks';
+import { CHECKOUT_RETURN_HOST } from '$lib/utils/checkoutCallbacks';
 
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
 // web logs stay as readable as adb ones - and hand every non-debug line to the in-app log, the only
@@ -237,6 +237,12 @@ if (isTauriRuntime()) {
                     { type: 'repost_proposed', postId: queueAssociationId },
                     async (id) => (await assos.getAssociation(id)).slug
                   );
+                  // Unreachable for `repost_proposed` (it always has a slug route); kept because the
+                  // signature is `string | null` and a null must never reach `goto`.
+                  if (!route) {
+                    console.warn('[hooks] proposals queue has no destination');
+                    return;
+                  }
                   return goto(route);
                 })
                 .catch((err) => console.error('[hooks] Proposal queue navigation failed', err));
@@ -267,11 +273,11 @@ if (isTauriRuntime()) {
               continue;
             }
 
-            // Checkout return: fr.emse.canari://payment/success|cancel?… A build older than the
-            // payment host still sends `stripe` (docs/wiki/legacy-compatibility.md), so both are read.
-            if (u.protocol === MOBILE_APP_PROTOCOL && CHECKOUT_RETURN_HOSTS.has(u.host)) {
+            // Checkout return: fr.emse.canari://payment/success|cancel?…
+            if (u.protocol === MOBILE_APP_PROTOCOL && u.host === CHECKOUT_RETURN_HOST) {
               const path = u.pathname.replace(/\/$/, '') || '/';
-              const sessionId = u.searchParams.get('session_id');
+              // A form return names its submission: the server puts `submission_id` in place of
+              // the `session_id` placeholder, which Lydia never fills (return-url-key.ts).
               const submissionId = u.searchParams.get('submission_id');
               const registered = u.searchParams.get('registered');
               const postId = u.searchParams.get('post_id');
@@ -294,8 +300,6 @@ if (isTauriRuntime()) {
                   );
                 } else if (submissionId) {
                   navigate(`/forms/success?submission_id=${encodeURIComponent(submissionId)}`);
-                } else if (sessionId) {
-                  navigate(`/forms/success?session_id=${encodeURIComponent(sessionId)}`);
                 } else if (registered) {
                   const q = new URLSearchParams({ registered });
                   if (postId) q.set('post_id', postId);
@@ -308,8 +312,6 @@ if (isTauriRuntime()) {
                   navigate('/shop?purchase_cancel=1');
                 } else if (submissionId) {
                   navigate(`/forms/cancel?submission_id=${encodeURIComponent(submissionId)}`);
-                } else if (sessionId) {
-                  navigate(`/forms/cancel?session_id=${encodeURIComponent(sessionId)}`);
                 } else {
                   navigate('/forms');
                 }
@@ -327,6 +329,18 @@ if (isTauriRuntime()) {
                   appendLog('[AUTH] MiConnect session ended - the sign-out browser came back')
                 )
                 .catch((err) => console.error('[hooks] Could not log the MiConnect sign-out', err));
+              continue;
+            }
+
+            // A host of our own scheme that no table above owns: a push from a newer server. The
+            // tap must land somewhere a reader can see the notification, never nowhere.
+            if (u.protocol === MOBILE_APP_PROTOCOL && u.host !== 'callback') {
+              console.warn(
+                `[hooks] unknown deep-link host, opening notifications: ${describeDeepLink(url)}`
+              );
+              import('$app/navigation')
+                .then(({ goto }) => goto('/notifications'))
+                .catch((err) => console.error('[hooks] Notifications navigation failed', err));
               continue;
             }
 

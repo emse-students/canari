@@ -67,7 +67,8 @@
   import { totalUnreadMessages } from '$lib/utils/unreadTotal';
   import SeoHead from '$lib/components/seo/SeoHead.svelte';
   import { purgeRetiredAvatarCache } from '$lib/utils/userAvatarCache';
-  import { publishTextZoom } from '$lib/utils/textZoom';
+  import { dropRetiredKlipyCustomerId } from '$lib/utils/chat/retiredKlipyCustomerId';
+  import { publishTextZoom, followIosDynamicType } from '$lib/utils/textZoom';
   import { m } from '$lib/paraglide/messages';
 
   let { children } = $props();
@@ -128,6 +129,7 @@
     themeStore.init();
     startTabIndicator();
     publishTextZoom();
+    const disposeDynamicType = followIosDynamicType(isIosApp);
 
     // Dismiss the inline splash screen (see app.html) once the first frame is rendered.
     // tick() ensures SvelteKit has completed its initial render before we fade out.
@@ -139,11 +141,15 @@
       }
     });
 
-    const teardownHistory = initHistoryOverlayStack();
+    // The iOS app has no system Back (no back-forward swipe in its WKWebView): its overlays are
+    // closed by the app's own edge swipe, and no history entry is written for them.
+    const teardownHistory = initHistoryOverlayStack({ systemBack: !isIosTauriRuntime() });
     const teardownKeyboard = initKeyboardViewport();
 
     // Reclaim the avatar bucket this client no longer writes. Idempotent, and free once it is gone.
     void purgeRetiredAvatarCache();
+    // The per-install id older builds sent to KLIPY with every GIF search (`retiredKlipyCustomerId.ts`).
+    dropRetiredKlipyCustomerId();
 
     const onVersionCheckTrigger = () => void refreshAppVersionCheck();
     void refreshAppVersionCheck();
@@ -155,6 +161,7 @@
 
     return () => {
       disposePressedClickGuard();
+      disposeDynamicType();
       teardownHistory();
       teardownKeyboard();
       window.removeEventListener('focus', onVersionCheckTrigger);

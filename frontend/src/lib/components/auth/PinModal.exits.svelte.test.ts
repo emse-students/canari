@@ -85,6 +85,30 @@ describe('PinModal - the exits do not scroll', () => {
     ).toBe(false);
   });
 
+  it('gives the unlock button its own top room and draws no line on the lock screen', () => {
+    // iPhone 12, v1.2.9-alpha.4: at the largest text size the keypad cut by the scrollport ended
+    // against the unlock button, rows 7-9 read as covered by it. Room, not a frame.
+    raiseGate();
+    const footer = document.querySelector<HTMLElement>('[data-modal-footer]')!;
+    expect(footer.hasAttribute('data-modal-footer-edge')).toBe(false);
+    expect(footer.classList.contains('border-t')).toBe(false);
+    const room = document.querySelector<HTMLElement>('[data-pin-footer]')!;
+    expect(footer.contains(room)).toBe(true);
+    expect(room.classList.contains('pt-3')).toBe(true);
+  });
+
+  it('the PIN change draws its footer as an edge: its form overflows once the keyboard is up', () => {
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const app = mount(ChangePinModal, {
+      target,
+      props: { open: true, onSubmit: vi.fn(), onClose: vi.fn() },
+    });
+    mounted.push(() => void unmount(app));
+    flushSync();
+    expect(document.querySelector('[data-modal-footer-edge]')).not.toBeNull();
+  });
+
   it('still submits the form it no longer nests in', () => {
     // A submit button outside its form is inert unless `form=` names one. This is the assertion the
     // whole change rests on: get it wrong and the button renders, looks right, and does nothing.

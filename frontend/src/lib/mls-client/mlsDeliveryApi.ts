@@ -8,7 +8,7 @@ import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPac
 import { toBase64, fromBase64 } from '$lib/utils/hex';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
-import { TransportFailureError } from '$lib/utils/transportFailure';
+import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 import { ApiRefusalError, responseOrigin } from '$lib/utils/apiRefusal';
 
 export type MlsDeliveryFetch = typeof fetch;
@@ -564,16 +564,26 @@ export class MlsDeliveryApi {
       if (afterCreatedAt) url.searchParams.set('after', afterCreatedAt);
 
       let batch: Array<{ createdAt?: string }>;
+      // OUTSIDE the try below: a token that cannot be had is not a page asked for too big. It used to
+      // be inside, so the offline cold start's refresh failure walked the whole ladder - eight
+      // requests, 250 down to 1, none of which ever left the device (Mi 9T, 2026-10-15).
+      const headers = await this.auth();
       try {
         const page = await fetchJsonUnderProgressDeadline<Array<{ createdAt?: string }>>(
           this.f,
           url.toString(),
-          { headers: await this.auth() },
+          { headers },
           stallTimeoutMs
         );
         if (!page.ok) break;
         batch = page.body;
       } catch (e) {
+        // A TRANSPORT FAILURE IS NOT A SIZE PROBLEM. Nobody answered, so no smaller question can get
+        // a different answer from the same dead link: halving it eight times was eight warn lines and
+        // eight requests against a fact (`transportFailure.ts`). A body that STARTED and died is not
+        // that: `fetchJsonUnderProgressDeadline` types it `BodyInterruptedError` (never a
+        // `TypeError`, on either platform), and it halves like a stall - an answer too big to arrive.
+        if (isTransportFailure(e)) throw e;
         // A page that does not arrive is a page ASKED FOR TOO BIG, until proven otherwise. Measured
         // on production: a device whose frames carried media needed 12 MB for 500 rows, timed out on
         // the deadline above having received nothing, ACKed nothing, and met the same 12 MB on every
@@ -648,7 +658,7 @@ export class MlsDeliveryApi {
       const d = (await res.json()) as { revoked?: boolean };
       return d.revoked === true;
     } catch (e) {
-      console.warn('[MLS] revocation check unreachable - treated as NOT revoked:', e);
+      console.warn(`[MLS] revocation check unreachable - treated as NOT revoked: ${String(e)}`);
       return false;
     }
   }
@@ -1455,7 +1465,13 @@ export class MlsDeliveryApi {
         head: res.headers.get('X-History-Head') ?? undefined,
       };
     } catch (e) {
-      console.error('Fetch History Error:', e);
+      // A transport failure is not a defect of this call: it says so in one line, by its class,
+      // with the same empty page the caller already handles. Anything else is one, and keeps its stack.
+      if (isTransportFailure(e)) {
+        console.warn(`[HISTORY] no answer for group ${groupId} - empty page: ${String(e)}`);
+      } else {
+        console.error('Fetch History Error:', e);
+      }
       return { rows: [] };
     }
   }
@@ -1522,7 +1538,13 @@ export class MlsDeliveryApi {
         out.set(groupId, { rows: rows ?? [], head: data.heads?.[groupId] });
       }
     } catch (e) {
-      console.error(`[History] batch of ${chunk.length} group(s) could not be sent:`, e);
+      if (isTransportFailure(e)) {
+        console.warn(
+          `[History] batch of ${chunk.length} group(s) got no answer - each replays its own page: ${String(e)}`
+        );
+      } else {
+        console.error(`[History] batch of ${chunk.length} group(s) could not be sent:`, e);
+      }
     }
   }
 

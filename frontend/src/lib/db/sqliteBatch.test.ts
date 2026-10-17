@@ -3,9 +3,64 @@ import {
   MAX_BOUND_PARAMETERS,
   MESSAGE_COLUMNS,
   MESSAGE_ROWS_PER_STATEMENT,
+  SEALED_SWAP_COLUMNS,
+  SEALED_SWAP_ROWS_PER_STATEMENT,
   chunk,
   messageInsertSql,
+  sealedSwapStatement,
 } from './sqliteBatch';
+
+describe('sealedSwapStatement', () => {
+  const swap = (id: string) => ({
+    id,
+    expected: `old-${id}`,
+    iv: `iv-${id}`,
+    cipherText: `ct-${id}`,
+  });
+
+  it('compare-and-swaps on the key column of the store, the payload columns only', () => {
+    const { sql, params } = sealedSwapStatement('graine', [swap('a'), swap('b')]);
+    expect(sql).toBe(
+      'UPDATE graine SET iv = CASE session_id WHEN $1 THEN $2 WHEN $3 THEN $4 END, ' +
+        'cipher_text = CASE session_id WHEN $5 THEN $6 WHEN $7 THEN $8 END ' +
+        'WHERE (session_id = $9 AND cipher_text = $10) OR (session_id = $11 AND cipher_text = $12)'
+    );
+    expect(params).toEqual([
+      'a',
+      'iv-a',
+      'b',
+      'iv-b',
+      'a',
+      'ct-a',
+      'b',
+      'ct-b',
+      'a',
+      'old-a',
+      'b',
+      'old-b',
+    ]);
+  });
+
+  it('numbers placeholders in the order they appear, so either binding convention is right', () => {
+    const { sql, params } = sealedSwapStatement('messages', [swap('x'), swap('y'), swap('z')]);
+    const order = (sql.match(/\$\d+/g) ?? []).map((p) => Number(p.slice(1)));
+    expect(order).toEqual(params.map((_, i) => i + 1));
+  });
+
+  it('fits a full batch under the bound-parameter ceiling', () => {
+    expect(SEALED_SWAP_ROWS_PER_STATEMENT * SEALED_SWAP_COLUMNS).toBeLessThanOrEqual(
+      MAX_BOUND_PARAMETERS
+    );
+    const full = Array.from({ length: SEALED_SWAP_ROWS_PER_STATEMENT }, (_, i) => swap(`m${i}`));
+    expect(sealedSwapStatement('outbox', full).params.length).toBeLessThanOrEqual(
+      MAX_BOUND_PARAMETERS
+    );
+  });
+
+  it('rejects an empty batch', () => {
+    expect(() => sealedSwapStatement('messages', [])).toThrow();
+  });
+});
 
 describe('messageInsertSql', () => {
   it('numbers placeholders across the whole statement, not per tuple', () => {

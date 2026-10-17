@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   ALL_CORE_FLAGS,
   ASSOCIATION_ADMIN_PRESET,
@@ -101,8 +104,8 @@ describe('the constants the server also defines', () => {
   });
 
   it('mirrors the backend ALL_CORE_FLAGS value', () => {
-    expect(ALL_CORE_FLAGS).toBe(1311);
-    expect(ASSOCIATION_ADMIN_PRESET).toBe(1311 | MANAGE_PAYOUT_ACCOUNT);
+    expect(ALL_CORE_FLAGS).toBe(3359);
+    expect(ASSOCIATION_ADMIN_PRESET).toBe(3359 | MANAGE_PAYOUT_ACCOUNT);
   });
 
   it('lists exactly the three flags the server gates on a.isBDE', () => {
@@ -124,6 +127,30 @@ describe('the constants the server also defines', () => {
       .filter((flag) => !BDE_ONLY_FLAGS.has(flag));
     for (const flag of nonBde) {
       expect(hasPermissionFlag(ASSOCIATION_ADMIN_PRESET, flag)).toBe(true);
+    }
+  });
+});
+
+describe('the role editor', () => {
+  /**
+   * The members editor is the ONLY screen that grants a flag, and its label list is a `$derived`
+   * inside a component, out of a unit test's reach: read the source instead. Dropping a flag's row
+   * (as `MANAGE_PARTNERSHIPS` once was) leaves a right that can be handed out and never taken back.
+   */
+  it('has a FLAG_LABELS row for every flag the enum defines', () => {
+    const source = readFileSync(
+      join(
+        dirname(fileURLToPath(import.meta.url)),
+        '../components/associations/AssociationMemberRow.svelte'
+      ),
+      'utf8'
+    );
+    const names = Object.keys(AssociationPermissionFlag).filter((k) => Number.isNaN(Number(k)));
+    expect(names).toContain('MANAGE_BOOKINGS');
+    for (const name of names) {
+      expect(source, `no FLAG_LABELS row for ${name}`).toMatch(
+        new RegExp(String.raw`flag:\s*AssociationPermissionFlag\.${name}\b`)
+      );
     }
   });
 });

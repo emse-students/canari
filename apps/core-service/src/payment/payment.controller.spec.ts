@@ -7,14 +7,19 @@ import type { PaymentService } from './payment.service';
 jest.mock('axios');
 const mockedAxios = axios as jest.Mocked<typeof axios>;
 
+/** A `request_uuid` exactly as the sandbox's `request/do` answered it on 2026-10-15 (payments.md). */
+const MEASURED_REQUEST_UUID = '077f2efc5b53d37086e25a19d87ceb29';
+
 describe('SESSION_ID_RE', () => {
-  it('accepts a Lydia request_uuid', () => {
-    expect(SESSION_ID_RE.test('11111111-1111-1111-1111-111111111111')).toBe(true);
+  it('accepts a Lydia request_uuid as Lydia issues it: 32 hex digits, no dashes', () => {
+    expect(SESSION_ID_RE.test(MEASURED_REQUEST_UUID)).toBe(true);
   });
 
   it('rejects garbage', () => {
     expect(SESSION_ID_RE.test('not-a-session-id')).toBe(false);
     expect(SESSION_ID_RE.test('')).toBe(false);
+    // The dashed RFC 4122 shape it used to require: no Lydia request has ever had one.
+    expect(SESSION_ID_RE.test('11111111-1111-1111-1111-111111111111')).toBe(false);
     // The Stripe-era `cs_...` id is no longer a session this service can have issued.
     expect(SESSION_ID_RE.test('cs_test_a1B2c3')).toBe(false);
   });
@@ -141,6 +146,121 @@ describe('PaymentController.createCheckout', () => {
     ).rejects.toThrow(/payerEmail/);
     expect(Date.now() - started).toBeLessThan(1000);
   });
+
+  it('forwards the lifetime and answers the provider request id', async () => {
+    const createCheckoutSession = jest
+      .fn()
+      .mockResolvedValue({ id: 'uuid-1', url: 'https://x', requestId: '48213' });
+    const controller = makeController(createCheckoutSession);
+
+    await expect(
+      controller.createCheckout({
+        lineItems: [],
+        successUrl: 's',
+        cancelUrl: 'c',
+        expireAfterSeconds: 1800,
+      })
+    ).resolves.toEqual({ ok: true, url: 'https://x', id: 'uuid-1', requestId: '48213' });
+    expect(createCheckoutSession).toHaveBeenCalledWith(
+      expect.objectContaining({ expireAfterSeconds: 1800 })
+    );
+  });
+
+  it.each([0, -1, 2.5])('refuses expireAfterSeconds %p before any provider call', async (v) => {
+    const createCheckoutSession = jest.fn();
+    const controller = makeController(createCheckoutSession);
+    await expect(
+      controller.createCheckout({
+        lineItems: [],
+        successUrl: 's',
+        cancelUrl: 'c',
+        expireAfterSeconds: v,
+      })
+    ).rejects.toThrow(/expireAfterSeconds/);
+    expect(createCheckoutSession).not.toHaveBeenCalled();
+  });
+});
+
+describe('PaymentController.requestState', () => {
+  const SECRET = 'internal-secret-for-test';
+  const UUID = MEASURED_REQUEST_UUID;
+  beforeAll(() => {
+    process.env.INTERNAL_SECRET = SECRET;
+  });
+
+  // The request social-service settles before a retry, and the one a payer's return confirms
+  // (`confirm-payment`), is named by the uuid Lydia issued. Refusing that shape made every settle
+  // that reached here a 409 and left a payment the callback missed unconfirmed for good.
+  it('answers the provider state of the named request', async () => {
+    const read = jest.fn().mockResolvedValue({ state: 'paid', raw: '1' });
+    const controller = new PaymentController({
+      getCheckoutRequestState: read,
+    } as unknown as PaymentService);
+    await expect(
+      controller.requestState({ sessionId: UUID, connectAccountId: 'v' }, SECRET)
+    ).resolves.toEqual({ ok: true, state: 'paid', raw: '1' });
+    expect(read).toHaveBeenCalledWith(UUID, 'v');
+  });
+
+  it.each([
+    [{ sessionId: '48213', connectAccountId: 'v' }],
+    [{ sessionId: '0f8e4c3a-1b2c-4d5e-8f90-123456789abc', connectAccountId: 'v' }],
+    [{ sessionId: UUID }],
+    [{}],
+  ])('refuses %p before any provider call', async (body) => {
+    const read = jest.fn();
+    const controller = new PaymentController({
+      getCheckoutRequestState: read,
+    } as unknown as PaymentService);
+    await expect(controller.requestState(body, SECRET)).rejects.toThrow('Invalid payload');
+    expect(read).not.toHaveBeenCalled();
+  });
+
+  it('refuses a caller without the internal secret', async () => {
+    const controller = new PaymentController({} as PaymentService);
+    await expect(
+      controller.requestState({ sessionId: UUID, connectAccountId: 'v' }, 'wrong')
+    ).rejects.toThrow('Forbidden');
+  });
+});
+
+describe('PaymentController.cancelRequest', () => {
+  const SECRET = 'internal-secret-for-test';
+  beforeAll(() => {
+    process.env.INTERNAL_SECRET = SECRET;
+  });
+
+  function makeController(cancelCheckoutRequest: jest.Mock) {
+    return new PaymentController({ cancelCheckoutRequest } as unknown as PaymentService);
+  }
+
+  it('cancels the named request at the Business it was issued to', async () => {
+    const cancel = jest.fn().mockResolvedValue('already-settled');
+    await expect(
+      makeController(cancel).cancelRequest({ requestId: '48213', connectAccountId: 'v' }, SECRET)
+    ).resolves.toEqual({ ok: true, outcome: 'already-settled' });
+    expect(cancel).toHaveBeenCalledWith('48213', 'v');
+  });
+
+  it.each([
+    [{ requestId: 'uuid-1', connectAccountId: 'v' }],
+    [{ requestId: '48213', connectAccountId: ' ' }],
+    [{}],
+  ])('refuses %p before any provider call', async (body) => {
+    const cancel = jest.fn();
+    await expect(makeController(cancel).cancelRequest(body, SECRET)).rejects.toThrow(
+      'Invalid payload'
+    );
+    expect(cancel).not.toHaveBeenCalled();
+  });
+
+  it('refuses a caller without the internal secret', async () => {
+    const cancel = jest.fn();
+    await expect(
+      makeController(cancel).cancelRequest({ requestId: '1', connectAccountId: 'v' }, 'wrong')
+    ).rejects.toThrow('Forbidden');
+    expect(cancel).not.toHaveBeenCalled();
+  });
 });
 
 /**
@@ -164,12 +284,9 @@ describe('PaymentController - every money route is guarded', () => {
     return (Reflect.getMetadata(GUARD_METADATA, fn as object) as unknown[]) ?? [];
   }
 
-  it.each([['createOnboarding'], ['verifySession'], ['cancelSession']])(
-    '%s runs NginxAuthGuard',
-    (handler) => {
-      expect(guardsOn(handler)).toContain(NginxAuthGuard);
-    }
-  );
+  it.each([['createOnboarding']])('%s runs NginxAuthGuard', (handler) => {
+    expect(guardsOn(handler)).toContain(NginxAuthGuard);
+  });
 
   it('completeLydiaAccount is for a global admin, behind NginxAuthGuard', () => {
     expect(guardsOn('completeLydiaAccount')).toEqual([NginxAuthGuard, GlobalAdminGuard]);

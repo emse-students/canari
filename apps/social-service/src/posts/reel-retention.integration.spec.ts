@@ -7,10 +7,10 @@
  * not, the cascade really removes the row and its notifications in one transaction, the migration
  * re-applies without error, and nothing that existed before it becomes a reel.
  *
- * GATED, DELIBERATELY, ON `SOCIAL_IT_DATABASE_URL`: CI does not provide a database here, and a
- * suite that fails without one would be a suite people learn to skip. The gate is visible - the
- * whole file reports as skipped, never as passing - and a developer (or the next session) runs it
- * against the local estate:
+ * GATED, DELIBERATELY, ON `SOCIAL_IT_DATABASE_URL`: a suite that fails without a database would be
+ * a suite people learn to skip, so without one the whole file reports as skipped, never as passing.
+ * CI sets it: `test-social-integration` in `ci.yml` runs every integration file against production's
+ * PostgreSQL and FAILS if any test in them was skipped. Locally, against the local estate:
  *
  *   SOCIAL_IT_DATABASE_URL=postgres://admin:password@localhost:5432/auth_db bun run test -- reel-retention.integration
  *

@@ -71,3 +71,30 @@ describe('answerText', () => {
     expect(answerText([], {})).toBe('');
   });
 });
+
+// A file answer is an opaque id; what a reader sees is a word, never the id.
+describe('answerText - a file answer', () => {
+  const FILE_ID = '11111111-1111-4111-8111-111111111111';
+  const FILE: AnswerQuestion = { type: 'file' };
+  const words = (deleted: string[] = []) => ({
+    file: 'Fichier',
+    fileDeleted: 'Fichier supprime',
+    deletedFiles: new Set(deleted),
+  });
+
+  it('reads a kept file as the word for a file', () => {
+    expect(answerText(FILE_ID, FILE, words())).toBe('Fichier');
+  });
+
+  it('reads a purged file as deleted', () => {
+    expect(answerText(FILE_ID, FILE, words([FILE_ID]))).toBe('Fichier supprime');
+  });
+
+  it('is empty when no file was sent', () => {
+    expect(answerText('', FILE, words())).toBe('');
+  });
+
+  it('refuses to read a file answer without words, rather than print its id', () => {
+    expect(() => answerText(FILE_ID, FILE)).toThrow('words of its reader');
+  });
+});

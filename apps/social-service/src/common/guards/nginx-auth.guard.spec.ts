@@ -37,11 +37,21 @@ describe('NginxAuthGuard (social-service)', () => {
     process.env.NODE_ENV = savedEnv;
   });
 
-  it('refuses every request when NODE_ENV is unset, rather than guessing a mode', () => {
+  it('refuses every request when the secret is unset, whatever NODE_ENV is (or is not)', () => {
     delete process.env.NODE_ENV;
     expect(() => guard.canActivate(makeContext({ 'x-user-id': 'user-1' }))).toThrow(
       UnauthorizedException
     );
+  });
+
+  it('does not need NODE_ENV once the secret and a valid token are present', () => {
+    delete process.env.NODE_ENV;
+    process.env.INTERNAL_SHARED_SECRET = SECRET;
+    const ctx = makeContext({
+      'x-user-id': 'user-1',
+      'x-internal-token': makeToken('user-1', SECRET),
+    });
+    expect(guard.canActivate(ctx)).toBe(true);
   });
 
   describe('in production', () => {
@@ -135,11 +145,26 @@ describe('NginxAuthGuard (social-service)', () => {
       process.env.NODE_ENV = 'development';
     });
 
-    it('accepts the X-User-Id the local nginx sets', () => {
-      expect(guard.canActivate(makeContext({ 'x-user-id': 'user-1' }))).toBe(true);
+    it('FAILS CLOSED when INTERNAL_SHARED_SECRET is absent: a bare X-User-Id is no longer enough', () => {
+      expect(() => guard.canActivate(makeContext({ 'x-user-id': 'user-1' }))).toThrow(
+        UnauthorizedException
+      );
+    });
+
+    it('verifies the HMAC the local nginx forwards, as production does', () => {
+      process.env.INTERNAL_SHARED_SECRET = SECRET;
+      expect(() => guard.canActivate(makeContext({ 'x-user-id': 'user-1' }))).toThrow(
+        UnauthorizedException
+      );
+      const ctx = makeContext({
+        'x-user-id': 'user-1',
+        'x-internal-token': makeToken('user-1', SECRET),
+      });
+      expect(guard.canActivate(ctx)).toBe(true);
     });
 
     it('throws when no user header is present', () => {
+      process.env.INTERNAL_SHARED_SECRET = SECRET;
       expect(() => guard.canActivate(makeContext({}))).toThrow(UnauthorizedException);
     });
 

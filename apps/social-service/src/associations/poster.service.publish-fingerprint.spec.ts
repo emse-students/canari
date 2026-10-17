@@ -1,3 +1,4 @@
+import { BadRequestException } from '@nestjs/common';
 import { PosterService } from './poster.service';
 import { PosterProject } from './entities/poster-project.entity';
 
@@ -104,20 +105,21 @@ describe('PosterService - the fingerprint of the document that went live', () =>
     expect(clearing?.patch).toMatchObject({ publication: null, publicationFingerprint: null });
   });
 
-  // The app EMBEDS its frontend, so an admin on an older build still posts the bare document.
-  // Refusing it would break publishing for them; it publishes with no fingerprint instead.
-  it('still publishes a bare document from a client that has no fingerprint', async () => {
-    await service.publish('p1', carte());
-    expect(patchFor('p1')?.publication).toBeDefined();
-    expect(patchFor('p1')?.publicationFingerprint).toBeNull();
+  // Every client admitted since floor 1.2.7 sends the wrapper, so a bare document is a bug.
+  it('refuses a bare document, and publishes nothing', async () => {
+    await expect(service.publish('p1', carte())).rejects.toBeInstanceOf(BadRequestException);
+    expect(patchFor('p1')).toBeUndefined();
   });
 
-  // A stored junk value would later be COMPARED, and would answer the staleness question wrongly.
-  it.each([['not-hex'], ['A'.repeat(64)], ['a'.repeat(63)], [''], [42]])(
-    'drops a malformed fingerprint (%p) rather than storing it',
+  // A stored junk value would later be COMPARED, and would answer the staleness question wrongly;
+  // every admitted client sends a well-formed one, so an absent or malformed one is refused.
+  it.each([['not-hex'], ['A'.repeat(64)], ['a'.repeat(63)], [''], [42], [undefined]])(
+    'refuses a malformed or absent fingerprint (%p), and publishes nothing',
     async (fingerprint) => {
-      await service.publish('p1', { carte: carte(), fingerprint });
-      expect(patchFor('p1')?.publicationFingerprint).toBeNull();
+      await expect(service.publish('p1', { carte: carte(), fingerprint })).rejects.toBeInstanceOf(
+        BadRequestException
+      );
+      expect(patchFor('p1')).toBeUndefined();
     }
   );
 

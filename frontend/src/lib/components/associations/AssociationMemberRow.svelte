@@ -49,6 +49,7 @@
         flag: AssociationPermissionFlag.MANAGE_PARTNERSHIPS,
         label: m.asso_flag_manage_partnerships(),
       },
+      { flag: AssociationPermissionFlag.MANAGE_BOOKINGS, label: m.asso_flag_manage_bookings() },
       {
         flag: AssociationPermissionFlag.MANAGE_PAYOUT_ACCOUNT,
         label: m.asso_flag_manage_payout_account(),

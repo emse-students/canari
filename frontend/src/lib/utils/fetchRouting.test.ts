@@ -30,6 +30,14 @@ describe('createRoutedFetch - the function hooks.client.ts installs as window.fe
     expect(native).not.toHaveBeenCalled();
   });
 
+  it('sends a first-party read to the WebView, a third-party one to the plugin', async () => {
+    const { native, plugin, f } = rig();
+    await f(`${API}/api/posts?limit=20`, { headers: { Authorization: 'Bearer t' } });
+    expect(native).toHaveBeenCalledTimes(1);
+    await f('https://third-party.example/x');
+    expect(plugin).toHaveBeenCalledTimes(1);
+  });
+
   it('passes the Request itself as the third argument, so its body kind decides', async () => {
     const { native, plugin, f } = rig();
     await f(new Request(upload, { method: 'POST', body: new Blob([new Uint8Array(4)]) }));
@@ -65,11 +73,13 @@ describe('createRoutedFetch - the function hooks.client.ts installs as window.fe
   // Mi 9T, `v1.2.7-alpha.1` (2026-10-14): the plugin rejects with reqwest's bare STRING, which no
   // consumer read as a network failure. The override must hand the app the contract's TypeError.
   it("types the plugin's bare-string rejection as a transport failure", async () => {
-    const raw = `error sending request for url (${API}/api/channels/workspaces/user/me)`;
+    // A JSON write: a first-party READ goes to the WebView since 2026-10-15.
+    const url = `${API}/api/channels/workspaces/w1/read`;
+    const raw = `error sending request for url (${url})`;
     const native = vi.fn();
     const plugin = vi.fn().mockRejectedValue(raw);
     const f = createRoutedFetch(native as never, plugin as never, () => [API]);
-    const failure = await f(`${API}/api/channels/workspaces/user/me`).catch((e: unknown) => e);
+    const failure = await f(url, { method: 'POST', body: '{}' }).catch((e: unknown) => e);
     expect(failure).toBeInstanceOf(TransportFailureError);
     expect(isTransportFailure(failure)).toBe(true);
     expect((failure as TransportFailureError).cause).toBe(raw);
@@ -162,8 +172,38 @@ describe('a binary body to the Canari API (the upload transport)', () => {
     );
   });
 
-  it('keeps a GET on the plugin, whose response body is streamed in raw binary chunks', () => {
-    expect(shouldUseNativeFetch(upload, { method: 'GET' }, upload, API)).toBe(false);
+  // Mi 9T, `v1.2.9-alpha.1` (2026-10-15): the feed's 52 kB first page took 3.5-4.3 s to cross the
+  // plugin's chunked body reads during a cold start, 3-13 ms through the WebView's own fetch.
+  it.each([
+    ['a GET named in init', (url: string) => [url, { method: 'GET' }] as const],
+    ['a GET by default (no init)', (url: string) => [url, undefined] as const],
+    ['a lower-case get', (url: string) => [url, { method: 'get' }] as const],
+    ['a HEAD', (url: string) => [url, { method: 'HEAD' }] as const],
+  ])('sends %s to a first-party origin native - its response body is the cost', (_l, make) => {
+    const [url, init] = make('https://canari.emse.fr/api/posts?limit=20');
+    expect(shouldUseNativeFetch(url, init, url, API)).toBe(true);
+  });
+
+  it('reads the method of a Request given as the first argument', () => {
+    const url = 'https://canari.emse.fr/api/posts';
+    expect(shouldUseNativeFetch(url, undefined, new Request(url), API)).toBe(true);
+    const post = new Request(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: '{}',
+    });
+    expect(shouldUseNativeFetch(url, undefined, post, API)).toBe(false);
+  });
+
+  it('keeps a GET to a THIRD-PARTY host on the plugin - CORS is not ours to grant there', () => {
+    const url = 'https://tenor.example/v2/search?q=x';
+    expect(shouldUseNativeFetch(url, { method: 'GET' }, url, API)).toBe(false);
+  });
+
+  it('keeps a JSON write (a DELETE with no body included) on the plugin', () => {
+    const url = 'https://canari.emse.fr/api/posts/1/reactions';
+    expect(shouldUseNativeFetch(url, { method: 'DELETE' }, url, API)).toBe(false);
+    expect(shouldUseNativeFetch(url, { method: 'PATCH', body: '{}' }, url, API)).toBe(false);
   });
 
   it('keeps a binary body to a THIRD-PARTY host on the plugin - CORS is not ours to grant there', () => {
