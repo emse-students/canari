@@ -133,6 +133,7 @@ import { socialUrl } from '$lib/utils/apiUrl';
 import { fetchUpload } from '$lib/media';
 import type { XhrUploadOptions } from '$lib/utils/uploadXhr';
 import { SocialApiError } from '$lib/associations/api';
+import { assertWithinRequestBudget } from '$lib/utils/mediaRequestLimits';
 
 /**
  * A refused call, typed at the THROW: the status always, the server's stable `code` when the body
@@ -207,6 +208,7 @@ export async function uploadFormImage(id: string, file: File): Promise<Form> {
   const token = await getToken().catch(() => '');
   const fd = new FormData();
   fd.append('file', file);
+  assertWithinRequestBudget(fd);
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${socialUrl()}/api/forms/${id}/image`, {
@@ -226,6 +228,7 @@ export async function uploadFormItemImage(
   const token = await getToken().catch(() => '');
   const fd = new FormData();
   fd.append('file', file);
+  assertWithinRequestBudget(fd);
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(`${socialUrl()}/api/forms/${formId}/items/image`, {

@@ -14,6 +14,8 @@
  * raised AND re-measured - never because a unit test passes.
  */
 
+import { m } from '$lib/paraglide/messages';
+
 /** What the host WAF drops: 10 MiB. A request at or above this never reaches the application. */
 export const GATEWAY_MAX_BODY_BYTES = 10 * 1024 * 1024;
 
@@ -45,4 +47,49 @@ export function requestBodyBytes(body: BodyInit | null | undefined): number {
   // A stream, or any shape this cannot measure, FAILS CLOSED: infinitely large is over every budget,
   // so the guard refuses it rather than waving through a body nobody counted.
   return Number.POSITIVE_INFINITY;
+}
+
+/**
+ * A request this client refuses to build because its body would exceed
+ * {@link MEDIA_REQUEST_BODY_BUDGET_BYTES}. Typed so a caller shows `message` (already localised)
+ * instead of its generic failure line: the file is the cause, and retrying cannot change it.
+ */
+export class RequestBodyTooLargeError extends Error {
+  constructor(
+    readonly bytes: number,
+    readonly limitBytes: number
+  ) {
+    super(
+      m.chat_media_too_large({
+        size: (bytes / (1024 * 1024)).toFixed(1),
+        limit: String(Math.floor(limitBytes / (1024 * 1024))),
+      })
+    );
+    this.name = 'RequestBodyTooLargeError';
+  }
+}
+
+/**
+ * Refuses, BEFORE any byte leaves, a single-request body over the 8 MiB budget - for the uploads
+ * that have no chunk route (association vault document, raw images). The host WAF would answer a
+ * 403 ban page after the whole body was sent (docs/wiki/infrastructure/host-waf-body-limit.md).
+ *
+ * @throws RequestBodyTooLargeError when the body is over budget or of unknown size.
+ */
+export function assertWithinRequestBudget(body: BodyInit): void {
+  const bytes = requestBodyBytes(body);
+  if (bytes > MEDIA_REQUEST_BODY_BUDGET_BYTES) {
+    console.warn(
+      `[media] refusing a ${bytes}-byte body: over the ${MEDIA_REQUEST_BODY_BUDGET_BYTES}-byte request budget`
+    );
+    throw new RequestBodyTooLargeError(bytes, MEDIA_REQUEST_BODY_BUDGET_BYTES);
+  }
+}
+
+/**
+ * The text to show for a failed upload: the localised size refusal when the file is the cause,
+ * otherwise the caller's own line.
+ */
+export function uploadFailureText(err: unknown, generic: string): string {
+  return err instanceof RequestBodyTooLargeError ? err.message : generic;
 }

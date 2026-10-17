@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { uploadFailureText } from '$lib/utils/mediaRequestLimits';
   import { Log } from '$lib/utils/Log';
   import type { Component } from 'svelte';
   import SquareImageCropper from '$lib/components/associations/SquareImageCropper.svelte';
@@ -37,7 +38,7 @@
       showCropper = false;
     } catch (e) {
       Log.d('cardIcon.handleExported failed', e);
-      error = m.card_icon_upload_error();
+      error = uploadFailureText(e, m.card_icon_upload_error());
     } finally {
       busy = false;
     }
