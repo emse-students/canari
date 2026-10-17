@@ -1297,7 +1297,11 @@ describe('ChannelService security hardening', () => {
       opts: { stored?: unknown; save?: (row: any) => Promise<unknown> } = {}
     ) => {
       const repos = makeService();
-      repos.channelRepo.findOne.mockResolvedValue({ id: 'ch1', workspaceId: 'ws1', isPrivate: false });
+      repos.channelRepo.findOne.mockResolvedValue({
+        id: 'ch1',
+        workspaceId: 'ws1',
+        isPrivate: false,
+      });
       repos.memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
       repos.memberRepo.find.mockResolvedValue([]);
       repos.messageRepo.findOne.mockResolvedValue(opts.stored ?? null);
@@ -1342,7 +1346,10 @@ describe('ChannelService security hardening', () => {
     });
 
     it('reads the id in either case: the stored key is lower case', async () => {
-      const { done, messageRepo } = send({ messageId: CLIENT_ID.toUpperCase() }, { stored: STORED });
+      const { done, messageRepo } = send(
+        { messageId: CLIENT_ID.toUpperCase() },
+        { stored: STORED }
+      );
       await expect(done).resolves.toBe(STORED);
       expect(messageRepo.findOne).toHaveBeenCalledWith({
         where: { channelId: 'ch1', authorId: 'u1', clientMessageId: CLIENT_ID },

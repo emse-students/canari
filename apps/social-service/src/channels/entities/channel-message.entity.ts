@@ -86,9 +86,15 @@ export class ChannelMessage {
    * (`AppMessage.message_id`). Never the primary key - the server mints that - only what makes a
    * repeated send idempotent: a second POST of the same author, salon and id returns this row
    * (WP-OFF-3). Null on a silent row and on every row older than migration 088.
+   *
+   * `select: false`, `update: false`: the deploy starts the services BEFORE it applies migration 088
+   * ([social-service](../../../../../docs/wiki/services/social-service.md#a-query-at-boot-runs-before-the-migration-that-adds-its-column-2026-10-02)),
+   * so no read and no save of a message may name the column - history and every lookup keep working
+   * in that window. Only the INSERT of a send names it (it must: the unique index is the idempotence),
+   * so a send in that window fails whole, stores nothing, and its client's retry is safe.
    */
-  @Column({ type: 'varchar', length: 36, nullable: true })
-  clientMessageId: string | null;
+  @Column({ type: 'varchar', length: 36, nullable: true, select: false, update: false })
+  clientMessageId?: string | null;
 
   @Column({ type: 'uuid', nullable: true })
   replyTo: string;
