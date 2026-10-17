@@ -562,8 +562,8 @@
       name something that is not on screen.
     -->
     {#if topLevelComments.length > 0}
-      <div class="mb-2 flex items-center justify-between gap-2">
-        <div>
+      <div class="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+        <div class="min-w-0">
           {#if topLevelComments.length > PREVIEW_COUNT && !showComments}
             <button
               type="button"
@@ -587,7 +587,7 @@
 
         <!-- Tri -->
         {#if topLevelComments.length > 1}
-          <div class="flex items-center gap-1">
+          <div class="flex min-w-0 flex-wrap items-center gap-1">
             <ArrowUpDown size={12} class="text-text-muted opacity-60" />
             {#each [['recent', m.post_sort_recent_label()], ['oldest', m.post_sort_oldest_label()], ['liked', m.post_sort_liked_label()]] as const as [mode, label] (mode)}
               <button

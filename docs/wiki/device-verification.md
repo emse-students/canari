@@ -1980,3 +1980,8 @@ nothing to measure because a revocation had already put a device in that state.
 still owed as a script, and its predicate is now written for it: `bun footprint.mjs --device <d>`
 must read `residue: 0` on a phone and `identityKeys: 0` everywhere, with the offline variant driven by
 a reload rather than a frame.
+
+### 2026-10-17 follow-up: the sort row (fixed) and the stale Tauri callback (open, cause not proven)
+
+- **Comment sort row.** At 150-200 % text the row "Afficher les N commentaires" + Récents / Anciens / Aimés did not wrap (page scroller 553 px on a 436 px screen). `PostComments.svelte` now wraps the row and the sort group (`flex-wrap`, `min-w-0`, `gap-x-2 gap-y-1`); `textZoomBoxes.test.ts` asserts it. Owed one look at 200 % on the Mi 9T.
+- **`[TAURI] Couldn't find callback id N` every ~15 s after a WebView reload** (`r1017-a129a5/cons-2.ndjson`: 27 lines, ONE id, intervals 14.85-15.05 s). The warning means Rust still answers a callback registered by the previous page. The only recurring Rust-to-JS channel in the app is the `plugin-websocket` listener in `TauriMlsService.connect()` (`addListener`); a reload does not run `pauseSocket()` (only the backgrounding path does, `sessionConnection.ts`), so a socket opened by the old page could keep delivering frames to the dead id. **NOT established from source**: no 15 s server frame was found in `backend/`, and the plugin's per-connection channel was not observed. Muting the line or adding a `pagehide` disconnect without that proof would be a guess. Next step: with the warning live, `adb logcat` for the websocket plugin plus the gateway's connection count for the account (two sockets after a reload would confirm it), then release the socket at `pagehide`.
