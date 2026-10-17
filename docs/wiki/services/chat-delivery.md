@@ -327,7 +327,7 @@ conversations keep a shared copy. Full reasoning in
 whose membership row is not `active` holds NO LEAF in the ratchet tree, so whatever it encrypts is
 undecryptable by construction for every member: accepting the frame does not deliver a message, it
 manufactures one that will fail to open on every recipient, for ever. Measured on production
-2026-09-02, DM `7da231f8`: the peer's `web-...-mtbep8vs-5oxb`, `pending` since 2026-08-27 and still
+2026-09-02, DM `7da231f8`: the peer's web device, `pending` since 2026-08-27 and still
 holding two undelivered Welcomes, sent six messages in 24 seconds that were fanned to five devices -
 **thirty rows of ciphertext nobody in the group can ever open**. The sender saw them sent.
 

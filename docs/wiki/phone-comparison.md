@@ -2,7 +2,7 @@
 
 Both phones ran a LOCAL build against the local stack, same account, same Wi-Fi. **The first
 sections below are the FINDINGS of that comparison, written before any fix; what was then fixed, lot by
-lot, is in "The correction plan" and the sections after it.** Screenshots are in the rig's state dir (`F:\Programmation\canari-harness\ios-bench\`),
+lot, is in "The correction plan" and the sections after it.** Screenshots are in the rig's state dir (the rig's `ios-bench` folder),
 not in the repo - they show a campaign account. The bench is [`tools/phone-bench/`](../../tools/phone-bench/bench.py)
 (`bench.py calibrate|tabs|scroll|startup|weight`, `crawl.py`); the iPhone side is driven by
 [`tools/ios-device/`](../../tools/ios-device/ios.mjs) ([mobile](frontend/mobile.md#a-build-for-the-phone-on-the-bench)).
@@ -167,7 +167,7 @@ design differences between iOS and Android accepted, test data created on the LO
   inside the script, never on a command line. **Tapping "Continuer" instead of pressing Return added
   a character to the password each time and the form answered "Mot de passe invalide"**; clear the
   field with `\b` keys and retype once. Never the CAS page.
-- **The dev estate does not share a campaign account's encryption state**: `canari-test-alpha` was
+- **The dev estate does not share a campaign account's encryption state**: a campaign test account was
   refused its campaign PIN there ("messages enregistres ... n'ont pas pu etre ouverts"), so on
   2026-09-30 the user authorised "PIN oublie ? > Reinitialiser", a test account on the dev copy, and the
   PIN was re-created as the SAME campaign PIN (`pin.mjs`) so nothing else moves. Its dev-estate
@@ -175,9 +175,8 @@ design differences between iOS and Android accepted, test data created on the LO
 
 **Owed to the user, none blocking:** whether a RELEASE APK may be installed on the Mi 9T (a different
 keystore, so the uninstall loses the A1 MLS enrolment) - until then Android timings are debug-build
-timings; revoke the App Store Connect key `U7X7X373G5`; disable Web Inspector on the iPhone; the bench
-IP `192.168.1.32` comes from DHCP. **Two folders the OS will not delete** (`canari-wt-brace`,
-`canari-wt-lot3`, a locked `.node` file in `node_modules`) are safe to remove by hand.
+timings; revoke the temporary App Store Connect key; disable Web Inspector on the iPhone; the bench
+LAN address comes from DHCP. Two stale worktree folders and a locked `.node` file in `node_modules` are safe to remove by hand.
 
 ## The user's guided pass on the release IPA (2026-09-30) - the list, in the order given
 

@@ -375,17 +375,14 @@ curl -s https://canari-emse.fr/api/version   # doit repondre 200 - ca lit la bas
 gh run list --limit 5                        # le pipeline est-il vert et silencieux
 ```
 
-Sur la machine :
+Sur la machine de production (hote partage Portail-etu depuis la bascule du 2026-09-24 ; l'acces est decrit dans les notes privees de l'equipe, et l'ancien alias ne lance plus aucun conteneur) :
 
 ```bash
-ssh canari
-docker compose -f canari/infrastructure/docker-compose.prod.yml ps
+docker compose -f <dossier-infrastructure>/docker-compose.prod.yml ps
 ```
 
-> **PowerShell et Git Bash marchent tous les deux depuis le 2026-09-02.** L'ancienne consigne
-> "PowerShell uniquement" accusait le mauvais coupable : `~/.ssh/config` ecrit maintenant le chemin
-> de la `ProxyCommand` cloudflared avec des barres obliques, que `bash` et `cmd` executent aussi
-> bien l'un que l'autre.
+> **PowerShell et Git Bash marchent tous les deux pour atteindre la machine** ; la consigne
+> "PowerShell uniquement" accusait le mauvais coupable (le chemin de commande de connexion).
 
 **Rejouer un deploiement a moitie rate**, c'est "Re-run failed jobs" sur le run qui existe deja.
 Aucune des trois bibliotheques de deploiement n'a de `workflow_dispatch` : ce serait une deuxieme porte vers la machine, et une
