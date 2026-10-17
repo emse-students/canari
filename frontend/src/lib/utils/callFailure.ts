@@ -21,6 +21,10 @@ import { ApiRefusalError, describeApiRefusal, refusalStatus } from '$lib/utils/a
  *
  * It carries no `code`: the initiate route answers a status and a body, and inventing a code slot
  * it never fills would be a discriminator nothing sets.
+ *
+ * The callee's half throws it too: `GET /api/calls/room-token` is the same setup step seen from the
+ * other end, and its 410 ("the ring window closed, the caller has stopped ringing") is a refusal
+ * the reader must be told as such, not as a generic failure.
  */
 export class CallInitiateError extends ApiRefusalError {
   constructor(status: number, message: string) {
@@ -64,5 +68,7 @@ export function describeCallFailure(error: unknown): string {
   if (error instanceof CallE2eUnsupportedError) return m.call_e2e_unsupported();
   const status = refusalStatus(error);
   if (status === 404) return m.chat_call_group_desynced();
+  // 410 is the room-token's answer once the ring window has closed: nothing failed, the call ended.
+  if (status === 410) return m.call_over();
   return describeApiRefusal(status, m.chat_call_action_start()) ?? m.chat_call_error_generic();
 }

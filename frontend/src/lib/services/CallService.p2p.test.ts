@@ -3,6 +3,7 @@ import { get } from 'svelte/store';
 import type { IMlsService } from '$lib/mls-client';
 import { CallService, CALL_ICE_TRANSPORT_POLICY } from './CallService';
 import { CallE2eUnsupportedError } from '$lib/utils/callFailure';
+import { m } from '$lib/paraglide/messages';
 
 /**
  * The client half of a PEER-TO-PEER 1:1 call (lot 1 of the revival, 2026-10-17), driven through
@@ -34,7 +35,13 @@ vi.mock('$lib/mls-client/mlsDeliveryHttp', () => ({
 
 const ICE = [{ urls: 'turn:turn.cloudflare.com:3478', username: 'u', credential: 'c' }];
 /** What the fake server answers; each test that needs another answer sets it, `beforeEach` resets. */
-const server = { ringTimeoutMs: 60_000, initiateStatus: 200, iceStatus: 200 };
+const server = {
+  ringTimeoutMs: 60_000,
+  initiateStatus: 200,
+  iceStatus: 200,
+  ringStatus: 200,
+  roomTokenStatus: 200,
+};
 vi.mock('$lib/utils/apiFetch', () => ({
   apiFetch: vi.fn(async (url: string) => {
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
@@ -43,8 +50,11 @@ vi.mock('$lib/utils/apiFetch', () => ({
         { roomId: 'room-1', roomToken: 'rt-1', ringTimeoutMs: server.ringTimeoutMs },
         server.initiateStatus
       );
-    if (url.includes('/api/calls/room-token')) return json({ roomToken: 'rt-2' });
+    if (url.includes('/api/calls/room-token'))
+      return json({ roomToken: 'rt-2' }, server.roomTokenStatus);
     if (url.includes('/api/calls/ice-servers')) return json({ iceServers: ICE }, server.iceStatus);
+    if (url.includes('/api/calls/ring-end')) return json({});
+    if (url.includes('/api/calls/ring')) return json({ rang: 1 }, server.ringStatus);
     return json({});
   }),
 }));
@@ -166,6 +176,8 @@ beforeEach(() => {
   server.ringTimeoutMs = 60_000;
   server.initiateStatus = 200;
   server.iceStatus = 200;
+  server.ringStatus = 200;
+  server.roomTokenStatus = 200;
   FakeSocket.instances = [];
   FakePeerConnection.instances = [];
   vi.stubGlobal('WebSocket', FakeSocket);
@@ -405,6 +417,56 @@ describe('the ring window, both sides', () => {
       'device-1'
     );
     expect(get(service.callState)).toBe('idle');
+  });
+});
+
+/**
+ * G1: the server's answer window opens at `POST /calls/ring`, so that request is load-bearing - a
+ * refused ring leaves a callee nothing it could ever answer, and it is already ringing in-app.
+ */
+describe('the ring opens the server window', () => {
+  it('ends the call and hangs up when the ring is refused after the invite left', async () => {
+    server.ringStatus = 410;
+    vi.mocked(fakeMls.sendMessage).mockClear();
+    const service = new CallService(fakeMls);
+
+    const started = service.startCall('group-1', false);
+    await settle();
+    const ws = FakeSocket.instances[0];
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1' });
+
+    await expect(started).rejects.toThrow('calls/ring failed (410)');
+    // The invite, then the hangup that stops the callee's in-app ring.
+    expect(fakeMls.sendMessage).toHaveBeenCalledTimes(2);
+  });
+});
+
+/** G2: a callee answering after the window closed is told the call is over, not that it failed. */
+describe('a late answer', () => {
+  it('reads the room-token 410 as "this call is over"', async () => {
+    server.roomTokenStatus = 410;
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    const service = new CallService(fakeMls);
+    service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      {
+        callId: 'room-1',
+        offerSdp: 'START',
+        hasVideo: false,
+        deviceId: 'device-2',
+        ringTimeoutMs: 60_000,
+      },
+      'me@example.org',
+      'device-1'
+    );
+
+    await service.acceptCall('group-1', 'room-1');
+
+    expect(showToast).toHaveBeenCalledWith(m.call_over(), 'warning');
+    expect(FakeSocket.instances).toHaveLength(0);
   });
 });
 

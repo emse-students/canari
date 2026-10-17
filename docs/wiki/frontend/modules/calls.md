@@ -94,7 +94,15 @@ Then, on each side:
    (`CALL_RING_TIMEOUT_SEC = 60`, chat-delivery `calls.service.ts`, the single source). The caller
    relays it in the invite (`CallMsg.ring_timeout_ms`, a duration, so no device compares clocks).
    `GET /calls/room-token` refuses a room bound to another group (403), an unknown or expired one
-   (410) and a request after the window (410) - the deadline is enforced there, on one clock.
+   (410) and a request outside the window (410) - the deadline is enforced there, on one clock.
+   **The window OPENS at the caller's `POST /calls/ring`** (G1, 2026-10-17), sent right after the
+   invite and awaited: before it there is no window at all, so nothing the caller does first (ICE
+   servers, a first-time microphone prompt, key derivation, the join) eats into the callee's 60 s.
+   Only the room's caller may open it, once; a retried ring keeps the first deadline. A refused or
+   unreachable ring ends the call and hangs up (the invite already rang the callee). What is left:
+   the callee's timer starts when the invite ARRIVES and the server's when the ring does, so the two
+   ends differ by the gap between those two one-way delays - a late answer in that gap is told
+   `call_over` ("this call is over", the 410 mapped by `describeCallFailure`), never a failure.
 1. `GET /api/calls/ice-servers` BEFORE ringing (caller) or joining (callee): a server without TURN
    credentials answers 503 and the call fails there, not after the callee has answered. A call that
    fails before its invite (initiate refused, no ICE servers, no microphone) writes NO missed-call

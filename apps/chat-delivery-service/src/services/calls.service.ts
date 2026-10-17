@@ -51,8 +51,15 @@ export interface InitiateCallResponse {
  */
 interface CallRoomBinding {
   groupId: string;
-  /** Epoch ms on THIS server's clock after which no callee is issued a token. */
-  answerBy: number;
+  /** The user who opened the room: the only one who may open its ring window. */
+  callerId: string;
+  /**
+   * Epoch ms on THIS server's clock after which no callee is issued a token. `null` until the
+   * caller's `POST /calls/ring` - the moment its invite has been SENT - so the window the server
+   * enforces starts when the ringing does, not when the caller began preparing (ICE servers, a
+   * first-time microphone prompt, key derivation, the signalling join all come in between).
+   */
+  answerBy: number | null;
 }
 
 /** Stored in Redis while a user device is actively in a call. */
@@ -154,16 +161,8 @@ export class CallsService {
 
     // Written BEFORE the room id leaves this server, so no callee can ever ask about a room this
     // binding does not yet name.
-    const binding: CallRoomBinding = {
-      groupId,
-      answerBy: Date.now() + CALL_RING_TIMEOUT_SEC * 1000,
-    };
-    await this.redis.set(
-      callRoomKey(roomId),
-      JSON.stringify(binding),
-      'EX',
-      CALL_ROOM_BINDING_TTL_SEC
-    );
+    // The window is NOT opened here: see `CallRoomBinding.answerBy` and `ringGroup`.
+    await this.writeRoomBinding(roomId, { groupId, callerId: userId, answerBy: null });
 
     // At `log` rather than `debug`: this is the invite half of the call record, and a record
     // that survives only while debug logging is on is a record that is not there when needed.
@@ -211,6 +210,13 @@ export class CallsService {
       );
       throw new ForbiddenException('This call does not belong to this conversation');
     }
+    if (binding.answerBy === null) {
+      // The caller never reached `ring`: its setup failed after the invite, and it hung up.
+      this.logger.warn(
+        `[call] join-token REFUSED room=${roomId} user=${userId}: the ring window never opened`
+      );
+      throw new GoneException('This call is over');
+    }
     if (Date.now() > binding.answerBy) {
       this.logger.log(
         `[call] join-token REFUSED room=${roomId} user=${userId}: the ring window closed`
@@ -227,6 +233,42 @@ export class CallsService {
     // with the SFU's own record it separates "never answered" from "answered and never arrived".
     this.logger.log(`[call] join-token room=${roomId} user=${userId} group=${groupId}`);
     return { roomToken };
+  }
+
+  private async writeRoomBinding(roomId: string, binding: CallRoomBinding): Promise<void> {
+    await this.redis.set(
+      callRoomKey(roomId),
+      JSON.stringify(binding),
+      'EX',
+      CALL_ROOM_BINDING_TTL_SEC
+    );
+  }
+
+  /**
+   * Opens the room's ring window - ONCE, from the room's caller. Idempotent from durable state: a
+   * repeated ring keeps the first `answerBy`, so a retry cannot extend a window. Throws the same
+   * answers as `room-token` for a room that is not this caller's to ring.
+   */
+  private async openRingWindow(callerId: string, groupId: string, roomId: string): Promise<void> {
+    const binding = await this.readRoomBinding(roomId);
+    if (!binding) {
+      this.logger.warn(`[ring] REFUSED call=${roomId} caller=${callerId}: no such room`);
+      throw new GoneException('This call is over');
+    }
+    if (binding.groupId !== groupId || binding.callerId !== callerId) {
+      this.logger.warn(
+        `[ring] REFUSED call=${roomId} caller=${callerId} group=${groupId}: not this caller's room`
+      );
+      throw new ForbiddenException('This call does not belong to this caller');
+    }
+    if (binding.answerBy !== null) {
+      this.logger.warn(`[ring] call=${roomId} rung again - the first window stands`);
+      return;
+    }
+    await this.writeRoomBinding(roomId, {
+      ...binding,
+      answerBy: Date.now() + CALL_RING_TIMEOUT_SEC * 1000,
+    });
   }
 
   /** The binding `initiate` wrote for `roomId`, or `null` when there is none (expired or never). */
@@ -464,6 +506,8 @@ export class CallsService {
   ): Promise<{ rang: number }> {
     this.logger.debug(`[ring] ringGroup caller=${callerId} group=${groupId} call=${callId}`);
     await this.assertMembership(callerId, groupId, 'ring');
+    // BEFORE the fan-out: the window must not depend on how long FCM and APNs take to answer.
+    await this.openRingWindow(callerId, groupId, callId);
 
     const members = await this.groupMemberRepo.find({
       where: { groupId },

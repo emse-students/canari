@@ -34,6 +34,14 @@ describe('describeCallFailure', () => {
     expect(out).toContain(m.chat_call_action_start());
   });
 
+  it('reads a 410 from room-token as a call that is over, not as a failure', () => {
+    // The callee answered after the server's ring window closed: the caller had stopped ringing.
+    const out = describeCallFailure(new CallInitiateError(410, 'calls/room-token failed (410)'));
+
+    expect(out).toBe(m.call_over());
+    expect(out).not.toBe(m.chat_call_error_generic());
+  });
+
   it.each([[500], [502], [400]])(
     'keeps the generic line for %i, which the mapper deliberately says nothing about',
     (status) => {
@@ -53,7 +61,7 @@ describe('describeCallFailure', () => {
   it('never returns the thrown sentence, whatever the status', () => {
     // The defect in one assertion: every arm above was reachable before, and all of them rendered
     // the server's own body to a French reader.
-    for (const status of [400, 401, 403, 404, 409, 429, 500, 503]) {
+    for (const status of [400, 401, 403, 404, 409, 410, 429, 500, 503]) {
       expect(describeCallFailure(new CallInitiateError(status, SERVER_SENTENCE))).not.toContain(
         'Groupe introuvable'
       );

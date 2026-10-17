@@ -302,17 +302,23 @@ export class CallService {
       // From here on the other party has been asked: an unanswered end is a missed call. Before
       // it (initiate refused, no ICE servers, no microphone) nobody was rung and nothing is missed.
       this.inviteSent = true;
+      // The ring OPENS the server's answer window, right after the invite left - so the window the
+      // server enforces and the callee's timer (armed on the invite's arrival) start together, and
+      // nothing the caller did before (ICE servers, a first microphone prompt, the join) eats into
+      // it. Awaited and load-bearing: without it the server refuses every answer (410). The
+      // caller's own timer starts after it, so the caller never gives up before the server does.
+      // WP-XP-5: it also fans out call_ring (Android) / APNs VoIP (iOS CallKit) for killed devices.
+      await this.triggerServerRing(groupId, this.currentCallId!, video);
       this.armRingTimer(this.currentCallId!, ringTimeoutMs, 'calling');
-      // WP-XP-5: explicit cleartext ring for killed/background devices - the server cannot
-      // read the MLS invite, so it fans out call_ring (Android) / APNs VoIP (iOS CallKit).
-      void this.triggerServerRing(groupId, this.currentCallId!, video);
       void this.chatNotifier?.onCallStarted(groupId, this.currentCallId!);
       this.syncCallPresence(true);
     } catch (e) {
       const msg = String(e);
       appendLog(`[Call] startCall failed: ${msg}`);
       console.error('Error starting call:', e);
-      this.endCall(false);
+      // Once the invite has left, the other party is ringing: hang up so it stops, rather than
+      // leaving it to ring into a call that will never answer.
+      this.endCall(this.inviteSent);
       throw e;
     }
   }
@@ -474,24 +480,29 @@ export class CallService {
   }
 
   /**
-   * Triggers the cleartext incoming-call ring fan-out (WP-XP-5): POST /api/calls/ring makes the
-   * backend push call_ring (Android CallStyle) / APNs VoIP (iOS CallKit) to every other member
-   * device. Best-effort: a ring failure must never break the call itself.
+   * `POST /api/calls/ring`: opens the server's answer window for this room (G1), then fans out the
+   * cleartext ring (WP-XP-5: call_ring for Android CallStyle, APNs VoIP for iOS CallKit). The
+   * fan-out stays best-effort on the server - a device it cannot reach does not fail the request -
+   * but the REQUEST is load-bearing: a refused or unreachable ring means no callee could ever get
+   * a token, so it throws and the call ends.
    */
   private async triggerServerRing(groupId: string, callId: string, hasVideo: boolean) {
-    try {
-      const { historyUrl } = resolveMlsPublicUrls();
-      const url = new URL('/api/calls/ring', historyUrl);
-      const res = await apiFetch(url.toString(), {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groupId, callId, hasVideo }),
-      });
-      appendLog(`[Call] server ring ${res.ok ? 'sent' : `failed (${res.status})`}`);
-    } catch (e) {
-      appendLog(`[Call] server ring error: ${String(e)}`);
+    const { historyUrl } = resolveMlsPublicUrls();
+    const url = new URL('/api/calls/ring', historyUrl);
+    const res = await apiFetch(url.toString(), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ groupId, callId, hasVideo }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new CallInitiateError(
+        res.status,
+        `calls/ring failed (${res.status})${detail ? `: ${detail}` : ''}`
+      );
     }
+    appendLog('[Call] server ring sent - answer window open');
   }
 
   /**
@@ -557,8 +568,13 @@ export class CallService {
     url.searchParams.set('roomId', roomId);
     const res = await apiFetch(url.toString(), { method: 'GET', credentials: 'include' });
     if (!res.ok) {
+      // Typed, as the initiate's refusal is: a 410 (ring window closed) is told as "this call is
+      // over" by `describeCallFailure`, which can only tell it apart by the status.
       const detail = await res.text().catch(() => '');
-      throw new Error(`calls/room-token failed (${res.status})${detail ? `: ${detail}` : ''}`);
+      throw new CallInitiateError(
+        res.status,
+        `calls/room-token failed (${res.status})${detail ? `: ${detail}` : ''}`
+      );
     }
     const data = (await res.json()) as { roomToken: string };
     return data.roomToken;
