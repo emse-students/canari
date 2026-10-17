@@ -1,6 +1,6 @@
 # Bookings (reservation of rooms and slots) - the chantier, decisions as taken
 
-**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 is a draft pull request. Decisions are written here the day the
+**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) is a draft pull request. Decisions are written here the day the
 user takes them; the work packages are written last, once every question is closed. Pointer in
 [backlog](backlog.md) to be added when the plan is complete.
 
@@ -255,7 +255,7 @@ reads the tables for them. Nothing here is a route yet (that is WP-B3).
 |---|---|
 | `src/bookings/zoned-time.ts` | Local wall time in a zone <-> UTC, with `Intl` alone and no library. The holes are resolved as `Temporal`'s `'compatible'`: a time in a spring-forward GAP moves forward by the gap, and a time that exists TWICE is the EARLIER instant. `24:00` is the next day's 00:00. |
 | `src/bookings/slots.ts` | `availabilityWindows`, `slotUnits`, `checkRangeShape`, `unitStates`, `bookingsOutsideAvailability` (D29) |
-| `src/bookings/booking-rules.ts` | `checkBookingWindow` (D26), `checkQuotas` (D17), `holderMayCancel` (D5), each refusal a CODE |
+| `src/bookings/booking-rules.ts` | `checkBookingWindow` (D26), `checkQuotas` (D17), `participantMayWithdraw` (D5), each refusal a CODE |
 | `src/bookings/booking-slots.service.ts` | `spaceSlots(spaceId, from, to)` (at most 62 local days) and `assertAvailabilityChangeAllowed` (409 `bookings-inside-change`, naming the booking ids) |
 
 **Generation.** A line applied to one local date is a PIECE.
@@ -277,6 +277,13 @@ reads the tables for them. Nothing here is a route yet (that is WP-B3).
 
   Before this rule, every touching pair chained across any number of days: a 24/7 resource gave no
   window at all, so every booking was refused.
+
+  **The cost, which organisers WILL meet:** on a 24/7 step resource a booking across midnight
+  (23:00-01:00) is refused `outside-availability`, because each whole day is its own window
+  (`slots.spec.ts` pins it). **The WP-B4 editor MUST warn** when a resource is open 00:00-24:00 on
+  consecutive days that no booking can cross midnight there; a night that must be bookable across
+  midnight is written as an evening line ending at 24:00 plus a morning line from 00:00 that ends
+  before 24:00, which joins.
 - **Which day a window belongs to.** A window belongs to the local date it STARTS on. Each date
   is decided from itself and its two neighbours only, so asking for one day gives exactly that
   day's part of a range. The invariant is tested over six availabilities in both modes, and the
@@ -318,3 +325,52 @@ the change and is named. Blocking a free range is not such a change.
 `booking-slots.service.spec.ts`, all table-driven. They cover both 2026 Paris changes, New York's
 gap, the midnight join in both modes, exceptions, dated lines, alignment, the step ceiling and
 every refusal code.
+
+## WP-B3 as built (2026-10-17)
+
+The API, under `/api/bookings` (nginx `location /api/bookings`, `auth_request` like `/api/forms`,
+upstream `social-service:3014`). `BookingsController` reads the account from `x-user-id` and the
+admin flag from `x-global-admin`, parses every id with `ParseUUIDPipe`, and reads the clock ONCE
+per request; `BookingsService` takes that `nowMs`, so no rule reads a wall clock.
+
+| Route | Who | Refusal codes |
+|---|---|---|
+| `GET mine` | anyone: their bookings as holder or participant, private texts of the LIVE ones (D32) | - |
+| `GET spaces/:id` | the audience (D6, D31) or the organiser; no private text | `space-not-found`, `audience` |
+| `GET spaces/:id/slots?from&to` | same; each booking cut to what the viewer may read (D9) | `slot-range` |
+| `GET spaces/:id/bookings` | the organiser: names and answers | `not-manager` |
+| `POST spaces/:id/bookings` | the audience; the organiser alone books on behalf (`holderId`, outside quotas) | `range`, `holder-is-participant`, `too-many-people`, `answer-required`, `resource-not-found`, `outside-availability`, `misaligned`, `too-many-steps`, `not-open-yet`, `started`, `notice`, `beyond-horizon`, `blocked`, `unknown-account`, `participant-blocked`, `active-bookings`, `minutes-per-period`, `slot-taken` |
+| `POST :id/cancel` | the holder or the organiser, ANY TIME before the start (D5) | `already-cancelled`, `history-frozen`, `not-yours` |
+| `POST :id/withdraw` | a participant, until `participantWithdrawMinMinutes` before the start (D5) | `already-cancelled`, `history-frozen`, `withdrawal-delay`, `not-a-participant` |
+| `POST resources/:id/blocks` | the organiser or the resource's linked account (D10) | `not-manager`, `history-frozen`, `range` (over 366 days), `bookings-inside-block` (with `bookingIds`, D29) |
+| `DELETE blocks/:id` | same; a past block is history | `block-not-found`, `history-frozen` |
+
+- **THE LOCK ORDER: the SPACE row, then the RESOURCE row, both `FOR UPDATE`, in every colliding
+  write.** The resource lock turns a losing racer into `23P01`, answered 409 `slot-taken`, rather
+  than a deadlock (measured in WP-B1). The space lock makes quotas (D17) and a block against a
+  booking hold ACROSS resources. The exclusion constraint stays the last word on overlap.
+- **Rights.** `mayManage` = a global admin, else `MANAGE_BOOKINGS` on the association
+  (`AssociationsService.mayAct`), else the owner of a PERSONAL space. `ownerId` grants nothing on
+  an association space.
+- **What a viewer receives** is decided in `booking-views.ts`, pure. The organiser reads names,
+  answers and private texts. The booking's PEOPLE read their names, and the private texts while it
+  is live, never the answers. Anyone else reads names only when `nameVisibility = 'names'`.
+- **The window binds the organiser too** (D26 names no exemption). Quotas do not bind a booking on
+  behalf (D17, D20) and count each participant as well as the holder; `holder: false` in the
+  refusal says which side broke it.
+- **Blocks between accounts (D21)** are read with `isBlockedBetween`, which is symmetric: between
+  the one who adds and each participant, and, on behalf, between the holder and each participant.
+  Which side blocked is never said.
+
+**Proof.** `booking-views.spec.ts` covers every relation and setting.
+`bookings.service.integration.spec.ts` runs the service against a real PostgreSQL:
+
+- eight simultaneous bookings of one slot, five rounds: one winner, seven `slot-taken`;
+- a quota held across two resources under concurrency;
+- the holder cancelling five minutes before the start against a 120-minute participant delay, and
+  the participant refused at the exact boundary;
+- nothing moving once started;
+- a block refused over a live booking and honoured after;
+- names and private texts per viewer.
+
+It runs in CI with the other integration specs (#1915).
