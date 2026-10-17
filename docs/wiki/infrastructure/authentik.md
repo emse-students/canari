@@ -59,6 +59,11 @@ FAILS printing the leftovers, their status and the worker's error lines. **The t
 named yet** - the next warning in a CI log will name it, and THAT is the evidence to act on (a retry that
 keeps being needed is a race to fix, not a path to keep). The wait is proved against a fake `docker` in
 `.github/scripts/tests/wait-default-blueprints.test.sh`.
+**A locally reproduced 30/31 (2026-10-16): `Default - Out-of-box-experience flow=error`** - and the wait
+FAILED at its 10-minute deadline without ever re-applying it, because the deadline was applied even after
+the count had moved: each `ak shell` probe took ~20 s on a loaded workstation, so 600 s ran out before
+the stall rule had counted its 12 polls. The deadline now bounds only a boot where NOTHING has applied,
+as the rule above says; the stall rule bounds the rest. A test case pins it.
 
 **THE PROOF THAT THE FILES DESCRIBE PRODUCTION, and how to take it again.** `snapshot` prints every
 object the blueprints name, with relations replaced by natural names and secrets by a digest. On
@@ -651,3 +656,43 @@ decide from it, is measured on [profiles-and-access](../profiles-and-access.md#1
 - [`infrastructure/nginx.md`](nginx.md) — `auth_request` configuration
 - [`infrastructure/backup.md`](backup.md) — Backup and restore procedures
 - [`infrastructure/MIGRATION.md`](../../../infrastructure/MIGRATION.md) — Server bootstrap and migration
+
+## The terms of use are a stage of the authorization flow (2026-10-16)
+
+**Decision (user, 2026-10-16):** signing in through the CAS or the Alumni source is a consent to the
+collection of name and first name, as one required tick, for new AND existing accounts.
+
+- **Where:** `blueprints/45-consent.yaml`, flow `miconnect-authorization`, which the eight OAuth2
+  providers now name instead of `default-provider-authorization-implicit-consent`. The enrolment flow
+  would have been wrong: it runs once, at the first sign-in, so existing accounts and a new version
+  of the text would never be asked.
+- **State:** `attributes.cgu_version` and `attributes.cgu_accepted_at` on the account. The stages
+  (prompt, then user write) are bound to the policy `miconnect-consent-needed`, which is true while
+  the stored version differs from the current one - so each version is asked once, for all services.
+- **The version is a literal in TWO places** in that file (the policy, the hidden prompt) and the
+  `updated` date of `frontend/src/routes/legal/miconnect/+page.svelte`. Change the text => change all
+  three, or the stage re-asks forever / never - plus `VERSION` in `test-consent-flow.py`.
+  `check-consent-version.sh`, the first step of `test-blueprints.sh` in CI, fails while the four
+  disagree.
+- **Driven, not only applied** (`test-consent-flow.py`, run by `test-blueprints.sh` in CI): a real
+  password sign-in, then `/application/o/authorize/` on every provider. It proves the notice and
+  link reach the challenge, a POST without the tick is refused and writes nothing, the tick writes
+  the version and an ISO date and ends on a code, a second authorization skips the page, an older
+  version is asked again. **Two authentik behaviours it caught, both silent on apply:** a checkbox's
+  `required` is NOT checked by the server (authentik builds it as a `BooleanField(required=False)`;
+  only the browser enforces it), so the tick is checked by the validation policy
+  `miconnect-consent-validate-accept`; and a HIDDEN field writes its INITIAL value - a
+  `placeholder_expression` is never evaluated for the write, so the date was stored as the
+  expression's source text until it became `initial_value_expression`. The hidden values are taken
+  from the server-side definition, never from the POST, so a client cannot forge the version (a
+  forged version and date in the POST are asserted ignored), and the write keeps every other
+  attribute (`profile`, `school_status`, `promo`, `formation` asserted unchanged).
+- **Never in an impersonated session.** There `request.user` is the person impersonated, so an
+  administrator was shown the terms and their tick would have landed on THAT account (driven
+  2026-10-16). `miconnect-consent-needed` returns false when the session carries
+  `authentik/impersonate/user`, so neither stage runs; the test impersonates through the API and
+  asserts the authorization completes and nothing is written on either account.
+- **The text** is `/legal/miconnect` on canari.emse.fr, hardcoded French like the other legal pages
+  ([open-questions](../open-questions.md)). Controller named: Association Rootz - confirm.
+- **Production reaches it** with `infrastructure/authentik/apply-blueprints.sh` (`snapshot`,
+  `dry-run`, `apply`), a production write on the identity provider.

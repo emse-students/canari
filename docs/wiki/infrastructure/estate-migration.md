@@ -800,7 +800,7 @@ Canari's runner takes the same shape, in its own group:
 | Shape | ORG-level, name `canari`, group `canari`, `visibility=selected` to this repository alone, `allows_public_repositories=true` (the same posture Portail-etu already carries, for the same reason: the repo is public) |
 | Account | `gha-runner` - no password, no `sudo`, member of `docker`, home `0700` - so `deploy-environment.sh` and `verify-secrets.sh` both resolve plain `docker` on their first branch |
 | Install root | `/opt/actions-runner/runners/canari/`, beside `cercle` and `miconnect` |
-| Isolation | the GROUP, not the label - every runner answers to the bare `self-hosted` that four jobs (`serve-prod`, `serve-dev`, `hosts`, `dev-refresh`) ask for, and `visibility=selected` is what keeps a Canari job off the Portail-etu runner and the reverse |
+| Isolation | the GROUP, not the label - every runner answers to the bare `self-hosted` that four jobs (`serve-prod`, `serve-dev`, `hosts`, `dev-reset` - `dev-refresh` until 2026-10-16) ask for, and `visibility=selected` is what keeps a Canari job off the Portail-etu runner and the reverse |
 
 **None of those four jobs changes** - `deploy-env.test.sh` derives its assertions from that literal
 string and keeps deriving them. The machine underneath moves; the mechanism does not. **The only
@@ -849,9 +849,11 @@ the old box's `.env`, collided with the shared host's own `crowdsec` - the nginx
 anticipated `8081`, the `.env` had not been reconciled with it.
 
 **Dev was seeded from the target's own live `canari-prod`, not migrated from the old box's separate
-dev database** - the architecturally correct source, since dev is always a disposable periodic copy
-of production and never independently authoritative
-([dev-environment](dev-environment.md)). `copy-prod-to-dev.sh` ran for real on the target:
+dev database** - the architecturally correct source at the time, since dev was then a disposable
+periodic copy of production and never independently authoritative (the copy was DELETED on
+2026-10-16 for GDPR; dev now holds a fictional seed -
+[dev-environment](dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16)).
+`copy-prod-to-dev.sh` ran for real on the target:
 442/442 users, every strip verified (push tokens, Stripe customer ids and media references all zero
 afterward). The script itself carried the same stale project name production's rename had already
 made wrong (`PROD_PROJECT="infrastructure"`, needed `"canari-prod"` now that both projects share a
@@ -1513,8 +1515,8 @@ own write-up.
 6. **DONE 2026-09-24, in full - data, relay AND runner.** Prod's window: dump, restore, verify by
    content fingerprint (53/53 tables), flip the relay, stop the old containers - see the write-up
    below. Dev was not dumped from the old box at all: it was seeded from the target's own now-live
-   `canari-prod` via `copy-prod-to-dev.sh`, which is the architecturally correct source (dev is
-   always a disposable copy of prod, never independently authoritative - `dev-environment.md`). The
+   `canari-prod` via `copy-prod-to-dev.sh`, then the source (dev was a disposable copy of prod;
+   the copy was deleted on 2026-10-16 and dev holds a fictional seed - `dev-environment.md`). The
    target's org-level `canari` runner was enabled and started (`gh api
    orgs/emse-students/actions/runners` confirms `online`); the old box's repo-level `Canari` runner
    was stopped and disabled the same way every other systemd change on that box went, through the

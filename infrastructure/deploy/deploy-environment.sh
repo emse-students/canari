@@ -232,7 +232,7 @@ fi
 # old containers exist; docs/wiki/infrastructure/logging.md.
 # shellcheck source-path=SCRIPTDIR source=../lib/archive-logs.sh
 . "$DEPLOY_PATH/infrastructure/lib/archive-logs.sh"
-archive_logs "$DOCKER_CLI" "$PROJECT" "${CANARI_LOG_ARCHIVE:-$HOME/deploy-log-archive}" 10
+archive_logs "$DOCKER_CLI" "$PROJECT" "$LOG_ARCHIVE_ROOT" 10
 
 dc up -d postgres
 

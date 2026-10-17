@@ -75,8 +75,8 @@ jobs:
   # WHAT DEV IS FOR SINCE THE MIGRATION (user, 2026-09-02). It is no longer a rehearsal stage that
   # every change passes through - development is LOCAL now - it is where a `X.X.X-alpha.N`
   # pre-release lands, and what the Play internal track and the TestFlight internal group point at.
-  # `scheduled.yml`'s `dev-refresh` job keeps feeding it a copy of production every Monday, so an alpha still meets
-  # production-shaped data.
+  # Its data is a fictional seed (`scheduled.yml`'s on-demand `dev-reset` job), never a copy of
+  # production (owner, 2026-10-16, GDPR).
   #
   # THE GATE IS A REPOSITORY VARIABLE, NOT A SECRET. `vars.DEV_ENVIRONMENT_ENABLED` unset means this
   # job skips and a pre-release deploys nothing. It is a `vars` and not a `secrets` entry so its
@@ -159,6 +159,7 @@ jobs:
           DEV_CLOUDFLARE_TURN_KEY_ID: ${{ secrets.DEV_CLOUDFLARE_TURN_KEY_ID }}
           DEV_MIGALLERY_API_KEY: ${{ secrets.DEV_MIGALLERY_API_KEY }}
           DEV_GOOGLE_SAFE_BROWSING_API_KEY: ${{ secrets.DEV_GOOGLE_SAFE_BROWSING_API_KEY }}
+          DEV_KLIPY_API_KEY: ${{ secrets.DEV_KLIPY_API_KEY }}
           DEV_SERVICE_ACCOUNT_USER_ID: ${{ secrets.DEV_SERVICE_ACCOUNT_USER_ID }}
           # Push, iOS half. Available on dev on purpose: what stops a test notification reaching a
           # real member is the copy's `TRUNCATE TABLE push_token`, not an absent key, so a dev estate

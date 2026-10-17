@@ -46,6 +46,11 @@
     lensLocked?: boolean;
     /** What sits over the live preview at the bottom: the shutter and its neighbours. */
     controls?: Snippet;
+    /**
+     * What the refusal screen offers beside its retry: a way on that needs no camera (the reel
+     * tab's gallery), so a member who refused the camera is not left at a dead end.
+     */
+    faultActions?: Snippet;
     /** What a capture can take, handed to the owner of the shutter (bind it). */
     capture?: CameraCapture;
     /**
@@ -75,6 +80,7 @@
     session = new CameraSession(),
     lensLocked = false,
     controls,
+    faultActions,
     paused = false,
     onBeforeRelease,
     onclose,
@@ -324,6 +330,9 @@
           <Settings size={16} strokeWidth={2.5} />
           {m.reels_open_settings()}
         </button>
+      {/if}
+      {#if faultActions}
+        {@render faultActions()}
       {/if}
     </div>
   {/if}

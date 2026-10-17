@@ -14,6 +14,7 @@ import { AuthSession } from './auth/entities/auth-session.entity';
 import { PlatformConfig } from './platform/entities/platform-config.entity';
 import { PlatformAnnouncement } from './platform/entities/platform-announcement.entity';
 import { PlatformAnnouncementSeen } from './platform/entities/platform-announcement-seen.entity';
+import { AccountErasureJob } from './account-erasure/account-erasure-job.entity';
 import { PaymentModule } from './payment/payment.module';
 import { VersionModule } from './version/version.module';
 import { ExternalModule } from './external/external.module';
@@ -48,6 +49,7 @@ import { SkyModule } from './sky/sky.module';
           PlatformConfig,
           PlatformAnnouncement,
           PlatformAnnouncementSeen,
+          AccountErasureJob,
         ],
         synchronize: process.env.NODE_ENV !== 'production',
       }),

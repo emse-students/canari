@@ -336,8 +336,9 @@ and `deploy-env.test.sh` now asserts the variable NAME rather than merely that t
 mentioned. Everything about the estate itself is on
 [dev-environment](infrastructure/dev-environment.md), the only copy.
 
-`scheduled.yml`'s `dev-refresh` job copies production's data into dev weekly (Mondays 04:00 UTC) and on demand, behind
-the same gate.
+`scheduled.yml`'s `dev-reset` job empties dev and loads the fictional seed, on demand only (no cron,
+not part of `all`), behind the same gate. Nothing copies production's data into dev since 2026-10-16
+([dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16)).
 
 ### The store arms (`ios.yml`, `android.yml`)
 
@@ -858,12 +859,12 @@ workflow names - there is exactly one such runner, and a typed list would pass o
 adds the third workflow. **"One" is a statement about what is RUNNING, not about what is
 registered**: from 2026-09-24 this repository has two registered runners, and the second is stopped
 and disabled precisely so the sentence stays true. The window in which both run is the flip itself,
-and the old one stops in the same breath as the new one starts. `scheduled.yml`'s `dev-refresh` job carries its own `dev-refresh` group and satisfies the same
+and the old one stops in the same breath as the new one starts. `scheduled.yml`'s `dev-reset` job carries its own `dev-reset` group and satisfies the same
 rule.
 
-**Still open, and not covered by either group:** a dev refresh and a dev deploy can overlap, the
-refresh stopping dev's containers to restore while `deploy-dev` brings them up on new images. A
-workflow may declare only one group, so joining them would put a Monday-04:00 database restore in
+**Still open, and not covered by either group:** a dev reset and a dev deploy can overlap, the
+reset stopping dev's containers to reseed while `deploy-dev` brings them up on new images. A
+workflow may declare only one group, so joining them would put a dev database reset in
 front of a production hotfix - a cost paid on the production path for a dev-only race. It is named
 here rather than fixed silently.
 
@@ -1136,7 +1137,7 @@ directory. 33 minutes down.
 
 **What stands between that update and production now is that nothing deploys at a merge.** An update
 sits on `main` until somebody publishes a release, and a `X.X.X-alpha.N` pre-release deploys the dev
-estate - which still carries a copy of production - before any stable does. The honest difference is
+estate - which holds a fictional seed, not production's data - before any stable does. The honest difference is
 WHO DECIDES: the old mechanism ran with nobody at the keyboard, this one runs when a human publishes
 an alpha. The ceiling in `ci.yml`'s `Dependency ceiling` check is what still refuses the update classes
 this repository cannot see the failure mode of; it is not a substitute for a rehearsal, and
@@ -1379,8 +1380,9 @@ declares it rather than by whoever remembers this file.
 THE CEILING ASKS FOR.** The plan for the dev environment said that PostgreSQL 18 starting in dev on a
 copy of production's data and serving `/api/version` would be the test that retires the `postgres`
 refusal. It would not have been, and believing it would have re-armed the 2026-09-01 outage behind a
-gate that reads as proof. `infrastructure/dev/copy-prod-to-dev.sh` is a **logical** copy - `pg_dump`
-replayed into a cluster the new major initialised itself, from empty - so it never touches a data
+gate that reads as proof. Dev's data was a **logical** copy - `pg_dump` replayed into a cluster the
+new major initialised itself, from empty - and since 2026-10-16 it is a schema plus a fictional seed
+loaded the same way. Neither ever touches a data
 directory written by the old major, and cannot fail the way production failed. It would have gone
 green on 18 while saying nothing about `pg_upgrade` or the 18+ move of the mount point from
 `/var/lib/postgresql/data` to `/var/lib/postgresql`. The next `postgres` major would then have
@@ -1392,7 +1394,7 @@ So each row states WHICH question its gap answers, and only one of the four answ
 | --- | --- | --- |
 | `none` | There is no gap; dev runs production's major. | nothing |
 | `fresh_cluster` | The new major serves a cluster it created from empty. This is what every gate here already proves, and it is the one case that always works. | nothing |
-| `logical_restore` | The new major serves this application's schema and data after a dump and restore. Worth having - it catches a schema or query the new major rejects - but the cluster is still one the new major built. **This is what the dev environment produces on its own.** | nothing |
+| `logical_restore` | The new major serves this application's schema and data loaded into it - a dump and restore, or since 2026-10-16 dev's schema-only restore plus the fictional seed. Worth having - it catches a schema or query the new major rejects - but the cluster is still one the new major built. **This is what the dev environment produces on its own.** | nothing |
 | `in_place_upgrade` | The new major serves production's OWN data directory, carried across by the documented upgrade path, with the mount layout the new image expects. | the refusal named in `lifts` |
 
 It fails closed on every other input, proved against fixtures: the wrong evidence value, an

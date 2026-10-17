@@ -24,6 +24,7 @@ export const PUBLIC_SITEMAP_ENTRIES: SitemapEntry[] = [
   { path: '/legal/cgu', changefreq: 'yearly', priority: 0.3 },
   { path: '/legal/privacy', changefreq: 'yearly', priority: 0.3 },
   { path: '/legal/child-safety', changefreq: 'yearly', priority: 0.3 },
+  { path: '/legal/miconnect', changefreq: 'yearly', priority: 0.3 },
 ];
 
 /** Sitemaps cap at 50 000 URLs; these ceilings keep the document far below it and cheap to build. */
