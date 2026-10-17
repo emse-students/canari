@@ -33,7 +33,7 @@
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
   import GifPickerModal from './GifPickerModal.svelte';
   import ComposerGifPanel from './ComposerGifPanel.svelte';
-  import { KLIPY_KEY, type GifResult } from '$lib/utils/chat/gifSearch';
+  import type { GifResult } from '$lib/utils/chat/gifSearch';
   import { withGifSize, gifPreviewUrl } from '$lib/utils/chat/messageDisplay';
   import ReplyGifThumb from '$lib/components/messages/ReplyGifThumb.svelte';
   import {
@@ -375,7 +375,7 @@
 
   const addMenuItems = $derived.by((): GlassMenuItem[] => {
     const items: GlassMenuItem[] = [...attachMenuItems];
-    if (hasGifPicker && onSendGif) {
+    if (onSendGif) {
       items.push({
         id: 'gif',
         label: m.chat_send_gif_label(),
@@ -404,8 +404,6 @@
     if (reason === 'toggle') dispatchSurface({ type: 'menuToggle' });
     else if (!open) dispatchSurface({ type: 'dismiss', reason });
   }
-  /** GIF button is only shown when a KLIPY key is configured (Tenor closed; Giphy free tier too small). */
-  const hasGifPicker = !!KLIPY_KEY;
   let showEmojiPicker = $state(false);
   /** Anchor for the emoji popover, and the boundary `clickOutside` closes it against. */
   let emojiButtonEl = $state<HTMLElement | null>(null);
@@ -1253,8 +1251,8 @@
         </div>
       {/if}
 
-      <!-- GIF button (shown when KLIPY is configured). -->
-      {#if !appChrome && hasGifPicker && onSendGif && !controlsCollapsed && !actionsHidden}
+      <!-- GIF button. Whether the estate has a provider key is the server's to say: the grid shows it. -->
+      {#if !appChrome && onSendGif && !controlsCollapsed && !actionsHidden}
         <div class="shrink-0">
           <button
             type="button"

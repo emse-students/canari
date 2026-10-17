@@ -1,10 +1,10 @@
 /**
- * `load` resolves the CanaReels filter and hands it to BOTH the first request and `feedParams` -
- * the one the next pages, the refresh and the stored copy read. A filter dropped here would draw a
- * filtered pill over an unfiltered feed.
+ * THE FILTERED-FEED MODE IS GONE (user, 2026-10-16): the CanaReels entry opens the reel viewer, so
+ * the feed itself is never narrowed to reels any more. A `?kind=reel` link written by the 1.2.9
+ * alphas, or the choice they remembered, must draw the WHOLE feed - not a reels-only feed with no
+ * control left on screen to undo it.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { resetFeedKindSession, rememberFeedKind } from '$lib/posts/feedKindFilter';
 
 const listPosts = vi.fn((_options: unknown) => Promise.resolve([]));
 vi.mock('$lib/posts/api', async (orig) => ({
@@ -24,35 +24,27 @@ const { load } = await import('./+page');
 async function run(query: string) {
   const url = new URL(`https://canari.test/posts${query}`);
   return (await (load as (e: { url: URL }) => Promise<unknown>)({ url })) as {
-    feedParams: { feed: string; kind?: string };
+    feedParams: Record<string, unknown>;
   };
 }
 
 beforeEach(() => {
   listPosts.mockClear();
   localStorage.clear();
-  resetFeedKindSession();
 });
 
 describe('posts load', () => {
-  it('passes kind=reel to the first request and to feedParams', async () => {
+  it('an old ?kind=reel link draws the whole feed', async () => {
     const data = await run('?feed=associations&kind=reel');
-    expect(listPosts).toHaveBeenCalledWith(
-      expect.objectContaining({ feed: 'associations', kind: 'reel', limit: 20 })
-    );
-    expect(data.feedParams).toMatchObject({ feed: 'associations', kind: 'reel' });
+    expect(listPosts.mock.calls[0][0]).not.toHaveProperty('kind');
+    expect(data.feedParams).toEqual({ feed: 'associations' });
   });
 
-  it('kind=all in the URL wins over a remembered "reel"', async () => {
-    rememberFeedKind('reel');
-    const data = await run('?feed=all&kind=all');
-    expect(listPosts.mock.calls[0][0]).not.toHaveProperty('kind', 'reel');
-    expect(data.feedParams.kind).toBeUndefined();
-  });
-
-  it('a bare address opens on the remembered choice', async () => {
-    rememberFeedKind('reel');
+  it('a choice the alphas remembered is not read, and is dropped', async () => {
+    localStorage.setItem('canari_post_feed_kind', 'reel');
     const data = await run('');
-    expect(data.feedParams.kind).toBe('reel');
+    expect(listPosts.mock.calls[0][0]).not.toHaveProperty('kind');
+    expect(data.feedParams).not.toHaveProperty('kind');
+    expect(localStorage.getItem('canari_post_feed_kind')).toBeNull();
   });
 });

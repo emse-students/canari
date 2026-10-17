@@ -1,7 +1,8 @@
 <script lang="ts">
   /**
-   * AN HONEST EMPTY CANAREELS VIEW: this tab has no live reel yet, and the one place a reel is made
-   * is one tap away - the camera (`CAMERA_PLACE`), which the feed otherwise reaches only by a swipe.
+   * AN HONEST "NO CANAREELS YET": the CanaReels entry found no live reel to open the viewer on
+   * (`ReelsEntryButton`), and the one place a reel is made is one tap away - the camera
+   * (`CAMERA_PLACE`), which the feed otherwise reaches only by a swipe.
    */
   import { Camera, Clapperboard } from '@lucide/svelte';
   import { resolve } from '$app/paths';

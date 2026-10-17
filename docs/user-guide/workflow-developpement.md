@@ -326,12 +326,14 @@ docker ps --filter label=com.docker.compose.project=canari-dev       # dev
 **Quel commit la production sert vraiment** ne se lit jamais dans `git log` : le tag `prod-released`
 (renomme depuis `prod-deployed` le 2026-09-03) est ecrit par le deploiement qui l'a rendu vrai.
 
-**Dev porte une copie complete de la base de production**, d'ou la banniere permanente et non
-fermable en haut de chaque page : sans elle, rien ne distingue les deux a l'ecran. Le
-rafraichissement est automatique **tous les lundis a 04:00 UTC**, et a la demande par Actions ->
-*Refresh dev.canari-emse.fr from production*. C'est destructif pour dev et pour rien d'autre : tout
-ce qui a ete tape dans dev depuis le dernier rafraichissement disparait. La copie retire les jetons
-push et les identifiants client Stripe avant la restauration.
+**Dev ne contient aucune donnee de production depuis le 2026-10-16** (decision RGPD) : seulement
+un jeu de donnees fictif (dix personnes `Fictif`, six associations fictives, leurs posts et
+evenements) et ce que les testeurs y creent. La banniere en haut de chaque page reste, pour qu'on ne
+confonde pas les deux a l'ecran. La remise a zero se fait **uniquement a la demande** : Actions ->
+`scheduled.yml` -> `job=dev-reset` (d'abord avec `dry_run=true`). C'est destructif pour dev et pour
+rien d'autre : tout ce qui a ete tape dans dev disparait, y compris votre droit d'administrateur,
+que vous vous redonnez ensuite par une requete SQL
+([dev-environment](../wiki/infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16)).
 
 **Dev partage les images backend de la production**, deliberement : une difference de comportement
 entre les deux estates ne peut donc jamais s'expliquer par un build different. Le frontend est

@@ -1,5 +1,7 @@
 import {
   abandonHistoryOverlay,
+  armHistoryOverlayGesture,
+  backHistoryOverlayFromGesture,
   drainHistoryOverlayStack,
   pushHistoryOverlay,
   closeHistoryOverlayFromUi,
@@ -419,6 +421,100 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
     expect(closeCamera).toHaveBeenCalledWith('back');
     expect(closeConversation).not.toHaveBeenCalled();
     expect(h.index).toBe(1);
+  });
+
+  it('the iOS edge swipe with the "+" menu open closes the menu, not the conversation (iPhone 12, v1.2.9-alpha.2)', () => {
+    fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closeConversation = vi.fn();
+    const closeMenu = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeMenu);
+
+    expect(backHistoryOverlayFromGesture(armHistoryOverlayGesture())).toBe(true);
+    expect(closeMenu).toHaveBeenCalledWith('back');
+    expect(closeConversation).not.toHaveBeenCalled();
+    expect(historyOverlayStackDepth()).toBe(1);
+
+    expect(backHistoryOverlayFromGesture(armHistoryOverlayGesture())).toBe(true);
+    expect(closeConversation).toHaveBeenCalledWith('back');
+    // Nothing open: the gesture is its owner's again.
+    expect(backHistoryOverlayFromGesture(armHistoryOverlayGesture())).toBe(false);
+  });
+
+  it('a second commit of one gesture (no arm left) closes nothing - never the menu AND the conversation', () => {
+    fakeHistory();
+    stop = initHistoryOverlayStack({ systemBack: false });
+    const closeConversation = vi.fn();
+    const closeMenu = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeMenu);
+
+    // The caller hands its arm over once: the first commit takes it, a second gets null.
+    let arm: ReturnType<typeof armHistoryOverlayGesture> | null = armHistoryOverlayGesture();
+    const commit = () => {
+      const held = arm;
+      arm = null;
+      return backHistoryOverlayFromGesture(held);
+    };
+    expect(commit()).toBe(true);
+    expect(commit()).toBe(true);
+    expect(closeMenu).toHaveBeenCalledTimes(1);
+    expect(closeConversation).not.toHaveBeenCalled();
+    expect(historyOverlayStackDepth()).toBe(1);
+  });
+
+  it('the edge swipe over the camera review closes the take (which asks), then the camera, never the conversation', () => {
+    fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closeConversation = vi.fn();
+    const closeCamera = vi.fn();
+    const closeTake = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeCamera);
+    pushHistoryOverlay(closeTake);
+
+    backHistoryOverlayFromGesture(armHistoryOverlayGesture());
+    expect(closeTake).toHaveBeenCalledWith('back');
+    expect(closeCamera).not.toHaveBeenCalled();
+    backHistoryOverlayFromGesture(armHistoryOverlayGesture());
+    expect(closeCamera).toHaveBeenCalledWith('back');
+    expect(closeConversation).not.toHaveBeenCalled();
+  });
+
+  it('a gesture Back leaves a ghost the next overlay takes, and a system Back after it still closes only the top', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closeConversation = vi.fn();
+    const closeMenu = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeMenu);
+    backHistoryOverlayFromGesture(armHistoryOverlayGesture());
+    const closeSheet = vi.fn();
+    pushHistoryOverlay(closeSheet);
+    expect(h.index).toBe(2);
+
+    await h.pressBack();
+    expect(closeSheet).toHaveBeenCalledWith('back');
+    expect(closeConversation).not.toHaveBeenCalled();
+  });
+
+  it('with no system Back (the iOS app) no entry is ever written, so nested closes by swipe leave nothing behind', () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack({ systemBack: false });
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const closes = [vi.fn(), vi.fn(), vi.fn()];
+      for (const close of closes) pushHistoryOverlay(close);
+      expect(historyOverlayStackDepth()).toBe(3);
+      for (let i = closes.length - 1; i >= 0; i--) {
+        expect(backHistoryOverlayFromGesture(armHistoryOverlayGesture())).toBe(true);
+        expect(closes[i]).toHaveBeenCalledWith('back');
+      }
+    }
+    expect(historyOverlayStackDepth()).toBe(0);
+    // Three cycles of three nested overlays: still the router's one entry.
+    expect(history.length).toBe(1);
+    expect(h.index).toBe(0);
   });
 
   it('reads an entry left by an earlier page load as the router entry below every live overlay', () => {

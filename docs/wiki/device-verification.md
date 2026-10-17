@@ -1396,6 +1396,31 @@ camera. **Owed one reading each on the Mi 9T and the iPhone 12:**
 - The overlay over the keyboard and over a conversation with a pending draft; a camera refused
   (permission denied) shows the refusal screen with no native fallback.
 
+## The Mi 9T readings of v1.2.9-alpha.5 (2026-10-17)
+
+Build `1.2.9 (100200905)`, the `v1.2.9-alpha.5` release APK (`app-universal-release.apk` by asset
+id, sha256 `96b09481...`), `adb install -r` over alpha.4 (`firstInstallTime` unchanged: enrolment
+kept; Play Protect's "send for a check" prompt answered "Ne pas envoyer"). Dev estate, account
+`fourth` ("Canari Test Delta"), vault path, bench DM with gamma only. Console over CDP. Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1017-a129a5/` (`cons-all.ndjson`, `cons-2.ndjson`, frames).
+#1977 (warm avatar cache) is NOT in this tag.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1. A gallery video in a chat opens 3 times and plays | **`PASS`** | A 9 s gallery video sent in the DM (prepared 13.8 MB -> 3.2 MB, segmented upload). Opened full screen 3 times in a row (tap off the centre "Lire" button), closed with Back each time: each open has a second `<video>` at 436 px, `readyState 4`, playing (`currentTime` 1.26-1.56 s at +1.5 s, 3.45-3.72 s at +3.5 s), no media error; Back returns to `/chat` with the viewer gone. A tap on the centre button plays inline instead (`InlineVideo: manual play`), by design |
+| 2. ReelBackdrop on the camera paints, then repaints once exposure settles | **`PASS`** | `/camera` from the feed swipe: `[reel-backdrop] painted`, then `repainted once the exposure settled (4 reads, 32 frames)` 1.5 s later; after a lens switch `painted` then `(2 reads, 16 frames)` 0.6 s later. The backdrop canvas is 96x168 shown at 436x861, opacity 0.6. In the reel viewer it paints on open and again on the next reel |
+| 3. Feed "Tout" at 200 % text | **`FAIL` (P3)** | `font_scale 2.0` (root 32 px). Tab row fine (a scroller; Tout and the CanaReels icon stay in view), names truncate, `documentElement` does not overflow. **But the comment sort row (Recents / Anciens / Aimes, beside "Afficher les N commentaires") does not wrap: `.page-scroll-wrap` gets `scrollWidth 553` for `clientWidth 436`** (`overflow-x: auto`), so the whole feed can be shifted 117 px sideways; a `scrollIntoView` on "Anciens" did exactly that (`t200-sort.png`). 17 px over already at 150 %, none at 100 % or 85 % |
+| 4. Posts page tabs and the CanaReels entry | **`PASS`** | Associations / Suivis / Tout each set `?feed=` and draw their list (Suivis: the "Aucun post" empty state). The clap icon opens the viewer at the newest reel (`page of 4, 4 loaded`), playing, author and text over the scrim, a swipe goes to the next reel, the close returns to `/posts?feed=all` |
+| 5. Avatars when switching chats | **`NOT-OBSERVED` for photos** | No conversation or member reachable from this account has a photo avatar (0 `<img>` avatars). Initials avatars sampled every frame across DM -> back -> community -> DM (986 frames): 0 frames with an empty avatar |
+
+**Met on the way:**
+
+- **A system text-size change reloads the WebView, and afterwards `[TAURI] Couldn't find callback id
+  2851905282 ...` is logged as a warning every ~15 s** (15 times in 4 min, same id), an async Rust
+  call still answering the page that went away. Noise by the project rule (P3).
+- The video staged in the composer shows a generic file icon and the name `81.mp4`, not a preview
+  or the gallery name; the sent bubble shows a grey video icon until tapped (P3, cosmetic).
+
 ## The Mi 9T readings of v1.2.9-alpha.2 (2026-10-15)
 
 Build `1.2.9 (100200902)` (`dumpsys package`), the `v1.2.9-alpha.2` release APK
@@ -1558,6 +1583,37 @@ opened onto the feed. Bench community "Bench126" only; nothing sent, no account 
 | 3. Notification level of a bench salon | **`PASS`** | Parametres du canal shows Notifications with Tous / Mentions / Aucune, Tous selected; Mentions selected (Tous 0, Mentions 1), then Tous restored (1, 0, 0). Effect not observed (no push on dev) |
 | 4. Reply swipe (#1880) and back gesture | **`PASS`** | A rightward drag on a peer bubble ("Canari Test Delta") stages "Repondre a Canari Test Delta" and the conversation stays open; a leftward drag from x=350 of 390 on an own bubble stages "Repondre a Canari Test Gamma"; both cancelled with "Annuler la reponse". A left-edge drag (x=2 to 260) from the salon returns to the community's salon list |
 | 5. In-app log export | **`NOT-OBSERVED`** | "Enregistrer le journal" opens the system "Enregistrer sous" picker (canari-log-1.2.8-alpha.1...) over an empty "Sur mon iPhone"; dismissed without saving. The file cannot be read off the TestFlight container from the workstation, so the absence of message text was not checked on iOS (the Android export of the same build is `PASS`) |
+
+## The iPhone 12 readings of v1.2.9-alpha.1 (2026-10-15)
+
+TestFlight build `1.2.9` (100200901), About reads "Version de Canari 1.2.9-alpha.1"; account
+`canari-test-gamma`, dev estate, driven over WDA (`tools/ios-device`), timings by
+`tools/phone-bench`. Evidence (screens, AX trees, syslog, `commtabs.ndjson`) is outside the repo in
+the rig's `ios-bench/r1015-a129a1/`. Bench community only; nothing sent.
+
+**Delivery.** At 19:50 the phone still ran `1.2.8-alpha.1` with auto-update ON: it never took
+alpha.2. By 20:09 auto-update had silently installed the `1.2.8` STABLE (100200899, a production
+build), never launched. The alpha.1 IPA reached TestFlight at ~20:09 (release run 38780575538);
+TestFlight offered "Mettre a jour" to 100200901 at 20:12 and one tap installed it. "Builds
+precedents" still lists nothing newer than 1.2.3 ([backlog](backlog.md)). After the update the app
+was SIGNED OUT and asked camera and microphone permission again.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1a. Dynamic Type at cold start (#1884) | **`PASS`** | PIN title 202x30 at default, 272x41 at the largest standard size (1.35x), 2x at the largest accessibility size; feed text and bubbles scale with it |
+| 1b. Default size unchanged | **`PASS`** | PIN gate identical to `1.2.8-alpha.1` at default |
+| 1c. Size changed while backgrounded | **`FAIL`** (P2) | 3 of 3: the "A propos" link kept its old size on return (64x22, 86x30, 128x42 stayed put); the new size applies only after a cold start |
+| 1d. Layout at 2x | **findings** | P2: the PIN keypad is mostly below the fold - digits 7-0, "Saisie manuelle", "PIN oublie ?" and "Rester connecte" sit behind the sticky Deverrouiller button, and scrolling to them pushes the dots off screen (the links are already hidden at 1.35x). P3: the community rail's salon name does not scale while "Ajouter un canal" does. P3: feed titles break mid-word ("personnalisati/on") and the header wordmark is dropped. Settings rows and the glass title pill truncate with an ellipsis; the composer and tab bar (icons) are fine. Reel text overlay `NOT-READ` |
+| 2. In-app camera (#1859) | **`PASS`** + P2 | Chat "+" > "Ouvrir la camera" and the post composer's "Ouvrir la camera" both open the in-app dialog ("Photo (toucher) ou video (maintenir)", "Changer de camera"). P2: in the chat, the conversation's glass chrome (back, title pill, menu, "+") paints ON TOP of the viewfinder; the post composer's camera is clean. The post camera asks for the microphone at open, the chat camera does not |
+| 3. Feed local-first (#1896) | **`PASS`** + P2 | Offline in session, the feed draws under the offline banner (not separable from memory). A cold unlock right after Wi-Fi returned showed "Fil enregistre sur l'appareil : pas de reponse du serveur." with "Reessayer" - the device copy - and did NOT refresh by itself in 20 s (P2); "Reessayer" replaced it. A normal online cold unlock shows no status line. A "Voir plus" tap made right after unlock still held 4 s later. Cold start offline stops at the PIN gate ("Impossible de contacter le serveur", by design) |
+| 4. Communities tab (#1897) | **`PASS`** (taps); timings `NOT-MEASURED` | Taps switch tabs. `bench.timed_action`: warm first 800-858 ms, settled 1237-1299 ms; cold first mount 804 / 1183 ms - no first-mount penalty. But the harness dispatch median is 1031 ms (522 ms on 2026-09-30), above the app's latency, so the absolutes are not a measurement |
+| 5. PIN change, then relaunch (#1898) | **`FAIL`** (P1) | Settings > Securite & appareils > the key button (no AX label, P3) > "Changer mon PIN". The submit said "Le changement de PIN n'a pas abouti. Reessayez dans un instant." while the dev access log shows `POST /api/mls/security/pin-change` **201**; the retry got 403 ("Le PIN actuel est incorrect."). The server rotated, the local re-seal did not. On relaunch the old PIN is refused, the new one passes the server check and lands on "Vos messages enregistres sur cet appareil n'ont pas pu etre ouverts"; "Recuperer mes messages" (old -> new) fails twice with "La recuperation du PIN n'a pas abouti" after `pin-salt` and `pin-check` 201. The device's messages stay locked. No app-level error in the syslog or core-service log. P2 in both dialogs: with the keyboard up the sticky submit button covers the next field, so tapping it submits the form ("Veuillez remplir tous les champs") and the focused field is hidden while typing |
+| 6. | skipped | by the brief |
+| 7. Noise | **findings** | Native syslog only (the JS log cannot be read off a TestFlight build): "keyboard accessory bar NOT removed: no WKContent view" (7x per session), "remote notification hook: selector absent on AppDelegate", "push diagnostic: no-apns-token", "APNs token not here yet", UIKit "may only be set for UIKBDynamicRenderFactory" on keyboard show. P3: native lines in French ("FCM token synchronise", "secret plus recent adopte depuis pending_push_secret.txt", "FCM delegate installe") |
+
+**State left behind.** `canari-test-gamma`'s dev PIN is now a scratch PIN held by the rig operator,
+not the one in `test-accounts.json`, and the iPhone's local store is sealed under the old PIN and
+cannot be opened. Either the account PIN goes back or the harness file follows.
 
 ## The bench readings of v1.2.7-alpha.2 (2026-10-14)
 

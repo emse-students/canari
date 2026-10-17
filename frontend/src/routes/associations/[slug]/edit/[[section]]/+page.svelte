@@ -31,7 +31,7 @@
     Globe,
   } from '@lucide/svelte';
   import SectionHub from '$lib/components/navigation/SectionHub.svelte';
-  import type { Crumb, HubRow } from '$lib/components/navigation/breadcrumb';
+  import type { Crumb, HubIcon, HubRow } from '$lib/components/navigation/breadcrumb';
   import {
     editRights,
     editTrail,
@@ -176,7 +176,7 @@
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
-  const SECTION_ICONS: Record<EditSection, HubRow['icon']> = {
+  const SECTION_ICONS: Record<EditSection, HubIcon> = {
     profile: Building2,
     members: Users,
     payments: CreditCard,
@@ -362,21 +362,11 @@
           {:else if canManagePayoutAccount && activePaymentProvider.current === 'lydia'}
             <LydiaBusinessOnboardingForm
               {asso}
-              onAccountCreated={(accountId, dashboardUrl) => {
-                if (asso)
-                  asso = { ...asso, lydiaAccountId: accountId, lydiaDashboardUrl: dashboardUrl };
-              }}
               onValidated={() => {
                 if (asso) asso = { ...asso, lydiaOnboardingComplete: true };
               }}
               onDisconnected={() => {
-                if (asso)
-                  asso = {
-                    ...asso,
-                    lydiaAccountId: null,
-                    lydiaOnboardingComplete: false,
-                    lydiaDashboardUrl: null,
-                  };
+                if (asso) asso = { ...asso, lydiaOnboardingComplete: false };
               }}
             />
           {:else if canManagePayoutAccount && activePaymentProvider.current === 'disabled'}

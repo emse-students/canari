@@ -851,6 +851,51 @@ against a real SQLite (`node:sqlite`, 2026-10-15: a full 166-row batch swapped 1
 deleted row untouched) and has **not** run on a device yet. Neither has the awaited keystore write,
 nor the cross-tab hold in a real browser.
 
+#### The login after a recovery read no groups - a false "partial restore" (iPhone 12, 2026-10-15)
+
+**The recovery PASSED on the iPhone 12 (`1.2.9-alpha.2`) and its login then said a conversation
+could not be restored.** `[ERROR] Partial restore: 0/1 ... missing 3122333c`, the conversation
+demoted to pending, then the re-add's external join refused with `group 3122333c… already present
+locally` - the native manager held the group the restore check said was missing. The cause:
+`openLocalStateWithKey` marks the client initialised so the login skips `_initImpl`, and
+`_initImpl` is what lists the native groups into `TauriMlsService._knownGroups`, which
+`getLocalGroups()` reads. So the login after a recovery ran on an empty cache: the banner, the
+demotion, the failed rejoin, until the next cold start listed the groups.
+
+**And one durable deletion.** `hydrateDistributionGroups` deletes every key-group row whose group
+`getLocalGroups()` does not name, and it read the same empty cache: `[GRAINE] key-group registry
+restored before the drain - 0 group(s), 1 row(s) for groups no longer held deleted`. The community's
+key group then took the conversation path and failed - part of the cascade, and the one part a cold
+start did not undo.
+
+**What the recovery's open now does - everything `init` does after its load** (2026-10-16, review
+of #1935). `openLocalStateWithKey` runs `afterStateOpened()` and then `reconcileSendRatchets()`,
+inside the `initPromise` a concurrent `init` returns, set before either is awaited (so no second
+`initialiser_mls` starts during the listing):
+
+- **The listing.** On Tauri `afterStateOpened` rebuilds the group caches from the native manager; the
+  web reads WASM live and needs nothing.
+- **The ratchet burn.** It lived in `init` alone, which the login after a recovery skips: an app
+  killed after sends it never checkpointed, PIN changed elsewhere, opened a state behind its own
+  sends, and the next send re-used a spent generation.
+- **A typed refusal.** A failed listing throws `LocalStateNotReadyError` instead of logging and
+  running on the empty cache - the whole cascade again. The open is not marked initialised, and
+  `recoverPinImpl` reports `auth_pin_recover_interrupted`: nothing moved, the same two PINs retry.
+- **A deletion gated on knowing.** `hydrateDistributionGroups` asks `heldGroupsKnown()` first; on
+  Tauri it is true only once a listing succeeded for the loaded state, so an unfilled cache deletes
+  nothing and says so at error level.
+
+`TauriMlsService.recoveryGroups.test.ts` carries one test per point; each fails on the code before.
+
+**The `LOST frame` lines that followed are this defect's cost, not the PIN lock's.** The false
+verdict sent a `welcome_request`; the peer's Welcome then made the client drop the group it held
+(`GroupAlreadyExists - forget storage + re-join`) and re-join at a newer epoch, so the frames sent
+while the device was locked - queued, and decryptable by the group it held - became frames of a
+past epoch. The history diff re-asked them (`raiseReconcile`, `[HISTORY_RECONCILE]`): **asked, and
+the answer was not observed** - `session-0002-restore.txt` carries the request and no reply, so
+whether those messages came back is not known. With the cache right, nothing is dropped and the
+queued frames decrypt as they are drained.
+
 ### An at-rest format change needs its own reader, in the same commit
 
 Every at-rest envelope here is a byte layout with no version field: `mls.bin` is

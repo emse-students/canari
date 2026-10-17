@@ -13,7 +13,10 @@ import { resetRouteCodePreloadsForTests } from '$lib/navigation/routeCodePreload
 class FakeObserver {
   static all: FakeObserver[] = [];
   disconnected = false;
-  constructor(readonly callback: IntersectionObserverCallback) {
+  constructor(
+    readonly callback: IntersectionObserverCallback,
+    readonly options?: IntersectionObserverInit
+  ) {
     FakeObserver.all.push(this);
   }
   observe() {}

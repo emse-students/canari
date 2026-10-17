@@ -41,6 +41,13 @@ import { isOverlayLayout } from './viewport';
  *  `drainHistoryOverlayStack` (in `beforeNavigate`) leaves ghosts too: `history.go(-n)` after
  *  SvelteKit pushed the new route would move the pointer back off it - "the first back gesture
  *  lands on the previous page".
+ *
+ * WHERE NOTHING EVER POPS AN ENTRY, NONE IS WRITTEN (`systemBack: false`, the iOS app, 2026-10-16).
+ * Its WKWebView has no back-forward swipe, so its only Back is the app's own edge swipe
+ * (`backHistoryOverlayFromGesture`), which needs the stack and never the history. Entries there were
+ * pure cost and grew without bound: closing N nested overlays by swipe leaves N ghosts and only the
+ * one under the pointer is ever taken again, so each such cycle added N-1 entries for good (review
+ * of #1936). The stack is kept; the history is left to the router.
  */
 const STATE_KEY = 'canariOverlay';
 /** Which page load pushed an entry: an id is only comparable with ids of the same load. */
@@ -82,6 +89,8 @@ let here = 0;
 let hereHref = '';
 /** A walk issued by `settleArrival` has not landed yet: its landing is not a Back. */
 let walking = false;
+/** False where no system Back exists to pop an entry (see the module comment): none is written. */
+let writesEntries = true;
 
 /** The page address now; empty where there is none (a test without a `location`). */
 function currentHref(): string {
@@ -104,10 +113,18 @@ export function isMobileOverlayLayout(): boolean {
 /**
  * Registers a global `popstate` listener. Call once from the root layout.
  * Returns a teardown function.
+ *
+ * `systemBack: false` is for a runtime with NO system Back (the iOS app): overlays are stacked for
+ * the app's own gesture Back, and no history entry is written for them.
  */
-export function initHistoryOverlayStack(): () => void {
+export function initHistoryOverlayStack(options: { systemBack?: boolean } = {}): () => void {
   if (!isBrowser || initialized) return () => {};
   initialized = true;
+  writesEntries = options.systemBack ?? true;
+  Log.d(
+    'historyOverlay',
+    `stack ready - ${writesEntries ? 'entries written' : 'no system Back, no entries'}`
+  );
 
   const onPopState = (event: PopStateEvent) => {
     const from = here;
@@ -131,6 +148,7 @@ export function initHistoryOverlayStack(): () => void {
     here = 0;
     hereHref = '';
     walking = false;
+    writesEntries = true;
   };
 }
 
@@ -146,6 +164,10 @@ export function initHistoryOverlayStack(): () => void {
 export function pushHistoryOverlay(close: OverlayClose): void {
   if (!isBrowser) return;
   const id = ++lastId;
+  if (!writesEntries) {
+    stack.push({ close, id });
+    return;
+  }
   const state = { [STATE_KEY]: id, [LOAD_KEY]: LOAD_ID };
   if (readArrival(history.state).ghost) {
     Log.d('historyOverlay', `overlay ${id} takes the ghost entry under the pointer (a hand-off)`);
@@ -222,6 +244,66 @@ export function closeHistoryOverlayFromUi(close: () => void): void {
   }
   releaseHistoryOverlay(close);
   close();
+}
+
+/**
+ * A Back the APP'S OWN gesture carries - the left-edge swipe, which is the only Back the iOS app has
+ * (its WKWebView does not enable the back-forward swipe, so no `popstate` ever comes from the edge).
+ * It closes exactly the TOP overlay, as a system Back does, and tells it so (`'back'`, which is what
+ * makes a held take ASK). Its entry stays as a ghost, like every close here (no traversal).
+ *
+ * Returns false when no overlay is open: the gesture then belongs to whatever drew it. Without this,
+ * the conversation's swipe closed the conversation from under its own "+" menu, and a swipe over a
+ * portalled layer (the camera's review) reached nothing at all (iPhone 12, v1.2.9-alpha.2, 2 of 2).
+ *
+ * `arm` is {@link armHistoryOverlayGesture}'s record from the touch's start: when the overlay on top
+ * then is no longer on top, the gesture is SPENT and closes nothing more (returns true, so the
+ * owner does not act either). Without it, a menu closed by anything during the stroke left the
+ * conversation on top for the commit to close.
+ */
+export function backHistoryOverlayFromGesture(arm: HistoryGestureArm | null): boolean {
+  if (!arm) {
+    // A commit no touch armed - a second commit of a gesture already spent (two pending slide-out
+    // ends): unarmed, it would close the next overlay down, which is "the menu AND the conversation".
+    Log.i('historyOverlay', 'gesture Back with no armed touch - spent, nothing closed');
+    return true;
+  }
+  const topId = stack.length > 0 ? stack[stack.length - 1].id : 0;
+  if (arm.topId !== topId) {
+    // ONE GESTURE, ONE CLOSE. The overlay on top when the finger came down is gone (something
+    // else closed it during the stroke: a tap-outside, a keyboard, its own owner): the gesture has
+    // been spent on it, and it must not go on to close what lay UNDER it - the conversation under
+    // the "+" menu (iPhone 12, v1.2.9-alpha.2 and alpha.3, 3 of 3). Info, not debug: the in-app
+    // log records no debug, and the alpha.3 reading could not be diagnosed without this line.
+    Log.i(
+      'historyOverlay',
+      `gesture Back spent: overlay ${arm.topId} was on top at the touch, ${topId || 'nothing'} is now - nothing more closed`
+    );
+    return true;
+  }
+  const top = stack.pop();
+  if (!top) {
+    Log.d('historyOverlay', 'gesture Back with no overlay open - the gesture owner decides');
+    return false;
+  }
+  Log.i('historyOverlay', `gesture Back closes overlay ${top.id}, ${stack.length} left open`);
+  top.close('back');
+  return true;
+}
+
+/** What the overlay stack looked like when a gesture Back's finger came down. */
+export interface HistoryGestureArm {
+  /** The id of the overlay on top then, or 0 when none was open. */
+  readonly topId: number;
+}
+
+/**
+ * Records the stack's top as a Back gesture arms (its touch STARTS), for
+ * {@link backHistoryOverlayFromGesture} to check at the commit: a gesture closes at most the
+ * overlay that was on top when it began - never two things, whatever closed the first meanwhile.
+ */
+export function armHistoryOverlayGesture(): HistoryGestureArm {
+  return { topId: stack.length > 0 ? stack[stack.length - 1].id : 0 };
 }
 
 /**

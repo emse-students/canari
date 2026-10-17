@@ -2,12 +2,10 @@ import { BadRequestException, Logger } from '@nestjs/common';
 import axios from 'axios';
 import { verifyLydiaSignature } from './lydia-signature';
 import { logSafeFieldName, matchLydiaSignature, observableFields } from './lydia-signature-match';
-import { parseLydiaOrderRef, orderRefToMetadata } from './lydia-order-ref';
 import type { ConnectAccountStatusResponse } from './payment-provider.interface';
 import type {
   CancelRequestOutcome,
   CheckoutRequestState,
-  CheckoutSessionInfo,
   CheckoutSessionResult,
   ConnectBalanceSummary,
   CreateCheckoutSessionParams,
@@ -273,9 +271,13 @@ export class LydiaPaymentProvider implements PaymentProvider {
 
   /**
    * Reads a request's state via `POST /api/request/state` with `request_uuid` AND the Business's
-   * `vendor_token`, the pair measured on the sandbox 2026-10-15 (payments.md; the answer is
-   * `{state, used_ease_of_payment, signature}`). State 1 is paid; 6 is what a cancel and an expiry
-   * both leave; 0 is still payable. Any other code is reported as `other`, never guessed.
+   * `vendor_token` (measured on the sandbox 2026-10-15, payments.md). Without the vendor_token
+   * Lydia still answers the state, but unsigned; with it the answer is `{state,
+   * used_ease_of_payment, signature}`. NO variant echoes `order_ref`, so the caller must already
+   * know which answer the request belongs to - it reads by the uuid its own row stored.
+   * 6 is what a cancel and an expiry both leave and 0 is still payable (both measured); 1 is paid
+   * per Lydia's documentation, NOT measured (paying needs the payer form). Any other code - 5,
+   * refused by the payer, among them, also unmeasured - is reported as `other`, never guessed.
    */
   async getCheckoutRequestState(
     sessionId: string,
@@ -296,25 +298,6 @@ export class LydiaPaymentProvider implements PaymentProvider {
       this.logger.warn(`Lydia request ${sessionId} is in unmeasured state "${raw}"`);
     }
     return { state, raw };
-  }
-
-  /**
-   * Looks up a request's state via `POST /api/request/state`. `sessionId` is the `request_uuid`
-   * returned by `createCheckoutSession`. State 1 = accepted/paid (see doc's Request-State codes).
-   */
-  async retrieveSession(sessionId: string): Promise<CheckoutSessionInfo> {
-    if (!this.providerToken) throw new BadRequestException('Lydia not configured');
-    const data = await this.postForm<{ state: string; order_ref?: string }>('/api/request/state', {
-      request_uuid: sessionId,
-    });
-    return {
-      id: sessionId,
-      paid: data.state === '1',
-      // Best-effort: only populated if request/state actually echoes order_ref back. The
-      // authoritative confirmation path is the signed request/do callback (webhook.controller.ts),
-      // not this synchronous poll.
-      metadata: orderRefToMetadata(parseLydiaOrderRef(data.order_ref)),
-    };
   }
 
   /**

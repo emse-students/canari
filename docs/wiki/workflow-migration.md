@@ -51,9 +51,9 @@ undoing a decision, not finishing the work.
 | --- | --- | --- |
 | 1 | The `dev` branch | **Gone.** `main` is the only branch. |
 | 2 | What deploys production | **Only the completion of `Bump version on release`.** Not a push. |
-| 3 | The dev ESTATE (`dev.canari-emse.fr`) | **Kept, with a new job: it is the PRE-RELEASE target.** `scheduled.yml`'s `dev-refresh` job keeps feeding it a copy of production every Monday. |
+| 3 | The dev ESTATE (`dev.canari-emse.fr`) | **Kept, with a new job: it is the PRE-RELEASE target.** It holds a fictional seed, reloaded on demand by `scheduled.yml`'s `dev-reset` job; the weekly copy of production that fed it until 2026-10-16 was deleted for GDPR ([dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16)). |
 | 4 | How a release starts | **A GitHub Release published on a tag** - the mechanism that already exists, with the push-triggered deploy removed. |
-| 5 | Local database | **A full production dump**, PII included, the way `dev-refresh` already copies it to the dev estate. |
+| 5 | Local database | **A full production dump**, PII included - the one copy of production left since the dev copy was deleted on 2026-10-16, and the owner's to decide on. |
 | 6 | Hooks | **`pre-commit` minimal (format only), `pre-push` DELETED**, replaced by a CI that also runs at merge on `main`. |
 | 7 | `main` protection | **PR required + required checks, with admin bypass** for the emergency path. |
 | 8 | Local authentication | **A dedicated `canari-local` OIDC client on the PRODUCTION Authentik**, redirect URIs on `localhost`. No local IdP. |
@@ -313,7 +313,7 @@ have had one exit code for three unrelated causes.
       `local/pull-prod-dump.sh` (read-only, refuses to write inside the work tree, `gunzip -t`
       against truncation, and a `.meta` sidecar recording what prod held AT DUMP TIME),
       `local/env-from-prod.sh`, `local/restore-into-local.sh`, and `lib/copy-strips.sh` -
-      **factored out of `dev/copy-prod-to-dev.sh` rather than copied**, so the strip list is one
+      **factored out of `dev/copy-prod-to-dev.sh` (deleted 2026-10-16) rather than copied**, so the strip list is one
       list. The caller passes its OWN guarded sql function by name, which keeps the destructive
       allowlist with whoever owns the target
 - [x] **362 users restored and VERIFIED against the sidecar**, with `push_token` truncated and 7
@@ -487,7 +487,7 @@ package starts.
       BEHIND `main` and 0 ahead, so nothing was lost, and all 19 open pull requests already targeted
       `main`, so nothing was orphaned. Both facts were checked before the delete and neither is
       recoverable afterwards, which is why the order matters
-- [x] `scheduled.yml`'s `dev-refresh` job left running (the estate survives)
+- [x] `scheduled.yml`'s `dev-refresh` job left running (the estate survives) - replaced on 2026-10-16 by the on-demand `dev-reset` to a fictional seed
 - [x] **the `prod-deployed` tag RETIRED AS AN INPUT, and `detect-changed-services` re-pointed
       at the last RELEASE first.** What it was re-pointed at is narrower than "the last release tag", and the
       reason is the moving image tag: production deploys `:latest`, which only a STABLE moves, and

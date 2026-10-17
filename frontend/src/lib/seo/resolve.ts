@@ -88,6 +88,12 @@ const LEGAL_SEO: Record<string, () => SeoMeta> = {
       'Engagements de Canari pour la protection des mineurs et le signalement de contenus.',
     path: '/legal/child-safety',
   }),
+  '/legal/miconnect': () => ({
+    title: m.legal_miconnect_title(),
+    description:
+      "Conditions d'utilisation de MiConnect et données transmises aux services de l'École.",
+    path: '/legal/miconnect',
+  }),
 };
 
 /**

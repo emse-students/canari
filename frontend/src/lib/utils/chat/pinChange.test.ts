@@ -14,6 +14,7 @@ import { gateStorage } from '$lib/db/deviceKeyGate';
 import { decryptData } from '$lib/encryption';
 import { toBase64 } from '$lib/utils/hex';
 import type { IMlsService, StateLoadFailure } from '$lib/mls-client';
+import { LocalStateNotReadyError } from '$lib/mls-client/IMlsService';
 import type {
   IStorage,
   OutboxEntry,
@@ -387,6 +388,28 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
       await everyRowUnder(s.raw, OLD);
     }
   );
+
+  it('a state that OPENED but could not be made ready moves nothing, and keeps its type', async () => {
+    const { OLD, NEW } = keys();
+    const s = await populated(OLD);
+    storageForUser.set('u-not-ready', s.gated);
+    const mls = fakeMls();
+    vi.mocked(mls.openLocalStateWithKey).mockRejectedValueOnce(
+      new LocalStateNotReadyError(new Error('lister_groupes failed'))
+    );
+
+    const failure = await performPinChange(
+      options('u-not-ready', mls, new Uint8Array([1])),
+      OLD,
+      NEW
+    ).catch((e: unknown) => e);
+
+    // Typed, so the recovery reports a retry rather than "old PIN incorrect" (sessionAuth).
+    expect(failure).toBeInstanceOf(LocalStateNotReadyError);
+    expect(mls.pointUnattendedUnlockAt).not.toHaveBeenCalled();
+    expect(mls.changeDeviceKey).not.toHaveBeenCalled();
+    await everyRowUnder(s.raw, OLD);
+  });
 
   it('a THROW in the MLS re-seal is typed too: the stores moved, the session must end', async () => {
     const { OLD, NEW } = keys();

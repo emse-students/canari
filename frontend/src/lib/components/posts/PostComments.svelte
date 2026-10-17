@@ -107,8 +107,6 @@
   let showGifPicker = $state(false);
   /** True while the comment input is focused, so only the focused box handles a keyboard GIF. */
   let commentInputFocused = $state(false);
-  /** GIF button is shown only when a KLIPY key is configured (same gate as the chat composer). */
-  const hasGifPicker = !!(import.meta.env as Record<string, string | undefined>).VITE_KLIPY_KEY;
 
   function clearPendingMedia() {
     if (pendingPreviewUrl) {
@@ -717,18 +715,16 @@
           onpaste={handleCommentPaste}
           onkeydown={handleInternalKeyDown}
         />
-        {#if hasGifPicker}
-          <button
-            type="button"
-            onclick={() => (showGifPicker = true)}
-            disabled={uploadingMedia}
-            title={m.chat_send_gif_label()}
-            aria-label={m.chat_send_gif_label()}
-            class="text-text-muted text-2xs mr-0.5 shrink-0 px-1.5 font-bold tracking-tight transition-colors hover:text-amber-500 disabled:opacity-40"
-          >
-            GIF
-          </button>
-        {/if}
+        <button
+          type="button"
+          onclick={() => (showGifPicker = true)}
+          disabled={uploadingMedia}
+          title={m.chat_send_gif_label()}
+          aria-label={m.chat_send_gif_label()}
+          class="text-text-muted text-2xs mr-0.5 shrink-0 px-1.5 font-bold tracking-tight transition-colors hover:text-amber-500 disabled:opacity-40"
+        >
+          GIF
+        </button>
         <button
           type="button"
           onclick={handleSubmitComment}
