@@ -1,0 +1,139 @@
+# The terms of use (CGU): one tick of ACCEPTANCE, asked once per version, before ANY application receives the person.
+# The legal basis of the processing is the performance of the service (the account), not this tick: the tick proves
+# the person was informed of the terms and of the list of data (decided by the user, 2026-10-16).
+#
+# Applied by infrastructure/authentik/apply-blueprints.py, never by the worker's own discovery
+# (instantiate: false) - see infrastructure/authentik/README.md. Every reference is a !Find on a
+# NATURAL key (slug, name, managed id), never a primary key, so the same file builds any instance.
+#
+# WHY THE AUTHORIZATION FLOW, and not the enrolment flow: every provider (Canari, Sky, MiGallery,
+# Portail-etu, Le Cercle, the archives...) authorizes through ONE flow, so a stage there is the only
+# place that covers the CAS and the Alumni source alike, the accounts that already exist (enrolment
+# runs once, at the first sign-in) and every future version of the text. The answer is stored on the
+# account: `cgu_version` (which text) and `cgu_accepted_at` (when). THE VERSION IS WRITTEN IN TWO
+# PLACES BELOW, the policy and the hidden prompt - change both, or the stage re-asks forever.
+# check-consent-version.sh (run by test-blueprints.sh in CI) fails while they, the page's `updated`
+# date and the test's VERSION disagree.
+version: 1
+metadata:
+  name: miconnect-consent
+  labels:
+    blueprints.goauthentik.io/instantiate: "false"
+entries:
+  - model: authentik_flows.flow
+    identifiers:
+      slug: "miconnect-authorization"
+    attrs:
+      name: "miconnect-authorization"
+      title: "Conditions d'utilisation de MiConnect"
+      designation: "authorization"
+      authentication: "require_authenticated"
+      # Same as default-provider-authorization-implicit-consent: no per-application consent screen.
+      denied_action: "message_continue"
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-consent-prompt-notice"
+    attrs:
+      field_key: "cgu_notice"
+      label: "Information"
+      type: "static"
+      order: 1
+      initial_value: "<p>MiConnect te connecte aux services des associations de l'École avec ton compte du CAS ou des Alumni. Pour cela, nous enregistrons ton <strong>nom</strong>, ton <strong>prénom</strong>, ton identifiant, ton campus, ta ou tes formations, ton année d'entrée et tes appartenances, et nous les transmettons aux services auxquels tu te connectes (Canari, Sky, MiGallery, Le Cercle, les archives). C'est nécessaire pour te reconnaître : sans cela, la connexion est impossible.</p><p><a href=\"https://canari.emse.fr/legal/miconnect\" target=\"_blank\" rel=\"noopener\">Lire les conditions d'utilisation et la politique de données</a></p>"
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-consent-prompt-accept"
+    attrs:
+      field_key: "cgu_accept"
+      label: "J'ai lu les conditions d'utilisation de MiConnect, qui décrivent les données enregistrées à ma connexion, et je les accepte."
+      type: "checkbox"
+      order: 2
+      required: true
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-consent-prompt-version"
+    attrs:
+      field_key: "attributes.cgu_version"
+      label: "Version des conditions"
+      type: "hidden"
+      order: 3
+      initial_value: "2026-10-16"
+  - model: authentik_stages_prompt.prompt
+    identifiers:
+      name: "miconnect-consent-prompt-date"
+    attrs:
+      field_key: "attributes.cgu_accepted_at"
+      label: "Date d'acceptation"
+      type: "hidden"
+      order: 4
+      # A HIDDEN field submits its INITIAL value, evaluated when the POST is validated - the moment
+      # of acceptance. A placeholder is never evaluated for the write: with only a placeholder
+      # expression, the account received the expression's SOURCE TEXT (driven 2026-10-16 by
+      # test-consent-flow.py).
+      placeholder: ""
+      placeholder_expression: false
+      initial_value: "from datetime import datetime, timezone\nreturn datetime.now(timezone.utc).isoformat()"
+      initial_value_expression: true
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-consent-needed"
+    attrs:
+      execution_logging: true
+      # True = the stage is shown. The literal is THE CURRENT VERSION (see the header).
+      # NEVER IN AN IMPERSONATED SESSION: there request.user is the person impersonated, so the
+      # administrator would be shown the terms and their tick written on THAT person's account
+      # (driven 2026-10-16 by test-consent-flow.py). Only the person may accept.
+      expression: |-
+        session = request.http_request.session if request.http_request else {}
+        if "authentik/impersonate/user" in session:
+            ak_logger.info("miconnect-consent: impersonated session, terms neither shown nor written")
+            return False
+        return request.user.attributes.get("cgu_version") != "2026-10-16"
+  # THE TICK IS CHECKED HERE, because `required` on a checkbox is not: authentik builds a checkbox as
+  # a BooleanField with required=False, so `required: true` above only reaches the browser's form,
+  # and a POST without the tick was ACCEPTED and written (driven 2026-10-16 by test-consent-flow.py).
+  - model: authentik_policies_expression.expressionpolicy
+    identifiers:
+      name: "miconnect-consent-validate-accept"
+    attrs:
+      execution_logging: true
+      expression: |-
+        if request.context.get("prompt_data", {}).get("cgu_accept") is True:
+            return True
+        ak_message("Coche la case pour accepter les conditions d'utilisation : sans elles, MiConnect ne peut pas te connecter.")
+        return False
+  - model: authentik_stages_prompt.promptstage
+    identifiers:
+      name: "miconnect-consent-ask"
+    attrs:
+      validation_policies:
+        - !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-consent-validate-accept"]]
+      fields:
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-consent-prompt-notice"]]
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-consent-prompt-accept"]]
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-consent-prompt-version"]]
+        - !Find [authentik_stages_prompt.prompt, [name, "miconnect-consent-prompt-date"]]
+  - model: authentik_stages_user_write.userwritestage
+    identifiers:
+      name: "miconnect-consent-write"
+    attrs:
+      user_creation_mode: "never_create"
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
+      stage: !Find [authentik_stages_prompt.promptstage, [name, "miconnect-consent-ask"]]
+      order: 10
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-authorization"], [flowstagebinding__stage__name, "miconnect-consent-ask"], [flowstagebinding__order, 10]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-consent-needed"]]
+      order: 0
+  - model: authentik_flows.flowstagebinding
+    identifiers:
+      target: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
+      stage: !Find [authentik_stages_user_write.userwritestage, [name, "miconnect-consent-write"]]
+      order: 20
+  - model: authentik_policies.policybinding
+    identifiers:
+      target: !Find [authentik_policies.policybindingmodel, [flowstagebinding__target__slug, "miconnect-authorization"], [flowstagebinding__stage__name, "miconnect-consent-write"], [flowstagebinding__order, 20]]
+      policy: !Find [authentik_policies_expression.expressionpolicy, [name, "miconnect-consent-needed"]]
+      order: 0

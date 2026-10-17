@@ -6,16 +6,30 @@
  */
 import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
-import type { BackdropPaintResult } from '$lib/reels/reelBackdropPaint';
+import {
+  EXPOSURE_MAX_SAMPLES,
+  EXPOSURE_SAMPLE_STRIDE,
+  type BackdropPaintResult,
+} from '$lib/reels/reelBackdropPaint';
 
 const paint = vi.hoisted(() => vi.fn((): BackdropPaintResult => 'painted'));
-vi.mock('$lib/reels/reelBackdropPaint', () => ({ paintBlurredBackdrop: paint }));
+const read = vi.hoisted(() => vi.fn());
+const blur = vi.hoisted(() => vi.fn(() => 'painted'));
+vi.mock('$lib/reels/reelBackdropPaint', async (orig) => ({
+  ...(await orig<typeof import('$lib/reels/reelBackdropPaint')>()),
+  paintBlurredBackdrop: paint,
+  readBackdropSample: read,
+  blurSampleInto: blur,
+}));
 
 import ReelBackdrop from './ReelBackdrop.svelte';
 
 beforeEach(() => {
   paint.mockReset();
   paint.mockReturnValue('painted');
+  read.mockReset();
+  blur.mockReset();
+  blur.mockReturnValue('painted');
 });
 
 afterEach(() => {
@@ -222,4 +236,81 @@ it('removes its listeners and cancels its frame callback on unmount', () => {
   expect(removeSpy).toHaveBeenCalledWith('loadeddata', expect.any(Function), true);
   expect(removeSpy).toHaveBeenCalledWith('load', expect.any(Function), true);
   expect(fake.cancelled).toEqual([1]);
+});
+
+/** A read of the camera whose mean colour is `mean`. */
+function sampleOf(mean: [number, number, number]) {
+  return { canvas: document.createElement('canvas'), width: 12, height: 21, mean };
+}
+
+it('repaints a live camera ONCE, from the first read that agrees with the one before it', () => {
+  // Under-exposed, then converging, then settled (Mi 9T, v1.2.9-alpha.4: near black over a grey wall).
+  read
+    .mockReturnValueOnce(sampleOf([20, 30, 40]))
+    .mockReturnValueOnce(sampleOf([90, 90, 92]))
+    .mockReturnValueOnce(sampleOf([120, 118, 121]))
+    .mockReturnValueOnce(sampleOf([122, 120, 119]));
+  const fake = fakeVideo({ src: { id: 'camera' } });
+  setup(true, fake.video);
+  fake.present();
+  expect(paint).toHaveBeenCalledTimes(1);
+
+  // Read every EXPOSURE_SAMPLE_STRIDE presented frames, never in between.
+  for (let i = 0; i < EXPOSURE_SAMPLE_STRIDE - 1; i++) fake.present();
+  expect(read).not.toHaveBeenCalled();
+  fake.present();
+  expect(read).toHaveBeenCalledTimes(1);
+
+  for (let i = 0; i < EXPOSURE_SAMPLE_STRIDE * 10; i++) fake.present();
+  expect(read).toHaveBeenCalledTimes(4);
+  expect(blur).toHaveBeenCalledTimes(1);
+  expect((blur.mock.calls[0] as unknown[])[1]).toMatchObject({ mean: [122, 120, 119] });
+  expect(fake.pendingFrames()).toBe(0);
+  // The same stream is never read again.
+  fake.video.dispatchEvent(new Event('playing'));
+  expect(fake.pendingFrames()).toBe(0);
+});
+
+it('paints the last read when the exposure never settles within the bound', () => {
+  let level = 0;
+  read.mockImplementation(() => sampleOf([(level += 40), level, level]));
+  const fake = fakeVideo({ src: { id: 'camera' } });
+  setup(true, fake.video);
+  for (let i = 0; i < 1 + EXPOSURE_SAMPLE_STRIDE * (EXPOSURE_MAX_SAMPLES + 4); i++) fake.present();
+  expect(read).toHaveBeenCalledTimes(EXPOSURE_MAX_SAMPLES);
+  expect(blur).toHaveBeenCalledTimes(1);
+  expect(fake.pendingFrames()).toBe(0);
+});
+
+it('says the repaint did not happen when the engine gave no context', () => {
+  const debug = vi.spyOn(console, 'debug').mockImplementation(() => {});
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  read.mockReturnValue(sampleOf([100, 100, 100]));
+  blur.mockReturnValue('no-context');
+  const fake = fakeVideo({ src: { id: 'camera' } });
+  setup(true, fake.video);
+  for (let i = 0; i < 1 + EXPOSURE_SAMPLE_STRIDE * 2; i++) fake.present();
+  expect(blur).toHaveBeenCalledTimes(1);
+  expect(warn).toHaveBeenCalledWith(expect.stringContaining('not repainted'));
+  expect(debug).not.toHaveBeenCalledWith(expect.stringContaining('[reel-backdrop] repainted'));
+});
+
+it('does not re-read a file: its first frame is its picture', () => {
+  const fake = fakeVideo({ src: 'blob:reel-1' });
+  setup(true, fake.video);
+  for (let i = 0; i < EXPOSURE_SAMPLE_STRIDE * 4; i++) fake.present();
+  expect(paint).toHaveBeenCalledTimes(1);
+  expect(read).not.toHaveBeenCalled();
+});
+
+it('a lens switch cancels the settle of the stream it replaces', () => {
+  read.mockReturnValue(sampleOf([100, 100, 100]));
+  const fake = fakeVideo({ src: { id: 'front' } });
+  setup(true, fake.video);
+  fake.present();
+  fake.setSource({ id: 'rear' });
+  fake.video.dispatchEvent(new Event('playing'));
+  fake.present();
+  expect(paint).toHaveBeenCalledTimes(2);
+  expect(read).not.toHaveBeenCalled();
 });

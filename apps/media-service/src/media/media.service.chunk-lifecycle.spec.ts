@@ -305,15 +305,25 @@ describe('an init that fails registers no opener', () => {
 
 describe('abort and complete racing, in either order', () => {
   it('a DELETE during an in-flight complete waits for it: the object survives and the re-ask answers', async () => {
-    const { svc, internals } = service(150);
+    const { svc, internals } = service();
+    // The upload is held open by the TEST, not by a delay: the complete is provably inside
+    // putFileStream (holding the lock) when the abort is issued, whatever the machine's load.
+    let reached!: () => void;
+    const inPut = new Promise<void>((r) => (reached = r));
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    internals.storage.putFileStream.mockImplementation(() => {
+      reached();
+      return held;
+    });
     const { uploadId } = await openAndStage(svc, internals);
     staged.push(internals.chunkTempPath(uploadId) + '.done');
 
     const completing = svc.completeChunkedUpload(uploadId, 1e8, OWNER, 'ephemeral');
-    // Let the complete take the lock and reach the slow putFileStream.
-    await new Promise((r) => setTimeout(r, 30));
+    await inPut;
     expect(internals.storage.putFileStream).toHaveBeenCalledTimes(1);
     const aborting = svc.abortChunkedUpload(uploadId, OWNER);
+    release();
 
     const [mediaId, outcome] = await Promise.all([completing, aborting]);
     expect(outcome).toBe('absent');

@@ -225,6 +225,29 @@ only to draw a picture. The tile opens the system picker instead, which needs ne
 the cap is refused the moment it is picked (`reels/videoDuration.ts`), and one whose header has no
 duration is left to the preparation's own `too-long`.
 
+**The gallery's `<input type="file">` lives in `ReelCapture`'s root, NEVER in CameraScreen's
+`controls` (2026-10-16).** On Android the picker backgrounds the app, so `CameraScreen` releases the
+camera (`visibilitychange` -> `session.suspend()`), the phase leaves `live` and the `controls`
+snippet unmounts. The input was inside it: the picked file came back to a DETACHED element
+(`isConnected: false`, `files[0]` set), and Svelte 5 delegates `onchange` from the mount root, so
+nothing ran - no review, no toast, no log, 3 of 3 on the Mi 9T (`v1.2.9-alpha.4`,
+[device-verification](../../device-verification.md)). The hazard is as old as the tab (C4/C5), not
+D-camera's: the composer cameras (`CameraOverlay`, `post` and `chat`) draw no gallery
+(`destinationRules().gallery` is `feed` only), and the composers' own gallery and file inputs
+(`PostComposerBar`, `ChatComposer`'s `pickerInputs`) sit outside the camera and outside any
+condition a picker's backgrounding changes. A pick now always ends in the review or a toast with a
+line: `gallery picked <type> (<n> bytes)`, then `not-a-video`, `too-long`, or, should the cap be
+unread, `reels_capture_pick_before_limits`; a pick the capture state refuses (an answer arriving
+over a review) is warned `a picked gallery take was refused in <state>` with
+`reels_capture_take_refused`. **A refused camera keeps the gallery**: the refusal screen offers it
+beside "Réessayer" (`CameraScreen`'s `faultActions`), since a pick needs no camera and the input is
+always mounted. `ReelCapture.svelte.test.ts` releases the camera as the picker does and then fires
+the change on the input, and picks from a denied camera. **Not covered: Android killing the app's
+process while the picker is open** (memory pressure; `configChanges` in the manifest covers rotation,
+not that). The relaunched app starts on a fresh page with no input waiting, so the pick is lost - an
+answer delivered to a process that no longer exists, which no WebView page can take back. The rule is in
+[durable-rules](../../durable-rules.md#ui-and-i18n---frontendarchitecture-auth-native-prompts).
+
 ### One shutter, and a capture that IS the preview (2026-10-05)
 
 `reels/framedCapture.ts`. User report from the Mi 9T and the iPhone: the saved image did not match
@@ -386,7 +409,10 @@ time by the viewer, since an MSE URL feeds one element - the same rule the media
 `postAuthorName` and `postAuthorHref`, the SAME helpers as `PostHeader`, so an association post shows
 and links the association, a hidden author is "Anonyme" and links nowhere - then the age, then the
 description rendered by `PostMarkdown` (the card's renderer and preprocessing, not a plain-text
-copy). The text folds to two lines; "Voir plus" (`post_voir_plus`, the card's own string) unfolds it
+copy). The author link is ONE accessible element: named by its `aria-label` ("Voir le profil de
+..."), its picture and name `aria-hidden`, at least 44 px tall (`min-h-11`) - VoiceOver read a
+second "Avatar de" link inside it and a 242 x 869 pt frame around a 20 pt picture (iPhone 12,
+v1.2.9-alpha.4). The text folds to two lines; "Voir plus" (`post_voir_plus`, the card's own string) unfolds it
 IN PLACE, scrollable up to half the screen and NEVER taller than the reel's frame (a letterboxed
 landscape frame is shorter than that: the block is a column capped at the frame, and the text is the
 part that shrinks and scrolls, so the author row is never clipped; and it pays the bottom safe-area
@@ -408,7 +434,11 @@ ugly, and then asked for the IGTV shape instead of a filter. C7 still holds: no 
 
 1. **One row**: the three tabs (Associations / Suivis / Tout) and, at its right end, a clap icon
    (`ReelsEntryButton`, named "Ouvrir les CanaReels"). The row is `FeedTabRow`: when it is too narrow
-   (390 px at 2x text) the TABS scroll sideways with a fade, the icon never wraps or leaves.
+   (390 px at 2x text) the TABS scroll sideways with a fade, the icon never wraps or leaves. The
+   SELECTED tab is scrolled into full view on arrival and on every selection
+   (`posts/feedTabScroll.ts`, centred and clamped, so the last tab lands flush at the end where no
+   fade is drawn): at 2x text "Tout" sat under the fade by the icon until the row was scrolled (Mi
+   9T, `v1.2.9-alpha.4`).
 2. **A tap goes STRAIGHT INTO the viewer**, full screen (`coversScreen`: no tabs, no feed chrome, no
    bottom bar, no native tab bar), at the NEWEST reel. Closing returns to the feed exactly where it
    was - the feed never left the page.
@@ -428,6 +458,26 @@ ugly, and then asked for the IGTV shape instead of a filter. C7 still holds: no 
    dropped by the feed's `load` (`retiredFeedKind.ts`, a shim in
    [legacy-compatibility](../../legacy-compatibility.md)); and a stored `feed:<tab>:reel`
    page is never asked for and goes with the other stored pages at the next sign-out.
+
+### "Reels 2 and 3 never play" was two reels with no video (iPhone 12, `v1.2.9-alpha.4`, 2026-10-16)
+
+**Not a player defect, and the suspects are REFUTED on the phone.** The reading swiped from reel 1
+(plays) to reels 2 and 3: a play glyph, no player, taps ignored. Dev's `posts` table has three
+reels, and the two by the production member have `images = '[]'`: the copy of production empties
+every post's media (`infrastructure/lib/copy-strips.sh`, strip (d) - dev never receives the blobs),
+which leaves a reel without the one video that IS a reel. `ReelSlide` then draws `VideoPoster`, the
+same glyph a player shows before its first frame - so the screen promised playback that no code path
+could start. Read on the same phone 2026-10-16: a fresh bench reel published first, the earlier
+"Test" reel (with its video) reached by a swipe as slide 2 PLAYS (`Pause`, `0:02 sur 0:03` in the
+accessibility tree), and slide 3 (no video) shows the glyph. So iOS autoplay, the touch layers and
+the first-gesture rule are not it.
+
+**What changed:** an active reel with no video now logs ONE `[reel-viewer] reel <id> carries no
+video` at error level (`ReelSlide.svelte`), which reaches the in-app log - the reading had to find
+this in the database. **What is owed to the user:** the copy should DELETE reels (with their
+`post_notifications`, as the expiry worker does) instead of emptying them; a deletion in the copy
+script waits for the user's yes. Since 2026-10-16 that copy reaches only a developer's LOCAL stack -
+dev holds a fictional seed with no reel ([dev-environment](../../infrastructure/dev-environment.md#what-the-copy-was-kept-so-nobody-rebuilds-it)).
 
 ## Saving before the deletion (C6)
 
@@ -715,6 +765,25 @@ and does not see the page's main thread. Tests: `ReelBackdrop.svelte.test.ts` pi
 animation frame, no second video, one paint per source". **Not read**: the iPhone (WKWebView reads a
 video into a canvas through its own path; the blur needs no CSS filter, so its cost there is the one
 read) and a landscape reel on the phone (the code path is the same `object-cover`).
+
+**A live camera is repainted ONCE more, after its exposure settles (2026-10-16).** The first
+presented frame of a camera is under-exposed and not yet white-balanced: on the Mi 9T
+(`v1.2.9-alpha.4`) the post camera's backdrop read RGB 2-6 over a grey wall (3 of 3), painted 166 ms
+after `[camera] first frame`, and `/camera`'s came out teal. The decision that "only a fully black
+read counts as blank" stays for files, whose first frame IS their picture. For a source that is a
+`srcObject` (a camera), after the first paint the stream is read every `EXPOSURE_SAMPLE_STRIDE` (8)
+presented frames, and the first read whose mean red, green and blue each agree with the previous
+read within `EXPOSURE_SETTLED_DELTA` (6 of 255) is blurred into the canvas - from that same read, no
+second `drawImage` (`readBackdropSample`, `blurSampleInto`, `exposureSettled` in
+`reels/reelBackdropPaint.ts`). At most `EXPOSURE_MAX_SAMPLES` (6) reads, about 1.6 s of a 30 fps
+preview, after which the last read is painted. Frames counted, no timer; a lens switch or the
+teardown cancels it as it cancels a first read. **Its cost**: up to six reads of ~25 ms in the
+camera's first 1.6 s; a take started inside that window can carry up to six holes of the kind the
+250 ms re-sample made, where it used to carry none. Logged as `[reel-backdrop] repainted once the
+exposure settled (n reads, m frames)` or `... from the last read, the exposure never settled`.
+Tests: `ReelBackdrop.svelte.test.ts`, `reelBackdropPaint.test.ts`. **Owed**: one Mi 9T reading - the post camera and `/camera` over the same grey wall, the backdrop's
+centre pixels against the preview's, the `repainted` line, and a take started in the first second
+read with ffprobe for holes.
 
 ### The end of a reel looked frozen (2026-10-16)
 

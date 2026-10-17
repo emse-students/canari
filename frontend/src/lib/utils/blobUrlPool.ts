@@ -142,6 +142,20 @@ export class BlobUrlPool {
     // (least recently used first).
   }
 
+  /**
+   * Revokes every IDLE entry now (all of them, or just `key`); a HELD one is left alone, because an
+   * `<img>` is still pointing at it and revoking would blank it. For a pool that keeps entries warm
+   * past their last holder, this is how a caller that KNOWS the bytes are wrong - or no longer its
+   * reader's - ends that grace early.
+   */
+  dropIdle(key?: string): void {
+    for (const [k, entry] of this.entries.entries()) {
+      if (key !== undefined && k !== key) continue;
+      if (entry.refCount > 0) continue;
+      this.drop(k, entry);
+    }
+  }
+
   private overBudget(): boolean {
     return this.entries.size > this.maxEntries || this.totalBytes > this.maxBytes;
   }

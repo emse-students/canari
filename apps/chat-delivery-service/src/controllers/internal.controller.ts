@@ -27,6 +27,10 @@ import { QueuedMessage } from '../entities/queued-message.entity';
 import { PinVerifier } from '../entities/pin-verifier.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { GroupInvite } from '../entities/group-invite.entity';
+import { DeviceSignatureKey } from '../entities/device-signature-key.entity';
+import { NotificationPreference } from '../entities/notification-preference.entity';
+import { UserDismissedGroup } from '../entities/user-dismissed-group.entity';
+import { DELETED_ACCOUNT } from '../utils/account-erasure-coverage';
 import { resolveGroupInvitePreview } from '../utils/group-invite';
 import { sanitizeIdentityValue } from '../utils/sanitize';
 import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
@@ -541,13 +545,23 @@ export class InternalController {
   }
 
   /**
-   * Deletes all MLS/device/conversation data for the given user.
+   * Deletes all MLS/device/conversation data for the given user - the chat-delivery half of an
+   * account erasure, driven by core-service's durable erasure queue (`account-erasure.service.ts`).
+   *
+   * IDEMPOTENT, BECAUSE THE QUEUE RETRIES IT UNTIL IT ANSWERS 2xx AND RUNS IT AGAIN ONCE EVERY TOKEN
+   * THE ACCOUNT HELD HAS EXPIRED. Nothing here reads a row a previous run deleted in order to find
+   * what else to delete: the Redis routing sets are cleaned by PREFIX from every group the account
+   * is still recorded in, never from a device list read off the key packages (which an interrupted
+   * first run had already deleted, so the retry used to clean nothing).
    *
    * - 1-on-1 DMs (isGroup=false): group is fully deleted (soft-delete + hard-delete all data).
    * - Multi-member groups (isGroup=true): user is removed from the group; the group itself
    *   and other members' data are preserved.
-   * - Redis group:members sets are cleaned for both cases.
-   * - History streams (history:{groupId}) are deleted only for DMs.
+   * - Queued APPLICATION messages the account sent are deleted; queued handshake frames (commits,
+   *   Welcomes) are not, because they are the other members' protocol state and leave the queue
+   *   when delivered - deleting a pending commit would fork the group for its recipient.
+   *
+   * What is covered, table by table, is `ACCOUNT_ERASURE_COVERAGE` and its spec.
    *
    * Called by core-service during account deletion - not exposed through Nginx.
    */
@@ -558,11 +572,16 @@ export class InternalController {
   ) {
     this.assertInternalSecret(headerSecret);
 
-    this.logger.log(`[INTERNAL_DELETE] starting user=${userId}`);
+    const who = userId.slice(0, 8);
+    this.logger.log(`[INTERNAL_DELETE] starting user=${who}`);
 
-    // Resolve all groups this user belongs to before deleting membership rows
-    const memberships = await this.groupMemberRepo.find({ where: { userId } });
-    const groupIds = memberships.map((m) => m.groupId);
+    // Every group the account is still recorded in, through EITHER membership table: a Graine
+    // distribution group carries device memberships and no `dm_group_members` row.
+    const [memberships, deviceMemberships] = await Promise.all([
+      this.groupMemberRepo.find({ where: { userId } }),
+      this.deviceGroupRepo.find({ where: { userId }, select: { groupId: true } }),
+    ]);
+    const groupIds = [...new Set([...memberships, ...deviceMemberships].map((m) => m.groupId))];
 
     if (groupIds.length > 0) {
       const groups = await this.groupRepo.findBy({ id: In(groupIds) });
@@ -588,23 +607,28 @@ export class InternalController {
         );
       }
 
-      // ── Multi-member groups: remove user from Redis membership sets ───────
-      const deviceIds = await this.keyPackageRepo
-        .find({ where: { userId }, select: { deviceId: true } })
-        .then((kps) => kps.map((kp) => kp.deviceId));
-
-      await Promise.all(
-        multiGroups.map(async (g) => {
-          if (deviceIds.length > 0) {
-            const members = deviceIds.map((d) => `${userId}:${d}`);
-            await this.redis.srem(`group:members:${g.id}`, ...members);
-          }
-          this.logger.log(`[INTERNAL_DELETE] removed from group groupId=${g.id}`);
-        })
+      // ── Multi-member groups: remove every route of this account, by prefix ──
+      let routes = 0;
+      for (const g of multiGroups) {
+        const routed = await this.redis.smembers(`group:members:${g.id}`);
+        const toRemove = routed.filter((m) => m.startsWith(`${userId}:`));
+        if (toRemove.length > 0) {
+          await this.redis.srem(`group:members:${g.id}`, ...toRemove);
+          routes += toRemove.length;
+        }
+      }
+      this.logger.log(
+        `[INTERNAL_DELETE] removed from ${multiGroups.length} group(s) user=${who} routes=${routes}`
       );
     }
 
     // ── User's own records ────────────────────────────────────────────────
+    const manager = this.groupRepo.manager;
+    const [, sentQueued] = (await manager.query(
+      `DELETE FROM queued_message
+        WHERE "senderId" = $1 AND "isCommit" IS NOT TRUE AND "isWelcome" IS NOT TRUE`,
+      [userId]
+    )) as [unknown[], number];
     await Promise.all([
       this.keyPackageRepo.delete({ userId }),
       this.otpRepo.delete({ userId }),
@@ -617,9 +641,14 @@ export class InternalController {
       this.pushTokenRepo.delete({ userId }),
       this.pinVerifierRepo.delete({ userId }),
       this.revokedDeviceRepo.delete({ userId }),
+      manager.delete(DeviceSignatureKey, { userId }),
+      manager.delete(NotificationPreference, { userId }),
+      manager.delete(UserDismissedGroup, { userId }),
+      // An invite link the account minted keeps working for the group; only the name goes.
+      this.groupInviteRepo.update({ createdBy: userId }, { createdBy: DELETED_ACCOUNT }),
     ]);
 
-    this.logger.log(`[INTERNAL_DELETE] done user=${userId}`);
+    this.logger.log(`[INTERNAL_DELETE] done user=${who} sentQueued=${sentQueued}`);
     return { ok: true };
   }
 }

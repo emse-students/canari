@@ -41,7 +41,10 @@ const gifs = vi.hoisted(() => ({
     hasNext: false,
   })),
 }));
-vi.mock('$lib/utils/chat/gifSearch', () => ({ KLIPY_KEY: 'test', fetchGifPage: gifs.page }));
+vi.mock('$lib/utils/chat/gifSearch', () => ({
+  fetchGifPage: gifs.page,
+  GifSearchUnavailableError: class extends Error {},
+}));
 
 afterAll(adoptTransitionAnimations());
 

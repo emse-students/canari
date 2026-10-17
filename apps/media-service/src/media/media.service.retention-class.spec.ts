@@ -40,7 +40,11 @@ type ServiceInternals = {
     get: (id: string) => Promise<unknown>;
     listObjects: () => Promise<Array<{ id: string; size: number; lastModifiedMs: number | null }>>;
   };
-  logger: { log: (msg: string) => void; warn: (msg: string) => void };
+  logger: {
+    log: (msg: string) => void;
+    warn: (msg: string) => void;
+    error: (msg: string) => void;
+  };
   persistMetadata: () => Promise<void>;
   purgeExpiredMedia: () => Promise<void>;
   sweepIntervalMs: number;
@@ -86,7 +90,7 @@ function serviceWith(items: Record<string, Entry>): {
   };
   // The constructor is bypassed, so the Logger it would have built is not there. Silent rather
   // than piped to the console: a spec that prints teaches its reader to skip the line that matters.
-  internals.logger = { log: () => {}, warn: () => {} };
+  internals.logger = { log: () => {}, warn: () => {}, error: () => {} };
   internals.persistMetadata = () => Promise.resolve();
   internals.sweepIntervalMs = 60_000;
   return { service, deleted };
@@ -212,6 +216,8 @@ describe('retention class: account deletion', () => {
 
     expect(await service.removeAllOwnedBy('departing-member')).toEqual({ deleted: 0, failed: 0 });
     expect(deleted).toEqual([]);
+    // ... but it is no longer attributed to the erased account.
+    expect(items[UUID_DOCUMENT].ownerId).toBe('[deleted]');
   });
 
   it('still SKIPS a public asset - a logo outlives the member who uploaded it', async () => {
@@ -228,6 +234,59 @@ describe('retention class: account deletion', () => {
 
     expect(await service.removeAllOwnedBy('departing-member')).toEqual({ deleted: 0, failed: 0 });
     expect(deleted).toEqual([]);
+  });
+});
+
+describe('account deletion is retried until it is complete', () => {
+  it('writes the index on a retry that has nothing left to delete, after a failed write', async () => {
+    const items: Record<string, Entry> = {
+      [UUID_ARCHIVE]: {
+        createdAt: LONG_IDLE,
+        lastAccessAt: Date.now(),
+        retentionClass: 'archive',
+        ownerId: 'departing-member',
+      },
+    };
+    const { service } = serviceWith(items);
+    const internals = service as unknown as ServiceInternals;
+    const persist = jest
+      .fn()
+      .mockRejectedValueOnce(new Error('disk full'))
+      .mockResolvedValue(undefined);
+    internals.persistMetadata = persist;
+
+    // The blob is gone, the index write failed: the call fails and the queue retries.
+    await expect(service.removeAllOwnedBy('departing-member')).rejects.toThrow('disk full');
+    // The retry finds nothing to delete, and still gets the index to disk.
+    expect(await service.removeAllOwnedBy('departing-member')).toEqual({ deleted: 0, failed: 0 });
+    expect(persist).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves an object whose delete FAILED live, so the next call removes it', async () => {
+    const items: Record<string, Entry> = {
+      [UUID_ARCHIVE]: {
+        createdAt: LONG_IDLE,
+        lastAccessAt: Date.now(),
+        retentionClass: 'archive',
+        ownerId: 'departing-member',
+      },
+    };
+    const { service, deleted } = serviceWith(items);
+    const internals = service as unknown as ServiceInternals;
+    const working = internals.storage.delete;
+    internals.storage.delete = () => Promise.reject(new Error('bucket unreachable'));
+
+    // The first pass fails - and does NOT mark the object purged, which is what stranded it before.
+    expect(await service.removeAllOwnedBy('departing-member')).toEqual({ deleted: 0, failed: 1 });
+    expect(items[UUID_ARCHIVE].purgedAt).toBeUndefined();
+
+    // The erasure queue's retry finds it again and finishes the job.
+    internals.storage.delete = working;
+    expect(await service.removeAllOwnedBy('departing-member')).toEqual({ deleted: 1, failed: 0 });
+    expect(deleted).toEqual([UUID_ARCHIVE]);
+
+    // And a third call - the queue's final pass - has nothing left to do.
+    expect(await service.removeAllOwnedBy('departing-member')).toEqual({ deleted: 0, failed: 0 });
   });
 });
 

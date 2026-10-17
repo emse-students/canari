@@ -34,7 +34,7 @@
 # merge onto it as before. WHAT PROTECTS PRODUCTION NOW IS THAT A MERGE DOES NOT DEPLOY. Nothing
 # reaches an estate until a release is published, so an update that would break production sits on
 # `main` until somebody cuts a release - and a `X.X.X-alpha.N` pre-release deploys the dev estate
-# first, on that same copy of production's data, whenever one is published.
+# first, on its fictional seed data, whenever one is published.
 #
 # THE DIFFERENCE IS WHO DECIDES, and it is worth being honest about: the old mechanism ran with
 # nobody at the keyboard, this one runs when a human publishes an alpha. The ceiling in `ci.yml`'s
