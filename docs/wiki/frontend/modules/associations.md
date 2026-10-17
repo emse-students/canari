@@ -59,7 +59,7 @@ publish in its name until a flag was ticked by hand.
 Now:
 
 - `AssociationsHeader.svelte` is the heading of the three directories. NAVIGATION is a row of outlined
-  pills under the title (Associations, Listes, Institutions, Agenda global) with the current directory
+  pills under the title (Associations, Listes, Institutions; the global agenda tab was removed 2026-10-18, `/calendar` stays as a route) with the current directory
   filled and `aria-current="page"`; the single PRIMARY action, yellow, sits on the title line and names what
   THAT directory creates (`Créer l'association`, `Créer une liste`, `Créer une institution`). The lists and
   institutions pages lost their "back to Associations" link: the nav carries it.
