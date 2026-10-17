@@ -26,6 +26,12 @@ export const globalMessaging = useMessaging();
 export const globalChannels = useChannelWorkspaces();
 export const globalNotifs = useNotifications();
 
+// LEAVING A THREAD ENDS THE SALON SELECTION, whichever exit is taken (the in-app back, Android's
+// Back, the iOS edge swipe): otherwise the salon row stays highlighted (`aria-current`) after a Back.
+globalConvs.onThreadLeft(() => {
+  globalChannels.selectedChannelConversationId = '';
+});
+
 // THE RAIL BEFORE THE NETWORK (F1, community-open-budget): the account saved on this device gets
 // its last community list in memory now, at module load, before the session, MLS or any request.
 // Synchronous - one localStorage read - so the Communities tab's first frame can already hold it.

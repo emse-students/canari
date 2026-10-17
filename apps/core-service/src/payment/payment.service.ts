@@ -8,7 +8,6 @@ import type {
   CancelRequestOutcome,
   CheckoutLineItem,
   CheckoutRequestState,
-  CheckoutSessionInfo,
   CheckoutSessionResult,
   ConnectAccountStatusResponse,
   ConnectBalanceSummary,
@@ -18,7 +17,7 @@ import type {
   PayerRecipient,
 } from './payment-provider.interface';
 
-export type { CheckoutSessionInfo, ConnectBalanceSummary };
+export type { ConnectBalanceSummary };
 
 /**
  * Orchestrates payment operations against the active PaymentProvider (Lydia, or `disabled`; Stripe
@@ -43,6 +42,7 @@ export class PaymentService {
       LYDIA_ENV: process.env.LYDIA_ENV,
       LYDIA_PROVIDER_TOKEN: process.env.LYDIA_PROVIDER_TOKEN,
       LYDIA_PROVIDER_PRIVATE_TOKEN: process.env.LYDIA_PROVIDER_PRIVATE_TOKEN,
+      LYDIA_OBSERVE_KEYS: process.env.LYDIA_OBSERVE_KEYS,
     });
   }
 
@@ -71,6 +71,11 @@ export class PaymentService {
    */
   verifyLydiaRequestCallback(fields: Record<string, string>, signature: string): boolean {
     return this.lydiaProvider.verifyRequestCallback(fields, signature);
+  }
+
+  /** What a callback that failed verification would have matched with the candidate keys (names only). */
+  observeLydiaRequestCallback(body: Record<string, unknown>, signature: string): string | null {
+    return this.lydiaProvider.observeRequestCallback(body, signature);
   }
 
   /** Creates or resumes a Connect-style onboarding link for the given association. */
@@ -145,11 +150,6 @@ export class PaymentService {
   /** Returns a URL to manage payouts for a Connect-style account. */
   async createConnectDashboardLink(accountId: string): Promise<string> {
     return (await this.getProvider()).createConnectDashboardLink(accountId);
-  }
-
-  /** Retrieves a checkout session by ID. */
-  async retrieveSession(sessionId: string): Promise<CheckoutSessionInfo> {
-    return (await this.getProvider()).retrieveSession(sessionId);
   }
 }
 

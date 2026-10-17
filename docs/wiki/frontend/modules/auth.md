@@ -601,7 +601,7 @@ non-destructively by `IMlsService.openLocalStateWithKey`).
 | Outbox attachment bytes | `CanariDBOutbox_<userId>` | sealed by a per-blob key held in the outbox payload, not by the device key: follows the payload | same | same |
 | MLS state | `mls.bin` (native), `CanariDBMls_<userId>` (web) | `changeDeviceKey` | `recoverAndRekey` (open + re-seal) | `changeDeviceKey`, LAST |
 | Keystore entry + background copy | platform keystore (native) | rewritten by `changeDeviceKey`, unawaited | same | `pointUnattendedUnlockAt`, awaited, FIRST |
-| Vault slot (+ an older build's unlabelled slot holding this key) | `canari_device_key_vault:v2:<userId>` | overwritten at the END | same | old slot cleared, new key saved, FIRST (`applyNewDeviceKeyLocally`) |
+| Vault slot (+ an older build's unlabelled slot holding this key) | `canari_device_key_vault:v2:<userId>` | overwritten at the END | same | old slot cleared BEFORE the keystore (`retireOldDeviceKeyFromVault`), new key saved after it (`applyNewDeviceKeyLocally`) |
 | Graine native mirror | `graine_seeds.json` (native) | not sealed (app-private plaintext): nothing to do | same | same |
 | Feed cache | memory only (`posts/feedCache.ts`) | not sealed, not persisted | same | same |
 | Stored feed first pages (#1896) | `IStorage` `feedPages` / `feed_pages` | dropped (`dropStoredFeedPages`) | dropped | DROPPED inside the storage hold, not re-sealed: a copy the server's next answer rewrites |
@@ -632,15 +632,17 @@ being re-sealed fails `check`.
    from them refused the right PIN - and on the change path, where the verifier is already rotated,
    every later recovery the same way: a lockout. The change needs no proof here: the server verifier
    has just proven the current PIN.
-2. **The unattended unlock moves FIRST**: the keystore (`pointUnattendedUnlockAt`, awaited; biometric
-   unlock and background push read it) and the vault (this account's slot cleared, and an older
-   build's unlabelled slot if it holds this key, then the new key saved). Both skip the server PIN
-   check, so had they kept the old key past a kill, they would open the MLS state (not yet re-sealed)
-   and run a session over stores already half moved - silently, no recovery ever offered. With the
-   new key, every way in after a kill finds an MLS state it cannot open and is sent to the recovery.
-   The cost: between this step and step 5 a background push cannot open `mls.bin` and shows generic
-   text. The vault half runs inside the other tabs' hold (below), so two changes from two tabs never
-   race on it.
+2. **The unattended unlock moves FIRST**: the OLD key leaves the vault before anything else (this
+   account's slot cleared, and an older build's unlabelled slot if it holds this key:
+   `retireOldDeviceKeyFromVault`), then the keystore takes the new key (`pointUnattendedUnlockAt`,
+   awaited; biometric unlock and background push read it - a refused write DELETES the entry before
+   it propagates), then the vault saves it (`applyNewDeviceKeyLocally`). Both skip the server PIN
+   check, so had they kept the old key past a kill or a refusal, they would open the MLS state (not
+   yet re-sealed) and run a session over stores already half moved - silently, no recovery ever
+   offered. With the new key, or none, every way in after a kill asks for the PIN or finds an MLS
+   state it cannot open, and is sent to the recovery. The cost: between this step and step 5 a
+   background push cannot open `mls.bin` and shows generic text. The vault save runs inside the other
+   tabs' hold (below), so two changes from two tabs never race on it.
 3. **The stores, under the storage gate** (`db/deviceKeyGate.ts`), **in every tab** - see
    [below](#the-other-tabs-of-the-account). Every `IStorage` handle comes from
    `getStorage`, which returns it through the gate. A change waits for the calls in flight, re-seals
@@ -666,8 +668,8 @@ the keystore moved, logged, never key material):
   holds the old one. `changePinImpl` answers with `endIntoKeyRecovery` - a reload, which comes back
   with the new key, cannot open the MLS state and is offered the recovery with the same two PINs
   (`auth_pin_change_interrupted`).
-- `vault`: no row and no state moved, so the session's key still seals everything here and it RUNS
-  ON. Only the unlock changed (the vault was cleared; on native the keystore holds the new key), and
+- `keystore` / `vault`: no row and no state moved, so the session's key still seals everything here
+  and it RUNS ON. Only the unlock changed (the keystore refused or moved; the vault was cleared), and
   the account already expects the new PIN, so the NEXT unlock is the one sent to the recovery
   (`auth_pin_change_not_applied` says exactly that, without claiming a restart).
 
@@ -687,6 +689,38 @@ open the state with the new key and offers the recovery, which opens it with the
 and runs this same path - every store already under the new key counts as DONE. A lost race costs
 one recovery prompt, never data. The gate does not hold it: the push runs where the WebView's locks
 do not reach.
+
+#### A keychain that cannot hold the biometric item (iOS with no passcode, 2026-10-15)
+
+**The iPhone 12 bench has no device passcode, and the change failed there after the server had
+rotated.** Its syslog at the submit: `SecItemDelete`, then `SecItemAdd` of the primary item with
+`.userPresence` access control -> LocalAuthentication `-5 "Passcode not set"` -> `errSecAuthFailed`
+(`-25293`); the same pair at both recovery attempts, and at EVERY PIN unlock (`store_push_context`).
+A `.userPresence` item cannot exist without a passcode, so `storeKeyBytes` threw on every call, and
+`pointUnattendedUnlockAt` - awaited since #1898, and OUTSIDE the typed `try` - let it escape
+untyped: "n'a pas abouti, reessayez" against a server that now refused the old PIN, then the same
+refusal in the recovery. Four things changed:
+
+- `storeKeyBytes` reads the FACT (`LAContext.canEvaluatePolicy(.deviceOwnerAuthentication)`,
+  `passcodeNotSet`) and writes no primary item on such a phone - biometric unlock, its only reader,
+  cannot be enabled there either. The background copy is written in both cases.
+- It deletes BOTH old items before writing either. It used to delete the primary, throw on its add
+  and never reach the background copy, which kept the OLD key - the very unattended unlock step 2
+  exists to retire.
+- The keystore step is inside the typed `try`, as stage `keystore` (`dataMoved` false). Tested from
+  the state the bench was left in (server on the new PIN, keystore refusing, every store and the MLS
+  state under the old key): the change is typed and moves nothing, and the recovery then finishes.
+- The vault's old key leaves BEFORE the keystore is asked (it used to leave after). A refusal left
+  the vault on the old PIN: a device without biometrics logged in silently on PIN1, past the server
+  check and with no recovery offered, and its next change (PIN2 -> PIN3) derived its "old" key from
+  PIN2 - rows under PIN1 opened under neither key, the live MLS state moved to PIN3, and messages,
+  seeds and outbox were stranded under PIN1. A refused keystore write now also deletes the entry,
+  for a refusal raised before the native deletes (a malformed key, a platform that throws first)
+  with biometrics on.
+
+**Owed to a device, and only to a device**: the Swift half compiling (macOS CI), the recovery
+finishing from the bench's left state, and what removing the passcode with biometrics on does
+([backlog](../../backlog.md)).
 
 #### The other tabs of the account
 
@@ -776,7 +810,12 @@ re-serialised. Logs carry counts only - never a row id, never key material.
 - all three stores move;
 - a wrong old PIN is decided by the MLS state, before the keystore, the vault or a row moves;
 - a row under an older key, even every row, refuses nothing;
-- the order: keystore, vault cleared, vault saved, the three stores, MLS state;
+- the order: vault cleared, keystore, vault saved, the three stores, MLS state;
+- PIN1 -> PIN2 refused by the keystore, relaunch, recovery, then PIN2 -> PIN3: the vault no longer
+  unlocks on PIN1, the recovery is offered and finishes, and the next change strands nothing - fails
+  with the vault cleared after the keystore;
+- `TauriMlsService.keystoreRefusal.test.ts`: a refused keystore write deletes the entry, then
+  propagates;
 - a run killed at its second batch is finished by the next;
 - writes the live session makes DURING the change (an edit, a new message, a seed, a queued message,
   all with the old key) land under the new key - fails with a gate that does not hold;
@@ -811,6 +850,51 @@ The SQLite statement (`sealedSwapStatement`) is unit-tested for its shape; it wa
 against a real SQLite (`node:sqlite`, 2026-10-15: a full 166-row batch swapped 166, a stale and a
 deleted row untouched) and has **not** run on a device yet. Neither has the awaited keystore write,
 nor the cross-tab hold in a real browser.
+
+#### The login after a recovery read no groups - a false "partial restore" (iPhone 12, 2026-10-15)
+
+**The recovery PASSED on the iPhone 12 (`1.2.9-alpha.2`) and its login then said a conversation
+could not be restored.** `[ERROR] Partial restore: 0/1 ... missing 3122333c`, the conversation
+demoted to pending, then the re-add's external join refused with `group 3122333c… already present
+locally` - the native manager held the group the restore check said was missing. The cause:
+`openLocalStateWithKey` marks the client initialised so the login skips `_initImpl`, and
+`_initImpl` is what lists the native groups into `TauriMlsService._knownGroups`, which
+`getLocalGroups()` reads. So the login after a recovery ran on an empty cache: the banner, the
+demotion, the failed rejoin, until the next cold start listed the groups.
+
+**And one durable deletion.** `hydrateDistributionGroups` deletes every key-group row whose group
+`getLocalGroups()` does not name, and it read the same empty cache: `[GRAINE] key-group registry
+restored before the drain - 0 group(s), 1 row(s) for groups no longer held deleted`. The community's
+key group then took the conversation path and failed - part of the cascade, and the one part a cold
+start did not undo.
+
+**What the recovery's open now does - everything `init` does after its load** (2026-10-16, review
+of #1935). `openLocalStateWithKey` runs `afterStateOpened()` and then `reconcileSendRatchets()`,
+inside the `initPromise` a concurrent `init` returns, set before either is awaited (so no second
+`initialiser_mls` starts during the listing):
+
+- **The listing.** On Tauri `afterStateOpened` rebuilds the group caches from the native manager; the
+  web reads WASM live and needs nothing.
+- **The ratchet burn.** It lived in `init` alone, which the login after a recovery skips: an app
+  killed after sends it never checkpointed, PIN changed elsewhere, opened a state behind its own
+  sends, and the next send re-used a spent generation.
+- **A typed refusal.** A failed listing throws `LocalStateNotReadyError` instead of logging and
+  running on the empty cache - the whole cascade again. The open is not marked initialised, and
+  `recoverPinImpl` reports `auth_pin_recover_interrupted`: nothing moved, the same two PINs retry.
+- **A deletion gated on knowing.** `hydrateDistributionGroups` asks `heldGroupsKnown()` first; on
+  Tauri it is true only once a listing succeeded for the loaded state, so an unfilled cache deletes
+  nothing and says so at error level.
+
+`TauriMlsService.recoveryGroups.test.ts` carries one test per point; each fails on the code before.
+
+**The `LOST frame` lines that followed are this defect's cost, not the PIN lock's.** The false
+verdict sent a `welcome_request`; the peer's Welcome then made the client drop the group it held
+(`GroupAlreadyExists - forget storage + re-join`) and re-join at a newer epoch, so the frames sent
+while the device was locked - queued, and decryptable by the group it held - became frames of a
+past epoch. The history diff re-asked them (`raiseReconcile`, `[HISTORY_RECONCILE]`): **asked, and
+the answer was not observed** - `session-0002-restore.txt` carries the request and no reply, so
+whether those messages came back is not known. With the cache right, nothing is dropped and the
+queued frames decrypt as they are drained.
 
 ### An at-rest format change needs its own reader, in the same commit
 

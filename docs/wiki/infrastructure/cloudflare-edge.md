@@ -81,7 +81,10 @@ whole policy - and three verbatim copies of a security policy is precisely how o
 old value after the other two are updated. One definition makes that impossible.
 
 `frontend/src/lib/security/csp.test.ts` asserts the invariants: exactly one declaration, more than
-one `include`, both KLIPY hosts present in `connect-src`, and no bare scheme there. It lives in the
+one `include`, KLIPY's GIF host `static.klipy.com` present in `connect-src` and its search API
+`api.klipy.com` ABSENT (the search goes through chat-delivery since 2026-10-16,
+[chat](../frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)), and no bare
+scheme there. It lives in the
 frontend suite on purpose - what invalidates the policy is frontend code calling a host nobody
 added.
 

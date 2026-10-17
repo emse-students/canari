@@ -12,7 +12,7 @@
 # a proof, never from a clock*, so a schedule is only ever a FLOOR UNDER THE WORST CASE: if it
 # arrives late, or not at all, the cost must be a late REPORT and never a wrong outcome. That holds
 # for every job below - the host applies its own updates whether this fires or not, a buildkit cache
-# that survives another week costs quota, the dev estate is refreshed on demand by anyone who needs
+# that survives another week costs quota, the dev estate is reset on demand by anyone who needs
 # it, and a nightly audit re-asks a question the pull-request path already asks on every change.
 # **A job whose correctness depended on this firing would not belong here.** It is measured, not
 # assumed: `code-analysis` asked for `0 2 * * *` and actually ran at 03:01, 03:09, 08:05, 08:24,
@@ -28,8 +28,9 @@ name: Scheduled
 
 on:
   schedule:
-    # Daily, and TWO jobs read this one: the host's security updates, after the apt-daily-upgrade
-    # window, and last night's backups, hours after the 03:30 and 04:00 runs they judge.
+    # Daily, and THREE jobs read this one: the host's security updates, after the apt-daily-upgrade
+    # window, last night's backups, hours after the 03:30 and 04:00 runs they judge, and the 90-day
+    # ceiling on technical logs.
     - cron: '30 7 * * *'
     # Daily. A new advisory can land against code nobody touched, which is the half the
     # pull-request path cannot see.
@@ -39,9 +40,10 @@ on:
     - cron: '0 3 * * 0'
     # Daily. Did the last stable release actually reach both stores?
     - cron: '0 9 * * *'
-    # Mondays, and TWO jobs read this one. Re-seed the dev estate from production, and ask what the
-    # cargo directories Dependabot cannot reach are behind on. Adding a third means editing this
-    # line too: a schedule serves whichever `if:` names it, and a comment naming one hides the rest.
+    # Mondays. Ask what the cargo directories Dependabot cannot reach are behind on. The dev copy
+    # from production read this slot too until 2026-10-16; its successor, `dev-reset`, has no clock.
+    # Adding a job here means editing this line too: a schedule serves whichever `if:` names it, and
+    # a comment naming one hides the rest.
     - cron: '0 4 * * 1'
   workflow_dispatch:
     inputs:
@@ -49,9 +51,9 @@ on:
         description: 'Which one to run by hand'
         type: choice
         default: all
-        options: [all, hosts, backups, analysis, alerts, caches, ghcr-cleanup, dev-refresh, stores, cargo-unreachable]
+        options: [all, hosts, backups, log-retention, analysis, alerts, caches, ghcr-cleanup, dev-reset, stores, cargo-unreachable]
       dry_run:
-        description: 'dev-refresh only: report what would happen and change nothing'
+        description: 'dev-reset only: report what would happen and change nothing'
         type: boolean
         default: false
 
@@ -145,6 +147,38 @@ jobs:
 
       - name: Read the artefacts and judge them
         run: bash infrastructure/backup/backup-report.sh
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # NO TECHNICAL LOG OLDER THAN THE PRIVACY POLICY'S 90 DAYS
+  #
+  # The policy promises IP logs are kept 90 days at most and then deleted automatically; a
+  # size-capped container log is no bound in time. Deletes the deploy-log archives past their 30
+  # days (files this project wrote, no container touched) and goes RED naming any container whose
+  # live log holds a line older than 60 days - only recreating it deletes that, and that is a
+  # human's production change. The 30 days between 60 and 90 are the slack for this run being late
+  # or dropped, which is what makes a clock acceptable here: missing it costs a late report, never
+  # the promise. docs/wiki/infrastructure/logging.md, the only copy of the reasoning.
+  #
+  # ON THE SELF-HOSTED RUNNER because the archive is in the deploying account's home and the logs
+  # are the local daemon's.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  log-retention:
+    name: Technical logs inside the 90-day promise
+    if: >
+      github.event.schedule == '30 7 * * *' ||
+      (github.event_name == 'workflow_dispatch' &&
+      contains(fromJSON('["all", "log-retention"]'), inputs.job))
+    runs-on: self-hosted
+    timeout-minutes: 15
+    # Its own group, at the job level, for the reason `hosts` gives.
+    concurrency:
+      group: log-retention
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Prune the log archive and judge the live logs
+        run: bash infrastructure/deploy/log-retention-report.sh
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
   # THE NIGHTLY SECURITY PASS
@@ -356,68 +390,79 @@ jobs:
           done
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
-  # RE-SEED THE DEV ESTATE FROM PRODUCTION
+  # RESET THE DEV ESTATE TO THE FICTIONAL SEED - ON DEMAND ONLY, AND NEVER FROM PRODUCTION
   #
-  # The full reasoning - what is copied, what is deliberately NOT, and why the copy is what makes a
-  # pre-release worth publishing - is on
+  # This job copied production's database into dev every Monday until 2026-10-16, when the owner's
+  # GDPR review ended it: dev now holds `infrastructure/dev/seed.sql`, people and associations that
+  # are visibly invented, and nothing restores production's rows into it again.
+  #
+  # NO CRON, AND THAT IS THE POINT. The copy ran weekly to stay fresh; a seed never goes stale, and
+  # what a reset destroys on a schedule is the testers' own work. So it runs when somebody asks - it
+  # lives in this file only because a fifth visible workflow needs a reason beyond "another topic".
+  # And it is NOT part of `all`: that choice re-runs the reports, and a destructive job is picked by
+  # its own name or not at all.
+  # The reasoning, and what the seed does and does not carry, is on
   # `docs/wiki/infrastructure/dev-environment.md`, the only copy.
   # ═══════════════════════════════════════════════════════════════════════════════════════════════
-  dev-refresh:
-    name: Refresh dev.canari-emse.fr from production
+  dev-reset:
+    name: Reset dev.canari-emse.fr to the fictional seed
     if: >
       vars.DEV_ENVIRONMENT_ENABLED == 'true' &&
-      (github.event.schedule == '0 4 * * 1' ||
-      (github.event_name == 'workflow_dispatch' &&
-      contains(fromJSON('["all", "dev-refresh"]'), inputs.job)))
+      github.event_name == 'workflow_dispatch' &&
+      inputs.job == 'dev-reset'
     runs-on: self-hosted
     permissions:
       contents: read
     concurrency:
-      group: dev-refresh
+      group: dev-reset
       cancel-in-progress: false
     steps:
       # The script lives in the repository, so it is read from the DEV checkout - never from
-      # production's. A refresh must not be able to depend on production's working tree at all.
+      # production's. A reset must not be able to depend on production's working tree at all.
       - name: Point at the dev checkout
         id: checkout
         run: |
           set -euo pipefail
           path="/srv/canari-dev"
           if [ ! -d "$path/.git" ]; then
-            echo "::error::$path is not a checkout - the dev estate has never been deployed, so there is nothing to refresh. Publish a pre-release first."
+            echo "::error::$path is not a checkout - the dev estate has never been deployed, so there is nothing to reset. Publish a pre-release first."
             exit 1
           fi
-          # AT `dev-deployed`, NOT `origin/main`: the copy ends by applying the migrations of this
-          # tree, and they must be those of the commit dev's IMAGES were built from - main is ahead of
-          # it by whatever merged since the last pre-release. It also stops a refresh from moving the
-          # compose file under a running estate.
+          # AT `dev-deployed`, NOT `origin/main`: the reset applies this tree's migrations and loads
+          # this tree's seed, and both must be those of the commit dev's IMAGES were built from -
+          # main is ahead of it by whatever merged since the last pre-release. It also stops a reset
+          # from moving the compose file under a running estate.
           if ! git -C "$path" fetch --force origin "refs/tags/dev-deployed:refs/tags/dev-deployed"; then
-            echo "::error::origin has no dev-deployed tag, so nothing says which commit dev's images come from. On a virgin estate (first deploy refused for want of a schema), tag the commit that deploy used: git tag dev-deployed <sha> && git push origin dev-deployed - then refresh."
+            echo "::error::origin has no dev-deployed tag, so nothing says which commit dev's images come from. On a virgin estate (first deploy refused for want of a schema), tag the commit that deploy used: git tag dev-deployed <sha> && git push origin dev-deployed - then reset."
             exit 1
           fi
           git -C "$path" reset --hard dev-deployed
+          if [ ! -f "$path/infrastructure/dev/reset-dev-to-seed.sh" ]; then
+            echo "::error::dev-deployed ($(git -C "$path" rev-parse --short HEAD)) predates the seed - publish a pre-release from a main that carries infrastructure/dev/reset-dev-to-seed.sh, then reset."
+            exit 1
+          fi
           echo "path=$path" >> "$GITHUB_OUTPUT"
-          echo "refreshing from $(git -C "$path" rev-parse --short HEAD) (dev-deployed)"
+          echo "resetting from $(git -C "$path" rev-parse --short HEAD) (dev-deployed)"
 
-      - name: Copy production into dev
+      - name: Empty dev and load the fictional seed
         working-directory: ${{ steps.checkout.outputs.path }}
         run: |
           set -euo pipefail
           if [ "${{ inputs.dry_run }}" = "true" ]; then
-            bash infrastructure/dev/copy-prod-to-dev.sh --dry-run
+            bash infrastructure/dev/reset-dev-to-seed.sh --dry-run
           else
-            bash infrastructure/dev/copy-prod-to-dev.sh
+            bash infrastructure/dev/reset-dev-to-seed.sh
           fi
 
-      # THE COPY IS NOT THE END OF THE JOB. It stops dev's application containers to restore, and
-      # the script brings them back - but "the containers are back" is not "the estate answers",
-      # which is the house rule these two lines exist to honour. `/api/version` needs the database
-      # the copy just replaced, so it is the cheapest statement that the restore really worked.
+      # THE RESET IS NOT THE END OF THE JOB. It stops dev's application containers, and the script
+      # brings them back - but "the containers are back" is not "the estate answers", which is the
+      # house rule these lines exist to honour. `/api/version` needs the database the reset just
+      # emptied, so it is the cheapest statement that the services read the seeded schema.
       # A DRY RUN CHANGES NOTHING, SO IT PROVES NOTHING - and asserting anyway reports the estate's
-      # PRE-EXISTING state as this refresh's failure. Measured 2026-09-02: the first dry run went
-      # green through the copy step and then failed here on twenty 502s, which were the schemaless
-      # dev database the dry run had deliberately not touched. A gate must only assert what the run
-      # it guards actually did.
+      # PRE-EXISTING state as this run's failure. Measured 2026-09-02: the first dry run of the old
+      # copy went green through every guard and then failed here on twenty 502s, which were the
+      # schemaless database it had deliberately not touched. A gate must only assert what the run it
+      # guards actually did.
       - name: Prove the dev estate still answers
         if: inputs.dry_run != true
         run: |
@@ -425,14 +470,14 @@ jobs:
           for i in $(seq 1 20); do
             status="$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:3080/api/version || true)"
             if [ "$status" = "200" ]; then
-              echo "dev answers /api/version after the refresh"
+              echo "dev answers /api/version after the reset"
               curl -s http://127.0.0.1:3080/api/version
               exit 0
             fi
             echo "  not yet (HTTP $status, $i/20)"
             sleep 6
           done
-          echo "::error::dev did not answer /api/version within 2 minutes of the refresh - the restore may have left the database in a state the services cannot read"
+          echo "::error::dev did not answer /api/version within 2 minutes of the reset - the services may not read the seeded database"
           exit 1
 
   # ═══════════════════════════════════════════════════════════════════════════════════════════════

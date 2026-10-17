@@ -27,6 +27,7 @@
     FramedStream,
     shouldMirrorCapture,
     takeFramedPhoto,
+    takeFramedThumbnail,
     type CameraCapture,
     type PreviewBox,
   } from '$lib/reels/framedCapture';
@@ -45,6 +46,11 @@
     lensLocked?: boolean;
     /** What sits over the live preview at the bottom: the shutter and its neighbours. */
     controls?: Snippet;
+    /**
+     * What the refusal screen offers beside its retry: a way on that needs no camera (the reel
+     * tab's gallery), so a member who refused the camera is not left at a dead end.
+     */
+    faultActions?: Snippet;
     /** What a capture can take, handed to the owner of the shutter (bind it). */
     capture?: CameraCapture;
     /**
@@ -62,15 +68,23 @@
      * owner unmounts it. Absent on the tab, where close navigates back to the origin tab.
      */
     onclose?: () => void;
+    /**
+     * The open asks for the MICROPHONE in the lens's own request (the reel tab), so a refusal may be
+     * either and the refusal text names both. A chat camera never asks for it and a post camera asks
+     * it apart (`postCameraOpener`), so their refusal is the camera's alone.
+     */
+    microphoneAsked?: boolean;
   }
 
   let {
     session = new CameraSession(),
     lensLocked = false,
     controls,
+    faultActions,
     paused = false,
     onBeforeRelease,
     onclose,
+    microphoneAsked = true,
     capture = $bindable(),
   }: Props = $props();
 
@@ -119,6 +133,13 @@
         return Promise.resolve(null);
       }
       return takeFramedPhoto(video, previewBox(video));
+    },
+    thumbnail() {
+      if (!video || !frameReady) {
+        console.warn('[camera] a thumbnail was asked for before the first frame');
+        return null;
+      }
+      return takeFramedThumbnail(video, previewBox(video));
     },
     startFramedStream() {
       if (!video || !frameReady) {
@@ -170,10 +191,11 @@
     if (document.visibilityState === 'hidden') {
       console.debug('[camera] app hidden - releasing the camera');
       onBeforeRelease?.();
-      session.stop();
-    } else if (session.phase === 'stopped' && !paused) {
-      console.debug('[camera] app visible - reopening the camera');
-      void session.start();
+      // `suspend`, not `stop`: the permission dialog backgrounds the app, and its answer is awaited.
+      session.suspend();
+    } else if (!paused) {
+      console.debug('[camera] app visible');
+      session.resume();
     }
   }
 
@@ -203,7 +225,11 @@
   });
 
   const FAULT_TEXT: Record<CameraFault, { title: () => string; body: () => string }> = {
-    denied: { title: m.reels_camera_denied_title, body: m.reels_camera_denied_body },
+    denied: {
+      title: m.reels_camera_denied_title,
+      body: () =>
+        microphoneAsked ? m.reels_camera_denied_body() : m.reels_camera_denied_body_camera_only(),
+    },
     unavailable: { title: m.reels_camera_unavailable_title, body: m.reels_camera_unavailable_body },
     busy: { title: m.reels_camera_busy_title, body: m.reels_camera_busy_body },
     interrupted: {
@@ -304,6 +330,9 @@
           <Settings size={16} strokeWidth={2.5} />
           {m.reels_open_settings()}
         </button>
+      {/if}
+      {#if faultActions}
+        {@render faultActions()}
       {/if}
     </div>
   {/if}

@@ -118,6 +118,30 @@ describe('PostMedia - a streamed feed video', () => {
   });
 
   /**
+   * THE FEED'S ANSWER REPLACES THE STORED COPY WITH NEW OBJECTS CARRYING THE SAME MEDIA (Mi 9T,
+   * v1.2.9-alpha.3): the stream reopened on the same `<video>` and its `play()` was interrupted.
+   */
+  it('an equal media in a new object keeps its stream; a different media opens a new one', async () => {
+    const props = $state({ media: REEL, authToken: 'token', letterbox: true, deferred: false });
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const component = mount(PostMedia, { target, props });
+    mounted.push(() => unmount(component));
+    await settle();
+    expect(streams).toHaveLength(1);
+
+    props.media = { ...REEL };
+    await settle();
+    expect(streams).toHaveLength(1);
+    expect(streams[0].closed).toBe(false);
+
+    props.media = { ...REEL, mediaId: 'r2' };
+    await settle();
+    expect(streams).toHaveLength(2);
+    expect(streams[0].closed).toBe(true);
+  });
+
+  /**
    * THE TAP OF THE REVIEW (#1744): the viewer waited for the whole file, which a paced stream builds
    * only at the end - so a tap did nothing, then the viewer popped up unasked. It opens AT THE TAP,
    * lifts the pacing, and goes away with the card if the card leaves.

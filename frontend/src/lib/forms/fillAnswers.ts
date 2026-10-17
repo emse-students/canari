@@ -129,6 +129,29 @@ export function visibleItems(
   });
 }
 
+/**
+ * The priced questions whose answer has NOT CHOSEN a cell yet: shown, required, and unanswered.
+ *
+ * An unanswered question falls in the grid's "others" group, which is the right cell for an OPTIONAL
+ * question left blank - that is what the server prices - but not for a required one, whose blank
+ * is only "not chosen yet". Pricing that blank called the paid form "Cotisation BDE 2026"
+ * "Combinaison indisponible" before any answer (Mi 9T, v1.2.9-alpha.3).
+ */
+export function pricedQuestionsAwaitingAnswer(
+  visible: FormItem[],
+  pricedQuestionIds: readonly string[],
+  selections: Selections
+): Set<string> {
+  const priced = new Set(pricedQuestionIds);
+  return new Set(
+    visible
+      .filter(
+        (item) => priced.has(item.id) && item.required && !isItemAnswered(item, selections[item.id])
+      )
+      .map((item) => item.id)
+  );
+}
+
 /** Only the answers to questions the person could see - what the server is sent. */
 export function visibleAnswers(visible: FormItem[], selections: Selections): Selections {
   const ids = new Set(visible.map((item) => item.id));

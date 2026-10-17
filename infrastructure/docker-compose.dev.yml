@@ -21,8 +21,8 @@
 # production wherever it can be, so that a difference in behaviour is never explained by a difference
 # in configuration.
 #
-# See docs/wiki/backlog.md for every decision taken with the user on 2026-09-01, including why this
-# environment carries a full copy of production and what the copy procedure must strip.
+# See docs/wiki/backlog.md for every decision taken with the user on 2026-09-01. Its data is a
+# fictional seed since 2026-10-16, never a copy of production (docs/wiki/infrastructure/dev-environment.md).
 
 # THE PROJECT NAME IS DECLARED HERE, AND UNTIL 2026-09-01 IT WAS NOT - which made the promise at the
 # top of this file false. A compose project with no `name:` is named after the DIRECTORY the file sits
@@ -102,8 +102,8 @@ services:
   postgres:
     logging: *logging
     # DEV CROSSES WITH PRODUCTION, IN THE SAME COMMIT, AND THAT IS THE POINT OF THIS ENVIRONMENT.
-    # It carries a full copy of production's data, so it is the only place an 18 can be met before
-    # production meets it - which is why the two lines move together rather than dev going first and
+    # It carries production's schema (with a fictional seed), so it is the only place an 18 can be
+    # met before production meets it - which is why the two lines move together rather than dev going first and
     # drifting. The automatic refusal in `.github/scripts/lib/ceiling.sh` stays: what made this safe
     # was a procedure and a window, never a green suite. Moving this line is a deliberate migration
     # with its own written rollback, never a dependency bump.
@@ -154,7 +154,7 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       REDIS_URL: redis://redis:6379
       DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
-      # Never `*`. This environment is publicly resolvable and carries a copy of production's data;
+      # Never `*`. This environment is publicly resolvable and testers sign in with real accounts;
       # a wildcard allowlist there is a different thing from a wildcard on a laptop.
       ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}
     depends_on:
@@ -213,6 +213,9 @@ services:
       # Server-side Safe Browsing lookup for shared links (WP-SAFELINK-1). Optional and
       # fails open: unset means no check, never a blocked link.
       GOOGLE_SAFE_BROWSING_API_KEY: ${GOOGLE_SAFE_BROWSING_API_KEY:-}
+      # The GIF picker's search (chat-delivery /api/mls/gifs): the server asks KLIPY so a reader's
+      # query, IP and identifier never reach it. Unset: the picker says GIF search is not configured.
+      KLIPY_API_KEY: ${KLIPY_API_KEY:-}
     depends_on:
       redis:
         condition: service_healthy
@@ -324,7 +327,7 @@ services:
       PORT: "3012"
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
-      # NO /adminer/ ROUTE HERE: dev holds a full copy of production's data and has no adminer
+      # NO /adminer/ ROUTE HERE: dev is publicly resolvable, holds testers' own rows and has no adminer
       # service (see the note where it would sit). Stated rather than left unset, so a missing line
       # is never what keeps the door shut.
       ADMINER_ENABLED: "false"
@@ -349,6 +352,8 @@ services:
       LYDIA_ENV: homologation
       LYDIA_PROVIDER_TOKEN: ${LYDIA_PROVIDER_TOKEN:-}
       LYDIA_PROVIDER_PRIVATE_TOKEN: ${LYDIA_PROVIDER_PRIVATE_TOKEN:-}
+      # Dev-only measurement of which key signs Lydia's callback; empty by default, removed once known.
+      LYDIA_OBSERVE_KEYS: ${LYDIA_OBSERVE_KEYS:-}
       FORM_URL: http://social-service:3014
       FORM_SERVICE_URL: http://social-service:3014
       # Account deletion fans out to media-service to remove the user's own uploads.

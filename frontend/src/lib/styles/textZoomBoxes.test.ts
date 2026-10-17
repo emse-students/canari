@@ -63,3 +63,21 @@ describe('the agenda at 200 % text', () => {
     }
   });
 });
+
+describe('the post comment controls at 200 % text', () => {
+  it('wraps the show/hide + sort row and its sort group instead of widening the page', () => {
+    const values = classValues(join(src, 'lib/components/posts/PostComments.svelte'));
+    const row = values.find(
+      (v) => /(?:^|\s)justify-between(?:\s|$)/.test(v) && /(?:^|\s)mb-2(?:\s|$)/.test(v)
+    );
+    expect(row).toMatch(/(?:^|\s)flex-wrap(?:\s|$)/);
+    const sort = values.find(
+      (v) =>
+        /(?:^|\s)flex(?:\s|$)/.test(v) &&
+        /(?:^|\s)items-center(?:\s|$)/.test(v) &&
+        /(?:^|\s)gap-1(?:\s|$)/.test(v) &&
+        /min-w-0/.test(v)
+    );
+    expect(sort).toMatch(/(?:^|\s)flex-wrap(?:\s|$)/);
+  });
+});

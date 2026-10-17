@@ -240,6 +240,20 @@ export class VaultOwnerUnprovenError extends Error {
 }
 
 /**
+ * A state opened outside `init` (the PIN recovery's `openLocalStateWithKey`) could not be made
+ * ready: the groups it holds could not be listed, or the send ratchets could not be reconciled.
+ * Nothing was written. A login run on top would read an empty group cache and act on it (a false
+ * "partial restore", re-joins of groups held, key-group rows deleted), so the open is REFUSED and
+ * the recovery reports a failure the same two PINs retry.
+ */
+export class LocalStateNotReadyError extends Error {
+  constructor(readonly reason: unknown) {
+    super(`the opened local state could not be made ready: ${String(reason)}`);
+    this.name = 'LocalStateNotReadyError';
+  }
+}
+
+/**
  * Thrown by {@link IMlsService.init} when `noFreshStart` is set and the saved local state
  * cannot be decrypted with the supplied PIN - the signal that the account PIN was likely
  * rotated on another device and recovery should be offered.

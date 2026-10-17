@@ -46,7 +46,7 @@ describe('the served Content-Security-Policy', () => {
     //
     // ONE DECLARED EXCEPTION, and it is a narrowing, never a copy: `/adminer/` (the database admin
     // UI, 2026-10-02) states its OWN policy, because the site-wide one allows `img-src https:` and
-    // `connect-src` to Klipy - a console that shows production data must not have an
+    // `connect-src` to Klipy's GIF host - a console that shows production data must not have an
     // image beacon to send it out through if Adminer ever has an XSS. The next test holds it narrower.
     const declared = policyDeclarations();
     expect(declared).toHaveLength(2);
@@ -73,12 +73,16 @@ describe('the served Content-Security-Policy', () => {
 
   it('names every external host the client reads bytes from', () => {
     const connect = sources(policyDeclarations()[0], 'connect-src');
-    // GifPickerModal searches this host...
-    expect(connect).toContain('https://api.klipy.com');
-    // ...and PostComments fetches the chosen GIF's BYTES from this one, to encrypt them before
-    // upload. Rendering the grid is `img-src`; reading bytes into memory is `connect-src`, and
-    // only the second one is what attaching a GIF to a comment needs.
+    // PostComments fetches the chosen GIF's BYTES from this host, to encrypt them before upload.
+    // Rendering the grid is `img-src`; reading bytes into memory is `connect-src`, and only the
+    // second one is what attaching a GIF to a comment needs.
     expect(connect).toContain('https://static.klipy.com');
+  });
+
+  it('does not let the browser reach the GIF SEARCH API - the server asks it (2026-10-16)', () => {
+    // The search goes through chat-delivery's `/api/mls/gifs` so KLIPY never sees a reader's query,
+    // IP or identifier (`gifSearch.ts`). Naming the API host again would re-open the direct path.
+    expect(sources(policyDeclarations()[0], 'connect-src')).not.toContain('https://api.klipy.com');
   });
 
   it('names no payment processor host: checkout is a navigation to the provider, never an embed', () => {

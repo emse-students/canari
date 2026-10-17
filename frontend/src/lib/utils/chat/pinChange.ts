@@ -115,13 +115,15 @@ export class LocalStateUnopenableError extends Error {
  *  - `stores` / `mls`: data has moved - stores and MLS state may sit under two keys. The session
  *    must end into the recovery (which opens the MLS state with the old key and finishes the move)
  *    rather than keep running on the old key ({@link dataMoved}).
- *  - `vault`: no row and no state moved. The session's key is still the one everything here is
- *    sealed under, so it may run on; only the unlock changed (the vault cleared, and on native the
- *    keystore moved: {@link keystoreMoved}), so the NEXT unlock is the one sent to the recovery.
+ *  - `keystore` / `vault`: no row and no state moved. The session's key is still the one everything
+ *    here is sealed under, so it may run on; only the unlock changed (this account's vault slot is
+ *    cleared before anything else, and on native the keystore may have moved: {@link keystoreMoved}),
+ *    so the NEXT unlock asks for the PIN and is the one sent to the recovery. `vault` is also the
+ *    stage of a failure in that first clearing (the unlabelled slot's retirement).
  */
 export class KeyChangeInterruptedError extends Error {
   constructor(
-    readonly stage: 'vault' | 'stores' | 'mls',
+    readonly stage: 'keystore' | 'vault' | 'stores' | 'mls',
     readonly keystoreMoved: boolean,
     readonly reason: unknown
   ) {
@@ -131,7 +133,7 @@ export class KeyChangeInterruptedError extends Error {
 
   /** Whether a row or the MLS state may already be under the new key. */
   get dataMoved(): boolean {
-    return this.stage !== 'vault';
+    return this.stage === 'stores' || this.stage === 'mls';
   }
 }
 
@@ -266,23 +268,38 @@ export async function dropStoredFeedPages(
 }
 
 /**
- * Points this device's vault at the new device key - the tail of {@link performPinChange}'s first
- * step, after the keystore ({@link IMlsService.pointUnattendedUnlockAt}).
+ * Takes the OLD device key out of this device's vault - the first thing {@link performPinChange}
+ * writes, BEFORE the keystore ({@link IMlsService.pointUnattendedUnlockAt}).
+ *
+ * A vault slot - this account's own, or the unlabelled one of an older build when it holds this very
+ * key - that kept the old key past a failed step or a kill would unlock, without the server PIN check,
+ * an MLS state not yet re-sealed: a silent login on the OLD PIN, no recovery ever offered, and a later
+ * change deriving its "old" key from a PIN the rows were never sealed under. It ran after the keystore
+ * until 2026-10-15, so a keystore refusal (an iPhone with no passcode) left the vault on the old key.
+ * Only an unlock is removed here: the next launch asks for the PIN, which the server checks.
+ */
+export async function retireOldDeviceKeyFromVault(
+  userId: string,
+  oldDeviceKeyB64: string,
+  log: (msg: string) => void
+): Promise<void> {
+  clearDeviceKey(userId);
+  await retireUnlabelledDeviceKeyIfOwnedBy(userId, oldDeviceKeyB64);
+  log('[DEVICEKEY] Old device key retired from the local vault.');
+}
+
+/**
+ * Points this device's vault at the new device key, once the keystore holds it - the tail of
+ * {@link performPinChange}'s first step. The old key already left in {@link retireOldDeviceKeyFromVault}.
  *
  * The keystore entry is NOT touched here: it was rewritten with the new key just before. Deleting it
  * would destroy the entry that was just written and turn biometric unlock off behind the user's back.
  */
 export async function applyNewDeviceKeyLocally(
   userId: string,
-  oldDeviceKeyB64: string,
   newDeviceKeyB64: string,
   log: (msg: string) => void
 ): Promise<void> {
-  // THE OLD KEY GOES FIRST, whatever happens next: a vault slot - this account's own, or the
-  // unlabelled one of an older build when it holds this very key - that kept the old key past a
-  // failed save or a kill would unlock, without the server PIN check, an MLS state not yet re-sealed.
-  clearDeviceKey(userId);
-  await retireUnlabelledDeviceKeyIfOwnedBy(userId, oldDeviceKeyB64);
   if (isTauriRuntime() && (await BiometricService.isConfigured().catch(() => false))) {
     // Biometrics on: the keystore is the source of truth. Keep the vault empty so the next
     // launch still takes the biometric path rather than a silent vault login.
@@ -326,13 +343,14 @@ export interface PinChangeOptions {
  *
  *  1. PROOF (recovery only): the stored MLS blob opens with the old key, or {@link
  *     DeviceKeyMismatchError} - nothing written.
- *  2. THE UNATTENDED UNLOCK MOVES FIRST: keystore, then vault, now hold the NEW key. Both skip the
- *     server PIN check, so had they kept the old key past a kill, they would open the MLS state (not
- *     yet re-sealed) and run a session over stores already half moved - silently. With the new key,
- *     every way in after a kill finds an MLS state it cannot open, and is sent to the recovery. The
- *     vault half runs inside the other tabs' hold ({@link holdOtherRealmsForKeyChange}): every OTHER
- *     tab of this account has been told and has let go of the databases, and a second change started
- *     from another tab is ordered behind this one and stops before its vault step.
+ *  2. THE UNATTENDED UNLOCK MOVES FIRST: the old key leaves the vault, then the keystore and the
+ *     vault take the NEW key. Both skip the server PIN check, so had they kept the old key past a
+ *     kill or a refusal, they would open the MLS state (not yet re-sealed) and run a session over
+ *     stores already half moved - silently. With the new key, or none, every way in after a kill
+ *     finds an MLS state it cannot open, or asks for the PIN, and is sent to the recovery. The vault
+ *     save runs inside the other tabs' hold ({@link holdOtherRealmsForKeyChange}): every OTHER tab of
+ *     this account has been told and has let go of the databases, and a second change started from
+ *     another tab is ordered behind this one and stops before its vault save.
  *  3. THE STORES, under the storage gate: this realm's storage calls wait while they move, and the
  *     retired key is forwarded to the new one afterwards ({@link holdStorageForKeyChange}).
  *  4. The session adopts the new key.
@@ -343,12 +361,12 @@ export interface PinChangeOptions {
  *     reverse order a kill left it under the new key and the remaining rows under a key no path would
  *     ever ask for again.
  *
- * A THROW after the keystore is a {@link KeyChangeInterruptedError} with its stage; from the stores
+ * A THROW from the vault retirement on is a {@link KeyChangeInterruptedError} with its stage; from the stores
  * on, the caller must end the session into the recovery rather than run on the old key.
  *
  * @throws {DeviceKeyMismatchError} in a recovery whose old key does not open the MLS state.
  * @throws {LocalStateUnopenableError} in a recovery whose MLS state no PIN can open.
- * @throws {KeyChangeInterruptedError} on any failure after the keystore step.
+ * @throws {KeyChangeInterruptedError} on any failure from the vault retirement on.
  * @throws {KeyChangeSupersededError} when another tab changed the key first; nothing here moved
  *         past the keystore.
  */
@@ -375,20 +393,28 @@ export async function performPinChange(
     log('[DEVICEKEY_CHANGE] The old key opens the local MLS state.');
   }
 
-  const keystoreMoved = await mls.pointUnattendedUnlockAt(newDeviceKeyB64);
-
   // FROM HERE A THROW IS TYPED, with the stage it stopped at: from the stores on, data has moved and
   // the session must not run on the old key; before them nothing on this device has (see the error).
+  // The keystore step is inside: on the change path the server verifier is ALREADY rotated, so an
+  // untyped refusal here told the user to retry a change the server had already taken (iPhone 12
+  // bench, 2026-10-15: the keystore refused every write on a phone with no passcode).
+  // THE OLD KEY LEAVES THE VAULT BEFORE THE KEYSTORE IS ASKED ANYTHING: whichever later step fails,
+  // no unattended unlock is left on the old key (see retireOldDeviceKeyFromVault).
   let stage: KeyChangeInterruptedError['stage'] = 'vault';
+  let keystoreMoved = false;
   try {
+    await retireOldDeviceKeyFromVault(userId, oldDeviceKeyB64, log);
+    stage = 'keystore';
+    keystoreMoved = await mls.pointUnattendedUnlockAt(newDeviceKeyB64);
+    stage = 'vault';
     const storage = await getStorage(userId);
-    // EVERYTHING FROM THE VAULT ON RUNS WHILE THE OTHER TABS ARE HELD: two changes started from two
-    // tabs are ordered by the exclusive lock, and the second stops before touching the vault.
+    // EVERYTHING FROM HERE RUNS WHILE THE OTHER TABS ARE HELD: two changes started from two tabs are
+    // ordered by the exclusive lock, and the second stops before saving its key to the vault.
     await holdOtherRealmsForKeyChange(
       userId,
       async () => {
         reportProgress(onProgress, { percent: 8, stage: 'mls' });
-        await applyNewDeviceKeyLocally(userId, oldDeviceKeyB64, newDeviceKeyB64, log);
+        await applyNewDeviceKeyLocally(userId, newDeviceKeyB64, log);
 
         stage = 'stores';
         await holdStorageForKeyChange(storage, oldDeviceKeyB64, newDeviceKeyB64, async (store) => {

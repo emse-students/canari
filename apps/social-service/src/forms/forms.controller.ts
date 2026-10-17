@@ -5,6 +5,7 @@ import {
   Delete,
   Get,
   Headers,
+  HttpCode,
   Param,
   ParseUUIDPipe,
   Patch,
@@ -18,6 +19,11 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Response } from 'express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { Throttle } from '@nestjs/throttler';
+import { UserResourceThrottlerGuard } from '../common/guards/user-resource-throttler.guard';
+
+/** `confirm-payment` calls allowed per user and submission per minute (the return poll is 10). */
+export const CONFIRM_PAYMENT_PER_MINUTE = 12;
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import { FormsService } from './forms.service';
 import { parseExportLabels } from './export-labels';
@@ -279,6 +285,29 @@ export class FormsController {
   // `stripe.webhooks.constructEvent` has verified the signature; a form manager takes cash through
   // `POST :id/submissions/:submissionId/validate-cash`, which is scoped to the form they manage;
   // and a free submission is written `'free'` at submit time.
+
+  /**
+   * Asks the provider whether a pending online answer was paid and records it if so, then answers
+   * the submission like the GET above. Requires the submitter or a form manager. NOT a `mark-paid`
+   * (see above): the caller names only the submission, and the payment is Lydia's answer about the
+   * request the row itself stored (`FormsService.confirmPayment`).
+   *
+   * Each call may spend the platform's Lydia tokens on a `request/state`, so it is throttled per
+   * user AND submission: `CONFIRM_PAYMENT_PER_MINUTE` covers the return page's poll (10 reads, 3 s
+   * apart) and nothing like a loop. A 429 stops the page's poll on "awaiting confirmation".
+   */
+  @UseGuards(NginxAuthGuard, UserResourceThrottlerGuard)
+  @Throttle({ default: { limit: CONFIRM_PAYMENT_PER_MINUTE, ttl: 60_000 } })
+  @Post('submissions/:submissionId/confirm-payment')
+  @HttpCode(200)
+  async confirmPayment(
+    @Param('submissionId', ParseUUIDPipe) submissionId: string,
+    @Headers('x-user-id') xUserId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    await this.service.assertSubmissionAccess(submissionId, xUserId, ga === 'true');
+    return this.service.confirmPayment(submissionId);
+  }
 
   /** Cancels a pending submission. Requires the submitter or a form manager. */
   @UseGuards(NginxAuthGuard)

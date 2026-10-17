@@ -10,7 +10,12 @@ import type {
   LocalStateOpenResult,
   StateLoadFailure,
 } from '$lib/mls-client';
-import { MlsDeliveryApi, isKeystoreKeyUnavailable, resolveMlsPublicUrls } from '$lib/mls-client';
+import {
+  LocalStateNotReadyError,
+  MlsDeliveryApi,
+  isKeystoreKeyUnavailable,
+  resolveMlsPublicUrls,
+} from '$lib/mls-client';
 import {
   type MlsDecryptSession,
   createSequentialDecryptSession,
@@ -100,6 +105,7 @@ import {
 import { getToken } from '$lib/stores/auth';
 import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
+import { isTransportFailure } from '$lib/utils/transportFailure';
 import type {
   DistributionFrameHandler,
   DistributionGroupInfoTransport,
@@ -688,8 +694,42 @@ export abstract class BaseMlsService implements IMlsService {
     // The state in memory is the one sealed under this key, so this key is what a checkpoint
     // taken before the re-seal must use.
     this.currentDeviceKeyB64 = deviceKeyB64;
-    this.initPromise = Promise.resolve();
+    // A state opened is not a fresh start, whatever an earlier attempt on this client decided.
+    this.freshStart = false;
+    // THE SAME TWO STEPS `init` RUNS AFTER ITS LOAD, in the promise a concurrent `init` returns: set
+    // BEFORE they are awaited, so no second `initialiser_mls` can start while they run, and the
+    // ratchet burn happens before anything can send - a recovery opens a snapshot that may sit
+    // behind sends the app made but never checkpointed (killed after them, PIN changed elsewhere),
+    // and without the burn the next send re-used a spent generation.
+    const ready = this.afterStateOpened().then(() => this.reconcileSendRatchets());
+    this.initPromise = ready;
+    try {
+      await ready;
+    } catch (e) {
+      this.initPromise = null;
+      console.error('[MLS] openLocalStateWithKey: the opened state could not be made ready:', e);
+      throw e instanceof LocalStateNotReadyError ? e : new LocalStateNotReadyError(e);
+    }
     return { opened: true };
+  }
+
+  /**
+   * What a platform owes once a state has been opened OUTSIDE {@link init} - the recovery's
+   * {@link openLocalStateWithKey}, which marks the client initialised so the login that follows
+   * skips `_initImpl`. Anything `_initImpl` derives from the opened state must be derived here too,
+   * or that login runs on caches describing no state at all. No-op where nothing is cached. A
+   * failure THROWS: the open is refused rather than run on a cache known to be wrong.
+   */
+  protected async afterStateOpened(): Promise<void> {}
+
+  /**
+   * Whether {@link getLocalGroups} is known to describe the loaded state. A destructive repair that
+   * reads it as "this group is not held" (a key-group row deleted, a conversation demoted) must ask
+   * this first: an empty cache that was never filled says nothing about what the state holds.
+   * True here; Tauri, whose cache is filled by a listing that can fail, answers from that listing.
+   */
+  heldGroupsKnown(): boolean {
+    return true;
   }
 
   /**
@@ -2016,12 +2056,20 @@ export abstract class BaseMlsService implements IMlsService {
         // here means this device's offline backlog is still on the server and nothing here will go
         // back for it - the next reconnect's pull is what covers it. Read as "fetch failed", the line
         // sat in production logs beside a queue that had not shrunk in weeks and nobody connected the
-        // two. `pullPendingMessagesJson` has already halved its page size down to a single row before
-        // giving up, so this is a genuine transport failure rather than an answer too big to arrive.
-        console.error(
-          `[PENDING] Pending fetch failed after ${fetched} message(s) - the backlog for ${this.userId}:${this.deviceId} is UNDRAINED and stays queued until the next reconnect:`,
-          e
-        );
+        // two. `pullPendingMessagesJson` halves its page only against a page that did not ARRIVE, and
+        // gives up at once on a transport failure (nobody answered: no smaller page can help), which
+        // is the expected end of an offline start - one line, by its class, no stack.
+        const where = `the backlog for ${this.userId}:${this.deviceId} is UNDRAINED and stays queued until the next reconnect`;
+        if (isTransportFailure(e)) {
+          console.warn(
+            `[PENDING] Pending fetch got no answer after ${fetched} message(s) - ${where}: ${String(e)}`
+          );
+        } else {
+          console.error(
+            `[PENDING] Pending fetch failed after ${fetched} message(s) - ${where}:`,
+            e
+          );
+        }
       }
     })();
     // CHAINED, NEVER OVERWRITTEN. Two pulls can overlap (a reconnect and the restore's seeded-rows
@@ -3413,6 +3461,17 @@ export abstract class BaseMlsService implements IMlsService {
       // exact defect this method exists to close, so it is never a quiet no-op.
       console.error(
         '[GRAINE] key-group registry not restored - no store wired; every key-group backlog is refused until its community loads'
+      );
+      return;
+    }
+    // A DELETION GATED ON KNOWING: below, a row whose group is not in `getLocalGroups()` is deleted
+    // for good. An empty cache that was never filled (the listing failed, or - before 2026-10-16 -
+    // the login after a PIN recovery, which skipped it) made every row look stale: iPhone 12,
+    // `[GRAINE] ... 0 group(s), 1 row(s) for groups no longer held deleted`, and the community's key
+    // group failed after it. Without the listing, nothing is restored and nothing is deleted.
+    if (!this.heldGroupsKnown()) {
+      console.error(
+        '[GRAINE] key-group registry not restored - the held groups were never listed, so no row can be judged stale; nothing deleted'
       );
       return;
     }

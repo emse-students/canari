@@ -2,11 +2,10 @@
   import PostMedia from './PostMedia.svelte';
   import { isReel, type PostEntity, type PostMediaRef } from '$lib/posts/api';
   import ReelViewer from '$lib/components/reels/ReelViewer.svelte';
-  import SvelteMarkdown from '@humanspeak/svelte-markdown';
   import LinkPreviewCard from '../messages/LinkPreviewCard.svelte';
-  import { POST_MARKDOWN_RENDERERS as renderers } from './postMarkdownRenderers';
+  import PostMarkdown from './PostMarkdown.svelte';
   import { extractFirstUrl } from '$lib/utils/chat/messageDisplay';
-  import { preprocessPostMarkdown } from '$lib/utils/posts/postMarkdown';
+  import { watchClampOverflow } from '$lib/utils/posts/clampOverflow';
   import { ensureHljsTheme } from '$lib/utils/posts/hljsTheme';
   import { onMount } from 'svelte';
   import MediaLightbox from '$lib/components/shared/MediaLightbox.svelte';
@@ -53,14 +52,7 @@
     // Measured only WHILE clamped: expanded, the box shows everything and would report no overflow,
     // which would hide the "Voir moins" that has to fold it back.
     if (!markdownEl || !clamped) return;
-    const el = markdownEl;
-    const measure = () => {
-      overflows = el.scrollHeight > el.clientHeight + 1;
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(el);
-    return () => observer.disconnect();
+    return watchClampOverflow(markdownEl, (value) => (overflows = value));
   });
 
   // Gallery lightbox (only for image/video media)
@@ -106,7 +98,6 @@
     lightboxIndex = (lightboxIndex + 1) % lightboxMedia.length;
   }
 
-  const displayedMarkdown = $derived(preprocessPostMarkdown(post.markdown ?? ''));
   const firstLink = $derived(post.markdown ? extractFirstUrl(post.markdown) : null);
 
   /**
@@ -143,18 +134,11 @@
 {#if post.markdown}
   <div class="px-5 pb-3">
     <div class="text-text-main text-sm leading-relaxed wrap-break-word">
-      <div
-        bind:this={markdownEl}
-        class="post-markdown max-w-none opacity-90 {clamped
-          ? 'line-clamp-8'
-          : ''} [&_br]:block [&_h1]:mt-1 [&_h1]:mb-0.5 [&_h1]:text-xl [&_h1]:leading-tight [&_h1]:font-bold [&_h1]:tracking-tight [&_h1+_p]:mt-2 [&_h2]:mt-1 [&_h2]:mb-0.5 [&_h2]:text-lg [&_h2]:leading-snug [&_h2]:font-bold [&_h2+_p]:mt-2 [&_h3]:mt-0.5 [&_h3]:mb-0 [&_h3]:text-base [&_h3]:leading-snug [&_h3]:font-bold [&_h3+_p]:mt-1.5 [&_p+p]:mt-3 [&_p:first-child]:mt-0"
-      >
-        <SvelteMarkdown
-          source={displayedMarkdown}
-          {renderers}
-          options={{ gfm: true, breaks: true }}
-        />
-      </div>
+      <PostMarkdown
+        markdown={post.markdown}
+        bind:element={markdownEl}
+        class="opacity-90 {clamped ? 'line-clamp-8' : ''}"
+      />
       {#if !fullContent && (overflows || expanded)}
         <button
           type="button"
