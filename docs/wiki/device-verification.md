@@ -1619,6 +1619,37 @@ in ~2 min: `[API] getToken failed ... proceeding without auth`, the `[A] refresh
 arrive`. Logcat adds 24 `AppOps: attributionTag  not declared in manifest of fr.emse.canari`. The
 Mi 9T is LEFT on the vault path ("Rester connecte" ticked) - mind the sign-out P1 candidate above.
 
+## The iPhone 12 readings of v1.2.9-alpha.5 (2026-10-17)
+
+TestFlight build `1.2.9 (100200905)`, account `canari-test-gamma`, dev estate, driven over WDA
+(`tools/ios-device`), native lines from the device syslog (`pymobiledevice3 syslog live -pn
+Canari`). The PIN gate was unlocked with the bench PIN. Evidence:
+`F:/Programmation/canari-harness/ios-bench/r1017-a129a5/` (frames, `syslog-canari.txt`). Frames
+showing a face, a personal photo library or the iOS password-autofill sheet were deleted.
+
+**How the build arrived.** Automatic updates did their job: TestFlight listed `1.2.9 (100200905)`
+with "Ouvrir", so the binary was installed. **But the process still running was the alpha.4 one.**
+Settings > A propos read "Version de Canari 1.2.9-alpha.4" and "Une version plus recente
+(1.2.9-alpha.5) est disponible". After a `terminate` and a relaunch it read "1.2.9-alpha.5" and
+"Vous utilisez la derniere version". The enrolment survived (PIN gate). So, on a bench where WDA
+keeps a session open, a background update does not take effect until the next cold start. Read
+the version before trusting any row.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1a. "+" menu open, one edge swipe (#1953) | **`PASS`, 7 of 7** | DM 4 of 4, salon "general" 3 of 3. After the swipe the menu is closed, the conversation is still open ("Retour au menu" and the composer are present) and the menu entries are gone. The control is also `PASS`: with nothing open, one swipe leaves the DM for the list, and leaves the salon for the community's salon list. Each menu open logs one native `Foundation` line (the hold, `<private>` in syslog) and each dismissal logs a second one |
+| 1b. The keyboard stays up when the "+" menu opens | **`FAIL`, 8 of 8** | With the composer focused and the keyboard up (`[CanariIOS] keyboard overlap=301 -> webview height 543`), opening the "+" menu drops the keyboard every time: `keyboard overlap=0 -> webview height 844`, logged 1.7 to 3.5 ms BEFORE the hold's `NSLog` (`12-plus.png` against `11-kbd.png`). `ButtonComponent.swift` sets `webView.isUserInteractionEnabled` and THEN logs. The likely cause is that taking the WebView out of touch resigns its first responder. This is not proven: the menu presentation was not separated from the hold. No alpha.4 baseline was taken for this |
+| 1c. Photos and Camera from the "+" | **`PASS`** | "Phototheque" opens the system picker (Photos / Collections, "Acces prive aux photos"), and "Annuler" returns to the conversation. "Ouvrir la camera" opens the in-app camera ("Fermer la camera", "Changer de camera", the "Photo (toucher) ou video (maintenir)" shutter), and "Fermer la camera" returns to the conversation. The keyboard did not come back after either one, because it was already gone (1b) |
+| 2. PIN change, confirm field with the keyboard up (#1952) | **`PASS`, with a limit** | Security > Changer > "Changer mon PIN". With "PIN actuel" focused, the confirm field (y 459-514 pt) is under the sticky "Changer mon PIN" button (y 435-483). Focusing "Nouveau PIN" scrolls the form, and the confirm field moves to y 361-416, clear of the button. A tap on it focuses it with the keyboard still up: WDA's active element is "Confirmer le nouveau PIN" at y 348-403, 32 pt above the button. The limit: from the FIRST field, the confirm field is not visible until the second one is focused. The keyboard is alphabetic on these fields. Nothing was submitted, and one stray letter typed into "PIN actuel" was discarded with the modal |
+| 3. Payment return announcer (#1952) | **`PASS` (structure), announcement `NOT-OBSERVED`** | `fr.emse.canari://open?url=https://canari.emse.fr/forms/success` with no `submission_id` lands directly on "Paiement introuvable". The AX tree has ONE status region ("etat de l'application", 16,580 358x93) that holds the heading and its sentence, with "Retour aux formulaires" outside it. VoiceOver was not turned on, so the actual announcement was not heard |
+| 4. Reel author link (#1952) | **`PASS` on the first reel, `FAIL` on the next ones** | Reel 1: ONE link "Voir le profil de Canari Test Gamma" at 16,628 176x45 pt (height at least 44), covering the avatar and name drawn in the frame, with "9 h" outside it. A tap opens Mon profil. **Reels 2 and 3: the same link reports 16,-206 161x879 pt and 16,-206 250x1723 pt**, stable across four reads 1.5 s apart, and again after swiping back. A tap at (100,400), inside that reported rectangle, does NOT navigate. So only the accessibility frame is wrong, not the hit area, and VoiceOver would outline a box taller than the screen. Reel 2 plays ("Pause"). Also seen: on a feed post the author avatar link is 20x22 / 22x22 pt next to a separate name link of 136-161x23 pt, both below 44 pt |
+| 5. Feed tabs and the CanaReels entry | **`PASS`** | Associations / Suivis / Tout select one at a time (switch values 1/0/0, 0/1/0, 0/0/1). Suivis shows "Aucun post" and Tout shows the bench reel post. At the default text size all three tabs and the CanaReels button (330,211 44x44) fit in the row. The CanaReels button is exposed as `Other`, not `Button`. The 2x-text centring (`feedTabScroll.ts`) was not read: Dynamic Type was not changed |
+| 6. Sign-out, then sign-in again | **`PASS`** | On the phone the desktop `Navbar` is not rendered (`hidden md:block`), so this was the phone's sign-out: tab 4 > "Deconnexion". iOS asks "<< Canari >> souhaite utiliser << miconnect.emse.fr >> pour se connecter", then "Continuer" lands on `/login` in about 5 s. "Connexion externe (service-account)" then shows the same iOS prompt and an EMPTY MiConnect form that asks for the username, so the MiConnect session did end. No terms stage was shown. With username + password, the app lands on the feed in about 6 s. Discussions lists the DM and the DM decrypts, including a video Delta sent today. No PIN was asked after the sign-in. A cold relaunch then asks for the PIN, and the bench PIN opens the feed with no "n'ont pas pu etre ouverts" |
+| Nothing fatal | **`PASS`** | 366k syslog lines: 0 `crash`, `fatal`, `EXC_` or `Terminating app` |
+
+**Not read:** the hold's own log lines (`NSLog` arrives as `<private>` in the syslog of a TestFlight
+build), the in-app log (it cannot be pulled off the TestFlight container), and VoiceOver.
+
 ## Traps that outlived the work that found them
 
 Kept because each one costs a full device pass to rediscover.
