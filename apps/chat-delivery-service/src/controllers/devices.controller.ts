@@ -186,7 +186,8 @@ export class DevicesController {
         // AND THERE IS NO "UNKNOWN" ARM LEFT, which is what this used to have: it read
         // `notAfter IS NULL OR notAfter > now()`, on the ground that a NULL was a pre-024 row and
         // meant "not known to be expired". Migration 024 backfilled those, and 577 fresh NULLs were
-        // back within two days - old clients publish bare base64 with no date. The bound below is
+        // back within two days - clients below 0.18.10 published bare base64 with no date (a shape
+        // refused since `minClientVersion` 1.2.7; the NULLs they wrote remain). The bound below is
         // the same arithmetic the backfill proved exact for THIS table, whose rows are inserted once
         // and never updated, so every row now answers the question whether or not a client spoke.
         .andWhere(
@@ -446,23 +447,21 @@ export class DevicesController {
       throw new BadRequestException('keyPackages must not exceed 200 items');
     }
 
-    // A UNION FOR EXACTLY ONE RELEASE, and the bare string is the OLD half. A client from before
-    // 2026-09-16 sends `["base64", ...]` and cannot be made to send anything else; one from after
-    // sends `[{ keyPackage, notAfter }, ...]` because the server did not read the lifetime out of the
-    // package and so could not tell an elapsed one from a fresh one. The old spelling stores a NULL, which the
-    // resolver reads as "not known to be expired" - no device is locked out by a fact nobody has.
-    // The removal date is on `docs/wiki/legacy-compatibility.md`.
+    // ONE SHAPE: `[{ keyPackage, notAfter }, ...]`, because the server does not read the lifetime
+    // out of the package and so cannot tell an elapsed one from a fresh one. The bare
+    // `["base64", ...]` of clients before 0.18.10 is refused since `minClientVersion` 1.2.7.
     const parsed = body.keyPackages.map((entry) => {
-      const raw: unknown =
-        typeof entry === 'object' && entry !== null ? entry : { keyPackage: entry };
-      const { keyPackage, notAfter } = raw as { keyPackage?: unknown; notAfter?: unknown };
+      if (typeof entry !== 'object' || entry === null) {
+        throw new BadRequestException('Each keyPackages entry must be { keyPackage, notAfter }');
+      }
+      const { keyPackage, notAfter } = entry as { keyPackage?: unknown; notAfter?: unknown };
       if (typeof keyPackage !== 'string' || keyPackage.length === 0 || keyPackage.length > 16384) {
         throw new BadRequestException('Each keyPackage must be a non-empty base64 string');
       }
       return { keyPackage, notAfter: sanitizeOptionalNotAfter(notAfter) };
     });
 
-    // AND AN OLD CLIENT'S SILENCE IS NOT A REASON TO STORE A NULL, which is what migration 024
+    // AND AN ENTRY WITH NO READABLE DATE IS NOT A REASON TO STORE A NULL, which is what migration 024
     // already proved: for THIS table `createdAt + 84 days` reconstructs the lifetime exactly, since
     // rows are inserted once and never updated, and that is how the migration backfilled every row
     // that predated it. Leaving the column NULL on new inserts meant the backfill drained and then
@@ -488,13 +487,14 @@ export class DevicesController {
       })
     );
     await this.oneTimeKeyPackageRepo.save(rows);
-    // THE UNDATED COUNT IS WHAT SAYS THE SHIM IS STILL EARNING ITS KEEP. It is the only signal that
-    // separates "old clients are still out there" from "the union can go", and a removal date with
-    // no measurement behind it is a guess.
+    // `undated=N` ABOVE ZERO IS A DEFECT SIGNAL, not a fleet measurement: every admitted client sends
+    // `notAfter` with each entry, so a current client sent an object without a readable date. The
+    // rows are still stored (dated from the insert above), and the line says which device to find.
     const undated = parsed.filter((kp) => kp.notAfter === null).length;
-    this.logger.log(
-      `[REGISTER_PREKEYS] user=${userId} device=${deviceId} count=${rows.length} undated=${undated}`
-    );
+    const line = `[REGISTER_PREKEYS] user=${userId} device=${deviceId} count=${rows.length} undated=${undated}`;
+    if (undated > 0)
+      this.logger.warn(`${line} - an admitted client sent entries with no readable notAfter`);
+    else this.logger.log(line);
     return { status: 'registered', count: rows.length };
   }
 
@@ -575,6 +575,11 @@ export class DevicesController {
       // WHICH OF THE THREE TRAVELS IN THE BODY, because the caller does different things with them
       // and could not tell them apart. `expired` in particular is temporary and says so: the
       // inviter used to log it as "deregistered" and delete the pending membership on it.
+      //
+      // A NEW REASON MUST SHIP IN A CLIENT FLOOR FIRST: a client reads a reason it does not know as
+      // `unrecognized` and KEEPS the invitation (retrying each sweep), so a reason added here only
+      // retires anything once `minClientVersion` admits only builds that know it. Every 404 here
+      // carries a reason; a 404 without one is read by the client as `unanswered` (not us).
       throw new NotFoundException({
         statusCode: 404,
         message: `No key package for device ${safeUserId}:${safeDeviceId}`,

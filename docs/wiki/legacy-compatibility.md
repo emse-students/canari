@@ -72,8 +72,6 @@ REST: those rows need a count, then a migration.
 | Shim (entry below) | Condition | Met at floor 1.2.7? | Data at rest | Removal size | Disposition |
 | --- | --- | --- | --- | --- | --- |
 | `paymentMethod: 'stripe'` STORED | rows written before 2026-10-08 | no - data | `purchase_records` and `submissions` | type + 3 client arms, after a migration | owed: count + migration (user) |
-| Prekeys as bare base64 strings | floor >= `0.18.10` | YES (`v0.18.10`) | undated rows stay covered by their `NULL` arms | ~-10 lines, server | removed with the floor |
-| `/key-package` 404 with no `reason` | every estate past the 2026-09-16 server (not a client floor) | YES (since `v0.18.10` deployed) | none | ~-30 lines, client | removed: a 404 with no reason is `unanswered`, a reason this build does not know is the typed refusal `unrecognized` |
 | Salon push held for a sender with no `seedFrame` | floor >= first release sending `seedFrame` | version YES (`v0.18.28`); proof NO | none | server refusal + Kotlin hold registry, native | NOT removed: nothing has measured that EVERY admitted send carries the frame (the server never stores it), so a required field could refuse an honest send. Owed: a log of frame-less non-silent sends, read for a week, then a native PR |
 | Server `legacyTitle`/`legacyBody` on social/form pushes | clients reading `contentKey` (2026-08-19) | version YES (`v0.14.1`) | none | ~-50 lines server + Kotlin + Swift arms | NOT removed: dropping them leaves an iOS alert EMPTY whenever the NSE does not run, a visible behaviour change, not a removal. Needs a decision and an iPhone reading |
 | Reaction push keeps wire type `social` + a generic `body` (`notify-reaction`; had no entry here) | clients knowing `reaction: 'true'` (2026-08-15) | version YES (`v0.14.0`) | none | server + Kotlin dispatch | NOT removed, same iOS-alert question as the row above |
@@ -396,52 +394,6 @@ replay, and delete this entry.
 before the change still duplicates once per replay and once per bundle. **Nothing repairs the rows
 already on disk**; see [backlog](backlog.md).
 
-
-### No date yet - a `/key-package` 404 with no `reason` in its body
-
-**Site:** `mlsDeliveryApi.ts`, `fetchDeviceKeyPackage` - the `'unspecified'` arm of the reason parse,
-and the `refusalIsTemporary` call sites that read it.
-**Shim:** since 2026-09-16 the delivery service puts `reason: 'revoked' | 'unregistered' | 'expired'`
-in the body of the 404, because the three are three different facts and the caller acts differently
-on each. A server that predates the field sends none, and `'unspecified'` is what the client calls
-that: it takes the branch the code took before the reason existed - retire the pending membership,
-promise nothing about a return - which is the only reading that cannot be wrong.
-**Replacement:** the field itself. Nothing else is needed.
-**What settles the date, and why there is none yet:** this is a shim against an old SERVER, not an
-old client, so `minClientVersion` says nothing about it. It is dead the moment every estate runs a
-build at or above the one carrying the field, and the two estates are deployed from this repository -
-so the honest condition is "after the next production deploy", not a date. Written here rather than
-left implicit because a `'unspecified'` that quietly becomes unreachable is exactly the branch a
-later reader spends an afternoon on.
-**On removal:** narrow `DeviceKeyPackageRefusal` to the server's three, delete the `'unspecified'`
-arm and its test, and delete this entry.
-**Cost of keeping it:** none beyond one branch. It never fires against a current server, and against
-an old one it preserves behaviour rather than inventing any.
-
----
-
-### 2026-12-16 - one-time prekeys published as a bare base64 string
-
-**Site:** `devices.controller.ts`, the `parsed` map in `registerDevicePrekeys` - the
-`typeof entry === 'object' ? entry : { keyPackage: entry }` line and nothing else.
-**Shim:** a client below 0.18.10 sends `keyPackages: ["base64", ...]`; one at or above it sends
-`[{ keyPackage, notAfter }, ...]`. The old spelling stores a NULL `notAfter`, which every read in
-this service treats as "not known to be expired" rather than "assume the worst" - so an old client's
-pool keeps working exactly as it did, and no device is locked out by a fact nobody has.
-**Replacement:** the expiry lives inside the serialized MLS KeyPackage and only the client's WASM
-crate can parse one. Until 2026-09-16 both tables held an opaque string, the server served elapsed
-packages, and the joiner refused them with `LifetimeError(Expired)` for ever - see
-[mls](protocols/mls-graine-state-machine.md) and migration `024_key_package_not_after.sql`.
-**What settles the date, and it is a measurement rather than a guess:** every batch logs
-`[REGISTER_PREKEYS] ... undated=N`, and N is the count of rows that arrived with no date. The shim
-goes when that count is zero over a week, which the retention of a stale install makes 2026-12-16 at
-the latest; `minClientVersion` reaching 0.18.10 retires it outright and sooner.
-**On removal:** type `keyPackages` as `{ keyPackage: string; notAfter?: string }[]`, delete the
-object/string branch, and delete this entry. The `notAfter IS NULL` arms in the resolver, the count
-and the reclaim STAY - they cover the rows migration 024 could not date, which outlive the shim.
-**Cost of keeping it:** a device on an old client publishes a pool the reclaim can never sweep and
-the resolver can never skip, so it keeps exactly the defect this change closes until it updates.
-That is the same trade the NULL makes everywhere here, and it is why the count above is logged.
 
 ---
 
