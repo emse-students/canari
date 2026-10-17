@@ -750,18 +750,22 @@ controller's `── Public ──` banner and carry **no guard**. nginx puts `/
 `{ ...asso, memberCount, parentName }` - which spread `documentVaultKey`, the hex 32-byte master
 key every document CEK is derived from, and `notesCiphertext`.
 
-`toSafeAssociation` (`associations/association.projection.ts`) is now the single seam that nulls
+`toSafeAssociation` (`associations/association.projection.ts`) became the single seam that nulled
 both, applied at the three controller reads. Third instance of one rule, after `Channel.masterSecret`
 (since deleted outright) and `AssociationProduct.webhookSecret`: **an entity that carries a secret
 needs one projection, and every read has to pass through it.**
 
 The seam is the controller, not the service, on purpose: `findById` is also used by writers
-(`update`), and stripping in the service would hand them a row whose key column reads null. It
-nulls rather than deletes, so responses keep the shape their TypeScript clients expect.
+(`update`, `resolvePaymentTarget`), and stripping in the service would hand them a row whose key
+column reads null. The three reads are behind `NginxAuthGuard` since 2026-08-05.
 
-*Still open, deliberately:* the three routes remain unguarded, so `stripeAccountId` and the rest of
-the row are readable without a session. Adding `NginxAuthGuard` there is the right fix but changes
-access semantics for routes other repos may consume, so it is a separate decision.
+**A denylist was the wrong shape, and it leaked the next secret (2026-10-15).** It named two columns,
+so `lydiaAccountId` - the Lydia `vendor_token`, all `request/cancel` needs besides a sequential
+request id - reached every signed-in member, and `me/list`, `POST /`, `PATCH :id` and the logo
+routes answered the raw row, vault key included. `toAssociationView` replaced it: an ALLOWLIST on
+all eight routes that answer a row, so a column added later is private until someone lists it. The
+payout account has its own read, `GET :id/payout-account` (`canManagePayoutAccount`). Story and
+test: [forms](../frontend/modules/forms.md#what-a-client-reads-of-a-submission-is-an-allowlist-2026-10-15).
 
 ### The document vault's markers are parsed in two languages, and they disagreed for seven weeks
 
@@ -1247,13 +1251,15 @@ Those six are the complete set: no other table in the database carries a `worksp
 was a seventh until the Graine rework dropped the table. Attached media are left to the retention
 sweep, which collects them once nothing accesses them again.
 
-**Account deletion is the one path that cannot refuse.** `internal.controller` deletes
-`channel_members` rows by `userId` directly, so it bypasses every guard above, and the account is
-going regardless. It therefore captures the affected workspace ids BEFORE deleting and calls
-`repairWorkspacesAfterAccountDeletion` after: a community left with nobody is hard-deleted, and one
-left with members but no admin promotes its highest-priority survivor, ties broken by the lowest
-user id. Deterministic, per-workspace `try` so one failure never strands the others, and logged at
-`warn` because an automatic promotion is something a human should be able to find afterwards.
+**Account deletion is the one path that cannot refuse.** It bypasses every guard above, because
+the account is going regardless. `ChannelService.removeAccountFromWorkspaces` takes each community
+in turn: cut off its private channels, repair it as if the account were already gone - a community
+left with nobody is hard-deleted, one left with members but no admin promotes its highest-priority
+survivor, ties broken by the lowest user id - and only THEN delete the membership row. A failed
+repair keeps that row and the call throws, so the erasure queue's retry finds the community again
+([account-erasure](../account-erasure.md)); a swallowed failure used to strand an adminless
+community for ever. Logged at `warn` because an automatic promotion is something a human should be
+able to find afterwards.
 
 ### One invite link, bounded (2026-08-18)
 

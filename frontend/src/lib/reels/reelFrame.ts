@@ -85,6 +85,16 @@ export function containFrame(stage: StageSize, ratio: number): FrameBox {
 }
 
 /**
+ * Whether the frame's bottom edge is the stage's (to the pixel): only then does it sit under the
+ * home indicator, so only then does what is drawn at its bottom owe the bottom safe-area inset. A
+ * letterboxed (landscape) frame is centred well above it, and paying the inset there costs a
+ * caption most of its room (review of #1942).
+ */
+export function frameReachesBottom(stage: StageSize, box: FrameBox): boolean {
+  return box.height > 0 && box.top + box.height >= stage.height - 1;
+}
+
+/**
  * Where an overlay's centre (0..1 of the frame) is in the frame's pixels: the ONE mapping the export
  * paints with (`drawDecorations`), and the same share the preview writes as `left`/`top` percentages.
  */

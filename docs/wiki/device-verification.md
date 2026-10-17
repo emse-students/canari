@@ -931,7 +931,7 @@ killed, and confirm the alert arrives: the row proves registration, not delivery
 regression either** - it is the first time the platform has reported anything, and it says the
 ordering was not the only broken link. The candidates left, and the device log that separates them,
 are in [backlog](backlog.md) under the P1; `[CanariPush] APNs token not here yet` versus
-`[CanariPush] FCM token synchronise` names the branch, and reading it needs `idevicesyslog` or a Mac.
+`[CanariPush] FCM token synchronised` names the branch, and reading it needs `idevicesyslog` or a Mac.
 
 **Neither answer arriving means the build did not reach the phone.** Check the version the device
 runs before reading anything into the silence - TestFlight is the beta channel and an ordinary
@@ -1396,6 +1396,71 @@ camera. **Owed one reading each on the Mi 9T and the iPhone 12:**
 - The overlay over the keyboard and over a conversation with a pending draft; a camera refused
   (permission denied) shows the refusal screen with no native fallback.
 
+## The Mi 9T readings of v1.2.9-alpha.5 (2026-10-17)
+
+Build `1.2.9 (100200905)`, the `v1.2.9-alpha.5` release APK (`app-universal-release.apk` by asset
+id, sha256 `96b09481...`), `adb install -r` over alpha.4 (`firstInstallTime` unchanged: enrolment
+kept; Play Protect's "send for a check" prompt answered "Ne pas envoyer"). Dev estate, account
+`fourth` ("Canari Test Delta"), vault path, bench DM with gamma only. Console over CDP. Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1017-a129a5/` (`cons-all.ndjson`, `cons-2.ndjson`, frames).
+#1977 (warm avatar cache) is NOT in this tag.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1. A gallery video in a chat opens 3 times and plays | **`PASS`** | A 9 s gallery video sent in the DM (prepared 13.8 MB -> 3.2 MB, segmented upload). Opened full screen 3 times in a row (tap off the centre "Lire" button), closed with Back each time: each open has a second `<video>` at 436 px, `readyState 4`, playing (`currentTime` 1.26-1.56 s at +1.5 s, 3.45-3.72 s at +3.5 s), no media error; Back returns to `/chat` with the viewer gone. A tap on the centre button plays inline instead (`InlineVideo: manual play`), by design |
+| 2. ReelBackdrop on the camera paints, then repaints once exposure settles | **`PASS`** | `/camera` from the feed swipe: `[reel-backdrop] painted`, then `repainted once the exposure settled (4 reads, 32 frames)` 1.5 s later; after a lens switch `painted` then `(2 reads, 16 frames)` 0.6 s later. The backdrop canvas is 96x168 shown at 436x861, opacity 0.6. In the reel viewer it paints on open and again on the next reel |
+| 3. Feed "Tout" at 200 % text | **`FAIL` (P3)** | `font_scale 2.0` (root 32 px). Tab row fine (a scroller; Tout and the CanaReels icon stay in view), names truncate, `documentElement` does not overflow. **But the comment sort row (Recents / Anciens / Aimes, beside "Afficher les N commentaires") does not wrap: `.page-scroll-wrap` gets `scrollWidth 553` for `clientWidth 436`** (`overflow-x: auto`), so the whole feed can be shifted 117 px sideways; a `scrollIntoView` on "Anciens" did exactly that (`t200-sort.png`). 17 px over already at 150 %, none at 100 % or 85 % |
+| 4. Posts page tabs and the CanaReels entry | **`PASS`** | Associations / Suivis / Tout each set `?feed=` and draw their list (Suivis: the "Aucun post" empty state). The clap icon opens the viewer at the newest reel (`page of 4, 4 loaded`), playing, author and text over the scrim, a swipe goes to the next reel, the close returns to `/posts?feed=all` |
+| 5. Avatars when switching chats | **`NOT-OBSERVED` for photos** | No conversation or member reachable from this account has a photo avatar (0 `<img>` avatars). Initials avatars sampled every frame across DM -> back -> community -> DM (986 frames): 0 frames with an empty avatar |
+
+**Met on the way:**
+
+- **A system text-size change reloads the WebView, and afterwards `[TAURI] Couldn't find callback id
+  2851905282 ...` is logged as a warning every ~15 s** (15 times in 4 min, same id), an async Rust
+  call still answering the page that went away. Noise by the project rule (P3).
+- The video staged in the composer shows a generic file icon and the name `81.mp4`, not a preview
+  or the gallery name; the sent bubble shows a grey video icon until tapped (P3, cosmetic).
+
+## The Mi 9T readings of v1.2.9-alpha.2 (2026-10-15)
+
+Build `1.2.9 (100200902)` (`dumpsys package`), the `v1.2.9-alpha.2` release APK
+(`app-universal-release.apk`, sha256 `b3fcc8e2...`, tag commit `adf0b419d`), installed with
+`adb install -r` over alpha.1 (accepted, account kept), dev estate, account `fourth` ("Canari Test
+Delta"), bench conversations only, vault path. Offline means airplane mode (the phone has no mobile
+data). Same instruments as alpha.1 (`feed.mjs`, console over CDP, logcat for the whole pass), plus
+`reconnect.mjs` (offline cold start, 10 s, airplane mode off, 40 one-second samples) and `frames.mjs`
+(the `mediaTime` of every presented frame of a take). Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1015-a129a2/` (frames `s*.png`, `feed-runs.ndjson`,
+`reconnect-runs.ndjson`, `cons-camera.ndjson`, `frames-video1.json`, `logcat-main.txt`).
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1a. Offline cold start noise (#1921) | **`PASS`** | n=3, same window as alpha.1: **10** warnings each (alpha.1: 68-70). One line per family: `[A] refresh✗transport` once, `[LAYOUT] Profile check did not answer` (twice, P3), revocation check, `push_context` write, `[DISPLAYNAME] profile lookups get no answer` once, `[FEED-STORE] ... drawn, unconfirmed`, `[History] batch ... got no answer`, `[HISTORY] no answer for group ...`, `[PENDING] ... UNDRAINED and stays queued`. No `getToken failed ... proceeding without auth`, no page-size halving, no `[GRAINE] asked <self>`. Feed drawn from the device (20 cards, 2432-2699 ms after `am start`), never "Impossible de charger" |
+| 1b. Back online without a restart (#1922) | **`PASS`** (refresh); media `NOT-OBSERVED` | Airplane off at t=0: `[CONNECTIVITY] browser reports online` +4.2 s (the radio), `server reachable again` +5.7 s, `[POSTS] server reachable again - the first page is asked again`, `200 GET /api/posts` +6.2 s; the status line is gone at the +7.2 s sample. `[PROMOTE] Access token acquired` at the same moment. **No post on the dev feed carries an image or video** (40+ cards of "Tout" and both reels scanned: no media element; the reels' API rows have `images: []`), so "media show after reconnect" could not be seen |
+| 1c. Online cold first paint (#1922) | **`PASS`** for the stored-copy hang; first card **not** under 1 s from launch | n=4: first card **2397-2798 ms after `am start`** (page 1779-2135 ms; alpha.1 2465-2973). The "Fil enregistre..., mise a jour..." line now stays **0.24-0.54 s** (alpha.1: 3.0-3.6 s), and in 1 run of 4 the server answer came first (`stored first page read after the server answered - not drawn`). `[POSTS] stored first page drawn: 20 posts read in 333 ms`; `<- 200 GET /api/posts` ~0.5 s after. The PR's 650-736 ms was a reload of a warm process; from a cold launch, the app's own boot dominates |
+| 2. CanaReels filter (#1920) | **`PASS`** (filter, relaunch); viewer `NOT-OBSERVED` | "Tous les posts" / "CanaReels" row under the header; CanaReels -> `GET /api/posts?...kind=reel` (`[POSTS] feed filter: all -> reel`), 2 reels listed; relaunch keeps "CanaReels" selected (stored page of 2 drawn). The row holds at 200 % text. **The two dev reels have no video** (`kind: reel`, `durationMs: 2219`, `images: []`), so the cards draw text only and a tap opens nothing: open / swipe to the next / return could not be read. Restored to "Tous les posts" |
+| 3a. Chat camera Back (#1925) | **`PASS`** | "+" > "Ouvrir la camera", photo. Back 1: "Abandonner cette capture ?" OVER the review; "La garder" keeps it (`discarding the review: kept`). Back 2: the dialog again; "Abandonner" returns to the live camera. Back 3 closes the camera (`Back closes the camera (chat)`), the conversation stays. Back 4 closes the conversation. Logs `historyOverlay ... Back landed on an entry no overlay above owns - closing the top one` twice (P3, below) |
+| 3b. Post composer video (#1925) | **`PASS`** | 3.5 s hold: `recording video/webm;codecs=h264,opus`, `take: 967955 bytes, video/x-matroska;codecs=avc1,opus`, `canari-video-*.mkv`, `[capture-poster] ... 3128-byte thumbnail attached`; the composer tile shows the frame, not a grey tile. Back closes the composer; reopening shows "Brouillon restaure (texte, options et medias)" with the video. Draft cleared afterwards, nothing published |
+| 3c. Refused camera, fresh permission (#1925) | **`PASS`** | `pm revoke` + flags cleared; chat camera: ONE system dialog, "Ne pas autoriser", no second dialog in the next 6 s (focus stays on Canari). `app away with an open in flight - its answer is awaited`, `refused (denied)`, `back on screen in error - nothing to reopen`. Text: "Canari n'a pas acces a la camera" / "Autorisez la camera pour Canari dans les reglages du telephone, puis reessayez." (no microphone). Permission granted back afterwards |
+| 3d. First frames of a take | **`PASS`** | The 2.975 s take plays 63 frames; first presented `mediaTime`s 0.003, 0.033, 0.100, 0.227...; largest gap 127 ms, spread over the whole take (a dim, still scene at ~21 fps), no hold at the start |
+| 4. PIN change then relaunch (#1898) | **`PASS`** | `Re-sealed under the new device key: messages=734 seeds=11 outbox=0; already new=0, unreadable=0, changed since read=0`, plus `3 stored feed page(s) dropped - the next feed answer rewrites them`, "PIN modifie" in 1.6 s. Kill and relaunch: `Device key restored from PinVault`, no PIN prompt, the DM history decrypted, 0 warnings. Changed back: the same counts |
+| 5. 200 % text and noise | **`PASS`** | `font_scale 2.0`: root 32 px, `/posts`, `/communities`, `/chat`, `/settings/about`, `/dashboard` all `scrollWidth = innerWidth = 436`; the only element past the edge is a truncated author name inside its `overflow: hidden` card. Restored to `0.85`. The whole online pass (1465 console lines): 2 warnings, the refusal itself and one `[TAURI] Couldn't find callback id` after a relaunch. Logcat: no `FATAL`, no ANR |
+
+**Findings:**
+
+- **P3 - back online, the refreshed feed shows 10 cards where the stored page and every cold start
+  show 20** (`reconnect-runs.ndjson`: 20 -> 10 at the refresh, still 10 at +37 s). More may load on
+  scroll; whether the reconnect path asks a smaller first page was not read.
+- **P3 - the dev estate cannot read media in the feed**: no post carries an image or video, and the
+  two reels come back with `images: []`. The reel viewer (#1920) and media after reconnect (#1922)
+  need a reel published on dev, or another bench.
+- **P3 - `[LAYOUT] Profile check did not answer` is logged twice** within 14 ms on an offline start.
+- **P3 - the overlay history stack heals itself on Back**: `Back landed on an entry no overlay above
+  owns - closing the top one`, then `1 left open` after the camera closed and `0 left open` with the
+  conversation. The user-visible order is right; the stack and the history disagree by one entry.
+- Logcat, camera stack (Chromium's, unchanged): 117 `Ignoring status update of camera`, 12
+  `BLUETOOTH_CONNECT permission is missing`, 3 `cr_VideoCapture` lines.
+
 ## The Mi 9T readings of v1.2.9-alpha.1 (2026-10-15)
 
 Build `1.2.9 (100200901)` (`dumpsys package`), the `v1.2.9-alpha.1` release APK
@@ -1550,6 +1615,8 @@ was SIGNED OUT and asked camera and microphone permission again.
 not the one in `test-accounts.json`, and the iPhone's local store is sealed under the old PIN and
 cannot be opened. Either the account PIN goes back or the harness file follows.
 
+
+
 ## The iPhone 12 readings of v1.2.9-alpha.2 (2026-10-16)
 
 TestFlight build `1.2.9` (100200902), About reads "Version de Canari 1.2.9-alpha.2"; account
@@ -1684,6 +1751,37 @@ in ~2 min: `[API] getToken failed ... proceeding without auth`, the `[A] refresh
 `Failed to fetch presence` and `[WS] Gateway connection failed` at ERROR, `[PENDING] page did not
 arrive`. Logcat adds 24 `AppOps: attributionTag  not declared in manifest of fr.emse.canari`. The
 Mi 9T is LEFT on the vault path ("Rester connecte" ticked) - mind the sign-out P1 candidate above.
+
+## The iPhone 12 readings of v1.2.9-alpha.5 (2026-10-17)
+
+TestFlight build `1.2.9 (100200905)`, account `canari-test-gamma`, dev estate, driven over WDA
+(`tools/ios-device`), native lines from the device syslog (`pymobiledevice3 syslog live -pn
+Canari`). The PIN gate was unlocked with the bench PIN. Evidence:
+`F:/Programmation/canari-harness/ios-bench/r1017-a129a5/` (frames, `syslog-canari.txt`). Frames
+showing a face, a personal photo library or the iOS password-autofill sheet were deleted.
+
+**How the build arrived.** Automatic updates did their job: TestFlight listed `1.2.9 (100200905)`
+with "Ouvrir", so the binary was installed. **But the process still running was the alpha.4 one.**
+Settings > A propos read "Version de Canari 1.2.9-alpha.4" and "Une version plus recente
+(1.2.9-alpha.5) est disponible". After a `terminate` and a relaunch it read "1.2.9-alpha.5" and
+"Vous utilisez la derniere version". The enrolment survived (PIN gate). So, on a bench where WDA
+keeps a session open, a background update does not take effect until the next cold start. Read
+the version before trusting any row.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1a. "+" menu open, one edge swipe (#1953) | **`PASS`, 7 of 7** | DM 4 of 4, salon "general" 3 of 3. After the swipe the menu is closed, the conversation is still open ("Retour au menu" and the composer are present) and the menu entries are gone. The control is also `PASS`: with nothing open, one swipe leaves the DM for the list, and leaves the salon for the community's salon list. Each menu open logs one native `Foundation` line (the hold, `<private>` in syslog) and each dismissal logs a second one |
+| 1b. The keyboard stays up when the "+" menu opens | **`FAIL`, 8 of 8** | With the composer focused and the keyboard up (`[CanariIOS] keyboard overlap=301 -> webview height 543`), opening the "+" menu drops the keyboard every time: `keyboard overlap=0 -> webview height 844` (`12-plus.png` against `11-kbd.png`). **The cause is the menu presentation, NOT the #1953 hold.** In each of the 8 rounds, UIKit logs `Override focusSystemState: (ENABLED)` for `_UIVariableGestureContextMenuInteraction` right after the touch-up. The WebView's input session ends 0.6 to 2.7 ms later (`End asserting activeInput modality`, `responder:(nil)`, `End input session`). The hold's `NSLog` comes 58 to 91 ms AFTER that, and the hold can only act from `willDisplayMenuFor`, just before that line. The `overlap=0` line sits 1 to 4 ms before the hold only because the keyboard-frame notification is posted at the end of the same presentation pass. The two rounds without a keyboard show the override and no input-session end. **Accepted as platform behaviour**, decision and reopen conditions in [mobile](frontend/mobile.md#the-conversations-native-glass-chrome) and the backlog P3 "Accepted: the native + menu drops the keyboard" |
+| 1c. Photos and Camera from the "+" | **`PASS`** | "Phototheque" opens the system picker (Photos / Collections, "Acces prive aux photos"), and "Annuler" returns to the conversation. "Ouvrir la camera" opens the in-app camera ("Fermer la camera", "Changer de camera", the "Photo (toucher) ou video (maintenir)" shutter), and "Fermer la camera" returns to the conversation. The keyboard did not come back after either one, because it was already gone (1b) |
+| 2. PIN change, confirm field with the keyboard up (#1952) | **`PASS`, with a limit** | Security > Changer > "Changer mon PIN". With "PIN actuel" focused, the confirm field (y 459-514 pt) is under the sticky "Changer mon PIN" button (y 435-483). Focusing "Nouveau PIN" scrolls the form, and the confirm field moves to y 361-416, clear of the button. A tap on it focuses it with the keyboard still up: WDA's active element is "Confirmer le nouveau PIN" at y 348-403, 32 pt above the button. The limit: from the FIRST field, the confirm field is not visible until the second one is focused. The keyboard is alphabetic on these fields. Nothing was submitted, and one stray letter typed into "PIN actuel" was discarded with the modal |
+| 3. Payment return announcer (#1952) | **`PASS` (structure), announcement `NOT-OBSERVED`** | `fr.emse.canari://open?url=https://canari.emse.fr/forms/success` with no `submission_id` lands directly on "Paiement introuvable". The AX tree has ONE status region ("etat de l'application", 16,580 358x93) that holds the heading and its sentence, with "Retour aux formulaires" outside it. VoiceOver was not turned on, so the actual announcement was not heard |
+| 4. Reel author link (#1952) | **`PASS` on the first reel, `FAIL` on the next ones** | Reel 1: ONE link "Voir le profil de Canari Test Gamma" at 16,628 176x45 pt (height at least 44), covering the avatar and name drawn in the frame, with "9 h" outside it. A tap opens Mon profil. **Reels 2 and 3: the same link reports 16,-206 161x879 pt and 16,-206 250x1723 pt**, stable across four reads 1.5 s apart, and again after swiping back. A tap at (100,400), inside that reported rectangle, does NOT navigate. So only the accessibility frame is wrong, not the hit area, and VoiceOver would outline a box taller than the screen. Reel 2 plays ("Pause"). Also seen: on a feed post the author avatar link is 20x22 / 22x22 pt next to a separate name link of 136-161x23 pt, both below 44 pt |
+| 5. Feed tabs and the CanaReels entry | **`PASS`** | Associations / Suivis / Tout select one at a time (switch values 1/0/0, 0/1/0, 0/0/1). Suivis shows "Aucun post" and Tout shows the bench reel post. At the default text size all three tabs and the CanaReels button (330,211 44x44) fit in the row. The CanaReels button is exposed as `Other`, not `Button`. The 2x-text centring (`feedTabScroll.ts`) was not read: Dynamic Type was not changed |
+| 6. Sign-out, then sign-in again | **`PASS`** | On the phone the desktop `Navbar` is not rendered (`hidden md:block`), so this was the phone's sign-out: tab 4 > "Deconnexion". iOS asks "<< Canari >> souhaite utiliser << miconnect.emse.fr >> pour se connecter", then "Continuer" lands on `/login` in about 5 s. "Connexion externe (service-account)" then shows the same iOS prompt and an EMPTY MiConnect form that asks for the username, so the MiConnect session did end. No terms stage was shown. With username + password, the app lands on the feed in about 6 s. Discussions lists the DM and the DM decrypts, including a video Delta sent today. No PIN was asked after the sign-in. A cold relaunch then asks for the PIN, and the bench PIN opens the feed with no "n'ont pas pu etre ouverts" |
+| Nothing fatal | **`PASS`** | 366k syslog lines: 0 `crash`, `fatal`, `EXC_` or `Terminating app` |
+
+**Not read:** the hold's own log lines (`NSLog` arrives as `<private>` in the syslog of a TestFlight
+build), the in-app log (it cannot be pulled off the TestFlight container), and VoiceOver.
 
 ## Traps that outlived the work that found them
 

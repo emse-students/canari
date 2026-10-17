@@ -15,12 +15,20 @@
     type PostFeed,
     type ScheduledPost,
   } from '$lib/posts/api';
+  import { FEED_FIRST_PAGE_SIZE, FEED_PAGE_SIZE, firstPageHasMore } from '$lib/posts/feedPageSize';
   import { msUntilNextDue, stillScheduled } from '$lib/posts/scheduledDue';
   import { deletePostAfterConfirm } from '$lib/posts/postDeletion';
   import { isFeedAudienceRefusal, isOutsideFeedAudience } from '$lib/posts/feedAudience';
-  import { feedCacheKey, readFeedCache, writeFeedCache } from '$lib/posts/feedCache';
+  import {
+    feedCacheKey,
+    readFeedCache,
+    writeFeedCache,
+    type FeedCacheParams,
+  } from '$lib/posts/feedCache';
   import {
     feedMayLoadMore,
+    feedRefetchOnReconnect,
+    refreshFirstPage,
     feedStoreAccess,
     firstPageFailure,
     listAfterFirstPage,
@@ -45,7 +53,10 @@
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
+  import FeedTabRow from '$lib/components/posts/FeedTabRow.svelte';
   import { getToken } from '$lib/stores/auth';
+  import { connectivity } from '$lib/stores/connectivity.svelte';
+  import { isTransportFailure } from '$lib/utils/transportFailure';
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { currentUserId } from '$lib/stores/user';
   import { RefreshCw, SquarePen, Inbox, Search, X } from '@lucide/svelte';
@@ -53,9 +64,6 @@
   import { m } from '$lib/paraglide/messages';
 
   const LAST_SEEN_KEY = 'posts_last_seen_ts';
-  const PAGE_SIZE = 10;
-  /** What `load` asks for first (`listPosts({ limit: 20 })`), and so what one stored page holds. */
-  const FIRST_PAGE_SIZE = 20;
 
   let {
     data,
@@ -72,6 +80,13 @@
   let postsOverride = $state<PostEntity[] | null>(null);
   /** Resolved value of data.posts - used as fallback when postsOverride is still null. */
   let initialPostsResolved = $state<PostEntity[] | null>(null);
+  /**
+   * THE LIST ON SCREEN, FROM ONE BLOCK. The `{#await}` used to draw the first answer in its `{:then}`
+   * and the handler then moved it into `postsOverride`, drawn by ANOTHER block: every card mounted
+   * twice, and the reel on screen opened its stream twice and logged its interrupted `play()` (Mi 9T,
+   * v1.2.9-alpha.3). The handler fills one of these two in the same turn as the answer.
+   */
+  const shownPosts = $derived(postsOverride ?? initialPostsResolved);
 
   /**
    * THE LIST ON SCREEN WAS DRAWN FROM THE DEVICE'S STORED COPY (`$lib/posts/feedStore`) AND NO
@@ -104,14 +119,21 @@
   );
 
   /** Keeps `posts` as the tab's stored first page, when the device may hold it now. */
-  function storeFirstPage(posts: PostEntity[]) {
+  function storeFirstPage(params: FeedCacheParams, posts: PostEntity[]) {
     const access = storeAccess;
     if (!access) {
       Log.d('POSTS', 'first page not stored - the device key is not in hand for this account');
       return;
     }
-    void saveStoredFeed(access, data.feedParams, posts);
+    void saveStoredFeed(access, params, posts);
   }
+
+  /**
+   * Counts the tab loads of this page instance: a request remembers the count it was issued under,
+   * and its answer is dropped when the reader has switched tab since (`refreshFirstPage`). Not
+   * reactive: nothing is drawn from it.
+   */
+  let tabLoad = 0;
 
   /**
    * Applies a failed feed read to the screen, as `firstPageFailure` classifies it: a 401/403 ends
@@ -209,13 +231,6 @@
       },
     };
   }
-
-  /** The feed's three modes, in the order they are drawn. The pill itself is written once. */
-  const FEED_TABS: { feed: PostFeed; label: () => string }[] = [
-    { feed: 'associations', label: m.posts_tab_associations },
-    { feed: 'followed', label: m.posts_tab_followed },
-    { feed: 'all', label: m.posts_tab_all },
-  ];
 
   let showCreateModal = $state(false);
 
@@ -389,8 +404,14 @@
    * answer only replaces the paint it is replacing, which is what the identity check says.
    */
   $effect(() => {
-    const key = feedCacheKey(data.feedParams);
+    const params = data.feedParams;
+    const key = feedCacheKey(params);
     const promise = data.posts;
+    // A new tab load: a refresh or a next page still out for the previous one is now stale, and the
+    // flags it set belong to nobody.
+    tabLoad++;
+    loading = false;
+    loadingMore = false;
 
     const cached = readFeedCache(key);
     const stale = cached?.posts ?? null;
@@ -412,11 +433,11 @@
       .then((posts) => {
         if (cancelled) return;
         firstPage = 'answered';
-        // The first batch asks for 20 where a page is PAGE_SIZE, so a short answer is the end.
-        const more = posts.length >= FIRST_PAGE_SIZE;
+        // A first page shorter than it asked for is the end.
+        const more = firstPageHasMore(posts.length);
         writeFeedCache(key, { posts, hasMore: more });
         initialPostsResolved = posts;
-        storeFirstPage(posts);
+        storeFirstPage(params, posts);
         const next = listAfterFirstPage({
           answer: posts,
           onScreen: postsOverride,
@@ -503,10 +524,11 @@
    * This used to re-parse `feed`, `promo` and `formation` off the URL - a third copy of `load`'s
    * parsing, complete with its own `parseInt` and its own default - so page 2 could be fetched
    * from a different feed than page 1 whenever the two disagreed. `load` publishes what it
-   * resolved; the only thing that changes between pages is the offset.
+   * resolved; the only thing that changes between pages is the offset. The caller passes the tab's
+   * params as it took them BEFORE its await, never `data.feedParams` read after it.
    */
-  function buildListOptions(offset = 0) {
-    return { limit: PAGE_SIZE, offset, ...data.feedParams };
+  function buildListOptions(params: FeedCacheParams, offset: number) {
+    return { limit: FEED_PAGE_SIZE, offset, ...params };
   }
 
   /**
@@ -527,51 +549,75 @@
     u.searchParams.set('feed', feed);
     u.searchParams.delete('promo');
     u.searchParams.delete('formation');
+    // An old `?kind=` (the 1.2.9 alphas' CanaReels filter) means nothing now: not carried along.
+    u.searchParams.delete('kind');
     void goto(resolve(internalPath(feedPath(u))), { invalidateAll: true, noScroll: true });
   }
 
   async function refreshPosts() {
+    // The tab is taken NOW: an answer for a tab the reader has left is dropped (`refreshFirstPage`).
+    const issuedFor = tabLoad;
     loading = true;
     errorMessage = '';
     hasMore = true;
-    try {
-      const posts = await listPosts(buildListOptions(0));
+    const outcome = await refreshFirstPage({
+      params: data.feedParams,
+      // The SAME first page the cold start asks and stores - never a scroll page (Mi 9T, alpha.3).
+      read: (params) => listPosts({ limit: FEED_FIRST_PAGE_SIZE, offset: 0, ...params }),
+      stillCurrent: () => issuedFor === tabLoad,
+    });
+    if (outcome.kind === 'stale') {
+      // `loading` belongs to the tab on screen now, which reset it at the switch.
+      Log.d('POSTS', 'a refresh answered for a tab the reader has left - dropped');
+      return;
+    }
+    loading = false;
+    if (outcome.kind === 'answered') {
+      const { posts, params } = outcome;
       postsOverride = posts;
-      hasMore = posts.length >= PAGE_SIZE;
-      writeFeedCache(feedCacheKey(data.feedParams), { posts, hasMore });
+      hasMore = firstPageHasMore(posts.length);
+      writeFeedCache(feedCacheKey(params), { posts, hasMore });
       // An answer: whatever the device drew is now the server's page, and the store follows it.
+      firstPage = 'answered';
       fromStore = false;
       storedRefreshFailed = false;
-      storeFirstPage(posts);
-    } catch (err) {
-      Log.d('refreshPosts failed', err);
-      const outside = isOutsideFeedAudience(err);
-      // A copy that stays on screen says it could not be refreshed on its own line; the red banner
-      // is for a feed that has nothing to show.
-      const failure = applyFirstPageFailure(err);
-      if (outside) noAudience = true;
-      else if (!failure.copyUnconfirmed) errorMessage = m.posts_load_error_title();
-    } finally {
-      loading = false;
+      storeFirstPage(params, posts);
+      return;
     }
+    const err = outcome.error;
+    Log.d('refreshPosts failed', err);
+    const outside = isOutsideFeedAudience(err);
+    // A copy that stays on screen says it could not be refreshed on its own line; the red banner
+    // is for a feed that has nothing to show.
+    const failure = applyFirstPageFailure(err);
+    firstPage = failure.firstPage;
+    if (outside) noAudience = true;
+    else if (!failure.copyUnconfirmed) errorMessage = m.posts_load_error_title();
   }
 
   async function loadMorePosts(currentPosts: PostEntity[]) {
     // A stored copy is not paged (`feedMayLoadMore`).
     if (!feedMayLoadMore({ loadingMore, hasMore, fromStore })) return;
+    // Same rule as `refreshPosts`: a page for a tab the reader has left is not appended to this one.
+    const issuedFor = tabLoad;
+    const params = data.feedParams;
     loadingMore = true;
     try {
-      const more = await listPosts(buildListOptions(currentPosts.length));
-      if (more.length === 0 || more.length < PAGE_SIZE) hasMore = false;
+      const more = await listPosts(buildListOptions(params, currentPosts.length));
+      if (issuedFor !== tabLoad) {
+        Log.d('POSTS', 'a next page answered for a tab the reader has left - dropped');
+        return;
+      }
+      if (more.length === 0 || more.length < FEED_PAGE_SIZE) hasMore = false;
       // Deduplicate in case new posts were inserted between page fetches.
       const existingIds = new Set(currentPosts.map((p) => p.id));
       const newPosts = more.filter((p) => !existingIds.has(p.id));
       postsOverride = [...currentPosts, ...newPosts];
-      writeFeedCache(feedCacheKey(data.feedParams), { posts: postsOverride, hasMore });
+      writeFeedCache(feedCacheKey(params), { posts: postsOverride, hasMore });
     } catch {
       // silent - user can scroll back up and retry
     } finally {
-      loadingMore = false;
+      if (issuedFor === tabLoad) loadingMore = false;
     }
   }
 
@@ -619,13 +665,46 @@
     return () => obs.disconnect();
   });
 
+  /**
+   * The token the cards draw their media with. Offline at launch there is none to have: that is the
+   * transport, already reported by the session (`[A] refresh-transport`), so it is said once here for
+   * what it costs this page - and the reconnect below asks again.
+   */
+  async function loadAuthToken() {
+    try {
+      authToken = await getToken();
+    } catch (e) {
+      if (isTransportFailure(e)) {
+        console.log('[POSTS] no access token without the server - post media wait for the link');
+        return;
+      }
+      console.error('[POSTS] the access token could not be read', e);
+    }
+  }
+
+  /**
+   * BACK ONLINE, THE FEED ASKS AGAIN BY ITSELF (Mi 9T reading of `v1.2.9-alpha.1`, 2026-10-15: after
+   * an offline start the stored copy said "pas de reponse du serveur" 40 s after the server was
+   * reachable, until "Reessayer"). It is the retry's own path, once per reconnect the server
+   * confirmed, and only when the last request got no answer (`feedRefetchOnReconnect`).
+   */
+  function onReconnect() {
+    if (userId && !authToken) void loadAuthToken();
+    const decision = {
+      firstPage,
+      loading,
+      serverReachable: connectivity.serverReachable,
+    };
+    if (!feedRefetchOnReconnect(decision)) return;
+    Log.d('POSTS', 'server reachable again - the first page is asked again');
+    void refreshPosts();
+  }
+
+  onMount(() => connectivity.onReconnect(onReconnect));
+
   onMount(() => {
     if (userId) {
-      getToken()
-        .then((t) => {
-          authToken = t;
-        })
-        .catch((e) => console.error('[Posts] Failed to get token', e));
+      void loadAuthToken();
       void loadScheduled();
     }
 
@@ -728,26 +807,11 @@
     {/if}
   </div>
 
-  <!--
-    ONE BUTTON, THREE TIMES, IS ONE BUTTON. These were three copies of the same twelve lines
-    differing only in feed key and label, so a change to the pill - the state colours, the padding,
-    an aria attribute - had to be made three times or made wrong twice.
-  -->
-  <div class="mb-5 flex flex-wrap items-center gap-2">
-    <div class="flex flex-wrap gap-2" class:hidden={!!searchQuery}>
-      {#each FEED_TABS as tab (tab.feed)}
-        <button
-          type="button"
-          onclick={() => navigateFeed(tab.feed)}
-          aria-pressed={activeFeed === tab.feed}
-          class="tap-target rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors {activeFeed ===
-          tab.feed
-            ? 'text-text-main border-amber-500/40 bg-amber-500/15'
-            : 'border-cn-border text-text-muted hover:text-text-main'}"
-        >
-          {tab.label()}
-        </button>
-      {/each}
+  <!-- ONE ROW: the three tabs and the CanaReels entry (user, 2026-10-16). Its content hides while a
+       search replaces the feed; its margin stays, as it always did. -->
+  <div class="mb-5">
+    <div class:hidden={!!searchQuery}>
+      <FeedTabRow feed={activeFeed} onFeed={navigateFeed} {authToken} />
     </div>
   </div>
 
@@ -836,13 +900,15 @@
       <div class="space-y-5">
         {#if heldForLanding}
           {@render skeletonCards()}
-        {:else if postsOverride}
-          {@render feedList(postsOverride)}
+        {:else if shownPosts}
+          {@render feedList(shownPosts)}
         {:else}
           {#await data.posts}
             {@render skeletonCards()}
-          {:then initialPosts}
-            {@render feedList(initialPosts)}
+          {:then}
+            <!-- The answer's handler sets `shownPosts` in this same turn; the list is drawn by the
+                 branch above, ONE block, so it does not mount here and again there. -->
+            {@render skeletonCards()}
           {:catch err}
             <!-- A stored copy still being read is about to draw: no error screen flashes before it. -->
             {#if loading || storedReadPending}
@@ -924,7 +990,7 @@
                     hasMore,
                   });
                   // The next launch must not draw the post just deleted from the stored page.
-                  storeFirstPage(postsOverride.slice(0, FIRST_PAGE_SIZE));
+                  storeFirstPage(data.feedParams, postsOverride.slice(0, FEED_FIRST_PAGE_SIZE));
                 }}
               />
             </div>
@@ -940,7 +1006,7 @@
             <div class="flex justify-center py-4">
               <RefreshCw size={20} class="text-text-muted animate-spin opacity-50" />
             </div>
-          {:else if !hasMore && !fromStore && resolvedPosts.length >= PAGE_SIZE}
+          {:else if !hasMore && !fromStore && resolvedPosts.length >= FEED_PAGE_SIZE}
             <p class="text-text-muted text-2xs py-4 text-center opacity-50">
               {m.posts_all_loaded()}
             </p>

@@ -300,6 +300,40 @@ describe('requestCommunityHistory (WP-34)', () => {
     );
   });
 
+  it('does not ask our own devices when presence says none of them is online', async () => {
+    // The Mi 9T, 2026-10-15: `asked <self> (every device) ... no-seed-held` for eight bench
+    // communities at every launch, its only other device offline - a transport frame nobody could
+    // receive. Presence names our online devices, and here it names only this one.
+    const solo = [{ userId: 'alice', online: true, onlineDevices: ['device-1'] }];
+    listWorkspaceMembers.mockResolvedValue(solo);
+    ownDevices = ['device-1', 'device-2'];
+    treeLeaves = ['alice:device-1', 'alice:device-2'];
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await requestCommunityHistory('ws-1');
+    await requestCommunityHistory('ws-1');
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    // One line for the run, not one per pass.
+    expect(info.mock.calls.filter(([m]) => String(m).includes('is not asked'))).toHaveLength(1);
+    info.mockRestore();
+  });
+
+  it('asks our own other device, by name, once presence says it is online', async () => {
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'alice', online: true, onlineDevices: ['device-1', 'device-2'] },
+    ]);
+    ownDevices = ['device-1', 'device-2'];
+    treeLeaves = ['alice:device-1', 'alice:device-2'];
+
+    await requestCommunityHistory('ws-1');
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const request = decodeAppMessage(sendMessage.mock.calls[0][1])?.graineRequest;
+    expect(request?.answererUserId).toBe('alice');
+    expect(request?.answererDeviceIds).toEqual(['device-2']);
+  });
+
   it('says so rather than asking when we are alone with a single device', async () => {
     listMembers.mockResolvedValue([{ userId: 'alice', online: true }]);
     listWorkspaceMembers.mockResolvedValue([{ userId: 'alice', online: true }]);

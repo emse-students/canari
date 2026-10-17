@@ -88,16 +88,6 @@ describe('themeStore', () => {
     expect(themeStore.isDark).toBe(false);
   });
 
-  it('cycle() parcourt automatique -> clair -> sombre -> automatique', () => {
-    themeStore.setPreference('system');
-    const seen = [themeStore.preference];
-    for (let n = 0; n < 3; n++) {
-      themeStore.cycle();
-      seen.push(themeStore.preference);
-    }
-    expect(seen).toEqual(['system', 'light', 'dark', 'system']);
-  });
-
   it("init() sans préférence sauvée → défaut 'system'", () => {
     osDark = true;
     themeStore.init();

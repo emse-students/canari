@@ -14,7 +14,13 @@
    * a child sits INSIDE the frame and is clipped to it.
    */
   import type { Snippet } from 'svelte';
-  import { REEL_FRAME_RATIO, containFrame, stageStep, type StageState } from '$lib/reels/reelFrame';
+  import {
+    REEL_FRAME_RATIO,
+    containFrame,
+    frameReachesBottom,
+    stageStep,
+    type StageState,
+  } from '$lib/reels/reelFrame';
   import ReelBackdrop from './ReelBackdrop.svelte';
 
   interface Props {
@@ -26,6 +32,11 @@
     frameEl?: HTMLElement | null;
     /** Hold the stage at the largest height seen (the keyboard may shrink the box). */
     latch?: boolean;
+    /**
+     * Whether the frame reaches the stage bottom (`frameReachesBottom`), for a caller whose overlay
+     * owes the bottom safe-area inset only there. Written by the frame.
+     */
+    reachesBottom?: boolean;
   }
 
   let {
@@ -33,6 +44,7 @@
     children,
     frameEl = $bindable(null),
     latch = false,
+    reachesBottom = $bindable(false),
   }: Props = $props();
 
   let boxWidth = $state(0);
@@ -50,6 +62,10 @@
     return next.kept;
   });
   const box = $derived(containFrame(stage, ratio));
+
+  $effect(() => {
+    reachesBottom = frameReachesBottom(stage, box);
+  });
 
   $effect(() => {
     console.debug(`[reel-frame] ratio ${ratio.toFixed(3)} fillsStage=${box.fillsStage}`);

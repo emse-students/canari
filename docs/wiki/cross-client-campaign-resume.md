@@ -53,8 +53,8 @@ deliberately, which is what rung 18 CORRUPT has always wanted and never had.
 
 **Costs, and each is stated on the row rather than assumed away.**
 
-- **Local is production's DATA, not production's POPULATION.** It is a snapshot; `copy-prod-to-dev`
-  truncates `push_token`; the MLS trees are whatever the local clients built. So the four population
+- **Local is production's DATA, not production's POPULATION.** It is a snapshot; the local copy
+  (`restore-into-local.sh`) truncates `push_token`; the MLS trees are whatever the local clients built. So the four population
   rows written into rung 12 MULTI measure the snapshot, and a `PASS` there answers "does the
   mechanism work", never "is production's estate sound".
 - **The refresh cookie is not the same.** `ALLOW_INSECURE_COOKIES=true` flips

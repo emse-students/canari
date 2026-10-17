@@ -20,6 +20,19 @@ describe('type scale tokens', () => {
     });
   }
 
+  it('text with no size class inherits a body size that follows --type-scale too', () => {
+    const body = [...css.matchAll(/\nbody \{([^}]*)\}/g)]
+      .map((m) => m[1])
+      .find((rule) => rule.includes("'Nunito Variable'"));
+    expect(body).toMatch(/font-size: calc\(1rem \* var\(--type-scale, 1\)\);/);
+  });
+
+  it('a markdown heading hyphenates before it breaks mid-word', () => {
+    expect(css).toMatch(
+      /\.post-markdown :is\(h1, h2, h3, h4, h5, h6\) \{\s*-webkit-hyphens: auto;\s*hyphens: auto;/
+    );
+  });
+
   it('the composer field height derives from the scaled line-height token', () => {
     expect(css).toMatch(/--composer-field-height: calc\(var\(--text-sm--line-height\) \+/);
   });

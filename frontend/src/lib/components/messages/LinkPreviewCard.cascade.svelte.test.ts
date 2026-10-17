@@ -40,7 +40,10 @@ const proxied = (raw: string) =>
 /** Keeps the registered callback reachable, which is the only way to say "it came near" here. */
 class FakeObserver {
   static last: FakeObserver | null = null;
-  constructor(readonly callback: IntersectionObserverCallback) {
+  constructor(
+    readonly callback: IntersectionObserverCallback,
+    readonly options?: IntersectionObserverInit
+  ) {
     FakeObserver.last = this;
   }
   observe() {}

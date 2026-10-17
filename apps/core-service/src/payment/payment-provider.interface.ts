@@ -111,13 +111,6 @@ export interface CheckoutRequestState {
   raw: string;
 }
 
-/** Minimal session shape consumed by verify/cancel - decoupled from any provider SDK type. */
-export interface CheckoutSessionInfo {
-  id: string;
-  paid: boolean;
-  metadata: Record<string, string | undefined>;
-}
-
 /** Collect balance snapshot for a connected account (single currency). */
 export interface ConnectBalanceSummary {
   availableCents: number;
@@ -144,7 +137,6 @@ export interface PaymentProvider {
   createConnectDashboardLink(accountId: string): Promise<string>;
 
   createCheckoutSession(params: CreateCheckoutSessionParams): Promise<CheckoutSessionResult>;
-  retrieveSession(sessionId: string): Promise<CheckoutSessionInfo>;
   /** Makes a request no longer payable. `requestId` is `CheckoutSessionResult.requestId`. */
   cancelCheckoutRequest(requestId: string, connectAccountId: string): Promise<CancelRequestOutcome>;
   /** Reads a request's state; `sessionId` is `CheckoutSessionResult.id` (Lydia's `request_uuid`). */

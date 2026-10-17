@@ -3,6 +3,7 @@ import {
   firstMissingAnswer,
   initialSelections,
   isItemAnswered,
+  pricedQuestionsAwaitingAnswer,
   visibleAnswers,
   visibleItems,
 } from './fillAnswers';
@@ -74,5 +75,28 @@ describe('visibleItems', () => {
   it('sends only the answers to visible questions', () => {
     const shown = visibleItems(items, { menu: 'm', veg: 'stale' });
     expect(visibleAnswers(shown, { menu: 'm', veg: 'stale' })).toEqual({ menu: 'm' });
+  });
+});
+
+describe('pricedQuestionsAwaitingAnswer', () => {
+  // Mi 9T, v1.2.9-alpha.3: "Combinaison indisponible" before any answer was chosen.
+  const formation = q({ id: 'formation', type: 'single_choice', required: true });
+  const promo = q({ id: 'promo', type: 'single_choice' });
+
+  it('a required priced question left blank has chosen no cell yet', () => {
+    const pending = pricedQuestionsAwaitingAnswer([formation, promo], ['formation', 'promo'], {
+      formation: '',
+      promo: '',
+    });
+    expect([...pending]).toEqual(['formation']);
+  });
+
+  it('an answer, an optional blank, a hidden or an unpriced question awaits nothing', () => {
+    expect(
+      pricedQuestionsAwaitingAnswer([formation], ['formation'], { formation: 'icm' }).size
+    ).toBe(0);
+    expect(pricedQuestionsAwaitingAnswer([promo], ['promo'], { promo: '' }).size).toBe(0);
+    expect(pricedQuestionsAwaitingAnswer([], ['formation'], { formation: '' }).size).toBe(0);
+    expect(pricedQuestionsAwaitingAnswer([formation], [], { formation: '' }).size).toBe(0);
   });
 });

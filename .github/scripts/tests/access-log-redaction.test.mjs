@@ -1,6 +1,6 @@
 #!/usr/bin/env bun
 /**
- * THE NGINX ACCESS LOG NEVER RECORDS A BEARER TOKEN.
+ * THE NGINX ACCESS LOG NEVER RECORDS A BEARER TOKEN, NOR A GIF SEARCH.
  *
  * Production, 2026-10-06: every `GET /api/ws?...&token=<JWT>` line of the container's access log
  * carried a live access token (1 h). The client sends it in the query on purpose (Tauri and proxies
@@ -11,7 +11,9 @@
  *   `map` that redacts every `token=` query value;
  * - the server block declares the `access_log` ITSELF: one declared at http level would ADD to the
  *   base image's `main` and leave the unredacted line beside the redacted one;
- * - no location overrides it with another format.
+ * - no location overrides it with another format;
+ * - a `/api/mls/gifs` line drops its whole query: the route exists so a search is never tied to the
+ *   reader's address, and this line carries the address.
  *
  * STATIC (CI has no Docker daemon); the behaviour was run against nginx:stable-alpine on 2026-10-06
  * with five request lines, one log line each, the token redacted and `xtoken=` left alone.
@@ -47,14 +49,20 @@ if (formatName === 'main') fail('the format is named `main`, a duplicate of the 
 const map = lines.join('\n').match(/map \$request_uri \$logged_request_uri \{([\s\S]*?)\n\}/)?.[1];
 if (!map) fail('the `map $request_uri $logged_request_uri` redaction is missing');
 else {
-  const rule = map.match(/"(~\^.*)"\s+"([^"]*)";/);
-  if (!rule) fail('the map has no regex rule');
+  const rules = [...map.matchAll(/"(~\^[^"]*)"\s+"([^"]*)";/g)].map((m) => ({
+    re: new RegExp(m[1].slice(1).replace(/\(\?<(\w+)>/g, '(?<$1>')),
+    value: m[2],
+  }));
+  if (rules.length === 0) fail('the map has no regex rule');
   else {
-    // The same regex, run here on the cases that mattered (nginx's PCRE and JS agree on this one).
-    const re = new RegExp(rule[1].slice(1).replace(/\(\?<(\w+)>/g, '(?<$1>'));
+    // The map's own rules, run here in ITS order (first match wins, as in nginx; nginx's PCRE and
+    // JS agree on these). A value naming captures is expanded from them.
     const apply = (uri) => {
-      const m = uri.match(re);
-      return m ? `${m.groups.uri_before_token}token=redacted${m.groups.uri_after_token}` : uri;
+      for (const { re, value } of rules) {
+        const m = uri.match(re);
+        if (m) return value.replace(/\$\{(\w+)\}/g, (_, g) => m.groups?.[g] ?? '');
+      }
+      return uri;
     };
     const cases = [
       [
@@ -64,6 +72,10 @@ else {
       ['/api/ws?token=eyJSECRET', '/api/ws?token=redacted'],
       ['/x?xtoken=keep&a=b', '/x?xtoken=keep&a=b'],
       ['/plain', '/plain'],
+      // A GIF search: the whole query goes, whatever it carries (2026-10-16).
+      ['/api/mls/gifs?q=chat%20noir&page=2', '/api/mls/gifs?query-redacted'],
+      ['/api/mls/gifs?page=1&q=x&token=eyJSECRET', '/api/mls/gifs?query-redacted'],
+      ['/api/mls/gifsy?q=keep', '/api/mls/gifsy?q=keep'],
     ];
     for (const [input, expected] of cases) {
       if (apply(input) !== expected) fail(`${input} logs as ${apply(input)}, expected ${expected}`);
@@ -88,4 +100,4 @@ if (failures.length > 0) {
   for (const f of failures) console.error(`  FAIL  ${f}`);
   process.exit(1);
 }
-console.log('access-log-redaction: the access log cannot record a token');
+console.log('access-log-redaction: the access log cannot record a token, nor a GIF search');

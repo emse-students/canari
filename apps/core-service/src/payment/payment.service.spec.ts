@@ -37,9 +37,6 @@ describe('PaymentService provider selection', () => {
         cancelUrl: 'https://x/ko',
       })
     ).rejects.toThrow('Payments are disabled on this platform');
-    await expect(service.retrieveSession('cs_test_1')).rejects.toThrow(
-      'Payments are disabled on this platform'
-    );
   });
 
   it('re-reads platform_config on every call, so a toggle takes effect without a restart', async () => {
