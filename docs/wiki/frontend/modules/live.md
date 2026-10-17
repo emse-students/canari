@@ -1,5 +1,7 @@
 # Live - the plan (R4 / decision C9, not started)
 
+> **Note 2026-10-17:** the user's 2026-10-16 calls decisions - 1:1 calls go peer-to-peer direct with Cloudflare TURN as the fallback - post-date this plan; every "relay-only" and SFU statement below describes the code of 2026-10-15, not the target, and WP-L0 is to be re-read against them.
+
 A member opens the composer, picks **Live**, and the whole Canari network can watch until the
 broadcast ends - Facebook-style. This page is the PLAN: what the user decided on 2026-10-15, what the
 existing calling bricks really are (read from the code that day), the questions still open for the
