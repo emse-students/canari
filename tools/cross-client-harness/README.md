@@ -24,13 +24,13 @@ archived rig rots, and a rig that lives outside the repository is not reviewed. 
 directory is anonymised by construction - the two accounts are `owner` and `peer` everywhere, and no
 check spells a name.
 
-**The state is deliberately NOT here**, in `../../../../canari-harness` (moved one level out on 2026-09-03):
+**The state is deliberately NOT here**, in a directory outside the work tree (moved further out on 2026-09-03):
 
 | Outside                        | Why it may not live in the repository                                  |
 | ------------------------------ | ---------------------------------------------------------------------- |
 | `test-accounts.json`           | Logins and PINs for the two campaign accounts. This repository is PUBLIC: outside the work tree they cannot be committed at all, which is a structure; a `.gitignore` rule would only be a policy. |
-| `chrome-w1/` `chrome-w2/`      | These directories ARE W1 and W2 - profile holds the MLS identity, the session and the enrolment. `git clean -xdf` does not spare a gitignored directory. **Since 2026-09-02 losing one no longer costs a 2FA**: the campaign's accounts are dedicated Authentik users that sign in through the service-account link, whose flow has no MFA stage. It still costs a DEVICE, which is what actually changes what a row measures. |
-| `test-accounts.json`           | Still outside, and still for the same reason after the move to a LOCAL target: the accounts are ordinary users on the PRODUCTION identity provider, because local authenticates against `auth.canari-emse.fr` by decision 8 of the workflow migration. A local target does not make the password local. |
+| `chrome-w1/` `chrome-w2/`      | These directories ARE W1 and W2 - profile holds the MLS identity, the session and the enrolment. `git clean -xdf` does not spare a gitignored directory. **Since 2026-09-02 losing one no longer costs a 2FA**: the campaign's accounts are dedicated test accounts. It still costs a DEVICE, which is what actually changes what a row measures. |
+| `test-accounts.json`           | Still outside, and still for the same reason after the move to a LOCAL target: the accounts are ordinary users on the PRODUCTION identity provider, because local authenticates against it by decision 8 of the workflow migration. A local target does not make the password local. |
 | `results.ndjson`               | The verdict record. A row carries the condensed dirt of its run, which quotes captured console lines naming real conversations. |
 | `apk/` `a1-baseline/` `logs/`  | Bulk artefacts. No script references them; they are installed and read by hand. |
 
@@ -80,7 +80,7 @@ derives it from the running pid every time and refuses to report success until C
    navigation falls through to `@app_shell` and any route deeper than one segment loads no module at
    all), and the local Postgres superuser is `admin`, not `canari`, which is why `psql` in `ssh.mjs`
    picks the user from `SITE` rather than from a flag.
-3. Create the state directory `../../../../canari-harness` and put `test-accounts.json` in it,
+3. Create the state directory outside the work tree and put `test-accounts.json` in it,
    from `test-accounts.example.json`. **It moved one level further out on 2026-09-03**, when the
    campaign restarted from zero - a root the old path cannot reach is a root that cannot be
    half-inherited. `play-console-sa.json` and `google-services.json` stayed in the previous
@@ -751,7 +751,7 @@ next one's symptom names the wrong cause.
     `bun tauri` shells out the same way. Call the binary in `node_modules/.bin` directly.
   - **`install -r`, never an uninstall.** It keeps the app data, which is the enrolment and the MLS
     store; an uninstall costs a re-enrolment. **That is no longer a 2FA** - since 2026-09-02 the
-    accounts sign in by password through the service-account link - but it is still a new DEVICE,
+    test accounts sign in without a second factor - but it is still a new DEVICE,
     with no history for any HEAL row to reason about. **And nothing afterwards says the uninstall
     happened**: the package reads the right version and launches. `install -r` preserves
     `firstInstallTime`, so `firstInstallTime == lastUpdateTime` is the ONLY witness - `a1apk.mjs`

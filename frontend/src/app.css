@@ -1470,6 +1470,18 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
     padding-bottom 180ms ease;
 }
 
+/*
+ * THE ROOM FOR THE NEXT FIELD, GIVEN BY THE FIELD ITSELF. The reveal after a keyboard rise is
+ * `scrollIntoView({ block: 'nearest' })`, which honours a scroll margin: a field stops 6.5rem above
+ * its scrollport's bottom edge - one label and one field box - so the field after it stays in view
+ * and tappable above the footer. Without it the PIN change's confirm field stood cut under the
+ * submit button and was reachable only after blurring (iPhone 12, v1.2.9-alpha.4). A margin moves
+ * nothing that is already in view, unlike a centred reveal, which jumped the modal on every focus.
+ */
+[data-keyboard-aware-overlay] :is(input:not([type='checkbox'], [type='radio']), textarea, select) {
+  scroll-margin-block-end: 6.5rem;
+}
+
 .keyboard-aware-modal-panel {
   max-height: min(92dvh, var(--app-viewport-height, 100dvh)) !important;
 }

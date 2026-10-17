@@ -3149,7 +3149,7 @@ Mi 9T (`1.2.7-alpha.3`, dev, inspectable WebView) with `adb input touchscreen sw
 and a CDP capture listener on every pointer/touch event, 108 swipes: own and received messages, a
 salon and a DM, keyboard open and closed, start at 10/50/95 % of the bubble, 80/250-300/700 ms,
 vertical drift 0 to 70 px either way, right after a fling. Evidence and CSV:
-`F:/Programmation/canari-harness/swipe-reply-r1014/`. Message kind did not enter: the handler sits
+`<harness-dir>/swipe-reply-r1014/`. Message kind did not enter: the handler sits
 on the bubble element and no failing cell depended on content. Two classes failed, every time:
 
 | Class | Cells | What the events show |

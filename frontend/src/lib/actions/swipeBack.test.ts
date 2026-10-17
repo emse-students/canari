@@ -96,6 +96,56 @@ describe('swipeBack', () => {
     expect(onBack).toHaveBeenCalledTimes(1);
   });
 
+  it('one stroke commits ONCE: a second transitionend does nothing', () => {
+    const node = document.createElement('section');
+    document.body.appendChild(node);
+    const onBack = vi.fn();
+    swipeBack(node, { onBack, enabled: true });
+
+    touch(node, 'touchstart', 5);
+    touch(node, 'touchmove', 120);
+    touch(node, 'touchend', 120);
+    node.dispatchEvent(new Event('transitionend'));
+    node.dispatchEvent(new Event('transitionend'));
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('a cancelled slide-out still ends the stroke, and leaves nothing pending', () => {
+    const node = document.createElement('section');
+    document.body.appendChild(node);
+    const onBack = vi.fn();
+    swipeBack(node, { onBack, enabled: true });
+
+    touch(node, 'touchstart', 5);
+    touch(node, 'touchmove', 120);
+    touch(node, 'touchend', 120);
+    // A node hidden mid-slide fires `transitioncancel` and never `transitionend`.
+    node.dispatchEvent(new Event('transitioncancel'));
+    expect(onBack).toHaveBeenCalledTimes(1);
+    node.dispatchEvent(new Event('transitionend'));
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it('a release still sliding is dropped when a new gesture arms: it never commits later', () => {
+    const node = document.createElement('section');
+    document.body.appendChild(node);
+    const onBack = vi.fn();
+    const onArm = vi.fn();
+    swipeBack(node, { onBack, onArm, enabled: true });
+
+    touch(node, 'touchstart', 5);
+    touch(node, 'touchmove', 120);
+    touch(node, 'touchend', 120);
+    // A new edge touch before the slide ended, released short: a snap, not a Back.
+    touch(node, 'touchstart', 5);
+    touch(node, 'touchend', 10);
+    node.dispatchEvent(new Event('transitionend'));
+
+    expect(onArm).toHaveBeenCalledTimes(2);
+    expect(onBack).not.toHaveBeenCalled();
+  });
+
   it('does not arm while text is selected, and abandons a drag a selection takes over', () => {
     const node = document.createElement('section');
     node.appendChild(document.createElement('div'));

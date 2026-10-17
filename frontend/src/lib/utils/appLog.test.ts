@@ -16,6 +16,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 const yieldSpy = vi.hoisted(() => vi.fn(() => Promise.resolve()));
 vi.mock('./scheduling/yieldToMainThread', () => ({ yieldToMainThread: yieldSpy }));
 
+// The screen signal, driven by hand: `screen.change(false)` is the app leaving the screen.
+const screen = vi.hoisted(() => ({ change: (_onScreen: boolean) => {} }));
+vi.mock('./appForeground', () => ({
+  onAppScreenChange: (onChange: (onScreen: boolean) => void) => {
+    screen.change = onChange;
+    return () => {};
+  },
+}));
+
 type AppLog = typeof import('./appLog');
 
 let appLog: AppLog;
@@ -271,6 +280,85 @@ describe('when nothing can be written', () => {
     // Said ONCE, not once per batch.
     expect(error).toHaveBeenCalledTimes(1);
     globalThis.indexedDB = new IDBFactory();
+  });
+
+  it('a write ON screen that fails stops writing, and the export still carries what was stored', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    appLog.captureConsoleLine('log', ['[A] stored earlier']);
+    await appLog.flushAppLog();
+    const transaction = vi
+      .spyOn(FakeDatabase.prototype, 'transaction')
+      .mockImplementationOnce(() => {
+        throw new DOMException('quota', 'QuotaExceededError');
+      });
+    appLog.captureConsoleLine('log', ['[A] refused']);
+    await appLog.flushAppLog();
+    transaction.mockRestore();
+
+    const snapshot = await appLog.readAppLog();
+    expect(snapshot.persistence).toBe('failed');
+    // The 1.2.9-alpha.3 export held only the memory tail: the ring on disk must come out too.
+    expect(snapshot.text).toMatch(/\[A\] stored earlier[\s\S]*\[A\] refused/);
+    expect(error).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a write the WebView suspension cuts short (iPhone, 1.2.9-alpha.3)', () => {
+  it('is not a storage failure: the lines are kept and written once the app is back on screen', async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const info = vi.spyOn(console, 'info').mockImplementation(() => {});
+    appLog.installAppLogFlushTriggers();
+    appLog.captureConsoleLine('log', ['[A] before']);
+    await appLog.flushAppLog();
+
+    // WebKit aborts the transaction in flight as it suspends the backgrounded WebView.
+    vi.spyOn(FakeDatabase.prototype, 'transaction').mockImplementationOnce(() => {
+      throw new DOMException('Transaction aborted', 'AbortError');
+    });
+    appLog.captureConsoleLine('log', ['[LIFECYCLE] App in background']);
+    screen.change(false);
+    await appLog.flushAppLog();
+    expect(error).not.toHaveBeenCalled();
+    expect(info).toHaveBeenCalledWith(expect.stringContaining('[APPLOG] a write was cut short'));
+
+    // Off screen, the batch thresholds do not ask the suspended WebView again.
+    const added = vi.spyOn(FakeObjectStore.prototype, 'add');
+    for (let i = 0; i < appLog.FLUSH_LINES; i++) appLog.captureConsoleLine('log', [`[B] ${i}`]);
+    await Promise.resolve();
+    expect(added).not.toHaveBeenCalled();
+
+    screen.change(true);
+    await appLog.flushAppLog();
+    const text = (await records()).map((r) => r.text).join('\n');
+    expect(text).toMatch(/\[A\] before[\s\S]*App in background[\s\S]*\[B\] 199/);
+    const snapshot = await appLog.readAppLog();
+    expect(snapshot.persistence).toBe('ok');
+  });
+
+  it('an abort delivered on RESUME, after the app is back, is written again at once - no hold', async () => {
+    vi.spyOn(console, 'info').mockImplementation(() => {});
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    appLog.installAppLogFlushTriggers();
+    appLog.captureConsoleLine('log', ['[A] before']);
+    await appLog.flushAppLog();
+
+    // WebKit: the write began off screen, the screen-on event ran, THEN the abort arrived.
+    vi.spyOn(FakeDatabase.prototype, 'transaction').mockImplementationOnce(() => {
+      screen.change(true);
+      throw new DOMException('Transaction aborted', 'AbortError');
+    });
+    appLog.captureConsoleLine('log', ['[LIFECYCLE] App in background']);
+    screen.change(false);
+    await appLog.flushAppLog();
+    await appLog.flushAppLog();
+    expect(error).not.toHaveBeenCalled();
+    expect((await records()).map((r) => r.text).join('\n')).toContain('App in background');
+
+    // Not held: the batch thresholds write again on their own.
+    const added = vi.spyOn(FakeObjectStore.prototype, 'add');
+    for (let i = 0; i < appLog.FLUSH_LINES; i++) appLog.captureConsoleLine('log', [`[B] ${i}`]);
+    await appLog.flushAppLog();
+    expect(added).toHaveBeenCalled();
   });
 });
 

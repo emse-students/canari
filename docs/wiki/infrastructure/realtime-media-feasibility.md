@@ -12,7 +12,7 @@
 > range. Segmented live over HTTPS works with the ports we have, and its ceiling is bandwidth.
 
 Every measurement below was taken **read-only** on 2026-10-15 between 19:57 and 20:08 UTC (21:57-
-22:08 French time, an evening, low-load hour): `ssh portail-etu-direct` for the host side, the
+22:08 French time, an evening, low-load hour): `ssh <prod-host>` for the host side, the
 workstation `OXYGEN` for the outside. No package installed, no container started, no setting
 changed, no port scan: each probe names the exact host and port it touched and sends at most three
 packets per target. Calling is still held off (`CALLS_ENABLED = false`, [calls](../frontend/modules/calls.md)),
@@ -28,7 +28,7 @@ stays valid in both orders.
 
 | Use | Verdict with the ports we have today | What would change it |
 | --- | --- | --- |
-| 1:1 call | **BLOCKED** - the SFU leg cannot reach Cloudflare TURN (section 2) | **one outbound rule**: UDP 3478 from `193.49.175.67` to Cloudflare TURN (section 3, the ask) |
+| 1:1 call | **BLOCKED** - the SFU leg cannot reach Cloudflare TURN (section 2) | **one outbound rule**: UDP 3478 from `<host-egress-ip>` to Cloudflare TURN (section 3, the ask) |
 | Group call | **BLOCKED**, same cause | the same rule; then ~15 people in ONE call at 0.4 Mb/s each before the ~90-107 Mb/s ceiling (section 4) - **unmeasured on a call** |
 | Screen share | **BLOCKED**, same cause (it is one more video track on the same path) | the same rule |
 | Livestream option A - WebRTC through the SFU | **BLOCKED**, same cause; and every viewer then costs a TURN relay leg billed against Cloudflare's free tier | the same rule; ~36-42 viewers at 2.5 Mb/s before the ceiling |
@@ -39,7 +39,7 @@ stays valid in both orders.
 
 **Question: what reaches the host from the internet?**
 
-Documented, with a control, on 2026-09-24 ([estate-migration](estate-migration.md#the-network-shape-settled-2026-09-24---only-22-80-and-443-enter-the-target-from-anywhere)):
+Documented, with a control, on 2026-09-24 ([estate-migration](estate-migration.md)):
 **only 22, 80 and 443 enter, and 22 only from the campus network** - a container published on a
 high port answered from the host itself and timed out from outside. The filter is the School's
 network border, not the host. That page also records **TCP 7844 blocked OUTBOUND** (the reason no
@@ -49,7 +49,7 @@ Re-read live, 2026-10-15 19:57 UTC:
 
 | Command | Result |
 | --- | --- |
-| `ip -br addr` | one interface `ens18` carrying `193.49.175.67`, `.40` and `.122` (`canari.emse.fr` = `.122`) |
+| `ip -br addr` | one interface `ens18` carrying `<host-egress-ip>`, `.40` and `.122` (`canari.emse.fr` = `.122`) |
 | `ss -lntuH` | public TCP listeners: `22`, `80`, `443` (host nginx), plus `10050` (monitoring agent), `111` (rpcbind) and three high ports, all host-managed. Every Canari port is on `127.0.0.1` (`8081` prod frontend, `3080` dev, `19010/19011` and `19100/19101` Garage). **No UDP listener other than NTP (`123`), rpcbind and two ephemeral sockets** |
 | `docker ps --format '{{.Names}} {{.Ports}}'` | no container publishes on a public address; `canari-prod-call-service-1` exposes `3004/tcp` on the Docker network only |
 | `docker ps -a \| grep -iE 'turn\|livekit\|janus\|mediasoup'` | **none** - there is no coturn or other media server on the host |
@@ -70,7 +70,7 @@ Nothing was ever asked of the DSI for TURN: estate-migration deliberately kept "
 out of every request ([section 4 decisions](estate-migration.md#4-the-decisions---taken-with-the-user-2026-09-23-and-2026-09-24-not-to-be-relitigated)). Section 3 shows that the range is not what the current design needs.
 
 **Question: what can the host send OUT?** Measured from the host with the same probe, 2026-10-15
-19:58 UTC (`ssh portail-etu-direct 'python3 -' < stun_probe.py`, Python already on the host), and
+19:58 UTC (`ssh <prod-host> 'python3 -' < stun_probe.py`, Python already on the host), and
 the same targets from `OXYGEN` 21 seconds later as the control:
 
 | Target (STUN Binding request) | From the HOST | From OXYGEN (control) |
@@ -86,9 +86,9 @@ the same targets from `OXYGEN` 21 seconds later as the control:
 | `tcp stun.l.google.com:19302` | **timeout** | - |
 
 `turn.cloudflare.com` resolved to `141.101.90.1` from both sides. `ip route get 141.101.90.1` on the
-host: `src 193.49.175.67` via `193.49.175.10` - **the host leaves from `.67`, not from `canari.emse.fr`'s
+host: `src <host-egress-ip>` via `<gateway-ip>` - **the host leaves from `.67`, not from `canari.emse.fr`'s
 `.122`**, which is the address an outbound rule must name. DNS goes to School resolvers
-(`/etc/resolv.conf`: `193.49.17x.x`), so the host's working UDP is internal.
+(`/etc/resolv.conf`: `<school-resolver-range>`), so the host's working UDP is internal.
 
 **Verdict: outbound from the host is the web ports only - TCP 80 and 443 pass; UDP to the internet
 and every non-web TCP port tested (3478, 5349, 19302, and 7844 in September) are dropped.** Three
@@ -138,13 +138,13 @@ library cannot speak. The phone side is not the problem (section 6).
 
 | Option | Ports | Who asks | Code change | Reading |
 | --- | --- | --- | --- | --- |
-| **A. Outbound UDP 3478 from `193.49.175.67` to Cloudflare TURN** | none inbound | DSI, one outbound rule | **none** - the design already works this way | **the minimal ask.** Cloudflare documents its TURN anycast ranges as `141.101.90.0/24` and `162.159.207.0/24` (from Cloudflare's TURN documentation, **not verified here** beyond `141.101.90.1` resolving); the relay ports Cloudflare allocates on its side do not matter to our border, because the SFU only ever talks to `:3478` |
+| **A. Outbound UDP 3478 from `<host-egress-ip>` to Cloudflare TURN** | none inbound | DSI, one outbound rule | **none** - the design already works this way | **the minimal ask.** Cloudflare documents its TURN anycast ranges as `141.101.90.0/24` and `162.159.207.0/24` (from Cloudflare's TURN documentation, **not verified here** beyond `141.101.90.1` resolving); the relay ports Cloudflare allocates on its side do not matter to our border, because the SFU only ever talks to `:3478` |
 | B. Teach the SFU TURN over TLS 443 (passes today) | none | nobody | port the SFU to a stack whose TURN client speaks TCP/TLS (webrtc-rs 0.17 does not; whether the 0.20 `rtc` rewrite does is **unknown**, and that port is already a separate piece of work, [calls](../frontend/modules/calls.md#the-webrtc-020-port-measured-2026-09-15)) | no DSI ticket, but a TCP relay leg under real-time media adds head-of-line stalls; **unmeasured** |
-| C. Drop relay-only on the SFU: inbound UDP media range | an inbound UDP range (e.g. 10 000-10 100) to `193.49.175.122` | DSI, the "refused more easily" kind | relay policy off on the SFU, a fixed port range and a 1:1 NAT address in `SettingEngine` | the ask estate-migration deliberately never made; buys a Cloudflare-free server leg and nothing the user asked for |
+| C. Drop relay-only on the SFU: inbound UDP media range | an inbound UDP range (e.g. 10 000-10 100) to `<canari-public-ip>` | DSI, the "refused more easily" kind | relay policy off on the SFU, a fixed port range and a 1:1 NAT address in `SettingEngine` | the ask estate-migration deliberately never made; buys a Cloudflare-free server leg and nothing the user asked for |
 | D. Self-hosted TURN (coturn) on the host | 3478 UDP/TCP and a relay range inbound, or TURN-TLS sharing 443 | DSI, plus an install on a DSI host | config only | **a new install on the DSI's host**, forbidden without their written agreement (CLAUDE.md); and 443 is taken by the host nginx, so TURN-TLS on 443 would need an SNI/ALPN stream split of THEIR nginx |
 
 **Recommendation recorded, decision the user's: Option A**, worded for the ticket as *"autoriser en
-sortie UDP 3478 depuis 193.49.175.67 vers 141.101.90.0/24 et 162.159.207.0/24 (relais TURN
+sortie UDP 3478 depuis <host-egress-ip> vers 141.101.90.0/24 et 162.159.207.0/24 (relais TURN
 Cloudflare, appels audio/video de Canari)"*. It is an outbound rule to two named /24, which is a
 different and smaller ask than the inbound range the September request avoided. It does NOT make
 calls work by itself: the by-hand call owed by [calls](../frontend/modules/calls.md) is still the
@@ -269,7 +269,7 @@ answered**, and no credential was minted or printed. Evidence:
 | Where, 2026-10-16 UTC | UDP 3478 (STUN/TURN) | UDP 53 | UDP 443 | TCP 3478 / 80 | TLS 5349 / 443 | Candidate types |
 | --- | --- | --- | --- | --- | --- | --- |
 | **Portail-etu host** (`.67`), 00:50 re-run | **no** | **no** | **no** (00:49) | no / yes | no / yes | - (server) |
-| **Old `canari` VM** (`ssh canari`, Proxmox VM 101, NAT via an EMSE `193.49.174.x`), 00:48 | **yes, 16 ms** (Google STUN too) | no | no | yes / yes | yes / yes | - (server) |
+| **Old `canari` VM** (Proxmox VM 101, NAT via an EMSE `<school-range>`), 00:48 | **yes, 16 ms** (Google STUN too) | no | no | yes / yes | yes / yes | - (server) |
 | OXYGEN, raw STUN, home line, 00:48 | yes, 10 ms | yes | yes | yes / yes | yes / yes | - |
 | OXYGEN, Chrome 155, 00:54 | yes (TURN reached) | **no answer** (raw STUN on 53 from the same PC did answer - a Chrome-on-Windows quirk, not the network) | not tried | reached / reached | reached / reached | host/udp, srflx/udp |
 | Mi 9T, Chrome 154 on Android 10, home Wi-Fi, 00:52 | yes (TURN reached) | yes | not tried | reached / reached | reached / reached | host/udp, srflx/udp |
@@ -376,7 +376,7 @@ FEASIBLE with no DSI change; the largest code change.**
   and the 0.17 "never placed a call" risk is untouched.
 
 **(D) The DSI ask (section 3, option A) - the fallback.** One outbound rule: UDP 3478 from
-`193.49.175.67` to Cloudflare TURN. Cloudflare's TURN page lists no fixed ranges; its guidance is to
+`<host-egress-ip>` to Cloudflare TURN. Cloudflare's TURN page lists no fixed ranges; its guidance is to
 allowlist what `turn.cloudflare.com` resolves to, fixed addresses being an enterprise-plan matter -
 **so the two /24 of section 3 stay UNVERIFIED** and the ticket should name the hostname as well. It
 is needed ONLY if the in-repo SFU stays on this host.
@@ -398,6 +398,52 @@ As the last resort of a peer-to-peer call it is the standard design, and Cloudfl
 is (A): it removes the DSI from the 1:1 revival and needs no new provider account.** (B) and (C2) are
 choices for WP-C4, the revival plan's decision step.
 
+## 9. Probes of 2026-10-16: servers
+
+> **The question** (user, 2026-10-16): settle with REAL probes, not readings, how calls and live can
+> run without Cloudflare or the DSI - this section is the SERVER half (the clients and TURN are
+> section 8.1). Taken 09:41-09:51 UTC from `OXYGEN` (a home line). Production host: read-only
+> commands only (`sudo -n` was used to READ `firewall-cmd`, `nft`, `iptables -S` and `nginx -T`;
+> nothing written, nothing listened). Old VM: read-only, plus ONE listener for 90 s, recorded below.
+> Evidence: `F:/Programmation/canari-harness/probes-servers-2026-10-16/`.
+
+| # | Question | Method | Result | Verdict |
+| --- | --- | --- | --- | --- |
+| 1a | Which inbound ports does the HOST itself accept? | `sudo -n firewall-cmd --list-all-zones`, `nft list chain inet firewalld filter_INPUT`, `iptables -S` | zone `public` (default, holds `ens18`): services `ssh http https zabbix-agent` (22, 80, 443, 10050), nothing else; INPUT ends in `reject with icmpx admin-prohibited`. `iptables` INPUT adds only the `CROWDSEC_CHAIN` drop lists. `ss -tulpn`: public TCP 22, 80, 443, 10050 (+ rpcbind 111 and three host high ports, all refused by the zone); every Canari port on `127.0.0.1`; **no UDP 443 listener, so no HTTP/3** | **22/80/443 (+10050 monitoring) - host rule and School border agree** (border measured 2026-09-24 and section 1) |
+| 1b | Public path of each front door | `curl -w '%{remote_ip}'` x5, response headers | `canari.emse.fr` -> `<canari-public-ip>`, `Server: nginx`, no `cf-ray`: **host nginx directly, no tunnel**. `dev.canari-emse.fr` -> a Cloudflare anycast address, `Server: cloudflare`, `cf-ray ...-MRS`: **edge -> tunnel on the old VM -> its relay (`127.0.0.1:3080` there) -> host over the private network** | as documented ([estate-migration](estate-migration.md)) |
+| 1c | Is the host's OUTBOUND UDP drop the host's own rule? | `nft list chain inet firewalld filter_OUTPUT` and its `filter_OUT_public_*` sub-chains | policy `accept`; `pre/log/deny/allow/post` all **empty** | **the drop of section 1 is the School border, not the host** - nothing on the host to change, and nothing a host-side setting would fix |
+| 2a | Prod egress on 443, from outside | `bun throughput.mjs` on the 2 125 099-byte `mls_wasm_bg.*.wasm`, identity encoding; control `speed.cloudflare.com` 25 MB = **279 Mb/s** | 1 conn x3: **41.3 Mb/s**; 5 conns x2: **66.7 Mb/s**; 20 conns x1: **99.1 Mb/s** (TTFB median 42 / 245 / 305 ms); all `200` | **same ~100 Mb/s ceiling as 2026-10-15** (section 4), a second hour, same client |
+| 2b | Dev egress, same test | same, dev's own wasm | 38.9 / 160.5 / **182.1 Mb/s** - but `cf-cache-status: HIT`: **those numbers are Cloudflare's cache, not our host**. Re-run with a unique query per request (`MISS`, through the tunnel): 1 conn **17.8**, 5 conns **18.7**, 20 conns **18.7 Mb/s** (TTFB median 2.35 s at 20) | **the tunnel path caps at ~19 Mb/s whatever the parallelism** - five times below the direct path; live segments must not be served through the old VM's tunnel |
+| 2c | Latency to each front door | `curl -w` x5 on `/_app/version.json` | prod: TCP connect **~38 ms**, TLS done ~100 ms, TTFB ~135 ms. Dev: connect ~16 ms (to the CDN), TTFB ~55-73 ms (edge-cached file) | the direct path is ~38 ms RTT from here; a segment's first byte is ~1 RTT after a warm connection |
+| 3a | Who administers the old VM, and what is it? | `systemd-detect-virt`, `id`, `ip route`, [cloudflare-edge](cloudflare-edge.md#the-tunnel-drops-in-the-22h-band-and-nothing-on-this-page-can-fix-it) | an **LXC container** (Proxmox CT 101, not a full VM) at `<private-ip>/16`, default route `<private-ip>` = **the School's Stormshield border firewall** (`fw-ste.emse.fr`), public NAT address `<old-vm-public-ip>`. Our account is in `sudo` and `docker`; its own `nft` ruleset is accept-all (Docker's chains only) | **the box is ours, its network is not**: any inbound path is a NAT rule on the School's firewall, i.e. a DSI request - the same as the host |
+| 3b | Can the old VM RECEIVE from the Internet on a high port? | `listen_probe.py` (below) on the VM, TCP+UDP `47391`, **90 s, 09:46:53-09:48:23 UTC, exited by itself** (`ss` afterwards: 0 sockets on 47391). From OXYGEN `send_probe.py <old-vm-public-ip> 47391`: 1 TCP connect + 3 UDP datagrams. Control from the VM to `<private-ip>:47391` | OXYGEN: **TCP timeout, UDP no reply x3, and the listener logged NOTHING from outside**. Control: TCP connected and UDP answered | **NO inbound, TCP or UDP** - by construction (no DNAT on the border) and now measured. A self-hosted coturn or a non-relay SFU there needs the DSI exactly as on the host |
+| 3c | Can it SEND UDP? | section 8.1 (STUN to Cloudflare TURN and Google) | yes, 14-21 ms | **outbound UDP works from the VM** (the School's policy differs by subnet, and we did not ask for it - section 8.2 C2) |
+| 3d | Capacity for a coturn or SFU | `nproc`, `free -m`, `uptime`, `df`; `curl` to `speed.cloudflare.com` from the VM | 6 cores, 16 GB (16.1 GB available), load 0.00, disk 18 % (98 GB free), **no container running**. Download 389-487 Mb/s. **Upload 4.0-4.4 Mb/s on a single TCP flow** (three runs, 10-25 MB; OXYGEN's control upload to the same endpoint: 56 Mb/s); a 20 MB stream VM -> OXYGEN over ssh: 6.8 Mb/s | CPU and RAM are plenty; **the UPLINK is the weak point** - ~4 Mb/s per TCP flow, ~19 Mb/s aggregate through the tunnel (2b). Whether the cap is per flow (four tunnel connections x ~4.5 would fit 19) or for the box, and what UDP gets, is **not measured** - an SFU there should be assumed to have ~15-20 Mb/s of egress until it is |
+| 3e | Is it the documented rollback? | [estate-migration](estate-migration.md) | **no longer**: the 23 Canari containers and 10 volumes were destroyed 2026-09-25 (*"Tout supprimer maintenant"*). What it still carries: the Cloudflare connector (every `canari-emse.fr` name, dev, `ssh <old-vm>`), the relay to the host, the legacy names' `301`s, and the jump to `<prod-host>`. | a change there risks **dev, the legacy redirects and our SSH path to production**, not a rollback. A permanent role (8.2 C2) must not share its fate with those |
+| 4a | WebSocket through the host nginx | `nginx -T` (`canari.conf`), client code | `proxy_http_version 1.1`, `Upgrade`/`Connection` forwarded; **no `proxy_read_timeout` anywhere, so the default 60 s applies** in front of the container's 3600 s on `/api/call` and 120 s on `/api/ws`. The web client's heartbeat is every 8 s (`WebMlsService.ts`), so `/api/ws` never idles 60 s. Upgrade without a token answers `401` on both `/api/ws` and `/api/call` (auth before upgrade), so **an idle socket could not be held open unauthenticated to measure the cut** | **WS works** (it carries chat today); a call-signalling socket must ping under 60 s or the host nginx closes it - the container's 3600 s is not what binds |
+| 4b | Long-lived chunked streaming (live segments) | `nginx -T`, `Dockerfile.frontend` | host `canari.conf`: **`proxy_buffering` not set = ON**, `proxy_request_buffering off`, `proxy_buffers 4 256k`, `client_max_body_size 2G`, `worker_connections 768`; `http2 on`; CrowdSec Lua bouncer. Container: `proxy_buffering off` server-wide, `tcp_nodelay on`, `client_max_body_size 100m`, `/api/media` `proxy_read_timeout 300s`. The container nginx CONSUMES an upstream `X-Accel-Buffering` header (nginx does not forward `X-Accel-*`), so a backend cannot unbuffer the host from inside | **segments as ordinary files: FEASIBLE today** (that is what 2a measured). **A single long chunked response (LL-HLS part streaming, SSE-style) is NOT safe as configured**: the host buffers it and cuts any gap over 60 s; fixing it is either `add_header X-Accel-Buffering no` on that container location (ours, no DSI) or a line in the host vhost (the DSI's file). **Not measured end to end** - no unauthenticated streaming endpoint exists |
+
+**What was NOT tested, and why.**
+
+- **The Mi 9T against the old VM's listener**: it sits on the same home Wi-Fi as OXYGEN, and the
+  inbound result is decided by the School border's NAT, not by the client - a second client on the
+  same line adds no information. A phone on mobile data would (the bench Mi 9T has no SIM, 8.1).
+- **An idle WebSocket held past 60 s** and **a slow chunked response through the host**: both need
+  an authenticated session or an endpoint we would have to deploy; the verdicts in 4a/4b are read
+  from configuration, not observed.
+- **UDP egress capacity of the old VM** (what a TURN/SFU leg would actually use) and **whether the
+  ~4 Mb/s is per flow**: needs a UDP sink we control on the Internet side, which does not exist.
+- **Prod throughput from campus or 4G**: same open item as section 7, unchanged.
+- **The host firewall's border rules** (as opposed to the host's own): the Stormshield is the
+  School's, outside every access this project holds.
+
+**What this changes in section 8.** It confirms (A) and (B): neither needs an inbound port, and the
+host's own rules are not the obstacle anywhere. It weakens **C2** (the SFU on the old VM): the
+network lets its UDP out, but the box receives nothing from outside, uploads ~4 Mb/s per flow and
+~19 Mb/s through its tunnel, and also carries dev and our SSH path - a group call's SFU forwarding
+N x (N-1) x 0.4 Mb/s would hit that ceiling at about 7 people. And it bounds **live option C**: serve
+segments from `canari.emse.fr` directly (~100 Mb/s), never through the tunnel (~19 Mb/s).
+
 ## The two probes
 
 Both lived in a scratch directory and are not committed; they are described here precisely enough to
@@ -407,8 +453,16 @@ be rewritten in a few minutes and the numbers re-taken.
 `0x2112A442`, 12 random transaction bytes) per attempt - at most three per UDP target, one per
 TCP/TLS target - and accepts only a Binding success (`0x0101`) echoing the transaction id. Targets
 are `turn.cloudflare.com` on udp 3478/53, tcp 3478/80 and tls 5349/443, plus any `kind:host:port`
-on the command line. Run on the host as `ssh portail-etu-direct 'python3 -' < stun_probe.py`.
+on the command line. Run on the host as `ssh <prod-host> 'python3 -' < stun_probe.py`.
 
 `throughput.mjs` (bun) runs N concurrent workers, each fetching one URL M times with
 `accept-encoding: identity`, and prints the status counts, bytes, elapsed time and Mb/s. Invoked as
-`bun throughput.mjs <url> <concurrency> <per-worker>`.
+`bun throughput.mjs <url> <concurrency> <per-worker>`. Section 9 added `BUST=1`, which appends a
+unique query to each request so a Cloudflare-fronted name answers `MISS` and the bytes come from
+our host, not the edge cache.
+
+Section 9's inbound test adds a pair: `listen_probe.py <port> <secs>` binds one TCP and one UDP
+socket on `0.0.0.0:<port>`, logs the source of every connection and datagram, answers each with a
+fixed string and exits after `<secs>`; it was run as `ssh <old-vm> 'python3 - 47391 90' <
+listen_probe.py`. `send_probe.py <host> <port>` makes one TCP connect (4 s timeout) and sends three
+UDP datagrams (2 s each), printing any answer.

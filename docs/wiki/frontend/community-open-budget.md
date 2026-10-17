@@ -90,7 +90,7 @@ all ("Selectionner ou creer une communaute") and "Impossible de charger les post
 community list is not local-first. Its exported log also shows 79 MLS checkpoints in ~3 min at
 94-238 ms each (135 in the whole file, median 114 ms, max 586) - one per bulk ingest, read
 watermarks included - and 45 identical `[HISTORY_RECONCILE] ... asked 30s ago` lines in 250 ms at
-cold start (section 6). Evidence: `F:\Programmation\canari-harness\pixel-r1014\` (off the
+cold start (section 6). Evidence: `<workstation>/canari-harness\pixel-r1014\` (off the
 repository: a real account).
 
 ## 3. What each open waits on - the critical chains
@@ -546,7 +546,7 @@ Not changed, and noted: the hub does not remember the selected community across 
 community.
 
 **Owed:** the same table on the phone with the built code, from the next pre-release. Evidence is in
-`F:/Programmation/canari-harness/a1-bench/r1015-first-mount/`: `runs.ndjson`, the profiles, the
+`<harness-dir>/a1-bench/r1015-first-mount/`: `runs.ndjson`, the profiles, the
 traces, and `src128/` (the dumped `1.2.8` chunks the profiles resolve against).
 
 ## 7. Not measured, and owed
@@ -568,7 +568,7 @@ traces, and `src128/` (the dumped `1.2.8` chunks the profiles resolve against).
 
 ## 8. Evidence
 
-`F:/Programmation/canari-harness/a1-bench/r1014-community-open/` (off the repository):
+`<harness-dir>/a1-bench/r1014-community-open/` (off the repository):
 `runs.ndjson` (one row per run with its console, API calls, requests, long tasks and logcat),
 `report.txt`, `batch1.log`, and `discarded/` - the rows taken before two instrument defects were
 fixed (a nested `window.fetch` wrapper that recorded and delayed some calls three times, and the
