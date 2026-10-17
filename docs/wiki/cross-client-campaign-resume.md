@@ -130,21 +130,14 @@ bun rows.mjs     # fails loudly if the ledger and the board disagree
 
 ### The accounts, and the fixtures they do not have
 
-Two ordinary Authentik users on `miconnect`, one `owner` (W1, W3, A1) and one `peer` (W2). **They
-sign in through the SERVICE-ACCOUNT link** production's login page already has - the small
-"Connexion externe (service-account)" button under the main OIDC button. It is
-`PASSWORD_LOGIN_FLOW_SLUG = 'password-login'` in `frontend/src/lib/stores/auth.ts`, which sends the
-browser to `/if/flow/password-login/?next=<authorize>`: identification + password + login, and
-**no `AuthenticatorValidateStage`**.
+Two ordinary Authentik users on `miconnect`, one `owner` (W1, W3, A1) and one `peer` (W2). **They sign in through a dedicated service-account sign-in path** that has no second factor. The flow details are kept privately.
 
-- **There is no 2FA in the campaign.** The EMSE 2FA was never Authentik's - the `miconnect-auth`
-  flow has `user_fields: []`, `password_stage: None` and `cas-emse` as its only source, so the main
-  button federates to the school and the school asks. The service-account flow does not go there.
+- **There is no 2FA in the campaign.** The school's 2FA is not Authentik's, and the service-account path does not go through it.
 - **So losing a Chrome profile is cheap in TIME and expensive in MEANING**: a re-login is a username
   and a password, but a fresh profile is a new device with no history, so every HEAL row's
   precondition has to be rebuilt and any row whose verdict depends on an existing device must be
   re-run rather than trusted.
-- Nothing is changed in Authentik's FLOWS and **production's main login page is untouched**. Two
+- Nothing is changed in Authentik's FLOWS. Two
   things beyond the users have changed on the identity provider, both on the `Canari Local` provider
   and neither touching production's client: the users themselves, and - on **2026-09-04** - the
   redirect URI `fr.emse.canari://callback`, without which a PHONE pointed at the local estate

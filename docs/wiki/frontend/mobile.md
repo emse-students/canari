@@ -496,7 +496,7 @@ call sites are `useMessaging.svelte.ts` (`handleSendChat`) and `utils/chat/messa
 (`sendChatMessage`); a new site that interpolates content must use a key of that list.
 
 **What it cannot catch, for the reviewer:** an UNQUOTED ASCII word that is a name
-(`Joined channel #bureau`, `Jolan Boudin left`, a path segment `/users/jolan`) - no pattern
+(`Joined channel #bureau`, `<First Last> left`, a path segment `/users/<name>`) - no pattern
 separates `bureau` from `ready` - a quoted name written in lower case (`"bureau"`), a byte list
 shorter than sixteen, `jean at emse.fr`, and a phone number written with parentheses. The
 cotisation roster line logged the admin's search text and now logs its length (second review). The

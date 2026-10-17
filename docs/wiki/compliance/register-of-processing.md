@@ -60,7 +60,7 @@ logged.
 **Security measures**: end-to-end encryption of message, media and reaction CONTENT (MLS RFC 9420,
 Graine); client-side media encryption (AES-256-GCM CEK); local state encrypted under a PIN-derived
 key (PBKDF2-SHA256, 310 000 iterations); access token in memory, 1 h; refresh rotation with replay
-detection; TLS 1.2+ (measured on the host and on Cloudflare); CrowdSec WAF and bouncer on the host
+detection; TLS 1.2+ (measured on the host and on Cloudflare); a web application firewall on the host
 (the DSI's); no secret in the repository; the server logs group names as a byte count.
 
 ## 3. MiConnect (Authentik)
@@ -116,7 +116,7 @@ director and the host (**OPEN**, owed by a human).
 
 | Item | Fact | Source |
 | --- | --- | --- |
-| Hosting | one shared host of the school, administered with the DSI, carrying `canari-prod`, `canari-dev`, Le Cercle, Sky, Portail-etu and Authentik; the DSI issues the TLS certificates and runs CrowdSec and an EDR | [estate-migration](../infrastructure/estate-migration.md) |
+| Hosting | one shared host of the school, administered with the DSI, carrying `canari-prod`, `canari-dev`, Le Cercle, Sky, Portail-etu and Authentik; the DSI issues the TLS certificates and runs the host's security tooling | [estate-migration](../infrastructure/estate-migration.md) |
 | Hosting agreement | **none written (OPEN)** - roles, access, incident notice, end of hosting | [dso-dossier](dso-dossier.md) |
 | Legacy names | `canari-emse.fr`, `dev.canari-emse.fr`, the archives and MiGallery still pass through Cloudflare (TLS terminated at the edge) | [cloudflare-edge](../infrastructure/cloudflare-edge.md) |
 | Database backups | nightly `auth_db` + `authentik_db` dumps, 14 days, local and mirrored to a second school VM; **to be encrypted (owner decision, OPEN)** | [backup](../infrastructure/backup.md) |
@@ -137,7 +137,7 @@ director and the host (**OPEN**, owed by a human).
 | MiGallery (MiTV) | separate controller | avatar requests by user id | France (school host) | ecosystem |
 | MiConnect / Authentik | Rootz's own service | profile claims | France (school host) | internal |
 | Le Cercle | separate service | balance top-up webhooks (user id, amount, payment id) | France (school host) | internal |
-| CrowdSec (operated by the DSI) | the DSI's security tool | IPs of requests | France | **to confirm whether signals leave the host (OPEN)** |
+| The host's firewall (operated by the DSI) | the DSI's security tool | IPs of requests | France | **to confirm whether signals leave the host (OPEN)** |
 
 ## 9. OPEN items (summary)
 

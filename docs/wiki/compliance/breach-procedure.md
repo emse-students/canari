@@ -36,7 +36,7 @@ that ground.
 | --- | --- |
 | A report under [`SECURITY.md`](../../../SECURITY.md) (GitHub Security Advisory) or an e-mail to `bureau@rootz-emse.fr` | an external finding |
 | The daily `scheduled.yml` reports (backups, host updates) and the deploy's health checks ([cicd](../cicd.md)) | an availability breach: a backup that stopped, a lost volume |
-| The host's security stack, operated by the school's DSI (CrowdSec, the EDR) | an intrusion on the shared host - **the DSI sees it first, and the duty to tell us is part of the hosting agreement that is still OPEN** ([dso-dossier](dso-dossier.md)) |
+| The host's security stack, operated by the school's DSI (its firewall and endpoint protection) | an intrusion on the shared host - **the DSI sees it first, and the duty to tell us is part of the hosting agreement that is still OPEN** ([dso-dossier](dso-dossier.md)) |
 | Container logs and the per-deploy archive ([logging](../infrastructure/logging.md)) | the evidence afterwards |
 | A user ("I can see somebody else's ...") | an authorisation defect |
 
