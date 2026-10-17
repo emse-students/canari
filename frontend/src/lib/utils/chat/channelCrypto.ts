@@ -413,16 +413,19 @@ export async function sendChannelReaction(
   targetMessageId: string,
   emoji: string,
   at: number,
-  removed: boolean
+  removed: boolean,
+  rowId: string = crypto.randomUUID()
 ): Promise<void> {
   const protoBytes = encodeAppMessage({
     ...mkReaction(targetMessageId, emoji, at, removed),
     // Its OWN id, never the reacted-to message's: this is a row in the channel like any other, and
     // giving it the target's id would make two rows answer to one address.
-    messageId: crypto.randomUUID(),
+    messageId: rowId,
     sentAt: at,
   });
-  await sendEncryptedChannelMessage(channelId, protoBytes, undefined, undefined, undefined, {
+  // The row id travels beside the ciphertext too: a repeat of this reaction (owed to a reconnect,
+  // WP-OFF-4) passes the same one, and the server answers it with the row it already holds.
+  await sendEncryptedChannelMessage(channelId, protoBytes, rowId, undefined, undefined, {
     silent: true,
   });
 }
@@ -440,16 +443,17 @@ export async function sendChannelEdit(
   channelId: string,
   targetMessageId: string,
   newContent: string,
-  editedAt: number
+  editedAt: number,
+  rowId: string = crypto.randomUUID()
 ): Promise<void> {
   const protoBytes = encodeAppMessage({
     ...mkEdit(targetMessageId, newContent, editedAt),
     // Its OWN id, like a reaction: two rows answering to one address would make delete and pin
-    // ambiguous.
-    messageId: crypto.randomUUID(),
+    // ambiguous. Beside the ciphertext as well, so a repeat is answered with the stored row.
+    messageId: rowId,
     sentAt: editedAt,
   });
-  await sendEncryptedChannelMessage(channelId, protoBytes, undefined, undefined, undefined, {
+  await sendEncryptedChannelMessage(channelId, protoBytes, rowId, undefined, undefined, {
     silent: true,
   });
 }

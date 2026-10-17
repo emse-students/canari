@@ -62,7 +62,13 @@ import {
   mkReaction,
   mkSystem,
 } from '$lib/proto/codec';
-import { queuedReadWatermarkAt, sendReadWatermark } from './messaging';
+import {
+  drainOwedDmReadMarksOnOutbox,
+  flushOwedDmReadMarks,
+  queuedReadWatermarkAt,
+  sendReadWatermark,
+} from './messaging';
+import { owedDmReadMarks, recordDmReadMark } from './salonReadMarkQueue';
 import { MediaUploadError } from '$lib/utils/mediaErrors';
 import {
   UploadAbortedError,
@@ -3192,6 +3198,37 @@ describe('outbox - a read watermark supersedes the unsent one of its conversatio
     await outboxIdle();
     await outbox.flush();
     expect(sentAts(mlsService)).toEqual([250]);
+  });
+
+  // A PROCESS KILLED INSIDE THE 2 s DEBOUNCE: the mark was decided and written down, the debounce
+  // never fired. The next life's outbox registration is what hands it over - nothing else would.
+  it('a DM mark owed by a killed process is queued when the next outbox is registered', async () => {
+    localStorage.clear();
+    recordDmReadMark('u', 'g1', 400);
+    const stop = drainOwedDmReadMarksOnOutbox(() => null);
+    try {
+      const storage = makeStorage();
+      const mlsService = makeMls();
+      connectivity.notifyServerUnreachable();
+      registerOutbox(makeDeps({ mlsService, storage }));
+
+      await vi.waitFor(() => expect(queuedAts(storage)).toEqual([400]));
+      await vi.waitFor(() => expect(owedDmReadMarks('u')).toEqual({}));
+    } finally {
+      stop();
+      localStorage.clear();
+    }
+  });
+
+  it('a DM mark the outbox could not take stays owed', async () => {
+    localStorage.clear();
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    unregisterOutbox();
+    recordDmReadMark('u', 'g1', 500);
+
+    expect(await flushOwedDmReadMarks('u')).toBe(0);
+    expect(owedDmReadMarks('u')).toEqual({ g1: { at: 500 } });
+    localStorage.clear();
   });
 
   it('never moves a mark backwards: a watermark an unsent one covers is not queued at all', async () => {

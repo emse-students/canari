@@ -153,6 +153,9 @@ describe('sendChannelReaction (WP-40)', () => {
     // make a delete or a pin ambiguous.
     expect(frame?.messageId).not.toBe('target-1');
     expect(String(frame?.messageId ?? '')).not.toHaveLength(0);
+    // The same id beside the ciphertext: a repeat owed to a reconnect (WP-OFF-4) is answered by the
+    // server with the row it already holds.
+    expect(body.messageId).toBe(frame?.messageId);
     expect(fromBase64(body.ciphertext).length).toBeGreaterThan(0);
   });
 });
@@ -171,6 +174,7 @@ describe('sendChannelEdit', () => {
     expect(frame?.edit?.newContent).toBe('Salut \u{1F600}');
     expect(Number(frame?.edit?.editedAt)).toBe(1_700_000_000_000);
     expect(frame?.messageId).not.toBe('target-1');
+    expect(body.messageId).toBe(frame?.messageId);
   });
 });
 

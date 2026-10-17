@@ -68,6 +68,7 @@
   import SeoHead from '$lib/components/seo/SeoHead.svelte';
   import { purgeRetiredAvatarCache } from '$lib/utils/userAvatarCache';
   import { dropRetiredKlipyCustomerId } from '$lib/utils/chat/retiredKlipyCustomerId';
+  import { drainOwedDmReadMarksOnOutbox } from '$lib/utils/chat/messaging';
   import { publishTextZoom, followIosDynamicType } from '$lib/utils/textZoom';
   import { m } from '$lib/paraglide/messages';
 
@@ -150,6 +151,9 @@
     void purgeRetiredAvatarCache();
     // The per-install id older builds sent to KLIPY with every GIF search (`retiredKlipyCustomerId.ts`).
     dropRetiredKlipyCustomerId();
+    // A DM read mark a killed process still owed goes to the outbox the moment one is registered,
+    // whatever route the app opens on (`flushOwedDmReadMarks`).
+    const stopOwedDmMarkDrain = drainOwedDmReadMarksOnOutbox(() => globalSession.userId || null);
 
     const onVersionCheckTrigger = () => void refreshAppVersionCheck();
     void refreshAppVersionCheck();
@@ -161,6 +165,7 @@
 
     return () => {
       disposePressedClickGuard();
+      stopOwedDmMarkDrain();
       disposeDynamicType();
       teardownHistory();
       teardownKeyboard();

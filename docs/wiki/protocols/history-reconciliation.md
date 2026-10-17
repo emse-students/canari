@@ -1262,10 +1262,15 @@ group, so its marks cannot enter this queue (`flushOne` drops a `channel_` entry
   receiver and the stored watermark of every peer. Not sending the frame at all needs no receiver to
   change.
 
-**Residual, not closed here.** A process death INSIDE the 2 s debounce still loses that window's
-frame. The local mark was persisted, so the next open finds nothing to announce. Closing it needs
-the owed mark written durably at decision time, as `salonReadMarkQueue.ts` does for salons
-([backlog](../backlog.md)).
+**A process death INSIDE the 2 s debounce no longer loses that window's frame (2026-10-17).** The
+local mark was persisted, so the next open found nothing to announce. The mark is now OWED from the
+instant it is decided (`recordDmReadMark`, the DM ledger of `salonReadMarkQueue.ts`), and dropped only
+once the outbox has TAKEN the frame. Every outbox registration drains what is owed
+(`drainOwedDmReadMarksOnOutbox`, subscribed in the root layout through `onOutboxRegistered`), so a
+killed process's mark is queued at the next boot, whatever route it opens on. A conversation that
+left the store before the debounce ended has its owed mark dropped. Test: `outbox.test.ts` ("a DM
+mark owed by a killed process is queued when the next outbox is registered", failing without the
+registration drain).
 
 **What a phone should count** to confirm the gain: `[READ] ... has read up to` lines received, and
 MLS checkpoints, per 3 minutes of a two-person DM exchange, on this build and on the one before it.

@@ -4,6 +4,8 @@ import type { OutboxEntry } from '$lib/db';
 import {
   cancelOutboxMessage,
   enqueueOutboxMessage,
+  getOutbox,
+  onOutboxRegistered,
   OutboxEnqueueError,
   type LatestWins,
 } from './outbox';
@@ -32,7 +34,16 @@ import {
 } from '$lib/utils/graine/sealUnavailableMessage';
 import { readSalonSendGate, whenSalonSendable } from '$lib/utils/graine/salonSendGate';
 import type { SalonEchoChange } from './salonEcho';
-import { clearUnsentSalonText, recordUnsentSalonText } from './salonUnsent';
+import {
+  clearUnsentSalonText,
+  recordUnsentSalonText,
+  takeOrphanedSalonTexts,
+  type UnsentSalonText,
+} from './salonUnsent';
+import { connectivity } from '$lib/stores/connectivity.svelte';
+import { isTransportFailure } from '$lib/utils/transportFailure';
+import { forgetOwedSalonWrite, oweSalonWrite } from './salonOwed';
+import { flushDmReadMarks } from './salonReadMarkQueue';
 
 /**
  * Dependencies required by message-sending helpers.
@@ -65,9 +76,9 @@ export interface SendMessageDeps {
 
 /**
  * A salon message that has been shown but not (yet) accepted by the server, kept so the failed row's
- * "retry" re-sends EXACTLY what the first attempt carried: same bytes, same client id, same mentions.
- * Memory only: a reload loses the row; the TEXT survives in the unsent ledger (`salonUnsent.ts`) and
- * goes back to the composer. The durable salon queue is WP-OFF-3.
+ * "retry" re-sends EXACTLY what the first attempt carried: same payload, same client id, same
+ * mentions. Memory only; its durable half is the unsent ledger (`salonUnsent.ts`), from which the
+ * next page life rebuilds it (`resumeUnsentSalonSends`).
  */
 interface SalonSend {
   /** The text as typed: what the unsent ledger keeps for a kill or reload (`salonUnsent.ts`). */
@@ -76,18 +87,51 @@ interface SalonSend {
   channelId: string;
   payload: Uint8Array;
   mentionedUserIds: string[];
+  /** The echo writer and logger of the last attempt: what a re-send on the reconnect reuses. */
+  deps: SendMessageDeps;
 }
 const salonSends = new Map<string, SalonSend>();
 
+/** The key a send is owed to the reconnect under (`salonOwed.ts`). */
+const sendKey = (messageId: string) => `send:${messageId}`;
+
+/**
+ * Owes a send that met NO ANSWER while this device was offline, or was held because it was, to the
+ * next reconnect (`salonOwed.ts`), where it goes again under the same client id.
+ */
+function oweOnReconnect(messageId: string): void {
+  oweSalonWrite(sendKey(messageId), async () => {
+    const send = salonSends.get(messageId);
+    if (!send) {
+      // Settled meanwhile by the frame or a history page, or given up by its author.
+      console.debug(`[SEND] owed salon send ${messageId.slice(0, 8)}... no longer registered`);
+      return;
+    }
+    if (retrying.has(messageId)) {
+      send.deps.log(`[SEND] owed salon send ${messageId.slice(0, 8)}... already being retried`);
+      return;
+    }
+    retrying.add(messageId);
+    try {
+      await deliverSalonSend(messageId, send);
+    } finally {
+      retrying.delete(messageId);
+    }
+  });
+}
+
+/** Ledger entries this page life took back and is waiting to send again (`resumeUnsentSalonSends`). */
+const resumingSalonSends = new Set<string>();
+
 /** The message ids this page life is still sending or can retry - what is NOT an orphan of a past life. */
 export function liveSalonSendIds(): ReadonlySet<string> {
-  return new Set(salonSends.keys());
+  return new Set([...salonSends.keys(), ...resumingSalonSends]);
 }
 
 /**
- * POSTs one salon send and moves its echo: `pending` while the salon is not loaded yet, `sending`
- * while in flight, `settled` on the server's answer, `error` on a refusal (the entry stays
- * registered so the row can be retried).
+ * POSTs one salon send and moves its echo: `pending` while the salon is not loaded yet or the device
+ * is offline, `sending` while in flight, `settled` on the server's answer, `error` on a refusal (the
+ * entry stays registered so the row can be retried).
  *
  * A SALON NOT YET LOADED HOLDS THE SEND, IT DOES NOT REFUSE IT (2026-10-13). A salon is drawn from
  * the local store before the community listing has taught this session its scope, and the seal
@@ -98,22 +142,26 @@ export function liveSalonSendIds(): ReadonlySet<string> {
  * that ends without the salon, a community that leaves, a sign-out: each refuses the hold, and the
  * row turns `error` with its Retry. The wait is bounded by those events, never by a clock.
  *
- * THE OUTCOME IS CLASSIFIED AT THE THROW. A status code is an ANSWER: the server saw the request and
- * said no, so the row is `error`. A throw that carries NO status (the network dropped, the reply was
- * lost) is an UNKNOWN outcome - the server may well have the message - so the row STAYS `sending` and
- * nothing here decides: the broadcast frame or the next history load (both carry the client UUID) is
- * the proof that settles it, and the unsent ledger keeps the text meanwhile. No clock is involved.
- * Marking it `error` and offering a retry would post it twice whenever the first attempt had landed,
- * because the server does not dedupe on the client id (`ChannelService.sendMessage` mints its own row
- * id and never reads `messageId`) - that dedupe is WP-OFF-3.
+ * AN OFFLINE DEVICE HOLDS THE SEND TOO (WP-OFF-3): nothing it POSTs can arrive, and a seal made now
+ * spends a key index for nothing. The row stays `pending` and the send is owed to the next
+ * reconnect, where it is sealed and posted.
  *
- * @returns `null` on success, else the member-facing refusal sentence.
+ * THE OUTCOME IS CLASSIFIED AT THE THROW. A status code below 500 is an ANSWER: the server saw the
+ * request and said no, so the row is `error`. Anything else is an UNKNOWN outcome - the server may
+ * hold the message - and since the server answers a repeat of the same client id with the row it
+ * already holds (migration 088), sending it again is safe:
+ * - a transport failure that left the device offline is OWED to the reconnect (`pending`), which
+ *   re-delivers it with no gesture;
+ * - anything else (a 5xx, no answer while the link still works, a throw with no status) is
+ *   `unconfirmed`: nothing known will change the answer, so it waits for the author's Retry.
+ * The broadcast frame or the next history page still settle the row first whenever the first POST
+ * did land. No clock decides any of it.
+ *
+ * @returns `null` when nothing needs saying (sent, or held for the reconnect), else the
+ *   member-facing sentence.
  */
-async function deliverSalonSend(
-  messageId: string,
-  send: SalonSend,
-  deps: SendMessageDeps
-): Promise<string | null> {
+async function deliverSalonSend(messageId: string, send: SalonSend): Promise<string | null> {
+  const { deps } = send;
   const reading = readSalonSendGate(send.channelId);
   if (reading.kind === 'wait') {
     deps.log(
@@ -132,6 +180,14 @@ async function deliverSalonSend(
   }
   if (reading.kind === 'wait') {
     deps.log(`[SEND] channel send ${messageId.slice(0, 8)}... released: its salon is loaded`);
+  }
+  if (connectivity.isOffline) {
+    deps.log(
+      `[SEND] channel send ${messageId.slice(0, 8)}... HELD: this device is offline - sent on the reconnect`
+    );
+    deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'pending' });
+    oweOnReconnect(messageId);
+    return null;
   }
   deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'sending' });
   try {
@@ -179,14 +235,24 @@ async function deliverSalonSend(
       return sealUnavailableMessage(error.reason);
     }
     const status = refusalStatus(error);
-    // NO ANSWER, OR A GATEWAY'S 5xx, IS NOT A REFUSAL. With no status the request may have reached
-    // the server before the link dropped; a 5xx may come from a proxy AFTER the social service
-    // stored the row (a 502/504 on the way back). Either way nobody knows whether the server holds
-    // it, so the row is `unconfirmed`: it offers Delete and "put back in the composer", never a
-    // silent retry, and the frame or the next history page settles it if the server did take it.
+    // NO ANSWER, AND THE LINK IS DOWN: the reconnect is the event that changes the answer, so the
+    // send is owed to it. `isOffline` was set by this very failure (`trackedFetch` reports every
+    // transport failure to the store before it rethrows), so it is a fact, not a guess.
+    if (status === null && isTransportFailure(error) && connectivity.isOffline) {
+      deps.log(
+        `[SEND] channel send ${messageId.slice(0, 8)}… got no answer and the device is offline - sent again, same client id, on the reconnect: ${String(error)}`
+      );
+      deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'state', status: 'pending' });
+      oweOnReconnect(messageId);
+      return null;
+    }
+    // NO ANSWER WITH THE LINK UP, OR A GATEWAY'S 5xx, IS NOT A REFUSAL. The request may have reached
+    // the server (a 502/504 may come from a proxy AFTER the social service stored the row), and no
+    // event is known to change the answer, so the row is `unconfirmed` and its Retry - the author's
+    // gesture - repeats it under the same client id, which the server answers with its stored row.
     if (status === null || status >= 500) {
       deps.log(
-        `[SEND] channel send ${messageId.slice(0, 8)}… OUTCOME UNKNOWN (status=${status ?? 'none'}): unconfirmed until the frame or a history load settles it: ${String(error)}`
+        `[SEND] channel send ${messageId.slice(0, 8)}… OUTCOME UNKNOWN (status=${status ?? 'none'}): unconfirmed, its Retry is safe (the server answers a repeat with its row): ${String(error)}`
       );
       deps.patchSalonEcho(send.conversationKey, messageId, {
         kind: 'state',
@@ -208,13 +274,12 @@ async function deliverSalonSend(
 const retrying = new Set<string>();
 
 /**
- * Re-sends a REFUSED salon message from its row's "retry". Same payload, same client id.
+ * Re-sends a salon message from its row's "retry". Same payload, same client id.
  *
- * SAFE BECAUSE IT IS OFFERED ONLY WHERE THE SERVER PROVED IT STORED NOTHING: a 4xx refusal, a
- * seal that never left this device, or a salon that could not be loaded (`error`). A retry of the
- * last one waits for the salon again if a listing is in flight. An `unconfirmed` row - no answer, or a 5xx - gets no
- * retry, because a repeat the server did take would post twice until the server dedupes on the
- * client id (WP-OFF-3).
+ * SAFE WHATEVER THE FIRST ATTEMPT DID: after a refusal (`error`) the server stored nothing, and after
+ * an unknown outcome (`unconfirmed`) it answers the repeat with the row it already holds (migration
+ * 088, WP-OFF-3). A retry of a salon that could not be loaded waits for it again if a listing is in
+ * flight.
  *
  * @returns the refusal sentence when it failed again, `null` when the server took it, and
  *   `undefined` when nothing is registered under `messageId` (a reload, or already sent).
@@ -233,9 +298,12 @@ export async function retrySalonSend(
     return undefined;
   }
   retrying.add(messageId);
+  // The author's gesture IS the delivery: nothing stays owed to the reconnect beside it.
+  forgetOwedSalonWrite(sendKey(messageId));
   deps.log(`[SEND] retrying salon message ${messageId.slice(0, 8)}…`);
   try {
-    return await deliverSalonSend(messageId, send, deps);
+    send.deps = deps;
+    return await deliverSalonSend(messageId, send);
   } finally {
     retrying.delete(messageId);
   }
@@ -260,10 +328,165 @@ export function forgetDeliveredSalonSend(messageId: string, userId: string): voi
   if (salonSends.delete(messageId)) clearUnsentSalonText(userId, messageId);
 }
 
+/**
+ * Forgets every salon send of the session that ended, in memory only: what is still unanswered stays
+ * in that account's unsent ledger, and its next session sends it again (`resumeUnsentSalonSends`) -
+ * which it could not while this page life still counted them as live.
+ */
+export function forgetSalonSendsOfEndedSession(): void {
+  if (salonSends.size > 0) {
+    console.log(
+      `[SEND] signed out: ${salonSends.size} salon send(s) left to the ledger for the next session`
+    );
+  }
+  salonSends.clear();
+}
+
 /** Forgets a failed salon send the member discarded: its row is removed by the caller. */
 export function discardSalonSend(messageId: string, userId: string): void {
   salonSends.delete(messageId);
+  forgetOwedSalonWrite(sendKey(messageId));
   clearUnsentSalonText(userId, messageId);
+}
+
+/** A salon message the unsent ledger can send again: one written with its `sentAt`. */
+type QueuedSalonText = UnsentSalonText & { sentAt: number };
+
+/**
+ * The payload of a salon text, rebuilt identically from what the ledger keeps: the same client id and
+ * author clock are sealed inside, so a repeat is the same message for every reader.
+ */
+function salonTextPayload(entry: QueuedSalonText): Uint8Array {
+  const { messageId, sentAt, text, replyTo } = entry;
+  return replyTo
+    ? encodeAppMessage({ ...mkReply(text, replyTo), messageId, sentAt })
+    : encodeAppMessage({ ...mkText(text), messageId, sentAt });
+}
+
+/**
+ * Draws a salon text's echo, records it in the unsent ledger, and delivers it - the one path for a
+ * fresh send and for one a past page life left unanswered (`resumeUnsentSalonSends`), so the two
+ * cannot differ in what they seal or what they keep.
+ *
+ * `echoed: false` means no row could be drawn, nothing was recorded and nothing was sent: the caller
+ * still holds the text.
+ */
+async function queueSalonSend(
+  entry: QueuedSalonText,
+  deps: SendMessageDeps
+): Promise<{ echoed: false } | { echoed: true; refusal: string | null }> {
+  const { messageId, conversationKey, text, sentAt, replyTo } = entry;
+  const send: SalonSend = {
+    text,
+    conversationKey,
+    channelId: conversationKey.replace(/^channel_/, ''),
+    payload: salonTextPayload(entry),
+    // Cleartext mention targets let the server route the `mentions` notification level.
+    mentionedUserIds: extractMentionUserIds(text),
+    deps,
+  };
+  const echoReply: ChatMessage['replyTo'] = replyTo
+    ? { id: replyTo.id, senderId: replyTo.senderId, content: replyTo.preview }
+    : undefined;
+  try {
+    await deps.addMessageToChat(
+      deps.userId,
+      serializeEnvelope(mkTextEnvelope(text, echoReply)),
+      conversationKey,
+      {
+        messageId,
+        status: 'pending',
+        timestamp: new Date(sentAt),
+        skipDbSave: true,
+        salonEcho: true,
+        ...(echoReply ? { replyTo: echoReply } : {}),
+      }
+    );
+  } catch (error: unknown) {
+    deps.log(
+      `[SEND] salon echo of ${messageId.slice(0, 8)}... could not be shown: ${String(error)}`
+    );
+    return { echoed: false };
+  }
+  salonSends.set(messageId, send);
+  // Before the POST leaves: a kill from here on sends it again at the next start.
+  recordUnsentSalonText(deps.userId, entry);
+  return { echoed: true, refusal: await deliverSalonSend(messageId, send) };
+}
+
+/** The tail of the resumes in flight - see `resumeUnsentSalonSends`. */
+let resumeTail: Promise<unknown> = Promise.resolve();
+
+/**
+ * Sends again what a PAST page life left unanswered in the unsent ledger (WP-OFF-3), under the same
+ * client id - the server answers a repeat with the row it holds, so a message that did arrive is not
+ * posted twice. Only entries whose writer is PROVEN dead are taken (`takeOrphanedSalonTexts`).
+ *
+ * `conversationKey` narrows it to one salon (the one just opened); `null` takes every salon's, which
+ * the session runs once it is up. An entry's echo needs its salon's conversation, which the listing
+ * draws: each entry first waits for its salon's send gate (an event, never a clock), and one whose
+ * conversation is still absent is put back, owned by this page life, for the moment its salon opens.
+ *
+ * @returns the entries this build cannot rebuild as composed (written before `sentAt` was kept) - the
+ *   caller hands their text back to the composer, as before WP-OFF-3.
+ */
+export function resumeUnsentSalonSends(
+  userId: string,
+  depsFor: (conversationKey: string) => SendMessageDeps | null,
+  conversationKey: string | null
+): Promise<UnsentSalonText[]> {
+  // ONE TAKE AT A TIME: the session's resume and a salon opened at the same instant would both read
+  // the ledger before either marked an entry live, and draw it twice.
+  const run = resumeTail.then(() => resumeOrphans(userId, depsFor, conversationKey));
+  resumeTail = run.catch(() => undefined);
+  return run;
+}
+
+async function resumeOrphans(
+  userId: string,
+  depsFor: (conversationKey: string) => SendMessageDeps | null,
+  conversationKey: string | null
+): Promise<UnsentSalonText[]> {
+  const orphans = await takeOrphanedSalonTexts(userId, conversationKey, liveSalonSendIds());
+  if (orphans.length === 0) return [];
+  const legacy = orphans.filter((o) => typeof o.sentAt !== 'number');
+  const resumable = orphans.filter((o): o is QueuedSalonText => typeof o.sentAt === 'number');
+  console.log(
+    `[SEND] ${orphans.length} unanswered salon message(s) of a past page life: ${resumable.length} sent again, ${legacy.length} back to the composer`
+  );
+  // Owned by this page life from now on, so a sibling tab does not take them while they wait, and
+  // LIVE in it, so a second resume (the salon opened meanwhile) does not take them twice.
+  for (const o of resumable) {
+    recordUnsentSalonText(userId, o);
+    resumingSalonSends.add(o.messageId);
+  }
+  void Promise.all(
+    resumable.map(async (entry) => {
+      try {
+        const gate = await whenSalonSendable(entry.conversationKey.replace(/^channel_/, ''));
+        const deps = depsFor(entry.conversationKey);
+        if (!deps) {
+          console.warn(
+            `[SEND] unanswered salon message ${entry.messageId.slice(0, 8)}... kept for later: its salon has no conversation here (gate=${gate.kind})`
+          );
+          return;
+        }
+        deps.log(
+          `[SEND] unanswered salon message ${entry.messageId.slice(0, 8)}... of a past page life sent again under its client id`
+        );
+        const queued = await queueSalonSend(entry, deps);
+        if (!queued.echoed) {
+          console.error(
+            `[SEND] unanswered salon message ${entry.messageId.slice(0, 8)}... not resumed: its row could not be drawn - kept in the ledger`
+          );
+        }
+      } finally {
+        // Registered in `salonSends` by now, or left in the ledger for the salon's next opening.
+        resumingSalonSends.delete(entry.messageId);
+      }
+    })
+  ).catch((e: unknown) => console.error(`[SEND] resuming unanswered salon messages failed:`, e));
+  return legacy;
 }
 
 /**
@@ -275,8 +498,10 @@ export function discardSalonSend(messageId: string, userId: string): void {
  * surviving reload/kill. The user never sees a transient "send failed" error - the only hard
  * block is a conversation whose group was deleted server-side (`deletedRemotely`).
  *
- * For channel conversations (`contactName` starts with `'channel_'`) the message is server-
- * authoritative and sent directly via `sendEncryptedChannelMessage` (no outbox).
+ * For channel conversations (`contactName` starts with `'channel_'`) the message is shown as an echo
+ * and queued in the unsent ledger, then posted by `deliverSalonSend` - held while its salon is not
+ * loaded or the device is offline, and sent again by the next page life if this one dies first
+ * (`queueSalonSend`, WP-OFF-3).
  *
  * Returns `{ success: false }` silently when the text is empty.
  */
@@ -320,57 +545,32 @@ export async function sendChatMessage(
     replyToData = { id: replyingTo.id, senderId: replyingTo.senderId, content: replyPreview };
   }
 
-  // Channels: server-authoritative, no durable outbox (WP-OFF-3) - but the text is SHOWN at once, as
-  // a local echo that the server's answer settles, so a refusal can no longer make it vanish.
+  // Channels: the text is SHOWN at once, as a local echo the server's answer settles, and it is
+  // queued durably in the unsent ledger, so neither a refusal nor a kill can make it vanish.
   if (isChannelConversationId(contactName)) {
-    const payload = replyingTo
-      ? encodeAppMessage({
-          ...mkReply(text, {
-            id: replyingTo.id,
-            senderId: replyingTo.senderId,
-            preview: replyToData?.content ?? '',
-          }),
-          messageId,
-          sentAt,
-        })
-      : encodeAppMessage({ ...mkText(text), messageId, sentAt });
-    const send: SalonSend = {
-      text,
-      conversationKey: contactName,
-      channelId: contactName.replace(/^channel_/, ''),
-      payload,
-      // Cleartext mention targets let the server route the `mentions` notification level.
-      mentionedUserIds: extractMentionUserIds(text),
-    };
-    try {
-      await addMessageToChat(
-        userId,
-        serializeEnvelope(mkTextEnvelope(text, replyToData)),
-        contactName,
-        {
-          messageId,
-          status: 'pending',
-          timestamp: new Date(sentAt),
-          skipDbSave: true,
-          salonEcho: true,
-          ...(replyToData ? { replyTo: replyToData } : {}),
-        }
-      );
-    } catch (error: unknown) {
-      // No row was drawn: the caller still holds the draft and puts it back (WP-OFF-1).
-      deps.log(
-        `[SEND] salon echo of ${messageId.slice(0, 8)}... could not be shown: ${String(error)}`
-      );
-      return { success: false, error: m.chat_send_error_generic() };
-    }
-    salonSends.set(messageId, send);
-    // Before the POST leaves: a kill from here on hands the text back at the next start.
-    recordUnsentSalonText(userId, { messageId, conversationKey: contactName, text });
-    const refusal = await deliverSalonSend(messageId, send, deps);
+    const queued = await queueSalonSend(
+      {
+        messageId,
+        conversationKey: contactName,
+        text,
+        sentAt,
+        ...(replyToData
+          ? {
+              replyTo: {
+                id: replyToData.id,
+                senderId: replyToData.senderId,
+                preview: replyToData.content,
+              },
+            }
+          : {}),
+      },
+      deps
+    );
+    if (!queued.echoed) return { success: false, error: m.chat_send_error_generic() };
     // `echoed`: the text lives in a row now (failed, with its retry), so the composer keeps nothing.
-    return refusal === null
+    return queued.refusal === null
       ? { success: true, echoed: true }
-      : { success: false, error: refusal, echoed: true };
+      : { success: false, error: queued.refusal, echoed: true };
   }
 
   // Group deleted/excluded server-side: the only hard block (deletion banner is shown).
@@ -450,21 +650,8 @@ async function enqueueControlEvent(
   proto: Uint8Array,
   latestWins?: LatestWins
 ): Promise<void> {
-  const now = Date.now();
   try {
-    await enqueueOutboxMessage(
-      {
-        id: crypto.randomUUID(),
-        conversationId,
-        sentAt: now,
-        kind: 'control',
-        controlProto: proto,
-        status: 'pending',
-        attempts: 0,
-        createdAt: now,
-      },
-      latestWins ? { latestWins } : undefined
-    );
+    await queueControlEvent(conversationId, proto, latestWins);
   } catch (e) {
     // A control event is best-effort by nature (it converges on the next one), so a queue that cannot
     // take it must not throw into the reaction/edit/pin/read UI - but it is NEVER silent: the peers
@@ -474,6 +661,31 @@ async function enqueueControlEvent(
       `[OUTBOX] control event "${kind}" not queued, peers will not receive it: ${e.message}`
     );
   }
+}
+
+/**
+ * The control-event enqueue itself, which THROWS `OutboxEnqueueError` when the queue cannot take it -
+ * for a caller that owns the event's durability (the owed DM read mark) and must know.
+ */
+function queueControlEvent(
+  conversationId: string,
+  proto: Uint8Array,
+  latestWins?: LatestWins
+): Promise<void> {
+  const now = Date.now();
+  return enqueueOutboxMessage(
+    {
+      id: crypto.randomUUID(),
+      conversationId,
+      sentAt: now,
+      kind: 'control',
+      controlProto: proto,
+      status: 'pending',
+      attempts: 0,
+      createdAt: now,
+    },
+    latestWins ? { latestWins } : undefined
+  );
 }
 
 /**
@@ -633,13 +845,50 @@ export async function setMessagePinned(
  */
 export async function sendReadWatermark(at: number, deps: MessageActionDeps): Promise<boolean> {
   if (!Number.isFinite(at) || at <= 0) return false;
-  await enqueueControlEvent(
-    'read_watermark',
-    deps.conversation.id,
-    encodeAppMessage(mkSystem('read_watermark', JSON.stringify({ at }))),
-    { value: at, valueOf: queuedReadWatermarkAt }
-  );
+  await enqueueControlEvent('read_watermark', deps.conversation.id, ...readWatermarkFrame(at));
   return true;
+}
+
+function readWatermarkFrame(at: number): [Uint8Array, LatestWins] {
+  return [
+    encodeAppMessage(mkSystem('read_watermark', JSON.stringify({ at }))),
+    { value: at, valueOf: queuedReadWatermarkAt },
+  ];
+}
+
+/**
+ * Hands every DM and group read mark this user still OWES to the outbox, and drops each one only
+ * once the outbox took it (`salonReadMarkQueue.ts`, the DM ledger). A mark is owed from the instant
+ * it is decided, so a process killed inside the 2 s debounce leaves it here rather than nowhere.
+ *
+ * @returns how many marks the outbox took.
+ */
+export function flushOwedDmReadMarks(userId: string): Promise<number> {
+  return flushDmReadMarks(userId, (conversationId, at) =>
+    Number.isFinite(at) && at > 0
+      ? queueControlEvent(conversationId, ...readWatermarkFrame(at))
+      : Promise.resolve()
+  );
+}
+
+/**
+ * Drains the owed DM read marks now if an outbox is active, and again on every registration - the
+ * boot and the sign-in being where a mark left by a killed process becomes deliverable. Never a timer:
+ * the registration is the event that changes the answer.
+ *
+ * @returns the unsubscribe.
+ */
+export function drainOwedDmReadMarksOnOutbox(currentUserId: () => string | null): () => void {
+  const drain = (userId: string, why: string) => {
+    flushOwedDmReadMarks(userId)
+      .then((n) => {
+        if (n > 0) console.log(`[READ] ${n} owed DM read mark(s) handed to the outbox (${why})`);
+      })
+      .catch((e) => console.error(`[READ] owed DM read marks drain threw (${why}):`, e));
+  };
+  const userId = currentUserId();
+  if (userId && getOutbox()) drain(userId, 'outbox already active');
+  return onOutboxRegistered((registered) => drain(registered, 'outbox registered'));
 }
 
 /**

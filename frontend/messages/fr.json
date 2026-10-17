@@ -3243,7 +3243,7 @@
   "open_in_app_banner_open": "Ouvrir dans l'application",
   "open_in_app_banner_dismiss": "Continuer dans ce navigateur",
   "offline_banner_title": "Hors connexion.",
-  "offline_banner_desc": "Vous pouvez lire vos conversations. Les messages de vos conversations privées partiront dès le retour du réseau ; dans un salon, attendez la connexion pour écrire.",
+  "offline_banner_desc": "Vous pouvez lire vos conversations. Vos messages partiront dès le retour du réseau ; dans un salon, les photos, vidéos et sondages attendent la connexion.",
   "offline_banner_reconnecting": "Connexion retrouvée, synchronisation de vos messages...",
   "slow_indicator_label": "Connexion lente. Vos messages partent quand même ; les chargements peuvent prendre plus de temps.",
   "link_label_home": "Accueil",
