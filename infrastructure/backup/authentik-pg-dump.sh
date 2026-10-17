@@ -13,7 +13,7 @@
 # boite applicative les pleins pouvoirs sur le fournisseur d identite. La cle est
 # donc installee avec une commande forcee qui pointe ici, et "restrict" :
 #
-#   command="/home/miconnect/bin/authentik-pg-dump",restrict ssh-ed25519 AAAA… canari@canari
+#   command="/home/<account>/bin/authentik-pg-dump",restrict ssh-ed25519 AAAA… canari@canari
 #
 # La liste de ce que la cle peut faire vaut alors exactement une ligne, et c est
 # celle-ci - une liste blanche, pas une interdiction. Ce que SSH aurait

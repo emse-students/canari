@@ -1,9 +1,9 @@
 # The host WAF drops any request body over 10 MiB (measured 2026-10-10)
 
-**Fact.** On the Portail-etu host (production, `canari.emse.fr`), the school-managed **CrowdSec AppSec**
-in the host nginx (`/etc/nginx/conf.d/crowdsec_nginx.conf`, a file we do not own) drops every request
+**Fact.** On the production host (`canari.emse.fr`), a school-managed host-level **WAF** in front of
+the origin (configuration we do not own) drops every request
 whose body exceeds **10 485 760 bytes (10 MiB)**, for every user, on every connection. The client gets a
-**403 with an HTML body** (`<title>CrowdSec Ban</title>`, 5.75 KB), after the whole body has been sent.
+**403 with an HTML body** (a ban page, 5.75 KB), after the whole body has been sent.
 It is not a slow-link problem and no retry changes it.
 
 ## Evidence
@@ -14,11 +14,10 @@ It is not a slow-link problem and no retry changes it.
   failure (attempt N): MediaUploadError: media upload failed (403 ) - <!DOCTYPE html>` and retried in a
   loop; the bubble spun for ever.
 - **curl, by the coordinator**: a 1 KB POST gets the origin's own `401` JSON; a 14 MB POST gets
-  `100-continue` then the `403` CrowdSec page.
-- **The host's own log** (`ssh portail-etu-direct`, `/var/log/crowdsec.log`): `request body exceeds limit
-  10485760 bytes, will drop request` and `WAF block: request body exceeded maximum allowed size`.
+  `100-continue` then the `403` ban page.
+- **The host's own log** records the drop as a body-size violation at exactly 10485760 bytes.
 - **Do not probe it again with big bodies from a workstation**: each one is an alert on a school-managed
-  security stack. The probe of 2026-10-10 created a CrowdSec alert on the prober's own address (redacted 2026-10-16: this repository is public, and an address names a person). Reproduce with
+  security stack. Reproduce with
   the mock instead (`media.bodyBudget.test.ts`).
 
 ## What the app does about it (WP-OFF-8, [offline-and-weak-network](../frontend/offline-and-weak-network.md#13-audit-of-2026-10-10-a-13-mb-attachment-on-a-poor-link-and-what-navigation-waits-for))

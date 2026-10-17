@@ -220,7 +220,7 @@ done
 
 # AND NEITHER ESTATE MAY ASK FOR A PORT THE SHARED HOST HAS ALREADY GIVEN AWAY. The loop above
 # asserts that prod and dev do not collide with EACH OTHER, which is what the 2026-09-01 defect was
-# - and it is not what the 2026-09-25 outage was. Production asked for 8080, CrowdSec's Local API
+# - and it is not what the 2026-09-25 outage was. Production asked for 8080, another local service
 # had held 127.0.0.1:8080 since 2026-09-22, and the frontend container could not bind at all: the
 # first automated production deploy after the move to the shared host took production down.
 #

@@ -613,7 +613,7 @@ The two defects that model was answering are worth keeping, because they say wha
 
 ### Its own checkout, and its own deployed tag
 
-The dev estate is deployed from `/home/canari/canari-dev`, a separate clone, because two estates
+The dev estate is deployed from its own checkout, a separate clone, because two estates
 sharing one working tree would race: a `git reset --hard` for one rewrites the compose file the other
 is being deployed from. `deploy-dev` creates that clone if it is absent, so the starting point is
 reproducible rather than a directory somebody once made differently.
@@ -654,7 +654,7 @@ if ever needed (`git show a8ac1828:.github/workflows/cd-dev.yml`).
 **ALL THREE ARE DONE. The list is kept because each one records HOW, and the how is what a rebuild
 would need.**
 
-1. **The tunnel INGRESS rule: DONE 2026-09-02**, `dev.canari-emse.fr` -> `http://localhost:3080`
+1. **The tunnel INGRESS rule: DONE 2026-09-02**, `dev.canari-emse.fr` -> the dev estate's loopback port
    (it had pointed at production's `8080`, which is why the name served production until that
    moment). Performed through the API, and the shape is the reusable part: GET
    `/accounts/{acct}/cfd_tunnel/{tunnel}/configurations`, **save the whole config to a file first**,
@@ -668,7 +668,7 @@ would need.**
    three derived ones (`DEV_AUTHENTIK_URL`, `DEV_BASE_URL`, `DEV_POSTGRES_USER`) and nine generated
    with `openssl rand`, none copied from production, plus `DEV_INTERNAL_SECRET` and
    `DEV_EXTERNAL_API_KEY`. The generated values exist in GitHub Secrets and, once dev has deployed
-   once, in `/home/canari/canari-dev/.env` on the box; they are written nowhere else on purpose.
+   once, in the dev estate's `.env` on the box; they are written nowhere else on purpose.
    **`DEV_AUTHENTIK_CLIENT_ID` and `DEV_AUTHENTIK_CLIENT_SECRET` were the last two and are DONE**
    (2026-09-02), against the `canari-dev` client created on the same Authentik instance. Of the
    optional rows, 9 are
@@ -697,7 +697,7 @@ second door onto one machine. Do not re-open it as a design question
 (provider `pk=1`, `default-provider-authorization-implicit-consent`, `sub_mode=hashed_user_id`, six
 redirect URIs); dev needs a sibling with `https://dev.canari-emse.fr/auth/callback` and its own
 `client_id`/`client_secret`. It is creatable from a workstation with
-`ssh miconnect 'docker exec -i miconnect-server-1 ak shell'` fed a script that copies provider 1's
+`docker exec -i miconnect-server-1 ak shell` on the identity host fed a script that copies provider 1's
 flow, signing key and property mappings - **but writing to the identity provider's database is
 exactly the class of action an agent should not perform unattended**, and the attempt on 2026-09-02
 was refused for that reason. Do it in the admin UI, or approve the command explicitly.
