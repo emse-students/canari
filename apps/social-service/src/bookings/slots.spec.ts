@@ -275,6 +275,14 @@ describe('a window crosses AT MOST ONE midnight (review of #1993)', () => {
     ).toEqual(['2026-11-02 23:00-23:00Z', '2026-11-03 23:00-23:00Z']);
   });
 
+  it('a 24/7 resource refuses a booking across midnight: two days are two windows', () => {
+    // 23:00-01:00 Paris, Monday to Tuesday. The cost of the at-most-one-midnight rule, accepted
+    // and named in docs/wiki/bookings-chantier.md "WP-B2 as built".
+    const range = { startMs: ms('2026-11-02T22:00:00Z'), endMs: ms('2026-11-03T00:00:00Z') };
+    const windows = availabilityWindows(step(60, 2), allWeek, [], '2026-11-02', '2026-11-03');
+    expect(checkRangeShape(step(60, 2), windows, range)).toBe('outside-availability');
+  });
+
   it('a 24/7 resource keeps an ordinary booking under an unchanged availability (D29)', () => {
     const b = { id: 'b', startMs: ms('2026-11-10T09:00:00Z'), endMs: ms('2026-11-10T10:00:00Z') };
     expect(bookingsOutsideAvailability(step(60, 2), allWeek, [], [b])).toEqual([]);

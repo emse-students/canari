@@ -646,6 +646,11 @@ then writes the badge from what remains — computed from the array already in h
 | GET | `/api/forms/:id/submissions` | List submissions (owner only) |
 | POST | `/api/forms/:id/image` | Upload form banner image |
 
+### Bookings (`/api/bookings`)
+
+Rooms and slots; every route, its rights and its refusal codes are in
+[bookings-chantier](../bookings-chantier.md#wp-b3-as-built-2026-10-17), the only copy.
+
 ### Associations (`/api/associations`)
 
 | Method | Path | Description |

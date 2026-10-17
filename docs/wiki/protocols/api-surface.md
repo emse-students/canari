@@ -371,6 +371,10 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 | GET | `/api/forms/:id/submissions` | List submissions (owner only) |
 | POST | `/api/forms/:id/image` | Upload form banner image |
 
+### Bookings
+
+`/api/bookings/*`: see [bookings-chantier](../bookings-chantier.md#wp-b3-as-built-2026-10-17), the only copy of the routes and their refusal codes.
+
 ### Associations
 
 | Method | Path | Description |
