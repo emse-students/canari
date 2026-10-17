@@ -1,4 +1,4 @@
-import { SessionExpiredError } from '$lib/stores/auth';
+import { SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 
 const getToken = vi.hoisted(() => vi.fn());
@@ -146,6 +146,21 @@ describe('promoteOfflineSession', () => {
     expect(flushOutbox).not.toHaveBeenCalled();
     // And no session is stamped with a device when there is no session left to stamp.
     expect(bindCurrentSessionDevice).not.toHaveBeenCalled();
+  });
+
+  it('stops quietly when a sign-out is in progress - no second sign-out, no "unreachable"', async () => {
+    getToken.mockRejectedValue(new SignOutInProgressError('request'));
+    const notifyUnreachable = vi.spyOn(connectivity, 'notifyServerUnreachable');
+    const { ctx, state } = makeCtx();
+    const cb = makeCb();
+
+    await promoteOfflineSession(ctx, cb, makeDeps);
+
+    expect(cb.onSessionExpired).not.toHaveBeenCalled();
+    expect(notifyUnreachable).not.toHaveBeenCalled();
+    expect(initializeConnection).not.toHaveBeenCalled();
+    expect(state.offlineSession).toBe(true);
+    notifyUnreachable.mockRestore();
   });
 
   it('stays offline, without signing out, when the network is still down', async () => {

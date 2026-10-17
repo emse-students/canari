@@ -1386,13 +1386,30 @@ a refresh answered 200 during the sign-out - one in flight when it began, or one
 token was dropped - re-saved the user and the token: the same vault unlock, 401 and second sign-out.
 The "superseded by a sign-in" guard could not see it (it needs a live `_accessToken`, which the
 sign-out had just dropped). **Closed by a sign-out GENERATION, not a clock**: `clearAuth` increments
-`_signOutGeneration` and holds `_signOutInProgress` for its whole run. A refresh asked for meanwhile
-is not sent (`refresh✗not sent - a sign-out is in progress`); one already in flight compares the
-generation it captured before its send, at its answer, after its body and after its two writes, and
-DROPS the answer (`refresh✗answer dropped`) - no identity, no token, no stored rotation, no verdict
-announced. Both throw `SessionExpiredError`, the type a dead session already gives every caller.
-Tests: `stores/auth.test.ts`, "the local identity at sign-out" - all four fail without the fix they
-name (the order, then the generation). `stopPushService` reads `currentUserId()` synchronously and
+`_signOutGeneration` and is counted in `_signOutsUnderway` for its whole run. A refresh asked for
+meanwhile is not sent (`refresh✗not sent - a sign-out is in progress`); one already in flight
+compares the generation it captured before its send, at its answer, after its body and after its two
+writes, and DROPS the answer (`refresh✗answer dropped`) - no identity, no token, no stored rotation,
+no verdict announced.
+
+**The refusal holds until the LAST sign-out under way ends** (second review): sign-outs overlap - a
+double tap, a session expiry during the PIN gate's or the navbar's sign-out - and a single flag that
+the FIRST finisher lowered let a refresh go out while the other was still revoking. That refresh
+captured the current generation, so nothing dropped its answer. Hence a count, not a flag.
+
+**Both refusals throw `SignOutInProgressError`, NOT `SessionExpiredError`** (classified at the throw):
+that type means "the server proved the session dead", and its consumers answer with a logout and a
+redirect - a second sign-out. Every consumer that branches on `SessionExpiredError` was enumerated,
+and the ones that would act on it stop quietly instead: `loginImpl` (its `getToken` catch and its
+outer catch, which would otherwise also have forgotten this account's vault slot),
+`attemptReconnectImpl` and `openGatewayConnection` (no `goto('/login')`, no backoff retry),
+`promoteOfflineSession` (not "network unreachable"), and `toUiActionError` (no error toast).
+`apiFetch` and `fetchUpload` already rethrow a refresh failure as it came.
+Tests: `stores/auth.test.ts`, "the local identity at sign-out" (each fails without the fix it names:
+the order, the generation, the count), and one per consumer, each failing without its branch:
+`offlineUnlock.test.ts` (both `loginImpl` catches), `signOutInProgressReconnect.test.ts`,
+`startGatewayHandshake.test.ts`, `promoteOfflineSession.test.ts`,
+`useChannelWorkspaces.svelte.test.ts`. `stopPushService` reads `currentUserId()` synchronously and
 relies on running from the handler, before the identity goes; a comment there says so.
 
 **The contract, unchanged:** a deliberate sign-out keeps the vault slot (see above), and it never

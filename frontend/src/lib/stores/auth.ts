@@ -102,8 +102,11 @@ let _pendingRefresh: Promise<string> | null = null;
  * which is "a saved user, nobody logged in": the vault unlock, its 401, and a second sign-out.
  */
 let _signOutGeneration = 0;
-/** True while {@link clearAuth} runs: a refresh asked for then is not sent at all. */
-let _signOutInProgress = false;
+/**
+ * How many {@link clearAuth} calls are running; while any is, a refresh asked for is not sent at all.
+ * A count because sign-outs overlap - see `clearAuth`.
+ */
+let _signOutsUnderway = 0;
 /**
  * The transport failure of the refresh SENT while the browser reported no network: the proof every
  * later caller of the same spell is answered from (see `refresh`). Null when no spell is proven.
@@ -176,6 +179,22 @@ export class SessionExpiredError extends Error {
   constructor() {
     super('Session expired - please log in again');
     this.name = 'SessionExpiredError';
+  }
+}
+
+/**
+ * A refresh refused or dropped because the USER is signing out (see `_signOutGeneration`).
+ *
+ * NOT a {@link SessionExpiredError}, deliberately, and not a subtype of it: that type says "the
+ * server proved the session dead", and its consumers answer with a logout and a redirect - a SECOND
+ * sign-out, the very thing the refusal exists to prevent. Nobody proved anything here: the sign-out
+ * already under way IS the outcome, so a consumer stops the work it was doing, quietly, and does
+ * nothing else - no logout, no redirect, no retry, no error shown.
+ */
+export class SignOutInProgressError extends Error {
+  constructor(stage: string) {
+    super(`refresh ${stage} dropped - a sign-out is in progress`);
+    this.name = 'SignOutInProgressError';
   }
 }
 
@@ -703,10 +722,10 @@ export async function signOutByChoice(): Promise<void> {
 export async function refresh(fetchImpl: typeof fetch = fetch): Promise<string> {
   // A SIGN-OUT IS REVOKING THIS CREDENTIAL RIGHT NOW: the answer is known, and a 200 racing the
   // revocation would rotate the very session being ended. Nothing is announced - the sign-out IS the
-  // outcome - and the caller gets the same type a dead session gives it.
-  if (_signOutInProgress) {
+  // outcome - and the caller gets a type of its own, never a dead-session verdict it would act on.
+  if (_signOutsUnderway > 0) {
     alog('refresh✗not sent - a sign-out is in progress');
-    throw new SessionExpiredError();
+    throw new SignOutInProgressError('request');
   }
   // The server already answered this question about this exact cookie. Repeating the request is a
   // round trip whose result is known, and 119 of them is what one iPhone sent in 45 minutes.
@@ -769,10 +788,10 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
   // WHICH SIGN-OUT THIS ASKED AFTER - see `_signOutGeneration`.
   const signOutsAtStart = _signOutGeneration;
   /** Drops an answer (or a send) that a sign-out started since has made moot. */
-  const supersededBySignOut = (stage: string): SessionExpiredError | null => {
+  const supersededBySignOut = (stage: string): SignOutInProgressError | null => {
     if (_signOutGeneration === signOutsAtStart) return null;
     alog(`refresh✗${stage} dropped - a sign-out started while it was in flight`);
-    return new SessionExpiredError();
+    return new SignOutInProgressError(stage);
   };
 
   // On a platform whose WebView can refuse the cookie, the credential is ours to carry. An EMPTY
@@ -993,16 +1012,22 @@ export async function clearAuth(): Promise<void> {
   alog('clear');
   // FIRST OF ALL, before the handler: every refresh from here to the end of the revocation is moot -
   // one asked for is not sent, one already in flight drops its answer (`_signOutGeneration`).
+  //
+  // A COUNT, NOT A FLAG. Two sign-outs can overlap (a double tap, a session expiry during the PIN
+  // gate's or the navbar's sign-out), and either may finish first: a flag the first finisher lowered
+  // let a refresh be sent while the other was still revoking - and that refresh captured the CURRENT
+  // generation, so nothing dropped its answer and it re-saved the user. The refusal holds until the
+  // LAST sign-out under way has finished.
   _signOutGeneration++;
-  _signOutInProgress = true;
+  _signOutsUnderway++;
   try {
     await clearAuthUnderway();
   } finally {
-    _signOutInProgress = false;
+    _signOutsUnderway--;
   }
 }
 
-/** The body of {@link clearAuth}, run while it holds `_signOutInProgress`. */
+/** The body of {@link clearAuth}, run while it is counted in `_signOutsUnderway`. */
 async function clearAuthUnderway(): Promise<void> {
   // THE LIVE SESSION ENDS BEFORE ANYTHING IT USES IS GONE - see `setSignOutHandler`. A throw here is
   // a session left running for a signed-out user, so it is accused by name, and the sign-out goes on.

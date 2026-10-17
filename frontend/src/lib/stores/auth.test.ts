@@ -31,6 +31,7 @@ const {
   refresh,
   getToken,
   SessionExpiredError,
+  SignOutInProgressError,
   setSessionExpiredHandler,
   setToken,
   isRefreshCredentialProvenDead,
@@ -351,7 +352,7 @@ describe('the local identity at sign-out', () => {
       const url = String(args[0]);
       sent.push(url.includes('/api/auth/logout') ? 'logout' : 'refresh');
       if (url.includes('/api/auth/logout')) {
-        await expect(getToken()).rejects.toBeInstanceOf(SessionExpiredError);
+        await expect(getToken()).rejects.toBeInstanceOf(SignOutInProgressError);
         return new Response('', { status: 200 });
       }
       return answer(200);
@@ -394,11 +395,49 @@ describe('the local identity at sign-out', () => {
     await signOut;
     setSessionExpiredHandler(null);
 
-    expect(outcome).toBeInstanceOf(SessionExpiredError);
+    expect(outcome).toBeInstanceOf(SignOutInProgressError);
+    // NOT the dead-session verdict, whose consumers answer with a second sign-out.
+    expect(outcome).not.toBeInstanceOf(SessionExpiredError);
     expect(logouts).toBe(1);
     expect(currentUserId()).toBeNull();
     expect(saveUserLocally).not.toHaveBeenCalled();
     expect(document.cookie).not.toContain('canari_ws_token=h');
     expect(expired).not.toHaveBeenCalled();
+  });
+
+  it('stays refused until the LAST of two overlapping sign-outs has finished', async () => {
+    // The second review's probe: A's logout held open, B run to the end, then a refresh. A flag the
+    // first finisher lowered let that refresh out, carrying the CURRENT generation - so nothing
+    // dropped its 200, and it re-saved the user while A was still revoking.
+    setToken(liveToken());
+    saveUserLocally.mockClear();
+    let releaseA: (r: Response) => void = () => {};
+    let logouts = 0;
+    let refreshes = 0;
+    fetchMock.mockImplementation((...args: unknown[]) => {
+      if (String(args[0]).includes('/api/auth/logout')) {
+        logouts++;
+        if (logouts === 1) {
+          return new Promise<Response>((resolve) => {
+            releaseA = resolve;
+          });
+        }
+        return Promise.resolve(new Response('', { status: 200 }));
+      }
+      refreshes++;
+      return Promise.resolve(answer(200));
+    });
+
+    const signOutA = clearAuth();
+    await vi.waitFor(() => expect(logouts).toBe(1));
+    await clearAuth();
+
+    await expect(refresh()).rejects.toBeInstanceOf(SignOutInProgressError);
+    expect(refreshes).toBe(0);
+    expect(currentUserId()).toBeNull();
+    expect(saveUserLocally).not.toHaveBeenCalled();
+
+    releaseA(new Response('', { status: 200 }));
+    await signOutA;
   });
 });

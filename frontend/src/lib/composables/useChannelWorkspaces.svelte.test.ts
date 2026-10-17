@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import { ChannelApiError } from '$lib/services/ChannelService';
-import { RefreshFailedError, SessionExpiredError } from '$lib/stores/auth';
+import { RefreshFailedError, SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
 import { GraineNotReadyError } from '$lib/utils/graine/runtime';
 import { GraineUnknownChannelError } from '$lib/utils/graine/channelSeal';
 import { showToast } from '$lib/stores/toast.svelte';
@@ -1352,6 +1352,17 @@ describe('useChannelWorkspaces - salon names and order', () => {
       // The toast names WHICH fact was missing, from the reason the refusal carries.
       expect(showToast).toHaveBeenCalledWith(said, 'error');
     }
+  });
+
+  it('raises no error toast when the action stopped because the user is signing out', async () => {
+    const { api, ctx } = await loadedStore();
+    const channels = api.channelWorkspaces[0].channels;
+    vi.mocked(showToast).mockClear();
+    reorderChannels.mockRejectedValue(new SignOutInProgressError('request'));
+
+    await api.reorderChannels('promo', [channels[2], channels[1], channels[0]], ctx);
+
+    expect(showToast).not.toHaveBeenCalled();
   });
 
   it('logs the cause of a failure it cannot name, which the sentence cannot carry', async () => {

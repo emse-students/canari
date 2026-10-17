@@ -44,6 +44,7 @@ import {
   getToken,
   clearAuth,
   SessionExpiredError,
+  SignOutInProgressError,
   isRefreshCredentialProvenDead,
 } from '$lib/stores/auth';
 import { IdentitySplitError, isIdentitySplit } from '$lib/stores/tokenIdentity.svelte';
@@ -681,6 +682,15 @@ export async function loginImpl(
       accessToken = await getToken();
       endBootSpan('access-token');
     } catch (err) {
+      // THE USER IS SIGNING OUT: this login stops, and that is all. Not a session loss - answering
+      // it with `onSessionExpired` was the second sign-out (Mi 9T, 2026-10-17) - and not a failed
+      // login either, which would put the PIN gate up over the sign-out.
+      if (err instanceof SignOutInProgressError) {
+        cb.log('[LOGIN] Stopped - a sign-out is in progress.');
+        withdrawLandingPreview('sign-out in progress');
+        ctx.setIsLoginInProgress(false);
+        return;
+      }
       // A SessionExpiredError means the refresh cookie is dead (HTTP 401/403) - the session
       // cannot be recovered by re-entering the PIN. Surface it as a session loss (logout +
       // redirect to /login); fall back to a direct redirect when no callback is wired so
@@ -1776,6 +1786,16 @@ export async function loginImpl(
     startConnectionWatchdogImpl(ctx, cb);
   } catch (_e: unknown) {
     cancelStartupCatchupBench();
+    // A SIGN-OUT STOPPED THIS LOGIN - nothing failed. The client it was building goes (as on any
+    // login that did not complete), and NOTHING ELSE: no error under the PIN, no `onSessionExpired`
+    // (a second sign-out), and above all not `clearDeviceKey` below, which would forget this
+    // account's "Rester connecte" slot that a sign-out keeps on purpose.
+    if (_e instanceof SignOutInProgressError) {
+      withdrawLandingPreview('sign-out in progress');
+      cb.log('[INIT] Login stopped - a sign-out is in progress.');
+      ctx.resetMls();
+      return;
+    }
     // A login that failed shows nothing it drew before the session: the PIN gate, the recovery
     // modal or the login page come back over the same screen they would have without F1.
     withdrawLandingPreview(`login did not complete (${loginErrorCode(_e)})`);
