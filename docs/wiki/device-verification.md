@@ -1421,6 +1421,63 @@ kept; Play Protect's "send for a check" prompt answered "Ne pas envoyer"). Dev e
 - The video staged in the composer shows a generic file icon and the name `81.mp4`, not a preview
   or the gallery name; the sent bubble shows a grey video icon until tapped (P3, cosmetic).
 
+## The Mi 9T readings of v1.2.9-alpha.4 (2026-10-16)
+
+Build `1.2.9 (100200904)` (`dumpsys package`; "Version de Canari 1.2.9-alpha.4" in
+`/settings/about`), the `v1.2.9-alpha.4` release APK (`app-universal-release.apk`, sha256
+`b58e4aa7...`) from release run `38888170609`, installed with `adb install -r` over alpha.3
+(accepted, account kept), dev estate, account `fourth` ("Canari Test Delta"), phone text size
+`0.85` (its default). Same instruments as alpha.3 (`feed.mjs`, `reconnect.mjs`, `st.mjs`, console
+over CDP, logcat), plus `reelperf.mjs` (in-page: `requestAnimationFrame` deltas over 5 s, then the
+playing reel's `requestVideoFrameCallback` across two loops) and `cap.mjs` (the caption toggle, its
+scroller, whether the reel plays). Two dev reels were published to have a long caption and a
+landscape frame (a 6 s in-app take, and a 1280x720 test pattern from the gallery), both deleted at
+the end (`DELETE /api/posts/...` 200 each); nothing was published on production. Evidence:
+`F:/Programmation/canari-harness/a1-bench/r1016-a129a4/` (frames `s*.png`, `reelperf.ndjson`,
+`feed-runs.ndjson`, `reconnect-runs.ndjson`, `cons-main.ndjson`, `applog.txt`, `logcat-main.txt`).
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1a. One header row (#1942) | **`PASS`** | "Associations", "Suivis", "Tout", then the clap icon at the right ("Ouvrir les CanaReels"); no "Tous les posts" / "CanaReels" filter row; `[POSTS] dropped the retired CanaReels filter choice` once (`s01-feed.png`) |
+| 1b. Clap opens the viewer | **`PASS`** | `[reels-entry] opening the viewer at the newest reel`, `[reel-viewer] opened on af19ba1b...`, `page of 3, 3 loaded`; full screen, the feed hidden under it (`s02-viewer.png`). Drag up: `next: 0 -> 1`. ONE system Back: `[reel-viewer] closed`, `/posts`, no dialog left, `history.length` unchanged |
+| 1c. Empty state | **`NOT-OBSERVED`** | Every dev account sees the same reels (`feed=all`); reaching "Pas encore de CanaReels" needs deleting other members' reels, which was not done |
+| 2a. Overlay, default text | **`PASS`** | Avatar + name + age small at the bottom-left over a scrim; a 9-line caption clamped to 2 lines with "Voir plus" (`s10-viewer-new-reel.png`). "Voir plus" unfolds in place (`caption expanded on f3bbee49...`), "Voir moins" and a tap on the video both fold; the reel plays throughout (`currentTime` advancing and looping, never paused) |
+| 2b. Overlay at 200 % text | **`PASS`** | `font_scale 2.0`, root 32 px: unfolded, the caption is a scroller (473 of 1485 px) under the author row with "Voir moins" visible; a drag scrolled it (`scrollTop` 0 -> 377) without turning the reel, the reel playing (`s14`, `s15`). Restored to `0.85` |
+| 2c. Landscape (letterboxed) reel | **`PASS`** | `[reel-review] take is 1280x720`, `ratio 1.778`: the frame sits mid-screen, the caption inside it, 2 lines + "Voir plus"; unfolded it scrolls inside the frame (112 of 210 px, `scrollTop` 0 -> 84), author row and toggle never clipped (`s19`, `s20`) |
+| 3a. Backdrop | **`PASS`** | A 96x56 / 96x168 canvas, `object-fit: cover`, no CSS filter; `[reel-backdrop] painted` exactly once per source, no timer. Smooth gradient, no blocks (`s19-landscape-viewer.png`) |
+| 3b. Frame timing while a reel plays | **`PASS`** | n=3 x 5 s: 302-304 frames, p50 16.6-16.7 ms, p95 16.8 ms, longest 17.0-33.6 ms, frames over 25 ms **0, 1, 0** (alpha.3 bench: 5 over 25 ms with the 250 ms re-sample) |
+| 3c. Loop seam | **`PASS`** for a reel published by alpha.4, residual noted | Video frames every 33 ms. **Trimmed reels** (published now, `[video-prep] trimmed to the video: 0.055-6.063 s`): last frame -> first frame after the wrap **100-117 ms**, first frame held **67-83 ms** (n=4 wraps, portrait and landscape). **Old untrimmed reel** (`af19ba1b`, 3.52 s): 100-133 ms, then the first frame held **250-267 ms** (n=5; 383-417 ms on alpha.3) |
+| 4a. Camera photo name | **`PASS`** | Edited photo: `handing back canari-photo-<n>.webp (44600 bytes)`, `camera take handed over (image/webp)`. Unedited: `canari-photo-<n>.jpg`. No `.bin` |
+| 4b. Camera preview backdrop | **`FAIL`** | Post composer camera, n=3 opens: the backdrop canvas reads near black (mid/bottom rows RGB 2-6) while the preview shows a grey wall; the band under the preview is RGB 16,15,16 (`s22`, `s30`, `s31`). Painted 166 ms after `[camera] first frame`, from an under-exposed first frame. On `/camera` the same paint came out teal over the grey wall (`s06b`) |
+| 5. Paid form price (#1938) | **`PASS`** | "Cotisation BDE 2026" by its id: before any answer, no "Combinaison indisponible", no price, no "Payer" (`s40`). After "ICM": "A partir de 60,00 EUR (3A, ICM)", "Paiement Canari" / "En especes", "Payer 60,00 EUR" (`s41`). Nothing paid |
+| 6a. Feed after reconnect (#1938) | **`PASS`** | n=2 offline cold start, then airplane off: **20 cards offline and 20 after** (alpha.3: 10); the status line goes at +6.3-7.3 s, the reel decodes at +8.4 s |
+| 6b. Reel stream once (#1938) | **`PASS`** | One `[media-seg] stream ... through MediaSource` per cold start (n=3 online, n=2 reconnect), no `play() refused` |
+| 7a. Wrong PIN empties the field | **`NOT-OBSERVED`** | As on alpha.3: the vault restores the key on every launch, the gate is never drawn |
+| 7b. Online cold first paint | **`PASS`** | n=3: first card **2558-3092 ms** after `am start` (alpha.3 2254-2385), 20 cards, 0 warnings |
+| 7c. Offline cold start noise | **`PASS`**, unchanged | n=3: **10** warnings each, the same ten families |
+| 7d. 200 % text | **`PASS`** | `/posts` `scrollWidth = innerWidth = 436`; the tabs scroll in their own row |
+
+**Findings:**
+
+- **P1 - a video picked from the gallery on `/camera` (Android) is dropped without a word.** The
+  picker opens (`GET_CONTENT video/*`), the app goes to the background, the camera is released and
+  `CameraScreen` drops its `controls` snippet with the `<input type="file">` in it. The file comes
+  back to that DETACHED input (`isConnected: false`, `files[0] = 96.mp4, video/mp4`), and Svelte 5
+  delegates `onchange` from the root, so `onPicked` never runs: no review, no toast, no log line
+  (n=3). Handing the same file to the live input reached `ready -> review on picked`, which is how
+  the landscape reel was made. Source: `frontend/src/lib/components/reels/ReelCapture.svelte`
+  (the input inside `{#snippet controls()}`).
+- **P3 - the camera backdrop is painted from the first frame, before exposure settles**: near black
+  in the post camera (3 of 3), teal on `/camera`. The live preview is grey.
+- **P3 - an old reel still holds its first frame 250-267 ms at the loop** (published before the
+  trim); new reels 67-83 ms.
+- Observations: at `font_scale 2.0` the selected "Tout" tab sits under the clap icon until the tab
+  row is scrolled (`s12-fs2-feed.png`); a system text size change reloads the page (the open viewer
+  closes). In-app log export: 24198 lines, 2147637 bytes, `[download] wrote ...`; its W/E lines of
+  the session are all the offline runs' transport failures. Logcat: no `FATAL`, no ANR; 99 `Ignoring
+  status update of camera`, 34 `Failed to query component interface for required system resources:
+  6` (codec stack).
+
 ## The Mi 9T readings of v1.2.9-alpha.3 (2026-10-16)
 
 Build `1.2.9 (100200903)` (`dumpsys package`), the `v1.2.9-alpha.3` release APK
@@ -1577,63 +1634,6 @@ streamed over CDP and logcat captured for the whole pass. Evidence:
   update of camera 0`, `W/MessageQueue ... sending message to a Handler on a dead thread` at a
   recording's end; `W/cr_media ... BLUETOOTH_CONNECT permission is missing` per camera open.
 - The online cold start's console carried **0** warnings or errors at launch.
-
-## The Mi 9T readings of v1.2.9-alpha.4 (2026-10-16)
-
-Build `1.2.9 (100200904)` (`dumpsys package`; "Version de Canari 1.2.9-alpha.4" in
-`/settings/about`), the `v1.2.9-alpha.4` release APK (`app-universal-release.apk`, sha256
-`b58e4aa7...`) from release run `38888170609`, installed with `adb install -r` over alpha.3
-(accepted, account kept), dev estate, account `fourth` ("Canari Test Delta"), phone text size
-`0.85` (its default). Same instruments as alpha.3 (`feed.mjs`, `reconnect.mjs`, `st.mjs`, console
-over CDP, logcat), plus `reelperf.mjs` (in-page: `requestAnimationFrame` deltas over 5 s, then the
-playing reel's `requestVideoFrameCallback` across two loops) and `cap.mjs` (the caption toggle, its
-scroller, whether the reel plays). Two dev reels were published to have a long caption and a
-landscape frame (a 6 s in-app take, and a 1280x720 test pattern from the gallery), both deleted at
-the end (`DELETE /api/posts/...` 200 each); nothing was published on production. Evidence:
-`F:/Programmation/canari-harness/a1-bench/r1016-a129a4/` (frames `s*.png`, `reelperf.ndjson`,
-`feed-runs.ndjson`, `reconnect-runs.ndjson`, `cons-main.ndjson`, `applog.txt`, `logcat-main.txt`).
-
-| Reading | Verdict | What was seen |
-| --- | --- | --- |
-| 1a. One header row (#1942) | **`PASS`** | "Associations", "Suivis", "Tout", then the clap icon at the right ("Ouvrir les CanaReels"); no "Tous les posts" / "CanaReels" filter row; `[POSTS] dropped the retired CanaReels filter choice` once (`s01-feed.png`) |
-| 1b. Clap opens the viewer | **`PASS`** | `[reels-entry] opening the viewer at the newest reel`, `[reel-viewer] opened on af19ba1b...`, `page of 3, 3 loaded`; full screen, the feed hidden under it (`s02-viewer.png`). Drag up: `next: 0 -> 1`. ONE system Back: `[reel-viewer] closed`, `/posts`, no dialog left, `history.length` unchanged |
-| 1c. Empty state | **`NOT-OBSERVED`** | Every dev account sees the same reels (`feed=all`); reaching "Pas encore de CanaReels" needs deleting other members' reels, which was not done |
-| 2a. Overlay, default text | **`PASS`** | Avatar + name + age small at the bottom-left over a scrim; a 9-line caption clamped to 2 lines with "Voir plus" (`s10-viewer-new-reel.png`). "Voir plus" unfolds in place (`caption expanded on f3bbee49...`), "Voir moins" and a tap on the video both fold; the reel plays throughout (`currentTime` advancing and looping, never paused) |
-| 2b. Overlay at 200 % text | **`PASS`** | `font_scale 2.0`, root 32 px: unfolded, the caption is a scroller (473 of 1485 px) under the author row with "Voir moins" visible; a drag scrolled it (`scrollTop` 0 -> 377) without turning the reel, the reel playing (`s14`, `s15`). Restored to `0.85` |
-| 2c. Landscape (letterboxed) reel | **`PASS`** | `[reel-review] take is 1280x720`, `ratio 1.778`: the frame sits mid-screen, the caption inside it, 2 lines + "Voir plus"; unfolded it scrolls inside the frame (112 of 210 px, `scrollTop` 0 -> 84), author row and toggle never clipped (`s19`, `s20`) |
-| 3a. Backdrop | **`PASS`** | A 96x56 / 96x168 canvas, `object-fit: cover`, no CSS filter; `[reel-backdrop] painted` exactly once per source, no timer. Smooth gradient, no blocks (`s19-landscape-viewer.png`) |
-| 3b. Frame timing while a reel plays | **`PASS`** | n=3 x 5 s: 302-304 frames, p50 16.6-16.7 ms, p95 16.8 ms, longest 17.0-33.6 ms, frames over 25 ms **0, 1, 0** (alpha.3 bench: 5 over 25 ms with the 250 ms re-sample) |
-| 3c. Loop seam | **`PASS`** for a reel published by alpha.4, residual noted | Video frames every 33 ms. **Trimmed reels** (published now, `[video-prep] trimmed to the video: 0.055-6.063 s`): last frame -> first frame after the wrap **100-117 ms**, first frame held **67-83 ms** (n=4 wraps, portrait and landscape). **Old untrimmed reel** (`af19ba1b`, 3.52 s): 100-133 ms, then the first frame held **250-267 ms** (n=5; 383-417 ms on alpha.3) |
-| 4a. Camera photo name | **`PASS`** | Edited photo: `handing back canari-photo-<n>.webp (44600 bytes)`, `camera take handed over (image/webp)`. Unedited: `canari-photo-<n>.jpg`. No `.bin` |
-| 4b. Camera preview backdrop | **`FAIL`** | Post composer camera, n=3 opens: the backdrop canvas reads near black (mid/bottom rows RGB 2-6) while the preview shows a grey wall; the band under the preview is RGB 16,15,16 (`s22`, `s30`, `s31`). Painted 166 ms after `[camera] first frame`, from an under-exposed first frame. On `/camera` the same paint came out teal over the grey wall (`s06b`) |
-| 5. Paid form price (#1938) | **`PASS`** | "Cotisation BDE 2026" by its id: before any answer, no "Combinaison indisponible", no price, no "Payer" (`s40`). After "ICM": "A partir de 60,00 EUR (3A, ICM)", "Paiement Canari" / "En especes", "Payer 60,00 EUR" (`s41`). Nothing paid |
-| 6a. Feed after reconnect (#1938) | **`PASS`** | n=2 offline cold start, then airplane off: **20 cards offline and 20 after** (alpha.3: 10); the status line goes at +6.3-7.3 s, the reel decodes at +8.4 s |
-| 6b. Reel stream once (#1938) | **`PASS`** | One `[media-seg] stream ... through MediaSource` per cold start (n=3 online, n=2 reconnect), no `play() refused` |
-| 7a. Wrong PIN empties the field | **`NOT-OBSERVED`** | As on alpha.3: the vault restores the key on every launch, the gate is never drawn |
-| 7b. Online cold first paint | **`PASS`** | n=3: first card **2558-3092 ms** after `am start` (alpha.3 2254-2385), 20 cards, 0 warnings |
-| 7c. Offline cold start noise | **`PASS`**, unchanged | n=3: **10** warnings each, the same ten families |
-| 7d. 200 % text | **`PASS`** | `/posts` `scrollWidth = innerWidth = 436`; the tabs scroll in their own row |
-
-**Findings:**
-
-- **P1 - a video picked from the gallery on `/camera` (Android) is dropped without a word.** The
-  picker opens (`GET_CONTENT video/*`), the app goes to the background, the camera is released and
-  `CameraScreen` drops its `controls` snippet with the `<input type="file">` in it. The file comes
-  back to that DETACHED input (`isConnected: false`, `files[0] = 96.mp4, video/mp4`), and Svelte 5
-  delegates `onchange` from the root, so `onPicked` never runs: no review, no toast, no log line
-  (n=3). Handing the same file to the live input reached `ready -> review on picked`, which is how
-  the landscape reel was made. Source: `frontend/src/lib/components/reels/ReelCapture.svelte`
-  (the input inside `{#snippet controls()}`).
-- **P3 - the camera backdrop is painted from the first frame, before exposure settles**: near black
-  in the post camera (3 of 3), teal on `/camera`. The live preview is grey.
-- **P3 - an old reel still holds its first frame 250-267 ms at the loop** (published before the
-  trim); new reels 67-83 ms.
-- Observations: at `font_scale 2.0` the selected "Tout" tab sits under the clap icon until the tab
-  row is scrolled (`s12-fs2-feed.png`); a system text size change reloads the page (the open viewer
-  closes). In-app log export: 24198 lines, 2147637 bytes, `[download] wrote ...`; its W/E lines of
-  the session are all the offline runs' transport failures. Logcat: no `FATAL`, no ANR; 99 `Ignoring
-  status update of camera`, 34 `Failed to query component interface for required system resources:
-  6` (codec stack).
 
 ## The Mi 9T readings of v1.2.8-alpha.1 (2026-10-15)
 
