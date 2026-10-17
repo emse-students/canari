@@ -1178,7 +1178,21 @@ the page's, whatever order `willEnd` and the touch arrive in. A tap outside the 
 reaches the web button under it either. **Owed on the iPhone (a build is needed, the Swift is only
 compiled here):** with the "+" open in a DM and in a salon, one edge swipe closes only the menu and
 logs NO `gesture Back` line; a second swipe leaves the conversation; a pick ("Photos", the camera)
-still opens its target; the keyboard, if up, stays up.
+still opens its target.
+
+**THE "+" MENU DROPS THE KEYBOARD, AND THAT IS THE PLATFORM'S, NOT THE HOLD'S (accepted 2026-10-17).**
+iPhone 12, `v1.2.9-alpha.5`, 8 of 8 ([device-verification](../device-verification.md)). The syslog
+orders it. Right after the touch-up, UIKit logs `Override focusSystemState: (ENABLED)` for
+`_UIVariableGestureContextMenuInteraction`: presenting the context menu turns on the scene's focus
+system. The WebView's input session ends 0.6 to 2.7 ms later (`End asserting activeInput modality`,
+`responder:(nil)`, `End input session`). The hold's `NSLog` comes 58 to 91 ms AFTER that, and
+`willDisplayMenuFor` is the only thing that sets the hold. So changing how the hold blocks the touch
+(an overlay, the gesture layer) would change nothing for the keyboard. It is accepted for three reasons:
+- every "+" entry opens a full-screen surface, which would hide the keyboard anyway;
+- the native `UIMenu` decision stands;
+- the one fix at the cause rests on UIKit behaviour nobody has observed.
+
+What would reopen it is in [backlog](../backlog.md#p3---accepted-the-native--menu-drops-the-keyboard-2026-10-17).
 
 **Hidden under everything that covers the screen** (`screenCover`, the tab bar's rule - no web layer
 can cover a native view), and while the web piece has no box (the phone header is `md:hidden`). The

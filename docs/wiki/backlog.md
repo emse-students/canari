@@ -241,6 +241,25 @@ measurement of the `md` rendition sizes over trending and a few searches.
 
 The WebView's own `loop` seeks to 0 and the audio renderer pre-rolls before the clock restarts: the first frame after the wrap is held 317-433 ms where the file spans 107-128 ms. Without an audio track the hold is the file's (83 ms for 107 ms), so it is the audio pre-roll, not the decoder. The audio outside the picture is trimmed since 2026-10-16 (`trimToVideo`, ~100 ms per loop). A seamless loop needs NO seek: re-append the same segments to the MSE buffer the streaming reader already uses, `timestampOffset` advanced by the duration. Owed: the design, then the iPhone's reading of the same seam. [reels](frontend/modules/reels.md#the-end-of-a-reel-looked-frozen-2026-10-16)
 
+## P3 - Accepted: the native "+" menu drops the keyboard (2026-10-17)
+
+Opening the composer's native `UIMenu` ends the WebView's input session, 8 of 8 on the iPhone 12 (`v1.2.9-alpha.5`). The cause is UIKit's context-menu presentation turning on the focus system, about 70 ms BEFORE the #1953 hold acts, not the hold ([mobile](frontend/mobile.md#the-conversations-native-glass-chrome) has the syslog order).
+
+**Accepted for three reasons:**
+- every "+" entry opens a full-screen surface;
+- the native menu decision stands;
+- the only fix at the cause rests on unobserved UIKit behaviour and risks a stuck gate.
+
+**Reopen it if** a menu dismissed WITHOUT a pick turns out to be a common path (a user report, or the in-app log showing `willEnd` with no pick). The candidate fix would then be compiled and read on a pre-release, never shipped on reasoning:
+- the existing `CanariNoInputAccessoryContentView` subclass (`canari_ios.mm`) answers `canResignFirstResponder` = NO while a native menu opens;
+- the gate rises before the focus override (`beginTracking` or `configurationForMenuAtLocation`);
+- it falls on every path the hold already releases on.
+
+Its iPhone reading, through `tools/ios-device`, in a DM and a salon, 8 rounds:
+1. With the composer focused (`keyboard overlap=301`), tap "+". Pass: no `End input session` and no `overlap=0` between the focus override and the hold line, the keyboard visible under the menu, the caret still in the composer after a dismissal.
+2. Re-run #1953: one edge swipe closes only the menu, 7 of 7.
+3. Exercise every release path: a pick (Photos), a tap outside, the app switcher mid-menu and back, and the conversation closed under the menu. After each, the keyboard must still go down normally: a stuck gate shows as a keyboard that cannot be dismissed.
+
 ## P3 - iOS: a Modal or sheet over a conversation has no edge swipe (found 2026-10-16)
 
 The iOS app's only Back is the conversation's own left-edge swipe, and a `Modal` is portalled to `document.body`, out of `ChatArea`: a swipe over its backdrop reaches nothing, as the camera review's did ([reels-in-chat](frontend/modules/reels-in-chat.md#the-iphone-12-reading-of-v129-alpha2---the-edge-swipe-is-the-ios-back-2026-10-16)). The fix is the camera's: the layer carries `swipeBack` calling `backHistoryOverlayFromGesture`, enabled only when it is `dismissible` (a gate pushes no entry, so the top overlay would be the one UNDER it). Owed first: one iPhone reading that a swipe over a sheet does nothing today.
