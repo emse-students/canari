@@ -72,7 +72,6 @@ REST: those rows need a count, then a migration.
 | Shim (entry below) | Condition | Met at floor 1.2.7? | Data at rest | Removal size | Disposition |
 | --- | --- | --- | --- | --- | --- |
 | `paymentMethod: 'stripe'` STORED | rows written before 2026-10-08 | no - data | `purchase_records` and `submissions` | type + 3 client arms, after a migration | owed: count + migration (user) |
-| Carte bare publish body | floor >= fingerprint | YES (`v0.18.28`) | old posters keep a null fingerprint (meaning UNKNOWN, kept) | ~-20 lines, server | removed with the floor (server only); a missing or malformed fingerprint is refused too |
 | Prekeys as bare base64 strings | floor >= `0.18.10` | YES (`v0.18.10`) | undated rows stay covered by their `NULL` arms | ~-10 lines, server | removed with the floor |
 | `/key-package` 404 with no `reason` | every estate past the 2026-09-16 server (not a client floor) | YES (since `v0.18.10` deployed) | none | ~-30 lines, client | removed: a 404 with no reason is `unanswered`, a reason this build does not know is the typed refusal `unrecognized` |
 | Salon push held for a sender with no `seedFrame` | floor >= first release sending `seedFrame` | version YES (`v0.18.28`); proof NO | none | server refusal + Kotlin hold registry, native | NOT removed: nothing has measured that EVERY admitted send carries the frame (the server never stores it), so a required field could refuse an honest send. Owed: a log of frame-less non-silent sends, read for a week, then a native PR |
