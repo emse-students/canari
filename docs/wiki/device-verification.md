@@ -1544,6 +1544,37 @@ opened onto the feed. Bench community "Bench126" only; nothing sent, no account 
 | 4. Reply swipe (#1880) and back gesture | **`PASS`** | A rightward drag on a peer bubble ("Canari Test Delta") stages "Repondre a Canari Test Delta" and the conversation stays open; a leftward drag from x=350 of 390 on an own bubble stages "Repondre a Canari Test Gamma"; both cancelled with "Annuler la reponse". A left-edge drag (x=2 to 260) from the salon returns to the community's salon list |
 | 5. In-app log export | **`NOT-OBSERVED`** | "Enregistrer le journal" opens the system "Enregistrer sous" picker (canari-log-1.2.8-alpha.1...) over an empty "Sur mon iPhone"; dismissed without saving. The file cannot be read off the TestFlight container from the workstation, so the absence of message text was not checked on iOS (the Android export of the same build is `PASS`) |
 
+## The iPhone 12 readings of v1.2.9-alpha.1 (2026-10-15)
+
+TestFlight build `1.2.9` (100200901), About reads "Version de Canari 1.2.9-alpha.1"; account
+`canari-test-gamma`, dev estate, driven over WDA (`tools/ios-device`), timings by
+`tools/phone-bench`. Evidence (screens, AX trees, syslog, `commtabs.ndjson`) is outside the repo in
+the rig's `ios-bench/r1015-a129a1/`. Bench community only; nothing sent.
+
+**Delivery.** At 19:50 the phone still ran `1.2.8-alpha.1` with auto-update ON: it never took
+alpha.2. By 20:09 auto-update had silently installed the `1.2.8` STABLE (100200899, a production
+build), never launched. The alpha.1 IPA reached TestFlight at ~20:09 (release run 38780575538);
+TestFlight offered "Mettre a jour" to 100200901 at 20:12 and one tap installed it. "Builds
+precedents" still lists nothing newer than 1.2.3 ([backlog](backlog.md)). After the update the app
+was SIGNED OUT and asked camera and microphone permission again.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1a. Dynamic Type at cold start (#1884) | **`PASS`** | PIN title 202x30 at default, 272x41 at the largest standard size (1.35x), 2x at the largest accessibility size; feed text and bubbles scale with it |
+| 1b. Default size unchanged | **`PASS`** | PIN gate identical to `1.2.8-alpha.1` at default |
+| 1c. Size changed while backgrounded | **`FAIL`** (P2) | 3 of 3: the "A propos" link kept its old size on return (64x22, 86x30, 128x42 stayed put); the new size applies only after a cold start |
+| 1d. Layout at 2x | **findings** | P2: the PIN keypad is mostly below the fold - digits 7-0, "Saisie manuelle", "PIN oublie ?" and "Rester connecte" sit behind the sticky Deverrouiller button, and scrolling to them pushes the dots off screen (the links are already hidden at 1.35x). P3: the community rail's salon name does not scale while "Ajouter un canal" does. P3: feed titles break mid-word ("personnalisati/on") and the header wordmark is dropped. Settings rows and the glass title pill truncate with an ellipsis; the composer and tab bar (icons) are fine. Reel text overlay `NOT-READ` |
+| 2. In-app camera (#1859) | **`PASS`** + P2 | Chat "+" > "Ouvrir la camera" and the post composer's "Ouvrir la camera" both open the in-app dialog ("Photo (toucher) ou video (maintenir)", "Changer de camera"). P2: in the chat, the conversation's glass chrome (back, title pill, menu, "+") paints ON TOP of the viewfinder; the post composer's camera is clean. The post camera asks for the microphone at open, the chat camera does not |
+| 3. Feed local-first (#1896) | **`PASS`** + P2 | Offline in session, the feed draws under the offline banner (not separable from memory). A cold unlock right after Wi-Fi returned showed "Fil enregistre sur l'appareil : pas de reponse du serveur." with "Reessayer" - the device copy - and did NOT refresh by itself in 20 s (P2); "Reessayer" replaced it. A normal online cold unlock shows no status line. A "Voir plus" tap made right after unlock still held 4 s later. Cold start offline stops at the PIN gate ("Impossible de contacter le serveur", by design) |
+| 4. Communities tab (#1897) | **`PASS`** (taps); timings `NOT-MEASURED` | Taps switch tabs. `bench.timed_action`: warm first 800-858 ms, settled 1237-1299 ms; cold first mount 804 / 1183 ms - no first-mount penalty. But the harness dispatch median is 1031 ms (522 ms on 2026-09-30), above the app's latency, so the absolutes are not a measurement |
+| 5. PIN change, then relaunch (#1898) | **`FAIL`** (P1) | Settings > Securite & appareils > the key button (no AX label, P3) > "Changer mon PIN". The submit said "Le changement de PIN n'a pas abouti. Reessayez dans un instant." while the dev access log shows `POST /api/mls/security/pin-change` **201**; the retry got 403 ("Le PIN actuel est incorrect."). The server rotated, the local re-seal did not. On relaunch the old PIN is refused, the new one passes the server check and lands on "Vos messages enregistres sur cet appareil n'ont pas pu etre ouverts"; "Recuperer mes messages" (old -> new) fails twice with "La recuperation du PIN n'a pas abouti" after `pin-salt` and `pin-check` 201. The device's messages stay locked. No app-level error in the syslog or core-service log. P2 in both dialogs: with the keyboard up the sticky submit button covers the next field, so tapping it submits the form ("Veuillez remplir tous les champs") and the focused field is hidden while typing |
+| 6. | skipped | by the brief |
+| 7. Noise | **findings** | Native syslog only (the JS log cannot be read off a TestFlight build): "keyboard accessory bar NOT removed: no WKContent view" (7x per session), "remote notification hook: selector absent on AppDelegate", "push diagnostic: no-apns-token", "APNs token not here yet", UIKit "may only be set for UIKBDynamicRenderFactory" on keyboard show. P3: native lines in French ("FCM token synchronise", "secret plus recent adopte depuis pending_push_secret.txt", "FCM delegate installe") |
+
+**State left behind.** `canari-test-gamma`'s dev PIN is now a scratch PIN held by the rig operator,
+not the one in `test-accounts.json`, and the iPhone's local store is sealed under the old PIN and
+cannot be opened. Either the account PIN goes back or the harness file follows.
+
 ## The bench readings of v1.2.7-alpha.2 (2026-10-14)
 
 **Mi 9T**: build `1.2.7 (100200702)`, the release's `app-universal-release.apk` (sha256
