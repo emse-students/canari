@@ -1,3 +1,0 @@
-### Fixed - a form payment whose Lydia callback is lost is confirmed when the payer returns, and the cancel page no longer calls a paid answer cancelled
-
-`verify-session` never worked (Lydia's `request/state` echoes no `order_ref`) and is replaced by `confirm-payment`; the request-state route accepts Lydia's undashed uuid; the "still open" message names its 30-minute bound ([forms](docs/wiki/frontend/modules/forms.md#an-online-payment-holds-its-seat-for-30-minutes-and-a-late-one-is-decided-from-the-row-2026-10-15), [payments](docs/wiki/frontend/modules/payments.md#what-requeststate-answers-and-what-it-does-not-2026-10-15)).
