@@ -78,7 +78,7 @@ ring/invite: MLS SystemMsg over chat-gateway + POST /api/calls/ring (FCM data / 
 | --- | --- | --- |
 | Client call engine | `frontend/src/lib/services/CallService.ts` (1297 lines) | complete for 1:1; held off by `CALLS_ENABLED` |
 | Call UI | `frontend/src/lib/components/chat/CallOverlay.svelte` (931 lines) | exists; shows an E2E badge from `e2eActive` |
-| E2E frames | `frontend/src/lib/workers/encryption.worker.ts` + `CallService.setupEncryption` | key = `exportSecret(groupId, 'mls-webrtc-media', callId, 32)`, AES-GCM, random 12-byte IV prefixed, WHOLE frame encrypted |
+| E2E frames | `frontend/src/lib/workers/encryption.worker.ts` + `CallService.setupEncryption` | one key per direction since 2026-10-18 = `exportSecret(groupId, 'mls-webrtc-media-v2', '<callId>\|<sender role>', 32)` (`utils/callKeys.ts`), AES-GCM with the media kind as AAD, random 12-byte IV prefixed, WHOLE frame encrypted |
 | Audio tuning | `frontend/src/lib/utils/callAudio.ts` | sender params per call kind |
 | Missed-call message | `frontend/src/lib/utils/chat/callSystemMessages.ts` (`recordCallMissed`) | a timeline system message; no call-history screen exists |
 | Failure type | `frontend/src/lib/utils/callFailure.ts` | `CallInitiateError` |

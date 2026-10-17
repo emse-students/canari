@@ -57,6 +57,18 @@ async function runTransform(scope: Scope, side: 'sender' | 'receiver', frames: u
   return out;
 }
 
+/**
+ * The `setKeys` message of one end of a call: two distinct keys, the caller sending with the one
+ * the callee receives with - the shape `utils/callKeys.ts` derives.
+ */
+function keysFor(role: 'caller' | 'callee') {
+  const callerKey = new Uint8Array(32).fill(1).buffer;
+  const calleeKey = new Uint8Array(32).fill(2).buffer;
+  return role === 'caller'
+    ? { type: 'setKeys', send: callerKey, receive: calleeKey }
+    : { type: 'setKeys', send: calleeKey, receive: callerKey };
+}
+
 const counters = () => posted.filter((p) => p.type === 'counters').at(-1)?.counters;
 
 describe('the encryption worker', () => {
@@ -68,7 +80,7 @@ describe('the encryption worker', () => {
 
   it('counts a frame too short for an IV as a decrypt failure', async () => {
     const { scope, send } = await loadWorker();
-    await send({ type: 'setKey', payload: new Uint8Array(32).fill(1).buffer });
+    await send(keysFor('caller'));
 
     await runTransform(scope, 'receiver', [{ data: new Uint8Array(4).buffer }]);
     await send({ type: 'getCounters' });
@@ -76,27 +88,61 @@ describe('the encryption worker', () => {
     expect(counters()).toMatchObject({ decFrames: 0, decFail: 1 });
   });
 
-  it('round-trips a frame: what the sender seals, the receiver opens', async () => {
+  /** One frame through the CALLER's worker, sealed; the worker's state is discarded afterwards. */
+  async function sealAsCaller(frame: { data: ArrayBuffer }) {
     const { scope, send } = await loadWorker();
-    await send({ type: 'setKey', payload: new Uint8Array(32).fill(1).buffer });
-    const clear = new Uint8Array([9, 8, 7]);
+    await send(keysFor('caller'));
+    const [sealed] = (await runTransform(scope, 'sender', [frame])) as { data: ArrayBuffer }[];
+    vi.resetModules();
+    return sealed.data;
+  }
 
-    const [sealed] = (await runTransform(scope, 'sender', [{ data: clear.slice().buffer }])) as {
-      data: ArrayBuffer;
-    }[];
-    expect(new Uint8Array(sealed.data)).not.toEqual(clear);
-    const [opened] = (await runTransform(scope, 'receiver', [{ data: sealed.data }])) as {
+  it("opens at the other end what one end's worker sealed", async () => {
+    const clear = new Uint8Array([9, 8, 7]);
+    const sealed = await sealAsCaller({ data: clear.slice().buffer });
+    expect(new Uint8Array(sealed)).not.toEqual(clear);
+
+    const { scope, send } = await loadWorker();
+    await send(keysFor('callee'));
+    const [opened] = (await runTransform(scope, 'receiver', [{ data: sealed }])) as {
       data: ArrayBuffer;
     }[];
     expect(new Uint8Array(opened.data)).toEqual(clear);
-
     await send({ type: 'getCounters' });
-    expect(counters()).toMatchObject({ encFrames: 1, decFrames: 1, decFail: 0 });
+    expect(counters()).toMatchObject({ decFrames: 1, decFail: 0 });
+  });
+
+  it('does not open a frame reflected back to the worker that sealed it', async () => {
+    const sealed = await sealAsCaller({ data: new Uint8Array([1, 2, 3]).buffer });
+
+    const { scope, send } = await loadWorker();
+    await send(keysFor('caller'));
+    const out = await runTransform(scope, 'receiver', [{ data: sealed }]);
+
+    expect(out).toHaveLength(0);
+    await send({ type: 'getCounters' });
+    expect(counters()).toMatchObject({ decFrames: 0, decFail: 1 });
+  });
+
+  it('does not open an audio frame offered as video', async () => {
+    const sealed = await sealAsCaller({ data: new Uint8Array([1, 2, 3]).buffer });
+    // The worker reads the kind from the frame's class name, as the browser's frames carry it.
+    class RTCEncodedVideoFrame {
+      constructor(public data: ArrayBuffer) {}
+    }
+
+    const { scope, send } = await loadWorker();
+    await send(keysFor('callee'));
+    const out = await runTransform(scope, 'receiver', [new RTCEncodedVideoFrame(sealed)]);
+
+    expect(out).toHaveLength(0);
+    await send({ type: 'getCounters' });
+    expect(counters()).toMatchObject({ decFrames: 0, decFail: 1 });
   });
 
   it('reports transform errors sampled - the first three, then every 100th - never one per frame', async () => {
     const { scope, send } = await loadWorker();
-    await send({ type: 'setKey', payload: new Uint8Array(32).fill(1).buffer });
+    await send(keysFor('caller'));
     const broken = {
       get data(): ArrayBuffer {
         throw new Error('frame unreadable');

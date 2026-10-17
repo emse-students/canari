@@ -508,6 +508,7 @@
   "call_over": "This call is over.",
   "call_unavailable": "This call cannot be placed.",
   "call_setup_failed": "The call could not start. Try again in a moment.",
+  "call_e2e_key_mismatch": "The call's audio cannot be decrypted: your device and the other person's are out of sync. Hang up, open the conversation, then call again.",
   "call_encrypted_label": "Encrypted",
   "call_label": "Call",
   "call_participants_count": "{participants} participants",

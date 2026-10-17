@@ -81,7 +81,7 @@ media rather than permanently unreadable history.
 
 **The MLS-native analogue exists and does not fit.** RFC 9420 §8.5's exporter secret is the
 sanctioned hook, it is exposed in our WASM as `export_secret`, and we already use it -
-`CallService` derives the WebRTC media key with label `mls-webrtc-media`, which is exactly DAVE's
+`CallService` derives the WebRTC media keys with label `mls-webrtc-media-v2` (one per direction), which is exactly DAVE's
 shape. But an exported secret is DERIVED FROM group state: using it requires being in the group, at
 the right epoch, having processed every commit - and a newcomer could never read the past, because
 they were not there at those epochs. It answers a different question.

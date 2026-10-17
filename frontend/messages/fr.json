@@ -540,6 +540,7 @@
   "call_over": "Cet appel est terminé.",
   "call_unavailable": "Cet appel ne peut pas être passé.",
   "call_setup_failed": "L'appel n'a pas pu démarrer. Réessayez dans un instant.",
+  "call_e2e_key_mismatch": "Le son de l'appel ne peut pas être déchiffré : votre appareil et celui de votre correspondant ne sont pas synchronisés. Raccrochez, ouvrez la conversation, puis rappelez.",
   "call_encrypted_label": "Chiffré",
   "call_label": "Appel",
   "call_participants_count": "{participants} participants",

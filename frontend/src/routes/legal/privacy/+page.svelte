@@ -128,6 +128,19 @@
         </dd>
       </div>
       <div>
+        <dt>Appels audio (quand la fonction est ouverte)</dt>
+        <dd>
+          Le son est chiffré de bout en bout entre les deux appareils : ni notre serveur ni
+          Cloudflare ne peuvent l'écouter. Le serveur connaît l'appel lui-même : la conversation,
+          qui appelle, l'heure et la durée. Il en garde l'état quelques heures, et ses journaux
+          techniques en gardent la trace pendant la durée indiquée en section 6. Pour se joindre,
+          <strong>les deux appareils échangent leurs adresses IP</strong> en passant par notre serveur,
+          qui les voit donc aussi : chaque participant peut connaître celle de l'autre. À chaque appel,
+          chaque appareil contacte aussi le relais de Cloudflare, qui voit son adresse IP et l'heure ;
+          quand la connexion directe est impossible, le son chiffré passe par ce relais (section 4).
+        </dd>
+      </div>
+      <div>
         <dt>Liens partagés</dt>
         <dd>
           Quand un lien est affiché avec un aperçu, son adresse est envoyée à notre serveur, qui
@@ -196,6 +209,11 @@
           <tr>
             <td>Publications, réactions, CanaReels, agenda</td>
             <td>Diffuser ce que vous publiez à l'audience choisie</td>
+            <td>Exécution du service (6.1.b)</td>
+          </tr>
+          <tr>
+            <td>Appels audio</td>
+            <td>Établir un appel chiffré entre deux membres d'une conversation</td>
             <td>Exécution du service (6.1.b)</td>
           </tr>
           <tr>
@@ -269,7 +287,9 @@
           le jeton et le titre affiché (nom de l'expéditeur ou du groupe). Pour une activité sur le fil
           (commentaire, mention, événement), la notification contient aussi en clair le nom de l'auteur
           et le début du texte, 60 caractères au plus. Ce choix technique permet d'afficher une notification
-          lisible ; le contenu des messages privés n'y figure jamais en clair.
+          lisible ; le contenu des messages privés n'y figure jamais en clair. Pour un appel, la notification
+          qui fait sonner le téléphone leur indique aussi qu'un appel arrive, avec en clair le nom de
+          l'appelant et celui de la conversation.
         </p>
       </li>
       <li>
@@ -309,6 +329,13 @@
           (canari-emse.fr et dev.canari-emse.fr) passent par Cloudflare (Cloudflare Inc.,
           États-Unis), qui voit alors les requêtes, votre adresse IP et les données transmises hors
           contenu chiffré. Le nom principal, canari.emse.fr, ne passe pas par Cloudflare.
+        </p>
+        <p>
+          Pour les appels, Cloudflare fournit aussi un relais (TURN). Chaque appareil le contacte à
+          chaque appel pour préparer la connexion : Cloudflare voit alors son adresse IP et le
+          moment de l'appel. Quand les deux appareils ne peuvent pas se joindre directement, le son
+          passe par ce relais, qui voit aussi le volume échangé, mais jamais le son, chiffré de bout
+          en bout. Notre serveur ne lui transmet aucun identifiant de compte.
         </p>
       </li>
       <li>
