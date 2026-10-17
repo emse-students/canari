@@ -1,0 +1,1 @@
+- **Calls (dev builds only):** every call writes a `[CALL_REPORT]` line to the exported log every 10 s and at its end - path, rates, loss, audio levels and the E2E worker's exact frame counts - and a refused engine writes one too ([calls-revival-plan](docs/wiki/frontend/modules/calls-revival-plan.md#6-observability---a-call-report-that-carries-evidence)).

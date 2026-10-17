@@ -27,7 +27,25 @@ import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/c
 import { CALLS_ENABLED } from '$lib/features';
 import { isBlockedWith, refusalCodeOf } from '$lib/users/blocks';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
-import { describeSelectedPair } from '$lib/utils/callStats';
+import {
+  buildCallReport,
+  describeEngine,
+  describeSelectedPair,
+  refusedCallReport,
+  type CallReportContext,
+  type E2eCounters,
+  type MediaSnapshot,
+} from '$lib/utils/callStats';
+import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
+
+/** How often a live call writes its `[CALL_REPORT]` (revival plan section 6). */
+const CALL_REPORT_INTERVAL_MS = 10_000;
+
+/** The `engine=` field of every report from this device. */
+function currentEngine(): string {
+  const shell = isAndroidTauriRuntime() ? 'android' : isIosTauriRuntime() ? 'ios' : null;
+  return describeEngine(navigator.userAgent, shell);
+}
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'incall' | 'ended';
 
@@ -107,6 +125,16 @@ export class CallService {
   private inviteSent = false;
   /** The relay paired the two parties: the ring is over whatever the media then does. */
   private peerArrived = false;
+  /** `performance.now()` at the user's tap (call or answer): the origin of `dur_ms`/`setup_ms`. */
+  private tapAt: number | null = null;
+  /** Tap to the first unmuted remote audio track - the plan's `setup_ms`. */
+  private setupMs: number | null = null;
+  /** The 10 s `[CALL_REPORT]` cadence, from the peer connection's creation to cleanup. */
+  private reportTimer: number | null = null;
+  /** The previous reading's byte totals, so the next one can state a rate. */
+  private lastSnapshot: MediaSnapshot | null = null;
+  /** The end report's context, stamped when the call ended rather than when its summary closed. */
+  private endStamp: Omit<CallReportContext, 'ice' | 'e2e'> | null = null;
   private localStream: MediaStream | null = null;
   private encryptionWorker: Worker | null = null;
   private workerKeyReady: Promise<void> | null = null;
@@ -314,11 +342,12 @@ export class CallService {
     if (get(this.callState) !== 'idle') return;
     // Refused BEFORE any request: no room, no ring, nothing the other party could answer.
     if (!canUseRtpScriptTransform()) {
-      appendLog('[Call] startCall refused - RTCRtpScriptTransform unavailable, no E2E possible');
+      appendLog(refusedCallReport('-', currentEngine()));
       throw new CallE2eUnsupportedError();
     }
 
     this.currentGroupId = groupId;
+    this.tapAt = performance.now();
 
     try {
       this.callState.set('calling');
@@ -392,11 +421,12 @@ export class CallService {
     this.currentCallId = callId;
     // Answered: the server's deadline, not this timer, now decides (a late token is a 410).
     this.clearRingTimer();
+    this.tapAt = performance.now();
     const useVideo = video ?? this.incomingHasVideo;
 
     try {
       if (!canUseRtpScriptTransform()) {
-        appendLog('[Call] acceptCall refused - RTCRtpScriptTransform unavailable, no E2E possible');
+        appendLog(refusedCallReport(callId, currentEngine()));
         throw new CallE2eUnsupportedError();
       }
       this.callState.set('incall');
@@ -456,6 +486,8 @@ export class CallService {
     // Show the "ended" summary screen briefly (1.5 s) so the user sees the call
     // duration and result before the overlay disappears (P4).
     if (get(this.callState) === 'incall' || get(this.callState) === 'calling') {
+      // The end report describes the call as it ENDED, not as the summary screen left it 1.5 s later.
+      this.endStamp = this.reportContext('end');
       this.callState.set('ended');
       setTimeout(() => {
         if (get(this.callState) === 'ended') {
@@ -498,6 +530,20 @@ export class CallService {
 
   private cleanup() {
     this.clearRingTimer();
+    this.stopCallReports();
+    // The END report is read from the peer connection and the worker BEFORE either is released,
+    // and they are released only once it is written: the order is the guarantee, not a delay.
+    const pc = this.pc;
+    const worker = this.encryptionWorker;
+    const ending = pc ? (this.endStamp ?? this.reportContext('end')) : null;
+    const previous = this.lastSnapshot;
+    this.endStamp = null;
+    this.pc = null;
+    this.encryptionWorker = null;
+    this.workerKeyReady = null;
+    this.lastSnapshot = null;
+    this.tapAt = null;
+    this.setupMs = null;
     this.inviteSent = false;
     this.peerArrived = false;
     this.removeBackgroundHandler();
@@ -524,22 +570,113 @@ export class CallService {
     }
     this.localStreamStore.set(null);
 
-    if (this.pc) {
-      this.pc.close();
-      this.pc = null;
-    }
     if (this.signaledWs) {
       this.signaledWs.close();
       this.signaledWs = null;
     }
-    if (this.encryptionWorker) {
-      this.encryptionWorker.terminate();
-      this.encryptionWorker = null;
-      this.workerKeyReady = null;
+    const release = () => {
+      pc?.close();
+      worker?.terminate();
+    };
+    if (pc && ending) {
+      void this.writeCallReport(pc, worker, ending, previous)
+        .catch((e: unknown) => appendLog(`[Call] WARN end report not written: ${String(e)}`))
+        .finally(release);
+    } else {
+      release();
     }
 
     this.remoteStream.set(null);
     this.remoteStreams.set(new Map());
+  }
+
+  /** What a report says that the peer connection and the worker do not, stamped at THIS moment. */
+  private reportContext(phase: CallReportContext['phase']): Omit<CallReportContext, 'ice' | 'e2e'> {
+    return {
+      callId: this.currentCallId ?? '-',
+      phase,
+      durMs: this.tapAt === null ? 0 : performance.now() - this.tapAt,
+      setupMs: this.setupMs,
+      engine: currentEngine(),
+    };
+  }
+
+  /**
+   * Asks the E2E worker for its exact totals. No timeout: a live worker always answers, and a dead
+   * one says so through its `error` event, which rejects - so the end report can never hold the
+   * peer connection open waiting for an answer that cannot come.
+   */
+  private requestCounters(worker: Worker): Promise<E2eCounters> {
+    return new Promise<E2eCounters>((resolve, reject) => {
+      const done = () => {
+        worker.removeEventListener('message', onMessage);
+        worker.removeEventListener('error', onError);
+      };
+      const onMessage = (event: MessageEvent<{ type?: string; counters?: E2eCounters }>) => {
+        if (event.data?.type !== 'counters' || !event.data.counters) return;
+        done();
+        resolve(event.data.counters);
+      };
+      const onError = (event: Event) => {
+        done();
+        reject(new Error(`encryption worker failed: ${event.type}`));
+      };
+      worker.addEventListener('message', onMessage);
+      worker.addEventListener('error', onError);
+      worker.postMessage({ type: 'getCounters' });
+    });
+  }
+
+  /**
+   * Reads `getStats()` and the worker's counters, writes ONE `[CALL_REPORT]` line, and keeps the
+   * snapshot the next tick turns into a rate (WP-C2, revival plan section 6).
+   */
+  private async writeCallReport(
+    pc: RTCPeerConnection,
+    worker: Worker | null,
+    stamp: Omit<CallReportContext, 'ice' | 'e2e'>,
+    previous: MediaSnapshot | null
+  ) {
+    const ice = pc.iceConnectionState;
+    const stats = await pc.getStats();
+    let e2e: E2eCounters | null = null;
+    if (worker) {
+      try {
+        e2e = await this.requestCounters(worker);
+      } catch (e) {
+        appendLog(`[Call] WARN E2E counters unavailable for the report: ${String(e)}`);
+      }
+    }
+    const report = buildCallReport(stats, { ...stamp, ice, e2e }, previous);
+    appendLog(report.line);
+    return report.snapshot;
+  }
+
+  /** Starts the 10 s reports of a live call; a second start replaces the first (a rebuilt pc). */
+  private startCallReports() {
+    this.stopCallReports();
+    this.reportTimer = window.setInterval(() => {
+      const pc = this.pc;
+      if (!pc || get(this.callState) !== 'incall') return;
+      void this.writeCallReport(
+        pc,
+        this.encryptionWorker,
+        this.reportContext('tick'),
+        this.lastSnapshot
+      )
+        .then((snapshot) => {
+          // A report that resolves after the call ended or the pc was rebuilt keeps no snapshot.
+          if (this.pc === pc) this.lastSnapshot = snapshot;
+        })
+        .catch((e: unknown) => appendLog(`[Call] WARN call report not written: ${String(e)}`));
+    }, CALL_REPORT_INTERVAL_MS);
+  }
+
+  private stopCallReports() {
+    if (this.reportTimer !== null) {
+      window.clearInterval(this.reportTimer);
+      this.reportTimer = null;
+    }
   }
 
   /**
@@ -946,6 +1083,8 @@ export class CallService {
       appendLog('[Call] the other device was replaced - rebuilding the peer connection');
       this.pc.close();
       this.pc = null;
+      // A new pc counts its bytes from zero: a rate against the old one's totals would be negative.
+      this.lastSnapshot = null;
       this.mergedRemoteStream = null;
       this.pendingRemoteIceCandidates = [];
       this.makingOffer = false;
@@ -994,6 +1133,10 @@ export class CallService {
 
     track.onunmute = () => {
       appendLog(`[Call] remote track unmuted kind=${track.kind}`);
+      // setup_ms: the user's tap to the first remote audio that actually flows - what they waited.
+      if (track.kind === 'audio' && this.setupMs === null && this.tapAt !== null) {
+        this.setupMs = performance.now() - this.tapAt;
+      }
       this.publishRemoteStream();
     };
     // Watchdog: a remote track that never unmutes means no media reached us - the usual cause
@@ -1041,6 +1184,7 @@ export class CallService {
       iceTransportPolicy: CALL_ICE_TRANSPORT_POLICY,
     });
     this.pc = pc;
+    this.startCallReports();
 
     const gathered = { host: 0, srflx: 0, relay: 0, prflx: 0 };
 
@@ -1197,6 +1341,8 @@ export class CallService {
           appendLog(`[Call] E2E decrypting ${mediaKind ?? '?'} (${count} frame(s))`);
         } else if (type === 'videoKeyframeIn') {
           appendLog(`[Call] remote video keyframe received (#${count})`);
+        } else if (type === 'transformError') {
+          appendLog(`[Call] WARN E2E transform error: ${detail ?? 'unknown'}`);
         }
       };
     }
