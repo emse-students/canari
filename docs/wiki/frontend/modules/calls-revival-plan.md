@@ -1,5 +1,7 @@
 # Calls - the revival plan (DRAFT, 2026-10-15, not started)
 
+> **Note 2026-10-17:** the user's 2026-10-16 decisions supersede parts of this plan: 1:1 calls go peer-to-peer DIRECT with Cloudflare TURN as the fallback (not relay-only through the SFU), and `1.2.9` ships without #1955. Where the sections below assume "both ends relay-only" or an SFU for 1:1, read them as the 2026-10-15 state, to be re-planned.
+
 > **Status: a plan, nothing built.** Calling is held off since 0.14.15 (`CALLS_ENABLED = false`,
 > [calls](calls.md)). This page orders the work that brings it back, **cheapest decisive test
 > first**, and names what each step depends on. Every statement marked **(unverified)** was not read
