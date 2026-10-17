@@ -17,6 +17,7 @@ import {
   internalSubmissionUrl,
   productPurchaseCompletedUrl,
 } from './social-internal-client';
+import { logSafeFieldName } from './lydia-signature-match';
 import { describeHttpError } from '../common/http-error-log';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -38,9 +39,8 @@ export const LYDIA_CALLBACK_BODY_LIMITS = {
   files: 0,
 } as const;
 
-/** Most field names a refusal line carries, and the longest one: the sender decides every name. */
+/** Most field names a refusal line carries: the sender decides every name. */
 const LOGGED_FIELD_NAMES = 16;
-const LOGGED_NAME_LENGTH = 32;
 
 /**
  * The field NAMES of a refused body, safe to log: the sender controls them, so they are capped in
@@ -49,9 +49,7 @@ const LOGGED_NAME_LENGTH = 32;
  */
 export function describeFieldNames(body: Record<string, unknown> | undefined): string {
   const names = Object.keys(body ?? {});
-  const shown = names
-    .slice(0, LOGGED_FIELD_NAMES)
-    .map((name) => name.replace(/[^\w.-]/g, '').slice(0, LOGGED_NAME_LENGTH));
+  const shown = names.slice(0, LOGGED_FIELD_NAMES).map((name) => logSafeFieldName(name));
   return `${names.length} field(s)=[${shown.join(',')}]`;
 }
 
@@ -178,13 +176,23 @@ export class PaymentWebhookController {
       throw new BadRequestException('Missing request_id or sig');
     }
 
-    const verified = this.paymentService.verifyLydiaRequestCallback(
-      { request_id: requestId, amount, currency, order_ref: orderRef, vendor_token: vendorToken },
-      signature
-    );
+    // The field set we assume Lydia signed; its NAMES go in the failure line below, next to the
+    // names actually received, so one refused callback says which set is wrong.
+    const signedFields = {
+      request_id: requestId,
+      amount,
+      currency,
+      order_ref: orderRef,
+      vendor_token: vendorToken,
+    };
+    const verified = this.paymentService.verifyLydiaRequestCallback(signedFields, signature);
     if (!verified) {
+      const observation = this.paymentService.observeLydiaRequestCallback(body, signature);
       this.logger.error(
-        `Lydia request-callback: signature verification failed (outcome=${outcome})`
+        `Lydia request-callback: signature verification failed (outcome=${outcome}, ` +
+          `content-type=${describeContentType(contentType)}, ${describeFieldNames(body)}, ` +
+          `verified-over=[${Object.keys(signedFields).join(',')}])` +
+          (observation ? ` ${observation}` : '')
       );
       throw new BadRequestException('Invalid signature');
     }

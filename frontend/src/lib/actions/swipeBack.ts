@@ -19,7 +19,10 @@ function startsOnInteractiveElement(target: EventTarget | null): boolean {
 }
 
 /**
- * True when the touch started on a message bubble, which owns a RIGHTWARD drag of its own.
+ * True when the touch started on a message bubble, which owns a RIGHTWARD drag of its own - or inside
+ * `[data-swipe-back-off]`, a region whose own strokes or state no Back swipe may take: the camera's
+ * editor (a paint stroke or a sticker drag from the left edge dragged the whole layer, then asked to
+ * leave the editor mid-stroke) and a recording (a swipe threw the take away without asking).
  *
  * REPLY-SWIPING A RECEIVED MESSAGE USED TO CLOSE THE CONVERSATION (user, 2026-09-29: *"parfois un
  * clic un peu baveux change de page (ou ferme la discussion)"*). The two gestures are the same
@@ -33,12 +36,18 @@ function startsOnInteractiveElement(target: EventTarget | null): boolean {
  * whole rest of the strip, while a reply swipe has nowhere else to happen.
  */
 function startsOnCompetingGesture(target: EventTarget | null): boolean {
-  return target instanceof Element && !!target.closest('[data-swipe-reply]');
+  return target instanceof Element && !!target.closest('[data-swipe-reply], [data-swipe-back-off]');
 }
 
 export interface SwipeBackOptions {
   /** Called when the gesture is confirmed (swipe right past threshold). */
   onBack: () => void;
+  /**
+   * Called once when a touch ARMS the gesture (it started in the edge zone, on nothing excluded) -
+   * where a caller records the state the commit must be judged against
+   * (`armHistoryOverlayGesture`): a Back closes what was on top when the finger came down.
+   */
+  onArm?: () => void;
   /** Whether the gesture is currently active (e.g. only on mobile view). */
   enabled?: boolean;
   /** Width of the left-edge activation zone in px (default 28). */
@@ -89,11 +98,20 @@ export function swipeBack(node: HTMLElement, options: SwipeBackOptions) {
     const t = e.touches[0];
     const edgeZone = opts.edgeZonePx ?? 28;
     if (t.clientX > edgeZone) return;
+    // A release still waiting for its slide to end is superseded by this gesture: it must not
+    // commit later, against the stack THIS touch armed on.
+    if (pendingEnd) {
+      console.debug('[swipeBack] a pending release is dropped: a new gesture armed');
+      dropPendingEnd();
+      node.style.removeProperty('transform');
+      node.style.removeProperty('transition');
+    }
     startX = t.clientX;
     startY = t.clientY;
     tracking = true;
     committed = false;
     console.debug(`[swipeBack] armed at x=${Math.round(startX)}`);
+    opts.onArm?.();
   }
 
   function onTouchMove(e: TouchEvent) {
@@ -143,28 +161,51 @@ export function swipeBack(node: HTMLElement, options: SwipeBackOptions) {
       // Slide out to the right then invoke callback.
       node.style.transition = 'transform 0.18s ease-out';
       node.style.transform = `translate3d(${node.offsetWidth * 0.35}px, 0, 0)`;
-      node.addEventListener(
-        'transitionend',
-        () => {
-          node.style.removeProperty('transform');
-          node.style.removeProperty('transition');
-          opts.onBack();
-        },
-        { once: true }
-      );
+      onOwnTransitionEnd(() => {
+        node.style.removeProperty('transform');
+        node.style.removeProperty('transition');
+        opts.onBack();
+      });
     } else {
       // Snap back.
       node.style.transition = 'transform 0.2s ease-out';
       node.style.transform = 'translate3d(0, 0, 0)';
-      node.addEventListener(
-        'transitionend',
-        () => {
-          node.style.removeProperty('transform');
-          node.style.removeProperty('transition');
-        },
-        { once: true }
-      );
+      onOwnTransitionEnd(() => {
+        node.style.removeProperty('transform');
+        node.style.removeProperty('transition');
+      });
     }
+  }
+
+  /**
+   * Runs `then` once, on the end of the NODE'S OWN transition. `transitionend` bubbles: a
+   * descendant's (a menu entry fading, a button's colour) ended the slide-out early and committed
+   * the Back from it, mid-animation.
+   */
+  function onOwnTransitionEnd(then: () => void) {
+    dropPendingEnd();
+    const handler = (e: Event) => {
+      if (e.target !== node) return;
+      dropPendingEnd();
+      then();
+    };
+    // A CANCELLED transition ends it too: a node hidden mid-slide (`display: none`) or restyled
+    // fires `transitioncancel` and never `transitionend`, and the handler stayed pending for the
+    // next gesture's transition to fire.
+    node.addEventListener('transitionend', handler);
+    node.addEventListener('transitioncancel', handler);
+    pendingEnd = () => {
+      node.removeEventListener('transitionend', handler);
+      node.removeEventListener('transitioncancel', handler);
+    };
+  }
+
+  /** The end handler of the last release, while it waits: AT MOST ONE, so one stroke commits once. */
+  let pendingEnd: (() => void) | null = null;
+
+  function dropPendingEnd() {
+    pendingEnd?.();
+    pendingEnd = null;
   }
 
   node.addEventListener('touchstart', onTouchStart, { passive: true });

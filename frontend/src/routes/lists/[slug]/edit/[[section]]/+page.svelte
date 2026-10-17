@@ -20,7 +20,7 @@
   import EditMembersTab from '$lib/components/associations/edit/EditMembersTab.svelte';
   import EditDangerTab from '$lib/components/associations/edit/EditDangerTab.svelte';
   import SectionHub from '$lib/components/navigation/SectionHub.svelte';
-  import type { HubRow } from '$lib/components/navigation/breadcrumb';
+  import type { HubIcon, HubRow } from '$lib/components/navigation/breadcrumb';
   import {
     LIST_EDIT_SECTIONS,
     editRights,
@@ -77,7 +77,7 @@
 
   const slug = $derived((page.params as Record<string, string>).slug);
 
-  const SECTION_ICONS: Partial<Record<EditSection, HubRow['icon']>> = {
+  const SECTION_ICONS: Partial<Record<EditSection, HubIcon>> = {
     profile: Building2,
     members: Users,
     danger: TriangleAlert,

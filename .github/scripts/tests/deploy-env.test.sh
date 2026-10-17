@@ -220,7 +220,7 @@ done
 
 # AND NEITHER ESTATE MAY ASK FOR A PORT THE SHARED HOST HAS ALREADY GIVEN AWAY. The loop above
 # asserts that prod and dev do not collide with EACH OTHER, which is what the 2026-09-01 defect was
-# - and it is not what the 2026-09-25 outage was. Production asked for 8080, CrowdSec's Local API
+# - and it is not what the 2026-09-25 outage was. Production asked for 8080, another local service
 # had held 127.0.0.1:8080 since 2026-09-22, and the frontend container could not bind at all: the
 # first automated production deploy after the move to the shared host took production down.
 #
@@ -558,10 +558,10 @@ fi
 # PUSH IS DELIBERATELY AVAILABLE ON DEV, AND THE GUARD IS ELSEWHERE. Until 2026-09-02 the three APNs
 # rows were `skip` while `FIREBASE_SERVICE_ACCOUNT_JSON` beside them was `warn` - Android push
 # provided for, iOS not, on the same threat model. That was an oversight, not a policy. What actually
-# stops a test notification reaching a real member is the copy's `TRUNCATE TABLE push_token`, asserted
-# by `dev-copy-guards.test.sh`: a dev estate holds no token of any real device, so the only phone it
-# can reach is one that has itself signed into dev. This asserts the two halves stay CONSISTENT, which
-# is the property that was broken - not which value they hold.
+# stops a test notification reaching a real member is that dev never holds a production token: it
+# holds no production row at all since 2026-10-16 (a fictional seed, `dev-reset-guards.test.sh`), so
+# the only phone it can reach is one that has itself signed into dev. This asserts the two halves
+# stay CONSISTENT, which is the property that was broken - not which value they hold.
 fcm="$(manifest_field FIREBASE_SERVICE_ACCOUNT_JSON 3)"
 apns="$(manifest_field APNS_VOIP_KEY_P8 3)"
 if [ "$fcm" = "$apns" ]; then

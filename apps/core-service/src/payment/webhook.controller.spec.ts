@@ -20,6 +20,7 @@ const USER_ID = '22222222-2222-2222-2222-222222222222';
 function makeController(verified: boolean) {
   const paymentService = {
     verifyLydiaRequestCallback: jest.fn().mockReturnValue(verified),
+    observeLydiaRequestCallback: jest.fn().mockReturnValue('observe: stub'),
   } as unknown as PaymentService;
   return new PaymentWebhookController(paymentService);
 }
@@ -163,7 +164,15 @@ describe('POST /api/payments/lydia-request-callback - the body types it reads', 
     verify = jest.fn().mockReturnValue(false);
     const moduleRef = await Test.createTestingModule({
       controllers: [PaymentWebhookController],
-      providers: [{ provide: PaymentService, useValue: { verifyLydiaRequestCallback: verify } }],
+      providers: [
+        {
+          provide: PaymentService,
+          useValue: {
+            verifyLydiaRequestCallback: verify,
+            observeLydiaRequestCallback: () => 'observe: stub',
+          },
+        },
+      ],
     }).compile();
     app = moduleRef.createNestApplication();
     app.use(bodyParser.json());
@@ -250,6 +259,8 @@ describe('a multipart callback through the REAL signature check', () => {
           useValue: {
             verifyLydiaRequestCallback: (f: Record<string, string>, sig: string) =>
               provider.verifyRequestCallback(f, sig),
+            observeLydiaRequestCallback: (f: Record<string, string>, sig: string) =>
+              provider.observeRequestCallback(f, sig),
           },
         },
       ],
@@ -298,5 +309,63 @@ describe('a multipart callback through the REAL signature check', () => {
     for (let i = 0; i < 30; i++) many[`extra${i}`] = '1';
     const res = await post(many);
     expect(res.status).toBe(400);
+  });
+});
+
+describe('a callback that fails verification says which fields it carried', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('logs the received and the verified field names, never a value', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const controller = makeController(false);
+
+    await expect(
+      controller.handleLydiaRequestCallback(
+        'cancel',
+        { request_id: '9', sig: 'abc', order_ref: 'form:secret-ref', amount: '5.00', state: '3' },
+        'multipart/form-data; boundary=x'
+      )
+    ).rejects.toThrow(/Invalid signature/);
+
+    const line = String(errorSpy.mock.calls[0]?.[0]);
+    expect(line).toContain('outcome=cancel');
+    expect(line).toContain('5 field(s)=[request_id,sig,order_ref,amount,state]');
+    expect(line).toContain('verified-over=[request_id,amount,currency,order_ref,vendor_token]');
+    expect(line).not.toContain('secret-ref');
+    expect(line).not.toContain('abc');
+  });
+});
+
+describe('a refused callback while observing', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  it('stays a 400 even when an observe key matches, and a hostile body still logs', async () => {
+    const errorSpy = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const KEY = 'observe-key';
+    const body = { request_id: '9', amount: '5.00', currency: 'EUR' };
+    const provider = new LydiaPaymentProvider({ LYDIA_OBSERVE_KEYS: KEY });
+    const paymentService = {
+      verifyLydiaRequestCallback: () => false,
+      observeLydiaRequestCallback: (b: Record<string, unknown>, sig: string) =>
+        provider.observeRequestCallback(b, sig),
+    } as unknown as PaymentService;
+    const controller = new PaymentWebhookController(paymentService);
+
+    await expect(
+      controller.handleLydiaRequestCallback('cancel', {
+        ...body,
+        sig: signLydiaParams(body, KEY),
+      })
+    ).rejects.toThrow(/Invalid signature/);
+    expect(String(errorSpy.mock.calls[0]?.[0])).toContain('observe: key#0');
+
+    await expect(
+      controller.handleLydiaRequestCallback('cancel', {
+        request_id: '9',
+        sig: 'x',
+        foo: { toString: 1 },
+      })
+    ).rejects.toThrow(/Invalid signature/);
+    expect(errorSpy).toHaveBeenCalledTimes(2);
   });
 });

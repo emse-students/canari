@@ -71,7 +71,6 @@ REST: those rows need a count, then a migration.
 
 | Shim (entry below) | Condition | Met at floor 1.2.7? | Data at rest | Removal size | Disposition |
 | --- | --- | --- | --- | --- | --- |
-| Whole-list role PUT + `RETIRED_PERMISSIONS` | client floor past the PATCH (2026-08-20) and the key removal (2026-08-19) | YES (`v0.14.1`) | none (migration 044 already stripped the keys) | ~-200 lines, server + one uncalled client method | removed with the floor (server only) |
 | `stripe` checkout return host | floor >= first release with `payment` | YES (`v1.2.4`) | none | ~-40 lines, server + client + `tauri.conf.json` + manifest | removed with the floor |
 | `paymentMethod: 'stripe'` INPUT | floor >= Stripe removal | YES (`v1.2.0`) | - | 1 line | removed with the floor |
 | `paymentMethod: 'stripe'` STORED | rows written before 2026-10-08 | no - data | `purchase_records` and `submissions` | type + 3 client arms, after a migration | owed: count + migration (user) |
@@ -94,6 +93,8 @@ REST: those rows need a count, then a migration.
 | `MLS_STATE_SEAL_V2_WRITER_ENABLED` | a stable with the reader served the web AND floor >= it | YES (`v1.2.7`) | it CHANGES device data at rest | 1 line, then the encrypt worker | NOT done here, same reason |
 | The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closes when the user sets 1.2.7 |
 | Group removal hold (#1878) | floor >= the release carrying it | NO (`1.2.9`) | - | - | waits |
+| `canari_post_feed_kind` drop (`posts/retiredFeedKind.ts`, run by the feed's `load`) | every device that ran a `1.2.9-alpha.2`/`.3` has opened the feed once on a later build | not a version question (alphas only) | one device-global `localStorage` key | 1 module + 1 call | remove with the first stable after `1.2.9` ([reels](frontend/modules/reels.md#the-canareels-entry---an-icon-beside-the-tabs-that-opens-the-viewer-user-2026-10-16)) |
+| `klipy_cid` drop (`utils/chat/retiredKlipyCustomerId.ts`, run at the root layout's mount) | every install older than 2026-10-16 has started once on a later build - a CLIENT FLOOR, since an install that never updates keeps the key and also keeps sending it | `minClientVersion` past the release carrying it | one device-global `localStorage` key, the per-install id older builds sent to KLIPY | 1 module + 1 call | remove with the first stable after the floor passes that release ([chat](frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
 
 **Owed to the user, read-only, before any migration above** (production Postgres, as
 [databases](infrastructure/databases.md#reaching-it-from-a-workstation) describes):
@@ -269,55 +270,6 @@ this entry deliberately has no date: a date would be a guess about a platform no
 **Cost of keeping it:** one header read and one cookie read per refresh. The hazard is not cost, it
 is that a client sending neither looks identical to one sending a stale cookie, which is why the
 refusal already logs the cookie names it received.
-
-### 2027-02-20 - the whole-list role-permission PUT
-
-**Site:** `PUT /api/channels/roles/:roleId/permissions` and `ChannelService.setRoleBasePermissions`
-in [`channel.service.ts`](../../apps/social-service/src/channels/channel.service.ts).
-**Shim:** the endpoint replaces a role's permissions wholesale. Since 2026-08-20 every client sends
-`PATCH` with a single `{ key, granted }` instead, because a grid cell IS a delta and sending it as a
-whole list is what made two administrators' compatible edits erase one another (COMM-20, measured on
-production the same day: the loser's grid went on showing a permission the server had dropped AND
-one it had never stored).
-**Why a shim at all:** the fleet is mixed by construction - an APK serves the bundle inside itself
-and no deploy reaches it - so every Android client built before 2026-08-20 still PUTs the whole list
-on any toggle. Removing the route would turn every role edit on those clients into a 404. They keep
-the old behaviour, lost update included, which is what they had.
-**On removal:** delete the `@Put` route, `setRoleBasePermissions`, its `RETIRED_PERMISSIONS` branch
-(whose own entry expires first, above) and the tests that name it. **The date is read, not argued**,
-and nothing currently reads it: the PUT logs `[ROLE] permissions updated` exactly as the PATCH logs
-`[ROLE] granted|revoked`, so **the two are distinguishable in the service log** and a campaign that
-never sees the first line has a fleet that has turned over.
-**Cost of keeping it:** two write paths for one column. They share `assertCanManageRoles` and
-`announceRolePermissions`, so the permission rule and the announcement cannot drift - what differs is
-only how the new list is arrived at, which is the whole point.
-
-### 2026-11-19 - the two permissions the grid drew and nothing enforced
-
-**Site:** `RETIRED_PERMISSIONS` in
-[`permissions.ts`](../../apps/social-service/src/channels/permissions.ts), and the branch that reads
-it in `ChannelService.setRoleBasePermissions`.
-**Shim:** `channel.access` and `channel.send` were deleted on 2026-08-19. They were in the registry
-from the start, drawn as two of the eight rows in the community permission grid, and read by NOTHING
-- neither decided any outcome, because a public salon is visible to every member and a private one
-to the people in it, and writing is decided per salon by `writePolicy`. Migration 044 stripped them
-from `channel_roles.permissions`, and the write path validates against the registry, so they cannot
-come back.
-**Why a shim at all:** the write path validates the WHOLE list and throws `BadRequestException` on
-any unknown key. A client built before the removal still renders eight rows and PUTs all eight on
-any toggle, so without this branch every role edit on such a client would 400 over two keys the
-server itself had put in its grid. They are therefore DROPPED and the rest applied, which is exactly
-what the admin asked for - and anything else unknown still fails the write, because a key the server
-cannot name is a client asking for a capability that does not exist.
-**On removal:** delete `RETIRED_PERMISSIONS`, the branch, its two tests in
-[`role-permissions.spec.ts`](../../apps/social-service/src/channels/role-permissions.spec.ts), and
-this entry. The date is read, not argued: `[ROLE] RETIRED_PERMISSION_SENT` fires at warn on every
-old-client edit, so if the log is silent across a campaign the fleet has turned over. **If it has
-fired, find which client and why before removing the branch** - the guard in the same spec asserts
-no retired name is ever reused as a live one, which is the only way this drop could silently delete
-a real grant.
-**Cost of keeping it:** one array and one filter, and a validation that is not uniform - which is
-the real cost, because "unknown keys are refused" now has an exception a reader must look up.
 
 ### 2026-11-19 - the pre-MLS send path, and the `content` column it is the only writer of
 

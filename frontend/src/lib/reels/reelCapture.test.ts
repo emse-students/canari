@@ -2,7 +2,7 @@
  * The capture's rules (CanaReels R3, C4): ONE shutter - a tap is a photo, a press that stays down
  * past the threshold is a video that its release ends - and the cap ends a take whatever the gesture.
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   SHUTTER_HOLD_THRESHOLD_MS,
   captureFileFrom,
@@ -191,5 +191,32 @@ describe('captureFileFrom', () => {
     expect(captureFileFrom(new Blob(['x'], { type: 'video/mp4' }), 7).name).toBe(
       'canari-video-7.mp4'
     );
+  });
+
+  it('names the Android WebView take by the container it reports, never .bin (Mi 9T, v1.2.9-alpha.1)', () => {
+    const mkv = captureFileFrom(new Blob(['x'], { type: 'video/x-matroska;codecs=avc1,opus' }), 7);
+    expect(mkv.name).toBe('canari-video-7.mkv');
+    expect(mkv.type).toBe('video/x-matroska;codecs=avc1,opus');
+  });
+
+  it('names the editor photo (WebP) and its PNG stand-in by their type, never .bin (Mi 9T, v1.2.9-alpha.3)', () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(captureFileFrom(new Blob(['x'], { type: 'image/webp' }), 7).name).toBe(
+      'canari-photo-7.webp'
+    );
+    expect(captureFileFrom(new Blob(['x'], { type: 'image/png' }), 7).name).toBe(
+      'canari-photo-7.png'
+    );
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+  });
+
+  it('accuses a truly unknown type and names it .bin', () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(captureFileFrom(new Blob(['x'], { type: 'image/heic' }), 7).name).toBe(
+      'canari-photo-7.bin'
+    );
+    expect(errors).toHaveBeenCalledTimes(1);
+    errors.mockRestore();
   });
 });

@@ -11,7 +11,7 @@ Overview:
 Manual bootstrap (this doc)        CD (automatic)               Data
 ─────────────────────────────       ─────────────────────       ──────────────────
 Docker + runner + clone repo   ->   generates .env files    ->   restore.sh
-SSH canari -> mitv (backups)        deploys Canari               (from mitv)
+SSH to the offsite backup host      deploys Canari               (from offsite)
 GitHub secrets present              deploys Authentik
 ```
 
@@ -59,7 +59,8 @@ for **server deployment**:
 | Admin routes (not a secret) | `ADMINER_ENABLED=true` on core-service, production's compose only, opens the gated `/adminer/` route and needs `INTERNAL_SHARED_SECRET` of 32+ characters - [databases](../docs/wiki/infrastructure/databases.md#the-adminer-route---the-database-in-a-browser-for-global-admins-2026-10-02) |
 | Media storage (Garage, formerly MinIO) | `GARAGE_RPC_SECRET`, `GARAGE_ADMIN_TOKEN`, `GARAGE_ACCESS_KEY_ID` (>= 8 chars), `GARAGE_SECRET_ACCESS_KEY` (>= 16 chars) - Garage's own minimums, which is why this is a dedicated key rather than reusing `MINIO_ROOT_USER`/`PASSWORD` |
 | Auth (Authentik) | `AUTHENTIK_URL`, `AUTHENTIK_CLIENT_ID`, `AUTHENTIK_CLIENT_SECRET`, `MICONNECT_PG_PASS`, `MICONNECT_AUTHENTIK_SECRET_KEY`. The MiConnect stack's own `.env` on its host also holds `MIGALLERY_AVATAR_SIGNING_KEY`, `MICONNECT_CAS_CONSUMER_SECRET` and `MICONNECT_EDITOR_TOKEN`, written by hand ([authentik/README](authentik/README.md#secrets)) |
-| App / frontend | `BASE_URL`, `KLIPY_API_KEY`, `ANDROID_APP_LINK_SHA256`, `APPLE_TEAM_ID` |
+| App / frontend | `BASE_URL`, `ANDROID_APP_LINK_SHA256`, `APPLE_TEAM_ID` |
+| GIF search (chat-delivery-service) | `KLIPY_API_KEY` (dev: `DEV_KLIPY_API_KEY`) - read by the SERVER since 2026-10-16, no longer baked into any frontend build: `GET /api/mls/gifs` asks KLIPY so a reader's query, IP and identifier never reach it. Unset, the picker says GIF search is not configured ([chat](../docs/wiki/frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
 | Payments | `LYDIA_PROVIDER_TOKEN`, `LYDIA_PROVIDER_PRIVATE_TOKEN` (WP-LYDIA-1; core-service only - whether payments are live is `platform_config.paymentProvider`, an admin setting at `/admin/platform`, not an env var). **The Stripe secrets (`STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_PUB_KEY`) are no longer read anywhere**: delete them from the GitHub secrets, see [stripe-archive](../docs/wiki/stripe-archive.md) |
 | MiConnect profile editor (WP4, production only) | `MICONNECT_EDITOR_TOKEN` - the API token of the authentik service account `miconnect-canari-editor` (RBAC role: view + change users only), read by core-service to write `attributes.profile`. **The SAME value on both sides**: a GitHub secret of that name for Canari, and `MICONNECT_EDITOR_TOKEN` in the MiConnect stack's `/srv/miconnect/.env`, which `blueprints/80-profile-editor.yaml` reads (`!Env`) when a release applies it. No dev counterpart: dev shares production's MiConnect and refuses the edit ([profiles-and-access](../docs/wiki/profiles-and-access.md)) |
 | Push / calls / avatars | `FIREBASE_SERVICE_ACCOUNT_JSON`, `CLOUDFLARE_CALLS_API_TOKEN`, `CLOUDFLARE_TURN_KEY_ID`, `MIGALLERY_API_KEY` |
@@ -155,7 +156,7 @@ Generate strong values: `openssl rand -hex 32` (secrets), `openssl rand -base64 
 > default answers for them. Rows marked `skip` must NOT be created: `CERCLE_API_KEY` is deliberately absent from dev
 > (decided with the user), so that a copy of production's database can never be answered as
 > production by Le Cercle.
-> **Push is NOT among them** - `copy-prod-to-dev.sh` truncates `push_token`, so dev has no real
+> **Push is NOT among them** - dev holds no production row (a fictional seed since 2026-10-16), so it has no real
 > device to reach, and both halves of push (FCM and the three APNs values) are ordinary optional
 > credentials.
 
@@ -181,31 +182,23 @@ the history says squash because that is what the automation does.
 secrets: `canari-auto-merge` must be installed on the owning organisation and listed in the
 ruleset's `bypass_actors`. It is not repeated here.
 
-## 4. SSH access for offsite backup (mitv)
+## 4. SSH access for offsite backup
 
-Backups push to `mitv` via SSH. On the new server:
+Backups push to the offsite LAN backup server via SSH. On the new server:
 
 ```bash
 # Server key (if missing)
 sudo -u canari ssh-keygen -t ed25519 -N "" -f /home/canari/.ssh/id_ed25519
 
-# Trust mitv
-sudo -u canari ssh-keyscan -H 10.0.0.4 >> /home/canari/.ssh/known_hosts
+# Trust the offsite host
+sudo -u canari ssh-keyscan -H <offsite-host> >> /home/canari/.ssh/known_hosts
 ```
 
-On `mitv` (once only), authorize the server's public key for the dedicated
-`canaribackup` user (member of `_ssh` group, store `/srv/canari-backups`):
+On the offsite host (once only), authorize the server's public key for a dedicated, unprivileged
+backup user whose home holds only the backup directory (mode `700`, `authorized_keys` mode `600`).
+The user name, the directory and the host are kept in the operators' private notes.
 
-```bash
-useradd -m -s /bin/bash canaribackup 2>/dev/null
-usermod -aG _ssh canaribackup
-install -d -m 700 -o canaribackup -g canaribackup /srv/canari-backups /home/canaribackup/.ssh
-echo "<contents of /home/canari/.ssh/id_ed25519.pub>" >> /home/canaribackup/.ssh/authorized_keys
-chown canaribackup:canaribackup /home/canaribackup/.ssh/authorized_keys
-chmod 600 /home/canaribackup/.ssh/authorized_keys
-```
-
-Test: `sudo -u canari ssh canaribackup@10.0.0.4 'echo ok'`.
+Test: `sudo -u canari ssh <backup-user>@<offsite-host> 'echo ok'`.
 
 ## 5. First deployment
 
@@ -315,7 +308,7 @@ from the same build; the CD rebuilds them together for exactly that reason.
 
 **Nothing here is required to bring production up, and on a fresh host there is nothing to do.** The
 second estate is optional. Since 2026-09-01 the pipeline that deploys it exists - three jobs in
-`deploy.yml` plus `dev-refresh.yml` - all gated on the repository variable `DEV_ENVIRONMENT_ENABLED`.
+`deploy.yml` plus a data job (now `scheduled.yml`'s `dev-reset`) - all gated on the repository variable `DEV_ENVIRONMENT_ENABLED`.
 **On THIS repository that variable is `true` since 2026-09-02, with all 14 `required` `DEV_*`
 secrets present and the `canari-dev` Authentik client created; on a fresh host it is absent and
 every dev job skips.** It is recorded here because turning that switch on is a bootstrap concern,
@@ -336,7 +329,7 @@ only copy. What a bootstrap owes:
 | Reverse proxy | one cloudflared ingress rule pointing `dev.canari-emse.fr` at `http://localhost:3080`. GET the tunnel config, save the original, change the single rule, PUT |
 | Secrets | its own value for everything in [section 3](#3-github-secrets) - see the note there |
 | Authentik | its own OIDC client, creatable on the box: `docker exec miconnect-server-1 ak shell -c ...` |
-| Data | `infrastructure/dev/copy-prod-to-dev.sh` on the box. Supports `--dry-run`, which changes nothing and reports what it would do. It refuses to write anywhere but the `canari-dev` compose project, and that refusal is a re-read Docker label rather than a flag |
+| Data | a FICTIONAL seed, never production's rows (owner, 2026-10-16): `infrastructure/dev/reset-dev-to-seed.sh`, run by `scheduled.yml`'s `dev-reset` job on demand. Supports `--dry-run`, which changes nothing and reports what it would do. It refuses to write anywhere but the `canari-dev` compose project, and that refusal is a re-read Docker label rather than a flag. A virgin dev database first needs the owner's SCHEMA-ONLY restore ([dev-environment](../docs/wiki/infrastructure/dev-environment.md#a-virgin-dev-database-the-schema-only-restore-owner-run)) |
 | Deployed from | `/home/canari/canari-dev`, a SEPARATE clone - two estates sharing one working tree would race, a `git reset --hard` for one rewriting the compose file the other is deployed from. `deploy-dev` creates it if absent, so there is nothing to do by hand |
 | Images | the two frontends are dev's own (`frontend:dev`, `frontend-ssr:dev`), because SvelteKit bakes `import.meta.env.*` in at build time; **every backend image is shared with production**, which is deliberate - it means a behavioural difference between the estates can never be blamed on a different build |
 | Deploy order | dev deploys BEFORE production, and a failed dev deploy stops production's. Setting `DEV_ENVIRONMENT_ENABLED` to anything but `true` is the escape hatch |
@@ -349,9 +342,9 @@ only copy. What a bootstrap owes:
 - [ ] Self-hosted runner registered and active
 - [ ] Repository cloned at `/home/canari/canari`
 - [ ] GitHub secrets created
-- [ ] SSH canari → mitv working
+- [ ] SSH to the offsite backup host working
 - [ ] CD passed green (Canari + Authentik)
-- [ ] Data restored from mitv
+- [ ] Data restored from the offsite backup
 - [ ] Backup cron installed
 - [ ] Egress probe cron installed (`/home/canari/egress/samples.ndjson` growing by one line a minute)
 - [ ] Reverse proxy / DNS / TLS in place

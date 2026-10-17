@@ -25,7 +25,9 @@ export function providerRefusalMessage(err: unknown): string | null {
 
 /**
  * The body `code` of social-service's 409 when a form answer's previous payment request could not
- * be shown dead or paid, so no second one was issued (`seat-hold.ts`). A retry a moment later reads
- * it again; the sentence says so rather than echoing the server's English.
+ * be shown dead or paid, so no second one was issued (`seat-hold.ts`). It can last until that
+ * request's 30-minute hold ends - counted from when it was issued, and for a row older than
+ * migration 084 from when the answer was created - so the sentence names that bound rather than
+ * "a moment", and is localized rather than echoing the server's English.
  */
 export const PREVIOUS_PAYMENT_OPEN = 'PREVIOUS_PAYMENT_OPEN';

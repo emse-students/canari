@@ -9,9 +9,11 @@ import { flushSync, mount, tick, unmount } from 'svelte';
 import ReelCapture from './ReelCapture.svelte';
 import { SHUTTER_HOLD_THRESHOLD_MS } from '$lib/reels/reelCapture';
 import { CameraSession } from '$lib/reels/cameraSession.svelte';
+import { CameraAccessError } from '$lib/reels/cameraAccess';
 import { installFakeMediaRecorder } from '$lib/reels/fakeMediaRecorder.test-helper';
 import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import { pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
+import { capturePosterOf } from '$lib/reels/capturePoster';
 import { m } from '$lib/paraglide/messages';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
@@ -50,10 +52,12 @@ const framed = vi.hoisted(() => ({
   stop: vi.fn(),
   start: vi.fn(),
   photo: vi.fn(),
+  thumbnail: vi.fn(),
 }));
 vi.mock('$lib/reels/framedCapture', async (orig) => ({
   ...(await orig<typeof import('$lib/reels/framedCapture')>()),
   takeFramedPhoto: framed.photo,
+  takeFramedThumbnail: framed.thumbnail,
   FramedStream: { start: framed.start },
 }));
 
@@ -315,6 +319,31 @@ describe('ReelCapture', () => {
     expect(framed.stop).toHaveBeenCalled();
   });
 
+  it('no Back swipe arms while the editor owns the strokes or a take is being filmed (review of #1936)', async () => {
+    const { target, pointer } = await render();
+    const root = () => target.querySelector('[data-swipe-back-off]');
+    expect(root()).toBeNull();
+    // Filming: a swipe would have thrown the take away unasked.
+    pointer('pointerdown', 1000);
+    vi.advanceTimersByTime(SHUTTER_HOLD_THRESHOLD_MS);
+    await settle();
+    expect(root()).not.toBeNull();
+    pointer('pointerup', 4000);
+    await settle();
+    // The review: the swipe is a Back again (it asks).
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+    expect(root()).toBeNull();
+    // The editor: a paint stroke from the left edge dragged the whole layer, then left the editor.
+    target
+      .querySelector<HTMLButtonElement>(
+        `[data-reel-review] [aria-label="${m.reels_review_edit()}"]`
+      )!
+      .click();
+    await settle();
+    expect(root()).not.toBeNull();
+    expect(root()!.contains(target.querySelector('[data-reel-surface]'))).toBe(true);
+  });
+
   it('Back with the editor open leaves the editor, never the take', async () => {
     const { target, hold } = await render();
     await hold();
@@ -474,6 +503,26 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
     expect(target.querySelector('[data-reel-sound]')).toBeNull();
   });
 
+  it('a filmed post take carries its first picture as its thumbnail, taken BEFORE the recorder starts (Mi 9T, v1.2.9-alpha.1)', async () => {
+    const still = new Blob(['first-frame'], { type: 'image/jpeg' });
+    framed.thumbnail.mockReturnValue(still);
+    const oncapture = vi.fn();
+    const { target, hold } = await render({ destination: 'post', oncapture, onclose: vi.fn() });
+    await hold();
+    target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
+    await settle();
+
+    const file = oncapture.mock.calls[0][0] as File;
+    expect(file.type).toMatch(/^video\//);
+    expect(capturePosterOf(file)).toBe(still);
+    // Its encode shares the main thread with nothing the take draws: no drawing loop yet.
+    expect(framed.thumbnail.mock.invocationCallOrder[0]).toBeLessThan(
+      framed.start.mock.invocationCallOrder[0]
+    );
+    // A full-size photo is never encoded for it.
+    expect(framed.photo).not.toHaveBeenCalled();
+  });
+
   it('a post camera whose microphone was refused still takes photos: a hold is a photo, and it is said', async () => {
     const { target, hold } = await render({ destination: 'post', oncapture: vi.fn() }, false);
     expect(toastStore.toasts.map((t) => t.message)).toContain(m.reels_capture_no_microphone());
@@ -527,6 +576,84 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
 
     expect(pickNatively).toHaveBeenCalledWith('library', { single: true });
     expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+  });
+
+  it('a video picked while the picker took the camera away still reaches the review', async () => {
+    // Android: the picker backgrounds the app, the camera is released and CameraScreen drops its
+    // controls. The file then comes back to the input - which must still be in the document, or
+    // Svelte's root-delegated `onchange` never runs (Mi 9T, v1.2.9-alpha.4, 3 of 3).
+    const { target } = await render();
+    const input = target.querySelector<HTMLInputElement>('[data-reel-gallery-input]')!;
+    expect(input).not.toBeNull();
+    const shown = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+    await settle();
+    expect(target.querySelector('[data-reel-shutter]')).toBeNull();
+    expect(input.isConnected).toBe(true);
+
+    const clip = new File([new Uint8Array(3)], 'clip.mp4', { type: 'video/mp4' });
+    Object.defineProperty(input, 'files', { value: [clip], configurable: true });
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    await settle();
+    shown.mockRestore();
+
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+  });
+
+  it('a refused camera keeps the gallery, and its pick reaches the review', async () => {
+    const session = new CameraSession(() =>
+      Promise.reject(new CameraAccessError('denied', 'camera: denied'))
+    );
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    mounted.push(mount(ReelCapture, { target, props: { session } }));
+    await settle();
+    expect(target.querySelector('[role="alert"]')).not.toBeNull();
+    const button = target.querySelector<HTMLButtonElement>('[data-reel-fault-gallery]')!;
+    expect(button.disabled).toBe(false);
+    const input = target.querySelector<HTMLInputElement>('[data-reel-gallery-input]')!;
+    const click = vi.spyOn(input, 'click').mockImplementation(() => {});
+    button.click();
+    expect(click).toHaveBeenCalledTimes(1);
+
+    const clip = new File([new Uint8Array(3)], 'clip.mp4', { type: 'video/mp4' });
+    Object.defineProperty(input, 'files', { value: [clip], configurable: true });
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+    await settle();
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+  });
+
+  it('a pick the state cannot take is said, never dropped in silence', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { target } = await render();
+    const input = target.querySelector<HTMLInputElement>('[data-reel-gallery-input]')!;
+    const pick = async (name: string) => {
+      const clip = new File([new Uint8Array(3)], name, { type: 'video/mp4' });
+      Object.defineProperty(input, 'files', { value: [clip], configurable: true });
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      await settle();
+      await settle();
+    };
+    await pick('first.mp4');
+    expect(target.querySelector('[data-reel-review]')).not.toBeNull();
+    // A second answer while the first is under review (a picker that answered twice).
+    await pick('second.mp4');
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('was refused in review'));
+    expect(toastStore.toasts.map((t) => t.message)).toContain(m.reels_capture_take_refused());
+  });
+
+  it('a pick that cannot be taken is said, never dropped', async () => {
+    const { target } = await render();
+    const input = target.querySelector<HTMLInputElement>('[data-reel-gallery-input]')!;
+    const doc = new File([new Uint8Array(3)], 'notes.pdf', { type: 'application/pdf' });
+    Object.defineProperty(input, 'files', { value: [doc], configurable: true });
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await settle();
+
+    expect(target.querySelector('[data-reel-review]')).toBeNull();
+    expect(toastStore.toasts.map((t) => t.message)).toContain(m.reels_capture_not_a_video());
   });
 
   it('the feed keeps its gallery shortcut and the publish step', async () => {

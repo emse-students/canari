@@ -2,7 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import * as bodyParser from 'body-parser';
-import { buildAllowedOrigins, corsOriginDelegate } from './cors-origins';
+import { buildAllowedOrigins, corsOptions } from './cors-origins';
 
 /**
  * THIS SERVICE CONNECTS NO KAFKA TRANSPORT, AND NEITHER DOES ANY OTHER - THERE IS NO BROKER.
@@ -30,17 +30,13 @@ async function bootstrap() {
   // Allowed origins: every Tauri WebView origin (one per platform), the deployed frontend, and
   // http(s) loopback on any port for dev. The list and the predicate live in `cors-origins.ts`.
   const allowedOrigins = buildAllowedOrigins(process.env.FRONTEND_URL);
-  app.enableCors({
-    origin: corsOriginDelegate(allowedOrigins),
-    credentials: true,
-    /**
-     * Without this the browser hides the header from the very clients that need it most: the app
-     * runs cross-origin under Tauri, so a response header it cannot read would silently disable
-     * the history walk's upper bound on mobile ONLY - the shape of failure that compiles, deploys
-     * green, and is wrong.
-     */
-    exposedHeaders: ['X-History-Head'],
-  });
+  /**
+   * `X-History-Head` exposed: without it the browser hides the header from the very clients that
+   * need it most: the app runs cross-origin under Tauri, so a response header it cannot read would
+   * silently disable the history walk's upper bound on mobile ONLY - the shape of failure that
+   * compiles, deploys green, and is wrong.
+   */
+  app.enableCors(corsOptions(allowedOrigins, ['X-History-Head']));
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   await app.listen(process.env.PORT || 3010);

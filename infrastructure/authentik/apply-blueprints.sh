@@ -7,7 +7,7 @@
 # together with the program, so the host needs neither a mount nor a copy of this directory.
 #
 # From a workstation rather than on the host, prefix the transport:
-#   AK_REMOTE="ssh portail-etu-direct" apply-blueprints.sh snapshot
+#   AK_REMOTE="ssh <production-host>" apply-blueprints.sh snapshot
 #
 # BLUEPRINTS_DIR names another directory of blueprints - test-blueprints.sh applies main's first.
 set -euo pipefail
@@ -28,6 +28,14 @@ if [ "${#files[@]}" -eq 0 ]; then
   echo "no blueprint in $dir" >&2
   exit 2
 fi
+
+# A HELD blueprint is one the user decided production must not get yet: it lives in `held/`, which
+# the glob above never reads, and it is NAMED at every run - dev's dry-run and the stable's apply
+# alike - so a hold is never mistaken for a blueprint that does not exist. Lifting one is moving it
+# back (`git revert` of the commit that held it). Why each is held: docs/wiki/backlog.md.
+for file in "$dir"/held/*.yaml; do
+  echo "::warning title=MiConnect blueprint HELD::held/$(basename "$file") is NOT applied - held by the user's decision, see docs/wiki/backlog.md" >&2
+done
 
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=ak-shell.sh

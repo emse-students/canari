@@ -217,7 +217,7 @@ listés dans la carte d'impact ci-dessus ; ils sont déjà inventoriés, pas bes
   l'a). Le fan-out interne (marquer submission payée, fulfillment produit, `dispatchCercleWebhook`)
   reste identique en forme ; seul le nom du champ d'idempotence change
   (`stripePaymentIntentId` -> `paymentReference`), et Le Cercle ne voit qu'une chaîne opaque unique —
-  aucune coordination avec Aurel nécessaire tant que le champ reste une string unique par transaction.
+  aucune coordination avec le mainteneur du Cercle nécessaire tant que le champ reste une string unique par transaction.
 
 **Phase 4 — Frontend**
 - `stripeCallbacks.ts` -> nom générique, cible de redirection Lydia à la place de Checkout.

@@ -18,6 +18,8 @@ import {
   PAYMENT_REQUEST_LIFETIME_SECONDS,
   PREVIOUS_PAYMENT_OPEN,
   SETTLED_PAYMENT_STATUSES,
+  CONFIRMABLE_PAYMENT_STATUSES,
+  LYDIA_REQUEST_UUID_RE,
   livePendingWhere,
   lockFormSeats,
   overCapacityFirst,
@@ -29,8 +31,14 @@ import { FormRespondent } from './entities/form-respondent.entity';
 import { CreateFormDto, SubmitFormDto } from './dto/form.dto';
 import axios from 'axios';
 import * as ExcelJS from 'exceljs';
-import { answerText, type AnswerQuestion } from './answer-text';
+import { answerText, type AnswerQuestion, type AnswerWords } from './answer-text';
 import type { ExportLabels } from './export-labels';
+import {
+  FormFilesService,
+  fileAnswersOf,
+  hasFileQuestion,
+  type AnswerFileState,
+} from './form-files.service';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { resolveCheckoutCallbackUrl } from '../common/checkout-callback-url';
@@ -38,6 +46,7 @@ import { withSubmissionReturnKey } from './return-url-key';
 import { UserTagService } from '../users/user-tag.service';
 import { PurchaseRecordService } from '../users/purchase-record.service';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
+import { toManagerView, toSubmitterView } from './submission.projection';
 import {
   bucketFor,
   dimensionsNeedProfile,
@@ -127,7 +136,8 @@ export class FormsService {
     private readonly userTagService: UserTagService,
     private readonly purchaseRecordService: PurchaseRecordService,
     private readonly pricingFacts: PricingFactsService,
-    @InjectRepository(FormRespondent) private readonly respondentRepo: Repository<FormRespondent>
+    @InjectRepository(FormRespondent) private readonly respondentRepo: Repository<FormRespondent>,
+    private readonly formFiles: FormFilesService
   ) {}
 
   /**
@@ -157,6 +167,33 @@ export class FormsService {
         'An anonymous form must be free: a payment or a cotisation grant identifies the submitter.'
       );
     }
+    // A file is uploaded by an account and kept on a row that names it, and its CONTENT (a CV)
+    // names its author too - the identity the form promised not to keep.
+    if (hasFileQuestion(input.items)) {
+      throw new BadRequestException(
+        'An anonymous form cannot ask for a file: a file is tied to the account that uploads it.'
+      );
+    }
+  }
+
+  /**
+   * Refuses a form that asks for a file AND restricts who may submit by an ANSWER. The file is
+   * uploaded before the answer exists, and the upload is judged on the same `submitCondition`
+   * (`assertMayUploadAnswerFile`) - with no answers yet, an `answer` criterion matches nobody, so
+   * every upload would be a 403. Refused where it is chosen rather than shipped as a form nobody can
+   * fill. A profile criterion (promo, formation, cotisation) is known at upload and stays allowed.
+   */
+  private assertFileQuestionConfigValid(input: {
+    items?: CreateFormDto['items'];
+    submitCondition?: unknown;
+  }): void {
+    if (!hasFileQuestion(input.items)) return;
+    const condition = input.submitCondition as { answer?: unknown } | null | undefined;
+    if (condition?.answer != null) {
+      throw new BadRequestException(
+        'A form that asks for a file cannot restrict who may answer by an answer: the file is sent before the answers exist.'
+      );
+    }
   }
 
   /**
@@ -181,6 +218,13 @@ export class FormsService {
     if (input.allowMultipleSubmissions !== true) {
       throw new BadRequestException(
         'A public form must accept several answers: a guest cannot be recognised a second time.'
+      );
+    }
+    // Decision D40: a file upload needs an account, and an anonymous write of files is the largest
+    // abuse surface a form could open. Refused here rather than at the guest's submit.
+    if (hasFileQuestion(input.items)) {
+      throw new BadRequestException(
+        'A public form cannot ask for a file: a guest has no account to upload it with.'
       );
     }
   }
@@ -343,6 +387,19 @@ export class FormsService {
     throw new ForbiddenException('This form is not open to you.');
   }
 
+  /**
+   * Refuses an upload for a FILE question to a member the form is not open to - the same audience
+   * rule `submit` applies, judged BEFORE the bytes are stored, so a member who may not answer cannot
+   * park files on the form either. Visibility of the question itself (`showIf`) is not judged here:
+   * it may depend on answers not given yet, and `submit` re-reads the whole answer anyway.
+   */
+  async assertMayUploadAnswerFile(formId: string, userId: string): Promise<void> {
+    const form = await this.formRepo.findOne({ where: { id: formId, deletedAt: IsNull() } });
+    if (!form) throw new NotFoundException('Form not found');
+    if (!form.submitCondition) return;
+    this.assertMaySubmit(form, await this.factsFor(form, userId));
+  }
+
   /** Creates a form and assigns stable IDs to all items and options that lack them. */
   async create(input: CreateFormDto, isGlobalAdmin = false) {
     if (input.associationId && !isGlobalAdmin) {
@@ -353,6 +410,7 @@ export class FormsService {
     }
     this.assertAnonymousConfigValid(input);
     this.assertPublicConfigValid(input);
+    this.assertFileQuestionConfigValid(input);
     await this.assertPaidFormAssociationReady(input);
     await this.assertCotisationConfigValid(input, {
       userId: input.ownerId!,
@@ -542,10 +600,18 @@ export class FormsService {
         'A form stays anonymous, or not, as it was created. Create a new form to change it.'
       );
     }
-    this.assertAnonymousConfigValid({ ...input, anonymous: form.anonymous });
+    // The questions the form WILL have: an absent list keeps the stored one, file questions included.
+    const items = input.items ?? form.items;
+    this.assertAnonymousConfigValid({ ...input, items, anonymous: form.anonymous });
     // Unlike anonymity, a link can be opened or withdrawn at any time: it promises nothing about
     // the answers already stored. An absent value means "leave it", so the stored one is checked.
-    this.assertPublicConfigValid({ ...input, isPublic: input.isPublic ?? form.isPublic });
+    this.assertPublicConfigValid({ ...input, items, isPublic: input.isPublic ?? form.isPublic });
+    // An absent condition keeps the stored one, which still meets the questions sent now.
+    this.assertFileQuestionConfigValid({
+      items,
+      submitCondition:
+        input.submitCondition !== undefined ? input.submitCondition : form.submitCondition,
+    });
 
     await this.assertPaidFormAssociationReady({ ...input, associationId: form.associationId });
     await this.assertCotisationConfigValid(
@@ -606,13 +672,14 @@ export class FormsService {
 
   /** Returns the most recent completed (paid or free) submission for a given user on a form. */
   async getSubmission(formId: string, userId: string) {
-    return this.submissionRepo.findOne({
+    const submission = await this.submissionRepo.findOne({
       where: [
         { formId, userId, paymentStatus: 'paid' },
         { formId, userId, paymentStatus: 'free' },
       ],
       order: { createdAt: 'DESC' },
     });
+    return submission ? toSubmitterView(submission) : null;
   }
 
   /**
@@ -869,6 +936,17 @@ export class FormsService {
       }
     }
 
+    // The files this answer cites: their SHAPE here, their ownership inside the transaction below
+    // (`FormFilesService.attach`), where it is checked and taken in one write. A form that cannot
+    // hold a file question (public, anonymous) never reaches `attach`: refused before anything.
+    const fileAnswers = fileAnswersOf(form.items ?? [], input.answers);
+    if (fileAnswers.length > 0 && (guest || form.anonymous || !input.userId)) {
+      this.logger.warn(
+        `[FORMS] submit refused: a file answer on form=${form.id.slice(0, 8)} without an account`
+      );
+      throw new BadRequestException('This form cannot receive a file without an account.');
+    }
+
     // Answers as option-id lists, which is what every criterion reads. A free-text answer is not a
     // criterion input, so it contributes nothing here and keeps its place in `input.answers`.
     // THE KEYS ARE THE FORM'S OWN QUESTION IDS, AND NOTHING ELSE GETS IN. Every key here comes
@@ -1106,6 +1184,9 @@ export class FormsService {
         });
         savedSubmission = await manager.save(submission);
       }
+      if (fileAnswers.length > 0) {
+        await this.formFiles.attach(manager, savedSubmission, id, input.userId!, fileAnswers);
+      }
     });
 
     // Cash payment shortcut - skip the online checkout entirely
@@ -1307,7 +1388,8 @@ export class FormsService {
     );
     return new ConflictException({
       code: PREVIOUS_PAYMENT_OPEN,
-      message: 'The previous payment request is still open. Try again in a moment.',
+      message:
+        'The previous payment request is still open. Try again once it has expired, at most 30 minutes after it was started.',
     });
   }
 
@@ -1339,22 +1421,17 @@ export class FormsService {
     this.logger.log(`[Forms] Submission ${submissionId} deleted by ${callerId}`);
   }
 
-  /** Loads a submission by ID with its payment status and the associated payment account ID (if any). */
+  /**
+   * Loads a submission by ID with its payment status, for its submitter or a manager. It used to
+   * answer `paymentAccountId` too - the Business's Lydia `vendor_token`, which no client read and
+   * which lets anyone cancel that Business's payment requests (`submission.projection.ts`).
+   */
   async getSubmissionById(submissionId: string) {
     const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!submission) throw new NotFoundException('Submission not found');
     const form = await this.formRepo.findOne({ where: { id: submission.formId } });
-    return {
-      id: submission.id,
-      formId: submission.formId,
-      userId: submission.userId,
-      totalPaid: submission.totalPaid,
-      currency: form?.currency ?? 'eur',
-      paymentStatus: submission.paymentStatus,
-      paymentAccountId: form?.associationId
-        ? await this.associationsService.getPaymentAccountId(form.associationId)
-        : null,
-    };
+    const { id, formId, totalPaid, paymentStatus } = toSubmitterView(submission);
+    return { id, formId, totalPaid, currency: form?.currency ?? 'eur', paymentStatus };
   }
 
   /**
@@ -1374,13 +1451,14 @@ export class FormsService {
    * not, and the organiser refunds it outside the application. Two late payments queue on the lock,
    * so they cannot both take the last seat.
    *
-   * A SECOND CALL ON A SETTLED ROW IS A REPLAY: the status does not move. It is the ordinary case -
-   * the Lydia callback and the payer's `verify-session` both land here for one payment. Before
-   * 2026-10-15 each call re-granted and wrote ANOTHER purchase record; now the effects run from
-   * durable flags (`fulfilPayment`), so a replay only finishes what is missing.
+   * A SECOND CALL ON A SETTLED ROW IS A REPLAY: the status does not move. The Lydia callback and
+   * the payer's return (`confirmPayment`, while the row is still `pending`) can both land here for
+   * one payment, in either order, and Lydia may repeat a callback. Before 2026-10-15 each call
+   * re-granted and wrote ANOTHER purchase record; now the effects run from durable flags
+   * (`fulfilPayment`), so a replay only finishes what is missing.
    *
    * THE REQUEST ID NEVER DECIDES THE STATUS, BUT A FOREIGN ONE IS ACCUSED. The two callers carry two
-   * DIFFERENT ids for one payment - the callback's numeric `request_id`, `verify-session`'s
+   * DIFFERENT ids for one payment - the callback's numeric `request_id`, `confirmPayment`'s
    * `request_uuid` - and the row stores both (`paymentRequestId`, `stripeSessionId`), so a replay
    * naming neither is a second request paid for one answer: logged at ERROR, status unchanged (the
    * money already landed; refusing would only hide it). The id that settled the row is kept in
@@ -1388,8 +1466,12 @@ export class FormsService {
    *
    * ONE ANSWER PER PERSON: on a single-answer form, a late payment whose payer already has another
    * row holding a seat or paid lands `paid_over_capacity`, logged at ERROR.
+   *
+   * `onlyIfRowNames` (the payer's return, `confirmPayment`): the request was read paid OUTSIDE
+   * this lock, so the row must still name that very uuid once locked. If a retry replaced it in
+   * between, the retry's own settle already read that request and decided it - nothing is written.
    */
-  async markPaid(submissionId: string, sessionId?: string) {
+  async markPaid(submissionId: string, sessionId?: string, onlyIfRowNames = false) {
     const found = await this.submissionRepo.findOne({ where: { id: submissionId } });
     if (!found) throw new NotFoundException('Submission not found');
 
@@ -1402,6 +1484,9 @@ export class FormsService {
           lock: { mode: 'pessimistic_write' },
         });
         if (!submission) throw new NotFoundException('Submission not found');
+        if (onlyIfRowNames && submission.stripeSessionId !== sessionId) {
+          return { submission, status: submission.paymentStatus, replay: true, stale: true };
+        }
         if (SETTLED_PAYMENT_STATUSES.has(submission.paymentStatus)) {
           return { submission, status: submission.paymentStatus, replay: true };
         }
@@ -1458,6 +1543,14 @@ export class FormsService {
       }
     );
     const { submission } = outcome;
+
+    if ('stale' in outcome) {
+      this.logger.warn(
+        `[Forms] markPaid on submission ${submissionId}: request ${sessionId} was read paid, but the ` +
+          `row now names ${submission.stripeSessionId ?? 'no request'} - a retry replaced it and settled it; nothing written`
+      );
+      return { ok: false };
+    }
 
     if (outcome.replay) {
       // The row now names its request by BOTH ids (`paymentRequestId`, the numeric one callbacks
@@ -1532,6 +1625,83 @@ export class FormsService {
         s.paymentRequestId === submission.paymentRequestId &&
         s.stripeSessionId === submission.stripeSessionId
     );
+  }
+
+  /**
+   * Asks the provider whether an online answer was paid, from the request the ROW names, and
+   * records the payment if so - the payer's return page calls it (`confirm-payment`), so a
+   * payment whose confirm callback never arrived is still confirmed while the payer is looking.
+   *
+   * Asked of a `pending` row AND of an `expired` or `cancelled` one that names a request: a
+   * payment made at the end of the hold whose callback is lost leaves the row `expired` with no
+   * seat, and `markPaid` already decides a late payment from the row (`paid` while the form has
+   * room, else `paid_over_capacity`). The row is re-checked under its lock to still name the uuid
+   * that was read (`markPaid`'s `onlyIfRowNames`).
+   *
+   * It is the only confirmation besides the callback. `verify-session` used to be the other one
+   * and never worked: it took the submission from the `order_ref` Lydia's `request/state` was
+   * supposed to echo, and no variant of that call echoes it (sandbox, 2026-10-15, payments.md).
+   * Here nothing comes from the client but the submission id the caller is allowed to read: the
+   * request is the row's own uuid and the answer is Lydia's, read server to server.
+   *
+   * Anything short of `paid` leaves the row as it is (the callback, the next read or the expiry
+   * job decides), and a failed read is logged at WARN and answered with the row unchanged: this
+   * is a read the payer repeats, never the path that releases or charges anything.
+   */
+  async confirmPayment(submissionId: string) {
+    const submission = await this.submissionRepo.findOne({ where: { id: submissionId } });
+    if (!submission) throw new NotFoundException('Submission not found');
+    const sessionId = submission.stripeSessionId;
+    if (
+      CONFIRMABLE_PAYMENT_STATUSES.has(submission.paymentStatus) &&
+      sessionId &&
+      !LYDIA_REQUEST_UUID_RE.test(sessionId)
+    ) {
+      // A Stripe-era row (`cs_...`): Lydia never issued it, so there is nothing to ask - and core
+      // would refuse it with a 400 on every poll.
+      this.logger.log(
+        `[Forms] confirmPayment ${submissionId}: ${submission.paymentStatus} row holds a non-Lydia request id, nothing to ask the provider`
+      );
+    } else if (CONFIRMABLE_PAYMENT_STATUSES.has(submission.paymentStatus) && sessionId) {
+      const form = await this.formRepo.findOne({ where: { id: submission.formId } });
+      const connectAccountId = form?.associationId
+        ? await this.associationsService.getPaymentAccountId(form.associationId)
+        : null;
+      if (!connectAccountId) {
+        this.logger.warn(
+          `[Forms] confirmPayment ${submissionId}: the form has no payment account to read request ${sessionId} with`
+        );
+      } else {
+        try {
+          const { data } = await axios.post(
+            coreUrl('payments/request-state'),
+            { sessionId, connectAccountId },
+            internalCoreRequestConfig()
+          );
+          if (data?.state === 'paid') {
+            this.logger.log(
+              `[Forms] confirmPayment ${submissionId}: request ${sessionId} is PAID at the provider - recorded`
+            );
+            await this.markPaid(submissionId, sessionId, true);
+          } else {
+            this.logger.debug(
+              `[Forms] confirmPayment ${submissionId}: request ${sessionId} is ${data?.state ?? 'unknown'} (${data?.raw ?? ''})`
+            );
+          }
+        } catch (err: unknown) {
+          this.logger.warn(
+            `[Forms] confirmPayment ${submissionId}: could not read request ${sessionId}: ${
+              err instanceof Error ? err.message : String(err)
+            }`
+          );
+        }
+      }
+    } else {
+      this.logger.debug(
+        `[Forms] confirmPayment ${submissionId}: ${submission.paymentStatus}, nothing to ask the provider`
+      );
+    }
+    return this.getSubmissionById(submissionId);
   }
 
   /**
@@ -1625,10 +1795,11 @@ export class FormsService {
   /** Lists submissions waiting for cash validation on a given form. Requires form manager rights. */
   async listPendingCash(formId: string, callerId: string, isGlobalAdmin: boolean) {
     await this.assertFormManager(formId, callerId, isGlobalAdmin);
-    return this.submissionRepo.find({
+    const rows = await this.submissionRepo.find({
       where: { formId, paymentStatus: 'pending_cash' },
       order: { createdAt: 'ASC' },
     });
+    return rows.map(toManagerView);
   }
 
   /**
@@ -1788,11 +1959,25 @@ export class FormsService {
         );
       rows.forEach((r) => nameMap.set(r.id, { firstName: r.firstName, lastName: r.lastName }));
     }
-    return subs.map((s) => ({
-      ...s,
-      firstName: nameMap.get(s.userId)?.firstName ?? null,
-      lastName: nameMap.get(s.userId)?.lastName ?? null,
-    }));
+    // The files among these answers: a purged one reads "file deleted" instead of offering a
+    // download, a live one is saved under its name. Asked only of a form that has a file question.
+    const files = hasFileQuestion(form?.items)
+      ? await this.formFiles.answerFiles(subs.map((s) => s.id))
+      : new Map<string, AnswerFileState>();
+    return subs.map((s) => {
+      const cited = Object.values(s.answers ?? {}).filter(
+        (value): value is string => typeof value === 'string' && files.has(value)
+      );
+      return {
+        ...toManagerView(s),
+        firstName: nameMap.get(s.userId)?.firstName ?? null,
+        lastName: nameMap.get(s.userId)?.lastName ?? null,
+        deletedFileIds: cited.filter((id) => files.get(id)!.purged),
+        fileNames: Object.fromEntries(
+          cited.filter((id) => !files.get(id)!.purged).map((id) => [id, files.get(id)!.fileName])
+        ),
+      };
+    });
   }
 
   /**
@@ -1863,6 +2048,21 @@ export class FormsService {
 
     sheet.columns = headers;
 
+    // A file question's cell is a WORD - the file itself is never exported. The words are the
+    // client's, like every other one in this file; a form with a file question and a client that
+    // did not send them is refused, not written with the id or with English.
+    let words: AnswerWords | undefined;
+    if (hasFileQuestion(form.items)) {
+      if (!labels.file || !labels.fileDeleted) {
+        throw new BadRequestException('export labels "file" and "fileDeleted" are required');
+      }
+      words = {
+        file: labels.file,
+        fileDeleted: labels.fileDeleted,
+        deletedFiles: await this.formFiles.deletedFileIds(submissions.map((s) => s.id)),
+      };
+    }
+
     submissions.forEach((sub) => {
       const names = (sub.userId && nameMap.get(sub.userId)) || { firstName: null, lastName: null };
       const row: Record<string, unknown> = {
@@ -1885,7 +2085,7 @@ export class FormsService {
       }
 
       form.items.forEach((item: FormItemLike) => {
-        row[item.id] = answerText(sub.answers[item.id], item);
+        row[item.id] = answerText(sub.answers[item.id], item, words);
       });
 
       sheet.addRow(row);

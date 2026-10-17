@@ -2,7 +2,7 @@ import { NestFactory } from '@nestjs/core';
 import { ValidationPipe } from '@nestjs/common';
 import { AppModule } from './app.module';
 import * as bodyParser from 'body-parser';
-import { buildAllowedOrigins, corsOriginDelegate } from './cors-origins';
+import { buildAllowedOrigins, corsOptions } from './cors-origins';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -11,10 +11,12 @@ async function bootstrap() {
   // Allowed origins: every Tauri WebView origin (one per platform), the deployed frontend, and
   // http(s) loopback on any port for dev. The list and the predicate live in `cors-origins.ts`.
   const allowedOrigins = buildAllowedOrigins(process.env.FRONTEND_URL);
-  app.enableCors({
-    origin: corsOriginDelegate(allowedOrigins),
-    credentials: true,
-  });
+  /**
+   * The phone apps read Canari's API through the WebView's own `fetch` (`fetchRouting.ts`), so
+   * they are a cross-origin client: a response header the browser does not expose is `null` to
+   * them. The XLSX exports name their file in `Content-Disposition` (`downloadXlsxFromApi`).
+   */
+  app.enableCors(corsOptions(allowedOrigins, ['Content-Disposition']));
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
 

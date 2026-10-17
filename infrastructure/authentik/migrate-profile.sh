@@ -4,7 +4,7 @@
 #
 #   migrate-profile.sh dry-run|apply [container]
 #
-# The container defaults to `miconnect-worker-1`; from a workstation, AK_REMOTE="ssh portail-etu-direct".
+# The container defaults to `miconnect-worker-1`; from a workstation, AK_REMOTE="ssh <production-host>".
 # Check that day's `authentik_db` dump before `apply` (docs/wiki/infrastructure/backup.md).
 set -euo pipefail
 

@@ -53,7 +53,11 @@
   let showTypePicker = $state(false);
 
   const isMatrix = $derived(['matrix_single', 'matrix_multiple'].includes(item.type));
-  const hasOptions = $derived(!['short_text', 'long_text', 'linear_scale'].includes(item.type));
+  // A DENYLIST: every type not named here gets the options editor. A type with no options (a file
+  // included) must be added, or its card grows an options list it will never use.
+  const hasOptions = $derived(
+    !['short_text', 'long_text', 'linear_scale', 'file'].includes(item.type)
+  );
 
   const fieldClass =
     'w-full min-w-0 px-3 py-2.5 sm:px-4 sm:py-3 border-2 border-cn-border sm:border-black/10 dark:sm:border-white/10 rounded-xl sm:rounded-2xl text-sm sm:text-base text-text-main bg-(--cn-surface) outline-none transition-all placeholder:text-text-muted/50 focus:border-cn-yellow focus:shadow-[0_0_0_4px_rgba(250,204,21,0.15)]';
@@ -426,13 +430,15 @@
 
   <div class="mb-4 h-px w-full bg-black/5 sm:mb-6 dark:bg-white/5"></div>
 
-  {#if ['short_text', 'long_text'].includes(item.type)}
+  {#if ['short_text', 'long_text', 'file'].includes(item.type)}
     <div
       class="text-text-muted/80 rounded-xl border border-dashed border-black/10 bg-black/5 p-3 text-center text-xs italic sm:rounded-2xl sm:p-5 sm:text-sm dark:border-white/20 dark:bg-white/5"
     >
       {item.type === 'short_text'
         ? m.form_builder_short_text_hint()
-        : m.form_builder_long_text_hint()}
+        : item.type === 'file'
+          ? m.form_builder_file_hint()
+          : m.form_builder_long_text_hint()}
     </div>
   {:else if item.type === 'linear_scale'}
     <div

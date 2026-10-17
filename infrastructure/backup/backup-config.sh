@@ -30,7 +30,7 @@ MICONNECT_PG_CONTAINER="${MICONNECT_PG_CONTAINER-miconnect-postgresql-1}"
 # copy of the database, which would give a backup that succeeds and lies.
 MICONNECT_SSH_HOST="${MICONNECT_SSH_HOST-}"
 
-# The offsite copy over SSH/rsync (the LAN server mitv). Empty to disable.
+# The offsite copy over SSH/rsync (the offsite LAN server). Empty to disable.
 BACKUP_SSH_HOST="${BACKUP_SSH_HOST-canaribackup@10.0.0.4}"
 BACKUP_SSH_PATH="${BACKUP_SSH_PATH:-/srv/canari-backups}"
 

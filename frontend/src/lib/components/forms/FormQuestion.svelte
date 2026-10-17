@@ -3,8 +3,17 @@
   import { formatAmount } from '$lib/forms/fillAnswers';
   import Picker from '$lib/components/ui/Picker.svelte';
   import type { PickerOption } from '$lib/components/ui/picker';
-  import { Ban } from '@lucide/svelte';
+  import { Ban, Paperclip, Upload, X } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { uploadFormAnswerFile } from '$lib/forms/api';
+  import {
+    FILE_RETENTION_DEFAULT_DAYS,
+    FORM_FILE_ACCEPT,
+    pickedFileProblem,
+  } from '$lib/forms/fileQuestion';
+  import { refusalStatus } from '$lib/utils/apiRefusal';
+  import { UploadAbortedError } from '$lib/utils/uploadXhr';
+  import { Log } from '$lib/utils/Log';
 
   /**
    * ONE QUESTION OF A FORM BEING FILLED IN - its card, its label and the input its type calls for.
@@ -30,6 +39,10 @@
     optionModifier?: (item: FormItem, opt: FormOption) => number;
     /** Whether this option leads to a combination the form does not offer. Defaults to never. */
     optionClosed?: (opt: FormOption) => boolean;
+    /** Days a FILE question's file is kept after the answer, said under the picker. */
+    fileRetentionDays?: number;
+    /** Told whenever a FILE question starts or stops uploading, so the page can hold the send. */
+    onUploadingChange?: (uploading: boolean) => void;
   }
 
   let {
@@ -41,7 +54,92 @@
     currency = 'eur',
     optionModifier = (_item, opt) => opt.priceModifier,
     optionClosed = () => false,
+    fileRetentionDays = FILE_RETENTION_DEFAULT_DAYS,
+    onUploadingChange,
   }: Props = $props();
+
+  /**
+   * A FILE question: the file is uploaded the moment it is picked, and the answer is the id the
+   * server returns - the server accepts that id only from this member, for this question. The name
+   * shown is the one the server filed it under; an answer restored without it reads as a word.
+   *
+   * While it travels the card shows how much has left and offers to cancel, and the page is told
+   * (`onUploadingChange`) so it refuses to send the answer until the file has an id - a form sent
+   * mid-upload would go without the file, or without an optional one the member thinks is attached.
+   * A question that disappears mid-upload (its condition stops holding) cancels its upload.
+   */
+  let pickedName = $state<string | null>(null);
+  let upload = $state.raw<{ controller: AbortController; percent: number | null } | null>(null);
+  let fileError = $state<string | null>(null);
+  const uploading = $derived(upload !== null);
+
+  $effect(() => {
+    onUploadingChange?.(uploading);
+  });
+  $effect(() => () => {
+    // On unmount only: an upload still running belongs to a question nobody sees any more.
+    upload?.controller.abort();
+    onUploadingChange?.(false);
+  });
+
+  async function onFilePicked(event: Event & { currentTarget: HTMLInputElement }) {
+    const input = event.currentTarget;
+    const file = input.files?.[0];
+    // Cleared at once, so picking the same file again after a refusal fires `change` again.
+    input.value = '';
+    if (!file) return;
+    fileError = pickedFileProblem(file);
+    if (fileError) {
+      Log.d(
+        'FormQuestion',
+        `file refused before upload: ${file.type || 'no type'} ${file.name.split('.').pop()}, ${file.size} B`
+      );
+      return;
+    }
+    const current = { controller: new AbortController(), percent: null as number | null };
+    upload = current;
+    try {
+      const uploaded = await uploadFormAnswerFile(formId, item.id, file, {
+        signal: current.controller.signal,
+        onProgress: ({ loaded, total }) => {
+          // Only the upload still in flight may move the bar; a cancelled one's late event may not.
+          if (upload?.controller === current.controller && total > 0) {
+            upload = { ...upload, percent: Math.min(100, Math.round((loaded / total) * 100)) };
+          }
+        },
+      });
+      value = uploaded.fileId;
+      pickedName = uploaded.fileName;
+      Log.d('FormQuestion', `file uploaded for ${item.id}: ${uploaded.sizeBytes} B stored`);
+    } catch (e) {
+      if (e instanceof UploadAbortedError) {
+        Log.d('FormQuestion', `file upload cancelled for ${item.id}`);
+        return;
+      }
+      const status = refusalStatus(e);
+      Log.d('FormQuestion', `file upload failed for ${item.id}: status ${status ?? 'none'}`);
+      fileError =
+        status === 413
+          ? m.form_file_error_size()
+          : status === 429
+            ? m.form_file_error_too_many()
+            : m.form_file_error_generic();
+    } finally {
+      if (upload?.controller === current.controller) upload = null;
+    }
+  }
+
+  function cancelUpload() {
+    Log.d('FormQuestion', `cancelling the file upload of ${item.id}`);
+    upload?.controller.abort();
+  }
+
+  function removeFile() {
+    Log.d('FormQuestion', `file removed from ${item.id}`);
+    value = '';
+    pickedName = null;
+    fileError = null;
+  }
 
   /**
    * A dropdown's choices, each read as the option label plus what it changes: closed, or its
@@ -246,6 +344,64 @@
           {/each}
         </tbody>
       </table>
+    </div>
+  {:else if item.type === 'file'}
+    <div class="space-y-2">
+      {#if value}
+        <div
+          class="border-cn-border bg-cn-bg flex items-center gap-2 rounded-2xl border-2 px-4 py-3"
+        >
+          <Paperclip size={16} class="text-text-muted shrink-0" />
+          <span class="text-text-main min-w-0 flex-1 truncate text-sm font-medium"
+            >{pickedName ?? m.form_answer_file()}</span
+          >
+          <button
+            type="button"
+            onclick={removeFile}
+            disabled={disabled || uploading}
+            class="ui-icon-button text-text-muted hover:text-text-main rounded-lg disabled:opacity-50"
+            aria-label={m.form_file_remove()}
+            title={m.form_file_remove()}
+          >
+            <X size={14} />
+          </button>
+        </div>
+      {/if}
+      <label
+        class="border-cn-border hover:border-cn-yellow/60 bg-cn-bg text-text-main flex cursor-pointer items-center justify-center gap-2 rounded-2xl border-2 border-dashed px-4 py-3 text-sm font-semibold transition-all {disabled ||
+        uploading
+          ? 'cursor-not-allowed opacity-60'
+          : ''}"
+      >
+        <input
+          type="file"
+          class="sr-only"
+          accept={FORM_FILE_ACCEPT}
+          disabled={disabled || uploading}
+          onchange={onFilePicked}
+        />
+        <Upload size={16} />
+        {#if upload}
+          {upload.percent === null
+            ? m.form_file_uploading()
+            : m.form_file_uploading_percent({ percent: upload.percent })}
+        {:else}
+          {value ? m.form_file_replace() : m.form_file_choose()}
+        {/if}
+      </label>
+      {#if upload}
+        <button
+          type="button"
+          onclick={cancelUpload}
+          class="text-text-muted hover:text-text-main text-xs font-semibold underline"
+        >
+          {m.form_file_cancel()}
+        </button>
+      {/if}
+      <p class="text-text-muted text-xs">{m.form_file_hint_fill({ days: fileRetentionDays })}</p>
+      {#if fileError}
+        <p class="text-red-err text-xs font-medium" role="alert">{fileError}</p>
+      {/if}
     </div>
   {:else}
     <div class="bg-red-err/10 text-red-err border-red-err/30 rounded-xl border p-3 text-xs">

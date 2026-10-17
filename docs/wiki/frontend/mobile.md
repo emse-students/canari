@@ -235,8 +235,9 @@ fine, so a passing XHR next to a failing `fetch` is the fingerprint of this clas
 **Measured on the Mi 9T (Android 16, 5.6 GB, app 1.2.2), 2026-10-10.** The plugin's JS (`dist-js/index.js`,
 2.6.1 installed, **2.8.1 in the lockfile, byte-identical on this point; 2.8.1 is the latest on npm**, the
 3.0 line is alpha) does `Array.from(new Uint8Array(await req.arrayBuffer()))` and ships it through `invoke`
-as JSON: one JS number per byte, then a JSON string, then a Rust `Vec<u8>`. The RESPONSE side is not like
-that: `fetch_read_body` returns raw binary chunks (`tauri::ipc::Response`), so only request bodies are hit.
+as JSON: one JS number per byte, then a JSON string, then a Rust `Vec<u8>`. The RESPONSE side returns raw
+binary chunks (`tauri::ipc::Response`), so it does not inflate - **but it is one `fetch_read_body` `invoke`
+per chunk, queued behind every other `invoke`, and that is SLOW** (next section).
 
 Resident memory above the pre-run baseline (`/proc/<pid>/statm` polled every ~20 ms for the app and the
 renderer, upload of a random `FormData` blob to `dev.canari-emse.fr/api/media/upload` with an invalid token,
@@ -259,8 +260,9 @@ production. Checked from the Android origin against dev: an `Authorization`-bear
 
 **The rule (`shouldUseNativeFetch`, third and fourth arguments, wired in `hooks.client.ts`):** a request with a
 BINARY body (`Blob`/`File`, `FormData`, `ArrayBuffer`, typed array, or a `Request` whose `Content-Type` is not
-text) to one of Canari's five service origins (`apiServiceOrigins()`) goes to the WebView. JSON string bodies,
-JSON/text `Request`s, GETs and third-party hosts stay on the plugin, which is what the override is for. A
+text) to one of Canari's five service origins (`apiServiceOrigins()`) goes to the WebView. **So does every
+READ (`GET`/`HEAD`) to those origins since 2026-10-15** (next section). JSON string bodies, JSON/text
+`Request`s and third-party hosts stay on the plugin, which is what the override is for. A
 `ReadableStream` or async-iterable body is NEVER native (WKWebView cannot stream a request body; the plugin
 buffers it). A `Request` built from a stream looks like one built from an untyped `Blob` and counts as binary,
 the one case `hasBinaryBody` cannot tell apart. The hook installs `createRoutedFetch` (`utils/fetchRouting.ts`),
@@ -297,6 +299,47 @@ below 1 MiB (401 on a 500 KB body) and by the web client, which runs this very `
 the wait into a typed error but was proven only by unit test (fake timers), NOT on a device. (3) Downloads were
 not changed or measured. (4) That the deadline's 16 KiB/s floor suits a real member link is a choice, not a
 measurement.
+
+### A response body through the HTTP plugin takes seconds at launch, so every first-party READ is native (2026-10-15)
+
+**Measured on the Mi 9T, `v1.2.9-alpha.1`**, the feed's first page (52 kB): through the plugin its body ended
+**3.5-4.3 s** after its head during a cold start and 0.42-0.65 s after it at rest; through the WebView's
+`fetch`, 3-13 ms. The main thread was idle for the end of the wait, so it is the bridge: one
+`fetch_read_body` `invoke` per chunk, queued behind the cold start's other `invoke`s. It kept the feed's
+stored copy on screen ~3.5 s after the server had answered ([posts](modules/posts.md#the-stored-copy-stayed-on-screen-for-the-plugins-body-read-2026-10-15),
+where the method and the per-run numbers are). The same cost is F7 of
+[community-open-budget](community-open-budget.md) (888 of 1114 ms for a 116 kB page).
+
+**The rule:** a `GET` or `HEAD` to a Canari service origin goes to the WebView (`isRead` in
+`shouldUseNativeFetch`). It was kept on the plugin on the belief that a response streamed in raw chunks cost
+nothing; that belief is what the measurement refuted. What makes it safe is what made the uploads safe: every
+service answers the preflight an `Authorization` header raises from the three WebView origins
+(`cors-origins.ts` in the Nest services, `chat_gateway_cors_layer`), measured from the Android origin for the
+whole cold start (0 warnings, every read answered). A cross-origin client sees only the safelisted response
+headers plus the exposed ones: the reads consume `Content-Type` and `Content-Length` (safelisted),
+`X-History-Head` (exposed by chat-delivery, and read by the MLS client, which keeps its own plugin `fetch`) and
+`Content-Disposition` (the XLSX exports, exposed by social-service with this change). A new response header a
+read depends on must be added to its service's `exposedHeaders`, or the phone reads `null`.
+
+**What a cross-origin read needs from the server, and where each is held (review of #1922):**
+
+| Need | Where |
+| --- | --- |
+| The preflight names `Authorization` back. A `*` in `Access-Control-Allow-Headers` does NOT cover it (Fetch standard) | Nest: `corsOptions` in `apps/*/src/cors-origins.ts` leaves `allowedHeaders` unset, so `cors` mirrors the request (asserted in `cors-origins.spec.ts`). The chat gateway answered `*` and now mirrors (`AllowHeaders::mirror_request()`, test `names_back_the_authorization_header_a_bearer_read_preflights`): `GET /api/presence` carries a Bearer token |
+| The preflight is cached | `Access-Control-Max-Age: 7200` on the four Nest services and the gateway (Chromium caps it at 2 h, WebKit at 10 min). Without it Chromium kept a preflight 5 s per URL |
+| An error nginx makes ITSELF is readable | A 502/504 while a service restarts, or the 500 of a failed `auth_request` (maintenance included), carried no CORS header, so a native read got a `TypeError` - "unreachable" - where the status was an answer. `error_page 500/502/503/504` at server level now answers through `@api_error_<code>` with `Access-Control-Allow-Origin` mapped from an ALLOWLIST of the three WebView origins (`$api_error_cors_origin`). Gate: `.github/scripts/tests/api-error-cors.test.mjs`, which also holds the map equal to `TAURI_WEBVIEW_ORIGINS`. Checked with `nginx -t` and a container: a failed auth sub-request answers `500` with `Access-Control-Allow-Origin: http://tauri.localhost`, and nothing for a foreign origin |
+| The response headers a read consumes | `Content-Disposition` (social-service), `X-History-Head` (chat-delivery) |
+
+Not covered by this repository: a 502 made by the HOST proxy in front of the container (the Portail-etu host's
+own nginx, the Cloudflare edge) while this container itself is down, which still reaches a native read as a
+transport failure.
+
+**Left on the plugin:** JSON writes (their responses are small), third-party hosts, and `TauriMlsService`'s
+delivery client, which imports the plugin's `fetch` directly and so still pays the chunk loop on history
+pages (F7's remaining half). **Not verified:** the iPhone (`Origin: tauri://localhost`, allowed everywhere and
+already carrying the refresh POST natively; whether WKWebView would have refused the gateway's `*` was not
+seen either way), and the preflight's cost on a slow link: measured on Wi-Fi the native head was 189-256 ms
+against the plugin's 246-779 ms, which also builds a new `reqwest` client per call.
 
 ### A relative `/api/` path is dead on mobile, and it fails as a SUCCESS
 
@@ -383,7 +426,8 @@ every plugin with a JS command surface, and an exemption there is how that test 
 | Storage | IndexedDB `CanariDBLog`, store `chunks`, auto-increment keys (two web tabs never collide), an index on each record's size. The same database on the web and in the Tauri WebView: one implementation, nothing native to verify. |
 | Write | Batched in memory, written as **one new record per batch**: at 32 KiB or 200 lines, when the app leaves the screen (`onAppScreenChange`, which is the only honest signal on Android, plus `pagehide`), and before an export. **Never on a timer.** Nothing already written is rewritten. |
 | Bound | After each write, the oldest records are deleted until the total is under **2 MiB** (UTF-16 code units; a redacted line is ASCII). Rotation is by SIZE. The newest record is never evicted. |
-| Failure | No IndexedDB, or a failed write: persistence stops for the process, said ONCE at `error` (`[APPLOG] the in-app log is no longer written to disk`), lines stay in a 256 KiB memory tail (oldest dropped and counted), and the export header names the state. Not a second storage path. |
+| Failure | No IndexedDB, or a failed write ON screen: persistence stops for the process, said ONCE at `error` (`[APPLOG] the in-app log is no longer written to disk`), lines stay in a 256 KiB memory tail (oldest dropped and counted), and the export header names the state. **The export still reads the ring already on disk** - it read the memory tail alone, 19 KB against 191 KB stored (iPhone 12, 1.2.9-alpha.3). Not a second storage path. |
+| Write cut short off screen | WebKit aborts the IndexedDB transaction in flight when it suspends a backgrounded WebView, so on iOS the leave-screen flush lost that race (`log write failed` 69 ms after `[LIFECYCLE] App in background`, alpha.2 and alpha.3). A write that fails while the app is OFF screen (known from the same `onAppScreenChange` that asked for it) is not a storage failure: its lines go back in front, the connection is dropped, the batch thresholds stop asking until the app is back, and the return writes them. WebKit delivers that abort on RESUME, so the app may already be on screen when it arrives: the hold then applies only while the app is still off screen, and otherwise the lines are written again at once. One `info` line says so. `appLog.test.ts` pins it. |
 | Wipe | `wipeDeviceToFactory` calls `discardAppLog()` (empties, closes, stops writing for the process) before the `CanariDB*` prefix delete removes the database; `onversionchange` closes the connection too, so the delete cannot block. A sign-out does NOT clear it: "I was logged out" is exactly the report it must survive. The cost, accepted rather than missed: the next account to sign in on that device can export the previous one's REDACTED lines (8-character id prefixes, times, error kinds). |
 | Export | Settings > About > **Save the log**: user-initiated only, through `downloadDecryptedFile` - the browser download on the web, the native save dialog in the app (Android's document picker, iOS's Files picker, the desktop save panel). A header gives version, platform class (`android-app`, never the model), export time and UTC offset, line / redacted / dropped counts and the storage state. |
 
@@ -452,7 +496,7 @@ call sites are `useMessaging.svelte.ts` (`handleSendChat`) and `utils/chat/messa
 (`sendChatMessage`); a new site that interpolates content must use a key of that list.
 
 **What it cannot catch, for the reviewer:** an UNQUOTED ASCII word that is a name
-(`Joined channel #bureau`, `Jolan Boudin left`, a path segment `/users/jolan`) - no pattern
+(`Joined channel #bureau`, `<First Last> left`, a path segment `/users/<name>`) - no pattern
 separates `bureau` from `ready` - a quoted name written in lower case (`"bureau"`), a byte list
 shorter than sixteen, `jean at emse.fr`, and a phone number written with parentheses. The
 cotisation roster line logged the admin's search text and now logs its length (second review). The
@@ -954,8 +998,12 @@ The NSE shares data with the main app via App Group `group.fr.emse.canari`:
 The NSE does **not** write `mls.bin`, process Welcome pushes, or drain the outbox. Those remain app-process responsibilities.
 
 **It also never sees a silent frame, so it can never cancel anything.** The extension runs on
-`mutable-content: 1` ALERT pushes only; a `content-available: 1` background push goes to the app
-(`canari_push.mm` `CanariHandleFcmData`). So `channel_read` — the frame that clears a salon's
+`mutable-content: 1` ALERT pushes only; a `content-available: 1` background push is MEANT for the app
+(`canari_push.mm` `CanariHandleFcmData`) - **and reaches no Canari native code today, background or foreground** (`willPresentNotification` fires for alerts only): the hook that would
+take it is never installed, because wry's delegate lacks
+`application:didReceiveRemoteNotification:fetchCompletionHandler:` and the hook only replaces an
+existing method (syslog, every launch: `remote notification hook NOT installed`;
+[backlog](../backlog.md)). So `channel_read` — the frame that clears a salon's
 notification after it was read on another device — is the app's to handle, and listing it in the
 extension's switch (as it was until 2026-08-16) is a branch that cannot execute. The removal itself
 must key on `threadIdentifier`, since the identifier differs between the two posters — see
@@ -1111,6 +1159,41 @@ Choisir les fichiers sheet followed Canari's menu. The library and files entries
 and the camera an input with `capture`, so iOS shows one menu
 ([chat](modules/chat.md#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)).
 
+**A TOUCH THAT DISMISSES A NATIVE MENU IS THE MENU'S, NEVER THE PAGE'S (2026-10-16).** The web
+knows nothing of a `UIMenu`: the composer's surface never becomes `menu` on iOS, so no overlay entry
+is pushed for the native "+". And the touch that dismissed the menu went on into the WebView. With
+the "+" menu open, ONE edge swipe closed the menu (UIKit) and the conversation (the page's swipe,
+which saw only the conversation open): iPhone 12, `v1.2.9-alpha.4`, 12 of 12. The in-app log proved
+which Back path fired. There was one `gesture Back closes overlay N, 0 left open` per swipe, with N
+going 1, 2, 3 over three open-conversation-open-menu rounds: ONE push per round, the
+conversation's. There was no second path, and #1945's arm had nothing to arm against. So
+`CanariButton` (the patch, `ButtonComponent.swift`) sets the WebView's `isUserInteractionEnabled`
+to false in `willDisplayMenuFor`. **A WebView left held is a dead app**, so the hold is released by
+`willEndFor`, by `apply()` clearing the menu, by the button leaving the window (or being released),
+or by the app becoming active (`didBecomeActive`, after a call or the app switcher tore the menu
+down). No timer is involved. The holders are a SET of buttons by identity, not one flag per button:
+every button shares the one WebView, so one button's release cannot give touch back under another's
+open menu, and a release by a non-holder changes nothing. The dismissing touch is hit-tested while the WebView is out of reach, so it never becomes
+the page's, whatever order `willEnd` and the touch arrive in. A tap outside the menu no longer
+reaches the web button under it either. **Owed on the iPhone (a build is needed, the Swift is only
+compiled here):** with the "+" open in a DM and in a salon, one edge swipe closes only the menu and
+logs NO `gesture Back` line; a second swipe leaves the conversation; a pick ("Photos", the camera)
+still opens its target.
+
+**THE "+" MENU DROPS THE KEYBOARD, AND THAT IS THE PLATFORM'S, NOT THE HOLD'S (accepted 2026-10-17).**
+iPhone 12, `v1.2.9-alpha.5`, 8 of 8 ([device-verification](../device-verification.md)). The syslog
+orders it. Right after the touch-up, UIKit logs `Override focusSystemState: (ENABLED)` for
+`_UIVariableGestureContextMenuInteraction`: presenting the context menu turns on the scene's focus
+system. The WebView's input session ends 0.6 to 2.7 ms later (`End asserting activeInput modality`,
+`responder:(nil)`, `End input session`). The hold's `NSLog` comes 58 to 91 ms AFTER that, and
+`willDisplayMenuFor` is the only thing that sets the hold. So changing how the hold blocks the touch
+(an overlay, the gesture layer) would change nothing for the keyboard. It is accepted for three reasons:
+- every "+" entry opens a full-screen surface, which would hide the keyboard anyway;
+- the native `UIMenu` decision stands;
+- the one fix at the cause rests on UIKit behaviour nobody has observed.
+
+What would reopen it is in [backlog](../backlog.md#p3---accepted-the-native--menu-drops-the-keyboard-2026-10-17).
+
 **Hidden under everything that covers the screen** (`screenCover`, the tab bar's rule - no web layer
 can cover a native view), and while the web piece has no box (the phone header is `md:hidden`). The
 pill's picture is the web avatar RASTERISED: the loaded photo, the channel glyph or the initials,
@@ -1143,13 +1226,13 @@ halves agreeing field by field (`systemComponentsPatch.test.ts`); the Swift comp
 **Owed on an iPhone:** the pieces over their CSS twins pixel for pixel, the "+" following the keyboard
 without a lag the eye sees, the picker opening, and VoiceOver reading the four names.
 
-### The iPhone follows Dynamic Type, by CSS alone (decided by the user 2026-10-14)
+### The iPhone follows Dynamic Type (decided by the user 2026-10-14)
 
 WKWebView ignores the system text size for ordinary CSS (read 2026-10-13: the largest standard size
 drew exactly as the default). A font declared `-apple-system-body` does resolve to the user's current
 body size, so `publishIosTypeScale` (`lib/utils/textZoom.ts`) reads a hidden probe styled that way,
 divides by 17px (the default "Large" body), clamps to `[1, 2]` and publishes `--type-scale`, which
-the eight `--text-*` tokens of `app.css` AND their `--text-*--line-height` multiply by (a size growing inside a fixed line box overlaps its lines and clips the composer; `typeScaleRatio.test.ts` keeps the two in step). No Swift. Spacing and boxes stay fixed, as on Android's WebView, and `.text-zoom-exempt` and `text-zoom-size-N` divide/multiply by `--type-scale` as well as `--text-zoom`, so avatar initials stay in their circle
+the eight `--text-*` tokens of `app.css` AND their `--text-*--line-height` multiply by (a size growing inside a fixed line box overlaps its lines and clips the composer; `typeScaleRatio.test.ts` keeps the two in step). The probe is read at start-up only; a later change is carried from native (below). Spacing and boxes stay fixed, as on Android's WebView, and `.text-zoom-exempt` and `text-zoom-size-N` divide/multiply by `--type-scale` as well as `--text-zoom`, so avatar initials stay in their circle
 ([phone-comparison](../phone-comparison.md)).
 
 - **Bound: 2.** Android's 200 % is the largest scale rows, composer, nav, bubbles and the agenda were
@@ -1161,15 +1244,28 @@ the eight `--text-*` tokens of `app.css` AND their `--text-*--line-height` multi
   Android's measured `--text-zoom`. **Unproven until the iPhone reading: that `-apple-system-body`
   resolves live to Dynamic Type in WKWebView.** Nothing here can settle it.
 - **`--text-zoom` stays 1 on iOS** (it means "the engine inflated every font"; only Android does). The reel overlay's `cqmin` size divides by `--text-zoom` alone, so it keeps matching the export canvas at any Dynamic Type size.
-- **A size changed from Control Center while the app is in front fires no `visibilitychange`**, so it applies at the next return to the foreground; no timer polls for it.
-- Read at start-up and on each return to the foreground (`visibilitychange`), since the setting is
-  changed outside the app without a reload.
+- **A LATER CHANGE COMES FROM NATIVE, NOT FROM THE PROBE (2026-10-15).** The first design re-read the
+  probe on `visibilitychange`; on the iPhone 12 (`1.2.9-alpha.1`) a size changed in Settings while
+  the app was backgrounded applied only after a cold start, 3 of 3. Whether the event never fired
+  or the probe read WebKit's size before WebKit had learnt the new one was not separated - neither
+  matters now: `CanariPublishDynamicType` (`canari_ios.mm`) reads
+  `UIFont preferredFontForTextStyle:UIFontTextStyleBody` and dispatches `canari:dynamic-type`
+  (`detail.bodyPx`) plus `window.__canariDynamicTypeBodyPx`, on
+  `UIContentSizeCategoryDidChangeNotification` (extra coverage: dismissing Control Center already fires an activation), on every
+  `didBecomeActive` (a change made while suspended) and after every page load.
+  `followIosDynamicType` starts from that global when it is there, from the probe otherwise, and
+  listens to the event. No timer.
+- **Text with no `text-*` class follows too**: `body` is `calc(1rem * var(--type-scale, 1))`, 16px
+  wherever the scale is 1. The rail's salon name inherited the engine's 16px and stayed put at 2x.
+- **A markdown heading hyphenates** (`.post-markdown` h1-h6, `hyphens: auto` under `lang="fr"`)
+  before `wrap-break-word` splits a word at the card's edge ("personnalisati/on" at 2x), with `-webkit-hyphens` for iOS below 17. Limit: a post carries no language, so an English heading is hyphenated by French rules.
 - **Owed - one reading on the iPhone 12 bench** (nothing here can render WKWebView): Settings >
   Display & Brightness > Text Size, then Accessibility > Display & Text Size > Larger Text (also
   Larger Accessibility Sizes), and each main screen: chats list and a conversation (bubbles,
   composer), communities, feed, agenda, dashboard, a modal and the PIN sheet. Check the text grows,
   nothing clips or overflows, avatar initials stay inside their circle, and changing the size with
-  the app in the background applies on return.
+  the app in the background applies on return (FAILED on `1.2.9-alpha.1`, re-owed on the native
+  publish above).
 
 ### iOS project
 
@@ -2457,6 +2553,32 @@ The fix is `tauri-plugin-customtabs` (`frontend/src-tauri/plugins/tauri-plugin-c
 **iOS side (built, not yet run on a device or simulator - this repo has never done that for any iOS build, see the device-verification ladder in CLAUDE.md).** `ios/Sources/CustomTabsPlugin.swift` presents the same URL in an `ASWebAuthenticationSession` instead, following `patches/tauri-plugin-keystore`'s `ios/` structure exactly (`Package.swift`, `Sources/`, `@_cdecl("init_plugin_customtabs")`). The one thing that is NOT a straight mirror of Android and needs checking first on hardware: `ASWebAuthenticationSession` intercepts its `callbackURLScheme` redirect itself, bypassing the app's normal URL-opening delegate entirely - so it would never reach `tauri-plugin-deep-link`'s `onOpenUrl` listener the way Android's intent-filter callback does. The plugin works around this by re-opening the callback URL via `UIApplication.shared.open(_:)`: since `fr.emse.canari://` is this app's own registered scheme, that call is expected to route straight back into the same app-delegate path the Android deep link already uses, keeping `hooks.client.ts` and everything downstream of it (the `/auth/callback` exchange) unchanged and shared between platforms. **VERIFIED ON HARDWARE 2026-08-27** (iPhone, iOS 18.7, against production): the `ASWebAuthenticationSession` presented, the redirect was intercepted, the self-reinvocation routed back into the app, and `/auth/callback` ran - the login failed one step later, in a server's CORS allowlist, which is a different defect entirely ([below](#the-ios-login-that-died-in-a-cors-allowlist)). Nothing in this plugin needed changing.
 
 **Why this needed a real plugin and not a few lines of Rust JNI.** This app already has a working Rust → Kotlin JNI call (`flush_webview_cookies` in `commands/cookies.rs`, calling `CookieManager.getInstance()`/`.flush()`), and its own comment explains exactly why that pattern does not generalise: a JNI-attached native thread has no Java frames on its stack, so `FindClass` only reaches boot-classpath **framework** classes. `android.webkit.CookieManager` is one; `androidx.browser.customtabs.CustomTabsIntent` (bundled into the APK's own dex, like `MainActivity` itself) is not, and would fail to resolve the same way calling into `MainActivity` directly would. Tauri's own plugin-invocation mechanism (`@TauriPlugin`, `Plugin(activity)`) runs Kotlin code with the correct classloader context for exactly this reason, which is why the fix is a full (if minimal) mobile plugin, following `patches/tauri-plugin-keystore`'s structure - `Cargo.toml`/`build.rs`/`src/mobile.rs` on the Rust side, `CustomTabsPlugin.kt` + a Gradle module on the Android side - rather than extending the raw-JNI pattern.
+
+**A modal's focused field is revealed again once its overlay stops moving (iPhone 12, 2026-10-15).**
+`[data-keyboard-aware-overlay]` animates its height for 180 ms, and the reveal after a keyboard rise
+runs one frame after the resize - into a scrollport still shrinking. In the PIN change dialog the
+focused field then settled half under the footer's submit button, and a tap where the next field
+stood submitted the form; the iOS keyboard drops and rises between two fields, so every move paid
+it. `initKeyboardViewport` redoes the reveal on the overlay's `transitionend` for `height`
+(`overlaySettledAroundFocus`). Read on v1.2.9-alpha.4: the focused field was then in view, but the
+NEXT one (the confirm field) stood cut under the button and was reachable only after blurring.
+
+**Inside a keyboard-aware overlay every field carries the room for the NEXT one (v1.2.9-alpha.4).**
+The reveal stays `nearest`, which puts the field on the bottom edge of a scrollport the keyboard
+made short - exactly where the next field is cut. A `scroll-margin-block-end: 6.5rem` on every
+field inside `[data-keyboard-aware-overlay]` (`app.css`; one label and one field box) is honoured
+by `nearest`, so the reveal stops with the next field still in view. A centred reveal was refused
+in review: the reveal runs on every focus, overlay `transitionend` and viewport resize, so it would
+jump the modal on a tap on a field already in view and snap back a hand-scrolled body on a QuickType
+resize. The reveal never animates under `prefers-reduced-motion` (`revealBehavior`).
+
+**A footer edge is opt-in.** `Modal`'s `footerEdge` (`border-t`, `pt-3`) is for a form that
+overflows once the keyboard is up - the PIN change passes it, so the confirm field's cut ends at a
+line rather than against the submit button. A one-line confirmation gets no line. The PIN gate,
+a lock screen with no frame, gives its own footer `pt-3` and no line: the keypad cut by the
+scrollport ends 12 px above "Deverrouiller", where rows 7-9 read as covered by it at the largest
+text size. Owed one reading on the iPhone: the PIN change with the keyboard up, the PIN gate at the
+largest size.
 
 `keyboardViewport.svelte.ts` pins the shell to the visual viewport while the keyboard is up:
 

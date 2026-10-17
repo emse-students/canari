@@ -160,6 +160,8 @@ export async function publishReel(
       maxBytes: limits?.maxPlaintextBytes,
       // The member's "remove the sound": the published file carries no audio track at all.
       removeAudio: clip.soundRemoved === true,
+      // A reel loops: sound outside the picture would be a still frame on every pass.
+      trimToVideo: true,
       ...video,
     });
 

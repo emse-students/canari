@@ -70,7 +70,11 @@ wait_for_default_blueprints() {
       fi
     fi
 
-    if [ $((SECONDS - started)) -ge "$deadline" ]; then
+    # The deadline bounds ONLY a boot where nothing has applied: once the count has moved, the stall
+    # rule above bounds the wait. Applied unconditionally, it fired at 30/31 before the stall rule
+    # had counted its polls - each probe took ~20 s on a loaded machine (2026-10-16) - so the one
+    # re-apply that rescues that shape never ran.
+    if [ "$ok" -eq 0 ] && [ $((SECONDS - started)) -ge "$deadline" ]; then
       echo "::error::default blueprints still not applied after ${deadline}s: ${state:-the worker never answered}"
       docker logs "$worker" 2>&1 | grep -iE 'error|fail|exception' | tail -20 | sed 's/^/  worker: /' || true
       return 1

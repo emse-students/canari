@@ -32,7 +32,10 @@ export interface FeedCacheParams {
   formation?: string;
 }
 
-/** The tabs a reader can reach, times the filters on them - a handful, and bounded by that. */
+/**
+ * The four tabs, plus the few `promo` / `formation` views a shared link opens - a handful, and
+ * bounded by that.
+ */
 const MAX_ENTRIES = 12;
 
 const entries = new Map<string, FeedCacheEntry>();

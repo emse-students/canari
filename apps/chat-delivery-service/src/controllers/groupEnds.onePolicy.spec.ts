@@ -102,7 +102,12 @@ function makeRepos() {
       save: jest.fn((x: unknown) => Promise.resolve(x)),
       update: jest.fn().mockResolvedValue({ affected: 1 }),
       delete: jest.fn().mockResolvedValue({ affected: 1 }),
-      manager: { transaction: jest.fn() },
+      manager: {
+        transaction: jest.fn(),
+        // The account erasure's own-records half, outside the group sweep this file measures.
+        query: jest.fn().mockResolvedValue([[], 0]),
+        delete: jest.fn().mockResolvedValue({ affected: 0 }),
+      },
     },
     groupMember: {
       find: jest.fn().mockResolvedValue([]),
