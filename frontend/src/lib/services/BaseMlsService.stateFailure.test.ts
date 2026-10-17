@@ -21,7 +21,13 @@ import { BaseMlsService } from './BaseMlsService';
  * over (CORRUPT-1). A test that pins a default nobody chose pins whatever the default happens to
  * catch.
  */
-type Verdict = 'mismatch' | 'undecryptable' | 'rotated' | 'keystore_unavailable' | 'unknown';
+type Verdict =
+  | 'mismatch'
+  | 'undecryptable'
+  | 'rotated'
+  | 'altered'
+  | 'keystore_unavailable'
+  | 'unknown';
 
 const classify = (error: unknown): Verdict =>
   (
@@ -45,14 +51,21 @@ describe('BaseMlsService.classifyStateLoadFailure', () => {
     expect(classify(new Error('STATE_UNDECRYPTABLE: aead::Error'))).toBe('undecryptable');
   });
 
-  // NOTHING WRITES A STATE HEADER YET, so this code cannot arrive from the field until step 2 flips
-  // the writer (`mls-core/src/state_blob.rs`). It is recognised NOW because the alternative is worse
-  // than not handling it: routed through `unknown` it would print "not typed by mls-core" about an
-  // error mls-core types, and an accusation that is wrong is worse than one that is missing.
+  // EVERY SAVE WRITES A STATE HEADER SINCE STEP 2 (2026-10-17, `mls-core/src/state_blob.rs`), so
+  // both halves the fingerprint separates now arrive from the field.
   it('reads the typed key-mismatch code as a rotation, which is the half a fingerprint separates', () => {
     expect(classify(new Error('STATE_KEY_MISMATCH: the header names a different device key'))).toBe(
       'rotated'
     );
+  });
+
+  it('reads the typed altered code as `altered` - the other half, which no PIN opens', () => {
+    // Routed through `undecryptable` it would pause for an old PIN that never existed (CORRUPT-2).
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    expect(classify(new Error('STATE_ALTERED: v1 tag did not verify under the key'))).toBe(
+      'altered'
+    );
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('does not accuse a rotation of being unrecognised', () => {

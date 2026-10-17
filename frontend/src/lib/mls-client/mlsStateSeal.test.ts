@@ -153,9 +153,8 @@ describe('sealMlsStateBlobV2', () => {
     for (const at of [16, 40, blob.length - 1]) {
       const altered = blob.slice();
       altered[at] ^= 1;
-      await expect(openMlsStateBlobV2(altered, DEVICE_KEY_B64)).rejects.toThrow(
-        /^STATE_UNDECRYPTABLE: /
-      );
+      // The header names the key in hand, so a failed tag is ALTERATION - never an old-PIN case.
+      await expect(openMlsStateBlobV2(altered, DEVICE_KEY_B64)).rejects.toThrow(/^STATE_ALTERED: /);
     }
   });
 

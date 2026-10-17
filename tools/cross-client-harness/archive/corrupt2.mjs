@@ -35,6 +35,11 @@
  * said either way. Writing an assertion for the diagnosis before measuring what the diagnosis IS
  * would be a check pre-judging its own row.
  *
+ * **SINCE PK1 THE CAUSE IS SEPARATED.** Every save is framed with the fingerprint of the key that
+ * sealed it, so a flipped byte under the key in hand is `STATE_ALTERED`: the client logs "The saved
+ * state was ALTERED" and "loaded state unusable (altered)", rotates the device identity and comes
+ * up READY with no PIN asked. Those two lines are what `explicit` matches on that path.
+ *
  * **WHAT IT COSTS AND HOW IT IS GIVEN BACK.** Identical to CORRUPT-4: the snapshot is taken here,
  * `mlsdb.mjs flip` REFUSES without one, and the restore is asserted against the hash the state had
  * before this file ran.
@@ -116,7 +121,7 @@ try {
       await awaitLine(w1, 'MLS', 9_000);
       const said = consoleLines(w1);
       const explicit = said.filter((t) =>
-        /unopenable|undecryptable|state_sealed|sealed|could not|n'ont pas pu|failed to (load|decrypt|deserialize)|corrupt|fresh state|not-ready/i.test(
+        /unopenable|undecryptable|state_sealed|sealed|could not|n'ont pas pu|failed to (load|decrypt|deserialize)|corrupt|fresh state|not-ready|ALTERED|loaded state unusable/i.test(
           t
         )
       );
@@ -170,6 +175,10 @@ try {
         // THE OBSERVATION THIS ROW EXISTS FOR, recorded whatever the verdict: what the product calls
         // an altered ciphertext is the open question, and a verdict without it settles nothing.
         whatItSaid: explicit.map((t) => t.slice(0, 220)),
+        // THE VERDICT THE FRAMED WRITER EXPECTS (PK1): the header names the key in hand, so the
+        // failure is `altered` and the client rotates with no PIN asked. Recorded, not asserted - a
+        // state not yet rewritten in the framed format still pauses as `undecryptable`.
+        namedAltered: explicit.some((t) => /ALTERED|loaded state unusable \(altered\)/.test(t)),
       });
     }
   }
@@ -187,7 +196,9 @@ try {
     console.log(
       `[corrupt2] state is ${restored ? restored.len + ' bytes / ' + restored.hash : 'ABSENT'} ` +
         `(was ${stateBefore.len} bytes / ${stateBefore.hash}) - ` +
-        (restored && restored.hash === stateBefore.hash ? 'IDENTICAL' : 'NOT THE STATE IT STARTED WITH')
+        (restored && restored.hash === stateBefore.hash
+          ? 'IDENTICAL'
+          : 'NOT THE STATE IT STARTED WITH')
     );
   }
   const ready = await bringToReady('W1');

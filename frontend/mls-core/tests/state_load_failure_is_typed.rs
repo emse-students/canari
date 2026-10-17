@@ -12,12 +12,11 @@
 //! These tests pin the two outcomes a caller must be able to tell apart, at the layer that KNOWS
 //! them. A reworded message keeps compiling; a removed variant does not.
 //!
-//! **They deliberately do not assert that "sealed under another key" and "altered" are told apart,
-//! because they are not and cannot be**: an AEAD tag that fails to verify has both explanations and
-//! nothing stored beside the blob says which. Separating them needs a key fingerprint in the
-//! envelope's own framing, which changes the WRITE format and is therefore a two-release sequence -
-//! an older build handed a header would read it as a nonce and report this very failure. See
-//! `docs/wiki/backlog.md`. What these tests do assert is that the answer no longer CLAIMS one.
+//! **On a LEGACY blob they deliberately do not assert that "sealed under another key" and "altered"
+//! are told apart, because they cannot be**: an AEAD tag that fails to verify has both explanations
+//! and nothing in those bytes says which. What they assert there is that the answer CLAIMS neither.
+//! The FRAMED blob every save writes since step 2 (2026-10-17) carries the key fingerprint that does
+//! separate them, and the tests at the bottom pin both verdicts on it.
 
 use mls_core::MlsError;
 use mls_core::security::encrypt_blob;
@@ -129,23 +128,26 @@ fn no_state_at_all_is_not_a_failure() {
         .expect("a device with no saved state must simply start");
 }
 
-// ── The framed shape, which nothing writes yet ─────────────────────────────────────────────────
+// ── The framed shape, which every save writes since step 2 (2026-10-17) ───────────────────────
 //
-// `state_blob` teaches the reader a header a year of installed devices has never written, so these
-// two tests are what stands in for field evidence until step 2 flips the writer. They are the reason
-// that flip can be one line: the round trip and the discrimination are already pinned.
+// `encrypt_state_blob_with_key` frames, so these are the shapes the field now holds. The header is
+// what finally separates the two causes the tests above can only name together.
 
 #[test]
-fn a_framed_state_opens_with_the_key_its_header_names() {
+fn every_save_is_framed_and_names_the_key_that_sealed_it() {
     let k = key(3);
     let manager = MlsManager::load_or_create(USER, DEVICE, None).expect("make");
-    let sealed = manager.save_encrypted_with_key(&k).expect("seal");
+    let blob = manager.save_encrypted_with_key(&k).expect("seal");
 
-    // Exactly what step 2 will write, produced here by the writer that ships dormant.
-    let framed = mls_core::state_blob::frame_v1(&k, &sealed);
-    assert_ne!(framed, sealed, "framing must actually change the bytes");
+    // STEP 2 ITSELF. Before the flip this was a bare `[nonce || ciphertext]` and read as legacy.
+    match mls_core::state_blob::parse(&blob).expect("a saved state must parse") {
+        mls_core::state_blob::Framed::V1 {
+            key_fingerprint, ..
+        } => assert_eq!(key_fingerprint, mls_core::state_blob::key_fingerprint(&k)),
+        other => panic!("a save must write the v1 frame, got {other:?}"),
+    }
 
-    MlsManager::load_with_key(USER, DEVICE, Some(framed), &k)
+    MlsManager::load_with_key(USER, DEVICE, Some(blob), &k)
         .map(|_| ())
         .expect("a framed state must open with its own key");
 }
@@ -155,10 +157,9 @@ fn a_framed_state_sealed_under_another_key_is_named_a_rotation_and_never_corrupt
     let sealing_key = key(4);
     let key_in_hand = key(5);
     let manager = MlsManager::load_or_create(USER, DEVICE, None).expect("make");
-    let sealed = manager.save_encrypted_with_key(&sealing_key).expect("seal");
-    let framed = mls_core::state_blob::frame_v1(&sealing_key, &sealed);
+    let framed = manager.save_encrypted_with_key(&sealing_key).expect("seal");
 
-    let err = MlsManager::load_with_key(USER, DEVICE, Some(framed), &key_in_hand)
+    let err = MlsManager::load_with_key(USER, DEVICE, Some(framed.clone()), &key_in_hand)
         .map(|_| ())
         .expect_err("the wrong key must be refused");
 
@@ -171,13 +172,48 @@ fn a_framed_state_sealed_under_another_key_is_named_a_rotation_and_never_corrupt
         "expected StateSealedUnderAnotherKey, got {err:?}"
     );
 
-    // And the legacy shape of the very same ciphertext still cannot be told apart, which is what
-    // makes step 2 worth doing rather than a nicety.
-    let err_legacy = MlsManager::load_with_key(USER, DEVICE, Some(sealed), &key_in_hand)
+    // And the legacy shape of the very same ciphertext still cannot be told apart - what every blob
+    // an older build wrote looks like until its first rewrite.
+    let legacy = framed[mls_core::state_blob::HEADER_LEN..].to_vec();
+    let err_legacy = MlsManager::load_with_key(USER, DEVICE, Some(legacy), &key_in_hand)
         .map(|_| ())
         .expect_err("the unframed blob must also be refused");
     assert!(
         matches!(err_legacy, MlsError::StateUndecryptable(_)),
         "an unframed blob carries no discriminator, so it can only be the observation: {err_legacy:?}"
     );
+}
+
+/// CORRUPT-2 and CORRUPT-1 on the shape the field now holds: one byte flipped in the body, and the
+/// body cut to half its length. The header names the key in hand, so the tag failing is ALTERATION,
+/// and the variant says so - the old PIN is irrelevant and the caller must not ask for it.
+#[test]
+fn a_framed_state_altered_under_the_key_in_hand_is_named_altered_and_never_a_rotation() {
+    let k = key(6);
+    let manager = MlsManager::load_or_create(USER, DEVICE, None).expect("make");
+    let framed = manager.save_encrypted_with_key(&k).expect("seal");
+
+    let mut flipped = framed.clone();
+    let mid =
+        mls_core::state_blob::HEADER_LEN + (flipped.len() - mls_core::state_blob::HEADER_LEN) / 2;
+    flipped[mid] ^= 0xff;
+
+    let mut cut = framed.clone();
+    cut.truncate(
+        mls_core::state_blob::HEADER_LEN + (framed.len() - mls_core::state_blob::HEADER_LEN) / 2,
+    );
+
+    for (name, blob) in [("one flipped byte", flipped), ("cut to half", cut)] {
+        let err = MlsManager::load_with_key(USER, DEVICE, Some(blob), &k)
+            .map(|_| ())
+            .expect_err("an altered state must not load");
+        assert!(
+            matches!(err, MlsError::StateAltered(_)),
+            "{name}: expected StateAltered, got {err:?}"
+        );
+        assert!(
+            err.to_string().starts_with("STATE_ALTERED: "),
+            "{name}: the code must lead the message, it is what crosses both FFI boundaries: {err}"
+        );
+    }
 }

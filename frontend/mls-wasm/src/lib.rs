@@ -87,8 +87,9 @@ pub fn init_logger() {
     let _ = log::set_logger(&LOGGER).map(|()| log::set_max_level(log::LevelFilter::Info));
 }
 
-/// ChaCha20 encrypt of a plain MLS CBOR snapshot with a base64-encoded 32-byte key.
-/// Wire format: `[nonce (12) || ciphertext]` — no salt prefix. Safe to call from a Web Worker.
+/// ChaCha20 encrypt of a plain MLS CBOR snapshot with a base64-encoded 32-byte key, framed v1
+/// (`mls_core::state_blob`: a header carrying the key fingerprint, then `[nonce (12) || ciphertext]`).
+/// Safe to call from a Web Worker.
 #[wasm_bindgen]
 pub fn encrypt_mls_state_blob_with_key(
     plain_state: &[u8],
