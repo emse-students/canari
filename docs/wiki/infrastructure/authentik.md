@@ -637,7 +637,19 @@ decide from it, is measured on [profiles-and-access](../profiles-and-access.md#1
 **Decision (user, 2026-10-16):** signing in through the CAS or the Alumni source is a consent to the
 collection of name and first name, as one required tick, for new AND existing accounts.
 
-- **Where:** `blueprints/45-consent.yaml`, flow `miconnect-authorization`, which the eight OAuth2
+> **HELD (user, 2026-10-17): stable 1.2.9 ships WITHOUT this stage.** The file waits in
+> `blueprints/held/45-consent.yaml`, which `apply-blueprints.sh` never sends and NAMES at every run
+> (a `::warning` on dev's dry-run and on the stable's apply), and the eight providers point back at
+> `default-provider-authorization-implicit-consent`. `.github/scripts/tests/held-blueprints.test.sh`
+> runs the real script on the real tree and fails if the file is sent, the run is silent, or an
+> active blueprint finds an object only the held one defines; `test-blueprints.sh` asserts on a
+> built instance (fresh AND upgraded from main) that no provider authorizes through
+> `miconnect-authorization`, in place of the driven test below. Dev signs in through the SAME
+> MiConnect, so the hold covers both. **Lifting it is `git revert` of the hold's commit**, after the
+> three conditions in [backlog](../backlog.md#p1---the-miconnect-terms-stage-reaches-production-with-the-next-stable-three-things-come-first-2026-10-16).
+> The page `/legal/miconnect` stays published.
+
+- **Where:** `blueprints/45-consent.yaml` (HELD: `blueprints/held/`), flow `miconnect-authorization`, which the eight OAuth2
   providers now name instead of `default-provider-authorization-implicit-consent`. The enrolment flow
   would have been wrong: it runs once, at the first sign-in, so existing accounts and a new version
   of the text would never be asked.

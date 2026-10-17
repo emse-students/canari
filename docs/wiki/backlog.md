@@ -47,8 +47,18 @@ P2. From the owner's GDPR review; the substance is [register-of-processing](comp
 
 ## P1 - The MiConnect terms stage reaches production with the next STABLE: three things come first (2026-10-16)
 
+**HELD since 2026-10-17 (user: stable 1.2.9 ships without it).** `45-consent.yaml` waits in
+`infrastructure/authentik/blueprints/held/`, never sent and named at every run, and the 8 providers
+point back at `default-provider-authorization-implicit-consent`; asserted by
+`held-blueprints.test.sh` and `test-blueprints.sh` ([authentik](infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16)).
+The hold binds a stable only through a pre-release cut AFTER it merged (a stable ships its latest
+alpha's commit; `v1.2.9-alpha.6` and earlier still carry the stage). **Lifting it = `git revert` of
+the hold's commit**, once the three conditions below hold; the revert also restores the
+`changelog.d/miconnect-terms-of-use.md` fragment and drops `miconnect-terms-held.md` (if a stable
+folded that one already, the revert's conflict on it is resolved by deleting it).
+
 `miconnect-authorization` (blueprint `45-consent.yaml`, 8 providers) is applied by the stable deploy
-like any blueprint, so **do not cut a stable until these hold**, in this order: (1) the page
+like any blueprint, so **do not lift the hold until these hold**, in this order: (1) the page
 `/legal/miconnect` answers 200 on dev (pre-release first), because the prompt links to it; (2) the
 cross-client harness accounts carry `attributes.cgu_version` (read-modify-write of the whole
 attributes bag - the profile editor PATCH replaces it), or `login.mjs` ticks the box, else every
@@ -80,7 +90,7 @@ no purge date (flagged to the DPO); account deletion is a durable queue (PR in p
 
 **Open at the time of writing:** account erasure PR #1965 (two review rounds, blocking defects being
 fixed, NOT armed); MiGallery face consent and erasure (PRs #392-#396, merged 2026-10-17);
-the MiConnect terms PR #1955 (armed; the stable that ships it needs the three conditions above);
+the MiConnect terms PR #1955 (merged, then HELD out of production on 2026-10-17 - lifting the hold needs the three conditions above);
 the Le Cercle history rewrite (owed: the permission system refused the destructive git step, the user
 runs it or approves it explicitly); sending the DPO dossier; the DSI log-retention request. **Done 2026-10-17:** Authentik's event retention is `days=90` (a dump was taken first) and Le Cercle's MR !29 is merged and deployed.
 
