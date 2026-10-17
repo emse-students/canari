@@ -5,6 +5,7 @@ import {
   ServiceUnavailableException,
   Inject,
   BadRequestException,
+  GoneException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
@@ -36,6 +37,22 @@ export interface InitiateCallResponse {
   roomId: string;
   /** Short-lived JWT (5 min) proving this user is allowed to join `roomId`. */
   roomToken: string;
+  /**
+   * How long the callee may still answer, in milliseconds. The caller stops ringing after it and
+   * relays it in the MLS invite, so both ends ring for the window THIS server enforces.
+   */
+  ringTimeoutMs: number;
+}
+
+/**
+ * What `initiate` records about a room, read back by `room-token`. It is the only link between a
+ * room id and the conversation it was opened in: without it, any member of ANY group could obtain
+ * a valid token for a room id they had learnt, signed for their own group.
+ */
+interface CallRoomBinding {
+  groupId: string;
+  /** Epoch ms on THIS server's clock after which no callee is issued a token. */
+  answerBy: number;
 }
 
 /** Stored in Redis while a user device is actively in a call. */
@@ -60,8 +77,24 @@ const TURN_USAGE_TTL_SEC = 45 * 24 * 60 * 60;
 /** Hard cap on counted call duration so a stale presence record can't inflate the estimate. */
 const MAX_COUNTED_CALL_SEC = 4 * 60 * 60;
 
+/**
+ * THE ring window: how long a callee may answer. The single source - the caller's timer, the
+ * callee's timer (via the MLS invite) and the `room-token` refusal all read this one value.
+ */
+export const CALL_RING_TIMEOUT_SEC = 60;
+
+/**
+ * How long a room's binding to its group lives: the ring window plus the longest call this
+ * service counts. Past it the room id names nothing and `room-token` answers 410.
+ */
+const CALL_ROOM_BINDING_TTL_SEC = CALL_RING_TIMEOUT_SEC + MAX_COUNTED_CALL_SEC;
+
 function userCallPresenceKey(userId: string): string {
   return `call:user_active:${userId}`;
+}
+
+function callRoomKey(roomId: string): string {
+  return `call:room:${roomId}`;
 }
 
 /** Monthly bucket (e.g. `turn:usage:2026-06`) accumulating estimated relayed megabytes. */
@@ -119,15 +152,32 @@ export class CallsService {
       algorithm: 'HS256',
     });
 
+    // Written BEFORE the room id leaves this server, so no callee can ever ask about a room this
+    // binding does not yet name.
+    const binding: CallRoomBinding = {
+      groupId,
+      answerBy: Date.now() + CALL_RING_TIMEOUT_SEC * 1000,
+    };
+    await this.redis.set(
+      callRoomKey(roomId),
+      JSON.stringify(binding),
+      'EX',
+      CALL_ROOM_BINDING_TTL_SEC
+    );
+
     // At `log` rather than `debug`: this is the invite half of the call record, and a record
     // that survives only while debug logging is on is a record that is not there when needed.
     this.logger.log(`[call] invite room=${roomId} user=${userId} group=${groupId}`);
-    return { roomId, roomToken };
+    return { roomId, roomToken, ringTimeoutMs: CALL_RING_TIMEOUT_SEC * 1000 };
   }
 
   /**
    * Issues a room access token for an existing room ID (used by call recipients).
-   * Verifies group membership before signing the token.
+   *
+   * Three refusals, each an answer: not a member (403); a room `initiate` never bound to THIS
+   * group (403 - knowing a room id must not buy a token signed for another conversation); and a
+   * room whose ring window closed or whose binding expired (410 - the caller has stopped
+   * ringing, so there is nobody to answer).
    */
   async requestRoomToken(
     userId: string,
@@ -150,6 +200,24 @@ export class CallsService {
       throw new ServiceUnavailableException('Call room tokens are not configured on this server');
     }
 
+    const binding = await this.readRoomBinding(roomId);
+    if (!binding) {
+      this.logger.warn(`[call] join-token REFUSED room=${roomId} user=${userId}: no such room`);
+      throw new GoneException('This call is over');
+    }
+    if (binding.groupId !== groupId) {
+      this.logger.warn(
+        `[call] join-token REFUSED room=${roomId} user=${userId}: asked for group=${groupId}, the room is bound to another`
+      );
+      throw new ForbiddenException('This call does not belong to this conversation');
+    }
+    if (Date.now() > binding.answerBy) {
+      this.logger.log(
+        `[call] join-token REFUSED room=${roomId} user=${userId}: the ring window closed`
+      );
+      throw new GoneException('This call is over');
+    }
+
     const roomToken = jwt.sign({ room_id: roomId, sub: userId, group_id: groupId }, roomSecret, {
       expiresIn: '5m',
       algorithm: 'HS256',
@@ -159,6 +227,19 @@ export class CallsService {
     // with the SFU's own record it separates "never answered" from "answered and never arrived".
     this.logger.log(`[call] join-token room=${roomId} user=${userId} group=${groupId}`);
     return { roomToken };
+  }
+
+  /** The binding `initiate` wrote for `roomId`, or `null` when there is none (expired or never). */
+  private async readRoomBinding(roomId: string): Promise<CallRoomBinding | null> {
+    const raw = await this.redis.get(callRoomKey(roomId));
+    if (!raw) return null;
+    try {
+      return JSON.parse(raw) as CallRoomBinding;
+    } catch (e) {
+      // Only `initiate` writes this key, so an unparseable value is a defect here, named as one.
+      this.logger.error(`[call] room binding for ${roomId} is unreadable: ${String(e)}`);
+      return null;
+    }
   }
 
   /**

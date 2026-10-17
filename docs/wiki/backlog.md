@@ -929,6 +929,15 @@ Calls are UNVERIFIED, not broken; it becomes P1 the day calling is revived. What
 relay-path call, two peers, audio and video, TURN as production configures it, taken by hand (the in-process half of it runs in CI since 2026-10-09: `apps/call-service/tests/relay_path.rs`)
 ([calls](frontend/modules/calls.md#the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)).
 
+### P1 (blocks `CALLS_COMPILED`, not dev) - four things owed before production calls (review of #1997, 2026-10-17)
+
+Lot 1 calls dev builds only. Before the production switch flips: F4, the IP exposure of
+`iceTransportPolicy: 'all'` and Cloudflare TURN as a recipient, written into
+`compliance/register-of-processing.md` and `/legal/privacy`; F5, a key-epoch/fingerprint agreement
+between the two ends, or a visible "decrypt failing" toast; one AES-GCM key used in both directions
+with no AAD; and the `fp=` log line printing 4 bytes of the key, to become a hash
+([calls](frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)).
+
 ### P2 - what made the profile fetches fail on that device at that moment
 
 Owed: the DENOMINATOR (the `(failed/attempted lookups failed this session, X%)` suffix on every

@@ -278,7 +278,6 @@ jobs:
           echo "VITE_CORE_URL=${APP_URL}" >> .env
           echo "VITE_AUTHENTIK_URL=${IDP_URL}" >> .env
           echo "VITE_AUTHENTIK_CLIENT_ID=${IDP_CLIENT}" >> .env
-          echo "VITE_CALL_E2E_ENCRYPTION=false" >> .env
           if [ "$IS_PRERELEASE" = "true" ]; then
             # The same banner the dev web estate carries, for the same reason: `deployEnvironment()`
             # treats UNSET as production, so a tester holding an alpha must be told which one it is.

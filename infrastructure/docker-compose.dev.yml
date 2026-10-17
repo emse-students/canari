@@ -172,9 +172,9 @@ services:
       RUST_LOG: info
       PORT: "3004"
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
-      # No TURN and no Cloudflare Calls credentials in dev: `CALLS_ENABLED` is false since 0.14.15
-      # and the surface has never been properly tested, so there is nothing here to point at a
-      # relay. Sharing production's would also mean a dev client consuming production's TURN quota.
+      # No TURN credentials HERE, deliberately: since lot 1 (2026-10-17) dev's 1:1 calls are peer to
+      # peer and this service only relays their handshake - it opens no peer connection, so it has
+      # nothing to point at a relay. The CLIENTS get TURN from chat-delivery-service, below.
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
 
   # ─────────────────────────────────────────────────────
@@ -210,6 +210,11 @@ services:
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
+      # Short-lived Cloudflare TURN credentials for dev's calls (`/api/calls/ice-servers`, lot 1).
+      # Rendered from the DEV_CLOUDFLARE_* secrets (env-manifest.tsv), never production's names.
+      # Unset: the endpoint answers 503 and a call fails before it rings.
+      CLOUDFLARE_CALLS_API_TOKEN: ${CLOUDFLARE_CALLS_API_TOKEN:-}
+      CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
       # Server-side Safe Browsing lookup for shared links (WP-SAFELINK-1). Optional and
       # fails open: unset means no check, never a blocked link.
       GOOGLE_SAFE_BROWSING_API_KEY: ${GOOGLE_SAFE_BROWSING_API_KEY:-}

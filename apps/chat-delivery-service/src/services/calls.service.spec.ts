@@ -2,9 +2,14 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { ForbiddenException, Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  GoneException,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { getApps } from 'firebase-admin/app';
-import { CallsService } from './calls.service';
+import { CALL_RING_TIMEOUT_SEC, CallsService } from './calls.service';
 import { ApnsVoipService } from './apns-voip.service';
 import { GroupMember } from '../entities/group-member.entity';
 import { PushToken } from '../entities/push-token.entity';
@@ -307,10 +312,68 @@ describe('CallsService', () => {
     /** The callee's half: asking for a token is the last thing seen before it joins the SFU. */
     it('names the join token, so a callee that never arrives is distinguishable', async () => {
       const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      const { roomId } = await service.initiateCall('caller', 'group-1');
 
-      await service.requestRoomToken('callee', 'group-1', 'room-9');
+      await service.requestRoomToken('callee', 'group-1', roomId);
 
-      expect(captured(log)).toContain('[call] join-token room=room-9 user=callee group=group-1');
+      expect(captured(log)).toContain(`[call] join-token room=${roomId} user=callee group=group-1`);
+    });
+
+    /**
+     * F1: a room id is bound to the conversation it was opened in, for the ring window plus the
+     * longest counted call - and the window `initiate` hands back is the one this binding holds.
+     */
+    it('binds the room to its group at initiate, for the ring window plus the call horizon', async () => {
+      const { roomId, ringTimeoutMs } = await service.initiateCall('caller', 'group-1');
+
+      expect(ringTimeoutMs).toBe(CALL_RING_TIMEOUT_SEC * 1000);
+      expect(redis.set).toHaveBeenCalledWith(
+        `call:room:${roomId}`,
+        expect.any(String),
+        'EX',
+        CALL_RING_TIMEOUT_SEC + 4 * 60 * 60
+      );
+      expect(JSON.parse(redisStore.get(`call:room:${roomId}`)!).groupId).toBe('group-1');
+    });
+
+    /**
+     * F1: a member of ANOTHER group who learnt the room id must not get a token for it - the
+     * token would be signed for their own group and seat them in a call they are not part of.
+     */
+    it('refuses a token for a room bound to another group', async () => {
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-2', userId: 'mallory' });
+
+      await expect(service.requestRoomToken('mallory', 'group-2', roomId)).rejects.toThrow(
+        ForbiddenException
+      );
+    });
+
+    it('answers 410 for a room no initiate ever bound, or whose binding expired', async () => {
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+
+      await expect(service.requestRoomToken('callee', 'group-1', 'room-9')).rejects.toThrow(
+        GoneException
+      );
+    });
+
+    /** F2: the ring window is enforced HERE, on one clock, whatever the callee's timer did. */
+    it('answers 410 once the ring window has closed', async () => {
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      const now = jest.spyOn(Date, 'now');
+      now.mockReturnValue(1_000_000);
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+
+      now.mockReturnValue(1_000_000 + CALL_RING_TIMEOUT_SEC * 1000);
+      await expect(service.requestRoomToken('callee', 'group-1', roomId)).resolves.toHaveProperty(
+        'roomToken'
+      );
+
+      now.mockReturnValue(1_000_000 + CALL_RING_TIMEOUT_SEC * 1000 + 1);
+      await expect(service.requestRoomToken('callee', 'group-1', roomId)).rejects.toThrow(
+        GoneException
+      );
     });
 
     /** Both halves fail for one reason, and only the caller's half used to say so. */

@@ -282,17 +282,22 @@ export function mkGraineBundle(
   return { graineBundle: bundle };
 }
 
-/** Builds an MLS call invitation (ring) message. */
+/**
+ * Builds an MLS call invitation (ring) message. `ringTimeoutMs` is the server's answer window,
+ * relayed verbatim so the callee stops ringing when the caller does.
+ */
 export function mkCallInvite(
   callId: string,
   hasVideo: boolean,
-  deviceId?: string
+  deviceId: string | undefined,
+  ringTimeoutMs: number
 ): canari.AppMessage.$Properties {
   return {
     call: {
       callId,
       hasVideo,
       deviceId: deviceId ?? '',
+      ringTimeoutMs,
       offerSdp: 'START',
     },
   };
