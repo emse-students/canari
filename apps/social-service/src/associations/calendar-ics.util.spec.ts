@@ -32,4 +32,12 @@ describe('buildAggregatedCalendarIcs', () => {
     );
     expect(ics).toContain('SUMMARY:Soiree - Corpo + 2 autres');
   });
+
+  it('drops an orphaned co-owner with no name instead of a trailing separator', () => {
+    const ics = buildAggregatedCalendarIcs([{ ...row, coOwners: [{ name: '' }] }], {
+      frontendBaseUrl: 'http://x',
+    });
+    expect(ics).toContain('SUMMARY:Soiree - Corpo');
+    expect(ics).not.toContain('Corpo +');
+  });
 });

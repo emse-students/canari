@@ -68,6 +68,8 @@ export class TauriMlsService extends BaseMlsService {
   private ws: Awaited<ReturnType<typeof NativeWebSocket.connect>> | null = null;
   /** The `pagehide` listener releasing the native socket with its page (see `connect`). */
   private _pageHideHandler: (() => void) | null = null;
+  /** The `pageshow` listener asking for a new socket when the page SURVIVED its `pagehide`. */
+  private _pageShowHandler: (() => void) | null = null;
   private wsUnlisten: (() => void) | null = null;
   /** Consecutive pings sent without any incoming data frame from the server. */
   private missedHeartbeats = 0;
@@ -288,6 +290,16 @@ export class TauriMlsService extends BaseMlsService {
         this.pauseSocket();
       };
       window.addEventListener('pagehide', this._pageHideHandler);
+      // A `pagehide` the page SURVIVES (a bfcache entry restored, a navigation that did not
+      // destroy the document) leaves it with no socket and no visibility edge to notice: the
+      // restore itself is the trigger, so it asks for the reconnect.
+      this._pageShowHandler = () => {
+        if (!this.ws) {
+          console.log('[WS] page shown again with no socket - reconnecting');
+          this.disconnectCallback?.();
+        }
+      };
+      window.addEventListener('pageshow', this._pageShowHandler);
       // THE EDGE THE VISIBILITY API NEVER FIRES ON A PHONE. A backgrounded Android WebView stays
       // `visible` (measured, see `appForeground.ts`), so the handler above cannot see the user
       // coming back; the activity's own foreground event can. Same decision, honest trigger.
@@ -503,6 +515,19 @@ export class TauriMlsService extends BaseMlsService {
         // Best-effort - ignore if the socket is already closing
       });
     }
+  }
+
+  /** Removes the page-lifecycle listeners this class registered, then the base teardown. */
+  override destroy(): void {
+    if (this._pageHideHandler) {
+      window.removeEventListener('pagehide', this._pageHideHandler);
+      this._pageHideHandler = null;
+    }
+    if (this._pageShowHandler) {
+      window.removeEventListener('pageshow', this._pageShowHandler);
+      this._pageShowHandler = null;
+    }
+    super.destroy();
   }
 
   /**

@@ -40,7 +40,7 @@ export function buildAggregatedCalendarIcs(
   const base = opts.frontendBaseUrl.replace(/\/+$/, '');
   const events: IcsEvent[] = rows.map((r) => ({
     uid: r.id,
-    summary: `${r.title} - ${organisersSummary([r.associationName, ...(r.coOwners ?? []).map((co) => co.name)])}`,
+    summary: `${r.title} - ${organisersSummary([r.associationName, ...(r.coOwners ?? []).map((co) => co.name)].filter((n) => n.trim() !== ''))}`,
     startsAt: r.startsAt,
     endsAt: r.endsAt,
     description: r.description,

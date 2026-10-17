@@ -78,4 +78,35 @@ describe('TauriMlsService.pauseSocket', () => {
     expect(ws.disconnect).toHaveBeenCalledTimes(1);
     expect(svc.ws).toBeNull();
   });
+
+  it('asks for a reconnect on pageshow when the page survived its pagehide', async () => {
+    const NativeWebSocket = (await import('@tauri-apps/plugin-websocket')).default as unknown as {
+      connect: ReturnType<typeof vi.fn>;
+    };
+    NativeWebSocket.connect.mockResolvedValue({
+      send: vi.fn().mockResolvedValue(undefined),
+      disconnect: vi.fn().mockResolvedValue(undefined),
+      addListener: vi.fn().mockReturnValue(vi.fn()),
+    });
+    const svc = new TauriMlsService() as unknown as Internals & {
+      connect(token?: string): Promise<void>;
+      disconnectCallback: (() => void) | null;
+      destroy(): void;
+    };
+    const cb = vi.fn();
+    svc.disconnectCallback = cb;
+    await svc.connect('tok');
+
+    window.dispatchEvent(new Event('pageshow'));
+    expect(cb).not.toHaveBeenCalled(); // socket still held: nothing to restore
+
+    window.dispatchEvent(new Event('pagehide'));
+    await flush();
+    window.dispatchEvent(new Event('pageshow'));
+    expect(cb).toHaveBeenCalledTimes(1);
+
+    svc.destroy();
+    window.dispatchEvent(new Event('pageshow'));
+    expect(cb).toHaveBeenCalledTimes(1);
+  });
 });
