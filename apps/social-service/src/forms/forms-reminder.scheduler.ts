@@ -45,7 +45,7 @@ export class FormReminderScheduler {
         // Mark as notified BEFORE sending to avoid duplicate notifications if the process
         // crashes between the push and the flag update.  Worst case: the notification is
         // silently lost; acceptable vs spamming the user on every cron tick.
-        await this.reminderRepo.update(r.id, { notified5min: true });
+        if (!(await this.claim(r.id, 'notified5min'))) continue;
         await this.push.notifyContent(r.userId, content, {
           type: 'form_reminder',
           formId: r.formId,
@@ -80,7 +80,7 @@ export class FormReminderScheduler {
       const content = formOpenContent();
       try {
         // Mark as notified BEFORE sending to avoid duplicate notifications (same rationale as above).
-        await this.reminderRepo.update(r.id, { notifiedOnOpen: true });
+        if (!(await this.claim(r.id, 'notifiedOnOpen'))) continue;
         await this.push.notifyContent(r.userId, content, {
           type: 'form_reminder',
           formId: r.formId,
@@ -106,6 +106,23 @@ export class FormReminderScheduler {
     if (toNotify5min.length + toNotifyOpen.length > 0) {
       this.logger.log(`[REMINDER] sent: 5min=${toNotify5min.length} open=${toNotifyOpen.length}`);
     }
+  }
+
+  /**
+   * Stamps one reminder flag IF it is still unset, and says whether this run is the one that set it.
+   *
+   * THE STAMP IS THE CLAIM, so a second process sending the same reminder is impossible rather than
+   * unlikely. Two copies of this service DO run at once: a release starts the new replica beside the
+   * old one and retires the old one only once the new one is healthy, and a minute boundary inside
+   * that overlap fires this cron in both (docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to).
+   * An unconditional `update` let both read the row as unsent, both stamp it, both push - the member
+   * was told twice. The conditional one matches in exactly one of them.
+   */
+  private async claim(id: string, flag: 'notified5min' | 'notifiedOnOpen'): Promise<boolean> {
+    const result = await this.reminderRepo.update({ id, [flag]: false }, { [flag]: true });
+    if (result.affected) return true;
+    this.logger.log(`[REMINDER] ${flag} for ${id.slice(0, 8)} already claimed by another run`);
+    return false;
   }
 
   /** Hourly cron - expires unvalidated cash submissions past their deadline. */

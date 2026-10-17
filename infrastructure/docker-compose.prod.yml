@@ -28,6 +28,8 @@ services:
   # ─────────────────────────────────────────────────────
   redis:
     logging: *logging
+    labels:
+      canari.deploy.replace: pinned
     # PINNED BY DIGEST TO WHAT PRODUCTION IS PROVEN TO RUN, not to whatever the tag resolved to
     # the morning somebody rebuilt. `redis:alpine` is a FLOATING MAJOR - it was serving 8.8.0 on
     # 2026-09-01 and a `docker compose pull` could have moved it to 9 without a line changing
@@ -82,6 +84,8 @@ services:
 
   postgres:
     logging: *logging
+    labels:
+      canari.deploy.replace: pinned
     # Same rule. The tag pinned the MAJOR only, so every patch arrived unannounced.
     #
     # THE MAJOR HERE IS NOT A FREE CHOICE, AND MOVING IT IS NOT A DEPENDENCY BUMP. Dependabot
@@ -120,6 +124,8 @@ services:
 
   adminer:
     logging: *logging
+    labels:
+      canari.deploy.replace: pinned
     # REACHED TWO WAYS: loopback on the host (an ssh tunnel), and /adminer/ through the frontend nginx for
     # GLOBAL ADMINS (core-service signs a short cookie; docs/wiki/infrastructure/databases.md). It publishes
     # nothing else.
@@ -142,6 +148,8 @@ services:
   # Chat Gateway (Rust / Axum) - port 3000
   chat-gateway:
     logging: *logging
+    labels:
+      canari.deploy.replace: overlap
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-gateway:${TAG:-latest}
     restart: always
     build:
@@ -167,12 +175,15 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+      start_interval: 2s
     depends_on:
       redis:
         condition: service_healthy
 
   call-service:
     logging: *logging
+    labels:
+      canari.deploy.replace: exclusive
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/call-service:${TAG:-latest}
     restart: always
     build:
@@ -205,6 +216,8 @@ services:
   # Chat Delivery Service (NestJS) - New port 3010
   chat-delivery-service:
     logging: *logging
+    labels:
+      canari.deploy.replace: overlap
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-delivery-service:${TAG:-latest}
     restart: always
     build:
@@ -261,6 +274,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+      start_interval: 2s
 
   # ─────────────────────────────────────────────────────
   # Garage - S3-compatible object storage, replacing MinIO (unmaintained upstream).
@@ -270,6 +284,8 @@ services:
   # ─────────────────────────────────────────────────────
   garage:
     logging: *logging
+    labels:
+      canari.deploy.replace: pinned
     image: dxflrs/garage:v2.4.1
     restart: always
     command: ["/garage", "server", "--single-node", "--default-bucket"]
@@ -304,6 +320,8 @@ services:
   # ─────────────────────────────────────────────────────
   media-service:
     logging: *logging
+    labels:
+      canari.deploy.replace: exclusive
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/media-service:${TAG:-latest}
     restart: always
     build:
@@ -356,6 +374,8 @@ services:
   # ─────────────────────────────────────────────────────
   core-service:
     logging: *logging
+    labels:
+      canari.deploy.replace: overlap
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/core-service:${TAG:-latest}
     restart: always
     build:
@@ -415,6 +435,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+      start_interval: 2s
     depends_on:
       postgres:
         condition: service_started
@@ -425,6 +446,8 @@ services:
   # ─────────────────────────────────────────────────────
   social-service:
     logging: *logging
+    labels:
+      canari.deploy.replace: overlap
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/social-service:${TAG:-latest}
     restart: always
     build:
@@ -465,6 +488,7 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+      start_interval: 2s
     depends_on:
       postgres:
         condition: service_started
@@ -478,9 +502,11 @@ services:
   # writes each page's Open Graph head into the shell before nginx sends it, which is the
   # one thing a crawler or an unfurler can see (frontend/src/hooks.server.ts). Reaches the
   # services directly on this network, never back through nginx, with INTERNAL_SECRET.
-  # Not published: nginx is still the only container binding a host port.
+  # Not published: the edge is the only container binding a host port.
   frontend-ssr:
     logging: *logging
+    labels:
+      canari.deploy.replace: overlap
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend-ssr:${TAG:-latest}
     restart: always
     environment:
@@ -494,6 +520,15 @@ services:
       SOCIAL_SERVICE_URL: http://social-service:3014
       CORE_SERVICE_URL: http://core-service:3012
       DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
+    # The image's own HEALTHCHECK, restated with `start_interval` so a new replica is known healthy
+    # within seconds of booting rather than one 30 s interval later.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 2s
     depends_on:
       social-service:
         condition: service_started
@@ -504,6 +539,8 @@ services:
 
   frontend:
     logging: *logging
+    labels:
+      canari.deploy.replace: overlap
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend:${TAG:-latest}
     restart: always
     environment:
@@ -514,14 +551,47 @@ services:
       # and a `VITE_` variable is baked in at BUILD time (the workflows write them into
       # `frontend/.env` before `bun run build`). They are gone - all three took their value from
       # `ALLOW_ORIGIN`, which is a CORS allowlist and not an origin.
-    ports:
-      # 127.0.0.1 ONLY, as dev already does. The host's own nginx is the single public entry point
-      # and reaches this over the loopback; publishing on 0.0.0.0 offered it to every other tenant
-      # of a machine this project does not own. The default is the shared host's real port, not 80,
-      # which belongs to that nginx - see `compute_frontend_host_port` in deploy/render-env.sh.
-      - "127.0.0.1:${FRONTEND_HOST_PORT:-8081}:80"
+    # NO HOST PORT SINCE 2026-10-17 - the edge below holds it, so a release can start this
+    # container's successor beside it (docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to).
+    expose:
+      - "80"
+    # `/nginx-health` answers from this nginx alone (no upstream, no access-log line), so healthy means
+    # "this image's configuration loaded and it is listening" - what the edge needs to send it traffic.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 2s
     depends_on:
       frontend-ssr:
+        condition: service_started
+
+  # THE ONE CONTAINER THAT HOLDS THE HOST PORT, AND A RELEASE NEVER REPLACES IT. A layer-4 relay to
+  # `frontend` (edge/nginx.conf says why, and why it reads nothing): the frontend used to publish the
+  # port itself, and a port belongs to ONE container, so its successor could not start until it had
+  # gone - a 502 on everything while it booted. Recreated only when this definition changes (an image
+  # bump), which costs that one deploy about a second; its configuration is reloaded in place.
+  edge:
+    logging: *logging
+    labels:
+      canari.deploy.replace: pinned
+    image: nginx:1.30.6-alpine@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5
+    restart: always
+    command: ["nginx", "-c", "/etc/nginx/edge/nginx.conf", "-g", "daemon off;"]
+    # The DIRECTORY, not the file: `git reset --hard` replaces a file by a new inode, and a bind mount
+    # of a single file keeps showing the old one - the reload would read yesterday's configuration.
+    volumes:
+      - ./edge:/etc/nginx/edge:ro
+    ports:
+      # 127.0.0.1 ONLY. The host's own nginx is the single public entry point and reaches this over
+      # the loopback; publishing on 0.0.0.0 offered it to every other tenant of a machine this
+      # project does not own. The default is the shared host's real port, not 80, which belongs to
+      # that nginx - see `compute_frontend_host_port` in deploy/render-env.sh.
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-8081}:80"
+    depends_on:
+      frontend:
         condition: service_started
 
 volumes:

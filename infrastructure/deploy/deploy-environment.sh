@@ -272,48 +272,78 @@ psql() {
 
 apply_migrations
 
-# ── Up, with the one retry that is a REPAIR and not a hope ───────────────────
-# A stale container of THIS estate's own frontend can hold the host port after a previous deploy was
-# killed. That is the only conflict this script may resolve by itself, and the allowlist is narrow on
-# purpose: an image name under this registry and prefix, and this project's own label. Anything else
-# on that port is somebody else's container and the deploy stops rather than removing it.
-printf '\nbringing the estate up\n'
-if ! dc up -d --remove-orphans; then
-  printf '\nfirst attempt failed - looking for a stale container holding host port %s\n' "$FRONTEND_HOST_PORT"
-
-  conflicts="$($DOCKER_CLI ps --filter "publish=$FRONTEND_HOST_PORT" \
-    --format '{{.ID}} {{.Image}} {{.Names}} {{.Label "com.docker.compose.project"}}' || true)"
-  foreign=0
-  if [ -n "$conflicts" ]; then
-    # fd 3 for the same reason as `apply_migrations` below: this body runs docker commands, and one
-    # `compose exec` added here would silently eat the rest of the list. Safe today - `printf | awk`
-    # gives awk its own stdin and `docker rm` reads none - and one edit away from not being.
-    while IFS= read -r row <&3; do
-      [ -z "$row" ] && continue
-      cid="$(printf '%s' "$row" | awk '{print $1}')"
-      image="$(printf '%s' "$row" | awk '{print $2}')"
-      name="$(printf '%s' "$row" | awk '{print $3}')"
-      owner="$(printf '%s' "$row" | awk '{print $4}')"
-
-      if [ "$owner" = "$PROJECT" ] && printf '%s' "$image" | grep -q "^${REGISTRY}/${IMAGE_PREFIX}/frontend:"; then
-        printf 'removing this estate'"'"'s own stale frontend: %s (%s)\n' "$name" "$cid"
-        $DOCKER_CLI rm -f "$cid"
-      else
-        printf '::error::host port %s is held by %s (image %s, project %s) which this estate does not own\n' \
-          "$FRONTEND_HOST_PORT" "$name" "$image" "${owner:-none}"
-        foreign=1
-      fi
-    done 3<<<"$conflicts"
+# ── Replace every service, without taking the estate off the air ─────────────
+# It used to be ONE `dc up -d --remove-orphans`, which recreates every container whose image moved -
+# every service this repository builds, at every release - by stopping the old one before the new one
+# had booted: 502 for the minute or two that took (backlog, 2026-10-09). Each service now declares how
+# it may be replaced, `replace-modes.py` refuses a declaration two replicas could not honour and orders
+# the services by `depends_on`, and `rolling.sh` starts each new replica beside the old one before
+# retiring it. docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to.
+#
+# on_port_conflict <service> - the one repair this script may make by itself, called by rolling.sh
+# when a service holding a host port cannot start. A stale container of THIS estate's own entry point
+# can hold the port after a previous deploy was killed - the edge, or the frontend that held the port
+# until 2026-10-17. The allowlist is narrow on purpose: this project's own label AND one of those two
+# services. Anything else on that port is somebody else's container, and the deploy stops rather
+# than removing it.
+on_port_conflict() {
+  local conflicts foreign=0 cid service name owner
+  conflicts="$($DOCKER_CLI ps -a --filter "publish=$FRONTEND_HOST_PORT" \
+    --format '{{.ID}} {{.Label "com.docker.compose.service"}} {{.Names}} {{.Label "com.docker.compose.project"}}' || true)"
+  if [ -z "$conflicts" ]; then
+    printf '::error::%s did not start and nothing holds host port %s - the failure is not a port conflict\n' \
+      "$1" "$FRONTEND_HOST_PORT" >&2
+    return 1
   fi
-
-  if [ "$foreign" -ne 0 ]; then
+  # fd 3 for the same reason as `apply_migrations`: this body runs docker commands, and one
+  # `compose exec` added here would silently eat the rest of the list.
+  while IFS=' ' read -r cid service name owner <&3; do
+    [ -n "$cid" ] || continue
+    if [ "$owner" = "$PROJECT" ] && { [ "$service" = edge ] || [ "$service" = frontend ]; }; then
+      printf 'removing this estate'"'"'s own stale %s holding port %s: %s (%s)\n' \
+        "$service" "$FRONTEND_HOST_PORT" "$name" "$cid"
+      $DOCKER_CLI rm -f "$cid" >/dev/null
+    else
+      printf '::error::host port %s is held by %s (service %s, project %s) which this estate does not own\n' \
+        "$FRONTEND_HOST_PORT" "$name" "${service:-none}" "${owner:-none}" >&2
+      foreign=1
+    fi
+  done 3<<<"$conflicts"
+  [ "$foreign" -eq 0 ] || {
     printf '::error::resolve the host port %s conflict and redeploy\n' "$FRONTEND_HOST_PORT" >&2
-    exit 1
-  fi
+    return 1
+  }
+}
 
-  printf 'retrying\n'
-  dc up -d --remove-orphans
+# shellcheck source-path=SCRIPTDIR source=../lib/rolling.sh
+. "$DEPLOY_PATH/infrastructure/lib/rolling.sh"
+
+printf '\nreading how each service may be replaced\n'
+REPLACE_PLAN="$(dc config --format json | python3 "$DEPLOY_PATH/infrastructure/lib/replace-modes.py" "${REGISTRY}/${IMAGE_PREFIX}/")" || {
+  printf '::error::%s declares a service this deploy cannot replace safely - see the lines above; nothing was changed\n' \
+    "$COMPOSE_FILE" >&2
+  exit 1
+}
+printf '%s\n' "$REPLACE_PLAN"
+
+if ! replace_services <<<"$REPLACE_PLAN"; then
+  printf '::error::the estate was not fully replaced - every service before the failing one runs the new release, the failing one and those after it still run the previous one\n' >&2
+  dc ps --all || true
+  exit 1
 fi
+
+# THE EDGE IS NOT REPLACED, SO ITS CONFIGURATION IS RELOADED: `edge/` is bind-mounted from this
+# checkout, which `git reset --hard` has just moved. `nginx -t` first, so a broken file is refused by
+# a test while the running configuration keeps serving; `-s reload` is graceful - the old workers
+# finish their connections.
+printf '\nreloading the edge configuration\n'
+dc exec -T edge nginx -t -c /etc/nginx/edge/nginx.conf
+dc exec -T edge nginx -s reload -c /etc/nginx/edge/nginx.conf
+
+# Anything this file no longer declares (`--remove-orphans`), and nothing else: every declared service
+# is already running what this release asked for, and `--no-recreate` keeps this from replacing any
+# of them the old way.
+dc up -d --no-recreate --remove-orphans
 printf 'containers started\n'
 
 
