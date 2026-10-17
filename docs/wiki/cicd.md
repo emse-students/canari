@@ -31,6 +31,10 @@ was written, the migration 082 spec turned out to have failed on EVERY run since
 The job runs them in band against production's PostgreSQL, pinned by the digest the compose files
 carry, and its last step FAILS unless jest ran as many suites as there are files on disk and skipped
 none: `--passWithNoTests` and the gate itself would otherwise turn "ran nothing" back into a pass.
+**ONE spec is excluded from it, by name in both steps: `internal/account-erasure.integration.spec.ts`**,
+which copies every social table out of `public` and so needs the schema `synchronize` builds; it runs
+in `boot-nest-apps` right after the boot built that schema (2026-10-17, found by rebasing on the
+merged account erasure: on this job's empty database it failed with "no table ... in public").
 `ci-passed-gate.test.mjs` holds the rest - every job is a need of `ci-passed`, `ci-passed` keeps
 `if: always()`, the aggregation refuses `failure` AND `cancelled` (run, not read), and the job's
 image equals production's.

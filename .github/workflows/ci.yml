@@ -677,12 +677,18 @@ jobs:
 
       # In band: each spec works in its own throwaway schema, but one database serves them all, and
       # a run whose order is fixed is one whose failure can be reproduced.
+      # ONE spec is NOT run here, and only one: `internal/account-erasure.integration.spec.ts` copies
+      # EVERY social table out of `public`, so it needs the schema `synchronize` builds - which this
+      # empty database has not got. It runs in `boot-nest-apps`, right after the boot built that
+      # schema ("Account erasure SQL against PostgreSQL"), on the same digest. Both steps below name
+      # it, so the count still refuses any OTHER spec the pattern stops selecting.
       - name: Run every integration spec
         working-directory: apps/social-service
         env:
           SOCIAL_IT_DATABASE_URL: postgres://canari:it-probe@localhost:5432/social_it
         run: >-
           node --run test -- --runInBand --testPathPatterns '\.integration\.spec\.ts$'
+          --testPathIgnorePatterns '/node_modules/' 'account-erasure\.integration\.spec\.ts$'
           --json --outputFile "$RUNNER_TEMP/social-it.json"
 
       - name: Every integration spec ran, and none was skipped
@@ -690,7 +696,7 @@ jobs:
         run: |
           set -euo pipefail
           report="$RUNNER_TEMP/social-it.json"
-          on_disk="$(find src -name '*.integration.spec.ts' | wc -l)"
+          on_disk="$(find src -name '*.integration.spec.ts' ! -path 'src/internal/account-erasure.integration.spec.ts' | wc -l)"
           suites="$(jq '.numTotalTestSuites' "$report")"
           tests="$(jq '.numTotalTests' "$report")"
           skipped="$(jq '.numPendingTests + .numTodoTests' "$report")"

@@ -216,7 +216,7 @@ lock; adjacent ranges, another resource, a cancellation; the checks; deleting a 
 association empties every child table and touches no other space. Controls: with the exclusion's
 predicate made false, 6 tests fail; with the constraint absent, 8 (the two that read it from the
 catalogue and the entity parity join them). Gated on `SOCIAL_IT_DATABASE_URL` like the other integration
-specs; CI runs it once #1915's `test-social-integration` job is on `main`, and skips it until then.
+specs; CI runs it in `test-social-integration` (#1915), on production's digest, the race tests included.
 
 Indexes beyond the exclusion's own GiST: `bookings ("holderId", "startsAt")` (my bookings),
 `("resourceId", "startsAt")` (a resource's bookings in time order, the D29 refusal) and `("endsAt")`
