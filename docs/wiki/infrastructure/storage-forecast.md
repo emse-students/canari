@@ -173,7 +173,7 @@ at its cap therefore weighs **~460 KB**.
 
 ### Backups - 1.2 G local, mirrored offsite
 
-15 archives of 65-79 MB (`BACKUP_RETENTION_DAYS=14` + today), cron 03:30, `rsync` to `mitv`
+15 archives of 65-79 MB (`BACKUP_RETENTION_DAYS=14` + today), cron 03:30, `rsync` to the offsite server
 (438 G, **376 G free**) with aligned retention. `backup.sh` takes a `pg_dump`, then
 `tar czf minio_data.tar.gz -C /data .` over the **entire** MinIO volume, every night. See
 [backup](backup.md).
@@ -362,7 +362,7 @@ central scenario, and leaves only the high scenario needing a bigger disk.
 `backup.sh` step 3 tars the whole media volume nightly. Those objects are **immutable and
 content-addressed**: 15 archives are 15 identical copies of bytes that never change, and gzip cannot
 shrink them because they are AES-GCM output. Replace that one step with a deduplicating backup
-(`restic` / `borg`) or a plain `rclone sync` to `mitv`, and keep the current 14-day full-archive
+(`restic` / `borg`) or a plain `rclone sync` to the offsite server, and keep the current 14-day full-archive
 scheme for the `pg_dump` - which is 29 MB and where point-in-time copies are actually worth having.
 
 This is the whole difference between the two tables above, it touches no product code, and it should
@@ -373,7 +373,7 @@ be done before any growth in usage rather than after.
 `infrastructure/backup/backup-objects.sh` keeps `infrastructure_minio_data` and
 `infrastructure_media_meta` in a restic repository (that volume list is the pre-Garage one - since
 2026-08-14 the script reads `garage_data` + `garage_meta` + `media_meta`) (throwaway image, no host dependency), 14d/8w/6m
-retention, `restic check` after every run, then an rsync mirror of the repository to `mitv`. It is in
+retention, `restic check` after every run, then an rsync mirror of the repository to the offsite server. It is in
 the `canari` crontab at 04:00, after the tar, and was verified under cron's own environment
 (`env -i` + cron `PATH`), not just from an interactive shell.
 
@@ -398,7 +398,7 @@ on production alongside it, and why each half is the way it is:
 | | before | after |
 | --- | --- | --- |
 | `/home/canari/backups` | 1019 MB | **133 MB** (of which 46 MB restic) |
-| offsite mirror on `mitv` | 1019 MB | **133 MB** |
+| offsite mirror | 1019 MB | **133 MB** |
 | one nightly archive | 70-76 MB | 3-4 MB |
 
 **The 15 existing archives were NOT deleted, and that correction matters more than the numbers.**
@@ -431,8 +431,8 @@ during an incident is worse than the documentation being absent**: it names a re
 does not exist. The `mongo` service, its volume and its dump were deleted on 2026-08-18 - see
 [databases](databases.md#mongodb---removed-2026-08-18).
 
-One consequence that must not be lost: the repository password lives at
-`/home/canari/.config/canari/restic-password`, NOT in `infrastructure/.env`, because the CD rewrites
+One consequence that must not be lost: the repository password lives in the deploy account's
+config directory, NOT in `infrastructure/.env`, because the CD rewrites
 that file from the GitHub secrets on every deploy and a repository whose password changes is
 unreadable forever. It has to be copied off the machine - the offsite mirror is a copy of an
 encrypted repository, not a second chance. See [MIGRATION.md](../../../infrastructure/MIGRATION.md).
@@ -558,7 +558,7 @@ Measured 2026-08-11: **30 G used of 125 G (25 %)**, with 6.0 GB reclaimable from
 A `docker system prune` is therefore **not urgent, and it is not free**: the CD deploys `:latest`, so
 the previous images are untagged and a prune deletes the fastest rollback path (GHCR still has them,
 at the cost of a pull). Beyond that, 125 GB is small for this workload: with 5.1 and 5.2 applied, a
-**500 GB** volume covers the high scenario for years, and `mitv` already has 376 GB free for the
+**500 GB** volume covers the high scenario for years, and the offsite server already has 376 GB free for the
 offsite copy.
 
 ### 5.7 Alert on the WP-GHOST-1 shape - **MEASURED CONTINUOUSLY SINCE 2026-08-19**

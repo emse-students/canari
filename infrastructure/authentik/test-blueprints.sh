@@ -12,6 +12,10 @@
 set -euo pipefail
 
 here="$(cd "$(dirname "$0")" && pwd)"
+
+# The terms-of-use version is one value in four files; checked before any container starts.
+bash "$here/check-consent-version.sh"
+
 project="miconnect-blueprint-test"
 work="$(mktemp -d)"
 
@@ -96,3 +100,21 @@ if ! run_ak_shell "$worker" <"$here/test-profile-editor.py" 2>&1 | tee >(cat >&2
   exit 1
 fi
 echo "the profile editor reads and changes users, and nothing else"
+
+# THE TERMS OF USE ARE HELD (user, 2026-10-17: stable 1.2.9 ships without them; docs/wiki/backlog.md).
+# 45-consent.yaml waits in blueprints/held/, so the driven test (test-consent-flow.py) has no stage to
+# drive. What is asserted instead is the hold itself, on the instance just built: no provider
+# authorizes through `miconnect-authorization` - on the upgrade run the flow EXISTS (main's blueprints
+# made it), so this is what proves these blueprints switch every provider back. Lifting the hold is
+# `git revert` of the commit that wrote this, which brings the driven test back.
+echo "terms of use: HELD - asserting no provider authorizes through miconnect-authorization"
+if ! run_ak_shell "$worker" 2>&1 <<'PY' | tee >(cat >&2) | grep -qx 'CONSENT-HELD-OK'; then
+from authentik.providers.oauth2.models import OAuth2Provider
+on_flow = sorted(OAuth2Provider.objects.filter(authorization_flow__slug="miconnect-authorization").values_list("name", flat=True))
+assert not on_flow, f"providers still on the held terms flow: {on_flow}"
+print("CONSENT-HELD-OK")
+PY
+  echo "::error::a provider still authorizes through the held terms flow - read the assertion above"
+  exit 1
+fi
+echo "the terms stage is held: every provider authorizes through the implicit-consent flow"

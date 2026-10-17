@@ -1,4 +1,7 @@
 import {
+  abandonHistoryOverlay,
+  armHistoryOverlayGesture,
+  backHistoryOverlayFromGesture,
   drainHistoryOverlayStack,
   pushHistoryOverlay,
   closeHistoryOverlayFromUi,
@@ -48,11 +51,13 @@ describe('historyOverlayStack', () => {
     stop();
   });
 
-  it('uses history.back when closing from UI', () => {
+  it('a UI close closes at once and never traverses: the entry stays, as a ghost', () => {
     const close = vi.fn();
     pushHistoryOverlay(close);
     closeHistoryOverlayFromUi(close);
-    expect(history.back).toHaveBeenCalled();
+    expect(close).toHaveBeenCalledTimes(1);
+    expect(historyOverlayStackDepth()).toBe(0);
+    expect(history.back).not.toHaveBeenCalled();
   });
 
   it('releasing an overlay its owner closed empties the stack and never walks the history', () => {
@@ -100,9 +105,13 @@ function fakeHistory() {
       entries[index] = state;
     },
     back() {
-      if (index === 0) return;
-      index--;
-      queueMicrotask(() => listener?.({ state: entries[index] } as PopStateEvent));
+      // The pointer moves when the traversal RUNS, not when it is asked for: a `pushState` made in
+      // between is gone back off, as Chrome does.
+      queueMicrotask(() => {
+        if (index === 0) return;
+        index--;
+        listener?.({ state: entries[index] } as PopStateEvent);
+      });
     },
   };
   vi.stubGlobal('history', api);
@@ -122,6 +131,10 @@ function fakeHistory() {
       api.back();
       // Every landing may walk one more entry; let each one settle.
       for (let i = 0; i < 6; i++) await Promise.resolve();
+    },
+    /** A `popstate` landing on `state`, delivered now, with no traversal behind it. */
+    fire(state: unknown) {
+      listener?.({ state } as PopStateEvent);
     },
   };
 }
@@ -165,8 +178,8 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
     expect(closeConversation).toHaveBeenCalledTimes(1);
     expect(closeSheet).not.toHaveBeenCalled();
     expect(historyOverlayStackDepth()).toBe(0);
-    // The history is back on the router's entry, so the NEXT Back is the router's to handle.
-    expect(h.index).toBe(0);
+    // Landed on the conversation's own entry, now a ghost: closing never traverses.
+    expect(h.index).toBe(1);
   });
 
   it('a ghost between two live overlays is crossed without costing a Back', async () => {
@@ -204,7 +217,7 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
     expect(h.index).toBe(0);
   });
 
-  it('a Back on the router entry after a ghost was crossed is the router own: no second walk', async () => {
+  it('once the last overlay is closed, ONE Back leaves the page across the ghosts it left', async () => {
     const h = fakeHistory();
     stop = initHistoryOverlayStack();
     history.pushState({ sveltekit: 1 }, '');
@@ -217,8 +230,11 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
 
     await h.pressBack();
     expect(closeConversation).toHaveBeenCalledTimes(1);
-    // The walk landed on the page's router entry and stopped there: one Back, one thing closed.
-    expect(h.index).toBe(2);
+    expect(h.index).toBe(3);
+    // Nothing open: this press is the page's. It lands on the page's entry, which shows nothing new,
+    // so the walk goes one further - the previous page, in one press.
+    await h.pressBack();
+    expect(h.index).toBe(1);
   });
 
   it('a navigation away from a ghost forgets it: a Back from the next page is not read as one on it', async () => {
@@ -234,6 +250,271 @@ describe('historyOverlayStack - one Back closes what is on screen (Mi 9T, 2026-1
 
     await h.pressBack();
     expect(h.index).toBe(1);
+  });
+
+  it('an overlay opened in the task that abandons another TAKES its entry: Back then closes only the top (Mi 9T, v1.2.9-alpha.1)', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closeConversation = vi.fn();
+    const closeMenu = vi.fn();
+    const closeCamera = vi.fn();
+    const closeTake = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeMenu);
+    // "Ouvrir la camera": the menu gives its entry up and the camera opens, in ONE task.
+    abandonHistoryOverlay(closeMenu);
+    pushHistoryOverlay(closeCamera);
+    expect(historyOverlayStackDepth()).toBe(2);
+    // Conversation, camera: the camera replaced the menu's entry, nothing traversed.
+    expect(h.index).toBe(2);
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    expect(h.index).toBe(2);
+    pushHistoryOverlay(closeTake);
+    expect(h.index).toBe(3);
+
+    await h.pressBack();
+    expect(closeTake).toHaveBeenCalledWith('back');
+    expect(closeCamera).not.toHaveBeenCalled();
+    expect(closeConversation).not.toHaveBeenCalled();
+    expect(h.index).toBe(2);
+  });
+
+  it('the camera handed back (take, then camera, abandoned): a sheet then one Back closes only the sheet', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closeConversation = vi.fn();
+    const closeCamera = vi.fn();
+    const closeTake = vi.fn();
+    const closeSheet = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeCamera);
+    pushHistoryOverlay(closeTake);
+    // "Suivant": the take is abandoned and the camera's onclose runs; its onDestroy abandons it.
+    abandonHistoryOverlay(closeTake);
+    abandonHistoryOverlay(closeCamera);
+    expect(historyOverlayStackDepth()).toBe(1);
+    pushHistoryOverlay(closeSheet);
+    expect(h.index).toBe(3);
+
+    await h.pressBack();
+    expect(closeSheet).toHaveBeenCalledWith('back');
+    expect(closeConversation).not.toHaveBeenCalled();
+    expect(historyOverlayStackDepth()).toBe(1);
+    await h.pressBack();
+    expect(closeConversation).toHaveBeenCalledWith('back');
+    expect(closeCamera).not.toHaveBeenCalled();
+    expect(closeTake).not.toHaveBeenCalled();
+  });
+
+  it('a conversation selected with the drawer AND the side panel open takes their entries: one Back closes it', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closeDrawer = vi.fn();
+    const closePanel = vi.fn();
+    const closeConversation = vi.fn();
+    pushHistoryOverlay(closeDrawer);
+    pushHistoryOverlay(closePanel);
+    // selectConversation: both give their entries up, and the conversation opens, in one task.
+    abandonHistoryOverlay(closeDrawer);
+    abandonHistoryOverlay(closePanel);
+    pushHistoryOverlay(closeConversation);
+    expect(h.index).toBe(2);
+
+    await h.pressBack();
+    expect(closeConversation).toHaveBeenCalledWith('back');
+    expect(closeDrawer).not.toHaveBeenCalled();
+    expect(closePanel).not.toHaveBeenCalled();
+    expect(historyOverlayStackDepth()).toBe(0);
+  });
+
+  it('pushA pushB abandonB abandonA: nothing traverses, and the next overlay is closed by ONE Back', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    const a = vi.fn();
+    const b = vi.fn();
+    pushHistoryOverlay(a);
+    pushHistoryOverlay(b);
+    abandonHistoryOverlay(b);
+    abandonHistoryOverlay(a);
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    expect(h.index).toBe(2);
+    expect(historyOverlayStackDepth()).toBe(0);
+
+    const c = vi.fn();
+    pushHistoryOverlay(c);
+    expect(h.index).toBe(2);
+    await h.pressBack();
+    expect(c).toHaveBeenCalledWith('back');
+    expect(historyOverlayStackDepth()).toBe(0);
+  });
+
+  it('pushA pushB uiB uiB: the second close is a no-op, and Back then closes A', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    const a = vi.fn();
+    let bOpen = true;
+    const b = vi.fn(() => {
+      bOpen = false;
+    });
+    pushHistoryOverlay(a);
+    pushHistoryOverlay(b);
+    closeHistoryOverlayFromUi(b);
+    // A double tap: the owner's guard sees the overlay already closed.
+    if (bOpen) closeHistoryOverlayFromUi(b);
+    expect(b).toHaveBeenCalledTimes(1);
+    expect(historyOverlayStackDepth()).toBe(1);
+
+    await h.pressBack();
+    expect(a).toHaveBeenCalledWith('back');
+    expect(historyOverlayStackDepth()).toBe(0);
+    expect(h.index).toBeGreaterThan(0);
+  });
+
+  it('pushA uiA uiA at the first entry: no hold, no traversal, and the next overlay gets an entry at once', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    const a = vi.fn();
+    pushHistoryOverlay(a);
+    closeHistoryOverlayFromUi(a);
+    closeHistoryOverlayFromUi(a);
+    for (let i = 0; i < 6; i++) await Promise.resolve();
+    expect(historyOverlayStackDepth()).toBe(0);
+    expect(h.index).toBe(1);
+
+    const next = vi.fn();
+    pushHistoryOverlay(next);
+    expect(historyOverlayStackDepth()).toBe(1);
+    await h.pressBack();
+    expect(next).toHaveBeenCalledWith('back');
+    expect(h.index).toBe(0);
+  });
+
+  it('a Back that lands on the history first entry: the next overlay gets its entry at once', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closePicker = vi.fn();
+    pushHistoryOverlay(closePicker);
+    releaseHistoryOverlay(closePicker);
+    // Back on the ghost lands on the router entry, which is the FIRST one: the walk off it goes
+    // nowhere and no popstate ever comes.
+    await h.pressBack();
+    expect(h.index).toBe(0);
+
+    const closeNext = vi.fn();
+    pushHistoryOverlay(closeNext);
+    expect(h.index).toBe(1);
+    await h.pressBack();
+    expect(closeNext).toHaveBeenCalledWith('back');
+  });
+
+  it('the member pressing Back right after the camera took the menu entry closes the camera, not the conversation', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closeConversation = vi.fn();
+    const closeMenu = vi.fn();
+    const closeCamera = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeMenu);
+    abandonHistoryOverlay(closeMenu);
+    pushHistoryOverlay(closeCamera);
+    await h.pressBack();
+    expect(closeCamera).toHaveBeenCalledWith('back');
+    expect(closeConversation).not.toHaveBeenCalled();
+    expect(h.index).toBe(1);
+  });
+
+  it('the iOS edge swipe with the "+" menu open closes the menu, not the conversation (iPhone 12, v1.2.9-alpha.2)', () => {
+    fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closeConversation = vi.fn();
+    const closeMenu = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeMenu);
+
+    expect(backHistoryOverlayFromGesture(armHistoryOverlayGesture())).toBe(true);
+    expect(closeMenu).toHaveBeenCalledWith('back');
+    expect(closeConversation).not.toHaveBeenCalled();
+    expect(historyOverlayStackDepth()).toBe(1);
+
+    expect(backHistoryOverlayFromGesture(armHistoryOverlayGesture())).toBe(true);
+    expect(closeConversation).toHaveBeenCalledWith('back');
+    // Nothing open: the gesture is its owner's again.
+    expect(backHistoryOverlayFromGesture(armHistoryOverlayGesture())).toBe(false);
+  });
+
+  it('a second commit of one gesture (no arm left) closes nothing - never the menu AND the conversation', () => {
+    fakeHistory();
+    stop = initHistoryOverlayStack({ systemBack: false });
+    const closeConversation = vi.fn();
+    const closeMenu = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeMenu);
+
+    // The caller hands its arm over once: the first commit takes it, a second gets null.
+    let arm: ReturnType<typeof armHistoryOverlayGesture> | null = armHistoryOverlayGesture();
+    const commit = () => {
+      const held = arm;
+      arm = null;
+      return backHistoryOverlayFromGesture(held);
+    };
+    expect(commit()).toBe(true);
+    expect(commit()).toBe(true);
+    expect(closeMenu).toHaveBeenCalledTimes(1);
+    expect(closeConversation).not.toHaveBeenCalled();
+    expect(historyOverlayStackDepth()).toBe(1);
+  });
+
+  it('the edge swipe over the camera review closes the take (which asks), then the camera, never the conversation', () => {
+    fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closeConversation = vi.fn();
+    const closeCamera = vi.fn();
+    const closeTake = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeCamera);
+    pushHistoryOverlay(closeTake);
+
+    backHistoryOverlayFromGesture(armHistoryOverlayGesture());
+    expect(closeTake).toHaveBeenCalledWith('back');
+    expect(closeCamera).not.toHaveBeenCalled();
+    backHistoryOverlayFromGesture(armHistoryOverlayGesture());
+    expect(closeCamera).toHaveBeenCalledWith('back');
+    expect(closeConversation).not.toHaveBeenCalled();
+  });
+
+  it('a gesture Back leaves a ghost the next overlay takes, and a system Back after it still closes only the top', async () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack();
+    const closeConversation = vi.fn();
+    const closeMenu = vi.fn();
+    pushHistoryOverlay(closeConversation);
+    pushHistoryOverlay(closeMenu);
+    backHistoryOverlayFromGesture(armHistoryOverlayGesture());
+    const closeSheet = vi.fn();
+    pushHistoryOverlay(closeSheet);
+    expect(h.index).toBe(2);
+
+    await h.pressBack();
+    expect(closeSheet).toHaveBeenCalledWith('back');
+    expect(closeConversation).not.toHaveBeenCalled();
+  });
+
+  it('with no system Back (the iOS app) no entry is ever written, so nested closes by swipe leave nothing behind', () => {
+    const h = fakeHistory();
+    stop = initHistoryOverlayStack({ systemBack: false });
+    for (let cycle = 0; cycle < 3; cycle++) {
+      const closes = [vi.fn(), vi.fn(), vi.fn()];
+      for (const close of closes) pushHistoryOverlay(close);
+      expect(historyOverlayStackDepth()).toBe(3);
+      for (let i = closes.length - 1; i >= 0; i--) {
+        expect(backHistoryOverlayFromGesture(armHistoryOverlayGesture())).toBe(true);
+        expect(closes[i]).toHaveBeenCalledWith('back');
+      }
+    }
+    expect(historyOverlayStackDepth()).toBe(0);
+    // Three cycles of three nested overlays: still the router's one entry.
+    expect(history.length).toBe(1);
+    expect(h.index).toBe(0);
   });
 
   it('reads an entry left by an earlier page load as the router entry below every live overlay', () => {

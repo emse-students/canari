@@ -12,7 +12,7 @@ use axum::{
     routing::get,
 };
 use std::{net::SocketAddr, sync::Arc};
-use tower_http::cors::{AllowOrigin, Any, CorsLayer};
+use tower_http::cors::{AllowHeaders, AllowOrigin, Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 use crate::handlers::ws_handler;
@@ -60,10 +60,21 @@ fn parse_allowed_origins(allow_origin: &str) -> Vec<HeaderValue> {
 /// that platform `/api/presence` with no server-side error to show for it - the same failure shape
 /// that cost iOS its login through the Nest services' own list (`apps/*/src/cors-origins.ts`,
 /// which this must be kept in step with).
+///
+/// THE ALLOWED HEADERS ARE THE ONES THE PREFLIGHT ASKS FOR, NEVER `*`. A wildcard
+/// `access-control-allow-headers` does NOT cover `Authorization` (Fetch standard, CORS-preflight
+/// fetch), so a browser that follows the standard refuses every Bearer read of `/api/presence`
+/// once the phone apps read through the WebView (`fetchRouting.ts`, 2026-10-15) - a transport
+/// failure, and the app would flap offline. Mirroring the request is what the Nest services'
+/// `cors` package does when `allowedHeaders` is unset.
+///
+/// The preflight is cached for [`CORS_PREFLIGHT_MAX_AGE`], so a read pays it once per URL rather
+/// than on every call.
 fn chat_gateway_cors_layer(allow_origin: &str) -> CorsLayer {
     let common = CorsLayer::new()
         .allow_methods([Method::GET, Method::POST, Method::OPTIONS])
-        .allow_headers(Any);
+        .allow_headers(AllowHeaders::mirror_request())
+        .max_age(CORS_PREFLIGHT_MAX_AGE);
 
     if allow_origin.trim() == "*" {
         return common.allow_origin(Any);
@@ -84,6 +95,10 @@ fn chat_gateway_cors_layer(allow_origin: &str) -> CorsLayer {
         common.allow_origin(AllowOrigin::list(origins))
     }
 }
+
+/// How long a browser may reuse an answered preflight. Chromium caps it at 2 h, WebKit at 10 min;
+/// the services' `enableCors({ maxAge })` uses the same value.
+const CORS_PREFLIGHT_MAX_AGE: std::time::Duration = std::time::Duration::from_secs(7200);
 
 /// Masks credentials in a Redis URL for logging.
 /// `redis://user:password@host:port` -> `redis://host:port`
@@ -296,6 +311,48 @@ mod tests {
         assert!(
             vary.to_ascii_lowercase().contains("origin"),
             "vary was {vary}"
+        );
+    }
+
+    /// A Bearer read from a phone app (`GET /api/presence` through the WebView) preflights
+    /// `authorization, content-type`. A `*` answer does not cover `Authorization`, so the header
+    /// must be named back, and the answer cached.
+    #[tokio::test]
+    async fn names_back_the_authorization_header_a_bearer_read_preflights() {
+        let response = router(PRODUCTION_ALLOW_ORIGIN)
+            .oneshot(
+                Request::builder()
+                    .method(Method::OPTIONS)
+                    .uri("/api/presence")
+                    .header(header::ORIGIN, "http://tauri.localhost")
+                    .header(header::ACCESS_CONTROL_REQUEST_METHOD, "GET")
+                    .header(
+                        header::ACCESS_CONTROL_REQUEST_HEADERS,
+                        "authorization,content-type",
+                    )
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        let allowed = response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+            .expect("no allow-headers")
+            .to_str()
+            .unwrap()
+            .to_ascii_lowercase();
+        assert!(allowed != "*", "a wildcard does not cover Authorization");
+        assert!(
+            allowed.contains("authorization"),
+            "allow-headers was {allowed}"
+        );
+        assert_eq!(
+            response
+                .headers()
+                .get(header::ACCESS_CONTROL_MAX_AGE)
+                .unwrap(),
+            "7200"
         );
     }
 

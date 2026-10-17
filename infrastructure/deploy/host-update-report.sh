@@ -8,9 +8,9 @@
 # a correct mechanism with no report is found by hand, a day late. Two things had already gone wrong
 # in exactly that way and nothing noticed either:
 #
-#   * `mitv` carried `/etc/apt/apt.conf.d/20auto-upgrades` with `APT::Periodic::Unattended-Upgrade
+#   * One host carried `/etc/apt/apt.conf.d/20auto-upgrades` with `APT::Periodic::Unattended-Upgrade
 #     "1"` and the PACKAGE NOT INSTALLED. A configuration that reads as "on" and does nothing.
-#   * The same box has had `/var/run/reboot-required` set since 12 July, naming a KERNEL security
+#   * The same box had `/var/run/reboot-required` set for weeks, naming a KERNEL security
 #     update, with 8 weeks of uptime. A security update you installed and are not running is a
 #     security update you do not have.
 #
@@ -206,7 +206,7 @@ judge() {
     findings=$((findings + 1))
   fi
 
-  # THE SWITCHES AND THE PACKAGE ARE TWO FACTS, AND `mitv` HAD THEM DISAGREE. Reported separately so
+  # THE SWITCHES AND THE PACKAGE ARE TWO FACTS, AND ONE HOST HAD THEM DISAGREE. Reported separately so
   # the message names which half is missing instead of saying "updates are off".
   if [ -z "${periodic_upgrade:-}" ] || [ "${periodic_upgrade}" = "0" ]; then
     printf '::error::APT::Periodic::Unattended-Upgrade is off on %s, so the timer runs and applies nothing\n' "${host}"
@@ -252,8 +252,8 @@ judge() {
   fi
 
   # A KERNEL SECURITY UPDATE INSTALLED AND NOT RUNNING IS NOT A SECURITY UPDATE. Deliberately a
-  # finding and never an action: nothing here reboots a box that serves anything, and `mitv` has
-  # wanted one since 12 July with nothing saying so.
+  # finding and never an action: nothing here reboots a box that serves anything, and one host had
+  # wanted one for weeks with nothing saying so.
   if [ "${reboot}" = "yes" ]; then
     printf '::error::%s needs a REBOOT for %s - updates are installed and not in effect, and only a human reboots this box\n' \
       "${host}" "${reboot_pkgs:-an unnamed package}"

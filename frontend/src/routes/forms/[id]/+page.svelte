@@ -5,6 +5,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { onMount } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import { getToken } from '$lib/stores/auth';
   import { showToast } from '$lib/stores/toast.svelte';
   import { currentUserId } from '$lib/stores/user';
@@ -37,6 +38,7 @@
     initialSelections,
     isItemAnswered,
     missingAnswerMessage,
+    pricedQuestionsAwaitingAnswer,
     visibleAnswers,
     visibleItems as visibleItemsOf,
   } from '$lib/forms/fillAnswers';
@@ -324,10 +326,28 @@
   });
 
   /**
+   * The priced questions still to be answered: until they are, no cell is chosen, so the page says
+   * nothing about the price - no total, no "from" price, no "unavailable"
+   * (`pricedQuestionsAwaitingAnswer`). The "others" cell they would fall in is not their price.
+   */
+  const awaitingPricedAnswers = $derived(
+    pricing
+      ? pricedQuestionsAwaitingAnswer(
+          visibleItems,
+          pricing.answerDimensions.map((d) => d.questionId),
+          selections
+        )
+      : new Set<string>()
+  );
+
+  /** Whether the answers have chosen a cell: no priced question is left to answer. */
+  const priceDecided = $derived(awaitingPricedAnswers.size === 0);
+
+  /**
    * The combination they have landed on does not exist, so there is nothing to pay and nothing to
    * submit. Distinct from `!maySubmit`, which is about who they ARE: this one moves as they answer.
    */
-  const priceUnavailable = $derived(baseCents === null);
+  const priceUnavailable = $derived(priceDecided && baseCents === null);
 
   /** The price, once known to exist. Zero for a free form, so the display stays arithmetic. */
   const priceCents = $derived(baseCents ?? 0);
@@ -345,6 +365,12 @@
     const current = view.answerDimensions.map((d) => bucketIdOf(d, selections[d.questionId]));
     return new Set(
       view.answerDimensions.flatMap((dimension, index) => {
+        // Another priced question not answered yet leaves this one's cell undecided: nothing is
+        // closed until it is (an "others" stand-in would close options the person can reach).
+        const othersPending = view.answerDimensions.some(
+          (other, j) => j !== index && awaitingPricedAnswers.has(other.questionId)
+        );
+        if (othersPending) return [];
         const item = form?.items.find((i) => i.id === dimension.questionId);
         const closed: string[] = [];
         for (const option of item?.options ?? []) {
@@ -391,8 +417,9 @@
 
   function calculateTotal(): number {
     // Nothing to total on an unavailable combination: there is no price, and showing zero would
-    // read as free on a form that is going to refuse the submission.
-    if (!form || baseCents === null) return 0;
+    // read as free on a form that is going to refuse the submission. Nor before the cell is chosen:
+    // the "others" cell a blank falls in is not this person's price.
+    if (!form || !priceDecided || baseCents === null) return 0;
     let total = baseCents;
     for (const item of visibleItems) {
       const val = selections[item.id];
@@ -410,8 +437,18 @@
     return Math.max(0, total);
   }
 
+  /** The FILE questions whose file is still travelling: the answer is not sent while any is. */
+  const uploadingFiles = new SvelteSet<string>();
+
   async function handleSubmit(payerEmail?: string) {
     if (!form || submitting) return;
+    if (uploadingFiles.size > 0) {
+      // Refused, not queued: an optional file question would otherwise go out empty while the
+      // member believes the file is attached.
+      Log.d('FormView', `submit refused: ${uploadingFiles.size} file(s) still uploading`);
+      error = m.form_file_wait_upload();
+      return;
+    }
     if (isNotOpenYet && form.opensAt) {
       error = m.form_view_error_not_open({ date: formatFormOpensAt(form.opensAt) });
       return;
@@ -451,7 +488,10 @@
         await navigateExternal(res.checkoutUrl);
       } else {
         submitted = true;
-        successMessage = m.form_view_submission_success();
+        // The previous request of this answer was found PAID while settling it: no new one.
+        successMessage = res.alreadyPaid
+          ? m.form_view_submission_already_paid()
+          : m.form_view_submission_success();
         setTimeout(() => goto(resolve(internalPath(redirectTo))), 1500);
       }
     } catch (e: any) {
@@ -586,7 +626,7 @@
     <!-- ── Header ── -->
     <FormHeader
       {form}
-      priceLabel={!priceUnavailable && priceCents > 0
+      priceLabel={priceDecided && !priceUnavailable && priceCents > 0
         ? m.form_view_from_price({ price: formatCurrency(priceCents, form.currency) }) +
           appliedPricingLabel
         : null}
@@ -713,8 +753,11 @@
           disabled={submitted || isNotOpenYet}
           formId={form.id}
           currency={form.currency}
+          fileRetentionDays={form.fileRetentionDays}
           {optionModifier}
           {optionClosed}
+          onUploadingChange={(busy) =>
+            busy ? uploadingFiles.add(item.id) : uploadingFiles.delete(item.id)}
         />
       {/each}
     </div>

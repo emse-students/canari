@@ -2,7 +2,11 @@
   import { Search, X } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
-  import { fetchGifPage, KLIPY_KEY, type GifResult } from '$lib/utils/chat/gifSearch';
+  import {
+    fetchGifPage,
+    GifSearchUnavailableError,
+    type GifResult,
+  } from '$lib/utils/chat/gifSearch';
   import { columnsFor, layoutMasonry, nearEnd, visibleTiles } from '$lib/utils/chat/gifMasonry';
   import MediaFrame from '$lib/components/shared/MediaFrame.svelte';
 
@@ -42,6 +46,8 @@
   let hasNext = $state(false);
   let loading = $state(false);
   let failed = $state(false);
+  /** The server answered that this estate has no GIF provider key - not a load failure. */
+  let unavailable = $state(false);
   let scroller = $state<HTMLElement | null>(null);
   let width = $state(0);
   let viewport = $state(0);
@@ -75,6 +81,12 @@
       hasNext = result.hasNext;
     } catch (error) {
       if (controller.signal.aborted || mine !== generation) return;
+      if (error instanceof GifSearchUnavailableError) {
+        console.warn('[GifGrid] the server has no GIF provider key on this estate');
+        unavailable = true;
+        results = [];
+        return;
+      }
       console.warn(`[GifGrid] page ${nextPage} failed: ${String(error)}`);
       failed = true;
       if (nextPage === 1) results = [];
@@ -88,7 +100,7 @@
 
   // A new search (or the grid opening) starts again at page 1 of that search.
   $effect(() => {
-    if (!active || !KLIPY_KEY) return;
+    if (!active || unavailable) return;
     const q = query;
     const timer = setTimeout(
       () => {
@@ -171,7 +183,7 @@
     class="relative min-h-0 flex-1 overflow-y-auto overscroll-contain px-2"
     data-testid="gif-grid-scroller"
   >
-    {#if !KLIPY_KEY}
+    {#if unavailable}
       <p class="text-text-muted py-10 text-center text-sm">{m.chat_gif_not_configured()}</p>
     {:else if failed && results.length === 0}
       <p class="py-10 text-center text-sm text-red-500">{m.chat_gif_load_error()}</p>

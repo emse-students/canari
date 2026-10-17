@@ -16,6 +16,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import NotificationRow from './NotificationRow.svelte';
 import type { PostNotification } from '$lib/posts/api';
+import { m } from '$lib/paraglide/messages';
 
 // `Avatar` resolves a display name on mount - stubbed so the test never reaches the network,
 // same convention `MessageReactions.test.ts` uses for the same reason.
@@ -173,5 +174,90 @@ describe('NotificationRow sentence', () => {
     expect(row.textContent).toContain('propose de co-organiser');
     expect(row.textContent).not.toContain('a commenté');
     expect(row.querySelector('[aria-label^="Logo de"]')).not.toBeNull();
+  });
+});
+
+describe('NotificationRow with a type this build does not know', () => {
+  const unknown: PostNotification = {
+    id: 'n-unk',
+    type: 'unit_test_future_type',
+    postId: 'x1',
+    actorId: 'u1',
+    actorName: 'Marie',
+    text: 'Une inscription',
+    read: false,
+    createdAt: new Date().toISOString(),
+  };
+
+  it('renders a neutral, inert row - not the comment sentence - and logs the type once', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const onOpen = vi.fn();
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    const app = mount(NotificationRow, {
+      target,
+      props: { notif: unknown, unread: false, onOpen },
+    });
+    mounted.push(() => void unmount(app));
+    flushSync();
+    const second = document.createElement('div');
+    document.body.appendChild(second);
+    const app2 = mount(NotificationRow, {
+      target: second,
+      props: { notif: unknown, unread: false, onOpen },
+    });
+    mounted.push(() => void unmount(app2));
+    flushSync();
+
+    expect(target.textContent).toContain(m.notif_unknown_type_text());
+    expect(target.textContent).not.toContain(m.notif_comment_text());
+    expect(target.textContent).not.toContain('Marie');
+    const button = target.querySelector('button')!;
+    expect(button.disabled).toBe(true);
+    button.click();
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain('unit_test_future_type');
+  });
+});
+
+/** Written out by hand on purpose: walking the production set would pass when a type left it. */
+const EVERY_TYPE_THE_SERVER_EMITS = [
+  'comment',
+  'reply',
+  'reaction',
+  'mention',
+  'form_reminder',
+  'association_post',
+  'followed_post',
+  'association_repost',
+  'repost_proposed',
+  'coorganise_proposed',
+  'event_proposed',
+  'event_validated',
+  'event_rejected',
+  'event_updated',
+  'event_deleted',
+  'event_pending',
+  'profile_correction_applied',
+  'profile_correction_refused',
+];
+
+describe('NotificationRow with every known type', () => {
+  it('is never the neutral row, and stays activatable', () => {
+    for (const type of EVERY_TYPE_THE_SERVER_EMITS) {
+      const target = renderRow({
+        id: `n-${type}`,
+        type,
+        postId: 'x1',
+        actorId: 'u1',
+        actorName: 'Marie',
+        text: 'Titre',
+        read: false,
+        createdAt: new Date().toISOString(),
+      });
+      expect(target.textContent, type).not.toContain(m.notif_unknown_type_text());
+      expect(target.querySelector('button')!.disabled, type).toBe(false);
+    }
   });
 });

@@ -68,6 +68,14 @@ const BITS_PER_PIXEL_FRAME = 0.15;
 
 /** The JPEG quality of a photo. */
 const PHOTO_QUALITY = 0.92;
+/**
+ * A take's THUMBNAIL (`ReelClip.poster`): its long edge in pixels, and its JPEG quality. The composer
+ * draws it in a 112 CSS px tile (`w-28`), 336 px at a DPR of 3, so 360 covers every phone measured;
+ * at that size a 9:16 still is ~73 k pixels, about 4 % of the full photo's 1080x1920, so its
+ * synchronous encode is a small fraction of a photo's (review of #1925).
+ */
+export const THUMBNAIL_LONG_EDGE = 360;
+const THUMBNAIL_QUALITY = 0.8;
 
 /** The largest even integer not above `value` (encoders reject odd dimensions), at least 2. */
 function even(value: number): number {
@@ -139,6 +147,8 @@ export interface CameraCapture {
   readonly ready: boolean;
   /** One photo, or `null` (logged) when none could be made. */
   photo(): Promise<Blob | null>;
+  /** The same crop as a small still ({@link THUMBNAIL_LONG_EDGE}), or `null` (logged). */
+  thumbnail(): Blob | null;
   /** The preview's crop as a stream to record, or `null` (logged) when none could be made. */
   startFramedStream(): FramedStream | null;
 }
@@ -205,6 +215,35 @@ export function takeFramedPhoto(video: HTMLVideoElement, box: PreviewBox): Promi
   const blob = canvasToBlob(canvas, 'image/jpeg', PHOTO_QUALITY);
   if (!blob) console.error('[framed-capture] photo: the canvas produced no blob');
   return Promise.resolve(blob);
+}
+
+/** The size of a thumbnail of `out`: its long edge brought down to {@link THUMBNAIL_LONG_EDGE}. */
+export function thumbnailSize(out: Size): Size {
+  const scale = Math.min(1, THUMBNAIL_LONG_EDGE / Math.max(out.width, out.height));
+  return { width: even(out.width * scale), height: even(out.height * scale) };
+}
+
+/**
+ * The preview's crop of the current frame as a SMALL JPEG - a filmed take's thumbnail. Synchronous
+ * (`canvasToBlob`, as a photo), which is why it is small, and why the capture screen takes it BEFORE
+ * the recorder starts: nothing the recorder draws shares the main thread with it.
+ */
+export function takeFramedThumbnail(video: HTMLVideoElement, box: PreviewBox): Blob | null {
+  const { crop, out } = cropFor(video, box);
+  const size = thumbnailSize(out);
+  const canvas = document.createElement('canvas');
+  canvas.width = size.width;
+  canvas.height = size.height;
+  const context = canvas.getContext('2d');
+  if (!context) {
+    console.error('[framed-capture] thumbnail: no canvas context');
+    return null;
+  }
+  draw(context, video, crop, size, box.mirror);
+  const blob = canvasToBlob(canvas, 'image/jpeg', THUMBNAIL_QUALITY);
+  if (!blob) console.error('[framed-capture] thumbnail: the canvas produced no blob');
+  else console.debug(`[framed-capture] thumbnail ${size.width}x${size.height}, ${blob.size} bytes`);
+  return blob;
 }
 
 /**

@@ -611,7 +611,7 @@ A backoff bump now updates the clear scheduling columns in place; it used to dec
 
 A salon notification now offers Mark as read, which clears the banner on every device and raises the salon's read receipt without opening the app. Reply stays absent on salons ([mobile](docs/wiki/frontend/mobile.md#a-salon-mark-as-read-only-and-why-reply-is-not-offered-decided-2026-10-10-android)).
 
-### A 403 on a send is classified by origin: an edge/WAF HTML page (CrowdSec ban) no longer parks the outbox as an identity refusal, it retries and tells the user once.
+### A 403 on a send is classified by origin: an edge/WAF HTML page (a security-tool ban) no longer parks the outbox as an identity refusal, it retries and tells the user once.
 
 ### Fixed - an upload from the phone app no longer inflates its body ~85 times in memory
 
@@ -751,7 +751,7 @@ The summary is now `setOnlyAlertOnce(true)` with `GROUP_ALERT_CHILDREN`; see [mo
 
 ### Changed - the host-update report's reach and the needrestart blindness are measured
 
-The report reads the Portail-etu host, where the runner lives; `needrestart -b` is blind to an unprivileged account, so it is not wired in until a sudoers rule exists ([host-updates](docs/wiki/infrastructure/host-updates.md#what-stays-open-the-reports-reach-the-raid-channel-and-libraries-nothing-restarts)).
+The report reads the Portail-etu host, where the runner lives; one check cannot be wired in until the host operator grants a rule ([host-updates](docs/wiki/infrastructure/host-updates.md#what-stays-open-the-reports-reach-the-raid-channel-and-libraries-nothing-restarts)).
 
 ### Changed - the lockfile-superseding mechanism for Dependabot is recorded, parked on one decision
 
@@ -1586,7 +1586,7 @@ The store notes for 1.1.0 are written: campus and formation spaces, the signed a
 
 ### Changed - the backlog after the user's answers of 2026-10-04
 
-Decided items closed (one holder, dead rows, the two photo bubbles), the done clicks removed, the tunnel token still on the command line recorded ([backlog](docs/wiki/backlog.md)).
+Decided items closed (one holder, dead rows, the two photo bubbles), the done clicks removed, the owed operator items recorded ([backlog](docs/wiki/backlog.md)).
 
 ### Added - a blind salon banner is counted, on Android and iOS
 
@@ -2720,8 +2720,8 @@ queued is already put behind it ([mobile](docs/wiki/frontend/mobile.md#backgroun
 
 `verifyPushSecretAuth` threw `ForbiddenException` with no log line, so a 403 on
 `/api/mls/push/*` was diagnosable only from the nginx access log, never from our own service.
-Found while root-causing a CrowdSec ban that closed `sky.mitv.fr` for an unrelated EMSE visitor
-([infrastructure](docs/wiki/infrastructure/estate-migration.md#crowdsec-covers-this-host-in-two-halves-and-only-one-of-them-reaches-every-vhost)).
+Found while root-causing a security-tool ban on another site for an unrelated EMSE visitor
+([infrastructure](docs/wiki/infrastructure/estate-migration.md)).
 
 ### Fixed - every refused session refresh says why in the server log
 
@@ -2868,8 +2868,8 @@ Flow titles and prompts in French with the ecosystem's "tu"; accounts are extern
 
 ### Changed - the School host reaches `mitv` privately, so the wiki and Omeka are a plain reverse proxy
 
-The "no private path" reading came from a routing table; the default gateway routes `10.0.0.4` in one
-hop. The three relay designs are withdrawn ([estate-migration](docs/wiki/infrastructure/estate-migration.md#sky-moves-the-wiki-and-omeka-only-get-names---decided-by-the-user-2026-09-25)).
+The "no private path" reading came from a routing table; the default gateway reaches the host in one
+hop. The three relay designs
 
 ## [0.18.25] - 2026-09-25
 
@@ -2890,13 +2890,13 @@ the bare-domain linkifier now carry the new name; the CORS list, the deep-link c
 `wss://` allowlist carry BOTH, because apps already installed on a phone still call the old one
 ([estate-migration](docs/wiki/infrastructure/estate-migration.md#7-phase-2---the-names)).
 
-### Changed - CrowdSec can now reason about the other vhosts, and about real clients
+### Changed - the host's access logs now see real clients
 
 `canari-prod`, `authentik` and `cercle` resolve the client address through the tunnel connector
-(`real_ip`) instead of logging `10.0.0.3` for every visitor, and CrowdSec's acquisition was then
-widened to their three access logs. The order matters: aimed at those logs first, the first abusive
-request would have banned the relay and taken the hostname down
-([estate-migration](docs/wiki/infrastructure/estate-migration.md#crowdsec-covers-this-host-in-two-halves-and-only-one-of-them-reaches-every-vhost)).
+(`real_ip`) instead of logging the connector's address for every visitor, and the host's
+intrusion-prevention tooling was then pointed at their access logs. The order matters: aimed at those
+logs first, the first abusive request would have banned the relay and taken the hostname down
+([estate-migration](docs/wiki/infrastructure/estate-migration.md)).
 
 ### Changed - le selecteur d'emojis est une grille maison, dessinee avec les images Noto
 
@@ -2929,8 +2929,8 @@ on both hosts; both origins now answer `200`
 ### Fixed - the first automated production deploy after the move could not bind its port
 
 `v0.18.23` brought the whole estate up except `frontend`: production asked for host port 8080, which
-CrowdSec's Local API has held on the shared host since before Canari arrived, and both public
-hostnames answered `502` for about fifteen minutes. The manual migration had started the container
+a service already on the shared host holds the port production asked for (8080), and both public
+hostnames answered `502` for about fifteen minutes.
 on 8081 and taught nginx 8081 without bringing `render-env.sh` along. Production's port is now 8081
 everywhere it is declared, the container publishes on the loopback like dev, and the deploy tests
 assert every rendered port against a measured list of what this machine has already given away
@@ -2978,8 +2978,7 @@ still needs the usual manual paste into the live Brand
 ### Changed - Authentik sert depuis la machine cible, et un proxy n'herite d'aucun defaut
 
 Fenetre de 6 min 37 s, 230 tables prouvees identiques par empreinte de contenu. Le relais est un
-conteneur ici et non un paquet : `nginx` est absent de la VM et `sudo` y demande un mot de passe,
-pas `docker`. Interposer ce relais imposait une limite de corps de 1 Mo a une stack publiee en
+conteneur ici et non un paquet, la VM n'ayant pas de serveur web installe. Interposer ce relais imposait
 direct jusque-la, donc sans aucune - relevee des deux cotes. Verifie jusqu'au bout : emetteur OIDC,
 executeur de flux et redirection CAS.
 [estate-migration](docs/wiki/infrastructure/estate-migration.md).
@@ -3053,10 +3052,7 @@ desormais un fichier de `changelog.d/`, verse sous sa version par le bump stable
 
 Re-checked every deliberate Cloudflare zone setting against the live host: TLS floor holds, the
 `www.` question is moot (no such DNS record), CSP and CSRF were never Cloudflare's job. The
-"DDoS absorption" row turned out to be answered by CrowdSec, already running on every vhost and
-banning for real - but its log-parsing half reads one shared `access.log`, so Authentik's own log,
-where a password is actually tried, is parsed by nothing
-([backlog](docs/wiki/infrastructure/estate-migration.md#crowdsec-covers-this-host-in-two-halves-and-only-one-of-them-reaches-every-vhost)).
+"DDoS absorption" row is answered by the host's own intrusion-prevention tooling.
 Full audit: [estate-migration](docs/wiki/infrastructure/estate-migration.md#what-the-edge-did-that-the-origin-must-now-do).
 
 ### Fixed - deux fichiers supprimes par accident sont revenus, et le gate qui aurait du le dire
@@ -3693,9 +3689,9 @@ arriere sont le meme geste.
 ### Changed - le runner quitte un compte personnel, et cloudflared attend son tunnel
 
 Le runner qui deploie Portail-etu tournait sous le login d'une personne, sur une machine partagee :
-il tourne sous `gha-runner`, sans sudo, et aucun workflow n'ecrit plus ou il vit. `cloudflared` est
-installe sur la cible et configure avec rien - creer le tunnel reste un geste de dashboard, remesure
-le 2026-09-24. Trois regles durables en sortent, dont `bin` est un lien symbolique.
+il tourne sous un compte de service dedie, et aucun workflow n'ecrit plus ou il vit. Le connecteur du
+tunnel est installe sur la cible ; sa creation reste un geste de dashboard. Trois regles durables en sortent,
+dont `bin` est un lien symbolique.
 [estate-migration](docs/wiki/infrastructure/estate-migration.md).
 
 ### Changed - la machine cible est videe avant le demenagement
@@ -3713,15 +3709,9 @@ Deux phases separees parce qu'une seule est visible : le deplacement se defait e
 le tunnel, le changement de noms ne se defait pas - un lien profond est compile dans le
 binaire et livre par deux stores. Decisions prises avec l'utilisateur le 2026-09-23, dont
 l'abandon total de Cloudflare sur les chemins publics. Le blocage bun est REFUTE.
-Premieres mesures SUR la machine cible le meme jour : ce n'est pas un serveur portail-etu mais la
-machine d'hebergement associatif partagee de l'ecole, 4 vCPU et 11 G face a trois VMs taillees pour
-8 et 20, et le compte livre n'a ni docker ni sudo - rien ne peut commencer avant. Deux affirmations
-du plan tombent : le multiplexage SSH ne marche pas sur ce poste, et le bastion muet n'est pas un
-bannissement. Le compte a depuis docker et sudo, et les comptes dormants sont supprimes. Trois
-pieges mesures sur la machine : une suppression massive de fichiers y est tuee sans laisser de
-trace, `/export` est un NetApp distinct du disque local, et la reutilisation d'uid a deja fausse
-l'attribution de fichiers trois fois. Le vhost `canari.emse.fr` prepare par la DSI repond deja - en
-servant Portail-etu. [estate-migration](docs/wiki/infrastructure/estate-migration.md).
+Premieres mesures SUR la machine cible le meme jour : c'est la machine d'hebergement associatif partagee de l'ecole,
+et non un serveur dedie ; les mesures de la machine sont dans les notes privees du projet.
+[estate-migration](docs/wiki/infrastructure/estate-migration.md).
 
 ### Fixed - NOTIF-10 ne mesure plus l'ignorance de son propre classificateur
 
@@ -9163,10 +9153,8 @@ since, so the two pages contradicted each other - and the page carrying the SQL,
 and the fact that `auth_db` is the only database is the one a reader opens first.
 
 **It also named the wrong culprit, which is why it outlived its own correction.** It was never Bash:
-MSYS `ssh` execs the cloudflared `ProxyCommand` through `/bin/bash` whatever the caller, and it was
-the Windows BACKSLASHES in that path being eaten. `~/.ssh/config` spells it with forward slashes
-now, which `bash` and `cmd` both exec. A rule that blames the tool rather than the path cannot be
-checked, so nothing could have refuted it.
+the rule blamed the tool rather than a path in the workstation's own SSH wiring, which is fixed.
+A rule that blames the tool rather than the path cannot be checked, so nothing could have refuted it.
 
 The preference now runs the other way for anything binary: PowerShell text-encodes stdout, so a
 `pg_dump | gzip` through it is corrupted on arrival, and `pull-prod-dump.sh` already says so in its
@@ -12649,7 +12637,7 @@ the web. Not a `continue-on-error`, which would have swallowed the real refusals
 
 **ADMIN BYPASS TAKEN, and this paragraph is the record the rule asks for.** `gh pr merge 399
 --squash --admin` merged the fix without waiting for `CI passed`, on the user's explicit instruction
-("Bypass admin. C'est urgent"), because production was refusing every browser login at the time. No
+(an urgent instruction), because production was refusing every browser login at the time. No
 gate of `release-preflight.sh` was bypassed: the ordinary alpha-then-stable sequence was followed,
 and the only thing skipped was the branch ruleset's required check on the pull request.
 

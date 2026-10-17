@@ -973,17 +973,32 @@ export function findLabelled(flat, labels, { type } = {}) {
   );
 }
 
-/** A switch's state from its accessibility value: true on, false off, null when it is not a switch. */
+/**
+ * A switch's state from its accessibility value: true on, false off, null when it is not a switch.
+ * Control Center on iOS 27 in French answers "Oui" / "Non" for its toggles (Mode Avion read "Non" on
+ * the iPhone 12 bench, 2026-10-16), where Settings' switches still answer 1 / 0.
+ */
 export function switchState(e) {
   const v = String(e?.value ?? '').trim().toLowerCase();
-  if (v === '1' || v === 'on' || v === 'true') return true;
-  if (v === '0' || v === 'off' || v === 'false') return false;
+  if (v === '1' || v === 'on' || v === 'true' || v === 'oui' || v === 'yes') return true;
+  if (v === '0' || v === 'off' || v === 'false' || v === 'non' || v === 'no') return false;
   return null;
+}
+
+/**
+ * The control labelled one of `labels` that answers as a switch. Control Center carries the same
+ * label on a status-bar IMAGE ("Wi-Fi", value null) above its toggle, so the first exact label is not
+ * the switch; when none answers as one, the first labelled element is returned for the error.
+ */
+function findSwitch(flat, labels) {
+  const want = labels.map((l) => l.toLowerCase());
+  const labelled = (flat ?? []).filter((e) => e.rect && want.includes(labelOf(e).toLowerCase()));
+  return labelled.find((e) => switchState(e) !== null) ?? labelled[0] ?? null;
 }
 
 /** Flips the switch labelled one of `labels` to `on` if it is not, then RE-READS it. */
 function setSwitch(labels, on, where) {
-  const before = findLabelled(readFlat(), labels);
+  const before = findSwitch(readFlat(), labels);
   if (!before) throw new Error(`${where}: no control labelled ${labels.join(' / ')} on screen`);
   const was = switchState(before);
   if (was === null) throw new Error(`${where}: "${labelOf(before)}" is not a switch (value ${JSON.stringify(before.value)})`);
@@ -991,7 +1006,7 @@ function setSwitch(labels, on, where) {
     tapRect(before.rect);
     io.sleepSync(900);
   }
-  const after = switchState(findLabelled(readFlat(), labels));
+  const after = switchState(findSwitch(readFlat(), labels));
   if (after !== on) throw new Error(`${where}: "${labelOf(before)}" reads ${after} after the tap - wanted ${on}`);
   return { before: was, after };
 }

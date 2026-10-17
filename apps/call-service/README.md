@@ -51,14 +51,14 @@ no database or Redis dependency of its own.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `JWT_SECRET` | yes | - | HS256 secret (shared with all services) |
-| `CALL_ROOM_SECRET` | no | `""` | Secret for room access tokens (without it, room access control is disabled) |
+| `CALL_ROOM_SECRET` | **yes** | - | Secret for room access tokens. Unset or empty, the service REFUSES TO START (it used to disable room access control; no dev flag exists, the local compose supplies a dev value) |
 | `PORT` | no | `3004` | Listen port |
 | `CLOUDFLARE_CALLS_API_TOKEN` | no | - | Cloudflare API token for TURN credentials |
 | `CLOUDFLARE_TURN_KEY_ID` | no | - | Cloudflare TURN key ID |
 | `CLOUDFLARE_TURN_TTL_SECONDS` | no | `7200` | TURN credential TTL |
 | `TURN_URL` | no | - | Static TURN URL (dev fallback) |
-| `TURN_USERNAME` | no | `user` | Static TURN username |
-| `TURN_CREDENTIAL` | no | `password` | Static TURN credential |
+| `TURN_USERNAME` | with `TURN_URL` | - | Static TURN username (no default; a `TURN_URL` without both credentials is ignored with an error) |
+| `TURN_CREDENTIAL` | with `TURN_URL` | - | Static TURN credential |
 
 ## See also
 

@@ -43,6 +43,12 @@ Server:
 | GET | `/api/media/:id` | JWT | Download encrypted blob (no-cache, owner or group member) |
 | DELETE | `/api/media/internal/users/:userId` | `INTERNAL_SECRET` | Delete every blob uploaded by a user (account deletion) |
 | DELETE | `/api/media/:id` | `INTERNAL_SECRET` | Delete media blob - server-to-server only |
+| POST | `/api/media/internal/form-file` | `INTERNAL_SECRET` | Store a form answer's PLAINTEXT file, class `form-file` |
+| GET | `/api/media/internal/form-file/:id` | `INTERNAL_SECRET` | The one read of a form file (social-service's manager-gated download) |
+| POST | `/api/media/internal/form-file-purge` | `INTERNAL_SECRET` | Delete form files on a class AND owner allowlist |
+
+The full route table, the other internal routes included, is the wiki's
+([media-service](../../docs/wiki/services/media-service.md#routes)).
 
 Client-facing `DELETE` endpoints do not exist. Blob deletion is triggered only by the 30-day idle retention sweep or account deletion via internal API.
 

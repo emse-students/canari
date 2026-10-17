@@ -25,10 +25,20 @@ describe('NginxAuthGuard', () => {
     guard = new NginxAuthGuard();
   });
 
-  it('passes when X-User-Id is present and no secret is set', () => {
-    const ctx = makeContext({ 'x-user-id': 'user-1' });
-    expect(guard.canActivate(ctx)).toBe(true);
-  });
+  it.each(['development', 'test', undefined, 'production'])(
+    'FAILS CLOSED when no secret is set, with NODE_ENV=%s',
+    (env) => {
+      const saved = process.env.NODE_ENV;
+      if (env === undefined) delete process.env.NODE_ENV;
+      else process.env.NODE_ENV = env;
+      try {
+        const ctx = makeContext({ 'x-user-id': 'user-1' });
+        expect(() => guard.canActivate(ctx)).toThrow(UnauthorizedException);
+      } finally {
+        process.env.NODE_ENV = saved;
+      }
+    }
+  );
 
   it('throws when X-User-Id is missing', () => {
     const ctx = makeContext({});

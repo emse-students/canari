@@ -4,6 +4,10 @@ import { appRouteForDeepLink, proposalQueueAssociationId } from './deepLinkRoute
 const route = (url: string) => appRouteForDeepLink(new URL(url));
 
 describe('appRouteForDeepLink', () => {
+  it('owns no route for a host it does not know (the caller sends the tap to the notifications list)', () => {
+    expect(route('fr.emse.canari://some-future-host/x1')).toBeNull();
+  });
+
   it('routes every page host a social push can name', () => {
     expect(route('fr.emse.canari://post/p1')).toBe('/posts/p1');
     expect(route('fr.emse.canari://form/f1')).toBe('/forms/f1');

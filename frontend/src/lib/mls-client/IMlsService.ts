@@ -240,6 +240,20 @@ export class VaultOwnerUnprovenError extends Error {
 }
 
 /**
+ * A state opened outside `init` (the PIN recovery's `openLocalStateWithKey`) could not be made
+ * ready: the groups it holds could not be listed, or the send ratchets could not be reconciled.
+ * Nothing was written. A login run on top would read an empty group cache and act on it (a false
+ * "partial restore", re-joins of groups held, key-group rows deleted), so the open is REFUSED and
+ * the recovery reports a failure the same two PINs retry.
+ */
+export class LocalStateNotReadyError extends Error {
+  constructor(readonly reason: unknown) {
+    super(`the opened local state could not be made ready: ${String(reason)}`);
+    this.name = 'LocalStateNotReadyError';
+  }
+}
+
+/**
  * Thrown by {@link IMlsService.init} when `noFreshStart` is set and the saved local state
  * cannot be decrypted with the supplied PIN - the signal that the account PIN was likely
  * rotated on another device and recovery should be offered.
@@ -257,6 +271,21 @@ export const MLS_LOCAL_STATE_UNDECRYPTABLE = 'MLS_LOCAL_STATE_UNDECRYPTABLE';
 export function isKeystoreKeyUnavailable(error: unknown): boolean {
   return String(error).includes('KEYSTORE_KEY_UNAVAILABLE');
 }
+
+/**
+ * Why a stored MLS state did not load, typed at the one place that reads `mls-core`'s codes:
+ * `mismatch` (another device's identity), `rotated` / `undecryptable` (the key does not open it),
+ * `keystore_unavailable` (biometric mode found no key) and `unknown` (an untyped failure).
+ */
+export type StateLoadFailure =
+  | 'mismatch'
+  | 'undecryptable'
+  | 'rotated'
+  | 'keystore_unavailable'
+  | 'unknown';
+
+/** The answer of {@link IMlsService.openLocalStateWithKey}: opened, or refused with its cause. */
+export type LocalStateOpenResult = { opened: true } | { opened: false; cause: StateLoadFailure };
 
 /**
  * Describes a bulk-ingest window: a span during which many MLS messages are processed at once
@@ -530,17 +559,23 @@ export interface IMlsService {
    */
   changeDeviceKey(newDeviceKeyB64: string): Promise<void>;
   /**
-   * Forgot-PIN-elsewhere recovery: decrypts this device's local state with the OLD key
-   * (non-destructively) then re-encrypts it under the NEW key, preserving all
-   * local messages. Marks the client initialised so a following login reuses it.
-   * Returns `false` if `oldDeviceKeyB64` does not decrypt the local state.
+   * Forgot-PIN-elsewhere recovery: opens this device's local state with the OLD key
+   * (non-destructively, nothing written) and marks the client initialised so a following login
+   * reuses it. A refusal carries its typed cause: only `undecryptable` / `rotated` prove the old PIN
+   * wrong; the others would refuse every PIN, so a caller must not word them as one.
+   * The re-seal is a later {@link changeDeviceKey}.
    */
-  recoverAndRekey(
+  openLocalStateWithKey(
     userId: string,
-    oldDeviceKeyB64: string,
-    newDeviceKeyB64: string,
+    deviceKeyB64: string,
     state: Uint8Array
-  ): Promise<boolean>;
+  ): Promise<LocalStateOpenResult>;
+  /**
+   * Points the unattended unlock (platform keystore: biometrics, background push) at a new device
+   * key, awaited. A no-op on web. Rejects when the keystore refused the write; resolves `true` when
+   * an entry was written, `false` when there is no keystore (nothing moved).
+   */
+  pointUnattendedUnlockAt(newDeviceKeyB64: string): Promise<boolean>;
   /** Generates a fresh MLS KeyPackage for this device, signed with the device-key-encrypted identity key. */
   generateKeyPackage(deviceKeyB64: string): Promise<DatedKeyPackage>;
   /**

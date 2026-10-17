@@ -1,4 +1,5 @@
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { withDeviceKeyHeld } from '$lib/db/deviceKeyGate';
 
 /** Converts a Uint8Array to a lowercase hex string (e.g. `Uint8Array([0xde,0xad])` → `"dead"`). */
 export function toHex(buffer: Uint8Array): string {
@@ -190,13 +191,44 @@ function openMlsDb(userId: string): Promise<IDBDatabase> {
  * Persist the MLS state blob for `userId` in IndexedDB.
  * Stores raw bytes - no base64 overhead.
  */
-/** Persists the PIN-encrypted MLS checkpoint (Argon2 + ChaCha20). Used at login and on critical flush. */
-export async function saveMlsStateEncrypted(userId: string, bytes: Uint8Array): Promise<void> {
+/**
+ * What became of one MLS state write: `written`, or refused by the version guard as `stale` (an
+ * older capture of this document) or `collision` (another writer reached the same version). A caller
+ * whose write MUST land - a device key change - reads it; a checkpoint may ignore it.
+ */
+export type MlsStateWriteOutcome = 'written' | 'stale' | 'collision';
+
+/**
+ * A write that MUST land was refused by the version guard. The device key change throws it: a
+ * dropped re-seal leaves the stored state under the OLD key while the session would log "done".
+ */
+export class MlsStateWriteRefusedError extends Error {
+  constructor(readonly outcome: Exclude<MlsStateWriteOutcome, 'written'>) {
+    super(`the MLS state write was refused by the version guard (${outcome})`);
+    this.name = 'MlsStateWriteRefusedError';
+  }
+}
+
+/**
+ * Persists the PIN-encrypted MLS checkpoint. Used at login and on critical flush.
+ *
+ * THROUGH THE DEVICE-KEY GATE (`db/deviceKeyGate.ts`): a write waits while another tab changes the
+ * device key and is refused once this tab's key is retired, so an old leader's checkpoint can never
+ * land under the old key after the change re-sealed the state.
+ */
+export async function saveMlsStateEncrypted(
+  userId: string,
+  bytes: Uint8Array
+): Promise<MlsStateWriteOutcome> {
+  return withDeviceKeyHeld(userId, () => writeMlsState(userId, bytes));
+}
+
+async function writeMlsState(userId: string, bytes: Uint8Array): Promise<MlsStateWriteOutcome> {
   if (isTauriRuntime()) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
       await invoke('save_mls_state', { data: Array.from(bytes) });
-      return;
+      return 'written';
     } catch (e) {
       console.warn('[MLS] save_mls_state failed:', e);
       throw e;
@@ -205,7 +237,8 @@ export async function saveMlsStateEncrypted(userId: string, bytes: Uint8Array): 
 
   const version = mlsSnapshotVersion(bytes);
   const db = await openMlsDb(userId);
-  return new Promise<void>((resolve, reject) => {
+  return new Promise<MlsStateWriteOutcome>((resolve, reject) => {
+    let outcome: MlsStateWriteOutcome = 'written';
     const tx = db.transaction(IDB_STORE, 'readwrite');
     const store = tx.objectStore(IDB_STORE);
     const verReq = store.get(MLS_STATE_VERSION_KEY);
@@ -240,6 +273,7 @@ export async function saveMlsStateEncrypted(userId: string, bytes: Uint8Array): 
             `from ${mine}, the stored one from ${_lastAcceptedWriter}. Two captures were in flight ` +
             `at once; if either tagged itself after an await, the numbers do not order the captures`
         );
+        outcome = 'stale';
         return;
       }
       if (version !== undefined && version === stored) {
@@ -248,6 +282,7 @@ export async function saveMlsStateEncrypted(userId: string, bytes: Uint8Array): 
             `version from the same seed, so the two are not comparable; not writing (this write ` +
             `from ${mine})`
         );
+        outcome = 'collision';
         return;
       }
       store.put(bytes, MLS_STATE_ENCRYPTED_KEY);
@@ -257,7 +292,7 @@ export async function saveMlsStateEncrypted(userId: string, bytes: Uint8Array): 
       }
     };
     verReq.onerror = () => reject(verReq.error);
-    tx.oncomplete = () => resolve();
+    tx.oncomplete = () => resolve(outcome);
     tx.onerror = () => reject(tx.error);
   });
 }
@@ -276,7 +311,10 @@ export async function purgeLegacyPlainMlsState(userId: string): Promise<void> {
 }
 
 /** @deprecated Alias for {@link saveMlsStateEncrypted}. */
-export async function saveMlsState(userId: string, bytes: Uint8Array): Promise<void> {
+export async function saveMlsState(
+  userId: string,
+  bytes: Uint8Array
+): Promise<MlsStateWriteOutcome> {
   return saveMlsStateEncrypted(userId, bytes);
 }
 
@@ -350,6 +388,12 @@ export async function hasMlsState(userId: string): Promise<boolean> {
 }
 
 export async function loadMlsState(userId: string): Promise<Uint8Array | null> {
+  // THROUGH THE GATE: a tab that reloads while another changes the device key reads the state only
+  // once it has moved, never the old-key state with the vault's new key.
+  return withDeviceKeyHeld(userId, () => readMlsState(userId));
+}
+
+async function readMlsState(userId: string): Promise<Uint8Array | null> {
   if (isTauriRuntime()) {
     try {
       const { invoke } = await import('@tauri-apps/api/core');
@@ -387,7 +431,8 @@ export async function loadMlsState(userId: string): Promise<Uint8Array | null> {
   const bytes = saved.startsWith(B64_PREFIX)
     ? fromBase64(saved.slice(B64_PREFIX.length))
     : fromHex(saved);
-  await saveMlsState(userId, bytes);
+  // Already inside the gate (`loadMlsState`): the ungated write, or it would wait on itself.
+  await writeMlsState(userId, bytes);
   localStorage.removeItem('mls_autosave_' + userId);
   // The migration path answers the same question, so it takes the same rule: a legacy entry that
   // decoded to nothing is not a state to hand to init either.

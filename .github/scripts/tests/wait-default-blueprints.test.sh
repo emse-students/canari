@@ -93,6 +93,16 @@ assert "it re-applied exactly once, not in a loop" '[ "$resends" = 1 ]'
 assert "the error names what is left" 'grep -q "::error::.*stalled AGAIN.*Default - Brand=error" "$tmp/out"'
 assert "and carries the worker's own error lines" 'grep -q "worker: .*lost a race" "$tmp/out"'
 
+echo "a stall reached after the deadline is still re-applied (slow probes, 2026-10-16)"
+rm -f "$tmp/poll" "$tmp/resends"
+printf '%s\n' "WAIT 30/31 Default - Brand=error" "WAIT 30/31 Default - Brand=error" "WAIT 30/31 Default - Brand=error" "WAIT 30/31 Default - Brand=error" FIXED >"$tmp/states"
+WAIT_POLL=0 WAIT_STALL_POLLS=3 WAIT_DEADLINE=0 wait_for_default_blueprints worker >"$tmp/out" 2>&1
+rc=$?
+resends=0
+[ -f "$tmp/resends" ] && resends=$(wc -l <"$tmp/resends")
+assert "it returns 0" '[ "$rc" = 0 ]'
+assert "the deadline did not cut the re-apply" '[ "$resends" = 1 ] && ! grep -q "still not applied" "$tmp/out"'
+
 echo "nothing applying at all fails at the deadline instead of hanging"
 rm -f "$tmp/poll" "$tmp/resends"
 printf '%s\n' "WAIT 0/31 a=unknown" >"$tmp/states"

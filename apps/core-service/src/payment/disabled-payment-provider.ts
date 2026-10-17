@@ -1,6 +1,7 @@
 import { BadRequestException, Logger } from '@nestjs/common';
 import type {
-  CheckoutSessionInfo,
+  CancelRequestOutcome,
+  CheckoutRequestState,
   CheckoutSessionResult,
   ConnectAccountStatusResponse,
   ConnectBalanceSummary,
@@ -52,7 +53,10 @@ export class DisabledPaymentProvider implements PaymentProvider {
   async createCheckoutSession(): Promise<CheckoutSessionResult> {
     return this.refuse('createCheckoutSession');
   }
-  async retrieveSession(): Promise<CheckoutSessionInfo> {
-    return this.refuse('retrieveSession');
+  async cancelCheckoutRequest(): Promise<CancelRequestOutcome> {
+    return this.refuse('cancelCheckoutRequest');
+  }
+  async getCheckoutRequestState(): Promise<CheckoutRequestState> {
+    return this.refuse('getCheckoutRequestState');
   }
 }

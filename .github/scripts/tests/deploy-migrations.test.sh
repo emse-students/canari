@@ -27,7 +27,7 @@ set -uo pipefail
 REPO="$(cd "$(dirname "$0")/../../.." && pwd)"
 SCRIPT="$REPO/infrastructure/lib/migrations.sh"
 DEPLOY="$REPO/infrastructure/deploy/deploy-environment.sh"
-COPY="$REPO/infrastructure/dev/copy-prod-to-dev.sh"
+RESET="$REPO/infrastructure/dev/reset-dev-to-seed.sh"
 PASS=0
 FAIL=0
 ok() {
@@ -73,6 +73,7 @@ ok "apply_migrations() is extractable from the real script"
 
 guard="$(sed -n '/^require_orm_schema() {/,/^}/p' "$SCRIPT")"
 sentinel_decl="$(sed -n '/^readonly ORM_SENTINEL_TABLE=/p' "$SCRIPT")"
+ledger_decl="$(sed -n '/^readonly MIGRATION_LEDGER_TABLE=/p' "$SCRIPT")"
 SENTINEL="$(printf '%s' "$sentinel_decl" | sed "s/^readonly ORM_SENTINEL_TABLE='//; s/'$//")"
 
 run_with_draining_psql() {
@@ -95,6 +96,7 @@ run_with_draining_psql() {
       return 0
     }
     eval "$sentinel_decl"
+    eval "$ledger_decl"
     eval "$guard"
     eval "$fn"
     apply_migrations
@@ -175,6 +177,7 @@ run_without_schema() {
       return 0
     }
     eval "$sentinel_decl"
+    eval "$ledger_decl"
     eval "$guard"
     eval "$fn"
     apply_migrations
@@ -195,32 +198,40 @@ else
   fail "it applied files before refusing"
 fi
 
-if printf '%s' "$dev_out" | grep -q 'Refresh dev.canari-emse.fr from production'; then
-  ok "the dev refusal NAMES the workflow that seeds the database"
+# The remedy changed on 2026-10-16: dev no longer has a copy of production to fall back on, so a
+# virgin dev database gets a SCHEMA-ONLY restore (no row of production) and then the fictional seed.
+if printf '%s' "$dev_out" | grep -q 'SCHEMA-ONLY restore' && printf '%s' "$dev_out" | grep -q 'dev-reset'; then
+  ok "the dev refusal NAMES the schema-only restore and the job that seeds the database"
 else
-  fail "the dev refusal does not name the seeding workflow - the reader is left to find it"
+  fail "the dev refusal does not name the schema-only restore and the dev-reset job - the reader is left to find them"
+fi
+if printf '%s' "$dev_out" | grep -qi 'from production'; then
+  fail "the dev refusal still sends the reader to a copy of production"
+else
+  ok "and it sends nobody to a copy of production's data"
 fi
 
 prod_out="$(run_without_schema prod </dev/null 2>&1)"
 if printf '%s' "$prod_out" | grep -qi 'restore a backup'; then
   ok "the production refusal says the schema is GONE and to restore a backup"
 else
-  fail "production and dev get the same remedy, and only one of them has anything to copy from"
+  fail "production and dev get the same remedy, and only one of them may be rebuilt from a seed"
 fi
 
-if printf '%s' "$prod_out" | grep -q 'Refresh dev.canari-emse.fr'; then
-  fail "the production refusal points at the DEV refresh workflow - it would copy production onto itself in the reader's mind"
+if printf '%s' "$prod_out" | grep -q 'dev-reset'; then
+  fail "the production refusal points at the DEV reset job - a reader could empty the wrong estate"
 else
   ok "and it does not point production at a dev-only remedy"
 fi
 
-printf '\nboth callers run the loop, and the copy runs it AFTER the restore\n'
+printf '\nboth callers run the loop, and the reset runs it BEFORE it truncates\n'
 
-# THE SECOND CALLER IS WHY THE LOOP IS A LIBRARY. The dev refresh replaces dev's database with
-# production's, schema and ledger included; without the loop it rolled a pre-release's schema back
-# under its images (2026-09-28, `admittedAtEpoch does not exist`). Order is asserted by line: a loop
-# run before the restore would be erased by it.
-for caller in "$DEPLOY" "$COPY"; do
+# THE SECOND CALLER IS WHY THE LOOP IS A LIBRARY. It was the copy of production into dev until
+# 2026-10-16, which rolled a pre-release's schema back under its images (2026-09-28,
+# `admittedAtEpoch does not exist`); it is the reset now, which brings an older schema forward after
+# a schema-only restore. Order is asserted by line: the seed is written for the CURRENT entities, so
+# a loop run after it would load the seed into the schema it was not written for.
+for caller in "$DEPLOY" "$RESET"; do
   name="${caller#"$REPO"/}"
   if grep -qE '^[[:space:]]*\. .*lib/migrations\.sh"' "$caller"; then
     ok "$name sources the shared loop"
@@ -235,13 +246,13 @@ for caller in "$DEPLOY" "$COPY"; do
     fail "$name does not call apply_migrations on a line of its own"
   fi
 done
+migrate_line="$(grep -nE '^[[:space:]]*apply_migrations[[:space:]]*$' "$RESET" | head -1 | cut -d: -f1)"
 # shellcheck disable=SC2016 # the pattern is the script's literal text, variables unexpanded
-restore_line="$(grep -nF 'psql -q -U "$DEV_USER" -d "$DATABASE"' "$COPY" | head -1 | cut -d: -f1)"
-migrate_line="$(grep -nE '^[[:space:]]*apply_migrations[[:space:]]*$' "$COPY" | head -1 | cut -d: -f1)"
-if [ -n "$restore_line" ] && [ -n "$migrate_line" ] && [ "$migrate_line" -gt "$restore_line" ]; then
-  ok "the copy migrates after it restores (line $migrate_line > $restore_line)"
+seed_line="$(grep -nE 'cat "\$SEED_SQL"' "$RESET" | head -1 | cut -d: -f1)"
+if [ -n "$seed_line" ] && [ -n "$migrate_line" ] && [ "$migrate_line" -lt "$seed_line" ]; then
+  ok "the reset migrates before it seeds (line $migrate_line < $seed_line)"
 else
-  fail "the copy does not migrate after the restore (restore ${restore_line:-?}, migrate ${migrate_line:-?})"
+  fail "the reset does not migrate before the seed (migrate ${migrate_line:-?}, seed ${seed_line:-?})"
 fi
 
 printf '\n'

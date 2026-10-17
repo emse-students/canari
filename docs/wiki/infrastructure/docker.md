@@ -121,9 +121,7 @@ more") passes - and it is worthless. Comparing the key SETS instead, **five keys
 were absent from Garage**:
 
 ```
-46f53db5-2609-47cf-8aac-8231ae7c7ffd   5a7f80c9-a921-45e5-92f4-04f52a7c8a7a
-8c1264e9-e4a1-4d0f-b6d8-d42771cc3887   ca35beec-d156-4497-b2c5-d7e2b80ccd3c
-fedf2767-d86e-4320-b5a4-20cc99148dfd
+<five object keys, listed in the private notes>
 ```
 
 Two readings fit: the migration missed them, or they were migrated and later deleted. They lead to
@@ -348,22 +346,17 @@ chat-delivery-service, Garage and Redis have health checks. Other services depen
 
 ## The deploy account is root on the host, by way of the `docker` group
 
-`id -Gn` for the account CI and every operator log in as answers `canari sudo users docker`.
-**Membership of `docker` is equivalent to root on that machine** - a container that bind-mounts `/`
-writes any file on the host, including a systemd unit - and it is required, because that account is
-what deploys.
-
-This is written down because the wrong mental model is the natural one. Nothing else in this
-repository says the deploy account is privileged, so a reader reasonably treats it as an application
-user, and two conclusions follow that are false: that a compromise of it is contained, and that a
-task needing root on that box needs a password it does not have. Neither holds. A rotation of a
-systemd unit's contents was performed through it on 2026-09-02.
+The account CI deploys with is in the `docker` group, which is **equivalent to root on that machine**
+(a container that bind-mounts `/` writes any file on the host) - and it is required, because that
+account is what deploys. Nothing else in this repository says the deploy account is privileged, so a
+reader reasonably treats it as an application user, and two conclusions follow that are false: that a
+compromise of it is contained, and that a task needing root needs a password it does not have.
 
 Two consequences worth keeping:
 
-- **`sudo` asking for a password on that host is not a security boundary**, it is a speed bump in
-  front of a door the same account can walk through by another route. Treat any capability reachable
-  from `docker` as reachable from that login, full stop.
+- **A password prompt on `sudo` is not a security boundary** in front of a door the same account can
+  walk through by another route. Treat any capability reachable from `docker` as reachable from that
+  login.
 - **A destructive control must therefore carry its own allowlist**, which is why the copy and restore
   scripts name the compose project they may touch rather than trusting the caller's privileges to
   stop them. The rule is in [durable-rules](../durable-rules.md).

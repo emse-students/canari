@@ -1,12 +1,34 @@
 /** What a form submission's payment status means for the page the payer lands on after Lydia. */
-export type PaymentReturnVerdict = 'confirmed' | 'wait' | 'failed';
+export type PaymentReturnVerdict = 'confirmed' | 'wait' | 'overCapacity' | 'failed';
 
 /**
- * `pending` is the only status that can still change: the signed Lydia callback may arrive after
- * the browser redirect, so the page keeps asking. Anything else that is not paid is final.
+ * `pending` and `expired` can still change: the signed Lydia callback may arrive after the browser
+ * redirect, and an online `expired` row is one whose seat was released while the payer was still
+ * paying - a late payment turns it into `paid` or `paid_over_capacity`, so the page keeps asking.
+ * `paid_over_capacity` is final and is NOT a failure: the money landed, the form was full, and the
+ * payer is owed a refund by the organiser. Anything else that is not paid is final.
  */
 export function paymentReturnVerdict(paymentStatus: string): PaymentReturnVerdict {
   if (paymentStatus === 'paid' || paymentStatus === 'free') return 'confirmed';
-  if (paymentStatus === 'pending') return 'wait';
+  if (paymentStatus === 'pending' || paymentStatus === 'expired') return 'wait';
+  if (paymentStatus === 'paid_over_capacity') return 'overCapacity';
   return 'failed';
+}
+
+/**
+ * What the page the payer lands on after LEAVING Lydia shows. `stillOpen` and `unconfirmed` are
+ * set by the page itself from the cancel's refusal; this maps a status read from the row.
+ */
+export type PaymentCancelView = 'cancelled' | 'paid' | 'overCapacity' | 'stillOpen' | 'unconfirmed';
+
+/**
+ * The cancel page's reading of a submission's status, before its cancel (a callback may already
+ * have confirmed the payment) and after one answered `alreadyPaid` (the request was found paid at
+ * Lydia). A paid answer is never shown as cancelled: until 2026-10-15 it was, whatever the row said.
+ */
+export function paymentCancelView(paymentStatus: string): 'cancelled' | 'paid' | 'overCapacity' {
+  const verdict = paymentReturnVerdict(paymentStatus);
+  if (verdict === 'confirmed') return 'paid';
+  if (verdict === 'overCapacity') return 'overCapacity';
+  return 'cancelled';
 }

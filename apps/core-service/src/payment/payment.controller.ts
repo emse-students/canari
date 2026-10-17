@@ -21,11 +21,7 @@ import { assertInternalSecret } from '../internal/internal-secret.util';
 import { GlobalAdminGuard } from '../common/guards/global-admin.guard';
 import type { WireLineItem } from './payment-provider.interface';
 import axios from 'axios';
-import {
-  internalSocialRequestConfig,
-  internalPaymentAccountUrl,
-  internalSubmissionUrl,
-} from './social-internal-client';
+import { internalSocialRequestConfig, internalPaymentAccountUrl } from './social-internal-client';
 import { socialUrl } from '../internal/service-urls';
 import { describeHttpError } from '../common/http-error-log';
 
@@ -38,8 +34,13 @@ const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
  */
 const PAYER_EMAIL_RE = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
 const PAYER_EMAIL_MAX_LENGTH = 254;
-/** A Lydia `request_uuid`, the id of a checkout session. */
-export const SESSION_ID_RE = UUID_RE;
+/**
+ * A Lydia `request_uuid`, the id of a checkout session: 32 hex digits with NO dashes, as
+ * `request/do` answers it (measured on the sandbox 2026-10-15, payments.md). It used to be the
+ * dashed RFC 4122 shape, which no Lydia request ever has, so `request-state` refused every real
+ * request as "Invalid payload".
+ */
+export const SESSION_ID_RE = /^[0-9a-f]{32}$/i;
 
 /** Controller handling Lydia Business onboarding and checkout sessions. */
 @Controller('payments')
@@ -47,27 +48,6 @@ export class PaymentController {
   private readonly logger = new Logger(PaymentController.name);
 
   constructor(private readonly paymentService: PaymentService) {}
-
-  /** Marks a form submission as paid via the internal social-service route. */
-  private async markSubmissionPaidInternal(
-    submissionId: string,
-    sessionId?: string
-  ): Promise<void> {
-    await axios.post(
-      internalSubmissionUrl(submissionId, 'mark-paid'),
-      sessionId ? { sessionId } : {},
-      internalSocialRequestConfig()
-    );
-  }
-
-  /** Cancels a pending form submission via the internal social-service route. */
-  private async cancelPendingSubmissionInternal(submissionId: string): Promise<void> {
-    await axios.post(
-      internalSubmissionUrl(submissionId, 'cancel-pending'),
-      {},
-      internalSocialRequestConfig()
-    );
-  }
 
   private async assertCanManageAssociation(req: Request, associationId: string): Promise<void> {
     const userId = (req.headers['x-user-id'] as string | undefined)?.trim();
@@ -297,12 +277,20 @@ export class PaymentController {
       idempotencyKey?: string;
       /** The payer's address, which Lydia's request/do needs as its recipient. Never stored. */
       payerEmail?: string;
+      /** How long the request stays payable, in whole seconds: the caller's seat hold. */
+      expireAfterSeconds?: number;
     },
     @Headers('x-internal-secret') secret?: string
   ) {
     assertInternalSecret(secret);
     if (!body || !body.lineItems || !Array.isArray(body.lineItems)) {
       throw new BadRequestException('Invalid payload');
+    }
+    if (
+      body.expireAfterSeconds !== undefined &&
+      (!Number.isInteger(body.expireAfterSeconds) || body.expireAfterSeconds <= 0)
+    ) {
+      throw new BadRequestException('Invalid expireAfterSeconds');
     }
 
     if (!(await this.paymentService.isConfigured())) {
@@ -326,9 +314,12 @@ export class PaymentController {
         metadata: body.metadata,
         connectAccountId: body.connectAccountId,
         idempotencyKey: body.idempotencyKey,
+        expireAfterSeconds: body.expireAfterSeconds,
       });
-      this.logger.debug(`[Payments] Checkout session created: ${session.id}`);
-      return { ok: true, url: session.url, id: session.id };
+      this.logger.debug(
+        `[Payments] Checkout session created: ${session.id} (request ${session.requestId ?? 'none'})`
+      );
+      return { ok: true, url: session.url, id: session.id, requestId: session.requestId };
     } catch (err: unknown) {
       // A typed refusal (the Lydia provider's PAYMENT_PROVIDER_REFUSED) is already the answer:
       // re-labelling it would bury both its code and its readable message.
@@ -339,76 +330,70 @@ export class PaymentController {
     }
   }
 
-  /** Verifies a completed checkout session and marks the linked form submission as paid. */
-  @UseGuards(NginxAuthGuard)
-  @Post('verify-session')
+  /**
+   * Makes a payment request no longer payable at the provider. SERVER-TO-SERVER ONLY, like
+   * `create-checkout-session`: social-service calls it when a retry replaces the request a pending
+   * answer was waiting on, BEFORE issuing the new one. `requestId` is the provider's own id (Lydia's
+   * numeric `request_id`) and `connectAccountId` the Business that request was issued to.
+   * Answers `{ ok: true, outcome }`. `already-settled` (Lydia's error 2) means PROCESSED - cancelled,
+   * expired, or very probably PAID - so the caller reads `request-state` before treating the
+   * request as dead. A refusal is the provider's typed 400.
+   */
+  @Post('cancel-request')
   @HttpCode(200)
-  async verifySession(@Body() body: { sessionId: string }) {
-    if (!body?.sessionId || !SESSION_ID_RE.test(body.sessionId)) {
-      throw new BadRequestException('Invalid sessionId');
+  async cancelRequest(
+    @Body() body: { requestId?: string; connectAccountId?: string },
+    @Headers('x-internal-secret') secret?: string
+  ) {
+    assertInternalSecret(secret);
+    if (
+      typeof body?.requestId !== 'string' ||
+      !/^\d{1,32}$/.test(body.requestId) ||
+      typeof body.connectAccountId !== 'string' ||
+      !body.connectAccountId.trim()
+    ) {
+      throw new BadRequestException('Invalid payload');
     }
-    if (!(await this.paymentService.isConfigured())) {
-      return { ok: false, message: 'Payment provider not configured' };
-    }
-
-    const session = await this.paymentService.retrieveSession(body.sessionId);
-
-    if (!session.paid) {
-      return { ok: false, message: 'Payment not completed' };
-    }
-
-    const submissionId = session.metadata?.submissionId;
-    const formId = session.metadata?.formId;
-
-    if (!submissionId || !/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) {
-      this.logger.error(`Missing or invalid submissionId in session ${body.sessionId}`);
-      return { ok: false, message: 'No submission linked to this session' };
-    }
-
-    try {
-      await this.markSubmissionPaidInternal(submissionId, body.sessionId);
-    } catch (err: unknown) {
-      const error = err as Error & { response?: { data?: unknown } };
-      this.logger.error('verify-session: mark-paid failed', describeHttpError(error));
-      // Non-fatal if already paid - webhook may have already handled it
-    }
-
-    return { ok: true, submissionId, formId };
+    const outcome = await this.paymentService.cancelCheckoutRequest(
+      body.requestId,
+      body.connectAccountId
+    );
+    return { ok: true, outcome };
   }
 
-  /** Cancels an unpaid checkout session and marks the linked submission as cancelled. */
-  @UseGuards(NginxAuthGuard)
-  @Post('cancel-session')
+  /**
+   * Reads a payment request's state at the provider. SERVER-TO-SERVER ONLY (internal secret):
+   * social-service asks it when a cancel answered `already-settled`, to tell a request that was
+   * PAID (the answer is then paid, and no new request may be issued) from one cancelled or expired.
+   * `sessionId` is the `request_uuid`; answers `{ ok: true, state, raw }`.
+   */
+  @Post('request-state')
   @HttpCode(200)
-  async cancelSession(@Body() body: { sessionId: string }) {
-    if (!body?.sessionId || !SESSION_ID_RE.test(body.sessionId)) {
-      throw new BadRequestException('Invalid sessionId');
+  async requestState(
+    @Body() body: { sessionId?: string; connectAccountId?: string },
+    @Headers('x-internal-secret') secret?: string
+  ) {
+    assertInternalSecret(secret);
+    if (
+      typeof body?.sessionId !== 'string' ||
+      !SESSION_ID_RE.test(body.sessionId) ||
+      typeof body.connectAccountId !== 'string' ||
+      !body.connectAccountId.trim()
+    ) {
+      throw new BadRequestException('Invalid payload');
     }
-    if (!(await this.paymentService.isConfigured())) {
-      return { ok: false, message: 'Payment provider not configured' };
-    }
-
-    const session = await this.paymentService.retrieveSession(body.sessionId);
-
-    // Safety guard: never cancel a session that was actually paid
-    if (session.paid) {
-      return { ok: false, message: 'Session already paid' };
-    }
-
-    const submissionId = session.metadata?.submissionId;
-    const formId = session.metadata?.formId;
-
-    if (!submissionId || !/^[a-zA-Z0-9_-]{1,128}$/.test(submissionId)) {
-      return { ok: false, message: 'No submission linked to this session' };
-    }
-
-    try {
-      await this.cancelPendingSubmissionInternal(submissionId);
-    } catch (err: unknown) {
-      const error = err as Error & { response?: { data?: unknown } };
-      this.logger.error('cancel-session: cancel submission failed', describeHttpError(error));
-    }
-
-    return { ok: true, submissionId, formId };
+    const { state, raw } = await this.paymentService.getCheckoutRequestState(
+      body.sessionId,
+      body.connectAccountId
+    );
+    return { ok: true, state, raw };
   }
+
+  // THERE IS NO `verify-session` NOR `cancel-session` ANY MORE (2026-10-15). Both read the request
+  // by its uuid and took the submission from the `order_ref` the answer was supposed to echo -
+  // `request/state` echoes none, with or without the vendor_token (measured on the sandbox,
+  // payments.md), so neither could ever name a submission. And no page reached them: Lydia does not
+  // fill `{CHECKOUT_SESSION_ID}`, so the return URL carries `submission_id` instead. A payment the
+  // callback did not confirm is now read by social-service from the row's own request
+  // (`POST forms/submissions/:id/confirm-payment`), through `request-state` above.
 }

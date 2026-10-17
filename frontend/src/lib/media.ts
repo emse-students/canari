@@ -61,6 +61,10 @@ export type MediaType = 'image' | 'video' | 'audio' | 'file';
  *
  * An object with no class is KEPT. It used to be the other way round, and an association vault
  * document - uploaded with no class - was swept on production in 2026-09.
+ *
+ * `'form-file'` IS DELIBERATELY ABSENT: a form answer's file is PLAINTEXT a manager reads, so only
+ * social-service may store one (`POST /media/internal/form-file`), and every client route refuses
+ * the class with a 400. A client never names it ([media-service](docs/wiki/services/media-service.md)).
  */
 export type MediaRetentionClass =
   | 'ephemeral'
@@ -254,8 +258,11 @@ const pauseUnlessAborted: ReaskPause = (ms, signal) =>
  * @param transport When given, the request goes through {@link xhrUpload} instead of `fetch`, which
  *                  is the only way to see its progress, cancel it and bound it by silence. The 401
  *                  retry is the same on both, and a retry reports its progress from zero again.
+ *
+ * Exported for the other body-carrying upload that is not media's: a form answer's file
+ * (`forms/api.ts`), which needs the same progress, cancel, gateway budget and 401 renewal.
  */
-async function fetchUpload(
+export async function fetchUpload(
   url: string,
   build: (token: string) => RequestInit,
   authToken: string,

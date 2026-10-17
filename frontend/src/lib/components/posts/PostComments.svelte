@@ -107,8 +107,6 @@
   let showGifPicker = $state(false);
   /** True while the comment input is focused, so only the focused box handles a keyboard GIF. */
   let commentInputFocused = $state(false);
-  /** GIF button is shown only when a KLIPY key is configured (same gate as the chat composer). */
-  const hasGifPicker = !!(import.meta.env as Record<string, string | undefined>).VITE_KLIPY_KEY;
 
   function clearPendingMedia() {
     if (pendingPreviewUrl) {
@@ -564,8 +562,8 @@
       name something that is not on screen.
     -->
     {#if topLevelComments.length > 0}
-      <div class="mb-2 flex items-center justify-between gap-2">
-        <div>
+      <div class="mb-2 flex flex-wrap items-center justify-between gap-x-2 gap-y-1">
+        <div class="min-w-0">
           {#if topLevelComments.length > PREVIEW_COUNT && !showComments}
             <button
               type="button"
@@ -589,7 +587,7 @@
 
         <!-- Tri -->
         {#if topLevelComments.length > 1}
-          <div class="flex items-center gap-1">
+          <div class="flex min-w-0 flex-wrap items-center gap-1">
             <ArrowUpDown size={12} class="text-text-muted opacity-60" />
             {#each [['recent', m.post_sort_recent_label()], ['oldest', m.post_sort_oldest_label()], ['liked', m.post_sort_liked_label()]] as const as [mode, label] (mode)}
               <button
@@ -717,18 +715,16 @@
           onpaste={handleCommentPaste}
           onkeydown={handleInternalKeyDown}
         />
-        {#if hasGifPicker}
-          <button
-            type="button"
-            onclick={() => (showGifPicker = true)}
-            disabled={uploadingMedia}
-            title={m.chat_send_gif_label()}
-            aria-label={m.chat_send_gif_label()}
-            class="text-text-muted text-2xs mr-0.5 shrink-0 px-1.5 font-bold tracking-tight transition-colors hover:text-amber-500 disabled:opacity-40"
-          >
-            GIF
-          </button>
-        {/if}
+        <button
+          type="button"
+          onclick={() => (showGifPicker = true)}
+          disabled={uploadingMedia}
+          title={m.chat_send_gif_label()}
+          aria-label={m.chat_send_gif_label()}
+          class="text-text-muted text-2xs mr-0.5 shrink-0 px-1.5 font-bold tracking-tight transition-colors hover:text-amber-500 disabled:opacity-40"
+        >
+          GIF
+        </button>
         <button
           type="button"
           onclick={handleSubmitComment}

@@ -482,3 +482,18 @@ it('Next hands on the edited media, or null (and no export) when nothing was add
   expect(edits.overlays).toHaveLength(1);
   expect(edits.overlays[0]).toMatchObject({ kind: 'emoji', x: 0.5, y: 0.5, scale: 1, rotation: 0 });
 });
+
+it('leaves the overlay size alone when the app follows Dynamic Type: nothing inflates a cqmin size on iOS', () => {
+  document.documentElement.style.setProperty('--type-scale', '2');
+  try {
+    const target = mountEditor();
+    target.querySelector<HTMLButtonElement>('[data-reel-tool-text]')!.click();
+    flushSync();
+    writeText(target, 'salut');
+    const style = overlay(target).querySelector('span')!.getAttribute('style')!;
+    // The editor must keep drawing what the export burns in: no --type-scale in the size.
+    expect(style).not.toContain('--type-scale');
+  } finally {
+    document.documentElement.style.removeProperty('--type-scale');
+  }
+});

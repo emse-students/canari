@@ -1,6 +1,6 @@
 # Association permissions
 
-> What each of the eleven `AssociationPermissionFlag` bits actually gates, measured from its call
+> What each of the twelve `AssociationPermissionFlag` bits actually gates, measured from its call
 > sites on 2026-08-26 - not from its comment. A flag with no call site is either dead or missing its
 > check, and the enum cannot tell you which.
 >
@@ -82,7 +82,7 @@ calls it and adds **no second axis of its own**.
 ## What each flag gates, measured
 
 54 routes declare a flag through `@SetMetadata(PERM_FLAG_KEY, ...)` +
-`GlobalAdminOrAssociationRoleGuard`. **Five of the eleven flags declare none** - they are enforced
+`GlobalAdminOrAssociationRoleGuard`. **Six of the twelve flags declare none** - they are enforced
 elsewhere, which is exactly why the audit had to read call sites rather than count decorators.
 
 | Flag | Bit | Guard-declared routes | What it actually gates |
@@ -96,8 +96,16 @@ elsewhere, which is exactly why the audit had to read call sites rather than cou
 | `MANAGE_ASSO` | 6 | 0 | BDE only. Creating an association (unscoped: there is none yet), **deleting one** it governs (`DELETE :id`, widened from global-admin-only 2026-09-10, scoped 2026-10-04), and **being the super-admin tier above** on the associations its spaces reach |
 | `MODERATE` | 7 | 0 | BDE only. `isContentModerator` - reports, mutes and comment deletion (`moderation.controller.ts`), plus editing, deleting and PINNING any post (`assertMayManage`, `pinPost`/`unpinPost`, and the `canManage` / `canPin` fields they are drawn from) |
 | `MANAGE_PRODUCTS` | 8 | 21 | the boutique, purchases and their exports, webhook failures, the whole payment-delegation tree, and the cotisation settings on `PATCH :id` |
-| `MANAGE_PAYOUT_ACCOUNT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding |
+| `MANAGE_PAYOUT_ACCOUNT` | 9 | 0 | `GET :id/manage-permission`, which core-service asks before opening Connect onboarding; `GET :id/payout-account`, the Lydia panel's read of the vendor token and dashboard URL |
 | `MANAGE_PARTNERSHIPS` | 10 | 8 | partnership cards, their icons, their codes and their claims |
+| `MANAGE_BOOKINGS` | 11 | 0 | nothing yet: the right of the planned bookings module (the bookings chantier, WP-B0). In the admin preset, inherited by a BDE super-admin, backfilled to every `MANAGE_FORMS` holder by migration 083 |
+
+**Deploy order and old clients for `MANAGE_BOOKINGS` (bit 11).** The admin preset is now 3871. An OLD server
+validates `permissions` against its own `ALL_PERMISSION_FLAGS` (at most 2047) and answers 400 to a mask above it,
+so a new client talking to a server not yet deployed fails to add an admin - the same shape as
+`MANAGE_PARTNERSHIPS`: deploy the server first. Conversely an admin added from an OLD app keeps the old preset
+(1823, no bit 2048) and lacks the right; that is not fixed by a second backfill but by WP-B1 of the bookings
+chantier, which is where the right first has an effect.
 
 Nothing is dead: every flag has at least one call site. Re-measure the table rather than trusting it
 - one pass over the `@SetMetadata` decorators and one over `AssociationPermissionFlag.` references

@@ -692,7 +692,7 @@ So `POST /api/associations/:id/partnerships/:cardId/claim` answered **500 for ev
 rejects the parameter before reading a row:
 
 ```
-invalid input syntax for type uuid: "d82cd2268993451edb547bdd7ff2784..."   -- SQLSTATE 22P02
+invalid input syntax for type uuid: "<hex id>..."   -- SQLSTATE 22P02
 ```
 
 Three things about the shape of this defect are worth keeping:
@@ -741,27 +741,25 @@ broken. *A double that encodes the wrong assumption does not miss a defect, it a
 correct.* The client half is in `frontend/src/lib/components/shop/PartnershipCardList.svelte`: a
 success carrying no code is now refused and logged rather than rendered as an empty code panel.
 
-### An association row carries two secrets, and three reads spread it whole
+### An association row carries secrets, and its reads must pass through one projection
 
-`GET /api/associations`, `/api/associations/:id` and `/api/associations/slug/:slug` sit under the
-controller's `── Public ──` banner and carry **no guard**. nginx puts `/api/associations` behind
-`auth_request`, but `/api/auth/verify` answers 200 for an anonymous request (it only sets
-`X-Logged-In: false`), so those three are reachable from the internet. All three returned
-`{ ...asso, memberCount, parentName }` - which spread `documentVaultKey`, the hex 32-byte master
-key every document CEK is derived from, and `notesCiphertext`.
-
-`toSafeAssociation` (`associations/association.projection.ts`) is now the single seam that nulls
-both, applied at the three controller reads. Third instance of one rule, after `Channel.masterSecret`
+Association reads once returned the raw row, which includes secret columns (the document vault master
+key and ciphertext notes). **Fixed and shipped**; the exposure window and details are kept in the
+private notes. `toSafeAssociation` (`associations/association.projection.ts`) became the single seam
+that nulls the secrets, applied at the controller reads. Third instance of one rule, after `Channel.masterSecret`
 (since deleted outright) and `AssociationProduct.webhookSecret`: **an entity that carries a secret
 needs one projection, and every read has to pass through it.**
 
 The seam is the controller, not the service, on purpose: `findById` is also used by writers
-(`update`), and stripping in the service would hand them a row whose key column reads null. It
-nulls rather than deletes, so responses keep the shape their TypeScript clients expect.
+(`update`, `resolvePaymentTarget`), and stripping in the service would hand them a row whose key
+column reads null. The three reads are behind `NginxAuthGuard` since 2026-08-05.
 
-*Still open, deliberately:* the three routes remain unguarded, so `stripeAccountId` and the rest of
-the row are readable without a session. Adding `NginxAuthGuard` there is the right fix but changes
-access semantics for routes other repos may consume, so it is a separate decision.
+**A denylist was the wrong shape, and it leaked the next secret (2026-10-15, fixed).** It named two
+columns, so another provider identifier reached signed-in members, and some write routes answered the
+raw row. `toAssociationView` replaced it: an ALLOWLIST on
+all eight routes that answer a row, so a column added later is private until someone lists it. The
+payout account has its own read, `GET :id/payout-account` (`canManagePayoutAccount`). Story and
+test: [forms](../frontend/modules/forms.md#what-a-client-reads-of-a-submission-is-an-allowlist-2026-10-15).
 
 ### The document vault's markers are parsed in two languages, and they disagreed for seven weeks
 
@@ -867,12 +865,9 @@ old `WHERE id = $1 AND formation = 'ICM' OR admin = true` would have parsed as
 (measured on the local copy of production: 4 rows without the brackets, 0 with them). Who each
 fragment admits is proven against PostgreSQL by `reader-spaces.integration.spec.ts`.
 
-**This closes the feed and not the class.** FIFTEEN edge locations carry the same `auth_request`
-(re-derived 2026-09-15; this line said sixteen), and `/api/presence` was the second confirmed hole
-- closed the same day by a header check in `chat-gateway/src/presence.rs`, whose docblock is the
-story. What is still open is that the signed-in rule has THREE independent implementations under
-two different discriminators and nothing asserts every route carries one, which is what made a
-missing one invisible: [backlog](../backlog.md).
+**This closes the feed and not the class.** `/api/presence` was the second confirmed hole, closed
+the same day by a header check in `chat-gateway/src/presence.rs`, whose docblock is the story. A
+guard-coverage assertion for signed-in routes is tracked in the [backlog](../backlog.md).
 
 ### A post is announced once, by a sweeper, and the column is the whole mechanism
 
@@ -1247,13 +1242,15 @@ Those six are the complete set: no other table in the database carries a `worksp
 was a seventh until the Graine rework dropped the table. Attached media are left to the retention
 sweep, which collects them once nothing accesses them again.
 
-**Account deletion is the one path that cannot refuse.** `internal.controller` deletes
-`channel_members` rows by `userId` directly, so it bypasses every guard above, and the account is
-going regardless. It therefore captures the affected workspace ids BEFORE deleting and calls
-`repairWorkspacesAfterAccountDeletion` after: a community left with nobody is hard-deleted, and one
-left with members but no admin promotes its highest-priority survivor, ties broken by the lowest
-user id. Deterministic, per-workspace `try` so one failure never strands the others, and logged at
-`warn` because an automatic promotion is something a human should be able to find afterwards.
+**Account deletion is the one path that cannot refuse.** It bypasses every guard above, because
+the account is going regardless. `ChannelService.removeAccountFromWorkspaces` takes each community
+in turn: cut off its private channels, repair it as if the account were already gone - a community
+left with nobody is hard-deleted, one left with members but no admin promotes its highest-priority
+survivor, ties broken by the lowest user id - and only THEN delete the membership row. A failed
+repair keeps that row and the call throws, so the erasure queue's retry finds the community again
+([account-erasure](../account-erasure.md)); a swallowed failure used to strand an adminless
+community for ever. Logged at `warn` because an automatic promotion is something a human should be
+able to find afterwards.
 
 ### One invite link, bounded (2026-08-18)
 

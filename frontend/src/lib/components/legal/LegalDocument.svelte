@@ -320,6 +320,39 @@
   }
 
   /*
+    A TABLE FOR WHAT IS ONE ROW PER PROCESSING (purpose, legal basis, retention). The wrapper
+    scrolls on its own so a phone-width page never scrolls sideways; the table keeps the body's
+    muted tier for cells and the border token for its rules.
+  */
+  .legal-prose :global(.legal-table-wrap) {
+    overflow-x: auto;
+  }
+
+  .legal-prose :global(.legal-table) {
+    width: 100%;
+    min-width: 32rem;
+    border-collapse: collapse;
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+  }
+
+  .legal-prose :global(.legal-table th),
+  .legal-prose :global(.legal-table td) {
+    text-align: left;
+    vertical-align: top;
+    padding: 0.5rem 0.75rem 0.5rem 0;
+    border-bottom: 1px solid var(--cn-border);
+  }
+
+  .legal-prose :global(.legal-table th) {
+    font-weight: 600;
+  }
+
+  .legal-prose :global(.legal-table td) {
+    color: var(--text-muted);
+  }
+
+  /*
     The two REAL callouts, and the reason cards came off everything else: `.legal-note` for a point
     the reader must not miss, `.legal-alert` for a prohibition. Colour carries the difference, and
     both keep the body's own type.
