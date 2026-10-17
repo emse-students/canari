@@ -1,6 +1,6 @@
 # Bookings (reservation of rooms and slots) - the chantier, decisions as taken
 
-**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 is draft pull request #1963, rebased on the merged account erasure (#1965) on 2026-10-17. Decisions are written here the day the
+**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 is a draft pull request. Decisions are written here the day the
 user takes them; the work packages are written last, once every question is closed. Pointer in
 [backlog](backlog.md) to be added when the plan is complete.
 
@@ -27,7 +27,7 @@ see who else booked.
 | D2 | Owner | Same four owners as a form: a person, an association, a list, an institution (all three are `associations` rows with a `kind`; rights are `MANAGE_*` on that entity or global admin). **To verify before building:** that `/forms/create` really offers lists and institutions in its picker. |
 | D3 | Granularity | **The organiser chooses per space between a FIXED STEP** (1..N steps per booking, N set by the organiser) **and PREDEFINED SLOTS** (an explicit list, which may differ from one resource to the next). |
 | D4 | Several people | A booking has a holder and PARTICIPANTS, all Canari accounts. Participants see it in their agenda and may withdraw alone. The organiser may cap people per slot. No free-text names. |
-| D5 | Withdrawal | Free for the holder, with a DELAY set by the organiser (default none). The organiser may always cancel, the holder is told. |
+| D5 | Withdrawal | **Replaced by the user on 2026-10-17:** the HOLDER (and the organiser) may cancel at any time before the start; a PARTICIPANT may withdraw only until a minimum delay before it, set per space (`participantWithdrawMinMinutes`, default 0 = until the start), to avoid last-minute withdrawals. Earlier text: "Free for the holder, with a DELAY set by the organiser (default none). The organiser may always cancel, the holder is told." |
 | D6 | Who may book | A signed-in account. The organiser may restrict with the forms' `AudienceCondition` (promo, formation, cotisation). **No guest access** (a booking with no identity cannot be withdrawn cleanly). |
 | D7 | What a booker provides | **The forms' questions are reused** (same builder, same types, conditional questions), plus a FILE type. **The file type must also exist in forms** (user): a sibling work package, shared. |
 | D8 | Retention | The FILE is purged N days after the slot (organiser sets N, platform caps it, short default - 30 days like a CanaReel). The HISTORY row (who, when, which resource) is kept FROZEN. What happens to the TEXT answers is open (Q-open-1). |
@@ -147,8 +147,8 @@ when each is opened (083 on 2026-10-15). Only Master marks ready, merges and rel
 |---|---|---|---|
 | **WP-F** (DRAFT PR #1908, 2026-10-15, migration 084: built; the media class `form-file` and its two internal routes `internal/form-file` and `internal/form-file-purge` are reusable as they are; the purge to reuse is `purgeExpiredFiles` in `apps/social-service/src/forms/file-retention-purge.ts`, each candidate `{ fileId, ownerId, start, retentionDays }` so for bookings `start` is the slot end; size cap 8 MiB because the host firewall drops bodies over 10 MiB; a file question is refused on PUBLIC and on ANONYMOUS forms, the second being the agent's choice to confirm with the user: the file row and the blob owner name the uploader) | FILE question type for forms: type everywhere it must exist, server validation of ownership, size and type, a new media retention class, a manager-gated read, expiry and purge, refused on a public form (D40) | `frontend/src/lib/forms/questionTypes.ts`, `FormBuilder.svelte` (`hasOptions` denylist), `FormQuestion.svelte`, `apps/media-service/.../media.service.ts` `RetentionClass`, `apps/social-service/src/posts/reel-retention.scheduler.ts` as the scheduler pattern | A manager downloads a file; a stranger holding the id gets nothing readable; a purged file leaves the row; a second purge changes nothing |
 | **WP-B0** (MERGED as #1904, 2026-10-15: the backfill migration is `083_manage_bookings.sql`; a list's role editor needed NO change, so the list roster work moves to WP-B4, which adds an `EditSection` key, an `editRights` entry and a `mayOpenEditSection` case, and changes the 'list has three sections' test) | `MANAGE_BOOKINGS`: bit `1 << 11`, both enums, role-editor row, Paraglide labels, backfill of `MANAGE_FORMS` holders (D39), the list roster (D38) | `association-member.entity.ts`, `frontend/src/lib/associations/api.ts`, `AssociationMemberRow.svelte` `FLAG_LABELS`, `editSections.ts` | `permissions.test.ts` and the DTO spec pass; the right is grantable from the editor |
-| **WP-B1** (DRAFT PR, 2026-10-16, migration `087_bookings.sql` because #1940 holds 086: see [WP-B1 as built](#wp-b1-as-built-2026-10-16)) | Data model and migration: space, resource, availability rules, exceptions, blocked ranges, booking, participants; `btree_gist` and an EXCLUDE constraint on (resource, time range) among live bookings; deletion of a space deletes everything (D27) | `apps/social-service/src/migrations/` (next free number), `docs/wiki/infrastructure/databases.md` rules | Two concurrent inserts on the last slot: exactly one wins, in a real database |
-| **WP-B2** | Slot generation on demand (step or predefined slots), booking window, quotas, withdrawal delay, zone handling, the rule that refuses an availability edit with bookings inside (D29). **A window crossing midnight is TWO rules** (22:00-24:00 and 00:00-02:00 the next day): `booking_availability_rules_order` requires `startTime < endTime`, and generation must join them back into one window | A new `bookings` module beside `forms`; `AssociationsService.mayAct` as the only rights policy | Table-driven tests across a daylight-saving change |
+| **WP-B1** (MERGED as #1963, 2026-10-17, migration `087_bookings.sql` because #1940 holds 086: see [WP-B1 as built](#wp-b1-as-built-2026-10-16)) | Data model and migration: space, resource, availability rules, exceptions, blocked ranges, booking, participants; `btree_gist` and an EXCLUDE constraint on (resource, time range) among live bookings; deletion of a space deletes everything (D27) | `apps/social-service/src/migrations/` (next free number), `docs/wiki/infrastructure/databases.md` rules | Two concurrent inserts on the last slot: exactly one wins, in a real database |
+| **WP-B2** (DRAFT PR, 2026-10-17: see [WP-B2 as built](#wp-b2-as-built-2026-10-17)) | Slot generation on demand (step or predefined slots), booking window, quotas, withdrawal delay, zone handling, the rule that refuses an availability edit with bookings inside (D29). **A window crossing midnight is TWO rules** (22:00-24:00 and 00:00-02:00 the next day): `booking_availability_rules_order` requires `startTime < endTime`, and generation must join them back into one window | A new `bookings` module beside `forms`; `AssociationsService.mayAct` as the only rights policy | Table-driven tests across a daylight-saving change |
 | **WP-B3** | API: book, cancel, participant withdraws, organiser blocks, books on behalf, cancels (D20); frozen history (D15); block honoured (`isBlockedBetween`); private fields returned only to the booking's people (D32) | `apps/social-service/src/common/user-blocks.ts`, `forms.service.ts` `assertFormManager` as the guard shape | A past booking refuses every write; a stranger never receives a private field |
 | **WP-B4** | Organiser screens: five settings sections (D35), resources, availability, questions reused from forms, the entity tab. The availability editor writes a window crossing midnight as two rules (see WP-B2) | `editSections.ts`, `routes/associations/[slug]/edit/[[section]]/+page.svelte`, `FormSection.svelte` and `FormAdvancedSettings.svelte` as the pattern | Seen at 390 and 1280 on a real build |
 | **WP-B5** | Booker screens: grid and planning (D14), my bookings, the dashboard card (D37), the sidebar entry, link and QR code, "Add to my calendar" with a hosted ICS route (D13) | `routes/calendar/+page.svelte`, `viewport.ts`, `AddEventToCalendarButton.svelte`, `navigation/places.ts`, `QrCodeModal.svelte`, `pageWidth.ts` | Read on the Mi 9T and the iPhone |
@@ -174,7 +174,7 @@ spaces go with the association.
 
 | Table | Holds | Decisions |
 |---|---|---|
-| `booking_spaces` | owner (`ownerId`, `associationId` NULL for a person), name, description, zone, `slotMode` (`step` with `stepMinutes`/`maxSteps`, or `slots`), `nameVisibility` (`occupied` by default), `discoverability`, `audience`, `items` (the forms' questions), `privateInfo`, the window (`opensAt`, `minNoticeMinutes`, `horizonDays`), the quotas (`maxActiveBookings`, `maxMinutesPerPeriod` + `quotaPeriod`), `withdrawalDelayMinutes`, `maxPeople` (holder included), `retentionDays` (1..30, default 7) | D2-D9, D17, D23, D25, D26, D31-D33 |
+| `booking_spaces` | owner (`ownerId`, `associationId` NULL for a person), name, description, zone, `slotMode` (`step` with `stepMinutes`/`maxSteps`, or `slots`), `nameVisibility` (`occupied` by default), `discoverability`, `audience`, `items` (the forms' questions), `privateInfo`, the window (`opensAt`, `minNoticeMinutes`, `horizonDays`), the quotas (`maxActiveBookings`, `maxMinutesPerPeriod` + `quotaPeriod`), `participantWithdrawMinMinutes` (renamed from `withdrawalDelayMinutes` by 088), `maxPeople` (holder included), `retentionDays` (1..30, default 7) | D2-D9, D17, D23, D25, D26, D31-D33 |
 | `booking_resources` | name, public `description`, `privateInfo`, optional `linkedUserId`, `position` | D10, D32 |
 | `booking_availability_rules` | a LOCAL wall-time line: `weekday` (ISO 1..7) XOR `onDate`, `startTime` < `endTime`. In a `step` space a window cut into steps, in a `slots` space ONE slot | D3, D11, D25 |
 | `booking_availability_exceptions` | whole local days removed, `fromDate`..`toDate` both INCLUDED | D11 |
@@ -245,3 +245,76 @@ column named like these can never ship unclassified:
 Proved on a real PostgreSQL by `bookings.integration.spec.ts` (one test per line above, two
 tombstoned participants in one booking, and a second run changing nothing). Recorded as row C17 of
 the [register of processing](compliance/register-of-processing.md).
+
+## WP-B2 as built (2026-10-17)
+
+Pure functions, with no clock and no database, so every case is a table-driven test. One service
+reads the tables for them. Nothing here is a route yet (that is WP-B3).
+
+| File | Holds |
+|---|---|
+| `src/bookings/zoned-time.ts` | Local wall time in a zone <-> UTC, with `Intl` alone and no library. The holes are resolved as `Temporal`'s `'compatible'`: a time in a spring-forward GAP moves forward by the gap, and a time that exists TWICE is the EARLIER instant. `24:00` is the next day's 00:00. |
+| `src/bookings/slots.ts` | `availabilityWindows`, `slotUnits`, `checkRangeShape`, `unitStates`, `bookingsOutsideAvailability` (D29) |
+| `src/bookings/booking-rules.ts` | `checkBookingWindow` (D26), `checkQuotas` (D17), `holderMayCancel` (D5), each refusal a CODE |
+| `src/bookings/booking-slots.service.ts` | `spaceSlots(spaceId, from, to)` (at most 62 local days) and `assertAvailabilityChangeAllowed` (409 `bookings-inside-change`, naming the booking ids) |
+
+**Generation.** A line applied to one local date is a PIECE.
+
+- **Step space.** The pieces of ONE DATE are UNITED (overlapping or touching) into a window. A
+  window is cut into steps of ELAPSED time from its start. A booking is 1..`maxSteps` consecutive
+  steps of one window.
+- **Slots space.** Each DISTINCT piece is a slot: two lines giving the same slot are one slot.
+  Two OVERLAPPING slots stay two slots, and this is allowed on purpose: both are offered, and
+  booking one shows the other as booked, because the exclusion holds one live booking per instant.
+  Refusing them is left to the editor of WP-B4, which may warn.
+- **A WINDOW CROSSES AT MOST ONE MIDNIGHT** (review of #1993, 2026-10-17). A date's window
+  ending at 24:00 takes in the next date's TAIL: a window starting at 00:00 and ending before
+  24:00. That tail is then no window of its own. A WHOLE day (00:00-24:00) is never a tail, so:
+  - a 24/7 resource is one window per day, and a booking in it cannot cross midnight;
+  - Monday 20:00 to Wednesday 02:00, written as three lines, is Monday 20:00-24:00, then Tuesday
+    00:00 to Wednesday 02:00;
+  - whole-day predefined slots stay one slot per day.
+
+  Before this rule, every touching pair chained across any number of days: a 24/7 resource gave no
+  window at all, so every booking was refused.
+- **Which day a window belongs to.** A window belongs to the local date it STARTS on. Each date
+  is decided from itself and its two neighbours only, so asking for one day gives exactly that
+  day's part of a range. The invariant is tested over six availabilities in both modes, and the
+  grid, `spaceSlots` and the D29 check all read the same windows.
+- **Dates asked.** They must be real calendar dates (2026-02-30 is not). They are counted
+  arithmetically before anything is built, so `z` or a range to 9999-12-31 is a 400 `slot-range`.
+- **Change nights.** A 01:00-04:00 line lasts four hours on the fall-back night (eight steps of
+  30 min) and two on the spring-forward night.
+
+**The booking window (D26).** It refuses:
+
+- `started`: a slot that has begun;
+- `notice`: a slot starting sooner than `minNoticeMinutes`;
+- `beyond-horizon`: a slot starting more than `horizonDays` x 24 h away (elapsed time, so the horizon
+  slides with the clock);
+- `not-open-yet`: anything before `opensAt`.
+
+**Quotas (D17).** They count the person's LIVE bookings of the space, as holder or as a
+participant who has not withdrawn.
+
+- `active-bookings` counts the bookings not yet ENDED, so one in progress still counts.
+- `minutes-per-period` sums the bookings STARTING in the same local day, or the same ISO week
+  (keyed by its Monday).
+- The organiser booking on someone's behalf is exempt: the caller (WP-B3) does not run the check.
+
+**Withdrawal (D5), DECIDED BY THE USER ON 2026-10-17.** A PARTICIPANT may withdraw only until
+`participantWithdrawMinMinutes` before the start, set per space (0 = until the start), so that a
+last-minute withdrawal does not leave the holder short (`participantMayWithdraw`). The HOLDER and
+the organiser may cancel AT ANY TIME before the start. After the start nothing moves, for anyone
+(D15). The column was `withdrawalDelayMinutes` in 087, named after a holder delay that no longer
+exists; migration 088 RENAMES it (and its CHECK) rather than adding a second column nothing would
+read. It has had no reader yet, so there is no data to translate.
+
+**D29.** A change of a resource's availability, or of the space's step, mode or step ceiling, is
+checked against the coming LIVE bookings. Any booking that is no longer a bookable shape refuses
+the change and is named. Blocking a free range is not such a change.
+
+**Proof.** `zoned-time.spec.ts`, `slots.spec.ts`, `booking-rules.spec.ts` and
+`booking-slots.service.spec.ts`, all table-driven. They cover both 2026 Paris changes, New York's
+gap, the midnight join in both modes, exceptions, dated lines, alignment, the step ceiling and
+every refusal code.

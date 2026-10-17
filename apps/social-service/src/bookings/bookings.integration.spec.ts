@@ -19,7 +19,7 @@
  * Everything happens in a throwaway schema, dropped at the end. The `btree_gist` extension the
  * migration creates is database-wide and stays (it is created in `public`, as in production).
  */
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { Client } from 'pg';
@@ -40,7 +40,13 @@ import {
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
 
-const MIGRATION = readFileSync(join(__dirname, '..', 'migrations', '087_bookings.sql'), 'utf8');
+/** 087 and every bookings migration after it, in order, as the deploy applies them. */
+const MIGRATION_DIR = join(__dirname, '..', 'migrations');
+const MIGRATION = readdirSync(MIGRATION_DIR)
+  .filter((f) => /^\d+_booking/.test(f))
+  .sort()
+  .map((f) => readFileSync(join(MIGRATION_DIR, f), 'utf8'))
+  .join('\n');
 
 const ALICE = 'a'.repeat(64);
 const BOB = 'b'.repeat(64);
@@ -119,7 +125,7 @@ maybe('bookings schema against PostgreSQL (migration 087)', () => {
     await ds.initialize();
     // The one table 087 references, in the shape it needs of it.
     await q(`CREATE TABLE associations (id uuid PRIMARY KEY)`);
-    // Applied TWICE: the deploy re-runs a file whose successor failed, so 087 must be a no-op then.
+    // Applied TWICE: the deploy re-runs a file whose successor failed, so each must be a no-op then.
     await q(MIGRATION);
     await q(MIGRATION);
   });

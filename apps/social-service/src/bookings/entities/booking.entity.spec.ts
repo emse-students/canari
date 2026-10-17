@@ -1,4 +1,4 @@
-import { readFileSync } from 'fs';
+import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { getMetadataArgsStorage } from 'typeorm';
 import { BOOKING_ENTITIES } from '../bookings.module';
@@ -10,11 +10,14 @@ import { Booking, BOOKINGS_NO_OVERLAP, BOOKINGS_NO_OVERLAP_EXPRESSION } from './
  * so this spec requires every NAMED object the entities declare (constraints, foreign keys, indexes)
  * to exist under the same name in the migration, and the overlap rule to be the same text.
  */
-describe('bookings entities against migration 087', () => {
-  const migration = readFileSync(
-    join(__dirname, '..', '..', 'migrations', '087_bookings.sql'),
-    'utf8'
-  );
+describe('bookings entities against migrations 087 onwards', () => {
+  // 087 and every bookings migration after it (088 renamed a column and its check), in order.
+  const dir = join(__dirname, '..', '..', 'migrations');
+  const migration = readdirSync(dir)
+    .filter((f) => /^\d+_booking/.test(f))
+    .sort()
+    .map((f) => readFileSync(join(dir, f), 'utf8'))
+    .join('\n');
   const targets = new Set<unknown>(BOOKING_ENTITIES);
   const storage = getMetadataArgsStorage();
 
