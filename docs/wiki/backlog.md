@@ -181,7 +181,6 @@ else holds, a console owned by the user, or hardware that does not exist.
 | **decide production's log retention**: the per-message lines at `LOG` level roll the container log over in ~20 minutes, so an incident older than that is unreadable | 1 decision | [2026-10-12](#decided-by-the-user-on-2026-10-12-and-what-the-evening-left-open) |
 | **decide the WebCrypto checkpoint seal** (design only) | 1 decision | [2026-10-12](#decided-by-the-user-on-2026-10-12-and-what-the-evening-left-open) |
 | **EMSE Finance's roster** - its bureau fills it in (the Carte de la vie asso editor names it meanwhile) | 1 conversation | [below](#the-carte-de-la-vie-asso-chantier---audited-2026-09-27-every-decision-taken-ready-to-build) |
-| **raise `minClientVersion` to `1.2.1` once BOTH stores serve `1.2.1`** - `1.0.3`-`1.1.2` keep the native key-group epoch bug (a cold start arms an epoch gap, salon sends are refused, the device re-joins 45 s later); the floor is `1.0.3` since 2026-10-11; Apple's order is to wait for 1.2.1's review, then submit 1.2.4 | 1 gesture | [channel-encryption §22.3](protocols/channel-encryption.md#223-the-native-app-read-every-held-key-group-as-epoch-0-and-re-joined-them-all---fixed-2026-10-09), [Graine v2](#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28) |
 | **set `posts=["ME"]` in Authentik for the staff accounts labelled EMSE that are ME** (two school-staff accounts), from the table Master hands over | 2 attributes | [profiles-and-access](profiles-and-access.md) |
 | **set the `DEV_KLIPY_API_KEY` secret** (environment `development`, the same KLIPY key is fine - KLIPY moves no money and believes nothing about production): since the GIF search moved to the server, dev without it answers "GIF search is not configured" | 1 click | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
 | **decide whether to ROTATE the KLIPY key**: it shipped in every web and native bundle as `VITE_KLIPY_KEY` until 2026-10-16, so it is public; rotating it also ends GIF search on native builds installed before the change, which still call KLIPY directly | 1 decision | [the GIF entry](#p2---a-gif-sent-in-a-chat-is-loaded-by-every-recipient-from-klipys-cdn-found-2026-10-16-gdpr-review) |
@@ -331,7 +330,7 @@ The client half is built (neutral inert row, no link, one warn per type, unknown
 
 ## Group DM: a remove must hold against a re-add (decided by the user 2026-10-14, in progress)
 
-**Ships in `1.2.9`, not `1.2.8`** (user, 2026-10-14). **OWED STEP OF 1.2.9: raise `minClientVersion`** (today `1.0.3`) once the stable carrying #1878 is served by BOTH stores (`bun tools/play-vitals/vitals.mjs`, and the App Store state), as its own step with the user told: the guarantee is complete only when every answering device runs the new build. This is a deliberate exception to the standing "`minClientVersion` stays `1.0.3`". The user's wording was "a la version 1.2.8", but the guarantee ships in `1.2.9`, so the floor to raise to is `1.2.9`, NOT `1.2.8`: **ask the user to confirm the version when the time comes.**
+**Ships in `1.2.9`, not `1.2.8`** (user, 2026-10-14). **OWED STEP OF 1.2.9: raise `minClientVersion`** (today `1.2.7`) once the stable carrying #1878 is served by BOTH stores (`bun tools/play-vitals/vitals.mjs`, and the App Store state), as its own step with the user told: the guarantee is complete only when every answering device runs the new build. The user's wording was "a la version 1.2.8", but the guarantee ships in `1.2.9`, so the floor to raise to is `1.2.9`, NOT `1.2.8`: **ask the user to confirm the version when the time comes.**
 
 Draft PR with server membership intervals and enforcement at the answering peer; the question it answers is [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add).
 
@@ -626,8 +625,8 @@ the design [§21](protocols/channel-encryption.md#21-graine-v2-an-author-that-is
 G2-4b), the verified MLS sender that covers the DMs (G2-1b, web and native), the writer G2-5
 (`v1.0.3`), the refusal of an arriving v1 seed G2-5b (`v1.2.6`), and the server's refusal of an
 unsigned row ([§21.8](protocols/channel-encryption.md#218-the-server-refuses-an-unsigned-salon-row-2026-10-13),
-#1802). Settled by decision, not owed: the floor stays `1.0.3` (a store build from `1.0.3` to
-`1.2.5` still accepts a v1 seed until it updates), and GRAINE-AUTH-4 is a unit test, not a rig row
+#1802). Settled: the floor is `1.2.7` since 2026-10-17, past `1.2.6`, so no admitted build accepts a
+v1 seed any more; and GRAINE-AUTH-4 is a unit test, not a rig row
 (no mutating dev hook). **The chantier closes when the three rows below are done**; what is left
 after that is a dated shim, and it lives in [legacy-compatibility](legacy-compatibility.md) alone.
 
@@ -1037,7 +1036,7 @@ undated, and those are placed by their client clock with a one-hour margin
 [open-questions](open-questions.md#is-a-remove-meant-to-be-durable-against-a-later-re-add)).
 **OWED TO THE USER - `minClientVersion`:** the withholding runs on the ANSWERING device, so an answerer
 on an older build still sends the window unfiltered; the guarantee is complete only once
-`minClientVersion` (1.0.3 today) reaches the build that ships it. Raising it is the user's call, not
+`minClientVersion` (1.2.7 today) reaches the build that ships it. Raising it is the user's call, not
 an agent's. **And a known abuse, accepted with the decision:** a member can remove and re-add someone
 to open an artificial window, making that span unrestorable to every new device while the person
 stays; nothing tells it from a real removal.
@@ -1305,7 +1304,7 @@ Swiping right from the leftmost tab opens the camera, and nothing says so. Wante
 ## Decided by the user on 2026-10-11
 
 - **Standing release authority.** The lead agent arms a pull request after an adversarial review and a green CI, and cuts pre-releases AND stables once the pre-release has been read on a phone and nothing blocks, informing the user each time. It replaces the 2026-10-01 rule (the stable only on the user's explicit go). Still asked first: a direct production change (a hand edit on the host, a production setting such as `minClientVersion`), a data migration or backfill, any deletion of data. Rule: [durable-rules](durable-rules.md#release-and-ci---cicd).
-- **`minClientVersion` is `1.0.3`** (2026-10-11): Graine G2-5's refusal of an arriving v1 seed is unblocked ([Graine v2](#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28)). The `1.2.1` floor (the key-group epoch bug) stays in the owed table.
+- **`minClientVersion` is `1.2.7` on production AND dev since 2026-10-17** (the user's gesture; it was `1.0.3` from 2026-10-11): Graine G2-5's refusal of an arriving v1 seed is unblocked ([Graine v2](#p1---graine-v2---an-author-that-is-proven-and-a-ciphertext-bound-to-its-place-decided-2026-09-28)), and the `1.2.1` key-group epoch floor is met.
 - **Docker prune on the shared host: authorised above 75 % disk, images and build cache ONLY, never a volume.** This overrides the no-install-without-DSI-agreement rule for that one case and no other ([the P3](#p3---docker-prune-is-built-for-the-portail-etu-host-but-not-installed-there)).
 - **No native camera access, anywhere.** The new-post composer and the chat each get ONE "Ouvrir la camera" entry that opens the in-app CanaReel camera; the gallery picker stays. This replaces the chat's `capture` inputs ([chat](frontend/modules/chat.md#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)). The media's retention class follows its DESTINATION: a post takes the post class, a published reel `reel` (30 days), a chat send `chat-reel` (30 days, [reels-in-chat](frontend/modules/reels-in-chat.md#91-decided---the-ui-target-is-snapchat-user-2026-10-09)). Not built.
 - **CanaReels in chats is a chantier, RC-0 to RC-11, and RC-0 (the measurement, no code) comes first** ([reels-in-chat](frontend/modules/reels-in-chat.md#7-the-work-packages-in-order)).
