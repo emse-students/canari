@@ -48,7 +48,7 @@ class name, so most are singular unless the entity declares `@Entity('...')`).
 |---|---|
 | core-service | `users` (the personal notepad is a `notes` column, not a table), `platform_config` |
 | chat-delivery-service | `key_package`, `one_time_key_package`, `queued_message`, `dm_groups`, `dm_group_members`, `dm_device_group_memberships`, `dm_user_dismissed_groups`, `group_invites`, `mls_commit_log`, `mls_group_info`, `push_token`, `revoked_device`, `pin_verifier` |
-| social-service | `channel_workspaces`, `channels`, `channel_members`, `channel_roles`, `channel_messages`, `channel_key_distributions`, `workspace_invites`, `forms`, `submissions`, `form_reminders`, `associations`, `association_members`, `association_products`, `association_categories`, `association_documents`, `purchase_records`, `webhook_deliveries` |
+| social-service | `channel_workspaces`, `channels`, `channel_members`, `channel_roles`, `channel_messages`, `channel_key_distributions`, `workspace_invites`, `forms`, `submissions`, `form_reminders`, `associations`, `association_members`, `association_products`, `association_categories`, `association_documents`, `purchase_records`, `webhook_deliveries`, `booking_spaces`, `booking_resources`, `booking_availability_rules`, `booking_availability_exceptions`, `booking_blocks`, `bookings`, `booking_participants` ([bookings](../bookings-chantier.md#wp-b1-as-built-2026-10-16)) |
 
 Full schema: see `docs/wiki/architecture.md` (PostgreSQL schema overview section).
 
@@ -146,6 +146,35 @@ Rules, all of them load-bearing:
   deploy, so a backfill kept re-applying: migration 004 re-granted `MANAGE_PAYOUT_ACCOUNT` and 016
   re-enabled `cotisationEnabled`, silently reverting admin changes. The ledger fixes this going
   forward; keep backfills narrowly conditioned anyway.
+
+- **A CHECK that evaluates to NULL PASSES.** `CHECK (mode = 'step' AND "stepMinutes" > 0 ...)`
+  let a NULL step through (migration 087, found by its integration spec). `COALESCE` or
+  `IS NOT NULL` every nullable operand of a CHECK.
+
+#### Extensions, and an EXCLUDE constraint (migration 087, 2026-10-16)
+
+**The migration role CAN create an extension.** The deploy runs `psql -U "$POSTGRES_USER"`, the
+postgres image's bootstrap role, a superuser on both estates (read on production 2026-10-16:
+`rolsuper = t`). Installed there: `pg_trgm`, `unaccent` (core-service creates them at boot) and,
+from 087, `btree_gist`, created `SCHEMA public` and wrapped so a refusal FAILS the deploy with the
+one command a superuser must run. **An extension an entity's DDL needs must also exist where
+`synchronize` builds the schema** (development, the CI boot probe): social-service's
+`dataSourceFactory` (`src/common/synchronize-prerequisites.ts`) creates the listed extensions
+before synchronising, and only when synchronising.
+
+**An EXCLUDE constraint holds under contention, but its LOSERS ARE NOT ALWAYS TOLD 23P01.**
+Measured on 18.6: eight bare concurrent inserts on one slot gave exactly one winner and seven
+`40P01 deadlock_detected` - each inserted its tuple, then waited on the others' uncommitted ones.
+Taking `SELECT ... FOR UPDATE` on the parent row (the resource) first, in the same transaction,
+serialises the writers and every loser gets `23P01` (`isExclusionViolation`). Both shapes are run
+by `bookings.integration.spec.ts`.
+
+**A DECLARED DRIFT: CI's boot probe runs PostgreSQL 16, production 18.6.** `boot-nest-apps` in
+`ci.yml` uses `postgres:16-alpine` (unpinned), while the compose files pin `18-alpine` by digest; the
+social-service integration job of #1915 uses production's digest. So the boot probe proves the
+`synchronize` path (extensions included) on a major production does not run. `btree_gist` and the
+exclusion behave the same on both (contrib, trusted since 13), but a feature added after 16 would
+pass there only by luck: align the boot probe on the compose digest when it is next touched.
 
 **A DATABASE WITH NO LEDGER MUST NEVER BE HANDED THE LOOP.** The local estate runs
 `NODE_ENV=development`, so `synchronize` builds its schema from the entities on every boot and it

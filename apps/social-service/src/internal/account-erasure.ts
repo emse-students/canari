@@ -155,6 +155,32 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
     via: 'claimedByUserId',
   },
 
+  // -- Bookings ({@link BOOKINGS_ERASURE_STATEMENTS}, docs/wiki/bookings-chantier.md) ------------
+  // A PERSONAL space goes with everything under it (D27); an association's keeps living and only
+  // its creator id is anonymised. The history stays frozen (D15) under the tombstone.
+  'booking_spaces.ownerId': { action: 'anonymise' },
+  'booking_spaces.audience': NO_ACCOUNT('the audience condition (tags, promos) of a space'),
+  'booking_spaces.items': NO_ACCOUNT('the questions of a space'),
+  // The link grants a view of the resource's bookings; it is not history, so it is cut (NULL).
+  'booking_resources.linkedUserId': { action: 'anonymise' },
+  'booking_blocks.createdById': { action: 'anonymise' },
+  'bookings.holderId': { action: 'anonymise' },
+  'bookings.bookedById': { action: 'anonymise' },
+  'bookings.cancelledById': { action: 'anonymise' },
+  // Its answers are its own data and nothing needs them once it is gone: purged now (D18 early).
+  'bookings.answers': { action: 'anonymise', via: 'holderId' },
+  'bookings.holderName': {
+    action: 'kept',
+    reason:
+      'D15: a deleted account leaves the name it had in a frozen booking; the one-year maximum age (D19) bounds it',
+  },
+  'booking_participants.userId': { action: 'anonymise' },
+  'booking_participants.userName': {
+    action: 'kept',
+    reason:
+      'D15: a deleted account leaves the name it had in a frozen booking; the one-year maximum age (D19) bounds it',
+  },
+
   // -- Not an account reference, despite the name ----------------------------------------------
   'associations.contactEmail': {
     action: 'kept',
@@ -172,6 +198,70 @@ export interface ErasureStatement {
   label: string;
   sql: string;
 }
+
+/**
+ * The bookings part of the erasure (docs/wiki/bookings-chantier.md, "A deleted account"), in order:
+ * what reads the account as HOLDER (cancel, withdraw, purge) runs before its ids are tombstoned.
+ *
+ * - A PERSONAL space it owns is deleted, and the foreign keys cascade everything under it (D27) -
+ *   other people's coming bookings there included: nobody else can manage that space.
+ * - A COMING live booking it holds is cancelled by the tombstone, which frees the slot; a coming
+ *   participation is withdrawn. A deleted account will not come.
+ * - The answers of every booking it held are purged now rather than N days after the slot (D18).
+ * - The frozen history (D15) keeps its rows: every id becomes {@link DELETED_ACCOUNT} - which
+ *   migration 087's partial unique index on `booking_participants` names - and the name snapshots
+ *   stay, bounded by the one-year maximum age (D19). A linked resource is unlinked.
+ *
+ * Exported apart so `bookings.integration.spec.ts` runs exactly these against the schema 087 builds.
+ */
+export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
+  {
+    label: 'bookings_personal_spaces',
+    sql: `DELETE FROM booking_spaces WHERE "associationId" IS NULL AND "ownerId" = $1`,
+  },
+  {
+    label: 'bookings_coming_cancelled',
+    sql: `UPDATE bookings SET "cancelledAt" = now(), "cancelledById" = $2
+           WHERE "holderId" = $1 AND "cancelledAt" IS NULL AND "startsAt" > now()`,
+  },
+  {
+    label: 'bookings_coming_withdrawn',
+    sql: `UPDATE booking_participants p SET "withdrawnAt" = now()
+            FROM bookings b
+           WHERE b.id = p."bookingId" AND p."userId" = $1 AND p."withdrawnAt" IS NULL
+             AND b."cancelledAt" IS NULL AND b."startsAt" > now()`,
+  },
+  {
+    label: 'bookings_answers',
+    sql: `UPDATE bookings SET answers = NULL, "answersPurgedAt" = now()
+           WHERE "holderId" = $1 AND answers IS NOT NULL`,
+  },
+  {
+    label: 'bookings_space_owner',
+    sql: `UPDATE booking_spaces SET "ownerId" = $2 WHERE "ownerId" = $1`,
+  },
+  { label: 'bookings_holder', sql: `UPDATE bookings SET "holderId" = $2 WHERE "holderId" = $1` },
+  {
+    label: 'bookings_booked_by',
+    sql: `UPDATE bookings SET "bookedById" = $2 WHERE "bookedById" = $1`,
+  },
+  {
+    label: 'bookings_cancelled_by',
+    sql: `UPDATE bookings SET "cancelledById" = $2 WHERE "cancelledById" = $1`,
+  },
+  {
+    label: 'bookings_participants',
+    sql: `UPDATE booking_participants SET "userId" = $2 WHERE "userId" = $1`,
+  },
+  {
+    label: 'bookings_blocks',
+    sql: `UPDATE booking_blocks SET "createdById" = $2 WHERE "createdById" = $1`,
+  },
+  {
+    label: 'bookings_linked_resource',
+    sql: `UPDATE booking_resources SET "linkedUserId" = NULL WHERE "linkedUserId" = $1`,
+  },
+];
 
 /**
  * Every statement, in the order they must run inside ONE transaction. Order matters where a row
@@ -237,6 +327,8 @@ export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
            WHERE jsonb_typeof(metadata #> '{poll,votesByUser}') = 'object'
              AND (metadata #> '{poll,votesByUser}') ? $1`,
   },
+  // Its bookings: a personal space deleted, the coming ones cancelled, the history tombstoned.
+  ...BOOKINGS_ERASURE_STATEMENTS,
 
   // Anonymised
   {
@@ -592,6 +684,23 @@ export async function keptPostMediaIds(db: ErasureDb, userId: string): Promise<s
 }
 
 /**
+ * Runs `statements` in order on `db` (the caller's transaction) and returns the rows each one
+ * changed, by label, leaving out the ones that changed nothing - the log line's `rows=`.
+ */
+export async function runErasureStatements(
+  db: ErasureDb,
+  statements: readonly ErasureStatement[],
+  userId: string
+): Promise<Record<string, number>> {
+  const counts: Record<string, number> = {};
+  for (const statement of statements) {
+    const affected = await db.write(statement.sql, erasureParams(statement, userId));
+    if (affected > 0) counts[statement.label] = affected;
+  }
+  return counts;
+}
+
+/**
  * Every row-level part of the social erasure, to be run inside ONE transaction by the caller: the
  * statements, then the scrub of other people's posts. Idempotent. The ONE implementation, run by
  * the internal route and by the integration spec against a real database.
@@ -599,11 +708,7 @@ export async function keptPostMediaIds(db: ErasureDb, userId: string): Promise<s
 export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<SocialErasureResult> {
   const pinsRemoved = await db.read<{ id: string; channelId: string }>(ERASED_PINS_SQL, [userId]);
 
-  const counts: Record<string, number> = {};
-  for (const statement of ERASURE_STATEMENTS) {
-    const affected = await db.write(statement.sql, erasureParams(statement, userId));
-    if (affected > 0) counts[statement.label] = affected;
-  }
+  const counts = await runErasureStatements(db, ERASURE_STATEMENTS, userId);
 
   // Comments, likes and poll votes need the structure, so the candidates are read and locked.
   let postsScrubbed = 0;

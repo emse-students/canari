@@ -1813,6 +1813,8 @@ Signing, the bump script, the secrets and every compile-check trick are on [cicd
 
 ## Associations and agenda -> [social-service](services/social-service.md)
 
+- **AN EXCLUDE CONSTRAINT GUARANTEES ONE WINNER, NOT A TYPED ANSWER FOR THE LOSERS.** Eight bare concurrent inserts on one booking slot: one winner, seven `40P01` deadlocks, zero `23P01`. A booking write takes `SELECT ... FOR UPDATE` on its resource first, so every loser meets a committed row and is told `23P01`; never classify a deadlock as "slot taken". And a CHECK that evaluates to NULL passes. [databases](infrastructure/databases.md#extensions-and-an-exclude-constraint-migration-087-2026-10-16), [bookings](bookings-chantier.md#wp-b1-as-built-2026-10-16)
+
 - **"THE SUBMITTER OR A MANAGER" IS NOT AN AUTHORISATION RULE ON A PAYMENT - IT IS THE ATTACK.** Whoever benefits from a state may never be the one allowed to assert it. A `paid` flag, a granted tag and a purchase record are established by the party that TOOK the money - a signature-verified webhook, or a manager recording cash on a form they manage - never by the person who owes it. [social-service](services/social-service.md)
 - **A CHECK WRITTEN `if (callerId)` IS NOT A CHECK, IT IS A DEFAULT-OPEN DOOR WITH A SIGN ON IT.** Making authorisation conditional on an argument being present means the path that passes nothing is the path that is trusted most. Give the trusted caller its own route with its own guard, and let the function take no caller at all. [social-service](services/social-service.md)
 

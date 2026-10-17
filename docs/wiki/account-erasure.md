@@ -130,6 +130,11 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   column (`createdBy`, `grantedBy`, `decidedBy`, `republishedBy`, ...). In core, an admin's edit of
   somebody else's profile keeps that person's history with `actorId = '[deleted]'`, and an
   announcement's author becomes the nil UUID.
+- **Bookings** (`BOOKINGS_ERASURE_STATEMENTS`): a PERSONAL space it owns is deleted with everything
+  under it, other people's coming bookings there included; its coming bookings are cancelled and
+  coming participations withdrawn; its answers are purged; every id in the frozen history becomes
+  `[deleted]`, and the NAME SNAPSHOTS are KEPT (decision D15), bounded by the one-year maximum age
+  (D19) - [bookings-chantier](bookings-chantier.md#a-deleted-account-2026-10-16-review-of-1963).
 - **Legacy cotisations**: a row the account claimed is DELETED. The claim had already turned it into
   a `user_tags` row (deleted above); what was left is the name it was matched on.
 
