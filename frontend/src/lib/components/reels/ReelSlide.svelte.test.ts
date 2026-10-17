@@ -101,6 +101,15 @@ it('shows the author picture and name, linking the profile', () => {
   expect(author.querySelector('[data-avatar-stub="u1"]')).not.toBeNull();
 });
 
+it('the author link is one named element of at least 44 px, its picture and name hidden from assistive tech', () => {
+  const { q } = render(reel());
+  const author = q<HTMLAnchorElement>('a[data-reel-author]')!;
+  expect(author.classList.contains('min-h-11')).toBe(true);
+  const children = Array.from(author.children);
+  expect(children.length).toBeGreaterThan(0);
+  for (const child of children) expect(child.getAttribute('aria-hidden')).toBe('true');
+});
+
 it('a post published as an association shows and links the association', () => {
   const association = { id: 'a1', name: 'BDE Mines', slug: 'bde', logoUrl: null };
   const { q } = render(reel({ association } as Partial<PostEntity>));
@@ -199,4 +208,32 @@ it('unfolded on a letterboxed reel, the text never outgrows the frame, and outsi
   expect(backdrop.closest('[data-reel-frame]')).toBeNull();
   expect(backdrop.classList).toContain('z-10');
   expect(backdrop.getAttribute('aria-hidden')).toBe('true');
+});
+
+it('a reel on screen with no video draws the poster and accuses the row', () => {
+  // Dev's copy of production emptied two reels' media; the viewer drew a play glyph nothing could
+  // play, and nothing said why (iPhone 12, v1.2.9-alpha.4).
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    const { q } = render(reel({ id: 'r-empty', media: [], images: [] }));
+    expect(q('[data-post-media-stub]')).toBeNull();
+    expect(error).toHaveBeenCalledTimes(1);
+    expect(String(error.mock.calls[0][0])).toContain('reel r-empty carries no video');
+    // A return to the same reel (its slide rebuilt) says nothing new about the same row.
+    render(reel({ id: 'r-empty', media: [], images: [] }));
+    expect(error).toHaveBeenCalledTimes(1);
+  } finally {
+    error.mockRestore();
+  }
+});
+
+it('a reel with its video, or one off screen, says nothing', () => {
+  const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+  try {
+    render(reel());
+    render(reel({ id: 'r-off', media: [], images: [] }), false);
+    expect(error).not.toHaveBeenCalled();
+  } finally {
+    error.mockRestore();
+  }
 });

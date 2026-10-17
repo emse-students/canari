@@ -538,7 +538,7 @@ the function returns a size instead of promising one.**
 
 **One size per unit.** Not one per poster - that would be the size the SMALLEST bubble can take, and
 one tiny unit would drag every card on the sheet down. Not one per card either: the per-name ladder
-is what printed "Thomas DELLESTABLE" at 4.6 px beside a neighbour at 6.4 px in the same crown.
+is what printed a long member name at 4.6 px beside a neighbour at 6.4 px in the same crown.
 
 The search is a bisection, not a walk, because it runs for every unit on every pointer frame of a
 drag; it is valid because the predicate is monotonic - a larger size only ever grows a card.

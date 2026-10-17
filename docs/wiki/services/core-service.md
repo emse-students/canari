@@ -122,7 +122,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | GET | `/api/users/me/notes-key` | JWT | Caller's notepad key (32 bytes hex), generated on first use |
 | GET | `/api/users/:id` | JWT | Get public profile (`me` resolves to caller) |
 | PATCH | `/api/users/me` | JWT | Update caller's profile |
-| DELETE | `/api/users/me` | JWT | Permanently delete account and all data across services |
+| DELETE | `/api/users/me` | JWT | Deactivate at once and queue a guaranteed erasure in every service ([account-erasure](../account-erasure.md)) |
 | GET | `/api/users/admin/list` | global admin | List all users with admin status |
 | PATCH | `/api/users/:id/admin` | global admin | Set/clear admin flag (cannot self-revoke) |
 
@@ -251,7 +251,29 @@ had only ever drawn them once.
   (`NotificationService.swift`, `fetchAvatar`) both cache the face on disk with an explicit 24 h
   age check, matching this endpoint's `max-age`.
 - Guarded by `userAvatarCache.test.ts`: reintroducing any store without an expiry makes "asks the
-  server again for a face nothing is displaying any more" fail - verified by reintroducing one.
+  server again once the window has passed" fail.
+
+##### The warm window: a remount costs nothing for three minutes (2026-10-16)
+
+**Reported: a face drew its initials, then the photo, on every remount in a chat or a list.** The
+pool revoked a blob with its last holder, so each remount paid the presence wait and a conditional
+request (`no-cache` + ETag, a `304` is still a round trip). The pool now keeps a released blob for
+`AVATAR_WARM_MS` (3 min, in memory only) under a 300-entry cap (idlest first), and a remount inside
+the window resolves from the pool on the first frame: no presence call, no request, no initials.
+Revoke-on-eviction is unchanged (`BlobUrlPool`), and `dropIdle()` empties the idle ones when the
+signed-in reader changes. Pinned by the "warm window" block of `userAvatarCache.test.ts` (one fetch
+and one presence call across a remount inside the window; two after it).
+
+- **Staleness is bounded by that window, not abolished**: a changed photo shows once its blob has
+  been idle 3 min, or on the next app load. A face some mount holds continuously is not revalidated
+  (true before too). Not a persistent store and not a longer `max-age`: both are the defect above.
+- **There is no in-session invalidation to hook**: the photo is changed in MiGallery, outside
+  Canari, and nothing here is told. The reader-change hook is the only event this client sees.
+- **STEP 2, NOT DONE, and what it needs**: a versioned URL (`/avatar?v=<version>`, served
+  `public, max-age=31536000, immutable`) would remove both the window and the round trip. It needs a
+  per-user photo version in the `avatar-presence` answer, which carries ids only (`withPhoto`);
+  MiGallery's asset-keyed ETag is the natural source, as `avatar-presence` would have to ask it for
+  every id. A clock-based TTL on the server is not an acceptable substitute.
 
 ##### The version comes from MiGallery, and until 2026-09-16 we threw it away
 
@@ -552,7 +574,7 @@ Merging them is a policy decision: picking one guard as "the" guard silently cha
 | `chat-delivery-service/.../header-auth.guard.ts` | `x-user-logged-in !== 'true'` (logs a denial on `/push/` routes) |
 | `chat-gateway/src/presence.rs` | empty `x-user-id` - Rust, stays where it is |
 
-**CodeQL 2547 (`js/user-controlled-bypass`, 2026-10-09) WAS REAL, AND IS CLOSED FOR `chat-delivery-service` ONLY.** Its guard skipped the HMAC when `INTERNAL_SHARED_SECRET` was unset and `NODE_ENV` was not `production`, so `x-user-logged-in: true` alone was the credential (proved by a failing test first). nginx clears and re-sets that header, and prod/dev pin `NODE_ENV=production` with the secret, so no estate was exposed; a bare local run was. The guard now requires the secret, a non-empty `x-user-id` and a valid token in EVERY environment, and the only callers of its routes are nginx-fronted. **The other two guards still skip the HMAC outside production when the secret is unset** (core and social, which also refuses an unset `NODE_ENV`): same latent shape, no alert because the header they read is `x-user-id`, and still the user's policy decision below.
+**CodeQL 2547 (`js/user-controlled-bypass`, 2026-10-09) WAS REAL, AND IS CLOSED FOR `chat-delivery-service` ONLY.** Its guard skipped the HMAC when `INTERNAL_SHARED_SECRET` was unset and `NODE_ENV` was not `production`, so `x-user-logged-in: true` alone was the credential (proved by a failing test first). nginx clears and re-sets that header, and prod/dev pin `NODE_ENV=production` with the secret, so no estate was exposed; a bare local run was. The guard now requires the secret, a non-empty `x-user-id` and a valid token in EVERY environment, and the only callers of its routes are nginx-fronted. The remaining guards are tracked in the backlog as a policy decision.
 
 The same decision says whether `X-Internal-Token` is required OUTSIDE production too for core and social (chat-delivery answers yes since 2026-10-09). Presence about an arbitrary user id is not an access-rule question; it is parked in `presence.rs`'s docblock.
 

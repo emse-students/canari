@@ -850,7 +850,7 @@ dependencies = [
  "rand",
  "rand_chacha 0.10.0",
  "rand_core 0.10.1",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "subtle",
  "x-wing",
  "x25519-dalek 2.0.1",
@@ -1225,7 +1225,7 @@ dependencies = [
 
 [[package]]
 name = "mls-core"
-version = "1.2.9-alpha.4"
+version = "1.2.9-alpha.6"
 dependencies = [
  "argon2",
  "base64",
@@ -1245,7 +1245,7 @@ dependencies = [
 
 [[package]]
 name = "mls-wasm"
-version = "1.2.9-alpha.4"
+version = "1.2.9-alpha.6"
 dependencies = [
  "console_error_panic_hook",
  "getrandom 0.2.17",
@@ -1388,7 +1388,7 @@ dependencies = [
  "rand_chacha 0.3.1",
  "rand_core 0.10.1",
  "rand_core 0.6.4",
- "sha2 0.11.0",
+ "sha2 0.11.1",
  "thiserror",
  "tls_codec",
 ]
@@ -1826,9 +1826,9 @@ dependencies = [
 
 [[package]]
 name = "sha2"
-version = "0.11.0"
+version = "0.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "446ba717509524cb3f22f17ecc096f10f4822d76ab5c0b9822c5f9c284e825f4"
+checksum = "47d7069beb7d6ac7b9acd1039986e73443f24234f41074da099d6f994ac9ad19"
 dependencies = [
  "cfg-if",
  "cpufeatures 0.3.0",

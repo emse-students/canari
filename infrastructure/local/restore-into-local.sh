@@ -193,8 +193,8 @@ rm -f "$RESTORE_ERR"
 log "restore complete, psql reported no error"
 
 # ── 4. The strips ────────────────────────────────────────────────────────────
-# The list lives in ONE place because there are two copies of production now, and its failure mode
-# is an absence: `.github/scripts/tests/dev-copy-guards.test.sh` derives it from the entity
+# The list lives in ONE place, beside the media-residue question it answers, and its failure mode
+# is an absence: `.github/scripts/tests/local-copy-guards.test.sh` derives it from the entity
 # declarations. `local_sql` is passed BY NAME so the allowlist of writable targets stays here.
 log "stripping what a copy must not carry…"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

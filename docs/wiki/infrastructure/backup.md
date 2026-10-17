@@ -2,7 +2,7 @@
 
 **Source**: `infrastructure/backup/`  
 **Script**: `infrastructure/backup/backup.sh`  
-**Schedule**: the `gha-runner` user's crontab on the Portail-etu host, `30 3 * * *` (the systemd
+**Schedule**: the deploy account's crontab on the production host, `30 3 * * *` (the systemd
 units in `infrastructure/backup/` belonged to the old box and are not installed there)
 
 ## Schedule
@@ -30,7 +30,7 @@ Each nightly run produces one timestamped archive (`canari-backup-YYYYMMDD-HHMMS
 | `MANIFEST.txt` | - | Timestamp, git commit, content description, and where the media are |
 
 Plus, at 04:00, `backup-objects.sh` (`canari-prod_garage_data` + `canari-prod_garage_meta` +
-`canari-prod_media_meta` into restic, its `backup` step reading as root for `node_key`, 14d/8w/6m, `restic check`, rsync mirror to `mitv`).
+`canari-prod_media_meta` into restic, its `backup` step reading as root for `node_key`, 14d/8w/6m, `restic check`, rsync mirror to the offsite server).
 The object storage backend migrated from MinIO to Garage on 2026-08-14 (MinIO is no longer
 maintained upstream) - see [docker](docker.md). Snapshots taken before that date are in the old
 `infrastructure_minio_data` format; see the comment at the top of `restore.sh`.
@@ -58,17 +58,17 @@ volume sha256-identically over 172 objects. Full model:
 | Location | Retention |
 |---|---|
 | Local (`/home/canari/backups/`) | 14 days (`BACKUP_RETENTION_DAYS`, configurable) |
-| Offsite (`canaribackup@10.0.0.4:/srv/canari-backups/`) | Same 14-day retention, enforced via SSH |
+| Offsite (`<backup-user>@<offsite-host>:<offsite-dir>/`) | Same 14-day retention, enforced via SSH |
 
 ## Offsite transfer
 
-Archives are pushed via `rsync` over SSH to a LAN server (`mitv`):
+Archives are pushed via `rsync` over SSH to a LAN server:
 
 ```
-rsync -az --partial canari-backup-*.tar.gz canaribackup@10.0.0.4:/srv/canari-backups/
+rsync -az --partial canari-backup-*.tar.gz <backup-user>@<offsite-host>:<offsite-dir>/
 ```
 
-The SSH key for `canaribackup@10.0.0.4` must be pre-authorized on the offsite server. The transfer uses `BatchMode=yes` (no password prompts); if the host is unreachable, a warning is logged but the backup still completes.
+The SSH key for the offsite account must be pre-authorized on the offsite server. The transfer uses `BatchMode=yes` (no password prompts); if the host is unreachable, a warning is logged but the backup still completes.
 
 ## Configuration variables (in `infrastructure/.env`)
 
@@ -76,7 +76,7 @@ The SSH key for `canaribackup@10.0.0.4` must be pre-authorized on the offsite se
 |---|---|---|
 | `BACKUP_DIR` | `/home/canari/backups` | Local backup directory |
 | `BACKUP_RETENTION_DAYS` | `14` | Days to keep local + offsite archives |
-| `BACKUP_SSH_HOST` | `canaribackup@10.0.0.4` | Offsite rsync destination (empty to disable) |
+| `BACKUP_SSH_HOST` | `<backup-user>@<offsite-host>` | Offsite rsync destination (empty to disable) |
 | `BACKUP_SSH_PATH` | `/srv/canari-backups` | Offsite directory |
 | `MICONNECT_PG_CONTAINER` | `miconnect-postgresql-1` | Authentik PostgreSQL container name (empty to skip) |
 | `MICONNECT_SSH_HOST` | empty | `~/.ssh/config` alias of the box running Authentik; empty = the container runs on this machine, TRUE since 2026-09-24 ([below](#five-nights-with-no-backup-at-all-2026-09-26-to-2026-09-30)) |
@@ -89,11 +89,11 @@ was `canari-backup-20260925-033002`. Every night since, `backup.sh` ran, dumped 
 on `ssh: Could not resolve hostname authentik-target` - and a failed step aborts the WHOLE archive,
 so Canari's own database was not saved either.
 
-**Why.** The cutover of 2026-09-24 put Canari AND Authentik on the Portail-etu host. The migration
+**Why.** The cutover of 2026-09-24 put Canari AND Authentik on the production host. The migration
 plan said `MICONNECT_SSH_HOST` becomes empty again once both stacks meet
 ([README](../../../infrastructure/backup/README.md)); it stayed `authentik-target` in
 `.env.example`, which the deploy renders into `infrastructure/.env`. That alias lived in the OLD
-box's `~/.ssh/config`, never in `gha-runner`'s on the new host. Read in `backup.log`: on 09-25 the
+box's `~/.ssh/config`, never in the deploy account's on the new host. Read in `backup.log`: on 09-25 the
 script still dumped locally (`Dump PostgreSQL Authentik…`, no `via`); the deploy of that evening
 brought the version reading this variable, and from 09-26 every run went `via authentik-target`.
 The crontab even said "no
@@ -109,7 +109,7 @@ offsite.
 09-25 were of EMPTY volumes (`infrastructure_*`, a compose project this host never ran). From 09-26
 it read the right ones, but Garage writes `garage_meta/node_key` `root:root 0600`: restic, running
 as the account, skipped it, exited 3, and `set -e` stopped the run before retention, check and the
-offsite mirror. So mitv's newest real media snapshot was the OLD box's of 09-23, and **no snapshot,
+offsite mirror. So the offsite server's newest real media snapshot was the OLD box's of 09-23, and **no snapshot,
 on either machine, had ever held `node_key`** - without it a restored Garage comes back as a
 different node, absent from its own layout. Mirrored by hand the same night (30 snapshots, checked
 first); since then the `backup` step alone reads as root and hands the repository back to the

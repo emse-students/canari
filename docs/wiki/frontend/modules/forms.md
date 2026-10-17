@@ -926,10 +926,7 @@ Tests: `forms.service.seat-hold.spec.ts` runs the service on an in-memory store 
 ## What a client reads of a submission is an allowlist (2026-10-15)
 
 `GET /api/forms/submissions/:id` (the submitter or a manager, read by the payment return pages)
-answered `paymentAccountId`: the Business's Lydia `vendor_token`. Lydia's `request/cancel` asks
-for nothing else besides the `request_id`, and request ids are sequential (`12115506`,
-[payments](payments.md)), so any submitter could cancel the open payment requests of everyone
-else paying that association. No client field read it. The two submitter reads and the two
+answered a payment-provider account credential that no client field read. The two submitter reads and the two
 manager lists (`:id/submissions`, `:id/submissions/pending-cash`) also answered the whole row:
 the provider ids (`stripeSessionId`, `paymentRequestId`, `paymentSettledBy`), the hold clock and
 the fulfilment flags.
@@ -948,9 +945,7 @@ recognisable value and fails if any client read carries one, by value or by key 
 fails 4/4 against the previous service.
 
 **The association reads had the same leak, closed the same way (2026-10-15).** `GET
-/api/associations` and its siblings answered `lydiaAccountId`, the same vendor token, to any
-signed-in member, through a denylist that nulled only the vault key and the notes; `me/list` did
-not even go through that and answered the vault master key to every member.
+/api/associations` and its siblings answered the same payment credential and other private columns, through a denylist rather than an allowlist.
 `apps/social-service/src/associations/association.projection.ts` (`toAssociationView`) is now an
 allowlist on every route that answers a row: `GET /`, `slug/:slug`, `:id`, `me/list`, `POST /`,
 `PATCH :id` and both logo routes. The token and the dashboard URL have their own read,

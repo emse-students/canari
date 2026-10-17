@@ -26,9 +26,9 @@
 set -euo pipefail
 
 # ── Production, by compose label. Constants: this script must not be pointable elsewhere. ──
-# Production's containers moved off the `canari` box onto portail-etu.emse.fr on 2026-09-24
-# (docs/wiki/infrastructure/estate-migration.md); `ssh canari` still reaches the OLD box, which is
-# now only the tunnel relay, so this must name the box that actually runs postgres. The compose
+# Production's containers moved onto the shared host on 2026-09-24
+# (docs/wiki/infrastructure/estate-migration.md); the old box may still accept a connection and run
+# no container, so this must name the box that actually runs postgres. The compose
 # project was renamed `infrastructure` -> `canari-prod` in the same move.
 readonly PROD_HOST="portail-etu-direct"
 readonly PROD_PROJECT="canari-prod"
@@ -87,7 +87,7 @@ log "production reports $PROD_USERS users"
 # ── Dump on the box, to a private temp file ──────────────────────────────────
 REMOTE="/tmp/canari-dump-$$.sql.gz"
 # --clean --if-exists so the restore replaces objects rather than colliding with them. The same
-# flags backup.sh and copy-prod-to-dev.sh use, deliberately: one dump format for every path.
+# flags backup.sh uses, deliberately: one dump format for every path.
 log "dumping $DATABASE on the box…"
 "${SSH[@]}" "umask 077 && docker exec -i $PROD_PG sh -c \"pg_dump -U '$PROD_USER' -d '$DATABASE' --clean --if-exists\" | gzip > $REMOTE && ls -l $REMOTE" | tr -d '\r'
 

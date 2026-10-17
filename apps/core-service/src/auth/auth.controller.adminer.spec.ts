@@ -60,7 +60,11 @@ function build(opts: { enabled?: boolean; dbAdmin?: boolean } = {}) {
     users as never,
     { getConfig: jest.fn(), isAccessBlockedByMaintenance: jest.fn() } as never,
     {} as never,
-    adminer
+    adminer,
+    {
+      erasureState: jest.fn().mockResolvedValue('none'),
+      confirmAfterSignIn: jest.fn().mockResolvedValue('none'),
+    } as never
   );
   return { controller, adminer };
 }
