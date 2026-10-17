@@ -671,6 +671,27 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       expect(mls.notifyConversationAvailable).toHaveBeenCalledWith(bgGroup);
     });
 
+    it('a FAILED storage read is not "no stored row": nothing is written, nothing announced', async () => {
+      const deps = baseDeps({
+        conversations: createTestConversations([]),
+        storage: { getConversation: vi.fn().mockRejectedValue(new Error('SQLITE_BUSY')) },
+      });
+      const mls = deps.mlsService as any;
+      mls.getLocalGroups = vi.fn().mockReturnValue([bgGroup]);
+      mls.getGroupMeta = vi.fn().mockResolvedValue({ name: 'Equipe', isGroup: true });
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0] as (...a: unknown[]) => Promise<boolean>;
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await onMsg('peer', new Uint8Array([1]), bgGroup, true, undefined);
+
+      expect(deps.conversations.get(bgGroup)).toBeUndefined();
+      expect(deps.saveConversation).not.toHaveBeenCalled();
+      expect(mls.notifyConversationAvailable).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('UNREADABLE'));
+      warn.mockRestore();
+    });
+
     it('control: a held group that HAS a row gets no second row and no announcement', async () => {
       const deps = baseDeps();
       const mls = deps.mlsService as any;

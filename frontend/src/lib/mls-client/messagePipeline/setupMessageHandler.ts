@@ -1520,14 +1520,25 @@ async function writeRowForHeldGroup(
   deps: MessageHandlerDeps
 ): Promise<void> {
   const { mlsService, userId, log } = deps;
-  const stored = deps.storage
-    ? await deps.storage.getConversation(groupId).catch((e: unknown) => {
-        log(
-          `[WELCOME] ${groupId.slice(0, 8)}... stored conversation row unreadable - writing one from the server row: ${String(e)}`
-        );
-        return null;
-      })
-    : null;
+  let stored: Awaited<
+    ReturnType<NonNullable<MessageHandlerDeps['storage']>['getConversation']>
+  > | null = null;
+  if (deps.storage) {
+    try {
+      stored = await deps.storage.getConversation(groupId);
+    } catch (e: unknown) {
+      // A failed read is NOT "no stored row": writing a fresh one would overwrite the stored row's
+      // watermarks, floor and sort key. The restore seeds and announces the row, as it does when
+      // membership cannot be read.
+      console.warn(
+        `[WELCOME] ${groupId.slice(0, 8)}... stored conversation row UNREADABLE - no row written, the restore owns it: ${String(e)}`
+      );
+      log(
+        `[WELCOME] ${groupId.slice(0, 8)}... stored conversation row UNREADABLE - no row written, the restore owns it: ${String(e)}`
+      );
+      return;
+    }
+  }
   if (findConversationKeyByGroupId(deps.conversations, groupId)) {
     // The restore seeded it while storage was being read: its writer owns it, and announces it.
     log(
