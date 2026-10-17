@@ -1,7 +1,7 @@
 /**
- * THE BOOKINGS API'S RULES AGAINST A REAL POSTGRESQL (WP-B3).
+ * THE BOOKINGS API'S RULES AGAINST A REAL POSTGRESQL (WP-B3, and the organiser's side, WP-B4).
  *
- * `BookingsService` is run on a real connection, with migrations 087 onwards applied to a throwaway
+ * `BookingsService` and `BookingSpacesService` are run on a real connection, with migrations 087 onwards applied to a throwaway
  * schema, because what it promises is a database's to keep: the space-then-resource row locks that
  * turn every losing racer into a typed `slot-taken` (never a deadlock), quotas that hold across the
  * resources of one space, a block refused over live bookings. Rights to an association
@@ -32,6 +32,8 @@ import { Association } from '../associations/entities/association.entity';
 import type { AssociationsService } from '../associations/associations.service';
 import type { PricingFactsService } from '../pricing/pricing-facts.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
+import type { UserTagService } from '../users/user-tag.service';
+import { BookingSpacesService } from './booking-spaces.service';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -78,6 +80,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
   let ds: DataSource;
   let service: BookingsService;
   let slotsService: BookingSlotsService;
+  let organiser: BookingSpacesService;
   /** `account:association` pairs holding MANAGE_BOOKINGS. */
   const grants = new Set<string>();
   /** The audience facts of an account, as `PricingFactsService` would build them. */
@@ -132,22 +135,33 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       },
     } as unknown as PricingFactsService;
     const repo = <T extends object>(e: new () => T) => ds.getRepository(e);
+    const slots = (slotsService = new BookingSlotsService(
+      repo(BookingSpace),
+      repo(BookingResource),
+      repo(BookingAvailabilityRule),
+      repo(BookingAvailabilityException),
+      repo(BookingBlock),
+      repo(Booking)
+    ));
     service = new BookingsService(
       repo(BookingSpace),
       repo(BookingResource),
       repo(Booking),
       repo(BookingParticipant),
       repo(BookingBlock),
-      (slotsService = new BookingSlotsService(
-        repo(BookingSpace),
-        repo(BookingResource),
-        repo(BookingAvailabilityRule),
-        repo(BookingAvailabilityException),
-        repo(BookingBlock),
-        repo(Booking)
-      )),
+      slots,
       associations,
       pricingFacts
+    );
+    organiser = new BookingSpacesService(
+      repo(BookingSpace),
+      repo(BookingResource),
+      repo(BookingAvailabilityRule),
+      repo(BookingAvailabilityException),
+      repo(Booking),
+      slots,
+      associations,
+      { listCotisationTiers: async () => [] } as unknown as UserTagService
     );
   });
 
@@ -707,6 +721,173 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
           })
         )
       ).toEqual({ code: 'participant-blocked' });
+    });
+  });
+
+  describe('the organiser (WP-B4)', () => {
+    const EVERY_DAY = [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({
+      weekday,
+      startTime: '08:00',
+      endTime: '22:00',
+    }));
+    const availability = (lines: object[], exceptions: object[] = []) =>
+      ({ lines, exceptions }) as never;
+
+    it('creates a personal space for anyone, an entity space for its organiser alone', async () => {
+      const association = (
+        await q(`INSERT INTO associations (id) VALUES (gen_random_uuid()) RETURNING id`)
+      )[0].id as string;
+      grants.add(`${ORGA}:${association}`);
+      const { id: personal } = await organiser.create({ name: 'Psy' }, as(ALICE));
+      expect(
+        await refusal(organiser.create({ name: 'BDA', associationId: association }, as(ALICE)))
+      ).toEqual({ code: 'not-manager' });
+      await organiser.create({ name: 'BDA', associationId: association }, as(ORGA));
+
+      expect((await organiser.managedList(null, as(ALICE))).map((s) => s.id)).toEqual([personal]);
+      expect(await organiser.managedList(association, as(ORGA))).toEqual([
+        expect.objectContaining({ name: 'BDA', resourceCount: 0 }),
+      ]);
+      expect(await refusal(organiser.managedList(association, as(ALICE)))).toEqual({
+        code: 'not-manager',
+      });
+      expect(await refusal(organiser.managedSpaceView(personal, as(BOB)))).toEqual({
+        code: 'not-manager',
+      });
+    });
+
+    it('refuses settings the database would refuse, as codes', async () => {
+      const { id } = await organiser.create({ name: 'x' }, as(ALICE));
+      const patch = (dto: object) => organiser.update(id, dto as never, as(ALICE), NOW);
+      expect(await refusal(patch({ timeZone: 'Mars/Olympus' }))).toEqual({ code: 'time-zone' });
+      expect(await refusal(patch({ maxMinutesPerPeriod: 60 }))).toEqual({ code: 'quota-pair' });
+      expect(
+        await refusal(patch({ items: [{ id: 'q', label: 'CV', required: true, type: 'file' }] }))
+      ).toEqual({ code: 'file-question-not-yet' });
+      await expect(patch({ slotMode: 'slots' })).resolves.toEqual({ ok: true });
+      const view = await organiser.managedSpaceView(id, as(ALICE));
+      expect([view.slotMode, view.stepMinutes, view.maxSteps]).toEqual(['slots', null, null]);
+    });
+
+    it('writes availability and reads it back; refuses a malformed line', async () => {
+      const { space, resourceIds } = await setup();
+      const r = resourceIds[0];
+      expect(
+        await refusal(
+          organiser.setAvailability(
+            r,
+            availability([{ weekday: 1, startTime: '10:00', endTime: '09:00' }]),
+            as(ORGA),
+            NOW
+          )
+        )
+      ).toEqual({ code: 'line-order' });
+      expect(
+        await refusal(
+          organiser.setAvailability(
+            r,
+            availability([
+              { weekday: 1, onDate: '2026-11-02', startTime: '09:00', endTime: '10:00' },
+            ]),
+            as(ORGA),
+            NOW
+          )
+        )
+      ).toEqual({ code: 'line-kind' });
+      await organiser.setAvailability(
+        r,
+        availability(
+          [
+            { weekday: 5, startTime: '22:00', endTime: '24:00' },
+            { weekday: 6, startTime: '00:00', endTime: '02:00' },
+          ],
+          [{ fromDate: '2026-12-24', toDate: '2027-01-02' }]
+        ),
+        as(ORGA),
+        NOW
+      );
+      const view = await organiser.managedSpaceView(space.id, as(ORGA));
+      expect(view.resources[0].lines).toEqual(
+        expect.arrayContaining([
+          { weekday: 5, onDate: null, startTime: '22:00:00', endTime: '24:00:00' },
+          { weekday: 6, onDate: null, startTime: '00:00:00', endTime: '02:00:00' },
+        ])
+      );
+      expect(view.resources[0].exceptions).toEqual([
+        { fromDate: '2026-12-24', toDate: '2027-01-02' },
+      ]);
+    });
+
+    it('refuses an availability or a step change over a coming booking, naming it (D29)', async () => {
+      const { space, resourceIds } = await setup();
+      const r = resourceIds[0];
+      const { id } = await book(space.id, r, '10:00', '10:30');
+      expect(
+        await refusal(
+          organiser.setAvailability(
+            r,
+            availability([{ weekday: 1, startTime: '14:00', endTime: '18:00' }]),
+            as(ORGA),
+            NOW
+          )
+        )
+      ).toEqual({ code: 'bookings-inside-change', bookingIds: [id] });
+      expect(await refusal(organiser.update(space.id, { stepMinutes: 45 }, as(ORGA), NOW))).toEqual(
+        {
+          code: 'bookings-inside-change',
+          bookingIds: [id],
+        }
+      );
+      expect(await refusal(organiser.removeResource(r, as(ORGA), NOW))).toEqual({
+        code: 'bookings-inside-change',
+        bookingIds: [id],
+      });
+      // Keeping the booking inside: accepted.
+      await expect(
+        organiser.setAvailability(r, availability(EVERY_DAY), as(ORGA), NOW)
+      ).resolves.toEqual({ ok: true });
+      await service.cancel(id, as(ALICE), NOW);
+      await expect(organiser.removeResource(r, as(ORGA), NOW)).resolves.toEqual({ ok: true });
+    });
+
+    it('a booking racing an availability change: never both', async () => {
+      for (let round = 0; round < 5; round++) {
+        const { space, resourceIds } = await setup();
+        const r = resourceIds[0];
+        const [booked, changed] = await Promise.allSettled([
+          book(space.id, r, '10:00', '10:30'),
+          organiser.setAvailability(
+            r,
+            availability([{ weekday: 1, startTime: '14:00', endTime: '18:00' }]),
+            as(ORGA),
+            NOW
+          ),
+        ]);
+        expect([booked.status, changed.status].filter((s) => s === 'fulfilled')).toHaveLength(1);
+      }
+    });
+
+    it('links a resource to an existing account only, and deletes a space with everything', async () => {
+      const { space } = await setup();
+      expect(
+        await refusal(
+          organiser.addResource(
+            space.id,
+            { name: 'Alumni', linkedUserId: '9'.repeat(64) },
+            as(ORGA)
+          )
+        )
+      ).toEqual({ code: 'unknown-account' });
+      const { id } = await organiser.addResource(
+        space.id,
+        { name: 'Alumni', linkedUserId: DAN.toUpperCase() },
+        as(ORGA)
+      );
+      expect((await ds.getRepository(BookingResource).findOneByOrFail({ id })).linkedUserId).toBe(
+        DAN
+      );
+      await organiser.remove(space.id, as(ORGA));
+      expect(await ds.getRepository(BookingResource).countBy({ spaceId: space.id })).toBe(0);
     });
   });
 });

@@ -1,6 +1,6 @@
 # Bookings (reservation of rooms and slots) - the chantier, decisions as taken
 
-**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) is a draft pull request. Decisions are written here the day the
+**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) is a draft pull request; WP-B4's organiser API is a draft stacked on it, its screens next. Decisions are written here the day the
 user takes them; the work packages are written last, once every question is closed. Pointer in
 [backlog](backlog.md) to be added when the plan is complete.
 
@@ -405,3 +405,42 @@ answers per account, per association and per flag, as the real policy does. It c
 - the organiser list paged; a booking vanishing between two reads.
 
 It runs in CI with the other integration specs (#1915).
+
+## WP-B4 as built - the organiser's API (2026-10-17)
+
+`BookingSpacesController` and `BookingSpacesService`, under the same prefix and guard as WP-B3. The
+screens come in a pull request of their own; this half is what they write through.
+
+| Route | Who | Refusal codes |
+|---|---|---|
+| `GET managed?associationId` | the entity's organiser; without the parameter, the actor's PERSONAL spaces | `not-manager` |
+| `POST spaces` | anyone for a personal space (D16); `MANAGE_BOOKINGS` for an entity's (`associationId`) | `not-manager`, and the settings codes below |
+| `GET spaces/:id/manage` | the organiser: every setting, every resource with its linked account, private text and availability | `space-not-found`, `not-manager` |
+| `PATCH spaces/:id` | the organiser; any subset of the settings (D35), `null` clears | `time-zone`, `step-shape`, `quota-pair`, `file-question-not-yet`, `item-id`, `audience-invalid`, `bookings-inside-change` (with `bookingIds`) |
+| `DELETE spaces/:id` | the organiser: the space and EVERYTHING under it (D27) | `not-manager` |
+| `POST spaces/:id/resources`, `PATCH resources/:id` | the organiser; a linked account must exist | `unknown-account` |
+| `DELETE resources/:id` | the organiser; refused while it has COMING live bookings (D29 applied to the whole resource) | `bookings-inside-change` |
+| `PUT resources/:id/availability` | the organiser: the resource's WHOLE availability (weekly and dated lines, closures), replaced | `line-kind`, `line-date`, `line-order`, `exception-range`, `bookings-inside-change` |
+
+- **D29 UNDER THE SPACE LOCK.** A change of availability, of the zone, the mode, the step or the
+  step ceiling, and the deletion of a resource, all take the SPACE row lock - the first lock every
+  booking takes - and only then run `assertAvailabilityChangeAllowed`. No booking can be made
+  between the check and the write; a test races the two and only one ever succeeds.
+- **The database's CHECKs are refused first, as codes** (`step-shape`, `quota-pair`), so a
+  constraint violation is never a 500. Switching to predefined slots clears the step.
+- **Rights** are the module's: `MANAGE_BOOKINGS` on the owning entity, the owner of a personal
+  space, a global admin. Creating an entity's space asks the same right.
+- **The audience and each question's condition** go through the forms' `parseAudienceCondition`,
+  with the entity's cotisation tiers, so a space and a form agree on who an ICM is.
+- **A FILE question is refused (`file-question-not-yet`) until WP-B6** brings the bookings half of
+  WP-F's storage and purge: accepted now, it would be a question nobody could answer.
+- **Times** are stored `HH:MM:SS`, `24:00` included; a window crossing midnight is two lines (WP-B2).
+- **No poster in v1**: D35's "poster" has no column (087 has none); it is left for a later version
+  rather than a migration in this package.
+- **Nothing new to erase**: no column was added. The linked account was already covered by
+  `BOOKINGS_ERASURE_STATEMENTS` (WP-B1).
+
+**Proof.** In `bookings.service.integration.spec.ts`, "the organiser (WP-B4)": rights per entity,
+the settings codes, availability written and read back, D29 naming the booking for availability,
+step and resource deletion, a booking racing an availability change (five rounds, never both), a
+linked account that must exist, a space deleted with everything.
