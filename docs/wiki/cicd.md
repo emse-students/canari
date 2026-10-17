@@ -278,7 +278,7 @@ a POST, because nothing was sent. **These three numbers must agree with `rolling
 **The proof is a test that sends throughout** (`.github/scripts/tests/deploy-rolling.test.sh`, a
 fixture estate of the same shape): ~1500 POSTs at concurrency 12 across a release, ALL `200`, on
 compose 5.5 and on 2.26.1 (the host's version); the same release done the old way, as its control,
-shows hundreds of failures. A minute-boundary cron firing in both replicas was the one shared-state
+shows hundreds of failures. A minute-boundary cron firing in both replicas was the one harmful shared-state
 race found: the form reminder now claims its row with a conditional `UPDATE`
 (`forms-reminder.scheduler.spec.ts` fails without it).
 
@@ -295,6 +295,16 @@ race found: the form reminder now claims its row with a conditional `UPDATE`
   edge: about one second with nothing on `8081`. And compose 2.26 hashes a service with `depends_on`
   differently with and without `--no-deps`, so the deploy ALWAYS uses `--no-deps`; a manual `up -d`
   with dependencies on the host makes the NEXT deploy recreate `edge` and `adminer` once.
+- **The first deploy carrying this costs more than that second.** The new `canari.deploy.replace`
+  labels change the compose definition of `postgres`, `redis`, `garage` and `adminer`, so that deploy
+  recreates them STOP-FIRST under live traffic (`redis` has no `start_interval`: `wait_healthy` can
+  wait ~30 s). And the OLD frontend still runs `resolver valid=10s` while rolling.sh waits 3 s, so it
+  can answer `502` for up to ~7 s per replaced service. Reasoned from how compose hashes a
+  definition, not run. **The "no 502" reading is taken on the SECOND pre-release**; the first proves
+  only that the edge took the port.
+- The `*/5` Le Cercle webhook retry (`retryDueWebhookDeliveries`) does not claim its rows, so both
+  replicas can retry in the overlap. Harmless: Le Cercle inserts with `ON CONFLICT(payment_intent_id)`,
+  so no member is credited twice; only a counter update and a `[CERCLE]` line are doubled.
 
 #### Every job checks out the SHA `release-kind` resolved, because `main` is a moving reference (2026-09-03)
 
