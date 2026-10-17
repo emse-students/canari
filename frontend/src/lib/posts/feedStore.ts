@@ -282,6 +282,53 @@ export function firstPageFailure(error: unknown, fromStore: boolean): FirstPageF
   return { firstPage: 'failed', withdrawCopy: false, copyUnconfirmed: fromStore };
 }
 
+/** What a refresh of a tab's first page came to - see {@link refreshFirstPage}. */
+export type FeedRefreshOutcome =
+  | { kind: 'stale' }
+  | { kind: 'answered'; params: FeedCacheParams; posts: PostEntity[] }
+  | { kind: 'failed'; params: FeedCacheParams; error: unknown };
+
+/**
+ * Asks a tab's first page again, for the tab it was ISSUED for.
+ *
+ * THE TAB IS TAKEN BEFORE THE AWAIT, AND AN ANSWER FOR A TAB THE READER HAS LEFT IS DROPPED (review
+ * of the reconnect refresh, 2026-10-15). The page used to read `data.feedParams` after its await: a
+ * refresh of "Suivis" landing after a switch to "Tout" was drawn over "Tout" and written into its
+ * cache and its stored page. The reconnect made that race ordinary - it fires whenever it fires.
+ *
+ * @param stillCurrent - Whether the tab this refresh was issued for is still the one on screen,
+ *   read after the answer (the page's tab-load counter).
+ */
+export async function refreshFirstPage(input: {
+  params: FeedCacheParams;
+  read: (params: FeedCacheParams) => Promise<PostEntity[]>;
+  stillCurrent: () => boolean;
+}): Promise<FeedRefreshOutcome> {
+  const { params } = input;
+  try {
+    const posts = await input.read(params);
+    return input.stillCurrent() ? { kind: 'answered', params, posts } : { kind: 'stale' };
+  } catch (error) {
+    return input.stillCurrent() ? { kind: 'failed', params, error } : { kind: 'stale' };
+  }
+}
+
+/**
+ * Whether the feed asks for its first page again now that the connectivity store announces a
+ * reconnect (`connectivity.onReconnect`). Only when the tab's last request got NO answer
+ * (`failed`): an answered page is current, a refusal is an answer about this reader, and a pending
+ * request will answer by itself. Never while a refresh is already out, and never on a reconnect
+ * the server has not confirmed: the store also announces the browser's `online` event, which proves
+ * no reachability, and announces again once a request has actually reached the server.
+ */
+export function feedRefetchOnReconnect(input: {
+  firstPage: FirstPageState;
+  loading: boolean;
+  serverReachable: boolean;
+}): boolean {
+  return input.firstPage === 'failed' && !input.loading && input.serverReachable;
+}
+
 /**
  * Whether the infinite scroll may ask for the next page. Never while the stored copy is on screen: an
  * offset counted on it is an offset into a list nobody confirmed.

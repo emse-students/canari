@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
 #
-# Asserts the guards on `infrastructure/dev/copy-prod-to-dev.sh` - the script that copies
-# PRODUCTION's database into the dev environment.
+# Asserts the guards on the LOCAL copy of production - `infrastructure/local/pull-prod-dump.sh`
+# fetches a dump, `infrastructure/local/restore-into-local.sh` restores it into a developer's own
+# stack, and `infrastructure/lib/copy-strips.sh` holds what a copy must not carry.
 #
-# WHY THIS EXISTS. That script reads production and destroys a database. Two of its properties cannot
-# be verified by running it, because running it requires a dev environment that does not exist yet,
-# and the failure it protects against is one nobody gets to see twice:
+# IT WAS `dev-copy-guards.test.sh` UNTIL 2026-10-16, when the weekly copy of production into the
+# dev.canari-emse.fr estate was deleted (owner, GDPR review) and dev moved to a fictional seed -
+# whose own guards are `dev-reset-guards.test.sh`. The local copy is the one production copy left,
+# kept for the owner to decide on, and these are the properties it still owes:
 #
-#   1. THE DIRECTION CANNOT INVERT. The two compose projects are hardcoded constants, so there is no
-#      argument a caller can pass to point the destructive half at production, and every write goes
-#      through one function that re-checks the target's project label.
-#   2. THE STRIP LIST IS COMPLETE. Its failure mode is an ABSENCE: a payment column added to an
-#      entity next month is a live identifier that the copy would carry into a publicly-resolvable
-#      environment, and nothing would say so. So the list is DERIVED from the entity declarations
-#      here and checked against the script, the same shape as `ceiling.test.sh` and for the same
-#      reason - a hand-written list fails silently by omission.
+#   1. THE STRIP LIST IS COMPLETE. Its failure mode is an ABSENCE: a payment column added to an
+#      entity next month is a live identifier the copy would carry onto a developer's laptop, and
+#      nothing would say so. So the list is DERIVED from the entity declarations here and checked
+#      against the strips, the same shape as `ceiling.test.sh` and for the same reason.
+#   2. THE TARGET CANNOT INVERT. The local project is a readonly literal, every write goes through
+#      one function that re-checks its label, and the restore half never reaches production.
 #
 # Run by `make test-ci-scripts` and by CI.
 
@@ -22,12 +22,12 @@ set -euo pipefail
 
 cd "$(dirname "$0")/../../.."
 
-readonly SCRIPT=infrastructure/dev/copy-prod-to-dev.sh
-# There are TWO copies of production since 2026-09-02, when development moved local. The strip list
-# lives in one file that both source, so the derivation below covers both by construction rather
-# than by a second hand-written list that would drift on the first change.
 readonly STRIPS=infrastructure/lib/copy-strips.sh
 readonly LOCAL_SCRIPT=infrastructure/local/restore-into-local.sh
+# Production's compose project, read from the file that declares it rather than typed: the local
+# target must never be that name, and a typed copy would go stale the day production is renamed
+# (it was `infrastructure` until 2026-09-24).
+prod_project=$(sed -n 's/^name:[[:space:]]*//p' infrastructure/docker-compose.prod.yml | head -1)
 
 failures=0
 checks=0
@@ -50,80 +50,14 @@ code_lines() {
   grep -vE '^[[:space:]]*#' "$1" | grep -vE '^[[:space:]]*$'
 }
 
-printf 'Guards on %s\n' "$SCRIPT"
+printf 'Guards on the local copy of production\n'
 
-if [ ! -f "$SCRIPT" ]; then
-  fail "$SCRIPT is missing"
-  printf '\nFAILED\n'
-  exit 1
+if [ -z "$prod_project" ]; then
+  fail "no 'name:' in infrastructure/docker-compose.prod.yml - production's project cannot be compared against"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. The direction cannot invert
-# ─────────────────────────────────────────────────────────────────────────────
-printf '\nthe direction is fixed:\n'
-
-prod_project=$(awk -F'"' '/^readonly PROD_PROJECT=/ { print $2; exit }' "$SCRIPT")
-dev_project=$(awk -F'"' '/^readonly DEV_PROJECT=/ { print $2; exit }' "$SCRIPT")
-
-if [ -n "$prod_project" ] && [ -n "$dev_project" ]; then
-  ok "both projects are declared as readonly literals ($prod_project, $dev_project)"
-else
-  fail "PROD_PROJECT and DEV_PROJECT must both be 'readonly NAME=\"literal\"'"
-fi
-
-if [ "$prod_project" != "$dev_project" ]; then
-  ok "the source and target projects are different names"
-else
-  fail "the source and target projects are the same name"
-fi
-
-# No write may name the production container. `PROD_PG` appearing in a `psql` without -tAX (the
-# read-only shape) or in any statement that writes would be the inversion this guards against.
-# `[$]` rather than a backslash: the dollar is a literal being searched for, and writing it escaped
-# inside single quotes reads as a failed attempt at expansion.
-if grep -nE '[$]PROD_PG' "$SCRIPT" | grep -qiE 'TRUNCATE|UPDATE |DELETE |DROP |CREATE DATABASE|INSERT '; then
-  fail "a write statement names the production container"
-else
-  ok "no write statement names the production container"
-fi
-
-# Every destructive statement must go through dev_sql(), which re-checks the label.
-destructive=$(grep -nE 'TRUNCATE|DROP DATABASE|CREATE DATABASE|^dev_sql "UPDATE|UPDATE [a-z_]+ SET' "$SCRIPT" |
-  grep -vE '^\s*[0-9]+:\s*#' | grep -vE '^[0-9]+:#')
-unguarded=0
-while IFS= read -r line; do
-  [ -n "$line" ] || continue
-  # Strip the line number, then ignore comment lines and this test's own description.
-  body=${line#*:}
-  case "$body" in
-  \#* | *' #'*[Tt]RUNCATE*) continue ;;
-  esac
-  printf '%s' "$body" | grep -qE '^\s*#' && continue
-  if ! printf '%s' "$body" | grep -q 'dev_sql'; then
-    fail "a destructive statement does not go through dev_sql(): ${body# }"
-    unguarded=$((unguarded + 1))
-  fi
-done <<EOF
-$destructive
-EOF
-[ "$unguarded" -eq 0 ] && ok "every destructive statement goes through dev_sql()"
-
-# dev_sql must verify the label on every call, not once at startup.
-if awk '/^dev_sql\(\)/,/^}/' "$SCRIPT" | grep -q 'project_of'; then
-  ok "dev_sql() re-reads the target project label per call"
-else
-  fail "dev_sql() does not re-read the target project label"
-fi
-
-if awk '/^dev_sql\(\)/,/^}/' "$SCRIPT" | grep -q 'DRY_RUN'; then
-  ok "dev_sql() honours --dry-run"
-else
-  fail "dev_sql() ignores --dry-run, so the dry run is not dry"
-fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. The strip list is complete, DERIVED from the entities
+# 1. The strip list is complete, DERIVED from the entities
 # ─────────────────────────────────────────────────────────────────────────────
 printf '\nthe strip list covers every payment column an entity declares:\n'
 
@@ -152,7 +86,7 @@ else
     if grep '"\$sql"' "$STRIPS" | grep -qF "\\\"$col\\\""; then
       ok "$col is stripped"
     else
-      fail "$col is declared by an entity and NOT stripped by the copies - a live identifier would reach dev AND a developer's laptop"
+      fail "$col is declared by an entity and NOT stripped by the local copy - a live identifier would reach a developer's laptop"
     fi
   done
 fi
@@ -166,10 +100,10 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 2b. The media strips are complete, DERIVED the same way and for a different reason
+# 1b. The media strips are complete, DERIVED the same way and for a different reason
 # ─────────────────────────────────────────────────────────────────────────────
-# The payment columns are things a copy MUST NOT carry. These are things it CANNOT carry: neither
-# copy fetches the object store, so every media id in the restored rows names a blob that lives only
+# The payment columns are things a copy MUST NOT carry. These are things it CANNOT carry: the
+# copy never fetches the object store, so every media id in the restored rows names a blob that lives only
 # in production's Garage, and the product is then answered 404 for asking exactly the right question.
 # The failure mode is the same absence - a media column added to an entity next month would dangle
 # with nothing to say so - so the list is derived rather than written out.
@@ -227,7 +161,7 @@ else
     if grep '"\$sql"' "$STRIPS" | grep -qF "\\\"$col\\\""; then
       ok "$col is cleared"
     else
-      fail "$col is declared by an entity and NOT cleared by the copies - the copy would reference objects it never received, and every render of them is a 404"
+      fail "$col is declared by an entity and NOT cleared by the local copy - it would reference objects it never received, and every render of them is a 404"
     fi
   done
 fi
@@ -240,46 +174,23 @@ else
   ok "$STRIPS writes only through the function its caller passes"
 fi
 
-# Both copies must actually USE it. A caller that stopped calling it would strip nothing at all,
-# which is the silent failure this whole section exists for.
-for caller in "$SCRIPT" "$LOCAL_SCRIPT"; do
-  if [ ! -f "$caller" ]; then
-    fail "$caller is missing"
-  elif grep -q 'copy-strips.sh' "$caller" && grep -q 'apply_copy_strips' "$caller"; then
-    ok "$caller sources the shared strips and applies them"
-  else
-    fail "$caller does not apply the shared strip list"
-  fi
-done
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 3. The copy verifies rather than asserts
-# ─────────────────────────────────────────────────────────────────────────────
-printf '\nthe copy checks its own result:\n'
-
-for probe in 'push_token' 'stripeCustomerId' 'FROM users' 'COPY_STRIPS_MEDIA_RESIDUE_SQL'; do
-  # Anchored on the text alone: the section rules are box-drawing characters, and a dot-per-char
-  # regex counts bytes rather than characters under a C locale.
-  if awk '/5\. Verify, do not assert/,0' "$SCRIPT" | grep -q "$probe"; then
-    ok "the verification step reads $probe back"
-  else
-    fail "the verification step does not read $probe back"
-  fi
-done
-
-if grep -q 'did not verify' "$SCRIPT"; then
-  ok "a copy that does not verify is reported as untrustworthy"
+# The copy must actually USE it. A caller that stopped calling it would strip nothing at all, which
+# is the silent failure this whole section exists for.
+if [ ! -f "$LOCAL_SCRIPT" ]; then
+  fail "$LOCAL_SCRIPT is missing"
+elif grep -q 'copy-strips.sh' "$LOCAL_SCRIPT" && grep -q 'apply_copy_strips' "$LOCAL_SCRIPT"; then
+  ok "$LOCAL_SCRIPT sources the shared strips and applies them"
 else
-  fail "a failed verification does not fail the script"
+  fail "$LOCAL_SCRIPT does not apply the shared strip list"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 4. The LOCAL copy, added 2026-09-02 - the same guards on a different target
+# 2. The LOCAL copy, added 2026-09-02 - the target cannot invert
 # ─────────────────────────────────────────────────────────────────────────────
 # It destroys a database on a developer's machine, and the machine it runs on also holds unrelated
 # Docker projects: the one it was written on already had a project called `local` belonging to
-# something else entirely. So the allowlist matters here for the same reason it matters in dev.
-printf '\nthe local copy is guarded the same way:\n'
+# something else entirely. So the allowlist matters here as it does on any shared daemon.
+printf '\nthe local copy cannot be aimed elsewhere:\n'
 
 if [ ! -f "$LOCAL_SCRIPT" ]; then
   fail "$LOCAL_SCRIPT is missing"
@@ -291,9 +202,10 @@ else
     fail "LOCAL_PROJECT must be 'readonly LOCAL_PROJECT=\"literal\"'"
   fi
 
-  # It must not be the production project name. Production's compose project is literally called
-  # `infrastructure`, which is exactly the kind of name a path-derived project could collide with.
-  if [ "$local_project" != "$prod_project" ]; then
+  # It must not be the production project name. Production's compose project was literally called
+  # `infrastructure` until 2026-09-24, exactly the kind of name a path-derived project could collide
+  # with, which is why the comparison reads the name from production's compose file.
+  if [ -n "$prod_project" ] && [ "$local_project" != "$prod_project" ]; then
     ok "the local target is not production's project name"
   else
     fail "the local target IS production's project name - a restore would destroy production"

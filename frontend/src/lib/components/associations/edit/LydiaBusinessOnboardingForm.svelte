@@ -4,7 +4,9 @@
     startLydiaOnboarding,
     disconnectLydiaConnect,
     validateLydiaOnboarding,
+    getAssociationPayoutAccount,
     type Association,
+    type AssociationPayoutAccount,
   } from '$lib/associations/api';
   import { Building2, ExternalLink } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -15,21 +17,41 @@
 
   interface Props {
     asso: Association;
-    /** Called with the vendor token and dashboard URL Lydia returned, so the parent can persist both locally. */
-    onAccountCreated: (accountId: string, dashboardUrl: string) => void;
-    /** Called once the Lydia Business has been unlinked, so the parent can clear it locally. */
+    /** Called once the Lydia Business has been unlinked, so the parent can clear its ready flag. */
     onDisconnected: () => void;
     /** Called once a platform admin has validated the onboarding, so the parent can mark it locally. */
     onValidated: () => void;
   }
 
-  let { asso, onAccountCreated, onDisconnected, onValidated }: Props = $props();
+  let { asso, onDisconnected, onValidated }: Props = $props();
 
   /** The sentences naming the entity: an institution is not called an association. */
   const words = $derived(wordingFor(asso.type).lydia);
 
   let disconnecting = $state(false);
   let validating = $state(false);
+
+  /**
+   * The payout account, read from its own MANAGE_PAYOUT_ACCOUNT route: the association row a member
+   * reads no longer carries the `vendor_token`. Null until it has loaded; the onboarding form is
+   * never offered before then, so a slow read cannot invite a second `business/create`.
+   */
+  let account = $state<AssociationPayoutAccount | null>(null);
+  let accountFailed = $state(false);
+
+  async function loadAccount() {
+    accountFailed = false;
+    try {
+      account = await getAssociationPayoutAccount(asso.id);
+    } catch (err) {
+      console.error('[Lydia] Payout account read failed:', err);
+      accountFailed = true;
+    }
+  }
+
+  $effect(() => {
+    untrack(() => void loadAccount());
+  });
 
   /** A platform admin confirms Lydia accepted the file; nothing else marks the onboarding complete. */
   async function handleValidate() {
@@ -42,6 +64,7 @@
     validating = true;
     try {
       await validateLydiaOnboarding(asso.id);
+      if (account) account = { ...account, lydiaOnboardingComplete: true };
       onValidated();
     } catch (err) {
       console.error('[Lydia] Manual validation failed:', err);
@@ -62,6 +85,7 @@
     disconnecting = true;
     try {
       await disconnectLydiaConnect(asso.id);
+      account = { lydiaAccountId: null, lydiaDashboardUrl: null, lydiaOnboardingComplete: false };
       onDisconnected();
     } catch (err) {
       error = m.asso_lydia_disconnect_error();
@@ -109,7 +133,11 @@
         businessPhone: businessPhone.trim(),
       });
       createdDashboardUrl = result.url;
-      onAccountCreated(result.accountId, result.url);
+      account = {
+        lydiaAccountId: result.accountId,
+        lydiaDashboardUrl: result.url,
+        lydiaOnboardingComplete: false,
+      };
     } catch (err) {
       error = err instanceof Error && err.message ? err.message : m.common_save_error();
     } finally {
@@ -129,37 +157,49 @@
     {m.asso_lydia_title()}
   </h2>
 
-  {#if asso.lydiaAccountId}
+  {#if accountFailed}
+    <p class="text-red-err text-sm" role="alert">{m.asso_lydia_account_error()}</p>
+    <button
+      type="button"
+      onclick={() => void loadAccount()}
+      class="border-cn-border text-text-main hover:bg-cn-bg rounded-xl border px-4 py-2.5 text-sm font-bold"
+    >
+      {m.asso_payments_provider_retry()}
+    </button>
+  {:else if !account}
+    <p class="text-text-muted text-sm">{m.asso_lydia_account_loading()}</p>
+  {:else if account.lydiaAccountId}
     <p class="text-text-main flex flex-wrap items-center gap-2 text-sm font-semibold">
       {m.asso_lydia_created_title()}
       <span
-        class="{asso.lydiaOnboardingComplete
+        class="{account.lydiaOnboardingComplete
           ? 'text-green-ok bg-green-ok/20'
           : 'text-amber-warn bg-amber-warn/20'} text-2xs rounded-full px-2 py-0.5 font-bold tracking-wide uppercase"
       >
-        {asso.lydiaOnboardingComplete
+        {account.lydiaOnboardingComplete
           ? m.asso_lydia_status_active()
           : m.asso_lydia_status_pending()}
       </span>
     </p>
-    {#if !asso.lydiaOnboardingComplete}
+    {#if !account.lydiaOnboardingComplete}
       <p class="text-text-muted text-sm leading-relaxed">{m.asso_lydia_created_desc()}</p>
     {/if}
     <p class="text-text-muted text-xs">
-      {m.asso_lydia_vendor_token_label()}: <span class="font-mono">{asso.lydiaAccountId}</span>
+      {m.asso_lydia_vendor_token_label()}: <span class="font-mono">{account.lydiaAccountId}</span>
     </p>
     <div class="flex flex-wrap items-center gap-2">
-      {#if asso.lydiaDashboardUrl}
+      {#if account.lydiaDashboardUrl}
+        {@const dashboardUrl = account.lydiaDashboardUrl}
         <button
           type="button"
-          onclick={() => void openDashboard(asso.lydiaDashboardUrl ?? '')}
+          onclick={() => void openDashboard(dashboardUrl)}
           class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold shadow-sm"
         >
           <ExternalLink size={16} />
           {m.asso_lydia_open_dashboard_button()}
         </button>
       {/if}
-      {#if isGlobalAdmin() && !asso.lydiaOnboardingComplete}
+      {#if isGlobalAdmin() && !account.lydiaOnboardingComplete}
         <button
           type="button"
           onclick={() => void handleValidate()}

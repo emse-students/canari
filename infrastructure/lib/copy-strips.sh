@@ -3,27 +3,28 @@
 # The things a COPY of production's database must not carry, and the ones it CANNOT carry, in ONE
 # place.
 #
-# WHY THIS FILE EXISTS. There are now two copies of production: the weekly one into the
-# dev.canari-emse.fr estate (`infrastructure/dev/copy-prod-to-dev.sh`) and the on-demand one into a
-# developer's local stack (`infrastructure/local/restore-into-local.sh`, added 2026-09-02 when
-# development moved local). The strip list's failure mode is an ABSENCE - a payment column added to
-# an entity next month is a live identifier the copy would carry, with nothing to say so - and
-# `.github/scripts/tests/dev-copy-guards.test.sh` DERIVES the list from the entity declarations to
-# catch exactly that. A second hand-written copy of the list would be covered by nothing and would
-# drift on the first change.
+# WHY THIS FILE EXISTS. There is ONE copy of production left: the on-demand one into a developer's
+# local stack (`infrastructure/local/restore-into-local.sh`, added 2026-09-02 when development moved
+# local). The weekly copy into the dev.canari-emse.fr estate, for which this list was first written,
+# was DELETED on 2026-10-16 (owner, GDPR review) - dev now loads a fictional seed through
+# `infrastructure/dev/reset-dev-to-seed.sh`, which reads only the media-residue question below.
+# The strip list's failure mode is an ABSENCE - a payment column added to an entity next month is a
+# live identifier the copy would carry, with nothing to say so - and
+# `.github/scripts/tests/local-copy-guards.test.sh` DERIVES the list from the entity declarations
+# to catch exactly that.
 #
-# The caller passes the name of ITS OWN guarded SQL function. Neither copy lets this file decide
-# what it may write to: `copy-prod-to-dev.sh` re-checks the dev compose label on every call, and
-# `restore-into-local.sh` re-checks the local one. That keeps the allowlist of writable targets in
-# the script that owns the target, and keeps this file about WHAT is stripped rather than WHERE.
+# The caller passes the name of ITS OWN guarded SQL function: `restore-into-local.sh` re-checks the
+# local compose label on every call. That keeps the allowlist of writable targets in the script that
+# owns the target, and keeps this file about WHAT is stripped rather than WHERE.
 #
 # Usage:
 #   . "$ROOT/infrastructure/lib/copy-strips.sh"
-#   apply_copy_strips dev_sql "$DATABASE" "[copy-prod-to-dev]"
+#   apply_copy_strips local_sql "$DATABASE" "[restore-into-local]"
 
 # The ONE question that says whether (d) actually happened, kept in the file that owns (d) so the
-# strip and its proof cannot drift apart. Both copies read it back in their step 5, and a copy that
-# reports anything but 0 has rows pointing at objects it never received.
+# strip and its proof cannot drift apart. The local copy reads it back in its step 5, the dev reset
+# reads it after loading the seed, and an answer other than 0 means rows pointing at objects the
+# estate never received.
 #
 # It counts ROWS that still reference something, not references: the number is only ever compared
 # against zero, and a per-column breakdown would be a second list to keep in step with the first.
@@ -41,7 +42,7 @@
 # `mediaId` and `/api/media/`, which is what found this one and answered nothing else on the schema
 # of 2026-09-05. It is written out in
 # `docs/wiki/infrastructure/databases.md#finding-every-media-reference-a-copy-carries-but-cannot-serve`
-# rather than here, and it has to be: `dev-copy-guards.test.sh` fails the build if this file so much
+# rather than here, and it has to be: `local-copy-guards.test.sh` fails the build if this file so much
 # as mentions a container or a client, because the allowlist of writable targets belongs in the
 # script that owns the target. Run it against a fresh copy after any schema change that adds a place
 # a media reference can hide, and add whatever it names to BOTH the strip and the count.
@@ -67,8 +68,8 @@ apply_copy_strips() {
   # to remove them: a shared sender would deliver a test notification to a member's phone, and a
   # different sender rejects every one of these rows - which would be 70-odd logged failures per
   # send, and noise is never acceptable. No foreign key references push_token, so TRUNCATE is safe
-  # (checked). This matters MORE in a local stack than in dev, not less: a local `.env` built by
-  # `env-from-prod.sh` carries production's own FIREBASE_SERVICE_ACCOUNT_JSON.
+  # (checked). It matters all the more in a local stack: a local `.env` built by `env-from-prod.sh`
+  # carries production's own FIREBASE_SERVICE_ACCOUNT_JSON.
   "$sql" "TRUNCATE TABLE push_token;" "$database"
   printf '%s   push_token truncated\n' "$prefix"
 
@@ -80,12 +81,9 @@ apply_copy_strips() {
   # `stripeAccountId`; every Lydia column is empty so far, which is exactly why they are stripped
   # now rather than when they are not.
   #
-  # The REASON differs between the two targets and the action does not. In dev there is no Stripe
-  # credential at all (user, 2026-09-01: "oublie. Stripe ne sera pas accessible en dev pour le
-  # moment, tant pis"), so a copied identifier could only produce a misleading failure. In a local
-  # stack the key is production's LIVE key (user, 2026-09-02), so a copied identifier is a real
-  # customer, a real connected account or a real payment intent that a local mistake could act on.
-  # Stripping makes nothing real ADDRESSABLE by accident in either case.
+  # In a local stack the key is production's LIVE key (user, 2026-09-02), so a copied identifier is
+  # a real customer, a real connected account or a real payment intent that a local mistake could
+  # act on. Stripping makes nothing real ADDRESSABLE by accident.
   #
   # The two `*OnboardingComplete` columns are NOT NULL booleans, so they are set false rather than
   # nulled - an association is not onboarded on an account the environment cannot reach.
@@ -106,8 +104,8 @@ apply_copy_strips() {
   # cannot declare payments disabled is a real gap, recorded in the backlog.
   printf '%s   platform_config.payment_provider left as-is (no "disabled" value exists - see backlog)\n' "$prefix"
 
-  # (d) EVERY REFERENCE TO AN OBJECT THE COPY DID NOT RECEIVE. Both copies fetch a Postgres dump and
-  # nothing else - neither touches Garage - so every media id in the restored rows names a blob that
+  # (d) EVERY REFERENCE TO AN OBJECT THE COPY DID NOT RECEIVE. The copy fetches a Postgres dump and
+  # nothing else - it never touches Garage - so every media id in the restored rows names a blob that
   # exists only in production's store. The rows are not merely incomplete, they are INCONSISTENT, and
   # the product then does exactly the right thing with them: it asks for what its database says
   # exists, and is answered 404.

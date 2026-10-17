@@ -20,13 +20,35 @@ import { registerPerReaderCache } from '$lib/utils/sharedCache';
 const RETIRED_CACHE_NAME = 'canari-user-avatars-v1';
 
 /**
- * This module's own pool - the counting is shared, the STATE is not.
+ * How long a decoded avatar outlives its last mounted holder.
  *
- * `evictDelayMs: 0` because these bytes are not worth keeping past their last holder: the delayed
- * eviction the pool defaults to exists for decrypted media, which is expensive to produce again.
- * Uncapped for the same reason it always was: the bound is how many faces are on screen.
+ * WHY A WARM WINDOW (user, 2026-10-16: a face flashed its initials on every remount in a chat or a
+ * list). With a revoke on the last release, each remount paid the presence wait AND a conditional
+ * request (`no-cache` + ETag: a `304` is still a full round trip) before the photo could draw. Kept
+ * for a few minutes, the remount is answered from memory on the first frame.
+ *
+ * THE WINDOW IS THE STALENESS BOUND, and it is deliberately short: the photo is MiGallery's to
+ * change and nothing here is told when it does, so a changed photo shows once its blob has been idle
+ * this long (or on the next app load, or reader change). Not a fresh-for-N-minutes promise for a
+ * face that is never idle: while any mount holds it, it is not revalidated - as before.
+ * A per-user version in the URL would remove the window entirely, but the presence answer carries
+ * only ids (see the wiki), so this stops here.
  */
-const blobs = new BlobUrlPool({ evictDelayMs: 0, maxEntries: Infinity });
+export const AVATAR_WARM_MS = 3 * 60 * 1000;
+/** About a screen of lists' worth of faces; the idlest go first beyond it (avatars are ~5-16 KB). */
+export const AVATAR_POOL_MAX_ENTRIES = 300;
+
+/**
+ * This module's own pool - the counting is shared, the STATE is not. Byte cap off: faces are tiny
+ * and the entry cap is the bound.
+ */
+const blobs = new BlobUrlPool({
+  evictDelayMs: AVATAR_WARM_MS,
+  maxEntries: AVATAR_POOL_MAX_ENTRIES,
+  maxBytes: Infinity,
+});
+// Another account must never be drawn the previous reader's warm faces.
+registerPerReaderCache(() => blobs.dropIdle());
 /** In-progress load per canonical avatar URL, so N simultaneous mounts cost ONE request. */
 const inFlightByUrl = new Map<string, Promise<AvatarDisplay>>();
 
@@ -108,8 +130,9 @@ async function loadAvatar(url: string, subjectUserId: string | undefined): Promi
  * the response itself - 24 h for an image, 10 min for an absence, `no-store` for an outage - and
  * the browser's own HTTP cache is what honours it. This function keeps nothing across sessions,
  * because a second store would need a second lifetime, and the one it used to keep had none at all
- * (see `RETIRED_CACHE_NAME`). What it does keep is a blob for the CURRENT mounts of one face, so a
- * directory listing the same person twenty times costs one request and one decode, not twenty.
+ * (see `RETIRED_CACHE_NAME`). What it does keep is a blob for the CURRENT mounts of one face, plus
+ * {@link AVATAR_WARM_MS} after the last one leaves, so a directory listing the same person twenty
+ * times costs one request and one decode, and a remount inside the window costs none.
  *
  * @param subjectUserId whose face `httpUrl` is, when the caller knows it. Given, the bytes are
  *   also handed to the Android notification's avatar cache ({@link mirrorAvatarToNative}) - the

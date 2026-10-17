@@ -888,12 +888,35 @@ export async function requestCommunityHistory(
   // AND ONLY A MEMBER WITH A DEVICE ONLINE, for the reason {@link resolveAnswerer} gives: the lowest
   // id regardless of presence was, on production 2026-09-24, a member offline for two days, asked at
   // every load and never answering.
-  const answerer =
-    lowestOtherMember(roster, userId, undefined, online) ??
-    ((await ownDevicesOnTheGroup(scope)) ? userId : null);
+  //
+  // AND OUR OWN DEVICES OBEY THE SAME RULE. The request is a transport frame, dropped for a device
+  // presence reports offline, so naming ourselves when presence says NONE of our other devices is
+  // online sends a request nobody can receive. The Mi 9T asked itself for the history of eight bench
+  // communities at EVERY launch this way (`asked <self> (every device) ... no-seed-held`,
+  // 2026-10-15), its only other device offline: eight roster reads and eight sealed sends a launch,
+  // into the void. `answering === null` is a server that did not say (older than 1.2.5) and keeps
+  // the old reading - our devices treated as reachable.
+  const other = lowestOtherMember(roster, userId, undefined, online);
+  const ownOnGroup = other === null && (await ownDevicesOnTheGroup(scope));
+  const ownOnline = answering === null || answeringDevicesOf(userId, answering).length > 0;
+  const answerer = other ?? (ownOnGroup && ownOnline ? userId : null);
   const offline = [...roster].filter((id) => id !== userId && !online.has(id)).sort();
   if (!answerer && offline.length > 0) {
     parkHistoryUntilOnline(workspaceId, offline);
+    return;
+  }
+  if (!answerer && ownOnGroup) {
+    // Our other devices hold this group and none is online. Filed against the epoch so a pass that
+    // changes nothing says nothing again - which is what the request sent into the void used to buy
+    // through `historyAsked`: one per session. The next start reads presence again. NOT parked like
+    // the other members ({@link parkHistoryUntilOnline}): the presence store's waiter watches USERS,
+    // and this user is online by definition (it is us), so it would fire at once - no per-device
+    // waiter exists yet (backlog, "Four things the offline cold start fix left open").
+    if (epoch !== null) historyUnanswerableAt.set(workspaceId, epoch);
+    console.info(
+      `[GRAINE] the history of community ${workspaceId.slice(0, 8)} is not asked: no other member, ` +
+        `and none of our other devices on its key group is online to receive the request`
+    );
     return;
   }
   if (!answerer) {

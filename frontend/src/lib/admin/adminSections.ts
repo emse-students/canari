@@ -32,7 +32,7 @@ import {
   Wrench,
 } from '@lucide/svelte';
 import { m } from '$lib/paraglide/messages';
-import type { Crumb, HubRow } from '$lib/components/navigation/breadcrumb';
+import type { Crumb, HubLinkRow } from '$lib/components/navigation/breadcrumb';
 
 /** The four tiers the console reads, ALREADY FOLDED: a platform administrator holds all four. */
 export interface AdminTiers {
@@ -259,11 +259,11 @@ export function mayOpenAdminPath(path: string, tiers: AdminTiers): boolean {
 export function adminHubGroups(
   tiers: AdminTiers,
   summaries: Record<string, string> = {}
-): { key: AdminGroupKey; label: string; rows: HubRow[] }[] {
+): { key: AdminGroupKey; label: string; rows: HubLinkRow[] }[] {
   return GROUPS.map((g) => ({
     key: g.key,
     label: g.label(),
-    rows: ENTRIES.filter((e) => e.group === g.key && e.may(tiers)).map((e): HubRow => ({
+    rows: ENTRIES.filter((e) => e.group === g.key && e.may(tiers)).map((e): HubLinkRow => ({
       key: e.key,
       href: e.href,
       label: e.label(),

@@ -136,6 +136,8 @@ function makeCtx(overrides: Record<string, unknown> = {}) {
     distributionFrameHandler: vi.fn().mockResolvedValue(undefined),
     runUnderMlsLock: <T>(fn: () => Promise<T>) => fn(),
     getLocalGroups: vi.fn().mockReturnValue([]),
+    // The base class's answer: the cache describes the loaded state (Tauri's is its listing).
+    heldGroupsKnown: () => true,
     createGroup: vi.fn().mockResolvedValue(undefined),
     exportGroupInfo: vi.fn().mockResolvedValue(new Uint8Array([1, 2, 3])),
     getEpoch: vi.fn().mockReturnValue(0),

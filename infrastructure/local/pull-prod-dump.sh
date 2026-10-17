@@ -87,7 +87,7 @@ log "production reports $PROD_USERS users"
 # ── Dump on the box, to a private temp file ──────────────────────────────────
 REMOTE="/tmp/canari-dump-$$.sql.gz"
 # --clean --if-exists so the restore replaces objects rather than colliding with them. The same
-# flags backup.sh and copy-prod-to-dev.sh use, deliberately: one dump format for every path.
+# flags backup.sh uses, deliberately: one dump format for every path.
 log "dumping $DATABASE on the box…"
 "${SSH[@]}" "umask 077 && docker exec -i $PROD_PG sh -c \"pg_dump -U '$PROD_USER' -d '$DATABASE' --clean --if-exists\" | gzip > $REMOTE && ls -l $REMOTE" | tr -d '\r'
 

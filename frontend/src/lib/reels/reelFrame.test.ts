@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   REEL_FRAME_RATIO,
   containFrame,
+  frameReachesBottom,
   frameToPixels,
   stableStageSize,
   stageStep,
@@ -97,6 +98,23 @@ describe('contained frame', () => {
 
   it('answers nothing before the stage is measured', () => {
     expect(containFrame({ width: 0, height: 0 }, R).width).toBe(0);
+  });
+});
+
+describe('frame bottom', () => {
+  const phone = { width: 390, height: 844 };
+  it('a full-screen or pillarboxed frame reaches the screen bottom, so it owes the inset', () => {
+    expect(frameReachesBottom(phone, containFrame(phone, 390 / 844))).toBe(true);
+    const tall = { width: 900, height: 700 };
+    expect(frameReachesBottom(tall, containFrame(tall, REEL_FRAME_RATIO))).toBe(true);
+  });
+  it('a letterboxed landscape frame sits above it, so it does not', () => {
+    expect(frameReachesBottom(phone, containFrame(phone, 16 / 9))).toBe(false);
+  });
+  it('an unmeasured frame does not', () => {
+    expect(
+      frameReachesBottom({ width: 0, height: 0 }, containFrame({ width: 0, height: 0 }, 1))
+    ).toBe(false);
   });
 });
 

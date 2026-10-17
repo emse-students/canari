@@ -37,6 +37,7 @@ import {
   MLS_LOCAL_STATE_UNDECRYPTABLE,
   isKeystoreKeyUnavailable,
   VaultOwnerUnprovenError,
+  LocalStateNotReadyError,
   type VaultRefusal,
 } from '$lib/mls-client';
 import {
@@ -2168,6 +2169,14 @@ export async function recoverPinImpl(
         `[PIN_RECOVER] The local MLS state opens with no PIN (${e.failure}) - nothing changed.`
       );
       throw new LocalizedError(m.auth_pin_recover_state_unopenable());
+    }
+    if (e instanceof LocalStateNotReadyError) {
+      // The state OPENED with the old key, but could not be made ready (its groups not listed):
+      // nothing moved, and the same two PINs retry it.
+      cb.log(
+        `[PIN_RECOVER] The opened state could not be made ready - nothing moved: ${e.message}`
+      );
+      throw new LocalizedError(m.auth_pin_recover_interrupted());
     }
     if (e instanceof KeyChangeSupersededError) {
       cb.log('[PIN_RECOVER] Another tab changed the device key first - this tab restarts.');

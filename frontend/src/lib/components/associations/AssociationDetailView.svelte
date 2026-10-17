@@ -50,7 +50,7 @@
   } from '@lucide/svelte';
   import Breadcrumb from '$lib/components/navigation/Breadcrumb.svelte';
   import SectionHub from '$lib/components/navigation/SectionHub.svelte';
-  import type { HubRow } from '$lib/components/navigation/breadcrumb';
+  import type { HubIcon, HubRow } from '$lib/components/navigation/breadcrumb';
   import {
     mayOpenPublicSection,
     parsePublicSection,
@@ -162,7 +162,7 @@
   const base = $derived<PublicBase>(kind === 'list' ? '/lists' : '/associations');
   const words = $derived(wordingFor(kind));
 
-  const SECTION_ICONS: Record<PublicSection, HubRow['icon']> = {
+  const SECTION_ICONS: Record<PublicSection, HubIcon> = {
     calendar: CalendarDays,
     members: Users,
     shop: ShoppingBag,

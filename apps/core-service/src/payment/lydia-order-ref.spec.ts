@@ -1,4 +1,4 @@
-import { parseLydiaOrderRef, orderRefToMetadata } from './lydia-order-ref';
+import { parseLydiaOrderRef } from './lydia-order-ref';
 
 describe('parseLydiaOrderRef', () => {
   it('decodes a form order_ref', () => {
@@ -30,24 +30,5 @@ describe('parseLydiaOrderRef', () => {
     expect(parseLydiaOrderRef(null)).toBeNull();
     expect(parseLydiaOrderRef(undefined)).toBeNull();
     expect(parseLydiaOrderRef('')).toBeNull();
-  });
-});
-
-describe('orderRefToMetadata', () => {
-  it('mirrors Stripe session metadata shape for a form', () => {
-    expect(orderRefToMetadata({ kind: 'form', submissionId: 'sub-1' })).toEqual({
-      submissionId: 'sub-1',
-    });
-  });
-
-  it('mirrors Stripe session metadata shape for a product', () => {
-    expect(orderRefToMetadata({ kind: 'product', productId: 'p1', userId: 'u1' })).toEqual({
-      productId: 'p1',
-      userId: 'u1',
-    });
-  });
-
-  it('returns an empty object for null', () => {
-    expect(orderRefToMetadata(null)).toEqual({});
   });
 });

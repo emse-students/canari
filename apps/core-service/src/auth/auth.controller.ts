@@ -37,6 +37,11 @@ import {
 } from './adminer-access.service';
 import { TAURI_WEBVIEW_ORIGINS } from '../cors-origins';
 import { REFRESH_HEADER, usesBodyRefreshTransport } from './refresh-transport';
+import { ACCESS_TOKEN_TTL_SECONDS } from './token-lifetimes';
+import {
+  AccountErasureService,
+  type ErasureState,
+} from '../account-erasure/account-erasure.service';
 
 interface OidcCallbackDto {
   code: string;
@@ -96,7 +101,8 @@ export class AuthController {
     private readonly usersService: UsersService,
     private readonly platformService: PlatformService,
     private readonly authSessions: AuthSessionsService,
-    private readonly adminerAccess: AdminerAccessService
+    private readonly adminerAccess: AdminerAccessService,
+    private readonly accountErasure: AccountErasureService
   ) {
     const secret = process.env.JWT_SECRET;
     if (!secret || secret === 'change-me-in-production') {
@@ -388,7 +394,14 @@ export class AuthController {
       throw new UnauthorizedException('Invalid userinfo response from Authentik');
     }
 
-    // 3. Upsert local user
+    // 3. Refuse an account whose erasure is still running. `users.id` IS the OIDC subject, so a
+    // sign-in now would recreate the account under the same id, and the erasure's next pass would
+    // then delete what the new account wrote. Once every job has completed the person may come back
+    // and gets a new, empty account. Checked again once the session exists (step 5b), because a
+    // deletion can commit between here and there.
+    this.refuseDuringErasure(userinfo.sub, await this.accountErasure.erasureState(userinfo.sub));
+
+    // 4. Upsert local user
     const user = await this.usersService.findOrCreateFromOidc(
       userinfo.sub,
       userinfo.name || null,
@@ -407,17 +420,23 @@ export class AuthController {
       });
     }
 
-    // 3b. Grant any cotisation a legacy estate recorded for them. On every sign-in, not just the
+    // 4b. Grant any cotisation a legacy estate recorded for them. On every sign-in, not just the
     // first: the claim terminates on durable state in social-service, so this is idempotent, and
     // a user who signed in before their association's list was loaded still gets their tag.
     await this.usersService.claimLegacyCotisations(user);
 
-    // 4. Issue internal JWT pair, backed by a session row so the refresh can be revoked
+    // 5. Issue internal JWT pair, backed by a session row so the refresh can be revoked
     const access_token = jwt.sign({ sub: user.id, admin: !!user.admin }, this.jwtSecret, {
-      expiresIn: '1h',
+      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
     });
     const session = await this.authSessions.create(user.id, this.clientInfo(req));
     const refresh_token = this.signRefreshToken(user.id, session.sessionId, session.tokenId);
+
+    // 5b. The race step 3 cannot close: a `DELETE /users/me` that committed after the check. Under
+    // the erasure's per-subject lock, so it is either seen here (and what this sign-in wrote is
+    // erased again) or it runs after, deletes this session itself, and covers the access token
+    // with its final pass. The tokens are only returned once this has passed.
+    this.refuseDuringErasure(userinfo.sub, await this.accountErasure.confirmAfterSignIn(user.id));
 
     // The cookie is set for EVERY client, including the ones that will drop it: it is unreadable by
     // the page's own JavaScript, so it stays the preferred transport wherever it survives - and
@@ -453,6 +472,29 @@ export class AuthController {
         admin: !!user.admin,
       },
     };
+  }
+
+  /**
+   * Refuses a sign-in while the account's erasure is not finished. `blocked` (a permanent failure,
+   * which a retry has not been shown to fix) sends the person to a human rather than telling them to
+   * wait. Two codes because the client renders two different messages.
+   */
+  private refuseDuringErasure(subject: string, erasure: ErasureState): void {
+    if (erasure === 'none') return;
+    this.logger.warn(
+      `[AUTH] sign-in refused: account erasure ${erasure} user=${subject.slice(0, 8)}`
+    );
+    throw new ForbiddenException(
+      erasure === 'blocked'
+        ? {
+            code: 'ACCOUNT_ERASURE_BLOCKED',
+            message: 'The deletion of this account is stuck. Contact bureau@rootz-emse.fr.',
+          }
+        : {
+            code: 'ACCOUNT_ERASURE_PENDING',
+            message: 'This account is being deleted. Try again in an hour.',
+          }
+    );
   }
 
   // ─── Token refresh ─────────────────────────────────────────────────────────
@@ -583,7 +625,7 @@ export class AuthController {
     const nextTokenId = result.tokenId;
 
     const access_token = jwt.sign({ sub: payload.sub, admin: isAdmin }, this.jwtSecret, {
-      expiresIn: '1h',
+      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
     });
     const new_refresh = this.signRefreshToken(payload.sub, sessionId, nextTokenId);
 

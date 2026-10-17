@@ -232,7 +232,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 |---|---|---|---|
 | GET | `/api/internal/mls/devices/:userId/count` | InternalSecret | How many devices a user has, inside the retention window - the service-facing counterpart of `GET /api/mls/devices/:userId` |
 | POST | `/api/internal/push/notify` | InternalSecret | Send push via internal secret |
-| DELETE | `/api/internal/users/:userId` | InternalSecret | Delete all user MLS/device data |
+| DELETE | `/api/internal/users/:userId` | InternalSecret | Idempotent account erasure ([account-erasure](../account-erasure.md)) |
 | DELETE | `/api/internal/follows/between/:userA/:userB` | InternalSecret | Drop both follows between two accounts - called by core-service when one blocks the other |
 | GET | `/api/health` | none | Liveness probe |
 
@@ -308,9 +308,7 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 | POST | `/api/payments/connect-dashboard-link/:associationId` | JWT | Stripe Dashboard link |
 | POST | `/api/payments/create-checkout-session` | InternalSecret | Create Checkout session (social-service only) |
 | POST | `/api/payments/cancel-request` | InternalSecret | Cancel a replaced payment request (social-service only) |
-| POST | `/api/payments/request-state` | InternalSecret | Read a payment request's state (social-service only) |
-| POST | `/api/payments/verify-session` | JWT | Verify completed checkout |
-| POST | `/api/payments/cancel-session` | JWT | Cancel unpaid checkout |
+| POST | `/api/payments/request-state` | InternalSecret | Read a payment request's state (social-service only: a retry's settle, and `POST /api/forms/submissions/:id/confirm-payment` on the payer's return) |
 | POST | `/api/payments/setup-payment-method` | JWT | Setup saved card |
 | GET | `/api/payments/payment-methods` | JWT | List saved cards |
 | DELETE | `/api/payments/payment-methods/:id` | JWT | Detach saved card |

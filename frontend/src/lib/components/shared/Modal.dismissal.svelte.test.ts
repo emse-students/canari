@@ -35,6 +35,10 @@ beforeEach(() => {
   // What the modal owes is the CALL - the popstate that follows is the browser's half, and the
   // tests below deliver it by hand exactly as a WebView does after an Android back press.
   vi.spyOn(history, 'back').mockImplementation(() => {});
+  // A closed overlay leaves its entry behind as a ghost, and the next push TAKES that entry rather
+  // than adding one (a hand-off). jsdom's history outlives a test, so the pointer is put back on a
+  // plain entry here - otherwise the previous test's ghost would decide this one's entry count.
+  history.replaceState(null, '');
 });
 
 afterEach(() => {
@@ -64,18 +68,17 @@ const escapeFrom = (from: Element) =>
   from.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
 
 /**
- * A dismissible modal does not close SYNCHRONOUSLY, and pretending otherwise hid a whole path.
+ * A dismissible modal closes SYNCHRONOUSLY, and costs no traversal.
  *
- * `dismiss()` hands an open modal to `closeHistoryOverlayFromUi`, which calls `history.back()` so
- * the browser's back stack stays in step with what is on screen; the `popstate` that follows is
- * what pops the entry and calls `onClose`. So the close is one task away, and a test that asserted
- * it inline was only ever green because it ran before the effect that registers the overlay - it
- * was measuring a modal that had not finished opening.
+ * `dismiss()` hands an open modal to `closeHistoryOverlayFromUi`, which takes it off the overlay stack
+ * and calls `onClose` in the same task. Its history entry stays behind as a ghost - the next overlay
+ * reuses it, or a Back crosses it - because a `history.back()` here would be an asynchronous traversal
+ * a push in the same tap can undo, which is how a sheet's close once ate the camera's entry.
  */
 function expectClosed(onClose: ReturnType<typeof vi.fn>) {
-  expect(history.back).toHaveBeenCalledTimes(1);
-  window.dispatchEvent(new PopStateEvent('popstate', { state: null }));
   expect(onClose).toHaveBeenCalledTimes(1);
+  expect(history.back).not.toHaveBeenCalled();
+  expect(historyOverlayStackDepth()).toBe(0);
 }
 
 describe('Modal', () => {
