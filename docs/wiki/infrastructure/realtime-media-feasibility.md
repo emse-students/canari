@@ -246,6 +246,158 @@ Live option C has no UDP at all: segments are HTTPS on 443, the most permissive 
 | SFU CPU per forwarded stream | the by-hand call [calls](../frontend/modules/calls.md) already owes, with `docker stats` beside it |
 | Whether webrtc-rs 0.20 speaks TURN over TLS (option B) | reading the `rtc` crate's TURN client at the time of the port |
 
+## 8. What works with no port opened by the DSI (measured 2026-10-16)
+
+> **The question** (user, 2026-10-16): *"Il faut que la DSI ouvre des ports ? On ne peut pas faire
+> sans ? Peut-etre avec le TURN Cloudflare, mais c'est moins bien ?"*
+>
+> **The answer: no port is needed IF the media never touches this host.** Sections 1-3 measured that
+> the HOST cannot reach a TURN relay; the CLIENTS can, over every transport (table 8.1). The one
+> design that needs the DSI is the one we have - an SFU on the host that must leave over UDP. Move
+> the media off the host (peer to peer for 1:1, a managed SFU for groups) and the host only carries
+> signalling over the 443 it already serves. Cloudflare TURN is not "less good" as a relay: it is
+> anycast to the nearest PoP (9-16 ms measured), and it is only used when a direct path fails.
+
+### 8.1 What was measured, and from where
+
+Every probe below is read-only: STUN Binding requests (`stun_probe.py`, section "The two probes"),
+or a browser page that builds one `RTCPeerConnection` per server URL and gives TURN a deliberately
+WRONG credential - so **a TURN error 400 means the relay was reached over that transport and
+answered**, and no credential was minted or printed. Evidence:
+`F:/Programmation/canari-harness/ice-probe-2026-10-16/` (the page, the raw outputs).
+
+| Where, 2026-10-16 UTC | UDP 3478 (STUN/TURN) | UDP 53 | UDP 443 | TCP 3478 / 80 | TLS 5349 / 443 | Candidate types |
+| --- | --- | --- | --- | --- | --- | --- |
+| **Portail-etu host** (`.67`), 00:50 re-run | **no** | **no** | **no** (00:49) | no / yes | no / yes | - (server) |
+| **Old `canari` VM** (Proxmox VM 101, NAT via an EMSE `<school-range>`), 00:48 | **yes, 16 ms** (Google STUN too) | no | no | yes / yes | yes / yes | - (server) |
+| OXYGEN, raw STUN, home line, 00:48 | yes, 10 ms | yes | yes | yes / yes | yes / yes | - |
+| OXYGEN, Chrome 155, 00:54 | yes (TURN reached) | **no answer** (raw STUN on 53 from the same PC did answer - a Chrome-on-Windows quirk, not the network) | not tried | reached / reached | reached / reached | host/udp, srflx/udp |
+| Mi 9T, Chrome 154 on Android 10, home Wi-Fi, 00:52 | yes (TURN reached) | yes | not tried | reached / reached | reached / reached | host/udp, srflx/udp |
+| Mi 9T on **mobile data** | **not measured** - no SIM in the phone (`gsm.sim.state ABSENT`) | | | | | |
+| iPhone 12, Safari | **not measured** - the page must be served on the LAN or a public origin, and serving it on the LAN was refused by the session's permission policy; a public copy is one step | | | | | |
+| Campus Wi-Fi, a French 4G carrier | **not measured** - a human on campus, a SIM | | | | | |
+
+**Reading.** The two clients measured reach Cloudflare TURN over all six transports and get a
+server-reflexive (`srflx`) candidate, i.e. a direct peer-to-peer path is at least attempted. **That
+is ONE home network**; whether campus Wi-Fi and the carriers leave UDP open is exactly what the
+missing rows settle (the page is ready for them). A client that loses UDP still has TLS 443 to
+Cloudflare, the transport the host's own border lets through.
+
+**And one fact that changes the cost of option C:** dev's `chat-delivery-service` and
+`call-service` carry **no** `CLOUDFLARE_CALLS_API_TOKEN` / `CLOUDFLARE_TURN_KEY_ID` (prod carries
+both; `docker exec ... env`, values never printed). `GET /api/calls/ice-servers` on dev therefore
+answers 503, so **no credentialed TURN allocation was measured** - only reachability. Giving dev the
+pair (or a dev-only TURN key) is a one-off for the user, owed before WP-C0's allocation half.
+
+### 8.2 The four paths, compared
+
+**(A) 1:1 calls peer to peer - FEASIBLE with no DSI change; a client change.**
+
+- **Today the SFU is mandatory, even for two people.** `CallService.connectToSfu` always opens
+  `wss://<origin>/api/call`, sends `Join`, then `initPeerConnection` offers to the SFU, which
+  terminates the peer connection and re-sends the media (`apps/call-service/src/main.rs`,
+  `SignalMessage` = `Join | Joined | Offer | Answer | IceCandidate`, no peer addressing). There is
+  no P2P mode in the code.
+- **What a P2P mode needs**, smallest first:
+  1. **Signalling between the two peers.** The cheapest is to keep `call-service` as a SIGNALLING
+     RELAY for a two-person room: it already authenticates `Join` with the room token, so it
+     forwards `Offer`/`Answer`/`IceCandidate` to the other peer instead of terminating them, and
+     opens no peer connection itself (no webrtc-rs on the media path at all). The alternative,
+     signalling as MLS application messages over chat-gateway, is E2E but adds ordering and latency
+     work for no gain - the SDP carries no secret the frame key depends on.
+  2. **The client** offers to the other peer (one polite / one impolite role for glare), and sets
+     `iceTransportPolicy` to `all` instead of `relay`, so ICE tries host, then `srflx`, then the
+     Cloudflare relay last. **Privacy trade, a decision for the user:** `all` lets each party learn
+     the other's public IP address; keeping `relay` makes every call go through Cloudflare (still
+     no host involvement, still no DSI) at TURN cost and one extra hop.
+  3. **E2E is unchanged.** `RTCRtpScriptTransform` sits on the sender and the receiver of the SAME
+     `RTCPeerConnection` whoever is on the other side, and the key is still
+     `exportSecret(groupId, 'mls-webrtc-media', callId, 32)`. P2P is in fact the simpler case: DTLS-SRTP
+     already ends at the other phone, and a TURN relay cannot read DTLS either. Every E2E defect the
+     revival plan lists (whole-frame encryption under H.264, the asymmetric legacy path) is the same
+     in both modes.
+- **Quality.** Direct is the lowest latency possible (no hop) and costs nothing. When NAT forbids a
+  direct path - symmetric NAT and carrier-grade NAT are common on mobile networks - ICE falls back to
+  Cloudflare TURN, which adds one anycast hop (9-16 ms measured to it from here) and is billed.
+  **What share of mobile calls will need the relay is unmeasured here** (published figures for
+  WebRTC are of the order of one call in five, not verified for French carriers); the
+  `[CALL_REPORT]` `pair=` field of the revival plan measures it on our own calls.
+- **Budget.** The 950 GB estimator in `calls.service.ts` assumes EVERY call is relayed at
+  3000 kb/s per device (~700 device-hours a month). In P2P only relayed calls cost, so the estimator
+  must learn which pair was selected (from the client report) or it refuses calls long before the
+  real spend.
+
+**(B) Group calls, screen share and live through a MANAGED SFU (Cloudflare Realtime SFU) -
+FEASIBLE with no DSI change; the largest code change.**
+
+- **The host only makes HTTPS calls**: the backend holds the SFU app secret and calls
+  `https://rtc.live.cloudflare.com/v1/apps/{appId}/...`; the clients do ICE with Cloudflare
+  directly ([connection patterns](https://developers.cloudflare.com/realtime/sfu/get-started/connection-patterns/)).
+  Measured: the host reaches `rtc.live.cloudflare.com` over 443 (`curl`, HTTP answer in 1.0 s,
+  2026-10-16). The host's uplink, its ~100 Mb/s ceiling (section 4) and its 15-person arithmetic
+  stop mattering - media never crosses it.
+- **Price** ([SFU pricing](https://developers.cloudflare.com/realtime/sfu/pricing/)): 1 000 GB
+  of egress free per month, **shared** with TURN, then $0.05/GB; ingress is free; **TURN is free
+  when used together with the SFU** ([TURN](https://developers.cloudflare.com/realtime/turn/)).
+  A live at 2.5 Mb/s costs ~1.1 GB per viewer-hour, so 40 viewers for one hour is ~45 GB.
+- **E2E.** Cloudflare's own E2EE demo (Orange Meets) encrypts frames with MLS in a WASM worker - the
+  shape of ours - and reports the SFU needed no change
+  ([blog, 2025-06-26](https://blog.cloudflare.com/orange-me2eets-we-made-an-end-to-end-encrypted-video-calling-app-and-it-was/)).
+  It keeps the first bytes of each VP8 frame in clear; **whether the SFU itself needs them
+  (keyframe detection, simulcast) is not in the product docs - UNVERIFIED**, and it is the same
+  header-in-clear question as the revival plan's WP-C3.
+- **Accounts.** An SFU is a separate Realtime "app" (App ID + App Secret), created in the
+  dashboard; **our TURN key does not give us one** - a one-off for the user, plus two secrets.
+  Client transports to the SFU (UDP, TCP, TLS 443) are not stated on the pages read - UNVERIFIED,
+  settled by the same probe page once an app exists.
+- **Limits** ([limits](https://developers.cloudflare.com/realtime/sfu/platform/limits/)): 64 tracks
+  per API call, 50 API requests/s per session, no stated participant cap; simulcast is listed.
+- **Code.** The client's signalling moves from our WebSocket to sessions/tracks calls proxied by our
+  backend, and the multi-stream client of WP-C11 is owed in any case. In exchange the Rust SFU, its
+  six never-placed webrtc majors and the 0.20 rewrite all leave the project.
+
+**(C) Keep the in-repo Rust SFU without the DSI.**
+
+- **C1 - TURN over TCP/TLS 443 from the host: BLOCKED in the library, every version.** 0.17.2 has
+  the TCP/TLS relay as a commented-out `TODO` (section 2), and **0.20.5 refuses them explicitly**:
+  `webrtc-0.20.5/src/peer_connection/transports/turn_relayer.rs` logs `Skipping unsupported secure
+  TURN url` and `Skipping unsupported non-UDP TURN url` (read from the crate source in the local
+  cargo registry, 2026-10-16). Only a fork with our own TURN-over-TCP client would do it - not a
+  realistic path. UDP 443 is no exit either: the host drops it (8.1).
+- **C2 - the SFU on the old `canari` VM: the NETWORK works, the VM's FUTURE does not.** From that VM
+  UDP 3478 reaches Cloudflare TURN and STUN in 14-21 ms (8.1), so the current relay-only design
+  would connect from there **with no code change to the media path**. It is idle (6 vCPU, 16 GB,
+  load 0.00), `call-service` is stateless (env only: `JWT_SECRET`, `CALL_ROOM_SECRET`, the TURN pair,
+  `PORT`), and the VM already runs the Cloudflare connector, so its WebSocket can be published as a
+  tunnel ingress on a `canari-emse.fr` name with no inbound port. **Against it:** that VM is
+  documented as the ROLLBACK, kept "for a while" ([estate-migration](estate-migration.md)); giving it a
+  permanent role reverses that decision. Its UDP exit is a policy of the School network we did not
+  ask for and can lose without notice. Both legs still relay through TURN (double the budget of P2P),
+  and the 0.17 "never placed a call" risk is untouched.
+
+**(D) The DSI ask (section 3, option A) - the fallback.** One outbound rule: UDP 3478 from
+`<host-egress-ip>` to Cloudflare TURN. Cloudflare's TURN page lists no fixed ranges; its guidance is to
+allowlist what `turn.cloudflare.com` resolves to, fixed addresses being an enterprise-plan matter -
+**so the two /24 of section 3 stay UNVERIFIED** and the ticket should name the hostname as well. It
+is needed ONLY if the in-repo SFU stays on this host.
+
+### 8.3 Recommendation, feature by feature
+
+| Feature | Recommended path | DSI | Quality | Cost |
+| --- | --- | --- | --- | --- |
+| **1:1 audio/video** | **(A) peer to peer**, Cloudflare TURN as last resort, signalling over the existing `/api/call` WebSocket | none | best: direct, no hop; relayed calls +1 anycast hop | only relayed calls are billed; the estimator must learn which |
+| **Group call (3+)** | **(B) managed SFU** | none | one hop to the nearest PoP for everyone, no host uplink ceiling | 1 000 GB/month free shared with TURN, then $0.05/GB; TURN free with the SFU |
+| **Screen share** | follows its call: (A) in a 1:1, (B) in a group | none | as its call | as its call |
+| **Live, option A (WebRTC)** | **(B) managed SFU** | none | sub-second | ~1.1 GB per viewer-hour at 2.5 Mb/s |
+| Live, option C (segments) | unchanged: HTTPS on the host (section 5) | none | seconds of delay | the host's ~100 Mb/s |
+| Keep the Rust SFU | (C2) on the old VM, or (D) the DSI rule | (D) only | as today | both legs relayed |
+
+**Is TURN "less good"?** Only as the PATH OF EVERY CALL, as today: two relayed legs plus an SFU hop.
+As the last resort of a peer-to-peer call it is the standard design, and Cloudflare's is close
+(anycast) and reachable on TLS 443 from networks that block UDP. **What decides the order of work
+is (A): it removes the DSI from the 1:1 revival and needs no new provider account.** (B) and (C2) are
+choices for WP-C4, the revival plan's decision step.
+
 ## The two probes
 
 Both lived in a scratch directory and are not committed; they are described here precisely enough to
