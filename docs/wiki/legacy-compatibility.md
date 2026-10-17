@@ -72,7 +72,6 @@ REST: those rows need a count, then a migration.
 | Shim (entry below) | Condition | Met at floor 1.2.7? | Data at rest | Removal size | Disposition |
 | --- | --- | --- | --- | --- | --- |
 | `paymentMethod: 'stripe'` STORED | rows written before 2026-10-08 | no - data | `purchase_records` and `submissions` | type + 3 client arms, after a migration | owed: count + migration (user) |
-| Carte bare publish body | floor >= fingerprint | YES (`v0.18.28`) | old posters keep a null fingerprint (meaning UNKNOWN, kept) | ~-20 lines, server | removed with the floor (server only); a missing or malformed fingerprint is refused too |
 | Prekeys as bare base64 strings | floor >= `0.18.10` | YES (`v0.18.10`) | undated rows stay covered by their `NULL` arms | ~-10 lines, server | removed with the floor |
 | `/key-package` 404 with no `reason` | every estate past the 2026-09-16 server (not a client floor) | YES (since `v0.18.10` deployed) | none | ~-30 lines, client | removed: a 404 with no reason is `unanswered`, a reason this build does not know is the typed refusal `unrecognized` |
 | Salon push held for a sender with no `seedFrame` | floor >= first release sending `seedFrame` | version YES (`v0.18.28`); proof NO | none | server refusal + Kotlin hold registry, native | NOT removed: nothing has measured that EVERY admitted send carries the frame (the server never stores it), so a required field could refuse an honest send. Owed: a log of frame-less non-silent sends, read for a week, then a native PR |
@@ -188,23 +187,6 @@ The v1 WRITER is already gone (G2-5): `sealWithGraine` lives only in the test fi
   count above 0 after the date: then name the salon, as the section below says.
   On the same day, `channel_messages."signature"` becomes `NOT NULL` (a migration), and the DTO's
   `signature?` and the `?? null` in `ChannelService.sendMessage` go with it.
-
-### No date yet - a carte publish body that is the bare document, with no fingerprint
-
-**Site:** `PosterService.readPublishBody` in `apps/social-service/src/associations/poster.service.ts`,
-the branch taken when the body has no `carte` key.
-**Shim:** since 2026-09-28 the carte editor posts `{ carte, fingerprint }`, and the fingerprint is
-what lets it later say the LIVE map is older than what has been saved
-([carte-vie-asso](carte-vie-asso.md#the-editor-can-say-the-live-map-is-older-than-what-is-saved)).
-The app EMBEDS its frontend, so an admin running an older build still posts the bare document;
-refusing it would break publishing for them, for no gain. Such a publish records no fingerprint, and
-the editor then reads the live map's freshness as UNKNOWN - which it shows as nothing at all, never
-as "up to date".
-**Removal condition:** `minClientVersion` at or above the first release carrying the fingerprint,
-i.e. both stores serving it. Then the wrapper becomes required and a bare body is a 400, because at
-that point a body with no fingerprint is a bug rather than an old build.
-**Cost of keeping it:** one `in` check and a debug line. The hazard is silence: a publish from an
-old build leaves a live map nothing can date, and the badge simply never appears for it.
 
 ### No date yet - the salon push HELD for its seed, for a sender that attaches no seed frame
 
