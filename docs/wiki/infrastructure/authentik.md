@@ -7,12 +7,11 @@ Canari uses Authentik as its OpenID Connect identity provider. Authentik is depl
 
 ## The box, and the log that settles an OIDC question
 
-Authentik does NOT run on `canari`. **Since 2026-09-24 it runs on the Portail-etu host**, reached
-as **`ssh portail-etu-direct`** ([estate-migration](estate-migration.md)); its containers kept their
-names, `miconnect-server-1`, `miconnect-worker-1` and `miconnect-postgresql-1`. `ssh miconnect` still
-answers, but that VM now runs only `miconnect-relay` and a `miconnect-postgresql-1` of its own -
-measured with `docker ps` on both hosts, 2026-09-25 - so a log or a shell read there is the WRONG
-Authentik.
+Authentik does NOT run on the old application VM. **Since 2026-09-24 it runs on the production
+host** ([estate-migration](estate-migration.md)); its containers kept their names,
+`miconnect-server-1`, `miconnect-worker-1` and `miconnect-postgresql-1`. The old identity VM may still
+answer, running only a relay and a frozen copy of the database, so a log or a shell read there is the
+WRONG Authentik.
 
 **`docker logs miconnect-server-1` is an ACCESS LOG**, and it is the instrument for any question
 about a login that failed on a client you cannot attach a debugger to. Every
@@ -25,7 +24,7 @@ one `status 400` carrying `tauri://localhost/auth/callback` from a user agent ca
 ## Deployment
 
 **Two halves, deployed differently.** The STACK (`compose.yml`, `.env`) is deployed by hand: it runs
-from `/srv/miconnect/` on the Portail-etu host, and a change reaches production only when someone
+from the stack's directory on the production host, and a change reaches production only when someone
 copies the file there and runs `docker compose up -d`, which recreates the containers whose
 configuration changed - sign-in is down while `server` restarts. The history, and the job
 `deploy-to-server` this section described until 2026-09-24 (it never existed), are in
@@ -59,6 +58,11 @@ FAILS printing the leftovers, their status and the worker's error lines. **The t
 named yet** - the next warning in a CI log will name it, and THAT is the evidence to act on (a retry that
 keeps being needed is a race to fix, not a path to keep). The wait is proved against a fake `docker` in
 `.github/scripts/tests/wait-default-blueprints.test.sh`.
+**A locally reproduced 30/31 (2026-10-16): `Default - Out-of-box-experience flow=error`** - and the wait
+FAILED at its 10-minute deadline without ever re-applying it, because the deadline was applied even after
+the count had moved: each `ak shell` probe took ~20 s on a loaded workstation, so 600 s ran out before
+the stall rule had counted its 12 polls. The deadline now bounds only a boot where NOTHING has applied,
+as the rule above says; the stall rule bounds the rest. A test case pins it.
 
 **THE PROOF THAT THE FILES DESCRIBE PRODUCTION, and how to take it again.** `snapshot` prints every
 object the blueprints name, with relations replaced by natural names and secrets by a digest. On
@@ -69,7 +73,7 @@ serializer strips trailing whitespace. The first `apply` on production, the same
 1 change, and the dry run after it reported 0. Re-take the proof after any hand edit:
 
 ```sh
-AK_REMOTE="ssh portail-etu-direct" bash infrastructure/authentik/apply-blueprints.sh snapshot > prod.json
+AK_REMOTE="ssh <production-host>" bash infrastructure/authentik/apply-blueprints.sh snapshot > prod.json
 bash infrastructure/authentik/test-blueprints.sh   # or snapshot a local instance built from the files
 ```
 
@@ -233,7 +237,7 @@ Both providers carry `fr.emse.canari://callback` as an **authorization** redirec
 this paragraph is the only record of either:
 
 ```sh
-ssh miconnect
+# on the Authentik host
 docker exec -i miconnect-server-1 ak shell    # then set the RedirectURI on the provider, and re-read it
 ```
 
@@ -445,8 +449,8 @@ The user asked that signing in to Authentik itself go to Canari by default. The 
 account was `internal` - `miconnect-enrollment-write` created them so. Changed that day, with the
 user's go-ahead:
 
-- the 594 accounts that are internal AND in no superuser group are `external`; the 5 admins stay
-  `internal`, so `https://auth.canari-emse.fr/if/admin/` still opens for them, unredirected - that
+- every account that is internal AND in no superuser group becomes `external`; the admins stay
+  `internal`, so the IdP's admin interface still opens for them, unredirected - that
   is the bypass;
 - `miconnect-enrollment-write.user_type` is `external`, so a new sign-up lands on Canari too;
 - the Canari application's `meta_launch_url` is `https://canari.emse.fr` (it named the old apex).
@@ -504,8 +508,8 @@ carrying the client half to testers needs the blueprints applied first, by hand,
 `main`:
 
 ```sh
-AK_REMOTE="ssh portail-etu-direct" bash infrastructure/authentik/apply-blueprints.sh dry-run
-AK_REMOTE="ssh portail-etu-direct" bash infrastructure/authentik/apply-blueprints.sh apply
+AK_REMOTE="ssh <production-host>" bash infrastructure/authentik/apply-blueprints.sh dry-run
+AK_REMOTE="ssh <production-host>" bash infrastructure/authentik/apply-blueprints.sh apply
 ```
 
 Applied early it changes nothing for the clients in the field: no shipped build calls Canari's
@@ -576,8 +580,7 @@ printed in full (the rollback):**
 
 - `password-login` is reachable by URL only and is NOT dead: the test campaign signs in through it
   (`PASSWORD_LOGIN_FLOW_SLUG`, [cross-client-campaign-resume](../cross-client-campaign-resume.md)).
-  It is not an opening for the rest: 586 accounts have an EMPTY password, which matches nothing;
-  6 have a real one.
+  Accounts without a usable password cannot use it.
 - `miconnect-auth-fallback` is referenced by nothing inside authentik; its deny text describes the
   CAS failure below.
 - The `Default - Out-of-box-experience flow` blueprint reports `error` since 2026-08-29. Harmless
@@ -590,37 +593,15 @@ printed in full (the rollback):**
   info). **Applied the same day**: the file copied to `/srv/miconnect/` (the previous one kept as
 `compose.yml.bak-2026-09-29`), `docker compose up -d`, both containers read back `info`, the
 `/authorize` probe answered `302` to `miconnect-auth` and no warning or error followed.
-- **About 1 CAS return in 6 fails (measured 2026-09-29, OPEN, a request is with the DSI)**: `docker
-  logs miconnect-server-1` since its 2026-09-24 restart held **72 `State check failed`**
-  (`authentik.sources.oauth.views.callback`, preceded by "No state parameter returned by the
-  source") against ~420 responses on `/source/oauth/callback/cas-emse/`, between 3 and 21 a day. Every
-  failing request reads the BARE callback URL (no `code`, no `state`, no query string), while a
-  working one carries `?code=...&state=...`: not a stale or mismatched state, the CAS sends the
-  browser to the callback without answering the authorization request. The same user agent fails
-  three times in a row (a Linux desktop and an Android phone on 2026-09-29), so people retry and stay
-  out. The deny text of the unreferenced `miconnect-auth-fallback` flow describes exactly this, so
-  somebody met it before and it was never measured. Open: [backlog](../backlog.md#p2---some-cas-returns-reach-miconnect-with-no-code-and-no-state-and-a-client-can-stay-out-diagnosed-2026-10-09).
-- **The failing sequence read end to end (read-only, 2026-10-09; `docker logs` and a `SELECT` on
-  `authentik_events_event`, nothing changed).** Over the only readable window (2026-10-05 to 10-06 22:40)
-  **121 requests failed the state check, and 63 of them (52 %) are not browsers**: `Apache-HttpClient/5.5.1
-  (Java/21)` 55, `okhttp/4.12` 8 (and a `curl`) - server-to-server calls to the bare callback URL, not people
-  who lost a sign-in; 118 of the 121 fall on 10-06, the day the DSI replaced the callback and tested it (two
-  addresses calling `cas-emse` then `cas-lab` every ~20 s between 13:22 and 14:48). The **"1 in 6" was
-  therefore an over-count**: it counted those probes as users. The other 58 are real browsers (Windows and
-  Linux Chrome 31, Android Chrome 8, iPhone Safari 5, Facebook in-app 3).
-  **What a browser failure looks like**: `GET /source/oauth/login/cas-emse/` (302 to the CAS), then 5-8 s later
-  the BARE `GET /source/oauth/callback/cas-emse/` (302), then authentik restarts `miconnect-auth` and
-  `login/cas-emse` runs a second time. On an iPhone (2026-10-06 09:29:59) the second hop returned a
-  `code` + `state` and the user signed in 4 s later: **the flow heals itself once**. On an Android at 09:08 the
-  same pair happened three times in 10 s and the sign-in never completed (nothing after 09:08:11 from that
-  client), so a client CAN stay out. Note the callback is often read with a different user agent
-  (`Linux`) from the login hop (`Android`): the bare request is not always the user's own browser. The
-  working codes carry `OC-<n>-...-cas1` / `-cas2`, TWO bridge nodes behind the CAS name; whether a node is
-  what answers bare is not visible from this side.
-  **Not readable and not fixed**: `docker logs miconnect-server-1` stops at 10-06 22:40 with `invalid character
-  '\x00'` (the json-file log holds NUL bytes, the container restarted 10-07 07:03 on a host at 88 % disk),
-  so NOTHING since the restart can be counted; the events table records only successes (127-132 `login` a day
-  on 10-07/08, one `login_failed` a day). Nothing was changed on MiConnect or the CAS.
+- **Some CAS returns reach MiConnect with no code and no state (measured 2026-09-29, OPEN, a request
+  is with the DSI)**: `State check failed` on the OAuth callback, from a BARE callback URL (no `code`,
+  no `state`), i.e. the CAS sends the browser to the callback without answering the authorization
+  request. The first reading ("1 in 6 users") was an over-count: about half of the failures are
+  non-browser callers (server-to-server probes, the school's own test of the replaced callback), the
+  rest are real browsers, where the flow heals itself once on most clients and a client CAN stay out
+  after repeated failures. The log stops at a NUL byte, so nothing after the container restart can be
+  counted and the events table records only successes. Nothing was changed on MiConnect or the CAS.
+  Open: [backlog](../backlog.md#p2---some-cas-returns-reach-miconnect-with-no-code-and-no-state-and-a-client-can-stay-out-diagnosed-2026-10-09).
 - The CAS source sends no PKCE although the CAS advertises `S256`; application launch URLs still name
   `mitv.fr` and `canari-emse.fr` hosts; names mix French and English (`Personnel de l'école`,
   `School Worker`, `Provider for Sky`); the Cercle's tokens live 30 s / 2 min where every other
@@ -640,8 +621,7 @@ real people are enrolling continuously, several in the hour that was measured. S
 snapshot of something moving: compare identities, never totals, and if a total must be quoted, quote
 the instant with it. Every account was `type=internal` until 2026-09-25, when all but the admins
 became `external` ([above](#signing-in-to-miconnect-lands-on-canari-and-admins-keep-the-admin-ui-2026-09-25));
-read 2026-09-29: 600 `external`, 5 `internal` (the `authentik Admins` group), 1
-`internal_service_account`. What each account declared at enrolment, and what the applications
+read 2026-09-29: almost every account `external`, the admins `internal`. What each account declared at enrolment, and what the applications
 decide from it, is measured on [profiles-and-access](../profiles-and-access.md#1-what-exists-today-measured-on-production-2026-09-29-1436-utc).
 
 ## See also
@@ -651,3 +631,43 @@ decide from it, is measured on [profiles-and-access](../profiles-and-access.md#1
 - [`infrastructure/nginx.md`](nginx.md) — `auth_request` configuration
 - [`infrastructure/backup.md`](backup.md) — Backup and restore procedures
 - [`infrastructure/MIGRATION.md`](../../../infrastructure/MIGRATION.md) — Server bootstrap and migration
+
+## The terms of use are a stage of the authorization flow (2026-10-16)
+
+**Decision (user, 2026-10-16):** signing in through the CAS or the Alumni source is a consent to the
+collection of name and first name, as one required tick, for new AND existing accounts.
+
+- **Where:** `blueprints/45-consent.yaml`, flow `miconnect-authorization`, which the eight OAuth2
+  providers now name instead of `default-provider-authorization-implicit-consent`. The enrolment flow
+  would have been wrong: it runs once, at the first sign-in, so existing accounts and a new version
+  of the text would never be asked.
+- **State:** `attributes.cgu_version` and `attributes.cgu_accepted_at` on the account. The stages
+  (prompt, then user write) are bound to the policy `miconnect-consent-needed`, which is true while
+  the stored version differs from the current one - so each version is asked once, for all services.
+- **The version is a literal in TWO places** in that file (the policy, the hidden prompt) and the
+  `updated` date of `frontend/src/routes/legal/miconnect/+page.svelte`. Change the text => change all
+  three, or the stage re-asks forever / never - plus `VERSION` in `test-consent-flow.py`.
+  `check-consent-version.sh`, the first step of `test-blueprints.sh` in CI, fails while the four
+  disagree.
+- **Driven, not only applied** (`test-consent-flow.py`, run by `test-blueprints.sh` in CI): a real
+  password sign-in, then `/application/o/authorize/` on every provider. It proves the notice and
+  link reach the challenge, a POST without the tick is refused and writes nothing, the tick writes
+  the version and an ISO date and ends on a code, a second authorization skips the page, an older
+  version is asked again. **Two authentik behaviours it caught, both silent on apply:** a checkbox's
+  `required` is NOT checked by the server (authentik builds it as a `BooleanField(required=False)`;
+  only the browser enforces it), so the tick is checked by the validation policy
+  `miconnect-consent-validate-accept`; and a HIDDEN field writes its INITIAL value - a
+  `placeholder_expression` is never evaluated for the write, so the date was stored as the
+  expression's source text until it became `initial_value_expression`. The hidden values are taken
+  from the server-side definition, never from the POST, so a client cannot forge the version (a
+  forged version and date in the POST are asserted ignored), and the write keeps every other
+  attribute (`profile`, `school_status`, `promo`, `formation` asserted unchanged).
+- **Never in an impersonated session.** There `request.user` is the person impersonated, so an
+  administrator was shown the terms and their tick would have landed on THAT account (driven
+  2026-10-16). `miconnect-consent-needed` returns false when the session carries
+  `authentik/impersonate/user`, so neither stage runs; the test impersonates through the API and
+  asserts the authorization completes and nothing is written on either account.
+- **The text** is `/legal/miconnect` on canari.emse.fr, hardcoded French like the other legal pages
+  ([open-questions](../open-questions.md)). Controller named: Association Rootz - confirm.
+- **Production reaches it** with `infrastructure/authentik/apply-blueprints.sh` (`snapshot`,
+  `dry-run`, `apply`), a production write on the identity provider.

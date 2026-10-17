@@ -81,7 +81,10 @@ whole policy - and three verbatim copies of a security policy is precisely how o
 old value after the other two are updated. One definition makes that impossible.
 
 `frontend/src/lib/security/csp.test.ts` asserts the invariants: exactly one declaration, more than
-one `include`, both KLIPY hosts present in `connect-src`, and no bare scheme there. It lives in the
+one `include`, KLIPY's GIF host `static.klipy.com` present in `connect-src` and its search API
+`api.klipy.com` ABSENT (the search goes through chat-delivery since 2026-10-16,
+[chat](../frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)), and no bare
+scheme there. It lives in the
 frontend suite on purpose - what invalidates the policy is frontend code calling a host nobody
 added.
 
@@ -118,8 +121,7 @@ application references it, so adding or removing an administrator is one edit in
 than one per hostname.
 
 **Which hostname serves which product is deliberately not written here** - this repository is public,
-and a gated door still does not need a signpost. The inventory lives in the operator's local agent
-memory alongside the API credentials.
+and a gated door still does not need a signpost.
 
 Two things learned doing it, both general:
 
@@ -127,7 +129,7 @@ Two things learned doing it, both general:
   tunnels. Auditing the one zone that prompted the question left an administrative interface fully
   open on another, and the DNS listing of the first zone could not have revealed it.
 - **A SECOND HOSTNAME CAN NAME THE SAME DESTINATION, AND GATING ONE GATES NOTHING.** Two hostnames
-  on two different zones resolved to the identical `https://10.0.0.2:8006` origin. The **tunnel
+  on two different zones resolved to the identical internal admin-console origin. The **tunnel
   ingress table is the authoritative list of what is published** - `GET
   /accounts/{account}/cfd_tunnel/{id}/configurations` - because it maps hostname to *service*, which
   is what makes the duplicate visible. A DNS listing shows names, not destinations, so it cannot.
@@ -283,260 +285,95 @@ fresh it is, never who may read it.
 
 ## The daemon on the origin, and the token it carries
 
-The tunnel is **remotely managed** (`config_src=cloudflare`): there is no `/etc/cloudflared/config.yml`
-on the origin, and the ingress lives in the API. What the box holds is the daemon, installed from
-Cloudflare's own apt repository, and a systemd unit whose `ExecStart` carries the tunnel's **run
-token** in plaintext.
+The tunnel is **remotely managed**: the ingress lives in the Cloudflare API, and the box holds only
+the daemon (installed from Cloudflare's apt repository) and a systemd unit. The operating detail (which
+hosts, the rotation runbook, recovery routes) is kept in the operators' private notes. Rules that
+survive:
 
-**All three tunnel hosts use this model as of 2026-09-02**, and until that day the third did not -
-it ran `--config /root/.cloudflared/config.yml tunnel run` against a local credentials JSON. They
-are now uniform: `--token` in a `600` unit, ingress in the API.
-
-### The host that was locally managed, and why its local file was the stale one
-
-The third host was migrated to the remote model on the same visit. Two things about it are worth
-keeping, because both invert the assumption a reader brings:
-
-- **Cloudflare already held a configuration for that tunnel** (`config_src` already read `cloudflare`,
-  at version 23) while the daemon ran with `--config`, so **the local file was what was in effect and
-  the remote one was invisible.** Switching to `--token` therefore switches which config applies -
-  it is not a no-op, and diffing the two is the whole job. **Never make that switch without the
-  diff.**
-- **The LOCAL file was the stale half**, which is the opposite of the natural guess. It carried two
-  hostnames with no DNS record at all (one of them a duplicate of the Proxmox interface under an
-  older name), and the remote config named the surviving one correctly. So the migration deleted two
-  dead rules and changed nothing live: all seven hostnames returned the same status codes after the
-  switch as the baseline taken before it.
-
-The credentials JSON and `cert.pem` remain on that host and no longer authenticate anything the unit
-uses. They are the only route back to the local model, which is why they were left rather than
-deleted, and the superseded `config.yml` was renamed with `superseded-by-remote-config` in its name
-rather than kept as `config.yml` - a stale file that reads as authoritative is worse than no file.
-
-A consequence for any check reused across hosts: a token-fingerprint comparison run on a
-locally-managed host reads the sha256 of the **empty string**, which compares equal to itself and
-reports success while measuring nothing. **A verification that cannot fail is not a verification** -
-assert the fingerprint is non-empty before comparing it.
-
-**That unit must be `600`.** It shipped as `644 root:root`, which is how the run token ended up in a
-terminal transcript: any login user could `systemctl cat cloudflared` and read it. systemd runs as
-root and never needed it world-readable, so the permission bought nothing and cost a rotation. The
-unit is `600 root:root` on both hosts that carry a token, and `systemctl cat` is refused to an
-unprivileged user on both - re-measured 2026-09-24.
-
-#### AND THE TOKEN WAS STILL READABLE BY ANY LOCAL USER, ON THREE HOSTS - FOUND 2026-09-24, CLOSED 2026-10-05
-
-`600` closed `systemctl cat`, which reads the FILE. **`systemctl show cloudflared -p ExecStart`
-reads systemd's own in-memory state over D-Bus, where the command line lives in full, and it answers
-any unprivileged user.** Measured on both boxes the same minute, as the ordinary login account: the
-unit is unreadable, and the complete `--token …` comes back anyway.
-
-**The permission was verified against the mechanism that caused the incident, not against the
-question.** The question was "can a local user read this token", and `systemctl cat` was only one of
-its answers; the paragraph above has read since 2026-09-02 as though the exposure were closed. It
-was not, and this is the second time this token has reached a transcript.
-
-**The fix is not a stricter mode - no mode reaches D-Bus.** The token must leave the command line:
-
-```ini
-# /etc/cloudflared/token   (600 root:root)
-TUNNEL_TOKEN=…
-
-# unit
-EnvironmentFile=/etc/cloudflared/token
-ExecStart=/usr/bin/cloudflared --no-autoupdate tunnel run
-```
-
-`systemctl show` prints `EnvironmentFile=` as a PATH and never its contents; the value reaches the
-process environment at exec time, and `/proc/<pid>/environ` is readable only by the process owner,
-which is root. `Environment=` in the unit would NOT do - that one `show` prints verbatim.
-
-**CLOSED 2026-10-05 on all THREE tunnel hosts** (`canari`, `miconnect` and `mitv` - the third was missing from
-this page), with the user present. Per host: the new secret, the new run token in `/etc/cloudflared/token`
-(`600 root:root` in a `700` directory), `EnvironmentFile=` in the unit, `--token` gone from `ExecStart`,
-`daemon-reload`, a DETACHED restart. Proved on each: `systemctl show cloudflared -p ExecStart` carries no
-`--token` for an unprivileged user, the process arguments carry none, the file is refused to that user,
-the journal holds four `Registered tunnel connection` lines, and the public name answers (`canari-emse.fr`,
-`dev.` and `rootz-emse.fr` all `200`). Each restart was about a minute.
-
-**How it was done, so it can be done again.** The `CF_TOKEN_TUNNEL` credential (not `CF_TOKEN_ADMIN`, which
-answers `401` on `/token`) reads AND rotates a tunnel, so the old "dashboard gesture only" note was wrong.
-**`canari` and `miconnect` were driven THROUGH `mitv` (`ssh -J mitv`), whose own tunnel is independent**, so
-restarting their connector did not cut the session; `mitv` itself went last and was re-entered through
-`canari`'s LAN. That route was exercised BEFORE the first PATCH, which is the only reason the order was
-safe. The root-side work reads the new token from stdin (`sudo -S` passes the rest of stdin to the
-command, measured with a dummy line first), so the value is never in an argument, a file in a user's
-home, or a transcript.
-
-**The historical text below is kept for the order of operations.** It named two hosts; there are three.
-
-**Both hosts owe this, and both owe a rotation after it**, in the order below - step 1 invalidates
-the old token instantly, so the tunnel is down between step 1 and the restart. That is a minute of
-production being unreachable, which is why it is done with the user present rather than alone.
+- **The run token must never be on a process command line.** `600` on the unit file closes
+  `systemctl cat`, but `systemctl show -p ExecStart` reads systemd's in-memory state over D-Bus and
+  answers any local user. Pass the token with `EnvironmentFile=` (a `600 root:root` file in a `700`
+  directory), never `Environment=` (which `show` prints verbatim) and never `--token`. Verify against
+  the mechanism that caused the leak, not against the question.
+- **Never switch a daemon from a local config to `--token` without diffing the two:** the remote
+  configuration may have been invisible while the local file was in effect, so the switch changes
+  which configuration applies. A superseded local file is renamed, not left as `config.yml`.
+- **A verification that cannot fail is not a verification:** assert a token fingerprint is non-empty
+  before comparing it (the sha256 of the empty string equals itself).
 
 ### Rotating the run token, and the order that matters
 
-The rotation is two API calls and a unit rewrite, and it can be done from a workstation with an
-account-scoped token - no dashboard gesture:
-
-1. `PATCH /accounts/{acct}/cfd_tunnel/{id}` with `{"tunnel_secret": "<base64 of 32+ random bytes>"}`
-2. `GET /accounts/{acct}/cfd_tunnel/{id}/token` for the new run token
-3. rewrite the unit's `--token` argument, `daemon-reload`, `restart`
-
-**Step 1 invalidates the old token instantly, so the ability to complete steps 2 and 3 must be
-proven BEFORE step 1 runs.** Verify the credential can read `/token` first: a `PATCH` followed by a
-refusal leaves a tunnel that looks healthy - the running daemon keeps the connections it already
-authenticated - and dies silently at its next restart. That is not a hypothetical; it happened for
-one minute during the 2026-09-02 rotation.
-
-Two more facts that cost time:
-
-- **A run token's length follows the secret's length.** A 32-byte secret yields ~180 characters, a
-  64-byte one ~250. A plausibility check calibrated on one of them rejects the other, so any such
-  guard is a numeric floor, never a digit-shaped pattern.
-- **The restart tears down the session that issues it**, the tunnel being the only door. So the work
-  runs detached (`setsid --fork`) and leaves a verdict in a log, and the verdict is evidence -
-  `Registered tunnel connection` in the journal, then an HTTP code from the front door. A tunnel
-  being up is not the site being up.
-
-The recovery route, exercised before touching anything: the two other tunnel hosts both reach the
-production origin's `:22` over the LAN, so `ssh -J <other-host> <user>@<origin-ip>` gets in when the
-origin's own tunnel is down. **A fallback that has not been exercised is not a fallback** - it was
-tested first, deliberately, and it is the only reason the rotation was safe to attempt.
+The rotation is two API calls (reset the tunnel secret, read the new run token) and a unit change,
+doable from a workstation with an account-scoped token. **Resetting the secret invalidates the old
+token instantly, so the ability to read the new one must be proven BEFORE the reset**; a refusal
+after the reset leaves a tunnel that looks healthy (the running daemon keeps its connections) and
+dies silently at its next restart. A restart tears down the session that issues it when the tunnel is
+the only door, so run it detached and leave a verdict in a log; a tunnel being up is not the site
+being up. **A recovery route that has not been exercised is not a recovery route:** test it before
+touching anything.
 
 ### Nothing keeps the daemon current, and a dormant timer says otherwise
 
-`cloudflared service install` leaves a `cloudflared-update.timer` behind. On the production origin it
-is **`disabled`, `inactive`, and has never run** - no journal entries at all - while the daemon runs
-with `--no-autoupdate`. The binary was three months behind (`2026.6.0` against `2026.8.3`) and
-nothing said so.
-
-**Enabling that timer would be the wrong fix.** Its `ExecStart` calls `cloudflared update`, which
-replaces the binary in place and would drift it from the version `dpkg` believes is installed - the
-daemon here comes from the apt repository. The package is upgraded with apt, which is safe for one
-measured reason: `dpkg -S /etc/systemd/system/cloudflared.service` finds **no owner** and the package
-declares **no conffile** for it, so an upgrade cannot replace the file carrying the run token. Verify
-that before upgrading on any host, and compare the token's fingerprint across the upgrade so a silent
-replacement is caught rather than assumed away.
-
+`cloudflared service install` leaves an update timer that must not be enabled: it replaces the
+binary in place and drifts it from what `dpkg` believes. Upgrade the package with apt, after checking
+that no package owns the unit file carrying the token and comparing the token's fingerprint across
+the upgrade.
 ## The tunnel drops in the 22h band, and nothing on this page can fix it
 
-**Measured 2026-09-11, after the user reported `canari-emse.fr` down.** Every hostname on the zone
-returned HTTP 530 / Cloudflare error **1033** for about six minutes, `cercle.canari-emse.fr`
-included - and so did `mitv.fr`, which is a different zone on a different machine. 1033 means the
-edge has **no connector registered** for the tunnel: it is the edge reporting that the origin
-stopped answering IT, never a fault at the edge, and reading it as one costs an hour.
+**Measured 2026-09-11.** Every hostname returned HTTP 530 / Cloudflare error **1033** for about six
+minutes, on two different zones and machines. 1033 means the edge has **no connector registered** for
+the tunnel: it is the edge reporting that the origin stopped answering IT, never a fault at the edge.
+Nothing on the origin moved (containers, kernel, conntrack, NIC counters, journal all clean); the
+connector logged `failed to dial to edge with quic: timeout`. **Do not restart the connector in
+response to a 1033** - that destroys the evidence and repairs nothing.
 
-**Nothing on the origin moved.** The box had been up 13 days, the containers 8 hours, no service
-restarted, no kernel event, conntrack at 358 of 262144, zero NIC error counters, and the journal
-carried entries for every minute of the window. The application never went down. What went down is
-the path between the origin and Cloudflare's edge:
-
-```
-failed to dial to edge with quic: timeout: no recent network activity
-```
-
-All four tunnel connections dropped inside the same second (22:23:11 CEST), the first re-registered
-at 22:27:59, full redundancy returned at 22:29:57. `cloudflared` had been running since 2026-09-02
-and never restarted: it survived the cut and re-dialled, which is exactly what it is for. **Do not
-restart it in response to a 1033** - that destroys the evidence and repairs nothing.
-
-**It is not a one-off, and it has a shape.** 175 drop events in seven days of journal, every one of
-them in hour 22 or 23 CEST, and `mitv`'s counts track `canari`'s almost exactly:
-
-| Window (CEST) | canari | mitv |
-| --- | --- | --- |
-| 09-08 22h | 30 | 38 |
-| 09-09 22h | 28 | 28 |
-| 09-09 23h | 35 | 29 |
-| 09-11 22h | 39 | 39 |
-
-Nothing at all on 09-05, 09-06 or 09-07, and a small episode on 09-10 - so "every night" is wrong,
-and saying it was the second error this incident produced.
-
-**The two boxes share exactly one thing, and that is the whole finding.** `mitv` is bare metal
-(`systemd-detect-virt: none`); `canari` is a container on different hardware. No hypervisor, no
-disk, no backup job and no host event can be common to both. What IS common: `10.0.0.3` and
-`10.0.0.4` leave through the same gateway `10.0.0.1` behind the same public address
-`193.49.174.63`. That gateway answers TLS on 443 with
-`CN=fw-ste.emse.fr, O=ECOLE NATIONALE SUPERIEURE DES MINES SAINT ETIENNE`, and its MAC OUI
-`00:0d:b4` is Stormshield. It is the School's border firewall, and it is the only element both
-paths cross.
-
-**So the cause is upstream of this repository and not a commit.** The firewall is outside the documented
-access scope here, no attempt was made to authenticate against it, and nobody is asked (user,
-2026-10-10: no request goes to the School's services).
-
-**Re-measured 2026-10-10, after the cutover: the band did not recur.** The tunnel connector is on the OLD
-VM (`ssh canari`, `systemctl is-active cloudflared` = active; the Portail-etu host runs none, so the
-question "does that host see the drop" has no object). `journalctl -u cloudflared --since "7 days ago"`
-holds 122 timeout lines, none at 22h-23h CEST: they cluster in two short episodes, 2026-10-07 08:31 and
-2026-10-08 19:14-19:18 (`Failed to dial a quic connection ... timeout`), against 175 lines all in the 22h
-band in the seven days of 2026-09-11. Re-read the same two commands if a 1033 is reported at night.
+The drops had a shape (every one in the 22h-23h band, tracking across two otherwise unrelated hosts),
+and the only thing the two paths share is the School's border firewall, so the cause is upstream of
+this repository and no request goes to the School's services (user, 2026-10-10). **Re-measured
+2026-10-10, after the cutover: the band did not recur.** Re-read the connector's journal if a 1033 is
+reported at night.
 
 ### Two refuted explanations, and the egress probe
 
-**Do not re-open either refuted hypothesis.** (1) A Proxmox `vzdump` freezing the container: both journals carried entries for every minute of the window, and the ledger gap was the probe's own `AbortSignal.timeout` - a gap in a ledger is evidence about its WRITER before it is evidence about the world ([durable-rules](../durable-rules.md)). (2) "The whole campus loses the network every evening": zero events on 09-05, 09-06 and 09-07.
+**Do not re-open either refuted hypothesis.** (1) A hypervisor snapshot freezing the container: both
+journals carried entries for every minute of the window, and the ledger gap was the probe's own
+`AbortSignal.timeout` - a gap in a ledger is evidence about its WRITER before it is evidence about
+the world ([durable-rules](../durable-rules.md)). (2) "The whole campus loses the network every
+evening": zero events on three of the nights.
 
-**The egress half.** `UpstreamUnreachableError` and `OUTBOUND_BUDGET_MS` are shipped; whether such stalls are CORRELATED across boxes is read from [`infrastructure/egress-probe/`](../../../infrastructure/egress-probe/README.md), armed in the `canari` crontab - which since the 2026-09-24 cutover is the old VM, running no container. The two netwatch witnesses stopped themselves on 2026-09-12 and nothing records that their ledgers were read.
+**The egress half.** `UpstreamUnreachableError` and `OUTBOUND_BUDGET_MS` are shipped; whether such
+stalls are CORRELATED across boxes is read from
+[`infrastructure/egress-probe/`](../../../infrastructure/egress-probe/README.md).
 
 ## A request body over 1 MiB is refused with a 413 on the legacy names - IT IS THE RELAY'S NGINX, NOT CLOUDFLARE (measured 2026-10-07, cause found 2026-10-09)
 
-Found in the user's dev console log: two 1.1 MB videos failing 800+ times. An unauthenticated
-`POST /api/media/upload` with a 1.2 MB body answers `413` with `Server: cloudflare` on
-`canari-emse.fr` (legacy) and `dev.canari-emse.fr`; a 600 KB body reaches the app (`401`).
+An unauthenticated `POST /api/media/upload` with a 1.2 MB body answered `413` with `Server: cloudflare`
+on the legacy names while a 600 KB body reached the app. **The 413 page itself names the author**:
+the body is nginx's own `413 Request Entity Too Large`, which Cloudflare only decorates. The limit is
+nginx's DEFAULT `client_max_body_size 1m` on the relay that the legacy names cross; the current name
+does not cross it and is not limited, and nothing downstream is (frontend nginx 100 MB, media-service
+50 MB). The repair is a body-size limit and unbuffered request proxying in the relay's server blocks,
+which are hand-written on the relay and not in this repository (owed to the user).
 
-**THE 413 PAGE ITSELF NAMES THE AUTHOR.** Read the whole response, not the status line: the HTML body is
-nginx's own `<h1>413 Request Entity Too Large</h1><hr><center>nginx</center>`, which Cloudflare only
-decorates with its beacon script. Cloudflare Free would say `413` with ITS error page and its limit is
-100 MB. **The limit is nginx's DEFAULT `client_max_body_size 1m`**, and 1 048 576 bytes pass while
-1 100 000 do not because that default is exactly 1 MiB.
-
-- **Where**: the relay on the old VM (`ssh canari`, NOT a container): `/etc/nginx/sites-enabled/canari-relay-prod.conf`
-  (`server_name canari-emse.fr`, `listen 8080`) and `canari-relay-dev.conf` (`dev.canari-emse.fr`,
-  `listen 127.0.0.1:3080`), each a `location /` with `proxy_pass https://193.49.175.122` and **no
-  `client_max_body_size` anywhere in the file or in `nginx.conf`** (read 2026-10-09, read-only). The
-  tunnel points at this relay, so every request to the two legacy names crosses it.
-- **`canari.emse.fr` (the current name) is NOT limited**: it does not cross the relay and answers
-  `401` from the host's nginx for the same 1.2 MB body.
-- **Nothing downstream is the limit**: the frontend nginx allows 100 MB, the host's `nginx.conf` 2 GB,
-  `media-service` 50 MB.
-- **The fix, one gesture on the old VM (the repo has no copy of these two files, they are hand-written
-  there)**: add `client_max_body_size 100m;` and `proxy_request_buffering off;` inside the `server` block
-  of BOTH relay files (the first matches the frontend's 100 MB; the second streams a body to the target
-  instead of spooling it to the relay's disk), then `sudo nginx -t && sudo systemctl reload nginx`.
-  Verify: `curl -s -o /dev/null -w '%{http_code}' -X POST --data-binary @<1.2 MB file>
-  https://dev.canari-emse.fr/api/media/upload` answers `401` (the app refusing an unauthenticated
-  caller), no longer `413`; same on `canari-emse.fr`.
-- **The client no longer retries a 413** (#1583,
-  [chat](../frontend/modules/chat.md#a-413-ends-the-entry-2026-10-08)): the entry ends with a visible
-  notice. The client sends a media as ONE `POST /api/media/upload` and only chunks above
-  `CHUNK_SIZE = 50 MB` (`media.ts`).
-- **An app-side avoidance exists and is NOT recommended**: dropping `CHUNK_SIZE` under 1 MiB would send
-  every media in hundreds of requests to dodge a one-line misconfiguration on a VM that retires with the
-  legacy names, and the chunk endpoints assemble on the server. The 301 on `canari-emse.fr` documents
-  already moves every current client to `canari.emse.fr`, which has no such limit; only an old APK and
-  an open tab's `/api/` calls still cross the relay.
-
+The client no longer retries a 413 (#1583, [chat](../frontend/modules/chat.md#a-413-ends-the-entry-2026-10-08)):
+the entry ends with a visible notice. The client sends a media as ONE `POST /api/media/upload` and only
+chunks above `CHUNK_SIZE = 50 MB` (`media.ts`). Dropping `CHUNK_SIZE` under 1 MiB to dodge a
+one-line misconfiguration on a retiring relay is NOT recommended; the 301 on documents already moves
+current clients to the current name.
 ## Working against the API
 
-The account id and token are **not in this repository and must never be** - it is public. They live
-in the operator's local agent memory. Read them from that file inside each command rather than
-passing them as arguments, and note that an account-scoped token (`cfat_` prefix) returns
-`Invalid API Token` from `/user/tokens/verify` while working perfectly everywhere else - that
-endpoint is for user tokens only, so it is not a valid check of the credential.
+The account id and token are **not in this repository and must never be** - it is public. They are
+held outside the repository and read inside each command rather than passed as arguments. An
+account-scoped token (`cfat_` prefix) returns `Invalid API Token` from `/user/tokens/verify` while
+working perfectly everywhere else - that endpoint is for user tokens only, so it is not a valid
+check of the credential.
 
-**Two agent tokens, and what each can actually reach** (measured 2026-09-29):
+**Two agent tokens, and what each can actually reach** (measured 2026-09-29): the **user token**
+reaches DNS, zone settings and Access but sees **no tunnel** and **no ruleset**; the **account token**
+lists and edits the account's tunnels and their remote ingress configuration and lists rulesets, but
+is REFUSED (`403`) on a zone's dynamic-redirect phase.
 
-- the **user token** (`/user/tokens/verify`) - DNS, zone settings, Access. It sees **no tunnel** and
-  **no ruleset**, which is where the "the project's token cannot see tunnels" measurements in
-  [estate-migration](estate-migration.md) come from;
-- the **account token** (`cfat_`, `/accounts/{acct}/tokens/verify`) - it lists and edits the
-  account's tunnels (`canari`, `mitv`, `portail-etu`, `rootz-emse`) and their remote ingress
-  config, and lists rulesets; it is REFUSED (`403`) on a zone's dynamic-redirect phase.
-
-**Both were rolled on 2026-09-29** after their values were printed into a session transcript:
-`PUT .../tokens/{id}/value` with the token itself, the new value written straight into the memory
-file and never echoed, then the new one verified `active` and the old one `401`. Neither is a
-GitHub secret, so no pipeline needed touching - CI carries its own, narrower tokens
-(`CLOUDFLARE_CACHE_PURGE_TOKEN`, the Calls/TURN pair).
+**Both were rotated on 2026-09-29** after their values reached a session transcript (a token can
+rotate itself through its own value endpoint; verify the new one is `active` and the old one `401`).
+Neither is a GitHub secret; CI carries its own, narrower tokens (`CLOUDFLARE_CACHE_PURGE_TOKEN`, the
+Calls/TURN pair).

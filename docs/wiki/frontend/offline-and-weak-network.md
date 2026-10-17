@@ -360,7 +360,7 @@ proxy) and compression on, to replace the pessimistic bytes; and on a real salon
 ### 10.1 What production served, read before changing anything
 
 `curl -H 'Accept-Encoding: br,gzip'` and one headless Chrome load of `https://canari.emse.fr/login`
-(read-only, public, no sign-in), 2026-10-09. The name resolves straight to the host (193.49.175.122),
+(read-only, public, no sign-in), 2026-10-09. The name is served directly by the school host,
 **no CDN in front**, so the Cloudflare-era figures of this page (723 kB brotli WASM) no longer describe
 production.
 
@@ -579,10 +579,10 @@ WebSocket), and Android/iOS where `plugin-http` is invisible to CDP.
 
 The user's console export (production web, 2026-10-10) shows `encryptAndUpload: application/pdf,
 14049945 bytes, single block`, an XHR `POST /api/media/upload` answered **403 in ~1 s with an HTML
-body** (`<title>CrowdSec Ban</title>`, 5.75 KB), and the outbox logging `transient failure (attempt N):
+body** (`<title>... Ban</title>`, 5.75 KB), and the outbox logging `transient failure (attempt N):
 MediaUploadError: media upload failed (403 ) - <!DOCTYPE html>` in a loop: the bubble spun for ever
-because **a status code was treated as a transport failure**. The school-managed CrowdSec AppSec in
-the HOST nginx drops ANY request body over 10 MiB (10 485 760 bytes), for every user, whatever the
+because **a status code was treated as a transport failure**. The school-managed web application firewall in
+front of the host refuses large request bodies, for every user, whatever the
 connection: [host-waf-body-limit](../infrastructure/host-waf-body-limit.md). Fixed by WP-OFF-8 (below):
 no body over 8 MiB is ever built, and a refusal ends the entry. The weak-link findings that follow
 are real and independent.
@@ -720,7 +720,7 @@ takes it). The **single-request route (< 8 MiB) has no memo**, a repeat stores a
 45 s bound for the answer instead of the 5 min of a chunked `complete`. A cancel during `complete` is logged
 (the assembled object is then unreferenced). **What releases a session when the app is killed: nothing but the
 24 h sweep** - the DELETE is a best-effort of a live page (it refreshes an expired token through `fetchUpload`).
-**A blocked upload is parked, not ended**: a CrowdSec ban is time-limited, so the entry stays in the queue with
+**A blocked upload is parked, not ended**: a firewall ban is time-limited, so the entry stays in the queue with
 the bubble phase `blocked` (retry + delete), is never retried by the ladder, and a reload makes one new
 attempt.
 Pinned by `media.chunkLifecycle.test.ts` (failure at chunk N, refusal, cancel, slow complete) and

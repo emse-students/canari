@@ -76,7 +76,7 @@ entries:
       name: "miconnect-archives"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-mino"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
@@ -108,7 +108,7 @@ entries:
       name: "miconnect-canari"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-signout"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
@@ -174,7 +174,7 @@ entries:
       name: "miconnect-canari-dev"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-signout"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
@@ -233,7 +233,7 @@ entries:
       name: "miconnect-canari-local"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-signout"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
@@ -287,7 +287,7 @@ entries:
       name: "miconnect-cercle"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
@@ -318,7 +318,7 @@ entries:
       name: "miconnect-migallery"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
@@ -343,7 +343,7 @@ entries:
       name: "miconnect-mino-wiki"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, "miconnect-invalidation-mino"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]
@@ -382,7 +382,7 @@ entries:
       name: "miconnect-sky"
     attrs:
       authentication_flow: !Find [authentik_flows.flow, [slug, "miconnect-auth"]]
-      authorization_flow: !Find [authentik_flows.flow, [slug, "default-provider-authorization-implicit-consent"]]
+      authorization_flow: !Find [authentik_flows.flow, [slug, "miconnect-authorization"]]
       invalidation_flow: !Find [authentik_flows.flow, [slug, "default-provider-invalidation-flow"]]
       property_mappings:
         - !Find [authentik_providers_oauth2.scopemapping, [name, "miconnect-claim-promo"]]

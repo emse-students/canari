@@ -1,13 +1,11 @@
 <script lang="ts">
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import type { PostEntity } from '$lib/posts/api';
-  import Avatar from '$lib/components/shared/Avatar.svelte';
-  import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
-  import AnonymousAvatar from '$lib/components/shared/AnonymousAvatar.svelte';
+  import PostAuthorAvatar from './PostAuthorAvatar.svelte';
   import { Clock, Repeat2, VenetianMask } from '@lucide/svelte';
   import { timeAgo, exactDate } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
-  import { postAuthorName } from '$lib/posts/postAuthorName';
+  import { postAuthorHref, postAuthorLinkLabel, postAuthorName } from '$lib/posts/postAuthorName';
   import { republishedByLine } from '$lib/posts/republication';
 
   /** Props for the PostHeader component. */
@@ -18,14 +16,6 @@
 
   let { post }: Props = $props();
 
-  /**
-   * `post.anonymous` alone is not enough to decide the identity branch: a moderator, a platform
-   * admin, and the post's own author all receive `authorId` on an anonymous post (server-side,
-   * `PostsService.mustHideAnonymousAuthor`) - a user request, 2026-09-17, that these three see the
-   * real name/avatar too, not the generic treatment a regular reader gets. Only a regular reader
-   * (no `authorId` on the payload) falls into the fully-hidden branch below.
-   */
-  const identityHidden = $derived(!!post.anonymous && !post.authorId);
   /** True whenever the reader can see WHO published an anonymous post - drives the badge alone. */
   const anonymousBadge = $derived(!!post.anonymous && !!post.authorId);
 
@@ -37,9 +27,9 @@
   /** "Republie par X, Y +N" (D38): one card per post, however many associations carry it. */
   const republished = $derived(republishedByLine(post.republishedBy));
 
-  const associationHref = $derived(
-    post.association ? `/associations/${encodeURIComponent(post.association.slug)}` : ''
-  );
+  /** Where the publisher links - `postAuthorHref`, shared with the reel viewer; none when hidden. */
+  const authorHref = $derived(postAuthorHref(post));
+  const authorLinkLabel = $derived(postAuthorLinkLabel(post));
 </script>
 
 <!--
@@ -50,51 +40,31 @@
   item refuses to shrink below its content and the `truncate` below never fires.
 -->
 <div class="flex min-w-0 flex-1 items-center gap-3.5 bg-transparent px-5 py-4">
-  {#if post.association}
+  {#if authorHref}
     <a
-      href={associationHref}
+      href={authorHref}
       class="shrink-0 rounded-full shadow-sm transition-transform duration-200 outline-none hover:scale-105 focus-visible:ring-2 focus-visible:ring-amber-500"
-      aria-label={m.post_view_association_label({ name: post.association.name })}
+      aria-label={authorLinkLabel}
     >
-      <AssociationAvatar
-        name={post.association.name}
-        logoUrl={post.association.logoUrl}
-        size="md"
-        shape="circle"
-      />
+      <PostAuthorAvatar {post} />
     </a>
-  {:else if identityHidden}
-    <span class="shrink-0">
-      <AnonymousAvatar size="md" shape="circle" />
-    </span>
   {:else}
-    <a
-      href="/profile/{encodeURIComponent(post.authorId ?? '')}"
-      class="shrink-0 rounded-full shadow-sm transition-transform duration-200 outline-none hover:scale-105 focus-visible:ring-2 focus-visible:ring-amber-500"
-      aria-label={m.post_view_profile_label({ name: getPostAuthorName() })}
-    >
-      <Avatar userId={post.authorId ?? ''} size="md" />
-    </a>
+    <span class="shrink-0">
+      <PostAuthorAvatar {post} />
+    </span>
   {/if}
 
   <div class="flex min-w-0 flex-1 flex-col justify-center">
     <div class="truncate">
-      {#if post.association}
+      {#if authorHref}
         <a
-          href={associationHref}
-          class="text-text-main text-sm font-bold transition-colors outline-none hover:text-amber-600 focus-visible:underline dark:hover:text-amber-400"
-        >
-          <EmojiText text={post.association.name} />
-        </a>
-      {:else if identityHidden}
-        <span class="text-text-main text-sm font-bold">{m.post_anonymous_label()}</span>
-      {:else}
-        <a
-          href="/profile/{encodeURIComponent(post.authorId ?? '')}"
+          href={authorHref}
           class="text-text-main text-sm font-bold transition-colors outline-none hover:text-amber-600 focus-visible:underline dark:hover:text-amber-400"
         >
           <EmojiText text={getPostAuthorName()} />
         </a>
+      {:else}
+        <span class="text-text-main text-sm font-bold">{getPostAuthorName()}</span>
       {/if}
     </div>
     <div class="text-text-muted text-2xs mt-0.5 flex items-center gap-1.5 font-medium opacity-80">

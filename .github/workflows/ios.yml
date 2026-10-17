@@ -357,7 +357,6 @@ jobs:
         working-directory: frontend
         env:
           AUTHENTIK_URL: ${{ secrets.AUTHENTIK_URL }}
-          KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
         run: |
           set -euo pipefail
           {
@@ -372,9 +371,6 @@ jobs:
             echo "VITE_AUTHENTIK_CLIENT_ID=${LOCAL_CLIENT_ID}"
             echo "VITE_CALL_E2E_ENCRYPTION=false"
           } > .env
-          if [ -n "$KLIPY_API_KEY" ]; then
-            echo "VITE_KLIPY_KEY=${KLIPY_API_KEY}" >> .env
-          fi
           # ITS OWN CAPABILITY SET, and a step of its own: `tauri-build` merges TAURI_CONFIG into
           # the config the Rust lib is compiled against, which is how `--config tauri.local.conf.json`
           # reaches Android. This build bypasses `tauri ios build`, so nothing else would add
@@ -412,7 +408,6 @@ jobs:
           DEV_BASE_URL: ${{ secrets.DEV_BASE_URL }}
           DEV_AUTHENTIK_URL: ${{ secrets.DEV_AUTHENTIK_URL }}
           DEV_AUTHENTIK_CLIENT_ID: ${{ secrets.DEV_AUTHENTIK_CLIENT_ID }}
-          KLIPY_API_KEY: ${{ secrets.KLIPY_API_KEY }}
         run: |
           set -euo pipefail
 
@@ -464,9 +459,6 @@ jobs:
           echo "VITE_CALL_E2E_ENCRYPTION=false" >> .env
           if [ "$IS_PRERELEASE" = "true" ]; then
             echo "VITE_DEPLOY_ENVIRONMENT=development" >> .env
-          fi
-          if [ -n "$KLIPY_API_KEY" ]; then
-            echo "VITE_KLIPY_KEY=${KLIPY_API_KEY}" >> .env
           fi
 
       - name: Verify frontend env for iOS build

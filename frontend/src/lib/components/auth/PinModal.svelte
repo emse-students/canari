@@ -258,18 +258,24 @@
     scrollport. The footer is still outside that region (`PinModal.exits` pins it), so the unlock
     button and the way out never scroll.
 
+    THE FORM NEVER SHRINKS AND CARRIES ITS OWN BOTTOM ROOM (`shrink-0`, `pb-4` on the form, not on
+    the scroll region): at the largest accessibility size the "stay signed in" row ended half under
+    the unlock button at the END of the scroll (iPhone 12, v1.2.9-alpha.3). A flex item of the scroll
+    region may be shrunk below its content by WebKit, and a scroll container's own bottom padding is
+    not always part of what it scrolls to; a box's own padding always is.
+
     NO AUTO-SUBMIT: a PIN here is 4 to 8 digits (`isValidPin`) and the code has no notion of a
     complete one, so submitting at the fourth digit would make every longer PIN impossible.
   -->
   <div
     data-pin-scroll
     onfocusin={revealFocused}
-    class="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 pt-4 pb-2"
+    class="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 pt-4"
   >
     <form
       id={FORM_ID}
       onsubmit={handleSubmit}
-      class="m-auto flex w-full max-w-xs flex-col items-center gap-4 py-2"
+      class="m-auto flex w-full max-w-xs shrink-0 flex-col items-center gap-4 pt-2 pb-4"
     >
       <PinAccountField {account} />
       <header class="flex flex-col items-center gap-2 text-center">
@@ -561,7 +567,10 @@
     `isLoading`: a submit that hangs is one of the states this button exists for.
   -->
   {#snippet footer()}
-    <div class="mx-auto flex w-full max-w-xs flex-col items-center gap-1">
+    <!-- ITS OWN TOP ROOM, NO LINE (a lock screen draws no frame): the keypad cut by the scrollport
+         ends 12 px above the unlock button rather than against it, where rows 7-9 read as covered
+         BY the button at the largest text size (iPhone 12, v1.2.9-alpha.4). -->
+    <div class="mx-auto flex w-full max-w-xs flex-col items-center gap-1 pt-3" data-pin-footer>
       <button
         type="submit"
         form={FORM_ID}

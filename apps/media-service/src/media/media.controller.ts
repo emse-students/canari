@@ -52,6 +52,7 @@ import {
   ForbiddenException,
   InternalServerErrorException,
   PayloadTooLargeException,
+  ServiceUnavailableException,
   UnauthorizedException,
   BadRequestException,
   UnprocessableEntityException,
@@ -870,7 +871,8 @@ export class MediaController {
   //
   // Declared BEFORE the catch-all `@Delete(':id')` for the same reason `internal/:id` precedes
   // `@Get(':id')`. No JWT: the caller is a service, not a user - the account is already gone by
-  // the time the fan-out reaches here, so there is no token left to present.
+  // the time the fan-out reaches here, so there is no token left to present. Called by core-service's
+  // durable erasure queue, which retries until this answers 2xx: hence 503 while anything failed.
   // ---------------------------------------------------------------------------
   @Delete('internal/users/:userId')
   async removeAllOwnedBy(
@@ -879,6 +881,11 @@ export class MediaController {
   ): Promise<{ ok: boolean; deleted: number; failed: number }> {
     assertInternalSecret(internalSecret);
     const { deleted, failed } = await this.mediaService.removeAllOwnedBy(userId);
+    if (failed > 0) {
+      // A 2xx would tell the erasure queue this half is done. It is not: the objects that failed
+      // are still stored, and only a retry of this call removes them.
+      throw new ServiceUnavailableException({ code: 'ERASURE_INCOMPLETE', deleted, failed });
+    }
     return { ok: true, deleted, failed };
   }
 

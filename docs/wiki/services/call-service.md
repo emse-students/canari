@@ -230,7 +230,7 @@ duration is present or absent.
 | Variable | Required | Default | Description |
 |---|---|---|---|
 | `JWT_SECRET` | yes | - | HS256 secret (shared with all services) |
-| `CALL_ROOM_SECRET` | no | `""` | Secret for room access tokens (without it, room access control is disabled) |
+| `CALL_ROOM_SECRET` | no | `""` | Secret for room access tokens (MUST be set in production; unset it is a development-only mode) |
 | `PORT` | no | `3004` | Listen port |
 | `CLOUDFLARE_CALLS_API_TOKEN` | no | - | Cloudflare API token for TURN credentials |
 | `CLOUDFLARE_TURN_KEY_ID` | no | - | Cloudflare TURN key ID |

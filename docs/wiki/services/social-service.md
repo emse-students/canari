@@ -692,7 +692,7 @@ So `POST /api/associations/:id/partnerships/:cardId/claim` answered **500 for ev
 rejects the parameter before reading a row:
 
 ```
-invalid input syntax for type uuid: "d82cd2268993451edb547bdd7ff2784..."   -- SQLSTATE 22P02
+invalid input syntax for type uuid: "<hex id>..."   -- SQLSTATE 22P02
 ```
 
 Three things about the shape of this defect are worth keeping:
@@ -745,8 +745,7 @@ success carrying no code is now refused and logged rather than rendered as an em
 
 `GET /api/associations`, `/api/associations/:id` and `/api/associations/slug/:slug` sit under the
 controller's `── Public ──` banner and carry **no guard**. nginx puts `/api/associations` behind
-`auth_request`, but `/api/auth/verify` answers 200 for an anonymous request (it only sets
-`X-Logged-In: false`), so those three are reachable from the internet. All three returned
+`auth_request`, but that check does not refuse an anonymous request, so those three were reachable without a session. All three returned
 `{ ...asso, memberCount, parentName }` - which spread `documentVaultKey`, the hex 32-byte master
 key every document CEK is derived from, and `notesCiphertext`.
 
@@ -871,12 +870,9 @@ old `WHERE id = $1 AND formation = 'ICM' OR admin = true` would have parsed as
 (measured on the local copy of production: 4 rows without the brackets, 0 with them). Who each
 fragment admits is proven against PostgreSQL by `reader-spaces.integration.spec.ts`.
 
-**This closes the feed and not the class.** FIFTEEN edge locations carry the same `auth_request`
-(re-derived 2026-09-15; this line said sixteen), and `/api/presence` was the second confirmed hole
-- closed the same day by a header check in `chat-gateway/src/presence.rs`, whose docblock is the
-story. What is still open is that the signed-in rule has THREE independent implementations under
-two different discriminators and nothing asserts every route carries one, which is what made a
-missing one invisible: [backlog](../backlog.md).
+**This closes the feed and not the class.** `/api/presence` was the second confirmed hole, closed
+the same day by a header check in `chat-gateway/src/presence.rs`, whose docblock is the story. A
+guard-coverage assertion for signed-in routes is tracked in the [backlog](../backlog.md).
 
 ### A post is announced once, by a sweeper, and the column is the whole mechanism
 
@@ -1251,13 +1247,15 @@ Those six are the complete set: no other table in the database carries a `worksp
 was a seventh until the Graine rework dropped the table. Attached media are left to the retention
 sweep, which collects them once nothing accesses them again.
 
-**Account deletion is the one path that cannot refuse.** `internal.controller` deletes
-`channel_members` rows by `userId` directly, so it bypasses every guard above, and the account is
-going regardless. It therefore captures the affected workspace ids BEFORE deleting and calls
-`repairWorkspacesAfterAccountDeletion` after: a community left with nobody is hard-deleted, and one
-left with members but no admin promotes its highest-priority survivor, ties broken by the lowest
-user id. Deterministic, per-workspace `try` so one failure never strands the others, and logged at
-`warn` because an automatic promotion is something a human should be able to find afterwards.
+**Account deletion is the one path that cannot refuse.** It bypasses every guard above, because
+the account is going regardless. `ChannelService.removeAccountFromWorkspaces` takes each community
+in turn: cut off its private channels, repair it as if the account were already gone - a community
+left with nobody is hard-deleted, one left with members but no admin promotes its highest-priority
+survivor, ties broken by the lowest user id - and only THEN delete the membership row. A failed
+repair keeps that row and the call throws, so the erasure queue's retry finds the community again
+([account-erasure](../account-erasure.md)); a swallowed failure used to strand an adminless
+community for ever. Logged at `warn` because an automatic promotion is something a human should be
+able to find afterwards.
 
 ### One invite link, bounded (2026-08-18)
 

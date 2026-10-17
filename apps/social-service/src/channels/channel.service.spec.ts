@@ -2191,28 +2191,85 @@ describe('ChannelService security hardening', () => {
 
   it('account deletion promotes a successor rather than leaving a community ungoverned', async () => {
     const repos = makeService();
-    // The admin's membership row is already gone: this route deletes it directly, which is the one
-    // path that cannot refuse, and therefore the one place a repair exists.
+    // The departing admin's row still exists: the repair runs BEFORE it is deleted, treating it as
+    // gone, so a failure leaves the row for the erasure retry to find.
     const rows = arrangeGovernedCommunity(repos, [
+      { userId: 'boss', roleIds: ['r-admin'] },
       { userId: 'zoe', roleIds: ['r-member'] },
       { userId: 'mod', roleIds: ['r-mod'] },
       { userId: 'amy', roleIds: ['r-member'] },
     ]);
 
-    await repos.service.repairWorkspacesAfterAccountDeletion(['ws1'], 'boss');
+    expect(await repos.service.removeAccountFromWorkspaces('boss')).toBe(1);
 
     // Highest-priority survivor, deterministically - no clock and no tie left to chance.
     expect(rows.find((r) => r.userId === 'mod')?.roleIds).toEqual(['r-admin']);
+    expect(rows.map((r) => r.userId)).not.toContain('boss');
     expect(repos.hardDeletes).not.toHaveBeenCalled();
   });
 
   it('account deletion deletes a community it emptied', async () => {
     const repos = makeService();
-    arrangeGovernedCommunity(repos, []);
+    arrangeGovernedCommunity(repos, [{ userId: 'boss', roleIds: ['r-admin'] }]);
 
-    await repos.service.repairWorkspacesAfterAccountDeletion(['ws1'], 'boss');
+    await repos.service.removeAccountFromWorkspaces('boss');
 
     expect(repos.hardDeletes).toHaveBeenCalledTimes(6);
+  });
+
+  it('a failed repair KEEPS the membership row and throws, so the retry repairs that community', async () => {
+    const repos = makeService();
+    const rows = arrangeGovernedCommunity(repos, [
+      { userId: 'boss', roleIds: ['r-admin'] },
+      { userId: 'mod', roleIds: ['r-mod'] },
+    ]);
+    const save = repos.memberRepo.save.getMockImplementation();
+    repos.memberRepo.save.mockImplementationOnce(() => Promise.reject(new Error('db blip')));
+
+    // The old version deleted the row first and swallowed this: the community stayed without an
+    // admin and the retry, finding no membership, never looked at it again.
+    await expect(repos.service.removeAccountFromWorkspaces('boss')).rejects.toThrow(
+      /account removal incomplete: 1\/1/
+    );
+    expect(rows.map((r) => r.userId)).toContain('boss');
+
+    repos.memberRepo.save.mockImplementation(save!);
+    await repos.service.removeAccountFromWorkspaces('boss');
+    expect(rows.find((r) => r.userId === 'mod')?.roleIds).toEqual(['r-admin']);
+    expect(rows.map((r) => r.userId)).not.toContain('boss');
+  });
+
+  it('a transient failure (chat-delivery down, a database blip) answers 503, a refusal answers 409', async () => {
+    const mk = () => {
+      const repos = makeService();
+      arrangeGovernedCommunity(repos, [
+        { userId: 'boss', roleIds: ['r-admin'] },
+        { userId: 'mod', roleIds: ['r-mod'] },
+      ]);
+      return repos;
+    };
+    const blip = mk();
+    blip.memberRepo.save.mockImplementationOnce(() => Promise.reject(new Error('db blip')));
+    await expect(blip.service.removeAccountFromWorkspaces('boss')).rejects.toMatchObject({
+      status: 503,
+    });
+
+    const refused = mk();
+    refused.memberRepo.save.mockImplementationOnce(() =>
+      Promise.reject(new ForbiddenException('refused'))
+    );
+    await expect(refused.service.removeAccountFromWorkspaces('boss')).rejects.toMatchObject({
+      status: 409,
+    });
+
+    // A programming error is deterministic: permanent, never a quiet 503.
+    const defect = mk();
+    defect.memberRepo.save.mockImplementationOnce(() =>
+      Promise.reject(new TypeError('x is undefined'))
+    );
+    await expect(defect.service.removeAccountFromWorkspaces('boss')).rejects.toMatchObject({
+      status: 409,
+    });
   });
 
   describe('the Graine history floor (WP-34)', () => {

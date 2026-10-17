@@ -604,6 +604,20 @@ jobs:
           INTERNAL_SHARED_SECRET: boot-probe-internal-shared-secret
         run: node --run test:boot
 
+      # THE ACCOUNT ERASURE'S SQL AGAINST THE SCHEMA THE BOOT JUST BUILT. `synchronize` created every
+      # table above, in a disposable database, so the two integration specs find the schema they are
+      # gated on (`*_IT_DATABASE_URL`) and nothing else needs provisioning: without this step they
+      # report as skipped everywhere, and the sticky `CASE`, the mention statements and the queue's
+      # `SKIP LOCKED` claim would be tested by nobody. Measured locally on a freshly synchronized
+      # database before it was added. Step in this job, not a new workflow: four are visible.
+      - name: Account erasure SQL against PostgreSQL
+        if: ${{ matrix.service == 'apps/core-service' || matrix.service == 'apps/social-service' }}
+        working-directory: ${{ matrix.service }}
+        env:
+          CORE_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
+          SOCIAL_IT_DATABASE_URL: postgres://canari:boot-probe@localhost:5432/boot_probe
+        run: node --run test -- account-erasure.integration
+
   # =================================================================================================
   # TYPESCRIPT BACKEND MATRIX
   # =================================================================================================

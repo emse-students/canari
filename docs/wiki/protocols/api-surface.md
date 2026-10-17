@@ -232,7 +232,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 |---|---|---|---|
 | GET | `/api/internal/mls/devices/:userId/count` | InternalSecret | How many devices a user has, inside the retention window - the service-facing counterpart of `GET /api/mls/devices/:userId` |
 | POST | `/api/internal/push/notify` | InternalSecret | Send push via internal secret |
-| DELETE | `/api/internal/users/:userId` | InternalSecret | Delete all user MLS/device data |
+| DELETE | `/api/internal/users/:userId` | InternalSecret | Idempotent account erasure ([account-erasure](../account-erasure.md)) |
 | DELETE | `/api/internal/follows/between/:userA/:userB` | InternalSecret | Drop both follows between two accounts - called by core-service when one blocks the other |
 | GET | `/api/health` | none | Liveness probe |
 

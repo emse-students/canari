@@ -59,6 +59,51 @@ the token, a replay, and the session row missing or expired. Until 2026-09-28 th
 silent, and a dev sign-out right after dev's database was replaced from production's could only be
 explained by correlating the 401's body length with the refresh job's clock.
 
+## Every first-party request has a deadline, the refresh and the sign-out included (2026-10-16)
+
+Until 2026-10-16 `apiFetch` bounded its response head and the two auth calls did not: `_doRefresh`
+and `clearAuth`'s `POST /api/auth/logout` were plain `fetch`es. `apiFetch` awaits `getToken()` first,
+so on a stalled or captive link at a cold open every request waited behind a refresh held for the
+engine's own timeout (minutes), and a sign-out hung with no feedback. Both now go through
+`trackedFetch` (`frontend/src/lib/utils/trackedFetch.ts`), the one place a deadline and the
+connectivity signal are applied, and an expiry is a `RequestDeadlineError`: a transport failure,
+never an answer, so it can never log anyone out.
+
+**The refresh's number comes from the rotation, not from the link.** The server rotates on RECEIPT,
+so a deadline can abandon a refresh it already executed and lose the new token. That loses the
+response, not the session: the replaced `jti` is answered with the CURRENT token for
+`ROTATION_GRACE_SECONDS` (60 s, see above), rotating nothing - **provided the old token is presented
+again inside that window.** "The next `getToken` caller is the retry" does not guarantee that,
+because there may be no next caller: a cold start's `hasStoredSession` swallows the failure and
+leaves the user on the login screen, the no-network gate holds refreshes until a reconnect, and a
+backgrounded app makes no call. A slow-but-alive refresh abandoned at its deadline could then be
+followed by nothing until the grace ran out, and the next refresh would revoke the session as a
+replay - where before the deadline it simply succeeded (adversarial review of #1966, 2026-10-16).
+
+**So a refresh whose head missed its deadline is re-sent ONCE, at once, with the SAME credential**
+(the stored copy where the client carries it in `X-Canari-Refresh`, the jar's current cookie
+otherwise), inside the shared single-flight promise. The server makes that safe by construction: if
+the first request never arrived, the re-send rotates normally; if it did, the re-send gets the grace
+answer. Never a double rotation. `REFRESH_DEADLINE_MS` is the read class's 20 s, and the call is
+labelled `read`, because what the policy needs is a call that may be re-sent once without a second
+effect - what a GET is, and what this POST is inside the grace. The bound that must fit in the 60 s
+grace is the RE-SEND'S ARRIVAL, about one deadline (20 s) after the rotation the first request
+caused - not the 40 s the two deadlines take in total. **One case is accepted:** an abandoned
+original delivered to the server MORE than 60 s after the re-send rotated would read as a replay
+and revoke the session; any retry of a rotating request has that case, and no deadline removes it. A
+second deadline rejects as a `RequestDeadlineError`, and a 401 on the re-send is the dead session it
+always was. No deadline is the worse case: an engine giving up after minutes has lost the same
+response AND spent the grace.
+
+**The sign-out is awaited, under `LOGOUT_DEADLINE_MS` (the write class's 30 s), and the local sign-out
+completes whatever the server did.** The button says it is busy for that wait and ignores a second
+tap, which would send a second logout (`Navbar.svelte`). Awaited because the web sign-out navigates the document to
+MiConnect's end-session next ([auth](frontend/modules/auth.md#signing-out-ends-the-miconnect-session-2026-10-14)),
+which would abort a request in flight. A sign-out past the deadline, or answered with a non-2xx, says `the server did NOT revoke
+the session` at `warn`, because the row then lives on: where the cookie is the credential (web,
+Android) it is still in the jar, since only the server's `Set-Cookie` clears an HttpOnly cookie. On
+the native transport (iOS) the stored copy is cleared locally either way.
+
 ## The rotation has to reach DISK, and on Android nothing guarantees that
 
 Rotation makes the credential's durability part of the protocol: from the instant the server answers,

@@ -4,8 +4,8 @@
 
 ## Why
 
-Checked on 2026-08-27, while asking whether le-cercle's `ENOSPC` could happen here: `canari` held 57
-dangling images and 64 dangling volumes, `mitv` held 6 and 77, and **no prune ran at all** on either
+Checked on 2026-08-27, while asking whether le-cercle's `ENOSPC` could happen here: the production host held 57
+dangling images and 64 dangling volumes, the second host held 6 and 77, and **no prune ran at all** on either
 host. Neither is near its edge - which is why this is a slope to be measured rather than an incident
 to be cleared.
 
@@ -108,21 +108,20 @@ On `canari`, where `/home/canari/canari` is a checkout CD keeps current:
 30 5 * * * cd /home/canari/canari && ./infrastructure/docker-prune/prune.py >> /home/canari/docker-prune/prune.log 2>&1
 ```
 
-`mitv` has **no checkout of this repo** - it hosts MiGallery, Sky and the dead `reservation-mitv`
-stack. The script is copied there, which means it can drift, which means the copy command belongs
+The second host has **no checkout of this repo**. The script is copied there, which means it can drift, which means the copy command belongs
 here rather than in somebody's memory:
 
 ```sh
-scp infrastructure/docker-prune/prune.py mitv:/root/docker-prune/prune.py
-ssh mitv 'chmod +x /root/docker-prune/prune.py'
+scp infrastructure/docker-prune/prune.py <second-host>:/root/docker-prune/prune.py
+ssh <second-host> 'chmod +x /root/docker-prune/prune.py'
 ```
 
 ```cron
-# Docker hygiene (05:45) - see canari:/home/canari/canari/infrastructure/docker-prune/README.md
+# Docker hygiene (05:45) - see infrastructure/docker-prune/README.md in the canari repository
 45 5 * * * CANARI_PRUNE_DIR=/root/docker-prune /root/docker-prune/prune.py >> /root/docker-prune/prune.log 2>&1
 ```
 
-The two hosts run different docker majors (29 on `canari`, 28 on `mitv`), which is why every label is
+The two hosts run different docker majors (29 on one, 28 on the other), which is why every label is
 read through `docker inspect` and never through `docker ps --format`: docker 29 turned `.Labels`
 there into a comma-joined string, so `index .Labels "..."` fails outright on one host and works on
 the other.
@@ -139,11 +138,11 @@ plain dangling prune plus the build cache is where the space is.
 Nothing was installed. Dry-run without installing anything (writes no ledger, deletes nothing):
 
 ```sh
-ssh portail-etu-direct 'python3 - --dry-run' < infrastructure/docker-prune/prune.py
+ssh <production-host> 'python3 - --dry-run' < infrastructure/docker-prune/prune.py
 ```
 
 Read-only facts about the host, checked 2026-10-09 so the steps below need no guess: the login
-user `jolan.boudin` is in the `docker` group (no sudo needed), `python3` is 3.13, docker is 26.1,
+user is in the `docker` group (no sudo needed), `python3` is 3.13, docker is 26.1,
 the user has **no crontab yet**, `/var/lib/docker` is `drwx--x--- root` (the script only calls
 `statvfs` on it, which needs search permission on the parents and nothing more), `/home/canari` does
 not exist (hence `CANARI_PRUNE_DIR` in every command below), and the two compose files are
@@ -154,14 +153,14 @@ To enable it, the user or Master runs these four commands, in this order, and se
 of the third:
 
 ```sh
-ssh portail-etu-direct 'mkdir -p ~/docker-prune'
-scp infrastructure/docker-prune/prune.py portail-etu-direct:docker-prune/prune.py
-ssh portail-etu-direct 'CANARI_PRUNE_DIR=$HOME/docker-prune python3 ~/docker-prune/prune.py --dry-run --remove-releases --keep 3 --compose /srv/canari/infrastructure/docker-compose.prod.yml /srv/canari-dev/infrastructure/docker-compose.dev.yml | head -80'
-ssh portail-etu-direct 'CANARI_PRUNE_DIR=$HOME/docker-prune python3 ~/docker-prune/prune.py --remove-releases --keep 3 --compose /srv/canari/infrastructure/docker-compose.prod.yml /srv/canari-dev/infrastructure/docker-compose.dev.yml'
+ssh <production-host> 'mkdir -p ~/docker-prune'
+scp infrastructure/docker-prune/prune.py <production-host>:docker-prune/prune.py
+ssh <production-host> 'CANARI_PRUNE_DIR=$HOME/docker-prune python3 ~/docker-prune/prune.py --dry-run --remove-releases --keep 3 --compose /srv/canari/infrastructure/docker-compose.prod.yml /srv/canari-dev/infrastructure/docker-compose.dev.yml | head -80'
+ssh <production-host> 'CANARI_PRUNE_DIR=$HOME/docker-prune python3 ~/docker-prune/prune.py --remove-releases --keep 3 --compose /srv/canari/infrastructure/docker-compose.prod.yml /srv/canari-dev/infrastructure/docker-compose.dev.yml'
 ```
 
 The third is the dry run (nothing deleted, no ledger line); the fourth is the first real pass and
-prints nothing on success. Then the cron entry, installed with `ssh portail-etu-direct crontab -e`:
+prints nothing on success. Then the cron entry, installed with `ssh <production-host> crontab -e`:
 
 ```cron
 # Docker hygiene (05:30) - see infrastructure/docker-prune/README.md in the canari repository
@@ -178,7 +177,7 @@ reach untagged layers and cache, never a tagged image of another estate.
 ## Reading the slope
 
 ```sh
-ssh canari 'tail -5 /home/canari/docker-prune/passes.ndjson' | python3 -m json.tool
+ssh <production-host> 'tail -5 <prune-dir>/passes.ndjson' | python3 -m json.tool
 ```
 
 The number to watch is not the reclaimed bytes - those are noise around a deploy cadence. It is

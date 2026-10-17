@@ -20,7 +20,7 @@ export interface LegalDocumentLink {
 }
 
 /**
- * THE THREE LEGAL DOCUMENTS, LISTED ONCE.
+ * THE LEGAL DOCUMENTS, LISTED ONCE.
  *
  * Each page used to hand-write links to the other two in its own footer - six links, and the pair
  * had to be edited on every page whenever the set changed. `LegalDocument.svelte` filters this by
@@ -31,4 +31,5 @@ export const LEGAL_DOCUMENTS: readonly LegalDocumentLink[] = [
   { href: '/legal/cgu', label: () => m.legal_cgu_link() },
   { href: '/legal/privacy', label: () => m.legal_privacy_link() },
   { href: '/legal/child-safety', label: () => m.legal_child_safety_link() },
+  { href: '/legal/miconnect', label: () => m.legal_miconnect_link() },
 ];

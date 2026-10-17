@@ -1,6 +1,6 @@
 import { signLydiaParams } from './lydia-signature';
 import { LydiaPaymentProvider } from './lydia-payment-provider';
-import { matchLydiaSignature } from './lydia-signature-match';
+import { matchLydiaSignature, observableFields } from './lydia-signature-match';
 
 const BUSINESS_KEY = 'synthetic-business-key';
 const fields = {
@@ -34,6 +34,16 @@ describe('matchLydiaSignature', () => {
   it('finds nothing for a wrong key', () => {
     const sig = signLydiaParams({ request_id: '1' }, BUSINESS_KEY);
     expect(matchLydiaSignature(fields, sig, ['wrong'])).toEqual([]);
+  });
+});
+
+describe('observableFields', () => {
+  it('keeps a sender-chosen __proto__ name as a plain key and never touches the prototype', () => {
+    const body = JSON.parse('{"__proto__":"x","amount":"1","sig":"s"}');
+    const result = observableFields(body);
+    if (!('fields' in result)) throw new Error('expected fields');
+    expect(Object.keys(result.fields)).toEqual(['__proto__', 'amount']);
+    expect(Object.getPrototypeOf(result.fields)).toBe(Object.prototype);
   });
 });
 

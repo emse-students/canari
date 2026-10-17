@@ -51,9 +51,9 @@ undoing a decision, not finishing the work.
 | --- | --- | --- |
 | 1 | The `dev` branch | **Gone.** `main` is the only branch. |
 | 2 | What deploys production | **Only the completion of `Bump version on release`.** Not a push. |
-| 3 | The dev ESTATE (`dev.canari-emse.fr`) | **Kept, with a new job: it is the PRE-RELEASE target.** `scheduled.yml`'s `dev-refresh` job keeps feeding it a copy of production every Monday. |
+| 3 | The dev ESTATE (`dev.canari-emse.fr`) | **Kept, with a new job: it is the PRE-RELEASE target.** It holds a fictional seed, reloaded on demand by `scheduled.yml`'s `dev-reset` job; the weekly copy of production that fed it until 2026-10-16 was deleted for GDPR ([dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16)). |
 | 4 | How a release starts | **A GitHub Release published on a tag** - the mechanism that already exists, with the push-triggered deploy removed. |
-| 5 | Local database | **A full production dump**, PII included, the way `dev-refresh` already copies it to the dev estate. |
+| 5 | Local database | **A full production dump**, PII included - the one copy of production left since the dev copy was deleted on 2026-10-16, and the owner's to decide on. |
 | 6 | Hooks | **`pre-commit` minimal (format only), `pre-push` DELETED**, replaced by a CI that also runs at merge on `main`. |
 | 7 | `main` protection | **PR required + required checks, with admin bypass** for the emergency path. |
 | 8 | Local authentication | **A dedicated `canari-local` OIDC client on the PRODUCTION Authentik**, redirect URIs on `localhost`. No local IdP. |
@@ -135,8 +135,7 @@ All measured on 2026-09-02 on the current machine (`OXYGEN`) and against the rem
 Measured during WP-0, and each one changes something downstream:
 
 - **A PHONE IS ATTACHED TO THIS MACHINE**, so `CLAUDE.md`'s "campaign PAUSED for want of a phone" and
-  its whole BLOCKED-ON-HARDWARE queue item are **false here**. It is a **Xiaomi Mi 9T** (`fa71073b`,
-  `davinci`, Android 16, SDK 36), not LITHIUM's Pixel 6a - so a device verdict taken on the Pixel does
+  its whole BLOCKED-ON-HARDWARE queue item are **false here**. It is a **Xiaomi Mi 9T** (`davinci`, Android 16, SDK 36), not LITHIUM's Pixel 6a - so a device verdict taken on the Pixel does
   not transfer, and neither does the SDK-37 defect that needed the `android-mcp` patch. WP-5 and the
   device table in [backlog](backlog.md) both have to be re-read against this.
 - **The Play tester tracks ALREADY EXIST**: `internal`, `alpha` and `beta` are all serving `0.10.12`
@@ -189,99 +188,24 @@ committed directly on `main` until WP-2 existed - the flow it creates cannot gov
 
 ### WP-0 - this machine (DONE, both rotations included; only the handoff zip is left)
 
-- [x] `~/.ssh/config`: `Host miconnect` added. **The `cercle` block needed no repair** - it was
-      already complete here, and the diff that suggested otherwise was a re-ordering. What was
-      genuinely missing was `10.0.0.7`'s entry in `known_hosts`, imported FROM THE BUNDLE rather
-      than accepted blind
-- [x] all four routes verified from the PowerShell tool: `canari`, `cercle`, `miconnect`
-      (hostname `rootz-emse`), and `mitv` shares `canari`'s working `ProxyCommand`
-- [x] the out-of-repo state root is **`../canari-harness/`, the SIBLING of the repo**, NOT the
-      `canari-secrets\` this checklist first named: that path is the SIBLING of the repo, which is
-      exactly where `tools/play-vitals/lib.mjs` already looks, so **no `PLAY_SA_KEY` is needed** and
-      the variable stays what it is meant to be - the override. `play-console-sa.json`,
-      `google-services.json` and the harness test accounts live there; `google-services.json` is
-      also placed at the gitignored `frontend/src-tauri/gen/android/app/` for a local Android build.
-      **SPLIT ON 2026-09-03 by WP-5, and the split is the point**: the campaign RIG root moved one
-      level further out, to `../../canari-harness/` (relative to the repo), so a campaign starting
-      from zero cannot half-inherit the LITHIUM one. `play-console-sa.json` and
-      `google-services.json` did NOT move - they are store and build credentials rather than rig
-      state, `lib.mjs` still resolves the first at the path above, and the sentence about
-      `PLAY_SA_KEY` above stays true because of that
-- [x] verified END TO END, not by the file existing: `bun tools/play-vitals/vitals.mjs` reads the
-      key, authenticates, and reports production on `0.14.15` / code `14015`
-- [x] the handoff memory installed - **11 files, not 12**: the `bunx` shim note was dropped as false
-      here (see below)
-- [x] **15 stale memory files deleted, and two of them were moved into the repo FIRST.** The Svelte 5
-      teardown race and the `svelte:boundary` strategy existed nowhere but that directory, which
-      `CLAUDE.md` calls a bug - they are now in
-      [frontend/architecture](frontend/architecture.md#a-prop-expression-is-re-evaluated-during-teardown-so-an-if-does-not-protect-it)
-      and [durable-rules](durable-rules.md). The other thirteen were already in the repo, or false:
-      one still named `prettier` as the formatter
-- [x] `chrome-devtools-mcp` (chrome_devtools **1.8.0**, 29 tools) installed and declared by absolute
-      path. **Verified over stdio**: it launched Chrome on `https://canari-emse.fr/` and followed the
-      redirect to `Connexion - Canari`, so the probe doubles as a production liveness check
-- [x] `android-mcp` (Android-MCP **4.0.1**, package 0.2.0, **14 tools**) installed as a
-      `uv tool` - the system Python is 3.12 and the package needs >= 3.13, and `uvx` was rejected
-      because it re-materialises the package per launch, which would erase exactly the kind of local
-      patch LITHIUM depended on. **Verified over stdio against the phone**: `ConnectDevice` then
-      `Snapshot` returned the live launcher tree
-- [x] **LITHIUM's `service.py` patch is NOT applied, and that is a measurement.** `device.info` -
-      the discarded probe that killed the server on a Pixel 6a at SDK 37 - returns a full dict on the
-      phone attached here. The patch is device-conditional; applying it blindly would have added an
-      unexplainable local modification
-- [x] `bunx`: **not needed.** `bun 1.4.0` here comes from the official installer at `~/.bun/bin` and
-      ships `bunx.exe`. LITHIUM's shim was a winget artefact
-- [x] `glab` 1.115.0 is **already on the PATH and already authenticated** to `gitlab.emse.fr`
-      through the OS keyring - the memory note claiming otherwise was LITHIUM's. A plaintext PAT
-      file sat beside it and was deleted; **deleting a file does not revoke a token**, so that
-      rotation is still owed. WHICH account, and WHERE the file was, are machine-local wiring and
-      live in the agent's memory - naming them in a PUBLIC repository is the defect Leon caught on
-      [estate-migration](infrastructure/estate-migration.md) on 2026-09-24
-- [x] **`CF_DNS_TOKEN` rotation - done by the user 2026-09-02**, who issued replacements after the
-      original leaked into a transcript on 2026-09-01. The workstation could not have done it: the
-      leaked token was `active` with no expiry, and `PUT /user/tokens/{id}/value` on itself answers
-      **403** - a Zone-scoped token cannot roll itself - while the broad `CF_API_TOKEN` the handoff
-      memory carried answers **401** and is dead. **A NEW TOKEN IS NOT A REVOKED OLD ONE**, so what
-      closes this is DELETING the leaked one, not superseding it
-- [x] **cloudflared tunnel RUN token rotation - DONE 2026-09-02, and it was NOT the user's click.**
-      The line above said it was, which stopped being true the moment they supplied an
-      account-scoped token that can read `/cfd_tunnel/{id}/token`. Rotated by `PATCH`ing the
-      tunnel secret and rewriting the unit; the token in the unit fingerprinted identically to the
-      one the API served, so the leaked value is confirmed dead rather than assumed to be.
-      **Three things this taught, all of which outlive the rotation:**
-      - **The ORDER is not free.** `PATCH` kills the old secret instantly, so the box must be able
-        to receive the new token BEFORE the call is made. Verifying that the credential can *read*
-        `/token` came first, precisely because a `PATCH` followed by a refusal would have left a
-        healthy-looking tunnel that dies at its next restart - which is exactly what happened for
-        one minute when a guard of mine refused a valid token
-      - **A guard calibrated on one sample rejects the next one.** The plausibility floor was a
-        digit-shaped glob (`1[0-9][0-9]`) derived from the 248-char token then in the unit, and the
-        API returned 180. It refused to write, which was right, but for a wrong reason. **A run
-        token's length follows the SECRET's length** (32 bytes -> ~180, 64 -> ~250), so the floor is
-        now a numeric comparison that says what it means
-      - **The leak CLASS is closed, not just the instance.** The unit was `644 root:root`, which is
-        why `systemctl cat` as the `canari` user printed the token into a transcript at all. It is
-        now `600`, and systemd is root so nothing needed it readable
-- [x] **the dead broad token is its own finding**: nothing on this workstation held Cloudflare
-      Access, Zero Trust or tunnel-ingress rights between its death and 2026-09-02. Re-issuing was
-      the user's call and they did it
-- [x] **cloudflared upgraded 2026.6.0 -> 2026.8.3** on the same visit (the user's ask). Checked
-      first, because the trap is real: had the package OWNED
-      `/etc/systemd/system/cloudflared.service`, or declared it a `conffile`, the upgrade could have
-      replaced the file carrying the run token and killed the only door into the box. `dpkg -S`
-      finds no owner and the package declares no conffile for it - measured before the upgrade ran,
-      and the token fingerprint is compared across it so a silent replacement would be CAUGHT
-- [x] **NO IDENTIFIER BELONGS ON THIS PAGE.** An earlier revision of it carried the leaked token's
-      id and the tunnel's uuid. Neither authenticates anything, but this repository is PUBLIC and its
-      own convention keeps that inventory out of public docs - the admin-hostname map is in the local
-      memory for exactly this reason. They were removed the same day, and **they remain in one pushed
-      commit**: an edit does not rewrite history. Ids live in
-      `~/.claude/projects/<project>/memory/`, and nowhere in `docs/`
-- [ ] the handoff zip destroyed - **NOT YET, AND NOT BLINDLY.** The bundle is the only copy in the
-      world of `claude-account-manager`; it has been preserved to
-      `../../claude-account-manager/` relative to the repo (with LITHIUM's DPAPI vault beside it, for
-      the record - it will not decrypt here). Destroy the zip only after WP-1 has taken what it needs
-      from the box
+The workstation wiring and the credential-rotation narrative are kept in a private folder. What
+outlives them, and guards the next rotation:
+
+- **The out-of-repo state root is a SIBLING of the work tree**, so `git clean -xdf` cannot reach it
+  and a public repository cannot receive it. Store and build credentials sit apart from rig state.
+- **A NEW TOKEN IS NOT A REVOKED OLD ONE.** What closes a leak is DELETING the leaked credential,
+  not issuing its successor; a zone-scoped token cannot roll itself.
+- **The ORDER of a tunnel-secret rotation is not free.** The old secret dies instantly, so the box
+  must be able to receive the new one BEFORE the call is made; verify the credential can READ the
+  new value first.
+- **A guard calibrated on one sample rejects the next one**: a run token's length follows its
+  secret's length, so a plausibility floor is a numeric comparison, not a digit-shaped glob.
+- **Close the leak CLASS, not the instance**: the unit file carrying a run token is root-only
+  (`600`), so an ordinary `systemctl cat` cannot print it into a transcript.
+- **Deleting a file does not revoke a token**; a plaintext credential found on a workstation is
+  rotated, not merely deleted.
+- **NO IDENTIFIER BELONGS ON THIS PAGE** (token ids, tunnel ids, host inventory): an edit does not
+  rewrite history.
 
 ### WP-1 - the local estate (DONE 2026-09-03)
 
@@ -290,14 +214,14 @@ in one way worth keeping: the plan named ONE script, `infrastructure/dev/dump-pr
 became FOUR, because fetching, classifying and restoring fail differently and a single script would
 have had one exit code for three unrelated causes.
 
-- [x] `/home/canari/canari/infrastructure/.env` pulled from the box as the source. **Not
+- [x] The production environment file pulled from the box as the source. **Not
       "(PowerShell)" as this line said** - either tool reaches prod since the `ProxyCommand` was
       respelled with forward slashes, and the constraint that DOES bite is the opposite one: a
       binary pipe (`pg_dump | gzip`) must NOT go through PowerShell, which text-encodes stdout and
       corrupts it. So `pull-prod-dump.sh` dumps on the box and `scp`s the file, and never pipes
 - [x] `infrastructure/.env` (local) built from it by `infrastructure/local/env-from-prod.sh`:
-      third-party secrets KEPT as production's (Stripe, Klipy, FCM/APNs, Authentik, Cloudflare
-      TURN, avatar), **and `CHANNELS_ENCRYPTION_SECRET` kept too** - without it the dumped data does
+      third-party secrets are copied, internal signing secrets are regenerated (next item), **and the
+      secret the dumped data was encrypted with is kept** - without it the dumped data does
       not decrypt. **All 61 variables are CLASSIFIED and an unclassified one is a hard error**, so a
       variable added to production later cannot be silently carried or silently dropped
 - [x] `JWT_SECRET`, `INTERNAL_SECRET`, `INTERNAL_SHARED_SECRET`, `CALL_ROOM_SECRET` REGENERATED for
@@ -313,7 +237,7 @@ have had one exit code for three unrelated causes.
       `local/pull-prod-dump.sh` (read-only, refuses to write inside the work tree, `gunzip -t`
       against truncation, and a `.meta` sidecar recording what prod held AT DUMP TIME),
       `local/env-from-prod.sh`, `local/restore-into-local.sh`, and `lib/copy-strips.sh` -
-      **factored out of `dev/copy-prod-to-dev.sh` rather than copied**, so the strip list is one
+      **factored out of `dev/copy-prod-to-dev.sh` (deleted 2026-10-16) rather than copied**, so the strip list is one
       list. The caller passes its OWN guarded sql function by name, which keeps the destructive
       allowlist with whoever owns the target
 - [x] **362 users restored and VERIFIED against the sidecar**, with `push_token` truncated and 7
@@ -329,7 +253,7 @@ have had one exit code for three unrelated causes.
       provider** - `grant_types` was EMPTY, `authentication_flow` None, `refresh_token_threshold` 0.
       A field diff against the working provider found it; reading the error text would not have
 - [x] **verified by a real login and a message sent, DONE 2026-09-03** - two clients, two browser
-      contexts, `canari-test-alpha` and `canari-test-beta`, both through the production Authentik:
+      contexts, two dedicated test accounts, both through the production Authentik:
       OIDC callback 200, first-connection PIN accepted, `register-device` 201 and `prekeys` 201,
       `Canal E2E etabli.`, a message typed and sent, and **the peer's client received it and
       DECRYPTED it** - the plaintext appears in beta's conversation list with an unread count of 1.
@@ -487,7 +411,7 @@ package starts.
       BEHIND `main` and 0 ahead, so nothing was lost, and all 19 open pull requests already targeted
       `main`, so nothing was orphaned. Both facts were checked before the delete and neither is
       recoverable afterwards, which is why the order matters
-- [x] `scheduled.yml`'s `dev-refresh` job left running (the estate survives)
+- [x] `scheduled.yml`'s `dev-refresh` job left running (the estate survives) - replaced on 2026-10-16 by the on-demand `dev-reset` to a fictional seed
 - [x] **the `prod-deployed` tag RETIRED AS AN INPUT, and `detect-changed-services` re-pointed
       at the last RELEASE first.** What it was re-pointed at is narrower than "the last release tag", and the
       reason is the moving image tag: production deploys `:latest`, which only a STABLE moves, and
