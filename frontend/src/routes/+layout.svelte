@@ -67,6 +67,7 @@
   import { totalUnreadMessages } from '$lib/utils/unreadTotal';
   import SeoHead from '$lib/components/seo/SeoHead.svelte';
   import { purgeRetiredAvatarCache } from '$lib/utils/userAvatarCache';
+  import { dropRetiredKlipyCustomerId } from '$lib/utils/chat/retiredKlipyCustomerId';
   import { publishTextZoom, followIosDynamicType } from '$lib/utils/textZoom';
   import { m } from '$lib/paraglide/messages';
 
@@ -147,6 +148,8 @@
 
     // Reclaim the avatar bucket this client no longer writes. Idempotent, and free once it is gone.
     void purgeRetiredAvatarCache();
+    // The per-install id older builds sent to KLIPY with every GIF search (`retiredKlipyCustomerId.ts`).
+    dropRetiredKlipyCustomerId();
 
     const onVersionCheckTrigger = () => void refreshAppVersionCheck();
     void refreshAppVersionCheck();

@@ -173,7 +173,7 @@ describe('followIosDynamicType', () => {
 /** Runs app.html's pre-paint Dynamic Type script against fake globals and returns what it published. */
 function runPrePaint(opts: { tauri: boolean; ua: string; touch?: number; bodyPx: string }) {
   const html = readFileSync('src/app.html', 'utf8');
-  const code = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+  const code = [...html.matchAll(/<script>([\s\S]*?)<\/script\s*>/gi)]
     .map((m) => m[1])
     .find((c) => c.includes('apple-system-body'))!;
   const props: Record<string, string> = {};

@@ -195,6 +195,7 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 - [`services/call-service.md`](../../services/call-service.md) — SFU WebRTC relay
 - [`services/chat-delivery.md#calls`](../../services/chat-delivery.md#calls) — Backend call endpoints
 - [`protocols/mls-protocol.md`](../../protocols/mls-protocol.md) — E2E encryption for call signaling
+- [`live.md`](live.md) — the livestream plan, built on this SFU once calls are revived
 
 ## The SFU runs six webrtc majors it has never placed a call on (2026-08-27)
 

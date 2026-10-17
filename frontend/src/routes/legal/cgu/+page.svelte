@@ -28,7 +28,7 @@
 <LegalDocument
   title={m.legal_cgu_title()}
   subtitle={m.legal_cgu_subtitle()}
-  updated="28/05/2026"
+  updated="16/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -36,7 +36,7 @@
     <h2>1. Définitions</h2>
     <p>Pour la bonne compréhension des présentes conditions :</p>
     <dl class="legal-terms">
-      {#each [['Le Service', "L'application Canari (mobile Android, bureau Windows/macOS/Linux, web) et son infrastructure backend."], ["L'Éditeur", "L'association étudiante Rootz, affiliée à l'École des Mines de Saint-Étienne."], ["L'Utilisateur", "Toute personne disposant d'un compte valide lié à l'École des Mines de Saint-Étienne (EMSE)."], ['MLS', 'Messaging Layer Security (RFC 9420) - protocole de chiffrement de bout en bout utilisé pour les messages privés.'], ['Association', 'Groupe ou organisation étudiante créé au sein de la plateforme.'], ['Contenu', 'Tout texte, image, fichier ou média publié ou envoyé via le Service par un Utilisateur.']] as [terme, def], i (i)}
+      {#each [['Le Service', "L'application Canari (mobile Android et iOS, bureau Windows/macOS/Linux, web) et ses serveurs."], ["L'Éditeur", "L'association étudiante Rootz, affiliée à l'École des Mines de Saint-Étienne."], ["L'Utilisateur", "Toute personne disposant d'un compte MiConnect valide lié à l'École des Mines de Saint-Étienne (EMSE)."], ['MLS', 'Messaging Layer Security (RFC 9420) - protocole de chiffrement de bout en bout utilisé pour les messages privés.'], ['Association', 'Groupe ou organisation étudiante créé au sein de la plateforme.'], ['Contenu', 'Tout texte, image, fichier ou média publié ou envoyé via le Service par un Utilisateur.']] as [terme, def], i (i)}
         <div>
           <dt>{terme}</dt>
           <dd>{def}</dd>
@@ -51,14 +51,14 @@
     <p>
       L'accès au Service est réservé aux membres de la communauté EMSE titulaires d'un compte
       institutionnel valide. <strong
-        >L'utilisation du Service est interdite aux personnes de moins de 13 ans.</strong
-      > L'accès s'effectue exclusivement via le portail d'authentification unique (OIDC) de l'École des
-      Mines ; Canari ne traite ni ne stocke aucun mot de passe.
+        >L'utilisation du Service est interdite aux personnes de moins de 15 ans.</strong
+      > L'accès s'effectue exclusivement via MiConnect, le service de connexion des associations (relié
+      au CAS de l'École) ; Canari ne traite ni ne stocke aucun mot de passe.
     </p>
     <p>
       En accédant au Service, vous déclarez avoir l'âge minimum requis et être autorisé à accepter
-      les présentes CGU. Si vous êtes mineur, vous devez obtenir l'accord de votre parent ou tuteur
-      légal.
+      les présentes CGU. Cet âge minimum est fixé par référence à l'article 45 de la loi
+      Informatique et Libertés ; un mineur de 15 ans ou plus peut utiliser le Service.
     </p>
   </section>
 
@@ -68,12 +68,11 @@
 
     <h3>Hébergement</h3>
     <p>
-      Les données sont hébergées sur des serveurs privés gérés par l'association Rootz, situés
-      physiquement à la Maison des Élèves de l'École des Mines, 20 Boulevard Alexandre de
-      Fraissinette, 42100 Saint-Étienne. Aucune donnée principale n'est transmise à des clouds
-      publics (voir la
-      <a href="/legal/privacy#tiers">Politique de confidentialité §3</a>
-      pour les sous-traitants).
+      Le Service fonctionne sur un serveur partagé de l'École des Mines de Saint-Étienne, en France,
+      administré avec la direction des systèmes d'information (DSI) de l'École ; ses sauvegardes
+      sont copiées sur une seconde machine de l'École. Les anciens noms de domaine passent encore
+      par Cloudflare. Les destinataires et sous-traitants sont listés dans la
+      <a href="/legal/privacy#tiers">Politique de confidentialité §4</a>.
     </p>
 
     <h3>Disponibilité</h3>
@@ -92,11 +91,11 @@
       <p>
         Tous les messages privés sont chiffrés via le protocole MLS (RFC 9420). Le serveur Canari
         stocke uniquement des blobs chiffrés et n'a techniquement pas accès au contenu de vos
-        conversations. Les clés de chiffrement ne quittent jamais votre appareil.
+        conversations. Les clés de chiffrement ne sont jamais transmises au serveur en clair.
       </p>
     </div>
     <dl class="legal-terms">
-      {#each [['Confidentialité persistante', "Le protocole MLS garantit que la compromission d'une clé ne compromet pas les messages passés."], ['Synchronisation multi-appareils', "Votre état de chiffrement peut être synchronisé entre plusieurs appareils via un mécanisme d'échange de clés sécurisé (ECDH)."], ['Médias', 'Les fichiers et images partagés en privé sont chiffrés côté client avant upload. Le serveur stocke uniquement les données chiffrées.']] as [titre, desc], i (i)}
+      {#each [['Confidentialité persistante', "Le protocole MLS garantit que la compromission d'une clé ne compromet pas les messages passés."], ['Synchronisation multi-appareils', 'Chacun de vos appareils rejoint vos conversations chiffrées ; une sauvegarde chiffrée par votre code PIN permet de restaurer votre historique.'], ['Médias', 'Les fichiers et images partagés en privé sont chiffrés côté client avant upload. Le serveur stocke uniquement les données chiffrées.']] as [titre, desc], i (i)}
         <div>
           <dt>{titre}</dt>
           <dd>{desc}</dd>
@@ -149,9 +148,9 @@
 
     <h3>Associations et workspaces</h3>
     <p>
-      Les responsables d'association peuvent créer des workspaces et des canaux de discussion. Les
-      canaux utilisent un chiffrement dérivé côté serveur (HKDF) distinct du chiffrement MLS des
-      messages directs.
+      Les responsables d'association peuvent créer des communautés et des salons de discussion. Les
+      messages de salon sont chiffrés de bout en bout par un mécanisme distinct du chiffrement MLS
+      des conversations privées ; le serveur ne détient pas les clés permettant de les lire.
     </p>
 
     <h3>Signalement de contenu</h3>
@@ -290,9 +289,11 @@
       <p class="legal-callout-title">Méthode principale - directement dans Canari</p>
       <p>
         Vous pouvez supprimer votre compte à tout moment depuis
-        <strong>Profil → Supprimer mon compte</strong>. La suppression est immédiate et irréversible
-        : profil, messages privés, publications, réactions et jetons de notification sont effacés
-        définitivement.
+        <strong>Paramètres > Supprimer mon compte</strong>. La suppression est immédiate et
+        irréversible : profil, publications, adhésions, appareils et jetons de notification sont
+        effacés ; vos messages de salon et vos achats sont conservés détachés de votre compte. Le
+        détail figure dans la
+        <a href="/legal/privacy#droits">{m.legal_privacy_link()} §10</a>.
       </p>
     </div>
 
@@ -307,14 +308,15 @@
       </p>
       <p class="legal-fineprint">
         Objet : <em>" Suppression compte Canari "</em> - depuis l'adresse e-mail liée à votre compte EMSE.
-        Délai de traitement : 30 jours maximum.
+        Délai de traitement : 30 jours au plus.
       </p>
     </div>
 
     <p>
       Certaines données peuvent être conservées au-delà si la loi l'exige (ex. données comptables
       liées à des transactions). Ces exceptions sont détaillées dans la
-      <a href="/legal/privacy#retention">{m.legal_privacy_link()} §5</a>.
+      <a href="/legal/privacy#retention">{m.legal_privacy_link()} §6</a>, avec la durée pendant
+      laquelle une donnée supprimée subsiste dans les sauvegardes.
     </p>
 
     <p>
@@ -330,7 +332,7 @@
       Le traitement de vos données personnelles est détaillé dans notre
       <a href="/legal/privacy">{m.legal_privacy_link()}</a>. Conformément au RGPD, vous disposez
       d'un droit d'accès, de rectification, de suppression, de limitation, de portabilité et
-      d'opposition. Pour toute demande :
+      d'opposition, exercés selon la procédure de sa section 10. Pour toute demande :
       <a href="mailto:bureau@rootz-emse.fr">bureau@rootz-emse.fr</a>.
     </p>
   </section>
@@ -340,7 +342,7 @@
     <h2>11. Propriété intellectuelle</h2>
     <p>
       L'application Canari, son code source et son design sont la propriété de l'association Rootz.
-      Le code est développé en open source sous licence MIT.
+      Son code source est public, publié sous la licence PolyForm Noncommercial 1.0.0.
     </p>
     <p>
       Les contenus que vous publiez (textes, images) restent votre propriété. En les publiant, vous
@@ -362,8 +364,8 @@
       <li>Des dommages résultant d'une utilisation inappropriée du Service</li>
       <li>De la perte de données consécutive à une réinitialisation volontaire de l'appareil</li>
       <li>
-        Des actes ou omissions des sous-traitants (Firebase, Lydia) dans les limites de la loi
-        applicable
+        Des actes ou omissions des sous-traitants (notamment Google, Apple, Cloudflare, Lydia,
+        KLIPY) dans les limites de la loi applicable
       </li>
     </ul>
   </section>

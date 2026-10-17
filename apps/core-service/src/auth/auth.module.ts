@@ -6,9 +6,15 @@ import { AuthSessionsService } from './auth-sessions.service';
 import { AuthSession } from './entities/auth-session.entity';
 import { UsersModule } from '../users/users.module';
 import { PlatformModule } from '../platform/platform.module';
+import { AccountErasureModule } from '../account-erasure/account-erasure.module';
 
 @Module({
-  imports: [TypeOrmModule.forFeature([AuthSession]), UsersModule, PlatformModule],
+  imports: [
+    TypeOrmModule.forFeature([AuthSession]),
+    UsersModule,
+    PlatformModule,
+    AccountErasureModule,
+  ],
   controllers: [AuthController],
   providers: [AuthSessionsService, AdminerAccessService],
   exports: [AuthSessionsService],

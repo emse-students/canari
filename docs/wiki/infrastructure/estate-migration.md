@@ -1,1557 +1,179 @@
 # The estate migration - three VMs onto one host, then onto `emse.fr`
 
-**This page is the only copy of the plan.** The decisions below were taken with the user on
-2026-09-23 and are marked not to be re-litigated; everything else here is either a MEASUREMENT with
-its date, or an OPEN QUESTION with the person who owes the answer.
+**This page is the public summary.** The operating detail of the migration (host and network map,
+access routes, firewall and intrusion-prevention behaviour, accounts, certificate and DNS
+exchanges, per-service move logs) is an access map for infrastructure this project does not own, and
+is kept in the operators' private notes. What stays here is what was decided and the traps that
+bind code.
 
-Related: [cloudflare-edge](cloudflare-edge.md) (what the edge does today, and stops doing),
-[nginx](nginx.md) (the origin behind it), [docker](docker.md),
-[dev-environment](dev-environment.md), [authentik](authentik.md),
-[ecosystem-convergence](../ecosystem-convergence.md).
+Related: [cloudflare-edge](cloudflare-edge.md), [nginx](nginx.md), [dev-environment](dev-environment.md),
+[host-updates](host-updates.md).
 
 ## 1. What is moving, and the two phases
 
-Three Proxmox VMs - `canari`, `cercle`, `miconnect` - become three Docker compose projects on the
-machine that already serves Portail-etu. Then four public names move from a domain we own to the
-School's.
-
-**THE PHASES ARE SEPARATE BECAUSE ONLY ONE OF THEM IS VISIBLE.** Phase 1 changes where bytes
-execute and nothing else: same names, same certificates, same edge, so a member cannot tell it
-happened and a mistake is undone by pointing the tunnel back at a VM that is still running. Phase 2
-changes what a user types, what a mobile binary has compiled into it, and what an OIDC token says
-it was issued by - none of which a tunnel can undo. Doing them together would make every phase-2
-symptom indistinguishable from a phase-1 one.
-
-| | Phase 1 - the move | Phase 2 - the names |
-| --- | --- | --- |
-| Changes | execution host, compose topology | public hostnames, TLS, OIDC issuer, deep links |
-| Visible to a member | no | yes, and irreversibly on mobile |
-| Rollback | repoint the tunnel at the old VM | redirects only; a shipped binary cannot be recalled |
-| Cloudflare | unchanged | **gone from every public path** |
+Production, the dev estate, Le Cercle and the identity provider (MiConnect) ran on three small VMs
+behind Cloudflare tunnels. They were consolidated, on 2026-09-24, onto ONE school-managed Docker host
+(phase 1), and the public names then moved from `canari-emse.fr` to `canari.emse.fr` and its siblings
+under `emse.fr` (phase 2). Every service binds loopback on the host; the host's own nginx terminates
+TLS and routes by `Host`. No Cloudflare connector runs on the host.
 
 ## 2. The measured starting point (2026-09-23)
 
-### The three estates, and the capacity question that had an answer
-
-**They are LXC containers, not virtual machines** - `systemd-detect-virt` says `lxc` on all three,
-and the tell was `/proc/loadavg` being identical to two decimals and moving together, because load
-is not namespaced. `nproc` and `free` do differ, so lxcfs presents the configured limits: the
-numbers below are ALLOCATION, and nothing in them is dedicated.
-
-| Estate | vCPU | RAM | Disk | Contents |
-| --- | --- | --- | --- | --- |
-| `canari` (pve 101) | 6 | 16 G | 125 G, **49 G used** | 23 containers: production AND dev, one daemon, two compose projects |
-| `cercle` (pve 102) | 1 | 2 G | 12 G, 6.1 G used | 1 container |
-| `miconnect` (pve 103) | 1 | 2 G | 16 G, 5.5 G used | Authentik: server, worker, postgresql |
-
-**Allocated 8 vCPU and 20 G; actually resident, about 2 G in total.** The target offers 4 vCPU and
-11 G. The allocation was generous, the consumption is not, and that is what decided the arbitration.
-**It is an IDLE reading and not a headroom proof**: it says nothing about a Postgres restore or a
-frontend build, and the honest next measurement is the resident set during one.
-
-**THE DATA IS TINY, AND THAT IS WHAT DECIDES THE CUTOVER.** Production media 68 MB, redis 66 MB,
-garage meta 5.7 MB, dev's Postgres 216 MB - the whole live state is comfortably under a gigabyte.
-A dump, a copy and a restore is therefore MINUTES, which is why no logical replication, no
-dual-write and no read replica appears anywhere in this plan. **A short read-only window is the
-entire cutover.**
-
-**Of `canari`'s 49 G, roughly 33 G does not move**: MiGallery's 16 G offsite backup living on
-Canari's estate, 14.7 G of reclaimable images (86 of them, for 23 containers - no `prune` has ever
-run), the runner and its caches, a Rust toolchain on a production box, an uncapped journal, and
-orphaned volumes including `zookeeper_logs` and a `miconnect_database` sitting on the wrong estate
-entirely. **The move rebuilds from the compose files, so debris is dropped by NOT being recreated.**
-
-### The target host
-
-`portail-etu.emse.fr`, `193.49.175.67`. **WHO reaches it, with which key and from which workstation
-is deliberately not written here** - that is an access map for a host this project does not own, in
-a PUBLIC repository, so it lives in the operator's local notes.
-
-- **Access is unattended since 2026-09-23.** Connection multiplexing is REFUTED on this workstation
-  (the master daemonises, `ssh -O check` says `Master running`, and every client is silently reset),
-  so each connection is a fresh ~1.4 s handshake. Batching a survey into one heredoc is a courtesy,
-  not a constraint.
-- **It is the school's shared association-hosting box, not a Portail-etu server**, and has been for
-  years: other associations' sites, MySQL, postfix, NFS mounts and human accounts. **We are moving
-  in beside other people.** Which sites and which accounts are deliberately not written here.
-- **Debian 13, kernel 6.12, KVM guest**, Docker 26.1.5, and a self-hosted Actions runner for
-  `emse-students` already installed - the deploy shape this plan wants existed in part before it.
-- **The host nginx is real and terminates TLS**: 80 and 443 on `0.0.0.0`, applications on loopback.
-  An earlier reading that TLS terminated in a container was wrong - it tested `command -v nginx`
-  against an unprivileged `PATH` and read the absence as an answer.
-- **`canari.emse.fr` already resolves, to `193.49.175.122`, AND THAT IS THIS SAME MACHINE**:
-  `ip -4 -o addr show ens18` returns `.67`, `.40` and `.122` on one interface. The probe that
-  suggested otherwise - `.67:22` answering while `.122:22` is dropped - was a per-address firewall
-  rule. The certificate convention is `/etc/certs/<name>/`, one directory per name, not a shared
-  SAN, and `/etc/certs/canari.emse.fr/` plus `sites-enabled/canari.conf` were both created
-  2026-09-22: **the DSI started preparing phase 2 while this plan was being written.**
-- **AND THAT PREPARED VHOST ALREADY ANSWERS - WITH THE NEIGHBOUR'S SITE.** It proxies to
-  `127.0.0.1:3000`, Portail-etu's port, so `Host: canari.emse.fr` returns the Portail-etu page.
-  Nothing is broken today because no record sends traffic there, **but the day phase 2 creates one,
-  Canari's production name serves Portail-etu until that single line changes.**
-
-| | Target host | The three estates to absorb |
-| --- | --- | --- |
-| vCPU | **4** (QEMU, AVX2 present) | 8 |
-| RAM | **11 G** | 20 G allocated, ~2 G resident |
-| Disk | **50 G, fully partitioned, no LVM** | 49 G, of which ~33 G is debris that does not move |
-
-**The disk cannot be grown from here** - no LVM, so enlarging it is a DSI action on the VM. The
-account is in `docker` and carries `ALL=(ALL) NOPASSWD:ALL`, broader than this plan asked for, so
-the restraint is the operator's rather than the system's.
-
-**THE HOST'S STANDING TRAPS ARE IN [durable-rules](../durable-rules.md#the-shared-host-and-what-it-does-to-every-operation---estate-migration), not here**, because they bind every
-command run there and not only this migration: a bulk file operation killed half-way with no
-diagnostic, two storage classes behind one capacity figure, recycled uids that make `find -user`
-worthless, and the ban-on-scan rule whose blast radius is production's own address.
-
-**The bastion keeps office hours and that is the whole of it**: `bastiono-ssh.emse.fr`, 07:00-20:00,
-French sources only, stated by the DSI. Two readings died before that sentence - a fail2ban ban
-(refuted: a ban cannot silence an address that never tried) and the host being down (right symptom,
-wrong cause). **The measurement that carried it was the cheapest one: the SAME address answered in
-the morning and was refused at night.** A probe from a new source adds nothing when the variable
-that moved was the clock. Outside those hours, `portail-etu-direct` via `ProxyJump canari`, which
-works only because `canari` is inside EMSE.
+The target is a shared host: co-tenant sites, human accounts and a school-owned security stack live
+beside ours, and its capacity (CPU, RAM, a disk that cannot be grown from here) was smaller than the
+three VMs it absorbs. **The move rebuilds from the compose files, so debris is dropped by NOT being
+recreated.** Host-specific measurements are in the private notes.
 
 ### The host was emptied before the move - 2026-09-24, and it is DONE
 
-It carries **787 packages where it carried 1813**: nine concurrent PHP versions (175 packages, of
-which nginx referenced exactly one), apache2, phpMyAdmin, MySQL and its eleven legacy databases,
-111 `rc` residues, whole desktop trees, and the `packages.sury.org` repository that outlived them.
-`/` went from 16 G used to 12 G, and `/etc` is under version control again - **and that repository
-is not etckeeper**, it is one the DSI's own staff drove by hand, fifteen commits, the last in 2019,
-so the new commits follow that convention rather than introducing a daemon onto someone else's
-machine.
+Unused legacy software on the host (old language runtimes, a database server with no remaining
+traffic, desktop libraries) was removed after evidence that nothing used it. Rule: **check the STATE
+after each batch, never the exit status**, delete what would have talked to a removed service in the
+same step, and leave in place anything that is the only surviving copy of a repository.
 
-**MySQL is the one that needed evidence before it could go**, and the evidence was its own
-histogram: 917 transactions in June 2026, 1 in July, 58 in August, 1 in September. The pre-Canari
-bar system stopped in June and what followed was a tail; the user confirmed `ssh cercle` replaced
-it. The dump is verified in four places. **What would have talked to a MySQL that is gone was
-deleted in the same breath** - two backup crons and a Zabbix userparameter - because a daily cron
-failing into a mailbox is the noise nobody reads, and a disabled thing is a thing a later reader
-has to re-decide.
+## 3. The bun blocker is refuted
 
-**Every check after each batch was on the STATE, never on the exit status**, for the reason the
-durable rule above gives. Twelve services and four vhosts were re-verified after each step;
-Portail-etu answered `200` throughout.
+A suspected runtime blocker for the target was measured and refuted; it is not to be re-opened.
 
-**ONE THING WAS LEFT IN PLACE DELIBERATELY.** `/opt/actions-runner/runners/portail-etu/_work/refonte-gala/`
-looks exactly like 160 MB of reclaimable build debris and every filesystem question said "delete".
-The question the filesystem cannot answer is whether the code exists anywhere else:
-`emse-students/refonte-gala` answers `404`, and the repository that looks like its successor does
-not contain this checkout's `HEAD`. **It is the only surviving artefact of a repository nobody can
-clone**, so reclaiming it is a question for its owners
-([backlog](../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
+## 4. The decisions - taken with the user 2026-09-23 and 2026-09-24, not to be relitigated
 
-### AIDE reported nothing for two and a half years, and three defects stood between it and a report
-
-The baseline had never been promoted, the daily unit sat in `failed`, and fixing that was not
-enough. **The exclusion syntax was wrong twice**: AIDE's `!<regex>` is RECURSIVE-negative - children
-of matching directories are still walked and merely not added - so `!/export` excluded the filer
-from the database while still walking every `.snapshot` tree it recreates daily. `-<regex>`, added
-in 0.19, is the one that prunes, and **`--path-check` settles which rule wins for a path in one
-second against twelve minutes for a rebuild**. Pruned: the NFS pseudo-filesystem, the container
-network namespaces whose ids are random per start, `/export`, and the 51007 entries under
-`/var/lib/docker` that every build rewrites. `/etc`, `/usr/bin` and `/etc/shadow` stay watched.
-
-**And the report reached nobody.** Debian runs AIDE as `_aide` with `CAP_DAC_READ_SEARCH`, which
-disables the suid bit the traditional `sendmail` interface needs, and `s-nail` was absent - while
-`/etc/aliases` sent root's mail to an address that no longer exists. **Half of every alert this
-machine has raised went into the void.** The alias now names a live mailbox and delivery was proven
-end to end. This is the durable rule about a correct mechanism with no report, met three times in
-one afternoon, and none of the three would have shown up in a green check.
-
-## 3. THE BUN BLOCKER IS REFUTED - do not re-open it
-
-For one day this plan had a blocking question. It is recorded because the refutation is what makes
-the plan safe rather than lucky.
-
-Portail-etu's `deploy.yml` carried, at length, the reason its `.bun-version` sat at **1.3.8**: the
-host is a KVM guest whose CPU advertised **no AVX2**, and every bun from 1.3.9 to 1.3.14 span at
-100% CPU inside module load - before the first log line, before a port was bound - which is what
-took Portail-etu's production down on 2026-08-26. Canari's four NestJS services build and run on
-`oven/bun:1.4.2-alpine`. **Docker does not virtualise instruction sets**, so a container's bun
-executes on the host's CPU and would have hung identically; updating bun on the HOST would have
-proved nothing, because each image carries its own.
-
-**The CPU now has AVX2, and the question is closed by a commit rather than by an argument**:
-Portail-etu `dcc9ffb`, 2026-09-22, *"Update Bun from 1.3.8 to 1.4.2 now that the deploy host has
-AVX2"*. The target host therefore already runs, in production, the exact bun Canari's images carry.
-
-One drift found on the way and still open: `.bun-version` says `1.4.0` while all seven Dockerfiles
-say `1.4.2`.
-
-## 4. The decisions - taken with the user 2026-09-23 and 2026-09-24, NOT TO BE RELITIGATED
-
-| Decision | Value | Why |
-| --- | --- | --- |
-| Shape on the new host | **Docker compose projects side by side**, not nested virtualisation | simpler, and it is the shape every future project gets |
-| Public traffic | **No Cloudflare at all** - nginx, ufw and DSI certificates | the School owns the zone and will not delegate it |
-| Internal traffic | stays on **`rootz-emse.fr`** behind a Cloudflare tunnel, with Access | an admin interface does not need a public name, and a gated door does not need a signpost |
-| **Where dev and the admin surface run** (2026-09-24, REVISED the same day) | **BOTH Canari estates move to the target, dev included** - reached the same way as production, through the old VM's relay, never a new connector | the earlier "stays on the old VM" reading argued from the refused port, but the relay already answers that regardless of which estate sits behind it; keeping dev off the target bought nothing further and cost it rehearsing production less faithfully |
-| The tunnel | **stays where it already works**, on the old VM (2026-09-24) | nothing is installed on the new host for it, so nothing there needs to reach the edge |
-| Dev | **`dev.canari-emse.fr`**, a proxied CNAME on production's OWN zone and tunnel (not `rootz-emse.fr`, and not behind Access) - **now hosted on the TARGET, reached via the old VM's relay** (revised 2026-09-24) | it was never internal: dev holds a FULL COPY of production data and answers `200` to anyone who resolves the name, unlinked but not gated. Only WHERE it runs changed, not its exposure |
-| Certificates | **issued, deposited and renewed by the DSI** at a fixed path | we never hold a private key and never run a renewal |
-| Old domain | `canari-emse.fr` **keeps answering, with 301s, from the old VM** | the less of it on the new installation the better (user) |
-| Old VMs | stay powered on for a while after each cutover | they are the rollback |
-| Cutover | **a short read-only window**, not zero downtime | the data is under a gigabyte; anything cleverer buys nothing |
-| OIDC issuer | several issuers accepted for a while, then **total** migration | a rename cannot be half-done for ever |
-| Forced re-login of every member | **acceptable** | the only unavoidable interruption in the chantier |
-| Order | **service by service**, least critical first | each service is a rehearsal of the runbook for the next |
-| Backups | **reworked in this chantier**, not after | the scheme costs 16x the data, and `restic` is already on the box |
-| Rate limiting | nginx, on the authentication and upload paths | replaces the part of Cloudflare that was actually doing something here |
-| IPv6 | ask for the AAAA, block on nothing | the narrow case is IPv6-only mobile carriers, and their NAT64 already covers it |
-| TURN | **later, and a separate request** | it needs an inbound UDP range, refused more easily than a DNS record - do not attach it to one |
-| Le Cercle's compose project name | **stays `le-cercle`** | declared in the file, matches the repository and the GitLab project - it was never inferred, so it was never actually at risk |
-| `miconnect`'s compose project name | **now declared explicitly**, kept `miconnect` | it had none at all and took its name from the directory by luck; the product's own name beats the software's (`authentik`), since the SSH alias and `/srv` path already say `miconnect` |
-| Canari's compose project name | `infrastructure` -> **`canari-prod`**, at the move, in the same commit that moves its path (section 10) | it is a DECLARED name, but the wrong one, and renaming it any earlier brings the CURRENT box up on empty volumes at the next ordinary deploy |
-| Le Cercle's database | stays SQLite; **moves to PostgreSQL AFTER the migration**, as its own chantier | homogeneity, not containment - the SQLite file already lives in a named volume exactly as Canari's Postgres data does; the rewrite touches ~68 files and a 234 366-row ledger, not worth doing during a migration whose remaining steps are minutes |
-
-**The `miconnect` row exists because of a defect that was silent by design.** A compose project with
-no declared `name:` takes its directory's, and a differently-named one starts on an EMPTY database
-instead of failing - the one place the OIDC configuration lives. It survived the move only because
-the old and new paths both happened to end in `miconnect`. `docker compose up -d --dry-run` after
-the fix answered `Running`/`Healthy` with no recreation - the declaration is a no-op for Docker,
-which is the whole point of catching it before it was not one.
-
-### The 2026-09-24 decision, and why it deletes a chantier instead of solving it
-
-**REVISED THE SAME DAY: the new host carries BOTH Canari estates, not production alone.** The
-paragraph below was written when dev was meant to stay behind; the user reversed that once the
-relay proved dev moves through the IDENTICAL mechanism as production, not a new one, so keeping it
-off the target bought nothing. What the original reasoning still settles, unchanged by the reversal:
-no connector is installed on the new host for EITHER estate, so the refused port never mattered to
-begin with, whichever estate sits behind the relay.
-
-| What it settles | |
-| --- | --- |
-| Outbound 7844 on the new host | **no longer a blocker, and not worth a DSI request** |
-| The connector installed there on 2026-09-24 | **REMOVED** the same day - unit, `EnvironmentFile`, binary, apt source and keyring; the host is back to its prior state, and the run token no longer sits on a machine shared with other associations |
-| The relay from the old VM | **NEEDED, for phase 1's PUBLIC path AND for dev** - every public name and dev's internal one reach their estate through the SAME relay, on a machine we already administer. See the relay section |
-
-**AND IT DOES NOT MAKE PHASE 1 TUNNEL-FREE.** Phase 1 preserves the OLD public names, which reach
-the edge through the tunnel; only the CONNECTOR's location was settled here. The relay section below
-is what carries that.
-
-**RESOLVED, the same way: Authentik's admin interface.** It is a PATH inside Authentik, not a
-separate service, so it could never have stayed behind while the rest of `miconnect` moved - and
-`miconnect` moved in full on 2026-09-24, admin path included. Nothing further to decide here.
+No Cloudflare in the public path of the new names; one certificate per name, issued by the school;
+the dev estate is hosted on the same machine; each estate moves by verified copy.
 
 ## 5. The target shape, and the one thing it forces
 
-**A single process owns ports 80 and 443, and five estates will want them.** The host's nginx is
-therefore the TLS terminator and the vhost router; every project publishes on a distinct loopback
-port and never on `0.0.0.0`.
-
-This is not a new idea being imposed - it is already the house style, and Portail-etu is the worked
-example: its container publishes `127.0.0.1:3000:3000`, and something on the host terminates TLS in
-front of it.
-
-**For Canari this is a SMALL change.** Its in-container nginx keeps everything that makes it
-valuable - `Content-Security-Policy`, CORS, the `auth_request` subrequest, the route table, the SSR
-fallback - and simply receives plain HTTP from the host's nginx instead of from `cloudflared`. The
-contract at that seam is identical, which is why [nginx](nginx.md) needs no rewrite.
-
-```
-            :443  host nginx  (TLS, DSI certificates, vhosts, rate limiting)
-                      |
-      +---------+-----+------+------------+
-      |         |            |            |
-  127.0.0.1  127.0.0.1   127.0.0.1    127.0.0.1
-   :3000      :30xx        :30xx        :30xx
-  portail    canari-prod   cercle      authentik
-             (its own nginx, then its services)
-```
-
-**THE `30xx` ABOVE ARE NOW CHOOSABLE, BECAUSE THE HOST'S LOOPBACK HAS BEEN ENUMERATED** (2026-09-24).
-This is the table section 8 owed BEFORE the DNS request, since the prepared `canari.conf` already
-proxies to `127.0.0.1:3000` - which is Portail-etu's.
-
-| Port | Held by |
-| --- | --- |
-| 22 | `sshd` |
-| 80, 443 | host nginx |
-| 111 | `rpcbind` |
-| **3000** | **the Portail-etu container - what `canari.conf` currently points at** |
-| 6060, 7422, 8080 | a host-owned agent this project does not administer |
-| 10050 | Zabbix agent |
-| 44855 | containerd |
-
-Nothing else listens, and the `30xx` guess above was one: `cercle` took **`5173`** on 2026-09-24,
-not `3002`, because `CERCLE_PUBLISH` already named it on the old VM and changing the publish address
-and the machine in the same gesture would have made a failure unattributable. **The rule is a
-distinct loopback port, not a consecutive one.**
-
-#### WHICH CONTAINER PUBLISHES WHAT - MEASURED ON THE FOUR MACHINES, 2026-09-24
-
-Built after the `cercle` cutover, because the loopback table above answers "what is taken" and not
-"what is asked for", and the difference decides whether an estate fits. Internal ports are shown
-only where a container publishes; an `EXPOSE`d port reached over the compose network is not a
-migration constraint and is left out.
-
-| Estate | Container | Publishes today | -> container | Target loopback |
-| --- | --- | --- | --- | --- |
-| Portail-etu | `portail-etu` | `127.0.0.1:3000` | `3000` | **already there** |
-| `cercle` | `cercle` | `0.0.0.0:5173` on the old VM | `3000` | **`5173`, LIVE since 2026-09-24** |
-| `canari` prod | `infrastructure-frontend-1` | `0.0.0.0:8080` | `80` | **NOT `8080` - see below** |
-| `canari` prod | `infrastructure-garage-1` | `127.0.0.1:19010`, `:19011` | `3900`, `3903` | free, but see the question below |
-| `canari` prod | `infrastructure-adminer-1` | `127.0.0.1:8888` | `8080` | **does not move** - admin surface, decision 4 |
-| `miconnect` | `miconnect-server-1` | `0.0.0.0:9000`, `:9443` | `9000`, `9443` | `9000` free; `9443` has no object - see below |
-| `canari` dev | `canari-dev-*` | `127.0.0.1:3080`, `:19100`, `:19101` | - | **does not move** - decision 4 |
-
-**THE CANARI PRODUCTION STACK ASKS FOR ONE PORT ON THE PUBLIC PATH.** Twelve containers run on
-`canari` and only THREE publish at all - the frontend, adminer and garage, each a row above. The
-other NINE publish nothing: `frontend-ssr`, `chat-gateway`, `call-service`, `chat-delivery-service`,
-`media-service`, `core-service`, `social-service`, `postgres` and `redis` are reached by service name
-over the compose network and cross no host boundary. So the public surface is `infrastructure-frontend-1`
-alone - the in-container nginx section 5 opens on - and the shape above needs no rewrite. **The other
-two publishers are not public and are not thereby free**: they are the admin-surface question decision
-4 already governs, answered for adminer and open for garage.
-
-**`8080` IS REFUSED, AND IT IS THE ONE PORT CANARI CURRENTLY USES.** It is held on the target by a
-host-owned agent this project does not administer, so the collision is not negotiable from our side:
-the frontend's publish address changes. It has to change anyway - `0.0.0.0:8080` breaks the house
-rule in the same line, and on the target a `0.0.0.0` bind is *also* the thing the firewall
-measurement said would be unreachable rather than exposed.
-
-**`9443` ON `miconnect` HAS NO OBJECT BEHIND A TLS-TERMINATING NGINX.** Authentik publishes both a
-plain and a TLS listener; the host's nginx terminates TLS with the DSI certificate and speaks plain
-HTTP to the loopback, exactly as it does for the other three. Carrying `9443` across would mean
-either a second certificate on the box or `proxy_ssl_verify off`, and both are refused elsewhere in
-this plan. **This is the same seam as [authentik](authentik.md)'s, and it is not yet decided.**
-
-**OPEN: does garage's published pair move, and who consumes it?** The two ports are loopback-bound on
-`canari` today, so nothing outside that machine reaches them - but "loopback-bound" says where they
-may be reached from, never who reaches them. Garage is production object storage and moves with
-production; `19011` is its admin port and would be an admin surface under decision 4. **Enumerate the
-consumers before choosing**, which is what the standing rule about auditing a seam requires.
+Only 22, 80 and 443 enter the host (the filter is the school's network border, not the host's own
+rules). Every container port stays on loopback and nginx is the only entry.
 
 ### What the edge did that the origin must now do
 
-**Re-audited against the live zone and the live host, 2026-09-25** - every deliberate Cloudflare
-setting is in [cloudflare-edge.md](cloudflare-edge.md#settings-that-are-deliberate); this table is
-what each one becomes once `canari.emse.fr` never reaches that zone at all. A claim below is
-VERIFIED only where it was actually probed, not inferred from the intent that shipped it.
-
-| Edge mechanism today | After phase 2 | Verified 2026-09-25 |
-| --- | --- | --- |
-| TLS termination, `min_tls_version: 1.2` | host nginx, DSI certificates | **YES** - `--tlsv1.0 --tls-max 1.0` refused (connection failure), 1.2 and 1.3 both `200` |
-| `www.` -> apex redirect | N/A - no `www.canari.emse.fr` DNS record exists at all (the row was dropped from the DSI request, item 1) | **YES** - `www.canari.emse.fr` does not resolve/connect; nothing to redirect |
-| CSP header | N/A - was never a Cloudflare setting. `http_response_headers_transform` on the zone is empty by design; nginx has always owned every response header, unaffected by which hostname is used | N/A |
-| CSRF protection | N/A - Cloudflare has no CSRF-specific feature; this was always application-level (SvelteKit/NestJS origin checks), unaffected by the zone | N/A |
-| `websockets: on` (zone setting, "Required by `/api/ws`") | **WAS NOT PORTED, FOUND 2026-09-25 - AND FIXED THE SAME DAY.** `sites-available/canari.conf` on the target host proxied `/` but never forwarded `Upgrade`/`Connection`, unlike `canari-prod.conf` and `canari-dev.conf` (written earlier, in phase 1, and correct). A WS handshake against `canari.emse.fr` got a bare nginx `400` with no `Upgrade` echoed back. Fixed by adding the same two lines `canari-prod.conf` already carries - `proxy_set_header Upgrade $http_upgrade;` and `proxy_set_header Connection $http_connection;` - to `canari.conf`'s single `location /` block, then `nginx -t && systemctl reload nginx`. The pre-edit backup is `canari.conf.bak-2026-09-25-no-websocket-upgrade` | **YES, both before (`400`, no `Upgrade` echoed) and after (`401`, unauthenticated - the same correct answer `canari-emse.fr` has always given)** |
-| Cache Rules on `/_app/immutable/` and the shell | **deleted, not ported - and RE-VERIFIED, not merely re-asserted, 2026-09-25.** With no CDN there is no shared cache, so `s-maxage=60` and the purge have no object. `max-age` on the origin keeps meaning what it means, and it does: `canari.emse.fr` serves `Cache-Control: public, max-age=31536000, immutable` on `/_app/immutable/*` and `public, max-age=0, s-maxage=60` on the shell, byte-identical to what `canari-emse.fr` sends today - the ORIGIN half of this was never Cloudflare's to begin with and the migration changed nothing about it. What is genuinely gone, confirmed by `curl -I` carrying no `cf-cache-status` header at all on `canari.emse.fr` where `canari-emse.fr` answers `HIT`/`REVALIDATED`: every request for the same bytes now reaches the origin container instead of a warm edge node. A local substitute (nginx `proxy_cache` on the shared host, keyed the same way) would recover the shared-cache EFFECT without a CDN, but is a NEW build, not a port, and is a separate open item below rather than folded into this "deliberate, not ported" row | **YES - origin headers identical on both hostnames; no edge layer exists on either the new host or a viable substitute for it** |
-| The zone purge after a deploy | **deleted**, with `CLOUDFLARE_CACHE_PURGE_TOKEN` | N/A - deliberate |
-| Access on admin hostnames | unchanged - those names stay internal, on `rootz-emse.fr` | N/A - out of scope |
-| DDoS absorption, bot filtering | **CROWDSEC, AND IT WAS ALREADY THERE - the first answer to this row was measured against the wrong mechanism.** `grep -r limit_req /etc/nginx` returns nothing on any vhost, which is true and was read as "nothing protects this host". What protects it is `conf.d/crowdsec_nginx.conf`: a Lua bouncer running `cs.Allow($remote_addr)` in `access_by_lua_block` on EVERY request of EVERY vhost, an AppSec/WAF at `127.0.0.1:7422` doing CVE virtual-patching, and ~20 enabled `http-*` scenarios including `http-generic-bf`. Both `crowdsec` and `crowdsec-firewall-bouncer` are `active`, and it bans for real - two live decisions on 2026-09-25 (`appsec-vpatch`, `http-bad-user-agent`) | **YES, and the coverage is SPLIT - see below** |
-| `0rtt`, BIC, Rocket Loader | Rocket Loader and BIC have no nginx equivalent and were already `off`/scoped to the auth subdomain (out of scope); 0-RTT is a TLS 1.3 server option nginx does not enable by default, matching the zone's `off` | N/A - all three end up equivalent to "off" either way |
+Removing the CDN moves its jobs onto the origin: real client addresses, compression, WebSocket
+upgrade settings, caching of the app shell and a redirect for the legacy names. Each one that was
+not ported broke something; port them explicitly.
 
 #### CROWDSEC COVERS THIS HOST IN TWO HALVES, AND ONLY ONE OF THEM REACHES EVERY VHOST
 
-Measured 2026-09-25, and it revises the row above rather than adding to it.
-
-**The IN-LINE half reaches everything.** `access_by_lua_block` runs before every request on every
-`server` block, so the bouncer's ban list and the AppSec WAF apply to all EIGHT vhosts this machine
-carries - and there are eight, not five: `gala.conf` (2019) and `mep.conf` (2021) are co-tenant
-sites this project does not own, alongside `portail-etu-new.conf`.
-
-**The LOG-PARSING half reached only what writes to the shared `access.log`, AND IT WAS EXTENDED THE
-SAME DAY.** CrowdSec's acquisition named exactly `/var/log/nginx/access.log` and
-`/var/log/nginx/error.log`. Of our vhosts only `canari.conf` writes there; `canari-prod.conf`,
-`canari-dev.conf`, `cercle.conf` and `authentik.conf` each write to their own file, so every
-behavioural scenario - `http-generic-bf` included - was blind to them. A new
-`/etc/crowdsec/acquis.d/canari.yaml` now adds `authentik.access.log`, `canari-prod.access.log` and
-`cercle.access.log` with the `nginx` label, and `cscli metrics` confirms all three being read
-(authentik 5 lines, canari-prod 72, cercle 3 within minutes of the reload). `canari-dev.access.log`
-is DELIBERATELY excluded: dev is served only through the relay and still shows one address for every
-visitor, so parsing it buys nothing and risks everything.
-
-**THE LEGACY PATH COULD NOT BE ADDED UNTIL `real_ip` WAS SET, AND THAT ORDERING IS THE LESSON.**
-`canari-prod.access.log` carried **11 935 requests from `10.0.0.3` against 1 from a real client**:
-the tunnel relay was the source address of essentially all of it, because nothing set `real_ip`
-there. Pointing CrowdSec at that file in that state would have handed it one address standing for
-every visitor - the first abusive request bans the relay and takes the whole legacy hostname down
-with it, a self-inflicted outage produced by switching on a protection. So `real_ip` went FIRST:
-`canari-prod.conf`, `authentik.conf` and `cercle.conf` now carry `set_real_ip_from 10.0.0.3;`
-(the connector), `set_real_ip_from 127.0.0.1;`, `real_ip_header X-Forwarded-For;` and
-`real_ip_recursive on;`, and only then was the acquisition widened. **The trusted address is the
-CONNECTOR's, not the service's own VM**: the first attempt trusted `10.0.0.7` on authentik and
-`10.0.0.6` on cercle - the VMs those services used to run on - and the logs kept showing `10.0.0.3`,
-which is what public traffic actually arrives from. `realip` runs in nginx's POST_READ phase, ahead
-of ACCESS, so it also changes what the in-line Lua bouncer sees: the same edit fixes both halves at
-once. `cscli decisions list` carries no ban against any `10.0.0.x` address, which is the check that
-this landed correctly.
-
-**What that leaves genuinely open is narrower still, and it is not ours to close.** Bans are GLOBAL
-per address on this box, so a decision taken on Canari traffic already closes the co-tenant sites
-`gala`, `mep` and `portail-etu-new` to that address, and theirs closes ours. That is a decision for
-the machine's owner, not a one-line port ([backlog](../backlog.md)).
+The in-line bouncer and WAF apply to every server block; the log-parsing scenarios only read the log
+files they are told about. **Rule: set `real_ip` (the trusted proxy's address, `real_ip_header
+X-Forwarded-For`, `real_ip_recursive on`) on a vhost BEFORE pointing log-parsing protection at its
+log.** Otherwise one address stands for every visitor, and the first abusive request bans the proxy
+and takes the whole name down. The trusted address is the CONNECTOR's, not the origin service's old
+host. Bans are global per address on a shared host.
 
 #### REFUTED - an nginx `proxy_cache` substitute for the lost edge cache buys ~3 ms of an ~80 ms path
 
-Raised, approved for building, then refused by its own measurement (2026-09-25). Kept because the
-reasoning is what stops it being raised a third time.
-
-The origin's own `Cache-Control` headers migrated untouched - `canari.emse.fr` serves the identical
-`max-age=31536000, immutable` on `/_app/immutable/*` and `max-age=0, s-maxage=60` on the shell, byte
-for byte. What is gone is the SHARED cache: `canari-emse.fr` still answers `cf-cache-status:
-HIT`/`REVALIDATED` through Cloudflare, `canari.emse.fr` carries no such header. So an nginx
-`proxy_cache` on the shared host was proposed to recover the effect locally.
-
-**It recovers almost nothing, because it is the wrong layer.** Timed on the host against the
-frontend container it would sit in front of: the SSR shell answers in **2.6-5.2 ms** and an
-immutable asset in **0.8-1.2 ms**. A cache one hop above that removes those milliseconds of local
-work and not one metre of the network path; Cloudflare's cache was worth having because it
-TERMINATED the request nearer the browser, and the ~80 ms measured from the user's own line is that
-path.
-
-**What would have to be true for it to come back**: the origin's answer becoming slow enough to
-matter, or `frontend-ssr` becoming a throughput bottleneck under real concurrency (at 3 ms one
-process serves ~300 req/s sequentially). Measure that first; do not re-derive the idea from the
-missing `cf-cache-status` header. **And it would not have been free**: `proxy_cache_path` lives in
-the `http` block, which here is the DSI's shared `conf.d/`, on a host carrying three co-tenant sites.
+Measured and refuted; not worth building.
 
 #### THE LEGACY HOSTNAME WAS ANSWERING 502 AT THE ORIGIN AND THE EDGE CACHE HID IT, 2026-09-25
 
-Found while probing something else, which is the only reason it was found at all.
-`curl` straight at the origin for `canari-emse.fr` returned **502**, while a browser loading
-`canari-emse.fr` got a perfectly normal page: Cloudflare was serving the shell from its own cache
-and re-validating rarely enough that nobody had yet met a miss. `dev.canari-emse.fr`, which has no
-warm cache to hide behind, was visibly 502 too - the same defect, one estate where it showed.
-
-**Cause**: `upstream sent too big header while reading response header from upstream`, 30 of them in
-the error log. SvelteKit emits a `Link: <...>; rel=modulepreload` response header listing every
-chunk of the route, ~7.5 KB on the app shell, against nginx's default `proxy_buffer_size` of 4 KB.
-The vhost written LAST, `canari.conf`, already carried the three lines that fix it, because it was
-written after that lesson. The four written EARLIER did not: `canari-prod.conf` and `canari-dev.conf`
-on the target host, and `canari-relay-prod.conf` / `canari-relay-dev.conf` on the old box, which
-proxy on to the target and hit the same oversized header a second time.
-
-**Fix**: `proxy_buffer_size 128k; proxy_buffers 4 256k; proxy_busy_buffers_size 256k;` added to all
-four, `nginx -t && systemctl reload nginx` on both hosts, backups kept as `*.bak-2026-09-25-*`. Both
-origins went 502 -> 200, verified with `curl` at the origin rather than through the edge.
-
-**Two things this is evidence for.** A CDN in front of a broken origin does not merely hide the
-breakage, it removes the signal that would have reported it - so an origin is probed AT the origin,
-never through its cache. And a correct setting on the vhost you are looking at says nothing about
-the four you are not: this fix existed, in this repo, on one file out of five.
+A CDN cache can hide an origin that fails. Probe the origin directly after any move, not the public
+name.
 
 ### THE FRONTEND BAKES ONE ABSOLUTE ORIGIN PER BUILD, AND PHASE 2 GAVE IT TWO - LOGIN BROKE, 2026-09-25
 
-`.github/workflows/build.yml`'s "Create frontend .env" step bakes a single `BASE_URL` secret into
-every `VITE_*_URL` (`FRONTEND`/`GATEWAY`/`CALL`/`DELIVERY`/`MEDIA`/`SOCIAL`/`CORE`) as one absolute
-URL, with its own comment saying why: "Every URL is the estate's own origin; nginx routes /ws,
-/api/ and /media/ on that host." True when `canari-prod` answered on exactly one public hostname.
-Phase 2 gave it two - `canari-emse.fr` (legacy, still tunnelled) and `canari.emse.fr` (new, primary)
-- and one build now serves both with one hardcoded absolute API origin baked into its JS.
-
-**Symptom, reported live**: loading `canari.emse.fr` and logging in, every call built from
-`frontend/src/lib/utils/apiUrl.ts` (`coreUrl()`, `gatewayUrl()`, `deliveryUrl()`, `socialUrl()`) and
-its two duplicates (`media.ts`'s `MediaService` constructor, `associations/api.ts`'s
-`mediaPublicBaseUrl()`) read the `VITE_*_URL` env var FIRST, so they addressed
-`https://canari-emse.fr` instead of the page's own origin. CSP's `connect-src 'self'` blocks a
-cross-origin fetch by design, so the OIDC callback `POST` died with a `NetworkError` - and even had
-CSP allowed it through, the fix would still have been wrong: it would have set auth cookies on the
-WRONG origin, the same browser-storage rule as the redirect prohibition above.
-
-**Fix, same day**: these functions now check `window.location.origin` FIRST in any real browser tab
-- ahead of the env var, not merely as its fallback - because nginx proxies `/api/`, `/ws` and
-`/media/` identically regardless of which public hostname served the page, so the page's own origin
-is always the right answer there. The env var is now consulted only when `isTauriRuntime()` is true
-(`tauri://localhost` never reaches the proxy, so Tauri/mobile genuinely needs the absolute baked
-URL) or when there is no `window` at all (SSR, or a browserless build step). `isTauriRuntime()`
-moved out of `openExternal.ts` into a new dependency-free `utils/tauriRuntime.ts`, re-exported from
-its old home for its existing callers, so `apiUrl.ts` could use it without a cycle through
-`openExternal.ts` -> `checkLinkSafety.ts` -> `apiUrl.ts`. The two duplicated media-URL readers now
-both call the new `mediaUrl()` export instead of re-deriving the same logic a third time.
-
-**What this does not touch**: a Tauri/store build still bakes exactly one absolute origin at build
-time and cannot be re-pointed afterwards - untouched here, because a packaged app was never
-reachable at two hostnames the way the web deploy now is. `ios.yml` and `android.yml` keep setting
-these vars unconditionally, and still should.
+SvelteKit bakes `import.meta.env.*` at build time, so a second public name needs either its own build
+or origin-relative URLs. Check every absolute URL a build carries against every name that serves it.
 
 ### THE CERTIFICATE RENEWAL IS THE TRAP, AND IT IS NOT HYPOTHETICAL
 
-The DSI drops a new file in `/etc/certs/<name>/` - the path is measured, not assumed, since
-2026-09-23 - and **something does reload nginx**: `/etc/cron.d/reload-nginx` runs
-`systemctl reload nginx` at 01:00 daily, with a comment saying it exists for exactly this reason.
-**Half of this trap was already closed by the DSI, and the claim that nothing would reload was
-wrong.**
-
-**The other half is untouched, and it is the dangerous half.** That reload is blind: it fires
-whether or not a new file arrived, and it reports nothing either way. A reload firing correctly over
-a certificate that was never renewed is indistinguishable from a working system - until expiry day,
-when the site dies with no warning and no failing gate anywhere in this repository. The deploy is
-green, the containers are up, the health check passes, and the name is simply refused by every
-browser.
-
-This is the durable rule about a correct mechanism with no report, in its purest form. One thing is
-owed:
-
-1. **a report that names the expiry date and accuses BEFORE it.** The daily reload already covers
-   delivery; **nothing covers non-delivery**, which is the failure that actually takes the site
-   down.
-
-#### ONE CERTIFICATE PER NAME, AND IT IS NOT ACME - MEASURED ON THE TWO LIVE NAMES, 2026-09-24
-
-The certificate question in section 7 was listed as **the blocking answer** the nginx configuration
-could not be written without. It is answered, and by reading the two certificates the School already
-serves rather than by asking:
-
-| | `portail-etu.emse.fr` | `canari.emse.fr` |
-| --- | --- | --- |
-| Subject CN | the name itself | the name itself |
-| `subjectAltName` | **`DNS:portail-etu.emse.fr` and nothing else** | **`DNS:canari.emse.fr` and nothing else** |
-| Issuer | GEANT TLS RSA 1 (Hellenic Academic and Research Institutions CA) | the same |
-| Validity | 2026-07-23 -> 2027-02-07 | 2026-09-22 -> 2027-04-09 |
-
-**One certificate per name.** Four names is four certificates, four expiry dates and four renewals -
-not one SAN bundle, so the nginx configuration gets four `ssl_certificate` pairs and the report this
-section owes has four dates to watch, not one.
-
-**And it is the GEANT TCS service, on a ~6.5-month validity - there is no ACME anywhere in this.**
-Nothing in this repository, and nothing on the host, can renew one: a renewal is a DSI action
-followed by a file landing in `/etc/certs/<name>/`. That is precisely why the blind 01:00 reload
-covers delivery and nothing covers NON-delivery, and it is why the missing report is the whole of
-what is owed here.
-
-**`canari.emse.fr` IS LIVE, AND ITS CERTIFICATE WAS REISSUED TWO DAYS AGO** (2026-09-22). It serves
-`Portail Etudiant ICM` - a SvelteKit application, `nginx`, HTTPS only, port 80 does not answer - from
-**`193.49.175.122`, which is NOT the host `portail-etu.emse.fr` runs on** (`193.49.175.67`). So the
-line in section 7 calling it a reassignment is right, and thinner than the thing it describes: the
-ask is to take a name off a running site on a machine this project has never inventoried, whose
-certificate somebody renewed this week. It is the one item in that request that can be refused on
-its merits, and the request should say what it is rather than let it read as moving a spare record.
-
-**The three other names do not exist at all** - `cercle.emse.fr`, `miconnect.emse.fr` and
-`www.canari.emse.fr` all answer `NXDOMAIN`, and neither live name carries an `AAAA`. There is no
-wildcard: a nonsense name under `emse.fr` answers `NXDOMAIN` too, which is worth stating because the
-first measurement here appeared to show one - the resolver's own address, echoed by `nslookup` in
-every answer, read as a record.
-
-### The cohabitation, and the rename that is only free once
-
-Five compose projects will share one daemon: `portail-etu`, `canari-prod`, `canari-dev`, `cercle`,
-`authentik`.
-
-- **Every project declares a `name:`.** A compose file without one is named after its DIRECTORY,
-  which is the defect that once put dev one forgotten flag away from mounting production's volumes
-  ([dev-environment](dev-environment.md)). Portail-etu's `docker-compose.yml` declares none today.
-- **`infrastructure` becomes `canari-prod`, and the migration is the ONLY moment this is free.**
-  Renaming a compose project renames its volumes and so orphans its data, which is exactly why
-  production's name has been pinned rather than fixed. The migration restores the data into fresh
-  volumes anyway. Miss it, and the production estate is called `infrastructure` on a machine
-  carrying five of them, for years.
-- **A host port allocation table**, and **resource ceilings on every project**. Dev already has
-  ceilings; Portail-etu has none, and on a shared box the first project to run away takes the
-  others with it.
-- **No `docker system prune` without a project filter.** The durable rule is that a destructive
-  control needs an allowlist of what it may touch; on a five-estate machine an unfiltered prune is
-  a weapon, and the images of four innocent projects are what it reaches.
-  `infrastructure/docker-prune/prune.py` is that filtered control: since 2026-10-06 production
-  deploys `v<version>`, so replaced images keep their tag and only a name-allowlisted removal
-  (`ghcr.io/emse-students/canari/*:v<semver>`, newest 3 kept, nothing a container references) reclaims
-  them ([README](../../../infrastructure/docker-prune/README.md#release-images---an-allowlist-by-name-and-three-guards)).
-  Measured read-only on the host 2026-10-08: `/` 88 % used (38 G of 45 G), images 12.15 GB of which
-  6.5 GB reclaimable, build cache 6.98 GB, volumes 1.43 GB; not installed yet.
-
-**`tools/ecosystem-shape/shape.mjs` is where this is asserted.** It already affirms that the four
-repositories share one CI shape, across repository boundaries, which is the same job. Extending it
-costs nothing and invents nothing; a new tool would be a second mechanism for one question.
+Certificates are delivered by the school, not by ACME. Treat renewal as an external event: verify
+the certificate actually served and never assume it was renewed.
 
 ## 6. Phase 1 - the move
 
-Order, least critical first, each one a rehearsal for the next:
-
-**`cercle` -> `miconnect` -> `canari-dev` -> `canari-prod`.**
-
-`cercle` is one container with almost no state, so it is where the runbook's mistakes are cheap.
-`canari-dev` immediately before `canari-prod` is deliberate: same compose file, same data shape,
-same deploy path, run once for real before the estate that matters.
-
-Per service, and the whole of it:
-
-1. install the self-hosted runner for that repository on the target host - **and `cercle` is not
-   a GitHub repository at all.** It lives on `gitlab.emse.fr`, so its runner is a `gitlab-runner`
-   registered against that project, not an Actions runner; the two coexist on the host and neither
-   knows about the other;
-2. stand the project up beside the old one, on its loopback port, **serving nothing**;
-3. restore its data into it, and diff the restore against the source;
-4. take a read-only window on the old estate, re-sync the delta, point the tunnel ingress at the
-   new loopback port;
-5. verify from the outside - `/api/version`, the health endpoint, a real sign-in - then release
-   read-only;
-6. leave the old VM running and untouched.
-
-**Nothing in phase 1 changes a hostname, a certificate or an OIDC issuer.** If step 5 is not
-convincing, step 4 is reversed by pointing the ingress back, and the old estate never stopped being
-able to serve.
+The runner account change and the per-service moves followed one template. The traps that bind code:
 
 ### The network shape, settled 2026-09-24 - only 22, 80 and 443 enter the target, from anywhere
 
-**Measured, with a control**: a container publishing a high port on the host's public address was
-reachable from the host itself (the control) but timed out from the workstation and from BOTH old
-estates over the private range, while 22/80/443 answered from an old estate every time. `DOCKER-USER`
-is a bare `RETURN` and the `DOCKER` chain ACCEPTs directly - the textbook shape of Docker punching
-through a host firewall, so the filter is the school's network border, not the host's own rules, and
-it is symmetric with the finding below. **This settles the architecture**: there is nothing to bind
-and restrict, because nothing but those three ports arrives at all, so every service stays on
-loopback with the host's own nginx routing by `Host` - which is what section 5 already chose, now
-validated by a firewall rather than by an argument.
-
-**A tunnel cannot be created from the workstation** (`10000 Authentication error`, and the tunnel
-list answers `success` with zero tunnels while production plainly runs one - a shape that would
-mislead a caller who trusts it). The user made the dashboard gesture, and the resulting connector
-could not reach the edge either: **TCP 7844 is blocked outbound from the target, in both the UDP and
-the `http2` fallback transports, to two different edge addresses**, while the same probe from `canari`
-succeeds on the same command. The block is upstream of the machine and there is no port-443 fallback
-for Cloudflare Tunnel, so this would have needed a firewall change or nothing.
-
-**The user took the other option instead** (section 4): no connector is installed on the new host
-for ANY estate, so a machine that needs no tunnel does not care what its network refuses - which
-holds whether one estate sits behind the old VM's relay or several. A **proxied Cloudflare `A`
-record** to the target's own address was drafted as an alternative to a tunnel and is REFUTED by
-that same section-4 decision (no Cloudflare in the public path) - kept nowhere else because the only
-thing worth keeping from it is the reasoning trap it shows: a seam solved through the one consumer
-just discussed, not through all of them.
-
-**The relay that phase 1 actually needs already runs in production.** `cercle.canari-emse.fr` is
-served today by a connector on the OLD VM proxying across the private network to the target with SNI
-`canari.emse.fr` and `Host: cercle.canari-emse.fr` - the target's nginx routes on that `Host` alone.
-Nothing new was built for this: the tunnel keeps pointing where it points today, the old VM's nginx
-gains one upstream, and rollback is one line on a machine we own. The alternative - editing the
-tunnel's own ingress - is not ours to take: production's connector is remotely managed, its ingress
-lives in Cloudflare, not on the box. **The source address the target sees is the old VM's PRIVATE
-address, preserved end to end with no NAT rewrite**, which is what lets a future allow-rule pin to
-one address rather than opening a port to the internet; the exact addresses stay in agent memory,
-not in this public repository.
-
-**The target's `cloudflared` was REMOVED entirely, not merely disabled**, once the section-4 decision
-made a connector on that box pointless: a run token in a file is a liability a disabled unit keeps
-alive, and the only thing worth keeping is the four lines of configuration recorded here. **Two
-tunnel identities are in play** - the box carried one and a second was handed over the same morning -
-and neither was overwritten, because picking the keeper is a dashboard-side decision; guessing wrong
-leaves an orphan tunnel claiming a hostname later.
-
-**The Portail-etu runner move is the template for the other two.** It ran as one person's login from
-that person's home; it now runs as `gha-runner`, no password, no `sudo`, one group, one install
-directory per repository under `/opt/actions-runner/runners/<repository>/`. The one line that had
-encoded three host facts (`~/actions-runner/_work/refonte-portail-etu/...`) now reads
-`$GITHUB_WORKSPACE` ([PR 83](https://github.com/emse-students/refonte-portail-etu/pull/83)), proven
-by dispatching the runner's other job after the move. **A runner directory's numbered `bin.2.336.0`
-and `bin.2.337.0` siblings are not update leftovers** - `bin` and `externals` are symlinks into the
-newest one, which is how a self-update swaps versions atomically; deleting the "leftovers" broke
-`svc.sh` with no hint of the cause and was repaired by re-extracting the matching release archive.
-The rules this needed already exist (a destructive control needs an allowlist, not a pattern that
-looks like debris; a name is not evidence, `ls -l` before `rm -rf`) - the sharpening is that the
-symlinks pointed at ABSOLUTE paths under the old home, so the move alone would have broken them and
-the deletion only changed a silent break into a loud one.
+Measured with a control: a high port published by a container was reachable from the host itself but
+not from outside, while 22, 80 and 443 answered. The filter is the school's network border, so every
+service stays on loopback behind the host's nginx and nothing else is exposed or can be relied on to
+be reachable (for example, no inbound UDP range).
 
 ### `cercle` HAS MOVED - 2026-09-24, AND IT IS THE SHAPE THE OTHER TWO FOLLOW
 
-| Ready | What was done |
-| --- | --- |
-| The runner | `cercle-portail`, shell, locked to the project, **registered PAUSED** so no job lands on it by accident, `gitlab-runner` **19.3.2 - the exact version of `gitlab.emse.fr`** (the repo offers 19.4.0, deliberately left off that host's unattended-upgrades origins) |
-| `/srv/le-cercle` | pre-created, owned by `gitlab-runner` - the deploy job's `mkdir -p` runs as that account and `/srv` belongs to root |
-| The two variables | `CERCLE_RUNNER_TAG` and `CERCLE_PUBLISH`, already through one production deploy |
-| The data | restored into `le-cercle_cercle-data`, owned by uid 1000 as the image expects |
-
-**The data rehearsal is a diff, not a copy**: `VACUUM INTO` while serving (never a `cp` of a live
-SQLite file), moved through the workstation because the two boxes cannot reach each other, then
-inventoried on both sides by the same script - **17 tables, 455722 rows, `user_version = 2`,
-`integrity_check = ok`, identical**, with the transferred archive's md5 matched at both ends. A count
-alone would not have settled it - it answers "how many", never "which".
-
-**The cutover is four gestures, and they are the model for `canari-dev`/`canari-prod`:**
-
-1. **The tunnel/relay** - repoint or extend the existing relay; this is the user's dashboard gesture
-   and the only blocking one.
-2. **The read-only window** - stop the old container, re-run `VACUUM INTO`, move the file, restore
-   it into the target volume, diff it again.
-3. **The flip** - pause the old runner, un-pause the target one, set the tag and the publish address,
-   re-run the pipeline on `main`. It builds on the new host, writes `.env` from the same CI
-   variables, migrates and starts.
-4. **The verification** - the health endpoint through the public name, and a real sign-in. `ORIGIN`
-   does not change in phase 1 and `sessions` travels with the database, so nobody is signed out.
-
-The rollback is gestures 3 and 1 reversed, and it costs nothing because the old VM never stopped
-being able to serve - its container and data are left in place, which is why the two host-specific
-values are variables rather than lines in a commit. **Two hand-made snapshots inside the live volume
-were dropped** (`pre-formation-rename.db`, `pre-reclass.db`, archived on the workstation first, the
-renames they precede a month live) - the move copies the live database only.
-
-**IT IS DONE.** Pipeline `#22369` built and deployed on the new host; the public name moved the same
-morning. The full chain: the Cloudflare tunnel reaches the old VM exactly as before, an nginx relay
-there proxies to the target with the SNI/`Host` pair above, the target's vhost routes to the
-container. `200` from outside in 0.13-0.19 s against 0.16 s before - the extra hop costs nothing
-readable - and the **target's own access log**, not just the response, names the old VM as the
-client, which is what proves the new machine answered rather than merely responded. The old
-container is `Exited (0)` under `unless-stopped`, which honours the manual stop across a daemon
-restart and cannot come back to contend for the port.
-
-**The read-only window was not needed, and a clock was not what proved it.** A per-table content
-fingerprint - rows serialized, SORTED, then hashed, so it survives the reordering a `VACUUM`
-performs and answers about CONTENT rather than "how long since a write" - matched on **all 17
-tables**, `ledger`'s 234 366 rows included.
-
-**Two traps found here are now durable rules**: a restored database read and could not be written
-because the copy carried the FILE's permissive mode and not its DIRECTORY's, which WAL mode's
-sibling files need ([durable-rules](../durable-rules.md#the-shared-host-and-what-it-does-to-every-operation---estate-migration));
-and the health endpoint's `ok` read masked exactly this for nine hours because `BEGIN IMMEDIATE`
-defers its write and is not a write probe, which the journal-mode table below settles.
-
-| Probe | WAL | `DELETE` |
-| --- | --- | --- |
-| a plain `SELECT` | refused (`SQLITE_READONLY_DIRECTORY`) | passes |
-| `BEGIN IMMEDIATE` then `ROLLBACK` | refused | **passes** |
-| a real `INSERT` (the control) | refused | refused |
-
-In WAL mode nothing works at all, because opening the database means creating `-shm`; in `DELETE`
-mode a read succeeds and only a write fails, so the SAME endpoint would have reported `ok` on a
-database nobody can write. **A column is only evidence for the question it was written to answer**
-([durable-rules](../durable-rules.md)): this one asks whether the schema can be READ, and answered a
-second question only because the journal mode made the two coincide.
+A copy, a verification against the old estate, then the traffic switch; rollback stays one line on
+a machine we own.
 
 ### `miconnect` - MOVED 2026-09-24, BY HAND, BECAUSE NOTHING DEPLOYS IT
 
-**No pipeline has ever built this estate** - `infrastructure/authentik/README.md` described a
-`deploy.yml` copying its compose file that does not exist, and the repository's compose file was a
-REBUILD REFERENCE that had drifted, including a pinned `2026.2.2` against a running `2026.8.0` (a
-schema downgrade Authentik's migrations cannot undo). Both are corrected. **The stack is one volume
-and two ports**: `9443` was not moved, it was DELETED - the tunnel has only ever reached Authentik in
-plain HTTP on `9000`, and nothing asked for the TLS port. `data/`, `certs/` and `custom-templates/`
-total 24 K; nothing travels but the database.
-
-**The nightly backup's SSH hop was believed and was not real** - the repair existed only in the
-repository (production was still on an older tag, no such key existed on the box, and the archive
-written that morning had no Authentik among its members); the streak was 94 nights, not 93, and it
-ended by hand. The opposite instruction - empty the variable, because the two stacks now share a
-host - was also wrong: they do not meet yet, Authentik left and Canari stayed, so the hop is MORE
-necessary, simply reversed to point at the target. It becomes correct only the day Canari itself
-arrives.
-
-**Stood up on the target, empty, then taken down first**, to answer what a plan cannot: 907 MB
-across all three containers on a 2 G VM, under two minutes to healthy including migrations, refused
-from the outside and healthy on loopback. The loopback binding needs no compose edit - the `.env`
-interpolates an address rather than a bare port. **uid 1000 collided with the host's own automation
-account** ([durable-rules](../durable-rules.md#the-shared-host-and-what-it-does-to-every-operation---estate-migration))
-and was benign only by luck; the three bind-mounted directories are candidates for named volumes at
-the cutover.
-
-**IT IS DONE.** The window was 6 min 37 s, almost all of it one `pg_dump` crossing two SSH hops.
-`https://auth.canari-emse.fr` answers `200` in 0.24-0.40 s from outside, the target's own access log
-names the relay as the client, and **every one of 230 tables' content fingerprints matched, zero
-errors or warnings in either service's log**. The relay here is a `nginx:alpine` CONTAINER rather
-than a package - the VM has no usable nginx and no `sudo`, `docker` needs none - listening in clear
-and raising TLS itself; **interposing it imposed a body-size ceiling that never existed on the direct
-path** (`client_max_body_size 50m`, set on both halves), which is the general lesson: a proxy
-inherits none of the defaults of the thing it replaces.
-
-**The end-to-end proof went past the login page**, because a `200` there proves almost nothing:
-OIDC discovery and JWKS answered for all five applications, `/application/o/authorize/` reached the
-flow executor, and the CAS EMSE redirect still lands on `auth.canari-emse.fr` as its callback - the
-one row that could have silently broken, since CAS validates a callback URI registered on ITS side
-and the move changed the machine without changing the name. **Phase 2 is where that row becomes a
-request to another team, not a check.** The rollback stays armed: only `server`/`worker` were
-stopped, `unless-stopped` will not restart them on its own, and reversing is `docker compose start
-server worker` once the relay is down.
-
-**A first differential run agreed with itself and was wrong** - it reported "IDENTICAL, 3 tables" for
-a 230-table database because the query read `relname` where `pg_tables` exposes `tablename`, so both
-sides returned the same `ERROR` and `diff` was right to call them equal. This is the durable rule
-about a comparison proving equality of whatever it actually read
-([durable-rules](../durable-rules.md#contracts-the-compiler-does-not-check)); the corrected run read
-230 tables with zero `ERROR` lines before its verdict was believed.
+The identity provider's stack is deployed by hand; its configuration is code and applied by the
+release ([authentik](authentik.md)).
 
 ### `canari` - MOVED 2026-09-24: it was two estates and a CI runner, not one estate
 
-Measured on the `canari` box, 2026-09-24:
-
-| What | RAM | Disk | Note |
-| --- | --- | --- | --- |
-| `infrastructure` (production, 12 containers) | 575 MiB | 307 MB of volumes | -> `canari-prod` at the move |
-| `canari-dev` (11 containers) | 1384 MiB | 217 MB of volumes | `dev.canari-emse.fr`, same box |
-| GitHub Actions runner | - | 5.5 GB (3.9 GB of `_work`) | `runs-on: self-hosted` |
-| The two checkouts, local backups, images | - | ~2 GB, 593 MB, 10.5 GB (5.5 GB reclaimable) | |
-
-The target has 8.9 GB of RAM and 27 GB of disk free against roughly 2 GB and 13 GB needed - it fits,
-and stays comfortable only if the target's own 2 GB of build cache and 1.3 GB of reclaimable images
-are pruned first. **Both estates move** (user, 2026-09-24): dropping dev would break release gate 2,
-which refuses a stable unless a pre-release served dev at that commit.
-
-**Moving them does not switch the old VM off.** Its connector's ingress carries nine names; three
-(`pm`, `wiki`, `archives`) are no part of this migration and two more (`cercle`, `auth`) now point at
-relays. The box survives phase 1 as the estate's single connector regardless of what Canari does -
-only the tunnel moving or disappearing, phase 2's subject, changes that.
-
-**The runner moves with the estates; the deploy does not convert to SSH.** A GitHub-hosted runner
-cannot reach the target at all: `193.49.175.67:22` timed out from this workstation's address and
-answered from `mitv` and from the `canari` box, both on `193.49.174.63`. It is not an IP ban - `443`
-connects from the SAME workstation address that `22` refuses, and a ban would take both - so the
-filter is per-port and upstream of the machine (`sshd` on `0.0.0.0:22`, empty `hosts.deny`, no local
-firewall at all). SSH into that host is a campus-network privilege, which is the entire reason the
-DSI runs a bastion, and it is why Portail-etu already deploys from a runner installed ON the target
-rather than over SSH.
-
-Canari's runner takes the same shape, in its own group:
-
-| | |
-| --- | --- |
-| Shape | ORG-level, name `canari`, group `canari`, `visibility=selected` to this repository alone, `allows_public_repositories=true` (the same posture Portail-etu already carries, for the same reason: the repo is public) |
-| Account | `gha-runner` - no password, no `sudo`, member of `docker`, home `0700` - so `deploy-environment.sh` and `verify-secrets.sh` both resolve plain `docker` on their first branch |
-| Install root | `/opt/actions-runner/runners/canari/`, beside `cercle` and `miconnect` |
-| Isolation | the GROUP, not the label - every runner answers to the bare `self-hosted` that four jobs (`serve-prod`, `serve-dev`, `hosts`, `dev-refresh`) ask for, and `visibility=selected` is what keeps a Canari job off the Portail-etu runner and the reverse |
-
-**None of those four jobs changes** - `deploy-env.test.sh` derives its assertions from that literal
-string and keeps deriving them. The machine underneath moves; the mechanism does not. **The only
-variable left is the address**, which is why the move is one step rather than the two a transport
-change would have needed.
-
-**The publish addresses were chosen by measurement, not by convention.** Listening on the target,
-2026-09-24: `3000` (`portail-etu`), `5173` (`cercle`), `9000` (Authentik), `6060`/`7422`/`8080` held
-by the host's own DSI-managed agent - not ours to move. `canari-prod`'s frontend takes
-**`127.0.0.1:8081`**, adjacent to the `8080` it uses today so the one-line difference stays legible;
-dev keeps its current `3080`/`19100`/`19101`. **Production's `0.0.0.0:8080` must not survive the
-move**: Docker publishes through the nat table, which firewalld's zone does not govern, so a port
-published on `0.0.0.0` there is reachable from the whole campus network whatever the zone says - the
-same finding Le Cercle's own compose file already carries a paragraph about.
-
-**IT IS DONE, in full, for both estates - data, traffic, the runner and the crontab (step 10.6).**
-The target's org-level `canari` runner is `online` (`gh api orgs/emse-students/actions/runners`);
-the old box's repo-level `Canari` runner is `offline`, stopped and disabled via the docker-chroot
-route (no sudo password on that account). The old box's crontab is gone entirely (`crontab -r`,
-backed up first to `/home/canari/backups/crontab.removed-2026-09-24.bak`) - the three lines it
-carried (nightly backup, object backup, egress probe) already run from the target under
-`gha-runner`, which now also schedules Le Cercle's own backup at 04:15
-([le-cercle deployment](https://gitlab.emse.fr/rootz/le-cercle/-/blob/main/docs/wiki/deployment.md#state)),
-closing the backup-completeness gap this same audit found. Production's window ran
-`2026-09-24T18:17:50Z`-`18:26:39Z` (8m49s):
-`pg_dump`/restore of `auth_db` plus the three object-storage volumes, verified with the same
-per-table content fingerprint methodology `cercle` and `miconnect` used - **53/53 tables identical**,
-spot-checked against the documented false-positive trap (two sides silently agreeing on the same
-error rather than the same content). The relay flipped (`:8080` on the old box -> `127.0.0.1:8081`
-on the target) and `https://canari-emse.fr/api/version` answered `200` through the full chain, the
-target's own nginx access log naming `10.0.0.3` as the client. The old box's 12 production
-containers are `Exited (0)` under `unless-stopped`.
-
-**One real defect surfaced mid-window and is now a durable rule
-([durable-rules](../durable-rules.md#the-shared-host-and-what-it-does-to-every-operation---estate-migration)):
-Garage's data and meta volumes were restored while the `garage-1` container consuming them was still
-running.** It had generated a fresh node identity in memory against the empty volumes at first boot;
-the restore then overwrote the on-disk state underneath it, and the two diverged -
-`ServerConn::run: Handshake error: performing handshake: failed opening client secret box`. Fixed by
-stopping the container before mutating its volume, never the reverse: `docker compose stop garage`,
-`rm -f`, then `up -d` to force a clean re-read, healthy within ~45 s. Two rehearsal-only defects were
-caught and fixed BEFORE the real window, exactly because both estates were stood up empty and torn
-down first: the exact pre-rename commit (`ffbe54731`) still declared `name: infrastructure`, patched
-live on the target's checkout to `canari-prod`; and `FRONTEND_HOST_PORT=8080`, copied verbatim from
-the old box's `.env`, collided with the shared host's own `crowdsec` - the nginx vhost had already
-anticipated `8081`, the `.env` had not been reconciled with it.
-
-**Dev was seeded from the target's own live `canari-prod`, not migrated from the old box's separate
-dev database** - the architecturally correct source, since dev is always a disposable periodic copy
-of production and never independently authoritative
-([dev-environment](dev-environment.md)). `copy-prod-to-dev.sh` ran for real on the target:
-442/442 users, every strip verified (push tokens, Stripe customer ids and media references all zero
-afterward). The script itself carried the same stale project name production's rename had already
-made wrong (`PROD_PROJECT="infrastructure"`, needed `"canari-prod"` now that both projects share a
-box and the script finds them by label) - patched live to unblock the copy, fixed properly in
-[PR 1073](https://github.com/emse-students/canari/pull/1073) along with the same defect in
-`infrastructure/local/pull-prod-dump.sh` (`PROD_HOST="canari"`, which now only reaches the relay, not
-the box running postgres). Dev's relay flipped the same way as prod's (`127.0.0.1:3080` on the old
-box), `https://dev.canari-emse.fr/api/version` answered `200` with the target's access log showing
-the request's full `X-Forwarded-For` chain ending in `10.0.0.3`, and the old box's 11 dev containers
-are stopped.
-
-**DESTROYED 2026-09-25: the rollback path above no longer exists, by explicit user consent
-("Tout supprimer maintenant").** All 23 stopped containers (12 prod + 11 dev, listed above) and all
-10 named volumes (`infrastructure_*` and `canari-dev_*` - postgres, garage data/meta, redis,
-media_meta) were removed from the old box; `docker ps -a` and `docker volume ls` there are now both
-empty. **A `docker compose start` can no longer bring either estate back on this box** - the target
-is the only copy from this point on. Verified before deleting: every name matched this section's own
-inventory exactly, none of it Authentik/`miconnect` - a separate stack, on a separate old VM, kept
-alive deliberately as a frozen rollback copy
-([authentik README](../../../infrastructure/authentik/README.md)).
+Production, dev and the self-hosted runner shared one box; they are now separated by compose project
+and by working directory. The runner runs as a dedicated unprivileged account, one install directory
+per repository.
 
 ### THE MOVE WAS FINISHED BY HAND, SO THE FIRST AUTOMATED DEPLOY TOOK PRODUCTION DOWN - 2026-09-25
 
-`v0.18.23` is the first production release cut after the 2026-09-24 move. Every image built, both
-stores took the version, and the estate came up - except `frontend`, which died on
-`driver failed programming external connectivity ... listen tcp4 0.0.0.0:8080: bind: address already
-in use`. Nothing was serving 8081 afterwards, so the host nginx answered `502` on BOTH
-`canari.emse.fr` and `canari-emse.fr`. Production was down for roughly fifteen minutes.
-
-**The cause is the move's own seam.** `compute_frontend_host_port()` in
-`infrastructure/deploy/render-env.sh` returns `8080` for production, and that was correct for as
-long as production had a machine to itself. On the shared host, CrowdSec's Local API has held
-`127.0.0.1:8080` since 2026-09-22 - before Canari arrived. The manual migration worked around it
-without noticing: the frontend was started by hand on **8081**, and `canari.conf` and
-`canari-prod.conf` were written to proxy to 8081. The deploy script was never brought along, and
-nothing ran it until a release did.
-
-**What the machinery got right, and it is worth naming.** `deploy-environment.sh` has a retry that
-removes a stale container holding the port - deliberately allowlisted to this project's own images.
-It looked, found no container (the holder is a systemd service, not a container), refused to touch
-anything and stopped with `resolve the host port 8080 conflict and redeploy`. A denylist would have
-killed CrowdSec. And `release-shipped.sh` refused to move the `prod-released` marker, so the release
-did not report itself shipped while production served the previous one - the check written after
-`v0.16.2` and `v0.16.3` did exactly its job.
-
-**The fix, in three files and one gate.** Production's port is `8081`, in `render-env.sh` (the one
-decider), in `.env.example` and as `DEFAULT_FRONTEND_PORT` in `deploy-environment.sh` - where it had
-been `80`, a fallback that on this host would have collided with the host's own nginx instead. The
-prod compose now publishes on `127.0.0.1` like dev already did, rather than offering the container
-to every other tenant of a machine we do not own. And `deploy-env.test.sh` gained a MEASURED list of
-host ports this machine has already given away (`22`, `80`, `443`, `8080`, each with the reason),
-asserted against every rendered port of both estates. The pre-existing test only asserted that prod
-and dev do not collide with EACH OTHER - which is the 2026-09-01 defect, and not this one.
-
-**Recovery, and why it was not a re-run.** `serve-prod.yml` does `git reset --hard <released sha>`,
-so re-running the failed job replays the released commit and would have failed identically. The
-estate was restored by recreating `frontend` with the correct port, and the host's `.env` and prod
-compose were corrected in place so they match what the fix will render. The `prod-released` marker
-is deliberately left stale: production serves `0.18.23`, but the pipeline did not put it there, and
-the marker is a statement about the pipeline.
+**Rule: do not tidy the production frontend host port back to its old value.** The old default
+collided with a service already bound on the shared host, and the first automated deploy after the
+move failed to bind. The port is computed in `infrastructure/deploy/render-env.sh`, defaulted in
+`deploy-environment.sh`, and the reserved list in `deploy-env.test.sh` is measured on the host, not
+derived. A manual move must be followed by a change to every file that still encodes the old value.
 
 ## 7. Phase 2 - the names
 
-`canari-emse.fr` -> `canari.emse.fr`, `cercle.canari-emse.fr` -> `cercle.emse.fr`,
-`auth.canari-emse.fr` -> `miconnect.emse.fr`. Dev does not appear: it goes internal.
-
-**Every name costs a DSI ticket - there is no delegated zone and no wildcard**, so they are all
-requested at once, together with the two questions the nginx configuration cannot be written
-without.
-
-| Ask | Note |
-| --- | --- |
-| `canari.emse.fr` | **DONE 2026-09-24, no ticket ever needed.** The vhost's `proxy_pass` pointed at `127.0.0.1:3000` (the portal's port, hence `Portail Etudiant ICM`); repointed to `127.0.0.1:8081` (Canari's, matching `canari-prod.conf`), `nginx -t` + reload, verified live: `canari.emse.fr` now serves Canari, `portail-etu.emse.fr` and `canari-emse.fr` unaffected. The DNS record and the GEANT TCS certificate (`/etc/certs/canari.emse.fr/`, issued 2026-09-22, valid to 2027-04-09) already existed - this row never belonged in a DSI request |
-| `cercle.emse.fr` | new. The School reserves `etu.emse.fr` for mail, so it is not `cercle.etu.emse.fr` |
-| `miconnect.emse.fr` | new |
-| AAAA for the above | only if the host has a v6 address. Nothing blocks on it |
-| The certificate path, and one SAN certificate or one per name | **ANSWERED by measurement 2026-09-24, leave it out of the request**: one certificate per name, GEANT TCS, no ACME - see above |
-| Confirm 80/443 inbound are already open | the machine already serves `portail-etu.emse.fr`, so this is expected to be a no-op |
-
-**TURN is deliberately NOT in that request.** It needs an inbound UDP range, which is a different
-kind of ask and is refused more easily than a DNS record; attaching it would put the whole list at
-risk. It goes in its own request when calls are revived ([calls](../frontend/modules/calls.md)).
+Names are requested from the school as DNS records (no delegated zone, no wildcard), one batch per
+request. The legacy names redirect documents and keep serving `/api/`, `/.well-known/` and an open
+tab's assets.
 
 ### Sky MOVES, the wiki and Omeka only get names - decided by the user 2026-09-25
 
-*"Je veux reellement deplacer Sky sur la machine, a l'instar de cercle ou canari. Des que sky.emse.fr
-sera dispo, on pourra couper le lien. Par contre archives.emse.fr et mino.emse.fr resteront sur le
-NAS mitv."* `mitv` itself is NOT being retired: it keeps Immich, MiGallery and the Mino stack, whose
-storage is the reason it exists.
-
-| Service | Today | Target name | Runs on, at the end | Shape |
-| --- | --- | --- | --- | --- |
-| Sky | `sky.mitv.fr`, on `mitv` | `sky.emse.fr` | **the School host** | a MOVE, like [`cercle`](#cercle-has-moved---2026-09-24-and-it-is-the-shape-the-other-two-follow) |
-| Wiki.js (`mino-wikijs-1`) | `wiki.canari-emse.fr` | `mino.emse.fr` | `mitv` | a name, relayed |
-| Omeka S (`mino-omekas-1`) | - | `archives.emse.fr` | `mitv` | a name, relayed |
-
-**THE NETWORK, MEASURED 2026-09-25 - it decides both shapes, and the first reading of it was WRONG.**
-The School host has ONLY public addresses (`193.49.175.67`, `.40`, `.122` on `ens18`) and no
-`10.0.0.0/8` route of its own. `mitv` is `10.0.0.4/16` behind a NAT at `10.0.0.1` - the same LAN as
-the old Canari VM and `miconnect` - and its egress address is `193.49.174.63`, a School address. The
-first pass read the host's routing table, found no `10.0.0.0/8` entry and concluded there was no
-private path. **There is one: the host's DEFAULT gateway `193.49.175.10` routes `10.0.0.4`** -
-`ip route get 10.0.0.4` answers `via 193.49.175.10`, one hop, 0.6 ms. A routing table lists what a
-host knows, never what its gateway knows; `ip route get` and a `curl` are the measurement. So:
-
-- **`mitv` -> School host works directly**: `https://canari.emse.fr/` resolved to `193.49.175.67`
-  answers `200` in 0.1 s from the box.
-- **School host -> `mitv` works directly too**, in plain HTTP over the School network:
-  `http://10.0.0.4:3002/` (Wiki.js) `200`, `:8081` (Omeka S) `302` to its install page, `:3001`
-  (Sky) `200`, each under 0.25 s. No Cloudflare, no tunnel.
-
-**Sky's move needs no new network at all.** Until `sky.emse.fr` exists, `sky.mitv.fr` stays in
-`mitv`'s Cloudflare tunnel and its ingress is repointed from the local container to the School host -
-exactly how `canari-emse.fr` reached the host through the old VM's relay. That ingress IS "the link"
-the user will cut once `sky.emse.fr` is live. What the move owes, by analogy with `cercle`: the SQLite
-file carried across (2 MB, `database/sky.db`, with the app stopped - it holds identities AND
-sessions), Sky's `deploy.yml` given a runner and a `DEPLOY_DIR` on the host (two repository
-variables since Sky #128), a port that collides with nothing
-([measure it first](#the-move-was-finished-by-hand-so-the-first-automated-deploy-took-production-down---2026-09-25)
-- CrowdSec's `8080` was the lesson), a vhost carrying `real_ip`, and the GitHub secrets its deploy
-writes into `.env` - never a hand edit on the box
-([why](#the-name-is-not-in-the-code-of-the-other-four-projects---it-is-an-environment-variable-and-moving-the-default-reaches-nothing-2026-09-25)).
-Its backup takes Canari's shape (Sky #131): a local archive in `/srv/sky-backups` on the host,
-mirrored to `canaribackup@10.0.0.4:/srv/sky-backups` - the private path above, the account Canari's
-own nightly backup uses.
+Sky moves to the shared host; the wiki and the archive only receive new names.
 
 #### Sky moved, 2026-09-27
 
-Window 10:03:10-10:03:38 (28 s of downtime). The old container stopped on `mitv` and set
-`restart=no` - its `restart: always` would otherwise have taken the relay's port back at the next
-reboot. `sky.db`, `sky-legacy.db` and `positions.json` carried with both ends stopped (journal mode
-`delete`, no WAL left), md5 identical on all three, counts read back on the target (748 people, 703
-relationships). The public name then served the School host's build, and its access log named the
-VISITOR's address. The rollback, kept armed: on `mitv`, `docker rm -f sky-relay; docker update
---restart=always sky-sky-1; docker compose ... start sky`.
-
-The two files that ARE the record, neither in a repository:
-
-- **`/etc/nginx/sites-available/sky.conf` on the host** - `server_name sky.mitv.fr`, the
-  `canari.emse.fr` certificate, `real_ip` trusting `10.0.0.4` only (what `mitv` arrives as,
-  measured), proxy to `127.0.0.1:3001`.
-- **`/etc/sky-relay/default.conf` on `mitv`**, run as `docker run -d --name sky-relay --restart
-  unless-stopped --network host -v /etc/sky-relay/default.conf:/etc/nginx/conf.d/default.conf:ro
-  nginx:alpine`. `listen 127.0.0.1:3001` - the tunnel's `localhost:3001` ingress never changed, and
-  the port that was open on every interface is now loopback only. TLS to `193.49.175.67` VERIFIED
-  with SNI `canari.emse.fr`, `Host: sky.mitv.fr`, and `X-Forwarded-For` taken from
-  `Cf-Connecting-IP`: on a docker bridge, `$remote_addr` would have been the bridge address and every
-  visitor would have shared it on the host.
-
-**SKY TOOK `sky.emse.fr`, 2026-09-28.** In order: Authentik's Sky provider gained
-`https://sky.emse.fr/auth/callback` BESIDE the old one; Sky #140 moved `ORIGIN`'s default
-(`docker-compose.prod.yml`, no variable sets it) and shipped as `v1.1.3`; then, the same minute,
-`sky.conf` (the OLD name, reached through the `mitv` relay) became a `301` + `no-store` for pages
-while `/api/` stays proxied - Canari's backend read Sky through `SKY_API_URL=https://sky.mitv.fr`,
-rendered from `infrastructure/.env.example`, which a server-side fetch should not have to follow a
-redirect for. **The redirect had to follow the deploy at once**: Sky builds its OIDC callback from
-`ORIGIN`, so a login begun on the old name would have returned to the new one without its state
-cookie. Measured: old-name pages `301` with path and query, `/api/health` `200`, the new name `200`,
-and Authentik's authorize answering its flow (not a redirect-URI error) for the new callback. The
-pre-edit vhost is `sky.conf.bak-2026-09-28-before-redirect`. **The `/api/` exception goes once
-Canari has shipped the new `SKY_API_URL`**; the relay and the old name stay until nothing names it.
-
-**LE CERCLE TOOK `cercle.emse.fr`, 2026-09-28, on the same shape.** Authentik's `Cercle` provider
-gained `https://cercle.emse.fr/auth/callback` beside the old one; the GitLab variable `ORIGIN`
-became `https://cercle.emse.fr`; `cercle.conf` (the old name) became a `301` + `no-store` for pages
-with `/api/` still proxied - **Canari's top-up webhook** (`association_products."webhookUrl"`, one
-row) targets `https://cercle.canari-emse.fr/api/canari/topup`, and a `POST` answered `301` is replayed
-as a `GET`. Pre-edit copy `cercle.conf.bak-2026-09-28-before-redirect`. **Retrying the `deploy` job
-alone FAILS**: it runs the image the same pipeline's `build:image` made, and the after-script prunes
-old tags, so `le-cercle:<old sha>` was gone ("pull access denied for le-cercle") - a variable change
-is shipped by a NEW `main` pipeline, never a retried job. The same log warns that the
-`le-cercle_cercle-data` volume "was not created by Docker Compose" - it was created by hand at the
-move, and the compose file does not declare it `external`. **The webhook row moved 2026-09-29**
-(`https://cercle.emse.fr/api/canari/topup`, verified `401` unsigned from outside and from
-`canari-prod-social-service-1`). The `/api/` exception still stays: the old name's access log still
-carries browser `GET`s on `/api/` (open tabs, cached pages) - it goes once that traffic has faded.
-
-**THE `/api/` EXCEPTIONS WENT, 2026-10-06.** The two old names' logs (current + rotated, two days)
-held **zero** `/api/` requests - only crawlers and scanners - and no container on the host names
-`sky.mitv.fr` or `cercle.canari-emse.fr` any more (read from each container's environment, secrets
-filtered). `sky.conf` and `cercle.conf` are pure `301`s now (pre-edit copies
-`/root/{sky,cercle}.conf.bak-2026-10-06-before-api-removal`). **The Sky relay on `mitv` STAYS,
-deliberately**: pointing the tunnel straight at the host would make every visitor of the old name
-arrive as `10.0.0.4`, the same address the wiki and Omeka traffic uses, and one abusive crawler
-banned there would take those down with it. The stopped `sky-sky-1` container and its 18 MB
-`/home/mitv/Sky/database` are the last pre-move copy: **deleting them is the user's gesture.**
-
-**EVERY CLIENT OF MICONNECT NOW NAMES `miconnect.emse.fr`, 2026-10-06** (the old name redirects its
-pages and serves the machine endpoints, see above): Le Cercle's CI variables (issuer AND JWKS
-together; its `deploy` was blocked by a dependency-audit gate unrelated to the change, fixed in
-the same sitting), Sky and MiGallery by their defaults, Canari by the `AUTHENTIK_URL` and
-`DEV_AUTHENTIK_URL` secrets - **which take effect with the next pre-release (dev) and stable
-(prod)**, an installed build keeping the old name for good. Wiki.js's strategy is the one left, a
-database edit on `mitv`. The `cercle-data` volume warning is closed by declaring it `external`
-(Le Cercle !26).
-
-**Two traps, both found before they cost anything.** `sky.db` is not the whole state:
-`sky-legacy.db` is written ONCE by `rebuild-db.js`, whenever absent, so the target's first start
-regenerated it from the wrong data, and `positions.json` is recomputed only on a mutation - Sky #132
-archives both and refuses to restore without the first. And the host's `gha-runner` crontab sets
-`BACKUP_DIR=/srv/canari-backups` for every job, so Sky's line names its own
-(`45 4 * * * BACKUP_DIR=/srv/sky-backups /srv/sky/scripts/backup.sh`). First run by hand: archive
-written, mirrored to `mitv:/srv/sky-backups`. The old `mitv` cron line is removed (its crontab saved
-as `/root/crontab.bak-2026-09-27-before-sky-move`) and `~/sky-offsite` on the old VM deleted.
-
-**The two names that stay on `mitv` are therefore a plain reverse proxy**: a School-host vhost for
-`mino.emse.fr` proxying to `http://10.0.0.4:3002`, one for `archives.emse.fr` to `:8081`, the GEANT
-certificate on the host like every other name there. The three shapes weighed before the measurement
-(forward to the public Cloudflare name, a tunnel dialled out from `mitv`, Cloudflare for SaaS) are
-withdrawn - each paid for a path that already existed. **What that path owes before it carries
-traffic**: those ports answer ANY School address today, not only the host - Sky's old container
-publishes `3001` on every interface too (the moved one binds `127.0.0.1`). `mitv` should admit
-`193.49.175.67` to them and refuse the rest of the School network, an allowlist rather than trust in
-the LAN; and the hop is plain HTTP, so the vhost sets the `X-Forwarded-*` headers the apps need to
-build their own URLs rather than assuming the hop is TLS.
-
-What each rename owes, whatever the shape (every item was a defect or a near-miss for Canari,
-[above](#a-browser-cannot-follow-a-redirect-and-keep-its-state---and-the-user-took-that-cost-knowingly-2026-09-25)):
-the app's public origin (`SKY_ORIGIN` for Sky - it drives `og:url`, the canonical link AND
-`adapter-node`'s CSRF check; Wiki.js has its own `SITE_URL`), the Authentik callback added BESIDE the
-old one, every neighbour that names it (Canari reads Sky's tree through `SKY_API_URL`), and a sweep
-of the RUNNING environments. A redirect costs Sky's signed-in visitors their session - cheap, since
-it is a cookie a sign-in restores, unlike Canari's MLS state.
-
-**Put all three names in the pending DSI request for `cercle.emse.fr` and `miconnect.emse.fr`** if it
-has not gone yet: every name is a ticket, and one ticket was the point of batching them.
-
-### The request, written out - copy it, do not rewrite it
-
-**One message, every name at once**, because every name costs a ticket and a second request is a
-second wait. The certificate question that used to be in the table is GONE from it: it was answered
-by measurement above, and a request that asks what the asker could have read is a request that gets
-a slower answer.
-
-**The block below is the message, and it carries French accents on purpose** - it is text to be
-SENT, not documentation prose, and `Portail Etudiant ICM` is not how that site spells its own name.
-Everything around it stays ASCII like the rest of this repository.
-
-```text
-Objet : demande d'enregistrements DNS et de certificats pour deux noms (association Canari)
-
-Bonjour,
-
-L'application Canari (association etudiante, actuellement sur canari-emse.fr) et les
-services qui l'accompagnent vont etre heberges sur la machine 193.49.175.67, celle qui
-sert deja portail-etu.emse.fr. Nous souhaitons a cette occasion passer sous emse.fr.
-
-1. Creation de deux enregistrements A vers 193.49.175.67 :
-     cercle.emse.fr
-     miconnect.emse.fr
-
-2. Pour information, sans demande de votre part : canari.emse.fr pointe deja vers
-   193.49.175.122, une adresse de cette meme machine, et son certificat a ete renouvele
-   le 22/09/2026. Ce nom renvoyait le Portail Etudiant ICM, une configuration nginx
-   restee en place ; nous l'avons corrigee cote machine le 24/09/2026 et il sert
-   desormais Canari.
-
-3. Un certificat par nom pour les deux noms du point 1, livre comme les autres dans
-   /etc/certs/<nom>/ sur 193.49.175.67.
-
-4. Confirmation que les ports 80 et 443 entrants sont bien ouverts sur 193.49.175.67
-   (la machine sert deja portail-etu.emse.fr, donc nous pensons que oui).
-
-5. Si la machine possede une adresse IPv6, les enregistrements AAAA correspondants.
-
-Merci d'avance,
-```
-
-**What is deliberately NOT in it**: TURN's inbound UDP range, which is refused more easily than a
-DNS record and would put the whole list at risk, and `dev`, which goes internal and needs no public
-name at all.
-
-**THE DNS HALF IS DONE, 2026-09-27** (DSI, in the ticket): `canari IN A 193.49.175.122`, and
-`cercle`, `miconnect`, `sky`, `mino` all `IN CNAME canari`. **`archives` was REFUSED** as too generic
-(a School service will likely want it); the user proposed **`archives-mino`** for Omeka, answer
-pending. Measured the same day: the four names resolve to the host and **fail TLS with a
-name-mismatch** - `/etc/certs/` holds only canari, gala, handimines, mep and portail-etu. **The
-certificates are what is owed now**, one per name as above, and nothing moves to a new name before
-its certificate is in `/etc/certs/<name>/`.
-
-**THE FOUR VHOSTS ARE IN, BEFORE THEIR CERTIFICATES, 2026-09-27.** `cercle-emse.conf`,
-`miconnect-emse.conf`, `sky-emse.conf`, `mino-emse.conf` in `sites-enabled/` on the host (the
-directories before them saved in `/root/nginx-sites-bak-2026-09-27-before-emse-names.tgz`), each
-proxying to the SAME backend as the old name (`mino` to `http://10.0.0.4:3002` on the private path)
-and each carrying **the `canari.emse.fr` certificate as a placeholder** - the name-mismatch those
-names already gave, nothing worse. Each file says what to swap when `/etc/certs/<name>/` lands. No
-application setting moved and nothing redirects: the old names still serve everyone. Measured with
-`curl -k`: `cercle` 200, `miconnect` 302 (Authentik's own flow redirect), `sky` 200, `mino` 200.
-The wiki being public on its old name, `mino` opens nothing new.
-
-**THE FOUR CERTIFICATES ARE IN, 2026-09-28.** The DSI's `certdeploy` dropped
-`/etc/certs/{cercle,miconnect,sky,mino}.emse.fr/` (GEANT TLS RSA 1, one per name, valid to
-2027-04-15; each private key checked against its certificate). The four vhosts now name their own
-(pre-swap copy `/root/nginx-sites-bak-2026-09-28-before-real-certs.tgz`). Verified from outside
-WITHOUT `-k`: `cercle` 200, `miconnect` 302 (its flow; `/-/health/live/` 200), `sky` 200, `mino`
-200. **Still nothing redirects and no application setting moved** - each name's switch is its own
-window, one application at a time.
-
-**PORT 80 IS CLOSED ON `193.49.175.122` AT THE SCHOOL'S BORDER, AND OPEN ON `.67`.** `http://`
-to `portail-etu`/`mep` (on `.67`) answers `301`; to `canari.emse.fr` and every CNAME of it (on
-`.122`) the connection fails, while the host's own nginx answers `301` locally - so it is the
-border, not the box. Only `https://` reaches the new names. A browser that tries `https` first hides
-it; a typed `http://` link does not. **Owed in the DSI request**: open 80 on `.122`, or point
-`canari` at `.67`.
-
-**THE WIKI'S OLD NAME HAS ITS REDIRECT WAITING, 2026-09-29.** `wiki.canari-emse.fr` and
-`archives.canari-emse.fr` are NOT on the `mitv` connector: they are rules of the **`canari`
-tunnel** (the old VM's connector), pointing at `http://10.0.0.4:3002` and `:8081` - so winding
-down the old VM cuts both unless their rules move first. `wiki-legacy.conf` on the host
-(`server_name wiki.canari-emse.fr`, the `canari.emse.fr` certificate, a `301` + `no-store` to
-`mino.emse.fr` for everything - the wiki has no machine client) is enabled and tested from `mitv`
-(path and query kept). The switch is two gestures, in this order and back to back:
-
-1. Wiki.js's own `host` setting (`settings` row `host` in `mino-db-wiki-1`) becomes
-   `https://mino.emse.fr`, then `mino-wikijs-1` restarts - it builds the OIDC callback from it;
-2. the `canari` tunnel's rule for `wiki.canari-emse.fr` points at `https://193.49.175.67` with
-   `originServerName: canari.emse.fr` and `httpHostHeader: wiki.canari-emse.fr` (the account token
-   can PUT it - [cloudflare-edge](cloudflare-edge.md#working-against-the-api)).
-
-Authentik's `MinoWiki` provider already accepts the `mino.emse.fr` callback.
+Done; verified through the new name and the legacy path.
 
 ### The deep links are the one thing a redirect cannot fix
 
-`applinks:canari-emse.fr` in the iOS entitlements and `android:host="canari-emse.fr"` in the
-manifest are **compiled into the binary and shipped through two stores**. A redirect does not reach
-them: an installation that is never updated will open the old host for ever.
-
-What makes this survivable is that the repository is already shaped for it. `MOBILE_APP_LINK_HOSTS`
-in `frontend/src/lib/mobile/appSiteAssociation.ts` is ONE list, and it feeds both `.well-known`
-endpoints - so serving the association files for two hosts at once is a one-line change, not a
-design. `PUBLIC_APP_HOSTS` and `DEFAULT_PUBLIC_APP_ORIGIN` in
-`frontend/src/lib/utils/publicAppUrl.ts` are the matching pair on the web side, with a
-`VITE_FRONTEND_URL` override already in place. The four NestJS services read their CORS origins
-from the environment; only their specs name a host.
-
-So the rule for phase 2 is: **both hosts are claimed by the app for several releases, the
-configuration migrates totally, and `canari-emse.fr` keeps answering with 301s indefinitely.** The
-old domain is not decommissioned at the end of this chantier, and no date is written for it until
-the stores say the old builds are gone.
+A redirect from the legacy name cannot preserve a native app's association with it; association files
+must be served from the new name.
 
 ### A browser cannot follow a redirect and keep its state - AND THE USER TOOK THAT COST KNOWINGLY, 2026-09-25
 
-Native apps are unaffected by which public host is used: `mls.bin`, the SQLite message database and
-the device key all live on the OS filesystem under the app's own identity (`fr.emse.canari`), not
-under a public hostname - the WebView itself never navigates away from `tauri://localhost` /
-`tauri.localhost`, and a deep link only tells the OS which installed app to open. Confirmed by
-reading `IMlsService.ts` ("`mls.bin`... meaningless on the web") and `mlsStatePersister.ts`, whose
-equivalent checkpoint on the WEB build is written to **IndexedDB**, which every browser partitions
-strictly per origin.
-
-`https://canari-emse.fr` and `https://canari.emse.fr` are two unrelated origins to a browser, with no
-shared registrable-domain suffix a cookie's `Domain=` could bridge. Nothing - no redirect, no API -
-moves IndexedDB, `localStorage` or a cookie between them. A browser session that lands on
-`canari.emse.fr` for the first time therefore starts from **zero**: no cached history, no MLS
-ratchet state, no refresh-token cookie (forced re-login), and cryptographically it looks exactly like
-adding a brand-new device to every conversation that browser was in - which depends on the healing/
-welcome path the queue already documents as unreliable (item 6, ~3 successes in 10).
-
-**THE PROHIBITION WAS OVERRULED BY THE USER ON 2026-09-25, AND THE MEASUREMENT BELOW STANDS.**
-The cost above was put to them in those terms - a redirected web session looks like a brand-new
-device, and the healing path behind that is ~3 in 10 - and they chose to redirect **every** browser
-visitor unconditionally anyway, so that `canari-emse.fr` exists only for app compatibility
-(*"canari-emse.fr ne doit etre la que pour la compatibilite des apps"*). That is a decision, not a
-refutation: nothing measured here changed, and it is NOT to be relitigated by a later session
-reading the paragraphs below and concluding the redirect is a defect.
-
-**Two constraints the decision does not remove, both load-bearing.**
-
-1. **It is NOT a blanket 301 on the vhost.** Installed native apps keep talking to
-   `canari-emse.fr` for everything under `/api/` (the WebSocket is `/api/ws`, media is `/api/media`
-   - there is no separate `/ws` or `/media/` prefix, which this paragraph used to claim), and their
-   universal-link association files under `/.well-known/` must keep answering there too - an app
-   already on a phone cannot be told otherwise. Only document navigation is redirected; every path
-   an app uses stays proxied.
-2. **The new host must WORK before the redirect is armed.** Arming it while
-   `canari.emse.fr` still had the `pin-salt` defect would have sent every web user to a host where
-   their session could not unlock at all - a worse outcome than the state loss the redirect was
-   accepted for. The ordering is: ship the same-origin fix, verify an unlock on the new host, then
-   redirect.
-
-**ARMED 2026-09-25, after the user verified the new host with a real unlock** - PIN accepted, and the
-history recovered in a second window from a session on the old name. `v0.18.25` was the first
-release to reach the site with the same-origin fix (`v0.18.24` reached both stores and not the web,
-[below](#the-name-is-not-in-the-code-of-the-other-four-projects---it-is-an-environment-variable-and-moving-the-default-reaches-nothing-2026-09-25)).
-
-The redirect lives in `/etc/nginx/sites-available/canari-prod.conf` on the target host, the vhost
-whose `server_name` is `canari-emse.fr`. Like every vhost there it is NOT in this repository, so this
-paragraph is its record; the pre-edit copy is `canari-prod.conf.bak-2026-09-25-before-redirect`.
-Two locations:
-
-- `location ~ ^/(api/|\.well-known/|_app/|fonts/|emoji/)` - **proxied to `127.0.0.1:8081`,
-  never redirected**. `/api/` is every call an installed app makes (a cross-origin `fetch` is
-  refused by CORS, a WebSocket does not follow a redirect); `/.well-known/` is where App Links and
-  Universal Links are verified, and Apple's CDN does not follow a redirect, so losing it would unlink
-  every installed iOS app; `/_app/`, `/fonts/` and `/emoji/` are what a tab ALREADY OPEN on the old
-  name lazy-loads - a module script across origins needs CORS headers the canonical host does not
-  send, so redirecting them would break a live session mid-use instead of at its next navigation.
-- `location /` - **`302` to `https://canari.emse.fr$request_uri`, with `Cache-Control: no-store`**,
-  as armed on 2026-09-25 (a `301` since, see below). Path and query are kept. Not a `301` at first: a
-  301 is cached by every browser that sees it and by the edge, and cannot be recalled if the
-  redirect turns out wrong.
-
-Measured through Cloudflare the same hour: `/`, `/posts?x=1` and `/auth/callback` answer `302` to
-the same path on the new name; `/api/version`, the calendar `feed.ics`, both association files, a
-`/_app/` chunk, a font and an emoji SVG answer `200`; `/api/mls/...` answers `401` and an `/api/ws`
-handshake `401`, both from the backend. The native OIDC callback is `fr.emse.canari://callback`, a
-custom scheme, so redirecting `/auth/callback` on the old name touches no app login. The web build
-has no service worker, so no cached shell can pin a browser to the old origin.
-
-**PROMOTED TO `301` - measured 2026-10-01**: `/` and `/posts` on the old name answer `301` to the
-same path on `canari.emse.fr`, still with `Cache-Control: no-store`. A `302` told a search engine the
-move was temporary and transferred no ranking, which is why the prudence had to stay short. What is
-left was the user's change of address in Google Search Console, declared 2026-10-04 (see [the SEO pass](#the-seo-pass-one-indexable-page-per-site-2026-10-06)).
-
-**What stays true, and what does not.** The IndexedDB measurement above is unchanged: a browser
-arriving on the new name from the old one still starts as a new device. What was withdrawn is the
-rule that no redirect may ever do that - it was the user's to overrule, and they did. If the old name
-is ever decommissioned, installed apps still need a version that bakes the new one to be the floor
-(`minClientVersion`) first; browsers no longer do.
+Origin-bound state (IndexedDB, storage, cookies) does not follow a redirect across origins. The user
+accepted that cost for the legacy name, which therefore serves apps only.
 
 ### THE NAME IS NOT IN THE CODE OF THE OTHER FOUR PROJECTS - IT IS AN ENVIRONMENT VARIABLE, AND MOVING THE DEFAULT REACHES NOTHING, 2026-09-25
 
-Every neighbour that talks to Canari reads its address from a variable with a default in the source:
-Sky's `CANARI_API_URL`, le Cercle's `CANARI_BASE_URL`, Portail-etu's `PUBLIC_CANARI_URL`. Four pull
-requests moved those defaults, all four merged, and **not one running container changed** - because
-every deployment sets the variable EXPLICITLY, so the default is dead code in production. A merged
-rename is not a renamed estate, and the artefact that proves it is `docker inspect`, never the diff.
-
-The source of truth is a CI variable in all four, and never the file on the box - each deploy
-rewrites `.env` from it:
-
-| Project | Where the value really lives | What writes the file |
-| --- | --- | --- |
-| Canari | GitHub secret `BASE_URL` | `render-env.sh`, every deploy |
-| Sky | GitHub secret `CANARI_API_URL` | `deploy.yml` line 142, every deploy |
-| le Cercle | GitLab variable `CANARI_BASE_URL` | `.gitlab-ci.yml` line 224, every deploy |
-| Portail-etu | GitHub secret `PUBLIC_CANARI_URL` | `deploy.yml` line 100, every deploy |
-
-**Sky was misread as a hand-maintained `.env` during this very sweep**, and its file was edited on
-`mitv` on that belief. The edit took effect, which is exactly what made the mistake invisible: the
-next deploy would have reverted it, hours or weeks later, with nothing connecting the regression to
-the edit. What settled it was the compose file's own comment - *"Le .env (secrets) est genere par la
-CD depuis les secrets GitHub"* - and then `deploy.yml` itself. **Read what writes the file before
-concluding that nothing does**, and prefer the workflow to the directory listing: a file with a
-plausible mtime and a human owner looks hand-maintained whether it is or not.
-
-**The same fact was also written three times INSIDE Canari's own pipeline, and the flip found the
-copy nobody had moved.** Which name counts as production is asserted before any build bakes it:
-`android.yml` and `ios.yml` carry their own `case` lists, moved in #1089, and `build.yml` read
-`env.DOMAIN: canari-emse.fr` - a variable `serve-prod.yml` also declares, where it means the LEGACY
-apex on purpose (it feeds `ALLOW_ORIGIN`). Once `BASE_URL` moved, the `v0.18.24` stable was refused
-as `unknown` at the web build while BOTH stores took the version, so phones shipped the fix and the
-site did not. `build.yml` now names `PROD_DOMAIN: canari.emse.fr`. Three classifiers of one fact is
-still two too many ([backlog](../backlog.md)).
-
-So editing the box is never the fix here, only ever a stopgap that hides its own expiry. The
-mirror-image mistake cost production earlier the same day:
-[the first automated deploy after this move took it down](#the-move-was-finished-by-hand-so-the-first-automated-deploy-took-production-down---2026-09-25),
-because a hand-finished state was one no script knew about.
-
-**A flip only lands at the next deploy of that project**, so the three pipeline-fed ones stay on the
-old apex until each ships - which is not a defect as long as both names resolve, and is exactly why
-the old apex must keep answering rather than merely redirecting.
-
-**Before believing any of this is done, read the environment of what is RUNNING**, on every box:
-
-```sh
-for c in $(docker ps --format '{{.Names}}'); do
-  docker inspect "$c" --format '{{range .Config.Env}}{{println .}}{{end}}' | grep canari-emse.fr &&
-    echo "  ^ in $c"
-done
-```
-
-Pipe it through a filter that drops `SECRET`, `KEY`, `TOKEN` and `PASSWORD` before it reaches a
-terminal, a log or a transcript: a container's environment is where the credentials are, and this
-sweep prints all of them otherwise.
-
-Three hits are EXPECTED and must not be flipped: `auth.canari-emse.fr` (the OIDC issuer, below),
-`cercle.canari-emse.fr` and `wiki.canari-emse.fr` (subdomain renames, excluded from phase 2), plus
-the whole dev estate, whose `dev.canari-emse.fr` is deliberate.
+The public name of Canari is an environment variable in each sibling project; changing the default
+in this repository reaches none of them. Change each deployment's variable.
 
 ### The OIDC issuer
 
-Renaming Authentik's public host changes the issuer, which every client configuration names and
-every live token was minted under. It is the one interruption with no gradual path: sessions do not
-survive it, and a forced re-login of every member has been accepted for exactly that reason.
-Several issuers are accepted during the transition; the end state is one. The redirect URIs live in
-Authentik's database, not in this repository - see [authentik](authentik.md).
+The issuer keeps its legacy host name until the identity provider's own move; after any rename, test
+the sign-in callback end to end.
 
 #### THE OLD NAME OF MICONNECT REDIRECTS, AND THE DSI REPLACED THE CAS CALLBACK (2026-10-06)
 
-**The DSI swapped the CAS callback instead of adding to it.** Measured the same day, on the same
-`/source/oauth/login/cas-emse/`: `miconnect.emse.fr` reached the CAS login page, and
-`auth.canari-emse.fr` ended in **`401 Not Authorized to Use CAS`** - every sign-in through the
-School's account on the old name was cut at that moment, for every client still naming it. The
-requirement above ("a DSI request, and it must land BEFORE any client points at the new name") had a
-mirror image nobody wrote down: **the request must say KEEP the old callback.** The next DSI message
-owes that sentence.
-
-**The repair is the old name's vhost, not a client change** (`authentik.conf` on the host, pre-edit
-copy `/root/authentik.conf.bak-2026-10-06-before-redirect`): every PAGE - `/`, `/if/` (flow, user UI,
-admin), `/source/`, `/application/o/authorize/`, end-session - answers `301` + `no-store` to
-`https://miconnect.emse.fr$request_uri`; the MACHINE endpoints stay proxied
-(`/application/o/{token,userinfo,introspect,revoke,device}/`, each provider's `.well-known/` and
-`jwks/`, `/api/`, `/-/health/`). A client that still names the old name keeps exchanging its code
-and reading `userinfo` there - a `POST` that gets a `301` is replayed as a `GET`, and the `iss` it
-expects is built from the Host of ITS request - while its browser leg runs on the new name, where
-the CAS accepts it. Measured: the old name's CAS path now lands on the CAS login page, and the old
-`authorize` lands on the new name's flow with the same query. The native clients' navigation guard
-(`navigation.rs`) accepts any `https://`, so an installed app follows the hop.
-
-**Nothing has to flip at once, and nothing may be removed early.** Each client switches to
-`miconnect.emse.fr` on its own release (Cercle: issuer AND JWKS together, it validates `iss`; Canari
-validates nothing and only exchanges at `AUTHENTIK_BASE_URL`); the old name stays for as long as an
-installed build or a store binary names it, which is for ever on Android and iOS.
-
-#### What the rename touches, read from Authentik 2026-09-27 (`ak shell`, read-only)
-
-**Every provider is `issuer_mode=per_provider`, and Authentik builds the issuer from the REQUEST's
-host**: `https://<host>/application/o/<app-slug>/`. So the issuer a client sees changes the moment
-that client's `MICONNECT_BASE_URL` (or equivalent) changes - never before, and never for the
-others. That is what makes the rename doable ONE CLIENT AT A TIME: each app flips its base URL and
-its own `iss` expectation in one release, and `auth.canari-emse.fr` keeps answering the rest.
-
-| Provider (app slug) | Callback(s) today | Owed at the rename |
-| --- | --- | --- |
-| Canari (`canari`) | `canari-emse.fr`, **`canari.emse.fr`** already, `tauri.localhost`, `localhost:1420/1421`, `fr.emse.canari://callback` | nothing new on the callback side; the base URL + issuer in its config |
-| Canari Dev / Canari Local | `dev.canari-emse.fr`, localhost | nothing (dev keeps its name) |
-| Cercle (`cercle`) | `cercle.canari-emse.fr`, localhost | add `https://cercle.emse.fr/auth/callback` |
-| Sky (`sky`) | `sky.mitv.fr` | add `https://sky.emse.fr/auth/callback` |
-| MinoWiki (`mino-wiki`) | `wiki.canari-emse.fr/login/<strategy-uuid>/callback` | add the same path on `mino.emse.fr` |
-| Archives MINO (`archives`) - Omeka | **`archives.canari-emse.fr`** `/oidc/redirect` and `/s/memoires-des-mines/` | add both on `archives-mino.emse.fr` once the DSI accepts that name |
-| MiGallery (`migallery`) | `gallery.mitv.fr` | nothing (no rename planned) |
-| ~~Portail Etu (`portail-etu`)~~ | DELETED 2026-09-30: last used 2026-07-01, its callback a 404, the refonte has no sign-in | nothing |
-
-**The brand** is one, `domain=auth.canari-emse.fr`, `default=True` - so `miconnect.emse.fr` already
-gets it (a default brand answers any host); its `domain` moves at the end, not before.
-
-**Two sources are registered ON THE OTHER SIDE, and neither is ours to change:**
-
-- **`cas-emse`** - an OIDC source against `cas.emse.fr`. Its callback
-  (`/source/oauth/callback/cas-emse/`) is registered at the DSI's CAS under the OLD host; a member
-  reaching Authentik on `miconnect.emse.fr` and choosing the School login would be refused by CAS
-  until that host is added there. **This is a DSI request**, and it must land BEFORE any client
-  points at the new name.
-- **`alumni`** - a SAML source. Its entity ID and ACS URL carry the host, so the alumni IdP's
-  metadata names the old one. Who operates that IdP is not recorded here - an open question for the
-  user.
+The school's IT department replaced, rather than extended, the CAS callback of the identity
+provider. After any callback change, sign in end to end.
 
 ## 8. What is owed by the USER
 
-Pointers only. The substance is in
-[backlog](../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks).
-
-- the DNS and certificate request to the DSI, as one message;
-- **creating the new Cloudflare tunnel on `rootz-emse.fr` - AND IT MAY NOT BLOCK PHASE 1 ANY MORE.**
-  A new tunnel would have to run on the target host, where 7844 is refused, so that plan is dead as
-  written; if the old VM's web server proxies to the new host instead, phase 1 needs NO Cloudflare
-  change at all and this ceases to be a blocker. **That is the first thing to settle** - the
-  paragraph below is kept because the measurement in it is still the reason a tunnel cannot be
-  created from here.
-  The project's token cannot do it, measured 2026-09-02 and again 2026-09-24 with the same result:
-  `POST /accounts/{acct}/cfd_tunnel` answers `10000 Authentication error`, `GET` answers 200 with
-  an EMPTY list while production runs a tunnel, and Access groups answer 403. A tunnel is a
-  dashboard gesture ([cloudflare-edge](cloudflare-edge.md)). Everything up to step 3 of phase 1 can
-  be done without it; step 4 cannot. The alternative to the gesture is an API token carrying
-  `Cloudflare Tunnel: Edit` on the account;
-- ~~the rights request~~ **GRANTED 2026-09-23** - `docker` plus `ALL=(ALL) NOPASSWD:ALL`, wider
-  than the narrow rule asked for; the older `boudin` account is gone and left no orphaned FILE
-  behind, though it did leave a **membership**: `getent group docker` still named it on 2026-09-24,
-  a group entry for a uid that no longer resolves. Removed. `deluser` does not sweep supplementary
-  groups, and nothing on a box reports one (section 2);
-- **the arbitration on capacity**: 4 vCPU and 11 G against three VMs sized for 8 and 20. Either the
-  VM grows, or what moves onto it is cut down. Nobody can decide that here;
-- nothing further on SSH: the touch is gone and access is unattended (section 2).
+Pointers only; see [backlog](../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks).
 
 ## 9. Open questions
 
-| Question | Who answers | Why it blocks something |
-| --- | --- | --- |
-| ~~Will the DSI grant `docker` and a narrow `sudo`?~~ | **ANSWERED 2026-09-23: both granted** | - |
-| Does Canari's data land on local `/` (45 G, **32 free** since the 2026-09-24 cleanup) or on the NetApp `/export` (24 G, 15 free)? | user with the DSI | they differ in size, free space and recovery; section 5 cannot be written without it. The local disk grew by 5 G, so the question is now about recovery and snapshots rather than about room |
-| What kills a bulk `rm` here, and will it kill a volume restore during the cutover? | DSI, one question | a cutover that dies half-way with no diagnostic is the worst failure mode in this plan |
-| 4 vCPU and 11 G for everything, or does the VM grow? | user, then DSI | it decides whether all three estates move, or only some |
-| ~~What are the file NAMES inside `/etc/certs/<name>/`?~~ | **ANSWERED 2026-09-24, by that one command** | `cert.pem`, `chain.pem`, `fullchain.pem`, `privkey.pem` - the Let's Encrypt layout - with the key `0600 root:root`, which nginx's root master reads. **`/etc/certs/canari.emse.fr/` ALREADY EXISTS and is complete**: the DSI issued that certificate before any request was made. another association's retired vhost also still has one |
-| ~~Is `193.49.175.122` the same machine as `193.49.175.67`?~~ | **ANSWERED 2026-09-24: yes, measured** | `ens18` carries `.67`, `.40` and `.122`. Section 2 |
-| ~~What of the shared box's legacy is ours to clean?~~ | **ANSWERED 2026-09-24 by the user, and DONE** | The nine php-fpm versions, apache2, phpMyAdmin and MySQL are gone; the databases are archived rather than destroyed. What was NOT touched is named above: the host's DSI-managed security agent stays at the version it had, because an agent newer than the DSI's central manager is unsupported - the product, its version and the manager's address are in the operator's local notes and not here, `isc-dhcp-client` stays because this machine is reached only over SSH, and the other associations' web roots under `/export/www` are untouched |
-| Production's Postgres volume size | one command on `canari` | the read-only window is quoted from it |
-| Does Portail-etu become a compose project with a declared `name:` and ceilings like the others? | user | it is the only estate that would not, and the standing mandate is homogeneity everywhere |
-| What was `zookeeper` for, and why is Authentik's database volume on Canari's VM? | nobody has asked | both are dropped by not being recreated, unless one of them turns out to matter |
-| What becomes of the Proxmox host once every VM is off it | user, not yet decided | it is the obvious destination for the reworked backups |
+Kept in the private notes.
 
 ## 10. THE ORDERED LIST - written 2026-09-24, DATA AND TRAFFIC NOW DONE FOR ALL THREE ESTATES
 
-All three estates' data and traffic are on the target: `cercle` and `auth.canari-emse.fr` since
-midday, `canari-emse.fr` and `dev.canari-emse.fr` since the evening - Canari's own move was two
-estates and a CI runner, not one estate
-([reasoning](#canari---moved-2026-09-24-it-was-two-estates-and-a-ci-runner-not-one-estate)), and the
-naming and Postgres-timing decisions it raised were settled in section 4. **Steps 5 and 6's runner
-half is DONE too, as of the same evening** - nothing in this list remains open; phase 1 is complete
-for all three estates. The runbook in section 6 says HOW each step was shaped, and carries Canari's
-own write-up.
-
-1. **DONE 2026-09-24: Canari's runner is registered on the target, STOPPED AND DISABLED.**
-   Org-level, name `canari`, group `canari`, `/opt/actions-runner/runners/canari`, `User=gha-runner`.
-   It was started once to prove registration, then stopped: both it and the Portail-etu runner
-   answer to the same bare `self-hosted` four jobs ask for, so a release published before the
-   estates move could otherwise land on the empty one. **Re-enabling it is step 6, not step 1** - it
-   happens last, in the window, with the old runner stopped in the same breath, or the same race
-   reopens from the other side.
-2. **DONE 2026-09-24: the two CHECKOUTS exist on the target** - `/srv/canari` and `/srv/canari-dev`,
-   clean clones of `origin/main`, owned by `gha-runner`. Not compose directories, unlike the other
-   two estates: Canari's estates are clones of THIS repository that the deploy `git reset --hard`s
-   into, and the deploy paths are still LITERALS in the workflows today (`DEPLOY_PATH:
-   /home/canari/canari` in `serve-prod.yml`, `DEV_DEPLOY_PATH: /home/canari/canari-dev` in
-   `serve-dev.yml`) - moving them to `/srv/canari` and `/srv/canari-dev` is still a commit owed here,
-   not a server-side gesture, and it is NOT this one. **The two halves do not self-heal the same
-   way**: `serve-dev.yml` clones when it finds no `.git`, `serve-prod.yml` assumes the checkout
-   exists - a move that trusts both would leave production's first deploy failing on a missing
-   directory while dev comes up and makes the migration look successful.
-3. **Declare `name: canari-prod` and `name: canari-dev` and repoint EVERY `DEPLOY_PATH` literal
-   to `/srv/canari` and `/srv/canari-dev`, IN ONE COMMIT, and DO NOT MERGE IT BEFORE STEP 6.**
-   THREE literals, not two: `serve-prod.yml`, `serve-dev.yml`, and a hardcoded `path=` inside
-   `scheduled.yml`'s `dev-refresh` job - the plan naming only two here was itself stale until
-   2026-09-24, and would have left the Monday refresh pointed at the OLD box after the cutover with
-   no warning before the next run. A THIRD hazard sits in the same rename: `backup.sh`,
-   `backup-objects.sh` and `restore.sh` each mount named volumes with a raw `docker run`, outside
-   `docker compose`, so nothing in them resolves the project name from the file - they had
-   `infrastructure_garage_data` and its two siblings written IN, which a rename alone would have
-   silently pointed at volumes that do not exist, producing an empty archive with no error.
-   Factored into one `CANARI_COMPOSE_PROJECT` variable (default `canari-prod`) reused across all
-   three scripts and documented in `infrastructure/backup/README.md`, in the SAME commit. None of
-   the three hazards is independent of the others, and the ordinary `gh pr create` cycle ships the
-   moment CI is green - there is no draft state in this repository's CI/CD to hold it. Renaming the
-   project ahead of the physical move brings the CURRENT box up on volumes that do not exist at its
-   next ordinary deploy (met once already on Authentik); repointing the paths ahead of it breaks the
-   CURRENT box's very next deploy, refresh and backup outright, since none of the renamed targets
-   exist there. **Prepare the branch, hold the PR, open it only as part of step 6.**
-4. **Write the target vhosts and the relay, on the pattern `cercle` and `miconnect` already prove.**
-   **DONE 2026-09-24 on the target's half**: `canari-prod.conf` (`canari-emse.fr` ->
-   `127.0.0.1:8081`) and `canari-dev.conf` (`dev.canari-emse.fr` -> `127.0.0.1:3080`) are
-   written, `nginx -t` passed, reloaded - verified from outside with `Host`-header routing (a clean
-   `502 Connection refused` on each, not a config error, and `cercle`/`miconnect` unaffected by the
-   reload). **DONE 2026-09-24 on the old-VM half too.** The claim this step's plan carried - that the
-   `canari` box has NO system nginx at all - was WRONG: nginx 1.26.3 is a pre-existing Debian package
-   there, `inactive`/`disabled` since a pre-containerization setup dated March 2026, not absent. It
-   needed enabling, not installing: `canari-relay-prod.conf` (`:8080` -> the target) and
-   `canari-relay-dev.conf` (`127.0.0.1:3080` -> the target), `nginx -t` passed, `systemctl enable
-   --now nginx`, both verified end to end through the real public names with the target's own access
-   log naming `10.0.0.3` as the client - the same proof `cercle` and `miconnect` used.
-5. **DONE 2026-09-24 - move the crontab and every remaining path naming the old box.** The three
-   cron lines (nightly backup, object backup, per-minute egress probe) already ran from the target
-   under `gha-runner` since the runner flip below; the old box's own crontab was backed up
-   (`/home/canari/backups/crontab.removed-2026-09-24.bak`) then removed entirely (`crontab -r`),
-   confirmed empty. `MICONNECT_SSH_HOST` needed no change: Authentik colocated on the target the
-   same day, so `backup.sh`'s local path (`MICONNECT_PG_CONTAINER`) already applied - see the
-   crontab comment on the target. A backup that still writes to an unwatched VM is indistinguishable
-   from one that works, until it is needed.
-6. **DONE 2026-09-24, in full - data, relay AND runner.** Prod's window: dump, restore, verify by
-   content fingerprint (53/53 tables), flip the relay, stop the old containers - see the write-up
-   below. Dev was not dumped from the old box at all: it was seeded from the target's own now-live
-   `canari-prod` via `copy-prod-to-dev.sh`, which is the architecturally correct source (dev is
-   always a disposable copy of prod, never independently authoritative - `dev-environment.md`). The
-   target's org-level `canari` runner was enabled and started (`gh api
-   orgs/emse-students/actions/runners` confirms `online`); the old box's repo-level `Canari` runner
-   was stopped and disabled the same way every other systemd change on that box went, through the
-   docker-chroot route, since that account's `sudo` needs a password this account does not hold -
-   confirmed `offline` via `gh api repos/emse-students/canari/actions/runners`.
-
-**Loose ends, small and real.** Two manual `authentik_db_2026-09-24_manuel.sql.gz` copies (27 MB
-each, on `canari` and on `mitv`) sit outside the 14-day purge, which only matches `*.tar.gz` - they
-were the safety net taken before the backup chain was repaired; delete them once one SCHEDULED run
-has produced an archive containing Authentik, not before, and deleting a backup is the user's
-gesture. `fix/batch-diagnostic-reads-the-app-not-the-document` is the one local branch still kept
-(its own worktree, an eight-line comment and one backlog row) - ship it or drop it
-deliberately.
+Data and traffic moved for all three estates; what remains is names and cleanups.
 
 ## The SEO pass: one indexable page per site (2026-10-06)
 
-Decided by the user: Le Cercle shows a presentation only, Sky a minimal public home, MiGallery a presentation plus sign-in (never a photo, album or person), the wiki indexes everything public. The method is the Portail-etu's: absolute URLs from the request origin, JSON-LD with `<` and `&` escaped, `robots.txt` `Allow: /$` + `Disallow: /`, and `X-Robots-Tag: noindex, nofollow` as the second voice. **A thrown `redirect()` bypasses `resolve`**, so each handler catches `isRedirect` and rebuilds the response, or a login redirect goes out without the header (measured on Le Cercle's `/compte`). Shipped: MiGallery `v2.15.9`, Sky `v1.1.5`, Le Cercle MR 28. Each repo's `docs/wiki/seo.md` holds the detail. Left on the wiki: no sitemap (Wiki.js has none) and two pages with placeholder descriptions.
-
-## The `mitv` ports stay open on the School network (user, 2026-10-06)
-
-`10.0.0.4:3002` (Wiki.js), `:8081` (Omeka S) and `:3001` (Sky) answer in plain HTTP to the whole School private network. **Decided: left as they are** - the user judges that network not sensitive, and the simplest option is no firewall rule. Nothing is owed. Revisit only if one of these services starts holding something a neighbour on that network must not read.
+Each site exposes one indexable presentation page (absolute URLs from the request origin, JSON-LD
+with `<` and `&` escaped, `robots.txt` allowing only `/$`, `X-Robots-Tag: noindex, nofollow` as the
+second voice). A thrown `redirect()` bypasses `resolve`, so each handler catches `isRedirect`.
 
 ## What this project installed on the shared host, and what the DSI must map (2026-10-09)
 
-The DSI asked who had put `gitlab-runner` on the host. This project had, on 2026-09-24 at 01:52, for Le Cercle's GitLab CI. They answered that such software needs weekly updates, must be mapped by them for an audit and is theirs to install, then that a further install, removal or security setting done without their agreement costs this project its privileges (the rule is in [durable-rules](../durable-rules.md)). Nothing was changed on the host to answer. The list below was read from `dpkg.log`, `apt/history.log`, systemd, the crontabs, nginx and `docker ps`; **`apt` does not record who ran a command, so each row is attributed by its date and by this page.**
-
-| What | Detail |
-| --- | --- |
-| Packages, 2026-09-22 | `docker.io` 26.1.5, `docker-compose`, `docker-cli`, `docker-buildx`, `containerd`, `runc`, `criu`, `tini`, `needrestart` |
-| Packages, 2026-09-23/24 | `rsync`, `jq`, `s-nail`; `cloudflared` installed 01:29 and purged 10:41 the same day |
-| `gitlab-runner` | 19.3.2-1 + `gitlab-runner-helper-images`, repository `gitlab-runner.sources`, shell executor, runner `cercle-portail` locked to the Cercle project, **not** in the unattended-upgrades origins so it never updates itself |
-| Accounts | `gha-runner` (no password, no sudo, group `docker`) and `gitlab-runner` (group `docker`) |
-| Units | `actions.runner.emse-students.canari`, `.portail-etu`, `actions.runner.emse-students-Sky.sky-ecole`, `gitlab-runner` |
-| Containers | Canari prod (12, with `adminer` on `127.0.0.1:8888`) and dev (9), Cercle, Sky, Portail-etu, Authentik prod and test; every port bound to `127.0.0.1`, nginx is the only entry |
-| nginx vhosts | `canari`, `canari-dev`, `canari-prod`, `authentik`, `cercle`, `cercle-emse`, `sky`, `sky-emse`, `miconnect-emse`, `miconnect-test`, `mino-emse`, `wiki-legacy` |
-| Cron (`gha-runner`) | backups at 03:30, 04:00, 04:15 and 04:45, and the egress probe every minute |
-| Directories | `/srv/{canari,canari-dev,canari-backups,canari-egress,le-cercle,le-cercle-backups,miconnect,miconnect-test,sky,sky-backups}`, `/opt/actions-runner` |
-| Removed, 2026-09-24 | `apache2`, PHP 7.0 to 8.4, `phpmyadmin`, MySQL server and client, `automysqlbackup`, `nodejs`/`npm`, `mutt`, `w3m`, the GTK/Mesa/WebKit libraries |
-
-**Three rows are not settled by the logs:** who ran the Docker install of 2026-09-22 and the purges of 2026-09-24 (the dates and the migration say it was this project, nothing records it), and what changed in `/etc/apt/apt.conf.d/50unattended-upgrades` on 2026-09-24 at 01:32, a security setting. **Owed to the DSI: their decision on `gitlab-runner`** - removed, with Le Cercle deployed another way, or kept with their written agreement and an update plan.
+The host is the school IT department's: no install, removal or security setting is made on it
+without their written agreement, asked BEFORE ([durable-rules](../durable-rules.md)). The list of what
+this project installed (container runtime, runner accounts, units, cron entries, directories) was
+handed to the DSI for their audit and is kept in the private notes.

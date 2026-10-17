@@ -7,7 +7,7 @@ Status: DESIGN (2026-10-09). Nothing here has been created or uploaded yet; the 
 ## 1. What the credentials can do (measured 2026-10-09, read-only)
 
 **Google Play** - the service account of [play-vitals](../../tools/play-vitals/README.md) (`PLAY_SA_KEY`,
-default `../canari-harness/play-console-sa.json`). A draft edit was opened, read, and DELETED (204);
+kept outside the repository). A draft edit was opened, read, and DELETED (204);
 nothing was written.
 
 | Call | Result |
@@ -24,8 +24,8 @@ en-US 0 phone, 0 ten-inch, 0 feature graphic, 1 icon (seven-inch unreadable at t
 
 **App Store Connect** - READABLE since 2026-10-12. The issuer ID is
 `b0bcfe88-4988-4f78-a80d-84c17642c7fc` (App Store Connect > Users and Access > Integrations; NOT a
-secret - it identifies the team, and the `.p8` is what signs), the key is `U7X7X373G5`, and its
-`.p8` sits in `~/.appstoreconnect/` on the workstation. That is all an ES256 token needs (an
+secret - it identifies the team, and the `.p8` is what signs), the key id is in the private notes, and its
+`.p8` is kept outside the repository. That is all an ES256 token needs (an
 individual-key token, without the issuer, was refused 401). The app id is `6793060521`
 (`fr.emse.canari`). On 2026-10-12 only `fr-FR` existed on the version localizations, and the
 description named no platform.
@@ -74,19 +74,23 @@ list before upload; never resample silently.
 
 ## 4. Privacy: the constraint that shapes the pipeline
 
-Dev is a full copy of production ([dev-environment](infrastructure/dev-environment.md)), so every
-directory, feed and member list on dev holds REAL people. A fictional account that opens the
-directory screenshots real names. Authentik is ONE instance for dev and prod
-([backlog](backlog.md)), so creating a fictional user is production-adjacent and is the user's
-gesture, never an agent's. Two ways to keep real rows off the screen:
+**Since 2026-10-16 dev holds no production row**: a fictional seed (ten `Fictif` people, six
+fictional associations, their posts and events) plus whatever testers create there
+([dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16)).
+That is option B below, reached for a privacy reason rather than for the screenshots. Two things
+still put a real person on screen: a TESTER's own row (testers sign in with their real MiConnect
+account, so a directory or member list on dev shows their names), and Authentik being ONE instance
+for dev and prod ([backlog](backlog.md)), so creating a fictional sign-in is production-adjacent and
+is the user's gesture, never an agent's. Until 2026-10-16 dev was a full copy of production, and the
+two options were:
 
 * **A. Scoped demo content on the copy.** Fictional users on a fictional campus plus fictional
   associations and posts; only screens where audiences already scope the data are shot. Cheap, but
   the association directory, search and member lists are not scoped and must be avoided. The risk is
   human: one wrong screen leaks.
-* **B. A demo estate with an EMPTY database** (a third compose project, or dev's DB wiped once and
-  frozen) holding only fictional rows. Safe by construction; costs infrastructure and an Authentik
-  client. **Recommended if more than one refresh is expected; A for a one-off.** DECISION OWED.
+* **B. A demo estate with an EMPTY database** holding only fictional rows. **This is what dev is
+  now**; shoot right after a `dev-reset`, before testers sign in, and the checklist below still
+  applies to every frame.
 
 Checklist applied to EVERY frame before it leaves the scratchpad (a person looks at each PNG):
 
@@ -103,10 +107,9 @@ Checklist applied to EVERY frame before it leaves the scratchpad (a person looks
 
 Each step idempotent and logged:
 
-1. **User (owed):** create N fictional Authentik users the way `canari-test-delta` was, with the
-   campus/programme attributes (a mix of saint-etienne and gardanne), credentials into
-   `../canari-harness/test-accounts.json`. They sign in through the `password-login` flow
-   (`PASSWORD_LOGIN_FLOW_SLUG`), no MFA.
+1. **User (owed):** create N fictional Authentik users the way the existing dev test accounts were, with the
+   campus/programme attributes (a mix of saint-etienne and gardanne), credentials kept in the
+   private harness state, never in the repository.
 2. Sign in once per account on dev so core-service creates the profile rows.
 3. Through the real API with those sessions (harness `login.mjs`/`accounts.mjs`): display names and
    generated avatars, 3-4 fictional associations and an institution, members, posts (one with a

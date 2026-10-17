@@ -24,7 +24,7 @@ const ACCOUNT = [
   "mls_pending.db",
   "mls_pending.db-wal",
   "mls_pending.db-shm",
-  "canari_d82cd2268993451edb547bdd7ff278447f6619f67d0d73a520897e54f0714df2.db",
+  "canari_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.db",
   "graine_seeds.json",
   "channel_keys.json",
   "push_context.json",
@@ -79,12 +79,12 @@ check(
 
 // This output is read into a PUBLIC repository, and two of these paths carry an identifier.
 const shortened = classifyNativePaths([
-  "canari_d82cd2268993451edb547bdd7ff278447f6619f67d0d73a520897e54f0714df2.db",
+  "canari_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.db",
   "files/avatar_08f6ee82e9b85af747fb28e6a0157f2d7bb55b82.jpg",
 ]).paths;
 check(
   "every identifier is cut to eight characters",
-  shortened.includes("canari_d82cd226.db") && shortened.includes("files/avatar_08f6ee82.jpg"),
+  shortened.includes("canari_01234567.db") && shortened.includes("files/avatar_08f6ee82.jpg"),
 );
 
 // The one a phone measured on the WebView alone would have called clean.

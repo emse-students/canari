@@ -73,7 +73,7 @@ prod)
   COMPOSE_FILE="infrastructure/docker-compose.prod.yml"
   # The host port the estate's nginx is published on. Read from .env below when it says otherwise;
   # this is only the fallback. It was 80 - the compose file's own default, written when production
-  # had a machine to itself. On the shared host 80 belongs to the host's nginx and 8080 to CrowdSec,
+  # had a machine to itself. On the shared host 80 belongs to the host's nginx and 8080 to another local service,
   # so a fallback that fires here must name the port production actually answers on.
   DEFAULT_FRONTEND_PORT=8081
   ;;
@@ -232,7 +232,7 @@ fi
 # old containers exist; docs/wiki/infrastructure/logging.md.
 # shellcheck source-path=SCRIPTDIR source=../lib/archive-logs.sh
 . "$DEPLOY_PATH/infrastructure/lib/archive-logs.sh"
-archive_logs "$DOCKER_CLI" "$PROJECT" "${CANARI_LOG_ARCHIVE:-$HOME/deploy-log-archive}" 10
+archive_logs "$DOCKER_CLI" "$PROJECT" "$LOG_ARCHIVE_ROOT" 10
 
 dc up -d postgres
 

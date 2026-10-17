@@ -6,10 +6,11 @@
   import { Log } from '$lib/utils/Log';
 
   /**
-   * DISMISSIBLE FOR THE SESSION ONLY, AND THE WHY OF BOTH HALVES. The dev environment carries a FULL
-   * copy of production's database, so it is indistinguishable from production on screen - the same
-   * members, the same communities, the same posts. Somebody who forgets which one they are in will
-   * post to what looks like the real thing. That is why it was permanent.
+   * DISMISSIBLE FOR THE SESSION ONLY, AND THE WHY OF BOTH HALVES. Until 2026-10-16 the dev environment
+   * carried a FULL copy of production's database, so it was indistinguishable from production on
+   * screen - the same members, the same communities, the same posts. Somebody who forgot which one
+   * they were in would post to what looked like the real thing. That is why it was permanent. It now
+   * holds a fictional seed, and the banner still marks a build that is not production.
    *
    * The user overruled that on 2026-09-30 after walking the iPhone build: on a phone the strip
    * costs ~180 px on every screen, which makes the test build unusable to test. So it closes - but

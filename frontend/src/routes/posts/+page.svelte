@@ -2,6 +2,7 @@
   import { internalPath } from '$lib/utils/internalPath';
   import { resolve } from '$app/paths';
   import { Log } from '$lib/utils/Log';
+  import { feedToShowAfterPublish } from '$lib/posts/landingFeed';
   import { onMount, untrack } from 'svelte';
   import { pullToRefresh } from '$lib/actions/pullToRefresh';
   import { page } from '$app/state';
@@ -12,21 +13,9 @@
     getMyScheduledPosts,
     type PostEntity,
     type PostFeed,
-    type PostKind,
     type ScheduledPost,
   } from '$lib/posts/api';
-  import {
-    advanceLastSeen,
-    feedKindFilterOf,
-    feedPageOptions,
-    kindForTabSwitch,
-    landingAfterPublish,
-    rememberFeedKind,
-    type FeedKindFilter,
-  } from '$lib/posts/feedKindFilter';
-  import { setReelFeedSource } from '$lib/reels/reelFeedSource';
-  import FeedKindFilterControl from '$lib/components/posts/FeedKindFilter.svelte';
-  import ReelsEmptyState from '$lib/components/posts/ReelsEmptyState.svelte';
+  import { FEED_FIRST_PAGE_SIZE, FEED_PAGE_SIZE, firstPageHasMore } from '$lib/posts/feedPageSize';
   import { msUntilNextDue, stillScheduled } from '$lib/posts/scheduledDue';
   import { deletePostAfterConfirm } from '$lib/posts/postDeletion';
   import { isFeedAudienceRefusal, isOutsideFeedAudience } from '$lib/posts/feedAudience';
@@ -64,6 +53,7 @@
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
   import Button from '$lib/components/ui/Button.svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
+  import FeedTabRow from '$lib/components/posts/FeedTabRow.svelte';
   import { getToken } from '$lib/stores/auth';
   import { connectivity } from '$lib/stores/connectivity.svelte';
   import { isTransportFailure } from '$lib/utils/transportFailure';
@@ -74,16 +64,13 @@
   import { m } from '$lib/paraglide/messages';
 
   const LAST_SEEN_KEY = 'posts_last_seen_ts';
-  const PAGE_SIZE = 10;
-  /** What `load` asks for first (`listPosts({ limit: 20 })`), and so what one stored page holds. */
-  const FIRST_PAGE_SIZE = 20;
 
   let {
     data,
   }: {
     data: {
       posts: Promise<PostEntity[]>;
-      feedParams: { feed: PostFeed; promo?: number; formation?: string; kind?: PostKind };
+      feedParams: { feed: PostFeed; promo?: number; formation?: string };
     };
   } = $props();
 
@@ -93,6 +80,13 @@
   let postsOverride = $state<PostEntity[] | null>(null);
   /** Resolved value of data.posts - used as fallback when postsOverride is still null. */
   let initialPostsResolved = $state<PostEntity[] | null>(null);
+  /**
+   * THE LIST ON SCREEN, FROM ONE BLOCK. The `{#await}` used to draw the first answer in its `{:then}`
+   * and the handler then moved it into `postsOverride`, drawn by ANOTHER block: every card mounted
+   * twice, and the reel on screen opened its stream twice and logged its interrupted `play()` (Mi 9T,
+   * v1.2.9-alpha.3). The handler fills one of these two in the same turn as the answer.
+   */
+  const shownPosts = $derived(postsOverride ?? initialPostsResolved);
 
   /**
    * THE LIST ON SCREEN WAS DRAWN FROM THE DEVICE'S STORED COPY (`$lib/posts/feedStore`) AND NO
@@ -206,15 +200,13 @@
     if (!seenObserver) {
       seenObserver = new IntersectionObserver(
         (entries) => {
-          const seen: number[] = [];
+          let maxTs = lastSeenTs;
           for (const entry of entries) {
             if (entry.isIntersecting) {
               const ts = elementPostTs.get(entry.target);
-              if (ts !== undefined) seen.push(ts);
+              if (ts !== undefined && ts > maxTs) maxTs = ts;
             }
           }
-          // The CanaReels view leaves the mark where it is (`advanceLastSeen`).
-          const maxTs = advanceLastSeen(lastSeenTs, seen, activeKind);
           if (maxTs > lastSeenTs) {
             lastSeenTs = maxTs;
             localStorage.setItem(LAST_SEEN_KEY, String(maxTs));
@@ -239,13 +231,6 @@
       },
     };
   }
-
-  /** The feed's three modes, in the order they are drawn. The pill itself is written once. */
-  const FEED_TABS: { feed: PostFeed; label: () => string }[] = [
-    { feed: 'associations', label: m.posts_tab_associations },
-    { feed: 'followed', label: m.posts_tab_followed },
-    { feed: 'all', label: m.posts_tab_all },
-  ];
 
   let showCreateModal = $state(false);
 
@@ -404,20 +389,6 @@
    * re-derives it.
    */
   const activeFeed = $derived(data.feedParams.feed);
-  /** The CanaReels filter `load` resolved (URL, remembered, none) - read, never re-derived. */
-  const activeKind = $derived(feedKindFilterOf(data.feedParams.kind));
-
-  /**
-   * THE VIEWER OPENED FROM THE FILTERED FEED SWIPES THROUGH IT (`$lib/reels/reelFeedSource`): the
-   * reels of this tab, from the one touched. Unfiltered, or on a search result, it keeps C7's list.
-   */
-  setReelFeedSource({
-    options: () => {
-      if (activeKind !== 'reel' || searchQuery) return null;
-      const { feed, promo, formation } = data.feedParams;
-      return { feed, promo, formation };
-    },
-  });
 
   /**
    * PAINT THE TAB FROM WHAT IT LAST HELD, THEN REPLACE IT WITH THE ANSWER.
@@ -462,8 +433,8 @@
       .then((posts) => {
         if (cancelled) return;
         firstPage = 'answered';
-        // The first batch asks for 20 where a page is PAGE_SIZE, so a short answer is the end.
-        const more = posts.length >= FIRST_PAGE_SIZE;
+        // A first page shorter than it asked for is the end.
+        const more = firstPageHasMore(posts.length);
         writeFeedCache(key, { posts, hasMore: more });
         initialPostsResolved = posts;
         storeFirstPage(params, posts);
@@ -556,8 +527,8 @@
    * resolved; the only thing that changes between pages is the offset. The caller passes the tab's
    * params as it took them BEFORE its await, never `data.feedParams` read after it.
    */
-  function buildListOptions(params: FeedCacheParams, offset = 0) {
-    return feedPageOptions(params, offset, PAGE_SIZE);
+  function buildListOptions(params: FeedCacheParams, offset: number) {
+    return { limit: FEED_PAGE_SIZE, offset, ...params };
   }
 
   /**
@@ -572,32 +543,14 @@
     showFeed(feed);
   }
 
-  /**
-   * Opens a feed WITHOUT remembering it: the tab a reader chose is theirs, a publish is not a choice.
-   * The CanaReels filter follows the reader's choice across tabs; `kind` overrides it for this visit.
-   */
-  function showFeed(feed: PostFeed, kind?: FeedKindFilter) {
+  /** Opens a feed WITHOUT remembering it: the tab a reader chose is theirs, a publish is not a choice. */
+  function showFeed(feed: PostFeed) {
     const u = new URL(page.url);
     u.searchParams.set('feed', feed);
     u.searchParams.delete('promo');
     u.searchParams.delete('formation');
-    // The viewer's CHOICE, so a `kind=all` a publish wrote lasts that visit only (`kindForTabSwitch`).
-    const nextKind = kind ?? kindForTabSwitch();
-    if (nextKind) u.searchParams.set('kind', nextKind);
-    void goto(resolve(internalPath(feedPath(u))), { invalidateAll: true, noScroll: true });
-  }
-
-  /**
-   * Switches between the whole feed and its CanaReels, and REMEMBERS it for this viewer - a per-viewer
-   * convenience (`feedKindFilter.ts`). The URL ALWAYS says it, `kind=all` included, so the URL alone
-   * decides the view whatever the storage did with the choice.
-   */
-  function selectKind(filter: FeedKindFilter) {
-    if (filter === activeKind) return;
-    Log.d('POSTS', `feed filter: ${activeKind} -> ${filter}`);
-    rememberFeedKind(filter);
-    const u = new URL(page.url);
-    u.searchParams.set('kind', filter);
+    // An old `?kind=` (the 1.2.9 alphas' CanaReels filter) means nothing now: not carried along.
+    u.searchParams.delete('kind');
     void goto(resolve(internalPath(feedPath(u))), { invalidateAll: true, noScroll: true });
   }
 
@@ -609,7 +562,8 @@
     hasMore = true;
     const outcome = await refreshFirstPage({
       params: data.feedParams,
-      read: (params) => listPosts(buildListOptions(params)),
+      // The SAME first page the cold start asks and stores - never a scroll page (Mi 9T, alpha.3).
+      read: (params) => listPosts({ limit: FEED_FIRST_PAGE_SIZE, offset: 0, ...params }),
       stillCurrent: () => issuedFor === tabLoad,
     });
     if (outcome.kind === 'stale') {
@@ -621,7 +575,7 @@
     if (outcome.kind === 'answered') {
       const { posts, params } = outcome;
       postsOverride = posts;
-      hasMore = posts.length >= PAGE_SIZE;
+      hasMore = firstPageHasMore(posts.length);
       writeFeedCache(feedCacheKey(params), { posts, hasMore });
       // An answer: whatever the device drew is now the server's page, and the store follows it.
       firstPage = 'answered';
@@ -654,7 +608,7 @@
         Log.d('POSTS', 'a next page answered for a tab the reader has left - dropped');
         return;
       }
-      if (more.length === 0 || more.length < PAGE_SIZE) hasMore = false;
+      if (more.length === 0 || more.length < FEED_PAGE_SIZE) hasMore = false;
       // Deduplicate in case new posts were inserted between page fetches.
       const existingIds = new Set(currentPosts.map((p) => p.id));
       const newPosts = more.filter((p) => !existingIds.has(p.id));
@@ -674,14 +628,10 @@
    */
   function onPostCreated(landing: PostFeed | null) {
     showCreateModal = false;
-    // A post is not a reel: while filtered, the whole feed is shown, for this visit only.
-    const target = landingAfterPublish(activeFeed, activeKind, landing);
+    const target = feedToShowAfterPublish(activeFeed, landing);
     if (target) {
-      Log.d(
-        'POSTS',
-        `published post lands in "${target.feed}" (${target.kind ?? activeKind}), leaving "${activeFeed}" (${activeKind})`
-      );
-      showFeed(target.feed, target.kind);
+      Log.d('POSTS', `published post lands in "${target}", leaving "${activeFeed}"`);
+      showFeed(target);
       void loadScheduled();
       return;
     }
@@ -857,32 +807,11 @@
     {/if}
   </div>
 
-  <!-- THE CANAREELS FILTER (user, 2026-10-15): a view on the feed, not a place - C7 keeps reels out
-       of every bar. Hidden with the pills while a search replaces the feed. -->
-  <div class="mb-3" class:hidden={!!searchQuery}>
-    <FeedKindFilterControl value={activeKind} onSelect={selectKind} />
-  </div>
-
-  <!--
-    ONE BUTTON, THREE TIMES, IS ONE BUTTON. These were three copies of the same twelve lines
-    differing only in feed key and label, so a change to the pill - the state colours, the padding,
-    an aria attribute - had to be made three times or made wrong twice.
-  -->
-  <div class="mb-5 flex flex-wrap items-center gap-2">
-    <div class="flex flex-wrap gap-2" class:hidden={!!searchQuery}>
-      {#each FEED_TABS as tab (tab.feed)}
-        <button
-          type="button"
-          onclick={() => navigateFeed(tab.feed)}
-          aria-pressed={activeFeed === tab.feed}
-          class="tap-target rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors {activeFeed ===
-          tab.feed
-            ? 'text-text-main border-amber-500/40 bg-amber-500/15'
-            : 'border-cn-border text-text-muted hover:text-text-main'}"
-        >
-          {tab.label()}
-        </button>
-      {/each}
+  <!-- ONE ROW: the three tabs and the CanaReels entry (user, 2026-10-16). Its content hides while a
+       search replaces the feed; its margin stays, as it always did. -->
+  <div class="mb-5">
+    <div class:hidden={!!searchQuery}>
+      <FeedTabRow feed={activeFeed} onFeed={navigateFeed} {authToken} />
     </div>
   </div>
 
@@ -971,13 +900,15 @@
       <div class="space-y-5">
         {#if heldForLanding}
           {@render skeletonCards()}
-        {:else if postsOverride}
-          {@render feedList(postsOverride)}
+        {:else if shownPosts}
+          {@render feedList(shownPosts)}
         {:else}
           {#await data.posts}
             {@render skeletonCards()}
-          {:then initialPosts}
-            {@render feedList(initialPosts)}
+          {:then}
+            <!-- The answer's handler sets `shownPosts` in this same turn; the list is drawn by the
+                 branch above, ONE block, so it does not mount here and again there. -->
+            {@render skeletonCards()}
           {:catch err}
             <!-- A stored copy still being read is about to draw: no error screen flashes before it. -->
             {#if loading || storedReadPending}
@@ -1016,8 +947,6 @@
              rule as `ChatArea.svelte`'s `showSkeleton`: the skeleton is for an empty list. -->
         {#if loading && resolvedPosts.length === 0}
           {@render skeletonCards()}
-        {:else if resolvedPosts.length === 0 && activeKind === 'reel'}
-          <ReelsEmptyState />
         {:else if resolvedPosts.length === 0}
           <div
             class="border-cn-border bg-cn-surface rounded-3xl border border-dashed px-6 py-16 text-center"
@@ -1061,7 +990,7 @@
                     hasMore,
                   });
                   // The next launch must not draw the post just deleted from the stored page.
-                  storeFirstPage(data.feedParams, postsOverride.slice(0, FIRST_PAGE_SIZE));
+                  storeFirstPage(data.feedParams, postsOverride.slice(0, FEED_FIRST_PAGE_SIZE));
                 }}
               />
             </div>
@@ -1077,7 +1006,7 @@
             <div class="flex justify-center py-4">
               <RefreshCw size={20} class="text-text-muted animate-spin opacity-50" />
             </div>
-          {:else if !hasMore && !fromStore && resolvedPosts.length >= PAGE_SIZE}
+          {:else if !hasMore && !fromStore && resolvedPosts.length >= FEED_PAGE_SIZE}
             <p class="text-text-muted text-2xs py-4 text-center opacity-50">
               {m.posts_all_loaded()}
             </p>

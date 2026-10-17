@@ -229,9 +229,17 @@ export function destinationRules(destination: CaptureDestination): DestinationRu
  * `video/webm;codecs=h264,opus` reports its take as `video/x-matroska;codecs=avc1,opus` (Mi 9T,
  * v1.2.9-alpha.1), and the take reached the post composer as `canari-video-*.bin`. H.264 is not a
  * WebM codec, so the engine names the container honestly; the name follows it.
+ *
+ * The image side is every type a canvas encode here can return: the lens photo is JPEG
+ * (`framedCapture.ts`), the editor's flattened photo is WebP (`reelEditor.ts`) - a photo through
+ * the editor reached the composer as `.bin` (Mi 9T, v1.2.9-alpha.3) - and an engine that cannot
+ * encode WebP hands back PNG instead (`canvasBlob.ts`: read `blob.type`). HEIC is not listed: no
+ * canvas encodes it, so only a recorder this code was never read against could produce one.
  */
 const CAPTURE_EXTENSIONS: Readonly<Record<string, string>> = {
   'image/jpeg': 'jpg',
+  'image/webp': 'webp',
+  'image/png': 'png',
   'video/webm': 'webm',
   'video/x-matroska': 'mkv',
   'video/mp4': 'mp4',

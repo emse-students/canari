@@ -156,6 +156,30 @@ export class PostMediaRetentionService implements OnModuleInit {
     return purgeReelMedia(this.httpService, items);
   }
 
+  /**
+   * Re-classes the media of posts that outlive their author's account - posts published as an
+   * association - as `association`, the class media-service's erasure keeps.
+   *
+   * NOT best-effort, unlike everything else here: the account erasure calls it BEFORE its media
+   * part may run, and an object left in its old class would be deleted under a post that stays. So
+   * a failure THROWS, the erasure attempt fails, and the queue retries.
+   */
+  async keepForAssociation(mediaIds: string[]): Promise<void> {
+    if (mediaIds.length === 0) return;
+    const changed = await applyMediaRetentionClass(
+      this.httpService,
+      this.logger,
+      mediaIds,
+      'association'
+    );
+    if (changed === null) {
+      throw new Error(`association media could not be re-classed (${mediaIds.length} object(s))`);
+    }
+    this.logger.log(
+      `[ERASURE] ${mediaIds.length} association post media kept (${changed} changed)`
+    );
+  }
+
   /** Marks media as archived, so the idle sweep never takes them. */
   async classify(mediaIds: string[]): Promise<void> {
     if (mediaIds.length > 0) {

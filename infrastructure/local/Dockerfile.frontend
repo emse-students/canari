@@ -43,12 +43,13 @@ RUN rm -f /usr/share/nginx/html/index.html /usr/share/nginx/html/50x.html
 # holds where someone remembered it is the thing a test is for.
 #
 # connect-src is the list of hosts the APP ITSELF calls, and it must match the code:
-#   - api.klipy.com    the GIF picker's search/trending API (GifPickerModal)
 #   - static.klipy.com the GIF BYTES, fetched to be encrypted before upload
 #     (PostComments.stageMediaFile). Omitting it blocked every GIF comment, silently.
+#   NOT api.klipy.com, since 2026-10-16: the GIF search goes through chat-delivery's
+#   /api/mls/gifs so KLIPY never sees a reader's query, IP or identifier (gifSearch.ts).
 # img-src stays wide (https:) because it renders arbitrary user-posted image URLs;
 # connect-src must not, since it governs what the app can read into memory.
-RUN mkdir -p /etc/nginx/snippets && printf 'add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"' '"'"'unsafe-inline'"'"'; script-src-elem '"'"'self'"'"' '"'"'unsafe-inline'"'"'; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss: ws: https://api.klipy.com https://static.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"'; form-action '"'"'self'"'"'; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n' > /etc/nginx/snippets/csp.conf
+RUN mkdir -p /etc/nginx/snippets && printf 'add_header Content-Security-Policy "default-src '"'"'self'"'"'; script-src '"'"'self'"'"' '"'"'wasm-unsafe-eval'"'"' '"'"'unsafe-inline'"'"'; script-src-elem '"'"'self'"'"' '"'"'unsafe-inline'"'"'; style-src '"'"'self'"'"' '"'"'unsafe-inline'"'"'; connect-src '"'"'self'"'"' blob: wss: ws: https://static.klipy.com; img-src '"'"'self'"'"' data: blob: https:; font-src '"'"'self'"'"' data:; worker-src '"'"'self'"'"' blob:; media-src '"'"'self'"'"' blob:; frame-src '"'"'self'"'"'; form-action '"'"'self'"'"'; object-src '"'"'none'"'"'; frame-ancestors '"'"'none'"'"'; base-uri '"'"'self'"'"';" always;\n' > /etc/nginx/snippets/csp.conf
 
 # The headers of an error this nginx makes itself on an API route (@api_error_*): JSON, never cached,
 # readable cross-origin by the three WebView origins ($api_error_cors_origin, an allowlist - empty
@@ -64,7 +65,11 @@ RUN printf '# THE ACCESS LOG NEVER RECORDS A BEARER TOKEN (prod 2026-10-06: ever
 # is WRITTEN is rewritten - `$request` is replaced by the same three parts with the `token` value\n\
 # redacted, on every route and whichever position it has. The rest of the line is the stock `main`\n\
 # format. The format has its own name because redefining `main` is a duplicate-name error.\n\
+# A GIF SEARCH IS NOT LOGGED EITHER (2026-10-16): `/api/mls/gifs?q=` exists so a reader'"'"'s search is\n\
+# never tied to their address, and this line carries both - so its whole query is dropped. FIRST,\n\
+# because a map takes the first rule that matches.\n\
 map $request_uri $logged_request_uri {\n\
+    "~^/api/mls/gifs(?:[?/]|$)" "/api/mls/gifs?query-redacted";\n\
     "~^(?<uri_before_token>.*[?&])token=[^&]*(?<uri_after_token>.*)$" "${uri_before_token}token=redacted${uri_after_token}";\n\
     default $request_uri;\n\
 }\n\

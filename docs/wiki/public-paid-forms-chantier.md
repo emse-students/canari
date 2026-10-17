@@ -66,6 +66,14 @@ Until then a row past the hold is NOT reused (a new row is written), and the rep
 trace of two payable requests. The migration numbers 084 of WP-P0 and WP-F collide: the second to
 merge renumbers to 085.
 
+## Accords recorded
+
+User, 2026-10-15, in session (relayed by the planning session, recorded at Master's request),
+covering: D1-D3, the backfill of migration 083, the data half of migration 084 before production,
+`minClientVersion` 1.2.7 (the user's own action), the anonymous-form file question refused, and
+Lydia states 1 (paid) and 5 (refused by the payer) to be measured by hand on the homologation payer
+page. No later work package starts until the lead session says so.
+
 ## Open
 
 - The floor amount: 0.50 is inherited from the old processor, Lydia's own minimum is unmeasured (Livrable A).

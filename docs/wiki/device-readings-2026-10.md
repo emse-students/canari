@@ -83,7 +83,7 @@ under it (WDA MJPEG frames 25 ms apart) and a 34 pt drift stays on the feed; the
 letterboxes the take with controls fully visible over the bars (#1539), "Suivant" goes straight to
 the publish step (#1505), "Supprimer et refilmer" asks before discarding (#1506); reactions on posts
 draw as Noto pictures; the feed scrolls with the header and glass bar fixed. Evidence:
-`F:\Programmation\canari-harness\ios-bench/a4-*.png`.
+`<workstation>/canari-harness\ios-bench/a4-*.png`.
 
 Found: the signed calendar subscription refused the reader's OWN campus (`AGENDA_SELECTION_FORBIDDEN`)
 - read fixed in alpha.5 by #1541/#1551; the post composer draft was device-global (#1549); the
@@ -130,7 +130,7 @@ cancelled), and let a refused push consume one of those before it posts a generi
 ## 2026-10-07 - iPhone 12, `v1.0.4-alpha.5` TestFlight build (100000405), accounts gamma then delta
 
 The update took ~4 min after the release run's upload to appear in TestFlight (pull to refresh until
-the row says "Mettre a jour"). Evidence: `F:/Programmation/canari-harness/ios-bench/a5-*.png`.
+the row says "Mettre a jour"). Evidence: `<harness-dir>/ios-bench/a5-*.png`.
 
 `PASS`: **the signed calendar subscription (#1541/#1551)** - a link carrying `campus=saint-etienne`,
 `formation=ICM` and a `sig` for the reader's own spaces (the alpha.4 FAIL is gone), "Copier" answers
