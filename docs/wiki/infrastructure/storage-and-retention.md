@@ -55,8 +55,13 @@ images, ~2 GB per deploy generation of the eight services. Plus untagged `admine
 | `/var/log/nginx` | 62 MB | logrotate |
 | `/var/log/aide` | 58 MB | ? (not checked) |
 | CrowdSec (`crowdsec_api.log` 12 MB live + ~1.1 MB gz every ~2 days, bouncer 8.9 MB) | ~35 MB | CrowdSec's own rotation; gz files accumulate since 2026-09-15 - no deletion observed |
-| Canari containers (16) | capped | `json-file`, `max-size 10m`, `max-file 3` = 30 MB each max |
+| Canari containers (16) | capped | `json-file`, `max-size 10m`, `max-file 3` = 30 MB each max - a SIZE bound, not an age one; the privacy policy's 90 days are reported daily for the live logs and enforced on the deploy-log archive since 2026-10-16 ([logging](logging.md#the-90-day-ceiling-2026-10-16)) |
 | **Non-Canari containers** (cercle, sky, portail-etu, miconnect x3, miconnect-test x3) | `miconnect-server-1` 22.7 MB, `miconnect-worker-1` 14.6 MB, `miconnect-test-server-1` 9.4 MB, `miconnect-test-worker-1` 7.2 MB, others < 1 MB | **NOTHING** - `LogConfig.Config` is `{}` and there is no `/etc/docker/daemon.json`, so these grow until the container is recreated |
+
+**Every host-level row above that can hold a client address** (journald, `/var/log/nginx`,
+CrowdSec, AIDE) and the uncapped co-tenant containers are the DSI's to bound; the request, with the
+exact settings and how to verify each, is [dsi-log-retention-request](dsi-log-retention-request.md)
+(drafted 2026-10-16, not sent).
 
 ### Backups (`/srv/canari-backups`, `gha-runner`)
 

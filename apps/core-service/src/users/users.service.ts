@@ -20,7 +20,7 @@ import {
 import { applyFuzzyNameSearch } from './userSearch';
 import { UserBlocksService } from './user-blocks.service';
 import { EMPTY_PROFILE, legacyColumns, type MiconnectProfile } from './miconnect-profile';
-import { chatDeliveryUrl, mediaUrl, socialUrl } from '../internal/service-urls';
+import { socialUrl } from '../internal/service-urls';
 
 /** Service managing user persistence and OIDC upsert logic. */
 @Injectable()
@@ -476,55 +476,5 @@ export class UsersService implements OnModuleInit {
       );
       return [];
     }
-  }
-
-  /**
-   * Permanently deletes a user account and all associated data across services.
-   * Order: chat-delivery data → social data → user row.
-   * Downstream failures are logged but do not abort the deletion - the user row
-   * is always removed so the account is inaccessible even if a service is down.
-   */
-  async deleteUser(userId: string): Promise<void> {
-    this.logger.log(`[deleteUser] starting userId=${userId}`);
-
-    const headers = { 'x-internal-secret': this.internalSecret };
-
-    // Best-effort: delete chat-delivery data (MLS keys, devices, messages)
-    await axios
-      .delete(chatDeliveryUrl(`internal/users/${encodeURIComponent(userId)}`), { headers })
-      .catch((err) =>
-        this.logger.warn(`[deleteUser] chat-delivery failed userId=${userId}: ${String(err)}`)
-      );
-
-    // Best-effort: delete/anonymise social data (posts, follows, memberships)
-    await axios
-      .delete(socialUrl(`internal/users/${encodeURIComponent(userId)}`), { headers })
-      .catch((err) =>
-        this.logger.warn(`[deleteUser] social failed userId=${userId}: ${String(err)}`)
-      );
-
-    // Best-effort: delete the media this user uploaded. The service holds only ciphertext, so the
-    // recorded uploader is the ONLY thing that can attribute a blob - anything stored before that
-    // was recorded stays reachable by the retention sweep alone.
-    await axios
-      .delete(mediaUrl(`media/internal/users/${encodeURIComponent(userId)}`), {
-        headers,
-      })
-      .then((r) =>
-        this.logger.log(
-          `[deleteUser] media deleted userId=${userId} count=${r.data?.deleted ?? '?'}`
-        )
-      )
-      .catch((err) =>
-        this.logger.warn(`[deleteUser] media failed userId=${userId}: ${String(err)}`)
-      );
-
-    // Hard-delete the user row last so login becomes impossible immediately after
-    // Local to this service, and not best-effort: a block row naming a deleted account would keep
-    // hiding a live person from the search of somebody who no longer exists.
-    await this.blocksService.deleteAllFor(userId);
-
-    await this.userRepository.delete({ id: userId });
-    this.logger.log(`[deleteUser] done userId=${userId}`);
   }
 }

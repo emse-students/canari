@@ -465,6 +465,8 @@ interface ChunkSession {
   /** Gives the reserved bytes back; idempotent. */
   release: () => void;
 }
+/** The owner written on an object that outlives the account that uploaded it. */
+const DELETED_OWNER = '[deleted]';
 
 @Injectable()
 export class MediaService {
@@ -1278,8 +1280,12 @@ export class MediaService {
    * be cited by messages in conversations the deleter cannot see, and the server - holding only
    * ciphertext - can count no references. A deleted message's blob is left to the retention sweep.
    *
+   * IDEMPOTENT, AND A FAILURE IS NOT A COMPLETION. core-service's erasure queue calls this until
+   * it succeeds, so an object whose delete failed keeps its live entry (the retry finds it) and the
+   * controller answers 503 while `failed > 0`. An object already purged is skipped.
+   *
    * @param ownerId  User whose uploads are removed.
-   * @returns Counts for the caller's log: what was deleted, and what could not be.
+   * @returns What was deleted, and what could not be (and will be retried).
    */
   async removeAllOwnedBy(ownerId: string): Promise<{ deleted: number; failed: number }> {
     let deleted = 0;
@@ -1292,19 +1298,27 @@ export class MediaService {
       // the member who uploaded it, but an archived post photo is still that member's and must go
       // with the account. Exemption from the idle sweep is not exemption from erasure, and
       // conflating the two here would have made account deletion silently stop reaching the feed.
-      if (this.survivesAccountDeletion(entry)) continue;
+      if (this.survivesAccountDeletion(entry)) {
+        // The object stays, the person does not: it is no longer attributable to the erased account.
+        this.meta.items[mediaId] = { ...entry, ownerId: DELETED_OWNER };
+        this.erasureIndexDirty = true;
+        continue;
+      }
 
       try {
         await this.storage.delete(mediaId);
         deleted += 1;
       } catch (err) {
         // Same stranding risk as the retention sweep: say so rather than losing the object.
+        // NOT marked purged: the entry is what lets the erasure queue's retry find this object
+        // again. Marking a failed delete as done is how an object used to be stranded for ever.
         failed += 1;
-        this.logger.warn(
-          `Account deletion could not remove ${mediaId} (object may be stranded): ${
+        this.logger.error(
+          `Account deletion could not remove ${mediaId} - left for the erasure retry: ${
             err instanceof Error ? err.message : String(err)
           }`
         );
+        continue;
       }
 
       this.meta.items[mediaId] = {
@@ -1313,10 +1327,25 @@ export class MediaService {
         purgedAt: Date.now(),
         purgeReason: 'manual_delete',
       };
+      this.erasureIndexDirty = true;
     }
 
-    if (deleted > 0 || failed > 0) await this.persistMetadata();
-    this.logger.log(`Account deletion for ${ownerId}: ${deleted} media deleted, ${failed} failed`);
+    // Whenever an entry changed, here or in an earlier call whose write failed: the blob is gone, and
+    // a retry that finds nothing left to delete must still get the index to disk.
+    if (this.erasureIndexDirty) {
+      // Cleared BEFORE the write and set again if it fails: an entry changed by a concurrent call
+      // while this one awaited keeps its own flag, instead of being cleared by this one's success.
+      this.erasureIndexDirty = false;
+      try {
+        await this.persistMetadata();
+      } catch (err) {
+        this.erasureIndexDirty = true;
+        throw err;
+      }
+    }
+    this.logger.log(
+      `Account deletion for ${ownerId.slice(0, 8)}...: ${deleted} media deleted, ${failed} failed`
+    );
     return { deleted, failed };
   }
 
@@ -1820,6 +1849,9 @@ export class MediaService {
       );
     }
   }
+
+  /** In-memory index changed by an account erasure and not yet written (a failed write leaves it set). */
+  private erasureIndexDirty = false;
 
   /**
    * Writes the metadata index ATOMICALLY and ONE WRITE AT A TIME.

@@ -71,7 +71,7 @@ because that is what shows in the band above a keyboard and in its rounded top c
 **The form accessory bar is removed** (up/down arrows and a check, ~45 pt above every keyboard):
 `CanariHideKeyboardAccessoryBar` swaps the WebKit content view's class for a subclass whose
 `inputAccessoryView` is nil. If a future iOS renames `WKContentView` the bar returns and the syslog
-says so (`keyboard accessory bar NOT removed`).
+says so (`keyboard accessory bar NOT removed`). The swap RENAMES the view's class, so every later activation finds the subclass first and returns silently; until 2026-10-15 it looked for the `WKContent` prefix only and logged "NOT removed" on every return to the foreground of a bar that was gone.
 
 Original finding, kept for the reasoning: Android goes edge-to-edge on purpose and keeps the bars,
 reading their insets: `enableEdgeToEdge()` in

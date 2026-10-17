@@ -69,7 +69,7 @@ export class Submission {
 
   /**
    * The id the confirmation that SETTLED this row carried (migration 084): the callback's numeric
-   * `request_id` or `verify-session`'s uuid. `markPaid` writes it once, on the transition, so a
+   * `request_id`, or the uuid when the payer's return confirmed it (`confirmPayment`). `markPaid` writes it once, on the transition, so a
    * later confirmation naming another request can be accused with the evidence beside it.
    */
   @Column({ type: 'varchar', length: 64, nullable: true })

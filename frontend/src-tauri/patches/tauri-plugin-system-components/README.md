@@ -7,6 +7,8 @@
 > Third, the conversation's glass chrome: a button's `menu` (a native UIMenu reported as a `menu`
 > event), `hidden`, `accessibilityLabel`, `foreground` and `imageSide`, and a titled circular button
 > drawn as a pill rather than a bare avatar. Why: `docs/wiki/frontend/mobile.md#the-conversations-native-glass-chrome`.
+> And while such a button's menu is displayed the webview takes no touch (`CanariButton`), so the
+> touch that dismisses the menu is never also the page's - same page.
 
 # tauri-plugin-system-components
 

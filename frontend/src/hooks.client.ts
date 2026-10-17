@@ -277,7 +277,8 @@ if (isTauriRuntime()) {
             // payment host still sends `stripe` (docs/wiki/legacy-compatibility.md), so both are read.
             if (u.protocol === MOBILE_APP_PROTOCOL && CHECKOUT_RETURN_HOSTS.has(u.host)) {
               const path = u.pathname.replace(/\/$/, '') || '/';
-              const sessionId = u.searchParams.get('session_id');
+              // A form return names its submission: the server puts `submission_id` in place of
+              // the `session_id` placeholder, which Lydia never fills (return-url-key.ts).
               const submissionId = u.searchParams.get('submission_id');
               const registered = u.searchParams.get('registered');
               const postId = u.searchParams.get('post_id');
@@ -300,8 +301,6 @@ if (isTauriRuntime()) {
                   );
                 } else if (submissionId) {
                   navigate(`/forms/success?submission_id=${encodeURIComponent(submissionId)}`);
-                } else if (sessionId) {
-                  navigate(`/forms/success?session_id=${encodeURIComponent(sessionId)}`);
                 } else if (registered) {
                   const q = new URLSearchParams({ registered });
                   if (postId) q.set('post_id', postId);
@@ -314,8 +313,6 @@ if (isTauriRuntime()) {
                   navigate('/shop?purchase_cancel=1');
                 } else if (submissionId) {
                   navigate(`/forms/cancel?submission_id=${encodeURIComponent(submissionId)}`);
-                } else if (sessionId) {
-                  navigate(`/forms/cancel?session_id=${encodeURIComponent(sessionId)}`);
                 } else {
                   navigate('/forms');
                 }

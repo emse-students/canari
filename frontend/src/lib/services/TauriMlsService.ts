@@ -9,6 +9,7 @@ import {
   detectRuntimeDeviceOs,
   MLS_LOCAL_STATE_UNDECRYPTABLE,
   VaultOwnerUnprovenError,
+  LocalStateNotReadyError,
   type MlsInitOptions,
 } from '$lib/mls-client';
 import {
@@ -27,6 +28,7 @@ import { getLocale } from '$lib/i18n';
 import { BaseMlsService } from './BaseMlsService';
 import { beginBootSpan, endBootSpan, timeBootSpan } from '$lib/mls-client/bootBenchmark';
 import { keystoreUnlockPrompt } from './biometric';
+import { keystoreCommand } from './keystoreCommands';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
 
@@ -71,6 +73,11 @@ export class TauriMlsService extends BaseMlsService {
   private static readonly MAX_MISSED_HEARTBEATS = 3;
   /** Cache of locally known MLS group IDs, populated after init and updated on group changes. */
   private _knownGroups: Set<string> = new Set();
+  /**
+   * Whether {@link _knownGroups} was filled from the native manager since the state was loaded.
+   * Reset by every load: a cache from the previous state, or none, says nothing about this one.
+   */
+  private _groupsListed = false;
   /** Last known MLS epoch per group (native); keeps sync `getEpoch()` meaningful on Tauri. */
   private _epochByGroupId: Map<string, number> = new Map();
   /**
@@ -743,7 +750,12 @@ export class TauriMlsService extends BaseMlsService {
           // EVERY SWALLOWED BRANCH LOGS. This chain is gated on a network round-trip and a
           // keystore write, and it silently carried the device-identity backup until that backup
           // became `store_device_identity`'s own job - months of drift with nothing in any log.
-          .catch((e) => console.warn('[MLS][Tauri] push_context write after init failed:', e))
+          // `String(e)`: the class names the cause (`TransportFailureError` on an offline start,
+          // when no token exists), and the stack of a known throw is a dozen lines that say nothing.
+          // NOT re-attempted at the reconnect - an open item, see offline-and-weak-network section 15.
+          .catch((e) =>
+            console.warn(`[MLS][Tauri] push_context write after init failed: ${String(e)}`)
+          )
       );
     }
 
@@ -788,6 +800,7 @@ export class TauriMlsService extends BaseMlsService {
     // carries a newer fact than this listing - it is left to that call, listed or not.
     const settled = groups.filter((groupId) => this.untouchedSince(groupId, listStamp));
     for (const groupId of settled) this._knownGroups.add(groupId);
+    this._groupsListed = true;
     for (const groupId of new Set([...this._knownGroups, ...this._epochByGroupId.keys()])) {
       if (listed.has(groupId) || !this.untouchedSince(groupId, listStamp)) continue;
       this._knownGroups.delete(groupId);
@@ -802,6 +815,30 @@ export class TauriMlsService extends BaseMlsService {
       `[MLS][Tauri] group caches rebuilt from the native manager - ${groups.length} group(s)`
     );
     return groups.length;
+  }
+
+  /**
+   * THE GROUP CACHES FOLLOW A STATE OPENED BY THE RECOVERY. `openLocalStateWithKey` marks the client
+   * initialised, so the login after a PIN recovery skips `_initImpl` - and with it the listing that
+   * fills {@link _knownGroups}. iPhone 12, `1.2.9-alpha.2`, 2026-10-15: the native manager held the
+   * group while `getLocalGroups()` answered nothing, so the restore reported "0/1 ... missing" (a
+   * banner for nothing lost), demoted the conversation to pending, and the re-add's external join
+   * failed with "already present locally" - until the next cold start listed it.
+   */
+  protected override async afterStateOpened(): Promise<void> {
+    let groups: number;
+    try {
+      groups = await this.syncGroupCachesFromNative();
+    } catch (e) {
+      // REFUSED, NOT LOGGED AND RUN ON: a login over an unlisted cache is the whole cascade above.
+      throw new LocalStateNotReadyError(e);
+    }
+    console.log(`[MLS][Tauri] state opened by the recovery - ${groups} group(s) listed`);
+  }
+
+  /** See {@link BaseMlsService.heldGroupsKnown}: true once the native manager's groups were listed. */
+  override heldGroupsKnown(): boolean {
+    return this._groupsListed;
   }
 
   /** Tauri-native `invoke` wrapper - calls `creer_groupe` in Rust and updates the local known-groups cache. */
@@ -940,6 +977,7 @@ export class TauriMlsService extends BaseMlsService {
     stateOnDisk?: boolean,
     unattendedKeyRead?: boolean
   ): Promise<void> {
+    this._groupsListed = false;
     await this.invokeInit(deviceKeyB64, state, undefined, stateOnDisk, unattendedKeyRead);
   }
 
@@ -989,14 +1027,30 @@ export class TauriMlsService extends BaseMlsService {
    * background push read, rewritten with the new key and AWAITED - unlike the refresh inside
    * {@link changeDeviceKeyImpl}, because here the order is the point. A refusal propagates: the
    * caller must not move any data while an unattended unlock still opens the old state.
+   *
+   * A REFUSED WRITE DELETES THE ENTRY BEFORE IT PROPAGATES. A refusal that came before the native
+   * side's own deletes (a malformed key, a platform that throws first) would leave the OLD key in
+   * the keystore, and with biometric unlock on that is a silent login on the old PIN, skipping the
+   * server check. With no entry, the next launch asks for the PIN; the biometric flag is left as the
+   * user set it, and the next PIN login writes the entry back (`store_push_context`).
    */
   override async pointUnattendedUnlockAt(newDeviceKeyB64: string): Promise<boolean> {
     if (!isTauriRuntime()) return false;
-    await invoke('actualiser_cle_keystore_avec_devicekey', {
-      deviceKeyB64: newDeviceKeyB64,
-      userId: this.userId,
-      deviceId: this.deviceId,
-    });
+    try {
+      await invoke('actualiser_cle_keystore_avec_devicekey', {
+        deviceKeyB64: newDeviceKeyB64,
+        userId: this.userId,
+        deviceId: this.deviceId,
+      });
+    } catch (e) {
+      console.error('[MLS][Tauri] Keystore refused the new device key - deleting its entry:', e);
+      await invoke(keystoreCommand('deleteKeyBytes'), {
+        payload: { alias: `mls_device_key_${this.userId}_${this.deviceId}` },
+      }).catch((d) =>
+        console.error('[MLS][Tauri] Deleting the keystore entry after a refusal failed too:', d)
+      );
+      throw e;
+    }
     console.log('[MLS][Tauri] Keystore now holds the new device key (unattended unlock moved).');
     return true;
   }

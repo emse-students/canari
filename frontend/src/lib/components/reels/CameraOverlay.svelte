@@ -17,6 +17,17 @@
    * shifted (PR #1859 review, 2026-10-15). The layer is `fixed` on `document.body`, outside the shell,
    * so none of those rules ever applied to IT.
    *
+   * IT DOES COVER THE SCREEN, AND SAYS SO (`coversScreen`). On iOS the conversation's chrome and the
+   * tab bar are NATIVE views drawn above the whole WebView, which no `z-index` reaches: the back
+   * button, the title pill, the menu and the composer's "+" painted over the viewfinder (iPhone 12,
+   * 1.2.9-alpha.1, 2026-10-15). They hide while a surface is registered there, as under every modal -
+   * the post composer's camera was clean only because its modal already was one.
+   *
+   * THE LEFT-EDGE SWIPE IS ITS BACK TOO. The iOS app has no system Back: its only one is the swipe the
+   * conversation draws (`swipeBack`), and this layer is portalled OUT of the conversation, so a swipe
+   * over the review reached nothing (iPhone 12, v1.2.9-alpha.2, 2 of 2). The layer carries the same
+   * gesture, and it closes the TOP overlay - the take first (which asks), then the camera.
+   *
    * THERE IS NO FALLBACK. A camera that cannot open (permission, no device) shows its own refusal
    * screen in CameraScreen; the member closes the layer and uses the gallery picker.
    */
@@ -24,8 +35,17 @@
   import ReelCapture from './ReelCapture.svelte';
   import { m } from '$lib/paraglide/messages';
   import { portal } from '$lib/actions/portal';
+  import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { CaptureDestination } from '$lib/reels/reelCapture';
-  import { abandonHistoryOverlay, pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
+  import {
+    abandonHistoryOverlay,
+    armHistoryOverlayGesture,
+    backHistoryOverlayFromGesture,
+    type HistoryGestureArm,
+    isMobileOverlayLayout,
+    pushHistoryOverlay,
+  } from '$lib/utils/historyOverlayStack';
+  import { swipeBack } from '$lib/actions/swipeBack';
   import type { CameraSession } from '$lib/reels/cameraSession.svelte';
 
   interface Props {
@@ -40,6 +60,13 @@
   }
 
   let { destination, oncapture, onclose, session }: Props = $props();
+
+  /**
+   * Where the overlay stack holds entries (`isMobileOverlayLayout`) - the one predicate the swipe and
+   * the entries share, so a swipe never closes an entry the layout does not stand behind. Read once:
+   * the layer lives for one take.
+   */
+  const narrow = isMobileOverlayLayout();
 
   const entry = () => {
     console.debug(`[camera-overlay] Back closes the camera (${destination})`);
@@ -58,6 +85,9 @@
     pushHistoryOverlay(entry);
   });
 
+  /** The stack's top when the swipe's finger came down: one swipe closes at most that layer. */
+  let gestureArm: HistoryGestureArm | null = null;
+
   onDestroy(() => {
     // A no-op when Back already took the entry off the stack.
     abandonHistoryOverlay(entry);
@@ -66,6 +96,16 @@
 
 <div
   use:portal
+  use:coversScreen
+  use:swipeBack={{
+    onBack: () => {
+      const arm = gestureArm;
+      gestureArm = null;
+      void backHistoryOverlayFromGesture(arm);
+    },
+    onArm: () => (gestureArm = armHistoryOverlayGesture()),
+    enabled: narrow,
+  }}
   class="fixed inset-0 z-(--z-viewer) bg-black text-white"
   role="dialog"
   aria-modal="true"

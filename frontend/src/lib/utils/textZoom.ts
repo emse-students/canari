@@ -61,13 +61,13 @@ export function iosTypeScale(bodyPx: number): number {
 /**
  * Makes the type scale follow iOS Dynamic Type, the way Android's WebView follows its font scale:
  * font sizes grow, lengths stay. WKWebView ignores the setting for ordinary CSS, but a font declared
- * `-apple-system-body` resolves to the user's current body size, so a hidden probe reads it back -
- * no native bridge. Publishes `--type-scale` (multiplied into every `--text-*` token in `app.css`)
- * only: `--text-zoom` keeps meaning "the engine inflated every font" (1 on iOS), so a font the
- * engine does not inflate and the tokens do not size (the reel overlay) is not shrunk. `app.css`
- * divides avatar glyphs by BOTH factors.
+ * `-apple-system-body` resolves to the user's current body size, so a hidden probe reads it back.
+ * Publishes `--type-scale` (multiplied into every `--text-*` token in `app.css`) only: `--text-zoom`
+ * keeps meaning "the engine inflated every font" (1 on iOS), so a font the engine does not inflate
+ * and the tokens do not size (the reel overlay) is not shrunk. `app.css` divides avatar glyphs by
+ * BOTH factors.
  *
- * Call it again when the app comes back to the foreground: the setting changes outside the app.
+ * The probe answers at start-up only; a later change arrives from native ({@link publishIosTypeScaleFor}).
  *
  * @returns the published factor.
  */
@@ -77,30 +77,64 @@ export function publishIosTypeScale(doc: Document = document): number {
   doc.body.append(probe);
   const bodyPx = parseFloat(getComputedStyle(probe).fontSize);
   probe.remove();
+  Log.d(`textZoom: iOS probe reads a ${bodyPx}px body`);
+  return publishIosTypeScaleFor(bodyPx, doc);
+}
+
+/**
+ * Publishes `--type-scale` for a Dynamic Type body size already known.
+ *
+ * @param bodyPx - the body size, in CSS px.
+ * @returns the published factor.
+ */
+export function publishIosTypeScaleFor(bodyPx: number, doc: Document = document): number {
   const scale = iosTypeScale(bodyPx);
-  const root = doc.documentElement;
-  root.style.setProperty('--type-scale', String(scale));
+  doc.documentElement.style.setProperty('--type-scale', String(scale));
   Log.d(`textZoom: iOS body ${bodyPx}px -> --type-scale ${scale}`);
   return scale;
 }
+
+/** The event `canari_ios.mm` dispatches with the body size UIKit reports (`detail.bodyPx`). */
+export const DYNAMIC_TYPE_EVENT = 'canari:dynamic-type';
+
+/** The global the same native call writes, for a page that loads after it. */
+const DYNAMIC_TYPE_GLOBAL = '__canariDynamicTypeBodyPx';
 
 /**
  * Wires Dynamic Type for the platform that has it, and does NOTHING anywhere else. The gate is
  * load-bearing: Chromium rejects the `-apple-system-body` shorthand, so an ungated probe reads the
  * default 16px and would publish a 1 where Android needs its own factor untouched.
  *
- * Publishes now and again each time the app returns to the foreground (the setting is changed
- * outside the app and does not reload the page).
+ * Publishes now, then every time native says the size changed. NOT on `visibilitychange`: a size
+ * changed while the app was backgrounded applied only after a cold start, 3 of 3 on the iPhone 12
+ * (2026-10-15) - the page re-read its probe and either was not told or read WebKit's size before
+ * WebKit had learnt the new one. UIKit knows the size when it posts the change, so `canari_ios.mm`
+ * carries it here, on the change, on each activation and after each page load.
  *
  * @param isIos - true on the Tauri iOS runtime.
  * @returns the teardown (a no-op when the gate is shut).
  */
 export function followIosDynamicType(isIos: boolean, doc: Document = document): () => void {
   if (!isIos) return () => {};
-  publishIosTypeScale(doc);
-  const onForeground = () => {
-    if (doc.visibilityState === 'visible') publishIosTypeScale(doc);
+  const view = doc.defaultView;
+  const known = view
+    ? (view as unknown as Record<string, unknown>)[DYNAMIC_TYPE_GLOBAL]
+    : undefined;
+  if (typeof known === 'number') {
+    Log.d(`textZoom: native already published a ${known}px body`);
+    publishIosTypeScaleFor(known, doc);
+  } else {
+    publishIosTypeScale(doc);
+  }
+  if (!view) return () => {};
+  const onChange = (e: Event) => {
+    const bodyPx = (e as CustomEvent<{ bodyPx?: unknown }>).detail?.bodyPx;
+    if (typeof bodyPx !== 'number') {
+      console.warn(`[textZoom] ${DYNAMIC_TYPE_EVENT} carried no body size:`, bodyPx);
+      return;
+    }
+    publishIosTypeScaleFor(bodyPx, doc);
   };
-  doc.addEventListener('visibilitychange', onForeground);
-  return () => doc.removeEventListener('visibilitychange', onForeground);
+  view.addEventListener(DYNAMIC_TYPE_EVENT, onChange);
+  return () => view.removeEventListener(DYNAMIC_TYPE_EVENT, onChange);
 }

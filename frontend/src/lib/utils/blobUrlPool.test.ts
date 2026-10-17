@@ -141,4 +141,18 @@ describe('BlobUrlPool', () => {
     expect(URL.revokeObjectURL).not.toHaveBeenCalled();
     expect(pool.tryRetain('a')).toBe('blob:first');
   });
+
+  it('dropIdle revokes idle entries only, never one a holder still has', () => {
+    const pool = new BlobUrlPool();
+    pool.retain('held', 'blob:held');
+    pool.retain('idle', 'blob:idle');
+    pool.release('idle');
+
+    pool.dropIdle();
+
+    expect(URL.revokeObjectURL).toHaveBeenCalledWith('blob:idle');
+    expect(URL.revokeObjectURL).not.toHaveBeenCalledWith('blob:held');
+    expect(pool.tryRetain('idle')).toBeNull();
+    expect(pool.tryRetain('held')).toBe('blob:held');
+  });
 });

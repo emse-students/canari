@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { forgetPostComposerMedia } from '$lib/posts/postComposerDraft';
   import { resolve } from '$app/paths';
   /**
    * Always-on layout component for the MLS session lifecycle.
@@ -395,6 +396,8 @@
     if (globalSession.isLoggedIn) deviceHoldsOtherAccount = false;
   });
   let pinLoading = $state(false);
+  /** The PIN typed on the gate, bound to `PinModal` so a refusal can empty it (`refusePinAttempt`). */
+  let pinEntry = $state('');
   let pinStep = $state('');
   let biometricConfigured = $state(false);
   // "Stay signed in" opt-in (browser only): persists the PIN vault across browser restarts.
@@ -684,6 +687,8 @@
     globalChannels.forgetAccount(appendLog);
     // ...and so do its staged attachments and armed replies, keyed by ids the next account may share.
     globalMessaging.forgetAccount(appendLog);
+    // ...and the media held by a closed new-post composer (`holdPostComposerMedia`).
+    forgetPostComposerMedia();
     _loginInProgress = false;
   }
 
@@ -1851,6 +1856,18 @@
     }
   }
 
+  /**
+   * ONE PLACE FOR A KEYPAD ATTEMPT THAT WAS REFUSED, whatever refused it (wrong PIN, no server, a
+   * login that returned without answering): the message, the spinner released, and the typed PIN
+   * EMPTIED - kept, the next digits were appended to it (see `PinModal`'s `pin`).
+   */
+  function refusePinAttempt(msg: string) {
+    pinError = msg;
+    pinLoading = false;
+    pinStep = '';
+    pinEntry = '';
+  }
+
   function handlePinSubmit(submittedPin: string) {
     pinError = '';
     pinLoading = true;
@@ -1905,9 +1922,7 @@
           onLoginFailed: (msg: string, code?: LoginErrorCode) => {
             answered = true;
             clearTimeout(stepTimer);
-            pinError = msg;
-            pinLoading = false;
-            pinStep = '';
+            refusePinAttempt(msg);
             applyPinFailure(globalSession.userId || currentUserId() || '', code);
           },
         })
@@ -1918,9 +1933,7 @@
         // guessing why.
         if (answered || !pinLoading) return;
         clearTimeout(stepTimer);
-        pinError = m.auth_pin_no_result();
-        pinLoading = false;
-        pinStep = '';
+        refusePinAttempt(m.auth_pin_no_result());
         _loginInProgress = false;
         appendLog('[PIN] login() returned without calling back - unblocking the PIN modal.');
       })
@@ -1935,9 +1948,7 @@
         // "your PIN is wrong".
         answered = true;
         clearTimeout(stepTimer);
-        pinError = localizedMessage(e, m.auth_pin_login_failed());
-        pinLoading = false;
-        pinStep = '';
+        refusePinAttempt(localizedMessage(e, m.auth_pin_login_failed()));
         _loginInProgress = false;
         appendLog(`[PIN] login() rejected: ${String(e)}`);
       });
@@ -2059,6 +2070,7 @@
   {showStaySignedIn}
   bind:staySignedIn={pinStaySignedIn}
   externalError={pinError}
+  bind:pin={pinEntry}
   isLoading={pinLoading}
   loadingStep={pinStep}
   isFirstSetup={isFirstPinSetup}

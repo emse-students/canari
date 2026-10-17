@@ -109,6 +109,23 @@ describe('backing out of a notification landing', () => {
     });
   });
 
+  it('both exits end the salon selection: the history close (Back, the iOS swipe) as the in-app back', () => {
+    // The salon row stayed highlighted after a Back: only the in-app back cleared the selection.
+    const viaOverlay = withConversation();
+    const leftByOverlay = vi.fn();
+    viaOverlay.onThreadLeft(leftByOverlay);
+    viaOverlay.selectConversation(KEY);
+    pushed[0]();
+    expect(leftByOverlay).toHaveBeenCalledTimes(1);
+
+    const viaControl = withConversation();
+    const leftByControl = vi.fn();
+    viaControl.onThreadLeft(leftByControl);
+    viaControl.selectConversation(KEY);
+    viaControl.goBackToMenu();
+    expect(leftByControl).toHaveBeenCalledTimes(1);
+  });
+
   it('leaves a landing for a DIFFERENT target alone', () => {
     // `endLandingUnlessTarget` is not "clear the landing", it is "clear it unless this IS it". A
     // landing published for a conversation nobody has opened yet must survive backing out of the

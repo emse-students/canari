@@ -5,6 +5,8 @@ import {
   isAbsentUserError,
 } from '$lib/stores/user';
 import { connectivity } from '$lib/stores/connectivity.svelte';
+import { TransportFailureError } from '$lib/utils/transportFailure';
+import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { m } from '$lib/paraglide/messages';
 import { SvelteMap, SvelteSet } from 'svelte/reactivity';
 // The sentinel is imported rather than restated: that a notice carries this sender id, and that no
@@ -47,6 +49,8 @@ const FAILURE_BACKOFF_MS = 2 * 60 * 1000;
  */
 let lookupsAttempted = 0;
 let lookupsFailed = 0;
+/** A lookup got NO ANSWER since the last reconnect, and that was said - once per spell. */
+let noAnswerSaid = false;
 
 /**
  * What the counters say right now, as a sentence.
@@ -81,6 +85,7 @@ export function displayNameLookupStats(): {
  * case it was written for; what it may not do is outlive the condition it recorded.
  */
 connectivity.onReconnect(() => {
+  noAnswerSaid = false;
   if (failedAt.size === 0) return;
   console.log(
     `[DISPLAYNAME] connectivity returned - retrying ${failedAt.size} suppressed lookup(s)`
@@ -376,6 +381,25 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
         displayNameCache.set(normalized, label);
         failedAt.delete(normalized);
         return label;
+      }
+      // NO ANSWER IS NOT A FAILED LOOKUP OF THIS USER. The accusation below promises "for the next
+      // 120s with no retry", which is false for a transport failure - the reconnect listener above
+      // clears the backoff the moment the server answers - and it printed once per user: six lines
+      // on the Mi 9T's offline cold start (2026-10-15), each counting into a rate that exists to
+      // judge a REFUSING server. Said once per spell instead, with what actually happens.
+      // BY THE TRANSPORT TYPES ONLY - `TransportFailureError` (typed at the throw by `trackedFetch`,
+      // `refresh` and the Tauri fetch) or a deadline - never by `TypeError` at large, which a
+      // programming bug throws too and which must keep its accusation below.
+      if (e instanceof TransportFailureError || e instanceof RequestDeadlineError) {
+        failedAt.set(normalized, Date.now());
+        if (!noAnswerSaid) {
+          noAnswerSaid = true;
+          console.warn(
+            `[DISPLAYNAME] profile lookups get no answer (${String(e)}) - an uncached name renders ` +
+              `as "unknown" until the server answers again, then every such lookup is asked again`
+          );
+        }
+        return cached ?? null;
       }
       // THE ONLY PLACE THAT KNOWS A NAME WAS LOST, AND IT USED TO SAY NOTHING. This file had no
       // logging at all, so a fallback that anonymises a conversation row could not be counted and

@@ -73,6 +73,14 @@
     onRecoverPin?: () => void;
     /** The signed-in account's id, filed with the PIN by a password manager (see `PinAccountField`). */
     account?: string;
+    /**
+     * The PIN being typed, two-way bound so the caller EMPTIES it where it refuses an attempt - a
+     * wrong PIN or no server to ask. The digits used to stay and the next ones were APPENDED: iPhone
+     * 12, 2026-10-16, an offline attempt left six dots, six more were typed once back online, and the
+     * twelve-digit PIN cost a "PIN incorrect" (an offline refusal costs no attempt - nothing reached
+     * the server - but the PIN typed after it did).
+     */
+    pin?: string;
   }
 
   let {
@@ -92,9 +100,9 @@
     resetWithheldNotice = '',
     onRecoverPin,
     account = '',
+    pin = $bindable(''),
   }: Props = $props();
 
-  let pin = $state('');
   let internalError = $state('');
   /**
    * The `<form>`'s id, so the submit button can live in the modal FOOTER and still submit it.
@@ -140,6 +148,18 @@
   $effect(() => {
     if (externalError) internalError = '';
   });
+
+  /**
+   * A FOCUSED CONTROL OF THE SCROLL REGION IS BROUGHT INTO IT. At the largest text sizes the keypad's
+   * last row and the two links under it sit below the fold of the scroll region, and the footer
+   * (outside that region) is what is drawn there - so a control reached by focus (VoiceOver,
+   * a keyboard, a switch) was hidden while it was the one being used. Same shape as the forgot box.
+   */
+  function revealFocused(e: FocusEvent) {
+    const target = e.target;
+    if (!(target instanceof HTMLElement)) return;
+    target.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+  }
 
   const displayError = $derived(externalError || internalError);
 
@@ -238,14 +258,24 @@
     scrollport. The footer is still outside that region (`PinModal.exits` pins it), so the unlock
     button and the way out never scroll.
 
+    THE FORM NEVER SHRINKS AND CARRIES ITS OWN BOTTOM ROOM (`shrink-0`, `pb-4` on the form, not on
+    the scroll region): at the largest accessibility size the "stay signed in" row ended half under
+    the unlock button at the END of the scroll (iPhone 12, v1.2.9-alpha.3). A flex item of the scroll
+    region may be shrunk below its content by WebKit, and a scroll container's own bottom padding is
+    not always part of what it scrolls to; a box's own padding always is.
+
     NO AUTO-SUBMIT: a PIN here is 4 to 8 digits (`isValidPin`) and the code has no notion of a
     complete one, so submitting at the fourth digit would make every longer PIN impossible.
   -->
-  <div class="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 pt-4 pb-2">
+  <div
+    data-pin-scroll
+    onfocusin={revealFocused}
+    class="flex min-h-0 flex-1 flex-col overflow-y-auto overscroll-contain px-6 pt-4"
+  >
     <form
       id={FORM_ID}
       onsubmit={handleSubmit}
-      class="m-auto flex w-full max-w-xs flex-col items-center gap-4 py-2"
+      class="m-auto flex w-full max-w-xs shrink-0 flex-col items-center gap-4 pt-2 pb-4"
     >
       <PinAccountField {account} />
       <header class="flex flex-col items-center gap-2 text-center">
@@ -537,7 +567,10 @@
     `isLoading`: a submit that hangs is one of the states this button exists for.
   -->
   {#snippet footer()}
-    <div class="mx-auto flex w-full max-w-xs flex-col items-center gap-1">
+    <!-- ITS OWN TOP ROOM, NO LINE (a lock screen draws no frame): the keypad cut by the scrollport
+         ends 12 px above the unlock button rather than against it, where rows 7-9 read as covered
+         BY the button at the largest text size (iPhone 12, v1.2.9-alpha.4). -->
+    <div class="mx-auto flex w-full max-w-xs flex-col items-center gap-1 pt-3" data-pin-footer>
       <button
         type="submit"
         form={FORM_ID}

@@ -40,6 +40,7 @@
 - [reels](services/reels.md) — CanaReels server half: the `reel` post kind, its 30-day deletion, the API contract
 - [Community rework](services/community-rework.md) — the master plan for the community subsystem: what triggered it, the three axes, and the crypto axis still to do
 - [NestJS framework](services/nestjs-framework.md) — which major each of the four services runs, why they differ, and what an ESM-only framework did to jest
+- [Account erasure](account-erasure.md) — `DELETE /users/me` as a durable, retried, journalled queue; every service's delete set asserted against its schema; what is NOT covered
 - [Reporting and blocking](moderation-and-blocking.md) — the one report store, and what a block does and does not close
 - [Read receipt privacy](read-receipt-privacy.md) — every path that can move a salon's "Lu par", its evidence, and the closed chantier (2026-10-14)
 
@@ -70,6 +71,7 @@
 - [Auth module](frontend/modules/auth.md) — Login flow, PIN, biometrics, device registration
 - [Chat module](frontend/modules/chat.md) — Conversations, groups, channels, communities
 - [Calls module](frontend/modules/calls.md) — WebRTC audio/video calls, CallKit, SFU relay
+- [Live](frontend/modules/live.md) — Livestream plan (R4/C9): the user's 2026-10-15 decisions, open questions, work packages; not started
 - [Associations module](frontend/modules/associations.md) — Club management, members, calendar, shop, documents
 - [Forms module](frontend/modules/forms.md) — Form builder, submissions, cash/Stripe payments
 - [Calls revival plan](frontend/modules/calls-revival-plan.md) - draft 2026-10-15: decisive tests first, the endpoint x network x call-kind matrix, the App Review video, a server-side switch, WP-C0..C13
@@ -85,7 +87,8 @@
 ### Infrastructure
 
 - [Docker & services](infrastructure/docker.md) — Docker Compose setup, service dependencies
-- [Container logs](infrastructure/logging.md) - the bounded json-file stanza on every service, and the per-deploy archive that keeps a log past the container a deploy recreates
+- [Container logs](infrastructure/logging.md) - the bounded json-file stanza on every service, and the per-deploy archive that keeps a log past the container a deploy recreates, and the privacy policy's 90-day ceiling: what is enforced, what is only reported
+- [DSI log retention request](infrastructure/dsi-log-retention-request.md) - what the shared host logs that names a client (journald, nginx, CrowdSec, AIDE, EDR), the exact setting asked of the DSI for each, and the request in French, drafted 2026-10-16 and not sent
 - [Host WAF body limit](infrastructure/host-waf-body-limit.md) - the school-managed CrowdSec drops any request body over 10 MiB; why every upload body stays under 8 MiB
 - [Nginx routing](infrastructure/nginx.md) — Route table (source of truth), auth_request
 - [Authentik (OIDC)](infrastructure/authentik.md) — Identity provider, OIDC flow, deployment
@@ -108,6 +111,14 @@
 - [Association permissions](association-permissions.md) — The eleven flags measured from their call sites, the one predicate answering "may this user act here", and the two tiers above a member
 - [Cotisations](cotisations.md) — Membership dues: cotisant tags, boutique products, form member pricing
 - [Carte de la Vie Asso](carte-vie-asso.md) — Editable poster generator (drag & drop canvas, PDF export)
+
+### Compliance (GDPR)
+
+- [Register of processing](compliance/register-of-processing.md) - the Art. 30 register: one row per processing across Canari, MiConnect, MiGallery, Sky, Le Cercle and Portail-etu, the processors, and the OPEN gaps
+- [DPIA: MiGallery face recognition](compliance/dpia-migallery-faces.md) - the AIPD: description, necessity, risks (non-members' faces first), measures, residual risk
+- [Breach procedure](compliance/breach-procedure.md) - Art. 33/34 runbook: detection, the 72 h clock, who decides, the CNIL notification, the French user notice, the breach register template
+- [Data-subject requests](compliance/data-subject-requests.md) - the manual procedure for access, export, erasure and objection within 30 days, the request log, the tables to read per service
+- [Dossier for the school's DPO](compliance/dso-dossier.md) - French: the three questions only the DPO can answer, the recipients, the points flagged
 
 ### Development & operations
 

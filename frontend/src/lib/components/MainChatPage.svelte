@@ -1400,10 +1400,7 @@
           onOpenMedia={() => convs.toggleSidePanel('media')}
           onSearchAll={searchConversation}
           onInviteMembers={(ids) => void convs.inviteMembersToCurrentGroup(ids, convCtx())}
-          onBack={() => {
-            channels.selectedChannelConversationId = '';
-            convs.goBackToMenu();
-          }}
+          onBack={convs.goBackToMenu}
           onOpenConversations={convs.openConversationDrawer}
           onOpenSettings={() =>
             convs.toggleSidePanel(isSelectedChannel ? 'settings' : 'conversation')}

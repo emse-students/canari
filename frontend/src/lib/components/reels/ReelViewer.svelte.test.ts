@@ -119,6 +119,25 @@ describe('ReelViewer', () => {
     expect(playing()).toEqual(['m-b']);
   });
 
+  it('while the caption is unfolded, the arrow keys scroll its text and do not turn the reel', async () => {
+    const { playing, key } = await render();
+    // `ReelSlide` marks its unfolded text `data-reel-caption-open`: that mark is the contract.
+    const caption = document.createElement('div');
+    caption.setAttribute('data-reel-caption-open', '');
+    const scrollBy = vi.fn();
+    caption.scrollBy = scrollBy as unknown as typeof caption.scrollBy;
+    document.querySelector('[data-reel-slide="b"]')!.appendChild(caption);
+    await key('ArrowDown');
+    await key('PageUp');
+    expect(playing()).toEqual(['m-b']);
+    expect(scrollBy).toHaveBeenCalledTimes(2);
+    expect(scrollBy.mock.calls[0][0].top).toBeGreaterThan(0);
+    expect(scrollBy.mock.calls[1][0].top).toBeLessThanOrEqual(0);
+    caption.remove();
+    await key('ArrowDown');
+    expect(playing()).toEqual(['m-a']);
+  });
+
   it('does not step past the last reel', async () => {
     const { playing, key } = await render(vi.fn(async () => []));
     await key('ArrowDown');

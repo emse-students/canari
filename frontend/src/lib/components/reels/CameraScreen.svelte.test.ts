@@ -123,6 +123,27 @@ describe('CameraScreen', () => {
     expect(busy.target.querySelector('[data-camera-open-settings]')).toBeNull();
   });
 
+  it('a camera that never asked for the microphone does not name it in its refusal', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const session = new CameraSession(() => Promise.reject(new CameraAccessError('denied', 'd')));
+    const target = document.createElement('div');
+    document.body.appendChild(target);
+    mounted.push(mount(CameraScreen, { target, props: { session, microphoneAsked: false } }));
+    flushSync();
+    await Promise.resolve();
+    await Promise.resolve();
+    flushSync();
+    const alert = target.querySelector('[role="alert"]')!.textContent;
+    expect(alert).toContain(m.reels_camera_denied_body_camera_only());
+    expect(alert).not.toContain(m.reels_camera_denied_body());
+
+    // The reel tab asks both in one request: its refusal names both.
+    const reel = await render(() => Promise.reject(new CameraAccessError('denied', 'd')));
+    expect(reel.target.querySelector('[role="alert"]')!.textContent).toContain(
+      m.reels_camera_denied_body()
+    );
+  });
+
   it('the web has no settings page to offer', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const { target } = await render(() =>
@@ -227,6 +248,31 @@ describe('CameraScreen', () => {
     expect(session.phase).toBe('live');
     expect(second).not.toBe(first);
     expect(second.srcObject).toBe(session.stream);
+  });
+
+  it('asks for the camera ONCE when the permission dialog backgrounds the app, and shows its refusal (Mi 9T, v1.2.9-alpha.1)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let refuse: (e: unknown) => void = () => {};
+    const open = vi.fn(
+      () =>
+        new Promise<MediaStream>((_, reject) => {
+          refuse = reject;
+        })
+    );
+    const { target } = await render(open);
+    // The dialog hides the WebView, the member refuses, the WebView comes back.
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden');
+    document.dispatchEvent(new Event('visibilitychange'));
+    refuse(new CameraAccessError('denied', 'denied'));
+    await Promise.resolve();
+    await Promise.resolve();
+    vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible');
+    document.dispatchEvent(new Event('visibilitychange'));
+    await Promise.resolve();
+    flushSync();
+
+    expect(open).toHaveBeenCalledTimes(1);
+    expect(target.querySelector('[data-camera-fault="denied"]')).not.toBeNull();
   });
 
   it('gives the camera back when the app goes to the background', async () => {

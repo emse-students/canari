@@ -326,7 +326,10 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/ceiling.test.sh
 	@bash .github/scripts/tests/compose-wiring.test.sh
 	@bash .github/scripts/tests/compose-logging.test.sh
-	@bash .github/scripts/tests/dev-copy-guards.test.sh
+	@bash .github/scripts/tests/log-retention.test.sh
+	@bash .github/scripts/tests/local-copy-guards.test.sh
+	@bash .github/scripts/tests/dev-reset-guards.test.sh
+	@bun test ./tools/dev-seed/
 	@bash .github/scripts/tests/dev-gap.test.sh
 	@bash .github/scripts/tests/deploy-env.test.sh
 	@bash .github/scripts/tests/deploy-migrations.test.sh
@@ -358,6 +361,7 @@ test-ci-scripts: lint-ci-scripts
 	@bun .github/scripts/tests/static-compression.test.mjs
 	@bun .github/scripts/tests/adminer-route.test.mjs
 	@bun .github/scripts/tests/access-log-redaction.test.mjs
+	@bun .github/scripts/tests/api-error-cors.test.mjs
 	@bun .github/scripts/tests/codeql-category.test.mjs
 	@bun .github/scripts/tests/declared-duplicates.test.mjs
 	@bun .github/scripts/tests/undeclared-duplicates.test.mjs
