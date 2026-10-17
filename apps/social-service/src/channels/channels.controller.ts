@@ -7,7 +7,6 @@ import {
   Param,
   Patch,
   Post,
-  Put,
   Query,
   HttpException,
   HttpStatus,
@@ -39,10 +38,7 @@ import {
   CHANNEL_NOTIFICATION_LEVELS,
   CHANNEL_WRITE_POLICIES,
 } from './dto/channel.dto';
-import {
-  type SetRolePermissionDto,
-  type SetRolePermissionsDto,
-} from './dto/channel-permission.dto';
+import { type SetRolePermissionDto } from './dto/channel-permission.dto';
 import { LiveGraineSessionsDto } from './dto/live-graine-sessions.dto';
 import { CHANNEL_MESSAGE_RETENTION_DAYS } from './channel-retention.scheduler';
 
@@ -833,27 +829,6 @@ export class ChannelsController {
       xUserId.trim().toLowerCase(),
       body.key,
       body.granted === true
-    );
-  }
-
-  /**
-   * Replaces a role's base permissions wholesale (MANAGE_ROLES required).
-   *
-   * KEPT FOR CLIENTS BUILT BEFORE 2026-08-20, which is every APK in the field: A1 serves the bundle
-   * inside itself and no deploy reaches it. Its removal date is in
-   * `docs/wiki/legacy-compatibility.md`.
-   */
-  @UseGuards(NginxAuthGuard)
-  @Put('roles/:roleId/permissions')
-  setRolePermissions(
-    @Headers('x-user-id') xUserId: string,
-    @Param('roleId') roleId: string,
-    @Body() body: SetRolePermissionsDto
-  ) {
-    return this.service.setRoleBasePermissions(
-      roleId,
-      xUserId.trim().toLowerCase(),
-      body.permissions ?? []
     );
   }
 }
