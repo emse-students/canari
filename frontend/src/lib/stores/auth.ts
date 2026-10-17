@@ -22,6 +22,7 @@ import {
 import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { invoke, isTauri } from '@tauri-apps/api/core';
 import { coreUrl } from '$lib/utils/apiUrl';
+import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import {
   OIDC_MOBILE_POST_LOGOUT_URI,
@@ -657,6 +658,24 @@ export async function leaveSignedOut(): Promise<void> {
     }
   }
   await goto(loginPath, { replaceState: true });
+}
+
+/**
+ * THE SIGN-OUT A USER CHOSE, from a control they tapped (the navbar, the dashboard row): revoke the
+ * session, then leave through MiConnect. One function, so the two controls cannot drift apart.
+ *
+ * A failure is not swallowed by the `void` a click handler gives it: it is logged as an error and
+ * the user is told the sign-out did not finish, so they can retry rather than believe they left.
+ */
+export async function signOutByChoice(): Promise<void> {
+  alog('signout requested by the user');
+  try {
+    await clearAuth();
+    await leaveSignedOut();
+  } catch (e) {
+    console.error('[auth] sign-out the user chose failed:', e);
+    showToast(m.auth_signout_failed());
+  }
 }
 
 /**

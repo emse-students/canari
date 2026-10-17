@@ -5,7 +5,7 @@
   import SessionActionButtons from './SessionActionButtons.svelte';
   import Avatar from '../shared/Avatar.svelte';
   import { goto } from '$app/navigation';
-  import { clearAuth, leaveSignedOut } from '$lib/stores/auth';
+  import { signOutByChoice } from '$lib/stores/auth';
   import { globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -19,8 +19,7 @@
     }
     signingOut = true;
     try {
-      await clearAuth();
-      await leaveSignedOut();
+      await signOutByChoice();
     } finally {
       signingOut = false;
     }

@@ -15,8 +15,10 @@ const clearAuth = vi.fn(
 const leaveSignedOut = vi.fn(async () => {});
 
 vi.mock('$lib/stores/auth', () => ({
-  clearAuth: () => clearAuth(),
-  leaveSignedOut: () => leaveSignedOut(),
+  signOutByChoice: async () => {
+    await clearAuth();
+    await leaveSignedOut();
+  },
 }));
 
 const { default: Navbar } = await import('./Navbar.svelte');

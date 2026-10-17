@@ -2736,15 +2736,22 @@
   "assoc_new_create_btn": "Créer l'association",
   "dashboard_subtitle": "Accès rapide à toutes les sections",
   "dashboard_account_heading": "Compte",
-  "dashboard_profile_btn": "Profil",
-  "dashboard_settings_btn": "Paramètres",
-  "dashboard_theme_btn": "Thème",
-  "dashboard_logout_btn": "Déconnexion",
-  "dashboard_profile_title": "Mon profil",
-  "dashboard_settings_title": "Réglages du compte",
-  "dashboard_theme_title": "Changer de thème (automatique, clair, sombre)",
-  "dashboard_logout_title": "Se déconnecter",
   "dashboard_explore_heading": "Explorer",
+  "dashboard_identity_summary": "Voir mon profil",
+  "dashboard_profile_label": "Mon profil",
+  "dashboard_managed_heading": "Mes associations",
+  "dashboard_signout_label": "Se déconnecter",
+  "auth_signout_failed": "La déconnexion n'a pas abouti. Réessayez.",
+  "dashboard_unread_notifications_label": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} notification non lue",
+        "countPlural=other": "{count} notifications non lues"
+      }
+    }
+  ],
   "assoc_list_heading": "Associations",
   "assoc_list_subtitle": "Découvrez les associations de la communauté",
   "assoc_list_load_error_fallback": "Impossible de charger les associations",
