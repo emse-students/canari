@@ -39,7 +39,7 @@ stays valid in both orders.
 
 **Question: what reaches the host from the internet?**
 
-Documented, with a control, on 2026-09-24 ([estate-migration](estate-migration.md#the-network-shape-settled-2026-09-24---only-22-80-and-443-enter-the-target-from-anywhere)):
+Documented, with a control, on 2026-09-24 ([estate-migration](estate-migration.md)):
 **only 22, 80 and 443 enter, and 22 only from the campus network** - a container published on a
 high port answered from the host itself and timed out from outside. The filter is the School's
 network border, not the host. That page also records **TCP 7844 blocked OUTBOUND** (the reason no
