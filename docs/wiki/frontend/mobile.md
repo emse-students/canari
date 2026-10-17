@@ -426,7 +426,8 @@ every plugin with a JS command surface, and an exemption there is how that test 
 | Storage | IndexedDB `CanariDBLog`, store `chunks`, auto-increment keys (two web tabs never collide), an index on each record's size. The same database on the web and in the Tauri WebView: one implementation, nothing native to verify. |
 | Write | Batched in memory, written as **one new record per batch**: at 32 KiB or 200 lines, when the app leaves the screen (`onAppScreenChange`, which is the only honest signal on Android, plus `pagehide`), and before an export. **Never on a timer.** Nothing already written is rewritten. |
 | Bound | After each write, the oldest records are deleted until the total is under **2 MiB** (UTF-16 code units; a redacted line is ASCII). Rotation is by SIZE. The newest record is never evicted. |
-| Failure | No IndexedDB, or a failed write: persistence stops for the process, said ONCE at `error` (`[APPLOG] the in-app log is no longer written to disk`), lines stay in a 256 KiB memory tail (oldest dropped and counted), and the export header names the state. Not a second storage path. |
+| Failure | No IndexedDB, or a failed write ON screen: persistence stops for the process, said ONCE at `error` (`[APPLOG] the in-app log is no longer written to disk`), lines stay in a 256 KiB memory tail (oldest dropped and counted), and the export header names the state. **The export still reads the ring already on disk** - it read the memory tail alone, 19 KB against 191 KB stored (iPhone 12, 1.2.9-alpha.3). Not a second storage path. |
+| Write cut short off screen | WebKit aborts the IndexedDB transaction in flight when it suspends a backgrounded WebView, so on iOS the leave-screen flush lost that race (`log write failed` 69 ms after `[LIFECYCLE] App in background`, alpha.2 and alpha.3). A write that fails while the app is OFF screen (known from the same `onAppScreenChange` that asked for it) is not a storage failure: its lines go back in front, the connection is dropped, the batch thresholds stop asking until the app is back, and the return writes them. WebKit delivers that abort on RESUME, so the app may already be on screen when it arrives: the hold then applies only while the app is still off screen, and otherwise the lines are written again at once. One `info` line says so. `appLog.test.ts` pins it. |
 | Wipe | `wipeDeviceToFactory` calls `discardAppLog()` (empties, closes, stops writing for the process) before the `CanariDB*` prefix delete removes the database; `onversionchange` closes the connection too, so the delete cannot block. A sign-out does NOT clear it: "I was logged out" is exactly the report it must survive. The cost, accepted rather than missed: the next account to sign in on that device can export the previous one's REDACTED lines (8-character id prefixes, times, error kinds). |
 | Export | Settings > About > **Save the log**: user-initiated only, through `downloadDecryptedFile` - the browser download on the web, the native save dialog in the app (Android's document picker, iOS's Files picker, the desktop save panel). A header gives version, platform class (`android-app`, never the model), export time and UTC offset, line / redacted / dropped counts and the storage state. |
 
@@ -1157,6 +1158,41 @@ WRONG picker opening: "Photos" reached a file input, and WebKit's own Photothequ
 Choisir les fichiers sheet followed Canari's menu. The library and files entries are now NATIVE pickers
 and the camera an input with `capture`, so iOS shows one menu
 ([chat](modules/chat.md#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)).
+
+**A TOUCH THAT DISMISSES A NATIVE MENU IS THE MENU'S, NEVER THE PAGE'S (2026-10-16).** The web
+knows nothing of a `UIMenu`: the composer's surface never becomes `menu` on iOS, so no overlay entry
+is pushed for the native "+". And the touch that dismissed the menu went on into the WebView. With
+the "+" menu open, ONE edge swipe closed the menu (UIKit) and the conversation (the page's swipe,
+which saw only the conversation open): iPhone 12, `v1.2.9-alpha.4`, 12 of 12. The in-app log proved
+which Back path fired. There was one `gesture Back closes overlay N, 0 left open` per swipe, with N
+going 1, 2, 3 over three open-conversation-open-menu rounds: ONE push per round, the
+conversation's. There was no second path, and #1945's arm had nothing to arm against. So
+`CanariButton` (the patch, `ButtonComponent.swift`) sets the WebView's `isUserInteractionEnabled`
+to false in `willDisplayMenuFor`. **A WebView left held is a dead app**, so the hold is released by
+`willEndFor`, by `apply()` clearing the menu, by the button leaving the window (or being released),
+or by the app becoming active (`didBecomeActive`, after a call or the app switcher tore the menu
+down). No timer is involved. The holders are a SET of buttons by identity, not one flag per button:
+every button shares the one WebView, so one button's release cannot give touch back under another's
+open menu, and a release by a non-holder changes nothing. The dismissing touch is hit-tested while the WebView is out of reach, so it never becomes
+the page's, whatever order `willEnd` and the touch arrive in. A tap outside the menu no longer
+reaches the web button under it either. **Owed on the iPhone (a build is needed, the Swift is only
+compiled here):** with the "+" open in a DM and in a salon, one edge swipe closes only the menu and
+logs NO `gesture Back` line; a second swipe leaves the conversation; a pick ("Photos", the camera)
+still opens its target.
+
+**THE "+" MENU DROPS THE KEYBOARD, AND THAT IS THE PLATFORM'S, NOT THE HOLD'S (accepted 2026-10-17).**
+iPhone 12, `v1.2.9-alpha.5`, 8 of 8 ([device-verification](../device-verification.md)). The syslog
+orders it. Right after the touch-up, UIKit logs `Override focusSystemState: (ENABLED)` for
+`_UIVariableGestureContextMenuInteraction`: presenting the context menu turns on the scene's focus
+system. The WebView's input session ends 0.6 to 2.7 ms later (`End asserting activeInput modality`,
+`responder:(nil)`, `End input session`). The hold's `NSLog` comes 58 to 91 ms AFTER that, and
+`willDisplayMenuFor` is the only thing that sets the hold. So changing how the hold blocks the touch
+(an overlay, the gesture layer) would change nothing for the keyboard. It is accepted for three reasons:
+- every "+" entry opens a full-screen surface, which would hide the keyboard anyway;
+- the native `UIMenu` decision stands;
+- the one fix at the cause rests on UIKit behaviour nobody has observed.
+
+What would reopen it is in [backlog](../backlog.md#p3---accepted-the-native--menu-drops-the-keyboard-2026-10-17).
 
 **Hidden under everything that covers the screen** (`screenCover`, the tab bar's rule - no web layer
 can cover a native view), and while the web piece has no box (the phone header is `md:hidden`). The
@@ -2524,7 +2560,25 @@ runs one frame after the resize - into a scrollport still shrinking. In the PIN 
 focused field then settled half under the footer's submit button, and a tap where the next field
 stood submitted the form; the iOS keyboard drops and rises between two fields, so every move paid
 it. `initKeyboardViewport` redoes the reveal on the overlay's `transitionend` for `height`
-(`overlaySettledAroundFocus`). Not yet read on the phone.
+(`overlaySettledAroundFocus`). Read on v1.2.9-alpha.4: the focused field was then in view, but the
+NEXT one (the confirm field) stood cut under the button and was reachable only after blurring.
+
+**Inside a keyboard-aware overlay every field carries the room for the NEXT one (v1.2.9-alpha.4).**
+The reveal stays `nearest`, which puts the field on the bottom edge of a scrollport the keyboard
+made short - exactly where the next field is cut. A `scroll-margin-block-end: 6.5rem` on every
+field inside `[data-keyboard-aware-overlay]` (`app.css`; one label and one field box) is honoured
+by `nearest`, so the reveal stops with the next field still in view. A centred reveal was refused
+in review: the reveal runs on every focus, overlay `transitionend` and viewport resize, so it would
+jump the modal on a tap on a field already in view and snap back a hand-scrolled body on a QuickType
+resize. The reveal never animates under `prefers-reduced-motion` (`revealBehavior`).
+
+**A footer edge is opt-in.** `Modal`'s `footerEdge` (`border-t`, `pt-3`) is for a form that
+overflows once the keyboard is up - the PIN change passes it, so the confirm field's cut ends at a
+line rather than against the submit button. A one-line confirmation gets no line. The PIN gate,
+a lock screen with no frame, gives its own footer `pt-3` and no line: the keypad cut by the
+scrollport ends 12 px above "Deverrouiller", where rows 7-9 read as covered by it at the largest
+text size. Owed one reading on the iPhone: the PIN change with the keyboard up, the PIN gate at the
+largest size.
 
 `keyboardViewport.svelte.ts` pins the shell to the visual viewport while the keyboard is up:
 

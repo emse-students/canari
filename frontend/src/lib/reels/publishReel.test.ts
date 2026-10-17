@@ -104,7 +104,7 @@ describe('publishReel', () => {
     await publishReel(input(), kept);
     expect(kept.prepare).toHaveBeenCalledWith(
       clip.blob,
-      expect.objectContaining({ removeAudio: false })
+      expect.objectContaining({ removeAudio: false, trimToVideo: true })
     );
 
     const silent = deps();

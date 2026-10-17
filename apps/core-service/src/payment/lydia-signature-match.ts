@@ -63,20 +63,21 @@ export interface LydiaSignatureMatch {
 export function observableFields(
   body: Record<string, unknown> | undefined
 ): { fields: Record<string, string> } | { skipped: string } {
-  const fields: Record<string, string> = {};
+  const entries: [string, string][] = [];
   let bytes = 0;
   for (const [name, value] of Object.entries(body ?? {})) {
     if (name === 'sig') continue;
     if (typeof value !== 'string' && typeof value !== 'number') continue;
     const text = String(value);
     bytes += Buffer.byteLength(name) + Buffer.byteLength(text);
-    fields[name] = text;
+    entries.push([name, text]);
   }
-  const count = Object.keys(fields).length;
+  const count = entries.length;
   if (count > OBSERVE_MAX_FIELDS || bytes > OBSERVE_MAX_BYTES) {
     return { skipped: `${count} field(s), ${bytes} byte(s) exceed the observation budget` };
   }
-  return { fields };
+  // fromEntries defines own properties, so a sender-chosen `__proto__` name stays a plain key.
+  return { fields: Object.fromEntries(entries) };
 }
 
 /**

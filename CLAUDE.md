@@ -41,6 +41,7 @@
 | What the USER must do by hand, and the long-term dev/release workflow (French) | [workflow-developpement.md](docs/user-guide/workflow-developpement.md) |
 | A shim kept alive for old clients, and its removal date | [docs/wiki/legacy-compatibility.md](docs/wiki/legacy-compatibility.md) |
 | What a report is, and what a block does and does not close | [docs/wiki/moderation-and-blocking.md](docs/wiki/moderation-and-blocking.md) |
+| GDPR: the Art. 30 register (the privacy policy is its public face - change both), the MiGallery DPIA, breach and data-subject procedures, the DPO dossier | [register-of-processing](docs/wiki/compliance/register-of-processing.md) |
 | Whether the four repos STILL have ONE CI shape, asserted rather than described | [ecosystem-shape](tools/ecosystem-shape/README.md) |
 | The cross-repo convergence plan, repo by repo | [ecosystem-convergence.md](docs/wiki/ecosystem-convergence.md#11-the-cross-repo-convergence-plan-repo-by-repo) |
 | The 2026-09-02 workflow migration: its decisions, its order, its state | [workflow-migration.md](docs/wiki/workflow-migration.md) |

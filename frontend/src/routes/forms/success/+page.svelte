@@ -1,11 +1,12 @@
 <script lang="ts">
   import { page } from '$app/state';
-  import { onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { CircleCheck, CircleX, Loader } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { confirmSubmissionPayment } from '$lib/forms/api';
   import { paymentReturnVerdict } from '$lib/forms/paymentReturn';
   import { SocialApiError } from '$lib/associations/api';
+  import { setPageTitle } from '$lib/seo/pageTitle.svelte';
 
   /**
    * Lydia's return carries the submission id (it cannot fill in a session id). Each read asks the
@@ -18,8 +19,31 @@
   const MAX_POLLS = 10;
   const POLL_INTERVAL_MS = 3000;
 
-  let status = $state<'loading' | 'confirmed' | 'pending' | 'overCapacity' | 'error'>('loading');
+  /**
+   * A return with no submission starts on its answer: its first title, the one the route announcer
+   * reads at the navigation, is already "Paiement introuvable".
+   */
+  let status = $state<'loading' | 'confirmed' | 'pending' | 'overCapacity' | 'error'>(
+    untrack(() => submissionId) ? 'loading' : 'error'
+  );
   let formId = $state<string | null>(null);
+
+  /**
+   * THE TITLE SAYS WHAT THE PAGE SAYS. The path's own title is neutral ("Retour de paiement"): this
+   * page is reached before anything is known, and it read "Paiement reussi" over "Paiement
+   * introuvable" for an unknown submission (iPhone 12, v1.2.9-alpha.3).
+   */
+  const STATUS_TITLE: Record<typeof status, () => string> = {
+    loading: () => m.form_success_verifying(),
+    confirmed: () => m.form_success_confirmed_heading(),
+    pending: () => m.form_success_pending_heading(),
+    overCapacity: () => m.form_success_over_capacity_heading(),
+    error: () => m.form_success_not_found_heading(),
+  };
+  $effect(() => {
+    setPageTitle(STATUS_TITLE[status]());
+  });
+  onDestroy(() => setPageTitle(null));
 
   async function confirmBySubmission(id: string) {
     for (let attempt = 0; attempt < MAX_POLLS; attempt++) {
@@ -46,7 +70,6 @@
   onMount(async () => {
     if (!submissionId) {
       console.warn('[forms/success] reached without a submission_id');
-      status = 'error';
       return;
     }
     try {
@@ -65,6 +88,13 @@
   });
 </script>
 
+<!--
+  THE ANSWER IS ANNOUNCED BY THE PAGE ITSELF. SvelteKit's route announcer reads the title once, at
+  the navigation, when it is still "Verification du paiement..." (iPhone 12, v1.2.9-alpha.4: it went
+  on reading that over "Paiement introuvable"). The heading and its sentence are a polite status
+  region, present from the first frame, so the answer that replaces the verifying line is what a
+  screen reader hears. The icon and the link stay OUTSIDE it: a status reads its text, not a way out.
+-->
 <div class="flex min-h-screen items-center justify-center px-4">
   <div class="w-full max-w-md space-y-6 text-center">
     {#if status === 'loading'}
@@ -73,34 +103,40 @@
           <Loader size={48} class="text-text-muted animate-spin" />
         </div>
       </div>
-      <p class="text-text-muted">{m.form_success_verifying()}</p>
-    {:else if status === 'pending'}
-      <div>
-        <h1 class="text-text-main text-2xl font-bold tracking-tight">
-          {m.form_success_pending_heading()}
-        </h1>
-        <p class="text-text-muted mt-2">{m.form_success_pending_desc()}</p>
-      </div>
-      <a
-        href={formId ? `/forms/${formId}` : '/forms'}
-        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
-      >
-        {m.form_success_back_to_form()}
-      </a>
     {:else if status === 'confirmed'}
       <div class="flex justify-center">
         <div class="bg-green-ok/15 rounded-full p-4">
           <CircleCheck size={48} class="text-green-ok" />
         </div>
       </div>
-      <div>
+    {:else if status === 'error'}
+      <div class="flex justify-center">
+        <div class="bg-red-err/20 rounded-full p-4">
+          <CircleX size={48} class="text-red-500" />
+        </div>
+      </div>
+    {/if}
+
+    <div role="status" data-payment-answer>
+      {#if status === 'loading'}
+        <p class="text-text-muted">{m.form_success_verifying()}</p>
+      {:else}
         <h1 class="text-text-main text-2xl font-bold tracking-tight">
-          {m.form_success_confirmed_heading()}
+          {STATUS_TITLE[status]()}
         </h1>
         <p class="text-text-muted mt-2">
-          {m.form_success_confirmed_desc()}
+          {status === 'confirmed'
+            ? m.form_success_confirmed_desc()
+            : status === 'pending'
+              ? m.form_success_pending_desc()
+              : status === 'overCapacity'
+                ? m.form_success_over_capacity_desc()
+                : m.form_success_not_found_desc()}
         </p>
-      </div>
+      {/if}
+    </div>
+
+    {#if status === 'pending' || status === 'confirmed'}
       <a
         href={formId ? `/forms/${formId}` : '/forms'}
         class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold shadow-sm transition-all"
@@ -108,32 +144,13 @@
         {m.form_success_back_to_form()}
       </a>
     {:else if status === 'overCapacity'}
-      <div>
-        <h1 class="text-text-main text-2xl font-bold tracking-tight">
-          {m.form_success_over_capacity_heading()}
-        </h1>
-        <p class="text-text-muted mt-2">{m.form_success_over_capacity_desc()}</p>
-      </div>
       <a
         href={formId ? `/forms/${formId}` : '/forms'}
         class="bg-cn-border/40 text-text-main hover:bg-cn-border/60 inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold transition-all"
       >
         {m.form_success_back_to_form()}
       </a>
-    {:else}
-      <div class="flex justify-center">
-        <div class="bg-red-err/20 rounded-full p-4">
-          <CircleX size={48} class="text-red-500" />
-        </div>
-      </div>
-      <div>
-        <h1 class="text-text-main text-2xl font-bold tracking-tight">
-          {m.form_success_not_found_heading()}
-        </h1>
-        <p class="text-text-muted mt-2">
-          {m.form_success_not_found_desc()}
-        </p>
-      </div>
+    {:else if status === 'error'}
       <a
         href="/forms"
         class="bg-cn-border/40 text-text-main hover:bg-cn-border/60 inline-flex items-center gap-2 rounded-xl px-6 py-3 text-sm font-bold transition-all"

@@ -39,6 +39,19 @@
           {/if}
         </span>
         <p class="flex-1 text-sm leading-snug font-medium"><EmojiText text={toast.message} /></p>
+        {#if toast.action}
+          {@const action = toast.action}
+          <button
+            type="button"
+            onclick={() => {
+              dismissToast(toast.id);
+              action.run();
+            }}
+            class="text-text-main -my-1 shrink-0 rounded-lg px-2 py-1 text-sm font-bold underline-offset-2 hover:underline"
+          >
+            {action.label}
+          </button>
+        {/if}
         <button
           onclick={() => dismissToast(toast.id)}
           class="mt-0.5 shrink-0 opacity-60 transition-opacity hover:opacity-100"

@@ -431,7 +431,7 @@ parsing.
 query live). `app.html` replays the same decision in an inline script before first paint so the
 splash does not flash the wrong colour.
 
-The choice is three-way and labelled Automatic / Light / Dark in settings (the `system` value keeps its stored name; the label was "System" and icon-only below 640 px until 2026-10-01, which read as "light and dark only"). The dashboard's one-tap button `cycle()`s automatic -> light -> dark -> automatic, because a plain light/dark toggle silently stranded the user outside Automatic. `app.html` once treated a saved `system` as light (flash on a dark phone); `themeStore.test.ts` now executes that inline script against the store for every preference x OS state. Automatic was already the default; nothing changed for users who picked explicitly.
+The choice is three-way and labelled Automatic / Light / Dark in settings (the `system` value keeps its stored name; the label was "System" and icon-only below 640 px until 2026-10-01, which read as "light and dark only"). The dashboard's one-tap cycle button is gone since 2026-10-16 (the dashboard became the app's hub, [section-navigation](section-navigation.md)); the settings control is the one place the theme is chosen. `app.html` once treated a saved `system` as light (flash on a dark phone); `themeStore.test.ts` now executes that inline script against the store for every preference x OS state. Automatic was already the default; nothing changed for users who picked explicitly.
 
 `src/app.css` is the single source of truth. Every colour that must flip is a CSS variable
 redefined under `:root[data-theme='dark']` and exposed to Tailwind through `@theme`:

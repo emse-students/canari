@@ -1251,13 +1251,15 @@ Those six are the complete set: no other table in the database carries a `worksp
 was a seventh until the Graine rework dropped the table. Attached media are left to the retention
 sweep, which collects them once nothing accesses them again.
 
-**Account deletion is the one path that cannot refuse.** `internal.controller` deletes
-`channel_members` rows by `userId` directly, so it bypasses every guard above, and the account is
-going regardless. It therefore captures the affected workspace ids BEFORE deleting and calls
-`repairWorkspacesAfterAccountDeletion` after: a community left with nobody is hard-deleted, and one
-left with members but no admin promotes its highest-priority survivor, ties broken by the lowest
-user id. Deterministic, per-workspace `try` so one failure never strands the others, and logged at
-`warn` because an automatic promotion is something a human should be able to find afterwards.
+**Account deletion is the one path that cannot refuse.** It bypasses every guard above, because
+the account is going regardless. `ChannelService.removeAccountFromWorkspaces` takes each community
+in turn: cut off its private channels, repair it as if the account were already gone - a community
+left with nobody is hard-deleted, one left with members but no admin promotes its highest-priority
+survivor, ties broken by the lowest user id - and only THEN delete the membership row. A failed
+repair keeps that row and the call throws, so the erasure queue's retry finds the community again
+([account-erasure](../account-erasure.md)); a swallowed failure used to strand an adminless
+community for ever. Logged at `warn` because an automatic promotion is something a human should be
+able to find afterwards.
 
 ### One invite link, bounded (2026-08-18)
 
