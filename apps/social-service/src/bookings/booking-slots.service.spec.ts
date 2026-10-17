@@ -76,6 +76,21 @@ describe('BookingSlotsService.spaceSlots', () => {
     ).rejects.toBeInstanceOf(BadRequestException);
   });
 
+  it.each([
+    ['not a date', 'z', '2026-10-26'],
+    ['a date the calendar does not have', '2026-02-30', '2026-03-01'],
+    ['ten thousand years', '2026-01-01', '9999-12-31'],
+  ])('answers 400 slot-range, never a 500, for %s', async (_case, from, to) => {
+    const err = await service()
+      .spaceSlots('s1', from, to)
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(BadRequestException);
+    expect((err as BadRequestException).getResponse()).toEqual({
+      code: 'slot-range',
+      maxDays: MAX_SLOT_RANGE_DAYS,
+    });
+  });
+
   it('says a missing space is missing', async () => {
     await expect(
       service({ spaces: repo([], null) }).spaceSlots('s1', '2026-10-26', '2026-10-26')

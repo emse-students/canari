@@ -3,7 +3,7 @@ import {
   type WindowSettings,
   checkBookingWindow,
   checkQuotas,
-  holderMayCancel,
+  participantMayWithdraw,
   quotaPeriodKey,
 } from './booking-rules';
 
@@ -118,7 +118,7 @@ describe('checkQuotas (D17)', () => {
   });
 });
 
-describe('holderMayCancel (D5)', () => {
+describe('participantMayWithdraw (D5, decided by the user 2026-10-17)', () => {
   it.each([
     ['no delay, before the start', 0, HOUR, true],
     ['no delay, at the start', 0, 0, false],
@@ -126,6 +126,6 @@ describe('holderMayCancel (D5)', () => {
     ['just before the delay', 60, HOUR + MIN, true],
     ['exactly at the delay', 60, HOUR, false],
   ])('%s', (_case, delay, startIn, expected) => {
-    expect(holderMayCancel(delay, NOW + startIn, NOW)).toBe(expected);
+    expect(participantMayWithdraw(delay, NOW + startIn, NOW)).toBe(expected);
   });
 });

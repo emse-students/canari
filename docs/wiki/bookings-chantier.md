@@ -27,7 +27,7 @@ see who else booked.
 | D2 | Owner | Same four owners as a form: a person, an association, a list, an institution (all three are `associations` rows with a `kind`; rights are `MANAGE_*` on that entity or global admin). **To verify before building:** that `/forms/create` really offers lists and institutions in its picker. |
 | D3 | Granularity | **The organiser chooses per space between a FIXED STEP** (1..N steps per booking, N set by the organiser) **and PREDEFINED SLOTS** (an explicit list, which may differ from one resource to the next). |
 | D4 | Several people | A booking has a holder and PARTICIPANTS, all Canari accounts. Participants see it in their agenda and may withdraw alone. The organiser may cap people per slot. No free-text names. |
-| D5 | Withdrawal | Free for the holder, with a DELAY set by the organiser (default none). The organiser may always cancel, the holder is told. |
+| D5 | Withdrawal | **Replaced by the user on 2026-10-17:** the HOLDER (and the organiser) may cancel at any time before the start; a PARTICIPANT may withdraw only until a minimum delay before it, set per space (`participantWithdrawMinMinutes`, default 0 = until the start), to avoid last-minute withdrawals. Earlier text: "Free for the holder, with a DELAY set by the organiser (default none). The organiser may always cancel, the holder is told." |
 | D6 | Who may book | A signed-in account. The organiser may restrict with the forms' `AudienceCondition` (promo, formation, cotisation). **No guest access** (a booking with no identity cannot be withdrawn cleanly). |
 | D7 | What a booker provides | **The forms' questions are reused** (same builder, same types, conditional questions), plus a FILE type. **The file type must also exist in forms** (user): a sibling work package, shared. |
 | D8 | Retention | The FILE is purged N days after the slot (organiser sets N, platform caps it, short default - 30 days like a CanaReel). The HISTORY row (who, when, which resource) is kept FROZEN. What happens to the TEXT answers is open (Q-open-1). |
@@ -174,7 +174,7 @@ spaces go with the association.
 
 | Table | Holds | Decisions |
 |---|---|---|
-| `booking_spaces` | owner (`ownerId`, `associationId` NULL for a person), name, description, zone, `slotMode` (`step` with `stepMinutes`/`maxSteps`, or `slots`), `nameVisibility` (`occupied` by default), `discoverability`, `audience`, `items` (the forms' questions), `privateInfo`, the window (`opensAt`, `minNoticeMinutes`, `horizonDays`), the quotas (`maxActiveBookings`, `maxMinutesPerPeriod` + `quotaPeriod`), `withdrawalDelayMinutes`, `maxPeople` (holder included), `retentionDays` (1..30, default 7) | D2-D9, D17, D23, D25, D26, D31-D33 |
+| `booking_spaces` | owner (`ownerId`, `associationId` NULL for a person), name, description, zone, `slotMode` (`step` with `stepMinutes`/`maxSteps`, or `slots`), `nameVisibility` (`occupied` by default), `discoverability`, `audience`, `items` (the forms' questions), `privateInfo`, the window (`opensAt`, `minNoticeMinutes`, `horizonDays`), the quotas (`maxActiveBookings`, `maxMinutesPerPeriod` + `quotaPeriod`), `participantWithdrawMinMinutes` (renamed from `withdrawalDelayMinutes` by 088), `maxPeople` (holder included), `retentionDays` (1..30, default 7) | D2-D9, D17, D23, D25, D26, D31-D33 |
 | `booking_resources` | name, public `description`, `privateInfo`, optional `linkedUserId`, `position` | D10, D32 |
 | `booking_availability_rules` | a LOCAL wall-time line: `weekday` (ISO 1..7) XOR `onDate`, `startTime` < `endTime`. In a `step` space a window cut into steps, in a `slots` space ONE slot | D3, D11, D25 |
 | `booking_availability_exceptions` | whole local days removed, `fromDate`..`toDate` both INCLUDED | D11 |
@@ -260,14 +260,29 @@ reads the tables for them. Nothing here is a route yet (that is WP-B3).
 
 **Generation.** A line applied to one local date is a PIECE.
 
-- **Step space.** The pieces of a resource are UNITED (overlapping or touching) into windows. A
+- **Step space.** The pieces of ONE DATE are UNITED (overlapping or touching) into a window. A
   window is cut into steps of ELAPSED time from its start. A booking is 1..`maxSteps` consecutive
   steps of one window.
-- **Slots space.** Each piece IS a slot. Two pieces join only across midnight (`24:00`, then the
-  next day's `00:00`), so back-to-back interviews stay two slots.
-- **Which day a window belongs to.** A window belongs to the local date it STARTS on. The
-  generation reads one day on either side of the dates asked, so a window crossing midnight (two
-  lines, see the WP table) is whole, and its tail is never a window of the next day.
+- **Slots space.** Each DISTINCT piece is a slot: two lines giving the same slot are one slot.
+  Two OVERLAPPING slots stay two slots, and this is allowed on purpose: both are offered, and
+  booking one shows the other as booked, because the exclusion holds one live booking per instant.
+  Refusing them is left to the editor of WP-B4, which may warn.
+- **A WINDOW CROSSES AT MOST ONE MIDNIGHT** (review of #1993, 2026-10-17). A date's window
+  ending at 24:00 takes in the next date's TAIL: a window starting at 00:00 and ending before
+  24:00. That tail is then no window of its own. A WHOLE day (00:00-24:00) is never a tail, so:
+  - a 24/7 resource is one window per day, and a booking in it cannot cross midnight;
+  - Monday 20:00 to Wednesday 02:00, written as three lines, is Monday 20:00-24:00, then Tuesday
+    00:00 to Wednesday 02:00;
+  - whole-day predefined slots stay one slot per day.
+
+  Before this rule, every touching pair chained across any number of days: a 24/7 resource gave no
+  window at all, so every booking was refused.
+- **Which day a window belongs to.** A window belongs to the local date it STARTS on. Each date
+  is decided from itself and its two neighbours only, so asking for one day gives exactly that
+  day's part of a range. The invariant is tested over six availabilities in both modes, and the
+  grid, `spaceSlots` and the D29 check all read the same windows.
+- **Dates asked.** They must be real calendar dates (2026-02-30 is not). They are counted
+  arithmetically before anything is built, so `z` or a range to 9999-12-31 is a 400 `slot-range`.
 - **Change nights.** A 01:00-04:00 line lasts four hours on the fall-back night (eight steps of
   30 min) and two on the spring-forward night.
 
@@ -287,9 +302,13 @@ participant who has not withdrawn.
   (keyed by its Monday).
 - The organiser booking on someone's behalf is exempt: the caller (WP-B3) does not run the check.
 
-**Withdrawal (D5).** The holder may cancel until `withdrawalDelayMinutes` before the start
-(0 = until the start). The organiser is not bound by the delay (D20). **Participants are not held
-to it in v1**: D4 lets them withdraw alone, and D5 names only the holder. Decided by Master on 2026-10-17; the user may overrule it.
+**Withdrawal (D5), DECIDED BY THE USER ON 2026-10-17.** A PARTICIPANT may withdraw only until
+`participantWithdrawMinMinutes` before the start, set per space (0 = until the start), so that a
+last-minute withdrawal does not leave the holder short (`participantMayWithdraw`). The HOLDER and
+the organiser may cancel AT ANY TIME before the start. After the start nothing moves, for anyone
+(D15). The column was `withdrawalDelayMinutes` in 087, named after a holder delay that no longer
+exists; migration 088 RENAMES it (and its CHECK) rather than adding a second column nothing would
+read. It has had no reader yet, so there is no data to translate.
 
 **D29.** A change of a resource's availability, or of the space's step, mode or step ceiling, is
 checked against the coming LIVE bookings. Any booking that is no longer a bookable shape refuses

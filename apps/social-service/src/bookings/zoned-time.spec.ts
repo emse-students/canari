@@ -1,6 +1,8 @@
 import {
   addDays,
   datesBetween,
+  dayCount,
+  isCalendarDate,
   isValidTimeZone,
   isoWeekday,
   isoWeekMonday,
@@ -119,6 +121,20 @@ describe('the calendar helpers', () => {
       '2026-11-02',
     ]);
     expect(datesBetween('2026-11-02', '2026-11-01')).toEqual([]);
+  });
+
+  it('knows a calendar date, and counts a range without building it', () => {
+    expect(isCalendarDate('2026-02-28')).toBe(true);
+    expect(isCalendarDate('2028-02-29')).toBe(true);
+    expect(isCalendarDate('2026-02-30')).toBe(false);
+    expect(isCalendarDate('2026-13-01')).toBe(false);
+    expect(isCalendarDate('z')).toBe(false);
+    expect(dayCount('2026-10-25', '2026-10-25')).toBe(1);
+    expect(dayCount('2026-03-01', '2026-03-31')).toBe(31);
+    expect(dayCount('2026-11-02', '2026-11-01')).toBe(0);
+    expect(dayCount('2026-01-01', '9999-12-31')).toBeGreaterThan(2_900_000);
+    // A malformed end is refused at once, never walked towards.
+    expect(() => datesBetween('2026-01-01', 'z')).toThrow(RangeError);
   });
 
   it('knows a zone from a typo', () => {

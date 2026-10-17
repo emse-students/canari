@@ -62,11 +62,40 @@ export function offsetMs(instantMs: number, zone: string): number {
   return wallClockMs(whole, zone) - whole;
 }
 
-/** `YYYY-MM-DD` -> [year, month, day]. Throws on anything else: a malformed date is a bug upstream. */
+/**
+ * `YYYY-MM-DD` -> [year, month, day], for a date that EXISTS on the calendar (2026-02-30 does
+ * not). Throws a RangeError on anything else: a caller holding user input checks
+ * {@link isCalendarDate} first.
+ */
 function parseDate(date: string): [number, number, number] {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date);
   if (!m) throw new RangeError(`not a YYYY-MM-DD date: ${date}`);
-  return [Number(m[1]), Number(m[2]), Number(m[3])];
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const back = new Date(Date.UTC(y, mo - 1, d));
+  if (back.getUTCFullYear() !== y || back.getUTCMonth() !== mo - 1 || back.getUTCDate() !== d) {
+    throw new RangeError(`not a calendar date: ${date}`);
+  }
+  return [y, mo, d];
+}
+
+/** Whether `date` is a `YYYY-MM-DD` that exists on the calendar. */
+export function isCalendarDate(date: string): boolean {
+  try {
+    parseDate(date);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * How many dates `[from, to]` holds, both included, by ARITHMETIC - no list is built, so a request
+ * for ten thousand years costs nothing to refuse. Zero or less when `to` is before `from`.
+ */
+export function dayCount(from: string, to: string): number {
+  const [y1, m1, d1] = parseDate(from);
+  const [y2, m2, d2] = parseDate(to);
+  return Math.round((Date.UTC(y2, m2 - 1, d2) - Date.UTC(y1, m1 - 1, d1)) / DAY_MS) + 1;
 }
 
 /** `HH:MM[:SS]` -> seconds since midnight, `24:00` included. */
@@ -125,9 +154,14 @@ export function isoWeekMonday(date: string): string {
   return addDays(date, 1 - isoWeekday(date));
 }
 
-/** Every calendar date from `from` to `to`, both INCLUDED. Empty when `to` is before `from`. */
+/**
+ * Every calendar date from `from` to `to`, both INCLUDED. Empty when `to` is before `from`. Both
+ * must be calendar dates (a RangeError otherwise, at once - never a loop that runs until the year
+ * overflows); the COUNT is the caller's to bound, as `spaceSlots` does with {@link dayCount}.
+ */
 export function datesBetween(from: string, to: string): string[] {
+  const n = dayCount(from, to);
   const out: string[] = [];
-  for (let d = from; d <= to; d = addDays(d, 1)) out.push(d);
+  for (let i = 0, d = from; i < n; i++, d = addDays(d, 1)) out.push(d);
   return out;
 }

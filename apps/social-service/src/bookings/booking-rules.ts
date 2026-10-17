@@ -1,6 +1,6 @@
 /**
  * THE RULES A BOOKING IS HELD TO, BESIDE ITS SHAPE (`slots.ts`): the booking window (D26), the two
- * per-person quotas (D17) and the holder's withdrawal delay (D5). Pure functions over a `nowMs`
+ * per-person quotas (D17) and the participants' withdrawal delay (D5). Pure functions over a `nowMs`
  * the caller reads ONCE, so the server - never the client alone - applies them, and every case is
  * a table-driven test (`booking-rules.spec.ts`).
  *
@@ -101,14 +101,16 @@ export function checkQuotas(
 }
 
 /**
- * Whether the HOLDER may still cancel a booking (D5): until `withdrawalDelayMinutes` before its
- * start, 0 meaning until the start itself. After the start nothing is cancellable by the holder:
- * the booking is history (D15). The organiser's cancellation (D20) is not held to the delay.
+ * Whether a PARTICIPANT may still withdraw (D5, decided by the user 2026-10-17): until
+ * `participantWithdrawMinMinutes` before the start, 0 meaning until the start itself, so a
+ * last-minute withdrawal does not leave the holder short. The HOLDER and the organiser are never
+ * delayed: they may cancel at any time before the start. After the start nothing moves, for
+ * anyone: the booking is history (D15).
  */
-export function holderMayCancel(
-  withdrawalDelayMinutes: number,
+export function participantMayWithdraw(
+  participantWithdrawMinMinutes: number,
   startMs: number,
   nowMs: number
 ): boolean {
-  return nowMs < startMs - withdrawalDelayMinutes * MINUTE_MS;
+  return nowMs < startMs - participantWithdrawMinMinutes * MINUTE_MS;
 }

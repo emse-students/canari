@@ -8,6 +8,7 @@ import {
   slotUnits,
   unitStates,
 } from './slots';
+import { addDays } from './zoned-time';
 
 const PARIS = 'Europe/Paris';
 const step = (stepMinutes = 30, maxSteps = 4): SlotConfig => ({
@@ -257,4 +258,101 @@ describe('bookingsOutsideAvailability: the D29 refusal', () => {
     // 23:30-00:30 local: the joined window holds it, neither half alone would.
     expect(bookingsOutsideAvailability(step(), crossing, [], [night])).toEqual([]);
   });
+});
+
+describe('a window crosses AT MOST ONE midnight (review of #1993)', () => {
+  const allWeek = [1, 2, 3, 4, 5, 6, 7].map((d) => weekly(d, '00:00:00', '24:00:00'));
+  // Monday 20:00 to Wednesday 02:00, written as three lines.
+  const chain = [
+    weekly(1, '20:00:00', '24:00:00'),
+    weekly(2, '00:00:00', '24:00:00'),
+    weekly(3, '00:00:00', '02:00:00'),
+  ];
+
+  it('a 24/7 resource is one window per day, never one chained window', () => {
+    expect(
+      availabilityWindows(step(60, 2), allWeek, [], '2026-11-02', '2026-11-03').map(show)
+    ).toEqual(['2026-11-02 23:00-23:00Z', '2026-11-03 23:00-23:00Z']);
+  });
+
+  it('a 24/7 resource keeps an ordinary booking under an unchanged availability (D29)', () => {
+    const b = { id: 'b', startMs: ms('2026-11-10T09:00:00Z'), endMs: ms('2026-11-10T10:00:00Z') };
+    expect(bookingsOutsideAvailability(step(60, 2), allWeek, [], [b])).toEqual([]);
+  });
+
+  it('Monday 20:00 to Wednesday 02:00: Tuesday shows its own day and the Wednesday tail', () => {
+    expect(
+      availabilityWindows(step(60, 2), chain, [], '2026-11-03', '2026-11-03').map(show)
+    ).toEqual(['2026-11-03 23:00-01:00Z']);
+    expect(
+      availabilityWindows(step(60, 2), chain, [], '2026-11-02', '2026-11-02').map(show)
+    ).toEqual(['2026-11-02 19:00-23:00Z']);
+    expect(availabilityWindows(step(60, 2), chain, [], '2026-11-04', '2026-11-04')).toEqual([]);
+  });
+
+  it('the grid and the D29 check agree on Tuesday 13:00', () => {
+    const tue = { id: 't', startMs: ms('2026-11-03T12:00:00Z'), endMs: ms('2026-11-03T13:00:00Z') };
+    const units = slotUnits(
+      step(60, 2),
+      availabilityWindows(step(60, 2), chain, [], '2026-11-03', '2026-11-03')
+    );
+    expect(units.some((u) => u.startMs === tue.startMs)).toBe(true);
+    expect(bookingsOutsideAvailability(step(60, 2), chain, [], [tue])).toEqual([]);
+  });
+
+  it('whole-day predefined slots stay one slot per day', () => {
+    expect(availabilityWindows(SLOTS, allWeek, [], '2026-11-03', '2026-11-03').map(show)).toEqual([
+      '2026-11-03 23:00-23:00Z',
+    ]);
+  });
+
+  it('a midnight slot joined once, its tail given by two lines counted once', () => {
+    const lines = [
+      weekly(1, '23:00:00', '24:00:00'),
+      weekly(2, '00:00:00', '01:00:00'),
+      dated('2026-11-03', '00:00:00', '01:00:00'),
+    ];
+    expect(availabilityWindows(SLOTS, lines, [], '2026-11-02', '2026-11-03').map(show)).toEqual([
+      '2026-11-02 22:00-00:00Z',
+    ]);
+  });
+
+  // THE ORACLE'S INVARIANT: whatever the availability, one day asked alone gives exactly that day's
+  // part of a range asked at once - the grid never depends on how wide the request was.
+  const AVAILABILITIES: [string, AvailabilityLine[], AvailabilityException[]][] = [
+    ['24/7', allWeek, []],
+    ['the Monday-Wednesday chain', chain, []],
+    [
+      '22:00-24:00 then 00:00-02:00',
+      [weekly(5, '22:00', '24:00'), weekly(6, '00:00', '02:00')],
+      [],
+    ],
+    [
+      'a 24/7 week cut by an exception',
+      allWeek,
+      [{ fromDate: '2026-10-28', toDate: '2026-10-29' }],
+    ],
+    ['change-night lines', [weekly(7, '01:00', '04:00'), weekly(6, '22:00', '24:00')], []],
+    [
+      'overlapping and back-to-back lines',
+      [weekly(2, '10:00', '12:00'), weekly(2, '11:00', '13:00'), weekly(2, '13:00', '14:00')],
+      [],
+    ],
+  ];
+  const FROM = '2026-10-20';
+  const TO = '2026-11-05';
+  for (const [name, lines, exceptions] of AVAILABILITIES) {
+    for (const config of [step(30, 4), SLOTS]) {
+      it(`${name} (${config.slotMode}): one day at a time = the range at once`, () => {
+        const whole = availabilityWindows(config, lines, exceptions, FROM, TO);
+        const byDay: string[] = [];
+        for (let d = FROM; d <= TO; d = addDays(d, 1)) {
+          byDay.push(...availabilityWindows(config, lines, exceptions, d, d).map(show));
+        }
+        expect(byDay).toEqual(whole.map(show));
+        // No window crosses more than one local midnight: it is shorter than two days.
+        for (const w of whole) expect(w.endMs - w.startMs).toBeLessThanOrEqual(48 * 3_600_000);
+      });
+    }
+  }
 });

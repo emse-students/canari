@@ -49,7 +49,7 @@ export type BookingQuotaPeriod = 'day' | 'week';
   'booking_spaces_quotas',
   `("maxActiveBookings" IS NULL OR "maxActiveBookings" >= 1) AND (("maxMinutesPerPeriod" IS NULL) = ("quotaPeriod" IS NULL)) AND ("maxMinutesPerPeriod" IS NULL OR "maxMinutesPerPeriod" >= 1) AND ("quotaPeriod" IS NULL OR "quotaPeriod" IN ('day', 'week'))`
 )
-@Check('booking_spaces_withdrawal_delay', `"withdrawalDelayMinutes" >= 0`)
+@Check('booking_spaces_participant_withdraw_min', `"participantWithdrawMinMinutes" >= 0`)
 @Check('booking_spaces_max_people', `"maxPeople" IS NULL OR "maxPeople" >= 1`)
 @Check('booking_spaces_retention_days', `"retentionDays" BETWEEN 1 AND 30`)
 export class BookingSpace {
@@ -131,9 +131,12 @@ export class BookingSpace {
   @Column({ type: 'varchar', length: 8, nullable: true })
   quotaPeriod: BookingQuotaPeriod | null;
 
-  /** The holder may cancel until this many minutes before the start; 0 = until the start (D5). */
+  /**
+   * A PARTICIPANT may withdraw until this many minutes before the start; 0 = until the start (D5,
+   * decided by the user 2026-10-17, migration 088). The holder and the organiser are never delayed.
+   */
   @Column({ type: 'int', default: 0 })
-  withdrawalDelayMinutes: number;
+  participantWithdrawMinMinutes: number;
 
   /** People in one booking, the holder included; NULL = no ceiling (D4, D33). */
   @Column({ type: 'int', nullable: true })

@@ -8,18 +8,14 @@
  *
  * 1. Each availability line gives, for every local date it applies to and no exception removes, a
  *    PIECE `[start, end)` in UTC, read in the space's zone (`zoned-time.ts`, D25).
- * 2. In a `step` space the pieces of a resource are UNITED into WINDOWS (overlapping or touching
- *    pieces become one), and a window is cut into steps of `stepMinutes` of ELAPSED time from its
- *    start; a booking is 1..`maxSteps` consecutive steps of ONE window (D3). Because touching pieces
- *    join, a window crossing midnight - written as two lines, 22:00-24:00 and 00:00-02:00 the next
- *    day, since `startTime < endTime` is a CHECK - is one window again.
- * 3. In a `slots` space each piece IS one slot (D3). Two pieces join only across MIDNIGHT (one ends
- *    at 24:00, the next day's starts at 00:00): joining every touching pair would merge two
- *    back-to-back interviews into one.
- *
- * A window belongs to the local date it STARTS on: asked for `[from, to]`, the generation reads
- * the days on either side, so a window starting on `to` and crossing midnight is whole, and the
- * after-midnight tail of a window starting the day before `from` is never shown as a window of its own.
+ * 2. In a `step` space the pieces of ONE DATE are UNITED into a window (overlapping or touching
+ *    pieces become one), cut into steps of `stepMinutes` of ELAPSED time from its start; a booking
+ *    is 1..`maxSteps` consecutive steps of ONE window (D3).
+ * 3. In a `slots` space each distinct piece IS one slot (D3).
+ * 4. A window CROSSES AT MOST ONE MIDNIGHT ({@link availabilityWindows}): one ending at 24:00 takes
+ *    in the next date's TAIL (00:00 to before 24:00), so a window written as two lines - 22:00-24:00
+ *    and 00:00-02:00 the next day, since `startTime < endTime` is a CHECK - is one window again, in
+ *    both modes. It belongs to the local date it STARTS on.
  */
 import type { BookingSlotMode } from './entities/booking-space.entity';
 import { addDays, datesBetween, isoWeekday, localDate, zonedToUtcMs } from './zoned-time';
@@ -73,33 +69,88 @@ function excluded(date: string, exceptions: readonly AvailabilityException[]): b
   return exceptions.some((e) => e.fromDate <= date && date <= e.toDate);
 }
 
-/** Every piece the lines give on the dates `[from, to]`, sorted by start. */
-function pieces(
+/** The pieces the lines give on ONE local date, sorted by start then end. */
+function piecesOn(
   config: SlotConfig,
   lines: readonly AvailabilityLine[],
   exceptions: readonly AvailabilityException[],
-  from: string,
-  to: string
+  date: string
+): Piece[] {
+  if (excluded(date, exceptions)) return [];
+  const weekday = isoWeekday(date);
+  const out: Piece[] = [];
+  for (const line of lines) {
+    if (line.onDate !== null ? line.onDate !== date : line.weekday !== weekday) continue;
+    const startMs = zonedToUtcMs(date, line.startTime, config.timeZone);
+    const endMs = zonedToUtcMs(date, line.endTime, config.timeZone);
+    // A line inside a spring-forward gap can collapse to nothing: no piece, rather than a reversed one.
+    if (endMs <= startMs) continue;
+    out.push({ date, startMs, endMs, startTime: line.startTime, endTime: line.endTime });
+  }
+  return out.sort((x, y) => x.startMs - y.startMs || x.endMs - y.endMs);
+}
+
+/**
+ * The windows of ONE local date before any midnight join: in a step space the date's pieces UNITED
+ * (overlapping or touching), in a slots space the date's DISTINCT pieces (a weekly and a dated line
+ * giving the same slot are one slot; two overlapping slots stay two - see the wiki).
+ */
+function dayWindows(
+  config: SlotConfig,
+  lines: readonly AvailabilityLine[],
+  exceptions: readonly AvailabilityException[],
+  date: string
 ): Piece[] {
   const out: Piece[] = [];
-  for (const date of datesBetween(from, to)) {
-    if (excluded(date, exceptions)) continue;
-    const weekday = isoWeekday(date);
-    for (const line of lines) {
-      if (line.onDate !== null ? line.onDate !== date : line.weekday !== weekday) continue;
-      const startMs = zonedToUtcMs(date, line.startTime, config.timeZone);
-      const endMs = zonedToUtcMs(date, line.endTime, config.timeZone);
-      // A line inside a spring-forward gap can collapse to nothing: no piece, rather than a reversed one.
-      if (endMs <= startMs) continue;
-      out.push({ date, startMs, endMs, startTime: line.startTime, endTime: line.endTime });
+  const seen = new Set<string>();
+  for (const p of piecesOn(config, lines, exceptions, date)) {
+    const last = out[out.length - 1];
+    if (config.slotMode === 'step' && last && p.startMs <= last.endMs) {
+      if (p.endMs > last.endMs) {
+        last.endMs = p.endMs;
+        last.endTime = p.endTime;
+      }
+      continue;
     }
+    const key = `${p.startMs}:${p.endMs}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push({ ...p });
   }
-  return out.sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs);
+  return out;
+}
+
+/** A TAIL: a day window starting at 00:00 and ending BEFORE 24:00 - the after-midnight part of a window. */
+const isTail = (w: Piece) => isMidnightStart(w.startTime) && !isMidnightEnd(w.endTime);
+
+/**
+ * THE ONE MIDNIGHT JOIN between a date's windows and the next date's: the first window of `day`
+ * ending at 24:00 (the HEAD) and the first TAIL of `next` starting at that instant. Null when there
+ * is none. Both sides of a date boundary ask this same function, so the head extending and the
+ * tail disappearing always agree.
+ */
+function midnightJoin(
+  day: readonly Piece[],
+  next: readonly Piece[]
+): { head: Piece; tail: Piece } | null {
+  for (const head of day) {
+    if (!isMidnightEnd(head.endTime)) continue;
+    const tail = next.find((n) => isTail(n) && n.startMs === head.endMs);
+    if (tail) return { head, tail };
+  }
+  return null;
 }
 
 /**
  * The windows (step space) or slots (slots space) of ONE resource whose local start date is in
- * `[from, to]`, sorted by start. See the file header for the joining rules.
+ * `[from, to]`, sorted by start.
+ *
+ * A WINDOW CROSSES AT MOST ONE MIDNIGHT. A date's window ending at 24:00 takes in the next date's
+ * TAIL (a window from 00:00 that ends before 24:00), and that tail is then no window of its own.
+ * A whole day (00:00-24:00) is never a tail, so it is never swallowed: a 24/7 resource is one
+ * window per day, and a run of days never chains into one window. Each date is decided from
+ * itself and its two neighbours only, so asking for one day or for a range gives the same windows
+ * for that day.
  */
 export function availabilityWindows(
   config: SlotConfig,
@@ -108,33 +159,26 @@ export function availabilityWindows(
   from: string,
   to: string
 ): Window[] {
-  // The day before `from` too, so the tail of a window it starts is joined to it and dropped with it.
-  const all = pieces(config, lines, exceptions, addDays(from, -1), addDays(to, 1));
-  const joined: Piece[] = [];
-  for (const p of all) {
-    const last = joined[joined.length - 1];
-    const joins =
-      last !== undefined &&
-      (config.slotMode === 'step'
-        ? p.startMs <= last.endMs
-        : p.startMs === last.endMs &&
-          isMidnightEnd(last.endTime) &&
-          isMidnightStart(p.startTime) &&
-          p.date === addDays(last.date, 1));
-    if (joins) {
-      if (p.endMs > last.endMs) {
-        last.endMs = p.endMs;
-        last.endTime = p.endTime;
-      }
-      continue;
+  const cache = new Map<string, Piece[]>();
+  const windowsOf = (date: string) => {
+    let w = cache.get(date);
+    if (!w) {
+      w = dayWindows(config, lines, exceptions, date);
+      cache.set(date, w);
     }
-    // The same slot from two lines (a weekly and a dated line agreeing) is one slot.
-    if (last && last.startMs === p.startMs && last.endMs === p.endMs) continue;
-    joined.push({ ...p });
+    return w;
+  };
+  const out: Window[] = [];
+  for (const date of datesBetween(from, to)) {
+    const swallowed = midnightJoin(windowsOf(addDays(date, -1)), windowsOf(date))?.tail;
+    const extended = midnightJoin(windowsOf(date), windowsOf(addDays(date, 1)));
+    for (const w of windowsOf(date)) {
+      if (w === swallowed) continue;
+      const endMs = extended?.head === w ? extended.tail.endMs : w.endMs;
+      out.push({ date, startMs: w.startMs, endMs });
+    }
   }
-  return joined
-    .filter((w) => w.date >= from && w.date <= to)
-    .map(({ date, startMs, endMs }) => ({ date, startMs, endMs }));
+  return out.sort((x, y) => x.startMs - y.startMs || x.endMs - y.endMs);
 }
 
 /**

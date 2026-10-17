@@ -24,7 +24,7 @@ import {
   slotUnits,
   unitStates,
 } from './slots';
-import { addDays, datesBetween, zonedToUtcMs } from './zoned-time';
+import { addDays, dayCount, isCalendarDate, zonedToUtcMs } from './zoned-time';
 
 /** The widest range of local dates one read may ask for: a grid shows a week, a planning a month. */
 export const MAX_SLOT_RANGE_DAYS = 62;
@@ -68,8 +68,10 @@ export class BookingSlotsService {
    */
   async spaceSlots(spaceId: string, from: string, to: string): Promise<ResourceSlots[]> {
     this.logger.debug(`[BOOKINGS] spaceSlots space=${spaceId} ${from}..${to}`);
-    const days = datesBetween(from, to).length;
-    if (days === 0 || days > MAX_SLOT_RANGE_DAYS) {
+    // Real calendar dates, counted arithmetically BEFORE anything is built: 'z', 2026-02-30 and a
+    // range to 9999-12-31 are a 400, never a 500 nor a ten-thousand-year loop.
+    const days = isCalendarDate(from) && isCalendarDate(to) ? dayCount(from, to) : 0;
+    if (days < 1 || days > MAX_SLOT_RANGE_DAYS) {
       this.logger.warn(`[BOOKINGS] spaceSlots refused: ${days} days asked`);
       throw new BadRequestException({ code: 'slot-range', maxDays: MAX_SLOT_RANGE_DAYS });
     }
