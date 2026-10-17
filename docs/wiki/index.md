@@ -35,7 +35,7 @@
 - [chat-delivery-service](services/chat-delivery.md) — NestJS MLS API, message queue, sync engine, push
 - [core-service](services/core-service.md) — OIDC auth (Authentik), users, Stripe payments
 - [media-service](services/media-service.md) — Encrypted blob storage (Garage)
-- [media-streaming-upload](services/media-streaming-upload.md) — Design: parts under 8 MiB, bounded-memory upload and download (CrowdSec 10 MiB wall)
+- [media-streaming-upload](services/media-streaming-upload.md) — Design: parts under 8 MiB, bounded-memory upload and download (the host firewall's body limit)
 - [social-service](services/social-service.md) — Posts, channels, associations, forms
 - [reels](services/reels.md) — CanaReels server half: the `reel` post kind, its 30-day deletion, the API contract
 - [Community rework](services/community-rework.md) — the master plan for the community subsystem: what triggered it, the three axes, and the crypto axis still to do
@@ -86,8 +86,8 @@
 
 - [Docker & services](infrastructure/docker.md) — Docker Compose setup, service dependencies
 - [Container logs](infrastructure/logging.md) - the bounded json-file stanza on every service, and the per-deploy archive that keeps a log past the container a deploy recreates, and the privacy policy's 90-day ceiling: what is enforced, what is only reported
-- [DSI log retention request](infrastructure/dsi-log-retention-request.md) - what the shared host logs that names a client (journald, nginx, CrowdSec, AIDE, EDR), the exact setting asked of the DSI for each, and the request in French, drafted 2026-10-16 and not sent
-- [Host WAF body limit](infrastructure/host-waf-body-limit.md) - the school-managed CrowdSec drops any request body over 10 MiB; why every upload body stays under 8 MiB
+- [DSI log retention request](infrastructure/dsi-log-retention-request.md) - what the shared host logs that names a client (journald, nginx and the host's security tooling), the exact setting asked of the DSI for each, and the request in French, drafted 2026-10-16 and not sent
+- [Host WAF body limit](infrastructure/host-waf-body-limit.md) - the school-managed firewall refuses large request bodies; why every upload body stays under 8 MiB
 - [Nginx routing](infrastructure/nginx.md) — Route table (source of truth), auth_request
 - [Authentik (OIDC)](infrastructure/authentik.md) — Identity provider, OIDC flow, deployment
 - [Mino access](infrastructure/mino-access.md) — Wiki.js and Omeka permissions driven by Authentik groups, the three archive levels

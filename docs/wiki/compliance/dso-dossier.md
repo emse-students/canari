@@ -44,8 +44,8 @@ d'administration du serveur.
 
 Aucune n'est écrite aujourd'hui. Nous proposons qu'elle couvre :
 
-- qui accède aux données et dans quel cadre (administration, sécurité, outils de la DSI - CrowdSec,
-  EDR) ;
+- qui accède aux données et dans quel cadre (administration, sécurité, outils de la DSI - pare-feu,
+  protection des postes) ;
 - l'information de l'association en cas d'incident de sécurité sur le serveur, et le délai (notre
   délai de 72 heures vis-à-vis de la CNIL en dépend) ;
 - la localisation des sauvegardes et leur chiffrement ;

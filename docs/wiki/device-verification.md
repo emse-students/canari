@@ -920,8 +920,8 @@ the foreground once - `didBecomeActive` is the trigger, so a launch is enough. T
 machine:
 
 ```
-ssh portail-etu-direct 'docker exec canari-prod-postgres-1 psql -U canari -d auth_db -c "SELECT platform, count(*) FROM push_token GROUP BY platform"'
-ssh canari 'docker logs --since 30m infrastructure-chat-delivery-service-1 2>&1 | grep PUSH_UNAVAILABLE'
+<ssh to the host> 'docker exec <prod postgres container> psql -U <db user> -d <db> -c "SELECT platform, count(*) FROM push_token GROUP BY platform"'
+<ssh to the host> 'docker logs --since 30m <chat-delivery container> 2>&1 | grep PUSH_UNAVAILABLE'
 ```
 
 **PASS** = an `ios` row exists. Then send the iPhone a message from another device with the app
@@ -1013,7 +1013,7 @@ a build carrying `tauri-plugin-os`; on anything older the check measures the def
 4. Finish the login. `/auth/callback` runs and the conversation list appears.
 
 **Server-side, for a verdict that does not depend on reading the client's log:**
-`ssh miconnect 'docker logs miconnect-server-1 --since 10m 2>&1 | grep -a authorize | tail -3'`
+`<ssh to the host> 'docker logs <miconnect server container> --since 10m 2>&1 | grep -a authorize | tail -3'`
 prints the request Authentik actually received - its `redirect_uri`, its `status` and the client's
 `user_agent`.
 

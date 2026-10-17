@@ -717,8 +717,7 @@ endpoint answered 200 with a silently fail-open verdict rather than an error.
 
 ## Rotating `JWT_SECRET`
 
-One HS256 secret signs every token of all six services, so a leak in the smallest of them mints
-admin tokens for all. Rotating it is already a supported operation — nothing in the workflows needs
+A single secret signs the services' tokens. Rotating it is already a supported operation — nothing in the workflows needs
 changing — but nothing schedules it either, which is why it is written down here.
 
 **The procedure is two steps**, and the second is not optional:
@@ -773,10 +772,9 @@ different commits. Production is deployed by the release's `v<version>`; dev by 
 **THE DEPLOY JOB RUNS ON THE MACHINE IT DEPLOYS, AND AFTER 2026-09-24 THAT IS NOT A PREFERENCE.**
 It reads as one, because the job builds nothing: it checks out, logs in to GHCR, pulls `latest` and
 runs `docker compose up`, all of which a GitHub-hosted runner could do over SSH. **It could not.**
-The migration target's `22` answers from the campus network and times out from anywhere else, while
-`443` answers from the same address that `22` refuses - so it is a per-port filter upstream of the
-host, not a ban on one address, and a GitHub-hosted runner has no route in at all. The measurement
-and the three source addresses it was taken from are on
+The migration target does not accept SSH from GitHub-hosted runners (a per-port filter upstream of the
+host, not a ban on one address), so a GitHub-hosted runner has no route in at all. The measurement
+is on
 [estate-migration](infrastructure/estate-migration.md#canari---moved-2026-09-24-it-was-two-estates-and-a-ci-runner-not-one-estate).
 
 **So the model is the same in all five repositories, and it is one sentence: `release.yml` is the
@@ -789,8 +787,8 @@ across the network.**
 | **Portail-etu** | GitHub | `portail-etu` | ORG, group `portail-etu`, selected to that repository | the target |
 | **Le Cercle** | `gitlab.emse.fr` | `cercle-portail` | project, tag `cercle-portail` | the target, **registered PAUSED** |
 | **MiConnect** | none | - | - | the target, deployed by hand: no pipeline has ever touched it |
-| **Sky** | GitHub | `sky` | REPOSITORY | `mitv` |
-| **MiGallery** | GitHub | `MiGallery` | REPOSITORY | `mitv` |
+| **Sky** | GitHub | `sky` | REPOSITORY | the old VM |
+| **MiGallery** | GitHub | `MiGallery` | REPOSITORY | the old VM |
 
 **Two runners on one machine are kept apart by the GROUP, never by the label.** Every runner here
 carries the same default `self-hosted,Linux,X64`, so a label decides nothing; `visibility=selected`
@@ -809,24 +807,18 @@ listing is a complete map of who may execute code on the target and an incomplet
 estate, which is the one thing to remember when reading it.
 
 **ONE ACCOUNT, DELIBERATELY, AND THE HALF-MEASURE WAS REFUSED** (user, 2026-09-24: *"Soit on
-separe tout, soit on rassemble tout."*). Both GitHub runners on the target run as `gha-runner` - no
-password, no `sudo`, one group - and that group is `docker`, which is root-equivalent. So the group
-decides WHERE a job lands and not what it may touch once there: a Canari job can reach Portail-etu's
-containers and the reverse.
+separe tout, soit on rassemble tout."*). Both GitHub runners on the target run as one
+service account, and its group is `docker`, which is root-equivalent. So the group decides WHERE a job
+lands and not what it may touch once there. The account detail is kept privately.
 
 **A second service account was considered and rejected as exactly the kind of fence that reads as a
-boundary without being one.** It would separate the two `_work` trees, the caches and the runner
+boundary without being one.** It would separate the work trees and the runner
 credential files, and it would separate nothing that matters, because both accounts would still hold
-the same socket. And the socket is already wider than this project: the host's `docker` group
-contains accounts belonging to the machine's other administrators, so a fence between our two
-runners would sit inside a field that is already open. **The only shape that would really separate
-them is a rootless daemon per runner**, which is a chantier on a machine this project does not own,
-with consequences for the volumes, the published ports and the backups of three estates already
-running there. It is named here so that nobody later mistakes the shared account for an oversight.
+the same socket. **The only shape that would really separate them is a rootless daemon per runner**,
+which is a chantier on a machine this project does not own. It is named here so that nobody later mistakes the shared account for an oversight.
 
-On the `canari` box, until it is switched off, the runner instead runs as the `canari` system user,
-reaches the Docker socket the same way, and holds the SSH access to `mitv` that the offsite backup
-needs.
+On the old `canari` box, until it is switched off, the runner runs as a system user of its own and
+reaches the Docker socket the same way.
 
 ### There is one runner, so a workflow that asks for it must say what it may not overlap with
 
