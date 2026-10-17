@@ -7,7 +7,7 @@
  * transactions on the last slot. It also proves what the constraint must NOT refuse - adjacent
  * half-open ranges, another resource, a range freed by a cancellation - and that deleting a space
  * (or its association) deletes everything under it (D27), and what a deleted ACCOUNT leaves behind
- * (`deleteBookingsUserData`). The entities read and write the tables, which pins their column names
+ * (`BOOKINGS_ERASURE_STATEMENTS`, the bookings part of the account erasure). The entities read and write the tables, which pins their column names
  * to the migration's.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files: without it the file reports
@@ -31,8 +31,11 @@ import { BookingResource } from './entities/booking-resource.entity';
 import { BookingParticipant } from './entities/booking-participant.entity';
 import { isExclusionViolation } from '../common/pg-errors';
 import { Association } from '../associations/entities/association.entity';
-import { deleteBookingsUserData } from './bookings-account-deletion';
-import { DELETED_ACCOUNT_ID } from './deleted-account';
+import {
+  BOOKINGS_ERASURE_STATEMENTS,
+  DELETED_ACCOUNT,
+  runErasureStatements,
+} from '../internal/account-erasure';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -434,7 +437,7 @@ maybe('bookings schema against PostgreSQL (migration 087)', () => {
     });
   });
 
-  describe('a deleted account (deleteBookingsUserData)', () => {
+  describe('a deleted account (BOOKINGS_ERASURE_STATEMENTS)', () => {
     // Past and coming are read against the server's now(), so the fixtures sit far on either side
     // of any date this test may run on - never near a wall clock.
     const PAST = {
@@ -479,14 +482,30 @@ maybe('bookings schema against PostgreSQL (migration 087)', () => {
 
     const get = (id: string) => ds.getRepository(Booking).findOneByOrFail({ id });
 
+    /**
+     * The bookings statements of the account erasure, run as the erasure runs them: in ONE
+     * transaction, through the same runner. The rows each changed, by label.
+     */
+    const erase = (userId: string) =>
+      ds.transaction((m) =>
+        runErasureStatements(
+          {
+            write: async (sql, params) => ((await m.query(sql, params)) as [unknown, number])[1],
+            read: async <T>(sql: string, params: unknown[]) => (await m.query(sql, params)) as T[],
+          },
+          BOOKINGS_ERASURE_STATEMENTS,
+          userId
+        )
+      );
+
     it('deletes a PERSONAL space of the account with everything under it, and no other', async () => {
       const mine = await spaceOf(CAROL);
       const someoneElses = await spaceOf(DAN);
       await book(mine.resource.id, PAST, DAN);
 
-      const outcome = await deleteBookingsUserData(ds.manager, CAROL);
+      const outcome = await erase(CAROL);
 
-      expect(outcome.personalSpacesDeleted).toBe(1);
+      expect(outcome.bookings_personal_spaces).toBe(1);
       expect(await ds.getRepository(BookingSpace).findOneBy({ id: mine.space.id })).toBeNull();
       expect(await ds.getRepository(Booking).countBy({ resourceId: mine.resource.id })).toBe(0);
       expect(
@@ -499,10 +518,10 @@ maybe('bookings schema against PostgreSQL (migration 087)', () => {
       await q(`INSERT INTO associations (id) VALUES ($1)`, [association]);
       const { space: s } = await spaceOf(CAROL, association);
 
-      await deleteBookingsUserData(ds.manager, CAROL);
+      await erase(CAROL);
 
       expect((await ds.getRepository(BookingSpace).findOneByOrFail({ id: s.id })).ownerId).toBe(
-        DELETED_ACCOUNT_ID
+        DELETED_ACCOUNT
       );
     });
 
@@ -510,11 +529,11 @@ maybe('bookings schema against PostgreSQL (migration 087)', () => {
       const { resource: r } = await spaceOf(DAN);
       const past = await book(r.id, PAST, CAROL);
 
-      await deleteBookingsUserData(ds.manager, CAROL);
+      await erase(CAROL);
 
       const row = await get(past.id);
-      expect(row.holderId).toBe(DELETED_ACCOUNT_ID);
-      expect(row.bookedById).toBe(DELETED_ACCOUNT_ID);
+      expect(row.holderId).toBe(DELETED_ACCOUNT);
+      expect(row.bookedById).toBe(DELETED_ACCOUNT);
       expect(row.holderName).toBe('name of c');
       expect(row.answers).toBeNull();
       expect(row.answersPurgedAt).not.toBeNull();
@@ -525,13 +544,13 @@ maybe('bookings schema against PostgreSQL (migration 087)', () => {
       const { resource: r } = await spaceOf(DAN);
       const coming = await book(r.id, COMING, CAROL);
 
-      const outcome = await deleteBookingsUserData(ds.manager, CAROL);
+      const outcome = await erase(CAROL);
 
-      expect(outcome.comingBookingsCancelled).toBe(1);
+      expect(outcome.bookings_coming_cancelled).toBe(1);
       const row = await get(coming.id);
       expect(row.cancelledAt).not.toBeNull();
-      expect(row.cancelledById).toBe(DELETED_ACCOUNT_ID);
-      expect(row.holderId).toBe(DELETED_ACCOUNT_ID);
+      expect(row.cancelledById).toBe(DELETED_ACCOUNT);
+      expect(row.holderId).toBe(DELETED_ACCOUNT);
       await expect(book(r.id, COMING, DAN)).resolves.toBeDefined();
     });
 
@@ -539,13 +558,13 @@ maybe('bookings schema against PostgreSQL (migration 087)', () => {
       const { resource: r } = await spaceOf(DAN);
       const forDan = await book(r.id, COMING, DAN, { bookedById: CAROL });
 
-      const outcome = await deleteBookingsUserData(ds.manager, CAROL);
+      const outcome = await erase(CAROL);
 
-      expect(outcome.comingBookingsCancelled).toBe(0);
+      expect(outcome.bookings_coming_cancelled).toBeUndefined();
       const row = await get(forDan.id);
       expect(row.cancelledAt).toBeNull();
       expect(row.holderId).toBe(DAN);
-      expect(row.bookedById).toBe(DELETED_ACCOUNT_ID);
+      expect(row.bookedById).toBe(DELETED_ACCOUNT);
       expect(row.answers).toEqual({ q_year: '2A' });
     });
 
@@ -563,15 +582,15 @@ maybe('bookings schema against PostgreSQL (migration 087)', () => {
         [r.id, PAST.startsAt, PAST.endsAt, CAROL]
       );
 
-      await deleteBookingsUserData(ds.manager, CAROL);
+      await erase(CAROL);
 
-      expect((await get(onBehalf.id)).bookedById).toBe(DELETED_ACCOUNT_ID);
+      expect((await get(onBehalf.id)).bookedById).toBe(DELETED_ACCOUNT);
       expect((await get(onBehalf.id)).holderId).toBe(DAN);
-      expect((await get(cancelled.id)).cancelledById).toBe(DELETED_ACCOUNT_ID);
+      expect((await get(cancelled.id)).cancelledById).toBe(DELETED_ACCOUNT);
       const blocks = await q(`SELECT "createdById" FROM booking_blocks WHERE "resourceId" = $1`, [
         r.id,
       ]);
-      expect(blocks).toEqual([{ createdById: DELETED_ACCOUNT_ID }]);
+      expect(blocks).toEqual([{ createdById: DELETED_ACCOUNT }]);
     });
 
     it('tombstones its participations, withdraws the coming one, and two tombstones share a booking', async () => {
@@ -585,21 +604,21 @@ maybe('bookings schema against PostgreSQL (migration 087)', () => {
         { bookingId: coming.id, userId: CAROL, userName: 'Carol' },
       ]);
 
-      const outcome = await deleteBookingsUserData(ds.manager, CAROL);
+      const outcome = await erase(CAROL);
       // A second deleted account in the SAME booking: the partial unique index lets both tombstones be.
-      await deleteBookingsUserData(ds.manager, BOB);
+      await erase(BOB);
 
-      expect(outcome.comingParticipationsWithdrawn).toBe(1);
+      expect(outcome.bookings_coming_withdrawn).toBe(1);
       const pastRows = await participants.find({
         where: { bookingId: past.id },
         order: { userName: 'ASC' },
       });
       expect(pastRows.map((p) => [p.userId, p.userName, p.withdrawnAt])).toEqual([
-        [DELETED_ACCOUNT_ID, 'Bob', null],
-        [DELETED_ACCOUNT_ID, 'Carol', null],
+        [DELETED_ACCOUNT, 'Bob', null],
+        [DELETED_ACCOUNT, 'Carol', null],
       ]);
       const comingRow = await participants.findOneByOrFail({ bookingId: coming.id });
-      expect(comingRow.userId).toBe(DELETED_ACCOUNT_ID);
+      expect(comingRow.userId).toBe(DELETED_ACCOUNT);
       expect(comingRow.withdrawnAt).not.toBeNull();
       // A LIVE account still appears once per booking.
       await participants.save({ bookingId: past.id, userId: DAN, userName: 'Dan' });
@@ -612,17 +631,14 @@ maybe('bookings schema against PostgreSQL (migration 087)', () => {
       const { resource: r } = await spaceOf(DAN);
       await ds.getRepository(BookingResource).update(r.id, { linkedUserId: CAROL });
 
-      await deleteBookingsUserData(ds.manager, CAROL);
-      const again = await deleteBookingsUserData(ds.manager, CAROL);
+      await erase(CAROL);
+      const again = await erase(CAROL);
 
       expect(
         (await ds.getRepository(BookingResource).findOneByOrFail({ id: r.id })).linkedUserId
       ).toBeNull();
-      expect(again).toEqual({
-        personalSpacesDeleted: 0,
-        comingBookingsCancelled: 0,
-        comingParticipationsWithdrawn: 0,
-      });
+      // A second run finds nothing to change: the queue's final pass is a no-op.
+      expect(again).toEqual({});
     });
   });
 });

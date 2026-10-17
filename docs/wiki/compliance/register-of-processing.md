@@ -49,12 +49,9 @@ the school's).
 | C17 | Bookings of rooms and slots (**built, not yet in use**: no route before WP-B3) | let members book a room or an appointment run by a person or an association | `booking_spaces` (owner), `booking_resources` (optional linked account), `bookings` (holder id and name, who booked, UTC range, answers to the space's questions, who cancelled), `booking_participants` (id and name), `booking_blocks` (author) | 6.1.b | answers purged N days after the slot (1-30, default 7, D18/D23); everything one year after the slot (D19) - both purges built in WP-B6; account deletion: personal spaces deleted, coming bookings cancelled, answers purged, ids tombstoned, name snapshots kept until the one-year purge | [bookings-chantier](../bookings-chantier.md#a-deleted-account-2026-10-16-review-of-1963) |
 
 **Account deletion** (`DELETE /api/users/me`, Settings > Supprimer mon compte) is immediate and fans
-out to every service. **Its completeness and a retry queue are being built by another work package
-(OPEN)**: today some tables are not reached (`submissions`, `form_respondents`, comments and
-reactions inside other people's posts, `minesweeper_*`, calendar events, `post_notifications`,
-`profile_changes`, `profile_correction_requests`, `notification_preference`,
-`device_signature_key`, the Redis history of other groups), and a failed downstream call is only
-logged. The bookings tables (C17) ARE reached, by `deleteBookingsUserData`.
+out to every service through core-service's durable erasure queue, retried until each service answers
+2xx; what each column gets is asserted against the schema ([account-erasure](../account-erasure.md)).
+The bookings tables (C17) are part of social's `ERASURE_STATEMENTS` (`BOOKINGS_ERASURE_STATEMENTS`).
 
 **Recipients and processors**: section 8. **Transfers**: Google, Apple, Cloudflare, KLIPY (section 8).
 

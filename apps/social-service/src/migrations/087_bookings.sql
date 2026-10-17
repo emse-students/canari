@@ -21,7 +21,7 @@
 -- 40P01 (deadlock_detected) instead. Ranges are HALF-OPEN `[start, end)`, so 10:00-10:30 and
 -- 10:30-11:00 are both bookable. A cancelled booking stays as history (D15) and frees its range.
 --
--- A DELETED ACCOUNT (`deleteBookingsUserData`): its personal spaces are deleted; elsewhere its ids
+-- A DELETED ACCOUNT (`BOOKINGS_ERASURE_STATEMENTS` in src/internal/account-erasure.ts): its personal spaces are deleted; elsewhere its ids
 -- become '[deleted]' (a linked resource is unlinked) and its name snapshots stay, bounded by the
 -- one-year maximum age (D15, D19).
 --

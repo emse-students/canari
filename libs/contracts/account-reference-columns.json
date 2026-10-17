@@ -1,5 +1,5 @@
 {
   "description": "Which entity properties can hold an account id, for the account-erasure coverage specs of social-service and chat-delivery-service. A property whose name matches `pattern` (case-insensitive) and does not end with one of `excludeSuffixes` must have a disposition in that service's ACCOUNT_ERASURE_COVERAGE. Shared as data so the two services cannot disagree on what counts as a reference.",
-  "pattern": "(user|author|actor|reporter|reviewer|reviewedby|sender|recipient|owner|uploader|uploadedby|claimedby|grantedby|bannedby|mutedby|createdby|validatedby|rejectedby|proposedby|decidedby|republishedby|settledby|follower|followed|email)",
+  "pattern": "(user|author|actor|reporter|reviewer|reviewedby|sender|recipient|owner|uploader|uploadedby|claimedby|grantedby|bannedby|mutedby|createdby|validatedby|rejectedby|proposedby|decidedby|republishedby|settledby|holder|bookedby|cancelledby|follower|followed|email)",
   "excludeSuffixes": ["At"]
 }

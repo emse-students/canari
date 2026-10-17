@@ -1,6 +1,6 @@
 # Bookings (reservation of rooms and slots) - the chantier, decisions as taken
 
-**Status: BUILDING (opened 2026-10-15).** WP-B0 merged (#1904); WP-F and WP-B1 are draft pull requests. Decisions are written here the day the
+**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 is draft pull request #1963, rebased on the merged account erasure (#1965) on 2026-10-17. Decisions are written here the day the
 user takes them; the work packages are written last, once every question is closed. Pointer in
 [backlog](backlog.md) to be added when the plan is complete.
 
@@ -224,8 +224,12 @@ Indexes beyond the exclusion's own GiST: `bookings ("holderId", "startsAt")` (my
 
 ### A deleted account (2026-10-16, review of #1963)
 
-`InternalController.deleteUserData` calls `deleteBookingsUserData`
-(`apps/social-service/src/bookings/bookings-account-deletion.ts`), one transaction:
+The bookings part of the account erasure ([account-erasure](account-erasure.md)) is
+`BOOKINGS_ERASURE_STATEMENTS` in `apps/social-service/src/internal/account-erasure.ts`, spread into
+`ERASURE_STATEMENTS` and run in the erasure's ONE transaction; every column below has its line in
+`ACCOUNT_ERASURE_COVERAGE`, which the coverage spec checks against the entities. The shared contract
+`libs/contracts/account-reference-columns.json` gained `holder`, `bookedby` and `cancelledby`, so a
+column named like these can never ship unclassified:
 
 | What the account left | What happens | Why |
 |---|---|---|
