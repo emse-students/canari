@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { uploadFailureText } from '$lib/utils/mediaRequestLimits';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { Log } from '$lib/utils/Log';
   import {
@@ -123,7 +124,7 @@
       onSetImage?.(mediaId);
     } catch (e) {
       Log.d('chatGroupPanel.handlePhotoCropExport failed', e);
-      imageUploadError = m.chat_group_image_upload_error();
+      imageUploadError = uploadFailureText(e, m.chat_group_image_upload_error());
     } finally {
       imageUploading = false;
     }

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { assertWithinRequestBudget, uploadFailureText } from '$lib/utils/mediaRequestLimits';
   import { onMount } from 'svelte';
   import {
     getVaultKey,
@@ -222,6 +223,7 @@
       // A vault document belongs to the association: kept for ever, and it survives the uploader's
       // account. Without a class it was swept like a chat photo, which is how one was lost.
       fd.append('retentionClass', 'association' satisfies MediaRetentionClass);
+      assertWithinRequestBudget(fd);
       const uploadRes = await apiFetch(`${mediaBase}/api/media/upload`, {
         method: 'POST',
         body: fd,
@@ -253,7 +255,7 @@
           status: String((e as { status: number }).status),
         });
       } else {
-        uploadError = m.asso_doc_upload_error();
+        uploadError = uploadFailureText(e, m.asso_doc_upload_error());
       }
     } finally {
       uploading = false;

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { uploadFailureText } from '$lib/utils/mediaRequestLimits';
   import { untrack, onMount } from 'svelte';
   import {
     updateAssociation,
@@ -157,7 +158,7 @@
       onUpdated(await uploadAssociationLogo(asso.id, file, slot));
       cropping = null;
     } catch (err) {
-      settingsError = m.asso_edit_logo_upload_error();
+      settingsError = uploadFailureText(err, m.asso_edit_logo_upload_error());
     } finally {
       logoBusy = false;
     }
