@@ -289,7 +289,7 @@ participant who has not withdrawn.
 
 **Withdrawal (D5).** The holder may cancel until `withdrawalDelayMinutes` before the start
 (0 = until the start). The organiser is not bound by the delay (D20). **Participants are not held
-to it in v1**: D4 lets them withdraw alone, and D5 names only the holder. To confirm with the user.
+to it in v1**: D4 lets them withdraw alone, and D5 names only the holder. Decided by Master on 2026-10-17; the user may overrule it.
 
 **D29.** A change of a resource's availability, or of the space's step, mode or step ceiling, is
 checked against the coming LIVE bookings. Any booking that is no longer a bookable shape refuses
