@@ -1700,6 +1700,44 @@ session since 2026-10-14, the alpha.1 ones included.
 iPhone's local store opens under it. Text size is at the default, airplane mode is off and the
 composer draft is empty. Two exported logs remain in "Sur mon iPhone".
 
+## The iPhone 12 readings of v1.2.9-alpha.3 (2026-10-16)
+
+TestFlight build `1.2.9` (100200903), About reads "Version de Canari 1.2.9-alpha.3"; account
+`canari-test-gamma`, dev estate, driven over WDA (`tools/ios-device`). Evidence (screens, AX trees,
+the app's own syslog lines, in-app log exports) is outside the repo in the rig's
+`ios-bench/r1016-a129a3/`, with `marks.txt` timing every step. Bench community and the bench DM
+only; nothing sent, nothing paid.
+
+**Delivery.** Release run 38825712616 finished at ~02:05. TestFlight offered "Mettre a jour" to
+100200903 at 02:17; one tap installed it, and the app was NOT signed out.
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1a. Edge swipe with the "+" menu open (#1936) | **`FAIL`** (P2) | 3 of 3 (DM twice, salon once): ONE left-edge swipe closes the menu AND leaves the conversation, as on alpha.2. A plain tap at the left edge with the menu open closes only the menu. The cause is not read: the `[historyOverlay]` lines are debug, and the in-app log does not record them. First thing to check: whether the menu is already closed (and off the stack) by the gesture's start, so that the swipe's end finds the conversation on top |
+| 1b. Edge swipe with nothing open | **`PASS`** | It leaves the conversation (DM and salon), and the salon row "general" is NOT left highlighted |
+| 1c. Edge swipe over the camera's photo review (#1936) | **`PASS`** | The swipe asks "Abandonner cette capture ?". "La garder" keeps the review, and the next swipe asks again. "Abandonner" leaves the live camera open; the next swipe closes the camera and stays in the conversation |
+| 1d. Paint stroke from the left edge in the editor | **`PASS`** | A stroke dragged from x=2 draws a line from the edge; the editor stays and nothing asks to leave. A sticker dragged from the edge `NOT-READ` |
+| 1e. Edge swipe while filming | `NOT-READ` | WDA did not hold the shutter as a video take: a 3.5 s press and a two-finger press-and-swipe both produced a PHOTO review |
+| 1f. Legal document page back | `NOT-READ` | Signed in, no screen links to `/legal/*` (only the login page does); not worth a sign-out |
+| 2a. PIN change, relaunch, change back (#1935) | **`PASS`** | Account -> scratch: "PIN modifie" in under 1 s. Relaunch, scratch PIN; scratch -> the `test-accounts.json` PIN; relaunch, unlock: the feed, the salon and the DM read, and no "Certaines conversations n'ont pas pu etre restaurees" banner. The log of the second unlock after it (the first one's lines went with 3e) has no `Partial restore` and no `already present locally`, and reads `[MLS][Tauri] group caches rebuilt from the native manager - 2 group(s)`. The interrupted state was NOT reproduced: a kill 300 ms and 650 ms after the submit left the server PIN unchanged both times |
+| 2b. Refused PIN empties the field (#1935) | **`PASS`** | Online: a wrong PIN gives "PIN incorrect ..." and the dots go back to the empty placeholder. Offline: "Impossible de contacter le serveur", and the field is empty too |
+| 2c. Largest accessibility size on the PIN gate (#1935) | **`PASS`** + P3 | Rows 7-0, "Saisie manuelle" and "PIN oublie ?" scroll into view on a drag up, and the keypad unlocks from there. P3: the "Rester connecte sur cet appareil" row stays half under the sticky Deverrouiller button at the end of the scroll |
+| 3a. Text size changed while backgrounded | **`PASS`** | "A propos" 64x22 -> 86x30 (largest standard) -> 126x42 (largest accessibility), no cold start; back to 53 pt filter buttons at the default |
+| 3b. Feed offline then online | **`PASS`** | The feed tab opened offline shows "Impossible de charger les posts" under "Hors connexion."; back online the posts draw by themselves within 8 s and the banner goes |
+| 3c. Native noise | **`PASS`** | 8 launches: "keyboard accessory bar removed" 8, "NOT removed" 0; Firebase's mobileprovision `<ERROR>` once per launch and "remote notification hook NOT installed", both known from alpha.2 |
+| 3d. Offline cold start | **`PASS`** | Airplane mode, cold start (twice): the gate draws and stays; the offline unlock says "Impossible de contacter le serveur" (by design). Back online, the unlock goes through |
+| 3e. In-app log | **findings** (P2) | The alpha.2 P2 again, with the same trigger: `E [APPLOG] the in-app log is no longer written to disk (failed): Error: log write failed` at 03:21:39, leaving for Settings at the largest accessibility size. The export after it reads `stored: failed` and holds ONLY the session begun at 03:20 (19 KB, against 191 KB an hour earlier). The next export, after a cold start, is back to `stored: ok` and 216 KB |
+| 4. Paid form on dev (#1916, #1930) | **`PASS`** (observation) | `fr.emse.canari://form/<id>` opens "Cotisation BDE 2026" with no crash (this account's answers hit "Combinaison indisponible"). `fr.emse.canari://payment/success?submission_id=<unknown>` shows "Paiement introuvable" with "Retour aux formulaires", right for an id that does not exist; the waiting state needs a real pending submission and was not read. P3: that page's title is still "Paiement reussi - Canari" over "Paiement introuvable" |
+
+**The rig.** `phone-ios.mjs`'s `setAirplaneMode` failed on iOS 27 in French: Control Center's
+toggles answer "Oui" / "Non", and a status-bar image labelled "Wi-Fi" sits above the Wi-Fi toggle.
+Both are fixed in this PR (`switchState` reads "Oui" / "Non"; `setSwitch` takes the labelled element
+that answers as a switch). Airplane on and off then read back right four times.
+
+**State left behind.** `canari-test-gamma`'s dev PIN matches `test-accounts.json`, and the
+iPhone's local store opens under it. Text size is at the default, airplane mode is off and both
+composer drafts are empty. Five exported logs remain in "Sur mon iPhone".
+
 ## The bench readings of v1.2.7-alpha.2 (2026-10-14)
 
 **Mi 9T**: build `1.2.7 (100200702)`, the release's `app-universal-release.apk` (sha256
