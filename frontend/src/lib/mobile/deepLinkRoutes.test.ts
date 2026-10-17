@@ -16,6 +16,14 @@ describe('appRouteForDeepLink', () => {
     expect(route('fr.emse.canari://admin-agenda')).toBe('/admin/agenda');
   });
 
+  it('keeps the comment a comment push names, and only that parameter', () => {
+    expect(route('fr.emse.canari://post/p1?comment=c1')).toBe('/posts/p1?comment=c1');
+    expect(route('fr.emse.canari://post/p1?comment=c1%26x%3D1')).toBe(
+      '/posts/p1?comment=c1%26x%3D1'
+    );
+    expect(route('fr.emse.canari://post/p1?other=1')).toBe('/posts/p1');
+  });
+
   it('matches the in-app bell for the same notification', async () => {
     const { notificationHref } = await import('$lib/posts/notificationTarget');
     expect(route('fr.emse.canari://form/f1')).toBe(

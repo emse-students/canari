@@ -355,7 +355,7 @@ Decided: the iPhone app FOLLOWS the system text size, like Android. Read on `1.2
 
 ## P2 - iOS silent frames reach no Canari native code, background or foreground (found 2026-10-15, iPhone 12 syslog)
 
-`CanariInstallRemoteNotificationHook` only replaces an EXISTING `application:didReceiveRemoteNotification:fetchCompletionHandler:`; wry's delegate has none and Firebase's proxy found no delegate at configure time, so the hook is never installed (`remote notification hook NOT installed`, every launch since at least 2026-10-14) and no `[CanariPush] onMessage` line was ever seen on the bench. `channel_read` (cross-device dismissal) and every other `content-available` frame are therefore acted on by no native code, backgrounded or in the foreground (`willPresentNotification` fires for alerts only), against what [mobile](frontend/mobile.md) and [chat-delivery](services/chat-delivery.md) described. **Owed**: add the method with `class_replaceMethod` as the APNs token hook does - a change of what iOS wakes the app for (background launch included), so its own pull request, an adversarial review of the background `CanariHandleFcmData` path, and a bench reading of a `channel_read` dismissal.
+**BUILT on a branch (2026-10-17), not shipped:** the method is ADDED with `class_replaceMethod`, and what a woken process may do is an allowlist of dismissals (`channel_read`, my own MLS frame, `call_ring_end`) that never reaches `CanariHandleFcmData` - mechanism in [mobile](frontend/mobile.md#silent-frames-reach-the-app-through-a-method-canari-adds-2026-10-17). **Owed**: the iPhone 12 reading named there (`remote notification hook installed`, then a salon read elsewhere clearing the banner, backgrounded and foregrounded). The Welcome kinds stay unhandled on iOS until the background-join row fix below.
 
 ## Next chantier after 1.2.8 - speed (user, 2026-10-14)
 
@@ -497,7 +497,7 @@ Peak is linear: **~95 MB of renderer per MB of file**. The server ceiling is 50 
 
 ## P3 - iOS notification sounds still play the default tone (palette A is Android and in-app only, 2026-10-09)
 
-The palette-A trills reach the app's tones and the three Android channels ([sounds](frontend/sounds.md)). On iOS the banner sound is the APNs payload's `sound` field (`'default'` at three sites of `push-payload.ts` and `calls.service.ts`), so it needs ONE change across: the three files as `.wav` in the app AND `canari_NSE` targets, the server naming one per message / reaction (a mention is known only to the NSE after decryption, which would set `content.sound` itself), and a listen on the iPhone. **Why it is not built from a workstation:** `project.yml` is NOT the build source ([project.yml header](../../frontend/src-tauri/gen/apple/project.yml)); the tracked `canari.xcodeproj/project.pbxproj` is hand-maintained, so bundling a resource in two targets is a hand edit of a file no gate here compiles. A server that names a file the bundle lacks is harmless (iOS plays the default), so the order is bundle first, server second.
+**BUILT on a branch (2026-10-17), not shipped:** the three Android files bundled in the app and the extension by reference, the server naming one per push, the extension setting the mention trill ([sounds](frontend/sounds.md)). **Owed**: an `ios.yml` compile check showing the three files copied into both bundles, then a listen on the iPhone 12 (DM, mention, reaction). The call ring (`calls.service.ts`) keeps `'default'` while calls are held off.
 
 ## Seen on the 2026-10-09 bench runs (around `v1.2.1`)
 
@@ -864,7 +864,7 @@ Matrix and reasoning: [mobile](frontend/mobile.md#what-every-notification-opens-
 Fixed on a branch (not shipped until released): a proposal push opened the feed, three notices had no switch, a
 browser salon notification clicked through `/chat`. Open:
 
-1. **P3 - a comment, reply or mention opens the post, not the comment.** No `commentId` travels in the payload or the URL.
+1. **P3 - a comment, reply or mention opens the post, not the comment.** BUILT on a branch (2026-10-17): the push carries `commentId` and the post page scrolls to it ([mobile](frontend/mobile.md)). Owed: one tap on the Mi 9T and the iPhone 12 landing on the comment; the in-app bell row still stores no comment id.
 2. **P3 - the Android manifest and `tauri.conf.json` declare five hosts; the page hosts a push writes (`posts`,
    `calendar`, `admin-agenda`, `proposals`) rely on the explicit intent of the notification.** Read it once on the Mi 9T.
 
