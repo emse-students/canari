@@ -154,7 +154,7 @@ the fixtures assume:
 
 ## The first live session (2026-10-01)
 
-Bench build of `main` at `4af29a0a0` (`ios.yml` run 36865179190, `local_url=http://192.168.1.32:8081`),
+Bench build of `main` at `4af29a0a0` (`ios.yml` run 36865179190, `local_url` = the workstation's LAN address, port 8081),
 signed and installed by `sign-install.mjs`, iOS 27.0.1. `PYMOBILEDEVICE3` must name the exe when it
 is not on `PATH` (on OXYGEN it is in the user's Python `Scripts` directory).
 
@@ -182,7 +182,7 @@ is not on `PATH` (on OXYGEN it is in the user's Python `Scripts` directory).
 | --- | --- |
 | `identity.mjs` read I1 as acting as `null`: `tauri://localhost` keeps no cookie jar, so `canari_ws_token` is absent by construction | on an origin with no cookie jar the subject is the user half of the gateway's `user:online:{claims.sub}:{deviceId}` key (`subjectsOfDeviceSocket`) |
 | `pin.mjs`: "no unlock modal" with the keypad on screen - the erase key is a Lucide icon with an `aria-label`, never the `⌫` text the probe and two self-tests modelled, so the keypad clause was false on EVERY phone | the keypad is its ten digit keys (`KEYPAD_EXPR`); the erase key is the labelled, textless button in the `0` key's group |
-| `pin.mjs`: "NOT ON THE LOCAL ESTATE: it called http://192.168.1.32:8081" - the iPhone's only route to the same nginx | `localAliases`: this machine's own IPv4 addresses on SITE's port are the same estate; another LAN host is still a stranger; `pin.mjs` now calls `estateVerdict` instead of a copy |
+| `pin.mjs`: "NOT ON THE LOCAL ESTATE: it called the workstation's LAN address on port 8081" - the iPhone's only route to the same nginx | `localAliases`: this machine's own IPv4 addresses on SITE's port are the same estate; another LAN host is still a stranger; `pin.mjs` now calls `estateVerdict` instead of a copy |
 | `ensureChat`: `text=Discussions` not found - the bottom bar is the plugin's native UITabBar, outside the DOM, with UNTITLED items (a decision, `NativeTabBar.svelte`) so WDA's flat tree drops three of four | `ios.mjs tabs` (class chain) and `tapNativeTab(placeId)`, the slot found by `places.ts`' `mobileNav` order and proven selected |
 | `realClick('[aria-label="Retour au menu"]')`: "no stable element" - WP-G2's header and "+" are native glass, the web twin `visibility: hidden` under the thread | on I1 a hidden twin with an `aria-label` is tapped as the native Button of the same label (`tapNativeButton`) |
 | `send.mjs`: "NO POST /api/mls/send" for a send the server took - every API call of the app goes through the Rust HTTP plugin, invisible to the WebView | on I1 the witness is chat-delivery's `[SEND] START sender=<user>:<device>` / `DONE` (`sendtrace.mjs`) |
@@ -215,7 +215,7 @@ O13, NOTIF-*, MENTION-2/3, LIFE-2/3/5/8) cannot run.
 
 ## The notification-tap deep link on the iPhone (first reading, 2026-10-05)
 
-The bench build already on the phone (1.0.3, `local_url` `http://192.168.1.32:8081`, inspectable
+The bench build already on the phone (1.0.3, `local_url` the workstation's LAN address on port 8081, inspectable
 through `pymobiledevice3 webinspector cdp --port 9444`, `bench_native_store` answering) was measured
 with `openDeepLink('fr.emse.canari://chat/<id>')` (O10) and the WebView console recorded over the
 bridge. **No real push is possible on this bench** (sandbox APNs credential, above), so the native
