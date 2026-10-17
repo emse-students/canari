@@ -253,10 +253,8 @@ no longer stored and must be uploaded again - with an "upload again" button in t
 association must upload it again" on the reviewer page. Before, it was a generic "download failed",
 and a protected document's 410 read as a wrong password.
 
-**Recovery is a restore, not code.** The restic repository (`/srv/canari-backups/restic-objects`,
-14d/8w/6m) still holds `garage_data` snapshots of 08-23, 08-30, 08-31, 09-06, 09-13 and daily
-09-18 to 09-21, all taken while that blob existed; its decryption salt lives in the deleted row's
-`description`, which the 2026-10-01 03:30 `auth_db` dump still holds. Whether to restore is the
+**Recovery is a restore, not code.** Snapshots of the object store taken while that blob existed still
+exist in the backups, and so does the row holding what is needed to decrypt it. Whether to restore is the
 user's call ([backup](../infrastructure/backup.md)).
 
 ### The archive class: the feed is not a conversation (2026-09-23)

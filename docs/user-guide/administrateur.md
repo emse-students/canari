@@ -131,11 +131,10 @@ make reset-services
 ### Lancer une sauvegarde manuelle
 
 ```bash
-# Sur le serveur de production
-sudo /etc/cron.daily/canari-backup
+# Sur le serveur de production : lancer le script de sauvegarde decrit dans la page ci-dessous
 ```
 
-Les sauvegardes automatiques s'executent quotidiennement a 03h30.
+Les sauvegardes automatiques s'executent chaque jour.
 Voir `docs/wiki/infrastructure/backup.md` pour la procedure complete.
 
 ---

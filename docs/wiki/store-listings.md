@@ -7,7 +7,7 @@ Status: DESIGN (2026-10-09). Nothing here has been created or uploaded yet; the 
 ## 1. What the credentials can do (measured 2026-10-09, read-only)
 
 **Google Play** - the service account of [play-vitals](../../tools/play-vitals/README.md) (`PLAY_SA_KEY`,
-default `../canari-harness/play-console-sa.json`). A draft edit was opened, read, and DELETED (204);
+kept outside the repository). A draft edit was opened, read, and DELETED (204);
 nothing was written.
 
 | Call | Result |
@@ -24,8 +24,8 @@ en-US 0 phone, 0 ten-inch, 0 feature graphic, 1 icon (seven-inch unreadable at t
 
 **App Store Connect** - READABLE since 2026-10-12. The issuer ID is
 `b0bcfe88-4988-4f78-a80d-84c17642c7fc` (App Store Connect > Users and Access > Integrations; NOT a
-secret - it identifies the team, and the `.p8` is what signs), the key is `U7X7X373G5`, and its
-`.p8` sits in `~/.appstoreconnect/` on the workstation. That is all an ES256 token needs (an
+secret - it identifies the team, and the `.p8` is what signs), the key id is in the private notes, and its
+`.p8` is kept outside the repository. That is all an ES256 token needs (an
 individual-key token, without the issuer, was refused 401). The app id is `6793060521`
 (`fr.emse.canari`). On 2026-10-12 only `fr-FR` existed on the version localizations, and the
 description named no platform.
@@ -107,10 +107,9 @@ Checklist applied to EVERY frame before it leaves the scratchpad (a person looks
 
 Each step idempotent and logged:
 
-1. **User (owed):** create N fictional Authentik users the way `canari-test-delta` was, with the
-   campus/programme attributes (a mix of saint-etienne and gardanne), credentials into
-   `../canari-harness/test-accounts.json`. They sign in through the `password-login` flow
-   (`PASSWORD_LOGIN_FLOW_SLUG`), no MFA.
+1. **User (owed):** create N fictional Authentik users the way the existing dev test accounts were, with the
+   campus/programme attributes (a mix of saint-etienne and gardanne), credentials kept in the
+   private harness state, never in the repository.
 2. Sign in once per account on dev so core-service creates the profile rows.
 3. Through the real API with those sessions (harness `login.mjs`/`accounts.mjs`): display names and
    generated avatars, 3-4 fictional associations and an institution, members, posts (one with a

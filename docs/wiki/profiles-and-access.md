@@ -10,7 +10,7 @@ inferred from one self-declared string.
 
 ## 1. What exists today (measured on production, 2026-09-29 ~14:36 UTC)
 
-Read with `ak shell` in `miconnect-server-1` on `ssh portail-etu-direct`, read-only. Counts are a
+Read with `ak shell` on the identity-provider host, read-only. Counts are a
 snapshot of a live population ([authentik](infrastructure/authentik.md#database-and-backup)).
 
 **Sign-in.** `miconnect-auth` is an identification stage with NO password field: a source button and
@@ -64,8 +64,8 @@ can sign in to all nine.
 Promo (entry year): 2026 177, 2025 158, 2024 140, 2023 70, 2022 39, then 2021 x2, 2020, 2007 and
 1816 - the validator accepts anything. 6 accounts have no all-capitals word in their name, so their
 `lastName` is empty - **and none of them is a person** (read 2026-09-30): authentik's
-`AnonymousUser`, a `service-account` and the four campaign accounts `canari-test-*`. Every real
-account splits. The `1816` was `les.roots`, an internal admin account the user DELETED as dead the
+`AnonymousUser`, a `service-account` and the four campaign test accounts. Every real
+account splits. The `1816` was an internal admin account the user DELETED as dead the
 same day.
 
 **What each application decides from those claims** - `formation = 'ICM'` is the real access
@@ -207,8 +207,7 @@ built.
 ## 3. Found on the way
 
 - **A MiGallery API key travels in plain text in claims.** The property mapping `avatar` builds a
-  URL carrying it, and it is attached to MinoWiki and Archives MINO, so any user of either can read
-  it in their own id_token or userinfo. The value is not written here. Closed by WP0 on 2026-09-30
+  URL carrying it, and it is attached to MinoWiki and Archives MINO, so it was readable in a claim. The value is not written here. Closed by WP0 on 2026-09-30
   ([section 4](#the-work-packages-in-order)).
 - **The Alumni source's `sso_url` is a placeholder** while the source is enabled and promoted.
   Whether its button renders on the sign-in page was not observed.
@@ -253,7 +252,7 @@ affected.
    `/api/users/<id_user>/avatar?sig=<s>`, where `s = base64url(HMAC-SHA256(key, id_user))`, unpadded.
    A signature opens ONE avatar: a bad one gets `403`, no signature and no key gets `401`.
 2. The `avatar` mapping computes the same value in Python from `MIGALLERY_AVATAR_SIGNING_KEY`, which
-   is passed through `infrastructure/authentik/compose.yml` from `/srv/miconnect/.env`. MiGallery reads
+   is passed through the stack's environment file. MiGallery reads
    the same key as `AVATAR_SIGNING_KEY` from its GitHub secret.
 3. Before saving, the switch evaluated the new expression for one account and fetched the URL.
    MiGallery answered `200`, and only then was the mapping saved.
@@ -268,8 +267,7 @@ Two things are worth knowing next time:
   not signed in since the switch. That URL now gets a `401`. The next sign-in replaces it, and nothing
   is exposed by it.
 
-The `?api_key=` query path that only this mapping used is still accepted by the route. Removing it
-is a MiGallery follow-up.
+Legacy key-in-URL access on the MiGallery side is tracked privately for removal.
 
 **WPA - authentik as code, BEFORE WP1 (user, 2026-09-29: *"on a tout fait à la main, peut-être
 qu'on peut faire mieux et plus propre, homogène"*).** Every custom object - flows, stages, prompts,
@@ -294,7 +292,7 @@ profile editor (WP4) is tried on the production instance with test accounts. **S
 in French in the "tu" register; the Cercle's 30 s / 2 min tokens are KEPT and documented, because it
 reads the verified id_token once at its callback and discards the rest
 (`le-cercle/src/lib/server/auth/authentik/index.ts`), so nothing ever uses those tokens later;
-`akadmin` is KEPT with its password, as the break-glass account if the CAS is down.
+A local break-glass administrator account is kept in case the CAS is down.
 
 **WPA is two pull requests, both MERGED AND APPLIED to production on 2026-09-30.**
 
@@ -366,7 +364,7 @@ reads the verified id_token once at its callback and discards the rest
 - **Proven before any write.** Locally: five accounts shaped like production's, the claims each
   mapping emits, the enrolment policy on a student and a staff submission, a second migration
   writing 0. On production, read-only: the claims today against the claims from the migrated
-  profile, for 607 accounts - the ONLY differences were 14 `Master -> Autre` and `les.roots`' `1816`.
+  profile, for 607 accounts - the ONLY differences were 14 `Master -> Autre` and one deleted admin account's `1816`.
 - **The order on production is forced**: the name, formation and promo claims read the profile
   only, so the migration is written BEFORE the blueprints are applied, and run again after them
   for anyone who enrolled in between.
@@ -465,7 +463,7 @@ filters.
   service account `miconnect-canari-editor`, the role `miconnect-profile-editor` (global permissions
   `view_user` and `change_user`, nothing else), the group `miconnect-profile-editors` that carries the
   role to the account, and its API token (`expiring: false`). The token key is `!Env
-  MICONNECT_EDITOR_TOKEN` from `/srv/miconnect/.env`, declared with `:?` in the stack's `compose.yml`,
+  MICONNECT_EDITOR_TOKEN` from the stack's environment file, declared with `:?` in the stack's `compose.yml`,
   so a `.env` that forgets it fails the start and the applier refuses an unresolved `!Env` before it
   commits. **The same value is the GitHub secret `MICONNECT_EDITOR_TOKEN`** that production's
   core-service reads ([MIGRATION](../../infrastructure/MIGRATION.md)).
@@ -1158,12 +1156,12 @@ The seven decisions of [the decisions](#the-nominative-read-grants---the-decisio
 
 #### The eight dev checks (2026-10-09, `dev.canari-emse.fr` on `1.2.1-alpha.1`, same code as `v1.2.1`)
 
-Set up through the API as the dev global admin (`canari-test-delta`): two throwaway associations, one with the audience `(campus gardanne, every formation)` holding a post and a poll post, one saint-etienne control. Grantee: `canari-test-gamma` (ICM, saint-etienne), granted the whole gardanne campus with `PUT /api/associations/read-grants`. Every fixture, the grant, the membership and the BDE flag were removed afterwards (re-read in the dev database: 0 left).
+Set up through the API as the dev global admin (a dedicated test account): two throwaway associations, one with the audience `(campus gardanne, every formation)` holding a post and a poll post, one saint-etienne control. Grantee: a dedicated test grantee (ICM, saint-etienne), granted the whole gardanne campus with `PUT /api/associations/read-grants`. Every fixture, the grant, the membership and the BDE flag were removed afterwards (re-read in the dev database: 0 left).
 
 | # | Check | Verdict | Evidence |
 |---|---|---|---|
 | 1 | a grantee sees the association posts of the granted campus | PASS | before the grant `GET /api/posts/:id` 404 for both posts; after it 200, and both are in `GET /api/posts?limit=50` |
-| 2 | no personal post of that campus | PASS, on the predicate | dev has NO personal post by a gardanne author and `canari-test-epsilon`'s credentials are not in `test-accounts.json`, so no end-to-end post. The shipped `postVisibleToViewerSql` was run read-only on the dev database with the grant live, over a personal post by each of the 8 gardanne users: `false` for all 8, `true` for the association post |
+| 2 | no personal post of that campus | PASS, on the predicate | dev has NO personal post by a gardanne author and that test account's credentials are not in the harness state, so no end-to-end post. The shipped `postVisibleToViewerSql` was run read-only on the dev database with the grant live, over a personal post by each of the 8 gardanne users: `false` for all 8, `true` for the association post |
 | 3 | can react | PASS | `POST /reactions` 201 |
 | 4 | can comment | PASS | `POST /comments` 201 |
 | 5 | cannot vote through the grant | PASS | `POST /polls/:pollId/vote` 404 `Post not found`; the stored poll keeps zero votes |
