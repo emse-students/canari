@@ -1396,6 +1396,50 @@ camera. **Owed one reading each on the Mi 9T and the iPhone 12:**
 - The overlay over the keyboard and over a conversation with a pending draft; a camera refused
   (permission denied) shows the refusal screen with no native fallback.
 
+## The Mi 9T readings of v1.2.9-alpha.7 (2026-10-17)
+
+Build `1.2.9 (100200907)`, the `v1.2.9-alpha.7` release APK (`app-universal-release.apk`, sha256
+`b3a5129c...`, release run `39026972985` green), `adb install -r` over alpha.5 (`firstInstallTime`
+unchanged: enrolment kept). Dev estate, account `fourth` ("Canari Test Delta", NOT an admin), vault
+path, phone text size `0.85`. Console over CDP, real taps with `adb input`. Evidence:
+`<harness-dir>/a1-bench/r1017-a129a7/` (`hubnav.ndjson`, `weaknet-runs.ndjson`, `wn1-3.txt`,
+`signout.json`, `cons-all.ndjson`, `cons-fs.ndjson`, frames `s*.png`).
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1. Comment sort row at 200 % text (#1980) | **`PASS`** | `font_scale 2.0` (root 32 px). "Recents / Anciens / Aimes" now sit on their own line UNDER "Afficher les 2 commentaires" (R 351 for a 436 px viewport). `.page-scroll-wrap` `scrollWidth 436 = clientWidth 436` (alpha.5: 553), `documentElement` 436; a `scrollIntoView` on "Anciens" and a real sideways drag both leave `scrollLeft` at 0 (`s10-fs2-sortrow.png`). The only boxes wider than the viewport are long author names, clipped inside their `truncate` parent |
+| 2a. Dashboard hub rows (#1958) | **`PASS`** | `/dashboard` from the fourth tab: the identity row ("Voir mon profil"), **Explorer** (Agenda, Associations, Listes, Institutions, Boutique, Formulaires, Notifs), then **Compte** (Parametres, then "Se deconnecter" in the danger tone) - the order #1958 specifies; "Compte" is the LAST group, not the first. No admin or manager group for this account (`s01`, `s02`) |
+| 2b. Each row navigates, Back returns | **`PASS`** | Real tap on each of the 9 link rows: `/profile`, `/calendar`, `/associations`, `/lists`, `/institutions`, `/shop`, `/forms`, `/notifications`, `/settings`, each with its own `h1`; ONE system Back returns to `/dashboard` 9 of 9 (`hubnav.ndjson`) |
+| 2c. Dashboard at 200 % text | **`PASS`** | `scrollWidth 436`, 0 clipped rows, labels and summaries wrap on two lines (one summary ends in an ellipsis after two lines, by design); scrolled to the end the sign-out row (bottom 832) clears the tab bar (top 873) (`s11`, `s12`) |
+| 2d. Sign-out busy state, double tap (#1958, #1966) | **`PASS`** for the button, **see the finding below** | Two `input tap` 191 ms apart: ONE `[A] signout requested by the user`; the row reads `disabled`, `aria-busy="true"` at the next sample, then `/login`. But TWO `POST /api/auth/logout` went out (200 each) - the second NOT from the second tap |
+| 2e. Theme still reachable | **`PASS`** | Parametres > Preferences: "Automatique / Clair / Sombre"; Clair sets `data-theme="light"` (body `rgb(240, 242, 245)`), Automatique returns to dark |
+| 3. Admin read-access redesign (#1957) | **`NOT-OBSERVED`** | `fourth` is not an admin (`canari_global_admin` false, no Administration group) |
+| 4. Airplane mode during a refresh (#1966) | **`PASS`** (n=3 cold, n=1 warm) | Cold start, airplane ON 0.75 s after launch, held 35 s, then OFF. n=2 with the refresh in flight: `refresh->` then `refresh✗transport 111-112ms`, `refresh not sent: the browser reports no network ... held until the reconnect`, `[LOGIN] Offline unlock (no token)`; network back: one more transport failure, then `refresh✓`, `[PROMOTE] ... fully promoted` 46 s after the cut. Route `/posts` throughout, the login page never drawn. n=1 with the cut after `refresh✓`: same, no sign-out. Warm (feed open, airplane on, pull to refresh, 30 s): "Hors connexion.", back online `server reachable again`, no `[A]` line. **Airplane mode fails the request in ~110 ms: the 20 s `REFRESH_DEADLINE_MS` path (a stalled link) was NOT exercised** |
+| 5. Avatar photo on the first frame (#1977) | **`NOT-OBSERVED`** | As on alpha.5: no conversation, community or member reachable from `fourth` has a photo avatar (0 `<img>` avatars on `/chat` and `/communities`) |
+| 6. `[TAURI] Couldn't find callback id` after a text-size change | **`PASS`** | Text size 0.85 -> 2.0 (the WebView reloads: `Initialised in TAURI mode`): **0** such warnings in the 3 min after, 0 in 210 s, 0 in logcat, 0 across the three force-stop relaunches of reading 4 (alpha.5: 15 in 4 min). The console logger was proven alive by a probe line |
+
+**Findings:**
+
+- **P2 - a user sign-out sends `POST /api/auth/logout` TWICE and ends through the "session
+  expired" path.** `signout.json`: `[A] signout requested by the user`, `[A] clear`, `[LOGOUT] MLS
+  client retired`, the page re-initialises, and `[PIN] Device key restored from PinVault -
+  auto-login...` runs AGAIN (17 ms after) - the vault surviving a sign-out, noted on 2026-10-14. That
+  auto-login asks for a token: `refresh->` races the logout, comes back `refresh✗401`, and
+  `[AUTH] Session expired - logging out and redirecting to /login?returnTo=%2Fdashboard` runs a
+  second `clear` and a second logout POST. The reader lands on `/login?returnTo=/dashboard`.
+- **Observed, documented:** `signout: MiConnect session NOT ended (no-id-token)` - this session
+  predates the id_token kept by #1866, so its first sign-out is local-only, as
+  [auth](frontend/modules/auth.md#signing-out-ends-the-miconnect-session-2026-10-14) says. The
+  following sign-in asked for the password.
+- **The 2026-10-14 P1 candidate did NOT reproduce:** sign-in again in the same process
+  (service-account link, password) reached `handleOidcCallback resolved`, the vault restore, the
+  device binding (`PUT .../sessions/current/device` 200), the feed and the DM list, no kill needed.
+- **P3 noise:** while the refresh is held offline, `[A] token->refresh` is logged 43-44 times in the
+  first 13 s of a cold start (one per caller). Offline `[WS] Gateway connection failed` at ERROR,
+  unchanged.
+- Logcat: no `FATAL EXCEPTION`, no ANR. The phone is left at text size `0.85`, airplane mode off,
+  signed in as `fourth` on the vault path.
+
 ## The Mi 9T readings of v1.2.9-alpha.5 (2026-10-17)
 
 Build `1.2.9 (100200905)`, the `v1.2.9-alpha.5` release APK (`app-universal-release.apk` by asset
