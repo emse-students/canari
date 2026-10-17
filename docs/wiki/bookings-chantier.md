@@ -1,6 +1,6 @@
 # Bookings (reservation of rooms and slots) - the chantier, decisions as taken
 
-**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) is a draft pull request; WP-B4's organiser API is a draft stacked on it, its screens next. Decisions are written here the day the
+**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) is a draft pull request; WP-B4's organiser API is a draft stacked on it, its screens next. **Owed by WP-B6, carried from WP-B4: the space poster (D35: column by migration, purge) and the bookings FILE question.** Decisions are written here the day the
 user takes them; the work packages are written last, once every question is closed. Pointer in
 [backlog](backlog.md) to be added when the plan is complete.
 
@@ -152,7 +152,7 @@ when each is opened (083 on 2026-10-15). Only Master marks ready, merges and rel
 | **WP-B3** | API: book, cancel, participant withdraws, organiser blocks, books on behalf, cancels (D20); frozen history (D15); block honoured (`isBlockedBetween`); private fields returned only to the booking's people (D32) | `apps/social-service/src/common/user-blocks.ts`, `forms.service.ts` `assertFormManager` as the guard shape | A past booking refuses every write; a stranger never receives a private field |
 | **WP-B4** | Organiser screens: five settings sections (D35), resources, availability, questions reused from forms, the entity tab. The availability editor writes a window crossing midnight as two rules (see WP-B2) | `editSections.ts`, `routes/associations/[slug]/edit/[[section]]/+page.svelte`, `FormSection.svelte` and `FormAdvancedSettings.svelte` as the pattern | Seen at 390 and 1280 on a real build |
 | **WP-B5** | Booker screens: grid and planning (D14), my bookings, the dashboard card (D37), the sidebar entry, link and QR code, "Add to my calendar" with a hosted ICS route (D13) | `routes/calendar/+page.svelte`, `viewport.ts`, `AddEventToCalendarButton.svelte`, `navigation/places.ts`, `QrCodeModal.svelte`, `pageWidth.ts` | Read on the Mi 9T and the iPhone |
-| **WP-B6** | Purge of files and answers after N days, the platform maximum age of one year (D19, D23), XLSX export (D24) | `reel-retention.scheduler.ts`, `forms/export-labels.ts`, `forms.service.ts` `exportSubmissions` | A purge run twice changes nothing; the export parses back |
+| **WP-B6** | Purge of files and answers after N days, the platform maximum age of one year (D19, D23), XLSX export (D24); **the FILE question for bookings** (refused `file-question-not-yet` until then) and **the space POSTER (D35): its column, by migration, and its purge** - both carried over from WP-B4 | `reel-retention.scheduler.ts`, `forms/export-labels.ts`, `forms.service.ts` `exportSubmissions` | A purge run twice changes nothing; the export parses back |
 | **WP-B7** | Device readings, a concurrency run with two real clients on one slot, the wiki page of the module, the user guide in French | `docs/wiki/frontend/modules/`, `docs/user-guide/` | Both phones read; the board of readings recorded |
 
 Order: **WP-F and WP-B0 can start in parallel** (they share nothing); B1 follows B0; B2 and B3
@@ -435,8 +435,9 @@ screens come in a pull request of their own; this half is what they write throug
 - **A FILE question is refused (`file-question-not-yet`) until WP-B6** brings the bookings half of
   WP-F's storage and purge: accepted now, it would be a question nobody could answer.
 - **Times** are stored `HH:MM:SS`, `24:00` included; a window crossing midnight is two lines (WP-B2).
-- **No poster in v1**: D35's "poster" has no column (087 has none); it is left for a later version
-  rather than a migration in this package.
+- **The poster (D35) is SCHEDULED IN WP-B6, not dropped** (Master, 2026-10-17): 087 has no column
+  for it, so WP-B6 adds the column and its purge with a migration; the General section of the
+  editor gains the field then.
 - **Nothing new to erase**: no column was added. The linked account was already covered by
   `BOOKINGS_ERASURE_STATEMENTS` (WP-B1).
 
