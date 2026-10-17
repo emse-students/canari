@@ -16,6 +16,7 @@ describe('SecurityController - checkPinVerifier', () => {
     findOne: jest.Mock;
     create: jest.Mock;
     save: jest.Mock;
+    update: jest.Mock;
   };
   let revokedDeviceRepo: {
     findOne: jest.Mock;
@@ -27,6 +28,7 @@ describe('SecurityController - checkPinVerifier', () => {
       findOne: jest.fn(),
       create: jest.fn(),
       save: jest.fn(),
+      update: jest.fn(),
     };
     revokedDeviceRepo = {
       findOne: jest.fn(),
@@ -203,5 +205,45 @@ describe('SecurityController - checkPinVerifier', () => {
     );
 
     expect(result).toEqual({ status: 'ok', resetRequired: false });
+  });
+
+  describe('changePin - a compare-and-swap on the verifier', () => {
+    const OLD = 'a'.repeat(64);
+    const NEW = 'b'.repeat(64);
+    const row = () => ({ id: 'r1', userId: 'u1', verifier: OLD, salt: 's' });
+
+    it('rotates the verifier only where the row still holds the one compared', async () => {
+      pinVerifierRepo.findOne.mockResolvedValue(row());
+      pinVerifierRepo.update.mockResolvedValue({ affected: 1 });
+
+      await expect(
+        controller.changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1', 'false')
+      ).resolves.toEqual({ ok: true });
+
+      expect(pinVerifierRepo.update).toHaveBeenCalledWith(
+        { userId: 'u1', verifier: OLD },
+        { verifier: NEW }
+      );
+      expect(pinVerifierRepo.save).not.toHaveBeenCalled();
+    });
+
+    it('refuses the second of two concurrent changes: the row moved after its check', async () => {
+      // Both requests read OLD; the first swapped it, so the second's conditional write matches none.
+      pinVerifierRepo.findOne.mockResolvedValue(row());
+      pinVerifierRepo.update.mockResolvedValue({ affected: 0 });
+
+      await expect(
+        controller.changePin({ userId: 'u1', oldVerifier: OLD, newVerifier: NEW }, 'u1', 'false')
+      ).rejects.toThrow('current PIN is incorrect');
+    });
+
+    it('refuses a wrong current PIN without writing', async () => {
+      pinVerifierRepo.findOne.mockResolvedValue(row());
+
+      await expect(
+        controller.changePin({ userId: 'u1', oldVerifier: NEW, newVerifier: OLD }, 'u1', 'false')
+      ).rejects.toThrow('current PIN is incorrect');
+      expect(pinVerifierRepo.update).not.toHaveBeenCalled();
+    });
   });
 });

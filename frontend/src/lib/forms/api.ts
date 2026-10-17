@@ -1,5 +1,6 @@
 import { m } from '$lib/paraglide/messages';
 import { statusLabels } from './paymentStatus';
+import type { AnswerWords } from './answerText';
 
 export interface FormOption {
   label: string;
@@ -86,6 +87,11 @@ export interface CreateFormPayload {
   /** Days after submission before an unvalidated cash payment expires (null = never). */
   cashPaymentExpiryDays?: number;
   /**
+   * Days a FILE question's file is kept after each answer, 1 to 30, 7 by default. The answer stays;
+   * the file is deleted by the server's purge (`form-file-retention.scheduler.ts`).
+   */
+  fileRetentionDays?: number;
+  /**
    * The pricing grid: `{ dimensions, cells }` in cents, or null for one price for everybody.
    *
    * A matrix rather than a list of price rules, so exactly one cell applies to any person and there
@@ -124,6 +130,8 @@ export interface Form extends CreateFormPayload {
 import { apiFetch } from '$lib/utils/apiFetch';
 import { getToken } from '$lib/stores/auth';
 import { socialUrl } from '$lib/utils/apiUrl';
+import { fetchUpload } from '$lib/media';
+import type { XhrUploadOptions } from '$lib/utils/uploadXhr';
 import { SocialApiError } from '$lib/associations/api';
 
 /**
@@ -312,6 +320,10 @@ export interface Submission {
   totalPaid: number;
   paymentStatus: string;
   createdAt: string;
+  /** The file answers of this submission whose file the retention purge has deleted. */
+  deletedFileIds?: string[];
+  /** The live files of this submission, by id: the name a manager's download is saved under. */
+  fileNames?: Record<string, string>;
 }
 
 /** Returns all submissions for a form with submitter names (form manager only). */
@@ -329,6 +341,22 @@ export async function getSubmissionPayment(
     `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}`
   );
   if (!res.ok) throw await refusal(res, 'Failed to read the submission');
+  return res.json();
+}
+
+/**
+ * Asks the server to read, at the payment provider, whether a pending online answer was paid, and
+ * to record it if so - then answers the submission like `getSubmissionPayment`. The payer's return
+ * page calls it, so a payment whose provider callback was lost is still confirmed.
+ */
+export async function confirmSubmissionPayment(
+  submissionId: string
+): Promise<{ id: string; formId: string; paymentStatus: string }> {
+  const res = await apiFetch(
+    `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}/confirm-payment`,
+    { method: 'POST' }
+  );
+  if (!res.ok) throw await refusal(res, 'Failed to confirm the payment');
   return res.json();
 }
 
@@ -368,6 +396,10 @@ export interface ExportLabels {
   status: string;
   /** Every payment status this client knows, by its stored value. */
   statuses: Record<string, string>;
+  /** What a FILE question's cell reads: the file is never exported, only this word. */
+  file: string;
+  /** The same cell once the retention purge has deleted the file. */
+  fileDeleted: string;
 }
 
 /** The labels this client would write an export in, resolved through Paraglide. */
@@ -379,7 +411,65 @@ export function exportLabels(): ExportLabels {
     amount: m.form_list_col_amount(),
     status: m.form_list_col_status(),
     statuses: statusLabels(),
+    file: m.form_answer_file(),
+    fileDeleted: m.form_answer_file_deleted(),
   };
+}
+
+/**
+ * The words a FILE answer reads as on this screen, for `answerText`. `deletedFiles` comes from the
+ * submissions the server returned (`deletedFileIds`).
+ */
+export function fileAnswerWords(submissions: Pick<Submission, 'deletedFileIds'>[]): AnswerWords {
+  return {
+    file: m.form_answer_file(),
+    fileDeleted: m.form_answer_file_deleted(),
+    deletedFiles: new Set(submissions.flatMap((s) => s.deletedFileIds ?? [])),
+  };
+}
+
+/** What an answer file's upload returns: the id the answer carries, and what the page shows. */
+export interface UploadedAnswerFile {
+  fileId: string;
+  fileName: string;
+  sizeBytes: number;
+  contentType: string;
+}
+
+/**
+ * Uploads the file of one FILE question before the answer is sent. The answer then carries
+ * `fileId`; the server accepts it only from the member who uploaded it, for this question.
+ *
+ * Through `fetchUpload` (an XHR), never `fetch`: it is the one transport that reports how much has
+ * left and can be cancelled, which an 8 MiB file on a weak link needs. `transport.signal` cancels
+ * (rejecting with `UploadAbortedError`), `transport.onProgress` reports the bytes sent.
+ */
+export async function uploadFormAnswerFile(
+  formId: string,
+  itemId: string,
+  file: File,
+  transport: XhrUploadOptions = {}
+): Promise<UploadedAnswerFile> {
+  const fd = new FormData();
+  fd.append('itemId', itemId);
+  fd.append('file', file);
+  const res = await fetchUpload(
+    `${socialUrl()}/api/forms/${encodeURIComponent(formId)}/files`,
+    (token) => ({ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd }),
+    await getToken(),
+    transport
+  );
+  if (!res.ok) throw await refusal(res, 'File upload failed');
+  return res.json();
+}
+
+/** A manager's download of one answer's file - the only way it is ever read. */
+export async function downloadFormAnswerFile(formId: string, fileId: string): Promise<Blob> {
+  const res = await apiFetch(
+    `${socialUrl()}/api/forms/${encodeURIComponent(formId)}/files/${encodeURIComponent(fileId)}`
+  );
+  if (!res.ok) throw await refusal(res, 'File download failed');
+  return res.blob();
 }
 
 export async function exportSubmissions(id: string, labels: ExportLabels): Promise<Blob> {
@@ -436,7 +526,9 @@ export async function cancelCashSubmission(
 }
 
 /** Cancels a pending online-payment submission after payment failure or user abort. */
-export async function cancelPendingSubmission(submissionId: string): Promise<{ ok: boolean }> {
+export async function cancelPendingSubmission(
+  submissionId: string
+): Promise<{ ok: boolean; alreadyPaid?: boolean }> {
   const res = await apiFetch(
     `${socialUrl()}/api/forms/submissions/${encodeURIComponent(submissionId)}/cancel`,
     { method: 'POST' }

@@ -13,6 +13,7 @@
  */
 
 import { connectivity } from '$lib/stores/connectivity.svelte';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 import {
   bodyByteLength,
   classOfMethod,
@@ -47,7 +48,15 @@ export async function trackedFetch(
     tracked.answered(bytes < LATENCY_BODY_CEILING_BYTES);
     return res;
   } catch (e) {
-    tracked.failed(e);
-    throw e;
+    // TYPED AT THE THROW. The `fetch` CALL rejects with a `TypeError` for exactly one thing by
+    // contract: no answer. The browser's is a bare `TypeError: Failed to fetch`, which a reader could
+    // not tell from a programming bug that also throws one; re-raised as the one class that says
+    // "no answer" by its name, so a consumer can ask for THAT type and nothing broader.
+    const failure =
+      e instanceof TypeError && !(e instanceof TransportFailureError)
+        ? new TransportFailureError(e)
+        : e;
+    tracked.failed(failure);
+    throw failure;
   }
 }

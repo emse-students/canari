@@ -439,7 +439,7 @@ So the script renders the load instead, and `psql` applies it:
 ```sh
 bun scripts/import-legacy-cotisations.ts --source cercle --file legacy-readonly-backup.db \
     --repair-names promo.csv --emit-sql /tmp/cercle.sql
-ssh canari 'docker exec -i canari-dev-postgres-1 psql -U canari -d auth_db -v ON_ERROR_STOP=1' \
+<ssh to the host> 'docker exec -i <dev postgres container> psql -U <db user> -d <db> -v ON_ERROR_STOP=1' \
     < /tmp/cercle.sql
 ```
 

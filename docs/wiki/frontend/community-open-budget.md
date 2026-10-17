@@ -90,7 +90,7 @@ all ("Selectionner ou creer une communaute") and "Impossible de charger les post
 community list is not local-first. Its exported log also shows 79 MLS checkpoints in ~3 min at
 94-238 ms each (135 in the whole file, median 114 ms, max 586) - one per bulk ingest, read
 watermarks included - and 45 identical `[HISTORY_RECONCILE] ... asked 30s ago` lines in 250 ms at
-cold start (section 6). Evidence: `F:\Programmation\canari-harness\pixel-r1014\` (off the
+cold start (section 6). Evidence: `<workstation>/canari-harness\pixel-r1014\` (off the
 repository: a real account).
 
 ## 3. What each open waits on - the critical chains
@@ -235,7 +235,7 @@ one unchanged. **None is built here.**
 | F4 | **Keep a salon's last decoded page locally and draw it first** (ledger row 9): stop deleting before the load, render the stored rows, merge the server page after (`mergeMessagePage` already merges) | 4 | first open in a process: 1.9 s -> the in-memory render (~0.56 s, then F6) at 1x, 6.2 s -> ~1.9 s at slow3g + cpu4; offline: history shown |
 | F5 | **Issue the history request at the tap**, not after the pane mounts | 4 | 323 ms (1x), 1.1 s (cpu4) on a first-ever open |
 | F6 | **Mount the visible bubbles first**: the render window opens on the last ~20 rows and grows after the first frame | 5 | the 340 ms long task of a 56-row page scales with rows: a cached reopen 564 -> ~200 ms at 1x (estimate, to be measured), 1.9 s -> ~0.6 s at 4x |
-| F7 | **A body that crosses the bridge once, and one native call for a page's signatures.** The body: read a first-party JSON response in one transfer instead of `plugin-http`'s chunked channel reads (or route these GETs through the WebView's own `fetch`, which already carries the refresh POST - `utils/fetchRouting.ts` holds why reads go to the plugin, and that reasoning decides which); the signatures: batch `graine_verify_signature` for the page | 4 | body: **888 of the 1114 ms** of a 116 kB page at 1x, 3.4 of 3.7 s at 4x (measured, section 5); signatures: the ~800 ms of the decode that is not a long task, at 200 rows (inferred from the split, to be measured with the batch) |
+| F7 | **A body that crosses the bridge once, and one native call for a page's signatures.** The body: read a first-party JSON response in one transfer instead of `plugin-http`'s chunked channel reads (or route these GETs through the WebView's own `fetch`, which already carries the refresh POST - `utils/fetchRouting.ts` holds why reads go to the plugin, and that reasoning decides which). **Built for `window.fetch` on 2026-10-15: every first-party `GET`/`HEAD` is the WebView's ([mobile](mobile.md#a-response-body-through-the-http-plugin-takes-seconds-at-launch-so-every-first-party-read-is-native-2026-10-15)); a salon's history page goes through `TauriMlsService`'s own plugin `fetch` and is NOT changed**; the signatures: batch `graine_verify_signature` for the page | 4 | body: **888 of the 1114 ms** of a 116 kB page at 1x, 3.4 of 3.7 s at 4x (measured, section 5); signatures: the ~800 ms of the decode that is not a long task, at 200 rows (inferred from the split, to be measured with the batch) |
 
 **F1 + F4 + F6 are what reach the 200 ms budget**; F2, F3, F5, F7 shorten the network refresh that
 follows and the first-ever case (new device, first sign-in), which no cache can serve.
@@ -546,7 +546,7 @@ Not changed, and noted: the hub does not remember the selected community across 
 community.
 
 **Owed:** the same table on the phone with the built code, from the next pre-release. Evidence is in
-`F:/Programmation/canari-harness/a1-bench/r1015-first-mount/`: `runs.ndjson`, the profiles, the
+`<harness-dir>/a1-bench/r1015-first-mount/`: `runs.ndjson`, the profiles, the
 traces, and `src128/` (the dumped `1.2.8` chunks the profiles resolve against).
 
 ## 7. Not measured, and owed
@@ -568,7 +568,7 @@ traces, and `src128/` (the dumped `1.2.8` chunks the profiles resolve against).
 
 ## 8. Evidence
 
-`F:/Programmation/canari-harness/a1-bench/r1014-community-open/` (off the repository):
+`<harness-dir>/a1-bench/r1014-community-open/` (off the repository):
 `runs.ndjson` (one row per run with its console, API calls, requests, long tasks and logcat),
 `report.txt`, `batch1.log`, and `discarded/` - the rows taken before two instrument defects were
 fixed (a nested `window.fetch` wrapper that recorded and delayed some calls three times, and the

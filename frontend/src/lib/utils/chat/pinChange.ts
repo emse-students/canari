@@ -1,34 +1,53 @@
 /**
- * Device-key-based change for a logged-in user.
+ * Moving this device from one device key to another, for BOTH ways the PIN can change.
  *
- * Unlike the destructive "forgot PIN" reset, this preserves all messages: the
- * in-memory MLS state (already decrypted at login) is re-encrypted under the new
- * device key via {@link IMlsService.changeDeviceKey}, and the local message DB is
- * re-encrypted via {@link reencryptLocalMessages}.
+ * The device key is derived from the PIN, so a PIN change is a device key change, and it reaches a
+ * device in one of two ways: the user changes the PIN HERE (`changePinImpl`), or the PIN was changed
+ * on ANOTHER device and this one recovers with the old and the new PIN (`recoverPinImpl`). Both
+ * derive the old key and the new key from the same server salt, so both can open what the old key
+ * sealed. They differ only in where the MLS state comes from - the live client, or the stored blob
+ * opened with the old key ({@link PinChangeOptions.storedMlsState}) - and everything else is ONE
+ * path, {@link performPinChange}, because the two had drifted: the recovery re-sealed the messages
+ * and forgot the Graine seeds, and both forgot the outbox.
  *
- * The account-wide PIN verifier rotation is handled by the caller BEFORE calling
- * {@link performPinChange} — this module only handles the local re-encryption.
- * Because the verifier is account-wide, the user's other devices keep their old
- * key locally and will hit a mismatch at their next login - they must re-enter the
- * new PIN (and re-enrol biometric). That is inherent: the device key never leaves
+ * What the device key seals, and what this does with each, is the table in
+ * `docs/wiki/frontend/modules/auth.md#what-the-device-key-seals-and-what-a-pin-change-does-with-each`.
+ *
+ * Unlike the destructive "forgot PIN" reset, this preserves everything. The account-wide PIN
+ * verifier is rotated (change) or checked (recovery) by the caller BEFORE this runs. The user's other
+ * devices keep their old key locally and recover at their next login - the device key never leaves
  * the device.
  */
-import { decryptData } from '$lib/encryption';
-import { getStorage, type IStorage, type StoredMessage } from '$lib/db';
-import { fromMessagePayload } from '$lib/db/messagePayload';
-import { decodeGraineSession } from '$lib/db/graineCodec';
-import { clearDeviceKeyAndWrapKey, saveDeviceKey } from '$lib/utils/deviceKeyVault';
+import { openSealedBytes, sealBytes } from '$lib/encryption';
+import { getStorage, type IStorage, type SealedPayloadSwap, type SealedStore } from '$lib/db';
+import {
+  KeyChangeSupersededError,
+  holdOtherRealmsForKeyChange,
+  holdStorageForKeyChange,
+} from '$lib/db/deviceKeyGate';
+
+export { KeyChangeSupersededError };
+import {
+  clearDeviceKey,
+  clearDeviceKeyAndWrapKey,
+  retireUnlabelledDeviceKeyIfOwnedBy,
+  saveDeviceKey,
+} from '$lib/utils/deviceKeyVault';
 import { BiometricService } from '$lib/services/biometric';
 import { isTauriRuntime } from '$lib/utils/openExternal';
-import { m } from '$lib/paraglide/messages';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
-import type { IMlsService } from '$lib/mls-client';
+import type { IMlsService, StateLoadFailure } from '$lib/mls-client';
 
-/** Batch size for local message re-encryption (avoids memory spikes on large histories). */
-const REENCRYPT_BATCH_SIZE = 200;
+/** Rows sealed and swapped per step: bounds the new ciphertexts held at once. */
+const RESEAL_BATCH_SIZE = 200;
 
-/** How often re-encryption reports progress and yields to the UI thread. */
-const REENCRYPT_PROGRESS_INTERVAL = 25;
+/**
+ * Every store `IStorage` seals under the device key. The MLS state is the other one, outside
+ * `IStorage`, and is re-sealed by {@link IMlsService.changeDeviceKey}. A `Record` over the union, so
+ * a store added to `SealedStore` without being added here fails `check` rather than being skipped.
+ */
+const SEALED_STORE_SET: Record<SealedStore, true> = { messages: true, graine: true, outbox: true };
+const SEALED_STORES = Object.keys(SEALED_STORE_SET) as SealedStore[];
 
 /** Identifies the current step of a device key change or cross-device recovery flow. */
 export type PinOperationStage =
@@ -38,7 +57,9 @@ export type PinOperationStage =
   | 'messages_decrypt'
   | 'messages_encrypt'
   | 'finalize'
-  | 'login';
+  | 'login'
+  /** Another tab of the account still holds the lock: the change waits for it to let go. */
+  | 'waiting_tabs';
 
 /** User-facing progress snapshot for device key change / recovery modals. */
 export interface PinOperationProgress {
@@ -61,141 +82,218 @@ function reportProgress(
 }
 
 /**
- * Re-encrypts every locally stored message from `oldDeviceKeyB64` to `newDeviceKeyB64`.
- * Conversation metadata is plaintext and untouched; only message payloads use the device key.
- *
- * @returns The number of messages successfully re-encrypted.
- * @throws When encrypted rows exist but none decrypt with `oldDeviceKeyB64` (wrong key or corruption).
+ * The old key does not open this device's MLS state: the old PIN the user typed in a recovery is
+ * wrong. Decided from the MLS blob - the one store every device has and that the old key provably
+ * sealed - and never from the message stores, whose rows may sit under an even older key (a seed the
+ * pre-2026-10-15 recovery left behind, an outbox row no earlier change moved). Thrown before
+ * anything is written. Typed so the caller words it without reading a message.
  */
-export async function reencryptLocalMessages(
+export class DeviceKeyMismatchError extends Error {
+  constructor() {
+    super('the old device key does not open the local MLS state');
+    this.name = 'DeviceKeyMismatchError';
+  }
+}
+
+/**
+ * The stored MLS state refused to open for a reason NO PIN can fix: another device's identity
+ * (`mismatch`), or a failure `mls-core` does not type (`unknown`, `keystore_unavailable`). Worded
+ * apart from {@link DeviceKeyMismatchError}, which it used to be - and which sent the user round the
+ * same keypad for ever. Thrown before anything is written.
+ */
+export class LocalStateUnopenableError extends Error {
+  constructor(readonly failure: Exclude<StateLoadFailure, 'undecryptable' | 'rotated'>) {
+    super(`the local MLS state cannot be opened by any PIN (${failure})`);
+    this.name = 'LocalStateUnopenableError';
+  }
+}
+
+/**
+ * The change threw after it started moving this device. Carries the stage, never key material, and
+ * the stage decides what the caller owes:
+ *
+ *  - `stores` / `mls`: data has moved - stores and MLS state may sit under two keys. The session
+ *    must end into the recovery (which opens the MLS state with the old key and finishes the move)
+ *    rather than keep running on the old key ({@link dataMoved}).
+ *  - `keystore` / `vault`: no row and no state moved. The session's key is still the one everything
+ *    here is sealed under, so it may run on; only the unlock changed (this account's vault slot is
+ *    cleared before anything else, and on native the keystore may have moved: {@link keystoreMoved}),
+ *    so the NEXT unlock asks for the PIN and is the one sent to the recovery. `vault` is also the
+ *    stage of a failure in that first clearing (the unlabelled slot's retirement).
+ */
+export class KeyChangeInterruptedError extends Error {
+  constructor(
+    readonly stage: 'keystore' | 'vault' | 'stores' | 'mls',
+    readonly keystoreMoved: boolean,
+    readonly reason: unknown
+  ) {
+    super(`the device key change was interrupted at the ${stage} step: ${String(reason)}`);
+    this.name = 'KeyChangeInterruptedError';
+  }
+
+  /** Whether a row or the MLS state may already be under the new key. */
+  get dataMoved(): boolean {
+    return this.stage === 'stores' || this.stage === 'mls';
+  }
+}
+
+/** What {@link resealDeviceKeyStores} found and did, per store and in total. */
+export interface ResealReport {
+  /** Rows moved from the old key to the new one, per store. */
+  resealed: Record<SealedStore, number>;
+  /** Rows already under the new key: an earlier, interrupted run had moved them. */
+  alreadyNew: number;
+  /**
+   * Rows that open under neither key - under a key older still, or damaged. Left exactly as they
+   * are: the caller has already PROVEN the old key (server verifier or MLS blob), so these say
+   * nothing about it, and refusing the change over them would lock the account out for good.
+   */
+  unreadable: number;
+  /** Rows deleted or rewritten between the read and the swap - left to their writer. */
+  changedSinceRead: number;
+}
+
+/**
+ * Moves every row of every device-key-sealed store from `oldDeviceKeyB64` to `newDeviceKeyB64`.
+ * Call it on a store nothing else writes to - {@link performPinChange} runs it under the storage gate.
+ *
+ * **RESUMABLE, BECAUSE IT CANNOT BE ATOMIC.** SQLite through the Tauri plugin has no multi-statement
+ * transaction (`sqliteBatch.ts`), a history can be thousands of rows, and a phone can be killed half
+ * way. So each row is classified by the key its own tag verifies under - the only record of which
+ * key sealed it - and a row already under the new key is DONE, not damaged. A run cut anywhere leaves
+ * every row under one of the two keys, and the next run (the recovery the user is sent to, with the
+ * same two PINs) finishes it. Nothing is ever deleted.
+ *
+ * **ONE STORE'S CIPHERTEXTS IN MEMORY, NOT TWO COPIES OF EVERYTHING.** A store is read whole (the
+ * footprint the old message pass already had, and what a backup export reads), then sealed and
+ * swapped `RESEAL_BATCH_SIZE` rows at a time, so the new ciphertexts held at once are one batch.
+ *
+ * Each write is a compare-and-swap ({@link IStorage.swapSealedPayloads}), so even a writer that
+ * escaped the gate cannot be overwritten with an older payload or have a deleted row brought back.
+ * The plaintext BYTES are re-sealed, never parsed: this is a re-seal, not a rewrite of the payload.
+ * Logs counts only - never a row id, never key material.
+ */
+export async function resealDeviceKeyStores(
   storage: IStorage,
   oldDeviceKeyB64: string,
   newDeviceKeyB64: string,
   log: (msg: string) => void = () => {},
   onProgress?: PinProgressCallback,
-  percentRange: { start: number; end: number } = { start: 30, end: 80 }
-): Promise<number> {
-  if (oldDeviceKeyB64 === newDeviceKeyB64) return 0;
-
-  const rows = await storage.getAllEncryptedRows();
-  if (rows.length === 0) return 0;
+  percentRange: { start: number; end: number } = { start: 10, end: 85 }
+): Promise<ResealReport> {
+  const report: ResealReport = {
+    resealed: { messages: 0, graine: 0, outbox: 0 },
+    alreadyNew: 0,
+    unreadable: 0,
+    changedSinceRead: 0,
+  };
+  if (oldDeviceKeyB64 === newDeviceKeyB64) return report;
 
   const { start, end } = percentRange;
   const span = end - start;
+  const storeSpan = span / SEALED_STORES.length;
 
-  log(`[DEVICEKEY_CHANGE] Re-encrypting ${rows.length} local message(s)…`);
-
-  const decrypted: StoredMessage[] = [];
-  for (let i = 0; i < rows.length; i++) {
-    const row = rows[i]!;
-    try {
-      const payload = (await decryptData(row.cipherText, row.iv, oldDeviceKeyB64)) as Record<
-        string,
-        unknown
-      >;
-      decrypted.push(
-        fromMessagePayload(
-          { id: row.id, conversationId: row.conversationId, timestamp: row.timestamp },
-          payload
-        )
-      );
-    } catch {
-      console.warn('[DEVICEKEY_CHANGE] Failed to decrypt message', row.id);
-    }
-
-    if (onProgress && (i % REENCRYPT_PROGRESS_INTERVAL === 0 || i === rows.length - 1)) {
-      const frac = (i + 1) / rows.length;
+  for (const [storeIndex, store] of SEALED_STORES.entries()) {
+    const rows = await storage.getSealedPayloads(store);
+    let storeUnreadable = 0;
+    for (let i = 0; i < rows.length; i += RESEAL_BATCH_SIZE) {
+      const batch = rows.slice(i, i + RESEAL_BATCH_SIZE);
+      const swaps: SealedPayloadSwap[] = [];
+      for (const row of batch) {
+        const plain = await openSealedBytes(row.cipherText, row.iv, oldDeviceKeyB64);
+        if (plain) {
+          const sealed = await sealBytes(plain, newDeviceKeyB64);
+          swaps.push({ id: row.id, expected: row.cipherText, ...sealed });
+        } else if (await openSealedBytes(row.cipherText, row.iv, newDeviceKeyB64)) {
+          report.alreadyNew++;
+        } else {
+          storeUnreadable++;
+        }
+      }
+      const swapped = await storage.swapSealedPayloads(store, swaps);
+      report.resealed[store] += swapped;
+      report.changedSinceRead += swaps.length - swapped;
+      const done = Math.min(i + RESEAL_BATCH_SIZE, rows.length);
       reportProgress(onProgress, {
-        percent: Math.round(start + frac * span * 0.5),
-        stage: 'messages_decrypt',
-        current: i + 1,
+        percent: Math.round(start + storeSpan * (storeIndex + done / rows.length)),
+        stage: 'messages_encrypt',
+        current: done,
         total: rows.length,
       });
-    }
-    if (i > 0 && i % REENCRYPT_PROGRESS_INTERVAL === 0) {
       await yieldToMainThread();
     }
+    if (storeUnreadable > 0) {
+      // EVERY SWALLOWED BRANCH LOGS: these rows stay unreadable on this device, and this says how many.
+      log(
+        `[DEVICEKEY_CHANGE] Warning: ${storeUnreadable} ${store} row(s) open under neither key - left as they are.`
+      );
+    }
+    report.unreadable += storeUnreadable;
   }
 
-  if (decrypted.length === 0) {
-    throw new Error(m.profile_pin_error_local_decrypt());
-  }
-
-  if (decrypted.length < rows.length) {
+  log(
+    `[DEVICEKEY_CHANGE] Re-sealed under the new device key: messages=${report.resealed.messages} ` +
+      `seeds=${report.resealed.graine} outbox=${report.resealed.outbox}; already new=${report.alreadyNew}, ` +
+      `unreadable=${report.unreadable}, changed since read=${report.changedSinceRead}`
+  );
+  if (report.changedSinceRead > 0) {
+    // Under the gate nothing else writes, so a row that moved under us is a writer that escaped it.
     log(
-      `[DEVICEKEY_CHANGE] Warning: ${rows.length - decrypted.length} message(s) skipped (decryption failed).`
+      `[DEVICEKEY_CHANGE] ERROR: ${report.changedSinceRead} row(s) changed during the re-seal - a writer bypassed the storage gate.`
     );
   }
-
-  const batchCount = Math.ceil(decrypted.length / REENCRYPT_BATCH_SIZE);
-  for (let i = 0; i < decrypted.length; i += REENCRYPT_BATCH_SIZE) {
-    await storage.saveMessages(decrypted.slice(i, i + REENCRYPT_BATCH_SIZE), newDeviceKeyB64);
-    const batchIdx = Math.floor(i / REENCRYPT_BATCH_SIZE) + 1;
-    if (onProgress) {
-      const frac = batchIdx / batchCount;
-      reportProgress(onProgress, {
-        percent: Math.round(start + span * (0.5 + frac * 0.5)),
-        stage: 'messages_encrypt',
-        current: Math.min(batchIdx * REENCRYPT_BATCH_SIZE, decrypted.length),
-        total: decrypted.length,
-      });
-    }
-    if (batchIdx < batchCount) await yieldToMainThread();
-  }
-
-  log(`[DEVICEKEY_CHANGE] ${decrypted.length} message(s) re-encrypted with the new device key.`);
-  return decrypted.length;
+  return report;
 }
 
 /**
- * Re-encrypts every stored Graine session seed from `oldDeviceKeyB64` to `newDeviceKeyB64`.
+ * Deletes the feed's stored first pages instead of re-sealing them under the new device key.
  *
- * Seeds sit under the device key exactly as messages do, so a PIN change that skipped them would
- * leave every channel seed sealed under a key this device no longer has - and unlike a message,
- * a seed cannot be re-fetched: after Graine the server holds no channel key material at all. The
- * loss would be silent and permanent, which is why this runs inside the same change.
- *
- * A seed that fails to decrypt is logged and skipped rather than fatal: the message pass has
- * already established whether `oldDeviceKeyB64` is the right key, so a failure HERE means one
- * corrupt row, and aborting would strand the seeds already re-encrypted under the new key.
- *
- * @returns The number of seeds successfully re-encrypted.
+ * They are a COPY the server's next answer rewrites (`$lib/posts/feedStore`), so re-sealing them is
+ * work for nothing, and leaving them under the old key would make every later read fail to open
+ * them - a warning on every launch about a copy nobody needs. Never fatal: a page left behind is
+ * deleted by the first read that cannot open it.
  */
-export async function reencryptGraineSessions(
+export async function dropStoredFeedPages(
   storage: IStorage,
-  oldDeviceKeyB64: string,
-  newDeviceKeyB64: string,
   log: (msg: string) => void = () => {}
-): Promise<number> {
-  if (oldDeviceKeyB64 === newDeviceKeyB64) return 0;
-
-  const rows = await storage.getAllEncryptedGraineRows();
-  if (rows.length === 0) return 0;
-
-  log(`[DEVICEKEY_CHANGE] Re-encrypting ${rows.length} channel session seed(s)...`);
-
-  let done = 0;
-  for (const row of rows) {
-    try {
-      const payload = await decryptData(row.cipherText, row.iv, oldDeviceKeyB64);
-      await storage.saveGraineSession(decodeGraineSession(row, payload), newDeviceKeyB64);
-      done++;
-    } catch {
-      log(`[DEVICEKEY_CHANGE] Warning: channel session ${row.sessionId} skipped (decrypt failed).`);
-    }
+): Promise<void> {
+  try {
+    const dropped = await storage.deleteFeedPages();
+    log(
+      `[DEVICEKEY_CHANGE] ${dropped} stored feed page(s) dropped - the next feed answer rewrites them.`
+    );
+  } catch (e) {
+    log(`[DEVICEKEY_CHANGE] Warning: the stored feed pages could not be dropped: ${String(e)}`);
   }
-
-  log(`[DEVICEKEY_CHANGE] ${done} channel session seed(s) re-encrypted with the new device key.`);
-  return done;
 }
 
 /**
- * Points this device's local unlock path at the new device key after the account PIN changed.
- * Shared by both the change and recovery flows.
+ * Takes the OLD device key out of this device's vault - the first thing {@link performPinChange}
+ * writes, BEFORE the keystore ({@link IMlsService.pointUnattendedUnlockAt}).
  *
- * The keystore entry is NOT touched here: {@link IMlsService.changeDeviceKey} has already
- * overwritten it (and `push_context.json`) with the new key. Deleting it at this point would
- * destroy the entry that was just written and turn biometric unlock off behind the user's back.
+ * A vault slot - this account's own, or the unlabelled one of an older build when it holds this very
+ * key - that kept the old key past a failed step or a kill would unlock, without the server PIN check,
+ * an MLS state not yet re-sealed: a silent login on the OLD PIN, no recovery ever offered, and a later
+ * change deriving its "old" key from a PIN the rows were never sealed under. It ran after the keystore
+ * until 2026-10-15, so a keystore refusal (an iPhone with no passcode) left the vault on the old key.
+ * Only an unlock is removed here: the next launch asks for the PIN, which the server checks.
+ */
+export async function retireOldDeviceKeyFromVault(
+  userId: string,
+  oldDeviceKeyB64: string,
+  log: (msg: string) => void
+): Promise<void> {
+  clearDeviceKey(userId);
+  await retireUnlabelledDeviceKeyIfOwnedBy(userId, oldDeviceKeyB64);
+  log('[DEVICEKEY] Old device key retired from the local vault.');
+}
+
+/**
+ * Points this device's vault at the new device key, once the keystore holds it - the tail of
+ * {@link performPinChange}'s first step. The old key already left in {@link retireOldDeviceKeyFromVault}.
+ *
+ * The keystore entry is NOT touched here: it was rewritten with the new key just before. Deleting it
+ * would destroy the entry that was just written and turn biometric unlock off behind the user's back.
  */
 export async function applyNewDeviceKeyLocally(
   userId: string,
@@ -213,16 +311,23 @@ export async function applyNewDeviceKeyLocally(
     await saveDeviceKey(userId, newDeviceKeyB64);
     log('[DEVICEKEY] New device key saved to the local vault.');
   } catch (e) {
-    // EVERY SWALLOWED BRANCH LOGS: the next launch then asks for the PIN, and this says why.
+    // EVERY SWALLOWED BRANCH LOGS. The vault was cleared first, so a failed save leaves NO
+    // unattended key: the next launch asks for the PIN, and this says why.
     log(`[DEVICEKEY] Saving the new device key to the local vault failed: ${String(e)}`);
   }
 }
 
 export interface PinChangeOptions {
-  /** ID of the logged-in user whose device key is changing. */
+  /** ID of the user whose device key is changing. */
   userId: string;
-  /** Live MLS service whose in-memory state will be re-encrypted under the new device key. */
-  mlsService: IMlsService;
+  /** The MLS client: live for a change, freshly built for a recovery. */
+  mls: IMlsService;
+  /**
+   * For a RECOVERY only: the stored MLS blob, opened with the old key as the proof the old PIN is
+   * right. Absent for an in-session change, whose live client is already open and whose old key the
+   * server verifier has just proven.
+   */
+  storedMlsState?: Uint8Array;
   /** Updates the session's in-memory device key so subsequent encryption uses the new value. */
   setDeviceKey: (deviceKeyB64: string) => void;
   /** Debug log sink. */
@@ -232,43 +337,121 @@ export interface PinChangeOptions {
 }
 
 /**
- * Performs the full device key change (local re-encryption only).
+ * Moves this device from `oldDeviceKeyB64` to `newDeviceKeyB64`. Used by the in-session change AND
+ * the recovery, in this order, each step chosen so a kill anywhere leaves a state the recovery
+ * finishes:
  *
- * The caller MUST have already rotated the PIN verifier server-side before calling
- * this function. This function handles:
- * 1. Re-encrypting the in-memory MLS state under the new device key.
- * 2. Re-encrypting all locally stored messages.
- * 3. Persisting the new device key in the vault and keystore.
+ *  1. PROOF (recovery only): the stored MLS blob opens with the old key, or {@link
+ *     DeviceKeyMismatchError} - nothing written.
+ *  2. THE UNATTENDED UNLOCK MOVES FIRST: the old key leaves the vault, then the keystore and the
+ *     vault take the NEW key. Both skip the server PIN check, so had they kept the old key past a
+ *     kill or a refusal, they would open the MLS state (not yet re-sealed) and run a session over
+ *     stores already half moved - silently. With the new key, or none, every way in after a kill
+ *     finds an MLS state it cannot open, or asks for the PIN, and is sent to the recovery. The vault
+ *     save runs inside the other tabs' hold ({@link holdOtherRealmsForKeyChange}): every OTHER tab of
+ *     this account has been told and has let go of the databases, and a second change started from
+ *     another tab is ordered behind this one and stops before its vault save.
+ *  3. THE STORES, under the storage gate: this realm's storage calls wait while they move, and the
+ *     retired key is forwarded to the new one afterwards ({@link holdStorageForKeyChange}).
+ *  4. The session adopts the new key.
+ *  5. THE MLS STATE LAST, still inside the other tabs' hold - and every MLS state read and write goes
+ *     through the same lock, so a tab that reloads reads it only once it has moved, and an old
+ *     leader's checkpoint cannot land after it. It is the recovery's entry point (opened with the OLD
+ *     key), so while it has not moved, the recovery is offered and finishes the stores. In the
+ *     reverse order a kill left it under the new key and the remaining rows under a key no path would
+ *     ever ask for again.
  *
- * Throws with a user-facing (localized) message on failure.
+ * A THROW from the vault retirement on is a {@link KeyChangeInterruptedError} with its stage; from the stores
+ * on, the caller must end the session into the recovery rather than run on the old key.
+ *
+ * @throws {DeviceKeyMismatchError} in a recovery whose old key does not open the MLS state.
+ * @throws {LocalStateUnopenableError} in a recovery whose MLS state no PIN can open.
+ * @throws {KeyChangeInterruptedError} on any failure from the vault retirement on.
+ * @throws {KeyChangeSupersededError} when another tab changed the key first; nothing here moved
+ *         past the keystore.
  */
 export async function performPinChange(
   opts: PinChangeOptions,
-  currentDeviceKeyB64: string,
+  oldDeviceKeyB64: string,
   newDeviceKeyB64: string
 ): Promise<void> {
-  const { userId, mlsService, setDeviceKey, log, onProgress } = opts;
-  log('[DEVICEKEY_CHANGE] Starting device key change…');
+  const { userId, mls, storedMlsState, setDeviceKey, log, onProgress } = opts;
+  log('[DEVICEKEY_CHANGE] Starting device key change...');
   reportProgress(onProgress, { percent: 5, stage: 'mls' });
 
-  // Re-encrypt MLS state under the new device key.
-  await mlsService.changeDeviceKey(newDeviceKeyB64);
-  log('[DEVICEKEY_CHANGE] MLS state re-encrypted with the new device key.');
+  if (storedMlsState) {
+    const result = await mls.openLocalStateWithKey(userId, oldDeviceKeyB64, storedMlsState);
+    if (!result.opened) {
+      // ONLY A KEY REFUSAL IS THE OLD PIN'S FAULT. Another device's identity or an untyped failure
+      // would refuse every PIN the user could type.
+      log(`[DEVICEKEY_CHANGE] The local MLS state did not open (${result.cause}) - nothing moved.`);
+      if (result.cause === 'undecryptable' || result.cause === 'rotated') {
+        throw new DeviceKeyMismatchError();
+      }
+      throw new LocalStateUnopenableError(result.cause);
+    }
+    log('[DEVICEKEY_CHANGE] The old key opens the local MLS state.');
+  }
 
-  const storage = await getStorage(userId);
-  await reencryptLocalMessages(storage, currentDeviceKeyB64, newDeviceKeyB64, log, onProgress, {
-    start: 10,
-    end: 85,
-  });
-  // After the messages, and before the new key is adopted: a seed left under the old key is
-  // channel history nothing can serve again.
-  await reencryptGraineSessions(storage, currentDeviceKeyB64, newDeviceKeyB64, log);
+  // FROM HERE A THROW IS TYPED, with the stage it stopped at: from the stores on, data has moved and
+  // the session must not run on the old key; before them nothing on this device has (see the error).
+  // The keystore step is inside: on the change path the server verifier is ALREADY rotated, so an
+  // untyped refusal here told the user to retry a change the server had already taken (iPhone 12
+  // bench, 2026-10-15: the keystore refused every write on a phone with no passcode).
+  // THE OLD KEY LEAVES THE VAULT BEFORE THE KEYSTORE IS ASKED ANYTHING: whichever later step fails,
+  // no unattended unlock is left on the old key (see retireOldDeviceKeyFromVault).
+  let stage: KeyChangeInterruptedError['stage'] = 'vault';
+  let keystoreMoved = false;
+  try {
+    await retireOldDeviceKeyFromVault(userId, oldDeviceKeyB64, log);
+    stage = 'keystore';
+    keystoreMoved = await mls.pointUnattendedUnlockAt(newDeviceKeyB64);
+    stage = 'vault';
+    const storage = await getStorage(userId);
+    // EVERYTHING FROM HERE RUNS WHILE THE OTHER TABS ARE HELD: two changes started from two tabs are
+    // ordered by the exclusive lock, and the second stops before saving its key to the vault.
+    await holdOtherRealmsForKeyChange(
+      userId,
+      async () => {
+        reportProgress(onProgress, { percent: 8, stage: 'mls' });
+        await applyNewDeviceKeyLocally(userId, newDeviceKeyB64, log);
 
-  reportProgress(onProgress, { percent: 92, stage: 'finalize' });
-  setDeviceKey(newDeviceKeyB64);
+        stage = 'stores';
+        await holdStorageForKeyChange(storage, oldDeviceKeyB64, newDeviceKeyB64, async (store) => {
+          const report = await resealDeviceKeyStores(
+            store,
+            oldDeviceKeyB64,
+            newDeviceKeyB64,
+            log,
+            onProgress,
+            { start: 10, end: 85 }
+          );
+          // The stored feed pages are a copy the server's next answer rewrites: dropped, not moved.
+          await dropStoredFeedPages(store, log);
+          return report;
+        });
+        setDeviceKey(newDeviceKeyB64);
 
-  // Point this device's local unlock path at the new key so re-login keeps working.
-  await applyNewDeviceKeyLocally(userId, newDeviceKeyB64, log);
+        stage = 'mls';
+        reportProgress(onProgress, { percent: 88, stage: 'mls' });
+        await mls.changeDeviceKey(newDeviceKeyB64);
+      },
+      () => reportProgress(onProgress, { percent: 6, stage: 'waiting_tabs' })
+    );
+  } catch (e) {
+    if (e instanceof KeyChangeSupersededError) {
+      log(
+        '[DEVICEKEY_CHANGE] Another tab changed the device key first - this change did not start.'
+      );
+      throw e;
+    }
+    log(
+      `[DEVICEKEY_CHANGE] ERROR: interrupted at the ${stage} step (keystore moved: ${keystoreMoved}) - ` +
+        `the recovery finishes it: ${String(e)}`
+    );
+    throw new KeyChangeInterruptedError(stage, keystoreMoved, e);
+  }
+  log('[DEVICEKEY_CHANGE] MLS state re-sealed with the new device key.');
   reportProgress(onProgress, { percent: 100, stage: 'finalize' });
   log('[DEVICEKEY_CHANGE] Done.');
 }

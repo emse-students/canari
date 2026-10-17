@@ -200,7 +200,7 @@ The defect, guards of 2026-08-28 and hand cleanup of 2026-08-30 are in `CHANGELO
 [chat-delivery](../services/chat-delivery.md#the-placeholder-that-took-a-conversations-first-seat-cleaned-by-hand-2026-08-30).
 The server estate is zero on all four tables; MULTI-8 `PASS` 2026-09-07 measured the live behaviour
 clean. A server row is not the MLS tree: if a commit ever Added the placeholder only a Remove commit from
-a member drops it. The group `7da231f8-119c-4ce2-884f-55f5c94c903f` sat at epoch 118 and the placeholder
+a member drops it. The group `7da231f8` sat at epoch 118 and the placeholder
 held a `key_package`, so an Add is likely rather than certain. Either member can read the tree from their
 own client; until then the conversation may be encrypting to a member that does not exist, which costs
 nothing cryptographically and makes the roster wrong.

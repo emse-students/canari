@@ -185,7 +185,7 @@ log "Purge des sauvegardes locales > ${BACKUP_RETENTION_DAYS} jours…"
 find "$BACKUP_DIR" -maxdepth 1 -name 'canari-backup-*.tar.gz' -type f \
   -mtime "+${BACKUP_RETENTION_DAYS}" -print -delete || true
 
-# ── 6. Copie offsite via SSH/rsync (serveur LAN mitv) ─────────────────────────
+# ── 6. Copie offsite via SSH/rsync (serveur LAN offsite) ─────────────────────────
 if [ -n "$BACKUP_SSH_HOST" ]; then
   log "Envoi offsite vers ${BACKUP_SSH_HOST}:${BACKUP_SSH_PATH}…"
   ssh -o BatchMode=yes -o ConnectTimeout=10 "$BACKUP_SSH_HOST" "mkdir -p '$BACKUP_SSH_PATH'"

@@ -312,7 +312,7 @@ pub(crate) fn read_mls_state_blob(app: &tauri::AppHandle) -> Option<Vec<u8>> {
 
 /// The frontend's view of the reader above.
 ///
-/// STILL NEEDED, AND BY EXACTLY ONE FLOW: old-PIN recovery hands the blob to `recoverAndRekey`,
+/// STILL NEEDED, AND BY EXACTLY ONE FLOW: old-PIN recovery hands the blob to `openLocalStateWithKey`,
 /// which re-seals it in the frontend. The LOGIN path no longer calls it - see
 /// [`read_mls_state_blob`] for what that cost - and neither does anything that only wants to know
 /// whether a state exists, which is what [`mls_state_size`] answers.

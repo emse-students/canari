@@ -1044,7 +1044,7 @@ export class ChannelService {
    * Grants or revokes ONE permission on a role, and returns the role's whole list as the server
    * holds it AFTERWARDS.
    *
-   * SENT AS THE DELTA IT IS. `setRolePermissions` below sends the list this browser computed, so two
+   * SENT AS THE DELTA IT IS. The whole-list PUT it replaced sent the list this browser computed, so two
    * administrators toggling two different cells of one role at the same moment lose one of the two
    * edits - measured on production by COMM-20 on 2026-08-20. The answer is authoritative and must be
    * applied as such: it already carries anything somebody else changed in the meantime.
@@ -1063,25 +1063,6 @@ export class ChannelService {
       {
         method: 'PATCH',
         body: JSON.stringify({ key, granted }),
-      }
-    );
-    await this.handleError(res);
-    return res.json();
-  }
-
-  async setRolePermissions(
-    roleId: string,
-    permissions: string[]
-  ): Promise<{
-    roleId: string;
-    roleName: string;
-    permissions: string[];
-  }> {
-    const res = await this.fetchWithAuth(
-      `${this.baseUrl}/api/channels/roles/${encodeURIComponent(roleId)}/permissions`,
-      {
-        method: 'PUT',
-        body: JSON.stringify({ permissions }),
       }
     );
     await this.handleError(res);

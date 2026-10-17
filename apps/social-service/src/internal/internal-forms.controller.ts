@@ -38,14 +38,22 @@ export class InternalFormsController {
     return this.formsService.markPaid(submissionId, body.sessionId);
   }
 
-  /** Cancels a pending submission when checkout expires or a charge fails. */
+  /**
+   * Cancels a pending submission when ITS payment request expired or was cancelled. The body names
+   * that request (`requestId`: Lydia's numeric id from a callback; `sessionId`: the request_uuid),
+   * and a report about a request the row no longer uses changes nothing (`cancelPendingSubmission`).
+   */
   @Post('submissions/:submissionId/cancel-pending')
   cancelPending(
     @Param('submissionId') submissionId: string,
-    @Headers('x-internal-secret') headerSecret: string
+    @Headers('x-internal-secret') headerSecret: string,
+    @Body() body: { requestId?: string; sessionId?: string }
   ) {
     this.assertInternalSecret(headerSecret);
     this.logger.debug(`[INTERNAL_FORMS] cancel-pending submission ${submissionId}`);
-    return this.formsService.cancelPendingSubmission(submissionId);
+    return this.formsService.cancelPendingSubmission(submissionId, {
+      requestId: typeof body?.requestId === 'string' ? body.requestId : undefined,
+      sessionId: typeof body?.sessionId === 'string' ? body.sessionId : undefined,
+    });
   }
 }

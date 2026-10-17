@@ -247,7 +247,7 @@ and it is a protocol change for the server and the client. F4 waits for the user
 ## 8. The SQL that produced every number
 
 Every statement ran inside `BEGIN READ ONLY; ... ROLLBACK;` as follows:
-`ssh portail-etu-direct 'docker exec -i canari-prod-postgres-1 psql -U canari -d auth_db -X -q' < file.sql`.
+`docker exec -i <prod-postgres-container> psql -U <db-user> -d auth_db -X -q < file.sql`, run on the production host.
 
 ```sql
 -- totals
@@ -361,7 +361,7 @@ the morning and was left alone, because it was not in the list the user approved
 
 ### The backup and how to restore it
 
-The backup is on the Portail-etu host, in `~/canari-reaper-2026-10-12/` of the operator account,
+The backup is on the production host, in a private directory of the operator account,
 mode `700`, files `600`. It was written at 09:18, before the pass. It holds one CSV per table,
 each filtered to the 43 `(userId, deviceId)` pairs, plus `candidates.csv` and `SHA256SUMS`:
 
@@ -378,8 +378,8 @@ queue.** Otherwise registering again is the designed path. To restore all of the
 filtering the CSVs by `deviceId`:
 
 ```sh
-ssh portail-etu-direct
-cd ~/canari-reaper-2026-10-12 && sha256sum -c SHA256SUMS
+# on the production host
+cd <backup-dir> && sha256sum -c SHA256SUMS
 PSQL='docker exec -i canari-prod-postgres-1 psql -U canari -d auth_db -X -v ON_ERROR_STOP=1'
 # 1. lift the ban, or the device cannot register again
 awk -F, '{printf "DELETE FROM revoked_device WHERE \"userId\"=%c%s%c AND \"deviceId\"=%c%s%c;\n",39,$1,39,39,$2,39}' candidates.csv | $PSQL
@@ -415,7 +415,7 @@ other 117. **All 118 calls answered HTTP 200**, and the delivery log holds **0 e
 rows and the first pass saw 117 641. That jump was an open question, now answered by
 [the measurement of 2026-10-13](#why-the-queue-holds-300-000-rows---measured-2026-10-13).
 
-**The backup** is on the Portail-etu host, in `~/canari-reaper-pass2-2026-10-12/` of the operator account,
+**The backup** is on the production host, in a private directory of the operator account,
 mode `700`, files `600`, with `SHA256SUMS`. It holds one CSV per table, filtered to the 118 devices.
 **To restore**, `\copy` each table's CSV back into its table, as the first pass's procedure above
 does, from this directory.

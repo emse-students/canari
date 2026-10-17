@@ -22,6 +22,7 @@
  * `INSERT OR REPLACE` under a primary key the caller already holds: re-running the batch converges.
  * A torn BEGIN/COMMIT across two connections has no such property.
  */
+import type { SealedStore } from './types';
 
 /**
  * The most conservative `SQLITE_MAX_VARIABLE_NUMBER` in the wild.
@@ -62,6 +63,67 @@ export function messageInsertSql(rows: number): string {
     'INSERT OR REPLACE INTO messages (id, conversation_id, timestamp, iv, cipher_text) VALUES ' +
     tuples.join(', ')
   );
+}
+
+/** The table and primary-key column behind each device-key-sealed store. */
+const SEALED_STORE_TABLES: Record<SealedStore, { table: string; key: string }> = {
+  messages: { table: 'messages', key: 'id' },
+  graine: { table: 'graine', key: 'session_id' },
+  outbox: { table: 'outbox', key: 'id' },
+};
+
+/** The table and key column of a sealed store, for the one `SELECT` that reads it. */
+export function sealedStoreTable(store: SealedStore): { table: string; key: string } {
+  return SEALED_STORE_TABLES[store];
+}
+
+/** Parameters bound per row in {@link sealedSwapSql}: id+iv, id+cipher, id+expected cipher. */
+export const SEALED_SWAP_COLUMNS = 6;
+
+/** Rows per compare-and-swap statement: the largest batch that cannot exceed the parameter ceiling. */
+export const SEALED_SWAP_ROWS_PER_STATEMENT = Math.floor(
+  MAX_BOUND_PARAMETERS / SEALED_SWAP_COLUMNS
+);
+
+/** One row of a sealed swap with its columns already in their TEXT form (base64). */
+export interface SealedSwapText {
+  id: string;
+  expected: string;
+  iv: string;
+  cipherText: string;
+}
+
+/**
+ * ONE statement that compare-and-swaps the sealed payload of `swaps.length` rows: a row changes only
+ * if it still holds the ciphertext it was read with. One statement because a statement is the
+ * largest unit of atomicity this plugin gives us (see the top of this file).
+ *
+ * The placeholders are numbered IN THE ORDER THEY APPEAR in the text, and the parameters returned
+ * follow that same order - so the binding is right whether the driver binds `$N` by its number or by
+ * its position. The two `CASE`s have no `ELSE`: the `WHERE` admits only rows named in the batch.
+ */
+export function sealedSwapStatement(
+  store: SealedStore,
+  swaps: readonly SealedSwapText[]
+): { sql: string; params: string[] } {
+  if (swaps.length < 1) throw new Error('sealedSwapStatement needs at least one row');
+  const { table, key } = SEALED_STORE_TABLES[store];
+  const params: string[] = [];
+  const next = (value: string): string => {
+    params.push(value);
+    return `$${params.length}`;
+  };
+  const ivCase = swaps.map((s) => `WHEN ${next(s.id)} THEN ${next(s.iv)}`).join(' ');
+  const cipherCase = swaps.map((s) => `WHEN ${next(s.id)} THEN ${next(s.cipherText)}`).join(' ');
+  const where = swaps
+    .map((s) => `(${key} = ${next(s.id)} AND cipher_text = ${next(s.expected)})`)
+    .join(' OR ');
+  return {
+    sql:
+      `UPDATE ${table} SET iv = CASE ${key} ${ivCase} END, ` +
+      `cipher_text = CASE ${key} ${cipherCase} END WHERE ${where}`,
+    params,
+  };
 }
 
 /** Splits `items` into consecutive runs of at most `size`, preserving order. Never yields []. */

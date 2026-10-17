@@ -58,6 +58,7 @@ describe('FormsService - archived forms', () => {
       {} as any,
       {} as any,
       {} as any,
+      {} as any,
       {} as any
     );
     return { service, formRepo, submissionRepo };

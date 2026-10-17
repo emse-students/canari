@@ -15,14 +15,16 @@ import { untrack } from 'svelte';
 describe('the feed paint identity', () => {
   it('a $state holds a proxy of the array it is given, and its read-back keeps its identity', () => {
     const cached = [{ id: 'a' }];
-    let list = $state<{ id: string }[] | null>(null);
-    list = cached;
-    expect(list === cached).toBe(false);
+    // Held in a `$state` object so each read is a property read: a bare `let` read outside a
+    // closure draws `state_referenced_locally` from the compiler on every run.
+    const page = $state<{ list: { id: string }[] | null }>({ list: null });
+    page.list = cached;
+    expect(page.list === cached).toBe(false);
 
-    const painted = untrack(() => list);
-    expect(list === painted).toBe(true);
+    const painted = untrack(() => page.list);
+    expect(page.list === painted).toBe(true);
 
-    list = [...cached, { id: 'b' }];
-    expect(list === painted).toBe(false);
+    page.list = [...cached, { id: 'b' }];
+    expect(page.list === painted).toBe(false);
   });
 });

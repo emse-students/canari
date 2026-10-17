@@ -1,10 +1,11 @@
 import { BadRequestException, Logger } from '@nestjs/common';
 import axios from 'axios';
-import { signLydiaParams } from './lydia-signature';
-import { parseLydiaOrderRef, orderRefToMetadata } from './lydia-order-ref';
+import { verifyLydiaSignature } from './lydia-signature';
+import { logSafeFieldName, matchLydiaSignature, observableFields } from './lydia-signature-match';
 import type { ConnectAccountStatusResponse } from './payment-provider.interface';
 import type {
-  CheckoutSessionInfo,
+  CancelRequestOutcome,
+  CheckoutRequestState,
   CheckoutSessionResult,
   ConnectBalanceSummary,
   CreateCheckoutSessionParams,
@@ -26,6 +27,9 @@ const PRODUCTION_BASE_URL = 'https://lydia-app.com';
 /** Lydia's payable range per request, confirmed by Lydia 2026-10-04: 0,50 EUR to 1000 EUR. */
 export const LYDIA_MIN_AMOUNT_CENTS = 50;
 export const LYDIA_MAX_AMOUNT_CENTS = 100_000;
+
+/** `request/cancel`'s answer for a request already cancelled or expired (sandbox, 2026-10-15). */
+const LYDIA_CANCEL_ALREADY_SETTLED = '2';
 
 /**
  * Fields no log line may ever carry in the clear - `api_token_id` is the Business's own
@@ -69,11 +73,13 @@ export class LydiaPaymentProvider implements PaymentProvider {
   private readonly baseUrl: string;
   private readonly providerToken: string | undefined;
   private readonly providerPrivateToken: string | undefined;
+  private readonly observeKeys: string[];
 
   constructor(env: {
     LYDIA_ENV?: string;
     LYDIA_PROVIDER_TOKEN?: string;
     LYDIA_PROVIDER_PRIVATE_TOKEN?: string;
+    LYDIA_OBSERVE_KEYS?: string;
   }) {
     this.baseUrl =
       (env.LYDIA_ENV || '').trim().toLowerCase() === 'production'
@@ -81,6 +87,11 @@ export class LydiaPaymentProvider implements PaymentProvider {
         : HOMOLOGATION_BASE_URL;
     this.providerToken = env.LYDIA_PROVIDER_TOKEN;
     this.providerPrivateToken = env.LYDIA_PROVIDER_PRIVATE_TOKEN;
+    // Second guard next to the compose wiring: a measurement variable never acts on production.
+    this.observeKeys = (this.baseUrl === PRODUCTION_BASE_URL ? '' : (env.LYDIA_OBSERVE_KEYS ?? ''))
+      .split(',')
+      .map((k) => k.trim())
+      .filter(Boolean);
     this.logger.log(`Lydia configured: ${this.isConfigured() ? 'yes' : 'no'} (${this.baseUrl})`);
   }
 
@@ -99,7 +110,17 @@ export class LydiaPaymentProvider implements PaymentProvider {
     return !!this.providerToken;
   }
 
-  private async postForm<T>(path: string, fields: Record<string, string>): Promise<T> {
+  /**
+   * POSTs a form to Lydia and throws a `PAYMENT_PROVIDER_REFUSED` 400 on any error code - except the
+   * codes listed in `answers`, which the CALLER knows to be an answer rather than a refusal (the
+   * cancel call's "already cancelled or expired", error 2). Those come back as the raw body, so the
+   * caller reads `error` itself and no refusal is logged for an outcome that is not one.
+   */
+  private async postForm<T>(
+    path: string,
+    fields: Record<string, string>,
+    answers: readonly string[] = []
+  ): Promise<T & { error?: string }> {
     const body = new URLSearchParams(fields);
     const res = await axios.post<
       T & { error?: string; status?: string; code?: string; message?: string }
@@ -126,6 +147,10 @@ export class LydiaPaymentProvider implements PaymentProvider {
         : null;
     const statusError = res.data?.status === 'error' ? (res.data.code ?? 'unknown') : null;
     const errorCode = numericError ?? statusError;
+    if (errorCode && answers.includes(String(errorCode))) {
+      this.logger.debug(`${path} answered error ${errorCode}, which the caller reads as an answer`);
+      return res.data;
+    }
     if (errorCode) {
       this.logger.warn(`${path} refused by Lydia: error ${errorCode}: ${res.data.message ?? ''}`);
       throw new BadRequestException({
@@ -187,31 +212,92 @@ export class LydiaPaymentProvider implements PaymentProvider {
       expire_url: this.callbackUrl('expire'),
     };
     if (params.idempotencyKey) fields.order_ref = params.idempotencyKey;
+    if (params.expireAfterSeconds !== undefined) {
+      // Lydia reads 0 as "never expires" and refuses anything but an integer (measured on the
+      // sandbox 2026-10-15): a value that would silently drop the expiry is refused HERE instead.
+      if (!Number.isInteger(params.expireAfterSeconds) || params.expireAfterSeconds <= 0) {
+        this.logger.warn(`Lydia checkout refused: expire_time ${params.expireAfterSeconds}`);
+        throw new BadRequestException('expireAfterSeconds must be a positive whole number');
+      }
+      fields.expire_time = String(params.expireAfterSeconds);
+    }
 
-    const data = await this.postForm<{ request_uuid: string; mobile_url: string }>(
-      '/api/request/do',
-      fields
-    );
-    return { id: data.request_uuid, url: data.mobile_url };
+    const data = await this.postForm<{
+      request_id?: string | number;
+      request_uuid: string;
+      mobile_url: string;
+    }>('/api/request/do', fields);
+    // `request_id` (numeric) is the id Lydia's callbacks and its cancel call carry; `request_uuid`
+    // is the one `request/state` reads. Both are kept, because neither replaces the other.
+    const requestId =
+      data.request_id === undefined || data.request_id === null ? null : String(data.request_id);
+    if (!requestId) {
+      this.logger.warn(`request/do answered without a request_id for ${data.request_uuid}`);
+    }
+    return { id: data.request_uuid, url: data.mobile_url, requestId };
   }
 
   /**
-   * Looks up a request's state via `POST /api/request/state`. `sessionId` is the `request_uuid`
-   * returned by `createCheckoutSession`. State 1 = accepted/paid (see doc's Request-State codes).
+   * Cancels a request via `POST /api/request/cancel` (measured on the sandbox 2026-10-15,
+   * payments.md): the NUMERIC `request_id` plus the Business's `vendor_token`, no signature. Lydia
+   * then moves the request to state 6 and calls its `cancel_url`. Error 2 ("transaction deja
+   * traitee") was measured on cancelled and expired requests; a PAID one very probably answers the
+   * same, so it comes back as `already-settled` - processed, not necessarily unpaid - and the caller
+   * reads `getCheckoutRequestState` before treating the request as dead.
+   * Any other refusal throws, like every call through `postForm`.
    */
-  async retrieveSession(sessionId: string): Promise<CheckoutSessionInfo> {
+  async cancelCheckoutRequest(
+    requestId: string,
+    connectAccountId: string
+  ): Promise<CancelRequestOutcome> {
     if (!this.providerToken) throw new BadRequestException('Lydia not configured');
-    const data = await this.postForm<{ state: string; order_ref?: string }>('/api/request/state', {
+    if (!/^\d+$/.test(requestId)) {
+      // Lydia refuses a request_uuid here (error 1): the numeric id is the only one it accepts.
+      throw new BadRequestException(`Lydia request/cancel needs the numeric request_id`);
+    }
+    if (!connectAccountId) {
+      throw new BadRequestException('Lydia request/cancel requires the vendor_token');
+    }
+    const data = await this.postForm<object>(
+      '/api/request/cancel',
+      { request_id: requestId, vendor_token: connectAccountId },
+      [LYDIA_CANCEL_ALREADY_SETTLED]
+    );
+    const outcome: CancelRequestOutcome =
+      String(data.error ?? '0') === LYDIA_CANCEL_ALREADY_SETTLED ? 'already-settled' : 'cancelled';
+    this.logger.log(`Lydia request ${requestId} cancel: ${outcome}`);
+    return outcome;
+  }
+
+  /**
+   * Reads a request's state via `POST /api/request/state` with `request_uuid` AND the Business's
+   * `vendor_token` (measured on the sandbox 2026-10-15, payments.md). Without the vendor_token
+   * Lydia still answers the state, but unsigned; with it the answer is `{state,
+   * used_ease_of_payment, signature}`. NO variant echoes `order_ref`, so the caller must already
+   * know which answer the request belongs to - it reads by the uuid its own row stored.
+   * 6 is what a cancel and an expiry both leave and 0 is still payable (both measured); 1 is paid
+   * per Lydia's documentation, NOT measured (paying needs the payer form). Any other code - 5,
+   * refused by the payer, among them, also unmeasured - is reported as `other`, never guessed.
+   */
+  async getCheckoutRequestState(
+    sessionId: string,
+    connectAccountId: string
+  ): Promise<CheckoutRequestState> {
+    if (!this.providerToken) throw new BadRequestException('Lydia not configured');
+    if (!connectAccountId) {
+      throw new BadRequestException('Lydia request/state requires the vendor_token');
+    }
+    const data = await this.postForm<{ state?: string | number }>('/api/request/state', {
       request_uuid: sessionId,
+      vendor_token: connectAccountId,
     });
-    return {
-      id: sessionId,
-      paid: data.state === '1',
-      // Best-effort: only populated if request/state actually echoes order_ref back. The
-      // authoritative confirmation path is the signed request/do callback (webhook.controller.ts),
-      // not this synchronous poll.
-      metadata: orderRefToMetadata(parseLydiaOrderRef(data.order_ref)),
-    };
+    const raw = data.state === undefined || data.state === null ? '' : String(data.state);
+    const state: CheckoutRequestState['state'] =
+      raw === '1' ? 'paid' : raw === '6' ? 'closed' : raw === '0' ? 'open' : 'other';
+    if (state === 'other') {
+      this.logger.warn(`Lydia request ${sessionId} is in unmeasured state "${raw}"`);
+    }
+    return { state, raw };
   }
 
   /**
@@ -297,7 +383,27 @@ export class LydiaPaymentProvider implements PaymentProvider {
   /** Verifies a `confirm_url`/`cancel_url`/`expire_url` callback signature from `request/do`. */
   verifyRequestCallback(fields: Record<string, string>, signature: string): boolean {
     if (!this.providerPrivateToken) return false;
-    const expected = signLydiaParams(fields, this.providerPrivateToken);
-    return expected === signature;
+    return verifyLydiaSignature(fields, this.providerPrivateToken, signature);
+  }
+
+  /**
+   * Observation of a callback that failed verification: which candidate key (by index), field set
+   * and algorithm reproduces its signature. Candidates come from `LYDIA_OBSERVE_KEYS`, a dev-only
+   * measurement variable removed once the algorithm is known; the answer carries names, never a
+   * value. `null` when nothing is configured (production, or no variable), so a refusal there carries
+   * no suffix at all.
+   */
+  observeRequestCallback(body: Record<string, unknown>, signature: string): string | null {
+    if (this.observeKeys.length === 0) return null;
+    const observable = observableFields(body);
+    if ('skipped' in observable) return `observe: skipped, ${observable.skipped}`;
+    const matches = matchLydiaSignature(observable.fields, signature, this.observeKeys);
+    if (matches.length === 0) return `observe: no match over ${this.observeKeys.length} key(s)`;
+    return `observe: ${matches
+      .map(
+        (m) =>
+          `key#${m.keyIndex} fields=[${m.fields.map(logSafeFieldName).join(',')}] algorithm=${m.algorithm}`
+      )
+      .join('; ')}`;
   }
 }

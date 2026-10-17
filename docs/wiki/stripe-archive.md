@@ -49,10 +49,9 @@ submission read (now `paymentAccountId`). **A real defect fixed with them:** the
 its approval still tested the Stripe pair, so a parent onboarded on Lydia could not approve a request;
 both read `lydiaOnboardingComplete` and `lydiaAccountId` now.
 
-**Deep-link host, additive:** a checkout return is `fr.emse.canari://payment/...`; `stripe` stays
-declared (manifest, `tauri.conf.json`), accepted by the server and routed by the client for builds that
-still send it - an entry in [legacy-compatibility](legacy-compatibility.md) with its removal condition.
-`deepLinkHostsDeclared.test.ts` pins both hosts in `tauri.conf.json` and the Android manifest.
+**Deep-link host:** a checkout return is `fr.emse.canari://payment/...`. The `stripe` host of builds
+below 1.2.4 was declared, accepted and routed until `minClientVersion` reached 1.2.7, then removed.
+`deepLinkHostsDeclared.test.ts` pins `payment` in `tauri.conf.json` and the Android manifest.
 
 **Still in the database, on purpose, and the plan that removes them:**
 
@@ -60,8 +59,7 @@ still send it - an entry in [legacy-compatibility](legacy-compatibility.md) with
 | --- | --- | --- |
 | Columns `associations."stripeAccountId"` and `"stripeOnboardingComplete"`, `users."stripeCustomerId"` | no longer mapped by any entity, read and written by nothing | **DROP** in a migration once the previous release (which still maps them) is no longer a rollback target; the strips in `copy-strips.sh`, `copy-prod-to-dev.sh`, `restore-into-local.sh` go in the same change. Dropping earlier gains nothing and a rollback would crash on the missing column |
 | `submissions."stripeSessionId"`, `purchase_records."stripePaymentIntentId"` | LIVE: they hold the Lydia order reference | a rename is expand, then contract: add `paymentRef`, backfill by `UPDATE`, ship code reading and writing the new column, drop the old one a release later. No measured need to rename yet, so it is not started |
-| `paymentMethod: 'stripe'` on rows and in the DTO | data at rest, read as `online`, never written | [legacy-compatibility](legacy-compatibility.md) |
-| `stripe` checkout host | legacy, see above | same entry |
+| `paymentMethod: 'stripe'` on rows | data at rest, read as `online`, never written (the DTO refuses it since floor 1.2.7) | [legacy-compatibility](legacy-compatibility.md) |
 
 **The rule the columns follow** ([databases](infrastructure/databases.md)): additive first, destructive
 last, and a destructive migration is cut only when the release that stopped mapping the column has been

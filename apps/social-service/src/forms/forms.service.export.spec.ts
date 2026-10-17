@@ -25,13 +25,15 @@ describe('FormsService.exportSubmissions', () => {
   function makeService(opts: {
     requiresPayment: boolean;
     submissions?: Record<string, unknown>[];
+    items?: Record<string, unknown>[];
+    deletedFiles?: string[];
   }) {
     const formRepo: any = {
       findOne: jest.fn(() =>
         Promise.resolve({
           id: 'f1',
           title: 'Inscription',
-          items: [ASSO],
+          items: opts.items ?? [ASSO],
           requiresPayment: opts.requiresPayment,
         })
       ),
@@ -49,7 +51,8 @@ describe('FormsService.exportSubmissions', () => {
       {} as any,
       {} as any,
       {} as any,
-      {} as any
+      {} as any,
+      { deletedFileIds: jest.fn(() => Promise.resolve(new Set(opts.deletedFiles ?? []))) } as any
     );
   }
 
@@ -116,5 +119,50 @@ describe('FormsService.exportSubmissions', () => {
     const warn = jest.spyOn((service as any).logger, 'warn').mockImplementation(() => undefined);
     expect(await firstDataRow(service)).toContain('refunded');
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('refunded'));
+  });
+
+  describe('a file question', () => {
+    const CV = { id: 'q_cv', label: 'Ton CV', required: false, type: 'file' };
+    const FILE_A = '11111111-1111-4111-8111-111111111111';
+    const FILE_B = '22222222-2222-4222-8222-222222222222';
+    const WITH_WORDS: ExportLabels = {
+      ...LABELS,
+      file: 'Fichier',
+      fileDeleted: 'Fichier supprime',
+    };
+
+    async function rows(service: FormsService): Promise<unknown[][]> {
+      const { buffer } = await service.exportSubmissions('f1', WITH_WORDS);
+      const workbook = new ExcelJS.Workbook();
+      await workbook.xlsx.load(buffer as unknown as ArrayBuffer);
+      const sheet = workbook.worksheets[0];
+      return [2, 3].map((n) => (sheet.getRow(n).values as unknown[]).slice(1));
+    }
+
+    // The file is never exported, and its id is not a reading of anything: the cell is a word.
+    it('writes the client word for a kept file and for a purged one, never the id', async () => {
+      const service = makeService({
+        requiresPayment: false,
+        items: [CV],
+        deletedFiles: [FILE_B],
+        submissions: [
+          submission({ id: 's1', answers: { q_cv: FILE_A } }),
+          submission({ id: 's2', answers: { q_cv: FILE_B } }),
+        ],
+      });
+      const [first, second] = await rows(service);
+      expect(first).toContain('Fichier');
+      expect(second).toContain('Fichier supprime');
+      expect(JSON.stringify([first, second])).not.toContain(FILE_A);
+    });
+
+    it('refuses a form with a file question when the client sent no word for it', async () => {
+      const service = makeService({
+        requiresPayment: false,
+        items: [CV],
+        submissions: [submission({ answers: { q_cv: FILE_A } })],
+      });
+      await expect(service.exportSubmissions('f1', LABELS)).rejects.toThrow(/fileDeleted/);
+    });
   });
 });

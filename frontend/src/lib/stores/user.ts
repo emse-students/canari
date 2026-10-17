@@ -4,6 +4,7 @@ import { forgetReaderCaches, SharedCache } from '$lib/utils/sharedCache';
 import { setCurrentUserId, setGlobalAdmin, setFeedAudience } from '$lib/stores/userState.svelte';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { clearWorkspaceSnapshots } from '$lib/utils/chat/workspaceSnapshot';
+import { forgetStoredFeeds } from '$lib/posts/feedStoreEpoch';
 // The notepad envelope is the same on both sides (AES-256-GCM under a hex key
 // held by its owner), so the association vault's implementation is reused rather
 // than copied - one envelope, one place to get right.
@@ -78,6 +79,8 @@ export function saveUserLocally(user: { id: string; displayName?: string; admin?
     forgetReaderCaches();
     // The previous account's community list is not drawn under this one's name (F1).
     clearWorkspaceSnapshots();
+    // Nor is any stored feed page written before the switch (`$lib/posts/feedStoreEpoch`).
+    forgetStoredFeeds('change of account');
   }
   localStorage.setItem(USER_STORAGE_KEY, user.id);
   setGlobalAdmin(!!user.admin);
@@ -97,6 +100,9 @@ export function clearUserLocally(): void {
   // device key, which costs a PIN to rebuild, while this list costs nothing but the first listing
   // after the next sign-in - a moment that needs the network anyway (wiki: community-open-budget).
   clearWorkspaceSnapshots();
+  // The stored feed pages end with it, by the same rule and in the same call: their epoch goes now,
+  // their sealed bytes at the next read or write of the account's store (`feedStoreEpoch.ts`).
+  forgetStoredFeeds('sign-out');
   setCurrentUserId(null);
 }
 

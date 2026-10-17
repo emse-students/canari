@@ -8,41 +8,35 @@
 
 ## Reaching it from a workstation
 
-`ssh portail-etu-direct`, then `docker exec` into the container `canari-prod-postgres-1` as user
-`canari` - **since the 2026-09-24 cutover** ([estate-migration](estate-migration.md)). `ssh canari`
-still connects, and the box runs NO container at all now: every `docker exec` there answers
-`No such container`, which reads like a typo rather than the wrong machine (measured 2026-09-27).
+Production's Postgres runs on the production host in the compose project `canari-prod`; reach it
+with `docker exec` into its container as the database user ([estate-migration](estate-migration.md)).
+A box that used to host the estate may still accept a connection and run NO container, so a
+`docker exec` there answers `No such container`, which reads like a typo rather than the wrong
+machine.
 **`auth_db` is the ONLY database** - every service shares it, social-service included, whose
 `DB_DATABASE` default `canari_social` **does not exist on prod**; a command that names it fails and
 the failure looks like a permissions problem.
 
 **THE CONTAINER NAME IS THE ONLY THING THAT SAYS WHICH ESTATE YOU ARE IN, so read it before you
 write.** The same host carries a second Postgres for `dev.canari-emse.fr` - compose project
-`canari-dev`, so container `canari-dev-postgres-1`, holding a full copy of production's data
+`canari-dev`, holding production's SCHEMA and a fictional seed, never its rows
 ([dev-environment](dev-environment.md)). Two containers, the same user, the same database name, the
-same table contents: nothing in a `psql` prompt distinguishes them. Prefer selecting by compose
-label over typing a name, which is what `infrastructure/dev/copy-prod-to-dev.sh` does and why it
-cannot be pointed at production:
+same tables: nothing in a `psql` prompt distinguishes them. Prefer selecting by compose label over
+typing a name, which is what `infrastructure/dev/reset-dev-to-seed.sh` does and why it cannot be
+pointed at production:
 
 ```
 docker ps --filter label=com.docker.compose.project=canari-prod \
           --filter label=com.docker.compose.service=postgres --format '{{.Names}}'
 ```
 
-**EITHER TOOL WORKS SINCE 2026-09-02, AND THE RULE THAT SAID "PowerShell, never Bash" NAMED THE
-WRONG CULPRIT.** It was never Bash. MSYS `ssh` execs the cloudflared `ProxyCommand` through
-`/bin/bash` whatever the caller, and it was the BACKSLASHES in that path, spelled Windows-style,
-that were eaten - so the connection died with an opaque error and the tool that happened to be
-running got the blame. `~/.ssh/config` now spells the path with FORWARD SLASHES, which `bash` and
-`cmd` both exec; measured on both.
-
-**The preference now runs the other way for anything binary.** PowerShell text-encodes stdout, so a
+**ANYTHING BINARY MUST NOT PASS THROUGH A TEXT-ENCODING SHELL.** PowerShell text-encodes stdout, so a
 `pg_dump | gzip` routed through it is corrupted on arrival - a backup that restores to nothing. A
-dump, a restore, or any pipe carrying bytes rather than text goes through Bash. Text queries may go
+dump, a restore, or any pipe carrying bytes rather than text goes through Bash; text queries may go
 through either. Quote SQL single-outer, doubled-inner:
 
 ```
-ssh portail-etu-direct 'docker exec canari-prod-postgres-1 psql -U canari -d auth_db -x -c "SELECT ... WHERE id = ''uuid''"'
+ssh <production-host> 'docker exec <prod-postgres-container> psql -U <db-user> -d auth_db -x -c "SELECT ... WHERE id = ''uuid''"'
 ```
 
 Single shared database host for all relational data. The database name is `auth_db`; logical separation is by schema/table prefix, not by database.
@@ -54,14 +48,14 @@ class name, so most are singular unless the entity declares `@Entity('...')`).
 |---|---|
 | core-service | `users` (the personal notepad is a `notes` column, not a table), `platform_config` |
 | chat-delivery-service | `key_package`, `one_time_key_package`, `queued_message`, `dm_groups`, `dm_group_members`, `dm_device_group_memberships`, `dm_user_dismissed_groups`, `group_invites`, `mls_commit_log`, `mls_group_info`, `push_token`, `revoked_device`, `pin_verifier` |
-| social-service | `channel_workspaces`, `channels`, `channel_members`, `channel_roles`, `channel_messages`, `channel_key_distributions`, `workspace_invites`, `forms`, `submissions`, `form_reminders`, `associations`, `association_members`, `association_products`, `association_categories`, `association_documents`, `purchase_records`, `webhook_deliveries` |
+| social-service | `channel_workspaces`, `channels`, `channel_members`, `channel_roles`, `channel_messages`, `channel_key_distributions`, `workspace_invites`, `forms`, `submissions`, `form_reminders`, `associations`, `association_members`, `association_products`, `association_categories`, `association_documents`, `purchase_records`, `webhook_deliveries`, `booking_spaces`, `booking_resources`, `booking_availability_rules`, `booking_availability_exceptions`, `booking_blocks`, `bookings`, `booking_participants` ([bookings](../bookings-chantier.md#wp-b1-as-built-2026-10-16)) |
 
 Full schema: see `docs/wiki/architecture.md` (PostgreSQL schema overview section).
 
 ### The `/adminer/` route - the database in a browser, for global admins (2026-10-02)
 
 *"add an adminer route to canari, in a safe way"* (user). **Production only.** Adminer already ran
-there, published on the host's loopback (`127.0.0.1:8888`, reached by an ssh tunnel); the route is a
+there, published on the host loopback only; the route is a
 second, GATED way in through the frontend nginx. The loopback one is unchanged.
 
 **THE PROBLEM IS THE CREDENTIAL, NOT THE PROXY.** A browser that OPENS a page sends no `Authorization`
@@ -105,10 +99,8 @@ permission - the route would be open to the internet.
 - **Audit:** every session opened, every refusal, and every cookie refused for a bad signature or a lost
   role is a `warn` line in core-service's log.
 
-**THE USER CHOSE THE EXISTING FULL-ACCESS DATABASE ACCOUNT** (asked 2026-10-02; the alternative was a
-dedicated read-only role, which was recommended and declined). So whoever passes both doors can write to
-production, and a flaw in this route is a flaw with write access. A `SELECT`-only role - one `CREATE
-ROLE`, one more secret - is the way to narrow it, and is not built.
+**The database account Adminer asks for is the user's decision** (2026-10-02). A `SELECT`-only role
+is the way to narrow the route and is tracked in the [backlog](../backlog.md).
 
 **Web only.** The session is a cookie scoped to the app's own origin; the native apps run on another, so
 the admin page shows an explanation instead of a button there.
@@ -154,6 +146,35 @@ Rules, all of them load-bearing:
   deploy, so a backfill kept re-applying: migration 004 re-granted `MANAGE_PAYOUT_ACCOUNT` and 016
   re-enabled `cotisationEnabled`, silently reverting admin changes. The ledger fixes this going
   forward; keep backfills narrowly conditioned anyway.
+
+- **A CHECK that evaluates to NULL PASSES.** `CHECK (mode = 'step' AND "stepMinutes" > 0 ...)`
+  let a NULL step through (migration 087, found by its integration spec). `COALESCE` or
+  `IS NOT NULL` every nullable operand of a CHECK.
+
+#### Extensions, and an EXCLUDE constraint (migration 087, 2026-10-16)
+
+**The migration role CAN create an extension.** The deploy runs `psql -U "$POSTGRES_USER"`, the
+postgres image's bootstrap role, a superuser on both estates (read on production 2026-10-16:
+`rolsuper = t`). Installed there: `pg_trgm`, `unaccent` (core-service creates them at boot) and,
+from 087, `btree_gist`, created `SCHEMA public` and wrapped so a refusal FAILS the deploy with the
+one command a superuser must run. **An extension an entity's DDL needs must also exist where
+`synchronize` builds the schema** (development, the CI boot probe): social-service's
+`dataSourceFactory` (`src/common/synchronize-prerequisites.ts`) creates the listed extensions
+before synchronising, and only when synchronising.
+
+**An EXCLUDE constraint holds under contention, but its LOSERS ARE NOT ALWAYS TOLD 23P01.**
+Measured on 18.6: eight bare concurrent inserts on one slot gave exactly one winner and seven
+`40P01 deadlock_detected` - each inserted its tuple, then waited on the others' uncommitted ones.
+Taking `SELECT ... FOR UPDATE` on the parent row (the resource) first, in the same transaction,
+serialises the writers and every loser gets `23P01` (`isExclusionViolation`). Both shapes are run
+by `bookings.integration.spec.ts`.
+
+**A DECLARED DRIFT: CI's boot probe runs PostgreSQL 16, production 18.6.** `boot-nest-apps` in
+`ci.yml` uses `postgres:16-alpine` (unpinned), while the compose files pin `18-alpine` by digest; the
+social-service integration job of #1915 uses production's digest. So the boot probe proves the
+`synchronize` path (extensions included) on a major production does not run. `btree_gist` and the
+exclusion behave the same on both (contrib, trusted since 13), but a feature added after 16 would
+pass there only by luck: align the boot probe on the compose digest when it is next touched.
 
 **A DATABASE WITH NO LEDGER MUST NEVER BE HANDED THE LOOP.** The local estate runs
 `NODE_ENV=development`, so `synchronize` builds its schema from the entities on every boot and it
@@ -235,7 +256,7 @@ are not built.
 binary pipe, so a `pg_dump` routed through it is a backup that restores to nothing.
 
 ```sh
-ssh portail-etu-direct 'docker exec canari-prod-postgres-1 pg_dump -U canari -d auth_db -Fc' > prod-auth_db.dump
+ssh <production-host> 'docker exec <prod-postgres-container> pg_dump -U <db-user> -d auth_db -Fc' > prod-auth_db.dump
 ```
 
 Measured 2026-09-15: **23,253,358 bytes in 45.8 s**, 282 TOC entries, `Format: CUSTOM`,
@@ -316,17 +337,17 @@ The 2026-09-01 failure at least crash-looped at once; this one comes up green an
 **DEV CROSSES FIRST, AND NOT AS A REHEARSAL.** A stable is refused unless a pre-release served dev at
 that same commit (`release-preconditions.sh`), so the pre-release is not optional and it deploys dev.
 If `canari-dev-postgres-1` has not crossed by then, the dev deploy dies at the same guard and the
-stable can never be cut. Dev holds a logical copy of production (95 MB, 2026-09-18) and
-`infrastructure/dev/copy-prod-to-dev.sh` rebuilds it from nothing, so dev needs no dump of its own.
+stable can never be cut. Dev holds a fictional seed that
+`infrastructure/dev/reset-dev-to-seed.sh` reloads on demand, so dev needs no dump of its own.
 
-**The sequence on the box.** `ssh canari`; the checkout is `/home/canari/canari` and
+**The sequence on the box.** The checkout is the deploy checkout and
 `infrastructure/.env` already carries `TAG`, so compose needs nothing added on the command line
 (production runs `TAG=latest`, dev `TAG=dev`). The stop list is DERIVED, because a typed one goes
 stale the day a service is added - which is the same defect `deploy-environment.sh` fixed for its own
 readiness check.
 
 ```sh
-cd /home/canari/canari
+cd <deploy-checkout>
 dc() { docker compose -f infrastructure/docker-compose.prod.yml --env-file infrastructure/.env "$@"; }
 
 # 1. Writes stop, and ONLY the writers: postgres 15 keeps running so it can be dumped.
@@ -440,8 +461,8 @@ not as a tar archive. See [backup](backup.md).
 
 ### Finding every media reference a COPY carries but cannot serve
 
-A copy of production - into `dev.canari-emse.fr` or into a local stack - fetches a Postgres dump and
-nothing else. Neither touches Garage, so every media id in the restored rows names a blob that
+The copy of production into a local stack - the only one left since 2026-10-16, when the copy into
+`dev.canari-emse.fr` was deleted - fetches a Postgres dump and nothing else. It never touches Garage, so every media id in the restored rows names a blob that
 exists only in production's store, and `infrastructure/lib/copy-strips.sh` clears them all and then
 COUNTS what is left, refusing the restore unless the answer is zero.
 
@@ -453,7 +474,7 @@ level below anything a column list can see. The feed 404ed while the copy's own 
 **What settles it is asking the database rather than reading harder.** This walks every text and
 jsonb column, and it is what found that one - run it against a fresh copy after any schema change
 that adds a place a media reference can hide, and add whatever it names to BOTH the strip and the
-count in `copy-strips.sh` (which deliberately cannot run this itself: `dev-copy-guards.test.sh`
+count in `copy-strips.sh` (which deliberately cannot run this itself: `local-copy-guards.test.sh`
 fails the build if that file so much as mentions `docker exec` or `psql`, because the allowlist of
 writable targets belongs in the script that owns the target):
 

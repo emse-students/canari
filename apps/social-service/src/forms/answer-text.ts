@@ -31,6 +31,22 @@ export interface AnswerOption {
 /** The only part of a question this reader needs. */
 export interface AnswerQuestion {
   options?: AnswerOption[];
+  /** Read for one type only, `file`, whose stored value is an id and never something to show. */
+  type?: string;
+}
+
+/**
+ * The words a FILE answer is read with, supplied by the caller that has a language: Paraglide on the
+ * screen, the client's export labels on the server. A file answer stores an opaque id, which is not a
+ * reading of anything, so it reads as one of two words and never as the id.
+ */
+export interface AnswerWords {
+  /** What a file that is still kept reads as. */
+  file: string;
+  /** What a file the retention purge has deleted reads as - the answer itself stays. */
+  fileDeleted: string;
+  /** The file ids that have been purged. */
+  deletedFiles: ReadonlySet<string>;
 }
 
 /** Resolves a stored value to the option label it names, or returns it unchanged. */
@@ -62,9 +78,17 @@ function oneValue(value: unknown, options: AnswerOption[] | undefined): string {
  *
  * A zero is an ANSWER - a scale can be answered 0 - so emptiness is tested for as null or the empty
  * string, never by falsiness. The export read `if (!ans)` until 2026-09-20 and dropped those.
+ *
+ * A FILE answer reads as `words.file` or `words.fileDeleted`, never as its id. A caller that reads
+ * one without supplying the words is a defect, and it THROWS rather than printing the id.
  */
-export function answerText(answer: unknown, item: AnswerQuestion): string {
+export function answerText(answer: unknown, item: AnswerQuestion, words?: AnswerWords): string {
   if (answer == null || answer === '') return '';
+
+  if (item.type === 'file') {
+    if (!words) throw new Error('answerText: a file answer is read with the words of its reader');
+    return words.deletedFiles.has(String(answer)) ? words.fileDeleted : words.file;
+  }
 
   if (typeof answer === 'object' && !Array.isArray(answer)) {
     return Object.entries(answer as Record<string, unknown>)

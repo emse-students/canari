@@ -44,6 +44,7 @@
   import type { CameraCapture, FramedStream } from '$lib/reels/framedCapture';
   import { settings } from '$lib/stores/settingsStore.svelte';
   import { readVideoDurationMs } from '$lib/reels/videoDuration';
+  import { attachCapturePoster } from '$lib/reels/capturePoster';
   import { getReelLimits, type ReelLimits } from '$lib/posts/api';
   import type { PublishReelDeps } from '$lib/reels/publishReel';
   import { refusalStatus } from '$lib/utils/apiRefusal';
@@ -52,7 +53,6 @@
   import { pickNatively } from '$lib/utils/chat/nativeAttachPicker';
   import {
     abandonHistoryOverlay,
-    closeHistoryOverlayFromUi,
     pushHistoryOverlay,
     type OverlayClose,
   } from '$lib/utils/historyOverlayStack';
@@ -124,6 +124,8 @@
   let recorder: ReelRecorder | null = null;
   /** The preview's crop being drawn for the take in progress (framedCapture.ts). */
   let framed: FramedStream | null = null;
+  /** The take in progress's first picture (`ReelClip.poster`), taken before the recorder starts. */
+  let takePoster: Blob | null = null;
   /** Armed by a press; its firing makes the press a video (reelCapture.ts). */
   let holdTimer: ReturnType<typeof setTimeout> | null = null;
   let limitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -173,7 +175,16 @@
   function send(event: CaptureEvent) {
     const before = capture;
     const after = captureReducer(before, event);
-    if (after === before) return;
+    if (after === before) {
+      // A pick is the member's own act: one the state refuses is said, never lost in silence.
+      if (event.type === 'picked') {
+        console.warn(
+          `[reel-capture] a picked ${event.clip.source} take was refused in ${before.kind}`
+        );
+        showToast(m.reels_capture_take_refused(), 'error');
+      }
+      return;
+    }
     console.debug(`[reel-capture] ${before.kind} -> ${after.kind} on ${event.type}`);
     capture = after;
     if (before.kind === 'pressing') clearHoldTimer();
@@ -232,8 +243,9 @@
    * A composer destination: the take leaves as a file for the composer's attachment path, and the
    * camera closes. `blob` is the edited media when the editor changed it.
    */
-  function handBack(blob: Blob) {
+  function handBack(blob: Blob, poster: Blob | null | undefined) {
     const file = captureFileFrom(blob);
+    if (poster && file.type.startsWith('video/')) attachCapturePoster(file, poster);
     console.debug(
       `[reel-capture] handing back ${file.name} (${file.size} bytes) to ${destination}`
     );
@@ -244,9 +256,8 @@
     }
     oncapture(file);
     editorOpen = false;
-    // The take's entry leaves the stack NOW, by abandon: `closeHistoryOverlayFromUi` would leave it
-    // on the stack until its traversal lands, the overlay's teardown below would pop it a SECOND
-    // time, and that second traversal closed what the camera was opened over (the conversation).
+    // The take's entry leaves the stack NOW, by abandon - its close would ask about the take the
+    // composer just received. The entry stays as a ghost the next overlay takes over.
     const entry = takeEntry;
     takeEntry = null;
     if (entry) abandonHistoryOverlay(entry);
@@ -294,9 +305,11 @@
     if (await confirmDiscardTake()) send({ type: 'discard' });
   }
 
+  /** The take is over (back to `ready`): its entry leaves the stack, with nothing left to ask. */
   function releaseTakeEntry() {
     const entry = takeEntry;
-    if (entry) closeHistoryOverlayFromUi(entry);
+    takeEntry = null;
+    if (entry) abandonHistoryOverlay(entry);
   }
 
   /** A tap: the preview's crop of the current frame, kept as a photo. */
@@ -320,6 +333,9 @@
       send({ type: 'failed' });
       return;
     }
+    // The take's thumbnail for a composer (`ReelClip.poster`), taken NOW: before the drawing loop and
+    // the recorder exist, so its encode costs the take no frame. The reel publish step needs none.
+    takePoster = rules.handsBackFile ? (camera?.thumbnail() ?? null) : null;
     framed = camera?.startFramedStream() ?? null;
     if (!framed) {
       showToast(m.reels_capture_record_error(), 'error');
@@ -367,9 +383,11 @@
       send({ type: 'failed' });
       return;
     }
+    const poster = takePoster;
+    takePoster = null;
     try {
       const blob = await ending.stop();
-      send({ type: 'stopped', clip: { blob, source: 'camera' } });
+      send({ type: 'stopped', clip: { blob, source: 'camera', poster } });
     } catch (err) {
       const fault = err instanceof ReelRecorderError ? err.fault : 'record';
       console.error(`[reel-capture] the take could not be kept (${fault})`, err);
@@ -391,6 +409,7 @@
     elapsedMs = 0;
     recorder?.abort();
     recorder = null;
+    takePoster = null;
     stopFraming();
   }
 
@@ -399,7 +418,12 @@
     const input = event.currentTarget as HTMLInputElement;
     const file = input.files?.[0];
     input.value = '';
-    if (file) await takePickedVideo(file);
+    if (!file) {
+      console.debug('[reel-capture] the gallery answered with no file');
+      return;
+    }
+    console.debug(`[reel-capture] gallery picked ${file.type || 'typeless'} (${file.size} bytes)`);
+    await takePickedVideo(file);
   }
 
   /**
@@ -427,7 +451,10 @@
 
   async function takePickedVideo(file: File) {
     if (!limits) {
+      // The gallery button waits for the cap, so this is a pick the member made and cannot see
+      // taken: it is said, never dropped.
       console.warn('[reel-capture] a gallery pick arrived before the cap was read');
+      showToast(m.reels_capture_pick_before_limits(), 'error');
       return;
     }
     if (!file.type.startsWith('video/')) {
@@ -459,16 +486,10 @@
     const entry = takeEntry;
     takeEntry = null;
     if (!entry) return;
-    if (onclose) {
-      // AN OVERLAY TORN DOWN UNDER A TAKE (its composer unmounted): the take's entry leaves the stack
-      // NOW, as in `handBack`. `closeHistoryOverlayFromUi` would leave it there until its traversal
-      // lands, so the overlay's own abandon below it would splice without going back - one history
-      // entry left behind, and the next Back spent on nothing.
-      console.debug('[reel-capture] torn down under a take: its history entry is abandoned');
-      abandonHistoryOverlay(entry);
-      return;
-    }
-    closeHistoryOverlayFromUi(entry);
+    // TORN DOWN UNDER A TAKE: the take's entry leaves the stack, and its close is NOT run - it would
+    // ask about a take whose screen is gone, over whatever page is now showing.
+    console.debug('[reel-capture] torn down under a take: its history entry is abandoned');
+    abandonHistoryOverlay(entry);
   });
 
   const recording = $derived(capture.kind === 'recording' || capture.kind === 'finishing');
@@ -477,7 +498,9 @@
   );
 </script>
 
-<div class="relative h-full w-full">
+<!-- No Back swipe while the editor owns the strokes or a take is being filmed (`swipeBack`): a
+     recording ends by its own shutter, never by an edge swipe that would drop it unasked. -->
+<div class="relative h-full w-full" data-swipe-back-off={editorOpen || recording ? '' : undefined}>
   <CameraScreen
     {session}
     bind:capture={camera}
@@ -485,7 +508,24 @@
     paused={capture.kind === 'review'}
     {onBeforeRelease}
     {onclose}
+    microphoneAsked={rules.microphone === 'with-lens'}
   >
+    {#snippet faultActions()}
+      <!-- A REFUSED CAMERA KEEPS THE GALLERY: a pick needs no camera, and the input is always
+           mounted, so the member who said no to the camera can still publish a video. -->
+      {#if rules.gallery}
+        <button
+          type="button"
+          class="inline-flex items-center gap-2 rounded-full bg-white/15 px-5 py-2.5 text-sm font-semibold outline-none hover:bg-white/25 focus-visible:ring-2 focus-visible:ring-amber-500 disabled:opacity-40"
+          disabled={!limits}
+          data-reel-fault-gallery
+          onclick={openGallery}
+        >
+          <Images size={16} strokeWidth={2.5} />
+          {m.reels_capture_gallery()}
+        </button>
+      {/if}
+    {/snippet}
     {#snippet controls()}
       <div class="grid grid-cols-3 items-end px-6">
         <div class="flex justify-start pb-6">
@@ -501,15 +541,6 @@
             >
               <Images size={22} strokeWidth={2} />
             </button>
-            {#if !nativeGallery}
-              <input
-                bind:this={picker}
-                type="file"
-                accept="video/*"
-                class="hidden"
-                onchange={onPicked}
-              />
-            {/if}
           {/if}
         </div>
         <div class="flex flex-col items-center gap-3">
@@ -545,6 +576,22 @@
     {/snippet}
   </CameraScreen>
 
+  <!-- THE GALLERY'S INPUT LIVES HERE, NEVER IN `controls`. The picker backgrounds the app, the camera
+       is released, and CameraScreen drops its controls with the phase: an input inside them was
+       detached when the picker answered, and Svelte's root-delegated `onchange` never reached it - a
+       picked video vanished with no review, no error and no line (Mi 9T, v1.2.9-alpha.4, 3 of 3).
+       Here it lives as long as the screen does, whatever the camera is doing. -->
+  {#if rules.gallery && !nativeGallery}
+    <input
+      bind:this={picker}
+      type="file"
+      accept="video/*"
+      class="hidden"
+      data-reel-gallery-input
+      onchange={onPicked}
+    />
+  {/if}
+
   {#if capture.kind === 'review'}
     {@const clip = capture.clip}
     {#if rules.handsBackFile}
@@ -554,7 +601,7 @@
         onedit={() => (editorOpen = true)}
         soundRemoval={rules.soundRemoval}
         nextLabel={m.reels_review_add()}
-        onnext={() => handBack(clip.blob)}
+        onnext={() => handBack(clip.blob, clip.poster)}
       />
     {:else if publishOpen && limits}
       <ReelPublishSheet {clip} {limits} deps={publishDeps} onclose={() => (publishOpen = false)} />
@@ -582,7 +629,8 @@
         if (capture.kind !== 'review') return;
         // The edited media replaces the take (null: untouched), and the publish step opens at once.
         if (rules.handsBackFile) {
-          handBack(blob ?? capture.clip.blob);
+          // The poster is the take as filmed: the editor's drawings are not on the thumbnail.
+          handBack(blob ?? capture.clip.blob, capture.clip.poster);
           return;
         }
         if (blob) capture = { kind: 'review', clip: { ...capture.clip, blob } };

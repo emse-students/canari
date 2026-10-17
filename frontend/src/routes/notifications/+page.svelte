@@ -84,6 +84,10 @@
         notif,
         async (id) => (await getAssociation(id)).slug
       );
+      if (!url) {
+        Log.d('notifications', `open ${notif.type}: no destination`);
+        return;
+      }
       await goto(resolve(internalPath(url)));
     } catch (e: unknown) {
       Log.d('notifications', `open ${notif.type} failed: ${String(e)}`);

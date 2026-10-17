@@ -292,6 +292,9 @@ describe('the menu closes', () => {
   it('on Back: the open menu holds a history entry, and popping it closes the menu', () => {
     stubMatchMedia(true);
     clearHistoryOverlayStack();
+    // On a plain entry: an earlier test's closed menu leaves a ghost, which the next open would take
+    // over by replaceState instead of pushing (the hand-off).
+    history.replaceState(null, '');
     const stopHistory = initHistoryOverlayStack();
     mounted.push(stopHistory);
     mountComposer();

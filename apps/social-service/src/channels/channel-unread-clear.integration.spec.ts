@@ -8,15 +8,21 @@
  * `clearedMarks` (`select`/`update: false`): a membership read and a membership save must not name
  * the column, because the deploy runs them BEFORE migration 082 exists.
  *
- * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files: CI provides no database, and
- * the file reports as skipped rather than passing. Run it against a throwaway PostgreSQL:
+ * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files; CI's
+ * `test-social-integration` sets it. Locally, against a throwaway PostgreSQL:
  *
  *   SOCIAL_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- channel-unread-clear.integration
  *
- * Everything happens in a throwaway schema, dropped at the end.
+ * Everything happens in a throwaway schema, dropped at the end. The schema is created BEFORE the
+ * DataSource initializes: TypeORM reads `current_schema()` once, at `initialize()`, and keeps it as
+ * the schema it introspects. Created afterwards, the search path named a schema that did not exist
+ * yet, so TypeORM kept no schema; the first `synchronize` still built the tables (unqualified DDL
+ * lands in the search path), but the SECOND one found none of them and tried to create
+ * `channel_workspaces` again - "relation already exists", on every run (2026-10-15).
  */
 import { readFileSync } from 'fs';
 import { join } from 'path';
+import { Client } from 'pg';
 import { DataSource, Repository } from 'typeorm';
 import { ChannelService } from './channel.service';
 import { Workspace } from './entities/workspace.entity';
@@ -44,6 +50,7 @@ const ms = (iso: string) => Date.parse(`${iso}Z`);
 
 maybe('clearing a community unread against PostgreSQL (migration 082)', () => {
   const schema = `clear_it_${Math.random().toString(36).slice(2, 10)}`;
+  let admin: Client;
   let ds: DataSource;
   let service: ChannelService;
   let members: Repository<ChannelMember>;
@@ -57,6 +64,9 @@ maybe('clearing a community unread against PostgreSQL (migration 082)', () => {
     );
 
   beforeAll(async () => {
+    admin = new Client({ connectionString: URL });
+    await admin.connect();
+    await admin.query(`CREATE SCHEMA ${schema}`);
     ds = new DataSource({
       type: 'postgres',
       url: URL,
@@ -67,7 +77,6 @@ maybe('clearing a community unread against PostgreSQL (migration 082)', () => {
       extra: { options: `-c search_path=${schema}` },
     });
     await ds.initialize();
-    await q(`CREATE SCHEMA ${schema}`);
     await ds.synchronize();
     const redis = { publishChannelEvent: jest.fn().mockResolvedValue(undefined) };
     members = ds.getRepository(ChannelMember);
@@ -100,9 +109,15 @@ maybe('clearing a community unread against PostgreSQL (migration 082)', () => {
   });
 
   afterAll(async () => {
-    if (!ds?.isInitialized) return;
-    await q(`DROP SCHEMA ${schema} CASCADE`);
-    await ds.destroy();
+    if (ds?.isInitialized) await ds.destroy();
+    if (!admin) return;
+    await admin.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await admin.end();
+  });
+
+  // TypeORM introspects the schema it read at initialize: this file's, not none - see the header.
+  it('introspects the throwaway schema, so a second synchronize sees the tables it built', () => {
+    expect(ds.driver.schema).toBe(schema);
   });
 
   it('migration 082 applies over the schema the entity built, and a later synchronize keeps it', async () => {

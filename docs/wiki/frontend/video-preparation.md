@@ -13,6 +13,8 @@ decision C3, 2026-09-29 (*"il faut que la charge serveur soit minimale"*), recor
 prepareVideoForUpload(source: Blob, {
   maxSeconds?: number,          // 90 for a CanaReel (C4); omitted = only the byte budget bounds it
   maxBytes?: number,            // MediaService.uploadLimits().maxPlaintextBytes
+  removeAudio?: boolean,        // the member removed the sound: no audio track at all
+  trimToVideo?: boolean,        // a reel: cut to the video track's own span (videoSpanTrim), see reels.md
   onProgress?: (fraction) => void,  // 0..1 as frames are encoded
   signal?: AbortSignal,         // cancel
 }): Promise<PreparedVideo>      // { file, width, height, durationSeconds, sourceBytes, outputBytes }

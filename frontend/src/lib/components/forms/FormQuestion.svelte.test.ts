@@ -6,10 +6,17 @@
  * answer that stays in the card and never reaches the page would still render perfectly. So each
  * type is clicked here and the value the PARENT holds is what is asserted.
  */
-import { describe, it, expect, afterEach } from 'vitest';
-import { flushSync, mount, unmount } from 'svelte';
-import type { FormItem } from '$lib/forms/api';
+import { describe, it, expect, afterEach, vi } from 'vitest';
+import { flushSync, mount, tick, unmount } from 'svelte';
+import { uploadFormAnswerFile, type FormItem } from '$lib/forms/api';
+import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr';
+import { m } from '$lib/paraglide/messages';
 import FormQuestionHarness from './FormQuestionHarness.test.svelte';
+
+vi.mock('$lib/forms/api', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/forms/api')>()),
+  uploadFormAnswerFile: vi.fn(),
+}));
 
 const mounted: (() => void)[] = [];
 
@@ -90,5 +97,83 @@ describe('FormQuestion', () => {
       optionClosed: (opt: { id?: string }) => opt.id === 'b',
     });
     expect(target.querySelectorAll<HTMLInputElement>('input[type=radio]')[1].disabled).toBe(true);
+  });
+});
+
+/**
+ * A FILE question while its file travels: the page is told it is busy (so it holds the send), the
+ * bar moves, and a cancel ends it with no error and no answer.
+ */
+describe('FormQuestion - a file on its way', () => {
+  const fileItem: FormItem = { id: 'cv', label: 'CV', required: false, type: 'file' };
+
+  function pick(target: HTMLElement, file: File) {
+    const input = target.querySelector<HTMLInputElement>('input[type=file]')!;
+    Object.defineProperty(input, 'files', { value: [file], configurable: true });
+    // Bubbling: Svelte delegates `change` to the root, as a browser's own event would reach it.
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  /** An upload that only ends when the test says so, or when its signal aborts. */
+  function pendingUpload() {
+    let transport: XhrUploadOptions = {};
+    let finish: (v: unknown) => void = () => {};
+    vi.mocked(uploadFormAnswerFile).mockImplementation((_f, _i, _file, t = {}) => {
+      transport = t;
+      return new Promise((resolve, reject) => {
+        finish = resolve as (v: unknown) => void;
+        t.signal?.addEventListener('abort', () => reject(new UploadAbortedError('cancelled')));
+      });
+    });
+    return { transport: () => transport, finish: (v: unknown) => finish(v) };
+  }
+
+  it('tells the page it is busy, shows the progress, and hands the id back when done', async () => {
+    const upload = pendingUpload();
+    const busy: boolean[] = [];
+    const { target, state } = render(fileItem, '', {
+      onUploadingChange: (b: boolean) => busy.push(b),
+    });
+    pick(target, new File(['x'], 'cv.pdf', { type: '' }));
+    flushSync();
+    expect(busy.at(-1)).toBe(true);
+    upload.transport().onProgress?.({ loaded: 50, total: 100 } as never);
+    flushSync();
+    expect(target.textContent).toContain('50');
+    upload.finish({ fileId: 'file-1', fileName: 'cv.pdf', sizeBytes: 1, contentType: '' });
+    await tick();
+    await tick();
+    flushSync();
+    expect(state.value).toBe('file-1');
+    expect(busy.at(-1)).toBe(false);
+  });
+
+  it('cancels: no answer, no error, and the page is told it is free again', async () => {
+    pendingUpload();
+    const busy: boolean[] = [];
+    const { target, state } = render(fileItem, '', {
+      onUploadingChange: (b: boolean) => busy.push(b),
+    });
+    pick(target, new File(['x'], 'cv.pdf', { type: 'application/pdf' }));
+    flushSync();
+    const cancel = [...target.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === m.form_file_cancel()
+    )!;
+    cancel.click();
+    await tick();
+    await tick();
+    flushSync();
+    expect(state.value).toBe('');
+    expect(target.querySelector('[role=alert]')).toBeNull();
+    expect(busy.at(-1)).toBe(false);
+  });
+
+  it('refuses a HEIC photo before anything is sent', () => {
+    vi.mocked(uploadFormAnswerFile).mockClear();
+    const { target } = render(fileItem, '');
+    pick(target, new File(['x'], 'IMG_1.HEIC', { type: 'image/heic' }));
+    flushSync();
+    expect(target.querySelector('[role=alert]')?.textContent).toBe(m.form_file_error_heic());
+    expect(uploadFormAnswerFile).not.toHaveBeenCalled();
   });
 });

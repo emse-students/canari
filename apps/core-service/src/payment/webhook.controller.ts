@@ -1,4 +1,14 @@
-import { BadRequestException, Body, Controller, Post, Query, Logger } from '@nestjs/common';
+import {
+  BadRequestException,
+  Body,
+  Controller,
+  Headers,
+  Post,
+  Query,
+  Logger,
+  UseInterceptors,
+} from '@nestjs/common';
+import { NoFilesInterceptor } from '@nestjs/platform-express';
 import axios from 'axios';
 import { PaymentService } from './payment.service';
 import { parseLydiaOrderRef } from './lydia-order-ref';
@@ -7,6 +17,7 @@ import {
   internalSubmissionUrl,
   productPurchaseCompletedUrl,
 } from './social-internal-client';
+import { logSafeFieldName } from './lydia-signature-match';
 import { describeHttpError } from '../common/http-error-log';
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -18,6 +29,37 @@ function assertValidSubmissionId(submissionId: string): void {
   if (!SUBMISSION_ID_RE.test(submissionId)) {
     throw new Error(`Invalid submissionId: ${submissionId}`);
   }
+}
+
+/** Multer limits for the public Lydia callback route: a few short text fields, never a file. */
+export const LYDIA_CALLBACK_BODY_LIMITS = {
+  fields: 16,
+  fieldSize: 4096,
+  parts: 16,
+  files: 0,
+} as const;
+
+/** Most field names a refusal line carries: the sender decides every name. */
+const LOGGED_FIELD_NAMES = 16;
+
+/**
+ * The field NAMES of a refused body, safe to log: the sender controls them, so they are capped in
+ * number and length and stripped of anything outside `[w.-]` (a newline in a key would forge a log
+ * line). Names only, never a value.
+ */
+export function describeFieldNames(body: Record<string, unknown> | undefined): string {
+  const names = Object.keys(body ?? {});
+  const shown = names.slice(0, LOGGED_FIELD_NAMES).map((name) => logSafeFieldName(name));
+  return `${names.length} field(s)=[${shown.join(',')}]`;
+}
+
+/** The media type of a request, bounded and stripped like a field name (the header is the sender's too). */
+export function describeContentType(contentType: string | undefined): string {
+  const mediaType = (contentType ?? '')
+    .split(';')[0]
+    .toLowerCase()
+    .replace(/[^\w/.+-]/g, '');
+  return mediaType.slice(0, 48) || 'none';
 }
 
 @Controller('payments')
@@ -68,12 +110,19 @@ export class PaymentWebhookController {
     this.logger.log(`Product purchase completed: productId=${productId} userId=${userId}`);
   }
 
-  /** Cancels a pending form submission via the internal social-service route. */
-  private async cancelPendingSubmissionInternal(submissionId: string): Promise<void> {
+  /**
+   * Cancels a pending form submission via the internal social-service route, naming the request
+   * Lydia reported (its numeric `request_id`): social-service applies it only if that is still the
+   * row's current request, so the cancel of a request a retry replaced changes nothing.
+   */
+  private async cancelPendingSubmissionInternal(
+    submissionId: string,
+    requestId: string
+  ): Promise<void> {
     assertValidSubmissionId(submissionId);
     await axios.post(
       internalSubmissionUrl(submissionId, 'cancel-pending'),
-      {},
+      { requestId },
       {
         ...internalSocialRequestConfig(),
         timeout: 15_000,
@@ -94,9 +143,17 @@ export class PaymentWebhookController {
    * carry (Lydia, not a signed-in user, is the caller).
    */
   @Post('lydia-request-callback')
+  // Reads the text fields of a `multipart/form-data` body: the global parsers only know JSON and
+  // urlencoded, and Lydia's two real callbacks of 2026-10-15 reached this route with NO field at all.
+  // A body of any other type passes through untouched.
+  // The route is PUBLIC and unauthenticated, so multer is bounded before it parses anything: Lydia's
+  // callback carries about eight fields, and an unbounded parser would hold 20 000 fields or 60 x 1 MB
+  // parts in memory for any caller.
+  @UseInterceptors(NoFilesInterceptor({ limits: LYDIA_CALLBACK_BODY_LIMITS }))
   async handleLydiaRequestCallback(
     @Query('outcome') outcome: string,
-    @Body() body: Record<string, unknown>
+    @Body() body: Record<string, unknown>,
+    @Headers('content-type') contentType?: string
   ) {
     if (outcome !== 'confirm' && outcome !== 'cancel' && outcome !== 'expire') {
       throw new BadRequestException('Invalid outcome');
@@ -110,16 +167,32 @@ export class PaymentWebhookController {
     const signature = String(body?.sig ?? '');
 
     if (!requestId || !signature) {
+      // Names only, never values: what Lydia actually sent is the one fact that separates a body
+      // type we do not parse from field names we do not know.
+      this.logger.error(
+        `Lydia request-callback refused: no request_id or sig (outcome=${outcome}, ` +
+          `content-type=${describeContentType(contentType)}, ${describeFieldNames(body)})`
+      );
       throw new BadRequestException('Missing request_id or sig');
     }
 
-    const verified = this.paymentService.verifyLydiaRequestCallback(
-      { request_id: requestId, amount, currency, order_ref: orderRef, vendor_token: vendorToken },
-      signature
-    );
+    // The field set we assume Lydia signed; its NAMES go in the failure line below, next to the
+    // names actually received, so one refused callback says which set is wrong.
+    const signedFields = {
+      request_id: requestId,
+      amount,
+      currency,
+      order_ref: orderRef,
+      vendor_token: vendorToken,
+    };
+    const verified = this.paymentService.verifyLydiaRequestCallback(signedFields, signature);
     if (!verified) {
+      const observation = this.paymentService.observeLydiaRequestCallback(body, signature);
       this.logger.error(
-        `Lydia request-callback: signature verification failed (outcome=${outcome})`
+        `Lydia request-callback: signature verification failed (outcome=${outcome}, ` +
+          `content-type=${describeContentType(contentType)}, ${describeFieldNames(body)}, ` +
+          `verified-over=[${Object.keys(signedFields).join(',')}])` +
+          (observation ? ` ${observation}` : '')
       );
       throw new BadRequestException('Invalid signature');
     }
@@ -147,8 +220,10 @@ export class PaymentWebhookController {
       } else if (ref.kind === 'form') {
         // No pending row exists for a boutique purchase (unlike a form submission), so a
         // cancelled/expired Lydia request for one is simply never fulfilled - nothing to undo.
-        await this.cancelPendingSubmissionInternal(ref.submissionId);
-        this.logger.log(`Cancelled pending submission ${ref.submissionId} after Lydia ${outcome}`);
+        await this.cancelPendingSubmissionInternal(ref.submissionId, requestId);
+        this.logger.log(
+          `Reported Lydia ${outcome} of request ${requestId} for submission ${ref.submissionId}`
+        );
       }
     } catch (err: unknown) {
       const error = err as Error & { response?: { data?: unknown } };

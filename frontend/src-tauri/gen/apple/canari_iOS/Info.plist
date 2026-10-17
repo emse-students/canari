@@ -15,9 +15,9 @@
 	<key>CFBundlePackageType</key>
 	<string>APPL</string>
 	<key>CFBundleShortVersionString</key>
-	<string>1.2.8</string>
+	<string>1.2.9</string>
 	<key>CFBundleVersion</key>
-	<string>100200802</string>
+	<string>100200907</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
 	<key>UIBackgroundModes</key>
@@ -78,7 +78,7 @@
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 	</array>
 	<!-- Custom URL scheme registration for tauri-plugin-deep-link custom-scheme links
-	     (OIDC callback fr.emse.canari://callback, Stripe return, chat/post/form routing).
+	     (OIDC callback fr.emse.canari://callback, checkout return fr.emse.canari://payment, chat/post/form routing).
 	     On Android the plugin generates the intent-filter into AndroidManifest.xml at build
 	     time; on iOS the CFBundleURLTypes entry must be declared here manually or the OS
 	     never hands the URL back to the app - which would break Authentik OIDC login. -->

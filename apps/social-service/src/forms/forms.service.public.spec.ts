@@ -62,7 +62,8 @@ describe('FormsService - public forms', () => {
       {} as any,
       {} as any,
       pricingFacts,
-      { count: jest.fn() } as any
+      { count: jest.fn() } as any,
+      {} as any
     );
     return { service, manager, saved, formRepo, submissionRepo, pricingFacts };
   }
@@ -111,7 +112,9 @@ describe('FormsService - public forms', () => {
       expect(saved[0].userId).toBeNull();
       expect(saved[0].paymentStatus).toBe('free');
       expect(saved[0]).not.toHaveProperty('createdAt');
-      expect(manager.query).not.toHaveBeenCalled();
+      // The one statement is the form's seat lock: a guest is never written to the registry.
+      expect(manager.query).toHaveBeenCalledTimes(1);
+      expect(manager.query.mock.calls[0][0]).toContain('FOR UPDATE');
     });
 
     it('cuts the time to the day when the public form is also anonymous', async () => {

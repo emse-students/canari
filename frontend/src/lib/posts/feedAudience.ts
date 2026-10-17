@@ -5,6 +5,7 @@ import { fetchFeedAudience } from '$lib/posts/api';
 import { goto } from '$app/navigation';
 import { Log } from '$lib/utils/Log';
 import { refusalStatus } from '$lib/utils/apiRefusal';
+import { forgetStoredFeeds } from '$lib/posts/feedStoreEpoch';
 
 /**
  * WHO MAY SEE THE SOCIAL FEED, ON THE CLIENT SIDE - ASKED, NOT RESTATED.
@@ -56,6 +57,8 @@ export async function revalidateFeedAudience(): Promise<boolean | null> {
       return null;
     }
     setFeedAudience(verdict);
+    // A reader outside the audience keeps no copy of the feed it can no longer read.
+    if (!verdict) forgetStoredFeeds('outside the feed audience');
     return verdict;
   } catch (error) {
     // The error itself as the payload: `Log` renders an Error's own text, an object holding one
@@ -104,5 +107,6 @@ export function isOutsideFeedAudience(error: unknown): boolean {
   if (!isFeedAudienceRefusal(error)) return false;
   Log.d('FeedAudience: the feed answered 403 - reader is outside the audience, verdict corrected');
   setFeedAudience(false);
+  forgetStoredFeeds('the feed answered 403');
   return true;
 }

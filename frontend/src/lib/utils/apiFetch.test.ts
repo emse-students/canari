@@ -1,15 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RefreshFailedError, SessionExpiredError, setToken } from '$lib/stores/auth';
+import { connectivity } from '$lib/stores/connectivity.svelte';
 import { apiFetch } from '$lib/utils/apiFetch';
+import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 
 /**
- * What `apiFetch` does when it cannot get a token.
- *
- * The two failures look identical to a caller and must not be treated the same. A transport
- * failure means "no network": some routes answer without a token and offline startup depends on
- * the attempt being made. A `SessionExpiredError` means the server ANSWERED that the session is
- * dead - retrying anonymously turns "you are logged out" into "there is nothing here", which is
- * exactly the empty feed Android showed on a revoked session (WP-ANDROID-SESS-1).
+ * What `apiFetch` does when it cannot get a token: it sends NOTHING, and rethrows what the refresh
+ * threw as it came. A `SessionExpiredError` means the server ANSWERED that the session is dead -
+ * retrying anonymously turns "you are logged out" into "there is nothing here", which is exactly the
+ * empty feed Android showed on a revoked session (WP-ANDROID-SESS-1). A transport failure means the
+ * request would go into the same dead link; it used to be sent anyway, unauthenticated, one warn line
+ * per request (docs/wiki/frontend/offline-and-weak-network.md).
  *
  * Nothing is mocked but the network: the token really is fetched through the auth store, so the
  * test exercises the seam that broke rather than a stand-in for it.
@@ -80,26 +81,83 @@ describe('apiFetch when no token can be obtained', () => {
     expect(callsTo('/api/social/feed')).toHaveLength(0);
   });
 
-  it('still attempts the request when the token failed for a transport reason', async () => {
-    refreshStatus = 0;
-
-    await expect(apiFetch(TARGET)).resolves.toHaveProperty('status', 200);
-    const [, init] = callsTo('/api/social/feed')[0] as unknown as [string, RequestInit];
-    expect((init.headers as Record<string, string>).Authorization).toBeUndefined();
-  });
-
-  it('names the cause it fell back FOR, so two very different failures do not read alike', async () => {
+  it('sends nothing when the token failed for a transport reason, and says so by type', async () => {
+    // The Mi 9T's offline cold start (2026-10-15): 23 requests went out with no token into the link
+    // the refresh had just failed on. The request is not sent; the caller holds the typed failure.
     refreshStatus = 0;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 
-    await apiFetch(TARGET);
+    const err = await apiFetch(TARGET).catch((e: unknown) => e);
 
-    const line = warn.mock.calls.map(([m]) => String(m)).find((m) => m.includes('without auth'));
-    expect(line).toBeDefined();
-    // A reader separating "a container is restarting" from "refresh is broken" has only this line.
-    expect(line).toContain('TypeError');
-    expect(line).toContain('Failed to fetch');
+    expect(err).toBeInstanceOf(TransportFailureError);
+    expect(isTransportFailure(err)).toBe(true);
+    expect(callsTo('/api/social/feed')).toHaveLength(0);
+    expect(warn.mock.calls.map(([m]) => String(m)).some((m) => m.includes('without auth'))).toBe(
+      false
+    );
     warn.mockRestore();
+  });
+
+  it('sends nothing when the refresh was answered with a refusal, and rethrows it as itself', async () => {
+    refreshStatus = 502;
+
+    const err = await apiFetch(TARGET).catch((e: unknown) => e);
+
+    expect(err).toBeInstanceOf(RefreshFailedError);
+    expect(callsTo('/api/social/feed')).toHaveLength(0);
+  });
+});
+
+/**
+ * ONE refresh per no-network spell: the first is sent and its outcome is the proof, every later
+ * caller of the spell is answered from it, and the reconnect ends the spell. `navigator.onLine` is
+ * driven through the store's own `offline` / `online` listeners.
+ */
+describe('apiFetch while the browser reports no network', () => {
+  const goOffline = () => {
+    connectivity.browserReportsNoNetwork(); // installs the window listeners
+    window.dispatchEvent(new Event('offline'));
+  };
+  const goOnline = () => window.dispatchEvent(new Event('online'));
+
+  it('sends ONE refresh for the spell, answers every later caller from its failure, and sends again after the online event', async () => {
+    refreshStatus = 0;
+    goOffline();
+    try {
+      const errors = [];
+      for (let i = 0; i < 5; i++) errors.push(await apiFetch(TARGET).catch((e: unknown) => e));
+
+      for (const e of errors) expect(e).toBeInstanceOf(TransportFailureError);
+      expect(callsTo('/api/auth/refresh')).toHaveLength(1);
+      expect(callsTo('/api/social/feed')).toHaveLength(0);
+
+      refreshStatus = 200;
+      goOnline();
+      await expect(apiFetch(TARGET)).resolves.toHaveProperty('status', 200);
+      expect(callsTo('/api/auth/refresh')).toHaveLength(2);
+    } finally {
+      goOnline();
+    }
+  });
+
+  it('recovers from a STALE false: the spell refresh is sent, answered, and ends the spell', async () => {
+    // WebKitGTK behind a full-tunnel VPN, or a WebView that missed `online` while suspended: the
+    // browser says no network while the server is right there. Refusing on the flag alone would lock
+    // a signed-in user out, since no token means no request and nothing would ever answer.
+    refreshStatus = 200;
+    goOffline();
+    try {
+      const res = await apiFetch(TARGET);
+
+      expect(res.status).toBe(200);
+      expect(callsTo('/api/auth/refresh')).toHaveLength(1);
+      const [, init] = callsTo('/api/social/feed')[0] as unknown as [string, RequestInit];
+      expect((init.headers as Record<string, string>).Authorization).toMatch(/^Bearer h\./);
+      // The answer proved the server reachable: the store no longer believes the browser.
+      expect(connectivity.browserReportsNoNetwork()).toBe(false);
+    } finally {
+      goOnline();
+    }
   });
 
   it('sends the Bearer token once the refresh succeeds', async () => {
