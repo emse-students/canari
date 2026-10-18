@@ -228,6 +228,36 @@ describe('fetchUserProfile', () => {
   );
 
   it(
+    'an older server with no `deleted` field answers an absent id as a quiet, cached 404',
+    async () => {
+      // Rolling deploy, rollback, or a store build live before production: the old answer shape.
+      const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+      vi.spyOn(console, 'debug').mockImplementation(() => {});
+      const apiFetch = vi.fn().mockImplementation(async (url: string) => {
+        const ids = new URL(url).searchParams.get('ids')!.split(',');
+        return {
+          ok: true,
+          json: async () => ({ users: ids.filter((i) => i !== 'gone').map(profile) }),
+        };
+      });
+      const mod = await load(apiFetch);
+
+      const [alive, missing] = await Promise.all([
+        mod.fetchUserProfile('alive'),
+        mod.fetchUserProfile('gone').catch((e: unknown) => e),
+      ]);
+      await mod.fetchUserProfile('gone').catch(() => undefined);
+
+      expect((alive as { id: string }).id).toBe('alive');
+      expect(mod.isAbsentUserError(missing)).toBe(true);
+      expect(mod.isDeletedAccountError(missing)).toBe(false);
+      expect(error).not.toHaveBeenCalled();
+      expect(apiFetch).toHaveBeenCalledTimes(1);
+    },
+    IMPORT_HEAVY_MS
+  );
+
+  it(
     'chunks at the cap the server refuses past, so an unbounded list never reaches it',
     async () => {
       const apiFetch = vi.fn().mockImplementation(async (url: string) => {
