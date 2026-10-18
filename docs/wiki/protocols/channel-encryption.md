@@ -3508,10 +3508,18 @@ answerer missed the live request. What can be recorded is an ANSWER.
 ### What changed on the wire
 
 `GraineBundleMsg.holds_nothing = 6` (bool). An answerer that may hand the past over (the community
-is `shared`) and holds NO seed of the community answers a HISTORY request with an empty bundle that
+is `shared`) and holds NO seed ROW of the community answers a HISTORY request with an empty bundle that
 says so, echoing the `request_id`, addressed to the device that asked as key material like every
 answer ([section 23](#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)). The
 `joined` refusal stays silent (the requester knows the rule), and a SESSIONS request is unchanged.
+
+**"Nothing" is a count of ROWS, never of what decrypted** (adversarial review of #2027). The seed read
+skips a row the device key cannot open - a PIN change re-sealing the store, backup rows sealed under
+another key - so an empty read is not an empty store, and claiming "nothing" from it would put a
+durable record at the requester while the past sits on the answerer. The claim is made only when
+`countGraineSessionsForWorkspace` (one `COUNT` on the clear `workspace_id` column, no key, both
+stores) is 0, read after the seeds; rows present and none opened answer as before this section:
+silence, with a warn naming the count.
 
 ### What the requester does with it
 
@@ -3540,8 +3548,12 @@ account, `canari_graine_history_held_nothing:v1:<userId>`) as `{groupId, epoch, 
   is filed against the epoch for the session and asked at the next start that sees such a device
   online - not parked, because the presence waiter watches USERS and that user is online (backlog,
   "Four things the offline cold start fix left open").
-- **FINAL** = every other member `exhausted`, and our own other devices on the tree all recorded
-  (or none exist). Read from the tree, so a device offline throughout is never final by omission. A
+- **A roster member with NO leaf on a known tree** (never signed in, or no device on the key group)
+  holds nothing sealed to it: skipped, never parked on, and counted as answered for FINAL. A leaf
+  naming no device keeps its member on the tree (never `exhausted`, never leafless). An unreadable
+  tree proves nothing about anyone, as below.
+- **FINAL** = every other member `exhausted` or leafless, and our own other devices on the tree all
+  recorded (or none exist). Read from the tree, so a device offline throughout is never final by omission. A
   tree that cannot be read proves nothing exhausted and never goes final. Marked durably, and a final
   record skips even the roster read on the next start - the tree cannot change without moving the
   epoch.
@@ -3560,10 +3572,19 @@ on the tree when it named none), once. Comparing the device on this path is a be
 refusing frames - with no production reading behind it, so it is its own item, shipped on an alpha
 first ([backlog](../backlog.md#p3---the-distribution-paths-device-check-ship-on-an-alpha-read-sender_mismatch-pathdistribution-first)).
 
-What it does NOT cover, said rather than guessed: a member that answered "nothing" and LATER gains
-the past without the epoch moving. Within one roster that past can only come from another member of
-it, who is either still unrecorded (and asked) or answered "nothing" too; a new seed minted later
-reaches this device directly and ends the ask.
+What it does NOT cover, said rather than guessed: a device that answered "nothing" and LATER gains
+the past without the epoch moving. Two routes: another member of the roster, who is either still
+unrecorded (and asked) or answered "nothing" too; and a **backup import** (`importBackup` ->
+`importEncryptedGraineRow`), which restores seed rows onto a device already on the tree. The record
+of that "nothing" lives at the REQUESTER, so forgetting anything on the importing device would not
+reach it, and no frame tells the requester. Accepted, because the cost is bounded: the requester's
+unreadable rows each still ask their session's sender (`noteMissingSeed`, the SESSIONS path,
+which reads no "nothing" record), the next membership change moves the epoch and asks again, and a
+new seed minted later reaches the requester directly and ends the ask.
+
+**MERGE ORDER WITH #2023:** its `accountLocalKeys.guard.test.ts` fails on a listed key's literal
+outside `ACCOUNT_KEY`, and `KEY_PREFIX` here is that literal - whichever of #2023 and #2027 merges
+SECOND derives the key from `ACCOUNT_KEY`.
 
 **The account wipe owes the key.** Pull request #2023 (WP-DEL-LOCAL) lists it in the ONE list of
 per-account keys, `ACCOUNT_KEY.historyHeldNothing` in `utils/accountLocalKeys.ts`, and sweeps it
@@ -3579,14 +3600,17 @@ its own prefix (the same string); when it merges, that builder is built from `AC
 | New requester, old answerer | Silence, as today; the ask stays open and the next start asks again. |
 | Native push path (Rust `proto_fields`) | The bundle is classified `graine_key_material` with zero seeds, `ok: false` - silent, as a decline-only bundle already is. |
 
-Tests: `frameHandler.test.ts` (the answer is sent and addressed; `joined` stays silent; the new bytes
+Tests: `frameHandler.test.ts` (the answer is sent and addressed; `joined` stays silent, an empty hand
+included; rows the key cannot open stay silent; the new bytes
 decoded by a schema WITHOUT field 6 are an empty bundle that changes nothing and logs nothing above
 debug; a claim carrying seeds is ignored out loud), `repair.test.ts` (final across a restart; asked
 again when the epoch moves, after a re-join, after a leave; a foreign id, member or device is
 ignored; one member's "nothing" asks the next; final only once every device on the tree answered,
 and then no roster read; a member whose online phone said "nothing" while a laptop of theirs on the
 tree is offline is not answered, and the laptop is asked when online; not final while our own other
-device is on the group and offline; one device counted once), `historyAnswered.test.ts`
+device is on the group and offline; a leafless roster member neither blocks final nor parks the ask,
+a device-less leaf does; one device counted once), `graineStore.test.ts` and
+`sqliteCountMessages.test.ts` (the row count includes rows the key cannot open), `historyAnswered.test.ts`
 (per-device keying, a repeated answer is not new, version replacement, malformed records), `proto_fields.rs`
 (`a_bundle_saying_it_holds_nothing_is_silent_key_material_with_no_seed`). **Owed:** one bench
 reading - a cold start with every other member online, then a second start: the first shows one

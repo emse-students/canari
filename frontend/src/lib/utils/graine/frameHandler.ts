@@ -382,11 +382,12 @@ async function answerSeedRequest(
   if (!gathered) return;
   // A HISTORY ask answered with an empty hand SAYS SO (section 24): silence there was the one answer
   // the requester could not record, so it asked again at every launch. Additive - a requester that
-  // predates the field reads an empty bundle and does nothing with it. A SESSIONS ask never reaches
-  // this with an empty hand and nothing declined unless every seed was withheld, which stays silent
-  // for the reason `gatherNamedSessions` gives.
-  const holdsNothing =
-    request.kind === kinds.GRAINE_REQUEST_KIND_HISTORY && gathered.seeds.length === 0;
+  // predates the field reads an empty bundle and does nothing with it. Only when the store holds NO
+  // ROW of the community (`gatherCommunityHistory`): rows that would not decrypt are not "nothing",
+  // and stay the silence they were. A SESSIONS ask never reaches this with an empty hand and nothing
+  // declined unless every seed was withheld, which stays silent for the reason `gatherNamedSessions`
+  // gives.
+  const holdsNothing = gathered.holdsNothing === true && gathered.seeds.length === 0;
   if (!holdsNothing && gathered.seeds.length === 0 && gathered.missing.length === 0) return;
 
   const bundle = encodeAppMessage(
@@ -441,6 +442,11 @@ interface GatheredSeeds {
   /** Sessions the request named that this device does not hold. Travels, rather than being logged. */
   missing: string[];
   truncated: boolean;
+  /**
+   * HISTORY only: the store holds no row of the community at all, decryptable or not - the one
+   * fact an answer of "I hold nothing" may claim (section 24).
+   */
+  holdsNothing?: boolean;
 }
 
 /**
@@ -567,8 +573,29 @@ async function gatherCommunityHistory(
   console.info(
     `[GRAINE] sending ${seeds.length} of ${held.length} held seed(s) as history to ${frame.sender}`
   );
+  // "I HOLD NOTHING" IS A CLAIM ABOUT THE STORE, NOT ABOUT THIS KEY (section 24). The read above skips
+  // a row it cannot decrypt - a PIN change re-sealing, a backup row sealed under another key - and
+  // an empty list from it would put a durable "nothing" at the requester while the past sits here.
+  // So the claim is made from the ROW count, read after the seeds so a row landing in between can
+  // only withhold the claim, never make it. Rows present and none opened answer as before: silence.
+  let holdsNothing = false;
+  if (held.length === 0) {
+    const rows = await storage.countGraineSessionsForWorkspace(frame.workspaceId);
+    holdsNothing = rows === 0;
+    if (!holdsNothing) {
+      console.warn(
+        `[GRAINE] not answering ${frame.sender}'s history ask in community ${frame.workspaceId.slice(0, 8)}: ` +
+          `${rows} seed row(s) held and none opens with this device's key - not "I hold nothing"`
+      );
+    }
+  }
   // A history request names no session, so there is nothing it could have named and missed.
-  return { seeds, missing: [], truncated: held.length > GRAINE_HISTORY_BUNDLE_MAX_SEEDS };
+  return {
+    seeds,
+    missing: [],
+    truncated: held.length > GRAINE_HISTORY_BUNDLE_MAX_SEEDS,
+    holdsNothing,
+  };
 }
 
 /** Stores the seeds of an answer and tells the UI which salons just became readable. */

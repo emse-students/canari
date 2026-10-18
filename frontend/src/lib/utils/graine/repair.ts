@@ -409,7 +409,10 @@ function answeringDevicesIn(
   return answering;
 }
 
-/** Per member (lower-cased), the device ids of theirs that are leaves of a key group. */
+/**
+ * Per member (lower-cased), the device ids of theirs that are leaves of a key group. A member with a
+ * leaf that names no device has an EMPTY set; a member with no leaf at all has no entry.
+ */
 type TreeDevices = Map<string, Set<string>>;
 
 /**
@@ -433,10 +436,13 @@ async function treeDevicesOn(groupId: string): Promise<TreeDevices | null> {
   const tree: TreeDevices = new Map();
   for (const leaf of leaves) {
     const device = deviceIdOfLeaf(leaf);
-    if (device === '' || device === me) continue;
+    if (device === me) continue;
     const user = userIdOfLeaf(leaf);
     const devices = tree.get(user) ?? new Set<string>();
-    devices.add(device);
+    // A leaf naming no device still puts its member ON the tree - with no device that could ever
+    // answer, so never `exhausted` - and keeps them from reading as a member with no leaf at all
+    // (`heldNothingView`'s `leafless`), which is a claim that they hold nothing of the group.
+    if (device !== '') devices.add(device);
     tree.set(user, devices);
   }
   return tree;
@@ -482,6 +488,10 @@ function answeringDevicesOf(answerer: string, answering: Map<string, string[]> |
  *
  * - `exhausted(id)`: every device of `id` on the TREE answered. `false` when the tree is unknown or
  *   holds no device of theirs - nothing is proven answered from a fact this device does not have.
+ * - `leafless(id)`: the tree is KNOWN and holds no leaf of `id` at all - a roster member who never
+ *   signed in, or whose devices never joined the key group. Such a member can hold nothing sealed to
+ *   this group, so they are skipped, never waited on, and count as answered for the final check.
+ *   An unknown tree proves nothing about them either way: `false`, today's reading.
  * - `spent(id)`: every device of `id` ONLINE answered, and at least one is online. Skipped for now,
  *   never recorded as answered: its other devices on the tree are offline and may hold the past.
  */
@@ -499,22 +509,26 @@ function heldNothingView(
   };
   const unansweredOnline = (id: string): string[] =>
     unansweredOf(id, answering?.get(id.toLowerCase()) ?? []).slice(0, MAX_NAMED_ANSWERERS);
+  const leafless = (id: string): boolean => tree !== null && !tree.has(id);
+  const done = (id: string): boolean => exhausted(id) || leafless(id);
   const spent = (id: string): boolean =>
     answering !== null &&
     (answering.get(id) ?? []).length > 0 &&
     unansweredOf(id, answering.get(id) ?? []).length === 0;
   return {
     exhausted,
+    /** Nothing left to hear from `id` at this tree: every tree device answered, or there is none. */
+    done,
     unansweredOnline,
     /** The tree devices of `id` not yet recorded, or `null` when the tree is unknown. */
     unansweredOnTree: (id: string): Set<string> | null =>
       tree ? new Set(unansweredOf(id, tree.get(id.toLowerCase()) ?? [])) : null,
     /** The members the election skips: answered from every device, or from every one online. */
-    skipped: new Set([...roster].filter((id) => exhausted(id) || spent(id))),
-    /** Every other member exhausted, and our own other devices on the tree too, if any. */
+    skipped: new Set([...roster].filter((id) => done(id) || spent(id))),
+    /** Every other member done, and our own other devices on the tree too, if any. */
     everyDeviceAnswered: (self: string): boolean =>
       tree !== null &&
-      [...roster].filter((id) => id !== self).every(exhausted) &&
+      [...roster].filter((id) => id !== self).every(done) &&
       ((tree.get(self)?.size ?? 0) === 0 || exhausted(self)),
   };
 }
@@ -1057,14 +1071,14 @@ export async function requestCommunityHistory(
   const ownOnline = answering === null || heldView.unansweredOnline(userId).length > 0;
   const answerer = other ?? (ownOnGroup && ownOnline ? userId : null);
   const offline = [...roster]
-    .filter((id) => id !== userId && !online.has(id) && !heldView.exhausted(id))
+    .filter((id) => id !== userId && !online.has(id) && !heldView.done(id))
     .sort();
   if (!answerer && offline.length > 0) {
     parkHistoryUntilOnline(workspaceId, offline);
     return;
   }
   const waitingOnDevice = [...roster].filter(
-    (id) => id !== userId && online.has(id) && !heldView.exhausted(id)
+    (id) => id !== userId && online.has(id) && !heldView.done(id)
   );
   if (!answerer && waitingOnDevice.length > 0) {
     // Online, but only on devices that already answered "nothing" - their other devices on the tree

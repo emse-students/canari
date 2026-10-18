@@ -608,6 +608,46 @@ describe('a history ask answered "I hold nothing" (section 24)', () => {
     expect(sentAsk(2)).toMatchObject({ answerer: 'alice', devices: ['device-2'] });
   });
 
+  it('a roster member with NO leaf on a known tree holds nothing of it: final without them, never parked on them', async () => {
+    // dave is in the community and never signed in: no device, so no leaf of the key group. Every
+    // other test here passes only because `treeLeaves` gives each member one.
+    const roster = [
+      { userId: 'bob', online: true, onlineDevices: ['web-bob'] },
+      { userId: 'alice', online: true, onlineDevices: ['device-1'] },
+      { userId: 'carol', online: true, onlineDevices: ['web-carol'] },
+      { userId: 'dave', online: false, onlineDevices: [] },
+    ];
+    listWorkspaceMembers.mockResolvedValue(roster);
+    await requestCommunityHistory('ws-1');
+    await answerNothing(0);
+    await answerNothing(1);
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(presenceWaiters.filter((w) => !w.cancelled)).toHaveLength(0);
+    expect(historyHeldNothingFinalAt('alice', 'ws-1', { groupId: 'dist-group', epoch: 7 })).toBe(
+      true
+    );
+  });
+
+  it('a leaf naming no device keeps its member on the tree - never final by reading them as leafless', async () => {
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'bob', online: true, onlineDevices: ['web-bob'] },
+      { userId: 'alice', online: true, onlineDevices: ['device-1'] },
+      { userId: 'carol', online: true, onlineDevices: ['web-carol'] },
+      { userId: 'dave', online: false, onlineDevices: [] },
+    ]);
+    treeLeaves = ['bob:web-bob', 'alice:device-1', 'carol:web-carol', 'dave'];
+    await requestCommunityHistory('ws-1');
+    await answerNothing(0);
+    await answerNothing(1);
+
+    // dave holds the group through a device-less leaf, and may hold the past: waited on, not final.
+    expect(historyHeldNothingFinalAt('alice', 'ws-1', { groupId: 'dist-group', epoch: 7 })).toBe(
+      false
+    );
+    expect(presenceWaiters.some((w) => !w.cancelled && w.userIds.includes('dave'))).toBe(true);
+  });
+
   it('counts one device once - the same device answering twice does not walk on', async () => {
     listWorkspaceMembers.mockResolvedValue([
       { userId: 'bob', online: true, onlineDevices: ['web-bob', 'bob-phone'] },
