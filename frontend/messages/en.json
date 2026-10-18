@@ -3078,6 +3078,7 @@
   "posts_empty_followed": "Follow clubs or people to see their posts here, or switch to",
   "posts_badge_new": "New",
   "posts_all_loaded": "You are all caught up!",
+  "posts_card_render_failed": "This post could not be displayed.",
   "posts_stored_refreshing": "Feed saved on this device, updating…",
   "posts_stored_not_refreshed": "Feed saved on this device: the server did not answer.",
   "posts_load_error_title": "Could not load posts",
