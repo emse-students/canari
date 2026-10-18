@@ -48,7 +48,10 @@ edge_healthcheck() {
   "$PYTHON" -c 'import json, sys; print(json.dumps((json.load(sys.stdin)["services"]["edge"].get("healthcheck") or {}).get("test") or ""))' |
     grep -v '^""$'
 }
-fixture_edge_health="$(docker compose -f "$REPO/.github/scripts/tests/rolling-fixture/compose.yml" config --no-interpolate --format json 2>/dev/null | edge_healthcheck)"
+# The fixture's variables are GIVEN, not left uninterpolated: on the runners, compose printed NOTHING for
+# this file under `--no-interpolate` (its `${X:?}`s, 2026-10-18), and its stderr is left visible.
+fixture_edge_health="$(TAG=v0 EDGE_DIR=/edge ROLLTEST_PORT=1 docker compose \
+  -f "$REPO/.github/scripts/tests/rolling-fixture/compose.yml" config --format json | edge_healthcheck)"
 
 # ── 1. Both deployed estates declare a mode the deploy can honour ─────────────
 for file in docker-compose.prod.yml docker-compose.dev.yml; do
