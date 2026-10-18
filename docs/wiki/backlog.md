@@ -387,7 +387,7 @@ Decided: the iPhone app FOLLOWS the system text size, like Android. Read on `1.2
 
 ## Next chantier after 1.2.8 - speed (user, 2026-10-14)
 
-Order: (1) opening a community or salon in **under 200 ms** for the tab and the first paint of cached content: F1 local workspace list (draft PR in progress), then F4 salon last page cached locally, the posts feed local-first (offline it says "Impossible de charger les posts"), read-marker coalescing (pending the adversarial review of #1879) - budget and ranking in [community-open-budget](frontend/community-open-budget.md); (2) CanaReels in chats (RC-3, RC-7, [reels-in-chat](frontend/modules/reels-in-chat.md)); (3) Graine v2 G2-6.
+Order: (1) opening a community or salon in **under 200 ms** for the tab and the first paint of cached content: F1 local workspace list (draft PR in progress), then F4 salon last page cached locally, the posts feed local-first (offline it says "Impossible de charger les posts"), read-marker coalescing (pending the adversarial review of #1879) - budget and ranking in [community-open-budget](frontend/community-open-budget.md); (2) CanaReels in chats (RC-3 built, device table owed; RC-7, [reels-in-chat](frontend/modules/reels-in-chat.md)); (3) Graine v2 G2-6.
 
 ## P3 - Found reading the Pixel 6a on prod 1.2.7 (Wi-Fi, LTE, offline, 2026-10-14)
 
