@@ -14,7 +14,12 @@ import { AssociationPermissionFlag } from '../associations/entities/association-
 import { isDeadlock, isExclusionViolation } from '../common/pg-errors';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { matchesCondition, needsProfile, type PricingFacts } from '../pricing/audience';
-import { normaliseCondition, visibleItemIds, type ConditionalItem } from '../forms/visibility';
+import {
+  normaliseCondition,
+  profileHiddenItemIds,
+  visibleItemIds,
+  type ConditionalItem,
+} from '../forms/visibility';
 import { BookingSpace } from './entities/booking-space.entity';
 import { BookingResource } from './entities/booking-resource.entity';
 import { BookingParticipant } from './entities/booking-participant.entity';
@@ -176,8 +181,15 @@ export class BookingsService {
       where: { spaceId },
       order: { position: 'ASC', createdAt: 'ASC' },
     });
+    // The PROFILE half of each question's condition, as a form's page receives it: the booking
+    // screen evaluates the answer half itself, and never asks a question the server would drop.
+    const items = (space.items ?? []) as ConditionalItem[];
+    const hiddenItemIds = items.some((i) => normaliseCondition(i))
+      ? profileHiddenItemIds(items, await this.factsFor(space, actor.userId))
+      : [];
     return {
       id: space.id,
+      hiddenItemIds,
       associationId: space.associationId,
       name: space.name,
       description: space.description,

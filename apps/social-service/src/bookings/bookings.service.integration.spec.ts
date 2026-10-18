@@ -963,6 +963,30 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       });
     });
 
+    it("names the questions a reader's profile hides, as a form does, and no others", async () => {
+      const items = [
+        { id: 'all', label: 'Nom', required: true, type: 'short_text' },
+        {
+          id: 'p24',
+          label: 'Promo 2024',
+          required: true,
+          type: 'short_text',
+          showIf: { promo: { values: [2024] } },
+        },
+        {
+          id: 'ans',
+          label: 'Suite',
+          required: false,
+          type: 'short_text',
+          showIf: { answer: { questionId: 'all', optionIds: ['x'] } },
+        },
+      ];
+      const { space } = await setup({ items: items as never });
+      facts.set(CAROL, { promo: 2024, formation: null, cotisationTiers: [], answers: {} });
+      expect((await service.getSpace(space.id, as(ALICE))).hiddenItemIds).toEqual(['p24']);
+      expect((await service.getSpace(space.id, as(CAROL))).hiddenItemIds).toEqual([]);
+    });
+
     it('sends a block id only to whoever may lift it', async () => {
       const { space, resourceIds } = await setup();
       const r = resourceIds[0];

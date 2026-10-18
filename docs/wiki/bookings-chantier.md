@@ -489,6 +489,11 @@ What the booker's screens need and WP-B3 did not serve. Three additions, no migr
 | `GET :id/calendar-link` | the booking's PEOPLE (holder, participant still in, the account linked to its resource) and its organiser: `{ path }` of its signed `.ics` | `not-yours` (also for an id that names nothing), then `already-cancelled` |
 | `GET :id/calendar.ics?sig=` | NO SESSION - a calendar app; authorised by `sig` alone | `calendar-signature` (checked before anything is read), `booking-not-found`, 410 `booking-cancelled` |
 
+`GET spaces/:id` now names `hiddenItemIds`: the questions the reader's PROFILE hides (promo,
+formation, cotisation), decided by `profileHiddenItemIds` in `forms/visibility.ts` - the one rule
+a form's page and a space's share. The screen evaluates the answer half as the booker types, so it
+never asks a question the server would drop.
+
 And in `GET spaces/:id/slots`, a blocked unit carries `blockId` for whoever may LIFT it - the
 organiser, and the account linked to the resource (the server still lets that account lift only
 the blocks it created). Nobody else is sent it.
