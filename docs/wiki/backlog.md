@@ -69,6 +69,16 @@ to `default-provider-authorization-implicit-consent` in `/if/admin/`. The flow f
 policy skips the consent, it never locks anyone out. Accounts that never sign in again are never
 asked. See [authentik](infrastructure/authentik.md#the-terms-of-use-are-a-stage-of-the-authorization-flow-2026-10-16).
 
+**Where the three stand (read 2026-10-18):** (1) MET - `dev.canari-emse.fr/legal/miconnect` answers
+200 with its own title (a missing `/legal/` path answers 404). (2) HALF - `login.mjs` ticks the box on
+the web and in the Android Custom Tab (`idpform.mjs`, pinned by `archive/idpform-selftest.mjs`, never
+yet run against the live page because the stage is held); the iOS sheet path (`signInThroughSheet`)
+does not know the page, so an iPhone row needs the account's `cgu_version` set, or an iOS stage read
+on the bench first. (3) NOT MET - every phone reading so far proves the hold (no terms page, PASS 3 of
+3 on the iPhone 12), none reads the prompt. One MiConnect serves dev and production, so (3) can only be
+read once the stage is live somewhere: bind `miconnect-authorization` to ONE provider first (`Canari
+Local`, the harness's), read it on both phones, then lift the hold for the eight.
+
 ## Decided by the user on 2026-10-16 - the GDPR pass over the whole ecosystem
 
 Source: a read-only DPO-style review of Canari, MiConnect, MiGallery, Sky, Le Cercle, Portail-etu and
