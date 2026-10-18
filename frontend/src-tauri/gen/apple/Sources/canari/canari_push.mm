@@ -3574,13 +3574,17 @@ static BOOL CanariInstallRemoteNotificationHook(void) {
  * afterwards can go unseen. Firebase's own App Delegate Proxy does exactly this after it swizzles
  * (`GULAppDelegateSwizzler reassignAppDelegate`) - the proxy this file replaces by hand.
  *
- * THE DELEGATE IS THEN OWNED HERE, FOR THE LIFE OF THE PROCESS. `UIApplication.delegate` does not
- * retain; the delegate `UIApplicationMain` created is kept by UIApplication itself, and a
- * `setDelegate:` gives that up. Firebase keeps its own strong copy for that reason
- * (`gOriginalAppDelegate`, set on the line after its re-assignment). Without one, the delegate is
- * read to have died with this function's local: v1.3.0-alpha.1/2 abort the moment anything reads the
- * accessibility tree, and the APNs token SpringBoard delivers never reaches the token hook. That
- * cause is INFERRED, not yet read from a backtrace (docs/wiki/backlog.md, P1 of 2026-10-19).
+ * THE DELEGATE IS THEN OWNED HERE, FOR THE LIFE OF THE PROCESS. `UIApplication.delegate` is
+ * documented as not retaining. That the delegate `UIApplicationMain` created is kept by
+ * UIApplication itself, and that a `setDelegate:` gives that ownership up, is BELIEVED, not read:
+ * UIKit's source is closed, and Firebase keeping its own strong copy (`gOriginalAppDelegate`, set
+ * on the line after its re-assignment) is the evidence. What WAS read (`pymobiledevice3 crash
+ * pull`, iPhone 12, v1.3.0-alpha.2): `-[UIResponder _enumerateKeyboardShortcutsInChainWithOptions:
+ * usingBlock:]` sent `_keyboardShortcutMenuLeaves` to a `_UISceneCloudKitShareMetadataBSActionHandler`
+ * - a freed responder whose memory UIKit had reused - so the responder chain, whose last link
+ * after UIApplication is this delegate, held a dead object. That the dead link IS the delegate is
+ * the hypothesis this copy tests; the becoming-active log below says which object UIKit holds
+ * (docs/wiki/backlog.md, P1 of 2026-10-19).
  */
 static id<UIApplicationDelegate> g_appDelegateKeptAlive = nil;
 
@@ -3596,6 +3600,31 @@ static void CanariReassignAppDelegate(void) {
   app.delegate = delegate;
   NSLog(@"[CanariPush] app delegate re-assigned so UIKit reads the added methods (kept alive: %@)",
         [g_appDelegateKeptAlive class]);
+}
+
+/**
+ * Logs, each time the app becomes active, which object UIKit holds as the application's delegate
+ * compared with the one `CanariReassignAppDelegate` keeps alive.
+ *
+ * Diagnostic for the P1 of 2026-10-19: `same` on every activation, with no abort on an
+ * accessibility read, is the reading that confirms the kept-alive fix; `nil` or `different` says the
+ * re-assignment left UIKit pointing somewhere else. In that last case `class` names whatever lives
+ * at the address UIKit holds: a UIKit-internal class there means a reused allocation, the very
+ * signature the alpha.2 crash report carried.
+ */
+static void CanariLogAppDelegateIdentity(void) {
+  id<UIApplicationDelegate> current = [UIApplication sharedApplication].delegate;
+  if (current == nil) {
+    NSLog(@"[CanariPush] became active: app delegate is nil (kept alive: %@)",
+          g_appDelegateKeptAlive == nil ? @"none" : NSStringFromClass([g_appDelegateKeptAlive class]));
+  } else if (current == g_appDelegateKeptAlive) {
+    NSLog(@"[CanariPush] became active: app delegate is the kept-alive one (%@)",
+          NSStringFromClass([current class]));
+  } else {
+    NSLog(@"[CanariPush] became active: app delegate %@ differs from the kept-alive one (%@)",
+          NSStringFromClass([current class]),
+          g_appDelegateKeptAlive == nil ? @"none" : NSStringFromClass([g_appDelegateKeptAlive class]));
+  }
 }
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
@@ -3845,6 +3874,13 @@ void CanariPushSetup(void) {
                 if (added) {
                   CanariReassignAppDelegate();
                 }
+              }];
+  [[NSNotificationCenter defaultCenter]
+      addObserverForName:UIApplicationDidBecomeActiveNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                CanariLogAppDelegateIdentity();
               }];
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
