@@ -19,12 +19,17 @@
    */
   interface Props {
     resource: ManagedResource;
+    spaceId: string;
+    /** The space's SAVED zone: the bookings a refusal names are read on it (D25). */
+    timeZone: string;
     stepMinutes: number | null;
     onChanged: (resource: ManagedResource) => void;
     onDeleted: (resourceId: string) => void;
+    /** Whether the fields or the availability hold changes not saved, for the leave warning. */
+    onDirty: (dirty: boolean) => void;
   }
 
-  let { resource, stepMinutes, onChanged, onDeleted }: Props = $props();
+  let { resource, spaceId, timeZone, stepMinutes, onChanged, onDeleted, onDirty }: Props = $props();
 
   // The editor's own copy: the parent keys this component by the resource id.
   let name = $state(untrack(() => resource.name));
@@ -36,7 +41,17 @@
   let saved = $state(false);
   let error = $state('');
 
+  let availabilityDirty = $state(false);
+
   const fieldId = (f: string) => `resource-${resource.id}-${f}`;
+  const fieldsNow = () => JSON.stringify([name, description, privateInfo, linkedUserId]);
+  /** The fields as last loaded or saved. */
+  let savedFields = $state(untrack(fieldsNow));
+  const fieldsDirty = $derived(fieldsNow() !== savedFields);
+
+  $effect(() => {
+    onDirty(fieldsDirty || availabilityDirty);
+  });
 
   async function save() {
     if (!name.trim() || saving) return;
@@ -53,6 +68,7 @@
     try {
       await updateResource(resource.id, fields);
       saved = true;
+      savedFields = fieldsNow();
       onChanged({ ...resource, ...fields });
     } catch (e) {
       error = describeBookingRefusal(e, m.bookings_resource_save());
@@ -166,11 +182,15 @@
 
   <div class="border-cn-border/60 border-t pt-4">
     <AvailabilityEditor
+      {spaceId}
+      {timeZone}
       resourceId={resource.id}
+      resourceName={resource.name}
       lines={resource.lines}
       exceptions={resource.exceptions}
       {stepMinutes}
       onSaved={(lines, exceptions) => onChanged({ ...resource, lines, exceptions })}
+      onDirty={(d) => (availabilityDirty = d)}
     />
   </div>
 </article>

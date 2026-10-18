@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { untrack } from 'svelte';
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
@@ -57,29 +57,44 @@
     return () => setPageTitle(null);
   });
 
-  onMount(load);
+  // The route parameter, not the mount: SvelteKit keeps this page alive from one space's editor to
+  // another's, so each new id is a new load.
+  $effect(() => {
+    const id = spaceId;
+    untrack(() => void load(id));
+  });
 
-  async function load() {
-    Log.d('BOOKINGS', `editor load space=${spaceId}`);
+  async function load(id: string) {
+    Log.d('BOOKINGS', `editor load space=${id}`);
     loading = true;
     loadError = '';
+    space = null;
+    owner = null;
+    tiers = [];
     try {
-      const loaded = await getManagedSpace(spaceId);
+      const loaded = await getManagedSpace(id);
+      // A later navigation owns the page now: this answer is for a space no longer shown.
+      if (id !== spaceId) return;
       space = loaded;
       if (loaded.associationId) {
-        const id = loaded.associationId;
-        void getAssociation(id)
-          .then((a) => (owner = a))
+        const assoc = loaded.associationId;
+        void getAssociation(assoc)
+          .then((a) => {
+            if (id === spaceId) owner = a;
+          })
           .catch((e) => Log.d('BOOKINGS', `owner name unavailable: ${String(e)}`));
-        void cotisationOptionsFor(id).then((o) => (tiers = o.tiers));
+        void cotisationOptionsFor(assoc).then((o) => {
+          if (id === spaceId) tiers = o.tiers;
+        });
       }
       fetchFormations()
         .then((f) => (formations = f))
         .catch((e) => Log.d('BOOKINGS', `formations unavailable: ${String(e)}`));
     } catch (e) {
+      if (id !== spaceId) return;
       loadError = describeBookingRefusal(e, m.common_load_error());
     } finally {
-      loading = false;
+      if (id === spaceId) loading = false;
     }
   }
 

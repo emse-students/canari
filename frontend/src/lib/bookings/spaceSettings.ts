@@ -8,12 +8,7 @@
  * caught here, by field, before a save.
  */
 import type { AudienceCondition, FormItem } from '$lib/forms/api';
-import {
-  formatLocalDateTime,
-  fromDate,
-  parseLocalDateTime,
-  toDate,
-} from '$lib/components/ui/dateTimeField';
+import { instantOfWallTime, wallTimeIn } from './zonedTime';
 import type {
   Discoverability,
   ManagedSpace,
@@ -62,7 +57,10 @@ export interface SettingsDraft extends Record<NumberField, string> {
   discoverability: Discoverability;
   audience: AudienceCondition | null;
   items: FormItem[];
-  /** The DateTimeField's wall time in the reader's zone (`YYYY-MM-DDTHH:mm`), `''` for none. */
+  /**
+   * The DateTimeField's wall time (`YYYY-MM-DDTHH:mm`) in the SPACE's zone (D25), `''` for none -
+   * the zone the draft will save, so a change of zone keeps the wall time and moves the instant.
+   */
   opensAt: string;
   /** Always a period; it only counts when `maxMinutesPerPeriod` is set. */
   quotaPeriod: QuotaPeriod;
@@ -87,7 +85,7 @@ export function draftFromSpace(space: ManagedSpace): SettingsDraft {
     discoverability: space.discoverability,
     audience: space.audience ?? null,
     items: structuredClone(space.items ?? []),
-    opensAt: space.opensAt ? formatLocalDateTime(fromDate(new Date(space.opensAt))) : '',
+    opensAt: space.opensAt ? wallTimeIn(Date.parse(space.opensAt), space.timeZone) : '',
     quotaPeriod: space.quotaPeriod ?? 'week',
   };
 }
@@ -132,7 +130,7 @@ export function draftProblems(draft: SettingsDraft): DraftProblems {
 export function settingsFromDraft(draft: SettingsDraft): SpaceSettings | null {
   if (Object.keys(draftProblems(draft)).length) return null;
   const num = (f: NumberField) => parseNumber(f, draft[f]) as number | null;
-  const opens = parseLocalDateTime(draft.opensAt);
+  const opens = draft.opensAt ? instantOfWallTime(draft.opensAt, draft.timeZone) : null;
   const quotaMinutes = num('maxMinutesPerPeriod');
   const step = draft.slotMode === 'step';
   return {
@@ -147,7 +145,7 @@ export function settingsFromDraft(draft: SettingsDraft): SpaceSettings | null {
     discoverability: draft.discoverability,
     audience: draft.audience,
     items: draft.items,
-    opensAt: opens ? toDate(opens).toISOString() : null,
+    opensAt: opens === null ? null : new Date(opens).toISOString(),
     minNoticeMinutes: num('minNoticeMinutes'),
     horizonDays: num('horizonDays'),
     maxActiveBookings: num('maxActiveBookings'),

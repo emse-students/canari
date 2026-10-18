@@ -65,10 +65,15 @@ describe('the draft round trip', () => {
     expect([set.maxMinutesPerPeriod, set.quotaPeriod]).toEqual([120, 'day']);
   });
 
-  it('carries the opening instant through the wall time of the reader', () => {
+  it("carries the opening instant through the SPACE's wall time, never the device's (D25)", () => {
     const opensAt = '2026-11-02T08:00:00.000Z';
-    const out = settingsFromDraft(draftFromSpace({ ...SPACE, opensAt }))!;
-    expect(out.opensAt).toBe(opensAt);
+    const draft = draftFromSpace({ ...SPACE, timeZone: 'Asia/Tokyo', opensAt });
+    expect(draft.opensAt).toBe('2026-11-02T17:00');
+    expect(settingsFromDraft(draft)!.opensAt).toBe(opensAt);
+    // A new zone keeps the wall time the organiser sees, so the instant moves with it.
+    expect(settingsFromDraft({ ...draft, timeZone: 'Europe/Paris' })!.opensAt).toBe(
+      '2026-11-02T16:00:00.000Z'
+    );
   });
 });
 

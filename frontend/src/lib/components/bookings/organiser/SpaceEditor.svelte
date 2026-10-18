@@ -21,6 +21,9 @@
     type ManagedSpace,
   } from '$lib/bookings/api';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
+  import { strandedIdsOf } from '$lib/bookings/stranded';
+  import { guardUnsavedChanges } from '$lib/navigation/unsavedChanges';
+  import StrandedBookings from './StrandedBookings.svelte';
   import {
     activeRuleCount,
     draftFromSpace,
@@ -65,11 +68,21 @@
   let saveError = $state('');
   let addingResource = $state(false);
   let resourceError = $state('');
+  /** The bookings the last refused save named (D29), and a key so a new refusal is a new list. */
+  let stranded = $state<{ ids: string[]; key: number }>({ ids: [], key: 0 });
 
-  const snapshot = (d: SettingsDraft) => JSON.stringify(settingsFromDraft(d));
+  // A draft that does not parse yet is still a change: compare the raw draft, not what it sends.
+  const snapshot = (d: SettingsDraft) => JSON.stringify(d);
   /** The settings as last loaded or saved, to tell a saved screen from one with changes. */
   let savedSettings = $state(untrack(() => snapshot(draft)));
   const dirty = $derived(snapshot(draft) !== savedSettings);
+  /** The resources (fields or availability) with changes not saved, by id. */
+  let dirtyResources = $state<Record<string, boolean>>({});
+  const anythingUnsaved = $derived(dirty || Object.values(dirtyResources).some(Boolean));
+  const leaveGuard = guardUnsavedChanges(
+    () => anythingUnsaved,
+    () => m.bookings_unsaved_leave()
+  );
   const problems = $derived(draftProblems(draft));
   const rulesActive = $derived(activeRuleCount(draft));
   const zones = $derived(timeZoneChoices(draft.timeZone));
@@ -92,6 +105,7 @@
     }
     saving = true;
     saveError = '';
+    stranded = { ids: [], key: stranded.key };
     try {
       await updateSpace(space.id, settings);
       space = { ...space, ...settings };
@@ -100,6 +114,7 @@
       onSaved(space);
     } catch (e) {
       saveError = describeBookingRefusal(e, m.bookings_save_settings());
+      stranded = { ids: strandedIdsOf(e), key: stranded.key + 1 };
     } finally {
       saving = false;
     }
@@ -136,6 +151,7 @@
 
   function resourceDeleted(id: string) {
     space.resources = space.resources.filter((r) => r.id !== id);
+    delete dirtyResources[id];
   }
 
   async function removeSpace() {
@@ -147,6 +163,8 @@
     try {
       await deleteSpace(space.id);
       Log.i('BOOKINGS', `space deleted from the editor id=${space.id.slice(0, 8)}`);
+      // Nothing is left to save: the leave is the editor's own.
+      leaveGuard.release();
       onDeleted();
     } catch (e) {
       saveError = describeBookingRefusal(e, m.common_delete_button());
@@ -237,9 +255,12 @@
     {#each space.resources as resource (resource.id)}
       <ResourceEditor
         {resource}
+        spaceId={space.id}
+        timeZone={space.timeZone}
         stepMinutes={savedStep}
         onChanged={resourceChanged}
         onDeleted={resourceDeleted}
+        onDirty={(d) => (dirtyResources[resource.id] = d)}
       />
     {/each}
   </div>
@@ -332,6 +353,9 @@
       clearable
       onValueChange={(v) => (draft.opensAt = v)}
     />
+    <p class={CONTROL_HINT_CLASS}>
+      {m.bookings_field_opens_at_zone({ zone: draft.timeZone.replaceAll('_', ' ') })}
+    </p>
   </div>
   <div class="grid grid-cols-1 gap-4 sm:grid-cols-2">
     <Input
@@ -426,6 +450,17 @@
   >
     {saveError}
   </p>
+{/if}
+{#if stranded.ids.length}
+  {#key stranded.key}
+    <StrandedBookings
+      spaceId={space.id}
+      ids={stranded.ids}
+      resources={space.resources}
+      timeZone={space.timeZone}
+      onRetry={saveSettings}
+    />
+  {/key}
 {/if}
 
 <FormSaveBar

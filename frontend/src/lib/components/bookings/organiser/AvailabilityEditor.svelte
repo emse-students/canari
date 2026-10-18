@@ -16,6 +16,8 @@
   } from '$lib/bookings/availability';
   import { setAvailability } from '$lib/bookings/api';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
+  import { strandedIdsOf } from '$lib/bookings/stranded';
+  import StrandedBookings from './StrandedBookings.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import DateTimeField from '$lib/components/ui/DateTimeField.svelte';
   import { CONTROL_LABEL_CLASS } from '$lib/components/ui/controlClasses';
@@ -28,19 +30,35 @@
    * the organiser thinks of it - "Friday 22:00 to 02:00" is ONE range - and written as the stored
    * lines by `toStoredLines` (WP-B2: a window crossing midnight is two lines). Saved on its own: the
    * server replaces the whole availability, and refuses a change that strands a coming booking
-   * (D29), naming how many.
+   * (D29), naming them: they are listed under the button, each with its cancel.
    */
   interface Props {
+    spaceId: string;
+    /** The space's SAVED zone, which the named bookings are read on (D25). */
+    timeZone: string;
     resourceId: string;
+    resourceName: string;
     lines: StoredLine[];
     exceptions: Closure[];
     /** The space's step, so the times offered fall on it; 15 min for a space of fixed slots. */
     stepMinutes: number | null;
     /** Called once the server took the new availability, with what it now stores. */
     onSaved: (lines: StoredLine[], exceptions: Closure[]) => void;
+    /** Whether the editor holds changes not saved, for the leave warning. */
+    onDirty: (dirty: boolean) => void;
   }
 
-  let { resourceId, lines, exceptions, stepMinutes, onSaved }: Props = $props();
+  let {
+    spaceId,
+    timeZone,
+    resourceId,
+    resourceName,
+    lines,
+    exceptions,
+    stepMinutes,
+    onSaved,
+    onDirty,
+  }: Props = $props();
 
   // The editor's own copy: the parent re-mounts this component when the resource changes.
   let rows = $state<EditorLine[]>(untrack(() => fromStoredLines(lines)));
@@ -48,6 +66,15 @@
   let saving = $state(false);
   let error = $state('');
   let saved = $state(false);
+  /** The bookings the last refused save named (D29); the key makes a new refusal a new list. */
+  let stranded = $state<{ ids: string[]; key: number }>({ ids: [], key: 0 });
+
+  const draftNow = () => JSON.stringify([rows, closures]);
+  /** The availability as last loaded or saved. */
+  let savedDraft = $state(untrack(draftNow));
+  $effect(() => {
+    onDirty(draftNow() !== savedDraft);
+  });
 
   const locale = $derived(getLocale() === 'en' ? 'en-US' : 'fr-FR');
   /** A step that divides an hour keeps the list short; anything else falls back to 15 min. */
@@ -138,14 +165,17 @@
     if (blocked || saving) return;
     saving = true;
     touch();
+    stranded = { ids: [], key: stranded.key };
     const stored = toStoredLines(rows);
     Log.d('BOOKINGS', `availability save resource=${resourceId} lines=${stored.length}`);
     try {
       await setAvailability(resourceId, stored, closures);
       saved = true;
+      savedDraft = draftNow();
       onSaved(stored, closures);
     } catch (e) {
       error = describeBookingRefusal(e, m.bookings_avail_save());
+      stranded = { ids: strandedIdsOf(e), key: stranded.key + 1 };
     } finally {
       saving = false;
     }
@@ -342,6 +372,17 @@
     >
       {error}
     </p>
+  {/if}
+  {#if stranded.ids.length}
+    {#key stranded.key}
+      <StrandedBookings
+        {spaceId}
+        ids={stranded.ids}
+        resources={[{ id: resourceId, name: resourceName }]}
+        {timeZone}
+        onRetry={save}
+      />
+    {/key}
   {/if}
 
   <div class="flex flex-wrap items-center justify-end gap-3">

@@ -177,6 +177,38 @@ export function deleteResource(resourceId: string): Promise<unknown> {
   });
 }
 
+/** One booking as its viewer may read it (D9): names only when allowed, answers to the organiser. */
+export interface BookingView {
+  id: string;
+  resourceId: string;
+  startsAt: string;
+  endsAt: string;
+  cancelled: boolean;
+  /** The viewer is the holder or a participant still in. */
+  mine: boolean;
+  holderName?: string;
+  participantNames?: string[];
+  answers?: Record<string, unknown> | null;
+}
+
+/**
+ * The bookings a D29 refusal named, as the organiser reads them (`GET spaces/:id/bookings?ids=`),
+ * by start. At most one page (200) is asked; an id of another space is not answered.
+ */
+export async function namedSpaceBookings(spaceId: string, ids: string[]): Promise<BookingView[]> {
+  const query = `?ids=${ids.map(encodeURIComponent).join(',')}`;
+  const page = await call<{ items: BookingView[] }>(
+    'namedSpaceBookings',
+    `/spaces/${encodeURIComponent(spaceId)}/bookings${query}`
+  );
+  return page.items;
+}
+
+/** The holder or the organiser cancels a coming booking (D5); nobody is notified in v1 (D13). */
+export function cancelBooking(bookingId: string): Promise<unknown> {
+  return call('cancelBooking', `/${encodeURIComponent(bookingId)}/cancel`, { method: 'POST' });
+}
+
 /** Replaces the resource's WHOLE availability (D11); refused over coming bookings (D29). */
 export function setAvailability(
   resourceId: string,

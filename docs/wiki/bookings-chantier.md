@@ -1,6 +1,6 @@
 # Bookings (reservation of rooms and slots) - the chantier, decisions as taken
 
-**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) merged as #2002; WP-B4's organiser API (#2006) and its screens are draft pull requests, the screens stacked on the API; WP-B5 (the booker's screens) next. **Owed by WP-B6, carried from WP-B4: the space poster (D35: column by migration, purge) and the bookings FILE question.** Decisions are written here the day the
+**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) merged as #2002; WP-B4's organiser API merged as #2006; its screens (#2019), WP-B5's API (#2029) and WP-B5's screens (#2035, stacked on #2019) are draft pull requests. **Owed by WP-B6, carried from WP-B4: the space poster (D35: column by migration, purge) and the bookings FILE question.** Decisions are written here the day the
 user takes them; the work packages are written last, once every question is closed. Pointer in
 [backlog](backlog.md) to be added when the plan is complete.
 
@@ -347,7 +347,7 @@ per request; `BookingsService` takes that `nowMs`, so no rule reads a wall clock
 | `GET mine` | anyone: at most 200, newest first - their bookings as holder or participant (withdrawn ones marked), and every booking of a resource LINKED to them (`linked: true`, D10); private texts of the LIVE ones they are one of the people of (D32) | - |
 | `GET spaces/:id` | the audience (D6, D31) or the organiser; no private text | `space-not-found`, `audience` |
 | `GET spaces/:id/slots?from&to` | same; each booking cut to what the viewer may read (D9) | `slot-range` |
-| `GET spaces/:id/bookings?offset&limit` | the organiser: names and answers, by start, pages of at most 200 (`{ items, nextOffset }`) | `not-manager`, `offset` |
+| `GET spaces/:id/bookings?offset&limit&ids` | the organiser: names and answers, by start, pages of at most 200 (`{ items, nextOffset }`); `ids` (comma-separated, at most 200) narrows it to the bookings a D29 refusal named, an id of another space not answered | `not-manager`, `offset`, `ids` |
 | `POST spaces/:id/bookings` | the audience; the organiser alone books on behalf (`holderId`, outside quotas) | `range`, `holder-is-participant`, `answer-required`, `resource-not-found`, `space-changed`, `too-many-people`, `outside-availability`, `misaligned`, `too-many-steps`, `not-open-yet`, `started`, `notice`, `beyond-horizon`, `blocked`, `unknown-account`, `participant-blocked`, `active-bookings`, `minutes-per-period`, `slot-taken`, `try-again` (a deadlock: send it again) |
 | `POST :id/cancel` | the holder or the organiser, ANY TIME before the start (D5) | `not-yours`, then `already-cancelled`, `history-frozen` |
 | `POST :id/withdraw` | a participant still in, until `participantWithdrawMinMinutes` before the start (D5) | `not-a-participant`, then `already-cancelled`, `history-frozen`, `withdrawal-delay` |
@@ -492,6 +492,9 @@ sent through the real HTTP layer with no ValidationPipe, changing none of them.
 | `lib/bookings/refusals.ts` | every organiser code to its sentence, then the status, then the generic line - never the server's message |
 | `lib/bookings/spaceSettings.ts` | the editor's text draft to the API and back, the DTO's bounds per field, the badge's count |
 | `lib/bookings/availability.ts` | the ranges as the organiser thinks of them to the stored lines and back (see WP-B2), the times offered, the 24/7 warning |
+| `StrandedBookings.svelte`, `lib/bookings/stranded.ts` | the bookings a D29 refusal NAMED, listed under the refused save - when (on the space's clock), which resource, whose - each with its cancel, then "save again" |
+| `lib/bookings/zonedTime.ts` | the space's wall clock to UTC and back, with the server's two rules for a DST gap and a doubled hour (`zoned-time.ts`) |
+| `lib/navigation/unsavedChanges.ts` | asks before an editor with unsaved changes is left: the browser's prompt on a tab close, the app's dialog on an in-app navigation, replayed on yes |
 
 - **A range crossing midnight is ONE range on screen** ("Friday 22:00 to 02:00", marked "ends the
   next day") and two stored lines; reading folds the pair back once, never a whole day.
@@ -502,6 +505,16 @@ sent through the real HTTP layer with no ValidationPipe, changing none of them.
   `DateTimeField`, which gained `dateOnly` (value `YYYY-MM-DD`, no time columns).
 - **Deleting a resource that has history is refused (D42)**: the confirmation and the refusal both
   say so, and point at closing it instead (its hours removed, or a closure).
+- **D29 NAMES THE BOOKINGS, AND SO DOES THE SCREEN.** A refused availability or settings save lists
+  the bookings in the way (`GET spaces/:id/bookings?ids=`, the first 200; the rest are named by the
+  next refusal), each with a cancel button that says the holder is not notified (D13). When none is
+  left, "save again" replays the save.
+- **DELETING A SPACE SAYS WHAT IT COSTS OTHERS**: its coming bookings disappear and the people who
+  made them are NOT told (D13, D27) - the confirmation asks the organiser to tell them first.
+- **The opening date is the SPACE's wall time (D25)**, named under the field; a change of zone
+  keeps the wall time on screen and moves the instant saved.
+- **Unsaved changes are asked about** before leaving the editor (settings, a resource's fields, an
+  availability), and the editor reloads when the route's space id changes, not only on mount.
 - **The file question is not offered** (`FormQuestionsSection` `withoutTypes`), and the screen
   says it comes later: the server refuses it until WP-B6.
 - **Large text**: `FormSection`'s header wraps at 200 % text (the badge and the chevron left the
@@ -510,5 +523,8 @@ sent through the real HTTP layer with no ValidationPipe, changing none of them.
 **Seen** at 390 and 1280 and at 200 % text on a local build, on a fixture space (a temporary
 signed-out preview route, not committed): no horizontal scroll, the night range folded, the 24/7
 warning, the date sheet. Not yet seen against a running API - the first organiser to use it on dev
-is that reading. **Proof**: `availability.test.ts`, `spaceSettings.test.ts`, `refusals.test.ts`,
-`editSections.test.ts`, `DateTimeField.svelte.test.ts`.
+is that reading. **Proof**: `availability.test.ts`, `spaceSettings.test.ts` (the opening in the
+space's zone), `refusals.test.ts`, `stranded.test.ts`, `zonedTime.test.ts` (both DST holes),
+`unsavedChanges.test.ts`, `editSections.test.ts`, `DateTimeField.svelte.test.ts`; on the server,
+`bookings.controller.spec.ts` (the `ids` filter's shape) and the integration case "narrows the
+organiser list to the bookings a D29 refusal named".

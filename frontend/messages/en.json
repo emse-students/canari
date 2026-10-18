@@ -3709,7 +3709,7 @@
   "bookings_field_retention": "Answers deleted (days after the slot)",
   "bookings_delete_space_button": "Delete the space",
   "bookings_delete_space_hint": "Everything goes with it: resources, availability and the booking history.",
-  "bookings_delete_space_confirm": "Delete \"{name}\" and all its history? This cannot be undone.",
+  "bookings_delete_space_confirm": "Delete \"{name}\" and all its history? Coming bookings disappear with it, and the people who made them are NOT told: tell them yourself first. This cannot be undone.",
   "bookings_save_settings": "Save the settings",
   "bookings_saved": "Settings saved.",
   "bookings_problem_required": "Required",
@@ -3753,5 +3753,18 @@
   "bookings_refusal_too_many_spaces": "You have reached the maximum number of personal spaces.",
   "bookings_refusal_too_many_resources": "This space has reached the maximum number of resources.",
   "bookings_refusal_association_not_found": "This association no longer exists.",
-  "bookings_refusal_opens_at": "The opening date is not valid."
+  "bookings_refusal_opens_at": "The opening date is not valid.",
+  "bookings_stranded_title": "The bookings in the way",
+  "bookings_stranded_hint": "Cancel the ones that must go, then save again. The people concerned are not notified: tell them yourself.",
+  "bookings_stranded_more": "And {count} more, named once these are cancelled.",
+  "bookings_stranded_cancel": "Cancel",
+  "bookings_stranded_cancel_aria": "Cancel the booking of {when}",
+  "bookings_stranded_cancel_confirm": "Cancel the booking of {when}? Its holder is not notified.",
+  "bookings_stranded_cleared": "Nothing is in the way any more: save again.",
+  "bookings_stranded_retry": "Save again",
+  "bookings_stranded_unnamed": "Name hidden",
+  "bookings_unsaved_leave": "Some changes are not saved. Leave anyway?",
+  "bookings_field_opens_at_zone": "On the space's clock: {zone}.",
+  "bookings_stranded_cancel_confirm_button": "Cancel the booking",
+  "bookings_stranded_keep": "Keep it"
 }
