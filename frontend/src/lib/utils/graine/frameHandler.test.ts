@@ -1,3 +1,4 @@
+import protobuf from 'protobufjs';
 import type { IStorage, StoredGraineSession } from '$lib/db/types';
 import { canari } from '$lib/proto/canari';
 import { addressedKeyMaterial } from '$lib/mls-client/frameDelivery';
@@ -34,10 +35,15 @@ import {
 
 // The real walk, observed: the id the bundle quotes must reach it, or a decline never advances it.
 const noteSeedUnavailableSpy = vi.fn();
+const noteHistoryHeldNothingSpy = vi.fn();
 vi.mock('./repair', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./repair')>();
   return {
     ...actual,
+    noteHistoryHeldNothing: (...args: Parameters<typeof actual.noteHistoryHeldNothing>) => {
+      noteHistoryHeldNothingSpy(...args);
+      return actual.noteHistoryHeldNothing(...args);
+    },
     noteSeedUnavailable: (...args: Parameters<typeof actual.noteSeedUnavailable>) => {
       noteSeedUnavailableSpy(...args);
       return actual.noteSeedUnavailable(...args);
@@ -1128,6 +1134,37 @@ describe('a history request from a joiner (WP-34)', () => {
     expect(bundle?.requestId).toBe('r-h');
     expect(bundle?.seeds?.map((s) => s.sessionId)).toEqual(['s-1', 's-2']);
     expect(bundle?.truncated).toBeFalsy();
+    expect(bundle?.holdsNothing).toBeFalsy();
+  });
+
+  it('SAYS it holds nothing rather than falling silent, addressed to the device that asked (section 24)', async () => {
+    const sendMessage = wireWithSessions([]);
+    registerCommunityHistoryVisibility('ws-1', 'shared');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(historyFrame());
+
+    // A silence here was the one answer the requester could not record: it asked at every launch.
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+    const [, payload, , delivery] = sendMessage.mock.calls[0];
+    const bundle = decodeAppMessage(payload)?.graineBundle;
+    expect(bundle?.requestId).toBe('r-h');
+    expect(bundle?.holdsNothing).toBe(true);
+    expect(bundle?.seeds ?? []).toHaveLength(0);
+    expect(delivery).toEqual(addressedKeyMaterial('newcomer:newcomer-web'));
+    expect(delivery.recipients).toEqual(['newcomer:newcomer-web']);
+    info.mockRestore();
+  });
+
+  it('still answers nothing at all when the past is withheld - the requester knows the rule', async () => {
+    const sendMessage = wireWithSessions([]);
+    registerCommunityHistoryVisibility('ws-1', 'joined');
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(historyFrame());
+
+    expect(sendMessage).not.toHaveBeenCalled();
+    info.mockRestore();
   });
 
   it('sends nothing when the community is set to joined, and says why', async () => {
@@ -1155,6 +1192,109 @@ describe('a history request from a joiner (WP-34)', () => {
     expect(sendMessage).not.toHaveBeenCalled();
     expect(warn).toHaveBeenCalled();
     warn.mockRestore();
+  });
+});
+
+describe('a bundle saying "I hold nothing" (section 24)', () => {
+  beforeEach(() => {
+    noteHistoryHeldNothingSpy.mockClear();
+    noteSeedUnavailableSpy.mockClear();
+  });
+
+  function holdsNothingFrame(seeds: canari.GraineMsg.$Properties[] = []) {
+    return {
+      scope: workspaceScope('ws-1'),
+      workspaceId: 'ws-1',
+      groupId: 'g-1',
+      sender: 'Bob',
+      senderDeviceId: 'web-bob',
+      plaintext: encodeAppMessage(
+        mkGraineBundle({ workspaceId: 'ws-1', requestId: 'r-h', seeds, holdsNothing: true })
+      ),
+    };
+  }
+
+  it('hands the answer, its request id and its device to the history ask', async () => {
+    const { storage } = fakeStorage();
+    wire(storage);
+
+    await handleDistributionFrame(holdsNothingFrame());
+
+    expect(noteHistoryHeldNothingSpy).toHaveBeenCalledWith('ws-1', 'Bob', 'r-h', 'web-bob');
+  });
+
+  it('ignores the claim, out loud, when the same bundle carries seeds', async () => {
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    await handleDistributionFrame(holdsNothingFrame([await v2SeedFor('chan-1', 's-a', 0)]));
+
+    expect(saved.map((s) => s.sessionId)).toEqual(['s-a']);
+    expect(noteHistoryHeldNothingSpy).not.toHaveBeenCalled();
+    expect(warn.mock.calls.flat().join(' ')).toContain('the claim is ignored');
+    warn.mockRestore();
+  });
+
+  /**
+   * THE CONDITION THE USER SET ON THIS FIELD (2026-10-18): a reader that predates it must ignore it
+   * without an error. Such a reader decodes with a schema that has no field 6, so it sees an empty
+   * bundle - which is what this decodes the new bytes with, then hands to the handler exactly as
+   * every reader since 1.0.3 handles it (`absorbSeedBundle`, unchanged on this branch): no seed
+   * stored, no decline walked, no salon re-read, nothing above debug.
+   */
+  it('reads, to a schema without the field, as an empty bundle that changes nothing and says nothing above debug', async () => {
+    const oldSchema = protobuf.Root.fromJSON({
+      nested: {
+        GraineBundleMsg: {
+          fields: {
+            workspaceId: { type: 'string', id: 1 },
+            requestId: { type: 'string', id: 2 },
+            seeds: { rule: 'repeated', type: 'bytes', id: 3 },
+            truncated: { type: 'bool', id: 4 },
+            missingSessionIds: { rule: 'repeated', type: 'string', id: 5 },
+          },
+        },
+        AppMessage: {
+          oneofs: { kind: { oneof: ['graineBundle'] } },
+          fields: { graineBundle: { type: 'GraineBundleMsg', id: 12 } },
+        },
+      },
+    });
+    const AppMessageV0 = oldSchema.lookupType('AppMessage');
+    const newBytes = holdsNothingFrame().plaintext;
+    const old = AppMessageV0.toObject(AppMessageV0.decode(newBytes), { defaults: true }) as {
+      graineBundle: { requestId: string; seeds: unknown[]; missingSessionIds: unknown[] };
+    };
+    expect(old.graineBundle.requestId).toBe('r-h');
+    expect(old.graineBundle.seeds).toHaveLength(0);
+    expect(old.graineBundle.missingSessionIds).toHaveLength(0);
+    expect('holdsNothing' in old.graineBundle).toBe(false);
+
+    // What that reader then does with it: the same bundle with the field absent.
+    const { storage, saved } = fakeStorage();
+    wire(storage);
+    const repaired: string[][] = [];
+    setGraineRepairListener((ids) => repaired.push(ids));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined);
+
+    await handleDistributionFrame({
+      ...holdsNothingFrame(),
+      plaintext: encodeAppMessage(mkGraineBundle({ workspaceId: 'ws-1', requestId: 'r-h' })),
+    });
+
+    expect(saved).toHaveLength(0);
+    expect(repaired).toHaveLength(0);
+    expect(noteSeedUnavailableSpy).not.toHaveBeenCalled();
+    expect(noteHistoryHeldNothingSpy).not.toHaveBeenCalled();
+    expect(warn).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+    expect(info).not.toHaveBeenCalled();
+    warn.mockRestore();
+    error.mockRestore();
+    info.mockRestore();
   });
 });
 

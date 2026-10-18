@@ -928,7 +928,8 @@ not already asked in this app session - in memory, so a restart is free to ask a
 answerer may simply have been offline. Neither is a clock. The ask sits in
 `ensureCommunityDistributionGroup`, on BOTH its branches: entering the group is what makes asking
 possible, and a device that joined while its answerer was offline must still ask on the next start.
-It is best-effort and never fails the join.
+It is best-effort and never fails the join. An explicit "I hold nothing" answer is the one thing
+recorded durably, per roster ([section 24](#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)).
 
 **The answerer is the lowest OTHER member with a device online** (presence since 2026-09-26, see
 [WP-33](#wp-33-and-the-answerer-nobody-elects)). This user is named only when another device of
@@ -3488,3 +3489,56 @@ not: commits and application frames share one per-group FIFO, and its `control` 
 the native `group_reset`. The frames were LIVE requests (339-469 B) sealed by other members' devices
 3-6 epochs behind, so every up-to-date member found them unreadable, and each loss drives a re-ask.
 The sender side is open in the [backlog](../backlog.md).
+
+## 24. A history ask answered "I hold nothing" is final for its roster (WP-HOLD-NOTHING, decided 2026-10-18)
+
+**The defect.** A device holding no seed of a community asks ONE member for its past
+(`requestCommunityHistory`, [WP-34](#wp-3435-and-the-rule-the-server-cannot-enforce)). An answerer
+holding nothing answered by SILENCE (`answerSeedRequest` returned on an empty gathering), so the
+requester had no answer to record and asked again at every launch. The Mi 9T did it for eight bench
+communities per launch ([offline-and-weak-network section 15](../frontend/offline-and-weak-network.md#15-an-offline-cold-start-sends-nothing-it-knows-will-fail-2026-10-15)).
+A durable "asked at epoch E" was rejected there and still is: it would strand a community whose
+answerer missed the live request. What can be recorded is an ANSWER.
+
+### What changed on the wire
+
+`GraineBundleMsg.holds_nothing = 6` (bool). An answerer that may hand the past over (the community
+is `shared`) and holds NO seed of the community answers a HISTORY request with an empty bundle that
+says so, echoing the `request_id`, addressed to the device that asked as key material like every
+answer ([section 23](#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)). The
+`joined` refusal stays silent (the requester knows the rule), and a SESSIONS request is unchanged.
+
+### What the requester does with it
+
+`noteHistoryHeldNothing` binds the answer to the ask in flight exactly as a session decline is bound
+(`noteSeedUnavailable`): the same request id, the member it was addressed to, a device it named. The
+ask becomes FINAL only once EVERY named device has said "I hold nothing" - a sibling device of the
+answerer may hold the past and be slower, and a durable "nothing" taken on one device's word would
+silence the ask for a whole roster. A named device that never answers leaves the ask open, which
+costs one ask at the next start, the cost before this field existed.
+
+The answer is recorded durably (`utils/graine/historyAnswered.ts`, `localStorage` per account,
+`canari_graine_history_held_nothing:v1:<userId>`) against the key group and the distribution epoch
+the request was sealed at. A start reads it after the epoch settles: the same group at the same
+epoch is the same question to the same roster, and is not asked. **The epoch is the roster's
+version** - every membership change commits to the key group - so a moved roster asks once again,
+with no clock anywhere. A re-join (`evenIfSeedsHeld`) and the community leaving the device forget the
+record. A request sealed with no ridable epoch is not recorded (said at info). Holding a seed
+already ends the ask before any of this.
+
+### Old clients, side by side (checked before writing, 2026-10-18)
+
+| Case | What happens |
+|---|---|
+| Old requester, new answerer | The old reader (`absorbSeedBundle`, the same shape since `1.0.3` and in the floor `1.2.7`) decodes the bundle, skips the unknown field 6 (protobufjs skips unknown tags), loops over zero seeds and zero declines, announces no salon, and writes one `debug` line. No warn, no error. It keeps asking per launch, as today. |
+| New requester, old answerer | Silence, as today; the ask stays open and the next start asks again. |
+| Native push path (Rust `proto_fields`) | The bundle is classified `graine_key_material` with zero seeds, `ok: false` - silent, as a decline-only bundle already is. |
+
+Tests: `frameHandler.test.ts` (the answer is sent and addressed; `joined` stays silent; the new bytes
+decoded by a schema WITHOUT field 6 are an empty bundle that changes nothing and logs nothing above
+debug; a claim carrying seeds is ignored out loud), `repair.test.ts` (final across a restart; asked
+again when the epoch moves, after a re-join, after a leave; a foreign id, member or device is
+ignored; final only once every named device said it), `proto_fields.rs`
+(`a_bundle_saying_it_holds_nothing_is_silent_key_material_with_no_seed`). **Owed:** one bench
+reading - a cold start with the other device online, then a second start, shows `holds nothing ...
+answered for distribution epoch N` once and no `asked ... no-seed-held` the second time.

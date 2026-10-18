@@ -7,6 +7,8 @@ import {
   resetEpochGapRegistry,
 } from '$lib/utils/chat/epochGapRegistry';
 import {
+  forgetWorkspaceRepairState,
+  noteHistoryHeldNothing,
   noteMissingSeed,
   noteSeedUnavailable,
   requestCommunityHistory,
@@ -392,6 +394,110 @@ describe('requestCommunityHistory (WP-34)', () => {
     expect(listWorkspaceMembers).toHaveBeenCalledTimes(1);
     expect(sendMessage).not.toHaveBeenCalled();
     info.mockRestore();
+  });
+});
+
+describe('a history ask answered "I hold nothing" (section 24)', () => {
+  beforeEach(() => localStorage.clear());
+  afterEach(() => localStorage.clear());
+
+  /** The request id and named devices of the history ask sent `n`-th. */
+  function sentAsk(n = 0) {
+    const request = decodeAppMessage(sendMessage.mock.calls[n][1])?.graineRequest;
+    return { requestId: String(request?.requestId), devices: request?.answererDeviceIds ?? [] };
+  }
+
+  /** A fresh start: everything in memory goes, what is durable stays. */
+  function restart() {
+    resetGraineRepairState();
+  }
+
+  it('is FINAL for its roster: the next start does not ask again', async () => {
+    await requestCommunityHistory('ws-1');
+    const { requestId } = sentAsk();
+    noteHistoryHeldNothing('ws-1', 'Bob', requestId, 'web-bob');
+
+    restart();
+    await requestCommunityHistory('ws-1');
+
+    // The Mi 9T asked again at every launch while this answer was a silence (2026-10-15).
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('asks again once the roster moves, because the answer was about that roster', async () => {
+    await requestCommunityHistory('ws-1');
+    noteHistoryHeldNothing('ws-1', 'bob', sentAsk().requestId, 'web-bob');
+
+    restart();
+    distributionEpoch = 8;
+    await requestCommunityHistory('ws-1');
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('without the answer, a fresh start still asks - an unanswered ask is not a final one', async () => {
+    await requestCommunityHistory('ws-1');
+    restart();
+    await requestCommunityHistory('ws-1');
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('ignores an answer to another request, from a member not asked, or from a device not named', async () => {
+    await requestCommunityHistory('ws-1');
+    const { requestId } = sentAsk();
+    noteHistoryHeldNothing('ws-1', 'bob', 'another-request', 'web-bob');
+    noteHistoryHeldNothing('ws-1', 'carol', requestId, 'web-carol');
+    noteHistoryHeldNothing('ws-1', 'bob', requestId, 'bob-phone');
+
+    restart();
+    await requestCommunityHistory('ws-1');
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('is final only once EVERY named device has said it - a silent sibling may hold the past', async () => {
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'bob', online: true, onlineDevices: ['web-bob', 'bob-phone'] },
+      { userId: 'alice', online: true, onlineDevices: ['device-1'] },
+    ]);
+    treeLeaves = ['bob:web-bob', 'bob:bob-phone', 'alice:device-1'];
+    await requestCommunityHistory('ws-1');
+    const { requestId, devices } = sentAsk();
+    expect([...devices].sort()).toEqual(['bob-phone', 'web-bob']);
+
+    noteHistoryHeldNothing('ws-1', 'bob', requestId, 'web-bob');
+    restart();
+    await requestCommunityHistory('ws-1');
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+
+    const second = sentAsk(1).requestId;
+    noteHistoryHeldNothing('ws-1', 'bob', second, 'web-bob');
+    noteHistoryHeldNothing('ws-1', 'bob', second, 'bob-phone');
+    restart();
+    await requestCommunityHistory('ws-1');
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('after a RE-JOIN asks again whatever was answered - the skipped epochs are gone', async () => {
+    await requestCommunityHistory('ws-1');
+    noteHistoryHeldNothing('ws-1', 'bob', sentAsk().requestId, 'web-bob');
+
+    restart();
+    await requestCommunityHistory('ws-1', { evenIfSeedsHeld: true });
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+  });
+
+  it('forgets the answer when the community leaves this device', async () => {
+    await requestCommunityHistory('ws-1');
+    noteHistoryHeldNothing('ws-1', 'bob', sentAsk().requestId, 'web-bob');
+
+    forgetWorkspaceRepairState('ws-1', []);
+    restart();
+    await requestCommunityHistory('ws-1');
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
   });
 });
 

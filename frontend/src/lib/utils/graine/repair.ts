@@ -14,6 +14,11 @@ import { distributionEpochFor, GraineDistributionUnavailableError } from './seed
 import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { deviceIdOfLeaf, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { describeKeyGroupFrameLosses } from '$lib/mls-client/keyGroupFrameLosses';
+import {
+  forgetHistoryHeldNothing,
+  historyHeldNothingAt,
+  recordHistoryHeldNothing,
+} from './historyAnswered';
 
 /**
  * Asking for a seed this device does not hold (WP-33).
@@ -151,6 +156,30 @@ const parked = new Map<string, { sessions: Map<string, string[]>; cancel: () => 
 
 /** Communities whose history request waits for a member to come online, with that waiter's cancel. */
 const historyParked = new Map<string, () => void>();
+
+/**
+ * Per community, the history request in flight: what an explicit "I hold nothing" must match before
+ * it is recorded as the answer (section 24).
+ *
+ * `pending` is the devices the request named that have not yet said "I hold nothing". The answer is
+ * FINAL only once every one of them has: a device of the answerer that holds the past may simply be
+ * slower, and a durable "nothing" recorded on the first device's word would silence the ask for the
+ * whole epoch while the history sat on its sibling. A named device that never answers leaves the
+ * request open, which costs one ask at the next start - what every launch cost before. `null` when
+ * the request named no device (a roster with no per-device presence): any device of the member
+ * answers for it, as section 23 reads a decline then.
+ */
+const historyRequest = new Map<
+  string,
+  {
+    requestId: string;
+    answerer: string;
+    pending: Set<string> | null;
+    groupId: string;
+    /** The distribution epoch the request was sealed at, `null` when the group was not ridable. */
+    epoch: number | null;
+  }
+>();
 
 /**
  * The key group each asked session went out on, and the epoch it was sealed at.
@@ -820,6 +849,10 @@ function parkUntilOnline(channelId: string, sessions: Map<string, string[]>): vo
  * on the distribution epoch instead - see {@link historyUnanswerableAt} - so the next ordinary
  * trigger re-asks once the roster has moved, and costs nothing while it has not.
  *
+ * **A FOURTH IS AN ANSWER: "I hold nothing"** (section 24). Unlike the in-memory "asked", it is
+ * durable, keyed on the same roster version, so a community whose answerer holds nothing is asked
+ * ONCE per roster rather than once per launch - see {@link noteHistoryHeldNothing}.
+ *
  * Best-effort by construction: it is called from the join path and must never fail it. Every branch
  * says what it did, because the alternative symptom is a joiner staring at an empty salon.
  */
@@ -832,11 +865,16 @@ export async function requestCommunityHistory(
    */
   { evenIfSeedsHeld = false }: { evenIfSeedsHeld?: boolean } = {}
 ): Promise<void> {
-  if (evenIfSeedsHeld) historyAsked.delete(workspaceId);
-  if (historyAsked.has(workspaceId)) return;
+  if (historyAsked.has(workspaceId) && !evenIfSeedsHeld) return;
   const { storage, deviceKey, userId, mlsService } = requireGraineRuntime(
     'cannot ask for community history'
   );
+  if (evenIfSeedsHeld) {
+    historyAsked.delete(workspaceId);
+    // A RE-JOINED key group skipped epochs it acknowledged unreadable: an earlier "I hold nothing"
+    // is no more evidence about the past than the seeds this device holds (section 24).
+    forgetHistoryHeldNothing(userId, workspaceId);
+  }
 
   // HOLDING SOME SEEDS IS NOT HOLDING THE PAST - a member back in a community holds exactly the
   // seeds sent since the return. That past is not this request's to fetch: every row this device
@@ -870,6 +908,16 @@ export async function requestCommunityHistory(
   // is on it.
   const epoch = distributionEpochFor(mlsService, scope);
   if (epoch !== null && historyUnanswerableAt.get(workspaceId) === epoch) return;
+  // ASKED AND ANSWERED, durably (section 24): the member asked at this very roster said it holds
+  // nothing of the community. Asking again would put the same question to the same people - which
+  // is what every launch did while that answer was a silence.
+  if (epoch !== null && historyHeldNothingAt(userId, workspaceId, groupId, epoch)) {
+    console.debug(
+      `[GRAINE] the history of community ${workspaceId.slice(0, 8)} is not asked: it was answered ` +
+        `"I hold nothing" at distribution epoch ${epoch}, and the group is still there`
+    );
+    return;
+  }
 
   const label = `community ${workspaceId.slice(0, 8)}`;
   const read = electionRoster(
@@ -934,16 +982,35 @@ export async function requestCommunityHistory(
   }
 
   const answererDevices = answeringDevicesOf(answerer, answering);
+  const requestId = crypto.randomUUID();
   const frame = encodeAppMessage(
     mkGraineRequest({
       workspaceId,
       kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY,
       answererUserId: answerer,
       answererDeviceIds: answererDevices,
-      requestId: crypto.randomUUID(),
+      requestId,
     })
   );
-  await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.transport);
+  // RECORDED BEFORE THE SEND, not after it: the answer travels over the socket while the send's
+  // own HTTP answer is still on its way back, so an "I hold nothing" may be handled before the
+  // `await` resumes - and against no request in flight it would be ignored. Replaces any earlier
+  // ask of this community: a late answer to a superseded request answers a question no longer
+  // asked.
+  historyRequest.set(workspaceId, {
+    requestId,
+    answerer: answerer.toLowerCase(),
+    pending: answererDevices.length > 0 ? new Set(answererDevices) : null,
+    groupId,
+    epoch,
+  });
+  try {
+    await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.transport);
+  } catch (e) {
+    // Nothing went out, so nothing can answer it; the caller says why the ask failed.
+    historyRequest.delete(workspaceId);
+    throw e;
+  }
   historyAsked.add(workspaceId);
   historyParked.get(workspaceId)?.();
   historyParked.delete(workspaceId);
@@ -982,6 +1049,79 @@ function parkHistoryUntilOnline(workspaceId: string, offline: string[]): void {
     );
   });
   historyParked.set(workspaceId, cancel);
+}
+
+/**
+ * A device asked for the history of `workspaceId` has answered "I hold nothing" (section 24).
+ *
+ * **The request becomes FINAL for its roster** once every device it named has said so: recorded
+ * durably against the key group and the epoch it was sealed at ({@link recordHistoryHeldNothing}),
+ * so no later start asks again until the roster moves. Bound to the request in flight exactly as a
+ * session decline is ({@link noteSeedUnavailable}): the id, the member it was addressed to, and a
+ * device it named. Anything else - a superseded ask, a member never asked, a device not named - is
+ * ignored at debug, because it answers a question nobody is waiting on.
+ *
+ * @param answerer Who answered, any case.
+ * @param requestId The request the bundle echoes.
+ * @param answererDevice The device the bundle came from, from its envelope.
+ */
+export function noteHistoryHeldNothing(
+  workspaceId: string,
+  answerer: string,
+  requestId: string,
+  answererDevice: string
+): void {
+  const inFlight = historyRequest.get(workspaceId);
+  if (
+    !inFlight ||
+    inFlight.requestId !== requestId ||
+    inFlight.answerer !== answerer.toLowerCase()
+  ) {
+    console.debug(
+      `[GRAINE] ignoring "I hold nothing" for community ${workspaceId.slice(0, 8)} from ${answerer}: ` +
+        `it answers request ${requestId || '(none)'}, not the history ask in flight` +
+        (inFlight ? ` (addressed to ${inFlight.answerer})` : '')
+    );
+    return;
+  }
+  if (inFlight.pending) {
+    if (!inFlight.pending.has(answererDevice)) {
+      console.debug(
+        `[GRAINE] ignoring "I hold nothing" for community ${workspaceId.slice(0, 8)} from ` +
+          `${answerer}:${answererDevice || '(no device)'}: request ${requestId} did not name that ` +
+          `device, or it has already answered`
+      );
+      return;
+    }
+    inFlight.pending.delete(answererDevice);
+    if (inFlight.pending.size > 0) {
+      console.info(
+        `[GRAINE] ${answerer}:${answererDevice} holds nothing of community ${workspaceId.slice(0, 8)} - ` +
+          `${inFlight.pending.size} named device(s) still to answer before the ask is final`
+      );
+      return;
+    }
+  }
+
+  historyRequest.delete(workspaceId);
+  if (inFlight.epoch === null) {
+    // Nothing to key the answer on: the group was not ridable when the request was sealed. Said,
+    // and left to the next start - one ask, the cost before this answer existed.
+    console.info(
+      `[GRAINE] ${answerer} holds nothing of community ${workspaceId.slice(0, 8)} - not recorded, ` +
+        `the request was sealed with no distribution epoch to key it on`
+    );
+    return;
+  }
+  const { userId } = requireGraineRuntime('cannot record a history answer');
+  recordHistoryHeldNothing(userId, workspaceId, {
+    groupId: inFlight.groupId,
+    epoch: inFlight.epoch,
+  });
+  console.info(
+    `[GRAINE] ${answerer} holds nothing of community ${workspaceId.slice(0, 8)} - the history ask is ` +
+      `answered for distribution epoch ${inFlight.epoch}, and asked again only once the roster moves`
+  );
 }
 
 /**
@@ -1097,6 +1237,19 @@ export function forgetWorkspaceRepairState(
 ): void {
   historyAsked.delete(workspaceId);
   historyUnanswerableAt.delete(workspaceId);
+  historyRequest.delete(workspaceId);
+  if (isGraineReady()) {
+    forgetHistoryHeldNothing(
+      requireGraineRuntime('cannot forget a history answer').userId,
+      workspaceId
+    );
+  } else {
+    // Left in place: it names this community's key group and epoch, which a re-join replaces, so it
+    // answers nothing then - but a leave with no runtime is worth naming.
+    console.debug(
+      `[GRAINE] the "I hold nothing" record of community ${workspaceId.slice(0, 8)} is kept: no runtime to name its account`
+    );
+  }
   historyParked.get(workspaceId)?.();
   historyParked.delete(workspaceId);
   // A parked channel waiter of this community may still fire; it re-asks only what is still in
@@ -1198,6 +1351,7 @@ export function resetGraineRepairState(): void {
   outstanding.clear();
   historyAsked.clear();
   historyUnanswerableAt.clear();
+  historyRequest.clear();
   for (const { cancel } of parked.values()) cancel();
   parked.clear();
   for (const cancel of historyParked.values()) cancel();
