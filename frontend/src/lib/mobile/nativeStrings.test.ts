@@ -410,6 +410,17 @@ describe('Mention tokens in a native banner', () => {
     expect(objc).toMatch(/CanariRenderMentions\(body,/);
   });
 
+  it("names somebody else from the phone's own copy of names, never from the push (WP-MENTION-NAME)", () => {
+    // Each renderer reads `display_names.json` lazily, only for a token naming somebody else, and
+    // only when the file names the account in the push context.
+    expect(kotlin).toMatch(/loadMentionNames\(me\)/);
+    expect(kotlin).toMatch(/optString\("userId"\)\.equals\(me, ignoreCase = true\)/);
+    expect(swift).toMatch(/names = loadMentionNames\(myUserId: me\)/);
+    expect(swift).toMatch(/\(root\["userId"\] as\? String\)\?\.lowercased\(\) == me/);
+    expect(objc).toMatch(/names = CanariLoadMentionNames\(me\)/);
+    expect(objc).toMatch(/\[\[owner lowercaseString\] isEqualToString:me\]/);
+  });
+
   it('names the two words in all four iOS tables and both Android ones', () => {
     for (const bundle of BUNDLES) {
       for (const lang of ['fr', 'en']) {

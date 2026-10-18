@@ -3,6 +3,7 @@
 #[cfg(any(feature = "bench-observables", test))]
 pub mod bench;
 pub mod cookies;
+pub mod display_names;
 pub mod mls;
 pub mod notifications;
 pub mod picked_files;

@@ -2459,11 +2459,38 @@ static NSString *_Nullable CanariFetchAndDecryptMedia(CanariPushContext *ctx,
   return tmpPath;
 }
 
-// Replaces the `@[<64 hex>]` mention tokens a decrypted body carries with a WORD - "you" for this
-// device's own user, "someone" for anybody else - and collapses the run of spaces a token left.
-// No name directory reaches this process, so it names the one id it knows for certain rather than
-// show a hex blob on the banner a mention makes time-sensitive. Twins: the NSE's `renderMentions`
-// and Android's `renderMentions`.
+// The `names` map of `display_names.json` in the app's data directory, or nil when it cannot be
+// used: absent, unreadable, or written for another account than `me` (one file per install, and two
+// accounts may sign in on one phone). Written by `store_display_names` (Rust).
+static NSDictionary *_Nullable CanariLoadMentionNames(NSString *_Nullable me) {
+  NSString *dir = CanariTauriDataDir();
+  if (me.length == 0 || dir == nil) {
+    return nil;
+  }
+  NSData *data = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"display_names.json"]];
+  if (data == nil) {
+    NSLog(@"[CanariPush] [MENTION_NAME] no display_names.json - every other mention is 'someone'");
+    return nil;
+  }
+  id root = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+  if (![root isKindOfClass:[NSDictionary class]]) {
+    NSLog(@"[CanariPush] [MENTION_NAME] display_names.json unreadable");
+    return nil;
+  }
+  id owner = ((NSDictionary *)root)[@"userId"];
+  if (![owner isKindOfClass:[NSString class]] || ![[owner lowercaseString] isEqualToString:me]) {
+    NSLog(@"[CanariPush] [MENTION_NAME] display_names.json belongs to another account - not used");
+    return nil;
+  }
+  id names = ((NSDictionary *)root)[@"names"];
+  return [names isKindOfClass:[NSDictionary class]] ? names : nil;
+}
+
+// Replaces the `@[<64 hex>]` mention tokens a decrypted body carries with something readable - "you"
+// for this device's own user, the NAME the phone already holds for anybody else, and the word
+// "someone" for an id it has never named - and collapses the run of spaces a token left. The names
+// come from the phone's own copy (`CanariLoadMentionNames`), never from the push or the network
+// (WP-MENTION-NAME, 2026-10-18). Twins: the NSE's `renderMentions` and Android's `renderMentions`.
 static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUserId) {
   if (text.length == 0 || [text rangeOfString:@"@["].location == NSNotFound) {
     return text;
@@ -2476,15 +2503,39 @@ static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUser
   NSString *me = myUserId.lowercaseString;
   NSMutableString *out = [NSMutableString string];
   NSUInteger cursor = 0;
+  // Read once per body, and only when a token names somebody else.
+  NSDictionary *names = nil;
+  BOOL namesRead = NO;
+  NSUInteger named = 0;
+  NSUInteger unknown = 0;
   for (NSTextCheckingResult *match in [regex matchesInString:text options:0 range:NSMakeRange(0, text.length)]) {
     [out appendString:[text substringWithRange:NSMakeRange(cursor, match.range.location - cursor)]];
     NSString *mentioned = [[text substringWithRange:[match rangeAtIndex:1]] lowercaseString];
     BOOL isMe = me.length > 0 && [mentioned isEqualToString:me];
     [out appendString:@"@"];
-    [out appendString:CanariLocalized(isMe ? @"notif.mention.you" : @"notif.mention.someone")];
+    if (isMe) {
+      [out appendString:CanariLocalized(@"notif.mention.you")];
+    } else {
+      if (!namesRead) {
+        names = CanariLoadMentionNames(me);
+        namesRead = YES;
+      }
+      id name = names[mentioned];
+      if ([name isKindOfClass:[NSString class]] && [(NSString *)name length] > 0) {
+        named++;
+        [out appendString:name];
+      } else {
+        unknown++;
+        [out appendString:CanariLocalized(@"notif.mention.someone")];
+      }
+    }
     cursor = match.range.location + match.range.length;
   }
   [out appendString:[text substringFromIndex:cursor]];
+  if (named + unknown > 0) {
+    NSLog(@"[CanariPush] [MENTION_NAME] named=%lu unknown=%lu", (unsigned long)named,
+          (unsigned long)unknown);
+  }
   return [out stringByReplacingOccurrencesOfString:@"[ \\t]{2,}"
                                         withString:@" "
                                            options:NSRegularExpressionSearch

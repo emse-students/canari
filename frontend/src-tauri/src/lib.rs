@@ -31,6 +31,7 @@ use crate::state::{AppState, PendingDb};
 #[cfg(feature = "bench-observables")]
 use crate::commands::bench::bench_native_store;
 use crate::commands::cookies::flush_webview_cookies;
+use crate::commands::display_names::store_display_names;
 use crate::commands::mls::{
     actualiser_cle_keystore_avec_devicekey, ajouter_membres_bulk, annuler_commit, confirmer_commit,
     creer_groupe, envoyer_message_bytes, exporter_group_info, exporter_ratchet_tree,
@@ -1107,6 +1108,7 @@ pub fn run() {
             take_picked_file,
             notifier_message_natif,
             store_avatar_mirror,
+            store_display_names,
             // A BENCH build only - see `commands::bench`. Absent, not refusing, everywhere else.
             #[cfg(feature = "bench-observables")]
             bench_native_store

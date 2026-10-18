@@ -1091,29 +1091,71 @@ class NotificationService: UNNotificationServiceExtension {
   }
 
   /// The `reason` of a refusal from `background.rs`, or nil for anything that is not one.
-  /// Replaces the `@[<64 hex>]` mention tokens a decrypted body carries with a WORD - "you" for this
-  /// device's own user, "someone" for anybody else - and collapses the run of spaces a token left.
+  /// Replaces the `@[<64 hex>]` mention tokens a decrypted body carries with something readable -
+  /// "you" for this device's own user, the NAME the phone already holds for anybody else, and the
+  /// word "someone" for an id it has never named - and collapses the run of spaces a token left.
   ///
-  /// The extension has no name directory and no second chance to redraw, so it renders the one id it
-  /// knows for certain and says plainly that it does not know the others, rather than a hex blob on
-  /// the very banner a mention makes time-sensitive. Android twin: `renderMentions`.
+  /// The names come from the phone's own copy, never from the push or the network
+  /// (WP-MENTION-NAME, 2026-10-18): `display_names.json` in the App Group, which the app writes with
+  /// every name it has resolved (`store_display_names`). Android twin: `renderMentions`.
   private static func renderMentions(_ text: String, myUserId: String?, locale: String?) -> String {
     guard text.contains("@["),
       let regex = try? NSRegularExpression(pattern: "@\\[([0-9a-fA-F]{64})\\]")
     else { return text }
     let me = myUserId?.lowercased()
     let ns = text as NSString
+    var names: [String: Any]?
+    var namesRead = false
+    var named = 0
+    var unknown = 0
     var out = ""
     var cursor = 0
     for match in regex.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
       out += ns.substring(with: NSRange(location: cursor, length: match.range.location - cursor))
       let id = ns.substring(with: match.range(at: 1)).lowercased()
-      let key = (me != nil && id == me) ? "notif.mention.you" : "notif.mention.someone"
-      out += "@" + localized(key, locale: locale)
+      if me != nil && id == me {
+        out += "@" + localized("notif.mention.you", locale: locale)
+      } else {
+        // Read once per body, and only when a token names somebody else.
+        if !namesRead {
+          names = loadMentionNames(myUserId: me)
+          namesRead = true
+        }
+        if let name = names?[id] as? String, !name.isEmpty {
+          named += 1
+          out += "@" + name
+        } else {
+          unknown += 1
+          out += "@" + localized("notif.mention.someone", locale: locale)
+        }
+      }
       cursor = match.range.location + match.range.length
     }
     out += ns.substring(from: cursor)
+    if named + unknown > 0 {
+      NSLog("[CanariNSE] [MENTION_NAME] named=\(named) unknown=\(unknown)")
+    }
     return out.replacingOccurrences(of: "[ \\t]{2,}", with: " ", options: .regularExpression)
+  }
+
+  /// The `names` map of `display_names.json` in the App Group, or nil when it cannot be used:
+  /// absent, unreadable, or written for another account than `myUserId` (one file per install, and
+  /// two accounts may sign in on one phone).
+  private static func loadMentionNames(myUserId: String?) -> [String: Any]? {
+    guard let me = myUserId, let dir = appGroupDir() else { return nil }
+    guard let data = try? Data(contentsOf: dir.appendingPathComponent("display_names.json")) else {
+      NSLog("[CanariNSE] [MENTION_NAME] no display_names.json - every other mention is 'someone'")
+      return nil
+    }
+    guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+      NSLog("[CanariNSE] [MENTION_NAME] display_names.json unreadable")
+      return nil
+    }
+    guard (root["userId"] as? String)?.lowercased() == me else {
+      NSLog("[CanariNSE] [MENTION_NAME] display_names.json belongs to another account - not used")
+      return nil
+    }
+    return root["names"] as? [String: Any]
   }
 
   private static func refusalReason(_ json: String?) -> String? {

@@ -1077,6 +1077,16 @@ pub(crate) fn delete_user_push_files(
     user_id: String,
 ) -> Result<usize, String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    // The mirrored names carry their own owner, so they are removed on THEIR proof, not the
+    // context's: in the data directory, and on iOS in the extension's App Group copy too.
+    crate::commands::display_names::remove_display_names_of(&data_dir, &user_id)?;
+    #[cfg(target_os = "ios")]
+    match crate::app_group::app_group_dir() {
+        Ok(group) => {
+            crate::commands::display_names::remove_display_names_of(&group, &user_id)?;
+        }
+        Err(e) => log::error!("[DEL-LOCAL] no App Group container - its names copy is left: {e}"),
+    }
     remove_user_push_files(&data_dir, &user_id)
 }
 

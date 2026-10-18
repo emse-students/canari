@@ -1949,6 +1949,31 @@ peer's ARCHIVE being merged into an empty store, which `batchAddMessages` counte
 caller now says which it is (`MessageBatchOrigin`, required). Two mechanisms because the two paths
 know different things - only the native side ever saw the push.
 
+#### A mention names its person from the phone's own copy (WP-MENTION-NAME, 2026-10-18)
+
+A decrypted body carries `@[<64 hex>]`; every native composer renders it (Android
+`renderMentions`, the NSE's `renderMentions`, `CanariRenderMentions`). This device's own id is
+"you"; **anybody else is named from `display_names.json`**, and an id the phone has never named
+stays the word "someone". The name never rides the push and is never fetched on the push path
+(user decision, 2026-10-18): the server would have to read who is mentioned, and Google or Apple
+would carry it.
+
+- **Writer**: the WebView. `displayName.ts` notes every name it RESOLVES (a seeded name, or a
+  fetched profile that carries one - never the unknown-user label) in `nameMirror.ts`, which hands
+  the batch to `store_display_names` (`commands/display_names.rs`) when the document turns
+  `hidden`. That is a proof, not a schedule: a native banner is only drawn while the app is not in
+  front, and leaving the front fires `visibilitychange` first. No timer.
+- **The file**: `{"userId": <owner>, "names": {<id>: <name>}}`, merged per owner, capped at 2000
+  names (this write's names kept first), written by temp file + rename. On iOS the command also
+  writes the App Group copy the extension reads, at the call rather than at the next lifecycle
+  mirror.
+- **Readers** use it only when its owner is the account in `push_context.json`; the account
+  deletion (`delete_user_push_files`) removes it only when its owner is the deleted account, in
+  the data directory and the App Group. The factory wipe takes it with every other top-level file.
+- **Pinned** by `nameMirror.test.ts` (the hide trigger, the owner, the one file name across four
+  toolchains) and `nativeStrings.test.ts`; Swift and ObjC are verified by compiling only. **Owed**:
+  one look on each phone ([backlog](../backlog.md)).
+
 #### The language a notification speaks
 
 **Not the phone's.** The Français/English toggle in Canari's settings and the device language are
