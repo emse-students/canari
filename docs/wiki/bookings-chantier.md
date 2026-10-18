@@ -352,7 +352,7 @@ per request; `BookingsService` takes that `nowMs`, so no rule reads a wall clock
 | `POST spaces/:id/bookings` | the audience; the organiser alone books on behalf (`holderId`, outside quotas) | `range`, `holder-is-participant`, `answer-required`, `resource-not-found`, `space-changed`, `too-many-people`, `outside-availability`, `misaligned`, `too-many-steps`, `not-open-yet`, `started`, `notice`, `beyond-horizon`, `blocked`, `unknown-account`, `participant-blocked`, `active-bookings`, `minutes-per-period`, `slot-taken`, `try-again` (a deadlock: send it again) |
 | `POST :id/cancel` | the holder or the organiser, ANY TIME before the start (D5) | `not-yours`, then `already-cancelled`, `history-frozen` |
 | `POST :id/withdraw` | a participant still in, until `participantWithdrawMinMinutes` before the start (D5) | `not-a-participant`, then `already-cancelled`, `history-frozen`, `withdrawal-delay` |
-| `POST resources/:id/blocks` | the organiser or the resource's linked account (D10) | `not-manager`, `history-frozen` (a start more than `NEAR_NOW_MS`, 10 s, behind the server's now; a nearer one is the screen's "from now" and moves up to the server's now), `range` (over 366 days, or empty once moved up), `bookings-inside-block` (with `bookingIds`, D29) |
+| `POST resources/:id/blocks` | the organiser or the resource's linked account (D10) | `not-manager`, `history-frozen` (a start more than `NEAR_NOW_MS`, 10 s, behind the server's now; a nearer one is the screen's "from now" and moves up to the server's now), `range` (over 366 days, or empty once moved up), `bookings-inside-block` (with `bookingIds`, D29), `block-overlap` (any overlap with a block of the same resource: the same "Indisponible" written twice, e.g. a retry after a lost answer) |
 | `DELETE blocks/:id` | the organiser any; the linked account only a block IT created | `block-not-found`, `not-yours`, `history-frozen` (ended) |
 
 - **THE LOCK ORDER: the SPACE row, then the RESOURCE row, both `FOR UPDATE`, in every colliding
@@ -632,10 +632,9 @@ id to the organiser and the linked account, not to a booker.
   (a timeout, a lost connection) or came back 5xx with no code may have been written
   (`outcomeUnknown`); any 4xx, a validation 400 with no code included, is a refusal. The booking
   sheet says the outcome is unknown and re-reads the grid and my bookings. **The block sheet
-  re-reads and CLOSES**: the server does not refuse a block over another block (a P2 in
-  [backlog](backlog.md)), so a second tap from the open sheet could write the same block twice;
-  the grid shows whether it landed. Every failed read or gesture is logged, transport failures
-  included.
+  re-reads and CLOSES**: a second tap from the open sheet is now refused by the server
+  (`block-overlap`), and the sheet also closes on it, the grid showing whether it landed.
+  Every failed read or gesture is logged, transport failures included.
 - **"Add to my calendar" asks for its signed link ON THE TAP** (`bookingIcsUrl`), never once per
   card on screen; a browser tab is opened inside the tap and pointed at it.
 - **A refusal that means the grid is stale** (`slot-taken`, `blocked`, `space-changed`) closes the

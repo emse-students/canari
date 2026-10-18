@@ -526,6 +526,38 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       await expect(book(space.id, r, '10:00', '10:30')).resolves.toHaveProperty('id');
     });
 
+    it('refuses a block over a block of the same resource: the same range twice writes one row', async () => {
+      const { resourceIds } = await setup({}, 2);
+      const [r, other] = resourceIds;
+      const first = { startsAt: on('09:00'), endsAt: on('10:00') };
+      await service.addBlock(r, first, as(ORGA), NOW);
+      const refused = { code: 'block-overlap' };
+      expect(await refusal(service.addBlock(r, first, as(ORGA), NOW))).toEqual(refused);
+      // Any overlap, whichever side reaches into the other.
+      for (const [from, to] of [
+        ['09:30', '09:45'],
+        ['08:00', '09:15'],
+        ['09:45', '11:00'],
+        ['08:00', '11:00'],
+      ]) {
+        expect(
+          await refusal(service.addBlock(r, { startsAt: on(from), endsAt: on(to) }, as(ORGA), NOW))
+        ).toEqual(refused);
+      }
+      // Touching ranges and another resource are not overlaps.
+      await service.addBlock(r, { startsAt: on('10:00'), endsAt: on('11:00') }, as(ORGA), NOW);
+      await service.addBlock(r, { startsAt: on('08:00'), endsAt: on('09:00') }, as(ORGA), NOW);
+      await service.addBlock(other, first, as(ORGA), NOW);
+      expect(await ds.getRepository(BookingBlock).countBy({ resourceId: r })).toBe(3);
+      // Racing the same block: one winner, the rest told it exists.
+      const racing = { startsAt: on('15:00'), endsAt: on('16:00') };
+      const results = await Promise.allSettled(
+        Array.from({ length: 5 }, () => service.addBlock(r, racing, as(ORGA), NOW))
+      );
+      expect(results.filter((x) => x.status === 'fulfilled')).toHaveLength(1);
+      expect(await ds.getRepository(BookingBlock).countBy({ resourceId: r })).toBe(4);
+    });
+
     it('lets the linked account block its own resource, and refuses a past range', async () => {
       const { space, resourceIds } = await setup();
       const r = resourceIds[0];

@@ -1,7 +1,7 @@
 /**
- * AN UNKNOWN OUTCOME CLOSES THE BLOCK SHEET (review of #2035). The server refuses a block over a
- * booking but not over another block, so a sheet left open after a lost answer offered a second tap
- * that could write the same block twice. The sheet re-reads the grid, says so, and closes; a plain
+ * AN UNKNOWN OUTCOME CLOSES THE BLOCK SHEET (review of #2035). A retry could write a block twice; the
+ * server now refuses one over another (`block-overlap`), but a sheet left open after a lost answer offered a second tap
+ * all the same. The sheet re-reads the grid, says so, and closes; a plain
  * refusal (a 4xx, even with no code) keeps it open with its sentence and re-reads nothing.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -85,5 +85,15 @@ describe('BlockSheet after a failed write', () => {
     );
     expect(onReread).not.toHaveBeenCalled();
     expect(onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe('BlockSheet over a block that already exists', () => {
+  it('says so, and closes asking for a re-read of the grid', async () => {
+    addBlock.mockRejectedValue(new BookingsApiError('overlap', 'block-overlap', 409, []));
+    const { onClose } = render();
+    submit();
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledWith(true));
+    expect(showToast).toHaveBeenCalledWith(m.bookings_refusal_block_overlap(), 'error');
   });
 });

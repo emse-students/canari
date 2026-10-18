@@ -80,7 +80,7 @@
         return;
       }
       error = describeBookingRefusal(e, m.bookings_block_action());
-      if (code === 'bookings-inside-block' || code === 'blocked') {
+      if (code === 'bookings-inside-block' || code === 'blocked' || code === 'block-overlap') {
         const ids = e instanceof BookingsApiError ? e.bookingIds : [];
         Log.i(
           'BOOKINGS',

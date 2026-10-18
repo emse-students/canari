@@ -3911,6 +3911,7 @@
   "bookings_refusal_withdrawal_delay": "Il est trop tard pour se retirer de cette réservation.",
   "bookings_refusal_inside_block": "Des réservations à venir ({count}) tombent dans cette indisponibilité : annulez-les d'abord, puis réessayez.",
   "bookings_refusal_block_not_found": "Cette indisponibilité n'existe plus.",
+  "bookings_refusal_block_overlap": "Cette plage est déjà indisponible (en tout ou en partie).",
   "bookings_stranded_title": "Les réservations en travers",
   "bookings_stranded_hint": "Annulez celles qui doivent partir, puis enregistrez de nouveau. Les personnes concernées ne sont pas prévenues : prévenez-les vous-même.",
   "bookings_stranded_more": "Et {count} de plus, nommées une fois celles-ci annulées.",
