@@ -212,7 +212,8 @@ let pendingProfileBatch: Map<
  * Issues one request per chunk of `ids` and settles every waiting caller from its answer.
  *
  * An id the server NAMES in `deleted` is an ANSWER - that account is gone - so it rejects with a
- * `DeletedAccountError` (a 404 to every existing classification, `isAbsentUserError`). A transport failure rejects every
+ * `DeletedAccountError` (a 404 to every existing classification, `isAbsentUserError`). An answer
+ * with no `deleted` field is an older server's, where absence is the plain 404. A transport failure rejects every
  * id in the chunk with what actually went wrong, which is not an answer and is not cached.
  */
 async function flushProfileBatch(
@@ -233,18 +234,28 @@ async function flushProfileBatch(
         if (!res.ok) throw new UserProfileFetchError(res.status);
         const { users, deleted } = (await res.json()) as {
           users: UserProfile[];
-          deleted: string[];
+          deleted?: string[];
         };
-        const deletedIds = new Set(deleted);
+        // LEGACY SHIM (docs/wiki/legacy-compatibility.md, "The profile batch without `deleted`"):
+        // a server older than 2026-10-18 has no `deleted` field and answers an unknown id by its
+        // ABSENCE. That absence is the old answer, not a breach - a plain 404, cached, quiet.
+        const legacyAnswer = deleted === undefined;
+        if (legacyAnswer) {
+          console.debug(
+            '[USER] batch answer has no `deleted` field (older server) - absence = 404'
+          );
+        }
+        const deletedIds = new Set(deleted ?? []);
         const byId = new Map(users.map((u) => [u.id, u]));
         for (const id of chunk) {
           const profile = byId.get(id);
           for (const waiter of batch.get(id) ?? []) {
             if (profile) waiter.resolve(profile);
             else if (deletedIds.has(id)) waiter.reject(new DeletedAccountError());
+            else if (legacyAnswer) waiter.reject(new UserProfileFetchError(404));
             else {
-              // Neither a profile nor a deletion: the server broke its contract, which is not an
-              // answer about this account and must not be cached as one.
+              // Neither a profile nor a deletion from a server that SENDS `deleted`: it broke its
+              // contract, which is not an answer about this account and must not be cached as one.
               console.error('[USER] batch answer names neither a profile nor a deletion', { id });
               waiter.reject(new UserProfileFetchError(502));
             }

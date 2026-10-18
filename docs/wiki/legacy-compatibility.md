@@ -132,6 +132,20 @@ earlier reaches the floor clients as a wrong sentence and a dead link, which no 
 4. Native tables (`composeServerNotification`, NSE, `canari_push.mm`) get its `contentKey`.
 **Removal condition:** none; this is a floor requirement, not a shim.
 
+### No date yet - the profile batch answered without `deleted`, by a server older than 2026-10-18
+
+**Site:** `flushProfileBatch` in `frontend/src/lib/stores/user.ts` (`legacyAnswer`).
+**Shim (2026-10-18):** `GET /api/users/batch` answers `{ users, deleted }` since #2022, and a client
+reading that shape meets an OLDER server whenever the two are not in step - a rolling deploy, a
+rollback, a store build live before production deploys. That server sends no `deleted` and answers
+an unknown id by its absence, so an answer with the field MISSING is read the old way: absence is
+`UserProfileFetchError(404)`, cached, rendered as the unknown-user label, one `console.debug` per
+chunk. Without it every absent id counted as a contract breach (`console.error`, 502, never cached)
+and `displayName.ts` warned, backed off 120 s and asked again.
+**Removal condition:** every estate's core-service sends `deleted` (dev and production both deployed
+past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
+field becomes the breach. A server version, not a client floor.
+
 ### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 
 **Site:** `PurchasePaymentMethod` in `apps/social-service/src/users/entities/purchase-record.entity.ts`,
