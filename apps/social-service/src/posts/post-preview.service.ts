@@ -8,6 +8,7 @@ import { AssociationsService } from '../associations/associations.service';
 import { mediaUrl } from '../internal/service-urls';
 import { isExpiredReel } from './reel.constants';
 import { POST_CARD_CONTENT_TYPE, renderPostCard } from './post-card-image';
+import { PostCardCache } from './post-card-cache';
 
 /**
  * WHAT A SHARED `/posts/:id` LINK MAY DISCLOSE TO SOMEBODY WITH NO CANARI SESSION.
@@ -95,6 +96,9 @@ interface StoredPostMedia {
  */
 const MAX_PREVIEW_IMAGE_BYTES = 5 * 1024 * 1024;
 
+/** What the rendered-card cache may hold: ~300 cards at ~100 kB, a bound rather than a target. */
+const CARD_CACHE_BYTES = 32 * 1024 * 1024;
+
 /** AES-GCM authentication tag length, in bytes. WebCrypto appends it to the ciphertext. */
 const GCM_TAG_BYTES = 16;
 
@@ -154,6 +158,7 @@ export function pickPreviewMedia(media: unknown): StoredPostMedia | null {
 @Injectable()
 export class PostPreviewService {
   private readonly logger = new Logger(PostPreviewService.name);
+  private readonly cards = new PostCardCache(CARD_CACHE_BYTES);
 
   constructor(
     @InjectRepository(Post) private readonly postRepo: Repository<Post>,
@@ -244,20 +249,32 @@ export class PostPreviewService {
     const found = await this.findShareable(postId);
     if (!found) return null;
 
+    // The key moves with everything a card is made of: an edit bumps `updatedAt`, a new logo
+    // changes `logoUrl` (it carries a `?v=`). A burst for one key renders once (see PostCardCache).
+    const key = `${postId}:${new Date(found.post.updatedAt).toISOString()}:${found.association.logoUrl ?? ''}`;
+    const data = await this.cards.getOrRender(key, () => this.renderCard(postId, found));
+    return data ? { data, contentType: POST_CARD_CONTENT_TYPE } : null;
+  }
+
+  /** Reads the card's source and renders it. Null, logged, when the source cannot be used. */
+  private async renderCard(
+    postId: string,
+    found: { post: Post; association: { logoUrl: string | null } }
+  ): Promise<Buffer | null> {
     const media = pickPreviewMedia(found.post.media);
     try {
       if (media) {
         const photo = await this.readPostPhoto(media);
         if (!photo) return null;
         this.logger.debug(`post card ${postId}: own photo ${media.mediaId}`);
-        return { data: await renderPostCard({ photo }), contentType: POST_CARD_CONTENT_TYPE };
+        return await renderPostCard({ photo });
       }
 
       const logoId = publicMediaId(found.association.logoUrl);
       const logo = logoId ? await this.readPublicLogo(logoId) : null;
       if (logoId && !logo) return null;
       this.logger.debug(`post card ${postId}: ${logo ? `logo ${logoId}` : 'plain background'}`);
-      return { data: await renderPostCard({ logo }), contentType: POST_CARD_CONTENT_TYPE };
+      return await renderPostCard({ logo });
     } catch (err) {
       this.logger.warn(`post card ${postId} could not be rendered: ${(err as Error)?.message}`);
       return null;
@@ -274,27 +291,35 @@ export class PostPreviewService {
       return null;
     }
     const url = mediaUrl(`media/internal/${encodeURIComponent(media.mediaId!)}`);
-    const ciphertext = await this.fetchMediaBytes(url, media.mediaId!, {
-      'x-internal-secret': secret,
-    });
+    const ciphertext = await this.fetchMediaBytes(
+      url,
+      media.mediaId!,
+      { 'x-internal-secret': secret },
+      MAX_PREVIEW_IMAGE_BYTES + GCM_TAG_BYTES
+    );
     if (!ciphertext) return null;
-    if (ciphertext.length > MAX_PREVIEW_IMAGE_BYTES + GCM_TAG_BYTES) {
-      this.logger.warn(`preview image ${media.mediaId} is ${ciphertext.length} bytes - refused`);
-      return null;
-    }
     return decryptPostMedia(ciphertext, media.key!, media.iv!);
   }
 
   /** Fetches an association logo through media-service's public route. Null, logged, on failure. */
   private async readPublicLogo(mediaId: string): Promise<Buffer | null> {
     const url = mediaUrl(`media/public/${encodeURIComponent(mediaId)}`);
-    return this.fetchMediaBytes(url, mediaId, {});
+    return this.fetchMediaBytes(url, mediaId, {}, MAX_PREVIEW_IMAGE_BYTES);
   }
 
+  /**
+   * Fetches a media-service body, NEVER HOLDING MORE THAN `maxBytes` of it.
+   *
+   * The cap is enforced while the body streams - a declared `Content-Length` over it is refused
+   * before a byte is read, and an undeclared or lying one aborts the request at the limit - because
+   * checking the size of a buffer afterwards is checking it after the memory was spent. A logo's
+   * URL is a free string an association admin typed, so its bytes are not ours to trust either.
+   */
   private async fetchMediaBytes(
     url: string,
     mediaId: string,
-    headers: Record<string, string>
+    headers: Record<string, string>,
+    maxBytes: number
   ): Promise<Buffer | null> {
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), MEDIA_FETCH_TIMEOUT_MS);
@@ -310,7 +335,29 @@ export class PostPreviewService {
         this.logger.warn(`preview image ${mediaId} answered ${res.status} for ${url}`);
         return null;
       }
-      return Buffer.from(await res.arrayBuffer());
+      const declared = Number(res.headers.get('content-length'));
+      if (Number.isFinite(declared) && declared > maxBytes) {
+        abort.abort();
+        this.logger.warn(`preview image ${mediaId} declares ${declared} bytes - refused`);
+        return null;
+      }
+      const reader = res.body?.getReader();
+      if (!reader) return Buffer.alloc(0);
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.length;
+        if (total > maxBytes) {
+          abort.abort();
+          await reader.cancel().catch(() => undefined);
+          this.logger.warn(`preview image ${mediaId} exceeds ${maxBytes} bytes - refused`);
+          return null;
+        }
+        chunks.push(value);
+      }
+      return Buffer.concat(chunks);
     } catch (err) {
       this.logger.warn(`preview image ${mediaId} failed: ${(err as Error)?.message}`);
       return null;

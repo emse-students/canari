@@ -22,6 +22,17 @@ const LOGO_MAX_SIDE = 420;
 
 const JPEG_QUALITY = 82;
 
+/**
+ * THE ROUTE IS ANONYMOUS, SO THE DECODER IS BOUNDED. sharp's default accepts 268 megapixels: a
+ * 16000x16000 PNG that fits in 5 MB then renders in ~680 ms on all of libvips' threads, per request.
+ * 40 MP is above any phone photo (the app compresses a post image to 2048 px) and far below that.
+ * Over the limit sharp throws, and the card is refused like any unreadable source.
+ */
+export const POST_CARD_MAX_INPUT_PIXELS = 40_000_000;
+
+/** libvips would otherwise take every core for one request; two is enough for a card and a burst. */
+sharp.concurrency(2);
+
 /** What a card is built from. A post's photo wins; a logo is only used when there is no photo. */
 export interface PostCardSource {
   photo?: Buffer | null;
@@ -43,7 +54,7 @@ export interface PostCardSource {
  */
 export async function renderPostCard(source: PostCardSource): Promise<Buffer> {
   if (source.photo) {
-    return sharp(source.photo)
+    return sharp(source.photo, { limitInputPixels: POST_CARD_MAX_INPUT_PIXELS })
       .rotate()
       .resize(POST_CARD_WIDTH, POST_CARD_HEIGHT, { fit: 'cover', position: 'attention' })
       .jpeg({ quality: JPEG_QUALITY })
@@ -60,7 +71,7 @@ export async function renderPostCard(source: PostCardSource): Promise<Buffer> {
   });
   if (!source.logo) return base.jpeg({ quality: JPEG_QUALITY }).toBuffer();
 
-  const logo = await sharp(source.logo)
+  const logo = await sharp(source.logo, { limitInputPixels: POST_CARD_MAX_INPUT_PIXELS })
     .rotate()
     .resize(LOGO_MAX_SIDE, LOGO_MAX_SIDE, { fit: 'inside', withoutEnlargement: false })
     .png()

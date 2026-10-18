@@ -2,7 +2,6 @@ import {
   CORE_URL,
   DELIVERY_URL,
   SOCIAL_URL,
-  fetchJson,
   fetchJsonOrThrow,
   internalHeaders,
 } from '$lib/seo/internalApi';
@@ -442,7 +441,7 @@ async function agendaJsonLd(): Promise<JsonLdNode[] | null> {
   const headers = internalHeaders();
   const perCampus = await Promise.all(
     CAMPUSES.map((campus) =>
-      fetchJson<CalendarEventPayload[]>(
+      fetchJsonOrThrow<CalendarEventPayload[]>(
         `${SOCIAL_URL()}/api/associations/calendar/feed?from=${from.toISOString()}&to=${to.toISOString()}&campus=${campus}`,
         headers
       )
@@ -549,6 +548,14 @@ export async function resolveServerSeo(pathname: string): Promise<ServerSeoResul
   }
 
   // Structured data is pointless on a page that asks not to be indexed.
-  const jsonLd = base.noindex ? null : await staticPageJsonLd(normalizePath(pathname));
-  return { meta: cachePut(pathname, jsonLd ? { ...base, jsonLd } : base), degraded: false };
+  try {
+    const jsonLd = base.noindex ? null : await staticPageJsonLd(normalizePath(pathname));
+    return { meta: cachePut(pathname, jsonLd ? { ...base, jsonLd } : base), degraded: false };
+  } catch (err) {
+    if (!(err instanceof UpstreamUnavailableError)) throw err;
+    // The agenda's structured data is the one static-page enrichment: a timeout of its feed is the
+    // same absence of an answer, and must not be cached as an agenda without events.
+    console.warn(`[SEO] DEGRADED head for ${pathname}, enrichment unavailable: ${err.message}`);
+    return { meta: base, degraded: true };
+  }
 }

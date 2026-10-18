@@ -168,10 +168,19 @@ the intermittent Messenger preview failure, whose cause the access log could not
   deployable, so they move together). Before, a logo post offered a raw 512x512 crest with no
   dimensions, the shape Messenger most often drops. The JPEG carries no metadata (EXIF stripped). A
   photo or logo that cannot be read answers 404 and logs a warning; it never silently becomes a
-  different card.
+  different card. **The route is anonymous and nothing shared sits in front of it** (canari.emse.fr has
+  no CDN; the earlier claim that an edge cache absorbs it was false), so it is bounded in the service:
+  sharp decodes at most 40 MP (`POST_CARD_MAX_INPUT_PIXELS`; the default 268 MP let a 16000x16000
+  PNG cost ~680 ms on every thread, per request) with `sharp.concurrency(2)`; a body is read as a
+  stream and aborted at 5 MB (a declared `Content-Length` over it is refused unread - a logo URL is a
+  free admin string); and `PostCardCache` keeps rendered cards in a 32 MB LRU keyed by post id,
+  `updatedAt` and logo URL, with one render per burst and failures never remembered.
 - **A transport failure of the 1.5 s enrichment is not a refusal.** `fetchJsonOrThrow`
   (`internalApi.ts`) returns `null` for a 4xx (the service answered: cached like any answer) and
-  throws `UpstreamUnavailableError` for a timeout, a connection failure or a 5xx.
+  throws `UpstreamUnavailableError` for a timeout, a connection failure, a 5xx, a 408 or a 429 (the last two
+  are 4xx by number and transient by meaning). It lives in `upstream.ts` so `upstream.test.ts` can test the split
+  with a fake fetch. The agenda feed goes through it too, and a non-transport throw in the hook is
+  also served `no-store`.
   `resolveServerSeo` answers `{ meta, degraded }`; a degraded head is NEVER put in the 60 s cache
   (that cache kept one timeout alive for a minute of every unfurler's retries), logs
   `[SEO] DEGRADED head for <path>` at warn, and `hooks.server.ts` sends `Cache-Control: no-store`
@@ -182,9 +191,8 @@ the intermittent Messenger preview failure, whose cause the access log could not
   reads the map and refuses any other arm. The access log gained five fields to say which case a hit
   was: [logging](../infrastructure/logging.md#the-access-log-diagnostic-fields-2026-10-18).
 
-**Not decided here, and the user's to decide:** the preview serves every association post, including one
-that used to carry a campus audience (the per-post audiences table went in migration 073, so nothing
-narrows a post any more). Whether a campus-restricted post should still preview is open.
+**Not decided here, and the user's to decide:** whether a campus-restricted post should still preview
+([open-questions](../open-questions.md#decision-owed---should-a-shared-association-post-preview-whatever-its-audience-2026-10-18)).
 
 ### The image an unfurler can actually fetch
 

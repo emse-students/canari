@@ -172,16 +172,18 @@ export class PublicController {
    * The post's card - its first image cropped, else its association's logo, always 1200x630 JPEG -
    * as `og:image` points at it.
    *
-   * `@Res()` rather than a returned buffer because the content type is the stored one and Nest
-   * would otherwise serialise the Buffer as JSON. Cached for an hour: unfurlers refetch this far
-   * more often than they refetch the head, and the bytes only change if the post is edited.
+   * `@Res()` rather than a returned buffer because Nest would otherwise serialise the Buffer as JSON.
+   * `Cache-Control: max-age=3600` lets an unfurler and a browser keep it, but NOTHING SHARED SITS IN
+   * FRONT OF THIS ROUTE (canari.emse.fr has no CDN), so the service remembers the rendered card
+   * itself: a bounded LRU keyed by post, `updatedAt` and logo, one render per burst
+   * ({@link PostPreviewService.readShareableImage}).
    *
    * THE ONE THROTTLED PREVIEW ROUTE, because it is the only one that does work: a blob fetch from
-   * media-service and an AES-GCM decrypt of up to 5 MB, for a caller with no session. The edge
-   * cache absorbs the legitimate shape of this traffic - an unfurler fetches one `og:image` per
-   * URL and remembers it for weeks - so 20/min per IP sits far above real use and still bounds
-   * what a cache-busting query string can make this service do. The JSON preview beside it is a
-   * database read and stays unthrottled, where a burst of unfurlers is exactly what is expected.
+   * media-service, an AES-GCM decrypt of up to 5 MB and a JPEG encode, for a caller with no session.
+   * The throttle (20/min per IP) sits far above one unfurler's real use and bounds what a
+   * cache-busting query string can make this service do - the card cache is keyed on the post, not
+   * the URL, so a query string cannot defeat it. The JSON preview beside it is a database read and
+   * stays unthrottled, where a burst of unfurlers is exactly what is expected.
    */
   @UseGuards(ClientIpThrottlerGuard)
   @Get('posts/:postId/preview-image')

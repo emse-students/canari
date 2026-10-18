@@ -69,6 +69,13 @@ describe('renderPostCard - one shape for every post', () => {
     expect((await sharp(card).metadata()).exif).toBeUndefined();
   });
 
+  it('refuses an image over the pixel limit, whatever its byte size - a flat 8000x8000 PNG is tiny on the wire', async () => {
+    const flat = await solid(8000, 8000, '#000000');
+    expect(flat.length).toBeLessThan(1024 * 1024);
+    await expect(renderPostCard({ photo: flat })).rejects.toThrow(/pixel/i);
+    await expect(renderPostCard({ logo: flat })).rejects.toThrow(/pixel/i);
+  });
+
   it('rejects bytes that are not an image instead of serving a blank card', async () => {
     await expect(renderPostCard({ photo: Buffer.from('not an image') })).rejects.toThrow(
       /Input buffer/

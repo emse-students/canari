@@ -287,12 +287,9 @@ describe('PostPreviewService.readShareableImage - the card it serves', () => {
     }
   }
 
-  const bytesOf = (buf: Buffer): Response =>
-    ({
-      ok: true,
-      status: 200,
-      arrayBuffer: () => Promise.resolve(new Uint8Array(buf).buffer),
-    }) as Response;
+  /** A real Response: the service reads the body as a stream and the headers it declares. */
+  const bytesOf = (buf: Buffer, headers: Record<string, string> = {}): Response =>
+    new Response(new Uint8Array(buf), { status: 200, headers });
 
   const png = (w: number, h: number) =>
     sharp({ create: { width: w, height: h, channels: 3, background: '#ff8800' } })
@@ -370,6 +367,110 @@ describe('PostPreviewService.readShareableImage - the card it serves', () => {
       () => ({ ok: false, status: 500 }) as Response,
       async () => {
         expect(await service(post(), assoc).readShareableImage(UUID)).toBeNull();
+      }
+    );
+  });
+
+  const logoAssoc = {
+    name: 'BDE',
+    slug: 'bde',
+    logoUrl: '/api/media/public/logo-1?v=1',
+    archived: false,
+  };
+
+  it('renders a card ONCE for repeated hits on the same post, and again after an edit', async () => {
+    const logo = await png(512, 512);
+    await withFetch(
+      () => bytesOf(logo),
+      async (seen) => {
+        const svc = service(post(), logoAssoc);
+        const first = await svc.readShareableImage(UUID);
+        const second = await svc.readShareableImage(UUID);
+        expect(second?.data).toBe(first?.data);
+        expect(seen).toHaveLength(1);
+      }
+    );
+  });
+
+  it('shares one render across a burst that arrives together', async () => {
+    const logo = await png(512, 512);
+    await withFetch(
+      () => bytesOf(logo),
+      async (seen) => {
+        const svc = service(post(), logoAssoc);
+        const burst = await Promise.all(
+          Array.from({ length: 8 }, () => svc.readShareableImage(UUID))
+        );
+        expect(seen).toHaveLength(1);
+        expect(new Set(burst.map((card) => card?.data)).size).toBe(1);
+      }
+    );
+  });
+
+  it('keys the cache on updatedAt: an edited post is rendered again', async () => {
+    const logo = await png(512, 512);
+    await withFetch(
+      () => bytesOf(logo),
+      async (seen) => {
+        const row = post({ updatedAt: new Date('2026-09-02T10:00:00Z') });
+        const svc = service(row, logoAssoc);
+        await svc.readShareableImage(UUID);
+        row.updatedAt = new Date('2026-09-03T10:00:00Z');
+        await svc.readShareableImage(UUID);
+        expect(seen).toHaveLength(2);
+      }
+    );
+  });
+
+  it('does not remember a failed render: the next request asks again', async () => {
+    const logo = await png(512, 512);
+    let healthy = false;
+    await withFetch(
+      () => (healthy ? bytesOf(logo) : ({ ok: false, status: 503 } as Response)),
+      async (seen) => {
+        const svc = service(post(), logoAssoc);
+        expect(await svc.readShareableImage(UUID)).toBeNull();
+        healthy = true;
+        expect(await svc.readShareableImage(UUID)).not.toBeNull();
+        expect(seen).toHaveLength(2);
+      }
+    );
+  });
+
+  it('refuses a logo whose declared Content-Length is over the cap, without reading it', async () => {
+    await withFetch(
+      () => bytesOf(Buffer.from('x'), { 'content-length': String(6 * 1024 * 1024) }),
+      async () => {
+        expect(await service(post(), logoAssoc).readShareableImage(UUID)).toBeNull();
+      }
+    );
+  });
+
+  it('aborts a logo that streams past the cap with no Content-Length, holding no more than the cap', async () => {
+    const chunk = new Uint8Array(1024 * 1024);
+    let pulled = 0;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(chunk);
+      },
+    });
+    await withFetch(
+      () => new Response(endless, { status: 200 }),
+      async () => {
+        expect(await service(post(), logoAssoc).readShareableImage(UUID)).toBeNull();
+        // 5 MB cap, 1 MB chunks: stops at the sixth read instead of draining the stream.
+        expect(pulled).toBeLessThanOrEqual(8);
+      }
+    );
+  });
+
+  it('refuses a photo ciphertext over the cap too, by the same streaming rule', async () => {
+    const media = [{ mediaId: 'm1', key: 'aa', iv: 'bb', mimeType: 'image/png' }];
+    await withFetch(
+      () => bytesOf(Buffer.from('x'), { 'content-length': String(6 * 1024 * 1024) }),
+      async () => {
+        expect(await service(post({ media })).readShareableImage(UUID)).toBeNull();
       }
     );
   });

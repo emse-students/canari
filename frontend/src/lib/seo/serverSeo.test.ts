@@ -136,3 +136,20 @@ describe('a transport failure of the enrichment is not a refusal, and is never r
     );
   });
 });
+
+describe('the agenda page is held to the same rule', () => {
+  beforeEach(() => fetchJson.mockReset());
+
+  it('a timeout of the agenda feed is degraded and not cached as an agenda with no events', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    fetchJson.mockRejectedValue(new UpstreamUnavailableError('http://social/feed', 'timeout'));
+    const first = await resolveServerSeo('/calendar');
+    expect(first.degraded).toBe(true);
+    expect(first.meta.jsonLd).toBeUndefined();
+
+    fetchJson.mockResolvedValue([]);
+    const second = await resolveServerSeo('/calendar');
+    expect(second.degraded).toBe(false);
+    warn.mockRestore();
+  });
+});

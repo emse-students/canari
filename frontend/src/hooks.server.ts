@@ -74,6 +74,8 @@ export const handle: Handle = async ({ event, resolve }) => {
   } catch (err) {
     // The head is a bonus; the page is the app. Never let one failed lookup cost a navigation.
     console.log('[SEO] head resolution failed for', pathname, err);
+    // The page then carries the shell's head-less default: not to be remembered by any cache either.
+    degraded = true;
   }
 
   // THE HEAD OF A PAGE WHOSE ENRICHMENT GOT NO ANSWER IS NOT TO BE REMEMBERED by any cache between
