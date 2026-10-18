@@ -3572,18 +3572,30 @@ static BOOL CanariInstallRemoteNotificationHook(void) {
  *
  * UIKit records the delegate's optional-method answers when the delegate is SET; a method added
  * afterwards can go unseen. Firebase's own App Delegate Proxy does exactly this after it swizzles
- * (`GULAppDelegateSwizzler reassignAppDelegate`) - the proxy this file replaces by hand. The strong
- * local keeps the delegate alive across the nil assignment.
+ * (`GULAppDelegateSwizzler reassignAppDelegate`) - the proxy this file replaces by hand.
+ *
+ * THE DELEGATE IS THEN OWNED HERE, FOR THE LIFE OF THE PROCESS. `UIApplication.delegate` does not
+ * retain; the delegate `UIApplicationMain` created is kept by UIApplication itself, and a
+ * `setDelegate:` gives that up. Firebase keeps its own strong copy for that reason
+ * (`gOriginalAppDelegate`, set on the line after its re-assignment). Without one, the delegate is
+ * read to have died with this function's local: v1.3.0-alpha.1/2 abort the moment anything reads the
+ * accessibility tree, and the APNs token SpringBoard delivers never reaches the token hook. That
+ * cause is INFERRED, not yet read from a backtrace (docs/wiki/backlog.md, P1 of 2026-10-19).
  */
+static id<UIApplicationDelegate> g_appDelegateKeptAlive = nil;
+
 static void CanariReassignAppDelegate(void) {
   UIApplication *app = [UIApplication sharedApplication];
   id<UIApplicationDelegate> delegate = app.delegate;
   if (delegate == nil) {
+    NSLog(@"[CanariPush] app delegate absent - nothing to re-assign");
     return;
   }
+  g_appDelegateKeptAlive = delegate;
   app.delegate = nil;
   app.delegate = delegate;
-  NSLog(@"[CanariPush] app delegate re-assigned so UIKit reads the added methods");
+  NSLog(@"[CanariPush] app delegate re-assigned so UIKit reads the added methods (kept alive: %@)",
+        [g_appDelegateKeptAlive class]);
 }
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
