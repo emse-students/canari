@@ -238,6 +238,30 @@ change failing.
 - **Risk**: medium (each deletion needs its covering test named). Revalidate per file; for (a), show
   the new test failing on the bug the old one was written for.
 
+**State 2026-10-18 (draft PR `chore/tests-t5-source-text`): TRIAGE STARTED, NOT FINISHED.** Re-listed
+on `main`: 88 non-native files read app source (the page's 89, minus one that moved). Most are NOT
+"a behaviour tested through its text" but one of two things, and the first answer is that the 89
+overstates the problem - the 2,355 cases include files that are mostly behavioural and read a source
+for one case (`outbox` 129 cases, `distributionGroup` 52, `offlineUnlock` 32, `pinChange` 28):
+
+- **(b) static scans of the whole tree** (a pattern ban no single module can see; oxlint has no
+  cross-file rule here): `backendChoice`, `toastLocalization`, `versionProbeOnUnlockPath`,
+  `globalChatSingleton.importCycle`, `historyFrameConsumptionSeam`, `markupSources`, `layerLadder`.
+  Each states why in its header and each lists its offenders. KEEP.
+- **(c) one-statement wiring pins whose subject needs a live MLS client, store and gateway to run**
+  (`startupOrder`, `historyProbeSender`, `tabLeadership`, `signOutEndsLiveSession`,
+  `logoutResetsAccountState`, `useNotifications.webClick/.tapListener/.androidBody`,
+  `pinFirstSetupRefuted`, `reconnectListingWiring`, `landingArrivalMark`, `salonPageKeptAtBoot`).
+  Their headers already say why a harness would assert its own mocks. KEEP; the two that did not say
+  (`salonPageKeptAtBoot`, `LoginForm.flat`) gained the paragraph in this pull request.
+- **CSS and token rules** (`styles/*`, `stickyDatePillGlass`): happy-dom computes no styles, so a
+  rendering test cannot see a backdrop or a ladder. KEEP.
+
+No file was deleted and none rewritten: every deletion needs a covering test named, and the ones
+read so far have none. **What is left, in order**: read the remaining ~55 headers against the three
+classes above; `savedStateFailure.test.ts` (4 cases, mostly behavioural, one source read) and the
+behaviour-heavy four named above are the first candidates to split the source case out.
+
 ### WP-T6 (S) - Wall clocks out of the suite
 
 - **Change**: `ChatArea.entryWindow` loses its 2,000 ms `waitFor` budgets (modelled geometry, a
