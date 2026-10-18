@@ -13,7 +13,9 @@ MiGallery's and the Cercle's.
 
 Canari is the one variant, deliberately: its 1 h access token stays STATELESS, because six services
 and nginx verify it without touching a database. The row backs the REFRESH token instead, and carries
-`sid` + `jti` (`apps/core-service/src/auth/auth-sessions.service.ts`).
+`sid` + `jti` (`apps/core-service/src/auth/auth-sessions.service.ts`). On Android a session may also
+own ONE restore key, which dies with the row and moves the session to a new phone rather than adding
+one ([account-restore](account-restore.md)).
 
 ## What a cookie is, and is not
 
