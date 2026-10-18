@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { isChannelEventFrame, isHeartbeatFrame } from './channelEventTypes';
+import { isChannelEventFrame, isEphemeralFrame, isHeartbeatFrame } from './channelEventTypes';
 
 /**
  * The routing table both socket clients ask, and the four frames it used to drop.
@@ -98,6 +98,20 @@ describe('isHeartbeatFrame', () => {
   it('is disjoint from the channel-event table, so neither can shadow the other', () => {
     for (const type of ['ping', 'pong']) {
       expect(isChannelEventFrame(type)).toBe(false);
+    }
+  });
+});
+
+describe('isEphemeralFrame', () => {
+  it('claims the typing and read signals', () => {
+    for (const type of ['typing', 'channel.typing', 'channel.read']) {
+      expect(isEphemeralFrame(type)).toBe(true);
+    }
+  });
+
+  it('claims nothing a reader needs announced', () => {
+    for (const type of ['', 'channel.message.created', 'welcome_request', 'workspace.updated']) {
+      expect(isEphemeralFrame(type)).toBe(false);
     }
   });
 });
