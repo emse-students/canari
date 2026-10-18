@@ -1344,7 +1344,7 @@ export async function loginImpl(
           callMsg as ICallMsg,
           ctx.getUserId()
         );
-        ctx
+        void ctx
           .getCallService()
           ?.handleCallSignal(
             senderId,

@@ -16,7 +16,8 @@ import { deployEnvironment } from '$lib/utils/deployEnvironment';
  * Calling as the STORE BINARIES carry it: the native ring (Android CallStyle + full-screen intent,
  * iOS PushKit/CallKit) and the two store declarations that go with it. Mirrored by `CALLS_ENABLED`
  * in `CanariFirebaseMessagingService.kt` - the push service runs when no webview exists and cannot
- * read this file - and `pushSilentDecrypt.test.ts` asserts the two agree.
+ * read this file - and `callsCompiled.test.ts` asserts that it, the ObjC `kCanariCallsEnabled`, the iOS
+ * `voip` background mode and Android's `USE_FULL_SCREEN_INTENT` all agree with this constant.
  *
  * **OFF.** The whole calling surface has never been exercised on hardware: the campaign board
  * carries twenty CALL rows and NOT ONE has ever run (`docs/wiki/mechanism-audit.md`), the SFU has

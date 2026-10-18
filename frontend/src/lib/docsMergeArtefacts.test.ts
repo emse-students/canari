@@ -21,7 +21,7 @@ import { join, relative, resolve } from 'node:path';
  * is the mechanical signature of that rule being broken by a merge, so it is the thing asserted.
  *
  * **This lives in the frontend suite because that is where repo-walking guards already live** -
- * `serverProse.test.ts` walks `src/`, `iosCallDeclarations.test.ts` walks `src-tauri/` - and because
+ * `serverProse.test.ts` walks `src/`, `callsCompiled.test.ts` reads `src-tauri/` - and because
  * it is the suite CI runs on every pull request. A guard nothing runs is a guard that does not exist.
  */
 const ROOT = resolve(process.cwd(), '..');
