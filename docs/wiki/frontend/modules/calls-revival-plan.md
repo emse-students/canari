@@ -286,8 +286,8 @@ Information or wants a link; both have been used)**.
    screen **(unverified)**.
 6. A second call is declined from CallKit; a third goes unanswered -> the missed-call message in the DM.
 7. From the conversation, show **report** and **block** (guideline 1.2: a way to report and block
-   abusive users exists for UGC; calling a blocked user must not ring - **(unverified: whether
-   `/api/calls/ring` consults blocks today)**, a WP-C7 item).
+   abusive users exists for UGC; calling a blocked user must not ring - **built 2026-10-18**:
+   `initiate` refuses a call across a block, so nothing rings ([calls](calls.md#the-switches-agree-and-a-silent-frame-stays-unread))).
 
 **Review notes:** two demo accounts are needed (a reviewer cannot call themselves); either the reviewer
 gets both credentials and two devices are assumed, or a staffed window is offered. A bot that answers
@@ -299,7 +299,7 @@ calls would need MLS membership and is not proposed.
 | --- | --- |
 | App Store privacy label - Audio Data, Photos or Videos | media is E2E and never stored; whether that is "not collected" under Apple's definition is **(unverified)** |
 | Call metadata (who called whom, duration, IP to Cloudflare TURN) | the SFU and chat-delivery logs hold user ids, room ids, durations; Cloudflare sees IPs. Likely "Usage Data / Product Interaction" linked to identity - decide, and say it in the privacy policy ([store-listings](../../store-listings.md)) |
-| Google Play - `USE_FULL_SCREEN_INTENT` | Android 14+ grants it by default only to calling/alarm apps; Play asks for a declaration **(unverified: current form)**; the manifest test `androidFcmManifest.test.ts` asserts it ABSENT today and must flip |
+| Google Play - `USE_FULL_SCREEN_INTENT` | Android 14+ grants it by default only to calling/alarm apps; Play asks for a declaration **(unverified: current form)**; `callsCompiled.test.ts` asserts it present exactly when `CALLS_COMPILED` is true |
 | Google Play - foreground service `phoneCall`/`microphone` | needs a declaration and, per Play's form, a video **(unverified)** - record it from the Tier B Mi 9T cells like the Apple one |
 | Info.plist strings | microphone and camera strings must name calls; they are French literals in `Info.plist` today, not Paraglide |
 
@@ -312,8 +312,9 @@ switches - a store reads the binary - but everything ELSE can.
 **Proposal:**
 
 1. **One compile-time fact, `CALLS_COMPILED`**, still in `frontend/src/lib/features.ts`, mirrored in
-   Kotlin and ObjC with the existing agreement test (`pushSilentDecrypt.test.ts` already asserts TS ==
-   Kotlin; extend to ObjC, plist and manifest). It says "this binary carries the declarations".
+   Kotlin and ObjC with ONE agreement test - **built 2026-10-18**: `callsCompiled.test.ts` asserts
+   Kotlin, ObjC, plist, manifest and the microphone purpose string against it
+   ([calls](calls.md#the-switches-agree-and-a-silent-frame-stays-unread)). It says "this binary carries the declarations".
 2. **One runtime mode, server-owned: `platform_config.calls_mode` = `off | testers | on`**, next to
    `maintenance_enabled` and `min_client_version` (`apps/core-service/src/platform/entities/platform-config.entity.ts`),
    served with them in `/api/version` (read by `frontend/src/lib/utils/appVersion.ts`), changed from the
@@ -347,7 +348,7 @@ migrations and the adversarial reviews; **sonnet** for mechanical work.
 | WP-C4 | **Decision**: keep Rust SFU 0.17 pinned / port to 0.20 / managed SFU | this page section 5, the feasibility page | - | the user, on the lead's recommendation | **F1, F2, F3, F7**, WP-C1 | a recorded decision; if "keep", `webrtc = "=0.17.n"` pinned |
 | WP-C5 | Android: ring and background - FSI back + `canUseFullScreenIntent`, foreground service `phoneCall`, caller name from the device cache (not the payload), notif-level decision, audio routing incl. Bluetooth | `CanariFirebaseMessagingService.kt`, `AndroidManifest.xml`, `androidFcmManifest.test.ts` | K6, K7, K8, K10 on E4; NOTIF rows unaffected | opus | WP-C1 | Tier B Android cells `PASS` |
 | WP-C6 | iOS: **spike first** - does WKWebView keep capturing and playing with the screen locked under an active CallKit call, and can the answer reach a call while MLS sits behind the PIN? Then PushKit/CallKit, `voip` + `audio` modes, `AVAudioSession` handover | `canari_push.mm`, `canari_iOS/Info.plist`, `iosCallDeclarations.test.ts`, `stores/pendingCallAccept.ts` | K6, K7, K8 on E6 | opus | WP-C1 | spike verdict recorded; if WKWebView cannot, the user chooses: foreground-only calls without `voip`, or a native media path (a separate chantier) |
-| WP-C7 | Call UX: history list from the call system messages, busy/second-call answer, blocked users never ring, permission strings naming calls, the ring obeying (or not) the conversation level | `callSystemMessages.ts`, `CallOverlay.svelte`, `calls.service.ts` ring fan-out, `messages/fr.json` / `en.json` | unit + K9, K12 | sonnet (strings, UI), opus review of the ring rule | - | CALL-4/5/7/17/18/19 `PASS` |
+| WP-C7 | Call UX: history list from the call system messages, busy/second-call answer, ~~blocked users never ring~~ (built 2026-10-18), permission strings naming calls (asserted against `CALLS_COMPILED` since 2026-10-18; the text is written in the revival commit), the ring obeying (or not) the conversation level | `callSystemMessages.ts`, `CallOverlay.svelte`, `calls.service.ts` ring fan-out, `messages/fr.json` / `en.json` | unit + K9, K12 | sonnet (strings, UI), opus review of the ring rule | - | CALL-4/5/7/17/18/19 `PASS` |
 | WP-C8 | The campaign: rung 15 CALL-1..20 + the matrix tiers B then C, video recorded from the iPhone cells | [board](../../cross-client-testing.md), `tools/cross-client-harness/README.md` | the rows themselves | lead + device agents + the user for N4/SIM/headset | WP-C2..C7 | Tier B green on an alpha (mode `testers`); Tier C green before the stable |
 | WP-C9 | Store: the Apple video + notes, privacy labels, Play FSI/FGS declarations, privacy policy text | this page section 8, `store/`, [store-listings](../../store-listings.md) | `submit.mjs --check-notes` | sonnet + the user (App Store Connect, Play Console are one-off clicks) | WP-C8 Tier B | the stable passes App Review with `voip` declared |
 | WP-C10 | ICE restart on network change (K11) instead of ending the call | `CallService.ts` `onconnectionstatechange`, SFU renegotiation | K11 on both phones | opus | WP-C4 | Wi-Fi -> 4G keeps the call with a gap measured in `[CALL_REPORT]` |

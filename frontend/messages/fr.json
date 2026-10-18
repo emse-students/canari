@@ -533,6 +533,7 @@
   "call_e2e_encrypted_title": "Appel chiffré de bout en bout",
   "call_e2e_unsupported": "Ce navigateur ne sait pas chiffrer un appel de bout en bout : l'appel n'a pas été lancé. Mettez-le à jour ou utilisez l'application.",
   "call_over": "Cet appel est terminé.",
+  "call_unavailable": "Cet appel ne peut pas être passé.",
   "call_setup_failed": "L'appel n'a pas pu démarrer. Réessayez dans un instant.",
   "call_encrypted_label": "Chiffré",
   "call_label": "Appel",

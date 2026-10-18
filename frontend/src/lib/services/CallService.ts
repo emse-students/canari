@@ -25,6 +25,7 @@ import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/callSystemMessages';
 import { CALLS_ENABLED } from '$lib/features';
+import { refusalCodeOf } from '$lib/users/blocks';
 import { describeSelectedPair } from '$lib/utils/callStats';
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'incall' | 'ended';
@@ -574,7 +575,8 @@ export class CallService {
       throw new CallInitiateError(
         'initiate',
         res.status,
-        `calls/initiate failed (${res.status})${detail ? `: ${detail}` : ''}`
+        `calls/initiate failed (${res.status})${detail ? `: ${detail}` : ''}`,
+        refusalCodeOf(detail)
       );
     }
     return res.json() as Promise<{ roomId: string; roomToken: string; ringTimeoutMs: number }>;
@@ -597,7 +599,8 @@ export class CallService {
       throw new CallInitiateError(
         'room-token',
         res.status,
-        `calls/room-token failed (${res.status})${detail ? `: ${detail}` : ''}`
+        `calls/room-token failed (${res.status})${detail ? `: ${detail}` : ''}`,
+        refusalCodeOf(detail)
       );
     }
     const data = (await res.json()) as { roomToken: string };

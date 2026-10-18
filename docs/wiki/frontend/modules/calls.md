@@ -75,7 +75,7 @@ Nothing in this lot needs the DSI.
 
 | Constant | Value | Holds |
 |---|---|---|
-| `CALLS_COMPILED` | `false` | the store binaries' calling: native ring, `voip`, `USE_FULL_SCREEN_INTENT`. Mirrored by the Kotlin `CALLS_ENABLED` (`pushSilentDecrypt.test.ts` asserts the two agree). The four native switches of the table above did NOT move |
+| `CALLS_COMPILED` | `false` | the store binaries' calling: native ring, `voip`, `USE_FULL_SCREEN_INTENT`. Mirrored by the Kotlin `CALLS_ENABLED`; `callsCompiled.test.ts` asserts all five switches of the table above agree with it ([below](#the-switches-agree-and-a-silent-frame-stays-unread)). The four native switches did NOT move |
 | `CALLS_ENABLED` | `CALLS_COMPILED \|\| deployEnvironment() === 'development'` | the in-app call buttons, `startCall`, `handleCallSignal`, the sibling check |
 | `CALLS_VIDEO_ENABLED` | `false` | the video-call button and both camera toggles; waits for WP-C3 (whole-frame encryption vs H.264) |
 
@@ -198,6 +198,38 @@ build, all of it blocks production):
   the IV/AAD) closes the nonce-collision and reflection questions.
 - **The `fp=` log line prints the first 4 BYTES OF THE KEY** (`CallService.setupEncryption`). Log a
   hash of the key instead (e.g. the first bytes of SHA-256), never key material.
+
+## The switches agree, and a silent frame stays unread
+
+**One test, one fact (2026-10-18).** `frontend/src/lib/mobile/callsCompiled.test.ts` reads
+`CALLS_COMPILED` from `features.ts` and asserts that the four other switches of the table at the top
+of this page AGREE with it - the Kotlin `CALLS_ENABLED`, the ObjC `kCanariCallsEnabled`, the `voip`
+entry of `UIBackgroundModes`, the `USE_FULL_SCREEN_INTENT` tag - and that the microphone purpose
+string (base `Info.plist`, `fr.lproj`, `en.lproj`) names calls exactly when calls are compiled. It
+replaced three tests that each asserted "off" (`iosCallDeclarations.test.ts`, two cases of
+`androidFcmManifest.test.ts`, one of `pushSilentDecrypt.test.ts`): a hard-coded "off" fails the
+revival commit for doing its job, an agreement fails it only when it forgets one of the five. Read
+as text: it proves what is written, never what runs.
+
+**The revival no longer reopens the Android push lane.** The Kotlin silent-frame guard used to be
+`silent && !CALLS_ENABLED && isKeyDistribution != true`: flipping the switch would have decrypted
+EVERY silent frame again - every read receipt, 10.7 s of Argon2 each on a Mi 9T (NOTIF-11) - to find
+the rare silent `call_invite`. Nothing needs that decrypt: every current caller rings through the
+cleartext `call_ring` push, sent and awaited BEFORE the MLS invite (a refused ring ends the call),
+and stops it with `call_ring_end`. The guard is now `silent && isKeyDistribution != true`, identical
+today (the switch is off) and unchanged by the flip; `pushSilentDecrypt.test.ts` fails if it ever
+reads the switch again. The MLS `call_invite` branch below it serves only a NON-silent invite from a
+pre-WP-XP-5 caller.
+
+**A call is never placed across a block (WP-C7).** `initiate` refuses `403 { code: 'USER_BLOCKED' }`
+when a block stands between the caller and the other member, in either direction - before a room is
+bound, so no ring window opens, no invite leaves and nothing rings, in-app or native. `room-token`
+refuses the same for a block set while the call rang. The client reads the code
+(`CallInitiateError.code`) and says `call_unavailable` ("this call cannot be placed"), never
+who blocked whom ([moderation-and-blocking](../../moderation-and-blocking.md#what-a-block-does-exhaustively)).
+Pinned by `calls.service.spec.ts` and `callFailure.test.ts`. Not covered: a MODIFIED client that
+sends the MLS `call_invite` without `initiate` still rings an open app; its answer is refused at
+`room-token` (no binding), so no media can flow.
 
 ## Responsibilities
 

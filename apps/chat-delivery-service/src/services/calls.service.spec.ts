@@ -26,7 +26,11 @@ describe('CallsService', () => {
   const groupMemberRepo = {
     findOne: jest.fn(),
     find: jest.fn(),
-    manager: { query: jest.fn(() => Promise.resolve([])) },
+    manager: {
+      query: jest.fn((_sql: string, _params?: unknown[]): Promise<unknown[]> =>
+        Promise.resolve([])
+      ),
+    },
   };
   const pushTokenRepo = {
     find: jest.fn(),
@@ -298,6 +302,7 @@ describe('CallsService', () => {
     beforeEach(() => {
       process.env.CALL_ROOM_SECRET = 'test-secret';
       groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'caller' });
+      groupMemberRepo.find.mockResolvedValue([{ userId: 'caller' }, { userId: 'callee' }]);
     });
     afterEach(() => {
       delete process.env.CALL_ROOM_SECRET;
@@ -559,6 +564,99 @@ describe('CallsService', () => {
       expect(result.rang).toBe(0);
       expect(pushTokenRepo.find).not.toHaveBeenCalled();
       expect(captured(warn)).toContain('[ring] call=call-1 group=group-1 has no other member');
+    });
+  });
+
+  /**
+   * WP-C7: calling somebody who blocked you - or whom you blocked - must not ring. Refused at
+   * `initiate`, so the caller never sends the MLS invite and nothing rings anywhere; and at the
+   * join token, for a block set while the call rang.
+   */
+  describe('a call is never placed across a block', () => {
+    /** `user_blocks` holds a row between `caller` and `callee`, whoever set it. */
+    const blockBetweenCallerAndCallee = () =>
+      groupMemberRepo.manager.query.mockImplementation((sql: string, params?: unknown[]) =>
+        Promise.resolve(
+          sql.includes('user_blocks') && params?.includes('caller') && params?.includes('callee')
+            ? [{ '?column?': 1 }]
+            : []
+        )
+      );
+
+    beforeEach(() => {
+      process.env.CALL_ROOM_SECRET = 'test-secret';
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'caller' });
+      // Rows are per device: the callee's two devices are one person to check.
+      groupMemberRepo.find.mockResolvedValue([
+        { userId: 'caller' },
+        { userId: 'callee' },
+        { userId: 'callee' },
+      ]);
+    });
+    afterEach(() => {
+      delete process.env.CALL_ROOM_SECRET;
+      groupMemberRepo.manager.query.mockImplementation(() => Promise.resolve([]));
+      jest.restoreAllMocks();
+    });
+
+    it('refuses initiate with the neutral USER_BLOCKED answer, and binds no room', async () => {
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      blockBetweenCallerAndCallee();
+
+      const refusal = await service.initiateCall('caller', 'group-1').catch((e: unknown) => e);
+
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect((refusal as ForbiddenException).getResponse()).toEqual({
+        code: 'USER_BLOCKED',
+        message: 'This call cannot be placed.',
+      });
+      // No binding: without one, no ring window can open and no callee can ever get a token.
+      expect(redis.set).not.toHaveBeenCalled();
+      expect(captured(log)).toContain(
+        '[call] initiate group=group-1 REFUSED user=caller: a block stands between the two'
+      );
+      // Checked once per person, not once per device row.
+      const blockQueries = groupMemberRepo.manager.query.mock.calls.filter(([sql]) =>
+        String(sql).includes('user_blocks')
+      );
+      expect(blockQueries).toHaveLength(1);
+    });
+
+    it('asks in both directions - the callee may be the one who blocked', async () => {
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      blockBetweenCallerAndCallee();
+
+      await expect(service.initiateCall('caller', 'group-1')).rejects.toThrow(ForbiddenException);
+
+      const [sql, params] = groupMemberRepo.manager.query.mock.calls.find(([q]) =>
+        String(q).includes('user_blocks')
+      )!;
+      expect(params).toEqual(['caller', 'callee']);
+      expect(sql).toMatch(/"blockerId" = \$1 AND "blockedId" = \$2/);
+      expect(sql).toMatch(/"blockerId" = \$2 AND "blockedId" = \$1/);
+    });
+
+    it('places the call when no block stands', async () => {
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+
+      await expect(service.initiateCall('caller', 'group-1')).resolves.toHaveProperty('roomId');
+    });
+
+    it('refuses the join token for a block set while the call rang', async () => {
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+      groupMemberRepo.find.mockResolvedValue([{ userId: 'caller' }]);
+      await service.ringGroup('caller', 'group-1', roomId, false);
+
+      blockBetweenCallerAndCallee();
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-1', userId: 'callee' });
+      const refusal = await service
+        .requestRoomToken('callee', 'group-1', roomId)
+        .catch((e: unknown) => e);
+
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({ code: 'USER_BLOCKED' });
     });
   });
 });

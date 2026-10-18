@@ -18,6 +18,7 @@ import { getApps } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { ApnsVoipService } from './apns-voip.service';
 import { resolveUserDisplayName } from '../utils/display-name';
+import { isBlockedBetween } from '../utils/user-blocks';
 
 /** ICE server entry returned to WebRTC clients. */
 export interface IceServerConfig {
@@ -153,6 +154,9 @@ export class CallsService {
       throw new ForbiddenException('Not a member of this group');
     }
 
+    const others = await this.otherMemberIds(groupId, userId);
+    await this.refuseIfBlocked(userId, others, `initiate group=${groupId}`);
+
     const roomSecret = process.env.CALL_ROOM_SECRET?.trim();
     if (!roomSecret) {
       this.logger.error('[calls] CALL_ROOM_SECRET is not set - cannot issue room tokens');
@@ -221,6 +225,9 @@ export class CallsService {
       );
       throw new ForbiddenException('This call does not belong to this conversation');
     }
+    // A block set WHILE the call rang: `initiate` refused every block that already stood, so this
+    // is the only one left, and it is answered before a token lets the two be connected.
+    await this.refuseIfBlocked(userId, [binding.callerId], `join-token room=${roomId}`);
     const answerByRaw = await this.redis.get(callAnswerByKey(roomId));
     const answerBy = answerByRaw === null ? null : Number(answerByRaw);
     if (answerBy === null || !Number.isFinite(answerBy)) {
@@ -545,11 +552,7 @@ export class CallsService {
     // BEFORE the fan-out: the window must not depend on how long FCM and APNs take to answer.
     await this.openRingWindow(callerId, groupId, callId);
 
-    const members = await this.groupMemberRepo.find({
-      where: { groupId },
-      select: { userId: true },
-    });
-    const calleeIds = [...new Set(members.map((m) => m.userId))].filter((id) => id !== callerId);
+    const calleeIds = await this.otherMemberIds(groupId, callerId);
     if (calleeIds.length === 0) {
       this.logger.warn(`[ring] call=${callId} group=${groupId} has no other member to ring`);
       return { rang: 0 };
@@ -656,6 +659,39 @@ export class CallsService {
     if (getApps().length > 0) return true;
     this.logger.error(`[${scope}] Firebase Admin is not initialised - no device can be reached`);
     return false;
+  }
+
+  /** Every OTHER user holding a membership row in `groupId` (rows are per device, so deduped). */
+  private async otherMemberIds(groupId: string, userId: string): Promise<string[]> {
+    const members = await this.groupMemberRepo.find({
+      where: { groupId },
+      select: { userId: true },
+    });
+    return [...new Set(members.map((m) => m.userId))].filter((id) => id !== userId);
+  }
+
+  /**
+   * A CALL IS NEVER PLACED ACROSS A BLOCK, in either direction (WP-C7, the guideline 1.2 shot of the
+   * App Review video: calling somebody who blocked you must not ring). A block leaves an existing
+   * conversation readable (`docs/wiki/moderation-and-blocking.md`), but a ring is a new intrusion
+   * on a person who asked for none, so it is refused here - where every call starts - rather than
+   * filtered at the fan-out: refused at `initiate`, the caller never sends the MLS invite either,
+   * so no device rings, in-app or native. The answer is the same `USER_BLOCKED` code the other
+   * block refusals carry, and the same neutral sentence: never who blocked whom.
+   *
+   * Calls are 1:1 today, so ANY block between the two members refuses. A group call (WP-C11) must
+   * decide whether one block refuses the call or only drops that member.
+   */
+  private async refuseIfBlocked(userId: string, others: string[], scope: string): Promise<void> {
+    for (const other of others) {
+      if (await isBlockedBetween(this.groupMemberRepo.manager, userId, other)) {
+        this.logger.log(`[call] ${scope} REFUSED user=${userId}: a block stands between the two`);
+        throw new ForbiddenException({
+          code: 'USER_BLOCKED',
+          message: 'This call cannot be placed.',
+        });
+      }
+    }
   }
 
   /** Membership guard shared by the ring endpoints. */
