@@ -8,6 +8,7 @@
   "auth_test_login_password": "External login (service account)",
   "auth_secure_login": "Secure login with your Mines account",
   "auth_account_erasure_pending": "This account is being deleted. Try again later to create a new one.",
+  "auth_account_deleted_here": "This account was deleted. Sign in online to create a new one.",
   "auth_account_erasure_blocked": "The deletion of this account is stuck. Contact bureau@rootz-emse.fr and we will finish it.",
   "auth_privacy": "Privacy",
   "auth_terms": "Terms",

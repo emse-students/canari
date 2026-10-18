@@ -86,6 +86,18 @@ why nothing could be inferred from them agreeing.
 **A FOURTH COPY IS THE SIGNAL TO RECONSIDER THE PACKAGE, not to add a fourth spelling of the rule.**
 The same trade `shared-ts` was deleted over applies here, and it is the same paragraph below.
 
+### `presence-audience.cases.json`
+
+The presence-audience question (WP-PRESENCE, 2026-10-18): `GET /api/presence` asks chat-delivery and
+social-service `{ viewerId, userIds }` and takes the union of the answers
+([chat-gateway](services/chat-gateway.md#who-may-see-whose-presence-wp-presence-2026-10-18)). Same
+two mechanisms as above: the two services validate it with ONE byte-identical module,
+`src/utils/presence-audience.ts` (declared in `declared-duplicates.mjs`, its spec copied beside it),
+and this file pins what that module answers plus `maxUserIds`, the cap the gateway's
+`MAX_PRESENCE_USERS` must equal. Read by both copies of `presence-audience.spec.ts` and by a test in
+`apps/chat-gateway/src/presence.rs`, which is why CI's gateway filter names `libs/contracts/` too.
+`expected: null` is a refusal: a malformed question is a 400, never an empty audience.
+
 ## A SHAPE IS NOT A RULE, AND IT IS PINNED WHERE IT IS WRITTEN (2026-09-22)
 
 A case table answers "given this input, what is the right answer" - a BEHAVIOUR three

@@ -84,6 +84,8 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       REDIS_URL: redis://redis:6379
       DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
+      SOCIAL_SERVICE_URL: http://social-service:3014
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
       ALLOW_ORIGIN: "*"
     depends_on:
       redis:

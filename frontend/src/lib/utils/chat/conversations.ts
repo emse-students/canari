@@ -5,6 +5,7 @@
  */
 import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import type { IStorage, ConversationMeta, StoredMessage } from '$lib/db';
 import {
   mapStoredMessagesToChatMessages,
@@ -317,7 +318,7 @@ export function markConversationDeletedRemotely(
 
 /** Returns the localStorage key used to store the set of archived conversation IDs for a user. */
 export function archiveStorageKey(uid: string): string {
-  return `canari_archived_conversations_${uid.toLowerCase()}`;
+  return ACCOUNT_KEY.archivedConversations(uid);
 }
 
 /** Saves the current set of archived conversation IDs for a user to localStorage. */

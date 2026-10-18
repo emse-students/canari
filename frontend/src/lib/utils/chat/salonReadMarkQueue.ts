@@ -23,6 +23,7 @@
  */
 import type { ReadWatermarks } from '$lib/types';
 import { appendLog } from '$lib/utils/sessionLog';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { mergeReadWatermarks, watermarkFor } from './readState';
 
 /** One owed mark: `at` is the read point, `serverAt` the server clock of the newest row it covers. */
@@ -40,7 +41,7 @@ export type SendSalonMark = (channelId: string, at: number, serverAt?: number) =
 type MarkSpace = 'salon' | 'dm';
 
 const keyFor = (space: MarkSpace, userId: string): string =>
-  `canari.${space === 'salon' ? 'salonReadMarks' : 'dmReadMarks'}.${userId.toLowerCase()}`;
+  space === 'salon' ? ACCOUNT_KEY.salonReadMarks(userId) : ACCOUNT_KEY.dmReadMarks(userId);
 
 function load(space: MarkSpace, userId: string): Owed {
   try {

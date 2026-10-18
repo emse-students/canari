@@ -207,6 +207,20 @@ export class BiometricService {
   }
 
   /**
+   * Deletes ONE account's keystore entry, asking nothing, and leaves the "configured" flags alone.
+   *
+   * For an account DELETION: the flags are per install, and another account enrolled here still
+   * unlocks with its own entry (`isKeyPresent` gates each alias). Unlike {@link forget}, a failure
+   * is THROWN, so the wipe that called it reports the entry as surviving instead of a warn line.
+   *
+   * @param alias - the exact entry, `mls_device_key_<userId>_<deviceId>`
+   */
+  static async deleteKeyEntry(alias: string): Promise<void> {
+    if (!isTauri()) return;
+    await invoke(keystoreCommand('deleteKeyBytes'), { payload: { alias } });
+  }
+
+  /**
    * Turns biometric unlock off from Settings: confirms the owner, then forgets the key.
    *
    * The prompt is load-bearing here - if the user cancels, `authenticate()` throws and nothing is

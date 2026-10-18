@@ -2,6 +2,7 @@ import { get, writable } from 'svelte/store';
 import { apiFetch } from '$lib/utils/apiFetch';
 import { gatewayUrl } from '$lib/utils/apiUrl';
 import { createPausableInterval } from '$lib/utils/backgroundPausableInterval';
+import { Log } from '$lib/utils/Log';
 
 /**
  * Svelte store mapping each watched user ID to a boolean indicating whether
@@ -118,7 +119,10 @@ export function unwatchUsers(userIds: string[]) {
 
 /**
  * Immediately fetches presence status for all watched users from the gateway and
- * merges the result into `presenceMap`. Silently skips non-JSON or 401 responses.
+ * merges the result into `presenceMap`. An asked user ABSENT from the answer is one this account may
+ * not see (the gateway shows presence only to people sharing a conversation or a community) and is
+ * dropped from the map: unknown, never "offline". Silently skips non-JSON or 401 responses; any
+ * other failure (a 503 when the gateway cannot establish the audience) keeps the map as it was.
  *
  * At most one request is in flight at a time: see {@link inFlight}.
  */
@@ -132,7 +136,8 @@ export async function checkPresenceNow(): Promise<void> {
 }
 
 async function pollPresence(): Promise<void> {
-  const usersStr = Array.from(peerIdsToPoll).join(',');
+  const asked = Array.from(peerIdsToPoll);
+  const usersStr = asked.join(',');
   try {
     const baseUrl = gatewayUrl();
     const res = await apiFetch(`${baseUrl}/api/presence?users=${usersStr}`);
@@ -146,13 +151,22 @@ async function pollPresence(): Promise<void> {
       // Only replace the map object when at least one value actually changed,
       // preventing cascading re-renders on every poll when statuses are stable.
       let cameOnline: string[] = [];
+      let hidden: string[] = [];
       presenceMap.update((prev) => {
         // An offline -> online EDGE, not the level: a user already known to be online says nothing
         // new, and a user we have never seen before is not "back" either.
         cameOnline = Object.keys(data).filter((k) => data[k] === true && prev[k] === false);
-        const hasChange = Object.keys(data).some((k) => prev[k] !== data[k]);
-        return hasChange ? { ...prev, ...data } : prev;
+        // An asked id ABSENT from a 200 is one this account may not see (WP-PRESENCE: only people
+        // sharing a conversation or a community with them). Its last value is dropped, so a person
+        // who stopped sharing anything does not keep a dot frozen at what it last was.
+        hidden = asked.filter((k) => !(k in data) && k in prev);
+        const hasChange = hidden.length > 0 || Object.keys(data).some((k) => prev[k] !== data[k]);
+        if (!hasChange) return prev;
+        const next = { ...prev, ...data };
+        for (const k of hidden) delete next[k];
+        return next;
       });
+      if (hidden.length > 0) Log.d(`[presence] ${hidden.length} watched user(s) no longer visible`);
       if (cameOnline.length > 0) notifyCameOnline(cameOnline);
       return;
     }

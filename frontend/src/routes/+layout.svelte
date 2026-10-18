@@ -34,7 +34,9 @@
   import IdentitySplitOverlay from '$lib/components/shared/IdentitySplitOverlay.svelte';
   import EnvironmentBanner from '$lib/components/shared/EnvironmentBanner.svelte';
   import MaintenanceAdminBanner from '$lib/components/shared/MaintenanceAdminBanner.svelte';
-  import { isGlobalAdmin } from '$lib/stores/user';
+  import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
+  import { accountLiveness, clearAuthLocally } from '$lib/stores/auth';
+  import { startDeletedAccountGuards } from '$lib/utils/deletedAccountGuards';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
   import OfflineBanner from '$lib/components/shared/OfflineBanner.svelte';
   import OpenInAppBanner from '$lib/components/shared/OpenInAppBanner.svelte';
@@ -154,6 +156,15 @@
     // A DM read mark a killed process still owed goes to the outbox the moment one is registered,
     // whatever route the app opens on (`flushOwedDmReadMarks`).
     const stopOwedDmMarkDrain = drainOwedDmReadMarksOnOutbox(() => globalSession.userId || null);
+    // A wipe a deleted account is still owed, and a deletion announced by another tab.
+    const stopDeletedAccountGuards = startDeletedAccountGuards(accountLiveness, {
+      currentUserId,
+      endSession: async (userId) => {
+        await clearAuthLocally();
+        await globalSession.releaseDeletedAccount(userId);
+        await goto(resolve('/login'), { replaceState: true });
+      },
+    });
 
     const onVersionCheckTrigger = () => void refreshAppVersionCheck();
     void refreshAppVersionCheck();
@@ -166,6 +177,7 @@
     return () => {
       disposePressedClickGuard();
       stopOwedDmMarkDrain();
+      stopDeletedAccountGuards();
       disposeDynamicType();
       teardownHistory();
       teardownKeyboard();

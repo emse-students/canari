@@ -90,6 +90,20 @@ describe('a failure that proves a local state exists refutes "first setup"', () 
     expect(source.match(/applyPinFailure\(/g) ?? []).toHaveLength(4);
   });
 
+  it('asks neither a salt nor a recovery for an account deleted from this device', () => {
+    // Review of #2023: the code `account_deleted` reached `askSaltForNextTry` (a salt request for an
+    // account that exists nowhere) and `evaluateRecoverable`. Both are skipped, as the salt already
+    // was for `device_revoked`, by a branch that returns BEFORE either call.
+    const body = applyPinFailureBody()!;
+    const branch = body.indexOf("if (code === 'account_deleted')");
+    expect(branch).toBeGreaterThan(-1);
+    const end = body.indexOf('return;', branch);
+    expect(end).toBeGreaterThan(branch);
+    expect(end).toBeLessThan(body.indexOf('evaluateRecoverable(uid, code)'));
+    expect(end).toBeLessThan(body.indexOf('askSaltForNextTry(code)'));
+    expect(body.slice(branch, end)).toContain('canRecoverPin = false');
+  });
+
   it('still gates both exits on the flag, which is why clearing it is the fix', () => {
     // If `PinModal` stopped hiding them, this guard would be pinning a statement that no longer
     // matters - and would say so here rather than quietly passing for ever.

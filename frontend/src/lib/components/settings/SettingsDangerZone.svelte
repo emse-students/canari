@@ -2,8 +2,14 @@
   import { Log } from '$lib/utils/Log';
   import { Trash2, LoaderCircle, CircleAlert } from '@lucide/svelte';
   import { slide } from 'svelte/transition';
-  import { deleteMyAccount } from '$lib/stores/user';
+  import { currentUserId, deleteMyAccount } from '$lib/stores/user';
+  import { globalSession, appendLog } from '$lib/stores/globalChatSingleton.svelte';
   import { clearAuth, leaveSignedOut } from '$lib/stores/auth';
+  import {
+    decideDeletedAccountWipe,
+    markDeletedAccountWipePending,
+  } from '$lib/utils/accountLocalWipe';
+  import { announceAccountDeleted } from '$lib/utils/deletedAccountGuards';
   import { m } from '$lib/paraglide/messages';
 
   // Irreversible account deletion. The user must type the localized confirmation word to arm
@@ -20,8 +26,37 @@
     deleting = true;
     deletionError = '';
     try {
-      await deleteMyAccount();
+      // What the page SHOWS, read before `clearAuth` forgets it - compared with, never used as, the
+      // account the server deleted.
+      const displayedUserId = currentUserId();
+      const { deletedSubject } = await deleteMyAccount();
+      // THE SERVER ANSWERED 204: the account named by the token it accepted is gone. Only THAT
+      // account's data may go - the token's subject, never the account on screen when the two
+      // differ (`decideDeletedAccountWipe`).
+      const decision = decideDeletedAccountWipe(deletedSubject, displayedUserId);
+      const wipes = decision.kind === 'wipe' || decision.kind === 'wipe-other-account';
+      if (wipes) markDeletedAccountWipePending(decision.userId);
+      else appendLog(`[DEL-LOCAL] local data NOT wiped: ${decision.kind}`);
+      // Every other tab signed in as the deleted account stops writing and closes its stores.
+      if (deletedSubject) announceAccountDeleted(deletedSubject);
       await clearAuth();
+      // THE ACCOUNT IS GONE FOR GOOD, so its rows on this device are only a cost. A failure is
+      // logged and never blocks the exit: the marker above resumes it at the next start.
+      if (wipes) {
+        try {
+          // This realm's handles are the deleted account's only when it is the one on screen.
+          await globalSession.wipeDeletedAccount(
+            decision.userId,
+            decision.kind === 'wipe',
+            appendLog
+          );
+        } catch (wipeErr) {
+          console.error(
+            '[DEL-LOCAL] wipeDeletedAccount failed - resumed at the next start:',
+            wipeErr
+          );
+        }
+      }
       await leaveSignedOut();
     } catch (err) {
       Log.d('handleDeleteAccount failed', err);

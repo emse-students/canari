@@ -195,3 +195,46 @@ describe('whenAnyComesOnline', () => {
     expect(String(fetchMock.mock.calls[0]?.[0])).toContain('users=bob');
   });
 });
+
+describe('the presence audience (WP-PRESENCE, 2026-10-18)', () => {
+  // The gateway answers only for people sharing a conversation or a community with this account:
+  // anyone else is ABSENT from a 200, never a 401/403 and never `false`.
+
+  it('drops a user the gateway stopped answering for, rather than freezing their last value', async () => {
+    await startWatching(['user-a', 'user-b'], { 'user-a': true, 'user-b': true });
+
+    fetchMock.mockImplementation(() => presenceResponse({ 'user-a': true }));
+    await checkPresenceNow();
+
+    expect(get(presenceMap)).toEqual({ 'user-a': true });
+  });
+
+  it('never reports a user it was never allowed to see, and never fires a waiter for them', async () => {
+    fetchMock.mockImplementation(() => presenceResponse({}));
+    const fn = vi.fn();
+    whenAnyComesOnline(['stranger'], fn);
+    await checkPresenceNow();
+
+    expect('stranger' in get(presenceMap)).toBe(false);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it('keeps the map as it was on a 503 (audience unreadable) and does not throw', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await startWatching(['user-a'], { 'user-a': true });
+
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: 'Presence audience unavailable' }), {
+          status: 503,
+          headers: { 'content-type': 'application/json' },
+        })
+      )
+    );
+    await expect(checkPresenceNow()).resolves.toBeUndefined();
+
+    expect(get(presenceMap)).toEqual({ 'user-a': true });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('503'));
+    warn.mockRestore();
+  });
+});

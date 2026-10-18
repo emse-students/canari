@@ -262,6 +262,13 @@ message GraineBundleMsg {
   // and "I am offline" are three different facts that an empty wire is unable to separate, and only
   // the first one means ask somebody else - which is what the requester does with this field.
   repeated string    missing_session_ids = 5;
+  // True on the answer to a HISTORY request from a device that may hand the past over and holds no
+  // seed of the community at all (channel-encryption section 24). Stated rather than inferred from
+  // an empty `seeds`, for the reason GraineRequestKind gives: "I hold nothing", "I never saw your
+  // request" and "the past is withheld from you" were all one silence, so the requester could
+  // record no answer and asked again at every launch. ADDITIVE: a reader that predates it decodes
+  // an empty bundle and absorbs nothing - no seed stored, no decline walked, no line above debug.
+  bool               holds_nothing = 6;
 }
 
 // ── Encrypted media attachment ───────────────────────────────────────────

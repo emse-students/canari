@@ -166,6 +166,24 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
+    what: 'the presence-audience question, validated on both answering services',
+    compare: 'exact',
+    why: 'the gateway asks chat-delivery (shared conversations) and social-service (shared communities) ONE question, `{ viewerId, userIds }`, and takes the union of the answers - so the two must parse it identically, or one half refuses what the other answers and every presence read is a 503. No shared TS package; the cap is the same number as MAX_PRESENCE_USERS in the gateway, pinned by libs/contracts/presence-audience.cases.json, which both specs and presence.rs read.',
+    files: [
+      'apps/chat-delivery-service/src/utils/presence-audience.ts',
+      'apps/social-service/src/utils/presence-audience.ts',
+    ],
+  },
+  {
+    what: 'the contract spec that guards the presence-audience question',
+    compare: 'exact',
+    why: 'a copied module needs a copied test beside it, or one service asserts the behaviour and the other only inherits the file',
+    files: [
+      'apps/chat-delivery-service/src/utils/presence-audience.spec.ts',
+      'apps/social-service/src/utils/presence-audience.spec.ts',
+    ],
+  },
+  {
     what: 'the reading of a submitted form answer, screen and spreadsheet',
     compare: 'exact',
     why: 'one question - "what did this person answer" - asked by the responses table and by the XLSX export an hour later, and those two must not be able to disagree. No shared TS package, and the file declares the minimal question shape itself rather than the model on either side, which is what lets the copies be identical.',

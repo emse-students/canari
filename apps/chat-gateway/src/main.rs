@@ -1,3 +1,4 @@
+mod audience;
 mod handlers;
 mod models;
 mod presence;
@@ -15,6 +16,7 @@ use std::{net::SocketAddr, sync::Arc};
 use tower_http::cors::{AllowHeaders, AllowOrigin, Any, CorsLayer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+use crate::audience::PresenceAudience;
 use crate::handlers::ws_handler;
 use crate::presence::{get_admin_presence, get_presence};
 use crate::state::AppState;
@@ -153,7 +155,30 @@ async fn main() {
         }
     };
 
-    let app_state = Arc::new(AppState::new(redis_client.clone(), jwt_secret));
+    // Presence audience (WP-PRESENCE): who shares a conversation or a community with whom is asked
+    // of the two services that own those tables. A missing value does not stop the gateway - the
+    // socket must keep serving messages - but every presence read then answers 503, and this line
+    // says why at boot rather than letting the first 503 be the clue.
+    let service_url = |name: &str| {
+        std::env::var(name).unwrap_or_else(|_| {
+            tracing::error!(
+                "{} is not set - GET /api/presence will answer 503 to every viewer",
+                name
+            );
+            String::new()
+        })
+    };
+    let delivery_url = service_url("DELIVERY_SERVICE_URL");
+    let social_url = service_url("SOCIAL_SERVICE_URL");
+    let internal_secret = std::env::var("INTERNAL_SECRET").unwrap_or_default();
+    if internal_secret.is_empty() {
+        tracing::error!(
+            "INTERNAL_SECRET is not set - GET /api/presence will answer 503 to every viewer"
+        );
+    }
+    let audience = PresenceAudience::new(delivery_url, social_url, internal_secret);
+
+    let app_state = Arc::new(AppState::new(redis_client.clone(), jwt_secret, audience));
 
     // ── Redis pub/sub subscriber ──────────────────────────────────────────
     subscribers::spawn_redis_subscriber(redis_client.clone(), app_state.connected_users.clone());
