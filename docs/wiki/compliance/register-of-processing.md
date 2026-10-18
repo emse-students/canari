@@ -145,7 +145,7 @@ director and the host (**OPEN**, owed by a human).
 1. The school's role (joint controller or provider) and the written hosting agreement with the DSI.
 2. Transfer safeguards for Google, Apple, Cloudflare, KLIPY - documented, or the text says "to be confirmed".
 3. Log retention 90 days enforced (Canari containers, deploy archive, Authentik `event_retention`, non-Canari containers).
-4. Account deletion complete, with retries; the tables listed in section 2.
+4. Account deletion complete, with retries - CLOSED: shipped in `v1.2.9` (#1965, [account-erasure](../account-erasure.md)). Left outside it: a backup restore brings back the accounts erased since the backup ([account-erasure](../account-erasure.md#what-is-not-covered-and-why)).
 5. Database backup dumps encrypted.
 6. KLIPY through the server, with no identifier - BUILT (search 2026-10-16, GIF images 2026-10-18); open until a production trace shows no reader request to KLIPY's CDN, and for clients that have not updated.
 7. Legacy cotisations kept with no end date - the DPO's opinion.
