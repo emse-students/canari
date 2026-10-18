@@ -17,6 +17,7 @@ const tabOutboxMock = vi.hoisted(() => ({
   requestLeaderOutboxFlush: vi.fn(),
   publishOutboxEntrySent: vi.fn(),
   publishOutboxEntryCancelled: vi.fn(),
+  publishOutboxEntryFailed: vi.fn(),
   // The handler is named in the signature rather than dropped: a flush trigger arrives through
   // this subscription, so the R-D8 trigger table has to read it back out of `mock.calls`.
   subscribeTabOutboxEvents: vi.fn((_handler: (event: TabOutboxEvent) => void) => () => {}),
@@ -40,6 +41,10 @@ import {
   MAX_CONCURRENT_SENDS,
   MAX_CONCURRENT_UPLOADS,
   MAX_UNEXPECTED_ATTEMPTS,
+  MAX_CONSECUTIVE_SERVER_ERRORS,
+  MAX_RETRY_AFTER_MS,
+  SERVER_ERROR_HOLD_MS,
+  serverErrorHoldMs,
   enqueueOutboxMessage,
   isOutboxEntryQueued,
   registerOutbox,
@@ -53,7 +58,9 @@ import {
   SenderNotActiveError,
   SendForbiddenError,
   SendEdgeRefusedError,
+  SendServerError,
 } from '$lib/mls-client/mlsDeliveryApi';
+import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import { toMirrorEntry } from './outboxMirror';
 import {
   MediaKind,
@@ -1207,7 +1214,7 @@ describe('outbox flusher', () => {
       makeDeps({
         mlsService: makeMls({
           send: async () => {
-            throw new Error('Message send HTTP error: 503');
+            throw new SendServerError('g1', 503, 'gateway');
           },
         }),
         storage,
@@ -1218,6 +1225,7 @@ describe('outbox flusher', () => {
     await outbox.flush();
 
     expect(storage._map.get('m1')?.attempts).toBe(1);
+    expect(storage._map.get('m1')?.serverErrors).toBe(1);
   });
 
   it('still retries a 5xx upload refusal: only a 4xx answer is permanent', async () => {
@@ -4076,6 +4084,435 @@ describe('outbox uploads run OUTSIDE the lane - a text written after a big file 
     await outboxIdle();
 
     expect(up.calls.filter((c) => c.fileName === 'c.pdf')).toHaveLength(1);
+    outbox.dispose();
+  });
+});
+
+describe('a text the server keeps failing (5xx) - terminal after N in a row (user, 2026-10-18)', () => {
+  /**
+   * A send stub answering from a script, one outcome per attempt: 'ok', '5xx', '4xx', 'transport'.
+   * Attempts are made due by hand (`dueNow`), never by a clock.
+   */
+  function scripted(outcomes: Array<'ok' | '5xx' | '4xx' | 'transport'>) {
+    let i = 0;
+    return makeMls({
+      send: async () => {
+        const next = outcomes[i++] ?? 'ok';
+        if (next === '5xx') throw new SendServerError('g1', 503, 'gateway');
+        if (next === '4xx') throw new ApiRefusalError(400, null, 'Message send HTTP error: 400');
+        if (next === 'transport')
+          throw new DeliveryUnreachableError(new TypeError('Failed to fetch'));
+      },
+    });
+  }
+
+  /** Clears the backoff the last attempt wrote, so the next flush attempts the entry. */
+  function dueNow(storage: any, id: string): void {
+    const e = storage._map.get(id);
+    if (e) storage._map.set(id, { ...e, nextAttemptAt: 0 });
+  }
+
+  async function attempt(outbox: { flush: () => Promise<void> }, storage: any, id: string, n = 1) {
+    for (let k = 0; k < n; k++) {
+      dueNow(storage, id);
+      await outbox.flush();
+    }
+  }
+
+  function setup(seed: OutboxEntry[], mlsService: any) {
+    const conversations = new SvelteMap<string, Conversation>([
+      [
+        'g1',
+        convoWith(
+          'g1',
+          seed.map((e) => e.id)
+        ),
+      ],
+    ]);
+    const storage = makeStorage(seed);
+    const outbox = createOutbox(makeDeps({ mlsService, storage, conversations }));
+    const status = (id: string) =>
+      conversations.get('g1')!.messages.find((m) => m.id === id)!.status;
+    return { conversations, storage, outbox, status };
+  }
+
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    clearAllUploads();
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => errorSpy.mockRestore());
+
+  it('is one named constant, 5', () => {
+    expect(MAX_CONSECUTIVE_SERVER_ERRORS).toBe(5);
+  });
+
+  it('parks a text as FAILED on the 5th 5xx in a row, keeps it, offers the retry and sends no more', async () => {
+    const mls = scripted(['5xx', '5xx', '5xx', '5xx', '5xx']);
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+
+    await attempt(outbox, storage, 't1', 4);
+    expect(status('t1')).toBe('pending');
+    expect(storage._map.get('t1').serverErrors).toBe(4);
+
+    await attempt(outbox, storage, 't1');
+    expect(status('t1')).toBe('error');
+    expect(uploadViewOf('t1')?.phase).toBe('failed');
+    expect(storage._map.get('t1').serverErrors).toBe(5);
+    expect(storage._map.has('t1')).toBe(true);
+    // Terminal: further flushes send nothing, and the background mirror does not carry it.
+    await attempt(outbox, storage, 't1', 2);
+    expect(mls.sendMessage).toHaveBeenCalledTimes(5);
+    expect(toMirrorEntry(storage._map.get('t1'))).toBeNull();
+    outbox.dispose();
+  });
+
+  it('applies to a reply as well', async () => {
+    const reply: OutboxEntry = {
+      ...textEntry('r1', 'g1', 100),
+      kind: 'reply',
+      replyTo: { id: 'x', senderId: 'u', preview: '' },
+    };
+    const { storage, outbox, status } = setup([reply], scripted(Array(5).fill('5xx')));
+    await attempt(outbox, storage, 'r1', 5);
+    expect(status('r1')).toBe('error');
+    outbox.dispose();
+  });
+
+  it('4 x 5xx then a success: sent, never failed', async () => {
+    const mls = scripted(['5xx', '5xx', '5xx', '5xx', 'ok']);
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+    await attempt(outbox, storage, 't1', 5);
+    expect(status('t1')).toBe('sent');
+    expect(storage._map.has('t1')).toBe(false);
+    outbox.dispose();
+  });
+
+  it('any other ANSWER resets the run: 4 x 5xx, a 4xx, 4 x 5xx is not terminal', async () => {
+    const mls = scripted(['5xx', '5xx', '5xx', '5xx', '4xx', '5xx', '5xx', '5xx', '5xx']);
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+    await attempt(outbox, storage, 't1', 5);
+    expect(storage._map.get('t1').serverErrors).toBe(0);
+    await attempt(outbox, storage, 't1', 4);
+    expect(storage._map.get('t1').serverErrors).toBe(4);
+    expect(status('t1')).toBe('pending');
+    outbox.dispose();
+  });
+
+  it('a transport failure never counts and never resets: 4 x 5xx, 3 x no answer, 1 x 5xx is terminal', async () => {
+    const mls = scripted([
+      '5xx',
+      '5xx',
+      '5xx',
+      '5xx',
+      'transport',
+      'transport',
+      'transport',
+      '5xx',
+    ]);
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+    await attempt(outbox, storage, 't1', 7);
+    expect(storage._map.get('t1').serverErrors).toBe(4);
+    expect(status('t1')).toBe('pending');
+    await attempt(outbox, storage, 't1');
+    expect(status('t1')).toBe('error');
+    outbox.dispose();
+  });
+
+  it('only transport failures, however many, never park a text', async () => {
+    const mls = scripted(Array(12).fill('transport'));
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+    await attempt(outbox, storage, 't1', 12);
+    expect(storage._map.get('t1').serverErrors ?? 0).toBe(0);
+    expect(status('t1')).toBe('pending');
+    outbox.dispose();
+  });
+
+  it('a reload keeps the count: 4 before it, 1 after it is terminal', async () => {
+    const mls = scripted(Array(5).fill('5xx'));
+    const first = setup([textEntry('t1', 'g1', 100)], mls);
+    await attempt(first.outbox, first.storage, 't1', 4);
+    first.outbox.dispose();
+
+    // A new page life on the same durable rows.
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['t1'])]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService: mls, storage: first.storage, conversations })
+    );
+    await attempt(outbox, first.storage, 't1');
+    expect(conversations.get('g1')!.messages[0].status).toBe('error');
+    outbox.dispose();
+  });
+
+  it('a reload of a FAILED text shows it failed and sends nothing', async () => {
+    const mls = makeMls();
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['t1'])]]);
+    const storage = makeStorage([
+      { ...textEntry('t1', 'g1', 100), serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS },
+    ]);
+    const outbox = createOutbox(makeDeps({ mlsService: mls, storage, conversations }));
+
+    await outbox.applyPendingStatuses();
+    expect(conversations.get('g1')!.messages[0].status).toBe('error');
+    expect(uploadViewOf('t1')?.phase).toBe('failed');
+    await attempt(outbox, storage, 't1');
+    expect(mls.sendMessage).not.toHaveBeenCalled();
+    expect(conversations.get('g1')!.messages[0].status).toBe('error');
+    outbox.dispose();
+  });
+
+  it('the retry resets the count durably and sends again', async () => {
+    const mls = scripted(['5xx', '5xx', '5xx', '5xx', '5xx', 'ok']);
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+    await attempt(outbox, storage, 't1', 5);
+    expect(status('t1')).toBe('error');
+
+    outbox.retryUpload('t1');
+    await outboxIdle();
+    expect(status('t1')).toBe('sent');
+    expect(storage._map.has('t1')).toBe(false);
+    expect(uploadViewOf('t1')).toBeUndefined();
+    outbox.dispose();
+  });
+
+  it('after a retry, the next 5xx starts a NEW run (1, not 6)', async () => {
+    const mls = scripted(Array(6).fill('5xx'));
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+    await attempt(outbox, storage, 't1', 5);
+    outbox.retryUpload('t1');
+    await outboxIdle();
+    expect(storage._map.get('t1').serverErrors).toBe(1);
+    expect(status('t1')).toBe('pending');
+    outbox.dispose();
+  });
+
+  it('a 4xx refusal keeps its own path: 5 x 400 is held on the ladder, never failed', async () => {
+    const mls = scripted(Array(5).fill('4xx'));
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+    await attempt(outbox, storage, 't1', 5);
+    expect(status('t1')).toBe('pending');
+    expect(storage._map.get('t1').attempts).toBe(5);
+    expect(storage._map.get('t1').serverErrors ?? 0).toBe(0);
+    outbox.dispose();
+  });
+
+  it('a 403 keeps its own parking, unchanged', async () => {
+    const mls = makeMls({
+      send: async () => {
+        throw new SendForbiddenError('g1');
+      },
+    });
+    const { storage, outbox, status } = setup([textEntry('t1', 'g1', 100)], mls);
+    await attempt(outbox, storage, 't1', 2);
+    expect(mls.sendMessage).toHaveBeenCalledTimes(1);
+    expect(status('t1')).toBe('pending');
+    outbox.dispose();
+  });
+
+  it('controls and attachments are not bounded: 6 x 5xx leaves them pending, uncounted', async () => {
+    const control: OutboxEntry = {
+      id: 'c1',
+      conversationId: 'g1',
+      sentAt: 90,
+      kind: 'control',
+      controlProto: encodeAppMessage(mkReaction('m0', 'x', 90)),
+      status: 'pending',
+      attempts: 0,
+      createdAt: 90,
+    };
+    const media: OutboxEntry = {
+      id: 'mm',
+      conversationId: 'g2',
+      sentAt: 100,
+      kind: 'media',
+      media: {
+        kind: MediaKind.MEDIA_KIND_IMAGE,
+        mimeType: 'image/png',
+        size: 3,
+        fileName: 'a.png',
+        uploadedRef: { mediaId: 'mid-1', key: 'aa', iv: 'bb' },
+      },
+      status: 'pending',
+      attempts: 0,
+      createdAt: 100,
+    };
+    const mls = makeMls({
+      send: async (groupId: unknown) => {
+        throw new SendServerError(String(groupId), 502, 'edge');
+      },
+    });
+    const conversations = new SvelteMap<string, Conversation>([
+      ['g1', convoWith('g1', ['c1'])],
+      ['g2', convoWith('g2', ['mm'])],
+    ]);
+    const storage = makeStorage([control, media]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService: mls, storage, conversations, uploadMedia: vi.fn() })
+    );
+    for (let k = 0; k < 6; k++) {
+      dueNow(storage, 'c1');
+      dueNow(storage, 'mm');
+      await outbox.flush();
+    }
+    expect(storage._map.get('c1').attempts).toBe(6);
+    expect(storage._map.get('mm').attempts).toBe(6);
+    expect(storage._map.get('c1').serverErrors ?? 0).toBe(0);
+    expect(storage._map.get('mm').serverErrors ?? 0).toBe(0);
+    expect(conversations.get('g2')!.messages[0].status).toBe('pending');
+    outbox.dispose();
+  });
+});
+
+describe('5xx terminal state - review of #2076 (follower Retry, the hold, the delete)', () => {
+  function always5xx(retryAfterMs: number | null = null) {
+    return makeMls({
+      send: async () => {
+        throw new SendServerError('g1', 502, 'edge', retryAfterMs);
+      },
+    });
+  }
+
+  async function failFiveTimes(outbox: { flush: () => Promise<void> }, storage: any, id: string) {
+    for (let k = 0; k < MAX_CONSECUTIVE_SERVER_ERRORS; k++) {
+      const e = storage._map.get(id);
+      storage._map.set(id, { ...e, nextAttemptAt: 0 });
+      await outbox.flush();
+    }
+  }
+
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    clearAllUploads();
+    isTabLeaderMock.mockReturnValue(true);
+    tabOutboxMock.requestLeaderOutboxFlush.mockClear();
+    tabOutboxMock.publishOutboxEntryFailed.mockClear();
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+  afterEach(() => {
+    isTabLeaderMock.mockReturnValue(true);
+    errorSpy.mockRestore();
+  });
+
+  it('holds each counted 5xx on the top step at least: five span 4 minutes, not 52 s', () => {
+    expect([1, 2, 3, 4, 5].map((a) => serverErrorHoldMs(a, null))).toEqual([
+      60_000, 60_000, 60_000, 60_000, 60_000,
+    ]);
+    expect(SERVER_ERROR_HOLD_MS * (MAX_CONSECUTIVE_SERVER_ERRORS - 1)).toBe(240_000);
+  });
+
+  it("honours the server's Retry-After, capped", () => {
+    expect(serverErrorHoldMs(1, 120_000)).toBe(120_000);
+    expect(serverErrorHoldMs(1, 5_000)).toBe(SERVER_ERROR_HOLD_MS);
+    expect(serverErrorHoldMs(1, 3_600_000)).toBe(MAX_RETRY_AFTER_MS);
+  });
+
+  it('writes that hold as the entry clock (Date.now pinned, never read as a wall clock)', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000);
+    const storage = makeStorage([textEntry('t1', 'g1', 100)]);
+    const outbox = createOutbox(makeDeps({ mlsService: always5xx(180_000), storage }));
+    await outbox.flush();
+    expect(storage._map.get('t1').nextAttemptAt).toBe(1_000_000 + 180_000);
+    now.mockRestore();
+    outbox.dispose();
+  });
+
+  it('a Retry clicked in a FOLLOWER tab resets the stored count, and the leader then sends it', async () => {
+    // The leader parks the text.
+    const leaderMls = makeMls({
+      send: (() => {
+        let i = 0;
+        return async () => {
+          if (i++ < MAX_CONSECUTIVE_SERVER_ERRORS) throw new SendServerError('g1', 503, 'gateway');
+        };
+      })(),
+    });
+    const storage = makeStorage([textEntry('t1', 'g1', 100)]);
+    const leaderConvos = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['t1'])]]);
+    const leader = createOutbox(
+      makeDeps({ mlsService: leaderMls, storage, conversations: leaderConvos })
+    );
+    await failFiveTimes(leader, storage, 't1');
+    expect(leaderConvos.get('g1')!.messages[0].status).toBe('error');
+    expect(tabOutboxMock.publishOutboxEntryFailed).toHaveBeenCalledWith('t1', 5);
+
+    // A follower tab, opened on the same durable queue, shows it failed and its member retries.
+    isTabLeaderMock.mockReturnValue(false);
+    const followerConvos = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['t1'])]]);
+    const follower = createOutbox(
+      makeDeps({ mlsService: makeMls(), storage, conversations: followerConvos })
+    );
+    await follower.applyPendingStatuses();
+    expect(followerConvos.get('g1')!.messages[0].status).toBe('error');
+    follower.retryUpload('t1');
+    await outboxIdle();
+    expect(storage._map.get('t1').serverErrors).toBe(0);
+    expect(followerConvos.get('g1')!.messages[0].status).toBe('pending');
+    expect(tabOutboxMock.requestLeaderOutboxFlush).toHaveBeenCalled();
+
+    // The leader drains on that request: its memory says failed, the row says otherwise - the row wins.
+    isTabLeaderMock.mockReturnValue(true);
+    await leader.flush();
+    expect(leaderMls.sendMessage).toHaveBeenCalledTimes(MAX_CONSECUTIVE_SERVER_ERRORS + 1);
+    expect(storage._map.has('t1')).toBe(false);
+    expect(leaderConvos.get('g1')!.messages[0].status).toBe('sent');
+    leader.dispose();
+    follower.dispose();
+  });
+
+  it('a follower already open when the leader parks it is told, and draws the failed bubble', async () => {
+    isTabLeaderMock.mockReturnValue(false);
+    const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['t1'])]]);
+    const outbox = createOutbox(
+      makeDeps({ mlsService: makeMls(), storage: makeStorage([]), conversations })
+    );
+    const handler = tabOutboxMock.subscribeTabOutboxEvents.mock.calls.at(-1)![0];
+    handler({ type: 'outbox_entry_failed', messageId: 't1', serverErrors: 5 });
+    expect(conversations.get('g1')!.messages[0].status).toBe('error');
+    expect(uploadViewOf('t1')?.phase).toBe('failed');
+    // Sent later (retried elsewhere): the failed view goes with it.
+    handler({ type: 'outbox_entry_sent', messageId: 't1' });
+    expect(conversations.get('g1')!.messages[0].status).toBe('sent');
+    expect(uploadViewOf('t1')).toBeUndefined();
+    outbox.dispose();
+  });
+
+  it('deleting a text answered 5xx is NOT a silent withdrawal: the delete must travel (it may be stored)', async () => {
+    const storage = makeStorage([{ ...textEntry('t1', 'g1', 100), serverErrors: 2 }]);
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage }));
+    expect(await outbox.cancelPending('t1')).toBe(false);
+    expect(storage._map.has('t1')).toBe(false);
+    outbox.dispose();
+  });
+
+  it('a text never answered 5xx is still withdrawn silently', async () => {
+    const storage = makeStorage([textEntry('t2', 'g1', 100)]);
+    const outbox = createOutbox(makeDeps({ mlsService: makeMls(), storage }));
+    expect(await outbox.cancelPending('t2')).toBe(true);
+    outbox.dispose();
+  });
+
+  it('a FAILED text lets a later independent text go, and a reply quoting it waits', async () => {
+    const sent: string[] = [];
+    const mls = makeMls({
+      send: async (_g: unknown, _p: unknown, id: unknown) => {
+        if (id === 't1') throw new SendServerError('g1', 500, 'gateway');
+        sent.push(String(id));
+      },
+    });
+    const reply: OutboxEntry = {
+      ...textEntry('r1', 'g1', 300),
+      kind: 'reply',
+      replyTo: { id: 't1', senderId: 'u', preview: '' },
+    };
+    const storage = makeStorage([
+      { ...textEntry('t1', 'g1', 100), serverErrors: MAX_CONSECUTIVE_SERVER_ERRORS },
+      textEntry('t2', 'g1', 200),
+      reply,
+    ]);
+    const outbox = createOutbox(makeDeps({ mlsService: mls, storage }));
+    await outbox.flush();
+    expect(sent).toEqual(['t2']);
+    expect(storage._map.has('r1')).toBe(true);
     outbox.dispose();
   });
 });
