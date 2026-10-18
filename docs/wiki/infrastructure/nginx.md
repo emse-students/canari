@@ -29,6 +29,7 @@ Most `/api` locations carry `auth_request /internal/auth/verify`, which calls `c
 | `/api/posts/*` | `social-service:3014` | yes | News feed |
 | `/api/forms/*` | `social-service:3014` | yes | Forms with payments |
 | `/api/bookings/*` | `social-service:3014` | yes | Bookings of rooms and slots |
+| `/api/lives/*` | `social-service:3014` | yes | Live broadcasts, 404 unless `LIVE_ENABLED` ([lives](../services/lives.md)) |
 | `/api/associations/*` | `social-service:3014` | yes | Clubs (Stripe Connect) |
 | `/api/channels/*` | `social-service:3014` | yes | Workspaces and channels |
 | `/api/auth/*` | `core-service:3012` | no | OIDC login, refresh, logout |

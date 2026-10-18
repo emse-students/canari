@@ -137,6 +137,9 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   coming participations withdrawn; its answers are purged; every id in the frozen history becomes
   `[deleted]`, and the NAME SNAPSHOTS are KEPT (decision D15), bounded by the one-year maximum age
   (D19) - [bookings-chantier](bookings-chantier.md#a-deleted-account-2026-10-16-review-of-1963).
+- **Lives** (`LIVES_ERASURE_STATEMENTS`): a live it broadcast is ENDED (`erased`) and its broadcaster
+  becomes `[deleted]` in one statement, and the live sweep deletes its segments and its row within
+  30 seconds (no replay, L3); a removed-viewer row naming it is deleted - [lives](services/lives.md#a-deleted-account).
 - **Legacy cotisations**: a row the account claimed is DELETED. The claim had already turned it into
   a `user_tags` row (deleted above); what was left is the name it was matched on.
 

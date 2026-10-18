@@ -17,6 +17,7 @@ import * as fs from 'fs-extra';
 import * as path from 'path';
 import { Readable } from 'stream';
 import sharp from 'sharp';
+import { LIVE_PREFIX } from './live-segments.service';
 
 /** UUID v4 pattern - used to validate user-supplied IDs before path joins and property accesses. */
 const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -181,6 +182,13 @@ export interface MediaStorageStats {
    */
   formFileCount: number;
   formFileBytes: number;
+  /**
+   * Sealed segments of lives (`live/<liveId>/<name>`), outside the metadata index by design and
+   * deleted by social-service's live sweep when their live ends. Their own line rather than
+   * `untracked`: a count that does not fall back to zero between lives is that sweep stopped.
+   */
+  liveSegmentCount: number;
+  liveSegmentBytes: number;
   /**
    * Live objects carrying no class at all: everything stored before the sweep became an allowlist
    * (2026-10-01), and every upload from a client too old to name its surface. The sweep may not
@@ -1405,6 +1413,8 @@ export class MediaService {
       pendingReelTtlMs: PENDING_REEL_TTL_MS,
       formFileCount: 0,
       formFileBytes: 0,
+      liveSegmentCount: 0,
+      liveSegmentBytes: 0,
       unclassifiedCount: 0,
       unclassifiedBytes: 0,
       retentionMs: RETENTION_MS,
@@ -1425,6 +1435,11 @@ export class MediaService {
         }
       }
 
+      if (object.id.startsWith(LIVE_PREFIX)) {
+        stats.liveSegmentCount += 1;
+        stats.liveSegmentBytes += object.size;
+        continue;
+      }
       const entry = this.meta.items[object.id];
       if (!entry) {
         stats.untrackedCount += 1;
