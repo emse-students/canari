@@ -67,16 +67,18 @@ The user pulled both cables. The probe, the page and the settings were the same 
 was read over wireless adb (`USB powered: false` checked at the start). Battery level, voltage and
 the HAL temperatures were read every minute.
 
-| Reading | Mi 9T (Chrome 154), 35 min unplugged | iPhone 12 (Safari), 30 min unplugged from ~11:17Z |
+| Reading | Mi 9T (Chrome 154), 35 min unplugged | iPhone 12 (Safari), unplugged from ~11:17Z to the replug at ~12:23Z |
 | --- | --- | --- |
-| Battery | **38 % -> 7 % in 31.3 min = ~59 %/h**, 5 % at the end; 3.52 -> 3.40 V under load. The replugged run above (~16 %/h) was USB covering most of the draw | before: 100 %; after: _pending, read by hand_ |
-| Heat | battery 31.5 -> 40.8 C, CPU 44 -> 54-56 C, GPU 38 -> 47.5 C; thermal status **0** throughout | _pending, by hand_ |
-| Stream | 806 MB, 714 appends, **0 append errors**, never paused, recorder never stopped; bitrate mean 3.06 Mb/s (60 s windows median 3.0, max 4.9); player behind the newest segment median 2.0 s, max 6.2 s | _pending: read from the page once replugged_ |
-| Degradation | dropped frames on the player 3 -> **571 of 63 015 (0.9 %)**, all after ~11:07Z, once the battery was under ~25 % and above ~38.5 C. The capture side held | - |
+| Battery | **38 % -> 7 % in 31.3 min = ~59 %/h**, 5 % at the end; 3.52 -> 3.40 V under load. The replugged run above (~16 %/h) was USB covering most of the draw | **100 % -> 86 %**, read by the user. The reading time is uncertain: the relay said "about 30 min", but the phone stayed unplugged until ~12:23Z (~66 min). So the drain is **~14-28 %/h**, against ~59 %/h on the Mi 9T |
+| Heat | battery 31.5 -> 40.8 C, CPU 44 -> 54-56 C, GPU 38 -> 47.5 C; thermal status **0** throughout | **warm (tiede)** at the back near the camera, by hand; the user says everything was fine |
+| Stream | 806 MB, 714 appends, **0 append errors**, never paused, recorder never stopped; bitrate mean 3.06 Mb/s (60 s windows median 3.0, max 4.9); player behind the newest segment median 2.0 s, max 6.2 s | Safari stayed in front and the video kept moving (the user); 719 MB over 3 961 s, **mean 1.45 Mb/s** (60 s windows 1.27-2.38, median 1.43); **0 append errors**, never paused, every sample `recording/live/visible`, no window short of chunks; player behind the newest segment median 1.2 s, max 2.2 s; **17 dropped of 118 711 frames** |
+| Degradation | dropped frames on the player 3 -> **571 of 63 015 (0.9 %)**, all after ~11:07Z, once the battery was under ~25 % and above ~38.5 C. The capture side held | none seen; the track muted once, at the replug |
 
 **Verdict, Mi 9T: the stream is `PASS` for 30 min, the battery is not.** A 2019 phone streaming
 720p at ~3 Mb/s with the screen on empties **~60 % of its battery per hour**. So a 60 min live
 (the L4 ceiling) needs a charged phone, or a plugged one: the app should warn below ~60 %.
+**Verdict, iPhone 12: `PASS` for 66 min unplugged** - a clean stream, warm to the touch, and a
+drain several times lower than the Mi 9T's at about half the bitrate.
 
 **What this settles for option C.** On both phones, MediaRecorder already produces the segment
 format the plan wants (fMP4, H.264 + AAC), sealing it costs nothing, and a growing source plays
@@ -94,10 +96,10 @@ installed builds are a store release and a TestFlight build, and neither can be 
 1. **Cut the pre-release** that carries lot 1 (section 1). That is the lead's action, not a touch on
    a phone. Then the iPhone's TestFlight "Mettre a jour" tap, if the update does not install in the
    background.
-2. ~~An unplugged 30 min live on each phone~~ - TAKEN 2026-10-18 (section 2b). The iPhone half
-   waits for its "after" battery %, its heat by hand, and a replug so the page can be read. The
-   probe, samplers and logs are in `<harness-dir>/live-bench-2026-10-18/`. The iPhone has no Wi-Fi
-   pairing, so it was injected over USB, then unplugged, and is read back over USB.
+2. ~~An unplugged 30 min live on each phone~~ - TAKEN 2026-10-18 (section 2b). The probe,
+   samplers and logs are in `<harness-dir>/live-bench-2026-10-18/`. The iPhone has no Wi-Fi
+   pairing, so it was injected over USB, unplugged, and read back over USB. Its battery is a
+   reading by hand with an uncertain time; a timed reading would narrow the 14-28 %/h.
 3. **A WKWebView reading** of `ManagedMediaSource` needs an inspectable iOS bench build
    (`tools/ios-device/sign-install.mjs`). That is the agents' to do, not a human's; it is listed so
    that it is not mistaken for done.
