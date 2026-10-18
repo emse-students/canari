@@ -1111,10 +1111,9 @@ The wipe and tombstone halves are fixed ([auth](frontend/modules/auth.md#erasing
 
 ## Mentions
 
-Both owed to a product choice; the designs are on
+One open item; the design is on
 [campaign-measured-defects](protocols/campaign-measured-defects.md#mentions).
 
-- **P3 - a mention of a deleted account writes a browser-level 404 no client code can suppress (2026-09-08).** DECIDED 2026-10-18: the server answers "deleted account" with NO name ([WP-MENTION-DELETED](#decided-by-the-user-on-2026-10-18---every-design-question-answered)). Never an `ignoringExpectedLog` on the row.
 - **P3 - a mention banner says "someone" where the NAME could be.** The hex is gone from every native composer; owed one look on an iPhone (compiled, never run). DECIDED 2026-10-18: the name comes from the phone's local copy of names, "someone" if unknown, never from the push ([WP-MENTION-NAME](#decided-by-the-user-on-2026-10-18---every-design-question-answered)).
 
 ## The harness itself
@@ -1407,7 +1406,6 @@ Each line: the decision, its scope as a work package (WP), and what blocks it. R
 - **WP-MIGALLERY-OFFSITE (M, ops + a MiGallery PR, no native): MiGallery's offsite backup goes to Canari's own offsite server**, then the old Canari VM can be wound down. Needs the offsite server's access arranged (private notes); a restore test.
 - **WP-RUST-LOCK-AUTOMERGE (M, CI): `arm-auto-merge.yml` may arm a pull request opened by the `canari-auto-merge` App, limited to dependency files (manifests and lockfiles, every commit Dependabot's) and a green `CI passed`.** The refresh mechanism is the one parked in [the Tooling P2](#p2---a-cargo-bump-in-mls-core-leaves-two-committed-lockfiles-dependabot-will-never-fix), rebuilt from its paragraph (about a day). Never auto-merge anything else from that App.
 - **WP-SALON-UNREAD (S-M, server + client, no MLS): the salon unread badge ignores join announcements AND muted salons.** The notice rows are encrypted, so the count needs the client or a flag on the notice; design first.
-- **WP-MENTION-DELETED (S, server, no MLS): the lookup of a deleted account answers "deleted account" with NO name** (200, no browser-level 404); no name snapshot anywhere.
 - **WP-MENTION-NAME (M, native Android and iOS, OPUS): a mention notification names its author from the phone's local copy of names**, "someone" if unknown; the name never rides the push. Owed: one look on each phone.
 - **WP-PUSH-I18N (M, Rust + native readings, OPUS): the 16 notification sentences of `mobile/proto_fields.rs` are translated in Rust from the app language, and a voice note stops being announced as an audio file.** One implementation for Android and iOS; a reading on each. **BUILT 2026-10-18** (`mobile/push_text.rs`), owed the two readings.
 - **WP-COORG-ACCEPT-NOTICE (S-M, server + native tables, no MLS): notify the organiser when a co-organisation is accepted** (`CoorganisationService.apply`), a push content in the Android, iOS and NSE tables like `coorganise_proposed`. **Blocks: ships only once `minClientVersion` covers the unknown-type fix (#1911)**, the same floor as the paid-form organiser alert.
