@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { get } from 'svelte/store';
 import type { IMlsService } from '$lib/mls-client';
-import { CallService, CALL_ICE_TRANSPORT_POLICY } from './CallService';
+import { CallService, CALL_ICE_TRANSPORT_POLICY, END_REPORT_BOUND_MS } from './CallService';
 import { CallE2eUnsupportedError } from '$lib/utils/callFailure';
 import { m } from '$lib/paraglide/messages';
 
@@ -235,8 +235,12 @@ const fakeMls = {
   }),
 } as unknown as IMlsService;
 
-/** Lets every pending promise and microtask of the service settle. */
-const settle = () => new Promise((r) => setTimeout(r, 0));
+/**
+ * Lets every pending promise and microtask of the service settle. Under fake timers a real
+ * `setTimeout(0)` would never fire, so the clock is advanced by zero instead: no wall time either way.
+ */
+const settle = () =>
+  vi.isFakeTimers() ? vi.advanceTimersByTimeAsync(0) : new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => {
   trail.length = 0;
@@ -647,11 +651,17 @@ describe('no missed call for a call that never rang', () => {
 describe('the call report', () => {
   const reports = (phase: string) =>
     trail.filter((l) => l.startsWith('[CALL_REPORT]') && l.includes(`phase=${phase}`));
-  /** The "ended" summary stays on screen 1.5 s before the call is released; wait past it. */
-  const pastSummary = async () => {
-    await new Promise((r) => setTimeout(r, 1_600));
-    await settle();
-  };
+  /** The "ended" summary stays on screen 1.5 s before the call is released; advance the FAKE clock past it. */
+  const pastSummary = () => vi.advanceTimersByTimeAsync(1_600);
+
+  // Every timer of the service is fake here - the summary's 1.5 s, the END_REPORT_BOUND_MS bound and
+  // the 10 s tick - so no test reads the wall clock or races a real timer.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it('writes the end report BEFORE it releases the peer connection and the worker', async () => {
     const service = new CallService(fakeMls);
@@ -681,32 +691,24 @@ describe('the call report', () => {
   });
 
   it('ticks every 10 s while in a call, and stops at its end', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    try {
-      const service = new CallService(fakeMls);
-      const ws = await callerJoined(service);
-      ws.deliver({ type: 'PeerReady', initiator: true });
-      await settle();
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
 
-      // Not in a call yet: nothing to report on.
-      vi.advanceTimersByTime(10_000);
-      await settle();
-      expect(reports('tick')).toHaveLength(0);
+    // Not in a call yet: nothing to report on.
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(reports('tick')).toHaveLength(0);
 
-      FakePeerConnection.instances[0].connect();
-      vi.advanceTimersByTime(10_000);
-      await settle();
-      expect(reports('tick')).toHaveLength(1);
+    FakePeerConnection.instances[0].connect();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(reports('tick')).toHaveLength(1);
 
-      ws.deliver({ type: 'PeerLeft' });
-      await pastSummary();
-      expect(reports('end')).toHaveLength(1);
-      vi.advanceTimersByTime(30_000);
-      await settle();
-      expect(reports('tick')).toHaveLength(1);
-    } finally {
-      vi.useRealTimers();
-    }
+    ws.deliver({ type: 'PeerLeft' });
+    await pastSummary();
+    expect(reports('end')).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(reports('tick')).toHaveLength(1);
   });
 
   /** A call in progress with its peer connection built, ready to be hung up. */
@@ -750,36 +752,36 @@ describe('the call report', () => {
     ws.deliver({ type: 'PeerLeft' });
     await pastSummary();
     expect(trail).not.toContain('pc.close');
-    await vi.waitFor(() => expect(trail).toContain('pc.close'), { timeout: 3_000 });
+    // The bound starts with the release, 1.5 s after the hangup: one tick short of it, still held.
+    await vi.advanceTimersByTimeAsync(END_REPORT_BOUND_MS - 200);
+    expect(trail).not.toContain('pc.close');
+    await vi.advanceTimersByTimeAsync(200);
 
+    expect(trail).toContain('pc.close');
     expect(trail.some((l) => l.startsWith('[Call] ERROR end report abandoned'))).toBe(true);
     expect(trail).toContain('worker.terminate');
     expect(reports('end')).toHaveLength(0);
-  }, 10_000);
+  });
 
   it('lets a tick in flight at hangup finish first: no closed pc, no line after the end', async () => {
-    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
-    try {
-      const ws = await liveCall();
-      FakePeerConnection.instances[0].connect();
-      await settle();
-      let open!: () => void;
-      faults.statsGate = new Promise((r) => (open = r));
-      vi.advanceTimersByTime(10_000); // the tick starts and waits in getStats
+    const ws = await liveCall();
+    FakePeerConnection.instances[0].connect();
+    await settle();
+    let open!: () => void;
+    faults.statsGate = new Promise((r) => (open = r));
+    await vi.advanceTimersByTimeAsync(10_000); // the tick starts and waits in getStats
 
-      ws.deliver({ type: 'PeerLeft' });
-      await pastSummary();
-      expect(trail).not.toContain('pc.close');
-      open();
-      await vi.waitFor(() => expect(trail).toContain('pc.close'));
+    ws.deliver({ type: 'PeerLeft' });
+    await pastSummary();
+    expect(trail).not.toContain('pc.close');
+    open();
+    await settle();
 
-      const [tick] = reports('tick');
-      const [end] = reports('end');
-      expect(trail.indexOf(tick)).toBeLessThan(trail.indexOf(end));
-      expect(trail.indexOf(end)).toBeLessThan(trail.indexOf('pc.close'));
-      expect(trail.some((l) => l.includes('not written'))).toBe(false);
-    } finally {
-      vi.useRealTimers();
-    }
+    expect(trail).toContain('pc.close');
+    const [tick] = reports('tick');
+    const [end] = reports('end');
+    expect(trail.indexOf(tick)).toBeLessThan(trail.indexOf(end));
+    expect(trail.indexOf(end)).toBeLessThan(trail.indexOf('pc.close'));
+    expect(trail.some((l) => l.includes('not written'))).toBe(false);
   });
 });
