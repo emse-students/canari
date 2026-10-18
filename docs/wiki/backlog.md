@@ -1271,9 +1271,11 @@ The English-on-a-French-screen sweep is finished ([durable-rules](durable-rules.
 **Done 2026-10-10:** `SocialApiError` extends `ApiRefusalError` (so `refusalStatus`/`refusalCode` read it),
 and every refused call of `forms/api.ts` and every bare-`fetch` upload, export and provider lookup of
 `associations/api.ts` throws it with the status and the code (`refusal`, `socialRefusal`).
-**Still owed, per endpoint, most-used screens first:** the plain `throw new Error('... failed')` sites of
-`minesweeper/api.ts`, `mls/groupInvites.ts`, `mls-client/mlsDeliveryApi.ts` (key package publish, device
-update, commit submission), `adminerSession.ts`, `vaultDownload.ts`, then the codes themselves (a stable
+**Done 2026-10-18:** `minesweeper/api.ts`, `mls/groupInvites.ts`, `adminerSession.ts`, `vaultDownload.ts`
+and `mlsDeliveryApi.ts` (key package publish, device update, commit submit and replay) throw
+`refusalFromResponse`'s `ApiRefusalError`; the join page and the minesweeper submit word it from the status.
+**Still owed:** the other plain `new Error('... failed: <status>')` sites of `mlsDeliveryApi.ts` (device list,
+GroupInfo, rename, members, dismiss, kick), then the server codes themselves (a stable
 name per refusal a user can act on; model: `DEVICE_REVOKED`, `PARTNERSHIP_NO_CODES_LEFT`). The
 `sessionAuth.ts` site closed with step 2 of the damaged-MLS-state P1 (PK1): the init throws typed errors,
 and `serverProse.test.ts`'s allowlist is empty.
