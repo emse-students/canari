@@ -1599,6 +1599,7 @@ parity row.
 | GET | `/api/mls/link-preview/image?url=` | Proxy a preview's `og:image` or favicon |
 | GET | `/api/mls/link-safety?url=` | Google Safe Browsing verdict for a URL (WP-SAFELINK-1) |
 | GET | `/api/mls/gifs?q=&page=` | The GIF picker's search/trending, asked of KLIPY by the server with `KLIPY_API_KEY`; per-user throttled; the query reaches no log line, nginx's access line included ([chat](../frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
+| GET | `/api/mls/gifs/media?url=&t=` | The GIF relay: one GIF from KLIPY's CDN only (no query), streamed, 12 MiB, byte-cached 24 h, single-flight, 16 in flight (`busy` 503 beyond), 600/min per address; gated by the day-long `gifTicket` the ticket route also returns; query dropped from this repo's nginx log, NOT from the host nginx's or the edge's ([chat](../frontend/modules/chat.md#the-gif-relay-no-readers-browser-asks-klipy-for-a-gif-2026-10-18)) |
 
 #### Who carries the MiGallery key, and who does not
 
@@ -1750,9 +1751,15 @@ Client-side the rewrite is one helper, `frontend/src/lib/utils/previewImageProxy
 nothing server-side would have rewritten them. It skips URLs already on our own origin, which is
 what keeps the MiGallery cover proxy from being proxied twice.
 
-The CSP `img-src` is deliberately **not** tightened to match: KLIPY GIFs and other remote sources
-still load directly. What a GIF in a chat tells KLIPY's CDN, and why this proxy does not carry it
-yet, is on [chat](../frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16).
+The CSP `img-src` is deliberately **not** tightened to match: the feed renders arbitrary user-posted
+images. GIFs do not come through this route: KLIPY's go through the GIF relay,
+`/api/mls/gifs/media` (`gif-media.controller.ts` - its own 12 MiB ceiling, streamed, a byte cache,
+single-flight, a day-long ticket kind), and a GIF from any other host still loads directly in the
+reader's browser, as before (owner decision; unmeasured; routing it here is one line in
+`proxiedGifUrl`). Both
+share `writeRelayedImageHeaders` (`utils/gif-media.ts`) and `requireTicketSecret`
+(`utils/previewTicket.ts`); the mechanism is on
+[chat](../frontend/modules/chat.md#the-gif-relay-no-readers-browser-asks-klipy-for-a-gif-2026-10-18).
 
 #### A relative reference belongs to the page that answered, not to the link that was written (2026-09-23)
 
@@ -1908,8 +1915,8 @@ answers "not an address" and skips the literal check entirely. `unbracketHost` s
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/calls/initiate` | Verify membership, bind the room ID to the group and its caller (Redis `call:room:<id>`, TTL = 60 s ring window + 4 h), return a room token + room ID + `ringTimeoutMs` for the in-repo `call-service`. The answer window is NOT open yet: `/api/calls/ring` opens it |
-| GET | `/api/calls/room-token` | Get room token for recipient: 403 for a room bound to another group, 410 for an unknown/expired room or after the ring window ([calls lot 1](../frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)) |
+| POST | `/api/calls/initiate` | Verify membership, bind the room ID to the group and its caller (Redis `call:room:<id>`, TTL = 60 s ring window + 4 h), return a room token + room ID + `ringTimeoutMs` for the in-repo `call-service`. The answer window is NOT open yet: `/api/calls/ring` opens it. 403 `USER_BLOCKED` when a block stands between the caller and the other member - no room is bound ([calls](../frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)) |
+| GET | `/api/calls/room-token` | Get room token for recipient: 403 for a room bound to another group, 403 `USER_BLOCKED` for a block set while it rang, 410 for an unknown/expired room or after the ring window ([calls lot 1](../frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)) |
 | GET | `/api/calls/ice-servers` | Get ICE server configuration |
 | POST | `/api/calls/presence` | Report device presence in call |
 | GET | `/api/calls/sibling-status` | Check sibling device call status |
@@ -2063,6 +2070,13 @@ the whole device. Check on a device before relying on the iOS half of `mentions`
 **Unverified on hardware**: the Android and iOS halves are covered by unit tests on the decision and
 on what reaches FCM/APNs; the iOS extension was not compiled here (no Xcode on the workstation), and
 neither phone has run it.
+
+**A conversation's CALL PERMISSION sits beside the level, on the same row (2026-10-18).**
+`dm_group_members.callsAllowed` (migration 032, NULL = never chose = rings unless the level is
+`none`), written by `PATCH /mls/groups/:groupId/calls`, listed as `groupCalls` in the same
+`GET /mls/notification-preferences`, and applied by `CallsService.ringGroup` to the ring push. The
+rule, the default and the client half:
+[calls](../frontend/modules/calls.md#the-call-permission---its-own-setting-per-conversation-decided-2026-10-18).
 
 ## Two lines that report a rate, not an event
 

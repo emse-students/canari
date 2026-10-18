@@ -340,6 +340,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/mls-forward-compat.test.sh
 	@bun .github/scripts/tests/changes-outputs.test.mjs
 	@bun .github/scripts/tests/ci-passed-gate.test.mjs
+	@bun .github/scripts/tests/smoke-login.test.mjs
 	@bash .github/scripts/tests/dependabot-cargo-reach.test.sh
 	@bash .github/scripts/tests/cargo-blocked-update-report.test.sh
 	@bash .github/scripts/tests/github-alerts-report.test.sh
@@ -357,6 +358,8 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/host-update-report.test.sh
 	@bash .github/scripts/tests/backup-report.test.sh
 	@bun .github/scripts/tests/no-nul-in-source.test.mjs
+	@bun .github/scripts/tests/docs-merge-artefacts.test.mjs
+	@bun .github/scripts/tests/line-endings.test.mjs
 	@bun .github/scripts/tests/assert-frontend-build.test.mjs
 	@bun .github/scripts/tests/wiki-links.test.mjs
 	@bun .github/scripts/tests/docs-private-guard.test.mjs

@@ -153,6 +153,18 @@ export interface ResealReport {
   changedSinceRead: number;
 }
 
+/** How {@link resealDeviceKeyStores} reports, and how many rows it seals and swaps per step. */
+export interface ResealOptions {
+  /** Debug log sink (counts only). */
+  log?: (msg: string) => void;
+  /** Progress reporter for the modal's bar. */
+  onProgress?: PinProgressCallback;
+  /** The share of the bar this pass fills. */
+  percentRange?: { start: number; end: number };
+  /** Rows sealed and swapped per step; {@link RESEAL_BATCH_SIZE} unless a test needs a small one. */
+  batchSize?: number;
+}
+
 /**
  * Moves every row of every device-key-sealed store from `oldDeviceKeyB64` to `newDeviceKeyB64`.
  * Call it on a store nothing else writes to - {@link performPinChange} runs it under the storage gate.
@@ -177,10 +189,14 @@ export async function resealDeviceKeyStores(
   storage: IStorage,
   oldDeviceKeyB64: string,
   newDeviceKeyB64: string,
-  log: (msg: string) => void = () => {},
-  onProgress?: PinProgressCallback,
-  percentRange: { start: number; end: number } = { start: 10, end: 85 }
+  options: ResealOptions = {}
 ): Promise<ResealReport> {
+  const {
+    log = () => {},
+    onProgress,
+    percentRange = { start: 10, end: 85 },
+    batchSize = RESEAL_BATCH_SIZE,
+  } = options;
   const report: ResealReport = {
     resealed: { messages: 0, graine: 0, outbox: 0 },
     alreadyNew: 0,
@@ -196,8 +212,8 @@ export async function resealDeviceKeyStores(
   for (const [storeIndex, store] of SEALED_STORES.entries()) {
     const rows = await storage.getSealedPayloads(store);
     let storeUnreadable = 0;
-    for (let i = 0; i < rows.length; i += RESEAL_BATCH_SIZE) {
-      const batch = rows.slice(i, i + RESEAL_BATCH_SIZE);
+    for (let i = 0; i < rows.length; i += batchSize) {
+      const batch = rows.slice(i, i + batchSize);
       const swaps: SealedPayloadSwap[] = [];
       for (const row of batch) {
         const plain = await openSealedBytes(row.cipherText, row.iv, oldDeviceKeyB64);
@@ -213,7 +229,7 @@ export async function resealDeviceKeyStores(
       const swapped = await storage.swapSealedPayloads(store, swaps);
       report.resealed[store] += swapped;
       report.changedSinceRead += swaps.length - swapped;
-      const done = Math.min(i + RESEAL_BATCH_SIZE, rows.length);
+      const done = Math.min(i + batchSize, rows.length);
       reportProgress(onProgress, {
         percent: Math.round(start + storeSpan * (storeIndex + done / rows.length)),
         stage: 'messages_encrypt',
@@ -418,14 +434,11 @@ export async function performPinChange(
 
         stage = 'stores';
         await holdStorageForKeyChange(storage, oldDeviceKeyB64, newDeviceKeyB64, async (store) => {
-          const report = await resealDeviceKeyStores(
-            store,
-            oldDeviceKeyB64,
-            newDeviceKeyB64,
+          const report = await resealDeviceKeyStores(store, oldDeviceKeyB64, newDeviceKeyB64, {
             log,
             onProgress,
-            { start: 10, end: 85 }
-          );
+            percentRange: { start: 10, end: 85 },
+          });
           // The stored feed pages are a copy the server's next answer rewrites: dropped, not moved.
           await dropStoredFeedPages(store, log);
           return report;

@@ -1,4 +1,5 @@
 import type { IStorage } from '../db';
+import { ACCOUNT_KEY } from './accountLocalKeys';
 
 /**
  * One-time migration that copies conversation and message data stored in the old
@@ -17,7 +18,7 @@ export async function migrateFromLocalStorage(
 ) {
   if (!storage) return;
 
-  const prefix = 'canari_conv_' + userId + '_';
+  const prefix = ACCOUNT_KEY.legacyConversation(userId, '');
   const keysToMigrate: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);

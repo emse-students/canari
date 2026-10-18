@@ -53,11 +53,17 @@ export interface ApiFetchOptions extends RequestInit {
    * it. Only for a route that legitimately computes for longer than a class allows.
    */
   deadlineMs?: number;
+  /**
+   * Told the bearer token of the attempt whose response is returned - the retry's after a 401. For
+   * a caller that must know WHOSE request the server answered (an account deletion), which the
+   * page's own idea of the signed-in account cannot tell it.
+   */
+  onAuthorization?: (bearer: string) => void;
 }
 
 /** Authenticated fetch wrapper: injects the Bearer token, retries once on 401, and throws on a second 401. */
 export async function apiFetch(url: string, options: ApiFetchOptions = {}): Promise<Response> {
-  const { deadlineMs, ...init } = options;
+  const { deadlineMs, onAuthorization, ...init } = options;
   const method = (init.method ?? 'GET').toUpperCase();
   const logUrl = url.replace(/^https?:\/\/[^/]+/, '').split('?')[0];
   const t0 = Date.now();
@@ -109,6 +115,7 @@ export async function apiFetch(url: string, options: ApiFetchOptions = {}): Prom
 
   log(`[API] → ${method} ${logUrl}`);
   let res = await attempt(url, { ...init, headers }, deadlineMs);
+  onAuthorization?.(token);
   log(`[API] ← ${res.status} ${method} ${logUrl} (${Date.now() - t0}ms)`);
 
   if (res.status === 401) {
@@ -117,6 +124,7 @@ export async function apiFetch(url: string, options: ApiFetchOptions = {}): Prom
       const newToken = await refresh();
       headers['Authorization'] = `Bearer ${newToken}`;
       res = await attempt(url, { ...init, headers }, deadlineMs);
+      onAuthorization?.(newToken);
       console.log(`[API] ← ${res.status} ${method} ${logUrl} (retry, ${Date.now() - t0}ms)`);
     } catch (e) {
       // RETHROWN AS IT CAME, because `refresh()` already answered the only question that matters

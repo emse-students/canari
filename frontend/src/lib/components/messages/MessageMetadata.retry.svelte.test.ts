@@ -61,15 +61,25 @@ describe('MessageMetadata on a failed send', () => {
 });
 
 describe('MessageMetadata on an unconfirmed send', () => {
-  it('reads apart from a failure, wherever it is, and offers put-back and delete but never retry', () => {
+  // WP-OFF-3: the server answers a repeat of the client id with the row it holds, so a retry of an
+  // unknown outcome can no longer post twice - it is offered beside put-back and delete.
+  it('reads apart from a failure, wherever it is, and offers retry, put-back and delete', () => {
+    const onRetry = vi.fn();
     const onRestore = vi.fn();
     const onDiscard = vi.fn();
-    const target = render({ status: 'unconfirmed', isLastOwn: false, onRestore, onDiscard });
+    const target = render({
+      status: 'unconfirmed',
+      isLastOwn: false,
+      onRetry,
+      onRestore,
+      onDiscard,
+    });
 
     expect(target.querySelector('[data-testid="message-unconfirmed"]')).not.toBeNull();
-    expect(target.querySelector('[data-testid="message-retry"]')).toBeNull();
+    target.querySelector<HTMLButtonElement>('[data-testid="message-retry"]')!.click();
     target.querySelector<HTMLButtonElement>('[data-testid="message-restore"]')!.click();
     target.querySelector<HTMLButtonElement>('[data-testid="message-discard"]')!.click();
+    expect(onRetry).toHaveBeenCalledTimes(1);
     expect(onRestore).toHaveBeenCalledTimes(1);
     expect(onDiscard).toHaveBeenCalledTimes(1);
   });

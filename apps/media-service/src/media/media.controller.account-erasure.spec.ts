@@ -13,7 +13,7 @@ const SECRET = 'erasure-secret';
 
 function build(result: { deleted: number; failed: number }) {
   const svc = { removeAllOwnedBy: jest.fn().mockResolvedValue(result) };
-  return new MediaController(svc as unknown as MediaService, {} as never);
+  return new MediaController(svc as unknown as MediaService, {} as never, {} as never);
 }
 
 const prev = process.env.INTERNAL_SECRET;

@@ -5,6 +5,7 @@
   import { getStorage, type ConversationMeta } from '$lib/db';
   import type { Conversation } from '$lib/types';
   import { getSavedUserId } from '$lib/stores/user';
+  import { isDeletedAccountHere } from '$lib/utils/deletedAccountMarker';
   import {
     conversationRecency,
     deriveConversationIdentity,
@@ -134,6 +135,15 @@
   onMount(async () => {
     const uid = getSavedUserId();
     if (!uid) {
+      idbLoading = false;
+      return;
+    }
+    // A KILL BEFORE `clearAuth()` LEAVES THE SAVED USER AT A DELETED ACCOUNT, and this panel runs
+    // with no login: opening its store would re-create `CanariDB_<id>` behind the owed wipe.
+    if (isDeletedAccountHere(uid)) {
+      console.warn(
+        `[POSTS] ${uid.slice(0, 8)} was deleted from this device - its stored conversations are not opened`
+      );
       idbLoading = false;
       return;
     }

@@ -14,6 +14,7 @@ import { showToast } from '$lib/stores/toast.svelte';
 import { biometricPrompt } from '$lib/stores/biometricPrompt.svelte';
 import { m } from '$lib/paraglide/messages';
 import type { SessionContext } from './sessionTypes';
+import { keystoreAlias } from '$lib/utils/accountLocalKeys';
 
 const BIOMETRIC_DISMISSED_KEY = 'canari_biometric_prompt_dismissed';
 
@@ -113,7 +114,7 @@ export async function disableBiometricImpl(ctx: SessionContext): Promise<void> {
   // Build the alias so we can delete the exact keystore entry.
   const userId = ctx.getUserId();
   const deviceId = ctx.getMyDeviceId();
-  const alias = userId && deviceId ? `mls_device_key_${userId}_${deviceId}` : undefined;
+  const alias = userId && deviceId ? keystoreAlias(userId, deviceId) : undefined;
   await BiometricService.disable(alias);
 
   const deviceKeyB64 = ctx.getDeviceKey();

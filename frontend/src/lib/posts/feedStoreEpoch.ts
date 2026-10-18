@@ -17,11 +17,14 @@
  * {@link forgetStoredFeeds}, and neither should load the storage layer to do it.
  */
 
-const KEY_PREFIX = 'canari_feed_store_epoch:v1:';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
+
+/** Every account's epoch key starts so; enumerated by {@link forgetStoredFeeds}. */
+const KEY_PREFIX = ACCOUNT_KEY.feedStoreEpoch('');
 
 /** The key one account's epoch lives under. */
 function keyFor(userId: string): string {
-  return `${KEY_PREFIX}${userId}`;
+  return ACCOUNT_KEY.feedStoreEpoch(userId);
 }
 
 /**

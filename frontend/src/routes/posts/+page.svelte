@@ -720,6 +720,33 @@
   });
 </script>
 
+<!--
+  ONE CARD THAT THROWS FAILS ITSELF, NOT THE FEED. A duplicate key inside one post's attached forms
+  put the whole of `/posts?feed=followed` behind the layout's error boundary (production, 1.2.9,
+  2026-10-18), and the reader lost every other post with it. The defect is fixed where it was
+  (`attachedFormsLoader`); this keeps the next one to its own card and NAMES the post in the log,
+  which the layout's line could not - a production Svelte error carries only its code.
+-->
+{#snippet guardedCard(post: PostEntity, onDelete: () => void)}
+  <svelte:boundary
+    onerror={(e) =>
+      console.error(`[POSTS] card ${post.id} failed to draw - the feed keeps the others:`, e)}
+  >
+    <PostCard {post} currentUserId={userId} {authToken} onRefresh={refreshPosts} {onDelete} />
+    {#snippet failed(_error, reset)}
+      <div
+        class="border-cn-border bg-cn-surface text-text-muted flex items-center gap-3 rounded-3xl border border-dashed p-5 text-sm"
+        role="alert"
+      >
+        <span>{m.posts_card_render_failed()}</span>
+        <button type="button" class="tap-target ml-auto font-bold underline" onclick={reset}
+          >{m.common_retry_button()}</button
+        >
+      </div>
+    {/snippet}
+  </svelte:boundary>
+{/snippet}
+
 {#snippet skeletonCards()}
   {#each { length: 4 } as _, i (i)}
     <div class="border-cn-border bg-cn-surface animate-pulse space-y-3 rounded-3xl border p-5">
@@ -845,15 +872,9 @@
         {:else}
           <div class="space-y-5">
             {#each searchResults as post (post.id)}
-              <PostCard
-                {post}
-                currentUserId={userId}
-                {authToken}
-                onRefresh={refreshPosts}
-                onDelete={() => {
-                  searchResults = (searchResults ?? []).filter((p) => p.id !== post.id);
-                }}
-              />
+              {@render guardedCard(post, () => {
+                searchResults = (searchResults ?? []).filter((p) => p.id !== post.id);
+              })}
             {/each}
           </div>
         {/if}
@@ -978,21 +999,15 @@
               {#if isNew(post)}
                 <PostCornerBadge label={m.posts_badge_new()} />
               {/if}
-              <PostCard
-                {post}
-                currentUserId={userId}
-                {authToken}
-                onRefresh={refreshPosts}
-                onDelete={() => {
-                  postsOverride = resolvedPosts.filter((p) => p.id !== post.id);
-                  writeFeedCache(feedCacheKey(data.feedParams), {
-                    posts: postsOverride,
-                    hasMore,
-                  });
-                  // The next launch must not draw the post just deleted from the stored page.
-                  storeFirstPage(data.feedParams, postsOverride.slice(0, FEED_FIRST_PAGE_SIZE));
-                }}
-              />
+              {@render guardedCard(post, () => {
+                postsOverride = resolvedPosts.filter((p) => p.id !== post.id);
+                writeFeedCache(feedCacheKey(data.feedParams), {
+                  posts: postsOverride,
+                  hasMore,
+                });
+                // The next launch must not draw the post just deleted from the stored page.
+                storeFirstPage(data.feedParams, postsOverride.slice(0, FEED_FIRST_PAGE_SIZE));
+              })}
             </div>
           {/each}
 

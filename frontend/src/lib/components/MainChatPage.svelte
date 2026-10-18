@@ -15,8 +15,8 @@
   import { fade } from 'svelte/transition';
   import { m } from '$lib/paraglide/messages';
   import { showToast } from '$lib/stores/toast.svelte';
-  import { sendReadWatermark, liveSalonSendIds } from '$lib/utils/chat/messaging';
-  import { recordUnsentSalonText, takeOrphanedSalonTexts } from '$lib/utils/chat/salonUnsent';
+  import { flushOwedDmReadMarks } from '$lib/utils/chat/messaging';
+  import { recordUnsentSalonText } from '$lib/utils/chat/salonUnsent';
   import { restoreFailedDraft } from '$lib/utils/chat/draftRestore';
   import { createHeldSendQueue } from '$lib/utils/chat/heldSends';
   import { isAppInForeground, onAppScreenChange } from '$lib/utils/appForeground';
@@ -31,7 +31,12 @@
     type ChannelPollDraft,
   } from '$lib/utils/chat/channelCrypto';
   import { channelService } from '$lib/services/ChannelService';
-  import { flushSalonReadMarks, recordSalonReadMark } from '$lib/utils/chat/salonReadMarkQueue';
+  import {
+    flushSalonReadMarks,
+    forgetDmReadMark,
+    recordDmReadMark,
+    recordSalonReadMark,
+  } from '$lib/utils/chat/salonReadMarkQueue';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
   import { mayPinMessage } from '$lib/utils/chat/pinPermission';
   // NOT from `CallService`: calling is held off, and naming its error type here would pull the
@@ -42,7 +47,8 @@
     claimChannelReadSignal,
     newestForeignMessageAt,
   } from '$lib/utils/chat/channelReadSignal';
-  import { applyLocalVote, setPollMeta } from '$lib/stores/pollStore.svelte';
+  import { applyLocalVote, getPollMeta, setPollMeta } from '$lib/stores/pollStore.svelte';
+  import { deliverSalonWrite, nothingLeftTheDevice } from '$lib/utils/chat/salonOwed';
   import { channelReactionMap } from '$lib/stores/reactionStore.svelte';
   import { aggregateSharedContent, type SharedContent } from '$lib/utils/chat/sharedContent';
   import { getPreviewText, parseEnvelope } from '$lib/envelope';
@@ -599,16 +605,32 @@
     return true;
   }
 
-  // ─── A salon message left unanswered by a PREVIOUS page life goes back to the composer ─────────
-  // The echo is memory only and the composer was cleared at the click, so a kill or reload while it
-  // was sending would have lost the text. It is handed back, never re-sent (WP-OFF-2). Only texts
-  // whose writer is PROVEN dead come back - a sibling tab still sending its own keeps them.
+  // ─── A salon message left unanswered by a PREVIOUS page life is sent again ──────────────────────
+  // The echo is memory only and the composer was cleared at the click, so the unsent ledger is the
+  // salon queue's durable half (WP-OFF-3): once the session is up, what a killed or reloaded page
+  // life left there is sent again under its client id, which the server answers with the row it
+  // holds if the first POST had landed. Only entries whose writer is PROVEN dead are taken - a
+  // sibling tab still sending its own keeps them.
+  $effect(() => {
+    const userId = session.userId;
+    if (!userId || !session.isLoggedIn) return;
+    void untrack(async () => {
+      const legacy = await messaging.resumeUnsentSends(msgCtx(), null);
+      // Written before the ledger kept a payload's `sentAt`: put back, owned by this page life, for
+      // the salon's own composer below.
+      for (const o of legacy) recordUnsentSalonText(userId, o);
+    });
+  });
+
+  // Opening a salon resumes what is still waiting for it: an entry kept because its conversation was
+  // not drawn yet, or one a sibling tab left when it closed. An entry written before WP-OFF-3 has no
+  // `sentAt`, cannot be rebuilt as composed, and goes back to the composer as it did before.
   $effect(() => {
     const contact = convs.selectedContact;
     const userId = session.userId;
     if (!contact || !userId || !isChannelConversationId(contact)) return;
     void untrack(async () => {
-      const orphans = await takeOrphanedSalonTexts(userId, contact, liveSalonSendIds());
+      const orphans = await messaging.resumeUnsentSends(msgCtx(), contact);
       if (orphans.length > 0 && convs.selectedContact !== contact) {
         // The member left the salon while the owner check ran: the texts belong to ITS composer,
         // so they go back in the ledger, owned by this page life, for the next visit.
@@ -731,6 +753,11 @@
         }
       }
       recordSalonReadMark(session.userId, currentContact, target, newestServerAt || undefined);
+    } else {
+      // A DM'S MARK IS OWED FROM HERE TOO, to the outbox: a process killed inside the debounce used to
+      // take it along, after the local mark had moved, so nothing sent it again and the peer kept the
+      // conversation unread for good. The next outbox registration drains it (`flushOwedDmReadMarks`).
+      recordDmReadMark(session.userId, currentContact, target);
     }
 
     readMarks.note(target, (toSend) => {
@@ -754,42 +781,16 @@
           }
           return;
         }
-        // THREE WAYS OUT OF HERE AND ALL THREE USED TO BE SILENT. The debounce has already handed
-        // the mark over, so nothing will retry: whatever this device has read up to is
-        // lost for the peer, which keeps showing the conversation unread until something else
-        // moves the mark. That is a best-effort path, and a line is all a loss leaves behind it.
-        try {
-          const mlsService = session.ensureMls();
-          const fresh = convs.conversations.get(currentContact);
-          if (!fresh) {
-            console.warn(
-              `[READ] watermark ${toSend} dropped: conversation ${currentContact} left the store` +
-                ' between the debounce arming and its expiry, so the receipt is never sent'
-            );
-            return;
-          }
-          sendReadWatermark(toSend, {
-            mlsService,
-            userId: session.userId,
-            deviceKeyB64: session.deviceKeyB64,
-            conversation: fresh,
-          }).catch((e) =>
-            console.warn(
-              `[READ] watermark ${toSend} for ${currentContact} was not sent - the peer keeps` +
-                ' showing it unread until this device reads again:',
-              e
-            )
-          );
-        } catch (e) {
-          // The comment here used to READ `/* MLS not ready */` and assert a cause nothing had
-          // checked. `session.ensureMls()` is the only call above that can throw, so that reading
-          // is probably right - but "probably" is not what a swallowed branch may claim, and the
-          // throw itself says it for free.
+        // The mark was recorded durably when it was decided; this hands every owed one to the
+        // outbox, which is durable from there. One the outbox cannot take stays owed and is logged.
+        if (!convs.conversations.get(currentContact)) {
           console.warn(
-            `[READ] watermark ${toSend} for ${currentContact} could not be sent - no MLS client:`,
-            e
+            `[READ] watermark ${toSend} dropped: conversation ${currentContact} left the store` +
+              ' between the debounce arming and its expiry, so the receipt is never sent'
           );
+          forgetDmReadMark(session.userId, currentContact);
         }
+        void flushOwedDmReadMarks(session.userId);
       });
     });
 
@@ -1212,9 +1213,13 @@
   }
 
   /**
-   * Toggles a message's pinned state, routing to the right transport: server pin for
-   * community channels (with optimistic local apply + revert on failure), MLS `pin`/`unpin`
-   * system message for DMs/groups.
+   * Toggles a message's pinned state, routing to the right transport: server pin for community
+   * channels, MLS `pin`/`unpin` system message for DMs/groups.
+   *
+   * A SALON PIN IS OPTIMISTIC AND OWED WHILE OFFLINE (WP-OFF-4): applied at once, sent on the
+   * reconnect when the link is down (`deliverSalonWrite`; a later toggle owes the later state, and a
+   * repeat SETS the same state), and reverted only when nothing of it reached the server
+   * (`nothingLeftTheDevice`) - a 5xx may have stored it, and the pin list is re-read on every open.
    */
   function handleTogglePinMessage(messageId: string) {
     const key = convs.selectedContact;
@@ -1230,18 +1235,31 @@
       const next = !isMessagePinned(convo.id, messageId);
       const at = Date.now();
       applyPin(convo.id, messageId, next, at);
-      void channelService.setMessagePinned(convo.id, messageId, next).catch((e: unknown) => {
-        // Revert if the server rejects. STRICTLY LATER than the optimistic apply, or a refusal
-        // landing in the same millisecond would tie with it - and a tie keeps a pin, so a refused
-        // unpin would never come back.
-        applyPin(convo.id, messageId, !next, Math.max(Date.now(), at + 1));
-        const status = refusalStatus(e);
-        log(`[PIN] refused (status=${status ?? 'none'}) pinned=${next}: ${String(e)}`);
-        showToast(
-          describeApiRefusal(status, m.channel_action_pin()) ?? m.channel_pin_error(),
-          'warning'
-        );
-      });
+      void deliverSalonWrite(
+        `pin:${messageId}`,
+        () => channelService.setMessagePinned(convo.id, messageId, next),
+        (outcome) => {
+          if (outcome.kind === 'owed') {
+            log(`[PIN] pinned=${next} of ${messageId.slice(0, 8)} kept, sent on reconnect`);
+            return;
+          }
+          if (outcome.kind === 'sent') return;
+          const e = outcome.error;
+          // Reverted STRICTLY LATER than the optimistic apply, or a refusal landing in the same
+          // millisecond would tie with it - and a tie keeps a pin, so a refused unpin would never
+          // come back.
+          const revert = nothingLeftTheDevice(e);
+          if (revert) applyPin(convo.id, messageId, !next, Math.max(Date.now(), at + 1));
+          const status = refusalStatus(e);
+          log(
+            `[PIN] refused (status=${status ?? 'none'}) pinned=${next}, ${revert ? 'reverted' : 'kept (the server may hold it)'}: ${String(e)}`
+          );
+          showToast(
+            describeApiRefusal(status, m.channel_action_pin()) ?? m.channel_pin_error(),
+            'warning'
+          );
+        }
+      );
     } else {
       void messaging.handleTogglePin(messageId, msgCtx());
     }
@@ -1269,26 +1287,51 @@
     await sendChannelPoll(channelId, draft);
   }
 
-  /** Casts (or retracts) the user's vote on a channel poll, optimistically then authoritatively. */
+  /**
+   * Casts (or retracts) the user's vote on a channel poll, optimistically then authoritatively.
+   *
+   * OWED WHILE OFFLINE (WP-OFF-4): the choice stays on the card and is sent on the reconnect
+   * (`deliverSalonWrite`; a later choice owes itself instead, and a vote SETS the selection, so a
+   * repeat is harmless). Taken back only when nothing of it reached the server
+   * (`nothingLeftTheDevice`), and only while the card still shows this choice.
+   */
   async function handleVotePoll(messageId: string, optionIds: string[]) {
     const channelId = convs.selectedContact;
+    const userId = session.userId;
     if (!channelId) return;
-    applyLocalVote(messageId, session.userId, optionIds);
-    try {
-      const meta = await channelService.votePoll(channelId, messageId, optionIds);
-      setPollMeta(messageId, meta);
-    } catch (e) {
-      // `channelService` throws an `ApiRefusalError` whose `message` is the server's
-      // own body: dev-facing English, correct for a log and wrong on a toast. The STATUS is what
-      // picks the sentence, through the one refusal mapper - which answers `null` for a status it
-      // has nothing better to say about, leaving the poll's own line to stand.
-      const status = refusalStatus(e);
-      log(`[POLL] vote refused (status=${status ?? 'none'}): ${String(e)}`);
-      showToast(
-        describeApiRefusal(status, m.channel_action_poll_vote()) ?? m.channel_poll_vote_error(),
-        'warning'
-      );
-    }
+    const before = getPollMeta(messageId)?.votesByUser[userId] ?? [];
+    applyLocalVote(messageId, userId, optionIds);
+    await deliverSalonWrite(
+      `vote:${messageId}`,
+      async () => {
+        const meta = await channelService.votePoll(channelId, messageId, optionIds);
+        setPollMeta(messageId, meta);
+      },
+      (outcome) => {
+        if (outcome.kind === 'owed') {
+          log(`[POLL] vote on ${messageId.slice(0, 8)} kept, sent on reconnect`);
+          return;
+        }
+        if (outcome.kind === 'sent') return;
+        const e = outcome.error;
+        const shown = getPollMeta(messageId)?.votesByUser[userId] ?? [];
+        const revert =
+          nothingLeftTheDevice(e) && JSON.stringify(shown) === JSON.stringify(optionIds);
+        if (revert) applyLocalVote(messageId, userId, before);
+        // `channelService` throws an `ApiRefusalError` whose `message` is the server's
+        // own body: dev-facing English, correct for a log and wrong on a toast. The STATUS is what
+        // picks the sentence, through the one refusal mapper - which answers `null` for a status it
+        // has nothing better to say about, leaving the poll's own line to stand.
+        const status = refusalStatus(e);
+        log(
+          `[POLL] vote refused (status=${status ?? 'none'}), ${revert ? 'taken back' : 'left as shown'}: ${String(e)}`
+        );
+        showToast(
+          describeApiRefusal(status, m.channel_action_poll_vote()) ?? m.channel_poll_vote_error(),
+          'warning'
+        );
+      }
+    );
   }
 
   /**

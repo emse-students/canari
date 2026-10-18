@@ -58,3 +58,15 @@ const HEARTBEAT_FRAMES = ['ping', 'pong'] as const;
 export function isHeartbeatFrame(type: string): boolean {
   return (HEARTBEAT_FRAMES as readonly string[]).includes(type);
 }
+
+/** Signals that arrive by the dozen and decide nothing: a typing indicator, a read receipt. */
+const EPHEMERAL_FRAMES = ['typing', 'channel.typing', 'channel.read'] as const;
+
+/**
+ * Whether `type` is a high-rate signal the socket does not announce line by line. Routing is
+ * unchanged for these: only the "frame arrived" console line is skipped, because a line printed
+ * for every keystroke of every member is one its reader learns to skip.
+ */
+export function isEphemeralFrame(type: string): boolean {
+  return (EPHEMERAL_FRAMES as readonly string[]).includes(type);
+}

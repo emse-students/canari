@@ -1,0 +1,31 @@
+import { Injectable, Logger } from '@nestjs/common';
+import { ThrottlerGuard } from '@nestjs/throttler';
+
+/**
+ * A throttle counted per VISITOR address, not per hop - for a route no session reaches.
+ *
+ * `ThrottlerGuard` keys on `req.ip`, and this service is only reached through the nginx container,
+ * so `req.ip` is that container for every request. nginx resolves the client itself (`real_ip`
+ * from the host proxy) and forwards it as `X-Real-IP`, the only address here that names a visitor;
+ * the service port is not published, so nothing reaches it without that nginx overwriting the
+ * header. The same guard, for the same reason, is social-service's
+ * `common/guards/client-ip-throttler.guard.ts` (the services share no package).
+ *
+ * Used where `UserThrottlerGuard` cannot be: the GIF relay is an `<img src>`, which carries no
+ * session, so there is no proven user id to count on.
+ */
+// Module-level rather than a field: `ThrottlerGuard` declares members of its own.
+const logger = new Logger('ClientIpThrottlerGuard');
+
+@Injectable()
+export class ClientIpThrottlerGuard extends ThrottlerGuard {
+  protected override async getTracker(req: Record<string, any>): Promise<string> {
+    const forwarded = req.headers?.['x-real-ip'];
+    if (typeof forwarded === 'string' && forwarded.length > 0) return `ip:${forwarded}`;
+    // No header: the request did not come through nginx (a test, a local call). Counted on the
+    // socket and said out loud, because in production it would mean one shared bucket.
+    // The PATH only: the GIF relay's query names a GIF and carries a ticket.
+    logger.warn(`[THROTTLE] no X-Real-IP on ${req.method} ${req.path}, keyed on the socket`);
+    return `ip:${req.ip}`;
+  }
+}

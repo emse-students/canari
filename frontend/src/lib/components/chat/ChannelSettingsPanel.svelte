@@ -22,6 +22,7 @@
     type ChannelWritePolicy,
   } from '$lib/services/ChannelService';
   import { m } from '$lib/paraglide/messages';
+  import { noteSalonNotificationLevel } from '$lib/utils/chat/salonUnread';
   import Picker from '../ui/Picker.svelte';
   import NotificationLevelControl from './NotificationLevelControl.svelte';
   import type { PickerOption } from '../ui/picker';
@@ -346,6 +347,7 @@
       notifLevel = await channelService.getNotificationLevel(selectedChannelId);
       // The same answer feeds the level this device applies to a salon frame it raises itself.
       notificationPreferences.rememberChannelLevel(selectedChannelId, notifLevel);
+      noteSalonNotificationLevel(selectedChannelId, notifLevel);
     } catch (e) {
       // A FAILED READ IS NOT THE VALUE `all`. It used to be, silently, which made a broken request
       // and a member who really is on `all` the same screen and different facts. Nothing is checked
@@ -366,6 +368,7 @@
     try {
       await channelService.setNotificationLevel(selectedChannelId, level);
       notificationPreferences.rememberChannelLevel(selectedChannelId, level);
+      noteSalonNotificationLevel(selectedChannelId, level);
     } catch (e) {
       console.warn('[CHANNEL] notification level refused - reverted', e);
       notifLevel = previous;

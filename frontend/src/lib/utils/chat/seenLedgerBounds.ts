@@ -15,6 +15,7 @@
  * Nothing here reads a clock: eviction order is insertion order inside a ledger and write order
  * across ledgers.
  */
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /** Fingerprints kept per group. The busiest measured conversation held 2 073; this leaves 2.4x. */
 export const MAX_FINGERPRINTS_PER_LEDGER = 5000;
@@ -60,10 +61,8 @@ export function boundSeenEntries(entries: Iterable<string>): string[] {
   return all.filter((_, i) => keep[i]);
 }
 
-const LEDGER_PREFIX = 'history_seen_cipher:';
-
 function ledgerIndexKey(userId: string): string {
-  return `history_seen_cipher_index:${userId}`;
+  return ACCOUNT_KEY.seenCipherIndex(userId);
 }
 
 /**
@@ -76,7 +75,7 @@ function readLedgerIndex(userId: string): string[] {
     const parsed: unknown = JSON.parse(raw);
     if (Array.isArray(parsed)) return parsed.filter((g): g is string => typeof g === 'string');
   }
-  const prefix = `${LEDGER_PREFIX}${userId}:`;
+  const prefix = ACCOUNT_KEY.seenCipher(userId, '');
   const groups: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);

@@ -17,7 +17,12 @@ import {
 import { m } from '$lib/paraglide/messages';
 import { CAMPUSES } from '$lib/profile/miconnectProfile';
 import { wordingFor, type AssociationKind } from '$lib/associations/kindWording';
-import { ASSOCIATION_EDIT_PATH, mergeSeo, resolveSeoForPath } from '$lib/seo/resolve';
+import {
+  ASSOCIATION_EDIT_PATH,
+  DOCUMENT_TITLE_SUFFIX,
+  mergeSeo,
+  resolveSeoForPath,
+} from '$lib/seo/resolve';
 import { isStaticPageRoute, normalizePath } from '$lib/seo/staticRoutes';
 import { SITE, siteOrigin } from '$lib/seo/site';
 import { markdownToPlainText, truncateForMeta } from '$lib/seo/text';
@@ -87,6 +92,17 @@ function publicMediaUrl(pathOrUrl: string | null | undefined): string | undefine
   return `${siteOrigin()}${value.startsWith('/') ? value : `/${value}`}`;
 }
 
+/**
+ * The lengths a shared post's card is cut to, measured against what the unfurlers display.
+ *
+ * Facebook and Messenger truncate a title past ~60 characters and a description past ~125, so the
+ * old 70 + " - Canari" (79) and 200 were cut a second time, by the unfurler, mid-word - which is
+ * what opengraph.xyz reported on a real post (2026-10-18). Cutting here, between words, decides
+ * where the card stops instead of leaving it to each consumer.
+ */
+const POST_CARD_TITLE_MAX = 60;
+const POST_CARD_DESCRIPTION_MAX = 125;
+
 interface PostPreviewPayload {
   markdown?: string;
   createdAt?: string;
@@ -121,16 +137,20 @@ async function postSeo(postId: string, path: string): Promise<Partial<SeoMeta> |
   const author = post.association?.name?.trim() || null;
 
   // The title is the post's opening words, and the association's name when it has none - a photo
-  // post used to title itself "Publication", which is the word the whole feed shares.
+  // post used to title itself "Publication", which is the word the whole feed shares. Its budget
+  // is the WHOLE `og:title`, the site suffix included: the card shows that string, not this one.
   const title = plain
-    ? truncateForMeta(plain, 70)
+    ? truncateForMeta(plain, POST_CARD_TITLE_MAX - DOCUMENT_TITLE_SUFFIX.length)
     : author
       ? m.seo_post_title_from({ association: author })
       : SITE.name;
   // An author line in front of the description is the only place the card says WHO posted without
   // spending the title on it.
   const description = plain
-    ? truncateForMeta(author ? m.seo_post_byline({ author, text: plain }) : plain, 200)
+    ? truncateForMeta(
+        author ? m.seo_post_byline({ author, text: plain }) : plain,
+        POST_CARD_DESCRIPTION_MAX
+      )
     : author
       ? m.seo_post_description_fallback({ association: author })
       : `${SITE.name}.`;

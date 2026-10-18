@@ -1,6 +1,7 @@
 import type { HistoryPage } from '$lib/mls-client/historyTypes';
 import { fromBase64 } from '$lib/utils/hex';
 import type { IStorage, StoredMessage } from '$lib/db';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import type { ChatMessage, Conversation, MessageReaction, ReadWatermarks } from '$lib/types';
 import type { IMlsService } from '$lib/mlsService';
 import { dropOwnExcludedMessages } from './historyEntitlement';
@@ -38,17 +39,17 @@ import { boundSeenEntries, noteLedgerWritten } from './seenLedgerBounds';
 
 /** Return the localStorage key used to persist the set of already-processed ciphertext fingerprints for a group. */
 function seenHistoryKey(userId: string, groupId: string): string {
-  return `history_seen_cipher:${userId}:${groupId}`;
+  return ACCOUNT_KEY.seenCipher(userId, groupId);
 }
 
 /** Return the localStorage key used to persist the last-processed Redis stream ID for incremental history fetching. */
 function lastStreamIdKey(userId: string, groupId: string): string {
-  return `history_last_stream_id:${userId}:${groupId}`;
+  return ACCOUNT_KEY.lastStreamId(userId, groupId);
 }
 
 /** Return the localStorage key used to persist per-ciphertext retry counters for undecryptable history frames. */
 function retryCipherKey(userId: string, groupId: string): string {
-  return `history_retry_cipher:${userId}:${groupId}`;
+  return ACCOUNT_KEY.retryCipher(userId, groupId);
 }
 
 /**

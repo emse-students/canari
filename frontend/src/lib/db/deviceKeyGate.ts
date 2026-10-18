@@ -47,6 +47,7 @@
  * Methods are bound to the real store, so a store's own internal calls never re-enter the gate.
  */
 import type { IStorage } from './types';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /** The channel a key change is announced on, to the other realms of this origin. */
 export const KEY_CHANGE_CHANNEL = 'canari-device-key';
@@ -58,7 +59,7 @@ function lockName(userId: string): string {
 
 /** The `localStorage` counter of completed-or-started key changes for `userId`. */
 function epochKey(userId: string): string {
-  return `canari-device-key-epoch:${userId}`;
+  return ACCOUNT_KEY.deviceKeyEpoch(userId);
 }
 
 /** The notice a changer posts BEFORE any data moves. Carries the account, never a key. */

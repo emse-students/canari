@@ -19,8 +19,10 @@ import {
   fetchChannelNotificationLevel,
   fetchNotificationPreferences,
   saveDisabledCategories,
+  saveGroupCallsAllowed,
   saveGroupNotificationLevel,
 } from '$lib/notifications/preferencesApi';
+import { callsAllowedFor } from '$lib/notifications/callPermission';
 import type { NotificationCategory } from '$lib/notifications/categories';
 import {
   isConversationNotificationLevel,
@@ -34,6 +36,8 @@ let disabled = $state<NotificationCategory[]>([]);
 let writeChain: Promise<unknown> = Promise.resolve();
 /** Private conversations quieter than `all`, by group id; an absent one is `all`. */
 let groupLevels = $state<Record<string, ConversationNotificationLevel>>({});
+/** Private conversations where the account CHOSE whether calls ring; an absent one follows its level. */
+let groupCalls = $state<Record<string, boolean>>({});
 /**
  * A salon's level for this account, by channel id (no `channel_` prefix), once this session has read
  * it. Unlike {@link groupLevels} it is not listed at sign-in - it lives in the social service - so an
@@ -63,6 +67,7 @@ export const notificationPreferences = {
       const snapshot = await fetchNotificationPreferences();
       disabled = snapshot.disabled;
       groupLevels = snapshot.groupLevels;
+      groupCalls = snapshot.groupCalls;
       loaded = true;
       return true;
     } catch (e) {
@@ -139,6 +144,41 @@ export const notificationPreferences = {
     }
   },
 
+  /**
+   * Whether a call in this private conversation may ring this account: the explicit choice, else
+   * the level's default (rings unless `none`). Until the first load answers this is the account
+   * default - calls ring - like every other setting this store mirrors.
+   */
+  callsAllowed(groupId: string): boolean {
+    return callsAllowedFor(groupLevels[groupId] ?? 'all', groupCalls[groupId]);
+  },
+
+  /**
+   * Records whether calls in one conversation may ring this account. Optimistic like the level: it
+   * moves at once and returns to the previous state (an explicit choice, or none) if the server
+   * refuses. Resolves false when the write failed (and was reverted).
+   */
+  async setGroupCallsAllowed(groupId: string, allowed: boolean): Promise<boolean> {
+    const had = Object.hasOwn(groupCalls, groupId);
+    const before = groupCalls[groupId];
+    if (had && before === allowed) return true;
+    groupCalls = { ...groupCalls, [groupId]: allowed };
+    try {
+      await saveGroupCallsAllowed(groupId, allowed);
+      return true;
+    } catch (e) {
+      Log.d(
+        `notificationPreferences.setGroupCallsAllowed(${groupId}, ${allowed}) failed - reverting`,
+        e
+      );
+      const next = { ...groupCalls };
+      if (had) next[groupId] = before;
+      else delete next[groupId];
+      groupCalls = next;
+      return false;
+    }
+  },
+
   /** A salon's level once read this session, `undefined` while it has not been. */
   channelLevel(channelId: string): ConversationNotificationLevel | undefined {
     return channelLevels[channelKey(channelId)];
@@ -183,6 +223,7 @@ export const notificationPreferences = {
   reset(): void {
     disabled = [];
     groupLevels = {};
+    groupCalls = {};
     channelLevels = {};
     channelReads.clear();
     loaded = false;

@@ -13,6 +13,7 @@ use mls_core::crypto::decode_base64_to_32_bytes;
 use mls_core::MlsManager;
 
 use super::proto_fields::extract_full_message_info;
+use super::push_text::PushLanguage;
 use crate::concurrency::background_write_mls_bin;
 
 /// Decodes a base64 device key and loads the MLS manager from the encrypted `mls.bin` bytes.
@@ -115,6 +116,7 @@ pub fn decrypt_channel_message(
     raw_key: &[u8],
     nonce: &[u8],
     ciphertext: &[u8],
+    language: PushLanguage,
 ) -> Option<serde_json::Value> {
     use aes_gcm::aead::{Aead, KeyInit};
     use aes_gcm::{Aes256Gcm, Key, Nonce};
@@ -143,7 +145,7 @@ pub fn decrypt_channel_message(
         }
     };
 
-    let info = extract_full_message_info(&plaintext);
+    let info = extract_full_message_info(&plaintext, language);
     if info["ok"].as_bool().unwrap_or(false) {
         Some(info)
     } else {
@@ -184,7 +186,13 @@ pub struct GrainePush<'a> {
 /// What it cannot do is refuse a REPLAY: a notification path holds no record of the rows it has
 /// opened. A replayed push re-shows a banner the device already showed; the app, which does hold
 /// that record, shows the row once.
-pub fn open_graine_push(data_dir: &Path, push: &GrainePush<'_>) -> serde_json::Value {
+///
+/// `language` words what the scanner composes itself ([`PushLanguage`]).
+pub fn open_graine_push(
+    data_dir: &Path,
+    push: &GrainePush<'_>,
+    language: PushLanguage,
+) -> serde_json::Value {
     let held =
         match crate::commands::push::read_graine_seed(data_dir, push.channel_id, push.session_id) {
             Ok(Some(held)) => held,
@@ -226,7 +234,7 @@ pub fn open_graine_push(data_dir: &Path, push: &GrainePush<'_>) -> serde_json::V
     };
 
     let Some((minter, signing_pk_b64)) = &held.v2 else {
-        return open_graine_push_v1(&seed, push, &nonce, &ciphertext);
+        return open_graine_push_v1(&seed, push, &nonce, &ciphertext, language);
     };
     if !push.sender_id.eq_ignore_ascii_case(minter) {
         log::error!(
@@ -270,7 +278,7 @@ pub fn open_graine_push(data_dir: &Path, push: &GrainePush<'_>) -> serde_json::V
         }
         Err(_) => return refused("graine-open-failed"),
     };
-    let info = extract_full_message_info(&plaintext);
+    let info = extract_full_message_info(&plaintext, language);
     if info["ok"].as_bool().unwrap_or(false) {
         info
     } else {
@@ -288,6 +296,7 @@ fn open_graine_push_v1(
     push: &GrainePush<'_>,
     nonce: &[u8],
     ciphertext: &[u8],
+    language: PushLanguage,
 ) -> serde_json::Value {
     let key = match crate::mobile::graine::derive_message_key(seed, push.session_id, push.index) {
         Ok(k) => k,
@@ -300,7 +309,7 @@ fn open_graine_push_v1(
             return refused("graine-open-failed");
         }
     };
-    decrypt_channel_message(&key, nonce, ciphertext)
+    decrypt_channel_message(&key, nonce, ciphertext, language)
         .unwrap_or_else(|| refused("graine-open-failed"))
 }
 
@@ -612,6 +621,7 @@ pub fn decrypt_push_message_with_key(
     user_id: &str,
     device_id: &str,
     frame: &PushFrame<'_>,
+    language: PushLanguage,
 ) -> serde_json::Value {
     let Some((mut manager, _key)) = load_manager_for_push(state_bytes, key_b64, user_id, device_id)
     else {
@@ -635,7 +645,7 @@ pub fn decrypt_push_message_with_key(
         }
     };
 
-    classify_verified(&manager, frame.group_id, frame.sender_id, app)
+    classify_verified(&manager, frame.group_id, frame.sender_id, app, language)
 }
 
 /// Refuses a decrypted frame whose envelope names another sender than the one MLS verified, then
@@ -650,6 +660,7 @@ fn classify_verified(
     group_id: &str,
     envelope_sender: &str,
     app: mls_core::IncomingApplication,
+    language: PushLanguage,
 ) -> serde_json::Value {
     let verified_user = app
         .sender_identity
@@ -663,7 +674,7 @@ fn classify_verified(
         );
         return refused("sender-mismatch");
     }
-    let mut out = classify_plaintext(&app.plaintext);
+    let mut out = classify_plaintext(&app.plaintext, language);
     if out["reason"] == "graine-key-material" {
         let seeds = out["seeds"].as_array().cloned().unwrap_or_default();
         let offered = seeds.len();
@@ -778,8 +789,8 @@ fn endorsed_by_tree(manager: &MlsManager, group_id: &str, seed: &serde_json::Val
 /// Graine key material carrying its seeds. SHARED BECAUSE THE CATCH-UP PATH LOST SEEDS WITHOUT IT:
 /// `decrypt_push_message_with_commits_with_key` kept only `ok: true`, so a seed sealed one commit
 /// ahead of the device was decrypted after the catch-up and then thrown away (NOTIF-19, 2026-09-27).
-fn classify_plaintext(plaintext: &[u8]) -> serde_json::Value {
-    let info = extract_full_message_info(plaintext);
+fn classify_plaintext(plaintext: &[u8], language: PushLanguage) -> serde_json::Value {
+    let info = extract_full_message_info(plaintext, language);
     if info["ok"].as_bool().unwrap_or(false) {
         return info;
     }
@@ -841,6 +852,7 @@ pub fn decrypt_push_message_with_commits_with_key(
     device_id: &str,
     commits: &[Vec<u8>],
     frame: &PushFrame<'_>,
+    language: PushLanguage,
 ) -> serde_json::Value {
     let Some((mut manager, _key)) = load_manager_for_push(state_bytes, key_b64, user_id, device_id)
     else {
@@ -869,7 +881,7 @@ pub fn decrypt_push_message_with_commits_with_key(
         }
     };
 
-    classify_verified(&manager, frame.group_id, frame.sender_id, app)
+    classify_verified(&manager, frame.group_id, frame.sender_id, app, language)
 }
 
 #[cfg(test)]
@@ -1150,6 +1162,7 @@ mod tests {
                 sender_id: "graine-alice",
                 ciphertext,
             },
+            PushLanguage::French,
         );
 
         assert_eq!(info["ok"], false, "key material must still ring nobody");
@@ -1211,6 +1224,7 @@ mod tests {
                 sender_id: "graine-ahead-alice",
                 ciphertext,
             },
+            PushLanguage::French,
         );
         assert_eq!(direct["reason"], "mls-refused");
 
@@ -1225,6 +1239,7 @@ mod tests {
                 sender_id: "graine-ahead-alice",
                 ciphertext,
             },
+            PushLanguage::French,
         );
         assert_eq!(info["ok"], false, "key material must still ring nobody");
         assert_eq!(info["reason"], "graine-key-material");
@@ -1273,6 +1288,7 @@ mod tests {
                     sender_id: envelope,
                     ciphertext: &ciphertext,
                 },
+                PushLanguage::French,
             )
         };
 
@@ -1320,6 +1336,7 @@ mod tests {
                 sender_id: &format!("{tag}-alice"),
                 ciphertext: &ciphertext,
             },
+            PushLanguage::French,
         );
         assert_eq!(info["ok"], false);
         assert_eq!(info["reason"], "mls-refused-for-good");
@@ -1347,6 +1364,7 @@ mod tests {
                 sender_id: "v1-refused-alice",
                 ciphertext: &ciphertext,
             },
+            PushLanguage::French,
         );
         assert_eq!(info["ok"], false, "key material must still ring nobody");
         assert_eq!(info["reason"], "graine-key-material");
@@ -1415,6 +1433,7 @@ mod tests {
                     sender_id: &alice_id,
                     ciphertext: &ciphertexts_of(&out)[0],
                 },
+                PushLanguage::French,
             );
             assert_eq!(info["reason"], "graine-key-material");
             info["seeds"].as_array().expect("seeds").len()
