@@ -30,7 +30,16 @@ import { BookingBlock } from './entities/booking-block.entity';
 import { BookingSlotsService, type SlotView } from './booking-slots.service';
 import { availabilityWindows, checkRangeShape, datesAround, type Range } from './slots';
 import { checkBookingWindow, checkQuotas, participantMayWithdraw } from './booking-rules';
-import { bookingView, privateInfoFor, relationTo, type BookingView } from './booking-views';
+import {
+  bookingView,
+  privateInfoFor,
+  relationTo,
+  withAnswerFiles,
+  type BookingView,
+} from './booking-views';
+import { BookingFilesService } from './booking-files.service';
+import { fileAnswersOf, type FileAnswer } from '../forms/form-files.service';
+import { bookingsWorkbook, type BookingExportLabels } from './booking-export';
 import {
   bookingCalendarPath,
   bookingCalendarSignatureMatches,
@@ -76,6 +85,10 @@ export async function mayManageSpace(
     AssociationPermissionFlag.MANAGE_BOOKINGS
   );
 }
+
+/** A space's questions in the shape the answer readers take (`items` is stored untyped). */
+const questionsOf = (space: BookingSpace) =>
+  (space.items ?? []) as { id: string; label?: string; type?: string }[];
 
 const DAY_MS = 86_400_000;
 
@@ -126,7 +139,8 @@ export class BookingsService {
     @InjectRepository(BookingBlock) private readonly blocks: Repository<BookingBlock>,
     private readonly slots: BookingSlotsService,
     private readonly associations: AssociationsService,
-    private readonly pricingFacts: PricingFactsService
+    private readonly pricingFacts: PricingFactsService,
+    private readonly bookingFiles: BookingFilesService
   ) {}
 
   // -- Rights ------------------------------------------------------------------------------------
@@ -206,6 +220,9 @@ export class BookingsService {
       horizonDays: space.horizonDays,
       participantWithdrawMinMinutes: space.participantWithdrawMinMinutes,
       maxPeople: space.maxPeople,
+      // How long a file answer is kept after the slot (D8), said under the file picker.
+      retentionDays: space.retentionDays,
+      poster: space.poster,
       canManage,
       resources: resources.map((r) => ({
         id: r.id,
@@ -234,13 +251,15 @@ export class BookingsService {
         grid.flatMap((r) => r.units.flatMap((u) => (u.state === 'blocked' ? [u.blockId] : [])))
       ),
     ];
-    const [rows, people, blocks, resources] = await Promise.all([
+    const [rows, people, blocks, resources, files] = await Promise.all([
       bookingIds.length ? this.bookings.findBy({ id: In(bookingIds) }) : Promise.resolve([]),
       bookingIds.length
         ? this.participants.findBy({ bookingId: In(bookingIds) })
         : Promise.resolve([]),
       blockIds.length ? this.blocks.findBy({ id: In(blockIds) }) : Promise.resolve([]),
       this.resources.findBy({ spaceId }),
+      // Only the organiser reads answers, so only the organiser's grid names their files.
+      canManage ? this.bookingFiles.answerFiles(bookingIds) : Promise.resolve(new Map()),
     ]);
     const byId = new Map(rows.map((b) => [b.id, b]));
     const blockById = new Map(blocks.map((b) => [b.id, b]));
@@ -266,7 +285,14 @@ export class BookingsService {
               startMs,
               endMs,
               state: 'booked',
-              booking: bookingView(b, people, relation, space.nameVisibility, actor.userId),
+              booking:
+                relation === 'manager'
+                  ? withAnswerFiles(
+                      bookingView(b, people, relation, space.nameVisibility, actor.userId),
+                      questionsOf(space),
+                      files
+                    )
+                  : bookingView(b, people, relation, space.nameVisibility, actor.userId),
             },
           ];
         }
@@ -440,6 +466,7 @@ export class BookingsService {
       associationName: s.associationId ? (nameOf.get(s.associationId) ?? null) : null,
       timeZone: s.timeZone,
       resourceCount: countOf.get(s.id) ?? 0,
+      poster: s.poster,
     }));
   }
 
@@ -549,12 +576,20 @@ export class BookingsService {
       take: take + 1,
     });
     const page = rows.slice(0, take);
-    const people = page.length
-      ? await this.participants.findBy({ bookingId: In(page.map((b) => b.id)) })
-      : [];
+    const pageIds = page.map((b) => b.id);
+    const [people, files] = page.length
+      ? await Promise.all([
+          this.participants.findBy({ bookingId: In(pageIds) }),
+          this.bookingFiles.answerFiles(pageIds),
+        ])
+      : [[], new Map()];
     return {
       items: page.map((b) => ({
-        ...bookingView(b, people, 'manager', space.nameVisibility, actor.userId),
+        ...withAnswerFiles(
+          bookingView(b, people, 'manager', space.nameVisibility, actor.userId),
+          questionsOf(space),
+          files
+        ),
         bookedOnBehalf: b.bookedById !== b.holderId,
         cancelledByHolder: b.cancelledById !== null && b.cancelledById === b.holderId,
       })),
@@ -682,6 +717,26 @@ export class BookingsService {
   }
 
   /**
+   * The file answers among the answers KEPT (`validAnswers`): one per FILE question answered, each
+   * a file id - refused `file-answer` when a value is not one. Ownership is `attach`'s, at the write.
+   */
+  private fileAnswersIn(
+    space: BookingSpace,
+    answers: Record<string, unknown> | null
+  ): FileAnswer[] {
+    if (answers === null) return [];
+    try {
+      return fileAnswersOf((space.items ?? []) as { id: string; type?: string }[], answers);
+    } catch (err) {
+      if (err instanceof BadRequestException) {
+        this.logger.debug(`[BOOKINGS] book refused: a file answer that names no file`);
+        throw new BadRequestException({ code: 'file-answer' });
+      }
+      throw err;
+    }
+  }
+
+  /**
    * Books a range of one resource (D4, D7, D12, D17, D20, D21, D26, D33). The organiser may book on
    * behalf of an account (`holderId`), outside the quotas (D17, D20); the window (D26) binds
    * everyone, the organiser included - D26 names no exemption.
@@ -708,6 +763,7 @@ export class BookingsService {
       throw new BadRequestException({ code: 'holder-is-participant' });
     }
     const answers = await this.validAnswers(before, holderId, dto.answers ?? {});
+    const fileAnswers = this.fileAnswersIn(before, answers);
     const people = [holderId, ...participantIds];
 
     try {
@@ -800,6 +856,9 @@ export class BookingsService {
             [row.id, participantIds, participantIds.map((p) => names.get(p))]
           );
         }
+        // D7: each file answer must be the ACTOR's own upload for this space and question; taken in
+        // this transaction, so a refusal rolls the booking back with it.
+        await this.bookingFiles.attach(m, row.id, spaceId, actor.userId, fileAnswers);
         this.logger.log(
           `[BOOKINGS] booked id=${row.id.slice(0, 8)} resource=${resource.id.slice(0, 8)} onBehalf=${onBehalf} people=${people.length}`
         );
@@ -985,5 +1044,88 @@ export class BookingsService {
     await this.blocks.delete({ id: blockId });
     this.logger.log(`[BOOKINGS] unblocked id=${blockId.slice(0, 8)}`);
     return { ok: true };
+  }
+
+  // -- Files and export (WP-B6) ------------------------------------------------------------------
+
+  /**
+   * Stores the file of one FILE question (D7) before the booking is sent: whoever the space is open
+   * to (its audience, as a booking), or its organiser (who books on someone's behalf).
+   */
+  async uploadFile(
+    spaceId: string,
+    itemId: string | undefined,
+    file: { buffer: Buffer; size: number; originalname?: string },
+    actor: Actor
+  ) {
+    this.logger.debug(`[BOOKINGS] uploadFile space=${spaceId} item=${itemId}`);
+    const space = await this.loadSpace(spaceId);
+    await this.assertMayUse(space, actor, await this.mayManage(space, actor));
+    return this.bookingFiles.upload(space, itemId, file, actor.userId);
+  }
+
+  /**
+   * One booking's file, for its ORGANISER - the only reader a booking's answers have (D9: answers
+   * and files are never another booker's; the holder's answers are the organiser's to read).
+   */
+  async downloadFile(bookingId: string, fileId: string, actor: Actor) {
+    this.logger.debug(`[BOOKINGS] downloadFile booking=${bookingId.slice(0, 8)}`);
+    const booking = await this.bookings.findOneBy({ id: bookingId });
+    // Who before what: a stranger learns `not-manager`, never whether the booking exists.
+    const resource = booking ? await this.resources.findOneBy({ id: booking.resourceId }) : null;
+    const space = resource ? await this.spaces.findOneBy({ id: resource.spaceId }) : null;
+    if (!space || !(await this.mayManage(space, actor))) {
+      throw new ForbiddenException({ code: 'not-manager' });
+    }
+    return this.bookingFiles.download(bookingId, fileId);
+  }
+
+  /**
+   * The XLSX of a space's bookings (D24), for its organiser: every booking the space still holds -
+   * past, coming, cancelled - by start, in the words the client sent (`labels`). Before the purge,
+   * the answers are in it; after, they are gone (D18). The files never are, only a word for each.
+   */
+  async exportBookings(spaceId: string, labels: BookingExportLabels, actor: Actor) {
+    this.logger.debug(`[BOOKINGS] exportBookings space=${spaceId}`);
+    const space = await this.loadSpace(spaceId);
+    if (!(await this.mayManage(space, actor))) {
+      throw new ForbiddenException({ code: 'not-manager' });
+    }
+    const resources = await this.resources.findBy({ spaceId });
+    const nameOf = new Map(resources.map((r) => [r.id, r.name]));
+    const rows = resources.length
+      ? await this.bookings.find({
+          where: { resourceId: In(resources.map((r) => r.id)) },
+          order: { startsAt: 'ASC', id: 'ASC' },
+        })
+      : [];
+    const ids = rows.map((b) => b.id);
+    const [people, files] = ids.length
+      ? await Promise.all([
+          this.participants.findBy({ bookingId: In(ids) }),
+          this.bookingFiles.answerFiles(ids),
+        ])
+      : [[], new Map()];
+    const buffer = await bookingsWorkbook(
+      space.name,
+      rows.map((b) => ({
+        id: b.id,
+        resourceName: nameOf.get(b.resourceId) ?? '',
+        holderName: b.holderName,
+        participantNames: people
+          .filter((p) => p.bookingId === b.id && p.withdrawnAt === null)
+          .map((p) => p.userName),
+        startsAt: b.startsAt,
+        endsAt: b.endsAt,
+        cancelled: b.cancelledAt !== null,
+        answers: b.answers,
+      })),
+      questionsOf(space),
+      space.timeZone,
+      labels,
+      files
+    );
+    this.logger.log(`[BOOKINGS] export space=${spaceId.slice(0, 8)} rows=${rows.length}`);
+    return { buffer, name: space.name };
   }
 }

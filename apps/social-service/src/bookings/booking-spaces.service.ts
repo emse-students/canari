@@ -12,7 +12,6 @@ import { AssociationsService } from '../associations/associations.service';
 import { UserTagService } from '../users/user-tag.service';
 import { isForeignKeyViolation } from '../common/pg-errors';
 import { criteriaContextFor, parseAudienceCondition } from '../pricing/validate';
-import { FILE_QUESTION_TYPE } from '../forms/form-files.service';
 import { BookingSpace } from './entities/booking-space.entity';
 import { BookingResource } from './entities/booking-resource.entity';
 import { BookingAvailabilityRule } from './entities/booking-availability-rule.entity';
@@ -32,6 +31,7 @@ import {
   type SpaceSettingsDto,
 } from './dto/space.dto';
 import { ZONED_INSTANT } from './dto/booking.dto';
+import { BookingPosterMedia, posterOf } from './booking-poster-media';
 
 /** The settings that change which shapes are bookable, so they run the D29 check (WP-B2). */
 const SHAPE_KEYS = ['timeZone', 'slotMode', 'stepMinutes', 'maxSteps'] as const;
@@ -39,8 +39,8 @@ const SHAPE_KEYS = ['timeZone', 'slotMode', 'stepMinutes', 'maxSteps'] as const;
 /**
  * THE SETTINGS A REQUEST MAY WRITE ONTO A SPACE, by name - never the keys of the body (review of
  * #2006: a body's own keys written onto the entity let `ownerId`, `associationId` or `id` through
- * whenever the ValidationPipe's whitelist is not there to strip them). `opensAt` is converted on its
- * own, so it is not in the list. `booking-spaces.keys.spec.ts` holds this list against the DTO.
+ * whenever the ValidationPipe's whitelist is not there to strip them). `opensAt` and the `poster`
+ * are converted on their own, so they are not in the list. `booking-spaces.keys.spec.ts` holds this list against the DTO.
  */
 export const SPACE_SETTING_KEYS = [
   'name',
@@ -115,7 +115,8 @@ export class BookingSpacesService {
     @InjectRepository(Booking) private readonly bookings: Repository<Booking>,
     private readonly slots: BookingSlotsService,
     private readonly associations: AssociationsService,
-    private readonly userTags: UserTagService
+    private readonly userTags: UserTagService,
+    private readonly posterMedia: BookingPosterMedia
   ) {}
 
   // -- Rights ------------------------------------------------------------------------------------
@@ -230,11 +231,6 @@ export class BookingSpacesService {
       throw new BadRequestException({ code: 'quota-pair' });
     }
     const items = (next.items ?? []) as { id?: string; type?: string; showIf?: unknown }[];
-    // D7's file question needs the bookings half of WP-F's storage and purge (WP-B6): refused
-    // until then, by a code, rather than accepted and unanswerable.
-    if (items.some((i) => i.type === FILE_QUESTION_TYPE)) {
-      throw new BadRequestException({ code: 'file-question-not-yet' });
-    }
     // Every question its own id: an answer, a condition and the export are keyed by it.
     const ids = items.map((i) => i.id);
     if (ids.some((id) => !id) || new Set(ids).size !== ids.length) {
@@ -259,10 +255,13 @@ export class BookingSpacesService {
 
   /**
    * Copies the settings a DTO carries onto `space` - the names of {@link SPACE_SETTING_KEYS} only,
-   * whatever else the body holds; absent keys are left as they are.
+   * whatever else the body holds; absent keys are left as they are. The poster is copied field by
+   * field (`posterOf`).
    */
   private applySettings(space: BookingSpace, dto: SpaceSettingsDto) {
     copyKeys(space, dto, SPACE_SETTING_KEYS);
+    const poster = posterOf(dto.poster);
+    if (poster !== undefined) space.poster = poster;
     const { opensAt } = dto;
     if (opensAt !== undefined) {
       // The DTO's shape, held here too: an instant without its zone is read in the server's.
@@ -311,6 +310,7 @@ export class BookingSpacesService {
         return m.save(BookingSpace, space);
       });
       this.logger.log(`[BOOKINGS] space created id=${saved.id.slice(0, 8)}`);
+      await this.posterMedia.keep(saved);
       return { id: saved.id };
     } catch (err) {
       if (isForeignKeyViolation(err)) {
@@ -324,13 +324,15 @@ export class BookingSpacesService {
   /**
    * Changes settings (D35). A change of zone, mode, step or step ceiling is a change of what is
    * bookable, so it is checked against every resource's coming bookings first (D29), under the
-   * space lock.
+   * space lock. A new poster is kept at the media service and the one it replaces released, both
+   * once the change is committed (`BookingPosterMedia`).
    */
   async update(spaceId: string, dto: SpaceSettingsDto, actor: Actor, nowMs: number) {
     this.logger.debug(`[BOOKINGS] update space=${spaceId}`);
     await this.managedSpace(spaceId, actor);
-    return this.spaces.manager.transaction(async (m) => {
+    const { space, oldPoster } = await this.spaces.manager.transaction(async (m) => {
       const space = await this.lockSpace(m, spaceId);
+      const oldPoster = space.poster?.mediaId ?? null;
       const before: SlotConfig = { ...space };
       this.applySettings(space, dto);
       await this.assertSettingsValid(space);
@@ -346,8 +348,14 @@ export class BookingSpacesService {
       }
       await m.save(BookingSpace, space);
       this.logger.log(`[BOOKINGS] space updated id=${spaceId.slice(0, 8)}`);
-      return { ok: true };
+      return { space, oldPoster };
     });
+    const newPoster = space.poster?.mediaId ?? null;
+    if (newPoster !== oldPoster) {
+      await this.posterMedia.keep(space);
+      if (oldPoster) await this.posterMedia.release([oldPoster], 'replaced or removed');
+    }
+    return { ok: true };
   }
 
   /**
@@ -358,8 +366,8 @@ export class BookingSpacesService {
   async remove(spaceId: string, actor: Actor, nowMs: number) {
     this.logger.debug(`[BOOKINGS] remove space=${spaceId}`);
     await this.managedSpace(spaceId, actor);
-    const erased = await this.spaces.manager.transaction(async (m) => {
-      await this.lockSpace(m, spaceId);
+    const { erased, poster } = await this.spaces.manager.transaction(async (m) => {
+      const space = await this.lockSpace(m, spaceId);
       const [{ n }]: { n: number }[] = await m.query(
         `SELECT count(*)::int AS n FROM bookings b JOIN booking_resources r ON r.id = b."resourceId"
           WHERE r."spaceId" = $1 AND b."cancelledAt" IS NULL AND b."startsAt" > $2
@@ -367,11 +375,14 @@ export class BookingSpacesService {
         [spaceId, new Date(nowMs), actor.userId]
       );
       await m.delete(BookingSpace, { id: spaceId });
-      return n;
+      return { erased: n, poster: space.poster?.mediaId ?? null };
     });
     this.logger.log(
       `[BOOKINGS] space deleted id=${spaceId.slice(0, 8)} comingBookingsOfOthersErased=${erased}`
     );
+    // Its files (D7) are now orphans (`booking_files."bookingId"` set NULL): the retention purge
+    // takes them at its next run.
+    if (poster) await this.posterMedia.release([poster], 'its space was deleted');
     return { ok: true };
   }
 

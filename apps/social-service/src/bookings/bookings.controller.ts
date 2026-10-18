@@ -11,9 +11,17 @@ import {
   ParseUUIDPipe,
   Post,
   Query,
+  Res,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type { Response } from 'express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { contentDisposition } from '../common/content-disposition';
+import { FORM_FILE_MAX_BYTES, type UploadedFormFile } from '../forms/form-files.service';
+import { parseBookingExportLabels } from './booking-export';
 import { BookingsService, SPACE_BOOKINGS_PAGE, type Actor } from './bookings.service';
 import { CreateBlockDto, CreateBookingDto } from './dto/booking.dto';
 
@@ -159,5 +167,76 @@ export class BookingsController {
     @Headers('x-global-admin') ga?: string
   ) {
     return this.service.removeBlock(blockId, actorOf(userId, ga), Date.now());
+  }
+
+  /**
+   * Uploads the file of one FILE question (`itemId` in the multipart body) before the booking is
+   * sent (D7, WP-B6). The interceptor's ceiling is one byte above the cap so the service, not
+   * Multer, says what the cap is. Returns `{ fileId, fileName, sizeBytes, contentType }`.
+   */
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: FORM_FILE_MAX_BYTES + 1 } }))
+  @Post('spaces/:spaceId/files')
+  uploadFile(
+    @Param('spaceId', ParseUUIDPipe) spaceId: string,
+    @UploadedFile() file: Express.Multer.File | undefined,
+    @Body('itemId') itemId: string | undefined,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga?: string
+  ): Promise<UploadedFormFile> {
+    if (!file) throw new BadRequestException({ code: 'file-empty' });
+    return this.service.uploadFile(spaceId, itemId, file, actorOf(userId, ga));
+  }
+
+  /**
+   * Streams one booking's file to its ORGANISER - the only reader it has. Its own type and name,
+   * `attachment` so a browser saves it, `nosniff` so the type read from the bytes is the one used.
+   */
+  @Get(':bookingId/files/:fileId')
+  async downloadFile(
+    @Param('bookingId', ParseUUIDPipe) bookingId: string,
+    @Param('fileId', ParseUUIDPipe) fileId: string,
+    @Res() res: Response,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    const { data, contentType, fileName } = await this.service.downloadFile(
+      bookingId,
+      fileId,
+      actorOf(userId, ga)
+    );
+    res.set({
+      'Content-Type': contentType,
+      'Content-Disposition': contentDisposition(fileName, fileId.slice(0, 8)),
+      'Content-Length': data.byteLength,
+      'X-Content-Type-Options': 'nosniff',
+      'Cache-Control': 'no-store, private',
+    });
+    res.send(data);
+  }
+
+  /**
+   * The XLSX of a space's bookings (D24), for its organiser. `labels` is the JSON of every word the
+   * file is written with, from the client (`parseBookingExportLabels`): refused when one is missing.
+   */
+  @Get('spaces/:spaceId/export')
+  async export(
+    @Param('spaceId', ParseUUIDPipe) spaceId: string,
+    @Res() res: Response,
+    @Headers('x-user-id') userId: string,
+    @Query('labels') rawLabels?: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    const { buffer, name } = await this.service.exportBookings(
+      spaceId,
+      parseBookingExportLabels(rawLabels),
+      actorOf(userId, ga)
+    );
+    res.set({
+      'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'Content-Disposition': contentDisposition(`${name}.xlsx`, 'export'),
+      'Content-Length': buffer.byteLength,
+      'Cache-Control': 'no-store, private',
+    });
+    res.send(Buffer.from(buffer));
   }
 }

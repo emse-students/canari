@@ -2,6 +2,7 @@ import { AssociationsService } from './associations.service';
 import { Association } from './entities/association.entity';
 import { AssociationCalendarEvent } from './entities/association-calendar-event.entity';
 import { AssociationMember } from './entities/association-member.entity';
+import { of } from 'rxjs';
 import { retireForms } from '../forms/retire-forms';
 
 jest.mock('../forms/retire-forms', () => ({
@@ -13,13 +14,17 @@ jest.mock('../forms/retire-forms', () => ({
  * paid form of a deleted institution stayed alive and was shown as "Personnel", because
  * `forms.associationId` carries no foreign key and `remove` never touched the table.
  */
-function makeService() {
+function makeService(posters: { id: string }[] = []) {
   const manager = { delete: jest.fn(() => Promise.resolve({ affected: 1 })) };
   const assoRepo = {
-    manager: { transaction: jest.fn((work: (m: typeof manager) => unknown) => work(manager)) },
+    manager: {
+      transaction: jest.fn((work: (m: typeof manager) => unknown) => work(manager)),
+      query: jest.fn(() => Promise.resolve(posters)),
+    },
   };
   const count = jest.fn(() => Promise.resolve(2));
   const redis = { scan: jest.fn(), del: jest.fn() };
+  const httpService = { post: jest.fn(() => of({ data: { changed: posters.length } })) };
   const service = new AssociationsService(
     assoRepo as never, // assoRepo
     { count } as never, // memberRepo
@@ -31,7 +36,7 @@ function makeService() {
     { count } as never, // formRepo
     undefined as never, // productRepo
     redis as never, // redis
-    undefined as never, // httpService
+    httpService as never, // httpService
     undefined as never, // notifications
     undefined as never // userTagService
   );
@@ -41,7 +46,7 @@ function makeService() {
       'invalidatePostListCaches'
     )
     .mockResolvedValue(undefined);
-  return { service, manager, assoRepo };
+  return { service, manager, assoRepo, httpService };
 }
 
 describe('AssociationsService.remove - the forms go with the association', () => {
@@ -59,5 +64,33 @@ describe('AssociationsService.remove - the forms go with the association', () =>
     // Forms go through `retireForms`: archived when they hold submissions (`submissions_form_fk`),
     // deleted otherwise - never a bare `manager.delete(Form, ...)`, which the key would refuse.
     expect(retireForms).toHaveBeenCalledWith(manager, { associationId: 'asso-1' });
+  });
+});
+
+describe('AssociationsService.remove - its booking spaces go, and their posters are released', () => {
+  it('releases every poster of its spaces to the idle sweep once the association is gone', async () => {
+    const { service, assoRepo, httpService } = makeService([
+      { id: 'poster-1' },
+      { id: 'poster-2' },
+    ]);
+
+    await expect(service.remove('asso-1', 'admin-1')).resolves.toEqual({ ok: true });
+
+    expect(assoRepo.manager.query).toHaveBeenCalledWith(
+      expect.stringContaining('FROM booking_spaces'),
+      ['asso-1']
+    );
+    expect(httpService.post).toHaveBeenCalledTimes(1);
+    expect(httpService.post.mock.calls[0]).toEqual([
+      expect.stringContaining('media/internal/retention-class'),
+      { mediaIds: ['poster-1', 'poster-2'], retentionClass: 'ephemeral' },
+      expect.anything(),
+    ]);
+  });
+
+  it('asks the media service nothing when no space had a poster', async () => {
+    const { service, httpService } = makeService();
+    await service.remove('asso-1', 'admin-1');
+    expect(httpService.post).not.toHaveBeenCalled();
   });
 });

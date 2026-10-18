@@ -183,6 +183,11 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
     reason:
       'D15: a deleted account leaves the name it had in a frozen booking; the one-year maximum age (D19) bounds it',
   },
+  // A file answer (D7, WP-B6) is its uploader's, as a form's: the row goes, the media service's
+  // part deletes the blob (class `form-file`), and the answer reads "file deleted".
+  'booking_files.uploaderId': { action: 'delete' },
+  'booking_files.fileName': { action: 'delete', via: 'uploaderId' },
+  'booking_spaces.poster': NO_ACCOUNT("the encrypted media reference of a space's poster"),
 
   // -- Lives ({@link LIVES_ERASURE_STATEMENTS}, docs/wiki/services/lives.md) ---------------------
   // A live is its broadcaster's content and has no replay (L3): the erasure ENDS it and anonymises
@@ -274,6 +279,13 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'bookings_blocks',
     sql: `UPDATE booking_blocks SET "createdById" = $2 WHERE "createdById" = $1`,
+  },
+  // Last, after the bookings: the booking path writes these rows after its booking (lock order).
+  // The media service's part of the erasure deletes the blobs (class `form-file`, owned by the
+  // uploader); the answer keeps the id, which now reads "file deleted" (`splitAnswerFiles`).
+  {
+    label: 'bookings_files',
+    sql: `DELETE FROM booking_files WHERE "uploaderId" = $1`,
   },
 ];
 

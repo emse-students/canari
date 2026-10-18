@@ -561,12 +561,29 @@ export class AssociationsService {
     // submissions is ARCHIVED rather than deleted (`retireForms`, `submissions_form_fk`), because
     // they are the payers' records. An archived form is in no list, so it cannot be shown as
     // "Personnel"; the staff reach it by id.
+    // Its booking spaces go with it (their foreign key cascades, D27); their posters are class
+    // `association`, which no sweep takes, so they are released once nothing cites them.
+    const posters: { id: string }[] = await this.assoRepo.manager.query(
+      `SELECT poster->>'mediaId' AS id FROM booking_spaces WHERE "associationId" = $1 AND poster IS NOT NULL`,
+      [id]
+    );
     await this.assoRepo.manager.transaction(async (manager) => {
       await manager.delete(AssociationCalendarEvent, { associationId: id });
       await retireForms(manager, { associationId: id });
       await manager.delete(AssociationMember, { associationId: id });
       await manager.delete(Association, id);
     });
+    if (posters.length) {
+      const released = await applyMediaRetentionClass(
+        this.httpService,
+        this.logger,
+        posters.map((p) => p.id),
+        'ephemeral'
+      );
+      this.logger.log(
+        `[ASSO] DELETE ${id}: ${posters.length} booking poster(s) ${released === null ? `NOT released - the media service keeps them: ${posters.map((p) => p.id).join(',')}` : 'released'}`
+      );
+    }
     await this.invalidatePostListCaches();
     return { ok: true };
   }
