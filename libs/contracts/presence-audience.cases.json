@@ -1,0 +1,51 @@
+{
+  "$comment": [
+    "THE PRESENCE-AUDIENCE QUESTION, WRITTEN ONCE AND ASSERTED IN THE THREE PLACES THAT ASK OR ANSWER IT.",
+    "",
+    "`GET /api/presence` (chat-gateway, Rust) asks chat-delivery and social-service the same",
+    "question - `{ viewerId, userIds }` - and both validate it with one byte-identical TypeScript",
+    "module, `src/utils/presence-audience.ts`. The gateway refuses more than `maxUserIds` distinct",
+    "ids before asking, and each service refuses the same bound again: three constants, one number.",
+    "This file is that number, and the cases the two services' validator must answer the same way.",
+    "Read by `presence.rs` (the gateway's constant) and by `presence-audience.spec.ts` in both",
+    "services. `expected: null` is a refusal (a 400), never an empty audience."
+  ],
+  "maxUserIds": 1000,
+  "cases": [
+    {
+      "name": "trims, lowercases, drops blanks and duplicates, keeps the order",
+      "body": { "viewerId": " Alice ", "userIds": ["Bob", " bob ", "", "CAROL"] },
+      "expected": { "viewerId": "alice", "userIds": ["bob", "carol"] }
+    },
+    {
+      "name": "keeps the viewer in the list - removing them is each route's decision",
+      "body": { "viewerId": "alice", "userIds": ["alice", "bob"] },
+      "expected": { "viewerId": "alice", "userIds": ["alice", "bob"] }
+    },
+    {
+      "name": "an empty list is a question, not a refusal",
+      "body": { "viewerId": "alice", "userIds": [] },
+      "expected": { "viewerId": "alice", "userIds": [] }
+    },
+    {
+      "name": "refuses a missing viewerId",
+      "body": { "userIds": ["bob"] },
+      "expected": null
+    },
+    {
+      "name": "refuses a blank viewerId",
+      "body": { "viewerId": "   ", "userIds": ["bob"] },
+      "expected": null
+    },
+    {
+      "name": "refuses userIds that is not an array",
+      "body": { "viewerId": "alice", "userIds": "bob" },
+      "expected": null
+    },
+    {
+      "name": "refuses an id that is not a string",
+      "body": { "viewerId": "alice", "userIds": ["bob", 1] },
+      "expected": null
+    }
+  ]
+}

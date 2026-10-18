@@ -69,6 +69,7 @@ describe('ChatGroupPanel notification level', () => {
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: [],
       groupLevels: { [G]: 'mentions' },
+      groupCalls: {},
     });
     await render();
     expect(radio(m.chat_channel_notif_mentions_label())?.getAttribute('aria-checked')).toBe('true');
@@ -84,7 +85,11 @@ describe('ChatGroupPanel notification level', () => {
   });
 
   it('writes a choice for this conversation', async () => {
-    api.fetchNotificationPreferences.mockResolvedValue({ disabled: [], groupLevels: {} });
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: [],
+      groupLevels: {},
+      groupCalls: {},
+    });
     await render();
     radio(m.chat_channel_notif_none_label())!.click();
     await tick();
@@ -94,7 +99,11 @@ describe('ChatGroupPanel notification level', () => {
   });
 
   it('says so, and puts the level back, when the server refuses the choice', async () => {
-    api.fetchNotificationPreferences.mockResolvedValue({ disabled: [], groupLevels: {} });
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: [],
+      groupLevels: {},
+      groupCalls: {},
+    });
     api.saveGroupNotificationLevel.mockRejectedValueOnce(new Error('403'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     await render();
@@ -109,11 +118,16 @@ describe('ChatGroupPanel notification level', () => {
   });
 
   it('re-reads the levels at every opening, so a change made on another device shows', async () => {
-    api.fetchNotificationPreferences.mockResolvedValue({ disabled: [], groupLevels: {} });
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: [],
+      groupLevels: {},
+      groupCalls: {},
+    });
     await notificationPreferences.load();
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: [],
       groupLevels: { [G]: 'none' },
+      groupCalls: {},
     });
     await render();
     expect(radio(m.chat_channel_notif_none_label())?.getAttribute('aria-checked')).toBe('true');

@@ -107,6 +107,42 @@ export async function writeGroupNotificationLevel(
   return (result.affected ?? 0) > 0;
 }
 
+/**
+ * Every conversation where `userId` CHOSE whether calls may ring them, keyed by group id - the
+ * explicit choices only. An absent group never chose, and the client resolves it against its level
+ * with the same rule as the server (`callsAllowedFor`), so a level changed later still moves it.
+ * Strict, like the levels' read.
+ */
+export async function readGroupCallPermissionsStrict(
+  manager: EntityManager,
+  userId: string
+): Promise<Record<string, boolean>> {
+  const rows = await manager.find(GroupMember, {
+    select: { id: true, groupId: true, callsAllowed: true },
+    where: { userId },
+  });
+  const calls: Record<string, boolean> = {};
+  for (const row of rows) {
+    if (typeof row.callsAllowed === 'boolean') calls[row.groupId] = row.callsAllowed;
+  }
+  return calls;
+}
+
+/**
+ * Records `userId`'s choice of whether calls in `groupId` may ring them, on their own membership row.
+ *
+ * @returns false when the caller has no membership row - nothing was written.
+ */
+export async function writeGroupCallsAllowed(
+  manager: EntityManager,
+  groupId: GroupUuid,
+  userId: string,
+  allowed: boolean
+): Promise<boolean> {
+  const result = await manager.update(GroupMember, { groupId, userId }, { callsAllowed: allowed });
+  return (result.affected ?? 0) > 0;
+}
+
 /** Replaces the account's disabled set. Unknown ids are the caller's to refuse. */
 export async function writeDisabledCategories(
   manager: EntityManager,

@@ -309,13 +309,14 @@ name.
 
 ### An `<img src>` cannot carry a Bearer, and that is a design constraint, not an exemption
 
-Three routes are reached by the browser itself rather than by application code -
-`GET /api/users/:id/avatar`, `GET /api/media/public/:id`, `GET /api/mls/link-preview/image` - so no
-`Authorization` header exists to check, and on `tauri://localhost` no cookie either. The first two
-serve assets that public pages show anyway. The third served an arbitrary external URL to anybody
-who asked, so it carries a **ticket** instead: an authenticated call to
-`GET /api/mls/link-preview/ticket` mints an HMAC over a five-minute bucket, and the image route
-verifies that. The discriminator is carried to where the decision is made rather than learned by
+Four routes are reached by the browser itself rather than by application code -
+`GET /api/users/:id/avatar`, `GET /api/media/public/:id`, `GET /api/mls/link-preview/image`,
+`GET /api/mls/gifs/media` - so no `Authorization` header exists to check, and on
+`tauri://localhost` no cookie either. The first two serve assets that public pages show anyway. The
+third served an arbitrary external URL to anybody who asked, so it carries a **ticket** instead: an
+authenticated call to `GET /api/mls/link-preview/ticket` mints an HMAC over a five-minute bucket,
+and the image route verifies that. The fourth, the GIF relay, verifies a second KIND minted by the
+same call (`gifTicket`, a day-long bucket, so a GIF keeps one URL in the browser cache). The discriminator is carried to where the decision is made rather than learned by
 failing - `apps/chat-delivery-service/src/utils/previewTicket.ts` and
 `frontend/src/lib/utils/previewTicket.svelte.ts` are the two halves.
 
@@ -330,6 +331,9 @@ $logged_request_uri` that redacts every `token=` query value (`xtoken=` is left 
 `canari_redacted` format that is `main` with `$request` rebuilt from it, and the `access_log` **inside
 the server block** - at http level it would ADD to the base image's `main` and write the raw line
 beside the redacted one (measured). Gate: `.github/scripts/tests/access-log-redaction.test.mjs`.
+The same map drops the whole query of the GIF search (`/api/mls/gifs?query-redacted`, 2026-10-16)
+and of the GIF relay (`/api/mls/gifs/media?query-redacted`, 2026-10-18, its own rule first): a
+search, or which GIF a reader loaded, beside their address is what those routes keep from KLIPY.
 
 **Not covered, and not in this repo:** the host-level nginx on the Portail-etu host
 (`sites-available/canari*.conf`) and the Cloudflare edge log see the same URL; their formats are the

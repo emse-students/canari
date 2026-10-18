@@ -56,14 +56,18 @@ impl DropReason {
     }
 }
 
-/// Hands `frame` to the partner's socket writer WITHOUT waiting.
+/// Hands `frame` to a socket writer's queue WITHOUT waiting - the ONLY way this mode sends.
 ///
-/// This runs on the SENDER's socket task. Awaiting room in the partner's bounded queue would let
-/// a partner that stopped reading freeze the sender's own reads, keepalive pings and writes - one
-/// stalled peer taking down the other. So it is synchronous by construction, and a frame that
+/// Every p2p send runs on SOME peer's socket task, and every queue is bounded. Awaiting room in
+/// another peer's queue would let a peer that stopped reading freeze this one's reads, keepalive
+/// pings and writes; awaiting room in this task's OWN queue would deadlock it outright, since the
+/// task that drains it is the one waiting. So it is synchronous by construction, and a frame that
 /// does not fit is dropped and returned as a reason for the caller to log.
-pub(crate) fn deliver(partner: &P2pPeer, frame: crate::SignalMessage) -> Result<(), DropReason> {
-    partner.tx.try_send(frame).map_err(|e| match e {
+pub(crate) fn deliver(
+    tx: &mpsc::Sender<crate::SignalMessage>,
+    frame: crate::SignalMessage,
+) -> Result<(), DropReason> {
+    tx.try_send(frame).map_err(|e| match e {
         mpsc::error::TrySendError::Full(_) => DropReason::Full,
         mpsc::error::TrySendError::Closed(_) => DropReason::Gone,
     })
@@ -308,15 +312,15 @@ mod tests {
     #[test]
     fn delivery_to_a_full_queue_drops_at_once_and_says_why() {
         let (b, mut rb) = peer_in("bob", "phone", "group-1", 1);
-        assert_eq!(deliver(&b, crate::SignalMessage::PeerLeft), Ok(()));
+        assert_eq!(deliver(&b.tx, crate::SignalMessage::PeerLeft), Ok(()));
         assert_eq!(
-            deliver(&b, crate::SignalMessage::PeerLeft),
+            deliver(&b.tx, crate::SignalMessage::PeerLeft),
             Err(DropReason::Full)
         );
         assert!(rb.try_recv().is_ok());
         drop(rb);
         assert_eq!(
-            deliver(&b, crate::SignalMessage::PeerLeft),
+            deliver(&b.tx, crate::SignalMessage::PeerLeft),
             Err(DropReason::Gone)
         );
     }

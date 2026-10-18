@@ -19,13 +19,16 @@
     readBy: string[];
     /** When true, renders outside the bubble (delivery/read indicators). */
     outsideBubble?: boolean;
-    /** Offered on a FAILED send that can be re-sent (a salon message, WP-OFF-2). */
+    /**
+     * Offered on a salon send that can be re-sent (WP-OFF-2): a FAILED one, and an UNCONFIRMED one,
+     * whose repeat the server answers with the row it already holds (WP-OFF-3).
+     */
     onRetry?: () => void;
     /** Offered beside `onRetry`, and on an unconfirmed send: gives the message up. */
     onDiscard?: () => void;
     /**
      * Offered on an UNCONFIRMED send (no answer came back): takes the row away and hands its text back
-     * to the composer, the member deciding whether to send it again - a silent retry could post twice.
+     * to the composer, for a member who would rather rewrite it than retry it.
      */
     onRestore?: () => void;
   }
@@ -128,6 +131,17 @@
         >
           <CircleHelp size={12} />
           {m.msg_non_confirme()}
+          {#if onRetry}
+            <button
+              type="button"
+              class="font-semibold underline"
+              data-testid="message-retry"
+              onclick={(e) => {
+                e.stopPropagation();
+                onRetry?.();
+              }}>{m.common_retry_button()}</button
+            >
+          {/if}
           {#if onRestore}
             <button
               type="button"

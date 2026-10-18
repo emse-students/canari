@@ -162,6 +162,9 @@ Two write paths never checked `anonymous` before resolving and storing the real 
 - Neither can **add the other to a group**.
 - Neither can **invite the other into a private salon** - inside a shared community included.
 - The two **follows** are severed, in both directions.
+- Neither can **call** the other, in an existing conversation included: a call is a new ring, not
+  the existing conversation (`initiate`, `ring` and `room-token` answer `403 USER_BLOCKED`,
+  [calls](frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)).
 - Neither is shown the other's **personal posts**, nor their **comments** under anybody's post -
   in the feed, in search, by id, and under an agenda event. **An association post and an anonymous
   post are exempt**, and the section below is why.
@@ -173,6 +176,13 @@ The directory (`GET /api/users/directory`) still lists both - it is a browsing v
 cursus filters, not a target picker, and punching a hole in it would make a block visible in a
 screen that has nothing to do with it. Invitation **links** are out of scope: a block stops somebody
 from pushing you somewhere, not from you walking in.
+
+**Presence is not hidden by a block** (WP-PRESENCE, 2026-10-18). Its audience is "shares a live
+conversation or a community with you" ([chat-gateway](services/chat-gateway.md#who-may-see-whose-presence-wp-presence-2026-10-18)),
+and a block ends neither, for the reason in the first paragraph above. So a blocked person who still
+shares a conversation or a community with you still sees your dot, and you theirs. The audience
+check reads only membership tables and never `user_blocks`: honouring a block there would mean the
+gateway asking a third service, and would make the block observable from the dot going dark.
 
 The blocked person is never notified. No administrator sees anything. They can, since posts started
 being hidden, NOTICE that one reader stopped seeing them - that is what a symmetric hide costs, and
@@ -260,6 +270,7 @@ mutations:
 | --- | --- | --- |
 | `POST /mls/groups/:groupId/members` | chat-delivery | `403 { code: 'USER_BLOCKED' }` |
 | `POST /api/channels/:channelId/members/invite` | social-service | `403 { code: 'USER_BLOCKED' }` |
+| `POST /api/calls/initiate`, `POST /api/calls/ring`, `GET /api/calls/room-token` | chat-delivery | `403 { code: 'USER_BLOCKED' }` |
 
 `addGroupMember` is the choke point for **both** paths a block closes. Without a `GroupMember` row
 the target's devices never receive a pending membership, so no Welcome is ever built for them. It is

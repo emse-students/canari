@@ -24,6 +24,11 @@ vi.mock('$lib/utils/chat/attachSources', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/chat/attachSources')>()),
   currentAttachRuntime: () => env.runtime,
 }));
+const nav = vi.hoisted(() => ({ goto: vi.fn(async (_href: string) => {}) }));
+vi.mock('$app/navigation', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$app/navigation')>()),
+  goto: nav.goto,
+}));
 const native = vi.hoisted(() => ({ pick: vi.fn(async (_kind: string) => [] as File[]) }));
 vi.mock('$lib/utils/chat/nativeAttachPicker', () => ({ pickNatively: native.pick }));
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
@@ -38,6 +43,7 @@ afterEach(() => {
   env.app = true;
   env.runtime = 'android-app';
   native.pick.mockClear();
+  nav.goto.mockClear();
   while (mounted.length) mounted.pop()!();
   document.body.innerHTML = '';
   window.matchMedia = originalMatchMedia;
@@ -117,7 +123,12 @@ describe('the one attachment menu - Android app', () => {
     openMenu();
 
     expect(opened).toEqual([]);
-    expect(entries()).toEqual(['Photothèque', 'Ouvrir la caméra', 'Tous les fichiers']);
+    expect(entries()).toEqual([
+      'Photothèque',
+      'Ouvrir la caméra',
+      'Tous les fichiers',
+      'CanaReels',
+    ]);
     expect(plus().getAttribute('aria-expanded')).toBe('true');
   });
 
@@ -154,6 +165,21 @@ describe('the one attachment menu - Android app', () => {
     expect(plus().getAttribute('aria-expanded')).toBe('false');
   });
 
+  it('"CanaReels" opens the camera TAB (a place, not a picker), and closes the menu', () => {
+    stubMatchMedia(true);
+    mountComposer();
+    const opened = spyOnPickers();
+
+    openMenu();
+    menuItem('CanaReels').click();
+    flushSync();
+
+    expect(nav.goto).toHaveBeenCalledTimes(1);
+    expect(String(nav.goto.mock.calls[0]![0])).toMatch(/\/camera$/);
+    expect(opened).toEqual([]);
+    expect(plus().getAttribute('aria-expanded')).toBe('false');
+  });
+
   it('hands what an input picked to the upload path', () => {
     stubMatchMedia(true);
     const props = mountComposer();
@@ -179,7 +205,12 @@ describe('the one attachment menu - iOS app', () => {
     const opened = spyOnPickers();
 
     openMenu();
-    expect(entries()).toEqual(['Photothèque', 'Ouvrir la caméra', 'Tous les fichiers']);
+    expect(entries()).toEqual([
+      'Photothèque',
+      'Ouvrir la caméra',
+      'Tous les fichiers',
+      'CanaReels',
+    ]);
     menuItem('Photothèque').click();
     flushSync();
     await tick();

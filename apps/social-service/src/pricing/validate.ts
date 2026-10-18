@@ -32,6 +32,26 @@ export interface CriteriaContext {
   questions: Map<string, Set<string>>;
 }
 
+/**
+ * The context a set of questions is validated in: the association's cotisation tiers, and each
+ * question's option ids. ONE builder for every caller (a form, a booking space), so a form and a
+ * space agree on what a condition may name.
+ */
+export function criteriaContextFor(
+  tiers: readonly { variantKey: string | null }[],
+  items: readonly { id?: string; options?: readonly { id?: string }[] }[]
+): CriteriaContext {
+  return {
+    tierKeys: tiers.map((t) => t.variantKey),
+    questions: new Map(
+      items.map((item) => [
+        item.id as string,
+        new Set<string>((item.options ?? []).map((o) => o.id).filter((x): x is string => !!x)),
+      ])
+    ),
+  };
+}
+
 function asRecord(value: unknown, where: string): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) {
     throw new BadRequestException(`${where} must be an object.`);

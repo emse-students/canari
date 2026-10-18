@@ -78,6 +78,16 @@ fn expect_undecryptable(blob: Vec<u8>, what: &str) {
     }
 }
 
+/// A blob whose header names the key in hand and whose tag fails: provably altered (step 2,
+/// 2026-10-17). Before, it shared `StateUndecryptable` with a stub and a legacy blob.
+fn expect_altered(blob: Vec<u8>, what: &str) {
+    match load(blob, &params::DEVICE_KEY) {
+        Err(MlsError::StateAltered(_)) => {}
+        Err(other) => panic!("{what}: expected StateAltered, got {other:?}"),
+        Ok(_) => panic!("{what}: an altered blob LOADED - that is a corrupt state accepted"),
+    }
+}
+
 // --- 1. The two implementations agree -------------------------------------------------------
 
 #[test]
@@ -154,7 +164,7 @@ fn a_legacy_sealed_state_loads_through_the_same_entry_point_as_v2() {
 // --- 3. Every alteration fails, as the right type --------------------------------------------
 
 #[test]
-fn a_flipped_bit_in_the_body_iv_or_tag_is_undecryptable() {
+fn a_flipped_bit_in_the_body_iv_or_tag_is_altered() {
     let blob = fixture(WEB_FIXTURE);
     let body_start = HEADER_LEN;
     for (what, at) in [
@@ -167,23 +177,26 @@ fn a_flipped_bit_in_the_body_iv_or_tag_is_undecryptable() {
     ] {
         let mut altered = blob.clone();
         altered[at] ^= 0x01;
-        expect_undecryptable(altered, what);
+        expect_altered(altered, what);
     }
 }
 
 #[test]
-fn a_truncated_v2_blob_is_undecryptable_at_every_length_an_interrupted_write_leaves() {
+fn a_truncated_v2_blob_never_loads_at_any_length_an_interrupted_write_leaves() {
     let blob = fixture(WEB_FIXTURE);
+    // Too short to carry a header, or a header over a stub: nothing names a key, so the observation.
     for len in [
         0,
         11,
         HEADER_LEN,
         HEADER_LEN + V2_IV_LEN,
         HEADER_LEN + V2_IV_LEN + 15,
-        blob.len() / 2,
-        blob.len() - 1,
     ] {
         expect_undecryptable(blob[..len].to_vec(), &format!("truncated to {len}"));
+    }
+    // The header survived and names the key in hand: the body was cut, which is alteration.
+    for len in [blob.len() / 2, blob.len() - 1] {
+        expect_altered(blob[..len].to_vec(), &format!("truncated to {len}"));
     }
 }
 
@@ -194,7 +207,7 @@ fn a_rewritten_version_byte_never_reaches_a_state() {
     // 2 -> 1: the v1 path, whose fingerprint matches and whose ChaCha tag cannot verify an AES body.
     let mut as_v1 = blob.clone();
     as_v1[MAGIC.len()] = 1;
-    expect_undecryptable(as_v1, "version byte rewritten to 1");
+    expect_altered(as_v1, "version byte rewritten to 1");
 
     // 2 -> 3: a version this build does not know, named as a downgrade.
     let mut as_v3 = blob.clone();
@@ -228,8 +241,8 @@ fn a_fingerprint_forged_to_match_another_key_still_fails_the_tag() {
     let mut forged = fixture(WEB_FIXTURE);
     forged[MAGIC.len() + 1..HEADER_LEN].copy_from_slice(&state_blob::key_fingerprint(&other));
     match load(forged, &other) {
-        Err(MlsError::StateUndecryptable(_)) => {}
-        other => panic!("expected StateUndecryptable, got {:?}", other.err()),
+        Err(MlsError::StateAltered(_)) => {}
+        other => panic!("expected StateAltered, got {:?}", other.err()),
     }
 }
 

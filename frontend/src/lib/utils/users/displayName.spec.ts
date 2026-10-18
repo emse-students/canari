@@ -5,6 +5,7 @@
 vi.mock('$lib/paraglide/messages', () => ({
   m: {
     user_unknown_label: () => 'Utilisateur inconnu',
+    user_deleted_label: () => 'Compte supprimé',
   },
 }));
 
@@ -23,6 +24,8 @@ vi.mock('$lib/stores/user', async () => {
     fetchUserProfile: vi.fn(),
     UserProfileFetchError: actual.UserProfileFetchError,
     isAbsentUserError: actual.isAbsentUserError,
+    isDeletedAccountError: actual.isDeletedAccountError,
+    DeletedAccountError: actual.DeletedAccountError,
   };
 });
 
@@ -452,6 +455,20 @@ describe('formatProfileDisplayName (indirect)', () => {
     // the two-minute suppression is earning its keep.
     expect(warn).not.toHaveBeenCalled();
     expect(mod.displayNameLookupStats()).toEqual({ attempted: 1, failed: 0, failureRate: 0 });
+  });
+
+  it('answers the deleted-account label, never a name, when the server names the account deleted', async () => {
+    vi.resetModules();
+    const userModule = await import('$lib/stores/user');
+    const mod = await import('./displayName');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.mocked(userModule.fetchUserProfile).mockClear();
+    vi.mocked(userModule.fetchUserProfile).mockRejectedValue(new userModule.DeletedAccountError());
+
+    expect(await mod.resolveUserDisplayName('usr_erased')).toBe('Compte supprimé');
+    expect(await mod.resolveUserDisplayName('usr_erased')).toBe('Compte supprimé');
+    expect(vi.mocked(userModule.fetchUserProfile)).toHaveBeenCalledTimes(1);
   });
 
   it('does not re-ask for an absent user when connectivity returns', async () => {

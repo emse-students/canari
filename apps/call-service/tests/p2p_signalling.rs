@@ -12,7 +12,7 @@
 //! THE TIMEOUTS ARE LIVENESS GUARDS ONLY: each wait is for a frame, and the bound exists so a hang
 //! fails instead of stalling CI. Nothing is asserted on elapsed time.
 
-use std::net::TcpListener;
+use std::io::{BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
@@ -43,36 +43,73 @@ impl Drop for Service {
     }
 }
 
-fn free_port() -> u16 {
-    TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
-        .port()
+/// The port in the service's "listening on <addr>" line, `None` for any other line.
+fn bound_port(line: &str) -> Option<u16> {
+    let addr = line.split("Call service listening on ").nth(1)?;
+    let digits: String = addr
+        .rsplit(':')
+        .next()?
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    digits.parse().ok()
 }
 
+/// Starts the binary on `PORT=0` and reads the port it BOUND from its own log line.
+///
+/// THE CHILD BINDS, AND NOTHING ELSE CAN HOLD THAT PORT. The previous shape picked a "free" port
+/// here, released it, and let the child bind it later: between the two, a test running in parallel
+/// could take it, so a test's readiness probe answered for ANOTHER test's service and its socket
+/// was reset under it. The line is logged after `bind` returns, so it is also the readiness event -
+/// no probe at all.
 async fn start() -> Service {
-    let port = free_port();
-    let child = Command::new(env!("CARGO_BIN_EXE_call-service"))
-        .env("PORT", port.to_string())
+    let mut child = Command::new(env!("CARGO_BIN_EXE_call-service"))
+        .env("PORT", "0")
+        .env("RUST_LOG", "info")
+        .env("NO_COLOR", "1")
         .env("JWT_SECRET", JWT_SECRET)
         .env("CALL_ROOM_SECRET", ROOM_SECRET)
         .env_remove("CLOUDFLARE_CALLS_API_TOKEN")
         .env_remove("CLOUDFLARE_TURN_KEY_ID")
-        .stdout(Stdio::null())
+        .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn call-service");
-    let service = Service { child, port };
-    // Ready when it accepts a connection: an event, bounded by LIVENESS.
-    timeout(LIVENESS, async {
-        while TcpStream::connect(("127.0.0.1", port)).await.is_err() {
-            tokio::task::yield_now().await;
+    let stdout = child.stdout.take().expect("piped stdout");
+    // One thread reads the log for the whole run: it hands over the port, then keeps draining so
+    // the child never blocks on a full pipe.
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        let mut tx = Some(tx);
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if let Some(port) = bound_port(&line) {
+                if let Some(tx) = tx.take() {
+                    let _ = tx.send(port);
+                }
+            }
         }
-    })
-    .await
-    .expect("call-service never started listening");
+    });
+    let mut service = Service { child, port: 0 };
+    // An event, bounded by LIVENESS: the channel closes without a port if the child exits first.
+    service.port = tokio::task::spawn_blocking(move || rx.recv_timeout(LIVENESS))
+        .await
+        .unwrap()
+        .expect("call-service never logged the port it bound");
     service
+}
+
+#[test]
+fn the_bound_port_is_read_from_the_listening_line_only() {
+    assert_eq!(
+        bound_port(
+            "2026-10-18T00:00:00Z  INFO call_service: Call service listening on 0.0.0.0:41234"
+        ),
+        Some(41234)
+    );
+    assert_eq!(
+        bound_port("INFO call_service: something else on 0.0.0.0:1"),
+        None
+    );
 }
 
 fn exp() -> usize {
@@ -305,6 +342,49 @@ async fn an_oversized_frame_closes_the_socket() {
     })
     .await;
     assert!(ended.is_ok(), "an oversized frame must end the socket");
+}
+
+/// The MESSAGE cap, apart from the frame cap: 65 KiB sent as five 13 KiB fragments, every frame
+/// well under 64 KiB. Only `max_message_size` can refuse it - without it the reassembled message
+/// would be parsed and relayed.
+#[tokio::test]
+async fn an_oversized_message_in_small_frames_closes_the_socket() {
+    use tokio_tungstenite::tungstenite::protocol::frame::coding::{Data, OpCode};
+    use tokio_tungstenite::tungstenite::protocol::frame::Frame;
+
+    let svc = start().await;
+    let mut alice = join(&svc, "alice", "room-fragments").await;
+    recv(&mut alice).await; // Joined
+
+    let fragment = vec![b'a'; 13 * 1024];
+    for i in 0..5 {
+        let opcode = if i == 0 {
+            OpCode::Data(Data::Text)
+        } else {
+            OpCode::Data(Data::Continue)
+        };
+        // A write may already fail once the server has closed; only the ending is asserted.
+        let _ = alice
+            .send(Message::Frame(Frame::message(
+                fragment.clone(),
+                opcode,
+                i == 4,
+            )))
+            .await;
+    }
+    let ended = timeout(LIVENESS, async {
+        loop {
+            match alice.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                Some(Ok(_)) => continue,
+            }
+        }
+    })
+    .await;
+    assert!(
+        ended.is_ok(),
+        "a message over the cap must end the socket, whatever its frame sizes"
+    );
 }
 
 #[tokio::test]

@@ -110,7 +110,10 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
 - **Deleted**: the account's own content and standing - posts, memberships, follows, mutes, tags,
   moderation state, reminders, respondent marks, form files (the row here, the blob in media),
   notifications to OR from it, minesweeper, reviewer grants, read grants, **its community salon
-  messages (reactions and pins included; the salons are told a pin is gone)**, its key packages, devices, PIN verifier, push tokens, signature keys,
+  messages (reactions and pins included; the salons are told a pin is gone) and the client-id
+  tombstones its deleted ones left (`channel_message_client_tombstones`, migration 090: author,
+  salon and a random id - an erased account repeats no send, so nothing needs them; a message
+  delete racing the erasure locks the row first, so it waits and writes none)**, its key packages, devices, PIN verifier, push tokens, signature keys,
   notification preferences, dismissal markers, DMs (tombstoned for the other party), queued
   messages to it and queued APPLICATION messages from it; in core, blocks, sessions, the profile
   trail and correction requests, announcement readership.

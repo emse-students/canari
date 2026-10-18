@@ -139,10 +139,28 @@ Three properties carry it, and each is asserted in `users.batch.spec.ts`:
 - **It is declared before `@Get(':id')`.** Nest matches in declaration order, so the other order
   routes `batch` as `id = "batch"` and answers 404 - a routing mistake wearing the face of a missing
   user.
-- **An unknown id is ABSENT from the answer, never an error.** One deleted account may not refuse
-  the nineteen live ones beside it, so the caller reads the absence and classifies it itself. The
-  store turns it back into the same `UserProfileFetchError(404)` the single-id route produced, which
-  is why `isAbsentUserError` and the whole display-name cache needed no change.
+- **An unknown id is NAMED in `deleted`, never an error and never a name** (decided 2026-10-18,
+  WP-MENTION-DELETED). One deleted account may not refuse the nineteen live ones beside it, and the
+  answer is `{ users, deleted: string[] }`: a typed "no such account" carrying no name, because the
+  name is kept nowhere once the account is erased (an id that never existed answers the same). The
+  store rejects it with `DeletedAccountError` (a `UserProfileFetchError(404)`, so `isAbsentUserError`
+  and the display-name cache needed no change) and the resolver renders the Paraglide
+  `user_deleted_label`. An answer with NO `deleted` field is an older server's (rolling deploy,
+  rollback, a store build live before production): absence is the plain 404 it always was, cached
+  and quiet - a dated shim in [legacy-compatibility](../legacy-compatibility.md#no-date-yet---the-profile-batch-answered-without-deleted-by-a-server-older-than-2026-10-18).
+  Only an id in NEITHER list from a server that SENDS `deleted` is a contract breach: it rejects
+  502, is logged, never cached, never rendered as deleted. `GET /api/users/:id` still answers 404.
+
+  **A KNOWN COST, ACCEPTED (2026-10-18): an id that never existed reads "Compte supprimé" for the
+  session** - an id from the other estate, or a malformed one in a mention. The server keeps no
+  tombstone, so "erased" and "never existed" are the same absence, and telling them apart would
+  mean keeping a trace of every erased account, which the erasure exists to avoid. **Letter case
+  cannot put one id in both lists**: `users.id` is `varchar(255)` under the deterministic default
+  collation, so `IN (...)` matches byte-exact (checked on `postgres:18-alpine`: `IN ('ABC','abc')`
+  returns only `abc`), the controller computes `deleted` from the ids it got back, and every
+  requested string lands in exactly one list. What case CAN do is the client's `normalizeUserId`
+  lowercasing before it asks: a stored id carrying an upper-case letter would read deleted. The
+  identity provider's subjects are lower-case hex, so none exists today.
 - **A list longer than `MAX_PROFILE_BATCH` (100) is REFUSED, not truncated.** A silently shortened
   answer is indistinguishable from a page of deleted accounts. 100 is above every shape that exists
   (production 2026-09-15: 421 accounts, largest association roster 27, largest DM group 2), so the
@@ -562,6 +580,8 @@ nulls the column. Only the client can encrypt, so the conversion cannot happen i
 ### Nothing records which BUILD each device runs (2026-08-27)
 
 Asked while debugging the iOS session: is there one place naming the version of every device? There is not. `/admin/platform` WRITES `minClientVersion` (a policy, not an observation) and `/admin/status` reads live presence from the gateway (no version). Two mechanisms already receive the value: `GET /users/me/announcement?clientVersion=` (every client, every launch; used only for an announcement's audience, then discarded) and `POST /auth/refresh?clientVersion=` (since 2026-08-27, for the refusal log). `push_token` already holds one row per `(userId, deviceId)` with a `platform` and an `updatedAt`, so recording the version is a column and a write. The cheap version is cheap; the useful version is a decision: which table owns it, whether a web session counts as a device, and what a dashboard shows (distribution by version, or laggards below `minClientVersion`). `key_package.deviceAppVersion` has been written on every platform since #613 (2026-09-14); devices enrolled before it re-report only when they next publish a key package, and it is the column `minClientVersion` decisions must be measured against ([durable-rules](../durable-rules.md#release-and-ci---cicd)).
+
+**THE REPORT EXISTS (2026-10-18, WP-VERSION-REPORT).** `bun tools/version-report/report.mjs` reads `key_package.deviceAppVersion` (no new column) and `platform_config.min_client_version` of the same database through `docker exec` on the compose project `canari-dev`, and prints the version distribution, the devices below the floor grouped by OS and version, and the devices with no stored version (counted apart: nothing says what they run, and the floor lets them through). `--devices` adds one line per laggard, `--input rows.txt --floor X.Y.Z` runs the same grouping on rows from a file. The project allowlist holds `canari-dev` only, so the script cannot be pointed at production; a production read is an operator action through the private notes. A pre-release suffix is ignored, as the server floor does. Exit 1 when anyone is below the floor, 2 when it could not look. Pure logic and its test: `tools/version-report/lib.mjs`, `lib.test.mjs` (in `make test-ci-scripts`). It reports what each device last PUBLISHED, so a device that has not republished since an upgrade still shows its older version.
 
 ### Three services refuse an unsigned caller three different ways
 

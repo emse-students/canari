@@ -10,6 +10,7 @@ import { trackedFetch } from '$lib/utils/trackedFetch';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
 import { ApiRefusalError, responseOrigin } from '$lib/utils/apiRefusal';
+import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 
 export type MlsDeliveryFetch = typeof fetch;
 
@@ -904,7 +905,7 @@ export class MlsDeliveryApi {
             throw new DeviceLimitReachedError(typeof body.max === 'number' ? body.max : null);
           }
         }
-        throw new Error(`Failed to publish KeyPackage: ${response.status} ${response.statusText}`);
+        throw await refusalFromResponse(response, 'Failed to publish KeyPackage');
       }
     });
   }
@@ -934,9 +935,7 @@ export class MlsDeliveryApi {
         }),
       });
       if (!response.ok) {
-        throw new Error(
-          `Failed to publish key packages: ${response.status} ${response.statusText}`
-        );
+        throw await refusalFromResponse(response, 'Failed to publish key packages');
       }
     });
   }
@@ -961,7 +960,7 @@ export class MlsDeliveryApi {
       }
     );
     if (!response.ok) {
-      throw new Error(`Failed to update device metadata: ${response.status}`);
+      throw await refusalFromResponse(response, 'Failed to update device metadata');
     }
     return await response.json();
   }
@@ -1066,7 +1065,7 @@ export class MlsDeliveryApi {
       }),
     });
     if (!res.ok) {
-      throw new Error(`Commit submission HTTP error: ${res.status}`);
+      throw await refusalFromResponse(res, 'Commit submission HTTP error');
     }
     return res.json();
   }
@@ -1094,7 +1093,7 @@ export class MlsDeliveryApi {
       { headers: await this.auth() }
     );
     if (!res.ok) {
-      throw new Error(`Commit replay HTTP error: ${res.status}`);
+      throw await refusalFromResponse(res, 'Commit replay HTTP error');
     }
     return res.json();
   }

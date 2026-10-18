@@ -34,7 +34,8 @@ import {
   loginErrorCode,
 } from './loginErrors';
 import {
-  MLS_LOCAL_STATE_UNDECRYPTABLE,
+  SavedStateUnopenedError,
+  SavedStateOfAnotherAccountError,
   isKeystoreKeyUnavailable,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
@@ -164,6 +165,10 @@ import {
 import { resetSiblingCallWarning } from '$lib/utils/callPresence';
 import { ChannelService } from '$lib/services/ChannelService';
 import type { ICallMsg } from '$lib/proto/codec';
+import {
+  closeDeletedAccountHandles,
+  wipeDeletedAccountLocalData,
+} from '$lib/utils/accountLocalWipe';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import {
   scheduleReconnectImpl,
@@ -172,6 +177,8 @@ import {
   stopConnectionWatchdogImpl,
 } from './sessionConnection';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
+import { ACCOUNT_KEY, SESSION_META_STORE } from '$lib/utils/accountLocalKeys';
+import { isDeletedAccountHere } from '$lib/utils/deletedAccountMarker';
 
 /**
  * Unregisters this session's presence listener. Module-level because the presence store outlives
@@ -357,6 +364,29 @@ function vaultRefusedFailure(refusal: VaultRefusal): LoginFailure {
   return new LoginFailure('vault_not_this_account', m.auth_vault_unverified());
 }
 
+/**
+ * The login failure for a saved state that `init` refused to open or replace (`noFreshStart`).
+ *
+ * READ FROM THE TYPE, NEVER FROM `reason.message`: it used to compare the message against one
+ * shared marker, which collapsed every cause into one screen. Three answers now, each with the
+ * sentence its cause has EARNED. Another account's state (`mls.owner`) is
+ * `device_holds_other_account`, the gate withholding the reset. A framed state whose header names
+ * another key (`rotated`) is a fact - the old PIN opens it - and says so without the "otherwise
+ * damaged" branch, which the fingerprint has ruled out. A legacy blob or an untyped failure is
+ * still only the observation, and keeps the sentence naming both remedies.
+ */
+export function savedStateFailure(
+  reason: SavedStateUnopenedError | SavedStateOfAnotherAccountError
+): LoginFailure {
+  if (reason instanceof SavedStateOfAnotherAccountError) {
+    return new LoginFailure('device_holds_other_account', m.auth_vault_other_account_device());
+  }
+  if (reason.reason === 'rotated') {
+    return new LoginFailure('local_state_sealed_under_old_pin', m.auth_local_state_old_pin());
+  }
+  return new LoginFailure('local_state_unopenable', m.auth_local_state_unopenable());
+}
+
 // ── Exported functions ────────────────────────────────────────────────────────
 
 /**
@@ -375,10 +405,10 @@ export async function resetDeviceAsFreshImpl(
   await ctx.whenMlsRetired();
   const { removeMlsState } = await import('$lib/utils/hex');
   await removeMlsState(userIdToReset);
-  localStorage.removeItem(`mls_device_id_${userIdToReset}`);
-  localStorage.removeItem(`canari_sync_guide_seen_${userIdToReset}`);
+  localStorage.removeItem(ACCOUNT_KEY.deviceId(userIdToReset));
+  localStorage.removeItem(ACCOUNT_KEY.syncGuideSeen(userIdToReset));
 
-  const deviceNamePrefix = `device-name:${userIdToReset}:`;
+  const deviceNamePrefix = ACCOUNT_KEY.deviceName(userIdToReset, '');
   const keysToDelete: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
@@ -418,6 +448,48 @@ export async function resetDeviceAsFreshImpl(
   clearDeviceKeyAndWrapKey();
   clearUserLocally();
   cb.log('[SECURITY] Revoked device detected: local state purged, reconnection required.');
+}
+
+/**
+ * Removes a DELETED account's local message database and vault slot, once its session has ended.
+ *
+ * Called after `clearAuth()` (which ends the live session through the sign-out handler): the final
+ * MLS checkpoint of that session is awaited first, so no write in flight can recreate what is
+ * deleted. Never `wipeDeviceToFactory` - another account on the device keeps everything it has.
+ *
+ * @param ranHere the deleted account is the one this realm ran (the page showed it): its handles are
+ *   closed first. FALSE when the server deleted another account than the one on screen - this realm's
+ *   handles are that other account's, and the deleted one's live in the tab its notice ends.
+ */
+export async function wipeDeletedAccountImpl(
+  ctx: SessionContext,
+  log: (msg: string) => void,
+  userId: string,
+  ranHere: boolean
+): Promise<void> {
+  await ctx.whenMlsRetired();
+  const failures = await wipeDeletedAccountLocalData(userId, {
+    closeThisRunsHandles: ranHere,
+    expectNativeDatabase: false,
+  });
+  log(
+    failures.length === 0
+      ? `[DEL-LOCAL] Local data of the deleted account removed (${userId.slice(0, 8)}).`
+      : `[DEL-LOCAL] Local data of the deleted account NOT fully removed: ${failures.join(', ')}`
+  );
+}
+
+/**
+ * In a tab told by ANOTHER tab that its account was deleted: once `clearAuth()` has ended this
+ * tab's session, waits for its final MLS checkpoint and closes its handles on that account's stores,
+ * so it stops writing and the deleting tab's deferred database deletes can complete.
+ */
+export async function releaseDeletedAccountImpl(
+  ctx: SessionContext,
+  userId: string
+): Promise<void> {
+  await ctx.whenMlsRetired();
+  await closeDeletedAccountHandles(userId);
 }
 
 /**
@@ -631,6 +703,19 @@ export async function loginImpl(
   };
 
   try {
+    // AN ACCOUNT DELETED FROM THIS DEVICE OPENS NOTHING, refused before the first store is touched
+    // (the landing preview and the MLS state lookup below both open one). Its wipe is owed or running,
+    // and a session would re-create what the wipe removes - the offline unlock above all, which has no
+    // server to refuse it and holds no token the resumed wipe could see. EVERY entry reaches this
+    // line: the vault and keystore unlocks of a saved user, the PIN gate, a reloaded follower tab.
+    // Lifted only by an online sign-in of that subject, which the server allows once the erasure
+    // completed (`forgetDeletedAccountOnSignIn`).
+    if (isDeletedAccountHere(ctx.getUserId()) || isDeletedAccountHere(userId.trim())) {
+      cb.log(
+        `[LOGIN] ${ctx.getUserId().slice(0, 8)} was deleted from this device - refused, an online sign-in is required`
+      );
+      throw new LoginFailure('account_deleted', m.auth_account_deleted_here());
+    }
     const mlsService = ctx.ensureMls();
     if (isVaultLogin && !vaultOwnerUnproven) {
       // The vault returned the device key before this function was called, so the store can be
@@ -954,10 +1039,11 @@ export async function loginImpl(
       const reason = mlsInitSettled.reason;
       // The init changed nothing (`MlsInitOptions.vaultOwnerUnproven`): the PIN gate, typed.
       if (reason instanceof VaultOwnerUnprovenError) throw vaultRefusedFailure(reason.refusal);
-      const reasonStr = reason instanceof Error ? reason.message : String(reason);
-      const isUndecryptable = reasonStr === MLS_LOCAL_STATE_UNDECRYPTABLE;
-      if (isUndecryptable) {
-        throw new LoginFailure('local_state_unopenable', m.auth_local_state_unopenable());
+      if (
+        reason instanceof SavedStateUnopenedError ||
+        reason instanceof SavedStateOfAnotherAccountError
+      ) {
+        throw savedStateFailure(reason);
       }
       // Empty keystore on biometric path: no key stored yet (first launch or
       // keystore was wiped). Surface a clean message and let the caller recover.
@@ -1258,7 +1344,7 @@ export async function loginImpl(
           callMsg as ICallMsg,
           ctx.getUserId()
         );
-        ctx
+        void ctx
           .getCallService()
           ?.handleCallSignal(
             senderId,
@@ -1717,7 +1803,7 @@ export async function loginImpl(
     }
 
     const STALE_SESSION_MS = 90 * 24 * 60 * 60 * 1_000;
-    const lastActiveKey = `canari_last_active:${ctx.getUserId()}`;
+    const lastActiveKey = ACCOUNT_KEY.lastActive(ctx.getUserId());
     const lastActiveRaw = localStorage.getItem(lastActiveKey);
     if (lastActiveRaw) {
       const lastActive = parseInt(lastActiveRaw, 10);
@@ -1730,7 +1816,7 @@ export async function loginImpl(
       // localStorage may be empty after Android process kill - try Tauri Store fallback.
       try {
         const { load } = await import('@tauri-apps/plugin-store');
-        const store = await load('session-meta.json', { autoSave: true, defaults: {} });
+        const store = await load(SESSION_META_STORE, { autoSave: true, defaults: {} });
         const nativeLastActive = await store.get<number>(lastActiveKey);
         if (
           typeof nativeLastActive === 'number' &&
@@ -1749,7 +1835,7 @@ export async function loginImpl(
     // Persist to Tauri Store so the value survives Android process kills.
     if (isTauriRuntime()) {
       import('@tauri-apps/plugin-store')
-        .then(({ load }) => load('session-meta.json', { autoSave: true, defaults: {} }))
+        .then(({ load }) => load(SESSION_META_STORE, { autoSave: true, defaults: {} }))
         .then((store) => store.set(lastActiveKey, nowMs))
         .catch(() => {});
     }

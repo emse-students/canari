@@ -11,6 +11,8 @@
  */
 
 import { saveUserLocally, clearUserLocally, currentUserId } from '$lib/stores/user';
+import type { AccountLiveness } from '$lib/utils/accountLocalWipe';
+import { forgetDeletedAccountOnSignIn } from '$lib/utils/deletedAccountMarker';
 import { setGlobalAdmin } from '$lib/stores/userState.svelte';
 import { noteSessionAnswered } from '$lib/stores/sessionAnswer.svelte';
 import {
@@ -453,6 +455,59 @@ export async function handleOidcCallback(
   code: string,
   state: string
 ): Promise<{ id: string; email: string; displayName: string }> {
+  // Counted while it runs, so `accountLiveness` can say a sign-in is in flight (WP-DEL-LOCAL).
+  const run = handleOidcCallbackUnderway(code, state);
+  _signInsInFlight.add(run);
+  try {
+    return await run;
+  } finally {
+    _signInsInFlight.delete(run);
+  }
+}
+
+/**
+ * The OIDC callbacks under way. A sign-in names its account only when it lands, so until then
+ * nothing may act on "who is signed in here" - the resumed wipe of a deleted account included.
+ */
+const _signInsInFlight = new Set<Promise<unknown>>();
+
+/**
+ * Whether an account is signed in here, and whether one is about to be - for the resume of an
+ * account-deletion wipe (`resumePendingDeletedAccountWipes`), which must never delete what a live
+ * session uses. Each answer is read at the moment it is asked.
+ *
+ * `isLive` IS PROVEN BY A TOKEN, NEVER BY THE SAVED IDENTITY. The saved user (`canari_saved_user`)
+ * is a leftover, not a sign-in: a kill between the pending-wipe marker and `clearAuth()` leaves it
+ * naming the deleted account, and an answer read from it made the next start drop the marker and keep
+ * the data for ever (every offline cold start). Access tokens live in memory only, so one held here
+ * landed IN THIS PROCESS - by an OIDC callback or a refresh - and every resume runs in a process
+ * started after the deletion was confirmed; the server refuses a refresh for a deleted account, so a
+ * token naming it can only come from that subject signing in AGAIN.
+ *
+ * A TOKEN IS ENOUGH ONLY BECAUSE THE TOKENLESS ENTRIES ARE CLOSED ELSEWHERE: a successful callback
+ * drops the marker of a subject the server let back in (`forgetDeletedAccountOnSignIn`, below), so
+ * another tab or a later offline start never resumes a wipe over the new account; and every login -
+ * the offline unlock is the one with no token - refuses an account deleted here before it opens a
+ * store (`isDeletedAccountHere` in `loginImpl`), so no session can re-create what the wipe removes.
+ */
+export const accountLiveness: AccountLiveness = {
+  isLive: (userId) => _accessToken !== null && decodeTokenClaims(_accessToken)?.sub === userId,
+  signInInFlight: () => _pendingRefresh !== null || _signInsInFlight.size > 0,
+  whenSignInSettled: async () => {
+    while (accountLiveness.signInInFlight()) {
+      const pending: Promise<unknown>[] = [..._signInsInFlight];
+      if (_pendingRefresh) pending.push(_pendingRefresh);
+      alog(`deletion wipe waits for ${pending.length} sign-in(s) in flight`);
+      await Promise.allSettled(pending);
+    }
+  },
+};
+
+/** The body of {@link handleOidcCallback}, run while it is counted in `_signInsInFlight`. */
+async function handleOidcCallbackUnderway(
+  code: string,
+  state: string
+): Promise<{ id: string; email: string; displayName: string }> {
   // CSRF state check - enforced on all platforms.
   // On desktop (Tauri) the state is read from the native Store plugin (survives
   // WebKitGTK navigation that clears localStorage). On web, localStorage is used.
@@ -525,6 +580,10 @@ export async function handleOidcCallback(
   };
 
   console.debug('[auth] got access_token, saving user:', data.user?.id);
+  // THE SERVER LET THIS SUBJECT IN, so any erasure of it has completed and this is a new account: a
+  // wipe still owed on this device for the deleted one must never reach it (WP-DEL-LOCAL). First,
+  // before this session's token or identity exists anywhere another tab's resume could miss.
+  forgetDeletedAccountOnSignIn(data.user.id);
   // A NEW SIGN-IN NAMES ITS OWN USER (saved just below), so a split latched for the previous
   // identity is about somebody who is no longer here.
   clearIdentitySplit();
@@ -1018,17 +1077,36 @@ export async function clearAuth(): Promise<void> {
   // let a refresh be sent while the other was still revoking - and that refresh captured the CURRENT
   // generation, so nothing dropped its answer and it re-saved the user. The refusal holds until the
   // LAST sign-out under way has finished.
+  await clearAuthCounted({ revokeServerSession: true });
+}
+
+/**
+ * Ends THIS TAB's session and forgets its identity, and touches NOTHING shared: no
+ * `POST /api/auth/logout`, no cookie flush, no native refresh credential.
+ *
+ * For a tab told by ANOTHER tab that its account was deleted (`deletedAccountGuards.ts`). The refresh
+ * cookie and the native credential are one per origin, not one per tab: the deleting tab already
+ * revoked its own session, and by the time the notice arrives that cookie may belong to an account
+ * signed in since - a second logout here would end THAT account's session for nothing.
+ */
+export async function clearAuthLocally(): Promise<void> {
+  alog('clear (local only - another tab ended this account)');
+  await clearAuthCounted({ revokeServerSession: false });
+}
+
+/** Counts one sign-out under way around {@link clearAuthUnderway} - see {@link clearAuth}. */
+async function clearAuthCounted(options: { revokeServerSession: boolean }): Promise<void> {
   _signOutGeneration++;
   _signOutsUnderway++;
   try {
-    await clearAuthUnderway();
+    await clearAuthUnderway(options);
   } finally {
     _signOutsUnderway--;
   }
 }
 
 /** The body of {@link clearAuth}, run while it is counted in `_signOutsUnderway`. */
-async function clearAuthUnderway(): Promise<void> {
+async function clearAuthUnderway(options: { revokeServerSession: boolean }): Promise<void> {
   // THE LIVE SESSION ENDS BEFORE ANYTHING IT USES IS GONE - see `setSignOutHandler`. A throw here is
   // a session left running for a signed-out user, so it is accused by name, and the sign-out goes on.
   if (_signOutHandler) {
@@ -1059,6 +1137,10 @@ async function clearAuthUnderway(): Promise<void> {
   clearPersistedPendingAcks();
   // And a PIN salt asked for a keypad this session will never submit.
   forgetPinSaltAhead('signed out', alog);
+  if (!options.revokeServerSession) {
+    alog('clear✓ local only - the shared cookie and credential are left to the tab that owns them');
+    return;
+  }
   // Tell the backend to REVOKE the session row - the cookie is the least of it. The credential has
   // to travel the same way it does on a refresh, or the server cannot name the row to delete and a
   // logout on iOS would clear the local copy while leaving the session alive for seven more days.

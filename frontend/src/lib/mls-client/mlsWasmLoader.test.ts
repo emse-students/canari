@@ -136,12 +136,12 @@ describe('loadAndInitWasm', () => {
       expect(WasmMlsClient).not.toHaveBeenCalled();
     });
 
-    it('rejects an altered v2 blob as STATE_UNDECRYPTABLE, never constructing a client', async () => {
+    it('rejects an altered v2 blob as STATE_ALTERED, never constructing a client', async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
       const blob = await sealMlsStateBlobV2(plain, KEY_B64);
       blob[blob.length - 1] ^= 1;
       await expect(loadAndInitWasm('u', 'd', blob, KEY_B64, true)).rejects.toThrow(
-        /^STATE_UNDECRYPTABLE: /
+        /^STATE_ALTERED: /
       );
       expect(WasmMlsClient).not.toHaveBeenCalled();
     });

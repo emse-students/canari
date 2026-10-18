@@ -271,14 +271,87 @@ pub(crate) fn pause_mls_foreground() {
     crate::concurrency::mark_foreground_inactive();
 }
 
+/// Deletes `mls.bin` and, with it, the record of whose state it was ([`MLS_STATE_OWNER_FILE`]) -
+/// an owner left beside no state would name an account this install no longer holds anything of.
 #[tauri::command]
 pub(crate) fn delete_mls_state(app: tauri::AppHandle) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let path = data_dir.join("mls.bin");
-    if path.exists() {
-        std::fs::remove_file(path).map_err(|e| e.to_string())
-    } else {
-        Ok(())
+    remove_mls_state_in(&data_dir)
+}
+
+/// [`delete_mls_state`] minus the `AppHandle`, so the pair it removes is tested on a real directory.
+fn remove_mls_state_in(data_dir: &std::path::Path) -> Result<(), String> {
+    for name in ["mls.bin", MLS_STATE_OWNER_FILE] {
+        let path = data_dir.join(name);
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| format!("remove {name}: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// The file beside `mls.bin` naming the account whose state it is.
+///
+/// **`mls.bin` IS ONE FILE PER INSTALL, AND NOTHING IN IT SAYS WHOSE IT IS WITHOUT OPENING IT.** When
+/// account B signs in on a phone that holds account A's state, B's key cannot open A's blob, and the
+/// gate used to read that exactly like a PIN rotated elsewhere or a damaged state - and offered the
+/// reset, which deletes A's state. With this record the gate can say "another account's messages are
+/// here" and withhold the reset (`TauriMlsService._initImpl`, `device_holds_other_account`).
+///
+/// Written ONLY by [`write_mls_state_owner`] after `initialiser_mls` LOADED or created a state for
+/// that account - the credential check in `load_or_create` is what proves the state is that
+/// account's - so a record can never name an account whose state was not opened under it.
+pub(crate) const MLS_STATE_OWNER_FILE: &str = "mls.owner";
+
+/// Records `user_id` as the owner of `mls.bin` ([`MLS_STATE_OWNER_FILE`]). Atomic (tmp + rename), so a
+/// reader sees the old owner or the new one, never a torn name. Skipped when it already says so.
+pub(crate) fn write_mls_state_owner(app: &tauri::AppHandle, user_id: &str) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    record_mls_state_owner(&data_dir, user_id)
+}
+
+/// [`write_mls_state_owner`] minus the `AppHandle`, testable on a real directory.
+fn record_mls_state_owner(data_dir: &std::path::Path, user_id: &str) -> Result<(), String> {
+    std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    let path = data_dir.join(MLS_STATE_OWNER_FILE);
+    if std::fs::read_to_string(&path).ok().as_deref() == Some(user_id) {
+        return Ok(());
+    }
+    let tmp = data_dir.join(format!("{MLS_STATE_OWNER_FILE}.tmp"));
+    std::fs::write(&tmp, user_id).map_err(|e| format!("write {MLS_STATE_OWNER_FILE}.tmp: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("rename {MLS_STATE_OWNER_FILE}: {e}"))?;
+    log::info!("[MLS] mls.bin owner recorded");
+    Ok(())
+}
+
+/// The account `mls.bin` was last opened for ([`MLS_STATE_OWNER_FILE`]), `None` when nothing was
+/// ever recorded - an install whose state predates the record, or a first install. `None` is
+/// ABSENCE OF PROOF and the frontend treats it so: it never claims the state is another account's.
+#[tauri::command]
+pub(crate) fn mls_state_owner(app: tauri::AppHandle) -> Option<String> {
+    let data_dir = match app.path().app_data_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("[MLS] app_data_dir() failed: {e}");
+            return None;
+        }
+    };
+    read_mls_state_owner(&data_dir)
+}
+
+/// [`mls_state_owner`] minus the `AppHandle`, testable on a real directory.
+fn read_mls_state_owner(data_dir: &std::path::Path) -> Option<String> {
+    match std::fs::read_to_string(data_dir.join(MLS_STATE_OWNER_FILE)) {
+        Ok(owner) if !owner.is_empty() => Some(owner),
+        Ok(_) => {
+            log::warn!("[MLS] {MLS_STATE_OWNER_FILE} is empty - read as no owner recorded");
+            None
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            log::warn!("[MLS] read {MLS_STATE_OWNER_FILE}: {e}");
+            None
+        }
     }
 }
 
@@ -456,6 +529,84 @@ pub(crate) fn wipe_app_data(data_dir: &std::path::Path) -> Result<(), String> {
     }
 }
 
+/// The directory `tauri-plugin-sql` opens `sqlite:<name>` under, resolved the SAME way it does.
+///
+/// tauri-plugin-sql 2.4 (`wrapper.rs`, `DbPool::connect`) joins the file name onto
+/// `app.path().app_config_dir()` - NOT `app_data_dir()`. The two are one directory on Windows and
+/// macOS and differ on Linux (`~/.config` vs `~/.local/share`), so a delete under `app_data_dir()`
+/// "removed 0 files" there and reported success while the database stayed. Re-read that function
+/// before changing this one, and on every bump of the plugin.
+fn sql_plugin_db_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path().app_config_dir().map_err(|e| e.to_string())
+}
+
+/// Deletes ONE account's local message database - `canari_<userId>.db` and its WAL/SHM side files -
+/// and nothing else: not `mls.bin` (one file per install, which may belong to another account), not
+/// another account's database. The account-deletion path calls it after closing the SQLite handle.
+///
+/// `expect_database` is set when the caller KNOWS the database exists (a store was open for that
+/// account in this run): finding no file then is a failure, not "nothing to do". Returns how many
+/// files were removed.
+#[tauri::command]
+pub(crate) fn delete_user_database(
+    app: tauri::AppHandle,
+    user_id: String,
+    expect_database: bool,
+) -> Result<usize, String> {
+    let db_dir = sql_plugin_db_dir(&app)?;
+    remove_user_database(&db_dir, &user_id, expect_database)
+}
+
+/// Whether `user_id` may name a database file: `[A-Za-z0-9_.@-]`, 1 to 255 characters - the SAME
+/// allowlist as the frontend's `isWipeableAccountId` (`accountLocalKeys.ts`).
+///
+/// The id is the MiConnect `sub`, which may be a UUID, a hash, a username or an email, hence `.` and
+/// `@`. A path separator is what could make "this account's database" name something else, and it is
+/// outside the set; `..` inside `canari_<id>.db` is an ordinary file name, never a parent.
+pub(crate) fn is_wipeable_account_id(user_id: &str) -> bool {
+    !user_id.is_empty()
+        && user_id.len() <= 255
+        && user_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '@'))
+}
+
+/// The whole of `delete_user_database` minus the `AppHandle`, so it runs against a real directory.
+///
+/// An id outside the allowlist is REFUSED rather than sanitised: a sanitised id names another file.
+pub(crate) fn remove_user_database(
+    db_dir: &std::path::Path,
+    user_id: &str,
+    expect_database: bool,
+) -> Result<usize, String> {
+    if !is_wipeable_account_id(user_id) {
+        log::error!("[DEL-LOCAL] refusing a user id outside the allowlist");
+        return Err("invalid user id".to_string());
+    }
+    let main_existed = db_dir.join(format!("canari_{user_id}.db")).exists();
+    let mut removed = 0usize;
+    let mut failures = 0usize;
+    for suffix in ["", "-wal", "-shm"] {
+        let path = db_dir.join(format!("canari_{user_id}.db{suffix}"));
+        remove_entry(&path, &mut removed, &mut failures);
+    }
+    log::info!(
+        "[DEL-LOCAL] removed {removed} database file(s) under {}, {failures} failed",
+        db_dir.display()
+    );
+    if failures > 0 {
+        return Err(format!("{failures} database file(s) could not be removed"));
+    }
+    if expect_database && !main_existed {
+        log::error!(
+            "[DEL-LOCAL] a database was expected under {} and none was there - nothing removed",
+            db_dir.display()
+        );
+        return Err("no database where the SQL plugin keeps it".to_string());
+    }
+    Ok(removed)
+}
+
 /// Deletes the entries of `dir` whose name starts with one of `prefixes`, for the two
 /// directories Canari shares with a framework and therefore cannot empty wholesale.
 fn wipe_by_prefix(
@@ -488,7 +639,7 @@ fn wipe_by_prefix(
 
 /// Removes one file or directory tree, counting the outcome. Logs at a level that ACCUSES on
 /// failure: what a wipe leaves behind is only ever found by reading the disk afterwards.
-fn remove_entry(path: &std::path::Path, removed: &mut usize, failures: &mut usize) {
+pub(crate) fn remove_entry(path: &std::path::Path, removed: &mut usize, failures: &mut usize) {
     let result = if path.is_dir() {
         std::fs::remove_dir_all(path)
     } else {
@@ -885,6 +1036,46 @@ mod tests {
         std::fs::write(path, b"x").unwrap();
     }
 
+    /// THE A -> B -> A RECORD (backlog "switching accounts on one iPhone"). The owner beside
+    /// `mls.bin` is what lets B's gate say "another account's messages are here" instead of offering
+    /// the reset that deletes them: it must name the LAST account a state was opened for, read back
+    /// absent as `None` (absence of proof, never a claim), and leave with the state it describes.
+    #[test]
+    fn the_owner_beside_mls_bin_names_the_last_account_and_leaves_with_the_state() {
+        let dir = temp_dir("mls-owner");
+        assert_eq!(
+            read_mls_state_owner(&dir),
+            None,
+            "no record on a first install"
+        );
+
+        record_mls_state_owner(&dir, "user-a").unwrap();
+        assert_eq!(read_mls_state_owner(&dir).as_deref(), Some("user-a"));
+        // Re-recording the same owner is a no-op, and a new one replaces it whole (tmp + rename).
+        record_mls_state_owner(&dir, "user-a").unwrap();
+        record_mls_state_owner(&dir, "user-b").unwrap();
+        assert_eq!(read_mls_state_owner(&dir).as_deref(), Some("user-b"));
+        assert!(
+            !dir.join(format!("{MLS_STATE_OWNER_FILE}.tmp")).exists(),
+            "the temporary file must not survive the rename"
+        );
+
+        // An empty record is not an owner.
+        std::fs::write(dir.join(MLS_STATE_OWNER_FILE), b"").unwrap();
+        assert_eq!(read_mls_state_owner(&dir), None);
+
+        // The reset deletes the state AND the record: an owner left beside no state would withhold
+        // a later reset over nothing.
+        record_mls_state_owner(&dir, "user-a").unwrap();
+        file(&dir, "mls.bin");
+        remove_mls_state_in(&dir).unwrap();
+        assert!(!dir.join("mls.bin").exists());
+        assert_eq!(read_mls_state_owner(&dir), None);
+        // And it is idempotent on an install that holds neither.
+        remove_mls_state_in(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     /// The measurement of 2026-08-28, as a test: a revoked device kept its Graine seeds, its
     /// channel keys, its push session and its FCM token, because none of them ends in `.db`.
     /// Against the extension filter this replaced, exactly ONE of these names disappeared.
@@ -1041,5 +1232,60 @@ mod tests {
         wipe_app_data(&dir).unwrap();
         wipe_app_data(&dir.join("never-existed")).unwrap();
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A deletion removes THAT account's database and its side files, and leaves another account's
+    /// database and the per-install `mls.bin` exactly where they were.
+    #[test]
+    fn remove_user_database_touches_only_that_account() {
+        let dir = std::env::temp_dir().join(format!("canari_del_local_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in [
+            "canari_a.db",
+            "canari_a.db-wal",
+            "canari_a.db-shm",
+            "canari_b.db",
+            "canari_b.db-wal",
+            "mls.bin",
+        ] {
+            std::fs::write(dir.join(f), b"x").unwrap();
+        }
+        assert_eq!(remove_user_database(&dir, "a", true).unwrap(), 3);
+        assert!(!dir.join("canari_a.db").exists());
+        assert!(!dir.join("canari_a.db-wal").exists());
+        assert!(dir.join("canari_b.db").exists());
+        assert!(dir.join("canari_b.db-wal").exists());
+        assert!(dir.join("mls.bin").exists());
+        // Idempotent when nothing is expected: a resumed wipe finds nothing and succeeds.
+        assert_eq!(remove_user_database(&dir, "a", false).unwrap(), 0);
+        // But nothing where a database was KNOWN to exist is the wrong directory: a failure.
+        assert!(remove_user_database(&dir, "a", true).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A MiConnect subject may be an email or carry dots: accepted, and only its own file goes.
+    #[test]
+    fn remove_user_database_accepts_an_email_like_id() {
+        let dir =
+            std::env::temp_dir().join(format!("canari_del_local_mail_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in ["canari_a.b@x.fr.db", "canari_a.db", "canari_b@x.fr.db"] {
+            std::fs::write(dir.join(f), b"x").unwrap();
+        }
+        assert_eq!(remove_user_database(&dir, "a.b@x.fr", true).unwrap(), 1);
+        assert!(!dir.join("canari_a.b@x.fr.db").exists());
+        assert!(dir.join("canari_a.db").exists());
+        assert!(dir.join("canari_b@x.fr.db").exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An id that could leave the app data directory is refused, never sanitised.
+    #[test]
+    fn remove_user_database_refuses_a_path_like_id() {
+        let dir = std::env::temp_dir();
+        for bad in ["", "../x", "a/b", "a\\b", "a:b", "a b"] {
+            assert!(remove_user_database(&dir, bad, false).is_err(), "{bad:?}");
+        }
+        assert!(remove_user_database(&dir, &"a".repeat(256), false).is_err());
     }
 }

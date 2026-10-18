@@ -232,7 +232,7 @@ Order = priority; detail lives where the link says, and WHERE THINGS LIVE says w
 4b. **CANAREELS IN CHATS, RC-0 TO RC-11: RC-1 (reader) AND RC-2 (server) SHIPPED IN `v1.2.2`, THE WRITER WAITS FOR RC-5 (resumable upload) AND RC-7 (native push) BEFORE ANY STABLE (user, 2026-10-14); NO NATIVE CAMERA ANYWHERE: the in-app CanaReel camera, the gallery picker stays (user, 2026-10-11; draft #1859)** ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#7-the-work-packages-in-order), [backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-11)).
 5. **P1 - A MEMBER WHO COMES BACK TO A COMMUNITY NEVER GETS ITS PAST: EVERY SEED REQUEST GOES TO AN OFFLINE MEMBER** (prod, 2026-09-24) - the election now reads presence and waits for a member to come online; **shipped in `v0.18.26` (2026-09-27), owed ONE reading on the returner's devices** ([backlog](docs/wiki/backlog.md)).
 6. **THE BOARD IS [cross-client-testing](docs/wiki/cross-client-testing.md) AND `bun rows.mjs`
-   SETTLES IT - NO COUNT HERE; run it.** PIN's four rows change a PIN or restart a browser, hence
+   SETTLES IT - NO COUNT HERE; run it.** **THE TEST TOOLING IS REFORMED NOW, NOT AFTER THE CAMPAIGN (user, 2026-10-18: "un nombre de test aberrant") - [WP-TEST-TOOLING-REFORM](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-18---every-design-question-answered).** PIN's four rows change a PIN or restart a browser, hence
    last; HEAL-NEW's rung redesign is open on a clean pass ([backlog](docs/wiki/backlog.md)).
 7. **P2 - THE UNDATED LAST-RESORT KEY PACKAGES ARE A CLIENT VERSION (`< 0.18.10`) AND CLOSE ON THEIR
    DRAIN (~20/day, 2026-09-22)**; the 1024-bundle web pool is closed and both client repairs are

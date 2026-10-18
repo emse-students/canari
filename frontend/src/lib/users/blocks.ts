@@ -23,9 +23,11 @@ export const USER_BLOCKED_CODE = 'USER_BLOCKED';
 export function refusalCodeOf(body: string): string | null {
   try {
     return (JSON.parse(body) as { code?: string }).code ?? null;
-  } catch {
+  } catch (e) {
     // Plain-text bodies come back from nginx and from some framework paths. The status still
-    // classifies the failure, so a missing code is a missing discriminator, not a failure to report.
+    // classifies the failure, but a refusal that carries no code is one no caller can tell apart,
+    // so it is said at a level that accuses: the upstream that answered in prose is the defect.
+    console.warn(`[blocks] refusal body is not JSON, no code to read: ${body.slice(0, 120)}`, e);
     return null;
   }
 }

@@ -3,6 +3,7 @@ import { get } from 'svelte/store';
 import type { IMlsService } from '$lib/mls-client';
 import { CallService, CALL_ICE_TRANSPORT_POLICY } from './CallService';
 import { CallE2eUnsupportedError } from '$lib/utils/callFailure';
+import { m } from '$lib/paraglide/messages';
 
 /**
  * The client half of a PEER-TO-PEER 1:1 call (lot 1 of the revival, 2026-10-17), driven through
@@ -15,12 +16,19 @@ import { CallE2eUnsupportedError } from '$lib/utils/callFailure';
  */
 
 vi.mock('$lib/features', () => ({ CALLS_ENABLED: true }));
+vi.mock('$lib/users/blocks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/users/blocks')>()),
+  isBlockedWith: vi.fn(async () => false),
+}));
 vi.mock('$lib/utils/sessionLog', () => ({ appendLog: vi.fn() }));
 vi.mock('$lib/stores/toast.svelte', () => ({ showToast: vi.fn() }));
 vi.mock('$lib/utils/callPresence', () => ({ publishCallPresence: vi.fn(async () => {}) }));
 vi.mock('$lib/utils/chat/callSystemMessages', () => ({
   getCallSystemMessageContext: () => null,
   recordCallMissed: vi.fn(),
+}));
+vi.mock('$lib/stores/notificationPreferences.svelte', () => ({
+  notificationPreferences: { callsAllowed: vi.fn(() => true) },
 }));
 vi.mock('$lib/stores/auth', () => ({ getToken: async () => 'session-token' }));
 vi.mock('$lib/utils/callAudio', () => ({
@@ -34,17 +42,34 @@ vi.mock('$lib/mls-client/mlsDeliveryHttp', () => ({
 
 const ICE = [{ urls: 'turn:turn.cloudflare.com:3478', username: 'u', credential: 'c' }];
 /** What the fake server answers; each test that needs another answer sets it, `beforeEach` resets. */
-const server = { ringTimeoutMs: 60_000, initiateStatus: 200, iceStatus: 200 };
+const server = {
+  ringTimeoutMs: 60_000,
+  initiateStatus: 200,
+  iceStatus: 200,
+  ringStatus: 200,
+  roomTokenStatus: 200,
+  /** When set, the ring request waits for it: a test can act while the ring is in flight. */
+  ringHold: null as Promise<void> | null,
+};
+/** The order in which the service talked to the server (`api:<path>`) and to the group (`mls`). */
+const order: string[] = [];
 vi.mock('$lib/utils/apiFetch', () => ({
   apiFetch: vi.fn(async (url: string) => {
+    order.push(`api:${new URL(url).pathname}`);
+    if (url.includes('/api/calls/ring') && !url.includes('ring-end') && server.ringHold) {
+      await server.ringHold;
+    }
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
     if (url.includes('/api/calls/initiate'))
       return json(
         { roomId: 'room-1', roomToken: 'rt-1', ringTimeoutMs: server.ringTimeoutMs },
         server.initiateStatus
       );
-    if (url.includes('/api/calls/room-token')) return json({ roomToken: 'rt-2' });
+    if (url.includes('/api/calls/room-token'))
+      return json({ roomToken: 'rt-2' }, server.roomTokenStatus);
     if (url.includes('/api/calls/ice-servers')) return json({ iceServers: ICE }, server.iceStatus);
+    if (url.includes('/api/calls/ring-end')) return json({});
+    if (url.includes('/api/calls/ring')) return json({ rang: 1 }, server.ringStatus);
     return json({});
   }),
 }));
@@ -156,7 +181,9 @@ const fakeTrack = () => ({ kind: 'audio', stop: vi.fn(), enabled: true });
 const fakeMls = {
   getDeviceId: () => 'device-1',
   exportSecret: vi.fn(async () => new Uint8Array(32).fill(7)),
-  sendMessage: vi.fn(async () => {}),
+  sendMessage: vi.fn(async () => {
+    order.push('mls');
+  }),
 } as unknown as IMlsService;
 
 /** Lets every pending promise and microtask of the service settle. */
@@ -166,6 +193,10 @@ beforeEach(() => {
   server.ringTimeoutMs = 60_000;
   server.initiateStatus = 200;
   server.iceStatus = 200;
+  server.ringStatus = 200;
+  server.roomTokenStatus = 200;
+  server.ringHold = null;
+  order.length = 0;
   FakeSocket.instances = [];
   FakePeerConnection.instances = [];
   vi.stubGlobal('WebSocket', FakeSocket);
@@ -268,7 +299,7 @@ describe('a peer-to-peer call, client side', () => {
 
   it('as the polite side, never opens and answers the initiator offer', async () => {
     const service = new CallService(fakeMls);
-    service.handleCallSignal(
+    await service.handleCallSignal(
       'peer@example.org',
       'group-1',
       {
@@ -380,7 +411,7 @@ describe('the ring window, both sides', () => {
     const { recordCallMissed } = await import('$lib/utils/chat/callSystemMessages');
     vi.mocked(recordCallMissed).mockClear();
     const service = new CallService(fakeMls);
-    service.handleCallSignal(
+    await service.handleCallSignal(
       'peer@example.org',
       'group-1',
       invite(5),
@@ -395,9 +426,24 @@ describe('the ring window, both sides', () => {
     expect(recordCallMissed).not.toHaveBeenCalled();
   });
 
-  it('does not ring for an invite that carries no window', () => {
+  it('does not ring in a conversation whose call permission refuses it', async () => {
+    const { notificationPreferences } = await import('$lib/stores/notificationPreferences.svelte');
+    vi.mocked(notificationPreferences.callsAllowed).mockReturnValueOnce(false);
     const service = new CallService(fakeMls);
-    service.handleCallSignal(
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      invite(5),
+      'me@example.org',
+      'device-1'
+    );
+    expect(notificationPreferences.callsAllowed).toHaveBeenCalledWith('group-1');
+    expect(get(service.callState)).toBe('idle');
+  });
+
+  it('does not ring for an invite that carries no window', async () => {
+    const service = new CallService(fakeMls);
+    await service.handleCallSignal(
       'peer@example.org',
       'group-1',
       invite(undefined),
@@ -405,6 +451,124 @@ describe('the ring window, both sides', () => {
       'device-1'
     );
     expect(get(service.callState)).toBe('idle');
+  });
+});
+
+/**
+ * G1: the server's answer window opens at `POST /calls/ring`, so that request is load-bearing - a
+ * refused ring leaves a callee nothing it could ever answer, and it is already ringing in-app.
+ */
+describe('the ring opens the server window', () => {
+  /**
+   * The window opens BEFORE anyone can learn of the call: a callee answering at once (a quick tap,
+   * an auto-accept) must find the window open, never a 410 whose hangup would end a sound call.
+   */
+  it('opens the window before the invite leaves', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+
+    const ring = order.indexOf('api:/api/calls/ring');
+    expect(ring).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('mls')).toBeGreaterThan(ring);
+  });
+
+  it('sends no invite, and writes no missed call, when the ring is refused', async () => {
+    server.ringStatus = 410;
+    const { recordCallMissed } = await import('$lib/utils/chat/callSystemMessages');
+    vi.mocked(recordCallMissed).mockClear();
+    const service = new CallService(fakeMls);
+
+    const started = service.startCall('group-1', false);
+    await settle();
+    const ws = FakeSocket.instances[0];
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1' });
+
+    await expect(started).rejects.toThrow('calls/ring failed (410)');
+    // The server opens the window before it fans out: a refused ring rang nobody.
+    expect(order).not.toContain('mls');
+    expect(recordCallMissed).not.toHaveBeenCalled();
+  });
+
+  it('does not invite, arm or publish presence for a call hung up while the ring was in flight', async () => {
+    let releaseRing!: () => void;
+    server.ringHold = new Promise((r) => (releaseRing = r));
+    const { publishCallPresence } = await import('$lib/utils/callPresence');
+    vi.mocked(publishCallPresence).mockClear();
+    const service = new CallService(fakeMls);
+
+    const started = service.startCall('group-1', false);
+    await settle();
+    const ws = FakeSocket.instances[0];
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1' });
+    await vi.waitFor(() => expect(order).toContain('api:/api/calls/ring'));
+
+    service.endCall();
+    releaseRing();
+    await started;
+
+    // The hangup told the group (the ring may have reached devices); no invite followed it.
+    expect(order.filter((o) => o === 'mls')).toHaveLength(1);
+    expect(vi.mocked(publishCallPresence).mock.calls.some(([p]) => p.active)).toBe(false);
+  });
+});
+
+/** G2: a callee answering after the window closed is told the call is over, not that it failed. */
+describe('a late answer', () => {
+  it('reads the room-token 410 as "this call is over"', async () => {
+    server.roomTokenStatus = 410;
+    const { showToast } = await import('$lib/stores/toast.svelte');
+    vi.mocked(showToast).mockClear();
+    const service = new CallService(fakeMls);
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      {
+        callId: 'room-1',
+        offerSdp: 'START',
+        hasVideo: false,
+        deviceId: 'device-2',
+        ringTimeoutMs: 60_000,
+      },
+      'me@example.org',
+      'device-1'
+    );
+
+    await service.acceptCall('group-1', 'room-1');
+
+    expect(showToast).toHaveBeenCalledWith(m.call_over(), 'warning');
+    expect(FakeSocket.instances).toHaveLength(0);
+  });
+});
+
+/** A refused answer (a block set while the call rang) told nobody it was answered. */
+describe('a refused answer', () => {
+  it('asks for the token before sending the answered frame, so a refusal sends only the hangup', async () => {
+    server.roomTokenStatus = 403;
+    const service = new CallService(fakeMls);
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      {
+        callId: 'room-1',
+        offerSdp: 'START',
+        hasVideo: false,
+        deviceId: 'device-2',
+        ringTimeoutMs: 60_000,
+      },
+      'me@example.org',
+      'device-1'
+    );
+    order.length = 0;
+
+    await service.acceptCall('group-1', 'room-1');
+    await settle();
+
+    expect(order[0]).toBe('api:/api/calls/room-token');
+    // The one MLS frame is the hangup; the answered frame never left.
+    expect(order.filter((o) => o === 'mls')).toHaveLength(1);
+    expect(order).not.toContain('api:/api/calls/ice-servers');
   });
 });
 
