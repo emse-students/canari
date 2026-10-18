@@ -9,26 +9,30 @@
     type BookerSpace,
     type SlotUnit,
   } from '$lib/bookings/api';
-  import { formatDay, formatTimeRange } from '$lib/bookings/grid';
+  import { formatBookingRange, formatTimeRange } from '$lib/bookings/grid';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { m } from '$lib/paraglide/messages';
   import { showToast } from '$lib/stores/toast.svelte';
+  import { refusalCode } from '$lib/utils/apiRefusal';
   import { Log } from '$lib/utils/Log';
 
   /**
    * "INDISPONIBLE" OVER A RANGE OF ONE RESOURCE (D10, D20): the organiser, or the account linked to
-   * the resource. `run` is the free units from the one tapped; the reader picks how far the block
-   * goes. Blocking a free range is immediate (D29); a range holding a coming booking is refused by
-   * the server, which names how many stand in the way.
+   * the resource. `run` is the free units from the one tapped, at most `BLOCK_LENGTH_CHOICES`; the
+   * reader picks how far the block goes, each length naming its end's day when it is not the
+   * start's. Blocking a free range is immediate (D29); a range a booking took meanwhile is refused
+   * by the server (`bookings-inside-block`), which means the grid is stale: it is re-read.
    */
   interface Props {
     space: BookerSpace;
     resource: BookerResource;
     run: SlotUnit[];
+    /** Re-reads the grid, the sheet staying open. */
+    onReread: () => Promise<void>;
     onClose: (changed: boolean) => void;
   }
 
-  let { space, resource, run, onClose }: Props = $props();
+  let { space, resource, run, onReread, onClose }: Props = $props();
 
   let count = $state(1);
   let reason = $state('');
@@ -60,7 +64,20 @@
       showToast(m.bookings_block_done(), 'info');
       onClose(true);
     } catch (e) {
+      const code = refusalCode(e);
+      if (code === null) {
+        // No typed answer: the block may have been written before the answer was lost.
+        Log.i('BOOKINGS', `block outcome unknown: ${String(e)}`);
+        error = m.bookings_block_outcome_unknown();
+        await onReread();
+        return;
+      }
       error = describeBookingRefusal(e, m.bookings_block_action());
+      if (code === 'bookings-inside-block' || code === 'blocked') {
+        Log.i('BOOKINGS', `the block's range went stale: ${code}`);
+        showToast(error, 'error');
+        onClose(true);
+      }
     } finally {
       submitting = false;
     }
@@ -72,7 +89,7 @@
     <div>
       <p class="text-text-main text-base font-bold">{resource.name}</p>
       <p class="text-text-muted text-sm first-letter:uppercase">
-        {formatDay(first.date)}, {formatTimeRange(first.startMs, last.endMs, space.timeZone)}
+        {formatBookingRange(first.startMs, last.endMs, space.timeZone)}
       </p>
     </div>
 

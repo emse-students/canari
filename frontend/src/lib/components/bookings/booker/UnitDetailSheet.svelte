@@ -1,9 +1,7 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import Modal from '$lib/components/shared/Modal.svelte';
   import AddEventToCalendarButton from '$lib/components/calendar/AddEventToCalendarButton.svelte';
   import {
-    calendarLink,
     type BookerResource,
     type BookerSpace,
     type MyBooking,
@@ -11,14 +9,14 @@
   } from '$lib/bookings/api';
   import {
     bookingCalendarEvent,
+    bookingIcsUrl,
     cancelWithConfirm,
     liftBlockWithConfirm,
     withdrawWithConfirm,
   } from '$lib/bookings/bookingActions';
-  import { formatBookingRange, formatDay, formatTimeRange } from '$lib/bookings/grid';
+  import { formatBookingRange } from '$lib/bookings/grid';
   import { answerText } from '$lib/forms/answerText';
   import { m } from '$lib/paraglide/messages';
-  import { Log } from '$lib/utils/Log';
 
   /**
    * WHAT A TAKEN UNIT IS, AND WHAT THE READER MAY DO WITH IT. A booking: its people as the space's
@@ -53,15 +51,6 @@
       : []
   );
 
-  let icsPath = $state<string | null>(null);
-
-  onMount(() => {
-    if (!booking?.mine || !coming) return;
-    calendarLink(booking.id)
-      .then((r) => (icsPath = r.path))
-      .catch((e) => Log.d('BOOKINGS', `no calendar link: ${String(e)}`));
-  });
-
   async function cancel() {
     if (!booking) return;
     if (await cancelWithConfirm(booking.id, !isHolder)) onClose(true);
@@ -94,7 +83,7 @@
             space.timeZone
           )}
         {:else}
-          {formatDay(unit.date)}, {formatTimeRange(unit.startMs, unit.endMs, space.timeZone)}
+          {formatBookingRange(unit.startMs, unit.endMs, space.timeZone)}
         {/if}
       </p>
     </div>
@@ -148,7 +137,8 @@
       {#if booking?.mine && coming}
         <span class="inline-flex items-center gap-1">
           <AddEventToCalendarButton
-            event={bookingCalendarEvent(booking, `${space.name} - ${resource.name}`, icsPath)}
+            event={bookingCalendarEvent(booking, `${space.name} - ${resource.name}`)}
+            resolveIcsUrl={() => bookingIcsUrl(booking.id)}
           />
           <span class="text-text-muted text-xs">{m.calendar_add_title()}</span>
         </span>

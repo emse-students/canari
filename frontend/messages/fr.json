@@ -3887,5 +3887,9 @@
   "bookings_unsaved_leave": "Des modifications ne sont pas enregistrées. Quitter quand même ?",
   "bookings_field_opens_at_zone": "À l'heure de l'espace : {zone}.",
   "bookings_stranded_cancel_confirm_button": "Annuler la réservation",
-  "bookings_stranded_keep": "La garder"
+  "bookings_stranded_keep": "La garder",
+  "bookings_time_next_day": "(lendemain)",
+  "bookings_sheet_window_note": "D'après l'heure de cet appareil, ce créneau n'est pas réservable maintenant ; le serveur tranche à l'envoi.",
+  "bookings_sheet_outcome_unknown": "La réponse n'est pas arrivée : la réservation a peut-être été faite, peut-être pas. La grille et vos réservations ont été relues : vérifiez avant de réessayer.",
+  "bookings_block_outcome_unknown": "La réponse n'est pas arrivée : l'indisponibilité a peut-être été posée, peut-être pas. La grille a été relue : vérifiez avant de réessayer."
 }

@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { BookerResource, BookerSpace, SlotUnit } from '$lib/bookings/api';
-  import { formatDay, formatTimeRange, type PlanningEntry } from '$lib/bookings/grid';
+  import { formatDay, formatTimeRange, unitDay, type PlanningEntry } from '$lib/bookings/grid';
   import { m } from '$lib/paraglide/messages';
 
   /**
@@ -43,7 +43,7 @@
                 class="border-green-ok/30 bg-green-ok/10 hover:bg-green-ok/20 text-text-main flex min-h-11 w-full flex-col items-start rounded-xl border px-3 py-2 text-left transition-colors"
               >
                 <span class="text-sm font-semibold first-letter:uppercase">
-                  {formatDay(unit.date)}
+                  {formatDay(unitDay(unit, space.timeZone))}
                 </span>
                 <span class="text-text-muted text-xs tabular-nums">
                   {formatTimeRange(unit.startMs, unit.endMs, space.timeZone)}

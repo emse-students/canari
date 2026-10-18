@@ -1,15 +1,16 @@
 import { describe, expect, it } from 'vitest';
+import { m } from '$lib/paraglide/messages';
 import type { ResourceSlots, SlotUnit } from './api';
 import {
-  addDays,
   bookingUnitLimit,
+  formatTimeRange,
   freeRunFrom,
   gridRows,
-  localDateIn,
-  localTimeIn,
   planning,
+  unitDay,
   windowRefusal,
 } from './grid';
+import { localTime } from './zonedTime';
 
 const PARIS = 'Europe/Paris';
 const at = (iso: string) => Date.parse(iso);
@@ -20,22 +21,54 @@ function unit(start: string, minutes: number, state: 'free' | 'blocked' = 'free'
   return { date: '2026-11-02', startMs, endMs: startMs + minutes * 60_000, state };
 }
 
-describe('the space zone', () => {
-  it('reads an instant as the space reads it, whatever the device zone', () => {
-    const instant = at('2026-11-02T23:30:00Z');
-    expect(localDateIn(instant, PARIS)).toBe('2026-11-03');
-    expect(localTimeIn(instant, PARIS)).toBe('00:30');
-    expect(localDateIn(instant, 'America/New_York')).toBe('2026-11-02');
+describe("a unit's day and its range, on the space's clock (D25)", () => {
+  it("names a unit by the day of its START, not by its window's date", () => {
+    const night = { date: '2026-11-06', startMs: at('2026-11-06T23:30:00Z') };
+    expect(unitDay(night, PARIS)).toBe('2026-11-07');
   });
 
-  it('keeps 18:00 at 18:00 across the daylight-saving change (D25)', () => {
-    expect(localTimeIn(at('2026-10-24T16:00:00Z'), PARIS)).toBe('18:00');
-    expect(localTimeIn(at('2026-10-26T17:00:00Z'), PARIS)).toBe('18:00');
+  it('writes the end of a day as 24:00, never 00:00', () => {
+    expect(formatTimeRange(at('2026-11-02T22:30:00Z'), at('2026-11-02T23:00:00Z'), PARIS)).toBe(
+      '23:30 - 24:00'
+    );
   });
 
-  it('adds calendar days across a month and a year', () => {
-    expect(addDays('2026-12-31', 1)).toBe('2027-01-01');
-    expect(addDays('2026-03-01', -1)).toBe('2026-02-28');
+  it('marks an end on the next day, and names the day of an end further on', () => {
+    expect(formatTimeRange(at('2026-11-06T21:00:00Z'), at('2026-11-07T01:00:00Z'), PARIS)).toBe(
+      `22:00 - 02:00 ${m.bookings_time_next_day()}`
+    );
+    const long = formatTimeRange(at('2026-11-06T09:00:00Z'), at('2026-11-08T09:00:00Z'), PARIS);
+    expect(long.startsWith('10:00 - ')).toBe(true);
+    expect(long.endsWith(' 10:00')).toBe(true);
+    expect(long).not.toBe('10:00 - 10:00');
+  });
+
+  it('keeps 18:00 at 18:00 across the daylight-saving change', () => {
+    expect(localTime(at('2026-10-24T16:00:00Z'), PARIS)).toBe('18:00');
+    expect(localTime(at('2026-10-26T17:00:00Z'), PARIS)).toBe('18:00');
+  });
+
+  it('tells the doubled hour of a fall-back night apart by its offset, and only that hour', () => {
+    // 2026-10-25 in Paris: 02:00-03:00 happens at 00:00Z (UTC+2), then again at 01:00Z (UTC+1).
+    expect(formatTimeRange(at('2026-10-24T23:00:00Z'), at('2026-10-25T00:00:00Z'), PARIS)).toBe(
+      '01:00 - 02:00 (UTC+2)'
+    );
+    expect(formatTimeRange(at('2026-10-25T00:00:00Z'), at('2026-10-25T01:00:00Z'), PARIS)).toBe(
+      '02:00 (UTC+2) - 02:00 (UTC+1)'
+    );
+    expect(formatTimeRange(at('2026-10-25T01:00:00Z'), at('2026-10-25T02:00:00Z'), PARIS)).toBe(
+      '02:00 (UTC+1) - 03:00'
+    );
+    expect(formatTimeRange(at('2026-10-25T02:00:00Z'), at('2026-10-25T03:00:00Z'), PARIS)).toBe(
+      '03:00 - 04:00'
+    );
+  });
+
+  it('a spring-forward night has no 02:00 to draw', () => {
+    // 2026-03-29 in Paris: 01:30 + 30 min is 03:00.
+    expect(formatTimeRange(at('2026-03-29T00:30:00Z'), at('2026-03-29T01:00:00Z'), PARIS)).toBe(
+      '01:30 - 03:00'
+    );
   });
 });
 
@@ -71,11 +104,31 @@ describe('gridRows', () => {
         ],
       },
     ];
-    const rows = gridRows(['a', 'b'], slots, '2026-11-02');
-    expect(rows.map((r) => localTimeIn(r.startMs, PARIS))).toEqual(['09:00', '10:00']);
+    const rows = gridRows(['a', 'b'], slots, '2026-11-02', PARIS);
+    expect(rows.map((r) => r.label)).toEqual(['09:00 - 09:30', '10:00 - 10:30']);
+    expect(rows.every((r) => !r.nextDay)).toBe(true);
     expect(rows[0].cells.every((c) => c !== null)).toBe(true);
     expect(rows[1].cells[0]?.state).toBe('free');
     expect(rows[1].cells[1]).toBeNull();
+  });
+});
+
+describe('a night window on the grid', () => {
+  it("keeps its after-midnight units on the window's date, marked as the next day", () => {
+    const late = {
+      date: '2026-11-06',
+      startMs: at('2026-11-06T22:30:00Z'),
+      state: 'free' as const,
+    };
+    const units: SlotUnit[] = [
+      { ...late, endMs: late.startMs + 30 * 60_000 },
+      { ...late, startMs: late.startMs + 30 * 60_000, endMs: late.startMs + 60 * 60_000 },
+    ];
+    const rows = gridRows(['a'], [{ resourceId: 'a', units }], '2026-11-06', PARIS);
+    expect(rows.map((r) => [r.label, r.nextDay])).toEqual([
+      ['23:30 - 24:00', false],
+      ['00:00 - 00:30', true],
+    ]);
   });
 });
 
@@ -117,7 +170,7 @@ describe('planning', () => {
       now,
       1
     );
-    expect(rows[0].units.map((u) => localTimeIn(u.startMs, PARIS))).toEqual(['10:00']);
+    expect(rows[0].units.map((u) => localTime(u.startMs, PARIS))).toEqual(['10:00']);
     expect(rows[1].units).toEqual([]);
   });
 });

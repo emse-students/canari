@@ -7,7 +7,7 @@
   import Select from '$lib/components/ui/Select.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import { book, type BookerResource, type BookerSpace, type SlotUnit } from '$lib/bookings/api';
-  import { formatDay, formatTimeRange } from '$lib/bookings/grid';
+  import { formatBookingRange, formatTimeRange } from '$lib/bookings/grid';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import {
     firstMissingAnswer,
@@ -39,11 +39,18 @@
     run: SlotUnit[];
     /** Offered to whoever may mark the range unavailable instead. */
     onBlockInstead?: () => void;
+    /**
+     * The DEVICE's clock puts the start outside the booking window. Said, never enforced: the
+     * device may be wrong, and the server answers the request on its own clock.
+     */
+    windowNote: boolean;
+    /** Re-reads the grid and the reader's bookings, the sheet staying open. */
+    onReread: () => Promise<void>;
     /** `changed`: a booking was made, or the grid is known stale (a slot taken meanwhile). */
     onClose: (changed: boolean) => void;
   }
 
-  let { space, resource, run, onBlockInstead, onClose }: Props = $props();
+  let { space, resource, run, onBlockInstead, windowNote, onReread, onClose }: Props = $props();
 
   const items = $derived(space.items);
   const hidden = $derived(new Set(space.hiddenItemIds));
@@ -106,9 +113,17 @@
       showToast(m.bookings_sheet_done(), 'info');
       onClose(true);
     } catch (e) {
+      const code = refusalCode(e);
+      if (code === null) {
+        // No answer the server typed - a timeout, a lost connection, a gateway error: the booking
+        // may have been written before the answer was lost. Say so, and show what is true now.
+        Log.i('BOOKINGS', `booking outcome unknown: ${String(e)}`);
+        error = m.bookings_sheet_outcome_unknown();
+        await onReread();
+        return;
+      }
       error = describeBookingRefusal(e, m.bookings_sheet_submit());
       // The range was taken or closed meanwhile, or the questions changed: the grid is stale.
-      const code = refusalCode(e);
       if (code === 'slot-taken' || code === 'blocked' || code === 'space-changed') {
         Log.i('BOOKINGS', `the sheet's range went stale: ${code}`);
         showToast(error, 'error');
@@ -125,9 +140,17 @@
     <div>
       <p class="text-text-main text-base font-bold">{resource.name}</p>
       <p class="text-text-muted text-sm first-letter:uppercase">
-        {formatDay(first.date)}, {formatTimeRange(first.startMs, last.endMs, space.timeZone)}
+        {formatBookingRange(first.startMs, last.endMs, space.timeZone)}
       </p>
     </div>
+
+    {#if windowNote}
+      <p
+        class="border-amber-warn/30 bg-amber-warn/10 text-amber-warn rounded-xl border px-3 py-2 text-xs"
+      >
+        {m.bookings_sheet_window_note()}
+      </p>
+    {/if}
 
     {#if run.length > 1}
       <Select

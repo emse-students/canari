@@ -10,6 +10,7 @@
   import { listSpaces, myBookings, type ListedSpace, type MyBooking } from '$lib/bookings/api';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { spaceHref } from '$lib/bookings/routes';
+  import { redrawEveryMinuteAndAt } from '$lib/bookings/redrawClock';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
 
@@ -48,7 +49,11 @@
     }))
   );
 
-  onMount(load);
+  onMount(() => {
+    void load();
+    // A booking that ends while the page is open moves to the history without a reload.
+    return redrawEveryMinuteAndAt(null, (now) => (nowMs = now));
+  });
 
   async function load() {
     Log.d('BOOKINGS', 'reservations page load');

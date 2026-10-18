@@ -1,17 +1,16 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { resolve } from '$app/paths';
   import AddEventToCalendarButton from '$lib/components/calendar/AddEventToCalendarButton.svelte';
-  import { calendarLink, type MyBooking } from '$lib/bookings/api';
+  import { type MyBooking } from '$lib/bookings/api';
   import {
     bookingCalendarEvent,
+    bookingIcsUrl,
     cancelWithConfirm,
     withdrawWithConfirm,
   } from '$lib/bookings/bookingActions';
   import { formatBookingRange } from '$lib/bookings/grid';
   import { spaceHref } from '$lib/bookings/routes';
   import { m } from '$lib/paraglide/messages';
-  import { Log } from '$lib/utils/Log';
 
   /**
    * ONE OF THE READER'S BOOKINGS on the Reservations page: where and when (in the space's zone,
@@ -44,15 +43,6 @@
         ? m.bookings_status_withdrawn()
         : null
   );
-
-  let icsPath = $state<string | null>(null);
-
-  onMount(() => {
-    if (!coming || !booking.mine) return;
-    calendarLink(booking.id)
-      .then((r) => (icsPath = r.path))
-      .catch((e) => Log.d('BOOKINGS', `no calendar link: ${String(e)}`));
-  });
 
   async function cancel() {
     if (await cancelWithConfirm(booking.id, false)) onChanged();
@@ -99,11 +89,8 @@
     <div class="flex flex-wrap items-center gap-2 pt-1">
       {#if booking.mine}
         <AddEventToCalendarButton
-          event={bookingCalendarEvent(
-            booking,
-            `${booking.space.name} - ${booking.resource.name}`,
-            icsPath
-          )}
+          event={bookingCalendarEvent(booking, `${booking.space.name} - ${booking.resource.name}`)}
+          resolveIcsUrl={() => bookingIcsUrl(booking.id)}
         />
       {/if}
       {#if booking.holder}

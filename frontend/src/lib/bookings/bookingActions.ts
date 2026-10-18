@@ -9,7 +9,7 @@ import { showConfirm } from '$lib/stores/confirm.svelte';
 import { showToast } from '$lib/stores/toast.svelte';
 import { socialUrl } from '$lib/utils/apiUrl';
 import { Log } from '$lib/utils/Log';
-import { cancelBooking, removeBlock, withdrawBooking } from './api';
+import { calendarLink, cancelBooking, removeBlock, withdrawBooking } from './api';
 import { describeBookingRefusal } from './refusals';
 
 /** Asks, then runs `act`; `true` once it is done, `false` when declined or refused (said). */
@@ -68,20 +68,20 @@ export function liftBlockWithConfirm(blockId: string): Promise<boolean> {
   );
 }
 
-/**
- * A booking as "Add to my calendar" reads it (D13). `icsPath` is the signed path the API gives
- * (`calendarLink`); the hosted file is what a phone hands to its calendar app.
- */
+/** A booking as "Add to my calendar" reads it (D13); its hosted file comes from {@link bookingIcsUrl}. */
 export function bookingCalendarEvent(
   booking: { id: string; startsAt: string; endsAt: string },
-  title: string,
-  icsPath: string | null
+  title: string
 ): AgendaExportEvent {
-  return {
-    id: `booking-${booking.id}`,
-    title,
-    startsAt: booking.startsAt,
-    endsAt: booking.endsAt,
-    ...(icsPath ? { icsUrl: `${socialUrl()}${icsPath}` } : {}),
-  };
+  return { id: `booking-${booking.id}`, title, startsAt: booking.startsAt, endsAt: booking.endsAt };
+}
+
+/**
+ * The hosted `.ics` of a booking, signed for the reader (`calendarLink`), asked for on the tap that
+ * needs it - never once per card on screen - and handed by a phone to its calendar app.
+ */
+export async function bookingIcsUrl(bookingId: string): Promise<string> {
+  Log.d('BOOKINGS', `calendar link asked booking=${bookingId.slice(0, 8)}`);
+  const { path } = await calendarLink(bookingId);
+  return `${socialUrl()}${path}`;
 }

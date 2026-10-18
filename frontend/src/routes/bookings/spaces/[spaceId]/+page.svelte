@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { page } from '$app/state';
   import { resolve } from '$app/paths';
   import {
@@ -33,17 +33,18 @@
     type SlotUnit,
   } from '$lib/bookings/api';
   import {
-    addDays,
+    BLOCK_LENGTH_CHOICES,
     bookingUnitLimit,
     formatDay,
     freeRunFrom,
     gridRows,
-    localDateIn,
     planning,
     unitsInOrder,
     windowRefusal,
     zoneDiffersFromDevice,
   } from '$lib/bookings/grid';
+  import { addDays, localDate } from '$lib/bookings/zonedTime';
+  import { redrawEveryMinuteAndAt } from '$lib/bookings/redrawClock';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { BOOKINGS_HREF, spaceEditorHref, spaceHref } from '$lib/bookings/routes';
   import { setPageTitle } from '$lib/seo/pageTitle.svelte';
@@ -62,7 +63,8 @@
    * THE BOOKER'S PAGE OF ONE SPACE (WP-B5): the grid of a date or the planning of the next free
    * units (D14, the default following the screen width as the agenda's), the sheets that book,
    * block and read a taken unit, and the space's link and QR code (D16). The server holds every
-   * rule: this page reads what it is sent and spares requests it knows would be refused.
+   * rule: this page reads what it is sent, draws the booking window on the device's clock - redrawn
+   * every minute and at the opening instant - and lets every tap reach the server's answer.
    */
 
   /** Days one grid read covers: a week, so moving day to day rarely asks again. */
@@ -74,7 +76,13 @@
 
   type View = 'grid' | 'planning';
   type Sheet =
-    | { kind: 'book'; resource: BookerResource; run: SlotUnit[]; blockRun: SlotUnit[] }
+    | {
+        kind: 'book';
+        resource: BookerResource;
+        run: SlotUnit[];
+        blockRun: SlotUnit[];
+        windowNote: boolean;
+      }
     | { kind: 'block'; resource: BookerResource; run: SlotUnit[] }
     | { kind: 'detail'; resource: BookerResource; unit: SlotUnit };
 
@@ -95,13 +103,14 @@
   let sheet = $state<Sheet | null>(null);
   let qrOpen = $state(false);
 
-  const today = $derived(space ? localDateIn(nowMs, space.timeZone) : '');
+  const today = $derived(space ? localDate(nowMs, space.timeZone) : '');
   const rows = $derived(
     space
       ? gridRows(
           space.resources.map((r) => r.id),
           slots,
-          date
+          date,
+          space.timeZone
         )
       : []
   );
@@ -126,28 +135,52 @@
     return () => setPageTitle(null);
   });
 
-  onMount(() => {
-    void load();
-    return onViewportChange(SCHEDULE_AGENDA_QUERY, (narrow) => {
+  onMount(() =>
+    onViewportChange(SCHEDULE_AGENDA_QUERY, (narrow) => {
       if (!viewChosen) view = narrow ? 'planning' : 'grid';
-    });
+    })
+  );
+
+  // The route parameter, not the mount: SvelteKit keeps this page from one space to another.
+  $effect(() => {
+    const id = spaceId;
+    untrack(() => void load(id));
   });
 
-  async function load() {
-    Log.d('BOOKINGS', `space page load space=${spaceId}`);
+  // The device's clock only REDRAWS (a unit drawn bookable or not, the opening notice); the server
+  // decides every request on its own.
+  $effect(() => {
+    const opensAt = space?.opensAt ? Date.parse(space.opensAt) : null;
+    return redrawEveryMinuteAndAt(opensAt, (now) => (nowMs = now));
+  });
+
+  async function load(id: string) {
+    Log.d('BOOKINGS', `space page load space=${id}`);
     loading = true;
     loadError = '';
+    space = null;
+    slots = [];
+    loaded = null;
+    sheet = null;
     try {
-      const loadedSpace = await getSpace(spaceId);
+      const loadedSpace = await getSpace(id);
+      // A later navigation owns the page now: this answer is for a space no longer shown.
+      if (id !== spaceId) return;
       space = loadedSpace;
       nowMs = Date.now();
-      date = localDateIn(nowMs, loadedSpace.timeZone);
+      date = localDate(nowMs, loadedSpace.timeZone);
       await Promise.all([readMine(), ensureSlots(true)]);
     } catch (e) {
+      if (id !== spaceId) return;
       loadError = describeBookingRefusal(e, m.common_load_error());
     } finally {
-      loading = false;
+      if (id === spaceId) loading = false;
     }
+  }
+
+  /** What is true now: the grid and the reader's bookings, read again after an unknown outcome. */
+  async function reread() {
+    await Promise.all([readMine(), ensureSlots(true)]);
   }
 
   /** The reader's own bookings, by id: who holds what, and the private texts (D32). */
@@ -194,7 +227,11 @@
     void ensureSlots();
   }
 
-  /** What tapping a unit opens: the booking sheet, the block sheet, or the reading of a taken unit. */
+  /**
+   * What tapping a unit opens: the reading of a taken unit, or the booking sheet of a free one - with
+   * "block instead" for whoever may. A unit the device's clock puts outside the window still opens,
+   * with a note: the server judges the START of the range, on its clock, and its answer is final.
+   */
   function pick(resource: BookerResource, unit: SlotUnit) {
     if (!space) return;
     if (unit.state !== 'free') {
@@ -203,15 +240,13 @@
     }
     const units = unitsInOrder(slots, resource.id);
     const mayBlock = space.canManage || resource.linkedToMe;
-    const blockRun = mayBlock ? freeRunFrom(units, unit, Infinity) : [];
-    if (windowRefusal(space, unit.startMs, nowMs) !== null) {
-      if (blockRun.length) sheet = { kind: 'block', resource, run: blockRun };
-      return;
-    }
-    const run = freeRunFrom(units, unit, bookingUnitLimit(space)).filter(
-      (u) => windowRefusal(space!, u.startMs, nowMs) === null
-    );
-    sheet = { kind: 'book', resource, run, blockRun };
+    sheet = {
+      kind: 'book',
+      resource,
+      run: freeRunFrom(units, unit, bookingUnitLimit(space)),
+      blockRun: mayBlock ? freeRunFrom(units, unit, BLOCK_LENGTH_CHOICES) : [],
+      windowNote: windowRefusal(space, unit.startMs, nowMs) !== null,
+    };
   }
 
   async function closeSheet(changed: boolean) {
@@ -376,13 +411,21 @@
       {space}
       resource={s.resource}
       run={s.run}
+      windowNote={s.windowNote}
+      onReread={reread}
       onBlockInstead={s.blockRun.length
         ? () => (sheet = { kind: 'block', resource: s.resource, run: s.blockRun })
         : undefined}
       onClose={closeSheet}
     />
   {:else if sheet.kind === 'block'}
-    <BlockSheet {space} resource={sheet.resource} run={sheet.run} onClose={closeSheet} />
+    <BlockSheet
+      {space}
+      resource={sheet.resource}
+      run={sheet.run}
+      onReread={reread}
+      onClose={closeSheet}
+    />
   {:else}
     <UnitDetailSheet
       {space}

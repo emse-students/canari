@@ -265,7 +265,7 @@ reads the tables for them. Nothing here is a route yet (that is WP-B3).
 |---|---|
 | `src/bookings/zoned-time.ts` | Local wall time in a zone <-> UTC, with `Intl` alone and no library. The holes are resolved as `Temporal`'s `'compatible'`: a time in a spring-forward GAP moves forward by the gap, and a time that exists TWICE is the EARLIER instant. `24:00` is the next day's 00:00. |
 | `src/bookings/slots.ts` | `availabilityWindows`, `slotUnits`, `checkRangeShape`, `unitStates`, `bookingsOutsideAvailability` (D29) |
-| `src/bookings/booking-rules.ts` | `checkBookingWindow` (D26), `checkQuotas` (D17), `participantMayWithdraw` (D5), each refusal a CODE |
+| `src/bookings/booking-rules.ts` | `checkBookingWindow` (D26, over `booking-window.ts`, the file the screen copies), `checkQuotas` (D17), `participantMayWithdraw` (D5), each refusal a CODE |
 | `src/bookings/booking-slots.service.ts` | `spaceSlots(spaceId, from, to)` (at most 62 local days) and `assertAvailabilityChangeAllowed` (409 `bookings-inside-change`, naming the booking ids) |
 
 **Generation.** A line applied to one local date is a PIECE.
@@ -603,19 +603,32 @@ id to the organiser and the linked account, not to a booker.
 | `components/bookings/booker/SpaceGrid.svelte` | the grid of ONE date (D14): resources as columns, units as rows; every cell a button named with its whole reading; the table scrolls inside its own box, never the page |
 | `SpacePlanning.svelte` | per resource, its next six units bookable NOW over the next 14 days; a resource with none says so |
 | `BookingSheet.svelte` | the range (a slot whole, or 1..`maxSteps` steps from the one tapped), the participants (`UserAutocomplete`, up to `maxPeople`), the questions (`FormQuestion`, `visibleItems` with the server's `hiddenItemIds`), and - for an organiser - "book for someone" (D20) |
-| `BlockSheet.svelte` | "Indisponible" from the unit tapped over any run of free units, a reason, shown or not (D20) |
+| `BlockSheet.svelte` | "Indisponible" from the unit tapped over a run of free units (at most `BLOCK_LENGTH_CHOICES` = 48 lengths, each naming its end's day when it is not the start's), a reason, shown or not (D20) |
 | `UnitDetailSheet.svelte` | a taken unit: names as D9 allows, private texts to the booking's people (D32), answers to the organiser, cancel / leave / "Add to my calendar"; a block's reason and lifting it |
 | `MyBookingCard.svelte` | one of my bookings on Reservations: where, when (the space's zone), my part, the private texts while live, the same three gestures |
-| `lib/bookings/grid.ts` | pure: the space's wall clock through `Intl`, the grid rows, the free run a booking or a block may cover, the planning, and `windowRefusal` - the server's `checkBookingWindow`, same order, same codes |
+| `lib/bookings/grid.ts` | pure: a unit's day, the ranges as text, the grid rows, the free run a booking or a block may cover, the planning, and `windowRefusal` - on `zonedTime.ts` and `bookingWindow.ts`, both the server's own files copied byte for byte |
+| `lib/bookings/bookingWindow.ts` | the booking window (D26) - `apps/social-service/src/bookings/booking-window.ts` COPIED, a declared duplicate, both copies answering `libs/contracts/booking-window.cases.json` |
+| `lib/bookings/redrawClock.ts` | the redraw: every minute, at the opening instant, and when the page is seen again |
 | `lib/bookings/bookingActions.ts` | cancel, leave and lift: ONE implementation each (ask, call, say), shared by both pages; the calendar event of a booking |
 | `lib/bookings/refusals.ts` | every booker code (`BOOKER_REFUSAL_CODES`) to its sentence, beside the organiser's |
 
 - **THE DEFAULT VIEW FOLLOWS THE WIDTH** as the agenda's (`SCHEDULE_AGENDA_QUERY`): the planning
   on a phone, the grid wider - until the reader picks one, then theirs holds.
-- **TIMES ARE THE SPACE'S** (D25), read with `Intl` in its zone; when the device's clock reads
-  differently, the page names the zone.
-- **A unit the booking window refuses is drawn "Non réservable"** and opens only for whoever may
-  block it. The mirror spares a request; the server still decides every booking.
+- **TIMES ARE THE SPACE'S** (D25), read in its zone; when the device's clock reads differently,
+  the page names the zone. **A unit's DAY is the local date of its START**, not the date its
+  window started (which the server stamps on it): a night window stays one block of rows on the
+  grid of the day it opened, its rows after midnight marked "(lendemain)", and every sentence that
+  names a day names the right one. An end at midnight reads `24:00`; a time in a fall-back night's
+  doubled hour carries its offset ("02:00 (UTC+2) - 02:00 (UTC+1)"), so two ranges never read alike.
+- **THE CLOCK THAT DECIDES IS THE SERVER'S.** The device's clock only DRAWS: a unit outside the
+  window is drawn "Non réservable", redrawn every minute and at the opening instant, and it STILL
+  OPENS - the sheet says the device thinks it is not bookable, and the server answers. Like the
+  server, only the START of a range is judged: a run of steps is never trimmed by the window.
+- **AN ANSWER THAT NEVER CAME IS SAID AS SUCH**: a booking or a block whose call fails with no
+  typed code (a timeout, a lost connection) may have been written - the sheet says the outcome is
+  unknown and re-reads the grid and my bookings before anything is tried again.
+- **"Add to my calendar" asks for its signed link ON THE TAP** (`bookingIcsUrl`), never once per
+  card on screen; a browser tab is opened inside the tap and pointed at it.
 - **A refusal that means the grid is stale** (`slot-taken`, `blocked`, `space-changed`) closes the
   sheet and re-reads the grid and my bookings, so the reader sees why.
 - **The holder's gestures come from `GET mine`**: a unit's view says `mine` but not holder or
@@ -633,8 +646,10 @@ id to the organiser and the linked account, not to a booker.
 
 **Seen** at 390 and 1280 and at 200 % text on a local build, on a fixture space (a temporary
 signed-out preview route, not committed): no page scroll sideways (the grid's third column
-scrolls in its box), the booking sheet with steps, people and questions, the detail with answers.
-Not yet seen against a running API, nor on a phone - WP-B7's readings. **Proof**: `grid.test.ts`
-(the zone across the daylight-saving change, the window in the server's order, the grid of one
-date, the free run, the planning), `refusals.test.ts` (every booker code worded), the dashboard's
-row order.
+scrolls in its box), the booking sheet with steps, people and questions, the detail with answers;
+after the review, a fall-back night window on the grid and the block lengths over it. Not yet
+seen against a running API, nor on a phone - WP-B7's readings. **Proof**: `grid.test.ts` (a
+unit's day, `24:00`, the next-day and further-day ends, both DST nights, a night window's rows,
+the free run, the planning), `bookingWindow.contract.test.ts` and the server's
+`booking-window.spec.ts` (one contract), `redrawClock.test.ts`, `refusals.test.ts` (every booker
+code worded), the dashboard's row order.
