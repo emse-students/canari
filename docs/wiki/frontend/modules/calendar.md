@@ -520,7 +520,7 @@ at `BREAK_LABEL_ANGLE` -20deg.
 | the Canva | this sheet | why |
 | --- | --- | --- |
 | the first row is filled with September's last evenings | those squares are NOT DRAWN - the background runs through them | the feed is one month wide; widening the fetch was refused (*"non, c'est bon"*), then the squares themselves were (*"on peut supprimer les cases qui ne contiennent pas de jour"*) |
-| the day number is large, bottom-right, UNDER the event cards | small, top-left, pinned over the tile (no longer a row of its own, 2026-10-06) | *"tout doit etre lisible et rien ne doit se chevaucher"*; the outline below keeps it readable if a long title reaches it |
+| the day number is large, bottom-right, UNDER the event cards | small, top-left, in a row of its own ABOVE the tiles (2026-10-18; pinned over the first tile from 2026-10-06, where it covered titles) | *"tout doit etre lisible et rien ne doit se chevaucher"*; the outline below keeps it readable if a long title reaches it |
 | no distinction for a weekend or a holiday | both recede, and a weekend IN a holiday recedes twice | *"on peut garder une distinction de fond quand meme, c'est plus lisible"*, then *"le WE et les jours de pause pourraient etre en un peu plus fonce"* |
 
 **EVERY EVENT TITLE IS WHITE WITH A DARK OUTLINE, CENTRED IN ITS OWN TILE (user, 2026-10-06, who works in Canva).**
@@ -532,7 +532,7 @@ inside an event tile; a number on an empty day keeps `contrastColor(cellBg)`. Th
 cell used to sit below the centre because the day number owned a row above it; the number is now
 absolutely pinned top-left and the title is centred both ways in the whole tile (each band of a
 stacked cell in its own). Long titles still shrink/clamp through `fitEventText(slotH)`.
-`DAY_NUM_H` remains the SCREEN grid's reserved row only.
+`DAY_NUM_H` remains the SCREEN grid's reserved row only. **Superseded on the sheet 2026-10-18** - see below: the number is back in a row, but above the tiles rather than inside the first one, so each title still centres in its whole tile.
 
 **A SQUARE OUTSIDE THE MONTH KEEPS ITS PLACE AND PAINTS NOTHING.** Dropping the element would slide
 the 1st onto the wrong weekday, so the cell is still emitted - with no background at all, which is
@@ -667,6 +667,36 @@ fails there rather than on a device.
 **Still owed: one press on real hardware.** A green suite says the blob reaches the right function;
 it says nothing about the picker, and the two `capabilities/default.json` grants this depends on
 (`fs:allow-write-file`, `dialog:allow-save`) are the kind that ship and install before rejecting.
+
+### THE NOVEMBER 2026 SHEET: OUTLINES, A NUMBER ROW AND A PNG (2026-10-18)
+
+The user sent the November 2026 PDF (autumn photograph) asking for better outlines, and for a PNG
+button beside the PDF. Reproduced offline with a busy photograph and the same titles; what the sheet
+showed, and what changed in `buildCalendarHtml`:
+
+| seen on the sheet | change |
+| --- | --- |
+| days faded into the photograph | every in-month day is a card with a rounded (8px) 2px `SHEET_INK` frame drawn OVER its content (`dayFrameHtml`); default cell opacity 58 -> 82 |
+| "26" sat on "Conference Energie et Nucleaire", "19" on "Service STO'Mines" | the number has its own `SHEET_NUM_ROW_H` row above the tiles - no tile holds it, so each title still centres in its whole tile |
+| the logo watermark sat under the title in short tiles | the logo has a fixed left slot (`LOGO_SLOT_*`), the title takes the rest; below 14px it is dropped rather than drawn as a dot; default logo opacity 55 -> 100 |
+| stacked events of one day merged into one band | a 2px rule opens every tile (`sheetRuleCss`) |
+| a two-line title cramped beside a one-word one | tiles share the cell by `titleLineWeight` through `weightedSlotHeights`, still summing exactly to the cell |
+| the title had an outline, the day numbers none | every number and the "+N" row are white with the dark outline |
+
+The geometry constants (title, gaps) are the Canva's and did not move; out-of-month squares stay undrawn.
+Open: the real November photograph has not been re-exported - the user's look is owed.
+
+**THE PNG IS THE PDF'S SHEET.** `withRenderedSheet` is the one render path: it pre-fetches the logos,
+builds the offscreen page and hands it to the PDF writer or to the PNG rasteriser, so the two files
+cannot differ on layout. The PNG keeps its text in the raster, at `pngRasterScale(devicePixelRatio)` =
+2 x the screen density capped at `PNG_MAX_RASTER_SCALE` 3 - the scale the PDF already rasterises at on
+every device, so a PNG never costs more canvas than the PDF does. Measured on a full six-row November
+with a busy photograph (desktop Chrome): scale 2 = 2160 x 1528, 4.1 MB, ~0.9 s; scale 3 = 3240 x 2292
+(30 MB of canvas, under half of iOS's ~16.7 Mpx limit), 7.6 MB, ~0.5 s warm; the PDF of the same
+month is 1.0 MB in ~1.2 s. Compare the carte's D8, whose A0 cost is still owed. Both files go through
+`downloadDecryptedFile`, so a phone app gets the OS save dialog for either - the hardware press owed
+for the PDF above is owed for the PNG too. Same gate as the PDF (`mayExport`), filename
+`canari-agenda-YYYY-MM`.
 
 ## ICS export
 

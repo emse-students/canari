@@ -29,9 +29,18 @@
     CALENDAR_CONTAINER_HEIGHT,
     CALENDAR_CONTAINER_WIDTH,
     fileToDataUrl,
+    type CalendarExportFormat,
     type CalendarExportOptions,
   } from '$lib/utils/calendarExport';
-  import { ChevronLeft, ChevronRight, FileDown, ImagePlus, X, RotateCcw } from '@lucide/svelte';
+  import {
+    ChevronLeft,
+    ChevronRight,
+    FileDown,
+    FileImage,
+    ImagePlus,
+    X,
+    RotateCcw,
+  } from '@lucide/svelte';
   import ColorPicker from '$lib/components/ui/ColorPicker.svelte';
   import { paletteFromImage } from '$lib/calendar/sheetPalette';
   // The sheet's two display faces, loaded by the ONE page that renders it. `calendarExport` is also
@@ -40,6 +49,7 @@
   import '@fontsource/chewy/400.css';
   import { m } from '$lib/paraglide/messages';
   import { getLocale } from '$lib/paraglide/runtime';
+  import { showToast } from '$lib/stores/toast.svelte';
 
   // ── Month navigation ─────────────────────────────────────────────
   let focusDate = $state(new Date());
@@ -153,21 +163,29 @@
     previewContainerWidth > 0 ? previewContainerWidth / CALENDAR_CONTAINER_WIDTH : 0
   );
 
-  // ── PDF export ───────────────────────────────────────────────────
-  let exporting = $state(false);
+  // ── PDF / PNG export ─────────────────────────────────────────────
+  /** The format being generated, or null. One at a time: both rasterise the same offscreen sheet. */
+  let exporting = $state<CalendarExportFormat | null>(null);
 
-  async function handleExport() {
+  /**
+   * Saves the month as `format`. Both formats go through the ONE render path in
+   * `exportCalendarMonth`, so the PNG is the PDF's sheet, never a second layout.
+   */
+  async function handleExport(format: CalendarExportFormat) {
     if (exporting) return;
-    exporting = true;
+    exporting = format;
     try {
-      await exportCalendarMonth(events, focusDate, opts);
+      await exportCalendarMonth(events, focusDate, opts, format);
+    } catch (err) {
+      Log.d('calendar.export: generation failed', { format, err });
+      showToast(m.common_download_failed(), 'error');
     } finally {
-      exporting = false;
+      exporting = null;
     }
   }
 
   /**
-   * WHO MAY BUILD AN AGENDA PDF (user, 2026-09-14: *"Exporter le calendrier en pdf ne doit etre
+   * WHO MAY BUILD AN AGENDA PDF - OR ITS PNG, THE SAME SHEET BEHIND THE SAME GATE (user, 2026-09-14: *"Exporter le calendrier en pdf ne doit etre
    * possible que pour les admins (systeme ou BDE)"*).
    *
    * `null` until the answer is known, which is NOT the same as `false`: drawing the tool and then
@@ -419,15 +437,38 @@
 
           <!-- Actions -->
           <div class="flex flex-col gap-2">
-            <button
-              type="button"
-              onclick={handleExport}
-              disabled={loading || exporting}
-              class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition-colors disabled:pointer-events-none disabled:opacity-40"
-            >
-              <FileDown size={18} />
-              {exporting ? m.common_generating_label() : m.calendar_export_download_btn()}
-            </button>
+            <!-- PDF and PNG side by side, wrapping onto two rows when the text is large. The visible
+                 label is the format alone - "Telecharger le PDF" broke onto two lines in a 360px
+                 panel - and the accessible name is the full action, which contains it. -->
+            <p class="text-text-muted text-xs font-bold tracking-wider uppercase">
+              {m.calendar_export_download_label()}
+            </p>
+            <div class="flex flex-wrap gap-2">
+              <button
+                type="button"
+                data-testid="calendar-export-pdf"
+                onclick={() => handleExport('pdf')}
+                disabled={loading || exporting !== null}
+                aria-busy={exporting === 'pdf'}
+                aria-label={m.calendar_export_download_btn()}
+                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex flex-1 basis-32 items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition-colors disabled:pointer-events-none disabled:opacity-40"
+              >
+                <FileDown size={18} aria-hidden="true" />
+                {exporting === 'pdf' ? m.common_generating_label() : m.calendar_export_format_pdf()}
+              </button>
+              <button
+                type="button"
+                data-testid="calendar-export-png"
+                onclick={() => handleExport('png')}
+                disabled={loading || exporting !== null}
+                aria-busy={exporting === 'png'}
+                aria-label={m.calendar_export_download_png_btn()}
+                class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex flex-1 basis-32 items-center justify-center gap-2 rounded-xl px-4 py-3 text-sm font-bold transition-colors disabled:pointer-events-none disabled:opacity-40"
+              >
+                <FileImage size={18} aria-hidden="true" />
+                {exporting === 'png' ? m.common_generating_label() : m.calendar_export_format_png()}
+              </button>
+            </div>
             <button
               type="button"
               onclick={resetOptions}
