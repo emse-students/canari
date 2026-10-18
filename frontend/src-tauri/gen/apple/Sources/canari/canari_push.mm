@@ -760,7 +760,8 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProto(CanariPushContext *c
   char *jsonPtr = canari_native_decrypt_message(
       (const unsigned char *)stateBytes.bytes, stateBytes.length, ctx.deviceKeyB64.UTF8String,
       ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String,
-      senderId.UTF8String, (const unsigned char *)cipher.bytes, cipher.length);
+      senderId.UTF8String, (const unsigned char *)cipher.bytes, cipher.length,
+      (ctx.locale ?: @"").UTF8String);
   if (jsonPtr == nil) {
     return nil;
   }
@@ -824,7 +825,7 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProtoWithCommits(
       (const unsigned char *)stateBytes.bytes, stateBytes.length, ctx.deviceKeyB64.UTF8String,
       ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String, senderId.UTF8String,
       commitsJson.UTF8String,
-      (const unsigned char *)cipher.bytes, cipher.length);
+      (const unsigned char *)cipher.bytes, cipher.length, (ctx.locale ?: @"").UTF8String);
   if (jsonPtr == nil) {
     return nil;
   }
@@ -3075,12 +3076,15 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
       NSString *signature =
           [data[@"signature"] isKindOfClass:[NSString class]] ? data[@"signature"] : @"";
       NSString *dir = CanariTauriDataDir();
+      // The app language Rust words its own sentences in; "" when none was mirrored.
+      NSString *locale = CanariLoadPushContext().locale ?: @"";
       char *jsonPtr =
           dir == nil ? nil
                      : canari_native_open_graine_push(
                            dir.UTF8String, channelId.UTF8String, sessionId.UTF8String,
                            (uint32_t)[messageIndexStr intValue], senderId.UTF8String,
-                           nonce.UTF8String, ciphertext.UTF8String, signature.UTF8String);
+                           nonce.UTF8String, ciphertext.UTF8String, signature.UTF8String,
+                           locale.UTF8String);
       if (jsonPtr != nil) {
         NSString *jsonStr = [NSString stringWithUTF8String:jsonPtr];
         canari_free_string(jsonPtr);

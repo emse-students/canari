@@ -635,7 +635,7 @@ class NotificationService: UNNotificationServiceExtension {
           statePtr.bindMemory(to: UInt8.self).baseAddress, state.count,
           ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId,
           senderId,
-          cipherPtr.bindMemory(to: UInt8.self).baseAddress, cipher.count)
+          cipherPtr.bindMemory(to: UInt8.self).baseAddress, cipher.count, ctx.locale)
         else { return nil }
         defer { canari_free_string(raw) }
         return String(cString: raw)
@@ -686,7 +686,7 @@ class NotificationService: UNNotificationServiceExtension {
         guard let raw = canari_native_decrypt_message_with_commits(
           statePtr.bindMemory(to: UInt8.self).baseAddress, state.count,
           ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId, senderId, commitsJson,
-          cipherPtr.bindMemory(to: UInt8.self).baseAddress, cipher.count)
+          cipherPtr.bindMemory(to: UInt8.self).baseAddress, cipher.count, ctx.locale)
         else { return nil }
         defer { canari_free_string(raw) }
         return String(cString: raw)
@@ -940,6 +940,8 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     var body: String?
+    // Read once: the app language Rust words its own sentences in, and the id a mention may name.
+    let ctx = loadPushContext()
     let openable = !ciphertext.isEmpty && !nonce.isEmpty && messageIndex != nil
     // THE MIRROR FIRST, THEN THE FRAME THE MESSAGE CARRIES (channel-encryption section 19). The
     // extension has no second chance at a banner - nothing redraws it once `finish()` runs - and a
@@ -961,7 +963,8 @@ class NotificationService: UNNotificationServiceExtension {
     if openable, let index = messageIndex, seedB64 != nil, let dir = Self.appGroupDir() {
       let signature = Self.string(userInfo["signature"]) ?? ""
       if let raw = canari_native_open_graine_push(
-        dir.path, channelId, sessionId, index, senderId, nonce, ciphertext, signature)
+        dir.path, channelId, sessionId, index, senderId, nonce, ciphertext, signature,
+        ctx?.locale ?? "")
       {
         let json = String(cString: raw)
         canari_free_string(raw)
@@ -976,7 +979,6 @@ class NotificationService: UNNotificationServiceExtension {
       NSLog("[CanariNSE] handleChannelMessage: no seed/ciphertext - generic channel=\(channelId)")
     }
 
-    let ctx = loadPushContext()
     // COUNTED, NOT ONLY LOGGED - the Android twin is `reportBlindBanner`. Never `held` here: nothing
     // redraws a banner once `finish()` runs, so a seed absent now is a blind banner for good.
     if seedB64 == nil, let ctx = ctx {
