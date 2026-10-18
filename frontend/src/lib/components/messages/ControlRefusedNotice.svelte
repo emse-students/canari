@@ -8,6 +8,7 @@
   import { m } from '$lib/paraglide/messages';
   import {
     controlRefusalsFor,
+    controlRetryAvailable,
     retryControlRefusal,
     type ControlAct,
   } from '$lib/utils/chat/controlRefusals.svelte';
@@ -24,6 +25,8 @@
   } = $props();
 
   const refusals = $derived(controlRefusalsFor(messageId));
+  // No chat page has registered the Retry yet: the button is disabled rather than a tap that only logs.
+  const canRetry = $derived(controlRetryAvailable());
   const shortExcerpt = $derived(
     excerpt.length > 40 ? `${excerpt.slice(0, 40).trimEnd()}...` : excerpt.trim()
   );
@@ -67,9 +70,10 @@
     <span>{labelOf(refusal.act)}</span>
     <button
       type="button"
-      class="inline-flex min-h-11 min-w-11 items-center justify-center px-2 font-medium underline"
+      class="inline-flex min-h-11 min-w-11 items-center justify-center px-2 font-medium underline disabled:no-underline disabled:opacity-50"
       data-testid="control-refused-retry"
       aria-label={retryNameOf(refusal.act)}
+      disabled={!canRetry}
       onclick={() => retry(refusal.key, refusal.act.kind)}
     >
       {m.control_refused_retry()}

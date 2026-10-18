@@ -39,6 +39,8 @@ import {
   forgetControlRefusals,
   loadControlRefusals,
   retryControlRefusal,
+  MAX_CONTROL_REFUSALS,
+  recordControlRefusal,
   setControlRetryExecutor,
 } from '$lib/utils/chat/controlRefusals.svelte';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
@@ -86,6 +88,7 @@ const kinds = () => controlRefusalsFor('m1').map((r) => r.act.kind);
 beforeEach(() => {
   localStorage.clear();
   forgetControlRefusals();
+  loadControlRefusals('me');
   outboxMock.cancelOutboxMessage.mockReset().mockResolvedValue(false);
   outboxMock.enqueueOutboxMessage.mockReset().mockResolvedValue(undefined);
   vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -275,5 +278,86 @@ describe('a refusal is as durable as the state it describes (P2-b)', () => {
     messaging.forgetAccount(() => {});
     expect(kinds()).toEqual([]);
     expect(localStorage.getItem(ACCOUNT_KEY.controlRefusals('me'))).toContain('"pin"');
+  });
+});
+
+describe('the review of 2d5a041f7', () => {
+  it('a retry that settles late keeps a NEWER refusal recorded under the same key', async () => {
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const { ctx } = ctxFor();
+    wire(messaging, ctx);
+    let instant = 1_000;
+    vi.spyOn(Date, 'now').mockImplementation(() => ++instant);
+
+    refuseNext();
+    await messaging.handleAddReaction('m1', '👍', ctx);
+    let releaseRetry!: () => void;
+    outboxMock.enqueueOutboxMessage.mockImplementationOnce(
+      () => new Promise<void>((resolve) => (releaseRetry = resolve))
+    );
+    const retried = retryControlRefusal(keys()[0]);
+    await vi.waitFor(() => expect(outboxMock.enqueueOutboxMessage).toHaveBeenCalledTimes(2));
+
+    // Meanwhile the 👍 is taken back, and that removal is refused too.
+    refuseNext();
+    await messaging.handleAddReaction('m1', '👍', ctx);
+    releaseRetry();
+    expect(await retried).toBe(true);
+
+    const left = controlRefusalsFor('m1');
+    expect(left).toHaveLength(1);
+    expect(left[0].act).toMatchObject({ kind: 'reaction', emoji: '👍', remove: true });
+  });
+
+  it('an act settling after an account switch writes to its own account and never rebinds', async () => {
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const { ctx } = ctxFor();
+    let refuse!: () => void;
+    outboxMock.enqueueOutboxMessage.mockImplementationOnce(
+      () =>
+        new Promise<void>((_, reject) => (refuse = () => reject(new OutboxEnqueueError('slow'))))
+    );
+    const pinning = useMessaging().handleTogglePin('m1', ctx);
+    await vi.waitFor(() => expect(outboxMock.enqueueOutboxMessage).toHaveBeenCalledTimes(1));
+
+    forgetControlRefusals();
+    loadControlRefusals('other');
+    refuse();
+    await pinning;
+
+    expect(kinds()).toEqual([]);
+    expect(localStorage.getItem(ACCOUNT_KEY.controlRefusals('other'))).toBeNull();
+    expect(localStorage.getItem(ACCOUNT_KEY.controlRefusals('me'))).toContain('"pin"');
+    // Still bound to `other`: a refusal of it shows, `me`'s does not come back.
+    recordControlRefusal('other', {
+      conversationId: 'g1',
+      messageId: 'm1',
+      act: { kind: 'delete' },
+    });
+    expect(kinds()).toEqual(['delete']);
+  });
+
+  it('keeps at most MAX_CONTROL_REFUSALS, the oldest evicted', () => {
+    for (let i = 0; i <= MAX_CONTROL_REFUSALS; i++) {
+      recordControlRefusal('me', {
+        conversationId: 'g1',
+        messageId: `x${i}`,
+        act: { kind: 'delete' },
+      });
+    }
+    const stored = JSON.parse(localStorage.getItem(ACCOUNT_KEY.controlRefusals('me'))!);
+    expect(stored).toHaveLength(MAX_CONTROL_REFUSALS);
+    expect(controlRefusalsFor('x0')).toEqual([]);
+    expect(controlRefusalsFor(`x${MAX_CONTROL_REFUSALS}`)).toHaveLength(1);
+  });
+
+  it('a purged conversation takes its refusals with it', async () => {
+    const { purgeConversation } = await import('$lib/utils/chat/conversations');
+    const { conversations } = ctxFor();
+    recordControlRefusal('me', { conversationId: 'g1', messageId: 'm1', act: { kind: 'delete' } });
+    await purgeConversation({ conversations, key: 'alice' });
+    expect(kinds()).toEqual([]);
+    expect(localStorage.getItem(ACCOUNT_KEY.controlRefusals('me'))).toBeNull();
   });
 });

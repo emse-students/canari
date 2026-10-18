@@ -101,7 +101,6 @@ import {
   clearControlRefusal,
   clearMessageControlRefusals,
   forgetControlRefusals,
-  loadControlRefusals,
   recordControlRefusal,
   type ControlAct,
   type ControlRefusal,
@@ -1933,6 +1932,8 @@ export function useMessaging() {
    * Settles the mention of one control act: a refusal by the durable queue records a notice for THAT
    * act (message, kind, emoji); a taken act clears only the refusal it supersedes - the same key, or
    * every refusal on the message for a delete. A 👍 refused then a pin taken keeps the 👍's notice.
+   * `ctx` is the one the act was issued with, so `ctx.userId` is the ISSUING account: a slow act that
+   * settles after an account switch writes to that account's list and never rebinds the store.
    */
   function settleControl(
     ctx: MessagingContext,
@@ -1941,11 +1942,10 @@ export function useMessaging() {
     act: ControlAct,
     queued: boolean
   ): void {
-    loadControlRefusals(ctx.userId);
     if (!queued) {
       recordControlRefusal(ctx.userId, { conversationId, messageId, act });
     } else if (act.kind === 'delete') {
-      clearMessageControlRefusals(messageId);
+      clearMessageControlRefusals(messageId, ctx.userId);
     } else {
       clearControlRefusal(ctx.userId, messageId, act);
     }
@@ -1993,11 +1993,10 @@ export function useMessaging() {
   ): Promise<boolean> {
     const { messageId, act } = refusal;
     const tag = `[OUTBOX] retry "${act.kind}" on ${messageId.slice(0, 8)}`;
-    loadControlRefusals(ctx.userId);
     const found = [...ctx.conversations.entries()].find(([, c]) => c.id === refusal.conversationId);
     if (!found) {
       ctx.log(`${tag}: its conversation is gone here, the refusal is dropped`);
-      clearMessageControlRefusals(messageId);
+      clearMessageControlRefusals(messageId, ctx.userId);
       return false;
     }
     const [convoKey, convo] = found;

@@ -5,6 +5,7 @@ import ControlRefusedNotice from './ControlRefusedNotice.svelte';
 import {
   clearControlRefusal,
   forgetControlRefusals,
+  loadControlRefusals,
   recordControlRefusal,
   setControlRetryExecutor,
   type ControlAct,
@@ -14,6 +15,7 @@ import { m } from '$lib/paraglide/messages';
 const mounted: (() => void)[] = [];
 beforeEach(() => {
   localStorage.clear();
+  loadControlRefusals('me');
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'log').mockImplementation(() => {});
 });
@@ -100,5 +102,16 @@ describe('ControlRefusedNotice', () => {
     await vi.waitFor(() =>
       expect(err).toHaveBeenCalledWith(expect.stringContaining('retry of refused "edit"'))
     );
+  });
+});
+
+describe('ControlRefusedNotice with no chat page registered', () => {
+  it('disables Retry until a handler exists, then enables it', () => {
+    refuse({ kind: 'delete' });
+    const target = render();
+    expect(buttons(target)[0].disabled).toBe(true);
+    setControlRetryExecutor(vi.fn().mockResolvedValue(true));
+    flushSync();
+    expect(buttons(target)[0].disabled).toBe(false);
   });
 });
