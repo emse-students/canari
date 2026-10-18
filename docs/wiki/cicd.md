@@ -1104,7 +1104,7 @@ a companion object, a plugin command missing from its ACL: none of these are vis
 build (`:app:compileUniversalReleaseKotlin`) is the first real Kotlin compile — a debug build does
 not exercise it.
 
-### A green run is not proof that _your_ file compiled
+### A green run is not proof that *your* file compiled
 
 The iOS `project.pbxproj` is hand-maintained (there is no xcodegen here), so a source file that is
 in the repository but absent from the target's build phase is **skipped, not failed**. The run is
