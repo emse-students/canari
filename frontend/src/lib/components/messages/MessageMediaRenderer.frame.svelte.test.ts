@@ -8,8 +8,16 @@
  * or its style change, between those states has found a shift. The pixels were measured in Chromium
  * and on the phones (docs/wiki/frontend/media-frame.md).
  */
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
+
+/** The tickets the relays take; `gif` is emptied by the test that renders before one is held. */
+const tickets = vi.hoisted(() => ({ gif: 'gif-ticket', preview: 'preview-ticket' }));
+vi.mock('$lib/utils/previewTicket.svelte', () => ({
+  ensurePreviewTicket: async () => {},
+  previewTicket: () => tickets.preview,
+  gifMediaTicket: () => tickets.gif,
+}));
 import MessageMediaRenderer from './MessageMediaRenderer.svelte';
 import GifEmbed from './GifEmbed.svelte';
 import type { MediaRef } from '$lib/media';
@@ -189,5 +197,39 @@ describe('GifEmbed - a GIF link holds its size before it loads', () => {
     flushSync();
     expect(document.querySelector('[data-media-frame]')).toBeNull();
     expect(document.querySelector('a')?.getAttribute('href')).toBe(URL_BARE);
+  });
+
+  // THE READER'S BROWSER NEVER ASKS KLIPY (2026-10-18): the bytes come through the GIF relay, and
+  // the message's URL - what an older client renders - is untouched.
+  it('draws a KLIPY GIF through the relay, never from the CDN', () => {
+    mountGif(withGifSize(URL_BARE, 498, 280));
+    const src = frame().querySelector('img')!.getAttribute('src')!;
+    expect(new URL(src).hostname).not.toBe('static.klipy.com');
+    expect(src).toContain('/api/mls/gifs/media?url=');
+    expect(src).toContain(`url=${encodeURIComponent(URL_BARE)}&t=gif-ticket`);
+    // The declared size still reads off the rewritten URL.
+    expect(src.endsWith('#cn-size=498x280')).toBe(true);
+  });
+
+  it('holds its size with no <img> until a ticket is held - never a src certain to fail', () => {
+    tickets.gif = '';
+    try {
+      mountGif(withGifSize(URL_BARE, 498, 280));
+      expect(frame().dataset.mediaSize).toBe('498x280');
+      expect(frame().querySelector('img')).toBeNull();
+      // Not latched as failed: the link would replace the frame.
+      expect(document.querySelector('a')).toBeNull();
+    } finally {
+      tickets.gif = 'gif-ticket';
+    }
+  });
+
+  it('sends a GIF from any other host through the link-preview proxy, not to its host', () => {
+    const foreign = 'https://media.example.org/funny.gif';
+    mountGif(foreign);
+    const src = frame().querySelector('img')!.getAttribute('src')!;
+    expect(new URL(src).hostname).not.toBe('media.example.org');
+    expect(src).toContain('/api/mls/link-preview/image?url=');
+    expect(src).toContain('&t=preview-ticket');
   });
 });

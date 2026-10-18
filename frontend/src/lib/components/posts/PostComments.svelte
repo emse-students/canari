@@ -15,6 +15,7 @@
   import { tick, onMount } from 'svelte';
   import { getToken } from '$lib/stores/auth';
   import GifPickerModal from '$lib/components/chat/GifPickerModal.svelte';
+  import { fetchGifFile } from '$lib/utils/gifMediaProxy';
   import type { PostComment, PostMediaRef } from '$lib/posts/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import PostImage from './PostImage.svelte';
@@ -163,22 +164,16 @@
   /**
    * In-app GIF picker: fetches the chosen GIF's bytes and stages it as encrypted comment media.
    *
-   * The bytes come from KLIPY's CDN, so this READS a cross-origin host into memory - which the
-   * page's `connect-src` has to name (see the CSP snippet in `Dockerfile.frontend`). It is not
-   * covered by the wide `img-src` that renders the picker's grid: displaying a remote image and
-   * reading its bytes are two different permissions, and only the second one applies here.
+   * The bytes come through Canari's GIF relay (`fetchGifFile`), never from KLIPY's CDN, so KLIPY
+   * does not see the person attaching it.
    */
   async function handleGifSelected(url: string) {
     showGifPicker = false;
     try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
-      const name = url.split('/').pop()?.split('?')[0] || `gif-${Date.now()}.gif`;
-      await stageMediaFile(new File([blob], name, { type: blob.type || 'image/gif' }));
+      await stageMediaFile(await fetchGifFile(url));
     } catch (err) {
       // The log separates the two causes this shares one message for: a refused connection
-      // (CSP, offline, CDN down) throws a TypeError, a served error throws our `HTTP <status>`.
+      // (offline, relay down) throws a TypeError, a served error throws our `HTTP <status>`.
       console.error('Failed to load GIF', err);
       showToast(m.post_comment_gif_fetch_error());
     }

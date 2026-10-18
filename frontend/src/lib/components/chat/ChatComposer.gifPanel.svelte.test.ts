@@ -45,6 +45,12 @@ vi.mock('$lib/utils/chat/gifSearch', () => ({
   fetchGifPage: gifs.page,
   GifSearchUnavailableError: class extends Error {},
 }));
+// The thumbnails go through Canari's relays, which take a ticket; minting one is a network call.
+vi.mock('$lib/utils/previewTicket.svelte', () => ({
+  ensurePreviewTicket: async () => {},
+  previewTicket: () => 'preview-ticket',
+  gifMediaTicket: () => 'gif-ticket',
+}));
 
 afterAll(adoptTransitionAnimations());
 
@@ -155,6 +161,21 @@ describe('the GIF panel', () => {
     }
     flushSync();
     expect(geometry()).toEqual(before);
+  });
+
+  it('draws every thumbnail through Canari, never from the GIF host (2026-10-18)', async () => {
+    mountComposer();
+    openGifPanel();
+    await vi.waitFor(() => expect(tiles()).toHaveLength(2));
+    flushSync();
+    const srcs = [...document.querySelectorAll<HTMLImageElement>('[data-media-frame] img')].map(
+      (img) => new URL(img.getAttribute('src')!)
+    );
+    expect(srcs).toHaveLength(2);
+    for (const src of srcs) {
+      expect(src.hostname).not.toBe('g');
+      expect(src.pathname.startsWith('/api/mls/')).toBe(true);
+    }
   });
 
   it('sends a tapped GIF carrying the size of the rendition sent (#cn-size), and closes', async () => {

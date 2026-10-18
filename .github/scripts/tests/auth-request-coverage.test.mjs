@@ -144,6 +144,9 @@ const IN_BODY_AUTH = [
   // `tauri://localhost`, no cookie - a guard would refuse every mobile reader. It verifies a
   // short-lived ticket an authenticated call minted instead, as its first statement.
   'verifyPreviewTicket',
+  // `GET /mls/gifs/media`, the GIF relay, is an `<img src>` for the same reason, and verifies its own
+  // day-long kind of ticket (`utils/previewTicket.ts`) as its first statement.
+  'verifyGifMediaTicket',
 ];
 
 /**

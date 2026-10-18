@@ -235,13 +235,17 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 
 ## P2 - A GIF sent in a chat is loaded by every recipient from KLIPY's CDN (found 2026-10-16, GDPR review)
 
-The search itself goes through Canari since 2026-10-16 (`GET /api/mls/gifs`); what is left is
-`static.klipy.com` learning each RECIPIENT's IP, user agent and reading time on every render of a
-GIF message, plus the searcher's thumbnails and the one fetch of a comment GIF's bytes. Not proxied yet
-because the existing image proxy's 3 MB ceiling and small-image cache were never measured against
-KLIPY's renditions. The substance, the table of the three paths and the route it needs are in
-[chat](frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16). Owed first: a
-measurement of the `md` rendition sizes over trending and a few searches.
+**BUILT 2026-10-18, NOT SHIPPED.** The search goes through Canari since 2026-10-16; the GIF relay
+(`GET /api/mls/gifs/media`: KLIPY's CDN only, 12 MiB measured, streamed, byte cache, a day-long
+ticket) now carries the three paths that still reached `static.klipy.com` - every recipient's GIF,
+the searcher's thumbnails, a comment GIF's bytes - and a GIF from any other host goes to the
+link-preview proxy. Mechanism and decisions:
+[chat](frontend/modules/chat.md#the-gif-relay-no-readers-browser-asks-klipy-for-a-gif-2026-10-18).
+**Owed, and it closes this entry:** a network trace on dev after the alpha (zero request to
+`static.klipy.com` from the browser across a GIF bubble, a quoted GIF, the picker and a comment
+attach), the same look on the Mi 9T and the iPhone, and the server log after a day
+(`[GIF_MEDIA]` refusals by reason, cache hits). **Owner's call:** drop `static.klipy.com` from
+`connect-src` once no tab runs an older bundle.
 
 ## P1 - Opening a community is network-gated: the salons 1.7 s after the tap on Wi-Fi, 6 s on a slow link and phone, never offline (user, 2026-10-14; measured, not built)
 

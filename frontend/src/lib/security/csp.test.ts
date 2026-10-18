@@ -73,9 +73,11 @@ describe('the served Content-Security-Policy', () => {
 
   it('names every external host the client reads bytes from', () => {
     const connect = sources(policyDeclarations()[0], 'connect-src');
-    // PostComments fetches the chosen GIF's BYTES from this host, to encrypt them before upload.
-    // Rendering the grid is `img-src`; reading bytes into memory is `connect-src`, and only the
-    // second one is what attaching a GIF to a comment needs.
+    // PostComments fetched the chosen GIF's BYTES from this host, to encrypt them before upload.
+    // Since the GIF relay (2026-10-18) the current bundle reads them through chat-delivery
+    // (`gifMediaProxy.ts`, `'self'`) and no longer needs it; it is KEPT, unchanged, for a web tab
+    // still running an older bundle, whose comment attach would otherwise fail until it reloads.
+    // Removing it is a narrowing the owner may take (docs/wiki/frontend/modules/chat.md).
     expect(connect).toContain('https://static.klipy.com');
   });
 

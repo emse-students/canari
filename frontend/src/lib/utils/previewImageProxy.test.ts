@@ -4,11 +4,12 @@ const apiFetch = vi.fn();
 vi.mock('$lib/utils/apiFetch', () => ({ apiFetch: (...args: unknown[]) => apiFetch(...args) }));
 
 const { proxiedPreviewImageUrl } = await import('$lib/utils/previewImageProxy');
-const { ensurePreviewTicket, previewTicket } = await import('$lib/utils/previewTicket.svelte');
+const { ensurePreviewTicket, gifMediaTicket, previewTicket } =
+  await import('$lib/utils/previewTicket.svelte');
 
 /** An answer shaped like the one `GET /api/mls/link-preview/ticket` gives. */
 function ticketResponse(ticket: string, expiresInMs = 300_000) {
-  return { ok: true, json: async () => ({ ticket, expiresInMs }) };
+  return { ok: true, json: async () => ({ ticket, expiresInMs, gifTicket: `gif-${ticket}` }) };
 }
 
 /**
@@ -45,6 +46,8 @@ describe('proxiedPreviewImageUrl', () => {
     await ensurePreviewTicket();
 
     expect(previewTicket()).toBe('deadbeef');
+    // The GIF relay's day-long ticket rides on the same answer (2026-10-18).
+    expect(gifMediaTicket()).toBe('gif-deadbeef');
     const url = proxiedPreviewImageUrl('https://example.com/cover.png');
     expect(url).toContain('/api/mls/link-preview/image?url=');
     expect(url).toContain('&t=deadbeef');

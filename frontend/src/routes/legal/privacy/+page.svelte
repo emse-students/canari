@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="16/10/2026"
+  updated="18/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -280,9 +280,12 @@
       <li>
         <p class="legal-block-title">KLIPY - recherche de GIF</p>
         <p>
-          Quand vous cherchez un GIF, votre recherche est envoyée à KLIPY avec un identifiant
-          aléatoire créé sur votre appareil, sans lien avec votre compte, et les images sont
-          chargées depuis ses serveurs : KLIPY voit donc l'adresse IP de votre appareil.
+          Quand vous cherchez un GIF, votre recherche passe par notre serveur, qui l'envoie à KLIPY
+          sans aucune donnée vous identifiant. Les GIF eux-mêmes - dans le sélecteur, dans les
+          conversations et dans les commentaires - sont aussi chargés par notre serveur : KLIPY voit
+          la recherche et l'adresse de notre serveur, jamais votre adresse IP ni votre compte. Une
+          version de l'application antérieure à octobre 2026 appelle encore KLIPY directement, avec
+          l'adresse IP de votre appareil, jusqu'à sa mise à jour.
         </p>
       </li>
       <li>
@@ -489,11 +492,11 @@
           <tr>
             <td>Identifiant aléatoire <code>klipy_cid</code></td>
             <td>
-              Transmis à KLIPY avec les recherches de GIF, qui s'en sert pour ses propres
-              statistiques (section 4). Il n'est pas nécessaire au service et sera supprimé quand
-              les recherches passeront par notre serveur, ce qui est en cours
+              Créé par les versions de l'application antérieures à octobre 2026, qui l'envoyaient à
+              KLIPY avec les recherches de GIF (section 4). La version actuelle ne l'utilise plus et
+              l'efface au démarrage
             </td>
-            <td>Jusqu'à son effacement</td>
+            <td>Jusqu'au premier démarrage d'une version à jour</td>
           </tr>
           <tr>
             <td>Journal de l'application</td>
