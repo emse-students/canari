@@ -1637,17 +1637,19 @@ fn p2p_join(
         (&initiator.tx, true, initiator.peer_id.as_str()),
         (&notify_tx, false, peer_id),
     ] {
-        if !p2p_send(
+        // Delivered directly rather than through `p2p_send`: a lost PeerReady is one event, and it
+        // gets ONE line, at error, because this call can then never negotiate.
+        if let Err(reason) = p2p::deliver(
             tx,
             SignalMessage::PeerReady {
                 initiator: is_initiator,
             },
-            &room_id,
-            who,
         ) {
             error!(
-                "[call] peer-ready lost room={} peer={} - this call cannot negotiate",
-                room_id, who
+                "[call] p2p peer-ready DROPPED room={} to={}: {} - this call cannot negotiate",
+                room_id,
+                who,
+                reason.as_str()
             );
         }
     }

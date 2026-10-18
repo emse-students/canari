@@ -41,9 +41,17 @@ const server = {
   iceStatus: 200,
   ringStatus: 200,
   roomTokenStatus: 200,
+  /** When set, the ring request waits for it: a test can act while the ring is in flight. */
+  ringHold: null as Promise<void> | null,
 };
+/** The order in which the service talked to the server (`api:<path>`) and to the group (`mls`). */
+const order: string[] = [];
 vi.mock('$lib/utils/apiFetch', () => ({
   apiFetch: vi.fn(async (url: string) => {
+    order.push(`api:${new URL(url).pathname}`);
+    if (url.includes('/api/calls/ring') && !url.includes('ring-end') && server.ringHold) {
+      await server.ringHold;
+    }
     const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status });
     if (url.includes('/api/calls/initiate'))
       return json(
@@ -166,7 +174,9 @@ const fakeTrack = () => ({ kind: 'audio', stop: vi.fn(), enabled: true });
 const fakeMls = {
   getDeviceId: () => 'device-1',
   exportSecret: vi.fn(async () => new Uint8Array(32).fill(7)),
-  sendMessage: vi.fn(async () => {}),
+  sendMessage: vi.fn(async () => {
+    order.push('mls');
+  }),
 } as unknown as IMlsService;
 
 /** Lets every pending promise and microtask of the service settle. */
@@ -178,6 +188,8 @@ beforeEach(() => {
   server.iceStatus = 200;
   server.ringStatus = 200;
   server.roomTokenStatus = 200;
+  server.ringHold = null;
+  order.length = 0;
   FakeSocket.instances = [];
   FakePeerConnection.instances = [];
   vi.stubGlobal('WebSocket', FakeSocket);
@@ -425,9 +437,23 @@ describe('the ring window, both sides', () => {
  * refused ring leaves a callee nothing it could ever answer, and it is already ringing in-app.
  */
 describe('the ring opens the server window', () => {
-  it('ends the call and hangs up when the ring is refused after the invite left', async () => {
+  /**
+   * The window opens BEFORE anyone can learn of the call: a callee answering at once (a quick tap,
+   * an auto-accept) must find the window open, never a 410 whose hangup would end a sound call.
+   */
+  it('opens the window before the invite leaves', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+
+    const ring = order.indexOf('api:/api/calls/ring');
+    expect(ring).toBeGreaterThanOrEqual(0);
+    expect(order.indexOf('mls')).toBeGreaterThan(ring);
+  });
+
+  it('sends no invite, and writes no missed call, when the ring is refused', async () => {
     server.ringStatus = 410;
-    vi.mocked(fakeMls.sendMessage).mockClear();
+    const { recordCallMissed } = await import('$lib/utils/chat/callSystemMessages');
+    vi.mocked(recordCallMissed).mockClear();
     const service = new CallService(fakeMls);
 
     const started = service.startCall('group-1', false);
@@ -437,8 +463,32 @@ describe('the ring opens the server window', () => {
     ws.deliver({ type: 'Joined', room_id: 'room-1' });
 
     await expect(started).rejects.toThrow('calls/ring failed (410)');
-    // The invite, then the hangup that stops the callee's in-app ring.
-    expect(fakeMls.sendMessage).toHaveBeenCalledTimes(2);
+    // The server opens the window before it fans out: a refused ring rang nobody.
+    expect(order).not.toContain('mls');
+    expect(recordCallMissed).not.toHaveBeenCalled();
+  });
+
+  it('does not invite, arm or publish presence for a call hung up while the ring was in flight', async () => {
+    let releaseRing!: () => void;
+    server.ringHold = new Promise((r) => (releaseRing = r));
+    const { publishCallPresence } = await import('$lib/utils/callPresence');
+    vi.mocked(publishCallPresence).mockClear();
+    const service = new CallService(fakeMls);
+
+    const started = service.startCall('group-1', false);
+    await settle();
+    const ws = FakeSocket.instances[0];
+    ws.open();
+    ws.deliver({ type: 'Joined', room_id: 'room-1' });
+    await vi.waitFor(() => expect(order).toContain('api:/api/calls/ring'));
+
+    service.endCall();
+    releaseRing();
+    await started;
+
+    // The hangup told the group (the ring may have reached devices); no invite followed it.
+    expect(order.filter((o) => o === 'mls')).toHaveLength(1);
+    expect(vi.mocked(publishCallPresence).mock.calls.some(([p]) => p.active)).toBe(false);
   });
 });
 

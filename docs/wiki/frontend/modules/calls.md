@@ -95,14 +95,21 @@ Then, on each side:
    relays it in the invite (`CallMsg.ring_timeout_ms`, a duration, so no device compares clocks).
    `GET /calls/room-token` refuses a room bound to another group (403), an unknown or expired one
    (410) and a request outside the window (410) - the deadline is enforced there, on one clock.
-   **The window OPENS at the caller's `POST /calls/ring`** (G1, 2026-10-17), sent right after the
-   invite and awaited: before it there is no window at all, so nothing the caller does first (ICE
-   servers, a first-time microphone prompt, key derivation, the join) eats into the callee's 60 s.
-   Only the room's caller may open it, once; a retried ring keeps the first deadline. A refused or
-   unreachable ring ends the call and hangs up (the invite already rang the callee). What is left:
-   the callee's timer starts when the invite ARRIVES and the server's when the ring does, so the two
-   ends differ by the gap between those two one-way delays - a late answer in that gap is told
-   `call_over` ("this call is over", the 410 mapped by `describeCallFailure`), never a failure.
+   **The window OPENS at the caller's `POST /calls/ring`** (G1, 2026-10-17), sent and awaited
+   BEFORE the invite: no callee can learn of the call before the server would issue it a token, so
+   an early answer (a quick tap, an auto-accept) can never meet a 410 whose hangup would end a sound
+   call. Nothing the caller does first (ICE servers, a first-time microphone prompt, key
+   derivation, the join) eats into the callee's 60 s. Only the room's caller may open it, once: the
+   deadline is its own key, `call:room:<id>:answer_by`, written with ONE `SET NX` that expires with
+   the binding (never restarting its TTL), so concurrent rings cannot both open it. A refused ring
+   rings nobody (the server opens the window before it fans out): no invite, no missed call, and the
+   caller reads `call_setup_failed`. A call hung up while its ring was in flight is not invited,
+   armed or published, and a second ring-end follows the completed fan-out. What is left: the
+   server's clock starts a little BEFORE the callee's timer (armed on the invite's arrival), by the
+   invite's delivery time - an answer in that last stretch is told `call_over` ("this call is
+   over", a 410 from `room-token` mapped by `describeCallFailure` on the typed step), never a
+   failure. A binding written by the lot 1 build (no `callerId`) is refused as expired, with a
+   warning: a one-deploy gap, dev only.
 1. `GET /api/calls/ice-servers` BEFORE ringing (caller) or joining (callee): a server without TURN
    credentials answers 503 and the call fails there, not after the callee has answered. A call that
    fails before its invite (initiate refused, no ICE servers, no microphone) writes NO missed-call

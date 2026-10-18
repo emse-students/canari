@@ -1906,7 +1906,7 @@ answers "not an address" and skips the literal check entirely. `unbracketHost` s
 | GET | `/api/calls/ice-servers` | Get ICE server configuration |
 | POST | `/api/calls/presence` | Report device presence in call |
 | GET | `/api/calls/sibling-status` | Check sibling device call status |
-| POST | `/api/calls/ring` | Open the room's 60 s answer window (once, from its caller only; 403 otherwise, 410 for an unknown room), then fan out an incoming-call ring to all group members (WP-XP-5) |
+| POST | `/api/calls/ring` | Open the room's 60 s answer window (`call:room:<id>:answer_by`, one `SET NX` expiring with the binding; once, from its caller only; 403 otherwise, 410 for an unknown or expired room), then fan out an incoming-call ring to all group members (WP-XP-5) |
 | POST | `/api/calls/ring-end` | Stop the ring everywhere (reason: answered/cancelled/ended) |
 
 The room id returned by `/api/calls/initiate` **is** the `callId` used by every other call route and

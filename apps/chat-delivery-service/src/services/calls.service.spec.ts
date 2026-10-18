@@ -40,10 +40,16 @@ describe('CallsService', () => {
   const redisStore = new Map<string, string>();
   const redis = {
     get: jest.fn((key: string) => Promise.resolve(redisStore.get(key) ?? null)),
-    set: jest.fn((key: string, value: string) => {
+    // Honours `NX` as Redis does: no write, and `null`, when the key already exists.
+    set: jest.fn((key: string, value: string, ...args: (string | number)[]) => {
+      if (args.includes('NX') && redisStore.has(key)) return Promise.resolve(null);
       redisStore.set(key, value);
       return Promise.resolve('OK');
     }),
+    /** Every key in this fake lives the binding's full TTL; a missing key is -2, as in Redis. */
+    pttl: jest.fn((key: string) =>
+      Promise.resolve(redisStore.has(key) ? (60 + 4 * 60 * 60) * 1000 : -2)
+    ),
     del: jest.fn((key: string) => {
       redisStore.delete(key);
       return Promise.resolve(1);
@@ -64,10 +70,7 @@ describe('CallsService', () => {
     jest.clearAllMocks();
     redisStore.clear();
     // The room every ring test rings: opened by `caller` in `group-1`, its window not yet open.
-    redisStore.set(
-      'call:room:call-1',
-      JSON.stringify({ groupId: 'group-1', callerId: 'caller', answerBy: null })
-    );
+    redisStore.set('call:room:call-1', JSON.stringify({ groupId: 'group-1', callerId: 'caller' }));
     delete process.env.CLOUDFLARE_CALLS_API_TOKEN;
     delete process.env.CLOUDFLARE_TURN_KEY_ID;
     delete process.env.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB;
@@ -409,9 +412,38 @@ describe('CallsService', () => {
       // A retried ring later must not extend the window it already opened.
       now.mockReturnValue(1_000_000 + 30_000);
       await ring(roomId);
-      expect(JSON.parse(redisStore.get(`call:room:${roomId}`)!).answerBy).toBe(
+      expect(Number(redisStore.get(`call:room:${roomId}:answer_by`))).toBe(
         1_000_000 + CALL_RING_TIMEOUT_SEC * 1000
       );
+    });
+
+    /** "Once" is ONE atomic write, so two rings in flight together cannot both open a window. */
+    it('opens the window once under concurrent rings, and never rewrites the binding', async () => {
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+      redis.set.mockClear();
+
+      await Promise.all([ring(roomId), ring(roomId)]);
+
+      const writes = redis.set.mock.calls.filter(([key]) => String(key).startsWith('call:room:'));
+      expect(writes.map(([key]) => key)).toEqual([
+        `call:room:${roomId}:answer_by`,
+        `call:room:${roomId}:answer_by`,
+      ]);
+      expect(writes.every((w) => w.includes('NX'))).toBe(true);
+      expect(captured(warn)).toContain('rung again - the first window stands');
+    });
+
+    /** The lot 1 binding (no caller) is refused explicitly: nobody may ring it. Dev only, one deploy. */
+    it('refuses a binding written before the ring window existed, and says why', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      redisStore.set('call:room:old', JSON.stringify({ groupId: 'group-1', answerBy: 9e15 }));
+
+      await expect(service.requestRoomToken('callee', 'group-1', 'old')).rejects.toThrow(
+        GoneException
+      );
+      expect(captured(warn)).toContain('predates the ring window');
     });
 
     /** F2: the ring window is enforced HERE, on one clock, whatever the callee's timer did. */
