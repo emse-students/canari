@@ -7,9 +7,10 @@
   URL's fragment (`withGifSize`, written by the picker) or, for an older link, from this device's
   first measurement of it. A GIF that cannot load becomes its link, as before.
 
-  The bytes come through Canari (`proxiedGifUrl`), never from the GIF's host: the message keeps the
-  original URL, and only the `<img src>` is rewritten. Until the ticket lands the frame holds its
-  size with no `<img>` in it - an empty `src` would fire `error` and latch the link.
+  A KLIPY GIF's bytes come through Canari (`proxiedGifUrl`), never from KLIPY's CDN: the message
+  keeps the original URL, and only the `<img src>` is rewritten. Any other host loads directly.
+  Until the ticket lands the frame holds its size with no `<img>` in it - an empty `src` would fire
+  `error` and latch the link.
   docs/wiki/frontend/media-frame.md
 -->
 <script lang="ts">

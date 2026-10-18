@@ -37,6 +37,10 @@ describe('parseKlipyCdnUrl', () => {
     expect(refusalOf('https://api.klipy.com/a.gif')).toBe('host-not-allowed');
     expect(refusalOf('https://u:p@static.klipy.com/a.gif')).toBe('credentials');
     expect(refusalOf('https://static.klipy.com:8443/a.gif')).toBe('non-default-port');
+    expect(refusalOf('https://static.klipy.com/a.gif?n=2')).toBe('query-not-allowed');
+    expect(refusalOf('https://static.klipy.com/a.gif?#cn-size=1x1')).toBe('query-not-allowed');
+    // A `?` inside the fragment is the sender's, not a query.
+    expect(refusalOf('https://static.klipy.com/a.gif#x?y')).toBeNull();
   });
 
   it('gives every refusal a status, a 4xx for what the request named', () => {

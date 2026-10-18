@@ -21,7 +21,15 @@ jest.mock('../utils/url-guard', () => {
 import { GifMediaController } from './gif-media.controller';
 import { assertSafeExternalUrl, ssrfSafeFetch } from '../utils/url-guard';
 import { mintGifMediaTicket, mintPreviewTicket } from '../utils/previewTicket';
-import { GIF_MEDIA_CACHE_ENTRY_MAX_BYTES, GIF_MEDIA_MAX_BYTES } from '../utils/gif-media';
+import {
+  GIF_MEDIA_CACHE_ENTRY_MAX_BYTES,
+  GIF_MEDIA_LIMIT_PER_MINUTE,
+  GIF_MEDIA_MAX_BYTES,
+  GIF_MEDIA_MAX_IN_FLIGHT,
+} from '../utils/gif-media';
+import { ClientIpThrottlerGuard } from '../guards/client-ip-throttler.guard';
+import { GUARDS_METADATA } from '@nestjs/common/constants';
+import { THROTTLER_LIMIT } from '@nestjs/throttler/dist/throttler.constants';
 
 const fetchMock = ssrfSafeFetch as jest.MockedFunction<typeof ssrfSafeFetch>;
 const guardMock = assertSafeExternalUrl as jest.MockedFunction<typeof assertSafeExternalUrl>;
@@ -73,6 +81,7 @@ describe('GifMediaController', () => {
     process.env.INTERNAL_SHARED_SECRET = SECRET;
     ticket = mintGifMediaTicket(SECRET).ticket;
     GifMediaController.cache.clear();
+    GifMediaController.inFlight.clear();
     fetchMock.mockReset();
     guardMock.mockReset();
     guardMock.mockImplementation(async (raw: string) => new URL(raw));
@@ -104,6 +113,9 @@ describe('GifMediaController', () => {
       ['https://media.giphy.com/a.gif', 400, 'host-not-allowed'],
       ['http://static.klipy.com/a.gif', 400, 'not-https'],
       ['https://static.klipy.com:444/a.gif', 400, 'non-default-port'],
+      // A counter in the query would make every request a new cache key.
+      ['https://static.klipy.com/a.gif?x=1', 400, 'query-not-allowed'],
+      ['https://static.klipy.com/a.gif?', 400, 'query-not-allowed'],
     ];
     for (const [url, status, reason] of cases) {
       const { res } = makeRes();
@@ -138,13 +150,64 @@ describe('GifMediaController', () => {
     // The fragment is the sender's, never KLIPY's, and never a second cache entry.
     expect(askedUrl).toBe(GIF_URL);
     expect(init?.redirect).toBe('manual');
-    expect(Object.keys(init?.headers ?? {}).sort()).toEqual(['accept', 'user-agent']);
+    // Nothing of the reader's; `identity` so the bytes counted are the GIF's own.
+    expect(init?.headers).toEqual({
+      'user-agent': 'CanariGifRelay/1.0',
+      accept: 'image/gif',
+      'accept-encoding': 'identity',
+    });
 
     // A second reader - with or without the fragment - is answered from the byte cache.
     const second = makeRes();
     await controller.relay(GIF_URL, ticket, second.res as never);
     expect(second.body().equals(GIF89A)).toBe(true);
     expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('is throttled per visitor address, at a quota sized for GIFs', () => {
+    // The decorated function itself, read as metadata's target and never called.
+    const handler = Object.getOwnPropertyDescriptor(GifMediaController.prototype, 'relay')
+      ?.value as object;
+    expect(Reflect.getMetadata(GUARDS_METADATA, handler)).toEqual([ClientIpThrottlerGuard]);
+    expect(Reflect.getMetadata(`${THROTTLER_LIMIT}default`, handler)).toBe(
+      GIF_MEDIA_LIMIT_PER_MINUTE
+    );
+  });
+
+  it('makes ONE upstream fetch for identical requests that arrive together', async () => {
+    let answer!: (r: Awaited<ReturnType<typeof ssrfSafeFetch>>) => void;
+    fetchMock.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+    const readers = [makeRes(), makeRes(), makeRes()];
+    const done = readers.map((r) => controller.relay(GIF_URL, ticket, r.res as never));
+    await new Promise((r) => setImmediate(r));
+    answer(gifAnswer());
+    await Promise.all(done);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    for (const r of readers) expect(r.body().equals(GIF89A)).toBe(true);
+    expect(logged.filter((l) => l.includes('served from an identical fetch'))).toHaveLength(2);
+    expect(GifMediaController.inFlight.size).toBe(0);
+  });
+
+  it('refuses 503 busy past the in-flight cap, and fetches nothing', async () => {
+    for (let i = 0; i < GIF_MEDIA_MAX_IN_FLIGHT; i++) {
+      GifMediaController.inFlight.set(`other-${i}`, new Promise<void>(() => {}));
+    }
+    const { res } = makeRes();
+    await controller.relay(GIF_URL, ticket, res as never);
+    expect(res.statusCode).toBe(503);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(logged.some((l) => l.includes('busy'))).toBe(true);
+  });
+
+  it('keeps nothing when KLIPY declared no length, and says why', async () => {
+    fetchMock.mockResolvedValueOnce(upstream(GIF89A, { headers: { 'content-type': 'image/gif' } }));
+    const { res, body } = makeRes();
+    await controller.relay(GIF_URL, ticket, res as never);
+    expect(body().equals(GIF89A)).toBe(true);
+    expect(GifMediaController.cache.size).toBe(0);
+    expect(logged.some((l) => l.includes('not cached: KLIPY declared no length'))).toBe(true);
+    expect(logged.some((l) => l.includes('(cached)'))).toBe(false);
   });
 
   it('streams a GIF over the cache entry ceiling but does not keep it', async () => {

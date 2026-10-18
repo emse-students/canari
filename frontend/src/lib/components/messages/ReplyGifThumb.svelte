@@ -7,8 +7,8 @@
   at reduced opacity so it reads as a quote and not as the message. The size the sender wrote into
   the URL (`#cn-size`) reserves the box before the picture arrives, so the quote does not grow when
   it loads. A GIF that cannot load becomes its `[GIF]` label, as `GifEmbed` becomes its link.
-  Its bytes come through Canari (`proxiedGifUrl`), never from the GIF's host; until the ticket lands
-  the label stands in, since an empty `src` would fire `error` and latch it.
+  A KLIPY GIF's bytes come through Canari (`proxiedGifUrl`), never from KLIPY's CDN; until the
+  ticket lands the label stands in, since an empty `src` would fire `error` and latch it.
   docs/wiki/frontend/modules/chat.md
 -->
 <script lang="ts">

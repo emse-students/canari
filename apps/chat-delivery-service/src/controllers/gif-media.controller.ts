@@ -1,12 +1,24 @@
-import { BadRequestException, Controller, Get, Logger, Query, Res } from '@nestjs/common';
+import {
+  BadRequestException,
+  Controller,
+  Get,
+  Logger,
+  Query,
+  Res,
+  UseGuards,
+} from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Response as ExpressResponse } from 'express';
+import { ClientIpThrottlerGuard } from '../guards/client-ip-throttler.guard';
 import { Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { ReadableStream as NodeWebReadableStream } from 'node:stream/web';
 import {
   GIF_MEDIA_CACHE_ENTRY_MAX_BYTES,
   GIF_MEDIA_CACHE_MAX_BYTES,
+  GIF_MEDIA_LIMIT_PER_MINUTE,
   GIF_MEDIA_MAX_BYTES,
+  GIF_MEDIA_MAX_IN_FLIGHT,
   GIF_MEDIA_TTL_MS,
   GifByteCounter,
   GifMediaRefusedError,
@@ -44,6 +56,10 @@ const GIF_CACHE_CONTROL = `private, max-age=${Math.floor(GIF_MEDIA_TTL_MS / 1000
  * - `image/gif` only, 12 MiB at most (measured), checked on the declared length and on the bytes.
  * - STREAMED: the reader receives bytes as they arrive; the only copy held is the cache's, and only
  *   while the GIF stays under the cache's entry ceiling.
+ * - BOUNDED: identical misses share one upstream fetch (single-flight), at most
+ *   `GIF_MEDIA_MAX_IN_FLIGHT` distinct GIFs are fetched at once (beyond: 503 `busy`), and one
+ *   visitor address makes at most `GIF_MEDIA_LIMIT_PER_MINUTE` requests a minute - the ticket is
+ *   shared and lasts a day, so it is not what limits a loop.
  * - Every refusal is typed (`GifMediaRefusedError`) and logged under its reason. Refusals are
  *   BODYLESS, like the preview proxy's: the answer is decoded by an `<img>`.
  * [chat](../../../../docs/wiki/frontend/modules/chat.md)
@@ -53,19 +69,26 @@ export class GifMediaController {
   private readonly logger = new Logger(GifMediaController.name);
 
   /**
-   * Keyed on the content URL (fragment dropped), shared by every reader: a GIF sent to a group of
-   * forty is fetched from KLIPY once. Bounded in bytes as well as in entries.
+   * Keyed on the content URL (fragment dropped, query refused), shared by every reader: a GIF of at
+   * most 4 MiB sent to a group of forty is fetched from KLIPY once per 24 h. Bounded in bytes as well
+   * as in entries.
    */
   static readonly cache = new TtlCache<Buffer>(500, {
     maxWeight: GIF_MEDIA_CACHE_MAX_BYTES,
     weigh: (body) => body.length,
   });
 
+  /** The upstream fetches in flight, by cache key: what a waiter awaits, and what the cap counts. */
+  static readonly inFlight = new Map<string, Promise<void>>();
+
   /**
    * Relays one KLIPY GIF. 401 without a valid ticket; 400 for a URL the allowlist refuses; 404 when
    * KLIPY has no such GIF; 413 over the ceiling; 415 when KLIPY answers something that is not a GIF;
-   * 502 when KLIPY redirected, failed or could not be reached.
+   * 502 when KLIPY redirected, failed or could not be reached; 503 when too many GIFs are already
+   * on their way; 429 (the throttler) past the per-address quota.
    */
+  @UseGuards(ClientIpThrottlerGuard)
+  @Throttle({ default: { limit: GIF_MEDIA_LIMIT_PER_MINUTE, ttl: 60_000 } })
   @Get('mls/gifs/media')
   async relay(
     @Query('url') rawUrl: unknown,
@@ -83,11 +106,10 @@ export class GifMediaController {
     // A failing stream destroys the response too, so a close AFTER a stream failure is that
     // failure's consequence, not a reader leaving.
     const upstream = new AbortController();
-    let readerLeft = false;
-    let streamFailed = false;
+    const state = { readerLeft: false, streamFailed: false };
     res.on('close', () => {
-      if (res.writableFinished || streamFailed) return;
-      readerLeft = true;
+      if (res.writableFinished || state.streamFailed) return;
+      state.readerLeft = true;
       upstream.abort();
     });
 
@@ -106,29 +128,64 @@ export class GifMediaController {
 
     const cacheKey = target.href;
     const cached = GifMediaController.cache.get(cacheKey);
-    if (cached) {
-      this.logger.debug(`[GIF_MEDIA] cache hit (${cached.length} bytes)`);
-      writeRelayedImageHeaders(res, {
-        contentType: 'image/gif',
-        length: cached.length,
-        cacheControl: GIF_CACHE_CONTROL,
-      });
-      res.end(cached);
-      return;
+    if (cached) return this.sendCached(res, cached, 'cache hit');
+
+    // SINGLE-FLIGHT: an identical request already on its way from KLIPY is waited on rather than
+    // repeated - forty readers opening the same GIF at once make one upstream fetch. When it ends
+    // without filling the cache (over the entry ceiling, failed, its reader left), the next waiter
+    // fetches itself, as the new leader.
+    for (let leader = GifMediaController.inFlight.get(cacheKey); leader;) {
+      await leader;
+      if (state.readerLeft) return this.readerGone('while an identical fetch was in flight');
+      const filled = GifMediaController.cache.get(cacheKey);
+      if (filled) return this.sendCached(res, filled, 'served from an identical fetch');
+      leader = GifMediaController.inFlight.get(cacheKey);
     }
 
+    if (GifMediaController.inFlight.size >= GIF_MEDIA_MAX_IN_FLIGHT) {
+      return this.refuse(
+        res,
+        new GifMediaRefusedError('busy', `${GIF_MEDIA_MAX_IN_FLIGHT} GIFs already on their way`)
+      );
+    }
+    let release!: () => void;
+    GifMediaController.inFlight.set(cacheKey, new Promise<void>((resolve) => (release = resolve)));
+    try {
+      await this.fetchAndStream(res, target, upstream.signal, state);
+    } finally {
+      GifMediaController.inFlight.delete(cacheKey);
+      release();
+    }
+  }
+
+  /**
+   * The leader's half: asks KLIPY, judges the answer, streams it to `res`, and fills the cache when
+   * the whole GIF was received, small enough, and exactly as long as KLIPY declared.
+   */
+  private async fetchAndStream(
+    res: ExpressResponse,
+    target: URL,
+    signal: AbortSignal,
+    state: { readerLeft: boolean; streamFailed: boolean }
+  ): Promise<void> {
+    const cacheKey = target.href;
     let response: Awaited<ReturnType<typeof ssrfSafeFetch>>;
     try {
       response = await ssrfSafeFetch(target.href, {
         method: 'GET',
         // Refused rather than followed: the allowlist decided the HOST, and a redirect is another.
         redirect: 'manual',
-        signal: upstream.signal,
-        // No header of the reader's: KLIPY learns this server and nothing else.
-        headers: { 'user-agent': 'CanariGifRelay/1.0', accept: 'image/gif' },
+        signal,
+        // No header of the reader's: KLIPY learns this server and nothing else. `identity`: the
+        // bytes counted and cached are the GIF's own, never a compressed transfer of them.
+        headers: {
+          'user-agent': 'CanariGifRelay/1.0',
+          accept: 'image/gif',
+          'accept-encoding': 'identity',
+        },
       });
     } catch (error) {
-      if (readerLeft) return this.readerGone('before KLIPY answered');
+      if (state.readerLeft) return this.readerGone('before KLIPY answered');
       return this.unreachable(res, new UpstreamUnreachableError(target.hostname, error));
     }
 
@@ -155,7 +212,7 @@ export class GifMediaController {
       const source = Readable.fromWeb(
         response.body as unknown as NodeWebReadableStream<Uint8Array>
       );
-      const markFailed = (): void => void (streamFailed = true);
+      const markFailed = (): void => void (state.streamFailed = true);
       source.once('error', markFailed);
       counter.once('error', markFailed);
       await pipeline(source, counter, res);
@@ -166,7 +223,7 @@ export class GifMediaController {
         this.logger.warn(`[GIF_MEDIA] cut off mid-stream: ${error.message}`);
         return;
       }
-      if (readerLeft) return this.readerGone(`after ${counter.received} bytes`);
+      if (state.readerLeft) return this.readerGone(`after ${counter.received} bytes`);
       this.logger.warn(
         `[GIF_MEDIA] KLIPY's body failed after ${counter.received} bytes: ` +
           `${String(errorCause(error) ?? error)}`
@@ -174,13 +231,28 @@ export class GifMediaController {
       return;
     }
 
+    // Kept only when it is provably the WHOLE GIF: KLIPY declared a length and that many bytes came.
     const body = counter.body();
-    if (body && (declaredLength === null || body.length === declaredLength)) {
-      GifMediaController.cache.set(cacheKey, body, GIF_MEDIA_TTL_MS);
-    }
-    this.logger.debug(
-      `[GIF_MEDIA] relayed ${counter.received} bytes (${body ? 'cached' : 'not cached: over the entry ceiling'})`
-    );
+    let outcome: string;
+    if (!body) outcome = 'not cached: over the entry ceiling';
+    else if (declaredLength === null) outcome = 'not cached: KLIPY declared no length';
+    else if (body.length !== declaredLength) {
+      outcome = `not cached: ${body.length} bytes for ${declaredLength} declared`;
+    } else if (!GifMediaController.cache.set(cacheKey, body, GIF_MEDIA_TTL_MS)) {
+      outcome = 'not cached: heavier than the whole cache';
+    } else outcome = 'cached';
+    this.logger.debug(`[GIF_MEDIA] relayed ${counter.received} bytes (${outcome})`);
+  }
+
+  /** Answers from the byte cache - after a hit, or after an identical fetch filled it. */
+  private sendCached(res: ExpressResponse, body: Buffer, how: string): void {
+    this.logger.debug(`[GIF_MEDIA] ${how} (${body.length} bytes)`);
+    writeRelayedImageHeaders(res, {
+      contentType: 'image/gif',
+      length: body.length,
+      cacheControl: GIF_CACHE_CONTROL,
+    });
+    res.end(body);
   }
 
   /**

@@ -236,10 +236,11 @@ next**. WP6b's release order is forced: see the owed-to-the-user table above.
 ## P2 - A GIF sent in a chat is loaded by every recipient from KLIPY's CDN (found 2026-10-16, GDPR review)
 
 **BUILT 2026-10-18, NOT SHIPPED.** The search goes through Canari since 2026-10-16; the GIF relay
-(`GET /api/mls/gifs/media`: KLIPY's CDN only, 12 MiB measured, streamed, byte cache, a day-long
-ticket) now carries the three paths that still reached `static.klipy.com` - every recipient's GIF,
-the searcher's thumbnails, a comment GIF's bytes - and a GIF from any other host goes to the
-link-preview proxy. Mechanism and decisions:
+(`GET /api/mls/gifs/media`: KLIPY's CDN only, no query, 12 MiB measured, streamed, byte cache,
+single-flight, 16 in flight, 600/min per address, a day-long ticket) now carries the three paths that still reached `static.klipy.com` - every recipient's GIF,
+the searcher's thumbnails, a comment GIF's bytes. A GIF from any other host still loads directly
+(owner decision: no regression), so a reader of a pasted giphy/tenor GIF still reaches that host,
+unmeasured; routing them is one line in `proxiedGifUrl`. Mechanism and decisions:
 [chat](frontend/modules/chat.md#the-gif-relay-no-readers-browser-asks-klipy-for-a-gif-2026-10-18).
 **Owed, and it closes this entry:** a network trace on dev after the alpha (zero request to
 `static.klipy.com` from the browser across a GIF bubble, a quoted GIF, the picker and a comment

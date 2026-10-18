@@ -29,12 +29,12 @@ const gifs = vi.hoisted(() => ({
     gifs: [
       {
         id: 'wide',
-        preview: { url: 'https://g/wide-s.gif', width: 200, height: 100 },
+        preview: { url: 'https://static.klipy.com/ii/w/wide-s.gif', width: 200, height: 100 },
         full: { url: 'https://g/wide-m.gif', width: 498, height: 249 },
       },
       {
         id: 'tall',
-        preview: { url: 'https://g/tall-s.gif', width: 100, height: 200 },
+        preview: { url: 'https://static.klipy.com/ii/t/tall-s.gif', width: 100, height: 200 },
         full: { url: 'https://g/tall-m.gif', width: 240, height: 480 },
       },
     ],
@@ -163,7 +163,7 @@ describe('the GIF panel', () => {
     expect(geometry()).toEqual(before);
   });
 
-  it('draws every thumbnail through Canari, never from the GIF host (2026-10-18)', async () => {
+  it('draws every KLIPY thumbnail through the GIF relay, never from the CDN (2026-10-18)', async () => {
     mountComposer();
     openGifPanel();
     await vi.waitFor(() => expect(tiles()).toHaveLength(2));
@@ -173,8 +173,9 @@ describe('the GIF panel', () => {
     );
     expect(srcs).toHaveLength(2);
     for (const src of srcs) {
-      expect(src.hostname).not.toBe('g');
-      expect(src.pathname.startsWith('/api/mls/')).toBe(true);
+      expect(src.hostname).not.toBe('static.klipy.com');
+      expect(src.pathname).toBe('/api/mls/gifs/media');
+      expect(src.searchParams.get('t')).toBe('gif-ticket');
     }
   });
 

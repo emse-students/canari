@@ -16,8 +16,8 @@ import type { Response as ExpressResponse } from 'express';
 /**
  * The ONE host the relay fetches from: KLIPY's CDN. An allowlist rather than the SSRF guard alone,
  * because the guard says only "public address" - without this the route would be a 12 MiB relay
- * for any image on the internet. The client sends a GIF from any other host to the link-preview
- * proxy instead (`frontend/src/lib/utils/gifMediaProxy.ts`).
+ * for any image on the internet. A GIF from any other host is not relayed at all: the client loads
+ * it directly, as before (`frontend/src/lib/utils/gifMediaProxy.ts`).
  */
 export const KLIPY_CDN_HOST = 'static.klipy.com';
 
@@ -40,6 +40,22 @@ export const GIF_MEDIA_CACHE_ENTRY_MAX_BYTES = 4 * 1024 * 1024;
 export const GIF_MEDIA_CACHE_MAX_BYTES = 64 * 1024 * 1024;
 
 /**
+ * Distinct GIFs on their way from KLIPY at once, at most. Each may hold up to
+ * {@link GIF_MEDIA_CACHE_ENTRY_MAX_BYTES} while it streams, so this bounds the relay's in-flight
+ * memory at 64 MiB beside the cache's 64 MiB. Identical requests wait on the one fetch and are not
+ * counted (single-flight); beyond the cap a request is refused `busy` (503).
+ */
+export const GIF_MEDIA_MAX_IN_FLIGHT = 16;
+
+/**
+ * Relay requests one visitor address may make per minute. Sized for GIFs, not the service's
+ * 10/min default: a picker page is 24 thumbnails and a conversation scrolled back can hold dozens,
+ * and the address nginx forwards may be a whole campus behind one NAT - so generous, against a
+ * scripted loop rather than a reader.
+ */
+export const GIF_MEDIA_LIMIT_PER_MINUTE = 600;
+
+/**
  * How long a cached GIF is reused, and what the reader's browser is told. KLIPY's URLs are
  * content-addressed (a new GIF is a new path) and its CDN itself says `max-age=86400`.
  */
@@ -53,6 +69,8 @@ export type GifMediaRefusal =
   | 'host-not-allowed'
   | 'credentials'
   | 'non-default-port'
+  | 'query-not-allowed'
+  | 'busy'
   | 'blocked-address'
   | 'redirected'
   | 'upstream-not-found'
@@ -73,6 +91,10 @@ export const GIF_MEDIA_REFUSAL_STATUS: Record<GifMediaRefusal, number> = {
   'host-not-allowed': 400,
   credentials: 400,
   'non-default-port': 400,
+  'query-not-allowed': 400,
+  // Too many distinct GIFs on their way from KLIPY at once: ours, transient, retried by the next
+  // render - never cached by anybody.
+  busy: 503,
   'blocked-address': 400,
   redirected: 502,
   'upstream-not-found': 404,
@@ -122,6 +144,12 @@ export function parseKlipyCdnUrl(raw: unknown): URL {
   }
   if (url.username || url.password) throw new GifMediaRefusedError('credentials');
   if (url.port) throw new GifMediaRefusedError('non-default-port', url.port);
+  // KLIPY's paths are content-addressed and carry no query. Any query - `?x=1`, `?x=2`, ... - would
+  // be a new cache key per request, so the cache and the single-flight would be defeated by a
+  // counter in the URL: refused, not stripped, since a client of ours never sends one.
+  // `raw` is read too: a bare trailing `?` parses to an empty `search` but keeps a distinct `href`.
+  if (url.search || raw.split('#')[0].includes('?'))
+    throw new GifMediaRefusedError('query-not-allowed');
   url.hash = '';
   return url;
 }

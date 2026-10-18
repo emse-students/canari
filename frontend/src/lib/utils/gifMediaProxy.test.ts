@@ -4,8 +4,8 @@
  * Every recipient's `<img>` used to load a sent GIF from KLIPY's CDN, handing KLIPY each reader's
  * address and reading time. The message keeps the original URL; this rewrite, at render time, is
  * what keeps the reader's browser off the CDN. Pinned: KLIPY's CDN goes to the GIF relay with the
- * fragment kept on the end and cut from the relayed URL; any other host goes to the link-preview
- * proxy (the policy for a foreign GIF); nothing is produced without a ticket.
+ * fragment kept on the end and cut from the relayed URL; any other host is left alone (owner
+ * decision: no regression for them); a KLIPY GIF produces nothing without a ticket.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -58,20 +58,19 @@ describe('proxiedGifUrl', () => {
     expect(url.hash).toBe('#cn-size=498x280');
   });
 
-  it('sends a GIF from any other host to the link-preview proxy, never to its host', () => {
+  it('leaves a GIF from any other host alone - it loads directly, as before', () => {
+    // Owner decision 2026-10-18: no regression for giphy/tenor/pasted GIFs; their reader still
+    // reaches their host (chat.md says so, with the one line that would route them).
     const foreign = 'https://media.giphy.com/media/abc/giphy.gif';
-    const url = new URL(proxiedGifUrl(foreign));
-    expect(url.hostname).not.toBe('media.giphy.com');
-    expect(url.pathname).toBe('/api/mls/link-preview/image');
-    expect(url.searchParams.get('url')).toBe(foreign);
-    expect(url.searchParams.get('t')).toBe('preview-ticket');
+    expect(proxiedGifUrl(foreign)).toBe(foreign);
+    // A KLIPY URL with a query is one the relay refuses, so it is not rewritten either.
+    expect(proxiedGifUrl(`${KLIPY}?x=1`)).toBe(`${KLIPY}?x=1`);
   });
 
-  it('answers nothing while no ticket is held - never a URL certain to fail', () => {
+  it('answers nothing for a KLIPY GIF while no ticket is held - never a URL certain to fail', () => {
     tickets.gif = '';
-    tickets.preview = '';
     expect(proxiedGifUrl(KLIPY)).toBe('');
-    expect(proxiedGifUrl('https://example.org/a.gif')).toBe('');
+    expect(proxiedGifUrl('https://example.org/a.gif')).toBe('https://example.org/a.gif');
   });
 
   it('leaves a non-http value alone', () => {

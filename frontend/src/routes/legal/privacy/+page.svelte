@@ -281,11 +281,14 @@
         <p class="legal-block-title">KLIPY - recherche de GIF</p>
         <p>
           Quand vous cherchez un GIF, votre recherche passe par notre serveur, qui l'envoie à KLIPY
-          sans aucune donnée vous identifiant. Les GIF eux-mêmes - dans le sélecteur, dans les
-          conversations et dans les commentaires - sont aussi chargés par notre serveur : KLIPY voit
-          la recherche et l'adresse de notre serveur, jamais votre adresse IP ni votre compte. Une
-          version de l'application antérieure à octobre 2026 appelle encore KLIPY directement, avec
-          l'adresse IP de votre appareil, jusqu'à sa mise à jour.
+          sans aucune donnée vous identifiant. Les GIF de KLIPY eux-mêmes - dans le sélecteur, dans
+          les conversations et dans les commentaires - sont aussi chargés par notre serveur : KLIPY
+          voit la recherche et l'adresse de notre serveur, jamais votre adresse IP ni votre compte.
+          L'adresse complète d'un GIF ainsi relayé figure dans les journaux techniques de notre
+          serveur web et de Cloudflare. Un GIF venant d'un autre site (lien collé) est chargé
+          directement depuis ce site par votre appareil. Une version de l'application antérieure à
+          celle qui contient ce relais charge encore les GIF directement chez KLIPY, avec l'adresse
+          IP de votre appareil, jusqu'à sa mise à jour.
         </p>
       </li>
       <li>

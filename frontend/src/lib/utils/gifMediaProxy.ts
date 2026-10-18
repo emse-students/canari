@@ -1,5 +1,5 @@
 /**
- * WHERE A GIF'S BYTES COME FROM: CANARI, NEVER THE GIF'S HOST.
+ * WHERE A KLIPY GIF'S BYTES COME FROM: CANARI, NEVER KLIPY'S CDN.
  *
  * A GIF sent from the picker is a KLIPY CDN URL inside an end-to-end encrypted message. Every
  * reader's `<img>` used to fetch it from that CDN, telling KLIPY each reader's address, user agent
@@ -10,46 +10,52 @@
  * attach (`PostComments.handleGifSelected`).
  *
  * - KLIPY's CDN goes to the GIF relay, `GET /api/mls/gifs/media` (chat-delivery's
- *   `gif-media.controller.ts`: that host only, `image/gif`, 12 MiB, streamed, cached).
- * - ANY OTHER HOST (`isGifUrl` matches any `.gif` link, and tenor/giphy pages) goes to the
- *   link-preview image proxy, as a pasted image's preview already does: no reader's browser asks a
- *   third party for a GIF either way. That proxy's own limits apply (3 MB, `image/*`), so a larger
- *   foreign GIF fails to load and the bubble shows its link - a refusal by policy, decided
- *   2026-10-18, rather than a direct load that would leak the reader to an arbitrary host.
+ *   `gif-media.controller.ts`: that host only, no query, `image/gif`, 12 MiB, streamed, cached).
+ * - ANY OTHER HOST (`isGifUrl` matches any `.gif` link, and tenor/giphy pages) is LEFT ALONE and
+ *   loads directly, as before (owner decision 2026-10-18: no regression for them). So a reader of
+ *   a pasted giphy or tenor GIF still reaches that host - unmeasured, and the picker never sends
+ *   one. Routing them later is one line here: return `proxiedPreviewImageUrl(rawUrl)` for them.
  *
- * Both return `''` while no ticket is held; every caller draws nothing until the ticket lands, and
- * re-renders then because reading the ticket is a reactive read.
+ * A KLIPY URL answers `''` while no ticket is held; every caller draws nothing until the ticket
+ * lands, and re-renders then because reading the ticket is a reactive read.
  * [chat](../../../../docs/wiki/frontend/modules/chat.md)
  */
 
 import { deliveryUrl } from '$lib/utils/apiUrl';
 import { Log } from '$lib/utils/Log';
-import { proxiedPreviewImageUrl } from '$lib/utils/previewImageProxy';
 import { ensurePreviewTicket, gifMediaTicket } from '$lib/utils/previewTicket.svelte';
 
 /** The one host the GIF relay serves - the same allowlist as the server's `KLIPY_CDN_HOST`. */
 export const KLIPY_CDN_HOST = 'static.klipy.com';
 
-/** Whether `url` is an https URL on KLIPY's CDN (the only kind the relay accepts). */
+/**
+ * Whether `url` is one the relay accepts: https on KLIPY's CDN, default port, no query (the
+ * server's `parseKlipyCdnUrl` refuses any query, KLIPY's paths being content-addressed).
+ */
 export function isKlipyCdnUrl(url: string): boolean {
   try {
     const u = new URL(url);
-    return u.protocol === 'https:' && u.hostname.toLowerCase() === KLIPY_CDN_HOST && !u.port;
+    return (
+      u.protocol === 'https:' &&
+      u.hostname.toLowerCase() === KLIPY_CDN_HOST &&
+      !u.port &&
+      !url.split('#')[0].includes('?')
+    );
   } catch {
     return false;
   }
 }
 
 /**
- * The URL to draw or fetch a GIF from, given the URL the message (or the picker) carries.
+ * The URL to draw or fetch a GIF from, given the URL the message (or the picker) carries: the
+ * relay for KLIPY's CDN, the URL itself for anything else.
  *
- * The fragment is NOT sent: it is cut from the relayed `url=` (a browser never sends one, and the
- * `#cn-size` must not make one GIF several cache entries) and put back on the END of the returned
- * URL, so the size the sender declared still reads off whatever URL a component holds.
+ * The fragment is NOT relayed: it is cut from `url=` (a browser never sends one, and the `#cn-size`
+ * must not make one GIF several cache entries) and put back on the END of the returned URL, so the
+ * size the sender declared still reads off whatever URL a component holds.
  */
 export function proxiedGifUrl(rawUrl: string): string {
-  if (!/^https?:\/\//i.test(rawUrl)) return rawUrl;
-  if (!isKlipyCdnUrl(rawUrl)) return proxiedPreviewImageUrl(rawUrl);
+  if (!isKlipyCdnUrl(rawUrl)) return rawUrl;
 
   const ticket = gifMediaTicket();
   if (!ticket) return '';
@@ -68,13 +74,13 @@ export function proxiedGifUrl(rawUrl: string): string {
  */
 export async function fetchGifFile(url: string): Promise<File> {
   await ensurePreviewTicket();
-  const relayed = proxiedGifUrl(url);
-  if (!relayed) throw new Error('no GIF relay ticket could be obtained');
+  const source = proxiedGifUrl(url);
+  if (!source) throw new Error('no GIF relay ticket could be obtained');
   Log.d(
     'GifMedia',
-    `reading a picked GIF's bytes via ${isKlipyCdnUrl(url) ? 'the GIF relay' : 'the preview proxy'}`
+    `reading a picked GIF's bytes ${isKlipyCdnUrl(url) ? 'through the GIF relay' : 'from its own host'}`
   );
-  const res = await fetch(relayed);
+  const res = await fetch(source);
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   const blob = await res.blob();
   // Named after the GIF, never after the relay URL (whose last segment is `media?...`).

@@ -224,12 +224,9 @@ describe('GifEmbed - a GIF link holds its size before it loads', () => {
     }
   });
 
-  it('sends a GIF from any other host through the link-preview proxy, not to its host', () => {
+  it('loads a GIF from any other host directly, as before (owner decision 2026-10-18)', () => {
     const foreign = 'https://media.example.org/funny.gif';
     mountGif(foreign);
-    const src = frame().querySelector('img')!.getAttribute('src')!;
-    expect(new URL(src).hostname).not.toBe('media.example.org');
-    expect(src).toContain('/api/mls/link-preview/image?url=');
-    expect(src).toContain('&t=preview-ticket');
+    expect(frame().querySelector('img')!.getAttribute('src')).toBe(foreign);
   });
 });

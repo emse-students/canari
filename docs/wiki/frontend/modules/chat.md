@@ -527,7 +527,8 @@ had closed for link previews.
 
 **What.** `GET /api/mls/gifs/media?url=<CDN URL>&t=<ticket>` (chat-delivery,
 `controllers/gif-media.controller.ts`, policy in `utils/gif-media.ts`) fetches the GIF and streams it
-to the reader. KLIPY sees chat-delivery's address, once per cache lifetime. The client rewrites at
+to the reader. KLIPY sees chat-delivery's address and a `User-Agent` - once per 24 h for a GIF
+the cache keeps, once per miss for a larger one. The client rewrites at
 **render time only**, through ONE helper, `frontend/src/lib/utils/gifMediaProxy.ts`
 (`proxiedGifUrl`, `fetchGifFile`), at the four places that draw or read a GIF: `GifEmbed` (the
 bubble, via `MessageTextBody`), `ReplyGifThumb` (a quoted GIF, also the composer's reply strip),
@@ -540,8 +541,9 @@ it always did.
   MEASURED 2026-10-18 over 144 GIFs (trending and searches): `sm` max 2.9 MB; `md` median 1.1 MB,
   p90 4.4 MB, max 11.7 MB. **Ceiling 12 MiB** (`GIF_MEDIA_MAX_BYTES`), checked on the declared
   length (413 before a byte is read) and on the bytes (the stream is cut, logged `too-large`).
-- **One host.** `static.klipy.com`, https, no credentials, no explicit port (`parseKlipyCdnUrl`),
-  then the SAME SSRF guard and pinned dispatcher as the preview proxy (`assertSafeExternalUrl`,
+- **One host, no query.** `static.klipy.com`, https, no credentials, no explicit port, and NO query
+  (400 `query-not-allowed`: KLIPY's paths are content-addressed, and `?x=N` would make every request
+  a new cache key) (`parseKlipyCdnUrl`), then the SAME SSRF guard and pinned dispatcher as the preview proxy (`assertSafeExternalUrl`,
   `ssrfSafeFetch`, `OUTBOUND_BUDGET_MS` per leg). **Redirects are refused (502 `redirected`), not
   followed**: the allowlist names a host and a redirect is another. `image/gif` only (415 `not-gif`;
   measured: the CDN answers `image/gif` with a `content-length`).
@@ -551,8 +553,19 @@ it always did.
   (4 MiB, about nine in ten `md` renditions) - which also bounds a request's memory.
 - **A byte cache** keyed on the content URL with the fragment dropped (`TtlCache` with a weight
   budget: 64 MiB in all, 500 entries, 24 h - KLIPY's paths are content-addressed and its CDN says
-  `max-age=86400`). A GIF sent to a group of forty is fetched from KLIPY once. Over 4 MiB a GIF is
-  re-fetched per cache miss; the reader's browser keeps it (`private, max-age=86400`).
+  `max-age=86400`). A GIF is kept only when it is provably whole: KLIPY declared a length and that
+  many bytes came (the debug line says which reason skipped a write). Upstream asked with
+  `accept-encoding: identity`, so the bytes counted are the GIF's own.
+- **Single-flight and a cap.** Identical misses wait on the ONE fetch in flight
+  (`GifMediaController.inFlight`) and are answered from the cache it fills - so a GIF of at most
+  4 MiB sent to a group of forty is fetched from KLIPY once per 24 h, even when they open it at the
+  same moment. A larger one fills no cache: each waiter then fetches in turn, and the reader's
+  browser keeps it (`private, max-age=86400`). A waiter follows its leader's pace (backpressure), a
+  cost taken for one fetch. At most `GIF_MEDIA_MAX_IN_FLIGHT` (16) distinct GIFs are fetched at
+  once, so in-flight memory stays under 64 MiB; beyond, 503 `busy`, logged.
+- **A per-address throttle**, because the ticket is shared and lives a day: `ClientIpThrottlerGuard`
+  (keyed on nginx's `X-Real-IP`, the twin of social-service's) at `GIF_MEDIA_LIMIT_PER_MINUTE` (600)
+  - generous on purpose: a picker page is 24 thumbnails, and one address may be a campus NAT.
 - **A ticket of its own kind, a DAY long.** The URL is an `<img src>` (no Bearer; on
   `tauri://localhost` no cookie), so it is ticket-gated like the preview proxy - but the ticket is
   part of the URL the browser caches under, and the preview ticket's five-minute bucket would have
@@ -562,12 +575,15 @@ it always did.
   other's route (`previewTicket.spec.ts`).
 - **Every refusal is typed and logged** (`GifMediaRefusedError`, one reason per line: `missing-url`,
   `invalid-url`, `not-https`, `host-not-allowed`, `credentials`, `non-default-port`,
-  `blocked-address`, `redirected`, `upstream-not-found`, `upstream-status`, `not-gif`, `empty-body`,
+  `query-not-allowed`, `busy`, `blocked-address`, `redirected`, `upstream-not-found`, `upstream-status`, `not-gif`, `empty-body`,
   `too-large`), bodyless like the preview proxy's. KLIPY unreachable is a 502 logged apart; a reader
   leaving is a debug line, told apart from a stream failure by which happened FIRST.
-- **The query is not logged.** nginx writes the route as `/api/mls/gifs/media?query-redacted`
-  (`access-log-redaction.test.mjs`): which GIF a reader loaded, beside their address, is what the
-  relay keeps from KLIPY.
+- **The query is not logged by THIS repository's nginx**, which writes the route as
+  `/api/mls/gifs/media?query-redacted` (`access-log-redaction.test.mjs`): which GIF a reader loaded,
+  beside their address, is what the relay keeps from KLIPY. **Not covered:** the host-level nginx
+  in front of it and the Cloudflare edge (legacy names) log the FULL URL, `url=` and `t=` included
+  ([nginx](../../infrastructure/nginx.md#the-access-log-never-records-a-token-2026-10-06)) - their
+  formats are the host's.
 - **The `#cn-size` fragment** is cut from the relayed `url=` (a browser never sends one, and it must
   not make one GIF several cache entries) and put back on the END of the rewritten URL; the frame
   still reads the size off the message's own URL (`measureKey` too, so the size cache does not
@@ -576,10 +592,11 @@ it always did.
   holds its frame empty and `ReplyGifThumb` shows its `[GIF]` label - an empty `src` would fire
   `error` and latch the link.
 - **A GIF from ANY OTHER HOST** (`isGifUrl` matches any `.gif` URL, and tenor/giphy pages through
-  `getGifEmbedUrl`) **goes to the link-preview proxy**, decided 2026-10-18: no reader's browser asks
-  a third party for a GIF either way. That proxy's limits apply (`image/*`, 3 MB), so a larger
-  foreign GIF fails to load and the bubble shows its link - a refusal by policy, preferred to a
-  direct load that would hand the reader to an arbitrary host.
+  `getGifEmbedUrl`) **still loads directly, as before** (owner decision 2026-10-18: no regression,
+  no detour through the 3 MB preview proxy, no ticket churn). So **a reader of a pasted giphy,
+  tenor or other `.gif` link still reaches that host** - how often is UNMEASURED (the picker never
+  sends one). Routing them later is one line in `proxiedGifUrl`: return
+  `proxiedPreviewImageUrl(rawUrl)` for a non-KLIPY URL.
 - **CSP unchanged.** `img-src` stays `https:` (the feed renders arbitrary user-posted images).
   `connect-src` still names `https://static.klipy.com`, which the current bundle no longer needs: it
   serves a web tab still running an older bundle (its comment attach would fail until it reloads).

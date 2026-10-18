@@ -75,7 +75,7 @@ Destinataires hors de l'association, pour Canari :
 | Apple (APNs) | jeton de l'appareil ; titre de la notification | à confirmer |
 | Cloudflare (anciens noms de domaine) | requêtes et adresses IP | à confirmer |
 | Google Safe Browsing | adresse des liens ouverts | à confirmer |
-| KLIPY (GIF) | recherches et images de GIF, demandées par notre serveur (adresse du serveur, un identifiant constant) ; une version de l'application non mise à jour envoie encore l'adresse IP de l'appareil | à confirmer ; recherche par notre serveur depuis le 16/10/2026 ; images par notre serveur construit le 18/10/2026, en production avec la version suivante |
+| KLIPY (GIF) | recherches et images de GIF, demandées par notre serveur (adresse du serveur et un identifiant constant pour la recherche ; adresse du serveur et un User-Agent seuls pour les images) ; l'adresse complète d'une image relayée (dont son URL et son ticket) figure dans les journaux du serveur nginx de l'hôte et de Cloudflare ; une version de l'application non mise à jour envoie encore l'adresse IP de l'appareil | à confirmer ; recherche par notre serveur depuis le 16/10/2026 ; images par notre serveur construit le 18/10/2026, en production avec la version suivante |
 | Lydia | adresse e-mail du payeur, montant, produits | prestataire français |
 
 ## 4. Les points que nous vous signalons
