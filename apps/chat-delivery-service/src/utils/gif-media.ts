@@ -43,9 +43,18 @@ export const GIF_MEDIA_CACHE_MAX_BYTES = 64 * 1024 * 1024;
  * Distinct GIFs on their way from KLIPY at once, at most. Each may hold up to
  * {@link GIF_MEDIA_CACHE_ENTRY_MAX_BYTES} while it streams, so this bounds the relay's in-flight
  * memory at 64 MiB beside the cache's 64 MiB. Identical requests wait on the one fetch and are not
- * counted (single-flight); beyond the cap a request is refused `busy` (503).
+ * counted (single-flight); waiters released to fetch in parallel ARE; beyond the cap a request is
+ * refused `busy` (503).
  */
 export const GIF_MEDIA_MAX_IN_FLIGHT = 16;
+
+/**
+ * The whole of one upstream fetch - headers AND body - at most. `ssrfSafeFetch` bounds only the
+ * connect step, so without this a KLIPY body that stalls would hold one of the
+ * {@link GIF_MEDIA_MAX_IN_FLIGHT} slots, and every reader waiting on it, indefinitely. 12 MiB in
+ * 30 s is ~3.3 Mbit/s, far under any CDN; past it the fetch is aborted and refused `timed-out`.
+ */
+export const GIF_MEDIA_FETCH_DEADLINE_MS = 30_000;
 
 /**
  * Relay requests one visitor address may make per minute. Sized for GIFs, not the service's
@@ -75,6 +84,7 @@ export type GifMediaRefusal =
   | 'redirected'
   | 'upstream-not-found'
   | 'upstream-status'
+  | 'timed-out'
   | 'not-gif'
   | 'empty-body'
   | 'too-large';
@@ -99,6 +109,8 @@ export const GIF_MEDIA_REFUSAL_STATUS: Record<GifMediaRefusal, number> = {
   redirected: 502,
   'upstream-not-found': 404,
   'upstream-status': 502,
+  // KLIPY did not finish within GIF_MEDIA_FETCH_DEADLINE_MS: a gateway timeout, never cached.
+  'timed-out': 504,
   'not-gif': 415,
   'empty-body': 502,
   'too-large': 413,

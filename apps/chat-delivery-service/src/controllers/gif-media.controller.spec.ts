@@ -23,6 +23,7 @@ import { assertSafeExternalUrl, ssrfSafeFetch } from '../utils/url-guard';
 import { mintGifMediaTicket, mintPreviewTicket } from '../utils/previewTicket';
 import {
   GIF_MEDIA_CACHE_ENTRY_MAX_BYTES,
+  GIF_MEDIA_FETCH_DEADLINE_MS,
   GIF_MEDIA_LIMIT_PER_MINUTE,
   GIF_MEDIA_MAX_BYTES,
   GIF_MEDIA_MAX_IN_FLIGHT,
@@ -82,6 +83,7 @@ describe('GifMediaController', () => {
     ticket = mintGifMediaTicket(SECRET).ticket;
     GifMediaController.cache.clear();
     GifMediaController.inFlight.clear();
+    GifMediaController.active = 0;
     fetchMock.mockReset();
     guardMock.mockReset();
     guardMock.mockImplementation(async (raw: string) => new URL(raw));
@@ -189,10 +191,44 @@ describe('GifMediaController', () => {
     expect(GifMediaController.inFlight.size).toBe(0);
   });
 
+  it("shares KLIPY's refusal with the waiters rather than asking again", async () => {
+    let answer!: (r: Awaited<ReturnType<typeof ssrfSafeFetch>>) => void;
+    fetchMock.mockReturnValueOnce(new Promise((resolve) => (answer = resolve)));
+    const readers = [makeRes(), makeRes(), makeRes()];
+    const done = readers.map((r) => controller.relay(GIF_URL, ticket, r.res as never));
+    await new Promise((r) => setImmediate(r));
+    answer(upstream(null, { status: 404 }));
+    await Promise.all(done);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    for (const r of readers) expect(r.res.statusCode).toBe(404);
+    expect(logged.filter((l) => l.includes('shared with an identical fetch'))).toHaveLength(2);
+  });
+
+  it("releases the waiters to fetch IN PARALLEL when the leader's GIF could not be kept", async () => {
+    const pending: ((r: Awaited<ReturnType<typeof ssrfSafeFetch>>) => void)[] = [];
+    fetchMock.mockImplementation(() => new Promise((resolve) => pending.push(resolve)));
+    // No declared length: streamed, never cached.
+    const noLength = () => upstream(GIF89A, { headers: { 'content-type': 'image/gif' } });
+    const readers = [makeRes(), makeRes(), makeRes()];
+    const done = readers.map((r) => controller.relay(GIF_URL, ticket, r.res as never));
+    await new Promise((r) => setImmediate(r));
+    expect(pending).toHaveLength(1);
+    pending[0](noLength());
+    for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+
+    // Both waiters are fetching at once - neither queued behind the other.
+    expect(pending).toHaveLength(3);
+    pending[1](noLength());
+    pending[2](noLength());
+    await Promise.all(done);
+    for (const r of readers) expect(r.body().equals(GIF89A)).toBe(true);
+    expect(GifMediaController.inFlight.size).toBe(0);
+    expect(GifMediaController.active).toBe(0);
+  });
+
   it('refuses 503 busy past the in-flight cap, and fetches nothing', async () => {
-    for (let i = 0; i < GIF_MEDIA_MAX_IN_FLIGHT; i++) {
-      GifMediaController.inFlight.set(`other-${i}`, new Promise<void>(() => {}));
-    }
+    GifMediaController.active = GIF_MEDIA_MAX_IN_FLIGHT;
     const { res } = makeRes();
     await controller.relay(GIF_URL, ticket, res as never);
     expect(res.statusCode).toBe(503);
@@ -277,6 +313,60 @@ describe('GifMediaController', () => {
       expect(GifMediaController.cache.size).toBe(0);
     }
   );
+
+  describe('the fetch deadline - headers AND body', () => {
+    beforeEach(() =>
+      jest.useFakeTimers({ doNotFake: ['setImmediate', 'nextTick', 'queueMicrotask'] })
+    );
+    afterEach(() => jest.useRealTimers());
+
+    /** A fetch that never answers, and rejects - as undici does - once its signal aborts. */
+    const stalledUntilAbort = (_url: string, init?: { signal?: AbortSignal | null }) =>
+      new Promise<never>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(new Error('aborted')));
+      });
+
+    it('refuses 504 timed-out when KLIPY never answers, and frees its slot', async () => {
+      fetchMock.mockImplementation(stalledUntilAbort as never);
+      const { res } = makeRes();
+      const done = controller.relay(GIF_URL, ticket, res as never);
+      await new Promise((r) => setImmediate(r));
+      jest.advanceTimersByTime(GIF_MEDIA_FETCH_DEADLINE_MS);
+      await done;
+      expect(res.statusCode).toBe(504);
+      expect(
+        logged.some((l) => l.includes('timed-out') && l.includes('before KLIPY answered'))
+      ).toBe(true);
+      expect(logged.some((l) => l.includes('the reader left'))).toBe(false);
+      expect(GifMediaController.active).toBe(0);
+    });
+
+    it('cuts off a body that stalls mid-stream, logged as the deadline', async () => {
+      fetchMock.mockImplementation((async (_url: string, init?: { signal?: AbortSignal }) => {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new Uint8Array(GIF89A));
+            init?.signal?.addEventListener('abort', () => controller.error(new Error('aborted')));
+          },
+        });
+        return new Response(body, {
+          headers: { 'content-type': 'image/gif', 'content-length': '999' },
+        });
+      }) as never);
+      const { res } = makeRes();
+      const done = controller.relay(GIF_URL, ticket, res as never);
+      for (let i = 0; i < 5; i++) await new Promise((r) => setImmediate(r));
+      jest.advanceTimersByTime(GIF_MEDIA_FETCH_DEADLINE_MS);
+      await done;
+      expect(res.destroyed).toBe(true);
+      expect(GifMediaController.cache.size).toBe(0);
+      expect(logged.some((l) => l.includes('cut off mid-stream') && l.includes('timed-out'))).toBe(
+        true
+      );
+      expect(logged.some((l) => l.includes('the reader left'))).toBe(false);
+      expect(GifMediaController.active).toBe(0);
+    });
+  });
 
   it('is a 502 when KLIPY cannot be reached, logged as such', async () => {
     fetchMock.mockRejectedValueOnce(new TypeError('fetch failed'));

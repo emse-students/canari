@@ -16,6 +16,7 @@ import type { ReadableStream as NodeWebReadableStream } from 'node:stream/web';
 import {
   GIF_MEDIA_CACHE_ENTRY_MAX_BYTES,
   GIF_MEDIA_CACHE_MAX_BYTES,
+  GIF_MEDIA_FETCH_DEADLINE_MS,
   GIF_MEDIA_LIMIT_PER_MINUTE,
   GIF_MEDIA_MAX_BYTES,
   GIF_MEDIA_MAX_IN_FLIGHT,
@@ -56,8 +57,10 @@ const GIF_CACHE_CONTROL = `private, max-age=${Math.floor(GIF_MEDIA_TTL_MS / 1000
  * - `image/gif` only, 12 MiB at most (measured), checked on the declared length and on the bytes.
  * - STREAMED: the reader receives bytes as they arrive; the only copy held is the cache's, and only
  *   while the GIF stays under the cache's entry ceiling.
- * - BOUNDED: identical misses share one upstream fetch (single-flight), at most
- *   `GIF_MEDIA_MAX_IN_FLIGHT` distinct GIFs are fetched at once (beyond: 503 `busy`), and one
+ * - BOUNDED: identical misses share one upstream fetch and its refusal (single-flight; a GIF the
+ *   cache could not keep releases its waiters to fetch in parallel), at most
+ *   `GIF_MEDIA_MAX_IN_FLIGHT` fetches run at once (beyond: 503 `busy`), each within
+ *   `GIF_MEDIA_FETCH_DEADLINE_MS` headers and body included (beyond: 504 `timed-out`), and one
  *   visitor address makes at most `GIF_MEDIA_LIMIT_PER_MINUTE` requests a minute - the ticket is
  *   shared and lasts a day, so it is not what limits a loop.
  * - Every refusal is typed (`GifMediaRefusedError`) and logged under its reason. Refusals are
@@ -78,14 +81,22 @@ export class GifMediaController {
     weigh: (body) => body.length,
   });
 
-  /** The upstream fetches in flight, by cache key: what a waiter awaits, and what the cap counts. */
-  static readonly inFlight = new Map<string, Promise<void>>();
+  /**
+   * The leading upstream fetch per cache key: what a waiter awaits. It resolves to KLIPY's verdict
+   * when KLIPY refused the GIF outright (404, not a GIF, too large...), which the waiters share
+   * rather than ask again; to `null` otherwise.
+   */
+  static readonly inFlight = new Map<string, Promise<GifMediaRefusedError | null>>();
+
+  /** Upstream fetches running right now, leaders and released waiters alike: what the cap counts. */
+  static active = 0;
 
   /**
    * Relays one KLIPY GIF. 401 without a valid ticket; 400 for a URL the allowlist refuses; 404 when
    * KLIPY has no such GIF; 413 over the ceiling; 415 when KLIPY answers something that is not a GIF;
    * 502 when KLIPY redirected, failed or could not be reached; 503 when too many GIFs are already
-   * on their way; 429 (the throttler) past the per-address quota.
+   * on their way; 504 when KLIPY did not answer within the deadline; 429 (the throttler) past the
+   * per-address quota.
    */
   @UseGuards(ClientIpThrottlerGuard)
   @Throttle({ default: { limit: GIF_MEDIA_LIMIT_PER_MINUTE, ttl: 60_000 } })
@@ -131,44 +142,82 @@ export class GifMediaController {
     if (cached) return this.sendCached(res, cached, 'cache hit');
 
     // SINGLE-FLIGHT: an identical request already on its way from KLIPY is waited on rather than
-    // repeated - forty readers opening the same GIF at once make one upstream fetch. When it ends
-    // without filling the cache (over the entry ceiling, failed, its reader left), the next waiter
-    // fetches itself, as the new leader.
-    for (let leader = GifMediaController.inFlight.get(cacheKey); leader;) {
-      await leader;
+    // repeated - forty readers opening the same GIF at once make one upstream fetch. Waited on ONCE:
+    // a verdict KLIPY gave is shared; a GIF the cache did not keep (over the entry ceiling, no
+    // declared length, failed, its reader left) releases every waiter to fetch IN PARALLEL, so the
+    // Nth reader waits two fetch times at most, never N.
+    const leader = GifMediaController.inFlight.get(cacheKey);
+    if (leader) {
+      const verdict = await leader;
       if (state.readerLeft) return this.readerGone('while an identical fetch was in flight');
+      if (verdict) return this.refuse(res, verdict, 'shared with an identical fetch');
       const filled = GifMediaController.cache.get(cacheKey);
       if (filled) return this.sendCached(res, filled, 'served from an identical fetch');
-      leader = GifMediaController.inFlight.get(cacheKey);
     }
 
-    if (GifMediaController.inFlight.size >= GIF_MEDIA_MAX_IN_FLIGHT) {
+    if (GifMediaController.active >= GIF_MEDIA_MAX_IN_FLIGHT) {
       return this.refuse(
         res,
         new GifMediaRefusedError('busy', `${GIF_MEDIA_MAX_IN_FLIGHT} GIFs already on their way`)
       );
     }
-    let release!: () => void;
-    GifMediaController.inFlight.set(cacheKey, new Promise<void>((resolve) => (release = resolve)));
+    // A released waiter fetches beside the others and leads nobody; the first fetch of a key leads.
+    const leads = !GifMediaController.inFlight.has(cacheKey);
+    let release!: (verdict: GifMediaRefusedError | null) => void;
+    if (leads) {
+      GifMediaController.inFlight.set(
+        cacheKey,
+        new Promise<GifMediaRefusedError | null>((resolve) => (release = resolve))
+      );
+    }
+    GifMediaController.active += 1;
+    let verdict: GifMediaRefusedError | null = null;
     try {
-      await this.fetchAndStream(res, target, upstream.signal, state);
+      verdict = await this.fetchAndStream(res, target, upstream, state);
     } finally {
-      GifMediaController.inFlight.delete(cacheKey);
-      release();
+      GifMediaController.active -= 1;
+      if (leads) {
+        GifMediaController.inFlight.delete(cacheKey);
+        release(verdict);
+      }
     }
   }
 
   /**
-   * The leader's half: asks KLIPY, judges the answer, streams it to `res`, and fills the cache when
-   * the whole GIF was received, small enough, and exactly as long as KLIPY declared.
+   * The fetching half: asks KLIPY, judges the answer, streams it to `res`, and fills the cache when
+   * the whole GIF was received, small enough, and exactly as long as KLIPY declared. The whole fetch
+   * is bounded by `GIF_MEDIA_FETCH_DEADLINE_MS`. Returns the refusal it answered with before any
+   * byte was sent - KLIPY's verdict on this GIF, which the waiters share - or `null`.
    */
   private async fetchAndStream(
     res: ExpressResponse,
     target: URL,
-    signal: AbortSignal,
+    upstream: AbortController,
     state: { readerLeft: boolean; streamFailed: boolean }
-  ): Promise<void> {
+  ): Promise<GifMediaRefusedError | null> {
+    const deadline = { passed: false };
+    const timer = setTimeout(() => {
+      deadline.passed = true;
+      upstream.abort();
+    }, GIF_MEDIA_FETCH_DEADLINE_MS);
+    try {
+      return await this.fetchWithin(res, target, upstream.signal, state, deadline);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  /** `fetchAndStream`'s body, with `deadline.passed` telling a timeout from every other abort. */
+  private async fetchWithin(
+    res: ExpressResponse,
+    target: URL,
+    signal: AbortSignal,
+    state: { readerLeft: boolean; streamFailed: boolean },
+    deadline: { passed: boolean }
+  ): Promise<GifMediaRefusedError | null> {
     const cacheKey = target.href;
+    const timedOut = (): GifMediaRefusedError =>
+      new GifMediaRefusedError('timed-out', `${GIF_MEDIA_FETCH_DEADLINE_MS} ms`);
     let response: Awaited<ReturnType<typeof ssrfSafeFetch>>;
     try {
       response = await ssrfSafeFetch(target.href, {
@@ -185,8 +234,17 @@ export class GifMediaController {
         },
       });
     } catch (error) {
-      if (state.readerLeft) return this.readerGone('before KLIPY answered');
-      return this.unreachable(res, new UpstreamUnreachableError(target.hostname, error));
+      if (deadline.passed) {
+        const refusal = timedOut();
+        this.refuse(res, refusal, 'before KLIPY answered');
+        return refusal;
+      }
+      if (state.readerLeft) {
+        this.readerGone('before KLIPY answered');
+        return null;
+      }
+      this.unreachable(res, new UpstreamUnreachableError(target.hostname, error));
+      return null;
     }
 
     const refusal = this.judge(response);
@@ -195,7 +253,8 @@ export class GifMediaController {
       await response.body?.cancel().catch((error: unknown) => {
         this.logger.debug(`[GIF_MEDIA] cancelling a refused body failed: ${String(error)}`);
       });
-      return this.refuse(res, refusal);
+      this.refuse(res, refusal);
+      return refusal;
     }
 
     const declared = Number.parseInt(response.headers.get('content-length') ?? '', 10);
@@ -221,14 +280,23 @@ export class GifMediaController {
       // pipeline has already destroyed the response, so the reader sees a cut-off image.
       if (error instanceof GifMediaRefusedError) {
         this.logger.warn(`[GIF_MEDIA] cut off mid-stream: ${error.message}`);
-        return;
+        return null;
       }
-      if (state.readerLeft) return this.readerGone(`after ${counter.received} bytes`);
+      if (deadline.passed) {
+        this.logger.warn(
+          `[GIF_MEDIA] cut off mid-stream: ${timedOut().message} after ${counter.received} bytes`
+        );
+        return null;
+      }
+      if (state.readerLeft) {
+        this.readerGone(`after ${counter.received} bytes`);
+        return null;
+      }
       this.logger.warn(
         `[GIF_MEDIA] KLIPY's body failed after ${counter.received} bytes: ` +
           `${String(errorCause(error) ?? error)}`
       );
-      return;
+      return null;
     }
 
     // Kept only when it is provably the WHOLE GIF: KLIPY declared a length and that many bytes came.
@@ -242,6 +310,7 @@ export class GifMediaController {
       outcome = 'not cached: heavier than the whole cache';
     } else outcome = 'cached';
     this.logger.debug(`[GIF_MEDIA] relayed ${counter.received} bytes (${outcome})`);
+    return null;
   }
 
   /** Answers from the byte cache - after a hit, or after an identical fetch filled it. */
@@ -278,8 +347,9 @@ export class GifMediaController {
   }
 
   /** A typed refusal: logged under its reason, answered with its status and no body. */
-  private refuse(res: ExpressResponse, refusal: GifMediaRefusedError): void {
-    this.logger.warn(`[GIF_MEDIA] refused (${refusal.status}): ${refusal.message}`);
+  private refuse(res: ExpressResponse, refusal: GifMediaRefusedError, how?: string): void {
+    const context = how ? ` (${how})` : '';
+    this.logger.warn(`[GIF_MEDIA] refused (${refusal.status}): ${refusal.message}${context}`);
     res.status(refusal.status).end();
   }
 

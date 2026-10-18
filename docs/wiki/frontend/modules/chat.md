@@ -559,10 +559,17 @@ it always did.
 - **Single-flight and a cap.** Identical misses wait on the ONE fetch in flight
   (`GifMediaController.inFlight`) and are answered from the cache it fills - so a GIF of at most
   4 MiB sent to a group of forty is fetched from KLIPY once per 24 h, even when they open it at the
-  same moment. A larger one fills no cache: each waiter then fetches in turn, and the reader's
-  browser keeps it (`private, max-age=86400`). A waiter follows its leader's pace (backpressure), a
-  cost taken for one fetch. At most `GIF_MEDIA_MAX_IN_FLIGHT` (16) distinct GIFs are fetched at
-  once, so in-flight memory stays under 64 MiB; beyond, 503 `busy`, logged.
+  same moment. A refusal KLIPY gave (404, not a GIF, too large, timed out) is SHARED with the
+  waiters. A GIF the cache did not keep (over 4 MiB, no declared length, a failed stream) releases
+  every waiter at once to fetch IN PARALLEL - the Nth reader waits two fetch times, never N - and
+  the reader's browser keeps it (`private, max-age=86400`). A waiter follows its leader's pace
+  (backpressure), a cost taken for one fetch. At most `GIF_MEDIA_MAX_IN_FLIGHT` (16) fetches run at
+  once, released waiters counted, so in-flight memory stays under 64 MiB; beyond, 503 `busy`,
+  logged.
+- **A deadline on the whole fetch.** `ssrfSafeFetch` bounds only the connect step, so a stalled
+  KLIPY body would hold a slot and every waiter on it. `GIF_MEDIA_FETCH_DEADLINE_MS` (30 s, headers
+  and body: 12 MiB at ~3.3 Mbit/s) aborts it: 504 `timed-out` before any byte, a logged cut-off
+  after.
 - **A per-address throttle**, because the ticket is shared and lives a day: `ClientIpThrottlerGuard`
   (keyed on nginx's `X-Real-IP`, the twin of social-service's) at `GIF_MEDIA_LIMIT_PER_MINUTE` (600)
   - generous on purpose: a picker page is 24 thumbnails, and one address may be a campus NAT.
