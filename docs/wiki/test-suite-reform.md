@@ -227,10 +227,11 @@ change failing.
   case count, same pass set, and the list of moved files in the PR.
 
 **Built 2026-10-18 (draft PR `chore/tests-t4-node-env`).** `vitest.config.ts` says
-`environment: 'node'`, and the **299** files that need a DOM say so on their own first line:
+`environment: 'node'`, and the **302** files that need a DOM say so on their own first line:
 `// @vitest-environment happy-dom`. The population was SEEDED from `--environment=node` runs, never
 guessed: 149 plain test files (the first whole-suite run) and 150 of the 179 `*.svelte.test.ts` (a
-second run of those alone; the other 29 pass under node and now run there). Of the 150, 142 failed
+second run of those alone; the other 29 pass under node and now run there), plus 3 that `main` added
+before the merge and that the node default turned red at once, as designed. Of the 150, 142 failed
 on a missing global and 8 on an ASSERTION - code that branches on `typeof window` took its other arm
 (`useChannelWorkspaces`, `.offlineWrites`, `useConversations.currentConvoScope`,
 `feedPaintIdentity`, `signedFeedUrl`, `displayName.reactive`, `displayNames`, `memberOrder`). Both
