@@ -139,10 +139,14 @@ Three properties carry it, and each is asserted in `users.batch.spec.ts`:
 - **It is declared before `@Get(':id')`.** Nest matches in declaration order, so the other order
   routes `batch` as `id = "batch"` and answers 404 - a routing mistake wearing the face of a missing
   user.
-- **An unknown id is ABSENT from the answer, never an error.** One deleted account may not refuse
-  the nineteen live ones beside it, so the caller reads the absence and classifies it itself. The
-  store turns it back into the same `UserProfileFetchError(404)` the single-id route produced, which
-  is why `isAbsentUserError` and the whole display-name cache needed no change.
+- **An unknown id is NAMED in `deleted`, never an error and never a name** (decided 2026-10-18,
+  WP-MENTION-DELETED). One deleted account may not refuse the nineteen live ones beside it, and the
+  answer is `{ users, deleted: string[] }`: a typed "no such account" carrying no name, because the
+  name is kept nowhere once the account is erased (an id that never existed answers the same). The
+  store rejects it with `DeletedAccountError` (a `UserProfileFetchError(404)`, so `isAbsentUserError`
+  and the display-name cache needed no change) and the resolver renders the Paraglide
+  `user_deleted_label`. An id in NEITHER list is a contract breach (an older server): it rejects 502,
+  is logged, never cached, never rendered as deleted. `GET /api/users/:id` still answers 404.
 - **A list longer than `MAX_PROFILE_BATCH` (100) is REFUSED, not truncated.** A silently shortened
   answer is indistinguishable from a page of deleted accounts. 100 is above every shape that exists
   (production 2026-09-15: 421 accounts, largest association roster 27, largest DM group 2), so the

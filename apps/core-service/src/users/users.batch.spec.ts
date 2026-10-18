@@ -60,8 +60,22 @@ describe('GET /users/batch', () => {
 
     const { users } = await controller.findMany('alive,gone');
 
-    // The caller reads the absence and classifies it, exactly as it classifies the 404 from `:id`.
     expect(users.map((u) => u.id)).toEqual(['alive']);
+  });
+
+  it('NAMES an id that matches nothing as deleted, with no name, instead of leaving it to inference', async () => {
+    const { controller } = makeController([row('alive')]);
+
+    const answer = await controller.findMany('alive,gone');
+
+    expect(answer.deleted).toEqual(['gone']);
+    expect(JSON.stringify(answer.deleted)).not.toMatch(/firstName|displayName/);
+  });
+
+  it('answers an empty deleted list when every id is live', async () => {
+    const { controller } = makeController([row('a')]);
+
+    expect((await controller.findMany('a')).deleted).toEqual([]);
   });
 
   it('asks for each id once, however many times it was listed', async () => {

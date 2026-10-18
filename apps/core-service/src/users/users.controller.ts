@@ -192,9 +192,11 @@ export class UsersController {
    * arrive as `id = "batch"` and 404 - which is the failure mode that looks like a missing user
    * rather than a routing mistake.
    *
-   * AN UNKNOWN ID IS ABSENT FROM THE ANSWER RATHER THAN AN ERROR: one deleted account may not
-   * refuse the nineteen live ones beside it. The client classifies the absence itself, exactly as it
-   * classifies the 404 from `:id`.
+   * AN UNKNOWN ID IS NEVER AN ERROR: one deleted account may not refuse the nineteen live ones
+   * beside it. It is NAMED in `deleted` instead - a typed "no such account" with NO name, because the
+   * name is kept nowhere once the account is erased - so the client reads an answer rather than
+   * inferring one from an absence (and a 404 per mention would be a line no client code can mask).
+   * An id that never existed is indistinguishable from an erased one and renders the same.
    */
   @UseGuards(NginxAuthGuard)
   @Get('batch')
@@ -217,7 +219,9 @@ export class UsersController {
         `too many ids (${requested.length} > ${MAX_PROFILE_BATCH}) - split the request`
       );
     }
-    return { users: await this.usersService.findManyPublic(requested) };
+    const users = await this.usersService.findManyPublic(requested);
+    const found = new Set(users.map((u) => u.id));
+    return { users, deleted: requested.filter((id) => !found.has(id)) };
   }
 
   /**
