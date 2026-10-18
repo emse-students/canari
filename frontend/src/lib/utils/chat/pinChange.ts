@@ -34,6 +34,7 @@ import {
   saveDeviceKey,
 } from '$lib/utils/deviceKeyVault';
 import { BiometricService } from '$lib/services/biometric';
+import { getTabLeadership } from '$lib/mls-client/tabLeader';
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 import type { IMlsService, StateLoadFailure } from '$lib/mls-client';
@@ -331,6 +332,30 @@ export async function applyNewDeviceKeyLocally(
     // unattended key: the next launch asks for the PIN, and this says why.
     log(`[DEVICEKEY] Saving the new device key to the local vault failed: ${String(e)}`);
   }
+}
+
+/**
+ * Whether an IN-SESSION PIN change may start in this tab: only in the account's MLS leader tab.
+ * Asked BEFORE the server verifier is rotated, so a refusal changes nothing anywhere.
+ *
+ * WHY THE LEADER ONLY, AND NOT A RE-SEAL OF THE STORED STATE. The change re-seals the MLS state from
+ * the LIVE client ({@link IMlsService.changeDeviceKey}). A follower's client was loaded from a
+ * snapshot older than the leader's last checkpoint, so the version guard refuses that write and the
+ * change always ended into a recovery prompt. Re-sealing the stored state instead would not save it:
+ * the change makes the leader go stale and reload, the reload frees the leader lock, the follower is
+ * PROMOTED, and the promotion handler reloads it (`useChatSession.svelte.ts`) - in the middle of its
+ * own change. Holding that promotion is a new cross-tab mechanism; refusing is a fact known here.
+ *
+ * `undecided` is refused too: the login decides leadership before any session exists, so a change
+ * cannot honestly be asked before it is known, and a write is never made on a guess.
+ */
+export function thisTabMayChangeDeviceKey(log: (msg: string) => void): boolean {
+  const leadership = getTabLeadership();
+  if (leadership === 'leader') return true;
+  log(
+    `[DEVICEKEY_CHANGE] Refused in this tab (${leadership}): a PIN change runs in the leader tab only - nothing asked, nothing moved.`
+  );
+  return false;
 }
 
 export interface PinChangeOptions {

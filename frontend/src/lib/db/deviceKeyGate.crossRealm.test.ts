@@ -4,9 +4,8 @@
  * see the other tab; the Web Lock and the notice are what must stop it.
  *
  * Each realm is a fresh import of the gate (`vi.resetModules`), sharing one Web Locks manager and
- * one broadcast bus - the two things a browser shares between the tabs of an origin. Both doubles
- * follow the specification on the points that matter here: a lock queue is FIFO per name, shared
- * holders coexist, and a channel never delivers to the object that posted.
+ * one broadcast bus - the two things a browser shares between the tabs of an origin
+ * (`src/test/crossRealmDoubles.ts`).
  */
 import 'fake-indexeddb/auto';
 import { IndexedDbStorage } from '$lib/db/indexeddb';
@@ -14,86 +13,9 @@ import { decryptData } from '$lib/encryption';
 import { toBase64 } from '$lib/utils/hex';
 import type { StoredMessage } from '$lib/db';
 import { resealDeviceKeyStores } from '$lib/utils/chat/pinChange';
+import { FakeChannel, FakeLocks } from '../../test/crossRealmDoubles';
 
 type Gate = typeof import('./deviceKeyGate');
-
-interface Pending {
-  name: string;
-  mode: LockMode;
-  run: () => void;
-}
-
-/** A Web Locks manager: FIFO per name, shared holders coexist, exclusive excludes everything. */
-class FakeLocks {
-  private queue: Pending[] = [];
-  private held: { name: string; mode: LockMode }[] = [];
-
-  request(
-    name: string,
-    options: LockOptions,
-    callback: LockGrantedCallback<unknown>
-  ): Promise<unknown> {
-    return new Promise((resolve, reject) => {
-      const mode = options.mode ?? 'exclusive';
-      const entry = { name, mode };
-      this.queue.push({
-        name,
-        mode,
-        run: () => {
-          this.held.push(entry);
-          Promise.resolve()
-            .then(() => callback({ name, mode } as Lock))
-            .then(resolve, reject)
-            .finally(() => {
-              this.held.splice(this.held.indexOf(entry), 1);
-              this.pump();
-            });
-        },
-      });
-      this.pump();
-    });
-  }
-
-  async query(): Promise<LockManagerSnapshot> {
-    return { held: this.held.map((h) => ({ ...h })), pending: [] };
-  }
-
-  private pump(): void {
-    for (let i = 0; i < this.queue.length;) {
-      const r = this.queue[i]!;
-      const blockedAhead = this.queue.slice(0, i).some((q) => q.name === r.name);
-      const conflict = this.held.some(
-        (h) => h.name === r.name && (h.mode === 'exclusive' || r.mode === 'exclusive')
-      );
-      if (blockedAhead || conflict) {
-        i++;
-        continue;
-      }
-      this.queue.splice(i, 1);
-      r.run();
-    }
-  }
-}
-
-/** A BroadcastChannel bus: delivers to every OTHER channel of the same name, asynchronously. */
-class FakeChannel {
-  static open: FakeChannel[] = [];
-  /** A suspended page: it runs no code, so it hears nothing. */
-  deaf = false;
-  private listeners: ((ev: MessageEvent) => void)[] = [];
-  constructor(readonly name: string) {
-    FakeChannel.open.push(this);
-  }
-  addEventListener(_type: 'message', fn: (ev: MessageEvent) => void): void {
-    this.listeners.push(fn);
-  }
-  postMessage(data: unknown): void {
-    for (const ch of FakeChannel.open) {
-      if (ch === this || ch.name !== this.name || ch.deaf) continue;
-      setTimeout(() => ch.listeners.forEach((fn) => fn({ data } as MessageEvent)), 0);
-    }
-  }
-}
 
 function key(): string {
   return toBase64(crypto.getRandomValues(new Uint8Array(32)));

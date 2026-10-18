@@ -786,9 +786,18 @@ holds the lock and, if one does, says so on screen (stage `waiting_tabs`,
 `auth_changepin_progress_waiting_tabs`: close that tab or bring it to the front).
 
 Without `navigator.locks` (WebKitGTK; the unit tests) the realm is alone, the reading `tabLeader.ts`
-makes of the same absence. Left open: a change made FROM a follower tab re-seals its own older
-capture, which the version guard refuses - so it now ends in a recovery instead of a silent "Done",
-but it still costs that recovery ([backlog](../../backlog.md)).
+makes of the same absence.
+
+**A change is made from the LEADER tab only** (`thisTabMayChangeDeviceKey` in `pinChange.ts`,
+asked by `changePinImpl` before the server verifier is rotated). A follower re-seals its own live
+client, loaded from an older snapshot than the leader last wrote, so the version guard refuses that
+write and the change ended in a recovery prompt every time. Re-sealing the STORED state instead was
+weighed and rejected: the change makes the leader go stale and reload, the reload frees the leader
+lock, the follower is PROMOTED, and the promotion handler (`useChatSession.svelte.ts`) reloads it in
+the middle of its own change - holding that promotion would be a new cross-tab mechanism. So a
+follower (or a tab whose leadership is still undecided) refuses on the settings screen with
+`auth_pin_change_follower_tab` - change it from the active tab, or take over here first - and
+nothing is asked of the server. Pinned by `pinChange.followerTab.test.ts` (two realms).
 
 **Resumable, because it cannot be atomic.** SQLite through the Tauri plugin has no multi-statement
 transaction (`sqliteBatch.ts`), so a history of thousands of rows cannot be swapped in one step, and
