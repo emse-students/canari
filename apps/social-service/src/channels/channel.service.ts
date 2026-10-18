@@ -3744,18 +3744,17 @@ export class ChannelService {
     const channels = await this.channelRepo.find({
       where: { workspaceId: In([...memberOf.keys()]) },
     });
-    const readable = channels
-      .filter((c) => {
-        const member = memberOf.get(c.workspaceId);
-        return !!member && this.canAccessChannel(c, member, userId);
-      })
-      .map((c) => c.id);
-    if (readable.length === 0) return { asOf: Date.now(), counts: {}, muted: [] };
-    const muted = readable.filter((id) => {
-      const channel = channels.find((c) => c.id === id);
-      return !!channel && memberOf.get(channel.workspaceId)?.notifLevels?.[id] === 'none';
+    const readable = channels.filter((c) => {
+      const member = memberOf.get(c.workspaceId);
+      return !!member && this.canAccessChannel(c, member, userId);
     });
-    const countable = readable.filter((id) => !muted.includes(id));
+    if (readable.length === 0) return { asOf: Date.now(), counts: {}, muted: [] };
+    const muted: string[] = [];
+    const countable: string[] = [];
+    for (const c of readable) {
+      if (memberOf.get(c.workspaceId)?.notifLevels?.[c.id] === 'none') muted.push(c.id);
+      else countable.push(c.id);
+    }
     if (countable.length === 0) return { asOf: Date.now(), counts: {}, muted };
 
     // asOf is taken HERE, right before the count, not at the top of the method: the client adds
@@ -4332,6 +4331,16 @@ export class ChannelService {
       take: safeLimit,
     });
     const oldestInPage = bodies[bodies.length - 1]?.createdAt ?? null;
+    // A SHORT PAGE IS THE END OF THE HISTORY: fewer bodies than asked means no older body exists, so
+    // no later page will ever be asked for what lies below the oldest one. A membership notice
+    // written before a salon's first body (the join that precedes the first word) would otherwise
+    // be in no page at all - so the lower bound goes and only the cursor bounds the silent rows.
+    const historyExhausted = bodies.length > 0 && bodies.length < safeLimit;
+    if (historyExhausted) {
+      this.logger.debug(
+        `[HISTORY] channel=${channelId} short page (${bodies.length}/${safeLimit}): silent rows below the oldest body included`
+      );
+    }
     // NO BODY AT ALL: A salon whose only rows are membership notices (sent silent since 2026-10-18,
     // so they ring and count nothing) would otherwise show an empty history. Bounded by the page
     // limit, and by the cursor like everything else.
@@ -4350,9 +4359,15 @@ export class ChannelService {
             where: {
               channelId,
               silent: true,
-              createdAt: hasValidCursor
-                ? And(MoreThanOrEqual(oldestInPage), LessThan(beforeDate))
-                : MoreThanOrEqual(oldestInPage),
+              ...(historyExhausted
+                ? hasValidCursor
+                  ? { createdAt: LessThan(beforeDate) }
+                  : {}
+                : {
+                    createdAt: hasValidCursor
+                      ? And(MoreThanOrEqual(oldestInPage), LessThan(beforeDate))
+                      : MoreThanOrEqual(oldestInPage),
+                  }),
             },
             order: { createdAt: 'DESC' },
           });

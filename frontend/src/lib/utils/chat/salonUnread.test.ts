@@ -305,6 +305,29 @@ describe('a muted salon', () => {
     expect(isSalonMuted(SALON)).toBe(false);
   });
 
+  // An answer asked BEFORE the member muted here, landing after, must not undo the mute (nor an
+  // unmute): the local choice is newer than what the server counted.
+  it('keeps a level chosen here after the answer was asked for', () => {
+    const map = new Map([[SALON, convo({ unreadCount: 3 })]]);
+    const token = beginUnreadReconcile();
+    noteSalonNotificationLevel(RAW, 'none');
+    reconcileSalonUnread(map, { asOf: 1, counts: { [RAW]: 3 }, muted: [] }, null, ME, token);
+    expect(isSalonMuted(SALON)).toBe(true);
+    expect(map.get(SALON)?.unreadCount).toBe(0);
+
+    const token2 = beginUnreadReconcile();
+    noteSalonNotificationLevel(RAW, 'all');
+    reconcileSalonUnread(map, { asOf: 2, counts: {}, muted: [RAW] }, null, ME, token2);
+    expect(isSalonMuted(SALON)).toBe(false);
+  });
+
+  it('follows an answer asked after the level was chosen here', () => {
+    const map = new Map([[SALON, convo()]]);
+    noteSalonNotificationLevel(RAW, 'none');
+    reconcileSalonUnread(map, { asOf: 1, counts: {}, muted: [] }, null, ME, beginUnreadReconcile());
+    expect(isSalonMuted(SALON)).toBe(false);
+  });
+
   it('is read from the wire, an older server naming none included', () => {
     expect(
       parseSalonUnreadAnswer({ asOf: 1, counts: {}, muted: [RAW.toUpperCase(), 7] })?.muted

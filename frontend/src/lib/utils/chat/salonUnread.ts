@@ -22,6 +22,7 @@
  * to be wrong.
  */
 import type { Conversation } from '$lib/types';
+import { Log } from '$lib/utils/Log';
 import {
   countUnreadForUser,
   isUnreadForUser,
@@ -52,6 +53,11 @@ const openedAtTick = new Map<string, number>();
  */
 let mutedSalons = new Set<string>();
 /**
+ * The tick at which a level was last noted HERE, per raw channel id. An answer asked before that
+ * tick was counted before the change and must not undo it - the same ORDER as `openedAtTick`.
+ */
+const levelNotedAtTick = new Map<string, number>();
+/**
  * The `asOf` of the last server count applied, 0 before the first one: the newest instant the
  * server's half of every badge on screen speaks for. See {@link communityUnreadUpTo}.
  */
@@ -76,6 +82,7 @@ export function resetSalonUnread(): void {
   ticks = 0;
   generation++;
   openedAtTick.clear();
+  levelNotedAtTick.clear();
   mutedSalons = new Set();
   lastAppliedAsOf = 0;
 }
@@ -88,12 +95,28 @@ export function isSalonMuted(conversationId: string): boolean {
 /**
  * Records a notification level the member just chose here, so the live tally follows at once
  * instead of at the next server answer. Only `none` mutes; the badge already on screen falls at
- * the next count.
+ * the next count. Stamped with the next tick, so an answer asked before it cannot undo it.
  */
 export function noteSalonNotificationLevel(conversationId: string, level: string): void {
   const id = conversationId.replace(/^channel_/, '').toLowerCase();
   if (level === 'none') mutedSalons.add(id);
   else mutedSalons.delete(id);
+  levelNotedAtTick.set(id, ++ticks);
+}
+
+/**
+ * The muted set an answer leaves: the server's, except for every salon whose level was noted here
+ * AFTER the answer was asked for (`token`) - that local choice is newer than what the server counted.
+ */
+function mergeMuted(answerMuted: readonly string[], token: number): Set<string> {
+  const next = new Set(answerMuted);
+  for (const [id, tick] of levelNotedAtTick) {
+    if (tick <= token) continue;
+    Log.d(`[UNREAD] salon ${id}: level chosen after the counts were asked - kept over the answer`);
+    if (mutedSalons.has(id)) next.add(id);
+    else next.delete(id);
+  }
+  return next;
 }
 
 /** Reads the wire answer defensively: a shape nobody recognises is reported, never half-applied. */
@@ -135,7 +158,7 @@ export function reconcileSalonUnread(
 ): string[] {
   const me = userId.toLowerCase();
   const changed: string[] = [];
-  mutedSalons = new Set(answer.muted ?? []);
+  mutedSalons = mergeMuted(answer.muted ?? [], token);
   for (const [key, convo] of conversations.entries()) {
     if (!isSalonKey(key) || key === selectedId) continue;
     if ((openedAtTick.get(key) ?? 0) > token) continue;

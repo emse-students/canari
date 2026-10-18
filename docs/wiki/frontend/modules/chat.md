@@ -3625,14 +3625,22 @@ wanted to read:
   and counted it until the salon was opened (the 2026-10-11 fix only made it coverable). The one
   writer (`inviteMemberToChannel`) now sends it `silent`, the flag the server already skips in
   `listUnreadCounts`; as a side effect it no longer rings phones either. `listMessages` returns the
-  silent rows of a salon with NO body at all, so a salon holding only notices still shows them.
+  silent rows of a salon with NO body at all, so a salon holding only notices still shows them, and
+  on a SHORT page (fewer bodies than asked - the end of the history) it drops the lower bound on the
+  silent rows and keeps only the cursor: the join notice written before a salon's first body is in
+  no later page, since none is ever asked for below a short one.
   **Notices written before this stay counted until the salon is opened**, which the read mark now
-  reaches - no data repair.
+  reaches - no data repair. **An inviter on an older client keeps sending ordinary (non-silent)
+  notices**, which stay counted the same way until `minClientVersion` reaches this build.
 - **A muted salon.** `notifLevels[channel] = 'none'` is left out of the SQL, and the answer gains
   `muted: string[]` (raw channel ids) so the client's LIVE tally stays quiet for them too
   (`isSalonMuted`, read by both arrival paths in `useMessaging`; `reconcileSalonUnread` sets a muted
   salon to 0). The settings panel updates the set at once (`noteSalonNotificationLevel`); a badge
-  already on screen when the member mutes falls at the next count. **`mentions` still counts**: the
+  already on screen when the member mutes falls at the next count. That local choice is stamped on
+  the same tick counter as `openedAtTick`, so an answer asked BEFORE it and landing after cannot
+  undo it. **Unmuting brings back what arrived while muted**: the server counts against the read
+  mark, which muting never moved, so those messages re-enter the badge at the next count - a mute
+  silences, it does not read. **`mentions` still counts**: the
   row is encrypted, the server cannot tell which rows mention the member. An older server sends no
   `muted`, and nothing is muted then.
 
