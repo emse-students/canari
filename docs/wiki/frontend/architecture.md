@@ -749,3 +749,21 @@ bun run lint:fix    # the same, auto-fixing what can be
 bun run format      # oxfmt (NOT prettier - this repo has no prettier config)
 bun run test        # Vitest
 ```
+
+### The tests read a second Paraglide compile (WP-T1)
+
+The app compiles Paraglide as `message-modules` into `src/lib/paraglide/` (one file per message,
+~3,300, tree-shaken by the build). Every test that touches `m` would import and transform all of
+them - 70 % of the suite's wall-clock. So vitest alone reads a second compile of the SAME project as
+`locale-modules` (ten files) from `frontend/.paraglide-test/`: `vitest.config.ts` aliases
+`$lib/paraglide` to it ahead of `$lib`.
+
+- **No extra manual step**: `bun run paraglide:compile:test` runs from `prepare` (so after every
+  `bun install`, CI included), and from `test`, `test:coverage` and `test:watch`.
+- **Gitignored, and out of the app's reach**: `/.paraglide-test` is in `frontend/.gitignore`, it is
+  outside `src/`, and only `vitest.config.ts` names it - `vite.config.js` and `svelte-check` still
+  see `src/lib/paraglide/`, so the shipped bytes do not change.
+- **Cannot drift**: `src/paraglideTestAlias.test.ts` asserts the alias hit the test output, that its
+  keys equal the app output's keys, and that every key of `messages/{fr,en}.json` is in it.
+- A test that dies with `Failed to resolve import "$lib/paraglide/..."` has not compiled it: run
+  `bun run paraglide:compile:test`.
