@@ -9,7 +9,7 @@
  * unpin made offline owe the unpin alone, and a vote changed twice owes the last choice.
  *
  * Every write here is safe to repeat - a send and a sealed row by their client id, which the server
- * answers with the row it holds (migration 088); a pin and a vote because they SET a state - so a
+ * answers with the row it holds (migration 090); a pin and a vote because they SET a state - so a
  * write that did land before its answer was lost costs nothing when it goes again.
  *
  * Memory only, on purpose: a pin or a vote replayed the next day would overwrite whatever the

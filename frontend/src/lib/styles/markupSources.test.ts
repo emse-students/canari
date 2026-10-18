@@ -111,16 +111,22 @@ describe('the comment stripper has exactly one implementation', () => {
     expect(files.map((f) => f.path)).toContain('lib/associations/socialApiError.test.ts');
   });
 
-  it.each(files.filter((f) => f.path !== OWNER).map((f) => [f.path]))(
-    '%s does not strip comments itself',
-    (path) => {
-      const body = files.find((f) => f.path === path)!.body;
-      // The idiom is a REMOVAL, so both halves are asserted together: a line that names a comment
-      // delimiter and hands it to `replace` is stripping comments, whatever it calls itself.
-      const offenders = body
-        .split('\n')
-        .filter((line) => line.includes('.replace(') && STRIPPER.test(line));
-      expect(offenders).toEqual([]);
-    }
-  );
+  it('no file strips comments itself (every offender listed)', () => {
+    // ONE case for the rule, not one per file: the failure names every offender and its line (numbered in
+    // the comment-stripped text). The idiom is a REMOVAL, so both halves are asserted together: a
+    // line that names a comment delimiter and hands it to `replace` is stripping comments,
+    // whatever it calls itself.
+    const offenders = files
+      .filter((f) => f.path !== OWNER)
+      .flatMap((f) =>
+        f.body
+          .split('\n')
+          .flatMap((line, i) =>
+            line.includes('.replace(') && STRIPPER.test(line)
+              ? [`${f.path}:${i + 1}: ${line.trim()}`]
+              : []
+          )
+      );
+    expect(offenders).toEqual([]);
+  });
 });

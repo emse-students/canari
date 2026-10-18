@@ -221,7 +221,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/calls/initiate` | Verify membership, return a room token for the `call-service` SFU |
-| GET | `/api/calls/room-token` | Get room token for recipient |
+| GET | `/api/calls/room-token` | Get room token for recipient (403 another group's room, 410 unknown room or ring window closed) |
 | GET | `/api/calls/ice-servers` | Get ICE server config |
 | POST | `/api/calls/presence` | Report device presence in call |
 | GET | `/api/calls/sibling-status` | Check sibling device call status |
@@ -370,6 +370,10 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 | POST | `/api/forms/:id/submit` | Submit form |
 | GET | `/api/forms/:id/submissions` | List submissions (owner only) |
 | POST | `/api/forms/:id/image` | Upload form banner image |
+
+### Bookings
+
+`/api/bookings/*`: see [bookings-chantier](../bookings-chantier.md#wp-b3-as-built-2026-10-17), the only copy of the routes and their refusal codes.
 
 ### Associations
 

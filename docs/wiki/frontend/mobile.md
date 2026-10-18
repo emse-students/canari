@@ -803,6 +803,15 @@ A tap now logs `[CanariPush] notification tap type=... deepLink=...` on iOS, and
 says `ABSENT`. Tests: `push-target.spec.ts` (the server contract), `deepLinkRoutes.test.ts` (the
 route table, compared against `notificationHref`).
 
+**A comment, a reply or a mention in a comment opens the post AT that comment (2026-10-17).** The
+three pushes carry `commentId`, and `socialDeepLink` writes `post/<id>?comment=<commentId>` - a
+query, so a build that predates it still opens the post. `appRouteForDeepLink` keeps that one
+parameter (`POST_COMMENT_PARAM`), the post page hands it to `PostComments`, which scrolls the row
+(`id="comment-<id>"`) into view once drawn and rings its bubble; a comment deleted since the push
+leaves the post at its top and logs why. The in-app bell still opens the post without it: the
+notification ROW stores no comment id. Tests: `post-interactions.comment-notify.spec.ts`,
+`push-target.spec.ts`, `deepLinkRoutes.test.ts`, `PostComments.focus.svelte.test.ts`.
+
 **Not measured on the iPhone yet** - see the verification note appended below when it is.
 
 **What was observed on the iPhone (2026-10-05, build 1.0.3 against the local stack).** A real push could
@@ -998,16 +1007,49 @@ The NSE shares data with the main app via App Group `group.fr.emse.canari`:
 The NSE does **not** write `mls.bin`, process Welcome pushes, or drain the outbox. Those remain app-process responsibilities.
 
 **It also never sees a silent frame, so it can never cancel anything.** The extension runs on
-`mutable-content: 1` ALERT pushes only; a `content-available: 1` background push is MEANT for the app
-(`canari_push.mm` `CanariHandleFcmData`) - **and reaches no Canari native code today, background or foreground** (`willPresentNotification` fires for alerts only): the hook that would
-take it is never installed, because wry's delegate lacks
-`application:didReceiveRemoteNotification:fetchCompletionHandler:` and the hook only replaces an
-existing method (syslog, every launch: `remote notification hook NOT installed`;
-[backlog](../backlog.md)). So `channel_read` — the frame that clears a salon's
-notification after it was read on another device — is the app's to handle, and listing it in the
-extension's switch (as it was until 2026-08-16) is a branch that cannot execute. The removal itself
-must key on `threadIdentifier`, since the identifier differs between the two posters — see
-[social-service](../services/social-service.md) "Cross-device read dismissal".
+`mutable-content: 1` ALERT pushes only; a `content-available: 1` background push is MEANT for the app.
+So `channel_read` — the frame that clears a salon's notification after it was read on another device
+— is the app's to handle, and listing it in the extension's switch (as it was until 2026-08-16) is a
+branch that cannot execute. The removal itself must key on `threadIdentifier`, since the identifier
+differs between the two posters — see [social-service](../services/social-service.md) "Cross-device
+read dismissal".
+
+#### Silent frames reach the app through a method Canari ADDS (2026-10-17)
+
+Until 2026-10-17 a silent frame reached **no Canari native code**, backgrounded or in the foreground
+(`willPresentNotification` fires for alerts only). The hook only REPLACED an existing
+`application:didReceiveRemoteNotification:fetchCompletionHandler:`; wry's delegate has none and
+Firebase's proxy found no delegate at configure time, so every launch of the iPhone 12 bench logged
+`remote notification hook NOT installed` and no `channel_read` dismissal ever ran on iOS.
+
+Now (`canari_push.mm`):
+
+- **`class_replaceMethod` ADDS the method**, chaining to any later wry implementation - the APNs
+  token hook's technique. The application's delegate is then re-assigned once
+  (`CanariReassignAppDelegate`), because UIKit records which optional methods a delegate implements
+  when it is SET; Firebase's own proxy does the same after it swizzles.
+- **Only a silent frame is acted on** (`CanariIsSilentFrame`: `content-available: 1` and no
+  `alert`); an alert stays the extension's (killed, background) and `willPresentNotification`'s
+  (foreground), or it would be drawn twice.
+- **What a woken process may do is an allowlist, each item a dismissal**
+  (`CanariHandleBackgroundFrame`): `channel_read` clears the salon; an MLS `message` frame whose
+  cleartext `senderId` is ME (my own read receipt or own-device copy) clears that conversation,
+  decrypting nothing; `call_ring_end` ends a CallKit ring. Every other kind - a Welcome, a
+  `welcome_request_pending`, a peer's receipt, a commit - is logged `NOT acted on`: the two Welcome
+  kinds would be the first background MLS write an iPhone has ever run, and wait for the
+  background-join row fix ([backlog](../backlog.md)). The `welcome_request_pending`, `isWelcome` and
+  `process_queue` branches of `CanariHandleFcmData`, which only a silent frame carries, are
+  therefore reached by nothing on iOS.
+- **The completion handler is called once**, after the removal has been issued and any chained
+  implementation has answered: early lets iOS suspend the process with the removal queued, never
+  makes iOS throttle later wakes.
+
+The `remote-notification` background mode was already declared, so whether iOS wakes the process is
+not what changed - what runs when it does is. Pinned by `iosSilentFrames.test.ts` (Objective-C++
+compiles only on the macOS runner). **Owed, on the iPhone 12 bench:** the launch line `remote
+notification hook installed`, then a salon read on another device clearing the iPhone's banner with
+`[CanariPush] type=channel_read - clearing notification` in the syslog, app backgrounded and app
+foregrounded.
 
 ### CallKit (VoIP pushes)
 

@@ -528,11 +528,12 @@ reader's.
 The proxy that would close the last row exists - `/api/mls/link-preview/image` (ticket-gated,
 SSRF-guarded, `image/*` only, [chat-delivery](../../services/chat-delivery.md)) - but routing GIFs
 through it is not the one-line change it looks like, so it was NOT done here: its ceiling is 3 MB
-(`IMAGE_MAX_BYTES`) and nothing has measured KLIPY's `md` rendition sizes against it, so an
-unmeasured share of GIFs would turn into a broken frame; only images up to `IMAGE_CACHEABLE_BYTES`
+(`IMAGE_MAX_BYTES`) and KLIPY's `md` renditions exceed it for 29 of 144 GIFs (20%; p50 1.1 MB, p90
+4.4 MB, max 11.7 MB; `sm` fits, max 2.9 MB; measured 2026-10-18 over trending and 5 searches, `HEAD`
+content-length), so about one GIF in five would turn into a broken frame; only images up to `IMAGE_CACHEABLE_BYTES`
 are cached server-side, so every larger GIF would be re-downloaded per reader through Canari's
 bandwidth; and the `#cn-size` fragment the frame reserves from must survive the rewrite. The work is
-a GIF-specific route (an allowlist of `static.klipy.com`, a measured ceiling, a byte cache keyed on
+a GIF-specific route (an allowlist of `static.klipy.com`, a measured ceiling (about 12 MB), a byte cache keyed on
 the content URL, streaming rather than buffering) plus the client rewrite at the three GIF
 renderers ([backlog](../../backlog.md)). The CSP cannot narrow this either way: `img-src` stays
 `https:` because the feed renders arbitrary user-posted images.

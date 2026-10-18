@@ -25,7 +25,7 @@ import {
 /** A well-formed Graine v2 signature: every salon row carries one (channel-encryption 21.8). */
 const SIGNATURE = Buffer.alloc(64, 7).toString('base64');
 
-/** A client message id as `crypto.randomUUID()` mints it (migration 088). */
+/** A client message id as `crypto.randomUUID()` mints it (migration 090). */
 const CLIENT_ID = '3f1c2b9a-7d4e-4c1a-9b2e-5a6d7c8e9f01';
 
 describe('ChannelService security hardening', () => {
@@ -101,7 +101,7 @@ describe('ChannelService security hardening', () => {
       create: jest.fn((x: unknown) => x),
       save: jest.fn((x: unknown) => Promise.resolve(x)),
       delete: jest.fn(() => Promise.resolve({ affected: 1 })),
-      // Raw SQL: the client-id tombstones of migration 088 (none by default).
+      // Raw SQL: the client-id tombstones of migration 090 (none by default).
       query: jest.fn((_sql: string, _params?: unknown[]) => Promise.resolve([] as unknown[])),
       find: jest.fn(),
       findOne: jest.fn(),
@@ -563,7 +563,7 @@ describe('ChannelService security hardening', () => {
     await service.deleteChannelMessage('ch1', 'm1', 'u1');
 
     expect(messageRepo.delete).toHaveBeenCalledWith({ id: 'm1', channelId: 'ch1' });
-    // In ONE transaction (migration 088): the client id's lock - the one a send takes around its
+    // In ONE transaction (migration 090): the client id's lock - the one a send takes around its
     // tombstone check and its insert - then the tombstone, then the row.
     expect(messageRepo.manager.transaction).toHaveBeenCalledTimes(1);
     const [[lockSql, lockParams], [sql, params]] = messageRepo.query.mock.calls;
@@ -1303,7 +1303,7 @@ describe('ChannelService security hardening', () => {
    * client's durable queue re-posts a salon message whose first POST got no answer; without this the
    * repeat of a POST that DID land wrote a second row (a duplicate on every member's screen).
    */
-  describe('a repeated send is answered with its stored row (migration 088)', () => {
+  describe('a repeated send is answered with its stored row (migration 090)', () => {
     const STORED = {
       id: 'm-first',
       channelId: 'ch1',

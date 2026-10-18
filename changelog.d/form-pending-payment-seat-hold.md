@@ -1,3 +1,0 @@
-### Fixed - an abandoned form checkout no longer keeps its seat for ever
-
-An online `pending` answer holds its seat for 30 minutes and its Lydia request dies two minutes before; a retry settles the previous request first (a paid one marks the answer paid instead of charging twice), a later payment takes a free seat or is flagged `paid_over_capacity`, a replayed payment no longer grants or records twice, and concurrent submits can no longer oversell a capped form (migration 084, [forms](docs/wiki/frontend/modules/forms.md#an-online-payment-holds-its-seat-for-30-minutes-and-a-late-one-is-decided-from-the-row-2026-10-15)).

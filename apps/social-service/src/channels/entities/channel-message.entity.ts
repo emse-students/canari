@@ -27,7 +27,7 @@ import {
   unique: true,
   where: '"senderSessionId" IS NOT NULL',
 })
-// One row per message its author composed (migration 088): a send repeated after a lost answer is
+// One row per message its author composed (migration 090): a send repeated after a lost answer is
 // answered with the stored row instead of writing a second one.
 @Index('UQ_channel_messages_author_client_id', ['authorId', 'channelId', 'clientMessageId'], {
   unique: true,
@@ -86,10 +86,10 @@ export class ChannelMessage {
    * (`AppMessage.message_id`). Never the primary key - the server mints that - only what makes a
    * repeated send idempotent: a second POST of the same author, salon and id returns this row
    * (WP-OFF-3). Edits and reactions carry their own row id here too (WP-OFF-4); null on a system
-   * notice and on every row older than migration 088. A send's answer carries it back: that echo is
+   * notice and on every row older than migration 090. A send's answer carries it back: that echo is
    * how a client learns this server answers a repeat with its row.
    *
-   * `select: false`, `update: false`: the deploy starts the services BEFORE it applies migration 088
+   * `select: false`, `update: false`: the deploy starts the services BEFORE it applies migration 090
    * ([social-service](../../../../../docs/wiki/services/social-service.md#a-query-at-boot-runs-before-the-migration-that-adds-its-column-2026-10-02)),
    * so no read and no save of a message may name the column - history and every lookup keep working
    * in that window. Only a write carrying a client id names it (it must: the unique index is the

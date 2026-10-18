@@ -284,7 +284,7 @@ import { Log } from '$lib/utils/Log';
  */
 /**
  * The 410 code a salon send gets when it repeats a message deleted since its first send landed
- * (social-service migration 088's tombstone): nothing is left to send or to offer again.
+ * (social-service migration 090's tombstone): nothing is left to send or to offer again.
  */
 export const CHANNEL_MESSAGE_DELETED = 'CHANNEL_MESSAGE_DELETED';
 
@@ -719,7 +719,7 @@ export class ChannelService {
   }
 
   /**
-   * POSTs one sealed salon row. Since migration 088 the answer carries back the `clientMessageId` it
+   * POSTs one sealed salon row. Since migration 090 the answer carries back the `clientMessageId` it
    * was posted under, which is how a client learns a repeat is answered with the stored row
    * (`salonRepeatProof.ts`).
    */

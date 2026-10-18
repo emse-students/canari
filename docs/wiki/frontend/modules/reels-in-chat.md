@@ -103,6 +103,7 @@ id). `feed` is the current behaviour byte for byte. `conversation` changes exact
 | --- | --- | --- |
 | Composer, EMPTY field | a camera button beside the microphone (Snapchat's place) | disappears when text is typed, as the mic does; the mic keeps its own hold gesture, the camera is a TAP target - two hold gestures side by side is how a slide turns into the wrong one |
 | The composer's "+" menu ([chat](chat.md#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)) | an entry "CanaReel" | the discoverable path and the desktop one; same handler |
+| The same "+" menu (phone apps; `addMenuItems`, one list for the web glass menu and the iOS native one) | an entry "CanaReels" (WP-REELS-MENU, 2026-10-18) | NAVIGATES to the camera TAB (`CAMERA_PLACE`), it opens no overlay: the tab is otherwise reached only by a swipe nothing announces. Not in the Android browser's paperclip menu. Owed: count of members who ever opened the camera, afterwards |
 | Camera inside the overlay | exactly the tab's controls | the camera opens on the FRONT lens (`CameraSession.facing` starts at `user`) |
 
 **Tap vs hold inside the overlay.** The shutter is unchanged: a HOLD films a reel. A TAP takes a photo,

@@ -98,6 +98,12 @@ message CallMsg {
   bool   has_video = 6; // Whether the caller intends to send video
   /** Originating device id (for multi-device answered / dismiss sibling rings). */
   string device_id = 8;
+  /**
+   * On an invite only: how long the callee may still answer, in milliseconds, as chat-delivery's
+   * `POST /calls/initiate` said to the caller. A DURATION, never an instant, so neither device
+   * compares its clock with the other's; the server's own deadline decides a late answer (410).
+   */
+  uint32 ring_timeout_ms = 9;
 
   oneof payload {
     string offer_sdp     = 2; // SDP offer json string

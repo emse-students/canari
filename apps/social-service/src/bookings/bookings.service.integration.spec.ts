@@ -1,0 +1,1162 @@
+/**
+ * THE BOOKINGS API'S RULES AGAINST A REAL POSTGRESQL (WP-B3, and the organiser's side, WP-B4).
+ *
+ * `BookingsService` and `BookingSpacesService` are run on a real connection, with migrations 087 onwards applied to a throwaway
+ * schema, because what it promises is a database's to keep: the space-then-resource row locks that
+ * turn every losing racer into a typed `slot-taken` (never a deadlock), quotas that hold across the
+ * resources of one space, a block refused over live bookings. Rights to an association
+ * (`AssociationsService.mayAct`) and the audience facts are stubbed: they have their own specs, and
+ * what is under test here is how the API USES them.
+ *
+ * Time is never the wall clock: every call is handed `NOW`, and the fixtures sit around it.
+ *
+ * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files (see `bookings.integration.spec.ts`).
+ */
+import { readFileSync, readdirSync } from 'fs';
+import { join } from 'path';
+import { createHmac, randomUUID } from 'crypto';
+import type { AddressInfo } from 'net';
+import { HttpException, Module, type INestApplication } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
+import { DataSource } from 'typeorm';
+import { Client } from 'pg';
+import { BOOKING_ENTITIES } from './bookings.module';
+import { BookingsService, NEAR_NOW_MS, type Actor } from './bookings.service';
+import {
+  BOOKINGS_ERASURE_STATEMENTS,
+  runErasureStatements,
+  type ErasureStatement,
+} from '../internal/account-erasure';
+import { BookingSlotsService } from './booking-slots.service';
+import { BookingSpace } from './entities/booking-space.entity';
+import { BookingResource } from './entities/booking-resource.entity';
+import { BookingAvailabilityRule } from './entities/booking-availability-rule.entity';
+import { BookingAvailabilityException } from './entities/booking-availability-exception.entity';
+import { BookingBlock } from './entities/booking-block.entity';
+import { Booking } from './entities/booking.entity';
+import { BookingParticipant } from './entities/booking-participant.entity';
+import { Association } from '../associations/entities/association.entity';
+import type { AssociationsService } from '../associations/associations.service';
+import type { PricingFactsService } from '../pricing/pricing-facts.service';
+import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
+import type { UserTagService } from '../users/user-tag.service';
+import { BookingSpacesService } from './booking-spaces.service';
+import { BookingSpacesController } from './booking-spaces.controller';
+import { MAX_PERSONAL_SPACES, MAX_RESOURCES_PER_SPACE } from './dto/space.dto';
+
+const URL = process.env.SOCIAL_IT_DATABASE_URL;
+const maybe = URL ? describe : describe.skip;
+
+const MIGRATION_DIR = join(__dirname, '..', 'migrations');
+const MIGRATION = readdirSync(MIGRATION_DIR)
+  .filter((f) => /^\d+_booking/.test(f))
+  .sort()
+  .map((f) => readFileSync(join(MIGRATION_DIR, f), 'utf8'))
+  .join('\n');
+
+const ALICE = 'a'.repeat(64);
+const BOB = 'b'.repeat(64);
+const CAROL = 'c'.repeat(64);
+const DAN = 'd'.repeat(64);
+/** The organiser of association spaces (MANAGE_BOOKINGS, stubbed). */
+const ORGA = 'e'.repeat(64);
+const STRANGER = 'f'.repeat(64);
+/** Created association spaces; holds no right on the association, so manages nothing. */
+const CREATOR = 'cr'.repeat(32);
+/** The eight racers of the lock test. */
+const RACERS = Array.from({ length: 8 }, (_, i) => `${i}`.repeat(64));
+
+/** Sunday 2026-11-01 12:00 UTC; the space is in UTC so local times read as written. */
+const NOW = Date.parse('2026-11-01T12:00:00Z');
+const on = (hhmm: string, day = '2026-11-02') => `${day}T${hhmm}:00.000Z`;
+
+const as = (userId: string): Actor => ({ userId, isGlobalAdmin: false });
+
+/** The `code` of the typed refusal a call ends in - never its message. */
+async function refusal(p: Promise<unknown>): Promise<Record<string, unknown>> {
+  try {
+    await p;
+  } catch (err) {
+    if (err instanceof HttpException) return err.getResponse() as Record<string, unknown>;
+    throw err;
+  }
+  throw new Error('expected a refusal, the call succeeded');
+}
+
+maybe('BookingsService against PostgreSQL (WP-B3)', () => {
+  const schema = `bookings_api_it_${Math.random().toString(36).slice(2, 10)}`;
+  let admin: Client;
+  let ds: DataSource;
+  let service: BookingsService;
+  let slotsService: BookingSlotsService;
+  let organiser: BookingSpacesService;
+  /** `account:association` pairs holding MANAGE_BOOKINGS. */
+  const grants = new Set<string>();
+  /** The audience facts of an account, as `PricingFactsService` would build them. */
+  const facts = new Map<string, Record<string, unknown>>();
+  /** Runs while the facts are built - i.e. between `book`'s first read of the space and its lock. */
+  let duringFacts: (() => Promise<void>) | null = null;
+  const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
+
+  beforeAll(async () => {
+    admin = new Client({ connectionString: URL });
+    await admin.connect();
+    await admin.query(`CREATE SCHEMA ${schema}`);
+    ds = new DataSource({
+      type: 'postgres',
+      url: URL,
+      entities: [...BOOKING_ENTITIES, Association],
+      synchronize: false,
+      extra: { options: `-c search_path=${schema}`, max: 12 },
+    });
+    await ds.initialize();
+    // The tables of other owners the API reads, in the shape it reads them.
+    await q(`CREATE TABLE associations (id uuid PRIMARY KEY)`);
+    await q(`CREATE TABLE users (id varchar PRIMARY KEY, "firstName" varchar, "lastName" varchar)`);
+    await q(
+      `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`
+    );
+    await q(MIGRATION);
+    for (const [id, first] of [
+      [ALICE, 'Alice'],
+      [BOB, 'Bob'],
+      [CAROL, 'Carol'],
+      [DAN, 'Dan'],
+      [ORGA, 'Orga'],
+      [STRANGER, 'Stranger'],
+      ...RACERS.map((r, i) => [r, `Racer${i}`]),
+    ]) {
+      await q(`INSERT INTO users (id, "firstName", "lastName") VALUES ($1, $2, 'X')`, [id, first]);
+    }
+
+    // The right as the real policy grants it: per account, per association, per flag. A stub that
+    // answered on the account alone would let "ownerId grants nothing" and "the organiser of A on
+    // B's space" pass whatever the service did.
+    const associations = {
+      mayAct: async (userId: string, associationId: string, flag: number) =>
+        flag === AssociationPermissionFlag.MANAGE_BOOKINGS &&
+        grants.has(`${userId}:${associationId}`),
+    } as unknown as AssociationsService;
+    const pricingFacts = {
+      build: async ({ userId }: { userId: string }) => {
+        await duringFacts?.();
+        return facts.get(userId) ?? {};
+      },
+    } as unknown as PricingFactsService;
+    const repo = <T extends object>(e: new () => T) => ds.getRepository(e);
+    const slots = (slotsService = new BookingSlotsService(
+      repo(BookingSpace),
+      repo(BookingResource),
+      repo(BookingAvailabilityRule),
+      repo(BookingAvailabilityException),
+      repo(BookingBlock),
+      repo(Booking)
+    ));
+    service = new BookingsService(
+      repo(BookingSpace),
+      repo(BookingResource),
+      repo(Booking),
+      repo(BookingParticipant),
+      repo(BookingBlock),
+      slots,
+      associations,
+      pricingFacts
+    );
+    organiser = new BookingSpacesService(
+      repo(BookingSpace),
+      repo(BookingResource),
+      repo(BookingAvailabilityRule),
+      repo(BookingAvailabilityException),
+      repo(Booking),
+      slots,
+      associations,
+      { listCotisationTiers: async () => [] } as unknown as UserTagService
+    );
+  });
+
+  afterAll(async () => {
+    await ds?.destroy();
+    await admin?.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
+    await admin?.end();
+  });
+
+  /**
+   * An association space, in UTC, steps of 30 min up to 4, open 08:00-22:00 every day, with
+   * `resources` resources. CREATED by CREATOR, who holds no right on the association; MANAGED by
+   * ORGA, who holds MANAGE_BOOKINGS on it - unless `managed` is false.
+   */
+  async function setup(settings: Partial<BookingSpace> = {}, resources = 1, managed = true) {
+    const association = (
+      await q(`INSERT INTO associations (id) VALUES (gen_random_uuid()) RETURNING id`)
+    )[0].id as string;
+    if (managed) grants.add(`${ORGA}:${association}`);
+    const space = await ds.getRepository(BookingSpace).save({
+      ownerId: CREATOR,
+      associationId: association,
+      name: 'Salle de musique',
+      timeZone: 'UTC',
+      stepMinutes: 30,
+      maxSteps: 4,
+      privateInfo: 'code 1234',
+      ...settings,
+    });
+    const ids: string[] = [];
+    for (let i = 0; i < resources; i++) {
+      const r = await ds
+        .getRepository(BookingResource)
+        .save({ spaceId: space.id, name: `Salle ${i}`, privateInfo: `cle ${i}`, position: i });
+      for (let weekday = 1; weekday <= 7; weekday++) {
+        await q(
+          `INSERT INTO booking_availability_rules ("resourceId", weekday, "startTime", "endTime")
+           VALUES ($1, $2, '08:00', '22:00')`,
+          [r.id, weekday]
+        );
+      }
+      ids.push(r.id);
+    }
+    return { space, resourceIds: ids };
+  }
+
+  const book = (
+    spaceId: string,
+    resourceId: string,
+    from: string,
+    to: string,
+    actor = ALICE,
+    extra: { participantIds?: string[]; holderId?: string } = {},
+    nowMs = NOW
+  ) =>
+    service.book(
+      spaceId,
+      { resourceId, startsAt: on(from), endsAt: on(to), ...extra },
+      as(actor),
+      nowMs
+    );
+
+  describe('the lock', () => {
+    it('eight simultaneous bookings of one slot: one wins, EVERY loser is told slot-taken', async () => {
+      for (let round = 0; round < 5; round++) {
+        const { space, resourceIds } = await setup();
+        const outcomes = await Promise.allSettled(
+          RACERS.map((r) => book(space.id, resourceIds[0], '14:00', '14:30', r))
+        );
+        const lost = outcomes.filter((o): o is PromiseRejectedResult => o.status === 'rejected');
+        expect(outcomes.length - lost.length).toBe(1);
+        expect(
+          lost.map((o) => (o.reason as HttpException).getResponse() as { code: string })
+        ).toEqual(Array(7).fill({ code: 'slot-taken' }));
+      }
+    }, 60_000);
+
+    it('holds a quota ACROSS resources: two concurrent bookings of one person, one passes', async () => {
+      const { space, resourceIds } = await setup({ maxActiveBookings: 1 }, 2);
+      const outcomes = await Promise.allSettled([
+        book(space.id, resourceIds[0], '10:00', '10:30'),
+        book(space.id, resourceIds[1], '10:00', '10:30'),
+      ]);
+      const lost = outcomes.filter((o): o is PromiseRejectedResult => o.status === 'rejected');
+      expect(lost).toHaveLength(1);
+      expect((lost[0].reason as HttpException).getResponse()).toEqual({
+        code: 'active-bookings',
+        holder: true,
+      });
+    });
+  });
+
+  describe('an account erased while its resource is being booked', () => {
+    // The erasure reads past and coming against the server's now(), so this day sits far ahead of
+    // any date the test may run on, and `book` is handed a now just before it.
+    const DAY = '2099-03-02';
+    const DAY_NOW = Date.parse('2099-03-01T12:00:00Z');
+    const slot = (resourceId: string) => ({
+      resourceId,
+      startsAt: on('14:00', DAY),
+      endsAt: on('14:30', DAY),
+    });
+    const LINKED_FIRST = new Set(['bookings_space_owner', 'bookings_linked_resource']);
+    /** The order before review: space and resource rows rewritten AFTER the bookings. */
+    const BROKEN_ORDER: readonly ErasureStatement[] = [
+      ...BOOKINGS_ERASURE_STATEMENTS.filter((s) => !LINKED_FIRST.has(s.label)),
+      ...BOOKINGS_ERASURE_STATEMENTS.filter((s) => LINKED_FIRST.has(s.label)),
+    ];
+
+    /** Resolves once some backend of this database waits on a lock. */
+    async function someoneWaitsOnALock() {
+      for (let i = 0; i < 500; i++) {
+        const { rows } = await admin.query<{ n: number }>(
+          `SELECT count(*)::int AS n FROM pg_stat_activity
+            WHERE datname = current_database() AND wait_event_type = 'Lock'`
+        );
+        if (rows[0].n > 0) return;
+        await new Promise((r) => setTimeout(r, 20));
+      }
+      throw new Error('no backend ever waited on a lock');
+    }
+
+    /**
+     * CAROL is linked to the resource and holds a coming booking on it. Her erasure runs
+     * `statements` in ONE transaction on its own connection; once her booking is cancelled (and
+     * before the transaction ends), ALICE books the same slot. What ALICE's booking came to.
+     */
+    async function race(statements: readonly ErasureStatement[]) {
+      const { space, resourceIds } = await setup();
+      const r = resourceIds[0];
+      await q(`UPDATE booking_resources SET "linkedUserId" = $1 WHERE id = $2`, [CAROL, r]);
+      await service.book(space.id, slot(r), as(CAROL), DAY_NOW);
+      const c = new Client({ connectionString: URL, options: `-c search_path=${schema}` });
+      await c.connect();
+      const db = {
+        write: async (sql: string, params: unknown[]) => (await c.query(sql, params)).rowCount ?? 0,
+        read: async <T>(sql: string, params: unknown[]) => (await c.query(sql, params)).rows as T[],
+      };
+      let booking: Promise<PromiseSettledResult<unknown>> | null = null;
+      try {
+        await c.query('BEGIN');
+        for (const statement of statements) {
+          await runErasureStatements(db, [statement], CAROL);
+          if (statement.label === 'bookings_coming_cancelled') {
+            booking = Promise.allSettled([
+              service.book(space.id, slot(r), as(ALICE), DAY_NOW),
+            ]).then(([o]) => o);
+            await someoneWaitsOnALock();
+          }
+        }
+        await c.query('COMMIT');
+      } finally {
+        await c.end();
+      }
+      return booking!;
+    }
+
+    it('the erasure takes space, resource, booking like the booking path: no deadlock, the booking lands', async () => {
+      const outcome = await race(BOOKINGS_ERASURE_STATEMENTS);
+      expect(outcome.status).toBe('fulfilled');
+    }, 30_000);
+
+    it('a writer that breaks the order: the booker is told try-again, never a 500', async () => {
+      const outcome = await race(BROKEN_ORDER);
+      expect(outcome.status).toBe('rejected');
+      const reason = (outcome as PromiseRejectedResult).reason as HttpException;
+      expect(reason.getResponse()).toEqual({ code: 'try-again' });
+    }, 30_000);
+  });
+
+  describe('booking', () => {
+    it('counts a participant against their own quota, and an organiser on behalf is exempt', async () => {
+      const { space, resourceIds } = await setup({ maxActiveBookings: 1 }, 2);
+      await book(space.id, resourceIds[0], '10:00', '10:30', BOB);
+      expect(
+        await refusal(
+          book(space.id, resourceIds[1], '11:00', '11:30', ALICE, { participantIds: [BOB] })
+        )
+      ).toEqual({ code: 'active-bookings', holder: false });
+      await expect(
+        book(space.id, resourceIds[1], '11:00', '11:30', ORGA, { holderId: BOB })
+      ).resolves.toHaveProperty('id');
+    });
+
+    it('lets only the organiser book on behalf', async () => {
+      const { space, resourceIds } = await setup();
+      expect(
+        await refusal(book(space.id, resourceIds[0], '10:00', '10:30', ALICE, { holderId: BOB }))
+      ).toEqual({ code: 'not-manager' });
+    });
+
+    it('refuses a past slot, a misaligned range, an unknown account and a blocked pair', async () => {
+      const { space, resourceIds } = await setup();
+      const r = resourceIds[0];
+      expect(
+        await refusal(book(space.id, r, '10:00', '10:30', ALICE, {}, Date.parse(on('10:10'))))
+      ).toEqual({
+        code: 'started',
+      });
+      expect(await refusal(book(space.id, r, '10:10', '10:40'))).toEqual({ code: 'misaligned' });
+      expect(
+        await refusal(
+          book(space.id, r, '10:00', '10:30', ALICE, { participantIds: ['9'.repeat(64)] })
+        )
+      ).toEqual({ code: 'unknown-account' });
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [CAROL, ALICE]);
+      // Symmetric: CAROL blocked ALICE, and ALICE may not add CAROL either.
+      expect(
+        await refusal(book(space.id, r, '10:00', '10:30', ALICE, { participantIds: [CAROL] }))
+      ).toEqual({ code: 'participant-blocked' });
+    });
+  });
+
+  describe('cancelling and withdrawing (D5, decided by the user 2026-10-17)', () => {
+    it('the holder cancels five minutes before the start, whatever the participants delay', async () => {
+      const { space, resourceIds } = await setup({ participantWithdrawMinMinutes: 120 });
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      const late = Date.parse(on('09:55'));
+      expect(await refusal(service.withdraw(id, as(BOB), late))).toEqual({
+        code: 'withdrawal-delay',
+      });
+      expect(await refusal(service.cancel(id, as(STRANGER), late))).toEqual({ code: 'not-yours' });
+      await expect(service.cancel(id, as(ALICE), late)).resolves.toEqual({ ok: true });
+      expect(await refusal(service.cancel(id, as(ALICE), late))).toEqual({
+        code: 'already-cancelled',
+      });
+    });
+
+    it('the organiser cancels at any time; a participant withdraws before the delay', async () => {
+      const { space, resourceIds } = await setup({ participantWithdrawMinMinutes: 120 });
+      const first = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      await expect(service.cancel(first.id, as(ORGA), Date.parse(on('09:59')))).resolves.toEqual({
+        ok: true,
+      });
+
+      const second = await book(space.id, resourceIds[0], '12:00', '12:30', ALICE, {
+        participantIds: [BOB],
+      });
+      // 12:00 minus 120 min: 10:00 is already too late, 09:59 is not.
+      expect(await refusal(service.withdraw(second.id, as(BOB), Date.parse(on('10:00'))))).toEqual({
+        code: 'withdrawal-delay',
+      });
+      await expect(service.withdraw(second.id, as(BOB), Date.parse(on('09:59')))).resolves.toEqual({
+        ok: true,
+      });
+      expect(await refusal(service.withdraw(second.id, as(BOB), NOW))).toEqual({
+        code: 'not-a-participant',
+      });
+    });
+
+    it('with no delay a participant withdraws until the start', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      await expect(service.withdraw(id, as(BOB), Date.parse(on('09:59')))).resolves.toEqual({
+        ok: true,
+      });
+    });
+
+    it('nothing moves once a booking has started: it is history', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      const started = Date.parse(on('10:00'));
+      expect(await refusal(service.cancel(id, as(ALICE), started))).toEqual({
+        code: 'history-frozen',
+      });
+      expect(await refusal(service.cancel(id, as(ORGA), started))).toEqual({
+        code: 'history-frozen',
+      });
+      expect(await refusal(service.withdraw(id, as(BOB), started))).toEqual({
+        code: 'history-frozen',
+      });
+    });
+  });
+
+  describe('blocks (D10, D29)', () => {
+    it('refuses a block over a live booking, naming it, then takes it once cancelled', async () => {
+      const { space, resourceIds } = await setup();
+      const r = resourceIds[0];
+      const { id } = await book(space.id, r, '10:00', '10:30');
+      const block = { startsAt: on('09:00'), endsAt: on('12:00'), reason: 'travaux' };
+      expect(await refusal(service.addBlock(r, block, as(ORGA), NOW))).toEqual({
+        code: 'bookings-inside-block',
+        bookingIds: [id],
+      });
+      expect(await refusal(service.addBlock(r, block, as(ALICE), NOW))).toEqual({
+        code: 'not-manager',
+      });
+      await service.cancel(id, as(ALICE), NOW);
+      const { id: blockId } = await service.addBlock(r, block, as(ORGA), NOW);
+      expect(await refusal(book(space.id, r, '10:00', '10:30'))).toEqual({ code: 'blocked' });
+      await service.removeBlock(blockId, as(ORGA), NOW);
+      await expect(book(space.id, r, '10:00', '10:30')).resolves.toHaveProperty('id');
+    });
+
+    it('lets the linked account block its own resource, and refuses a past range', async () => {
+      const { space, resourceIds } = await setup();
+      const r = resourceIds[0];
+      await ds.getRepository(BookingResource).update(r, { linkedUserId: DAN });
+      expect(
+        await refusal(
+          service.addBlock(
+            r,
+            { startsAt: on('08:00', '2026-10-01'), endsAt: on('09:00', '2026-10-01') },
+            as(DAN),
+            NOW
+          )
+        )
+      ).toEqual({ code: 'history-frozen' });
+      await expect(
+        service.addBlock(r, { startsAt: on('08:00'), endsAt: on('09:00') }, as(DAN), NOW)
+      ).resolves.toHaveProperty('id');
+      expect(await refusal(service.removeBlock(randomUUID(), as(DAN), NOW))).toEqual({
+        code: 'block-not-found',
+      });
+      expect(space.slotMode).toBe('step');
+    });
+  });
+
+  describe('what each viewer reads (D9, D32)', () => {
+    async function bookedUnit(spaceId: string, viewer: string) {
+      const grid = await service.spaceSlots(spaceId, '2026-11-02', '2026-11-02', as(viewer));
+      return grid[0].units.find((u) => u.state === 'booked')!;
+    }
+
+    it("'occupied': a stranger reads no name, the people and the organiser read them", async () => {
+      const { space, resourceIds } = await setup({ nameVisibility: 'occupied' });
+      await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, { participantIds: [BOB] });
+
+      const stranger = await bookedUnit(space.id, STRANGER);
+      expect(stranger.booking).not.toHaveProperty('holderName');
+      expect(stranger.booking).not.toHaveProperty('participantNames');
+      expect(stranger.booking).not.toHaveProperty('answers');
+      expect(stranger.booking?.mine).toBe(false);
+
+      const bob = await bookedUnit(space.id, BOB);
+      expect(bob.booking).toMatchObject({
+        holderName: 'Alice X',
+        participantNames: ['Bob X'],
+        mine: true,
+      });
+      expect(bob.booking).not.toHaveProperty('answers');
+
+      expect(await bookedUnit(space.id, ORGA)).toHaveProperty('booking.answers');
+    });
+
+    it("'names': a stranger reads the names, never the answers", async () => {
+      const { space, resourceIds } = await setup({ nameVisibility: 'names' });
+      await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+      const stranger = await bookedUnit(space.id, STRANGER);
+      expect(stranger.booking).toMatchObject({ holderName: 'Alice X' });
+      expect(stranger.booking).not.toHaveProperty('answers');
+    });
+
+    it('private texts reach the people of a LIVE booking only', async () => {
+      const { space, resourceIds } = await setup();
+      const live = await book(space.id, resourceIds[0], '10:00', '10:30', CAROL, {
+        participantIds: [DAN],
+      });
+      const gone = await book(space.id, resourceIds[0], '11:00', '11:30', CAROL);
+      await service.cancel(gone.id, as(CAROL), NOW);
+
+      const mine = await service.mine(as(DAN));
+      expect(mine.find((b) => b.id === live.id)?.privateInfo).toEqual({
+        spacePrivateInfo: 'code 1234',
+        resourcePrivateInfo: 'cle 0',
+      });
+      const carol = await service.mine(as(CAROL));
+      expect(carol.find((b) => b.id === gone.id)?.privateInfo).toBeNull();
+      expect(await service.mine(as(STRANGER))).toEqual([]);
+      expect(await service.getSpace(space.id, as(STRANGER))).not.toHaveProperty('privateInfo');
+    });
+
+    it('the organiser list is the organiser alone', async () => {
+      const { space } = await setup();
+      expect(await refusal(service.spaceBookings(space.id, as(ALICE)))).toEqual({
+        code: 'not-manager',
+      });
+      await expect(service.spaceBookings(space.id, as(ORGA))).resolves.toEqual({
+        items: [],
+        nextOffset: null,
+      });
+    });
+
+    it('pages the organiser list by start', async () => {
+      const { space, resourceIds } = await setup();
+      const ids = [];
+      for (const [from, to] of [
+        ['10:00', '10:30'],
+        ['11:00', '11:30'],
+        ['12:00', '12:30'],
+      ]) {
+        ids.push((await book(space.id, resourceIds[0], from, to)).id);
+      }
+      const first = await service.spaceBookings(space.id, as(ORGA), 0, 2);
+      expect(first.items.map((b) => b.id)).toEqual(ids.slice(0, 2));
+      expect(first.nextOffset).toBe(2);
+      const last = await service.spaceBookings(space.id, as(ORGA), 2, 2);
+      expect(last.items.map((b) => b.id)).toEqual([ids[2]]);
+      expect(last.nextOffset).toBeNull();
+    });
+
+    it('the account linked to a resource reads its bookings (D10): names, never answers', async () => {
+      const { space, resourceIds } = await setup({ nameVisibility: 'occupied' });
+      await ds.getRepository(BookingResource).update(resourceIds[0], { linkedUserId: DAN });
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+
+      const unit = await bookedUnit(space.id, DAN);
+      expect(unit.booking).toMatchObject({ holderName: 'Alice X', mine: false });
+      expect(unit.booking).not.toHaveProperty('answers');
+
+      // Other tests booked for DAN too: this booking is read by its id.
+      const dans = (await service.mine(as(DAN))).filter((b) => b.id === id);
+      expect(dans).toEqual([
+        expect.objectContaining({ linked: true, holder: false, holderName: 'Alice X' }),
+      ]);
+      expect(dans[0]).not.toHaveProperty('answers');
+      expect(dans[0].privateInfo).toEqual({
+        spacePrivateInfo: 'code 1234',
+        resourcePrivateInfo: 'cle 0',
+      });
+    });
+
+    it('a participant who withdrew reads an occupied space as anyone else does', async () => {
+      const { space, resourceIds } = await setup({ nameVisibility: 'occupied' });
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      await service.withdraw(id, as(BOB), NOW);
+      expect((await bookedUnit(space.id, BOB)).booking).not.toHaveProperty('holderName');
+      const bobs = (await service.mine(as(BOB))).filter((b) => b.id === id);
+      expect(bobs).toEqual([expect.objectContaining({ withdrawn: true })]);
+      expect(bobs[0]).not.toHaveProperty('holderName');
+      expect(bobs[0].privateInfo).toBeNull();
+    });
+
+    it('leaves out a booking that vanished between the two reads, never a 500', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30');
+      const real = slotsService.spaceSlots.bind(slotsService);
+      const spy = jest.spyOn(slotsService, 'spaceSlots').mockImplementationOnce(async (...args) => {
+        const grid = await real(...args);
+        await q(`DELETE FROM bookings WHERE id = $1`, [id]);
+        return grid;
+      });
+      try {
+        const grid = await service.spaceSlots(space.id, '2026-11-02', '2026-11-02', as(ALICE));
+        expect(grid[0].units.some((u) => u.state === 'booked')).toBe(false);
+        expect(grid[0].units.length).toBeGreaterThan(0);
+      } finally {
+        spy.mockRestore();
+      }
+    });
+  });
+
+  describe('review of #2002: rights before state, blocks and the past', () => {
+    it('tells a stranger not-yours whatever the state of the booking', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      await service.cancel(id, as(ALICE), NOW);
+      expect(await refusal(service.cancel(id, as(STRANGER), NOW))).toEqual({ code: 'not-yours' });
+      expect(await refusal(service.withdraw(id, as(STRANGER), NOW))).toEqual({
+        code: 'not-a-participant',
+      });
+      const started = Date.parse(on('10:10'));
+      expect(await refusal(service.cancel(id, as(STRANGER), started))).toEqual({
+        code: 'not-yours',
+      });
+    });
+
+    it("lets a linked account lift its own blocks only, never the organiser's", async () => {
+      const { resourceIds } = await setup();
+      const r = resourceIds[0];
+      await ds.getRepository(BookingResource).update(r, { linkedUserId: DAN });
+      const orgas = await service.addBlock(
+        r,
+        { startsAt: on('09:00'), endsAt: on('10:00') },
+        as(ORGA),
+        NOW
+      );
+      const dans = await service.addBlock(
+        r,
+        { startsAt: on('14:00'), endsAt: on('15:00') },
+        as(DAN),
+        NOW
+      );
+      expect(await refusal(service.removeBlock(orgas.id, as(DAN), NOW))).toEqual({
+        code: 'not-yours',
+      });
+      await expect(service.removeBlock(dans.id, as(DAN), NOW)).resolves.toEqual({ ok: true });
+      await expect(service.removeBlock(orgas.id, as(ORGA), NOW)).resolves.toEqual({ ok: true });
+    });
+
+    it('refuses a block starting in the past; a booking under way neither refuses nor is named', async () => {
+      const { space, resourceIds } = await setup();
+      const r = resourceIds[0];
+      await book(space.id, r, '10:00', '10:30');
+      const coming = await book(space.id, r, '11:00', '11:30');
+      const at1015 = Date.parse(on('10:15'));
+      expect(
+        await refusal(
+          service.addBlock(r, { startsAt: on('10:00'), endsAt: on('12:00') }, as(ORGA), at1015)
+        )
+      ).toEqual({ code: 'history-frozen' });
+      expect(
+        await refusal(
+          service.addBlock(r, { startsAt: on('10:15'), endsAt: on('12:00') }, as(ORGA), at1015)
+        )
+      ).toEqual({ code: 'bookings-inside-block', bookingIds: [coming.id] });
+      await service.cancel(coming.id, as(ALICE), at1015);
+      await expect(
+        service.addBlock(r, { startsAt: on('10:15'), endsAt: on('12:00') }, as(ORGA), at1015)
+      ).resolves.toHaveProperty('id');
+    });
+
+    it('a start just behind the server clock is "from now" and moves up to it; an older one is refused', async () => {
+      const { resourceIds } = await setup();
+      const r = resourceIds[0];
+      const now = Date.parse(on('10:15'));
+      const late = new Date(now - NEAR_NOW_MS).toISOString();
+      const { id } = await service.addBlock(
+        r,
+        { startsAt: late, endsAt: on('12:00') },
+        as(ORGA),
+        now
+      );
+      const row = await ds.getRepository(BookingBlock).findOneByOrFail({ id });
+      expect(row.startsAt.toISOString()).toBe(on('10:15'));
+      const tooLate = new Date(now - NEAR_NOW_MS - 1).toISOString();
+      expect(
+        await refusal(
+          service.addBlock(r, { startsAt: tooLate, endsAt: on('13:00') }, as(ORGA), now)
+        )
+      ).toEqual({ code: 'history-frozen' });
+      // Moved up to now, a block that ended before the server's now is empty.
+      expect(
+        await refusal(
+          service.addBlock(
+            r,
+            { startsAt: late, endsAt: new Date(now - 1).toISOString() },
+            as(ORGA),
+            now
+          )
+        )
+      ).toEqual({ code: 'range' });
+    });
+
+    it('lifting a block under way ends it now and keeps its past part', async () => {
+      const { resourceIds } = await setup();
+      const { id } = await service.addBlock(
+        resourceIds[0],
+        { startsAt: on('10:00'), endsAt: on('12:00') },
+        as(ORGA),
+        NOW
+      );
+      const at11 = Date.parse(on('11:00'));
+      await service.removeBlock(id, as(ORGA), at11);
+      const row = await ds.getRepository(BookingBlock).findOneByOrFail({ id });
+      expect([row.startsAt.toISOString(), row.endsAt.toISOString()]).toEqual([
+        on('10:00'),
+        on('11:00'),
+      ]);
+      expect(await refusal(service.removeBlock(id, as(ORGA), at11))).toEqual({
+        code: 'history-frozen',
+      });
+    });
+  });
+
+  describe('review of #2002: rights read as the real policy grants them', () => {
+    it('the CREATOR of an association space manages nothing: ownerId grants no right', async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE);
+      expect(await refusal(service.spaceBookings(space.id, as(CREATOR)))).toEqual({
+        code: 'not-manager',
+      });
+      expect(await refusal(service.cancel(id, as(CREATOR), NOW))).toEqual({ code: 'not-yours' });
+      expect(
+        await refusal(book(space.id, resourceIds[0], '11:00', '11:30', CREATOR, { holderId: BOB }))
+      ).toEqual({ code: 'not-manager' });
+    });
+
+    it("the organiser of association A has no right on B's space", async () => {
+      await setup();
+      const b = await setup({}, 1, false);
+      expect(await refusal(service.spaceBookings(b.space.id, as(ORGA)))).toEqual({
+        code: 'not-manager',
+      });
+      expect(
+        await refusal(book(b.space.id, b.resourceIds[0], '10:00', '10:30', ORGA, { holderId: BOB }))
+      ).toEqual({ code: 'not-manager' });
+    });
+
+    it('refuses a resource of another space', async () => {
+      const a = await setup();
+      const b = await setup();
+      expect(await refusal(book(a.space.id, b.resourceIds[0], '10:00', '10:30'))).toEqual({
+        code: 'resource-not-found',
+      });
+    });
+
+    it('refuses an account outside the audience, on every read and write', async () => {
+      const { space, resourceIds } = await setup({ audience: { promo: { values: [2024] } } });
+      facts.set(BOB, { promo: 2024, formation: null, cotisationTiers: [], answers: {} });
+      for (const p of [
+        service.getSpace(space.id, as(ALICE)),
+        service.spaceSlots(space.id, '2026-11-02', '2026-11-02', as(ALICE)),
+        book(space.id, resourceIds[0], '10:00', '10:30', ALICE),
+      ]) {
+        expect(await refusal(p)).toEqual({ code: 'audience' });
+      }
+      await expect(book(space.id, resourceIds[0], '10:00', '10:30', BOB)).resolves.toHaveProperty(
+        'id'
+      );
+    });
+
+    it('decides on the space AS LOCKED: a ceiling or the questions changed meanwhile count', async () => {
+      const items = [{ id: 'q', label: 'Promo', required: false, type: 'short_text' }];
+      const { space, resourceIds } = await setup({ items });
+      const r = resourceIds[0];
+      const spaces = ds.getRepository(BookingSpace);
+      duringFacts = () => spaces.update(space.id, { maxPeople: 1 }).then(() => undefined);
+      try {
+        expect(
+          await refusal(book(space.id, r, '10:00', '10:30', ALICE, { participantIds: [BOB] }))
+        ).toEqual({ code: 'too-many-people', maxPeople: 1 });
+        duringFacts = () =>
+          spaces.update(space.id, { maxPeople: null, items: [] }).then(() => undefined);
+        expect(await refusal(book(space.id, r, '10:00', '10:30'))).toEqual({
+          code: 'space-changed',
+        });
+      } finally {
+        duringFacts = null;
+      }
+    });
+
+    it('refuses too many people and a holder named as a participant', async () => {
+      const { space, resourceIds } = await setup({ maxPeople: 2 });
+      const r = resourceIds[0];
+      expect(
+        await refusal(book(space.id, r, '10:00', '10:30', ALICE, { participantIds: [BOB, CAROL] }))
+      ).toEqual({ code: 'too-many-people', maxPeople: 2 });
+      expect(
+        await refusal(book(space.id, r, '10:00', '10:30', ALICE, { participantIds: [ALICE] }))
+      ).toEqual({ code: 'holder-is-participant' });
+      await expect(
+        book(space.id, r, '10:00', '10:30', ALICE, { participantIds: [BOB] })
+      ).resolves.toHaveProperty('id');
+    });
+
+    it('honours a block between the HOLDER and a participant when the organiser books on behalf (D21)', async () => {
+      const { space, resourceIds } = await setup();
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [DAN, BOB]);
+      expect(
+        await refusal(
+          book(space.id, resourceIds[0], '10:00', '10:30', ORGA, {
+            holderId: BOB,
+            participantIds: [DAN],
+          })
+        )
+      ).toEqual({ code: 'participant-blocked' });
+    });
+  });
+
+  describe('the organiser (WP-B4)', () => {
+    const EVERY_DAY = [1, 2, 3, 4, 5, 6, 7].map((weekday) => ({
+      weekday,
+      startTime: '08:00',
+      endTime: '22:00',
+    }));
+    const availability = (lines: object[], exceptions: object[] = []) =>
+      ({ lines, exceptions }) as never;
+
+    it('creates a personal space for anyone, an entity space for its organiser alone', async () => {
+      const association = (
+        await q(`INSERT INTO associations (id) VALUES (gen_random_uuid()) RETURNING id`)
+      )[0].id as string;
+      grants.add(`${ORGA}:${association}`);
+      const { id: personal } = await organiser.create({ name: 'Psy' }, as(ALICE));
+      expect(
+        await refusal(organiser.create({ name: 'BDA', associationId: association }, as(ALICE)))
+      ).toEqual({ code: 'not-manager' });
+      await organiser.create({ name: 'BDA', associationId: association }, as(ORGA));
+
+      expect((await organiser.managedList(null, as(ALICE))).map((s) => s.id)).toEqual([personal]);
+      expect(await organiser.managedList(association, as(ORGA))).toEqual([
+        expect.objectContaining({ name: 'BDA', resourceCount: 0 }),
+      ]);
+      expect(await refusal(organiser.managedList(association, as(ALICE)))).toEqual({
+        code: 'not-manager',
+      });
+      expect(await refusal(organiser.managedSpaceView(personal, as(BOB)))).toEqual({
+        code: 'not-manager',
+      });
+    });
+
+    it('refuses settings the database would refuse, as codes', async () => {
+      const { id } = await organiser.create({ name: 'x' }, as(ALICE));
+      const patch = (dto: object) => organiser.update(id, dto as never, as(ALICE), NOW);
+      expect(await refusal(patch({ timeZone: 'Mars/Olympus' }))).toEqual({ code: 'time-zone' });
+      expect(await refusal(patch({ maxMinutesPerPeriod: 60 }))).toEqual({ code: 'quota-pair' });
+      expect(
+        await refusal(patch({ items: [{ id: 'q', label: 'CV', required: true, type: 'file' }] }))
+      ).toEqual({ code: 'file-question-not-yet' });
+      await expect(patch({ slotMode: 'slots' })).resolves.toEqual({ ok: true });
+      const view = await organiser.managedSpaceView(id, as(ALICE));
+      expect([view.slotMode, view.stepMinutes, view.maxSteps]).toEqual(['slots', null, null]);
+    });
+
+    it('writes availability and reads it back; refuses a malformed line', async () => {
+      const { space, resourceIds } = await setup();
+      const r = resourceIds[0];
+      expect(
+        await refusal(
+          organiser.setAvailability(
+            r,
+            availability([{ weekday: 1, startTime: '10:00', endTime: '09:00' }]),
+            as(ORGA),
+            NOW
+          )
+        )
+      ).toEqual({ code: 'line-order' });
+      expect(
+        await refusal(
+          organiser.setAvailability(
+            r,
+            availability([
+              { weekday: 1, onDate: '2026-11-02', startTime: '09:00', endTime: '10:00' },
+            ]),
+            as(ORGA),
+            NOW
+          )
+        )
+      ).toEqual({ code: 'line-kind' });
+      await organiser.setAvailability(
+        r,
+        availability(
+          [
+            { weekday: 5, startTime: '22:00', endTime: '24:00' },
+            { weekday: 6, startTime: '00:00', endTime: '02:00' },
+          ],
+          [{ fromDate: '2026-12-24', toDate: '2027-01-02' }]
+        ),
+        as(ORGA),
+        NOW
+      );
+      const view = await organiser.managedSpaceView(space.id, as(ORGA));
+      expect(view.resources[0].lines).toEqual(
+        expect.arrayContaining([
+          { weekday: 5, onDate: null, startTime: '22:00:00', endTime: '24:00:00' },
+          { weekday: 6, onDate: null, startTime: '00:00:00', endTime: '02:00:00' },
+        ])
+      );
+      expect(view.resources[0].exceptions).toEqual([
+        { fromDate: '2026-12-24', toDate: '2027-01-02' },
+      ]);
+    });
+
+    it('refuses an availability or a step change over a coming booking, naming it (D29)', async () => {
+      const { space, resourceIds } = await setup();
+      const r = resourceIds[0];
+      const { id } = await book(space.id, r, '10:00', '10:30');
+      expect(
+        await refusal(
+          organiser.setAvailability(
+            r,
+            availability([{ weekday: 1, startTime: '14:00', endTime: '18:00' }]),
+            as(ORGA),
+            NOW
+          )
+        )
+      ).toEqual({ code: 'bookings-inside-change', bookingIds: [id] });
+      expect(await refusal(organiser.update(space.id, { stepMinutes: 45 }, as(ORGA), NOW))).toEqual(
+        {
+          code: 'bookings-inside-change',
+          bookingIds: [id],
+        }
+      );
+      // Keeping the booking inside: accepted.
+      await expect(
+        organiser.setAvailability(r, availability(EVERY_DAY), as(ORGA), NOW)
+      ).resolves.toEqual({ ok: true });
+    });
+
+    it('never deletes a resource that has history, cancelled or past included (D42)', async () => {
+      const { space, resourceIds } = await setup({}, 2);
+      const [booked, never] = resourceIds;
+      const { id } = await book(space.id, booked, '10:00', '10:30');
+      expect(await refusal(organiser.removeResource(booked, as(ORGA)))).toEqual({
+        code: 'resource-has-bookings',
+      });
+      // Cancelled is still history (D15): still refused, and the row is still there.
+      await service.cancel(id, as(ALICE), NOW);
+      expect(await refusal(organiser.removeResource(booked, as(ORGA)))).toEqual({
+        code: 'resource-has-bookings',
+      });
+      expect(await ds.getRepository(Booking).countBy({ id })).toBe(1);
+      // A resource nobody ever booked goes.
+      await expect(organiser.removeResource(never, as(ORGA))).resolves.toEqual({ ok: true });
+    });
+
+    it('a booking racing an availability change: never both', async () => {
+      for (let round = 0; round < 5; round++) {
+        const { space, resourceIds } = await setup();
+        const r = resourceIds[0];
+        const [booked, changed] = await Promise.allSettled([
+          book(space.id, r, '10:00', '10:30'),
+          organiser.setAvailability(
+            r,
+            availability([{ weekday: 1, startTime: '14:00', endTime: '18:00' }]),
+            as(ORGA),
+            NOW
+          ),
+        ]);
+        expect([booked.status, changed.status].filter((s) => s === 'fulfilled')).toHaveLength(1);
+      }
+    });
+
+    it('links a resource to an existing account only, and deletes a space with everything', async () => {
+      const { space } = await setup();
+      expect(
+        await refusal(
+          organiser.addResource(
+            space.id,
+            { name: 'Alumni', linkedUserId: '9'.repeat(64) },
+            as(ORGA)
+          )
+        )
+      ).toEqual({ code: 'unknown-account' });
+      const { id } = await organiser.addResource(
+        space.id,
+        { name: 'Alumni', linkedUserId: DAN.toUpperCase() },
+        as(ORGA)
+      );
+      expect((await ds.getRepository(BookingResource).findOneByOrFail({ id })).linkedUserId).toBe(
+        DAN
+      );
+      await organiser.remove(space.id, as(ORGA), NOW);
+      expect(await ds.getRepository(BookingResource).countBy({ spaceId: space.id })).toBe(0);
+    });
+
+    it('refuses duplicate question ids, a zoneless opening, an entity that does not exist', async () => {
+      const { id } = await organiser.create({ name: 'x' }, as(ALICE));
+      const patch = (dto: object) => organiser.update(id, dto as never, as(ALICE), NOW);
+      const q1 = { id: 'q', label: 'Nom', required: false, type: 'text' };
+      expect(await refusal(patch({ items: [q1, { ...q1, label: 'Autre' }] }))).toEqual({
+        code: 'item-id',
+      });
+      expect(await refusal(patch({ opensAt: '2026-11-02T10:00:00' }))).toEqual({
+        code: 'opens-at',
+      });
+      await expect(patch({ opensAt: '2026-11-02T10:00:00+01:00' })).resolves.toEqual({ ok: true });
+      expect((await organiser.managedSpaceView(id, as(ALICE))).opensAt).toEqual(
+        new Date('2026-11-02T09:00:00Z')
+      );
+      expect(
+        await refusal(
+          organiser.create(
+            { name: 'ghost', associationId: randomUUID() },
+            { userId: ALICE, isGlobalAdmin: true }
+          )
+        )
+      ).toEqual({ code: 'association-not-found' });
+    });
+
+    it('caps personal spaces per account and resources per space', async () => {
+      const owner = RACERS[7];
+      for (let i = 0; i < MAX_PERSONAL_SPACES; i++) {
+        await organiser.create({ name: `s${i}` }, as(owner));
+      }
+      expect(await refusal(organiser.create({ name: 'one more' }, as(owner)))).toEqual({
+        code: 'too-many-spaces',
+        max: MAX_PERSONAL_SPACES,
+      });
+      const { space } = await setup({}, 0);
+      for (let i = 0; i < MAX_RESOURCES_PER_SPACE; i++) {
+        await organiser.addResource(space.id, { name: `r${i}` }, as(ORGA));
+      }
+      expect(
+        await refusal(organiser.addResource(space.id, { name: 'one more' }, as(ORGA)))
+      ).toEqual({ code: 'too-many-resources', max: MAX_RESOURCES_PER_SPACE });
+    });
+
+    /**
+     * THROUGH THE REAL HTTP LAYER, WITH NO ValidationPipe (review of #2006): the whitelist that
+     * strips unknown keys in production is not there, so the body reaches the service whole. What
+     * stops `ownerId`, `associationId`, `spaceId` or `id` from being written is the service's own
+     * list of the keys it copies - and that is what is under test here.
+     */
+    describe('a body naming fields it may not write (no whitelist)', () => {
+      const SECRET = 'bookings-http-it-secret';
+      let app: INestApplication;
+      let base: string;
+      let previousSecret: string | undefined;
+
+      const headersFor = (userId: string) => ({
+        'content-type': 'application/json',
+        'x-user-id': userId,
+        'x-internal-token': createHmac('sha256', SECRET)
+          .update(`${userId}:${Math.floor(Date.now() / 60000)}`)
+          .digest('hex'),
+      });
+      const send = (method: string, path: string, body: object) =>
+        fetch(`${base}/bookings${path}`, {
+          method,
+          headers: headersFor(ORGA),
+          body: JSON.stringify(body),
+        });
+
+      beforeAll(async () => {
+        previousSecret = process.env.INTERNAL_SHARED_SECRET;
+        process.env.INTERNAL_SHARED_SECRET = SECRET;
+        @Module({
+          controllers: [BookingSpacesController],
+          providers: [{ provide: BookingSpacesService, useValue: organiser }],
+        })
+        class HttpModule {}
+        app = await NestFactory.create(HttpModule, { logger: false });
+        await app.listen(0, '127.0.0.1');
+        base = `http://127.0.0.1:${(app.getHttpServer().address() as AddressInfo).port}`;
+      });
+
+      afterAll(async () => {
+        await app?.close();
+        if (previousSecret === undefined) delete process.env.INTERNAL_SHARED_SECRET;
+        else process.env.INTERNAL_SHARED_SECRET = previousSecret;
+      });
+
+      it('ignores id, ownerId and associationId on a space, id and spaceId on a resource', async () => {
+        const { space, resourceIds } = await setup();
+        const other = await setup();
+        const res = await send('PATCH', `/spaces/${space.id}`, {
+          name: 'Renamed',
+          id: randomUUID(),
+          ownerId: STRANGER,
+          associationId: other.space.associationId,
+          createdAt: '2000-01-01T00:00:00Z',
+        });
+        expect(res.status).toBe(200);
+        const row = await ds.getRepository(BookingSpace).findOneByOrFail({ id: space.id });
+        expect([row.name, row.ownerId, row.associationId]).toEqual([
+          'Renamed',
+          CREATOR,
+          space.associationId,
+        ]);
+
+        const patched = await send('PATCH', `/resources/${resourceIds[0]}`, {
+          name: 'Salle B',
+          id: randomUUID(),
+          spaceId: other.space.id,
+        });
+        expect(patched.status).toBe(200);
+        const r = await ds.getRepository(BookingResource).findOneByOrFail({ id: resourceIds[0] });
+        expect([r.name, r.spaceId]).toEqual(['Salle B', space.id]);
+
+        const forgedId = randomUUID();
+        const added = await send('POST', `/spaces/${space.id}/resources`, {
+          name: 'Salle C',
+          id: forgedId,
+          spaceId: other.space.id,
+        });
+        expect(added.status).toBe(201);
+        const { id } = (await added.json()) as { id: string };
+        expect(id).not.toBe(forgedId);
+        expect((await ds.getRepository(BookingResource).findOneByOrFail({ id })).spaceId).toBe(
+          space.id
+        );
+
+        const created = await send('POST', '/spaces', {
+          name: 'Mine',
+          ownerId: STRANGER,
+          id: forgedId,
+        });
+        expect(created.status).toBe(201);
+        const mine = (await created.json()) as { id: string };
+        const createdRow = await ds.getRepository(BookingSpace).findOneByOrFail({ id: mine.id });
+        expect([createdRow.id === forgedId, createdRow.ownerId]).toEqual([false, ORGA]);
+      });
+    });
+  });
+});

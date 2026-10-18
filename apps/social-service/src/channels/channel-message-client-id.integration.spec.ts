@@ -1,11 +1,11 @@
 /**
- * A SALON SEND REPEATED AFTER A LOST ANSWER, AGAINST A REAL POSTGRESQL - migration 088 included.
+ * A SALON SEND REPEATED AFTER A LOST ANSWER, AGAINST A REAL POSTGRESQL - migration 090 included.
  *
  * `channel.service.spec.ts` asserts the decisions over mocks; this file runs them over the real
  * partial unique index, which is where they can be wrong without any mock noticing: two repeats
  * racing past the lookup must leave ONE row, and the loser must be answered with the winner's row,
  * never a 409. It also pins the entity declaration of `clientMessageId` (`select`/`update: false`):
- * a history read and a pin must not name the column, because the deploy runs them BEFORE 088 exists.
+ * a history read and a pin must not name the column, because the deploy runs them BEFORE 090 exists.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files; CI's
  * `test-social-integration` sets it. Locally, against a throwaway PostgreSQL:
@@ -32,7 +32,7 @@ const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
 
 const migration = readFileSync(
-  join(__dirname, '..', 'migrations', '088_channel_message_client_id.sql'),
+  join(__dirname, '..', 'migrations', '090_channel_message_client_id.sql'),
   'utf8'
 );
 
@@ -43,7 +43,7 @@ const OTHER = 'someone-else';
 const SIGNATURE = Buffer.alloc(64, 7).toString('base64');
 const CLIENT_ID = '7b0c1d2e-3f40-4a5b-8c6d-7e8f90a1b2c3';
 
-maybe('a repeated salon send against PostgreSQL (migration 088)', () => {
+maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
   const schema = `clientid_it_${Math.random().toString(36).slice(2, 10)}`;
   let admin: Client;
   let ds: DataSource;
@@ -124,7 +124,7 @@ maybe('a repeated salon send against PostgreSQL (migration 088)', () => {
     expect(publish).toHaveBeenCalledTimes(1);
   };
 
-  it('migration 088 applies over the schema the entity built, twice', async () => {
+  it('migration 090 applies over the schema the entity built, twice', async () => {
     await q(migration);
     await q(migration);
     const index: { indexdef: string }[] = await q(
@@ -224,7 +224,7 @@ maybe('a repeated salon send against PostgreSQL (migration 088)', () => {
     expect(await rows()).toBe(before + 2);
   });
 
-  it('a history read and a pin never name the column: the deploy runs them before 088', async () => {
+  it('a history read and a pin never name the column: the deploy runs them before 090', async () => {
     await q(`DROP INDEX IF EXISTS "UQ_channel_messages_author_client_id"`);
     await q(`ALTER TABLE channel_messages DROP COLUMN "clientMessageId"`);
     try {

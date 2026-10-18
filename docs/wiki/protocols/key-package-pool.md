@@ -704,7 +704,8 @@ and **95% of devices were exempt from the refusal entirely**.
 
 * **`one_time_key_package` is INSERT-once and never updated**, so the sum IS the package's lifetime -
   which is precisely why migration 024 backfilled it that way. The mistake was making it a one-shot
-  UPDATE: old clients publish bare base64 with no date, so the backfill drained and refilled at ~290
+  UPDATE: clients below `0.18.10` published bare base64 with no date (refused since
+  `minClientVersion` 1.2.7), so the backfill drained and refilled at ~290
   rows a day. Migration 025 makes it the column `DEFAULT`, the publish path applies it to an undated
   or unparseable batch, and the two read sites plus the reclaim `COALESCE` to it - so the filter is
   **total** and no read has an "unknown" arm left.
@@ -745,3 +746,24 @@ not carrying the client change.** The rows date themselves instead, at about 20 
 against 2026-09-18 - 677 undated then, 597 four days later. The only shape that could reach the rest
 is the server decoding the `keyPackage` bytes it already holds, which means an MLS decoder in a
 service built never to interpret them; the trade is in `docs/wiki/backlog.md`.
+
+## How a client reads a key-package 404, and which answers retire an invitation (floor 1.2.7)
+
+`GET mls/devices/:userId/:deviceId/key-package` 404s only with a `reason` in its body: `revoked`,
+`unregistered` or `expired` (`KeyPackageRefusal`, `devices.controller.ts`). `fetchDeviceKeyPackage`
+(`mlsDeliveryApi.ts`) reads it in three ways:
+
+* **A known reason** is the refusal it names. The pending-invitation sweep (`actions.ts`) retires the
+  invitation on these three only - an ALLOWLIST, `refusalRetiresInvitation`, because retiring is
+  destructive. `expired` is among them because it heals elsewhere: the device mints a fresh package on
+  its next connection and `registerDevice` re-creates the membership.
+* **A reason this build does not know** is `unrecognized`: the server answered, but this build cannot
+  judge the answer, so the invitation is KEPT and the next sweep asks again. The unknown reason is
+  warned about once per reason for the client's life.
+* **A 404 with no reason** is not the delivery service answering (a proxy, a missing route): it is
+  `unanswered`, like a 5xx or an unreachable network. Nothing is retired, and the caller logs it once
+  per sweep.
+
+**A NEW 404 REASON MUST SHIP IN A CLIENT FLOOR FIRST.** A deployed client keeps the invitation on a
+reason it does not know, so a new reason that should retire anything does so only once
+`minClientVersion` admits only builds that know it. The rule is also written at the server's throw.

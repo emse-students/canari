@@ -21,10 +21,12 @@
 //! Downgrades are not hypothetical: an APK is reinstalled by hand all through a campaign session, and
 //! a store rollback does the same thing to a real user.
 //!
-//! So the sequence is READ-FIRST, WRITE-LATER. This module ships complete - [`frame_v1`] included and
-//! tested - but nothing calls it on a write path yet, which makes this release behaviourally inert.
-//! When [`crate::MlsManager::save_encrypted_with_key`] starts framing (step 2, once `minClientVersion`
-//! makes this reader the floor), the classification becomes real and not one release before.
+//! So the sequence was READ-FIRST, WRITE-LATER. The reader shipped in `v0.18.18`, behaviourally inert;
+//! step 2 (2026-10-17, `minClientVersion` 1.0.3 past that reader) made
+//! [`crate::MlsManager::encrypt_state_blob_with_key`] call [`frame_v1`], so every blob written since
+//! carries the header and a failed load is classified from it: `StateSealedUnderAnotherKey` when the
+//! fingerprint names another key, `StateAltered` when it names the key in hand and the tag fails. A
+//! legacy blob keeps answering `StateUndecryptable` until its first rewrite.
 //!
 //! # Why the legacy shape is not a fallback
 //!
@@ -175,11 +177,14 @@ pub fn key_fingerprint(key: &[u8; 32]) -> [u8; FINGERPRINT_LEN] {
 pub fn parse(blob: &[u8]) -> Result<Framed<'_>, MlsError> {
     if blob.len() >= HEADER_LEN && blob[..MAGIC.len()] == MAGIC {
         let version = blob[MAGIC.len()];
-        // The smallest body each version can carry: a nonce for v1 (its tag is checked by the
-        // cipher), an IV AND a tag for v2, because an AES-GCM body shorter than that is a stub and
-        // not a ciphertext. Unknown versions are refused before any length is read.
+        // The smallest body each version can carry: a nonce AND a tag for both - ChaCha20-Poly1305's
+        // 12 + 16 for v1, AES-GCM's IV + tag for v2 - because a body shorter than that is a stub and
+        // not a ciphertext. Handed to the cipher, a v1 stub would fail its tag under the key its
+        // header names and read as `StateAltered`, which rotates the device identity; a truncated
+        // write is `StateUndecryptable`, as a legacy blob under its nonce is. Unknown versions are
+        // refused before any length is read.
         let floor = match version {
-            VERSION_1 => 12,
+            VERSION_1 => 12 + 16,
             VERSION_2 => V2_IV_LEN + V2_TAG_LEN,
             _ => {
                 return Err(MlsError::StateUndecryptable(format!(
@@ -225,10 +230,8 @@ pub fn parse(blob: &[u8]) -> Result<Framed<'_>, MlsError> {
 
 /// Wraps an already-sealed `[nonce || ciphertext]` body in a v1 header.
 ///
-/// **NOTHING ON A WRITE PATH CALLS THIS YET, DELIBERATELY** - see this module's header for why the
-/// reader has to be the floor first. It exists and is tested now so that step 2 is a one-line change
-/// at [`crate::MlsManager::save_encrypted_with_key`] rather than a design revisited months later, and
-/// so the round trip is pinned by a test today.
+/// Called by [`crate::MlsManager::encrypt_state_blob_with_key`], the one writer every native and
+/// WASM save goes through - see this module's header for the read-first sequence that preceded it.
 pub fn frame_v1(key: &[u8; 32], sealed: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(HEADER_LEN + sealed.len());
     out.extend_from_slice(&MAGIC);
@@ -259,9 +262,10 @@ pub fn v2_aead_key(device_key: &[u8; 32]) -> Result<[u8; 32], MlsError> {
 
 /// Opens a version 2 body (`[iv || ciphertext || tag]`) with the header as AAD.
 ///
-/// Every failure is `StateUndecryptable`: a tag that does not verify here has ALREADY passed the
-/// fingerprint check (the caller makes it first), so the key is the right one and the bytes - body
-/// or header - were altered. There is no "another key" reading of this error left to make.
+/// A tag that does not verify is `StateAltered`: it has ALREADY passed the fingerprint check (the
+/// caller makes it first), so the key is the right one and the bytes - body or header - were
+/// altered. There is no "another key" reading of this error left to make. A body too short to hold
+/// an IV and a tag stays `StateUndecryptable`, as in [`parse`].
 pub fn open_v2(device_key: &[u8; 32], header: &[u8], sealed: &[u8]) -> Result<Vec<u8>, MlsError> {
     if sealed.len() < V2_IV_LEN + V2_TAG_LEN {
         return Err(MlsError::StateUndecryptable(format!(
@@ -276,7 +280,7 @@ pub fn open_v2(device_key: &[u8; 32], header: &[u8], sealed: &[u8]) -> Result<Ve
         .crypto()
         .aead_decrypt(AeadType::Aes256Gcm, &key, ct_tag, iv, header)
         .map_err(|e| {
-            MlsError::StateUndecryptable(format!(
+            MlsError::StateAltered(format!(
                 "v2 AES-GCM tag did not verify under the right key - the blob was altered: {e:?}"
             ))
         })
@@ -356,6 +360,25 @@ mod tests {
         blob[MAGIC.len()] = VERSION_2;
         let err = parse(&blob).expect_err("a v2 stub must be refused");
         assert!(err.to_string().contains("version 2"), "{err}");
+    }
+
+    #[test]
+    fn a_version_1_body_shorter_than_a_nonce_and_a_tag_is_a_stub_and_never_altered() {
+        // 12..=27 bytes used to pass a nonce-only floor, fail the Poly1305 tag under the key the
+        // header names, and read as `StateAltered` - a destructive rotation for a truncated write.
+        for len in [0usize, 11, 12, 27] {
+            let blob = frame_v1(&KEY_A, &sealed(len));
+            let err = parse(&blob).expect_err("a v1 stub must be refused");
+            assert!(
+                matches!(err, MlsError::StateUndecryptable(_)),
+                "expected StateUndecryptable for a {len}-byte v1 body, got {err:?}"
+            );
+            assert!(err.to_string().contains("version 1"), "{err}");
+        }
+        assert!(matches!(
+            parse(&frame_v1(&KEY_A, &sealed(28))),
+            Ok(Framed::V1 { .. })
+        ));
     }
 
     #[test]

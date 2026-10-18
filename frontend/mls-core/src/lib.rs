@@ -93,8 +93,10 @@ pub enum MlsError {
     /// which; `mls_autosave_ver` is a per-write sequence counter that orders concurrent flushes,
     /// not a key id.
     ///
-    /// Until a key fingerprint is written into the envelope's own framing, the honest thing is a
-    /// variant that says "this did not open" and lets the caller present both possibilities.
+    /// A FRAMED blob carries a key fingerprint that separates the two (`StateSealedUnderAnotherKey`,
+    /// `StateAltered`); this variant is what is left: a LEGACY blob, whose bytes say neither, and a
+    /// stub too short to carry a header or a nonce. For those the honest thing is a variant that says
+    /// "this did not open" and lets the caller present both possibilities.
     ///
     /// **WHY IT IS A VARIANT AND NOT A MESSAGE.** It used to be
     /// `OpenMls(format!("Decryption: {..}"))`, and the TypeScript classifier that has to act on it
@@ -125,12 +127,21 @@ pub enum MlsError {
     /// OLD one recovers it. Without the header these bytes are indistinguishable from corruption, and
     /// naming them apart is the entire purpose of [`crate::state_blob`].
     ///
-    /// **IT CANNOT FIRE YET AND THAT IS BY DESIGN.** Nothing writes a header until step 2 (see the
-    /// module docs for why the reader must be the floor first), so every blob in the field today reads
-    /// as legacy and still answers `StateUndecryptable`. The variant ships with the reader so the
-    /// classifier on the other side can learn it in the same release rather than one behind.
+    /// It fires on every blob written since step 2 flipped the writer (2026-10-17); a blob an older
+    /// build wrote still reads as legacy and answers `StateUndecryptable` until its first rewrite.
     #[error("STATE_KEY_MISMATCH: {0}")]
     StateSealedUnderAnotherKey(String),
+    /// The saved MLS state is FRAMED, its header names THE KEY IN HAND, and its tag does not verify:
+    /// the bytes were altered after they were sealed (a flipped byte, a truncation).
+    ///
+    /// The other half of `StateUndecryptable` the fingerprint separates, and the one that decides a
+    /// recovery: the key is provably right, so **no PIN can open this state, ever** - asking for an
+    /// old one sends the user after a credential that never existed (CORRUPT-1, CORRUPT-2,
+    /// 2026-09-08). The caller rotates the device identity, which needs no PIN and destroys nothing
+    /// that could still be opened. Never inferred from a failed tag alone: a legacy blob has no header
+    /// and stays `StateUndecryptable`.
+    #[error("STATE_ALTERED: {0}")]
+    StateAltered(String),
     /// Biometric mode, and the platform keystore handed back no key: nothing enrolled yet, the
     /// entry was wiped, or the user cancelled (or could not pass) the biometric sheet.
     ///

@@ -60,6 +60,12 @@ class NotificationService: UNNotificationServiceExtension {
   private static let kInitialsSize: CGFloat = 192
   private static let kInitialsLetterRatio: CGFloat = 0.4
 
+  /// The palette-A "mention" trill (docs/wiki/frontend/sounds.md), bundled in this target and the
+  /// app. The "message" and "reaction" trills are named by the server in the APNs `sound`; a mention
+  /// is the one the server cannot see. Twin of `kCanariSoundMention` in `canari_push.mm`;
+  /// `iosNotificationSounds.test.ts` holds the names together.
+  private static let mentionSoundFile = "canari_gazouillis_mention.wav"
+
   /// Serializes NSE writes to `fcm_message_cache.ndjson`. The NSE runs in a separate
   /// process from the app, so it does not need to share the app's lock, but its own
   /// concurrent invocations must serialize writes to avoid torn NDJSON.
@@ -451,12 +457,11 @@ class NotificationService: UNNotificationServiceExtension {
   /// that could not be read, or an account id that could not be loaded, proves no mention - it stays
   /// passive, which is also exactly what iOS shows when this extension never runs at all.
   struct LevelDecision {
-    /// The message names this account: break through Focus.
+    /// The message names this account: break through Focus and ring with the mention trill - which
+    /// also raises a `mentions` frame the server sent soundless.
     let mentionsMe: Bool
     /// The conversation is at `mentions` and the message does not prove a mention: stay passive.
     let quiet: Bool
-    /// The conversation is at `mentions` and the message names this account: ring, as `all` does.
-    let raise: Bool
   }
 
   static func levelDecision(
@@ -465,17 +470,17 @@ class NotificationService: UNNotificationServiceExtension {
     let me = myUserId?.lowercased() ?? ""
     let mentionsMe = !me.isEmpty && (mentioned?.contains(me) ?? false)
     guard level == "mentions" else {
-      return LevelDecision(mentionsMe: mentionsMe, quiet: false, raise: false)
+      return LevelDecision(mentionsMe: mentionsMe, quiet: false)
     }
     if mentionsMe {
       NSLog("[CanariNSE] [NOTIF] group=\(groupId.prefix(8)) level=mentions and it names me - raised")
-      return LevelDecision(mentionsMe: true, quiet: false, raise: true)
+      return LevelDecision(mentionsMe: true, quiet: false)
     }
     let why = mentioned == nil || me.isEmpty
       ? "the message could not be read - a mention is not proven"
       : "the message does not mention this account"
     NSLog("[CanariNSE] [NOTIF] group=\(groupId.prefix(8)) level=mentions - kept passive: \(why)")
-    return LevelDecision(mentionsMe: false, quiet: true, raise: false)
+    return LevelDecision(mentionsMe: false, quiet: true)
   }
 
   /// Runs the decrypt ladder matching Android (WP-PUSH-2):
@@ -838,14 +843,15 @@ class NotificationService: UNNotificationServiceExtension {
     // preview, and decided once in `levelDecision`.
     if level.mentionsMe {
       content.interruptionLevel = .timeSensitive
+      // The palette-A "mention" trill. Only the extension can choose it: the server cannot read
+      // whether a message names its reader, so it sent the "message" one (or none, see below).
+      content.sound = UNNotificationSound(named: UNNotificationSoundName(Self.mentionSoundFile))
     } else if level.quiet {
       content.interruptionLevel = .passive
       content.sound = nil
     }
-    // The server sent a `mentions` frame soundless; a proven mention rings like any message.
-    if level.raise {
-      content.sound = .default
-    }
+    // A `mentions` frame arrives soundless from the server; a proven mention rings with the trill
+    // set just above, which is also how it is raised (`levelDecision` logs that).
 
     // Attachment priority: a media thumbnail (WP-XP-3) outranks the sender avatar, since iOS shows
     // only the first image attachment as the banner preview. Fall back to the avatar for text/non-image.

@@ -388,7 +388,7 @@ export async function sendEncryptedChannelMessage(
       ? { silent: true }
       : { seedFrame: sealed.seedFrame, seedGroupId: sealed.seedGroupId }),
   });
-  // An answer echoing the client id proves this server answers a repeat with its row (088).
+  // An answer echoing the client id proves this server answers a repeat with its row (090).
   if (messageId) noteSalonSendAnswer(messageId, row);
   // The id the SERVER gave its row, which the sender's own echo is re-keyed to (WP-OFF-2).
   if (typeof row?.id === 'string' && row.id) {

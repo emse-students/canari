@@ -6,7 +6,7 @@
  * for its author; one left unanswered by a kill came back to the composer for its author to send by
  * hand. Both were deliberate while the server minted a new row for every POST, because an automatic
  * repeat of a message that HAD landed posted it twice. The server now answers a repeat of the client
- * id with the row it already holds (migration 088), so the queue may repeat - and every test here
+ * id with the row it already holds (migration 090), so the queue may repeat - and every test here
  * asserts the repeat carries the FIRST attempt's client id, which is the whole of that safety.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -44,7 +44,7 @@ import {
 } from '$lib/utils/chat/salonRepeatProof';
 import { ChannelApiError } from '$lib/services/ChannelService';
 
-/** An answer of a server carrying migration 088: it echoes the client id, so a repeat is safe. */
+/** An answer of a server carrying migration 090: it echoes the client id, so a repeat is safe. */
 function proveRepeatsSafe() {
   noteSalonSendAnswer('00000000-0000-4000-8000-0000000000ff', {
     clientMessageId: '00000000-0000-4000-8000-0000000000ff',
@@ -104,7 +104,7 @@ beforeEach(() => {
   resetSalonSendGate();
   openSalonSendGate(CHANNEL.replace(/^channel_/, ''));
   openSalonSendGate(CHANNEL);
-  // Every test but the ones about the proof itself runs against a server known to carry 088.
+  // Every test but the ones about the proof itself runs against a server known to carry 090.
   resetSalonRepeatProofForTests();
   proveRepeatsSafe();
 });
@@ -295,7 +295,7 @@ describe('what a past page life left unanswered', () => {
 });
 
 describe('a repeat nobody asked for waits for the server to prove it safe', () => {
-  // Store builds meet the server WITHOUT migration 088 for days (production deploys once both
+  // Store builds meet the server WITHOUT migration 090 for days (production deploys once both
   // stores serve the client), and that server posts a repeat twice. So no repeat goes unasked until
   // an answer has echoed a client id.
   beforeEach(() => resetSalonRepeatProofForTests());

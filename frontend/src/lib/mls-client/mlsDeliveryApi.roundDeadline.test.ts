@@ -117,7 +117,7 @@ describe('keyPackagePublication reads the fact the commit gate reads', () => {
     [{ kind: 'package', device: { keyPackage: new Uint8Array(), deviceId: 'd' } }, 'published'],
     [{ kind: 'none', reason: 'expired' }, 'published'],
     [{ kind: 'none', reason: 'unregistered' }, 'absent'],
-    [{ kind: 'none', reason: 'unspecified' }, 'absent'],
+    [{ kind: 'none', reason: 'unrecognized' }, 'absent'],
     [{ kind: 'none', reason: 'revoked' }, 'revoked'],
     [{ kind: 'unanswered', detail: 'x' }, 'unknown'],
   ] as const)('%j is %s', (answer, expected) => {

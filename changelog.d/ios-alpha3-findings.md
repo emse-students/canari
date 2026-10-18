@@ -1,3 +1,0 @@
-### Fixed - iOS: one edge swipe closes one thing, the in-app log survives backgrounding, two layout and title defects
-
-An edge swipe closes at most the overlay on top when it began ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#the-iphone-12-reading-of-v129-alpha3---one-gesture-one-close-2026-10-16)); a log write cut short by the app leaving the screen is kept, not a storage failure, and an export after a real failure still carries the stored ring ([mobile](docs/wiki/frontend/mobile.md#the-in-app-log)). The PIN gate's last row is reachable at the largest text size, and the payment return's title follows what it says.

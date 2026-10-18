@@ -1,3 +1,0 @@
-### Changed - fewer read-watermark frames: none for your own sends, one queued per conversation
-
-A DM or group read mark no longer moves over the reader's own message, so sending stops emitting a watermark frame. Each of those frames cost every member a decrypt and a full MLS checkpoint. An unsent watermark is now superseded in the outbox by a newer one, and leaving a conversation inside the 2 s window delivers the receipt instead of dropping it ([history-reconciliation](docs/wiki/protocols/history-reconciliation.md#the-sender-says-only-what-is-new-and-the-outbox-keeps-one-watermark-per-conversation-2026-10-15)).

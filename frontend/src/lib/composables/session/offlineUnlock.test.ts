@@ -88,6 +88,24 @@ describe('a server answer is never read as a missing network', () => {
     expect(expiredAt).toBeLessThan(offlineAt);
     expect(catchBlock.slice(expiredAt, offlineAt)).toContain('return;');
   });
+
+  it('stops on a sign-out in progress without reading it as an expiry', () => {
+    // `SignOutInProgressError` is not a verdict: answering it with `onSessionExpired` was a second
+    // sign-out. Its branch comes first and returns without calling back.
+    const catchStart = loginImplBody.indexOf('accessToken = await getToken();');
+    const catchBlock = loginImplBody.slice(
+      catchStart,
+      loginImplBody.indexOf('// Collect the MLS state')
+    );
+    const stopAt = catchBlock.indexOf('if (err instanceof SignOutInProgressError) {');
+    const expiredAt = catchBlock.indexOf('err instanceof SessionExpiredError');
+    expect(stopAt).toBeGreaterThan(-1);
+    expect(stopAt).toBeLessThan(expiredAt);
+    const branch = catchBlock.slice(stopAt, expiredAt);
+    expect(branch).toContain('return;');
+    expect(branch).not.toContain('onSessionExpired');
+    expect(branch).not.toContain('onLoginFailed');
+  });
 });
 
 describe('the offline session never re-enters the destructive catch', () => {
@@ -153,6 +171,23 @@ describe('a failed unlock keeps the identity unless the session is dead', () => 
     expect(end).toBeGreaterThan(at);
     return loginImplBody.slice(at, end);
   })();
+
+  it('stops on a sign-out in progress BEFORE forgetting the vault slot or calling back', () => {
+    // The whole catch, from its first line: the branch must precede `clearDeviceKey`, which would
+    // forget the "Rester connecte" slot a sign-out keeps, and every callback (a second sign-out, or
+    // a PIN error over the sign-out).
+    const at = loginImplBody.indexOf('} catch (_e: unknown) {');
+    const catchBody = loginImplBody.slice(at, loginImplBody.indexOf('} finally {', at));
+    const branch = catchBody.indexOf('if (_e instanceof SignOutInProgressError) {');
+    const branchEnd = catchBody.indexOf('return;', branch);
+    expect(branch).toBeGreaterThan(-1);
+    expect(branchEnd).toBeGreaterThan(branch);
+    expect(branch).toBeLessThan(catchBody.indexOf('clearDeviceKey('));
+    const body = catchBody.slice(branch, branchEnd);
+    expect(body).not.toContain('onSessionExpired');
+    expect(body).not.toContain('onLoginFailed');
+    expect(body).not.toContain('setLoginError');
+  });
 
   it('forgets the identity inside the session-expired branch and nowhere else in the catch', () => {
     const expired = failureCatch.indexOf('if (_e instanceof SessionExpiredError) {');

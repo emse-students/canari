@@ -5,6 +5,16 @@ describe('socialDeepLink - the payload contract of a tap', () => {
     expect(socialDeepLink({ type: 'social', postId: 'p1' })).toBe('fr.emse.canari://post/p1');
   });
 
+  it('a comment, reply or mention in a comment opens the post at that comment', () => {
+    expect(socialDeepLink({ type: 'social', postId: 'p1', commentId: 'c1' })).toBe(
+      'fr.emse.canari://post/p1?comment=c1'
+    );
+    // The comment id is encoded like the post id: it cannot add a parameter.
+    expect(socialDeepLink({ postId: 'p1', commentId: 'c1&x=1' })).toBe(
+      'fr.emse.canari://post/p1?comment=c1%26x%3D1'
+    );
+  });
+
   it('a form reminder opens the form', () => {
     expect(socialDeepLink({ type: 'form_reminder', formId: 'f1' })).toBe(
       'fr.emse.canari://form/f1'

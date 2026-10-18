@@ -292,10 +292,12 @@ describe('silent push frames are handled by the app, never by the extension', ()
   });
 
   it('every silent type is acted on by the app dispatcher, the only process that gets it', () => {
+    // The BACKGROUND dispatcher: a silent frame reaches the app through the delegate method the
+    // hook adds, and only `CanariHandleBackgroundFrame` reads it (iosSilentFrames.test.ts).
     const dispatcher = functionBody(
       objcSource,
-      /static void CanariHandleFcmData\(/,
-      /\nvoid CanariPushCancelMessageNotifications\(/
+      /static void CanariHandleBackgroundFrame\(/,
+      /\nstatic void CanariSwizzledDidReceiveRemoteNotification\(/
     );
     for (const type of silentTypes) {
       expect({ type, handled: dispatcher.includes(`isEqualToString:@"${type}"`) }).toEqual({

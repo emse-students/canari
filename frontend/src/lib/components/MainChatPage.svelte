@@ -74,7 +74,7 @@
   import ChatArea from './chat/ChatArea.svelte';
   import MessagingSyncOverlay from './chat/MessagingSyncOverlay.svelte';
   import ForwardMessageModal from './chat/ForwardMessageModal.svelte';
-  import { CALLS_ENABLED } from '$lib/features';
+  import { CALLS_ENABLED, CALLS_VIDEO_ENABLED } from '$lib/features';
   import type {
     AddMessageToChatOptions,
     ChatMessage,
@@ -1361,13 +1361,22 @@
     void openInvitedChannel(channelId);
   }
 
-  /** Starts a voice or video call when the conversation is a group or DM (not a channel). */
+  /**
+   * Whether the conversation on screen is a one-to-one DM. A call is peer to peer since the
+   * 2026-10-17 revival, and the signalling room seats exactly two users: a group has no call
+   * button until a group design exists (calls-revival-plan WP-C4/WP-C11).
+   */
+  let selectedIsDirect = $derived(
+    !!convs.selectedContact &&
+      convs.conversations.get(convs.selectedContact)?.conversationType === 'direct'
+  );
+
+  /** Starts a voice or video call in the one-to-one conversation on screen. */
   function startCallForCurrentConversation(video: boolean) {
     if (!session.callService || !convs.selectedContact) return;
     const convo = convs.conversations.get(convs.selectedContact);
     if (!convo) return;
-    const type = convo.conversationType ?? 'group';
-    if (type === 'channel') return;
+    if (convo.conversationType !== 'direct') return;
     if (convo.lifecycle !== 'active') {
       showToast(m.chat_call_session_not_ready(), 'warning');
       return;
@@ -1510,12 +1519,12 @@
             messaging.removePendingMediaFile(convs.selectedContact, index)}
           videoPreparation={messaging.videoPreparation}
           isUploading={messaging.isUploadingMedia}
-          onStartAudioCall={CALLS_ENABLED
+          onStartAudioCall={CALLS_ENABLED && selectedIsDirect
             ? () => {
                 void startCallForCurrentConversation(false);
               }
             : undefined}
-          onStartVideoCall={CALLS_ENABLED
+          onStartVideoCall={CALLS_ENABLED && CALLS_VIDEO_ENABLED && selectedIsDirect
             ? () => {
                 void startCallForCurrentConversation(true);
               }

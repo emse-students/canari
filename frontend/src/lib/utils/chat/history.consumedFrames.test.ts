@@ -18,10 +18,12 @@ import { frameFingerprint } from '$lib/mls-client/inboundFrameLedger';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import {
+  commitPendingHistoryMarks,
   hasHistoryFrameBeenConsumed,
   markHistoryFrameConsumed,
   replayConversationHistory,
   resetSeenCipherCacheForTests,
+  snapshotPendingHistoryMarks,
 } from './history';
 
 const USER = 'user-1';
@@ -31,8 +33,11 @@ const KEY = `history_seen_cipher:${USER}:${GROUP}`;
 /** Reads the persisted set the way a later page load would. */
 const persisted = (): string[] => JSON.parse(localStorage.getItem(KEY) ?? '[]');
 
-/** Lets the coalesced flush run. A microtask drain, never a wall clock. */
+/** Lets pending microtasks run. A microtask drain, never a wall clock. */
 const flush = () => Promise.resolve().then(() => undefined);
+
+/** A checkpoint whose write lands at once: the snapshot, then the declaration. */
+const checkpoint = () => commitPendingHistoryMarks(snapshotPendingHistoryMarks(USER));
 
 beforeEach(() => {
   localStorage.clear();
@@ -63,63 +68,78 @@ describe('the key the two delivery paths share', () => {
 });
 
 describe('markHistoryFrameConsumed', () => {
-  it('persists the mark under the group key, so a reload skips the row instead of failing on it', async () => {
+  it('persists the mark under the group key at the next checkpoint, so a reload skips the row instead of failing on it', () => {
     markHistoryFrameConsumed(USER, GROUP, 'fp-a');
-    await flush();
+    checkpoint();
 
     expect(persisted()).toEqual(['fp-a']);
   });
 
-  it('keeps what was already there rather than replacing it', async () => {
+  it('is NOT durable before a checkpoint holds the ratchet advance it stands for', async () => {
+    // A fingerprint stored ahead of its advance tells the next replay to SKIP a frame whose
+    // generation the reloaded ratchet never spent. In memory it already answers this session.
+    markHistoryFrameConsumed(USER, GROUP, 'fp-a');
+    await flush();
+
+    expect(localStorage.getItem(KEY)).toBeNull();
+    expect(hasHistoryFrameBeenConsumed(USER, GROUP, 'fp-a')).toBe(true);
+  });
+
+  it('keeps what was already there rather than replacing it', () => {
     localStorage.setItem(KEY, JSON.stringify(['older-stream-id']));
 
     markHistoryFrameConsumed(USER, GROUP, 'fp-a');
-    await flush();
+    checkpoint();
 
     expect(persisted()).toEqual(['older-stream-id', 'fp-a']);
   });
 
-  it('collapses a whole drain into ONE write', async () => {
-    // A reconnect hands over a burst of frames in one turn. Each mark rewriting a set capped at
-    // five thousand entries would put a `JSON.stringify` of the lot on the hot inbound path.
-    // On the INSTANCE, not on `Storage.prototype`: under jsdom the prototype spy never fires, which
-    // would have made every count below trivially zero - and the "does not write twice" case would
-    // have passed while measuring nothing at all.
+  it('writes a drain that AWAITS between frames once, at its checkpoint - not once per frame', async () => {
+    // The backlog's proof (performance audit, 2026-10-12): a queue drain awaits between frames, so
+    // a flush coalescing one synchronous turn re-stringified the whole set - capped at five
+    // thousand entries - into `localStorage` for EVERY frame. Counted on the INSTANCE, not on
+    // `Storage.prototype`: under jsdom the prototype spy never fires, which would make every count
+    // below trivially zero.
     const setItem = vi.spyOn(localStorage, 'setItem');
 
-    for (let i = 0; i < 40; i++) markHistoryFrameConsumed(USER, GROUP, `fp-${i}`);
-    await flush();
+    for (let i = 0; i < 40; i++) {
+      markHistoryFrameConsumed(USER, GROUP, `fp-${i}`);
+      await flush(); // the drain's await between two frames
+    }
+    expect(setItem.mock.calls.filter(([k]) => k === KEY)).toHaveLength(0);
+
+    checkpoint();
 
     expect(setItem.mock.calls.filter(([k]) => k === KEY)).toHaveLength(1);
     expect(persisted()).toHaveLength(40);
     setItem.mockRestore();
   });
 
-  it('does not write twice for the same frame', async () => {
+  it('does not write twice for the same frame', () => {
     markHistoryFrameConsumed(USER, GROUP, 'fp-a');
-    await flush();
+    checkpoint();
     // Installed AFTER the first mark is persisted, so what it counts is the second mark alone.
     const setItem = vi.spyOn(localStorage, 'setItem');
 
     markHistoryFrameConsumed(USER, GROUP, 'fp-a');
-    await flush();
+    checkpoint();
 
     expect(setItem.mock.calls.filter(([k]) => k === KEY)).toHaveLength(0);
     setItem.mockRestore();
   });
 
-  it('is a no-op without an identified user or group, rather than writing a nameless key', async () => {
+  it('is a no-op without an identified user or group, rather than writing a nameless key', () => {
     markHistoryFrameConsumed('', GROUP, 'fp-a');
     markHistoryFrameConsumed(USER, '', 'fp-a');
-    await flush();
+    checkpoint();
 
     expect(localStorage.length).toBe(0);
   });
 
-  it('keeps each group to its own set', async () => {
+  it('keeps each group to its own set', () => {
     markHistoryFrameConsumed(USER, GROUP, 'fp-a');
     markHistoryFrameConsumed(USER, 'group-2', 'fp-b');
-    await flush();
+    checkpoint();
 
     expect(persisted()).toEqual(['fp-a']);
     expect(JSON.parse(localStorage.getItem(`history_seen_cipher:${USER}:group-2`) ?? '[]')).toEqual(
@@ -780,7 +800,7 @@ describe('hasHistoryFrameBeenConsumed', () => {
 });
 
 describe('a mark made while a replay is walking', () => {
-  it('survives the replay writing its own copy back at the end', async () => {
+  it('survives the replay writing its own copy back at the end', () => {
     // THE REASON THE SET IS SHARED RATHER THAN RE-READ. The replay loads the set when it starts,
     // mutates it for the whole walk, and writes it back once at the end. If live delivery marked a
     // frame into a DIFFERENT object in between, that final write - made from a copy taken before
@@ -791,7 +811,7 @@ describe('a mark made while a replay is walking', () => {
     localStorage.setItem(KEY, JSON.stringify(['stream-id-1']));
     markHistoryFrameConsumed(USER, GROUP, 'stream-id-1'); // hydrates the shared set, adds nothing
     markHistoryFrameConsumed(USER, GROUP, 'fp-live');
-    await flush();
+    checkpoint();
 
     expect(persisted()).toEqual(['stream-id-1', 'fp-live']);
   });

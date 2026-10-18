@@ -18,6 +18,28 @@
  */
 export const DECLARED_GROUPS = [
   {
+    what: 'the SIGTERM drain a release relies on to retire a replica without dropping a request',
+    compare: 'exact',
+    why: 'no shared TS package, for the reason the CORS allowlist below gives; each image must carry the handler itself',
+    files: [
+      'apps/chat-delivery-service/src/drain-on-sigterm.ts',
+      'apps/core-service/src/drain-on-sigterm.ts',
+      'apps/media-service/src/drain-on-sigterm.ts',
+      'apps/social-service/src/drain-on-sigterm.ts',
+    ],
+  },
+  {
+    what: 'the drain test that guards it',
+    compare: 'exact',
+    why: 'a copied module needs a copied test beside it, or three services assert the behaviour and the fourth only inherits the file',
+    files: [
+      'apps/chat-delivery-service/src/drain-on-sigterm.spec.ts',
+      'apps/core-service/src/drain-on-sigterm.spec.ts',
+      'apps/media-service/src/drain-on-sigterm.spec.ts',
+      'apps/social-service/src/drain-on-sigterm.spec.ts',
+    ],
+  },
+  {
     what: 'the CORS origin allowlist every service applies',
     compare: 'exact',
     why: 'no shared TS package; one would add a build stage and the --install-links trap to four production images (see the docblock in any copy)',

@@ -123,7 +123,7 @@
   import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
   import { CALLS_ENABLED } from '$lib/features';
-  import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
+  import { mergeFcmMessagesAndAnnounce } from '$lib/utils/chat/fcmMemoryMerge';
   import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
   import { flushActiveMlsStateEncrypted } from '$lib/mls-client/mlsStatePersisterRegistry';
   import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
@@ -457,8 +457,25 @@
    */
   function applyPinFailure(uid: string, code: LoginErrorCode | undefined) {
     if (code && provesLocalStateExists(code)) isFirstPinSetup = false;
+    // A TYPED PIN CAN MEET ANOTHER ACCOUNT'S STATE TOO, not only a saved unlock: `mls.owner` names
+    // that account when this one's key does not open `mls.bin`. Read on every path, or the keypad
+    // path offered the reset the saved-unlock path withheld.
+    noteOtherAccountState(code);
     void evaluateRecoverable(uid, code);
     askSaltForNextTry(code);
+  }
+
+  /**
+   * Withholds the reset when the failure PROVES this install's state is another account's
+   * (`provesOtherAccountState`), whichever path met it - the saved unlock or the keypad.
+   */
+  function noteOtherAccountState(code: LoginErrorCode | undefined) {
+    if (provesOtherAccountState(code)) {
+      deviceHoldsOtherAccount = true;
+      appendLog(
+        "[MLS] This install's MLS state is another account's - the reset is withheld at the gate."
+      );
+    }
   }
 
   /**
@@ -747,12 +764,7 @@
     // from the SERVER, never assumed "returning" - and not from the device id either, which the
     // refused attempt itself may have just minted (`openPinModal`).
     if (isVaultRefusal(code)) {
-      if (provesOtherAccountState(code)) {
-        deviceHoldsOtherAccount = true;
-        appendLog(
-          "[VAULT] This install's MLS state is another account's - the reset is withheld at the gate."
-        );
-      }
+      noteOtherAccountState(code);
       appendLog('[VAULT] Saved unlock refused for this account - drawing its own PIN gate.');
       void openPinModal(globalSession.userId || currentUserId() || '', { deviceIdUnproven: true });
       return;
@@ -1378,12 +1390,14 @@
       }));
       if (injected.messages.length === 0) return;
       // The placeholders are what let a FIRST message from a new correspondent appear without a
-      // restart - see `mergeFcmMessagesIntoConversations`.
-      mergeFcmMessagesIntoConversations(
+      // restart - see `mergeFcmMessagesIntoConversations`. Each row it creates is ANNOUNCED, since
+      // frames refused for lack of that row wait on it and nothing else is scheduled on a resume.
+      mergeFcmMessagesAndAnnounce(
         injected.messages,
         globalConvs.conversations,
         selfId,
-        injected.placeholders
+        injected.placeholders,
+        (groupId) => globalSession.ensureMls().notifyConversationAvailable(groupId)
       );
     } finally {
       globalConvs.endConversationSource();

@@ -11,8 +11,8 @@
  * form, an event proposal opens the validation queue, every other agenda notice opens the calendar,
  * and a post notice opens the post. The hosts are resolved by `appRouteForDeepLink` in the frontend.
  *
- * @param data - The flat push data the caller built (`postId`, `formId`, `action`, `associationId`,
- *   `queueAssociationId`).
+ * @param data - The flat push data the caller built (`postId`, `commentId`, `formId`, `action`,
+ *   `associationId`, `queueAssociationId`).
  */
 export function socialDeepLink(data: Record<string, string>): string {
   const formId = data.formId;
@@ -31,6 +31,12 @@ export function socialDeepLink(data: Record<string, string>): string {
     return `fr.emse.canari://proposals/${encodeURIComponent(data.queueAssociationId)}`;
   }
   const postId = data.postId;
-  if (postId) return `fr.emse.canari://post/${encodeURIComponent(postId)}`;
+  if (postId) {
+    const post = `fr.emse.canari://post/${encodeURIComponent(postId)}`;
+    // A comment, a reply or a mention in a comment opens the post AT that comment: the app scrolls
+    // to it (`?comment=`, read by `appRouteForDeepLink` and the post page). A query rather than a
+    // path segment, so a build that predates it still opens the post.
+    return data.commentId ? `${post}?comment=${encodeURIComponent(data.commentId)}` : post;
+  }
   return 'fr.emse.canari://posts';
 }

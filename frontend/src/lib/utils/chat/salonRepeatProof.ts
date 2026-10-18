@@ -2,10 +2,10 @@
  * WHETHER THE SERVER IS KNOWN TO ANSWER A REPEATED SALON SEND WITH ITS STORED ROW (WP-OFF-3).
  *
  * A send whose answer was lost may have landed. Repeating it is safe only on a server carrying
- * migration 088, which answers a repeat of the same client id with the row it already holds - an
+ * migration 090, which answers a repeat of the same client id with the row it already holds - an
  * older one ignores the id and posts the message twice. Production is deployed only once BOTH stores
  * serve the client, so a store build meets the old server for days, and a client cannot hope its
- * server is new: it must KNOW. The fact it reads is the answer itself - since 088 a send's answer
+ * server is new: it must KNOW. The fact it reads is the answer itself - since 090 a send's answer
  * carries back the client id it was posted under (`clientMessageId`), which an older server never
  * does. One such answer proves it for this page life; no clock, no probe.
  *

@@ -28,12 +28,11 @@
     }[section]
   );
 
-  /** Navigation only: the three directories and the global agenda. Creation is NOT in this set. */
+  /** Navigation only: the three directories. Creation is NOT in this set. */
   const navItems = $derived([
     { key: 'associations', href: '/associations', label: m.assoc_list_heading() },
     { key: 'lists', href: '/lists', label: m.assoc_list_lists_btn() },
     { key: 'institutions', href: '/institutions', label: m.assoc_list_institutions_btn() },
-    { key: 'calendar', href: '/calendar', label: m.assoc_list_global_calendar() },
   ]);
 </script>
 

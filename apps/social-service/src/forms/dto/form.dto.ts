@@ -34,7 +34,7 @@ const ANSWERS_MAX_ARRAY_LEN = 50;
  * Validates that `answers` is a shallow Record whose values are strings, string arrays, or numbers,
  * all within accepted size bounds.
  */
-function IsValidAnswers(options?: ValidationOptions) {
+export function IsValidAnswers(options?: ValidationOptions) {
   return function (object: object, propertyName: string) {
     registerDecorator({
       name: 'isValidAnswers',

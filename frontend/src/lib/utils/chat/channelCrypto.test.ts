@@ -134,7 +134,7 @@ describe('sendEncryptedChannelMessage', () => {
     expect('poll' in body).toBe(false);
   });
 
-  it('learns a repeat is safe ONLY from an answer that echoes its client id (migration 088)', async () => {
+  it('learns a repeat is safe ONLY from an answer that echoes its client id (migration 090)', async () => {
     resetSalonRepeatProofForTests();
     // An older server answers with its row and nothing else: nothing is proven.
     sendMessage.mockResolvedValueOnce({ id: 'srv-1', createdAt: 1 });

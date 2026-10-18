@@ -1239,11 +1239,18 @@ covered the builder field by field and none of it applied to a caller that never
 
 **Which iOS process a push reaches is decided here.** `mutable-content: 1` (alert) runs the
 Notification Service Extension; `content-available: 1` (background) is meant for the app
-(`canari_push.mm` `CanariHandleFcmData`) and never goes to the extension - **but the app hook taking
-it is not installed (2026-10-15), so no Canari native code acts on it, background or foreground**
-([mobile](../frontend/mobile.md), [backlog](../backlog.md)). So a silent type — today only
-`channel_read` — is acted on by the app alone, and listing one in the NSE's switch is a branch that
-cannot execute. `frontend/src/lib/mobile/channelPushFields.test.ts` pins both directions across the
+(`canari_push.mm` `CanariHandleBackgroundFrame`, an allowlist of dismissals since 2026-10-17 -
+before that the hook taking it was never installed, see
+[mobile](../frontend/mobile.md#silent-frames-reach-the-app-through-a-method-canari-adds-2026-10-17))
+and never goes to the extension. So a silent type such as `channel_read` is acted on by the app
+alone, and listing one in the NSE's switch is a branch that cannot execute.
+
+**The alert's `sound` names a palette-A trill** (`IOS_NOTIFICATION_SOUND`, bundled in the app and
+the extension, [sounds](../frontend/sounds.md)): the "message" trill on an MLS alert (a `mentions`
+frame stays soundless and the extension sets the "mention" trill once it reads a mention); on an
+internal alert, the trill of the Android channel the same push lands on - a salon message "mention"
+or "message" by the per-recipient `mentioned`, a message reaction "reaction", and posts, comments and
+forms the system default (`canari_social`, `canari_forms`). `frontend/src/lib/mobile/channelPushFields.test.ts` pins both directions across the
 seam.
 
 **Client config & build:** the Firebase client config files are gitignored and injected by CI
@@ -1901,12 +1908,12 @@ answers "not an address" and skips the literal check entirely. `unbracketHost` s
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/calls/initiate` | Verify membership, return a room token + room ID for the in-repo `call-service` SFU |
-| GET | `/api/calls/room-token` | Get room token for recipient |
+| POST | `/api/calls/initiate` | Verify membership, bind the room ID to the group and its caller (Redis `call:room:<id>`, TTL = 60 s ring window + 4 h), return a room token + room ID + `ringTimeoutMs` for the in-repo `call-service`. The answer window is NOT open yet: `/api/calls/ring` opens it |
+| GET | `/api/calls/room-token` | Get room token for recipient: 403 for a room bound to another group, 410 for an unknown/expired room or after the ring window ([calls lot 1](../frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)) |
 | GET | `/api/calls/ice-servers` | Get ICE server configuration |
 | POST | `/api/calls/presence` | Report device presence in call |
 | GET | `/api/calls/sibling-status` | Check sibling device call status |
-| POST | `/api/calls/ring` | Fan out an incoming-call ring to all group members (WP-XP-5) |
+| POST | `/api/calls/ring` | Open the room's 60 s answer window (`call:room:<id>:answer_by`, one `SET NX` expiring with the binding; once, from its caller only; 403 otherwise, 410 for an unknown or expired room), then fan out an incoming-call ring to all group members (WP-XP-5) |
 | POST | `/api/calls/ring-end` | Stop the ring everywhere (reason: answered/cancelled/ended) |
 
 The room id returned by `/api/calls/initiate` **is** the `callId` used by every other call route and

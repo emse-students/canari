@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { TypeOrmModule } from '@nestjs/typeorm';
+import { AssociationsModule } from '../associations/associations.module';
+import { PricingModule } from '../pricing/pricing.module';
 import { BookingSpace } from './entities/booking-space.entity';
 import { BookingResource } from './entities/booking-resource.entity';
 import { BookingAvailabilityRule } from './entities/booking-availability-rule.entity';
@@ -7,8 +9,14 @@ import { BookingAvailabilityException } from './entities/booking-availability-ex
 import { BookingBlock } from './entities/booking-block.entity';
 import { Booking } from './entities/booking.entity';
 import { BookingParticipant } from './entities/booking-participant.entity';
+import { BookingSlotsService } from './booking-slots.service';
+import { BookingsService } from './bookings.service';
+import { BookingsController } from './bookings.controller';
+import { BookingSpacesService } from './booking-spaces.service';
+import { BookingSpacesController } from './booking-spaces.controller';
+import { UserTagModule } from '../users/user-tag.module';
 
-/** Every table of the module (migration 087), in parent-to-child order. */
+/** Every table of the module (migrations 087 onwards), in parent-to-child order. */
 export const BOOKING_ENTITIES = [
   BookingSpace,
   BookingResource,
@@ -20,11 +28,19 @@ export const BOOKING_ENTITIES = [
 ];
 
 /**
- * Bookings of rooms and slots (docs/wiki/bookings-chantier.md). WP-B1 is the data model ONLY: the
- * entities are registered so `synchronize` builds them in development; slot generation (WP-B2) and
- * the API (WP-B3) add their providers and controllers here.
+ * Bookings of rooms and slots (docs/wiki/bookings-chantier.md): the tables (WP-B1), slot
+ * generation on demand (WP-B2, `BookingSlotsService`), the booker's API (WP-B3,
+ * `BookingsController`) and the organiser's (WP-B4, `BookingSpacesController`).
  */
 @Module({
-  imports: [TypeOrmModule.forFeature(BOOKING_ENTITIES)],
+  imports: [
+    TypeOrmModule.forFeature(BOOKING_ENTITIES),
+    AssociationsModule,
+    PricingModule,
+    UserTagModule,
+  ],
+  controllers: [BookingsController, BookingSpacesController],
+  providers: [BookingSlotsService, BookingsService, BookingSpacesService],
+  exports: [BookingSlotsService],
 })
 export class BookingsModule {}

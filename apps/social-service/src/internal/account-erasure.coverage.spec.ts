@@ -108,7 +108,7 @@ function rawColumns(): FoundColumn[] {
       )?.[1];
       if (!body) continue;
       for (const line of body.split('\n')) {
-        // Either case for the type (migration 088 spells it `VARCHAR`, 078 `varchar`), and a
+        // Either case for the type (migration 090 spells it `VARCHAR`, 078 `varchar`), and a
         // table constraint (`PRIMARY KEY (...)`) is not a column.
         const m = /^\s*"?([a-zA-Z_]+)"?\s+([a-z]+)/i.exec(line);
         if (m && !/^(PRIMARY|CONSTRAINT|CHECK|UNIQUE|FOREIGN)$/i.test(m[1]))

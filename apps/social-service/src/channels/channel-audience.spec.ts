@@ -87,7 +87,7 @@ describe('channel audience', () => {
       findOne: jest.fn(() =>
         Promise.resolve({ id: 'msg-1', channelId: channel.id, authorId: INSIDER, pinned: false })
       ),
-      // A delete runs its client-id lock, tombstone and row in one transaction (migration 088).
+      // A delete runs its client-id lock, tombstone and row in one transaction (migration 090).
       manager: { transaction: jest.fn() },
     };
     messageRepo.manager.transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) =>

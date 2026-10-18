@@ -214,10 +214,18 @@ describe('the login carries the vault owner from the vault to the init', () => {
   });
 
   it('withholds the reset from a gate whose mls.bin is proven foreign, and locks the act itself too', () => {
-    const failed = shell.slice(shell.indexOf('function onSavedPinFailed('));
-    expect(failed.slice(0, 1200)).toMatch(
+    const note = shell.slice(shell.indexOf('function noteOtherAccountState('));
+    expect(note.slice(0, 400)).toMatch(
       /if \(provesOtherAccountState\(code\)\) \{\s+deviceHoldsOtherAccount = true;/
     );
+    // Both paths that can meet a foreign state read it: the saved unlock (a vault refusal) and every
+    // failed unlock (`applyPinFailure` - the keypad, where `mls.owner` proves it since 2026-10-17).
+    const failed = shell.slice(shell.indexOf('function onSavedPinFailed('));
+    expect(failed.slice(0, 1200)).toMatch(
+      /if \(isVaultRefusal\(code\)\) \{\s+noteOtherAccountState\(code\);/
+    );
+    const applied = shell.slice(shell.indexOf('function applyPinFailure('));
+    expect(applied.slice(0, applied.indexOf('\n  }\n'))).toContain('noteOtherAccountState(code);');
     const reset = shell.slice(shell.indexOf('async function handlePinReset('));
     const lock = reset.indexOf('if (deviceHoldsOtherAccount) {');
     expect(lock).toBeGreaterThan(-1);

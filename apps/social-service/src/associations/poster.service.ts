@@ -85,27 +85,33 @@ export class PosterService {
   }
 
   /**
-   * Reads the publish body, which carries the document and - since 2026-09-28 - its fingerprint.
+   * Reads the publish body: `{ carte, fingerprint }`, the only shape since `minClientVersion` 1.2.7.
    *
-   * Two shapes are accepted because an admin may be running an older build: the app EMBEDS its
-   * frontend, so a client that predates the fingerprint still posts the bare document, and refusing
-   * it would break publishing for them. That client simply publishes with no fingerprint recorded,
-   * and the editor then treats the live map's freshness as unknown rather than guessing.
-   * See docs/wiki/legacy-compatibility.md for when this shim goes.
+   * Every admitted build sends the wrapper with a SHA-256 hex fingerprint
+   * (`fingerprintPublishedCarte`), so anything else - the bare document clients before 2026-09-28
+   * posted, a wrapper with no fingerprint, or a malformed one - is a bug rather than an old build,
+   * and is refused before anything is written: a stored junk value would later be COMPARED and
+   * answer the staleness question wrongly.
+   *
+   * @throws BadRequestException when the body is not `{ carte, fingerprint }` with a fingerprint of
+   *   64 lowercase hex characters.
    */
-  private readPublishBody(body: unknown): { carte: unknown; fingerprint: string | null } {
-    if (body !== null && typeof body === 'object' && 'carte' in body) {
-      const wrapped = body as { carte: unknown; fingerprint?: unknown };
-      const fp = wrapped.fingerprint;
-      // 64 lowercase hex characters, or nothing: the column is a hint, and a malformed one is
-      // dropped rather than stored, so a later comparison can never be decided by junk.
-      const valid = typeof fp === 'string' && /^[0-9a-f]{64}$/.test(fp);
-      if (fp !== undefined && !valid)
-        this.logger.warn('publish body carries a malformed fingerprint');
-      return { carte: wrapped.carte, fingerprint: valid ? fp : null };
+  private readPublishBody(body: unknown): { carte: unknown; fingerprint: string } {
+    if (body === null || typeof body !== 'object' || !('carte' in body)) {
+      this.logger.warn('publish refused: the body is not the { carte, fingerprint } wrapper');
+      throw new BadRequestException('Publication body must be { carte, fingerprint }');
     }
-    this.logger.debug('publish body has no fingerprint: a client older than 2026-09-28');
-    return { carte: body, fingerprint: null };
+    const wrapped = body as { carte: unknown; fingerprint?: unknown };
+    const fp = wrapped.fingerprint;
+    if (typeof fp !== 'string' || !/^[0-9a-f]{64}$/.test(fp)) {
+      this.logger.warn(
+        `publish refused: fingerprint ${fp === undefined ? 'absent' : 'malformed'} - every admitted client sends one`
+      );
+      throw new BadRequestException(
+        'Publication body must be { carte, fingerprint } with a 64-character lowercase hex fingerprint'
+      );
+    }
+    return { carte: wrapped.carte, fingerprint: fp };
   }
 
   /**
@@ -117,9 +123,9 @@ export class PosterService {
    * from migration 035 forbids two live rows: doing it in two statements would fail against itself.
    *
    * @param id - Project to publish.
-   * @param body - `{ carte, fingerprint }`, or the bare document from a client older than the
-   *   fingerprint (see {@link readPublishBody}).
-   * @throws BadRequestException when the payload carries no placeable association.
+   * @param body - `{ carte, fingerprint }` (see {@link readPublishBody}).
+   * @throws BadRequestException when the body is not that wrapper, or the payload carries no
+   *   placeable association.
    */
   async publish(id: string, body: unknown): Promise<PosterProject> {
     this.logger.debug(`publish poster project ${id}`);

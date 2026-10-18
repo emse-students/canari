@@ -4,7 +4,7 @@
  * Before it, an edit was applied only after its POST succeeded - offline, the text the author had
  * just corrected snapped back with an error - and a reaction was rolled back on any transport
  * failure. Both now apply at once, are OWED to the reconnect when the link is down (`salonOwed.ts`),
- * and go again under the SAME row id, which the server answers with the row it holds (migration 088).
+ * and go again under the SAME row id, which the server answers with the row it holds (migration 090).
  * They are taken back only when nothing of them left the device - a refusal, never a lost answer.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';

@@ -1396,6 +1396,50 @@ camera. **Owed one reading each on the Mi 9T and the iPhone 12:**
 - The overlay over the keyboard and over a conversation with a pending draft; a camera refused
   (permission denied) shows the refusal screen with no native fallback.
 
+## The Mi 9T readings of v1.2.9-alpha.7 (2026-10-17)
+
+Build `1.2.9 (100200907)`, the `v1.2.9-alpha.7` release APK (`app-universal-release.apk`, sha256
+`b3a5129c...`, release run `39026972985` green), `adb install -r` over alpha.5 (`firstInstallTime`
+unchanged: enrolment kept). Dev estate, account `fourth` ("Canari Test Delta", NOT an admin), vault
+path, phone text size `0.85`. Console over CDP, real taps with `adb input`. Evidence:
+`<harness-dir>/a1-bench/r1017-a129a7/` (`hubnav.ndjson`, `weaknet-runs.ndjson`, `wn1-3.txt`,
+`signout.json`, `cons-all.ndjson`, `cons-fs.ndjson`, frames `s*.png`).
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1. Comment sort row at 200 % text (#1980) | **`PASS`** | `font_scale 2.0` (root 32 px). "Recents / Anciens / Aimes" now sit on their own line UNDER "Afficher les 2 commentaires" (R 351 for a 436 px viewport). `.page-scroll-wrap` `scrollWidth 436 = clientWidth 436` (alpha.5: 553), `documentElement` 436; a `scrollIntoView` on "Anciens" and a real sideways drag both leave `scrollLeft` at 0 (`s10-fs2-sortrow.png`). The only boxes wider than the viewport are long author names, clipped inside their `truncate` parent |
+| 2a. Dashboard hub rows (#1958) | **`PASS`** | `/dashboard` from the fourth tab: the identity row ("Voir mon profil"), **Explorer** (Agenda, Associations, Listes, Institutions, Boutique, Formulaires, Notifs), then **Compte** (Parametres, then "Se deconnecter" in the danger tone) - the order #1958 specifies; "Compte" is the LAST group, not the first. No admin or manager group for this account (`s01`, `s02`) |
+| 2b. Each row navigates, Back returns | **`PASS`** | Real tap on each of the 9 link rows: `/profile`, `/calendar`, `/associations`, `/lists`, `/institutions`, `/shop`, `/forms`, `/notifications`, `/settings`, each with its own `h1`; ONE system Back returns to `/dashboard` 9 of 9 (`hubnav.ndjson`) |
+| 2c. Dashboard at 200 % text | **`PASS`** | `scrollWidth 436`, 0 clipped rows, labels and summaries wrap on two lines (one summary ends in an ellipsis after two lines, by design); scrolled to the end the sign-out row (bottom 832) clears the tab bar (top 873) (`s11`, `s12`) |
+| 2d. Sign-out busy state, double tap (#1958, #1966) | **`PASS`** for the button, **see the finding below** | Two `input tap` 191 ms apart: ONE `[A] signout requested by the user`; the row reads `disabled`, `aria-busy="true"` at the next sample, then `/login`. But TWO `POST /api/auth/logout` went out (200 each) - the second NOT from the second tap |
+| 2e. Theme still reachable | **`PASS`** | Parametres > Preferences: "Automatique / Clair / Sombre"; Clair sets `data-theme="light"` (body `rgb(240, 242, 245)`), Automatique returns to dark |
+| 3. Admin read-access redesign (#1957) | **`NOT-OBSERVED`** | `fourth` is not an admin (`canari_global_admin` false, no Administration group) |
+| 4. Airplane mode during a refresh (#1966) | **`PASS`** (n=3 cold, n=1 warm) | Cold start, airplane ON 0.75 s after launch, held 35 s, then OFF. n=2 with the refresh in flight: `refresh->` then `refresh✗transport 111-112ms`, `refresh not sent: the browser reports no network ... held until the reconnect`, `[LOGIN] Offline unlock (no token)`; network back: one more transport failure, then `refresh✓`, `[PROMOTE] ... fully promoted` 46 s after the cut. Route `/posts` throughout, the login page never drawn. n=1 with the cut after `refresh✓`: same, no sign-out. Warm (feed open, airplane on, pull to refresh, 30 s): "Hors connexion.", back online `server reachable again`, no `[A]` line. **Airplane mode fails the request in ~110 ms: the 20 s `REFRESH_DEADLINE_MS` path (a stalled link) was NOT exercised** |
+| 5. Avatar photo on the first frame (#1977) | **`NOT-OBSERVED`** | As on alpha.5: no conversation, community or member reachable from `fourth` has a photo avatar (0 `<img>` avatars on `/chat` and `/communities`) |
+| 6. `[TAURI] Couldn't find callback id` after a text-size change | **`PASS`** | Text size 0.85 -> 2.0 (the WebView reloads: `Initialised in TAURI mode`): **0** such warnings in the 3 min after, 0 in 210 s, 0 in logcat, 0 across the three force-stop relaunches of reading 4 (alpha.5: 15 in 4 min). The console logger was proven alive by a probe line |
+
+**Findings:**
+
+- **P2 - a user sign-out sends `POST /api/auth/logout` TWICE and ends through the "session
+  expired" path.** `signout.json`: `[A] signout requested by the user`, `[A] clear`, `[LOGOUT] MLS
+  client retired`, the page re-initialises, and `[PIN] Device key restored from PinVault -
+  auto-login...` runs AGAIN (17 ms after) - the vault surviving a sign-out, noted on 2026-10-14. That
+  auto-login asks for a token: `refresh->` races the logout, comes back `refresh✗401`, and
+  `[AUTH] Session expired - logging out and redirecting to /login?returnTo=%2Fdashboard` runs a
+  second `clear` and a second logout POST. The reader lands on `/login?returnTo=/dashboard`.
+- **Observed, documented:** `signout: MiConnect session NOT ended (no-id-token)` - this session
+  predates the id_token kept by #1866, so its first sign-out is local-only, as
+  [auth](frontend/modules/auth.md#signing-out-ends-the-miconnect-session-2026-10-14) says. The
+  following sign-in asked for the password.
+- **The 2026-10-14 P1 candidate did NOT reproduce:** sign-in again in the same process
+  (service-account link, password) reached `handleOidcCallback resolved`, the vault restore, the
+  device binding (`PUT .../sessions/current/device` 200), the feed and the DM list, no kill needed.
+- **P3 noise:** while the refresh is held offline, `[A] token->refresh` is logged 43-44 times in the
+  first 13 s of a cold start (one per caller). Offline `[WS] Gateway connection failed` at ERROR,
+  unchanged.
+- Logcat: no `FATAL EXCEPTION`, no ANR. The phone is left at text size `0.85`, airplane mode off,
+  signed in as `fourth` on the vault path.
+
 ## The Mi 9T readings of v1.2.9-alpha.5 (2026-10-17)
 
 Build `1.2.9 (100200905)`, the `v1.2.9-alpha.5` release APK (`app-universal-release.apk` by asset
@@ -1962,6 +2006,37 @@ the version before trusting any row.
 
 **Not read:** the hold's own log lines (`NSLog` arrives as `<private>` in the syslog of a TestFlight
 build), the in-app log (it cannot be pulled off the TestFlight container), and VoiceOver.
+
+## The iPhone 12 readings of v1.2.9-alpha.7 (2026-10-17)
+
+TestFlight build `1.2.9 (100200907)`, account `canari-test-gamma`, dev estate, driven over WDA
+(`tools/ios-device`), native lines from the device syslog (`pymobiledevice3 syslog live -pn
+Canari`), the sign-out timed from WDA's MJPEG stream (port 9100, a frame every ~100 ms). The PIN gate
+was unlocked with the bench PIN. Evidence: `<harness-dir>/ios-bench/r1017-a129a7/` (frames,
+`signout-mjpeg/`, `22-signout-contact.png`, `syslog-canari.txt`). Frames showing the iOS
+password-autofill sheet, the keypad mid-PIN or a reel's photographed document were deleted.
+
+**How the build arrived.** This time it had NOT been installed in the background: TestFlight listed
+`1.2.9 (100200907)` with "Mettre a jour" ~6 min after the release run went green. One tap installed
+it ("Ouvrir"), then a `terminate` and a relaunch. Settings > A propos read "Version de Canari
+1.2.9-alpha.7" and "Vous utilisez la derniere version". The enrolment survived (PIN gate).
+
+| Reading | Verdict | What was seen |
+| --- | --- | --- |
+| 1a. The dashboard hub (#1958): rows and navigation | **`PASS`, 9 of 9** | Tab 4 is "Tableau de bord". The groups, top to bottom: the identity row ("Voir mon profil"), EXPLORER (Agenda, Associations, Listes, Institutions, Boutique, Formulaires, Notifs), COMPTE (Parametres, then "Se deconnecter" in the danger tone). The account is not a manager, so no probed group appears. Each row lands on its page: Mon profil, Agenda, Associations, Listes, Institutions, Boutique, Formulaires, Notifs, Parametres. Tab 4 brings the hub back. The sign-out row (y 688-736 pt, scrolled) clears the tab bar (761). Settings > A propos is reached from Parametres |
+| 1b. Sign-out busy state | **`PASS`** | MJPEG, tap at t=0: the row is drawn normally up to ~+250 ms. From ~+350 ms to ~+550 ms the "Se deconnecter" label and icon are dimmed and the header avatar is gone. `/login` is drawn by ~+1.1 s, and the iOS end-session prompt ("<< Canari >> souhaite utiliser << miconnect.emse.fr >> pour se connecter") rises over `/login` at ~+1.3 s. **The order differs from alpha.5**, where the prompt came first and `/login` ~5 s after "Continuer". "Continuer" closes the prompt with `/login` unchanged |
+| 1c. Sign-out ends the MiConnect session | **`PASS`, 3 of 3** | Each time, "Connexion externe (service-account)" shows the iOS prompt and then an EMPTY MiConnect form that asks for the username |
+| 2. Sign-in again: no terms or consent stage (#1990 holds #1955 out) | **`PASS`, 3 of 3** | Username, then password, then Canari's "Connexion en cours / Echange du code d'autorisation..." and the app. No page between the password and the app, and no element matching conditions / accepter / consentement in the tree, sampled every ~0.5 s for 15 s after the submit |
+| 2b. The PIN after a sign-in | **`SUSPECT`, not proven** | Sign-ins 1 and 2 landed on the PIN gate. **The first PIN attempt was refused both times** with "PIN incorrect : ce PIN ne correspond pas a celui enregistre pour ce compte". The second attempt, 6 filled dots counted on the frame, opened the app. The same PIN opened the gate at a cold start before and after. Sign-in 3 landed on the feed with NO PIN gate (as in alpha.5), and the DM decrypts. **The limit:** the dots of the two refused attempts were not counted, so a digit lost by the driver is not ruled out. The app log is not readable on a TestFlight build, so the refusal's cause is unknown. Owed: a sign-in on an inspectable bench build, reading the PIN check's request and its answer |
+| 3. The "+" menu, one edge swipe (#1953) | **`PASS`, 9 of 9** | DM 5 of 5 and salon "general" 4 of 4, one round in each with the keyboard up. After the swipe, the menu entries (Phototheque, Ouvrir la camera) are gone and the conversation is still open ("Retour au menu" present). The keyboard drop is accepted and not filed. Control: with no menu open, one swipe leaves the DM |
+| 3b. **The DM's native chrome with the keyboard up** | **`FAIL`, 2 of 2 in the DM, 0 of 1 in the salon** | Reproduced after a cold start. With the DM composer focused (`[CanariIOS] keyboard overlap=301 -> webview height 543`), the web composer and "Envoyer" sit at y=487 pt, as check W expects. **The native "+" sits at y=186 pt, mid-thread, beside the video bubble** (186 = 487 - 301, one keyboard overlap too high). **The glass header ("Retour au menu", the title, "Plus d'actions") is gone from the screen and from the AX tree.** Both come back when the keyboard closes (`overlap=0 -> webview height 844`). In the salon "general", the same steps leave "+" at 487 and the header in place. The DM's last message is a tall video. Frames `15-kbd-clean.png` and `16-salon-kbd.png`. The chrome code is unchanged since alpha.5, so this is not new in alpha.7. Check W on `1.2.3-alpha.5` had the "+" at 487 |
+| 4. Weak network, no sign-out (#1966) | **`PASS`, with a limit** | (a) Airplane mode ON before a cold start: the PIN gate stays for 30 s, past the 20 s refresh deadline, and no sign-in screen appears. Entering the PIN offline answers "Impossible de contacter le serveur. Verifiez votre connexion puis reessayez.", a transport failure, not "PIN incorrect". Airplane OFF, then the same PIN opens the feed, still signed in. (b) Airplane ON ~60 s after a cold start, with the app in front: the PIN gate stays and there is no sign-out. **The limit:** a toggle inside the cold-start refresh's own flight was not achieved. Control Center takes over 3 s through WDA, and a blind fast tap did not register (no path change in the syslog) |
+| 5. Feed tabs and the CanaReels entry | **`PASS`** | Associations / Suivis / Tout select one at a time (switch values 1/0/0, 0/1/0, 0/0/1). Suivis shows "Aucun post", and Tout shows the bench posts. The CanaReels button (330,211 44x44) opens the viewer, the reel plays ("Pause"), and "Fermer les CanaReels" returns to the feed. The button is still exposed as `Other`, not `Button` |
+| Observation: edge swipe on a hub row's page | **noted, not filed** | From Agenda, opened from the hub, a left-edge swipe (two gesture shapes) stays on Agenda. No back control is drawn there, and tab 4 returns to the hub. No check states what an edge swipe should do on a hub row's page |
+| Nothing fatal | **`PASS`** | 1.75M syslog lines: 0 `crash`, `fatal`, `EXC_` or `Terminating app` |
+
+**Left on the bench:** signed in as `canari-test-gamma` on `1.2.9-alpha.7`, unlocked, on the feed.
+Dynamic Type and 200 % text were not read (not owed by this build).
 
 ## Traps that outlived the work that found them
 

@@ -216,7 +216,7 @@ export interface SendChannelMessageDto {
    * The UUID the client minted for this message - the same one sealed inside the ciphertext
    * (`AppMessage.message_id`). Never the primary key (`sendMessage` mints that, so a client cannot
    * choose one): it is the IDEMPOTENCE key. A repeat from the same author in the same salon with the
-   * same id is answered with the row already stored (migration 088, WP-OFF-3), and a repeat of one
+   * same id is answered with the row already stored (migration 090, WP-OFF-3), and a repeat of one
    * since deleted is refused (`CHANNEL_MESSAGE_DELETED`, 410). An edit and a reaction carry their own
    * row id (WP-OFF-4); a system notice carries none. Anything that is not a UUID is refused
    * (`CHANNEL_CLIENT_MESSAGE_ID_INVALID`).

@@ -2,9 +2,14 @@
 
 import { Test, TestingModule } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
-import { ForbiddenException, Logger, ServiceUnavailableException } from '@nestjs/common';
+import {
+  ForbiddenException,
+  GoneException,
+  Logger,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { getApps } from 'firebase-admin/app';
-import { CallsService } from './calls.service';
+import { CALL_RING_TIMEOUT_SEC, CallsService } from './calls.service';
 import { ApnsVoipService } from './apns-voip.service';
 import { GroupMember } from '../entities/group-member.entity';
 import { PushToken } from '../entities/push-token.entity';
@@ -35,10 +40,16 @@ describe('CallsService', () => {
   const redisStore = new Map<string, string>();
   const redis = {
     get: jest.fn((key: string) => Promise.resolve(redisStore.get(key) ?? null)),
-    set: jest.fn((key: string, value: string) => {
+    // Honours `NX` as Redis does: no write, and `null`, when the key already exists.
+    set: jest.fn((key: string, value: string, ...args: (string | number)[]) => {
+      if (args.includes('NX') && redisStore.has(key)) return Promise.resolve(null);
       redisStore.set(key, value);
       return Promise.resolve('OK');
     }),
+    /** Every key in this fake lives the binding's full TTL; a missing key is -2, as in Redis. */
+    pttl: jest.fn((key: string) =>
+      Promise.resolve(redisStore.has(key) ? (60 + 4 * 60 * 60) * 1000 : -2)
+    ),
     del: jest.fn((key: string) => {
       redisStore.delete(key);
       return Promise.resolve(1);
@@ -58,6 +69,8 @@ describe('CallsService', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     redisStore.clear();
+    // The room every ring test rings: opened by `caller` in `group-1`, its window not yet open.
+    redisStore.set('call:room:call-1', JSON.stringify({ groupId: 'group-1', callerId: 'caller' }));
     delete process.env.CLOUDFLARE_CALLS_API_TOKEN;
     delete process.env.CLOUDFLARE_TURN_KEY_ID;
     delete process.env.CLOUDFLARE_TURN_MONTHLY_BUDGET_GB;
@@ -304,13 +317,153 @@ describe('CallsService', () => {
       expect(captured(log)).toContain(`[call] invite room=${roomId} user=caller group=group-1`);
     });
 
+    /** The caller's `POST /calls/ring`, which opens the window (a group with nobody else to ring). */
+    const ring = async (roomId: string, callerId = 'caller') => {
+      groupMemberRepo.find.mockResolvedValue([{ userId: callerId }]);
+      return service.ringGroup(callerId, 'group-1', roomId, false);
+    };
+
     /** The callee's half: asking for a token is the last thing seen before it joins the SFU. */
     it('names the join token, so a callee that never arrives is distinguishable', async () => {
       const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+      await ring(roomId);
 
-      await service.requestRoomToken('callee', 'group-1', 'room-9');
+      await service.requestRoomToken('callee', 'group-1', roomId);
 
-      expect(captured(log)).toContain('[call] join-token room=room-9 user=callee group=group-1');
+      expect(captured(log)).toContain(`[call] join-token room=${roomId} user=callee group=group-1`);
+    });
+
+    /**
+     * F1: a room id is bound to the conversation it was opened in, for the ring window plus the
+     * longest counted call - and the window `initiate` hands back is the one this binding holds.
+     */
+    it('binds the room to its group at initiate, for the ring window plus the call horizon', async () => {
+      const { roomId, ringTimeoutMs } = await service.initiateCall('caller', 'group-1');
+
+      expect(ringTimeoutMs).toBe(CALL_RING_TIMEOUT_SEC * 1000);
+      expect(redis.set).toHaveBeenCalledWith(
+        `call:room:${roomId}`,
+        expect.any(String),
+        'EX',
+        CALL_RING_TIMEOUT_SEC + 4 * 60 * 60
+      );
+      expect(JSON.parse(redisStore.get(`call:room:${roomId}`)!).groupId).toBe('group-1');
+    });
+
+    /**
+     * F1: a member of ANOTHER group who learnt the room id must not get a token for it - the
+     * token would be signed for their own group and seat them in a call they are not part of.
+     */
+    it('refuses a token for a room bound to another group', async () => {
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+      groupMemberRepo.findOne.mockResolvedValue({ groupId: 'group-2', userId: 'mallory' });
+
+      await expect(service.requestRoomToken('mallory', 'group-2', roomId)).rejects.toThrow(
+        ForbiddenException
+      );
+    });
+
+    it('answers 410 for a room no initiate ever bound, or whose binding expired', async () => {
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+
+      await expect(service.requestRoomToken('callee', 'group-1', 'room-9')).rejects.toThrow(
+        GoneException
+      );
+    });
+
+    /**
+     * G1: the window opens when the caller RINGS, not at initiate. Everything between the two -
+     * ICE servers, a first-time microphone prompt, the signalling join - used to eat into the
+     * callee's 60 s, so the server could refuse an answer while the callee was still ringing.
+     */
+    it('opens the window at ring, however long the caller took to get there', async () => {
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      const now = jest.spyOn(Date, 'now');
+      now.mockReturnValue(1_000_000);
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+
+      // Before the ring there is no window at all: nobody has been rung yet.
+      await expect(service.requestRoomToken('callee', 'group-1', roomId)).rejects.toThrow(
+        GoneException
+      );
+
+      // A slow setup: the caller rings 45 s after initiate. The callee still gets its full 60 s.
+      const rungAt = 1_000_000 + 45_000;
+      now.mockReturnValue(rungAt);
+      await ring(roomId);
+      now.mockReturnValue(rungAt + CALL_RING_TIMEOUT_SEC * 1000);
+      await expect(service.requestRoomToken('callee', 'group-1', roomId)).resolves.toHaveProperty(
+        'roomToken'
+      );
+    });
+
+    it('opens the window once, from the caller only', async () => {
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      const now = jest.spyOn(Date, 'now');
+      now.mockReturnValue(1_000_000);
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+
+      await expect(ring(roomId, 'callee')).rejects.toThrow(ForbiddenException);
+      await ring(roomId);
+      // A retried ring later must not extend the window it already opened.
+      now.mockReturnValue(1_000_000 + 30_000);
+      await ring(roomId);
+      expect(Number(redisStore.get(`call:room:${roomId}:answer_by`))).toBe(
+        1_000_000 + CALL_RING_TIMEOUT_SEC * 1000
+      );
+    });
+
+    /** "Once" is ONE atomic write, so two rings in flight together cannot both open a window. */
+    it('opens the window once under concurrent rings, and never rewrites the binding', async () => {
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+      redis.set.mockClear();
+
+      await Promise.all([ring(roomId), ring(roomId)]);
+
+      const writes = redis.set.mock.calls.filter(([key]) => String(key).startsWith('call:room:'));
+      expect(writes.map(([key]) => key)).toEqual([
+        `call:room:${roomId}:answer_by`,
+        `call:room:${roomId}:answer_by`,
+      ]);
+      expect(writes.every((w) => w.includes('NX'))).toBe(true);
+      expect(captured(warn)).toContain('rung again - the first window stands');
+    });
+
+    /** The lot 1 binding (no caller) is refused explicitly: nobody may ring it. Dev only, one deploy. */
+    it('refuses a binding written before the ring window existed, and says why', async () => {
+      const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      redisStore.set('call:room:old', JSON.stringify({ groupId: 'group-1', answerBy: 9e15 }));
+
+      await expect(service.requestRoomToken('callee', 'group-1', 'old')).rejects.toThrow(
+        GoneException
+      );
+      expect(captured(warn)).toContain('predates the ring window');
+    });
+
+    /** F2: the ring window is enforced HERE, on one clock, whatever the callee's timer did. */
+    it('answers 410 once the ring window has closed', async () => {
+      jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
+      const now = jest.spyOn(Date, 'now');
+      now.mockReturnValue(1_000_000);
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+      await ring(roomId);
+
+      now.mockReturnValue(1_000_000 + CALL_RING_TIMEOUT_SEC * 1000);
+      await expect(service.requestRoomToken('callee', 'group-1', roomId)).resolves.toHaveProperty(
+        'roomToken'
+      );
+
+      now.mockReturnValue(1_000_000 + CALL_RING_TIMEOUT_SEC * 1000 + 1);
+      await expect(service.requestRoomToken('callee', 'group-1', roomId)).rejects.toThrow(
+        GoneException
+      );
     });
 
     /** Both halves fail for one reason, and only the caller's half used to say so. */

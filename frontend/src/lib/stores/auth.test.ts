@@ -11,15 +11,32 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  */
 
 const currentUserId = vi.fn<() => string | null>(() => 'user-1');
+// Models the real store: dropping the local identity is what `currentUserId()` reads afterwards.
+const clearUserLocally = vi.fn(() => {
+  currentUserId.mockReturnValue(null);
+});
+
+// Models the real store too: a refresh restoring the identity from a token makes it current.
+const saveUserLocally = vi.fn((user: { id: string }) => {
+  currentUserId.mockReturnValue(user.id);
+});
 
 vi.mock('$lib/stores/user', () => ({
   currentUserId: () => currentUserId(),
-  saveUserLocally: vi.fn(),
-  clearUserLocally: vi.fn(),
+  saveUserLocally: (user: { id: string }) => saveUserLocally(user),
+  clearUserLocally: () => clearUserLocally(),
 }));
 
-const { refresh, setSessionExpiredHandler, setToken, isRefreshCredentialProvenDead, clearAuth } =
-  await import('$lib/stores/auth');
+const {
+  refresh,
+  getToken,
+  SessionExpiredError,
+  SignOutInProgressError,
+  setSessionExpiredHandler,
+  setToken,
+  isRefreshCredentialProvenDead,
+  clearAuth,
+} = await import('$lib/stores/auth');
 const { IdentitySplitError, getIdentitySplit } = await import('$lib/stores/tokenIdentity.svelte');
 
 /** A refresh response with the given status; 200 carries a syntactically valid JWT. */
@@ -38,7 +55,7 @@ function liveToken(): string {
   return `h.${claims}.s`;
 }
 
-const fetchMock = vi.fn<() => Promise<Response>>();
+const fetchMock = vi.fn<(...args: unknown[]) => Promise<Response>>();
 
 beforeEach(() => {
   fetchMock.mockReset();
@@ -273,5 +290,154 @@ describe('the sign-out handler', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(error).toHaveBeenCalledWith(expect.stringContaining('sign-out handler failed'));
     error.mockRestore();
+  });
+});
+
+/**
+ * ONE SIGN-OUT, ONE LOGOUT (Mi 9T, `1.2.9-alpha.7`, 2026-10-17). The local identity outlived the
+ * sign-out's round trip: for its whole length the app shell saw "a saved user, nobody logged in" and
+ * started the "Rester connecte" unlock, whose refresh met the revocation (401), and the
+ * session-expired path ran a SECOND `clearAuth` - a second `POST /api/auth/logout`, landing on
+ * `/login?returnTo=/dashboard`. The identity now goes before anything is awaited.
+ */
+describe('the local identity at sign-out', () => {
+  it('is gone before the server is asked to revoke the session', async () => {
+    setToken(liveToken());
+    clearUserLocally.mockClear();
+    let identityAtLogout: string | null | undefined;
+    fetchMock.mockImplementation(async () => {
+      identityAtLogout = currentUserId();
+      return new Response('', { status: 200 });
+    });
+
+    await clearAuth();
+
+    expect(identityAtLogout).toBeNull();
+    expect(clearUserLocally).toHaveBeenCalledTimes(1);
+  });
+
+  it('lets a 401 met while the logout is in flight announce nothing - no second sign-out', async () => {
+    // A live credential, so the refresh below is really sent and really refused.
+    setToken(liveToken());
+    const expired = vi.fn();
+    setSessionExpiredHandler(expired);
+    let logouts = 0;
+    fetchMock.mockImplementation(async (...args: unknown[]) => {
+      const url = String(args[0]);
+      if (url.includes('/api/auth/logout')) {
+        logouts++;
+        // What the vault auto-login did on the phone: ask for a token while the revocation is out.
+        await expect(refresh()).rejects.toThrow();
+        return new Response('', { status: 200 });
+      }
+      return answer(401);
+    });
+
+    await clearAuth();
+    setSessionExpiredHandler(null);
+
+    expect(logouts).toBe(1);
+    expect(expired).not.toHaveBeenCalled();
+  });
+
+  it('is not restored by a refresh asked for while the logout is in flight, even one the server would answer 200', async () => {
+    // The review's probe: `_doRefresh` restores the identity from a token's `sub` (the Android
+    // process-kill branch), so a 200 here re-saved the user the sign-out had just cleared.
+    setToken(liveToken());
+    saveUserLocally.mockClear();
+    const expired = vi.fn();
+    setSessionExpiredHandler(expired);
+    const sent: string[] = [];
+    fetchMock.mockImplementation(async (...args: unknown[]) => {
+      const url = String(args[0]);
+      sent.push(url.includes('/api/auth/logout') ? 'logout' : 'refresh');
+      if (url.includes('/api/auth/logout')) {
+        await expect(getToken()).rejects.toBeInstanceOf(SignOutInProgressError);
+        return new Response('', { status: 200 });
+      }
+      return answer(200);
+    });
+
+    await clearAuth();
+    setSessionExpiredHandler(null);
+
+    // Not sent at all: the answer is known, and a 200 would rotate the session being revoked.
+    expect(sent).toEqual(['logout']);
+    expect(currentUserId()).toBeNull();
+    expect(saveUserLocally).not.toHaveBeenCalled();
+    expect(document.cookie).not.toContain('canari_ws_token=h');
+    expect(expired).not.toHaveBeenCalled();
+  });
+
+  it('is not restored by a refresh that was already in flight when the sign-out began', async () => {
+    setToken(liveToken());
+    saveUserLocally.mockClear();
+    const expired = vi.fn();
+    setSessionExpiredHandler(expired);
+    let answerRefresh: (r: Response) => void = () => {};
+    let logouts = 0;
+    fetchMock.mockImplementation((...args: unknown[]) => {
+      if (String(args[0]).includes('/api/auth/logout')) {
+        logouts++;
+        return Promise.resolve(new Response('', { status: 200 }));
+      }
+      return new Promise<Response>((resolve) => {
+        answerRefresh = resolve;
+      });
+    });
+
+    const inFlight = refresh().catch((e: unknown) => e);
+    // Let the refresh reach its request before the sign-out starts.
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+    const signOut = clearAuth();
+    answerRefresh(answer(200));
+    const outcome = await inFlight;
+    await signOut;
+    setSessionExpiredHandler(null);
+
+    expect(outcome).toBeInstanceOf(SignOutInProgressError);
+    // NOT the dead-session verdict, whose consumers answer with a second sign-out.
+    expect(outcome).not.toBeInstanceOf(SessionExpiredError);
+    expect(logouts).toBe(1);
+    expect(currentUserId()).toBeNull();
+    expect(saveUserLocally).not.toHaveBeenCalled();
+    expect(document.cookie).not.toContain('canari_ws_token=h');
+    expect(expired).not.toHaveBeenCalled();
+  });
+
+  it('stays refused until the LAST of two overlapping sign-outs has finished', async () => {
+    // The second review's probe: A's logout held open, B run to the end, then a refresh. A flag the
+    // first finisher lowered let that refresh out, carrying the CURRENT generation - so nothing
+    // dropped its 200, and it re-saved the user while A was still revoking.
+    setToken(liveToken());
+    saveUserLocally.mockClear();
+    let releaseA: (r: Response) => void = () => {};
+    let logouts = 0;
+    let refreshes = 0;
+    fetchMock.mockImplementation((...args: unknown[]) => {
+      if (String(args[0]).includes('/api/auth/logout')) {
+        logouts++;
+        if (logouts === 1) {
+          return new Promise<Response>((resolve) => {
+            releaseA = resolve;
+          });
+        }
+        return Promise.resolve(new Response('', { status: 200 }));
+      }
+      refreshes++;
+      return Promise.resolve(answer(200));
+    });
+
+    const signOutA = clearAuth();
+    await vi.waitFor(() => expect(logouts).toBe(1));
+    await clearAuth();
+
+    await expect(refresh()).rejects.toBeInstanceOf(SignOutInProgressError);
+    expect(refreshes).toBe(0);
+    expect(currentUserId()).toBeNull();
+    expect(saveUserLocally).not.toHaveBeenCalled();
+
+    releaseA(new Response('', { status: 200 }));
+    await signOutA;
   });
 });

@@ -95,22 +95,13 @@ const MUST_COVER = [
  * line with a vaguer one. `LocalizedError` closed it - the throw now says that its message is the
  * reader's, and the screen asks rather than assumes.
  *
- * `sessionAuth.ts` took its place on 2026-09-16, and it is parked DELIBERATELY rather than left
- * behind: the site compares `reason.message` against `MLS_LOCAL_STATE_UNDECRYPTABLE`, a shared
- * constant rather than a sentence, and the defect is upstream of the comparison.
- * `classifyStateLoadFailure` already separates `sealed` (an old PIN opens it) from `unknown`
- * (corruption, no PIN helps) and BOTH throws collapse the two into that one marker. Typing the
- * marker without deciding what the screen does with `unknown` would ship the same wrong diagnosis
- * behind a better shape, so it closes with the P1 that owns that question - see
- * `docs/wiki/backlog.md`. Every OTHER site in that file was closed in the same pass.
+ * `sessionAuth.ts` took its place from 2026-09-16 to 2026-10-17: it compared the MLS init failure's
+ * `reason.message` against one shared marker that collapsed every cause of an unopened state. Step 2
+ * of the damaged-state P1 framed every save, so the causes became facts, and the init now throws
+ * them as TYPES (`SavedStateUnopenedError`, `SavedStateOfAnotherAccountError`) the login reads with
+ * `instanceof`. The list is empty, and the next entry needs the same kind of reason.
  */
-const ALLOWED: Record<string, string> = {
-  'src/lib/composables/session/sessionAuth.ts':
-    'Compares the MLS init failure against the shared MLS_LOCAL_STATE_UNDECRYPTABLE constant. ' +
-    'The marker collapses `sealed` and `unknown`, so typing it without deciding what the screen ' +
-    'does with `unknown` would ship the same wrong diagnosis behind a better shape. It closes ' +
-    'with the PIN-vs-corrupt-state P1 in docs/wiki/backlog.md.',
-};
+const ALLOWED: Record<string, string> = {};
 
 /** Every hand-written `.svelte` and `.ts` file under `dir`, recursively. */
 function sourcesUnder(dir: string): string[] {
@@ -169,17 +160,27 @@ describe('no member-facing tree renders a server sentence', () => {
     expect(files).toContain('src/hooks.client.ts');
   });
 
-  it.each(files.map((f) => [f]))('%s', (file) => {
-    // The SHARED stripper: the rule has to be documentable beside the code it governs, and a
-    // docblock explaining why nothing may render `.message` necessarily writes `.message`.
-    const offends = SERVER_PROSE.test(withoutAnyComments(readFileSync(join(ROOT, file), 'utf8')));
-    if (ALLOWED[file]) {
-      // An allowlisted file must STILL offend, or the entry is stale and buys nothing.
-      expect(offends).toBe(true);
-      expect(ALLOWED[file].length).toBeGreaterThan(20);
-      return;
+  it('no file renders a server sentence (every offender listed)', () => {
+    // ONE case for the rule, not one per file: the failure names EVERY offender, so a pass that
+    // breaks the rule in three files reads as three entries, not three red cases among a thousand
+    // green ones.
+    const offenders: string[] = [];
+    const staleAllowed: string[] = [];
+    for (const file of files) {
+      // The SHARED stripper: the rule has to be documentable beside the code it governs, and a
+      // docblock explaining why nothing may render `.message` necessarily writes `.message`.
+      const code = withoutAnyComments(readFileSync(join(ROOT, file), 'utf8'));
+      const offends = SERVER_PROSE.test(code);
+      if (ALLOWED[file]) {
+        // An allowlisted file must STILL offend, or the entry is stale and buys nothing.
+        if (!offends || ALLOWED[file].length <= 20) staleAllowed.push(file);
+        continue;
+      }
+      if (!offends) continue;
+      // Lines are not reported: comment removal shifts them, so the offending text is named.
+      offenders.push(`${file}: ${code.match(SERVER_PROSE)?.[0]}`);
     }
-    expect(offends).toBe(false);
+    expect({ offenders, staleAllowed }).toEqual({ offenders: [], staleAllowed: [] });
   });
 
   it('allowlists nothing that is not in the tree', () => {

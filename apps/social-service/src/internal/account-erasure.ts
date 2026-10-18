@@ -74,7 +74,7 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // member's device - a row with no session asks peers for a seed nobody can send.
   'channel_messages.authorId': { action: 'delete' },
   'channel_messages.senderSessionId': { action: 'delete', via: 'authorId' },
-  // The client ids its DELETED salon messages left (migration 088): what keeps a repeated send from
+  // The client ids its DELETED salon messages left (migration 090): what keeps a repeated send from
   // posting a removed message again. An erased account repeats no send, so they go with it.
   'channel_message_client_tombstones.authorId': { action: 'delete' },
   'channel_members.userId': {
@@ -204,7 +204,11 @@ export interface ErasureStatement {
 
 /**
  * The bookings part of the erasure (docs/wiki/bookings-chantier.md, "A deleted account"), in order:
- * what reads the account as HOLDER (cancel, withdraw, purge) runs before its ids are tombstoned.
+ * what reads the account as HOLDER (cancel, withdraw, purge) runs before its ids are tombstoned,
+ * and the rows are taken in the booking path's own lock order - SPACES, then RESOURCES, then
+ * bookings - so an erasure racing a booking on a resource the account is linked to waits or is
+ * waited for, and never deadlocks (a booking holds the space and resource locks while it inserts,
+ * and the insert waits on the booking row this erasure cancels).
  *
  * - A PERSONAL space it owns is deleted, and the foreign keys cascade everything under it (D27) -
  *   other people's coming bookings there included: nobody else can manage that space.
@@ -223,6 +227,14 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
     sql: `DELETE FROM booking_spaces WHERE "associationId" IS NULL AND "ownerId" = $1`,
   },
   {
+    label: 'bookings_space_owner',
+    sql: `UPDATE booking_spaces SET "ownerId" = $2 WHERE "ownerId" = $1`,
+  },
+  {
+    label: 'bookings_linked_resource',
+    sql: `UPDATE booking_resources SET "linkedUserId" = NULL WHERE "linkedUserId" = $1`,
+  },
+  {
     label: 'bookings_coming_cancelled',
     sql: `UPDATE bookings SET "cancelledAt" = now(), "cancelledById" = $2
            WHERE "holderId" = $1 AND "cancelledAt" IS NULL AND "startsAt" > now()`,
@@ -238,10 +250,6 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
     label: 'bookings_answers',
     sql: `UPDATE bookings SET answers = NULL, "answersPurgedAt" = now()
            WHERE "holderId" = $1 AND answers IS NOT NULL`,
-  },
-  {
-    label: 'bookings_space_owner',
-    sql: `UPDATE booking_spaces SET "ownerId" = $2 WHERE "ownerId" = $1`,
   },
   { label: 'bookings_holder', sql: `UPDATE bookings SET "holderId" = $2 WHERE "holderId" = $1` },
   {
@@ -259,10 +267,6 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'bookings_blocks',
     sql: `UPDATE booking_blocks SET "createdById" = $2 WHERE "createdById" = $1`,
-  },
-  {
-    label: 'bookings_linked_resource',
-    sql: `UPDATE booking_resources SET "linkedUserId" = NULL WHERE "linkedUserId" = $1`,
   },
 ];
 

@@ -13,6 +13,7 @@ import { registerPerReaderCache, SharedCache } from '$lib/utils/sharedCache';
 import type { PublishedCarte } from '$lib/carte/publish';
 import type { PriceMatrix } from '$lib/pricing/priceMatrix';
 import type { Campus, Formation } from '$lib/profile/miconnectProfile';
+import { assertWithinRequestBudget } from '$lib/utils/mediaRequestLimits';
 
 /**
  * Permission flags for association members (mirrors the backend enum).
@@ -760,6 +761,7 @@ export async function uploadCalendarEventImage(
   const token = await getToken().catch(() => '');
   const fd = new FormData();
   fd.append('file', file);
+  assertWithinRequestBudget(fd);
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(
@@ -1098,6 +1100,7 @@ export async function uploadAssociationLogo(
   const token = await getToken().catch(() => '');
   const fd = new FormData();
   fd.append('file', file);
+  assertWithinRequestBudget(fd);
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(
@@ -2072,6 +2075,7 @@ export async function uploadProductIcon(
   const token = await getToken().catch(() => '');
   const fd = new FormData();
   fd.append('file', file);
+  assertWithinRequestBudget(fd);
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(
@@ -2690,6 +2694,7 @@ export async function uploadPartnershipIcon(
   const token = await getToken().catch(() => '');
   const fd = new FormData();
   fd.append('file', file);
+  assertWithinRequestBudget(fd);
   const headers: Record<string, string> = {};
   if (token) headers['Authorization'] = `Bearer ${token}`;
   const res = await fetch(

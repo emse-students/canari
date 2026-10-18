@@ -90,7 +90,7 @@ const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 const SIGNATURE_BASE64_CHARS = 88;
 
 /**
- * 410 code: a send repeating a message that was deleted after its first send landed (migration 088's
+ * 410 code: a send repeating a message that was deleted after its first send landed (migration 090's
  * tombstone). The client forgets the send instead of offering it again.
  */
 export const CHANNEL_MESSAGE_DELETED = 'CHANNEL_MESSAGE_DELETED';
@@ -3375,7 +3375,7 @@ export class ChannelService {
       return { row, replayed: false };
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
-      // THE OTHER UNIQUE INDEX (migration 088): a repeat of this message landed between the lookup in
+      // THE OTHER UNIQUE INDEX (migration 090): a repeat of this message landed between the lookup in
       // `sendMessage` and this insert. Read from the ROW, never from the constraint's name in the
       // driver's message: a row under this author's client id IS the answer.
       if (msg.clientMessageId) {
@@ -3445,7 +3445,7 @@ export class ChannelService {
 
   /**
    * Inserts a message that carries a client id, unless that id names a message this author's salon
-   * has DELETED (migration 088's tombstone). A delete drops the row, so the lookup in `sendMessage`
+   * has DELETED (migration 090's tombstone). A delete drops the row, so the lookup in `sendMessage`
    * finds nothing for a repeat that arrives after it - a first POST whose answer was lost, its app
    * killed, the message removed by a moderator or by its author on another device - and without this
    * the repeat would post it again: a moderation removal undone with no one touching anything.
@@ -4375,10 +4375,10 @@ export class ChannelService {
       throw new ForbiddenException('Missing channel.moderate permission to delete this message');
     }
 
-    // ITS CLIENT ID OUTLIVES IT (migration 088): the tombstone and the delete commit together, under
+    // ITS CLIENT ID OUTLIVES IT (migration 090): the tombstone and the delete commit together, under
     // the client id's lock (`clientIdLockSql`) that a send takes around its tombstone check and its
     // insert - so no instant exists where a repeat of this message finds neither the row nor its
-    // tombstone and posts it again. A row with no client id (older than 088, a system notice) has
+    // tombstone and posts it again. A row with no client id (older than 090, a system notice) has
     // nothing a repeat could name: it takes no lock and writes no tombstone.
     await this.messageRepo.manager.transaction(async (tx) => {
       await tx.query(

@@ -1,5 +1,5 @@
 import { MlsDeliveryApi, type MlsDeliveryFetch } from './mlsDeliveryApi';
-import { refusalIsTemporary } from './deviceKeyPackage';
+import { refusalIsTemporary, refusalRetiresInvitation } from './deviceKeyPackage';
 
 /**
  * WHAT THE `null` HID.
@@ -52,23 +52,43 @@ describe('asking for one device KeyPackage', () => {
     }
   );
 
-  /** A server older than the reason field. `unspecified` keeps the only reading that can't be wrong. */
-  it('reads a 404 with no reason as unspecified rather than guessing one', async () => {
+  /**
+   * Every delivery service since 2026-09-16 names its reason, so a 404 with none is not that
+   * service answering - it establishes nothing, and nothing is retired. The caller logs it, once per sweep.
+   */
+  it('says a 404 naming no reason established nothing, without logging it itself', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
     const fetchFn = vi.fn().mockResolvedValue(json({ statusCode: 404, message: 'nope' }, 404));
 
     expect(await api(fetchFn).fetchDeviceKeyPackage('u1', 'd1')).toEqual({
-      kind: 'none',
-      reason: 'unspecified',
+      kind: 'unanswered',
+      detail: 'a 404 with no reason in it',
     });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
-  it('reads a 404 with an UNKNOWN reason as unspecified, not as the string it was sent', async () => {
-    const fetchFn = vi.fn().mockResolvedValue(json({ reason: 'something-newer' }, 404));
+  /**
+   * A reason this build does not know is still the server ANSWERING (one added after this build
+   * shipped): it is typed `unrecognized`, which retires nothing, and it is warned about ONCE - every
+   * sweep meets it again, and a repeated line is noise.
+   */
+  it('reads a 404 with an UNKNOWN reason as an unrecognized refusal, warned once', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    // A fresh Response per call: a body is read once.
+    const fetchFn = vi
+      .fn()
+      .mockImplementation(async () => json({ reason: 'something-newer' }, 404));
+    const client = api(fetchFn);
 
-    expect(await api(fetchFn).fetchDeviceKeyPackage('u1', 'd1')).toEqual({
-      kind: 'none',
-      reason: 'unspecified',
-    });
+    for (let sweep = 0; sweep < 3; sweep++) {
+      expect(await client.fetchDeviceKeyPackage('u1', 'd1')).toEqual({
+        kind: 'none',
+        reason: 'unrecognized',
+      });
+    }
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 
   it.each([500, 502, 503, 401])('says %d established NOTHING about the device', async (status) => {
@@ -111,6 +131,16 @@ describe('refusalIsTemporary', () => {
     expect(refusalIsTemporary('expired')).toBe(true);
     expect(refusalIsTemporary('revoked')).toBe(false);
     expect(refusalIsTemporary('unregistered')).toBe(false);
-    expect(refusalIsTemporary('unspecified')).toBe(false);
+    expect(refusalIsTemporary('unrecognized')).toBe(false);
+  });
+});
+
+describe('refusalRetiresInvitation', () => {
+  /** An allowlist, because retiring is destructive: only the reasons this build can judge retire. */
+  it('retires on the three known reasons and keeps the invitation on an unrecognized one', () => {
+    expect(refusalRetiresInvitation('revoked')).toBe(true);
+    expect(refusalRetiresInvitation('unregistered')).toBe(true);
+    expect(refusalRetiresInvitation('expired')).toBe(true);
+    expect(refusalRetiresInvitation('unrecognized')).toBe(false);
   });
 });

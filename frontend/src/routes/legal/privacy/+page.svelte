@@ -594,14 +594,13 @@
       <p class="legal-callout-title">Supprimer votre compte</p>
       <p>
         Depuis l'application : <strong>Paramètres > Supprimer mon compte</strong>. La suppression
-        est immédiate : profil, publications, adhésions, appareils, jetons de notification et
-        messages en attente sont effacés. Vos messages dans les salons et vos achats sont conservés
-        sous une forme détachée de votre compte (auteur « supprimé »), pour ne pas trouer les
-        conversations des autres membres ni la comptabilité des associations. Certaines données ne
-        sont pas encore atteintes par cette suppression, notamment vos réponses aux formulaires, vos
-        commentaires et réactions sur les publications d'autres membres et l'historique des
-        modifications de votre profil : leur intégration est en cours, et vous pouvez en demander
-        l'effacement par e-mail dès maintenant.
+        est immédiate : profil, publications, adhésions, appareils, jetons de notification, messages
+        en attente et messages de salon (avec leurs réactions et épingles) sont effacés. Vos achats
+        sont conservés sous une forme détachée de votre compte (auteur « supprimé »), pour ne pas
+        trouer la comptabilité des associations. Certaines données ne sont pas encore atteintes par
+        cette suppression, notamment vos réponses aux formulaires, vos commentaires et réactions sur
+        les publications d'autres membres et l'historique des modifications de votre profil : leur
+        intégration est en cours, et vous pouvez en demander l'effacement par e-mail dès maintenant.
       </p>
       <p class="legal-fineprint">
         Les données supprimées subsistent dans les sauvegardes pendant la durée indiquée en section

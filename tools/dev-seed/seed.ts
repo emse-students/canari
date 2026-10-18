@@ -82,6 +82,13 @@ export function ahead(days: number, hour: number): { expr: string } {
 }
 
 /** The fictional people. `key` is the stable identity; the names are what a screen shows. */
+/**
+ * The client floor dev is reset to. It must follow the PRODUCTION floor (the server refuses a floor
+ * above its own version, so never raise it past what dev runs). The live row is changed from the
+ * admin page; this constant is only what a reset-to-seed drops it back to.
+ */
+const MIN_CLIENT_VERSION = '1.2.7';
+
 const PEOPLE = [
   { key: 'alice', first: 'Alice', formation: 'ICM', promo: 2024, campus: 'saint-etienne' },
   { key: 'bruno', first: 'Bruno', formation: 'ICM', promo: 2023, campus: 'saint-etienne' },
@@ -442,7 +449,7 @@ export function buildSeed(repoRoot: string = REPO_ROOT): SeedRows {
       {
         id: 1,
         maintenance_enabled: false,
-        min_client_version: '0.0.0',
+        min_client_version: MIN_CLIENT_VERSION,
         payment_provider: 'disabled',
       },
     ],

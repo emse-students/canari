@@ -135,7 +135,7 @@ const awaitingRepeatProof = new Map<string, () => void>();
 
 /**
  * Holds a send whose outcome is UNKNOWN until a repeat is proven safe, instead of repeating it
- * unasked: against a server without migration 088 the repeat would post it twice. Its row stays
+ * unasked: against a server without migration 090 the repeat would post it twice. Its row stays
  * `unconfirmed`, so the author's Retry is offered meanwhile; once an answer proves it, the send goes
  * again under its client id with no gesture.
  */
@@ -196,7 +196,7 @@ export function liveSalonSendIds(): ReadonlySet<string> {
  * THE OUTCOME IS CLASSIFIED AT THE THROW. A status code below 500 is an ANSWER: the server saw the
  * request and said no, so the row is `error`. Anything else is an UNKNOWN outcome - the server may
  * hold the message - and since the server answers a repeat of the same client id with the row it
- * already holds (migration 088), sending it again is safe:
+ * already holds (migration 090), sending it again is safe:
  * - a transport failure that left the device offline is OWED to the reconnect (`pending`), which
  *   re-delivers it with no gesture - once an answer has proven this server answers a repeat with
  *   its row (`salonRepeatProof.ts`); before that it is `unconfirmed` and waits for that proof;
@@ -324,7 +324,7 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
       });
       return m.chat_send_unconfirmed();
     }
-    // A REPEAT OF A MESSAGE DELETED SINCE ITS FIRST SEND LANDED (migration 088's tombstone): it was
+    // A REPEAT OF A MESSAGE DELETED SINCE ITS FIRST SEND LANDED (migration 090's tombstone): it was
     // posted, then removed by its author or a moderator. Nothing is left to send or to offer again.
     if (refusalCode(error) === CHANNEL_MESSAGE_DELETED) {
       deps.log(
@@ -354,7 +354,7 @@ const retrying = new Set<string>();
  *
  * SAFE WHATEVER THE FIRST ATTEMPT DID: after a refusal (`error`) the server stored nothing, and after
  * an unknown outcome (`unconfirmed`) it answers the repeat with the row it already holds (migration
- * 088, WP-OFF-3). A retry of a salon that could not be loaded waits for it again if a listing is in
+ * 090, WP-OFF-3). A retry of a salon that could not be loaded waits for it again if a listing is in
  * flight.
  *
  * @returns the refusal sentence when it failed again, `null` when the server took it, and
@@ -516,7 +516,7 @@ let resumeTail: Promise<unknown> = Promise.resolve();
 /**
  * Sends again what a PAST page life left unanswered in the unsent ledger (WP-OFF-3), under the same
  * client id - the server answers a repeat with the row it holds, so a message that did arrive is not
- * posted twice. That holds only on a server carrying migration 088, so each entry is drawn
+ * posted twice. That holds only on a server carrying migration 090, so each entry is drawn
  * `unconfirmed` and waits until an answer has proven it (`salonRepeatProof.ts`). Only entries whose
  * writer is PROVEN dead are taken (`takeOrphanedSalonTexts`), and one whose session ends while it
  * waits stays in its account's ledger.

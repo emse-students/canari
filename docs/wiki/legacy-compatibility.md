@@ -72,9 +72,6 @@ REST: those rows need a count, then a migration.
 | Shim (entry below) | Condition | Met at floor 1.2.7? | Data at rest | Removal size | Disposition |
 | --- | --- | --- | --- | --- | --- |
 | `paymentMethod: 'stripe'` STORED | rows written before 2026-10-08 | no - data | `purchase_records` and `submissions` | type + 3 client arms, after a migration | owed: count + migration (user) |
-| Carte bare publish body | floor >= fingerprint | YES (`v0.18.28`) | old posters keep a null fingerprint (meaning UNKNOWN, kept) | ~-20 lines, server | removed with the floor (server only); a missing or malformed fingerprint is refused too |
-| Prekeys as bare base64 strings | floor >= `0.18.10` | YES (`v0.18.10`) | undated rows stay covered by their `NULL` arms | ~-10 lines, server | removed with the floor |
-| `/key-package` 404 with no `reason` | every estate past the 2026-09-16 server (not a client floor) | YES (since `v0.18.10` deployed) | none | ~-30 lines, client | removed: a 404 with no reason is `unanswered`, a reason this build does not know is the typed refusal `unrecognized` |
 | Salon push held for a sender with no `seedFrame` | floor >= first release sending `seedFrame` | version YES (`v0.18.28`); proof NO | none | server refusal + Kotlin hold registry, native | NOT removed: nothing has measured that EVERY admitted send carries the frame (the server never stores it), so a required field could refuse an honest send. Owed: a log of frame-less non-silent sends, read for a week, then a native PR |
 | Server `legacyTitle`/`legacyBody` on social/form pushes | clients reading `contentKey` (2026-08-19) | version YES (`v0.14.1`) | none | ~-50 lines server + Kotlin + Swift arms | NOT removed: dropping them leaves an iOS alert EMPTY whenever the NSE does not run, a visible behaviour change, not a removal. Needs a decision and an iPhone reading |
 | Reaction push keeps wire type `social` + a generic `body` (`notify-reaction`; had no entry here) | clients knowing `reaction: 'true'` (2026-08-15) | version YES (`v0.14.0`) | none | server + Kotlin dispatch | NOT removed, same iOS-alert question as the row above |
@@ -87,7 +84,7 @@ REST: those rows need a count, then a migration.
 | `GET /history` bare array | replacement shipped, then floored | NO (never shipped) | none | - | unchanged |
 | `LEGACY_PERMISSION_MAPPING` (`channel-role.entity.ts`; no entry here) | no `channel_roles` row holds an old key | not a version question | `channel_roles.permissions` | 1 map + 1 hook | owed: count |
 | Form `dependsOn`/`dependsValue` (`forms/visibility.ts`; no entry here) | no stored form uses the pair | not a version question | `forms.items` | reader branch | owed: count |
-| State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | NOT done here: a writer flip, not a removal - its own MLS PR with an adversarial review ([backlog](backlog.md)) |
+| State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | FLIPPED in its own MLS PR (PK1, 2026-10-17, unshipped until a tag carries it); the LEGACY reader stays for blobs not yet rewritten ([backlog](backlog.md)) |
 | `MLS_STATE_SEAL_V2_WRITER_ENABLED` | a stable with the reader served the web AND floor >= it | YES (`v1.2.7`) | it CHANGES device data at rest | 1 line, then the encrypt worker | NOT done here, same reason |
 | The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closes when the user sets 1.2.7 |
 | Group removal hold (#1878) | floor >= the release carrying it | NO (`1.2.9`) | - | - | waits |
@@ -134,6 +131,20 @@ earlier reaches the floor clients as a wrong sentence and a dead link, which no 
 3. Add the type to `KNOWN_NOTIFICATION_TYPES` and the `notificationHref` switch (`notificationTarget.ts`), and give `NotificationRow` its glyph, colour and Paraglide sentence; the tests walk every known type through both.
 4. Native tables (`composeServerNotification`, NSE, `canari_push.mm`) get its `contentKey`.
 **Removal condition:** none; this is a floor requirement, not a shim.
+
+### No date yet - the profile batch answered without `deleted`, by a server older than 2026-10-18
+
+**Site:** `flushProfileBatch` in `frontend/src/lib/stores/user.ts` (`legacyAnswer`).
+**Shim (2026-10-18):** `GET /api/users/batch` answers `{ users, deleted }` since #2022, and a client
+reading that shape meets an OLDER server whenever the two are not in step - a rolling deploy, a
+rollback, a store build live before production deploys. That server sends no `deleted` and answers
+an unknown id by its absence, so an answer with the field MISSING is read the old way: absence is
+`UserProfileFetchError(404)`, cached, rendered as the unknown-user label, one `console.debug` per
+chunk. Without it every absent id counted as a contract breach (`console.error`, 502, never cached)
+and `displayName.ts` warned, backed off 120 s and asked again.
+**Removal condition:** every estate's core-service sends `deleted` (dev and production both deployed
+past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
+field becomes the breach. A server version, not a client floor.
 
 ### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 
@@ -188,23 +199,6 @@ The v1 WRITER is already gone (G2-5): `sealWithGraine` lives only in the test fi
   count above 0 after the date: then name the salon, as the section below says.
   On the same day, `channel_messages."signature"` becomes `NOT NULL` (a migration), and the DTO's
   `signature?` and the `?? null` in `ChannelService.sendMessage` go with it.
-
-### No date yet - a carte publish body that is the bare document, with no fingerprint
-
-**Site:** `PosterService.readPublishBody` in `apps/social-service/src/associations/poster.service.ts`,
-the branch taken when the body has no `carte` key.
-**Shim:** since 2026-09-28 the carte editor posts `{ carte, fingerprint }`, and the fingerprint is
-what lets it later say the LIVE map is older than what has been saved
-([carte-vie-asso](carte-vie-asso.md#the-editor-can-say-the-live-map-is-older-than-what-is-saved)).
-The app EMBEDS its frontend, so an admin running an older build still posts the bare document;
-refusing it would break publishing for them, for no gain. Such a publish records no fingerprint, and
-the editor then reads the live map's freshness as UNKNOWN - which it shows as nothing at all, never
-as "up to date".
-**Removal condition:** `minClientVersion` at or above the first release carrying the fingerprint,
-i.e. both stores serving it. Then the wrapper becomes required and a bare body is a 400, because at
-that point a body with no fingerprint is a bug rather than an old build.
-**Cost of keeping it:** one `in` check and a debug line. The hazard is silence: a publish from an
-old build leaves a live map nothing can date, and the badge simply never appears for it.
 
 ### No date yet - the salon push HELD for its seed, for a sender that attaches no seed frame
 
@@ -414,52 +408,6 @@ replay, and delete this entry.
 before the change still duplicates once per replay and once per bundle. **Nothing repairs the rows
 already on disk**; see [backlog](backlog.md).
 
-
-### No date yet - a `/key-package` 404 with no `reason` in its body
-
-**Site:** `mlsDeliveryApi.ts`, `fetchDeviceKeyPackage` - the `'unspecified'` arm of the reason parse,
-and the `refusalIsTemporary` call sites that read it.
-**Shim:** since 2026-09-16 the delivery service puts `reason: 'revoked' | 'unregistered' | 'expired'`
-in the body of the 404, because the three are three different facts and the caller acts differently
-on each. A server that predates the field sends none, and `'unspecified'` is what the client calls
-that: it takes the branch the code took before the reason existed - retire the pending membership,
-promise nothing about a return - which is the only reading that cannot be wrong.
-**Replacement:** the field itself. Nothing else is needed.
-**What settles the date, and why there is none yet:** this is a shim against an old SERVER, not an
-old client, so `minClientVersion` says nothing about it. It is dead the moment every estate runs a
-build at or above the one carrying the field, and the two estates are deployed from this repository -
-so the honest condition is "after the next production deploy", not a date. Written here rather than
-left implicit because a `'unspecified'` that quietly becomes unreachable is exactly the branch a
-later reader spends an afternoon on.
-**On removal:** narrow `DeviceKeyPackageRefusal` to the server's three, delete the `'unspecified'`
-arm and its test, and delete this entry.
-**Cost of keeping it:** none beyond one branch. It never fires against a current server, and against
-an old one it preserves behaviour rather than inventing any.
-
----
-
-### 2026-12-16 - one-time prekeys published as a bare base64 string
-
-**Site:** `devices.controller.ts`, the `parsed` map in `registerDevicePrekeys` - the
-`typeof entry === 'object' ? entry : { keyPackage: entry }` line and nothing else.
-**Shim:** a client below 0.18.10 sends `keyPackages: ["base64", ...]`; one at or above it sends
-`[{ keyPackage, notAfter }, ...]`. The old spelling stores a NULL `notAfter`, which every read in
-this service treats as "not known to be expired" rather than "assume the worst" - so an old client's
-pool keeps working exactly as it did, and no device is locked out by a fact nobody has.
-**Replacement:** the expiry lives inside the serialized MLS KeyPackage and only the client's WASM
-crate can parse one. Until 2026-09-16 both tables held an opaque string, the server served elapsed
-packages, and the joiner refused them with `LifetimeError(Expired)` for ever - see
-[mls](protocols/mls-graine-state-machine.md) and migration `024_key_package_not_after.sql`.
-**What settles the date, and it is a measurement rather than a guess:** every batch logs
-`[REGISTER_PREKEYS] ... undated=N`, and N is the count of rows that arrived with no date. The shim
-goes when that count is zero over a week, which the retention of a stale install makes 2026-12-16 at
-the latest; `minClientVersion` reaching 0.18.10 retires it outright and sooner.
-**On removal:** type `keyPackages` as `{ keyPackage: string; notAfter?: string }[]`, delete the
-object/string branch, and delete this entry. The `notAfter IS NULL` arms in the resolver, the count
-and the reclaim STAY - they cover the rows migration 024 could not date, which outlive the shim.
-**Cost of keeping it:** a device on an old client publishes a pool the reclaim can never sweep and
-the resolver can never skip, so it keeps exactly the defect this change closes until it updates.
-That is the same trade the NULL makes everywhere here, and it is why the count above is logged.
 
 ---
 

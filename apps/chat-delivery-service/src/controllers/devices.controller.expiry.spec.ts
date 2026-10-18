@@ -243,16 +243,18 @@ describe('DevicesController - a key package past its lifetime', () => {
       expect(saved[0].notAfter?.getTime()).toBe(when.getTime());
     });
 
-    it('still accepts the bare string an older client sends, and DATES it from the insert', async () => {
-      // THE SHIM, AND THE WHOLE OF IT. A client from before this change cannot be made to send a
-      // date; refusing it would take a working device's pool away over a fact nobody needs.
-      //
-      // BUT STORING A NULL WAS NOT THE ONLY WAY TO ACCEPT IT, and it was the expensive one: 577
-      // undated rows stood on production on 2026-09-18, every one written AFTER migration 024
-      // backfilled the table on exactly this arithmetic, and each was a row no read site could
-      // judge for 84 days. This table is insert-once, so the sum IS the package's lifetime.
+    it('refuses the bare string of a client below 0.18.10, and stores nothing', async () => {
+      // `minClientVersion` 1.2.7 admits no such client, so a bare string is a bug, not an old build.
+      await expect(publish(['AAA', 'BBB'])).rejects.toThrow(/\{ keyPackage, notAfter \}/);
+    });
+
+    it('DATES an entry with no date from the insert', async () => {
+      // STORING A NULL was the expensive answer: 577 undated rows stood on production on
+      // 2026-09-18, every one written AFTER migration 024 backfilled the table on exactly this
+      // arithmetic, and each was a row no read site could judge for 84 days. This table is
+      // insert-once, so the sum IS the package's lifetime.
       const before = Date.now();
-      const saved = await publish(['AAA', 'BBB']);
+      const saved = await publish([{ keyPackage: 'AAA' }, { keyPackage: 'BBB' }]);
       const after = Date.now();
       expect(saved.map((r) => r.keyPackage)).toEqual(['AAA', 'BBB']);
       const span = KEY_PACKAGE_LIFETIME_DAYS * 24 * HOUR;
@@ -269,6 +271,25 @@ describe('DevicesController - a key package past its lifetime', () => {
       const saved = await publish([{ keyPackage: 'AAA', notAfter: 'the day before yesterday' }]);
       expect(saved[0].notAfter).not.toBeNull();
       expect(saved[0].notAfter!.getTime()).toBeGreaterThan(Date.now());
+    });
+
+    it('accuses an undated entry at warn, and logs a fully dated batch at log', async () => {
+      // Every admitted client dates each entry, so `undated` above zero is a defect to find.
+      const { controller } = await build({
+        otkpRepo: { create: (row: unknown) => row, save: async (rows: unknown[]) => rows },
+      });
+      const warn = jest.spyOn(controller['logger'], 'warn');
+      const log = jest.spyOn(controller['logger'], 'log');
+      const send = (keyPackages: unknown) =>
+        controller.registerDevicePrekeys({ userId: 'u1', deviceId: 'd1', keyPackages }, 'u1');
+
+      await send([{ keyPackage: 'AAA' }]);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('undated=1'));
+
+      warn.mockClear();
+      await send([{ keyPackage: 'BBB', notAfter: new Date(Date.now() + HOUR).toISOString() }]);
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining('REGISTER_PREKEYS'));
+      expect(log).toHaveBeenCalledWith(expect.stringContaining('undated=0'));
     });
 
     it('still refuses a batch with no key package in it', async () => {

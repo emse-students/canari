@@ -13,7 +13,8 @@ import {
   migrateLegacyMlsStateBlob,
   wasmGraineSignatureEngine,
   detectRuntimeDeviceOs,
-  MLS_LOCAL_STATE_UNDECRYPTABLE,
+  SavedStateUnopenedError,
+  noPinOpensState,
   VaultOwnerUnprovenError,
   type MlsInitOptions,
 } from '$lib/mls-client';
@@ -752,7 +753,7 @@ export class WebMlsService extends BaseMlsService {
     if (this.client) return;
     // `opts` MUST be forwarded: dropping it silences `noFreshStart`, and an undecryptable
     // saved state then takes the destructive fresh-start branch (new device id, old device
-    // deleted server-side) instead of surfacing MLS_LOCAL_STATE_UNDECRYPTABLE for recovery.
+    // deleted server-side) instead of surfacing `SavedStateUnopenedError` for recovery.
     // TypeScript accepts an override that declares fewer parameters, so the loss is silent.
     return super.init(userId, deviceKeyB64, state, opts);
   }
@@ -838,17 +839,27 @@ export class WebMlsService extends BaseMlsService {
         }
       }
 
-      if (cause === 'mismatch' || state != null) {
-        // ANYTHING BUT A MISMATCH IS WORTH PAUSING FOR - same reasoning as `TauriMlsService`,
-        // and the same reason it is written as a negation: `unknown` must not be rotated away.
-        if (opts?.noFreshStart && cause !== 'mismatch') {
-          throw new Error(MLS_LOCAL_STATE_UNDECRYPTABLE, { cause: e });
+      if (noPinOpensState(cause) || state != null) {
+        // ANYTHING NO PIN CAN OPEN IS ROTATED, EVERYTHING ELSE IS WORTH PAUSING FOR - same
+        // reasoning as `TauriMlsService`, and the same reason it is written as a negation: `unknown`
+        // must not be rotated away. The browser keeps one state per account, so it has no owner
+        // record to consult.
+        if (opts?.noFreshStart && !noPinOpensState(cause)) {
+          throw new SavedStateUnopenedError(
+            cause === 'rotated' || cause === 'undecryptable' ? cause : 'unknown',
+            e
+          );
+        }
+        if (cause === 'altered') {
+          console.error(
+            `[MLS] The saved state was ALTERED under the key its header names - no PIN opens it; rotating the device identity: ${String(e).slice(0, 200)}`
+          );
         }
         await this.rotateDeviceIdentity(
           deviceKeyB64,
           cause === 'mismatch'
             ? 'credential mismatch - stale state'
-            : `loaded state unusable (corruption?): ${String(e).slice(0, 200)}`
+            : `loaded state unusable (${cause}): ${String(e).slice(0, 200)}`
         );
       } else {
         console.error('[MLS] WASM init failed:', e);
