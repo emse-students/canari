@@ -113,7 +113,9 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   messages (reactions and pins included; the salons are told a pin is gone) and the client-id
   tombstones its deleted ones left (`channel_message_client_tombstones`, migration 090: author,
   salon and a random id - an erased account repeats no send, so nothing needs them; a message
-  delete racing the erasure locks the row first, so it waits and writes none)**, its key packages, devices, PIN verifier, push tokens, signature keys,
+  delete racing the erasure locks the row first, so it waits and writes none; the fan-out outbox
+  entry of a message (`channel_message_fanout`, migration 093) goes with its message by cascade, and
+  its mentions of other accounts live only until the broadcast is handed off)**, its key packages, devices, PIN verifier, push tokens, signature keys,
   notification preferences, dismissal markers, DMs (tombstoned for the other party), queued
   messages to it and queued APPLICATION messages from it; in core, blocks, sessions, the profile
   trail and correction requests, announcement readership.

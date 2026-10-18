@@ -47,6 +47,7 @@ const RAW_TABLES = [
   'read_grant_journal',
   'post_audiences',
   'channel_message_client_tombstones',
+  'channel_message_fanout',
 ];
 
 const SRC = join(__dirname, '..');
