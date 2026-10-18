@@ -648,7 +648,7 @@ makes long - and one detail page awaits its own data.
 | 1 | **P1** An attachment bubble is blind: no progress, cancel or retry, no deadline on the upload | **BUILT: WP-OFF-8** ([13.4](#134-wp-off-8-built-a-bubble-that-says-how-much-has-gone-and-can-be-ended)) | this page |
 | 2 | **P1** Navigation waits on a profile call (root layout) and on one post (detail page) | **BUILT: WP-NAV-1** (a separate pull request; [posts](modules/posts.md)) | `routes/+layout.ts`, `routes/posts/[postId]` |
 | 3 | **P2** Every failed upload restarts at byte 0; a 50 MB body is ONE request | open: the resumable chunk upload with a server offset route is reels-in-chat RC-5, and RC-5 now only has to reuse `xhrUpload` | [reels-in-chat](modules/reels-in-chat.md), [media-service](../services/media-service.md) |
-| 4 | **P2** The upload holds the conversation's lane and a send slot, so text sent behind a big file waits for it | open: **WP-OFF-9**, start the upload at enqueue outside the lane (display order is `sentAt`, so a late attachment still sorts at its compose time) and let the send wait only for ITS own ref | [backlog](../backlog.md) |
+| 4 | **P2** The upload holds the conversation's lane and a send slot, so text sent behind a big file waits for it | **BUILT: WP-OFF-9** ([13.8](#138-wp-off-9-built-the-upload-runs-outside-the-lane-2026-10-18)) | this page |
 | 5 | **P2** A salon (channel) attachment blocks the composer with no progress and no cancel (`isUploadingMedia`) | open: it needs WP-OFF-2/3's salon row; `xhrUpload` is ready for it | [backlog](../backlog.md) |
 | 6 | **P2** The 13 MB file lives in the outbox row and three times in memory per attempt | open: RC-5 ("the file outside the row") | [reels-in-chat](modules/reels-in-chat.md) |
 | 7 | **P2** First list render waits for the WASM (R7) | diagnosed, not built: WP-W3 | section 10.3 |
@@ -740,8 +740,8 @@ request carries more. Every upload surface (chat, salon, posts, comments, reels,
 `encryptAndUpload`, so one place covers them; the other large-body POSTs are listed in the
 [host-waf-body-limit](../infrastructure/host-waf-body-limit.md#what-else-posts-a-big-body) page.
 
-**Not done, on purpose:** resume (needs a server offset route, RC-5), the lane decoupling (WP-OFF-9),
-the salon composer, and any hardware reading: **owed ONE look on the iPhone** with a real 13 MB file on
+**Not done, on purpose:** resume (needs a server offset route, RC-5), the lane decoupling (WP-OFF-9,
+built since: 13.8), the salon composer, and any hardware reading: **owed ONE look on the iPhone** with a real 13 MB file on
 a bad link, because every gate here is blind to what a WKWebView `XMLHttpRequest` upload reports on a
 cellular radio.
 
@@ -808,6 +808,25 @@ A Pixel 6a was made unusable by ONE queued 13 MB attachment. #1728 removed the r
 **Not changed, by design.** The native mirror never carries media (`toMirrorEntry` is null for it). **A PIN change re-seals every outbox row and never touches a blob** (since #1898, `resealDeviceKeyStores` in `pinChange.ts`): it reads and compare-and-swaps the raw `iv` / `cipherText` of each row on both backends (`getSealedPayloads` / `swapSealedPayloads`), so an attachment row moves with its blob key inside it and the IndexedDB blob stays exactly as written. The live flusher keeps the old key until the change ends, and the storage gate covers that window: its calls wait while the rows move, then the retired key is forwarded to the new one ([auth](modules/auth.md#the-other-tabs-of-the-account), `db/deviceKeyGate.ts`). Pinned by `pinChange.test.ts` (a queued text, reaction and attachment survive the change; a flush issued mid-pass is held, then reads under the new key).
 
 **Owed.** (a) the Mi 9T re-reading of the 13 MB send (peak and the wait before the first byte); (b) ONE iPhone check: kill the app with a queued 13 MB file and relaunch. WKWebView may evict IndexedDB under storage pressure; the row then survives in SQLite and the attachment shows the `upload_error` card (a lost attachment, visibly, never a silent one). Not measured.
+
+### 13.8 WP-OFF-9 built: the upload runs outside the lane (2026-10-18)
+
+**Before.** `flushOne` awaited the whole transfer inside the conversation's lane AND a send slot, so a text written behind a 13 MB file on a weak link waited minutes for it, and three big files held all three send slots.
+
+**Mechanism** (`utils/chat/outbox.ts`):
+- The lane, meeting an attachment that owes its upload, **starts the transfer and moves on** (`startUpload`, outcome `uploading`). That is at enqueue in the ordinary case (the enqueue raises the flush); behind an EARLIER entry of the same conversation that is held for a retry, it starts when that one clears, as before. The transfer holds no send slot; it holds one of `MAX_CONCURRENT_UPLOADS` (2) upload slots, so a weak uplink is not split across many bodies.
+- **Only the small MLS send of the media message takes the lane**, once the upload has ended: the task wakes the lane, which sends it in turn. One task per entry id, checked and set with no await between them, so a file is never on the wire twice; the leader-only gate is unchanged (only `runFlush`'s lanes start tasks).
+- A lane with an upload still running **stays claimed and waits for an EVENT** - the upload ending, or a flush raised meanwhile (an enqueue wakes it) - never a clock. So `flush()` still resolves once everything it could send is sent.
+- **A failed upload is classified IN THE LANE** (`settleFailure`, the one path the MLS send's failures also take): refusal, give-up, gateway block, transport hold and the retry-on-request end exactly as in 13.4-13.6. A failure held for a retry, or an attachment backing off on its UPLOAD, holds back only what depends on it (`dependsOnAny`: a reply quoting it, a control naming it); an attachment whose upload ENDED and whose MLS send fails holds its successors, like any message.
+- **The ended upload makes its message due ONCE** (`sendDue`): the first send attempt skips the backoff the upload attempts left; a send that then fails (5xx, edge 403) takes the ladder like any message, and no later flush re-posts it early. Uploaded, the entry keeps lane order again.
+- **A lane arms the backoff before it waits** for an upload: `runFlush` arms it only after its lanes return, so a text held on a 5xx behind a running upload would otherwise wait for the whole file. The ladder's timer raises a flush, which wakes the claimed lane.
+- **Cancel** aborts a transfer on the wire AND one still waiting for an upload slot (the waiter leaves the queue at once); a withdrawal landing during the ref write, with nothing left to abort, is noticed when the task settles. The task forgets itself and clears the bubble. **Retry** aborts and restarts a transfer on the wire; on one still waiting for a slot it does nothing, so it keeps its place in line. **Crash survival** is unchanged: the ref reaches the row before the send is tried and the bytes leave it, and the task keeps the ref (without the bytes) for the send, so a failed row write costs a second upload only after a kill and the payload is decoded once per upload.
+
+**ORDER, STATED.** Display order is `sentAt` (`compareMessageOrder`, on every device), and the media message carries its compose time. **A text sent after a file may reach the peers BEFORE it** (wire order), and every device - the sender's included - still draws the file ABOVE the text. Two attachments of one conversation may likewise be SENT in the order their uploads end; each still sorts at its own compose time. A reply or a control that names the attachment never overtakes it.
+
+**Known limit.** After a reload, an attachment backing off on its upload is not known as such until it is due (the light queue read carries no payload), so it holds its successors for the rest of that backoff (60 s at most), once.
+
+Pinned by `outbox.test.ts` ("outbox uploads run OUTSIDE the lane", WP-OFF-9): a text enqueued behind a 13 MB attachment whose upload is pending is sent before the upload ends (fails on the previous code), a reply quoting it waits, a cancel during the decoupled upload, a kill between the upload end and the send uploads nothing twice; and, after the review of #2061, a send failing after the upload keeps its ladder, a text held on a 5xx behind a running upload retries on its own ladder (fake timers), the 2-slot cap with a third attachment cancelled or retried while it waits, a dispose during an upload, a refusal brought back by the task, a withdrawal during the ref write. **Owed:** the same reading on a phone with a real file on a bad link (with the iPhone look of 13.4).
 
 ## 14. A transport failure is one type on every platform (2026-10-14)
 
