@@ -177,11 +177,14 @@ pub fn key_fingerprint(key: &[u8; 32]) -> [u8; FINGERPRINT_LEN] {
 pub fn parse(blob: &[u8]) -> Result<Framed<'_>, MlsError> {
     if blob.len() >= HEADER_LEN && blob[..MAGIC.len()] == MAGIC {
         let version = blob[MAGIC.len()];
-        // The smallest body each version can carry: a nonce for v1 (its tag is checked by the
-        // cipher), an IV AND a tag for v2, because an AES-GCM body shorter than that is a stub and
-        // not a ciphertext. Unknown versions are refused before any length is read.
+        // The smallest body each version can carry: a nonce AND a tag for both - ChaCha20-Poly1305's
+        // 12 + 16 for v1, AES-GCM's IV + tag for v2 - because a body shorter than that is a stub and
+        // not a ciphertext. Handed to the cipher, a v1 stub would fail its tag under the key its
+        // header names and read as `StateAltered`, which rotates the device identity; a truncated
+        // write is `StateUndecryptable`, as a legacy blob under its nonce is. Unknown versions are
+        // refused before any length is read.
         let floor = match version {
-            VERSION_1 => 12,
+            VERSION_1 => 12 + 16,
             VERSION_2 => V2_IV_LEN + V2_TAG_LEN,
             _ => {
                 return Err(MlsError::StateUndecryptable(format!(
@@ -357,6 +360,25 @@ mod tests {
         blob[MAGIC.len()] = VERSION_2;
         let err = parse(&blob).expect_err("a v2 stub must be refused");
         assert!(err.to_string().contains("version 2"), "{err}");
+    }
+
+    #[test]
+    fn a_version_1_body_shorter_than_a_nonce_and_a_tag_is_a_stub_and_never_altered() {
+        // 12..=27 bytes used to pass a nonce-only floor, fail the Poly1305 tag under the key the
+        // header names, and read as `StateAltered` - a destructive rotation for a truncated write.
+        for len in [0usize, 11, 12, 27] {
+            let blob = frame_v1(&KEY_A, &sealed(len));
+            let err = parse(&blob).expect_err("a v1 stub must be refused");
+            assert!(
+                matches!(err, MlsError::StateUndecryptable(_)),
+                "expected StateUndecryptable for a {len}-byte v1 body, got {err:?}"
+            );
+            assert!(err.to_string().contains("version 1"), "{err}");
+        }
+        assert!(matches!(
+            parse(&frame_v1(&KEY_A, &sealed(28))),
+            Ok(Framed::V1 { .. })
+        ));
     }
 
     #[test]

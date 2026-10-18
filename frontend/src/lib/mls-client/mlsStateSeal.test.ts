@@ -158,6 +158,34 @@ describe('sealMlsStateBlobV2', () => {
     }
   });
 
+  it('calls ONLY an OperationError altered: any other decrypt rejection leaves untyped', async () => {
+    // `STATE_ALTERED` rotates the device identity, so a rejection that is not WebCrypto's
+    // tag-check answer must not wear it - the classifier then answers `unknown` and destroys nothing.
+    const blob = await sealMlsStateBlobV2(plain, DEVICE_KEY_B64);
+    const decrypt = vi.spyOn(crypto.subtle, 'decrypt');
+    try {
+      decrypt.mockRejectedValueOnce(new DOMException('tag mismatch', 'OperationError'));
+      await expect(openMlsStateBlobV2(blob, DEVICE_KEY_B64)).rejects.toThrow(/^STATE_ALTERED: /);
+      for (const other of [
+        new DOMException('key not usable for decrypt', 'InvalidAccessError'),
+        new TypeError('engine fault'),
+      ]) {
+        decrypt.mockRejectedValueOnce(other);
+        const error = await openMlsStateBlobV2(blob, DEVICE_KEY_B64).then(
+          () => null,
+          (e: unknown) => e
+        );
+        expect(error).toBeInstanceOf(Error);
+        expect(String(error)).not.toMatch(
+          /STATE_(ALTERED|KEY_MISMATCH|UNDECRYPTABLE)|IDENTITY_MISMATCH/
+        );
+        expect((error as Error).cause).toBe(other);
+      }
+    } finally {
+      decrypt.mockRestore();
+    }
+  });
+
   it('recognises only version 2: legacy, v1 and unknown versions stay with mls-core', async () => {
     const blob = await sealMlsStateBlobV2(plain, DEVICE_KEY_B64);
     for (const version of [1, 3]) {

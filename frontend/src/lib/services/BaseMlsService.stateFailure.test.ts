@@ -68,6 +68,18 @@ describe('BaseMlsService.classifyStateLoadFailure', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it('reads a v2 decrypt rejection that is not a tag check as `unknown`, accused and not destroyed', () => {
+    // The shape `openMlsStateBlobV2` throws for a non-`OperationError` rejection: proving nothing
+    // about the bytes, it must never reach the `altered` rotation.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const untyped = new Error(
+      'v2 AES-GCM decrypt failed with something other than a tag check, so the state is not proven altered: InvalidAccessError',
+      { cause: new DOMException('x', 'InvalidAccessError') }
+    );
+    expect(classify(untyped)).toBe('unknown');
+    expect(warn).toHaveBeenCalled();
+  });
+
   it('does not accuse a rotation of being unrecognised', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     classify(new Error('STATE_KEY_MISMATCH: x'));
