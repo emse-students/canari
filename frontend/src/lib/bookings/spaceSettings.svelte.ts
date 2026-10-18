@@ -68,7 +68,13 @@ export interface SettingsDraft extends Record<NumberField, string> {
 
 const text = (n: number | null | undefined) => (n === null || n === undefined ? '' : String(n));
 
-/** The draft of a space as the server answered it. */
+/**
+ * The draft of a space as the server answered it. The caller's space is usually `$state` (the edit
+ * page holds it so, and hands it down as a prop), so the nested values are copied with
+ * `$state.snapshot`, never `structuredClone`: a proxy is not cloneable and threw `DataCloneError`
+ * on every open of the editor (v1.3.0-alpha.2). The copy also keeps the draft from sharing the
+ * page's audience proxy, which the audience editor would otherwise write through.
+ */
 export function draftFromSpace(space: ManagedSpace): SettingsDraft {
   const numbers = Object.fromEntries(NUMBER_FIELDS.map((f) => [f, text(space[f])])) as Record<
     NumberField,
@@ -83,8 +89,8 @@ export function draftFromSpace(space: ManagedSpace): SettingsDraft {
     slotMode: space.slotMode,
     nameVisibility: space.nameVisibility,
     discoverability: space.discoverability,
-    audience: space.audience ?? null,
-    items: structuredClone(space.items ?? []),
+    audience: $state.snapshot(space.audience ?? null),
+    items: $state.snapshot(space.items ?? []),
     opensAt: space.opensAt ? wallTimeIn(Date.parse(space.opensAt), space.timeZone) : '',
     quotaPeriod: space.quotaPeriod ?? 'week',
   };
@@ -145,6 +151,7 @@ export function settingsFromDraft(draft: SettingsDraft): SpaceSettings | null {
     discoverability: draft.discoverability,
     audience: draft.audience,
     items: draft.items,
+    // eslint-disable-next-line svelte/prefer-svelte-reactivity -- read once into a string, never stored
     opensAt: opens === null ? null : new Date(opens).toISOString(),
     minNoticeMinutes: num('minNoticeMinutes'),
     horizonDays: num('horizonDays'),
