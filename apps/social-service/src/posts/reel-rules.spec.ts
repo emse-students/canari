@@ -9,7 +9,12 @@
  */
 import { BadRequestException } from '@nestjs/common';
 import { assertCreateKindShape, assertReelEditShape } from './reel-rules';
-import { REEL_MAX_DURATION_MS, isExpiredReel } from './reel.constants';
+import {
+  CHAT_REEL_MAX_DURATION_MS,
+  REEL_MAX_DURATION_MS,
+  isExpiredReel,
+  reelLimits,
+} from './reel.constants';
 
 const video = { type: 'video', mimeType: 'video/mp4' };
 const reel = (extra: Record<string, unknown> = {}) => ({
@@ -120,5 +125,16 @@ describe('isExpiredReel', () => {
     expect(isExpiredReel({ kind: 'post', expiresAt: new Date(0) }, now)).toBe(false);
     expect(isExpiredReel({ expiresAt: new Date(0) }, now)).toBe(false);
     expect(isExpiredReel({ kind: 'reel', expiresAt: null }, now)).toBe(false);
+  });
+});
+
+describe('reelLimits - the numbers a client reads', () => {
+  it('serves the chat cap (60 s, D-size) next to the published reel cap (90 s)', () => {
+    expect(reelLimits()).toMatchObject({
+      maxDurationMs: 90_000,
+      chatMaxDurationMs: CHAT_REEL_MAX_DURATION_MS,
+    });
+    expect(CHAT_REEL_MAX_DURATION_MS).toBe(60_000);
+    expect(CHAT_REEL_MAX_DURATION_MS).toBeLessThan(REEL_MAX_DURATION_MS);
   });
 });
