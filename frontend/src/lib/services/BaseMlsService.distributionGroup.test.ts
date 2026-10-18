@@ -433,6 +433,25 @@ describe('routing a frame that arrived on the group', () => {
     );
   });
 
+  it('hands the envelope DEVICE to the sender check, so a sibling cannot be spoken for', async () => {
+    const processIncomingMessage = vi.fn().mockResolvedValue(new Uint8Array([9, 9]));
+    const ctx = registered({ processIncomingMessage });
+
+    await proto.routeDistributionFrame.call(
+      ctx as never,
+      'g-1',
+      'peer',
+      new Uint8Array([1]),
+      'peer-phone'
+    );
+
+    expect(processIncomingMessage).toHaveBeenCalledWith('g-1', new Uint8Array([1]), {
+      userId: 'peer',
+      deviceId: 'peer-phone',
+      path: 'distribution',
+    });
+  });
+
   it('counts a frame lost for good, by cause, for the seed requests that follow to print', async () => {
     // F3 of the 2026-10-12 queue audit: a request line names what is missing and could not say why.
     resetKeyGroupFrameLosses();

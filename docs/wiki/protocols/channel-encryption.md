@@ -2716,11 +2716,13 @@ a path that was never given a sender and compares nothing.
 comparison, on four paths - `live` (the WebSocket and pull queue), `distribution` (a key-group
 frame), `welcome-replay` and `history`. The envelope's user is compared with the credential's user,
 and its `senderDeviceId`, where the envelope carries one AND the path hands it over, with the
-credential's device. **Only `live` and `history` hand it over today**: `openDistributionFrame` passes the user
-alone, so on `distribution` the device is never compared and `senderDeviceId` stays self-asserted
-(read as such in [section 24](#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18));
-comparing it there is a behaviour change with no production reading behind it, owed on an alpha
-first ([backlog](../backlog.md#p3---the-distribution-paths-device-check-ship-on-an-alpha-read-sender_mismatch-pathdistribution-first)). Three kinds:
+credential's device. **`live`, `history` and, since the 2026-10-18 draft, `distribution` hand it over**:
+`openDistributionFrame` passes the frame's `senderDeviceId` beside the user, so a key-group frame
+whose device disagrees is refused like a user mismatch (see
+[section 24](#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)).
+It is a behaviour change with no production reading behind it, so no stable carries it before
+`[SENDER_MISMATCH] path=distribution` has been read on dev, then production
+([backlog](../backlog.md#p3---the-distribution-paths-device-check-ship-on-an-alpha-read-sender_mismatch-pathdistribution-first)). Three kinds:
 `user`, `device`, `unverifiable`. The envelope's device is itself what the SENDING client's request
 body claimed, so a `device` mismatch is either the server relabelling a frame or a client lying
 about which device sent it - both worth knowing, and the measurement does not need to tell them
