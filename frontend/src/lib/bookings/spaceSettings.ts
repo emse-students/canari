@@ -8,7 +8,7 @@
  * caught here, by field, before a save.
  */
 import type { AudienceCondition, FormItem } from '$lib/forms/api';
-import { instantOfWallTime, wallTimeIn } from './zonedTime';
+import { instantOfWallTime, wallTimeIn } from './wallTime';
 import type {
   Discoverability,
   ManagedSpace,

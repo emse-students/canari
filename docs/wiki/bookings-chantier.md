@@ -493,7 +493,7 @@ sent through the real HTTP layer with no ValidationPipe, changing none of them.
 | `lib/bookings/spaceSettings.ts` | the editor's text draft to the API and back, the DTO's bounds per field, the badge's count |
 | `lib/bookings/availability.ts` | the ranges as the organiser thinks of them to the stored lines and back (see WP-B2), the times offered, the 24/7 warning |
 | `StrandedBookings.svelte`, `lib/bookings/stranded.ts` | the bookings a D29 refusal NAMED, listed under the refused save - when (on the space's clock), which resource, whose - each with its cancel, then "save again" |
-| `lib/bookings/zonedTime.ts` | the space's wall clock to UTC and back, with the server's two rules for a DST gap and a doubled hour (`zoned-time.ts`) |
+| `lib/bookings/zonedTime.ts`, `wallTime.ts` | the space's wall clock to UTC and back: `zonedTime.ts` is the server's `zoned-time.ts` COPIED BYTE FOR BYTE (a declared duplicate, both DST holes resolved the same way), `wallTime.ts` puts the date field's value on it |
 | `lib/navigation/unsavedChanges.ts` | asks before an editor with unsaved changes is left: the browser's prompt on a tab close, the app's dialog on an in-app navigation, replayed on yes |
 
 - **A range crossing midnight is ONE range on screen** ("Friday 22:00 to 02:00", marked "ends the
@@ -524,7 +524,7 @@ sent through the real HTTP layer with no ValidationPipe, changing none of them.
 signed-out preview route, not committed): no horizontal scroll, the night range folded, the 24/7
 warning, the date sheet. Not yet seen against a running API - the first organiser to use it on dev
 is that reading. **Proof**: `availability.test.ts`, `spaceSettings.test.ts` (the opening in the
-space's zone), `refusals.test.ts`, `stranded.test.ts`, `zonedTime.test.ts` (both DST holes),
+space's zone), `refusals.test.ts`, `stranded.test.ts`, `wallTime.test.ts` (both DST holes),
 `unsavedChanges.test.ts`, `editSections.test.ts`, `DateTimeField.svelte.test.ts`; on the server,
 `bookings.controller.spec.ts` (the `ids` filter's shape) and the integration case "narrows the
 organiser list to the bookings a D29 refusal named".

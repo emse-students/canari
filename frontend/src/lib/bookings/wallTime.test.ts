@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { instantOfWallTime, localDateIn, wallTimeIn } from './zonedTime';
+import { instantOfWallTime, wallTimeIn } from './wallTime';
+import { localDate } from './zonedTime';
 
 const PARIS = 'Europe/Paris';
 const at = (iso: string) => Date.parse(iso);
@@ -8,7 +9,7 @@ describe("a space's wall clock (D25)", () => {
   it("reads an instant on the space's clock, whatever the device's", () => {
     expect(wallTimeIn(at('2026-11-02T09:00:00Z'), PARIS)).toBe('2026-11-02T10:00');
     expect(wallTimeIn(at('2026-11-02T09:00:00Z'), 'Asia/Tokyo')).toBe('2026-11-02T18:00');
-    expect(localDateIn(at('2026-11-02T23:30:00Z'), PARIS)).toBe('2026-11-03');
+    expect(localDate(at('2026-11-02T23:30:00Z'), PARIS)).toBe('2026-11-03');
   });
 
   it('writes a wall time back to the same instant, round trip', () => {

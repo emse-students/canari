@@ -166,6 +166,15 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
+    what: "a booking space's wall clock (D25), server and screen",
+    compare: 'exact',
+    why: 'one question - "what instant is this local time in the space\'s zone, and back" - answered by the server for every rule and booking and by the organiser\'s and booker\'s screens for every date they show or take, which must not disagree on a DST night. No shared TS package between the NestJS service and the SvelteKit app, and the file has no import, which is what lets the copies be identical.',
+    files: [
+      'apps/social-service/src/bookings/zoned-time.ts',
+      'frontend/src/lib/bookings/zonedTime.ts',
+    ],
+  },
+  {
     what: 'the reading of a submitted form answer, screen and spreadsheet',
     compare: 'exact',
     why: 'one question - "what did this person answer" - asked by the responses table and by the XLSX export an hour later, and those two must not be able to disagree. No shared TS package, and the file declares the minimal question shape itself rather than the model on either side, which is what lets the copies be identical.',
