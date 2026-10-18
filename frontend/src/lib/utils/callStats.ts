@@ -189,7 +189,8 @@ export function buildCallReport(
     `jitter_ms=${typeof inAudio?.jitter === 'number' ? Math.round(inAudio.jitter * 1000) : '-'}`,
     `audio_level_out=${fixed(outAudioSource?.audioLevel, 3)}`,
     `audio_level_in=${fixed(inAudio?.audioLevel, 3)}`,
-    `e2e=on`,
+    // `on` only when the worker answered: without its counters this line cannot vouch for E2E.
+    `e2e=${e2e ? 'on' : '-'}`,
     `enc_frames=${e2e ? e2e.encFrames : '-'}`,
     `dec_frames=${e2e ? e2e.decFrames : '-'}`,
     `dec_fail=${e2e ? e2e.decFail : '-'}`,

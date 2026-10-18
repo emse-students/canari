@@ -41,6 +41,15 @@ import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion'
 /** How often a live call writes its `[CALL_REPORT]` (revival plan section 6). */
 const CALL_REPORT_INTERVAL_MS = 10_000;
 
+/**
+ * The longest teardown waits for the END report before releasing the peer connection and the
+ * worker anyway. `getStats()` and a live worker answer in milliseconds; this bound exists so that a
+ * browser that never answers cannot hold a peer connection (and the microphone path behind it)
+ * open. If it is ever wrong, the cost is ONE missing report line, never more traffic - and it is
+ * logged as an ERROR naming what did not answer.
+ */
+export const END_REPORT_BOUND_MS = 2_000;
+
 /** The `engine=` field of every report from this device. */
 function currentEngine(): string {
   const shell = isAndroidTauriRuntime() ? 'android' : isIosTauriRuntime() ? 'ios' : null;
@@ -131,6 +140,8 @@ export class CallService {
   private setupMs: number | null = null;
   /** The 10 s `[CALL_REPORT]` cadence, from the peer connection's creation to cleanup. */
   private reportTimer: number | null = null;
+  /** The tick report being read, if any: one at a time, and the end report waits for it. */
+  private reportInFlight: Promise<MediaSnapshot | null> | null = null;
   /** The previous reading's byte totals, so the next one can state a rate. */
   private lastSnapshot: MediaSnapshot | null = null;
   /** The end report's context, stamped when the call ended rather than when its summary closed. */
@@ -532,7 +543,10 @@ export class CallService {
     this.clearRingTimer();
     this.stopCallReports();
     // The END report is read from the peer connection and the worker BEFORE either is released,
-    // and they are released only once it is written: the order is the guarantee, not a delay.
+    // and they are released once it is written - or once `boundedEndReport` gives up on it, so a
+    // browser that never answers cannot keep the call open. Its `dur_ms`/`setup_ms` were stamped
+    // when the call ended (`endStamp`); `ice=` and the stats are read here, up to the 1.5 s summary
+    // later.
     const pc = this.pc;
     const worker = this.encryptionWorker;
     const ending = pc ? (this.endStamp ?? this.reportContext('end')) : null;
@@ -579,9 +593,16 @@ export class CallService {
       worker?.terminate();
     };
     if (pc && ending) {
-      void this.writeCallReport(pc, worker, ending, previous)
-        .catch((e: unknown) => appendLog(`[Call] WARN end report not written: ${String(e)}`))
-        .finally(release);
+      // A tick still being read goes first, so its line can never land after the end line, and
+      // neither touches a closed peer connection: the release comes after both.
+      const tick = this.reportInFlight ?? Promise.resolve(null);
+      this.reportInFlight = null;
+      const endReport = tick
+        .catch(() => null) // the tick's own catch already logged it
+        .then((tickSnapshot) => this.writeCallReport(pc, worker, ending, tickSnapshot ?? previous))
+        .then(() => undefined)
+        .catch((e: unknown) => appendLog(`[Call] WARN end report not written: ${String(e)}`));
+      void this.boundedEndReport(endReport).finally(release);
     } else {
       release();
     }
@@ -602,9 +623,27 @@ export class CallService {
   }
 
   /**
-   * Asks the E2E worker for its exact totals. No timeout: a live worker always answers, and a dead
-   * one says so through its `error` event, which rejects - so the end report can never hold the
-   * peer connection open waiting for an answer that cannot come.
+   * Waits for the end report at most {@link END_REPORT_BOUND_MS}, so teardown never depends on
+   * `getStats()` or the worker answering. Reaching the bound is a defect of the engine or the
+   * worker, and is logged as one; the report is then abandoned, the release goes ahead.
+   */
+  private boundedEndReport(endReport: Promise<void>): Promise<void> {
+    let timer: number | undefined;
+    const bound = new Promise<void>((resolve) => {
+      timer = window.setTimeout(() => {
+        appendLog(
+          `[Call] ERROR end report abandoned - getStats() or the E2E worker did not answer within ${END_REPORT_BOUND_MS} ms; releasing the call anyway`
+        );
+        resolve();
+      }, END_REPORT_BOUND_MS);
+    });
+    return Promise.race([endReport, bound]).finally(() => window.clearTimeout(timer));
+  }
+
+  /**
+   * Asks the E2E worker for its exact totals. No timeout of its own: a live worker always answers,
+   * a dead one says so through its `error` event (which rejects), and teardown is bounded one level
+   * up by `boundedEndReport` - so the peer connection is never held open waiting for it.
    */
   private requestCounters(worker: Worker): Promise<E2eCounters> {
     return new Promise<E2eCounters>((resolve, reject) => {
@@ -658,17 +697,35 @@ export class CallService {
     this.reportTimer = window.setInterval(() => {
       const pc = this.pc;
       if (!pc || get(this.callState) !== 'incall') return;
-      void this.writeCallReport(
+      if (this.reportInFlight) {
+        // The previous tick has not answered in 10 s: that is the defect, so it is named.
+        appendLog('[Call] WARN call report tick skipped - the previous one is still being read');
+        return;
+      }
+      const inFlight: Promise<MediaSnapshot | null> = this.writeCallReport(
         pc,
         this.encryptionWorker,
         this.reportContext('tick'),
         this.lastSnapshot
       )
         .then((snapshot) => {
-          // A report that resolves after the call ended or the pc was rebuilt keeps no snapshot.
+          // A report that resolves after the pc was rebuilt keeps no snapshot (its bytes restart).
           if (this.pc === pc) this.lastSnapshot = snapshot;
+          return snapshot;
         })
-        .catch((e: unknown) => appendLog(`[Call] WARN call report not written: ${String(e)}`));
+        .catch((e: unknown) => {
+          // A pc this service closed itself (the other device was replaced) is not a failure.
+          appendLog(
+            this.pc === pc
+              ? `[Call] WARN call report not written: ${String(e)}`
+              : '[Call] call report tick dropped - its peer connection was rebuilt while it was read'
+          );
+          return null;
+        })
+        .finally(() => {
+          if (this.reportInFlight === inFlight) this.reportInFlight = null;
+        });
+      this.reportInFlight = inFlight;
     }, CALL_REPORT_INTERVAL_MS);
   }
 
@@ -1342,7 +1399,7 @@ export class CallService {
         } else if (type === 'videoKeyframeIn') {
           appendLog(`[Call] remote video keyframe received (#${count})`);
         } else if (type === 'transformError') {
-          appendLog(`[Call] WARN E2E transform error: ${detail ?? 'unknown'}`);
+          appendLog(`[Call] WARN E2E transform error (${count ?? '?'}): ${detail ?? 'unknown'}`);
         }
       };
     }

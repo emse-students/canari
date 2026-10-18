@@ -1,5 +1,8 @@
 // encryption.worker.ts - WebRTC Encoded Transform (insertable streams) for MLS-derived call keys.
 
+// A module, so its tests can load it (`encryption.worker.test.ts`); it exports nothing.
+export {};
+
 /** Minimal typing for RTCTransformEvent (DOM lib may omit it in worker context). */
 interface TransformEventLike {
   transformer: {
@@ -12,6 +15,7 @@ interface TransformEventLike {
 let callKey: CryptoKey | null = null;
 const ivLength = 12;
 let decryptFailures = 0;
+let transformErrors = 0;
 // Per-kind counters so the logs unambiguously show whether *video* (not just audio)
 // frames flow through the E2E transform - critical for diagnosing black remote video.
 const encrypted = { audio: 0, video: 0 };
@@ -106,7 +110,12 @@ workerScope.onrtctransform = (event: Event) => {
       } catch (e) {
         // Reported to the page, which writes it to the call log: a console line in a worker
         // reaches no exported log, and a frame lost here is otherwise lost without a trace.
-        self.postMessage({ type: 'transformError', detail: String(e) });
+        // Sampled like decrypt failures: a transform that throws throws on EVERY frame (50 a
+        // second), and one log line per frame would bury the call log.
+        transformErrors++;
+        if (isSampled(transformErrors)) {
+          self.postMessage({ type: 'transformError', detail: String(e), count: transformErrors });
+        }
       }
     },
   });
@@ -176,10 +185,15 @@ async function decryptFrame(
   }
 }
 
-/** Counts one dropped frame, and tells the page about the first three and then every 100th. */
+/** The failures the page is told about: the first three, then every 100th. */
+function isSampled(count: number): boolean {
+  return count <= 3 || count % 100 === 0;
+}
+
+/** Counts one dropped frame, and tells the page about the sampled ones. */
 function recordDecryptFailure(detail: string) {
   decryptFailures++;
-  if (decryptFailures <= 3 || decryptFailures % 100 === 0) {
+  if (isSampled(decryptFailures)) {
     self.postMessage({ type: 'decryptError', detail, count: decryptFailures });
   }
 }

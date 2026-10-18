@@ -77,18 +77,36 @@ vi.mock('$lib/utils/apiFetch', () => ({
   }),
 }));
 
+/** Faults a test injects into the fakes below; `beforeEach` clears them. */
+const faults = vi.hoisted(() => ({
+  workerDies: false,
+  stats: 'ok' as 'ok' | 'reject' | 'hang',
+  /** When set, `getStats` waits for it: a report can be held in flight. */
+  statsGate: null as Promise<void> | null,
+}));
+
 /** The E2E worker: answers `setKey` with `keyReady` and `getCounters` with its totals, as the real one does. */
 vi.mock('../workers/encryption.worker?worker', () => ({
   default: class {
     onmessage: ((e: MessageEvent) => void) | null = null;
     private listeners: ((e: MessageEvent) => void)[] = [];
+    private errorListeners: ((e: Event) => void)[] = [];
     addEventListener(type: string, l: (e: MessageEvent) => void) {
       if (type === 'message') this.listeners.push(l);
+      if (type === 'error') this.errorListeners.push(l as (e: Event) => void);
     }
     removeEventListener(_: string, l: (e: MessageEvent) => void) {
       this.listeners = this.listeners.filter((x) => x !== l);
+      this.errorListeners = this.errorListeners.filter((x) => x !== l);
     }
     postMessage(msg: { type: string }) {
+      if (msg.type === 'getCounters' && faults.workerDies) {
+        // A worker that crashed answers nothing; its `error` event is all the page gets.
+        queueMicrotask(() => {
+          for (const l of this.errorListeners.slice()) l({ type: 'error' } as Event);
+        });
+        return;
+      }
       const data =
         msg.type === 'setKey'
           ? { type: 'keyReady' }
@@ -182,6 +200,11 @@ class FakePeerConnection {
   connectionState: RTCPeerConnectionState = 'new';
   iceConnectionState: RTCIceConnectionState = 'checking';
   async getStats() {
+    if (this.closed) throw new Error('InvalidStateError: the peer connection is closed');
+    if (faults.stats === 'reject') throw new Error('getStats failed');
+    if (faults.stats === 'hang') await new Promise(() => {});
+    if (faults.statsGate) await faults.statsGate;
+    trail.push('getStats');
     return new Map() as unknown as RTCStatsReport;
   }
   close() {
@@ -217,6 +240,9 @@ const settle = () => new Promise((r) => setTimeout(r, 0));
 
 beforeEach(() => {
   trail.length = 0;
+  faults.workerDies = false;
+  faults.stats = 'ok';
+  faults.statsGate = null;
   server.ringTimeoutMs = 60_000;
   server.initiateStatus = 200;
   server.iceStatus = 200;
@@ -678,6 +704,80 @@ describe('the call report', () => {
       vi.advanceTimersByTime(30_000);
       await settle();
       expect(reports('tick')).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /** A call in progress with its peer connection built, ready to be hung up. */
+  async function liveCall() {
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    return ws;
+  }
+
+  it('says so when getStats fails at the end, and still releases the call', async () => {
+    const ws = await liveCall();
+    faults.stats = 'reject';
+
+    ws.deliver({ type: 'PeerLeft' });
+    await pastSummary();
+
+    expect(trail.some((l) => l.startsWith('[Call] WARN end report not written'))).toBe(true);
+    expect(trail).toContain('pc.close');
+    expect(trail).toContain('worker.terminate');
+  });
+
+  it('writes the report with e2e=- when the worker died, and says why', async () => {
+    const ws = await liveCall();
+    faults.workerDies = true;
+
+    ws.deliver({ type: 'PeerLeft' });
+    await pastSummary();
+
+    expect(trail.some((l) => l.startsWith('[Call] WARN E2E counters unavailable'))).toBe(true);
+    const [end] = reports('end');
+    expect(end).toContain('e2e=- enc_frames=-');
+    expect(trail).toContain('pc.close');
+  });
+
+  it('releases the call anyway when getStats never answers, and accuses it', async () => {
+    const ws = await liveCall();
+    faults.stats = 'hang';
+
+    ws.deliver({ type: 'PeerLeft' });
+    await pastSummary();
+    expect(trail).not.toContain('pc.close');
+    await vi.waitFor(() => expect(trail).toContain('pc.close'), { timeout: 3_000 });
+
+    expect(trail.some((l) => l.startsWith('[Call] ERROR end report abandoned'))).toBe(true);
+    expect(trail).toContain('worker.terminate');
+    expect(reports('end')).toHaveLength(0);
+  }, 10_000);
+
+  it('lets a tick in flight at hangup finish first: no closed pc, no line after the end', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const ws = await liveCall();
+      FakePeerConnection.instances[0].connect();
+      await settle();
+      let open!: () => void;
+      faults.statsGate = new Promise((r) => (open = r));
+      vi.advanceTimersByTime(10_000); // the tick starts and waits in getStats
+
+      ws.deliver({ type: 'PeerLeft' });
+      await pastSummary();
+      expect(trail).not.toContain('pc.close');
+      open();
+      await vi.waitFor(() => expect(trail).toContain('pc.close'));
+
+      const [tick] = reports('tick');
+      const [end] = reports('end');
+      expect(trail.indexOf(tick)).toBeLessThan(trail.indexOf(end));
+      expect(trail.indexOf(end)).toBeLessThan(trail.indexOf('pc.close'));
+      expect(trail.some((l) => l.includes('not written'))).toBe(false);
     } finally {
       vi.useRealTimers();
     }

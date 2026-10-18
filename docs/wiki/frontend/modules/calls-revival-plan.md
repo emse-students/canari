@@ -187,7 +187,9 @@ GB beyond the free tier **(unverified: current Cloudflare pricing)**. E2E is una
 
 ## 6. Observability - a call report that carries evidence
 
-**WP-C2 is BUILT (2026-10-18, dev builds only; owed one reading from a phone's exported log).** One
+**WP-C2 is BUILT (2026-10-18; it runs wherever `CALLS_ENABLED` is true, which today means the
+`development` deploy environment, since `CALLS_COMPILED` is false; owed one reading from a phone's
+exported log).** One
 `[CALL_REPORT]` line per call per device, through `appendLog` (so the in-app log export carries it),
 every 10 s while `incall` and once at the end, built from `getStats()` by `buildCallReport` in
 `frontend/src/lib/utils/callStats.ts` (tests in `callStats.test.ts` and `CallService.p2p.test.ts`):
@@ -196,17 +198,24 @@ every 10 s while `incall` and once at the end, built from `getStats()` by `build
 [CALL_REPORT] call=<roomId> phase=<tick|end> dur_ms= setup_ms=<tap->first remote audio> engine=<chromium-N|webkit-N|gecko-N, tauri-<shell>/ prefix>
   ice=<state> pair=<local type>/<proto>-><remote type>/<proto> relayed=<yes|no> [relay_proto=] [rtt_ms=] turn=<host:port, no credential>
   out_kbps= in_kbps= loss_in_pct= jitter_ms= audio_level_out= audio_level_in=
-  e2e=on enc_frames= dec_frames= dec_fail= keyframes_in= codec_a= codec_v=
+  e2e=<on|-> enc_frames= dec_frames= dec_fail= keyframes_in= codec_a= codec_v=
 [CALL_REPORT] call=<roomId|-> phase=refused engine= e2e=refused reason=no-rtp-script-transform
 ```
 
 - A field the stats do not carry is written `-`, never guessed. Rates are computed between two readings
   on the stats' OWN timestamps, never a wall clock; a rebuilt peer connection restarts them.
 - `enc_frames`/`dec_frames`/`dec_fail`/`keyframes_in` are the worker's EXACT totals (`getCounters`),
-  not the sampled progress lines; a frame too short to carry an IV counts as a `dec_fail`.
-- The end report is stamped when the call ENDS (not when its 1.5 s summary closes) and read BEFORE the
-  peer connection is closed and the worker terminated - the order is the guarantee, not a delay. A
-  call that never built a peer connection writes no end report.
+  not the sampled progress lines; a frame too short to carry an IV counts as a `dec_fail`. `e2e=on`
+  only when the worker answered; without its counters the line says `e2e=-` and a WARN says why.
+  The worker's transform errors reach the log sampled like decrypt failures (first 3, then every
+  100th).
+- The end report's `dur_ms` and `setup_ms` are stamped when the call ENDS; its `ice=` and its stats
+  are read when the call is RELEASED, after the 1.5 s summary. It is read BEFORE the peer connection
+  is closed and the worker terminated, and after any tick still in flight, so no tick line follows
+  it and nothing reads a closed connection. Teardown waits for it at most `END_REPORT_BOUND_MS`
+  (2 s): past that the report is abandoned with an ERROR naming what did not answer, and the call is
+  released anyway - a bound that, if wrong, costs one line, never traffic. A call that never built a
+  peer connection writes no end report.
 
 - `call=` is the room id, the same value as the SFU's `room=` - the only join key between the halves
   ([call-service](../../services/call-service.md#the-join-key)). Keep it one value.

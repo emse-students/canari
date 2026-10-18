@@ -149,7 +149,7 @@ describe('buildCallReport', () => {
     expect(line).toContain('pair=none');
     expect(line).toContain('turn=-');
     expect(line).toContain('loss_in_pct=-');
-    expect(line).toContain('enc_frames=- dec_frames=- dec_fail=- keyframes_in=-');
+    expect(line).toContain('e2e=- enc_frames=- dec_frames=- dec_fail=- keyframes_in=-');
   });
 
   it('carries no address and no credential', () => {
