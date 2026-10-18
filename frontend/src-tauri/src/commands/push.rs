@@ -1084,22 +1084,62 @@ pub(crate) fn store_push_context(
         .store_device_key(&key_bytes, &alias)
         .map_err(|e| format!("keystore write failed (background decrypt will not work): {e}"))?;
 
+    write_session_push_context(
+        &data_dir,
+        &user_id,
+        &device_id,
+        &base_url,
+        &push_token.unwrap_or_default(),
+        locale,
+    )
+}
+
+/// Orders every edit of `push_context.json` made in this process: the three writers
+/// (`store_push_context`, `store_device_identity`, `set_push_context_locale`) and the deletion's
+/// read-check-delete ([`remove_user_push_files`]).
+///
+/// WHY. The deletion reads the file to PROVE the deleted account owns it, then removes it. A new
+/// sign-in's `store_push_context` landing between the two was deleted on the strength of a proof
+/// about the PREVIOUS bytes, leaving that session with no push context until it was stored again
+/// (fourth review of #2023). A Tauri command without `async` is not serialised by the runtime: the
+/// IPC custom protocol calls it on whatever thread the WebView hands the request to.
+static PUSH_CONTEXT_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Takes [`PUSH_CONTEXT_LOCK`]. The lock guards an ORDER, not a value: a holder that panicked
+/// leaves no half-built data behind it, so a poisoned lock is taken as it is.
+fn push_context_guard() -> std::sync::MutexGuard<'static, ()> {
+    PUSH_CONTEXT_LOCK
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// The file half of [`store_push_context`], under [`PUSH_CONTEXT_LOCK`]: replaces
+/// `push_context.json` with this session's context.
+fn write_session_push_context(
+    data_dir: &std::path::Path,
+    user_id: &str,
+    device_id: &str,
+    base_url: &str,
+    push_token: &str,
+    locale: Option<String>,
+) -> Result<(), String> {
+    let _guard = push_context_guard();
     // This call REPLACES the file, so a locale already mirrored must survive a caller that does not
     // know one - otherwise a device-key refresh silently reverts every background notification to
     // the default language until the user next changes it by hand.
     let locale = locale
         .filter(|l| !l.trim().is_empty())
-        .or_else(|| read_push_context_locale(&data_dir))
+        .or_else(|| read_push_context_locale(data_dir))
         .unwrap_or_else(|| DEFAULT_PUSH_LOCALE.to_string());
 
     let json = serde_json::json!({
         "userId": user_id,
         "deviceId": device_id,
         "baseUrl": base_url,
-        "pushToken": push_token.unwrap_or_default(),
+        "pushToken": push_token,
         "locale": locale,
     });
-    std::fs::write(data_dir.join("push_context.json"), json.to_string()).map_err(|e| e.to_string())
+    std::fs::write(data_dir.join(PUSH_CONTEXT_FILE), json.to_string()).map_err(|e| e.to_string())
 }
 
 /// Mirrors THIS DEVICE'S IDENTITY, and nothing else, so it survives the WebView losing
@@ -1141,6 +1181,7 @@ pub(crate) fn store_device_identity(
     std::fs::create_dir_all(&data_dir).map_err(|e| e.to_string())?;
     let path = data_dir.join("push_context.json");
 
+    let _guard = push_context_guard();
     let mut ctx: serde_json::Map<String, serde_json::Value> = match std::fs::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
         Err(_) => serde_json::Map::new(),
@@ -1194,6 +1235,7 @@ pub(crate) fn set_push_context_locale(locale: String, app: tauri::AppHandle) -> 
     // Absent file: the user changed language before ever logging in. Writing a lone locale here
     // would be a push context with no device key, which every reader treats as unusable - so this
     // is not an error, and `store_push_context` picks the value up at login through the read above.
+    let _guard = push_context_guard();
     let mut ctx: serde_json::Map<String, serde_json::Value> = match std::fs::read(&path) {
         Ok(bytes) => serde_json::from_slice(&bytes).unwrap_or_default(),
         Err(_) => return Ok(()),
@@ -1265,15 +1307,30 @@ pub(crate) fn delete_user_push_files(
 /// - absent, unreadable or naming nobody: nothing is touched and it is logged - an unknown owner is
 ///   never a licence to delete.
 ///
+/// The read, the check and every removal run under [`PUSH_CONTEXT_LOCK`], so a context a new
+/// sign-in stores meanwhile is written AFTER the deletion and survives it.
+///
 /// Returns how many files were removed.
 pub(crate) fn remove_user_push_files(
     data_dir: &std::path::Path,
     user_id: &str,
 ) -> Result<usize, String> {
+    remove_user_push_files_proved(data_dir, user_id, || {})
+}
+
+/// [`remove_user_push_files`], with `after_proof` run once the context has proved `user_id` owns
+/// the files and before the first removal, the lock still held: the window the lock closes, which
+/// a test fills with a concurrent sign-in.
+fn remove_user_push_files_proved(
+    data_dir: &std::path::Path,
+    user_id: &str,
+    after_proof: impl FnOnce(),
+) -> Result<usize, String> {
     if !crate::commands::storage::is_wipeable_account_id(user_id) {
         log::error!("[DEL-LOCAL] push files: refusing a user id outside the allowlist");
         return Err("invalid user id".to_string());
     }
+    let _guard = push_context_guard();
     let context_path = data_dir.join(PUSH_CONTEXT_FILE);
     let bytes = match std::fs::read(&context_path) {
         Ok(b) => b,
@@ -1304,6 +1361,7 @@ pub(crate) fn remove_user_push_files(
         }
         Some(_) => {}
     }
+    after_proof();
     let mut removed = 0usize;
     let mut failures = 0usize;
     for name in ACCOUNT_PUSH_FILES {
@@ -1894,5 +1952,48 @@ mod fcm_cache_take_tests {
         .unwrap();
         assert_eq!(ids(&take_fcm_cache_in(&d)), vec!["a"]);
         std::fs::remove_dir_all(&d).ok();
+    }
+}
+
+#[cfg(test)]
+mod push_context_lock_tests {
+    use super::{
+        remove_user_push_files_proved, write_session_push_context, PUSH_CONTEXT_FILE,
+        PUSH_CONTEXT_LOCK,
+    };
+
+    fn owner(dir: &std::path::Path) -> Option<String> {
+        let bytes = std::fs::read(dir.join(PUSH_CONTEXT_FILE)).ok()?;
+        let v: serde_json::Value = serde_json::from_slice(&bytes).ok()?;
+        v.get("userId")?.as_str().map(str::to_string)
+    }
+
+    /// A new sign-in storing its context inside the deletion's window - after the proof, before
+    /// the removals - is held until the deletion is done, and its context survives it.
+    #[test]
+    fn a_sign_in_during_the_deletion_keeps_its_push_context() {
+        let dir = std::env::temp_dir().join(format!("canari_push_ctx_lock_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        write_session_push_context(&dir, "deleted", "d1", "https://x", "t1", None).unwrap();
+
+        let mut sign_in = None;
+        let removed = remove_user_push_files_proved(&dir, "deleted", || {
+            // The proof and the removals are one critical section.
+            assert!(PUSH_CONTEXT_LOCK.try_lock().is_err());
+            let d = dir.clone();
+            sign_in = Some(std::thread::spawn(move || {
+                write_session_push_context(&d, "new", "d2", "https://x", "t2", None)
+            }));
+        })
+        .unwrap();
+        sign_in.unwrap().join().unwrap().unwrap();
+
+        assert_eq!(
+            removed, 1,
+            "only the deleted account's context was there to remove"
+        );
+        assert_eq!(owner(&dir).as_deref(), Some("new"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
