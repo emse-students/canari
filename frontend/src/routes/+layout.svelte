@@ -70,6 +70,7 @@
   import SeoHead from '$lib/components/seo/SeoHead.svelte';
   import { purgeRetiredAvatarCache } from '$lib/utils/userAvatarCache';
   import { dropRetiredKlipyCustomerId } from '$lib/utils/chat/retiredKlipyCustomerId';
+  import { drainOwedDmReadMarksOnOutbox } from '$lib/utils/chat/messaging';
   import { publishTextZoom, followIosDynamicType } from '$lib/utils/textZoom';
   import { m } from '$lib/paraglide/messages';
 
@@ -152,6 +153,9 @@
     void purgeRetiredAvatarCache();
     // The per-install id older builds sent to KLIPY with every GIF search (`retiredKlipyCustomerId.ts`).
     dropRetiredKlipyCustomerId();
+    // A DM read mark a killed process still owed goes to the outbox the moment one is registered,
+    // whatever route the app opens on (`flushOwedDmReadMarks`).
+    const stopOwedDmMarkDrain = drainOwedDmReadMarksOnOutbox(() => globalSession.userId || null);
     // A wipe a deleted account is still owed, and a deletion announced by another tab.
     const stopDeletedAccountGuards = startDeletedAccountGuards(accountLiveness, {
       currentUserId,
@@ -172,6 +176,7 @@
 
     return () => {
       disposePressedClickGuard();
+      stopOwedDmMarkDrain();
       stopDeletedAccountGuards();
       disposeDynamicType();
       teardownHistory();

@@ -13,6 +13,13 @@
  * server is reachable (communities loaded, live stream back), never on a timer.
  *
  * The merge is `max` per salon, so a replay or an out-of-order write never moves a mark backwards.
+ *
+ * A DM OR GROUP MARK OWES THE SAME THING, TO THE OUTBOX RATHER THAN THE SERVER (2026-10-17). Its
+ * receipt is an MLS `read_watermark` queued after a 2 s debounce, so a process killed inside that
+ * window lost it: the local mark had already moved, nothing moved it again, and the peer kept the
+ * conversation unread for good. It is now written here when decided, in its own key, and removed only
+ * once the outbox has TAKEN the frame - the outbox is durable from there. The owed DM marks are
+ * drained into the outbox whenever a controller is registered (`drainOwedDmReadMarks`).
  */
 import type { ReadWatermarks } from '$lib/types';
 import { appendLog } from '$lib/utils/sessionLog';
@@ -30,27 +37,31 @@ type Owed = Record<string, OwedSalonMark>;
 /** What the flush calls to deliver one mark; throws on a refusal. */
 export type SendSalonMark = (channelId: string, at: number, serverAt?: number) => Promise<unknown>;
 
-const keyFor = (userId: string): string => ACCOUNT_KEY.salonReadMarks(userId);
+/** Which ledger a mark is owed in: a salon's goes to the server, a DM's or group's to the outbox. */
+type MarkSpace = 'salon' | 'dm';
 
-function load(userId: string): Owed {
+const keyFor = (space: MarkSpace, userId: string): string =>
+  space === 'salon' ? ACCOUNT_KEY.salonReadMarks(userId) : ACCOUNT_KEY.dmReadMarks(userId);
+
+function load(space: MarkSpace, userId: string): Owed {
   try {
-    const raw = localStorage.getItem(keyFor(userId));
+    const raw = localStorage.getItem(keyFor(space, userId));
     if (!raw) return {};
     const parsed = JSON.parse(raw) as unknown;
     return parsed && typeof parsed === 'object' ? (parsed as Owed) : {};
   } catch (e) {
-    appendLog(`[READ] owed salon marks unreadable, treated as none: ${String(e)}`);
+    appendLog(`[READ] owed ${space} marks unreadable, treated as none: ${String(e)}`);
     return {};
   }
 }
 
-function store(userId: string, owed: Owed): void {
+function store(space: MarkSpace, userId: string, owed: Owed): void {
   try {
-    if (Object.keys(owed).length === 0) localStorage.removeItem(keyFor(userId));
-    else localStorage.setItem(keyFor(userId), JSON.stringify(owed));
+    if (Object.keys(owed).length === 0) localStorage.removeItem(keyFor(space, userId));
+    else localStorage.setItem(keyFor(space, userId), JSON.stringify(owed));
   } catch (e) {
     console.warn(
-      `[READ] owed salon marks could not be persisted - a reload loses them: ${String(e)}`
+      `[READ] owed ${space} marks could not be persisted - a reload loses them: ${String(e)}`
     );
   }
 }
@@ -62,16 +73,25 @@ export function recordSalonReadMark(
   at: number,
   serverAt?: number
 ): void {
+  record('salon', userId, channelId, at, serverAt);
+}
+
+/** Records that `userId` has read the DM or group `conversationId` up to `at`, durably. */
+export function recordDmReadMark(userId: string, conversationId: string, at: number): void {
+  record('dm', userId, conversationId, at);
+}
+
+function record(space: MarkSpace, userId: string, id: string, at: number, serverAt?: number): void {
   if (!(at > 0)) return;
-  const owed = load(userId);
-  const held = owed[channelId];
-  owed[channelId] = {
+  const owed = load(space, userId);
+  const held = owed[id];
+  owed[id] = {
     at: Math.max(held?.at ?? 0, at),
     ...(Math.max(held?.serverAt ?? 0, serverAt ?? 0) > 0
       ? { serverAt: Math.max(held?.serverAt ?? 0, serverAt ?? 0) }
       : {}),
   };
-  store(userId, owed);
+  store(space, userId, owed);
 }
 
 /**
@@ -121,7 +141,23 @@ export function salonMarksAfterLoad(
 
 /** The marks still owed, for tests and diagnostics. */
 export function owedSalonReadMarks(userId: string): Owed {
-  return load(userId);
+  return load('salon', userId);
+}
+
+/**
+ * Drops the owed DM mark of a conversation that left this device's store (deleted, or left): its
+ * group is gone, so a frame queued for it could only loop in the flusher.
+ */
+export function forgetDmReadMark(userId: string, conversationId: string): void {
+  const owed = load('dm', userId);
+  if (!(conversationId in owed)) return;
+  delete owed[conversationId];
+  store('dm', userId, owed);
+}
+
+/** The DM and group marks still owed to the outbox, for tests and diagnostics. */
+export function owedDmReadMarks(userId: string): Owed {
+  return load('dm', userId);
 }
 
 /**
@@ -130,21 +166,41 @@ export function owedSalonReadMarks(userId: string): Owed {
  *
  * @returns how many marks the server took.
  */
-export async function flushSalonReadMarks(userId: string, send: SendSalonMark): Promise<number> {
+export function flushSalonReadMarks(userId: string, send: SendSalonMark): Promise<number> {
+  return flush('salon', userId, send, 'the next load or reconnect');
+}
+
+/**
+ * Hands every owed DM or group mark to the outbox; `queue` resolves once the outbox has taken the
+ * frame and throws when it could not. Same removal rule as the salon's.
+ */
+export function flushDmReadMarks(
+  userId: string,
+  queue: (conversationId: string, at: number) => Promise<unknown>
+): Promise<number> {
+  return flush('dm', userId, queue, 'the next outbox registration or read');
+}
+
+async function flush(
+  space: MarkSpace,
+  userId: string,
+  send: SendSalonMark,
+  nextChance: string
+): Promise<number> {
   if (!userId) return 0;
-  const snapshot = load(userId);
+  const snapshot = load(space, userId);
   let delivered = 0;
-  for (const [channelId, mark] of Object.entries(snapshot)) {
+  for (const [id, mark] of Object.entries(snapshot)) {
     try {
-      await send(channelId, mark.at, mark.serverAt);
-      const current = load(userId);
-      if ((current[channelId]?.at ?? 0) <= mark.at) delete current[channelId];
-      store(userId, current);
+      await send(id, mark.at, mark.serverAt);
+      const current = load(space, userId);
+      if ((current[id]?.at ?? 0) <= mark.at) delete current[id];
+      store(space, userId, current);
       delivered++;
     } catch (e) {
       console.warn(
-        `[READ] salon mark ${mark.at} for ${channelId} not delivered - kept, and asked again at` +
-          ` the next load or reconnect (its senders still see it unread until then): ${String(e)}`
+        `[READ] ${space} mark ${mark.at} for ${id} not delivered - kept, and asked again at` +
+          ` ${nextChance} (its senders still see it unread until then): ${String(e)}`
       );
     }
   }

@@ -50,6 +50,8 @@ export const ACCOUNT_KEY = {
   salonUnsent: (userId: string) => `canari.salon-unsent.${userId.toLowerCase()}`,
   /** `salonReadMarkQueue.ts`: the salon read marks still owed to the server (lower-cased). */
   salonReadMarks: (userId: string) => `canari.salonReadMarks.${userId.toLowerCase()}`,
+  /** `salonReadMarkQueue.ts`: the DM and group read marks still owed to the outbox (lower-cased). */
+  dmReadMarks: (userId: string) => `canari.dmReadMarks.${userId.toLowerCase()}`,
   /**
    * `feedStoreEpoch.ts`: the account's stored-feed epoch. Called with `''` it is the prefix a
    * sign-out enumerates to end EVERY account's epoch.
@@ -120,6 +122,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.historyHeldNothing(userId),
     ACCOUNT_KEY.salonUnsent(userId),
     ACCOUNT_KEY.salonReadMarks(userId),
+    ACCOUNT_KEY.dmReadMarks(userId),
     ACCOUNT_KEY.feedStoreEpoch(userId),
     ACCOUNT_KEY.legacyMlsAutosave(userId),
     ACCOUNT_KEY.syncGuideSeen(userId),
@@ -152,10 +155,10 @@ const ID_NAMING_KEYS = [
 /**
  * The OTHER account ids this device holds data for that differ from `userId` only by letter case.
  *
- * TWO IDS THAT CASE-FOLD TOGETHER SHARE STORAGE. Three keys lower-case the id (`archivedConversations`,
- * `salonUnsent`, `salonReadMarks`), and the native database file `canari_<id>.db` lives on a
- * case-INSENSITIVE filesystem on Windows and macOS: wiping `Abc` there would remove `abc`'s unsent
- * texts and its database. MiConnect subjects are not promised to be case-distinct-safe, so a deletion
+ * TWO IDS THAT CASE-FOLD TOGETHER SHARE STORAGE. Four keys lower-case the id (`archivedConversations`,
+ * `salonUnsent`, `salonReadMarks`, `dmReadMarks`), and the native database file `canari_<id>.db`
+ * lives on a case-INSENSITIVE filesystem on Windows and macOS: wiping `Abc` there would remove
+ * `abc`'s unsent texts and its database. MiConnect subjects are not promised to be case-distinct-safe, so a deletion
  * asks this first and REFUSES when it is not empty - never a guess at which rows are whose.
  */
 export function caseCollidingAccountIdsIn(store: Storage, userId: string): string[] {

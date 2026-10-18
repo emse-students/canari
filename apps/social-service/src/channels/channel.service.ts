@@ -5,6 +5,7 @@ import {
   Logger,
   BadRequestException,
   ConflictException,
+  GoneException,
   HttpException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -87,6 +88,27 @@ const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 /** An Ed25519 signature is 64 bytes, which padded base64 spells in exactly 88 characters. */
 const SIGNATURE_BASE64_CHARS = 88;
+
+/**
+ * 410 code: a send repeating a message that was deleted after its first send landed (migration 090's
+ * tombstone). The client forgets the send instead of offering it again.
+ */
+export const CHANNEL_MESSAGE_DELETED = 'CHANNEL_MESSAGE_DELETED';
+
+/**
+ * The transaction-scoped advisory lock on ONE client id (author, salon, client id), as SQL over the
+ * three expressions that spell it - parameters on the send, the row's columns on the delete. Both
+ * writers take it, so a delete can never fall between a send's tombstone check and its insert: the
+ * send checks and inserts under it, the delete writes its tombstone and drops the row under it, and
+ * whichever comes second reads what the first committed. The ONE spelling of the key, so the two
+ * sides cannot hash different strings.
+ */
+export function clientIdLockSql(author: string, channel: string, clientId: string): string {
+  return `pg_advisory_xact_lock(hashtextextended(${author}::text || ':' || ${channel}::uuid::text || ':' || ${clientId}::text, 0))`;
+}
+
+/** A client message id is what `crypto.randomUUID()` mints: a canonical UUID, either case. */
+const CLIENT_MESSAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * 400 code: a salon row carrying no Graine v2 signature (channel-encryption section 21.8).
@@ -3194,6 +3216,17 @@ export class ChannelService {
     await this.assertSeedFrame(channel, input);
     this.assertSigned(channel.id, input);
 
+    // A SEND REPEATED AFTER A LOST ANSWER IS ANSWERED WITH THE ROW IT ALREADY MADE (WP-OFF-3). The
+    // client's queue re-posts a message whose first POST got no answer, and only this side knows
+    // whether that POST landed: the id its author minted (and sealed inside the ciphertext) names the
+    // row, so the repeat writes nothing, publishes nothing and pushes nobody. A repeat of a DELETED
+    // message is refused at the insert itself, under the client id's lock (`saveUnderUnusedKey`).
+    const clientMessageId = this.readClientMessageId(channel.id, input);
+    if (clientMessageId) {
+      const stored = await this.findByClientMessageId(channelId, input.senderId, clientMessageId);
+      if (stored) return stored;
+    }
+
     // A poll is just an encrypted message carrying a label-free descriptor: we
     // store its option IDs/deadline server-side (for tallying + auto-pin) while
     // the question and labels stay in the ciphertext. Auto-pinned so it stays
@@ -3220,12 +3253,16 @@ export class ChannelService {
       senderSessionId: input.senderSessionId,
       messageIndex: input.messageIndex,
       signature: input.signature ?? null,
+      clientMessageId,
       silent: input.silent === true,
       metadata: pollMeta ? { poll: pollMeta } : {},
       pinned: autoPin,
     });
 
-    const savedMsg = await this.saveUnderUnusedKey(msg, input);
+    const saved = await this.saveUnderUnusedKey(msg, input);
+    // Two repeats racing: the other one wrote the row, this one is answered with it.
+    if (saved.replayed) return saved.row;
+    const savedMsg = saved.row;
     if (pollMeta) {
       this.logger.log(
         `[POLL] created channel=${channelId} message=${savedMsg.id} options=${pollMeta.optionIds.length} endsAt=${pollMeta.endsAt ?? 'none'}`
@@ -3330,11 +3367,25 @@ export class ChannelService {
   private async saveUnderUnusedKey(
     msg: ChannelMessage,
     input: SendChannelMessageDto
-  ): Promise<ChannelMessage> {
+  ): Promise<{ row: ChannelMessage; replayed: boolean }> {
     try {
-      return await this.messageRepo.save(msg);
+      const row = msg.clientMessageId
+        ? await this.saveUnlessDeleted(msg, msg.clientMessageId)
+        : await this.messageRepo.save(msg);
+      return { row, replayed: false };
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
+      // THE OTHER UNIQUE INDEX (migration 090): a repeat of this message landed between the lookup in
+      // `sendMessage` and this insert. Read from the ROW, never from the constraint's name in the
+      // driver's message: a row under this author's client id IS the answer.
+      if (msg.clientMessageId) {
+        const stored = await this.findByClientMessageId(
+          msg.channelId,
+          msg.authorId,
+          msg.clientMessageId
+        );
+        if (stored) return { row: stored, replayed: true };
+      }
       this.logger.error(
         `[CHANNEL_KEY_REUSED] refused channel=${msg.channelId} sender=${input.senderId.slice(0, 8)} ` +
           `session=${input.senderSessionId.slice(0, 8)} index=${input.messageIndex} - a replay or a key sealed twice`
@@ -3344,6 +3395,93 @@ export class ChannelService {
         message: 'a message under this session and index already exists',
       });
     }
+  }
+
+  /**
+   * The client id a send carries (`messageId`, the UUID its author sealed inside the ciphertext), or
+   * null when it carries none - a silent row, a system notice. Every shipped client mints it with
+   * `crypto.randomUUID()`, so anything that is not a UUID is refused rather than stored: a value the
+   * idempotence key cannot trust would make two different messages one.
+   */
+  private readClientMessageId(channelId: string, input: SendChannelMessageDto): string | null {
+    const { messageId } = input;
+    if (messageId === undefined || messageId === null) return null;
+    if (typeof messageId !== 'string' || !CLIENT_MESSAGE_ID.test(messageId)) {
+      this.logger.warn(
+        `[CHANNEL_SEND] refused channel=${channelId} sender=${input.senderId.slice(0, 8)}: ` +
+          `messageId is not a UUID (${typeof messageId === 'string' ? `${messageId.length}ch` : typeof messageId})`
+      );
+      throw new BadRequestException({
+        code: 'CHANNEL_CLIENT_MESSAGE_ID_INVALID',
+        message: 'messageId is the UUID the client minted for this message',
+      });
+    }
+    return messageId.toLowerCase();
+  }
+
+  /**
+   * The row this author already wrote in this salon under `clientMessageId`, or null. A hit is a
+   * repeated send (its first answer was lost), logged because it is the only trace the repeat leaves.
+   */
+  private async findByClientMessageId(
+    channelId: string,
+    authorId: string,
+    clientMessageId: string
+  ): Promise<ChannelMessage | null> {
+    const stored = await this.messageRepo.findOne({
+      where: { channelId, authorId, clientMessageId },
+    });
+    if (stored) {
+      this.logger.log(
+        `[CHANNEL_SEND] repeat of client message ${clientMessageId.slice(0, 8)} channel=${channelId} ` +
+          `sender=${authorId.slice(0, 8)} answered with its stored row ${stored.id.slice(0, 8)} - nothing written`
+      );
+      // The column is `select: false`, so the read did not bring it: the answer carries it anyway,
+      // because the ECHO is how a client learns this server answers a repeat with its row.
+      stored.clientMessageId = clientMessageId;
+    }
+    return stored ?? null;
+  }
+
+  /**
+   * Inserts a message that carries a client id, unless that id names a message this author's salon
+   * has DELETED (migration 090's tombstone). A delete drops the row, so the lookup in `sendMessage`
+   * finds nothing for a repeat that arrives after it - a first POST whose answer was lost, its app
+   * killed, the message removed by a moderator or by its author on another device - and without this
+   * the repeat would post it again: a moderation removal undone with no one touching anything.
+   *
+   * The check and the insert run in ONE transaction under {@link clientIdLockSql}, which
+   * `deleteChannelMessage` takes too: a check made before the lock could pass, a delete commit, and
+   * the insert re-post the row it just removed.
+   *
+   * @throws GoneException `CHANNEL_MESSAGE_DELETED` (410): the client forgets the send.
+   */
+  private saveUnlessDeleted(msg: ChannelMessage, clientMessageId: string): Promise<ChannelMessage> {
+    return this.messageRepo.manager.transaction(async (tx) => {
+      const params = [msg.authorId, msg.channelId, clientMessageId];
+      await tx.query(`SELECT ${clientIdLockSql('$1', '$2', '$3')}`, params);
+      // A new statement after the lock: READ COMMITTED reads what a delete holding it committed.
+      const tombstones: unknown[] = await tx.query(
+        `SELECT 1 FROM channel_message_client_tombstones
+          WHERE "authorId" = $1 AND "channelId" = $2 AND "clientMessageId" = $3`,
+        params
+      );
+      if (tombstones.length > 0)
+        this.refuseDeletedRepeat(msg.channelId, msg.authorId, clientMessageId);
+      return tx.getRepository(ChannelMessage).save(msg);
+    });
+  }
+
+  /** Logs and refuses a repeat whose client id met its tombstone (see `saveUnlessDeleted`). */
+  private refuseDeletedRepeat(channelId: string, authorId: string, clientMessageId: string): never {
+    this.logger.warn(
+      `[CHANNEL_SEND] repeat of DELETED client message ${clientMessageId.slice(0, 8)} channel=${channelId} ` +
+        `sender=${authorId.slice(0, 8)} refused - the message was removed after its first send landed`
+    );
+    throw new GoneException({
+      code: CHANNEL_MESSAGE_DELETED,
+      message: 'this message was deleted: a repeat of it is not posted again',
+    });
   }
 
   /**
@@ -4237,7 +4375,27 @@ export class ChannelService {
       throw new ForbiddenException('Missing channel.moderate permission to delete this message');
     }
 
-    await this.messageRepo.delete({ id: messageId, channelId });
+    // ITS CLIENT ID OUTLIVES IT (migration 090): the tombstone and the delete commit together, under
+    // the client id's lock (`clientIdLockSql`) that a send takes around its tombstone check and its
+    // insert - so no instant exists where a repeat of this message finds neither the row nor its
+    // tombstone and posts it again. A row with no client id (older than 090, a system notice) has
+    // nothing a repeat could name: it takes no lock and writes no tombstone.
+    await this.messageRepo.manager.transaction(async (tx) => {
+      await tx.query(
+        `SELECT ${clientIdLockSql('"authorId"', '"channelId"', '"clientMessageId"')}
+           FROM channel_messages
+          WHERE id = $1 AND "channelId" = $2 AND "clientMessageId" IS NOT NULL`,
+        [messageId, channelId]
+      );
+      await tx.query(
+        `INSERT INTO channel_message_client_tombstones ("authorId", "channelId", "clientMessageId")
+         SELECT "authorId", "channelId", "clientMessageId" FROM channel_messages
+          WHERE id = $1 AND "channelId" = $2 AND "clientMessageId" IS NOT NULL
+         ON CONFLICT DO NOTHING`,
+        [messageId, channelId]
+      );
+      await tx.getRepository(ChannelMessage).delete({ id: messageId, channelId });
+    });
 
     const audience = await this.channelAudience(channel);
     await this.redis.publishChannelEvent(

@@ -255,6 +255,7 @@ describe('wipeDeletedAccountLocalData - what else goes with the account', () => 
     const keys = [
       ACCOUNT_KEY.salonUnsent('User-A'),
       ACCOUNT_KEY.salonReadMarks('User-A'),
+      ACCOUNT_KEY.dmReadMarks('User-A'),
       ACCOUNT_KEY.notReadySince('User-A', 'g1'),
       ACCOUNT_KEY.feedStoreEpoch('User-A'),
       ACCOUNT_KEY.deviceName('User-A', 'd1'),

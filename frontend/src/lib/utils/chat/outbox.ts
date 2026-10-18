@@ -1874,7 +1874,28 @@ export function registerOutbox(deps: OutboxDeps): OutboxController {
   const controller = active;
   sweepOrphanBlobs(deps);
   setUploadRetry((messageId) => controller.retryUpload(messageId));
+  for (const listener of registrationListeners) {
+    try {
+      listener(deps.userId);
+    } catch (e) {
+      console.error('[OUTBOX] a registration listener threw:', e);
+    }
+  }
   return active;
+}
+
+const registrationListeners = new Set<(userId: string) => void>();
+
+/**
+ * Calls `listener` each time a controller is registered, with its user: the event that makes a
+ * write owed to the outbox before it existed (a boot, a sign-in) deliverable. The listener runs after
+ * the controller is active, so an enqueue inside it is taken.
+ *
+ * @returns the unsubscribe.
+ */
+export function onOutboxRegistered(listener: (userId: string) => void): () => void {
+  registrationListeners.add(listener);
+  return () => registrationListeners.delete(listener);
 }
 
 /**
