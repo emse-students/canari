@@ -3,6 +3,7 @@ import type { Campus, CursusEntry, Post } from '$lib/profile/miconnectProfile';
 import { forgetReaderCaches, SharedCache } from '$lib/utils/sharedCache';
 import { setCurrentUserId, setGlobalAdmin, setFeedAudience } from '$lib/stores/userState.svelte';
 import { coreUrl } from '$lib/utils/apiUrl';
+import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { clearWorkspaceSnapshots } from '$lib/utils/chat/workspaceSnapshot';
 import { forgetStoredFeeds } from '$lib/posts/feedStoreEpoch';
 // The notepad envelope is the same on both sides (AES-256-GCM under a hex key
@@ -383,10 +384,20 @@ export async function saveMyNotes(notes: string): Promise<void> {
  * Permanently deletes the authenticated user's account and all associated data.
  * Throws if the server returns a non-204 response.
  * The caller is responsible for clearing local auth state and redirecting to /login.
+ *
+ * @returns the `sub` of the access token the server ACCEPTED for the delete - the account that is
+ *   actually gone, which is not necessarily the one the page shows (another tab may have signed in
+ *   as someone else meanwhile). `null` when the token names nobody readable.
  */
-export async function deleteMyAccount(): Promise<void> {
-  const res = await apiFetch(`${coreUrl()}/api/users/me`, { method: 'DELETE' });
+export async function deleteMyAccount(): Promise<{ deletedSubject: string | null }> {
+  let bearer: string | null = null;
+  const res = await apiFetch(`${coreUrl()}/api/users/me`, {
+    method: 'DELETE',
+    onAuthorization: (token) => (bearer = token),
+  });
   if (res.status !== 204) {
     throw new Error(`Account deletion failed (${res.status})`);
   }
+  const sub = bearer ? decodeTokenClaims(bearer)?.sub : undefined;
+  return { deletedSubject: typeof sub === 'string' && sub ? sub : null };
 }

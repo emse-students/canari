@@ -164,7 +164,10 @@ import {
 import { resetSiblingCallWarning } from '$lib/utils/callPresence';
 import { ChannelService } from '$lib/services/ChannelService';
 import type { ICallMsg } from '$lib/proto/codec';
-import { wipeDeletedAccountLocalData } from '$lib/utils/accountLocalWipe';
+import {
+  closeDeletedAccountHandles,
+  wipeDeletedAccountLocalData,
+} from '$lib/utils/accountLocalWipe';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import {
   scheduleReconnectImpl,
@@ -434,12 +437,28 @@ export async function wipeDeletedAccountImpl(
   userId: string
 ): Promise<void> {
   await ctx.whenMlsRetired();
-  const failures = await wipeDeletedAccountLocalData(userId);
+  const failures = await wipeDeletedAccountLocalData(userId, {
+    closeThisRunsHandles: true,
+    expectNativeDatabase: false,
+  });
   log(
     failures.length === 0
       ? `[DEL-LOCAL] Local data of the deleted account removed (${userId.slice(0, 8)}).`
       : `[DEL-LOCAL] Local data of the deleted account NOT fully removed: ${failures.join(', ')}`
   );
+}
+
+/**
+ * In a tab told by ANOTHER tab that its account was deleted: once `clearAuth()` has ended this
+ * tab's session, waits for its final MLS checkpoint and closes its handles on that account's stores,
+ * so it stops writing and the deleting tab's deferred database deletes can complete.
+ */
+export async function releaseDeletedAccountImpl(
+  ctx: SessionContext,
+  userId: string
+): Promise<void> {
+  await ctx.whenMlsRetired();
+  await closeDeletedAccountHandles(userId);
 }
 
 /**

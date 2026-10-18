@@ -101,7 +101,7 @@ function base64ToUint8(val: unknown): Uint8Array {
  * Used on Tauri desktop and mobile builds.  Binary fields (iv, salt, cipherText) are stored
  * as base64-encoded TEXT columns rather than BLOBs to work around a Tauri SQL serialisation
  * bug where BLOB values are read back as JSON arrays after an app restart.
- * Database file path: `<app-data-dir>/canari_<userId>.db`.
+ * Database file path: `<app-config-dir>/canari_<userId>.db` (the plugin resolves `app_config_dir()`).
  */
 export class SqliteStorage implements IStorage {
   private db: any = null;

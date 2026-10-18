@@ -456,44 +456,82 @@ pub(crate) fn wipe_app_data(data_dir: &std::path::Path) -> Result<(), String> {
     }
 }
 
+/// The directory `tauri-plugin-sql` opens `sqlite:<name>` under, resolved the SAME way it does.
+///
+/// tauri-plugin-sql 2.4 (`wrapper.rs`, `DbPool::connect`) joins the file name onto
+/// `app.path().app_config_dir()` - NOT `app_data_dir()`. The two are one directory on Windows and
+/// macOS and differ on Linux (`~/.config` vs `~/.local/share`), so a delete under `app_data_dir()`
+/// "removed 0 files" there and reported success while the database stayed. Re-read that function
+/// before changing this one, and on every bump of the plugin.
+fn sql_plugin_db_dir(app: &tauri::AppHandle) -> Result<std::path::PathBuf, String> {
+    app.path().app_config_dir().map_err(|e| e.to_string())
+}
+
 /// Deletes ONE account's local message database - `canari_<userId>.db` and its WAL/SHM side files -
 /// and nothing else: not `mls.bin` (one file per install, which may belong to another account), not
 /// another account's database. The account-deletion path calls it after closing the SQLite handle.
+///
+/// `expect_database` is set when the caller KNOWS the database exists (a store was open for that
+/// account in this run): finding no file then is a failure, not "nothing to do". Returns how many
+/// files were removed.
 #[tauri::command]
-pub(crate) fn delete_user_database(app: tauri::AppHandle, user_id: String) -> Result<(), String> {
-    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    remove_user_database(&data_dir, &user_id).map(|_| ())
+pub(crate) fn delete_user_database(
+    app: tauri::AppHandle,
+    user_id: String,
+    expect_database: bool,
+) -> Result<usize, String> {
+    let db_dir = sql_plugin_db_dir(&app)?;
+    remove_user_database(&db_dir, &user_id, expect_database)
+}
+
+/// Whether `user_id` may name a database file: `[A-Za-z0-9_.@-]`, 1 to 255 characters - the SAME
+/// allowlist as the frontend's `isWipeableAccountId` (`accountLocalKeys.ts`).
+///
+/// The id is the MiConnect `sub`, which may be a UUID, a hash, a username or an email, hence `.` and
+/// `@`. A path separator is what could make "this account's database" name something else, and it is
+/// outside the set; `..` inside `canari_<id>.db` is an ordinary file name, never a parent.
+fn is_wipeable_account_id(user_id: &str) -> bool {
+    !user_id.is_empty()
+        && user_id.len() <= 255
+        && user_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '@'))
 }
 
 /// The whole of `delete_user_database` minus the `AppHandle`, so it runs against a real directory.
 ///
-/// The id becomes part of a file name, so anything but `[A-Za-z0-9_-]` is REFUSED rather than
-/// sanitised: a separator or `..` would turn "delete this account's database" into a delete of
-/// something else. Returns how many files were removed.
+/// An id outside the allowlist is REFUSED rather than sanitised: a sanitised id names another file.
 pub(crate) fn remove_user_database(
-    data_dir: &std::path::Path,
+    db_dir: &std::path::Path,
     user_id: &str,
+    expect_database: bool,
 ) -> Result<usize, String> {
-    if user_id.is_empty()
-        || !user_id
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
-    {
-        log::error!("[DEL-LOCAL] refusing a user id that is not a plain identifier");
+    if !is_wipeable_account_id(user_id) {
+        log::error!("[DEL-LOCAL] refusing a user id outside the allowlist");
         return Err("invalid user id".to_string());
     }
+    let main_existed = db_dir.join(format!("canari_{user_id}.db")).exists();
     let mut removed = 0usize;
     let mut failures = 0usize;
     for suffix in ["", "-wal", "-shm"] {
-        let path = data_dir.join(format!("canari_{user_id}.db{suffix}"));
+        let path = db_dir.join(format!("canari_{user_id}.db{suffix}"));
         remove_entry(&path, &mut removed, &mut failures);
     }
-    log::info!("[DEL-LOCAL] removed {removed} database file(s), {failures} failed");
-    if failures == 0 {
-        Ok(removed)
-    } else {
-        Err(format!("{failures} database file(s) could not be removed"))
+    log::info!(
+        "[DEL-LOCAL] removed {removed} database file(s) under {}, {failures} failed",
+        db_dir.display()
+    );
+    if failures > 0 {
+        return Err(format!("{failures} database file(s) could not be removed"));
     }
+    if expect_database && !main_existed {
+        log::error!(
+            "[DEL-LOCAL] a database was expected under {} and none was there - nothing removed",
+            db_dir.display()
+        );
+        return Err("no database where the SQL plugin keeps it".to_string());
+    }
+    Ok(removed)
 }
 
 /// Deletes the entries of `dir` whose name starts with one of `prefixes`, for the two
@@ -1099,14 +1137,32 @@ mod tests {
         ] {
             std::fs::write(dir.join(f), b"x").unwrap();
         }
-        assert_eq!(remove_user_database(&dir, "a").unwrap(), 3);
+        assert_eq!(remove_user_database(&dir, "a", true).unwrap(), 3);
         assert!(!dir.join("canari_a.db").exists());
         assert!(!dir.join("canari_a.db-wal").exists());
         assert!(dir.join("canari_b.db").exists());
         assert!(dir.join("canari_b.db-wal").exists());
         assert!(dir.join("mls.bin").exists());
-        // Idempotent: a second call finds nothing and succeeds.
-        assert_eq!(remove_user_database(&dir, "a").unwrap(), 0);
+        // Idempotent when nothing is expected: a resumed wipe finds nothing and succeeds.
+        assert_eq!(remove_user_database(&dir, "a", false).unwrap(), 0);
+        // But nothing where a database was KNOWN to exist is the wrong directory: a failure.
+        assert!(remove_user_database(&dir, "a", true).is_err());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A MiConnect subject may be an email or carry dots: accepted, and only its own file goes.
+    #[test]
+    fn remove_user_database_accepts_an_email_like_id() {
+        let dir =
+            std::env::temp_dir().join(format!("canari_del_local_mail_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in ["canari_a.b@x.fr.db", "canari_a.db", "canari_b@x.fr.db"] {
+            std::fs::write(dir.join(f), b"x").unwrap();
+        }
+        assert_eq!(remove_user_database(&dir, "a.b@x.fr", true).unwrap(), 1);
+        assert!(!dir.join("canari_a.b@x.fr.db").exists());
+        assert!(dir.join("canari_a.db").exists());
+        assert!(dir.join("canari_b@x.fr.db").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1114,8 +1170,9 @@ mod tests {
     #[test]
     fn remove_user_database_refuses_a_path_like_id() {
         let dir = std::env::temp_dir();
-        for bad in ["", "../x", "a/b", "a\\b", "a.b"] {
-            assert!(remove_user_database(&dir, bad).is_err(), "{bad:?}");
+        for bad in ["", "../x", "a/b", "a\\b", "a:b", "a b"] {
+            assert!(remove_user_database(&dir, bad, false).is_err(), "{bad:?}");
         }
+        assert!(remove_user_database(&dir, &"a".repeat(256), false).is_err());
     }
 }
