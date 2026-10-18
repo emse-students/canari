@@ -641,6 +641,8 @@ The framed `state_blob` v2 (WebCrypto AES-GCM on the web, read by `mls-core` eve
 
 `sessionAuth.ts:1351,1364` call `loadAndRestoreConversations` per Welcome; a new device joining 80 groups restores 80 times.
 
+**Built (2026-10-18, draft PR `perf/welcome-restore-once`)**: one restore at a time, at most one queued behind it, so a burst of Welcomes costs two restores ([performance-audit](frontend/performance-audit-2026-10-12.md#finding-8---built-2026-10-18-draft-pr-perfwelcome-restore-once)). Owed once shipped: the count of `[RESTORE] ... seeded` lines on a new device joining many groups. Delete this entry then.
+
 ### P3 - the thread's render window only grows, with listeners per bubble
 
 `renderWindow.ts` never shrinks the mounted range; each `MessageBubble` adds a non-passive `touchmove` listener. Owed: a DOM-node and listener count on a seeded 5k thread, which decides whether the grow-only window (deliberate, see `renderWindow.ts`) is worth reopening. **The per-bubble `matchMedia` and window `keydown` are gone (#1998, in `v1.3.0-alpha.1`)** ([performance-audit](frontend/performance-audit-2026-10-12.md#findings-5-9-and-10---built-2026-10-17-draft-pr-perfpk13-message-storage)).

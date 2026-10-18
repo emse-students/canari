@@ -8,6 +8,7 @@
 import { goto } from '$app/navigation';
 import { resolve } from '$app/paths';
 import { internalPath, loginReturningTo } from '$lib/utils/internalPath';
+import { reportRejectionOnce } from '$lib/utils/reportRejectionOnce';
 import { SvelteSet } from 'svelte/reactivity';
 import { getStorage, type IStorage } from '$lib/db';
 import { resetSalonUnread } from '$lib/utils/chat/salonUnread';
@@ -1781,9 +1782,11 @@ export async function loginImpl(
               })
             );
             await cb.saveConversation(groupId);
-            await cb
-              .loadAndRestoreConversations()
-              .catch((e) => cb.log(`[WARN] Error resyncing convs (Welcome): ${e}`));
+            // A burst of Welcomes is folded into ONE queued restore, so its failure is one line,
+            // not one per Welcome.
+            await reportRejectionOnce(cb.loadAndRestoreConversations(), (e) =>
+              cb.log(`[WARN] Error resyncing convs (Welcome): ${e}`)
+            );
             // Fresh join: the Welcome lands us at the current epoch with no pre-join history. The
             // inviter pushes a bundle on the foreground add path, but its background twin
             // (send-welcome-and-commit) does not, so we compare here as well - which costs one
@@ -2628,7 +2631,9 @@ export function tearDownLiveSession(
   ctx.setConnectionPaused(false);
   ctx.setIsMessagingInitializing(false);
   // The watchdog's candidate set IS the live conversation map, so emptying it is half of why
-  // nothing can drive recovery for a session that has ended.
+  // nothing can drive recovery for a session that has ended. The restore chain goes with it, or a
+  // restore this session queued would refill the map as the account that just left.
+  cb.invalidateRestores();
   cb.conversations.clear();
   resetSalonUnread();
   cb.setSelectedContact(null);

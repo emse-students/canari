@@ -398,6 +398,7 @@
     return {
       conversations: convs.conversations,
       loadAndRestoreConversations: () => convs.loadAndRestoreConversations(convCtx()),
+      invalidateRestores: () => convs.invalidateRestores(),
       beginConversationSource: () => convs.beginConversationSource(),
       endConversationSource: () => convs.endConversationSource(),
       addMessageToChat: (sid: string, content: string, contactName: string, options?: any) =>
