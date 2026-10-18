@@ -185,7 +185,7 @@ describe('outline room and slot heights', () => {
   it('gives every title outline room for the outer half of its stroke, cancelled by a margin', () => {
     for (const size of [9, 10, 12, 13]) {
       const room = Math.ceil(outlineWidth(size) / 2);
-      expect(outlineRoomCss(size)).toBe(`padding:${room}px;margin:-${room}px;`);
+      expect(outlineRoomCss(size)).toBe(`padding:0 ${room}px;margin:0 -${room}px;`);
       expect(room * 2).toBeGreaterThanOrEqual(outlineWidth(size));
     }
   });

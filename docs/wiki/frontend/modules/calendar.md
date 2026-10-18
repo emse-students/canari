@@ -575,7 +575,8 @@ Two defects reproduced by rendering October with two half-day events on the 13th
 - **The outline was cut left and right.** A title is `overflow:hidden` for its line clamp, which clips
   at the padding box, while `paint-order:stroke fill` paints the stroke's outer half beyond the glyph.
   `outlineRoomCss(fontSize)` pads the title by `ceil(strokeWidth / 2)` and cancels it with the same
-  negative margin, so the wrapping width is unchanged. The room is derived from `outlineWidth`, the
+  negative margin, so the wrapping width is unchanged. Left and right only since 2026-10-18: a room below the last
+  line let the top of the clamped next line show through it. The room is derived from `outlineWidth`, the
   same number `textOutlineCss` strokes with.
 - **A grey sliver under the cell.** `floor(CELL_H / nSlots)` per slot left up to `nSlots - 1` px of the
   cell unpainted. `slotHeights(cellH, n)` returns integers that sum exactly to the cell (the remainder

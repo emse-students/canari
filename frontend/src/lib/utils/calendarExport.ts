@@ -160,7 +160,10 @@ export function outlineWidth(fontSize: number): number {
  */
 export function outlineRoomCss(fontSize: number): string {
   const room = Math.ceil(outlineWidth(fontSize) / 2);
-  return `padding:${room}px;margin:-${room}px;`;
+  // Left and right only: a room below the last line let the TOP of the clamped next line show
+  // through it ("Energie et..." over a sliver of "Nucleaire", 2026-10-18), and the line height
+  // already leaves the stroke its room above and below.
+  return `padding:0 ${room}px;margin:0 -${room}px;`;
 }
 
 /**
