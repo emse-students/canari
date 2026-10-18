@@ -26,6 +26,7 @@ import { m } from '$lib/paraglide/messages';
 import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/callSystemMessages';
 import { CALLS_ENABLED } from '$lib/features';
 import { isBlockedWith, refusalCodeOf } from '$lib/users/blocks';
+import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { describeSelectedPair } from '$lib/utils/callStats';
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'incall' | 'ended';
@@ -204,6 +205,15 @@ export class CallService {
     if (callMsg.offerSdp === 'START' || (callMsg.callId && !this.currentCallId)) {
       if (senderNorm === userNorm) {
         appendLog('[Call] ignoring invite from own account on another device');
+        return;
+      }
+      // The conversation's call permission: the server already withheld the ring push, and the
+      // in-app invite is the half it cannot read. The missed-call line is `handleCallSignalForChat`'s
+      // to write, from the same predicate, so the timeline has one writer.
+      if (!notificationPreferences.callsAllowed(groupId)) {
+        appendLog(
+          `[Call] invite ${callMsg.callId} in ${groupId} not rung - calls are not allowed in this conversation`
+        );
         return;
       }
       if (get(this.callState) !== 'idle') return;

@@ -2071,6 +2071,13 @@ the whole device. Check on a device before relying on the iOS half of `mentions`
 on what reaches FCM/APNs; the iOS extension was not compiled here (no Xcode on the workstation), and
 neither phone has run it.
 
+**A conversation's CALL PERMISSION sits beside the level, on the same row (2026-10-18).**
+`dm_group_members.callsAllowed` (migration 032, NULL = never chose = rings unless the level is
+`none`), written by `PATCH /mls/groups/:groupId/calls`, listed as `groupCalls` in the same
+`GET /mls/notification-preferences`, and applied by `CallsService.ringGroup` to the ring push. The
+rule, the default and the client half:
+[calls](../frontend/modules/calls.md#the-call-permission---its-own-setting-per-conversation-decided-2026-10-18).
+
 ## Two lines that report a rate, not an event
 
 `[DEVICE_MEMBERSHIPS]` used to print on every membership poll (several per second while a device

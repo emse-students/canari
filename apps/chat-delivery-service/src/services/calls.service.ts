@@ -9,7 +9,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
-import { GroupMember } from '../entities/group-member.entity';
+import { callsAllowedFor, GroupMember } from '../entities/group-member.entity';
+import { cutUserId } from '../utils/log-repeat';
 import { PushToken } from '../entities/push-token.entity';
 import * as jwt from 'jsonwebtoken';
 import * as crypto from 'crypto';
@@ -120,6 +121,15 @@ function monthlyTurnUsageKey(now: Date = new Date()): string {
  * Mints short-lived TURN credentials via Cloudflare Calls.
  * Returns HTTP 503 when Cloudflare credentials are not configured.
  */
+/** What `prepareRing` hands the background fan-out. */
+interface RingPlan {
+  callerId: string;
+  groupId: string;
+  callId: string;
+  hasVideo: boolean;
+  calleeIds: string[];
+}
+
 @Injectable()
 export class CallsService {
   private readonly logger = new Logger(CallsService.name);
@@ -546,7 +556,28 @@ export class CallsService {
     groupId: string,
     callId: string,
     hasVideo: boolean
-  ): Promise<{ rang: number }> {
+  ): Promise<void> {
+    const plan = await this.prepareRing(callerId, groupId, callId, hasVideo);
+    if (!plan) return;
+    // The caller is answered BEFORE the fan-out, and with a body that says nothing about it: how
+    // long the pushes take, and how many went out, would otherwise tell the caller whether a callee
+    // refused calls (the refused path skips every push). A failure is logged, never thrown at a
+    // caller who has already been answered.
+    void this.fanOutRing(plan).catch((e: unknown) =>
+      this.logger.error(`[ring] call=${callId} group=${groupId} fan-out failed`, e as Error)
+    );
+  }
+
+  /**
+   * The part of a ring the caller must wait for: it may refuse (not a member, a block), and it
+   * opens the answer window. Resolves null when there is nobody to ring.
+   */
+  private async prepareRing(
+    callerId: string,
+    groupId: string,
+    callId: string,
+    hasVideo: boolean
+  ): Promise<RingPlan | null> {
     this.logger.debug(`[ring] ringGroup caller=${callerId} group=${groupId} call=${callId}`);
     await this.assertMembership(callerId, groupId, 'ring');
     const calleeIds = await this.otherMemberIds(groupId, callerId);
@@ -560,12 +591,23 @@ export class CallsService {
 
     if (calleeIds.length === 0) {
       this.logger.warn(`[ring] call=${callId} group=${groupId} has no other member to ring`);
+      return null;
+    }
+    return { callerId, groupId, callId, hasVideo, calleeIds };
+  }
+
+  /** The push fan-out of a ring; resolves with how many devices were handed the ring. */
+  private async fanOutRing(plan: RingPlan): Promise<{ rang: number }> {
+    const { callerId, groupId, callId, hasVideo, calleeIds } = plan;
+    const ringable = await this.membersWhoTakeCalls(groupId, callId, calleeIds);
+    if (ringable.length === 0) {
+      this.logger.log(`[ring] call=${callId} group=${groupId} rang=0 - nobody may be rung`);
       return { rang: 0 };
     }
 
     const callerName = await resolveUserDisplayName(this.groupMemberRepo.manager, callerId);
     const groupName = await this.resolveGroupName(groupId);
-    const tokens = await this.pushTokenRepo.find({ where: { userId: In(calleeIds) } });
+    const tokens = await this.pushTokenRepo.find({ where: { userId: In(ringable) } });
     // Checked once per fan-out rather than once per device: without Firebase every FCM ring is
     // skipped, and `rang=0/N` on its own reads as "nobody was reachable" when the truth is that
     // this server never asked anyone. iOS VoIP goes straight to APNs and is unaffected.
@@ -697,6 +739,34 @@ export class CallsService {
         });
       }
     }
+  }
+
+  /**
+   * The callees this conversation may RING: each member's call permission (`callsAllowed`, resolved
+   * against `notifLevel` by {@link callsAllowedFor}). A member who refused calls here is not pushed
+   * at all - no CallStyle, no CallKit, whatever build the phone runs - and the caller is not told
+   * why (the call simply goes unanswered, like any other). Read with the ring, never cached, so a
+   * choice made a second ago already holds. A read that fails throws: the ring request fails and
+   * the caller's call ends as `call_setup_failed`, rather than ringing somebody who may have said no.
+   */
+  private async membersWhoTakeCalls(
+    groupId: string,
+    callId: string,
+    calleeIds: string[]
+  ): Promise<string[]> {
+    const rows = await this.groupMemberRepo.find({
+      where: { groupId, userId: In(calleeIds) },
+      select: { userId: true, notifLevel: true, callsAllowed: true },
+    });
+    const withheld = new Set(
+      rows.filter((r) => !callsAllowedFor(r.notifLevel, r.callsAllowed)).map((r) => r.userId)
+    );
+    if (withheld.size > 0) {
+      this.logger.log(
+        `[ring] call=${callId} group=${groupId} withheld from ${withheld.size} member(s) - calls not allowed in this conversation: ${[...withheld].map(cutUserId).join(',')}`
+      );
+    }
+    return calleeIds.filter((id) => !withheld.has(id));
   }
 
   /** Membership guard shared by the ring endpoints. */

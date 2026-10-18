@@ -1,0 +1,76 @@
+import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { SvelteMap } from 'svelte/reactivity';
+
+vi.mock('$lib/utils/users/displayName', () => ({
+  resolveDisplayNames: async () => (id: string) => `name-of-${id}`,
+}));
+vi.mock('$lib/notifications/preferencesApi', () => ({
+  fetchNotificationPreferences: vi.fn(),
+  saveDisabledCategories: vi.fn(),
+  saveGroupNotificationLevel: vi.fn().mockResolvedValue(undefined),
+  saveGroupCallsAllowed: vi.fn().mockResolvedValue(undefined),
+  fetchChannelNotificationLevel: vi.fn(),
+}));
+
+import { handleCallSignalForChat, type CallSystemMessageContext } from './callSystemMessages';
+import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
+import { parseEnvelope } from '$lib/envelope';
+import type { Conversation } from '$lib/types';
+
+const G = '0b9f3d7e-1111-4222-8333-444455556666';
+
+function makeCtx() {
+  const addMessageToChat = vi.fn(async () => {});
+  const conversations = new SvelteMap<string, Conversation>([
+    [G, { id: G, messages: [] } as unknown as Conversation],
+  ]);
+  const ctx: CallSystemMessageContext = {
+    userId: 'me',
+    deviceKey: () => 'dk',
+    storage: null,
+    conversations,
+    addMessageToChat,
+  };
+  return { ctx, addMessageToChat };
+}
+
+const invite = { callId: 'call-1', offerSdp: 'START' };
+
+describe('handleCallSignalForChat - the conversation call permission', () => {
+  beforeEach(() => notificationPreferences.reset());
+
+  it('writes the call as started where calls may ring', async () => {
+    const { ctx, addMessageToChat } = makeCtx();
+    await handleCallSignalForChat(ctx, 'caller', G, invite, 'me');
+    const [, content] = addMessageToChat.mock.calls[0] as unknown as [string, string];
+    const env = parseEnvelope(content);
+    expect(env.kind === 'system' && env.callEvent?.endedAt).toBeFalsy();
+  });
+
+  it('writes it as MISSED at once where calls are not allowed, instead of a ring', async () => {
+    await notificationPreferences.setGroupCallsAllowed(G, false);
+    const { ctx, addMessageToChat } = makeCtx();
+    await handleCallSignalForChat(ctx, 'caller', G, invite, 'me');
+    expect(addMessageToChat).toHaveBeenCalledTimes(1);
+    const [, content, groupId, options] = addMessageToChat.mock.calls[0] as unknown as [
+      string,
+      string,
+      string,
+      { messageId: string },
+    ];
+    expect(groupId).toBe(G);
+    expect(options.messageId).toBe('call-call-1');
+    const env = parseEnvelope(content);
+    // Missed is final: a later hangup from the caller leaves it as it is.
+    expect(env.kind === 'system' && env.callEvent?.endedAt).toBeTruthy();
+  });
+
+  it('follows a conversation set to none when the account never chose', async () => {
+    await notificationPreferences.setGroupLevel(G, 'none');
+    const { ctx, addMessageToChat } = makeCtx();
+    await handleCallSignalForChat(ctx, 'caller', G, invite, 'me');
+    const [, content] = addMessageToChat.mock.calls[0] as unknown as [string, string];
+    const env = parseEnvelope(content);
+    expect(env.kind === 'system' && env.callEvent?.endedAt).toBeTruthy();
+  });
+});
