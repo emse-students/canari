@@ -92,7 +92,9 @@ export class CallsController {
     if (!userId) throw new BadRequestException('Missing X-User-Id header');
     const safeGroupId = sanitizeQueryValue(body?.groupId, 'groupId');
     const safeCallId = sanitizeQueryValue(body?.callId, 'callId');
-    return this.callsService.ringGroup(userId, safeGroupId, safeCallId, !!body?.hasVideo);
+    await this.callsService.ringGroup(userId, safeGroupId, safeCallId, !!body?.hasVideo);
+    // Constant body: a count would tell the caller whether a callee refused calls.
+    return { ok: true };
   }
 
   /**

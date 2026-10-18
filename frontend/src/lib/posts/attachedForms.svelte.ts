@@ -22,6 +22,10 @@ export interface AttachedFormReads {
   checkSubmission(id: string): Promise<{ hasSubmitted: boolean }>;
 }
 
+/** Posts already accused of a duplicate form: the list is rebuilt on every change, the accusation is not. */
+// eslint-disable-next-line svelte/prefer-svelte-reactivity -- a record nothing draws
+const warnedDuplicatePosts = new Set<string>();
+
 /**
  * The forms `post` names, each ONCE, in the order the post names them.
  *
@@ -40,7 +44,8 @@ export function attachedFormSources(
     if (out.some((s) => s.id === f.id)) continue;
     out.push({ id: f.id, title: f.title });
   }
-  if (out.length < post.forms.length) {
+  if (out.length < post.forms.length && !warnedDuplicatePosts.has(post.id)) {
+    warnedDuplicatePosts.add(post.id);
     console.warn(
       `[POSTS] post ${post.id} names ${post.forms.length - out.length} attached form(s) more than once - each drawn once`
     );
@@ -104,8 +109,11 @@ export function attachedFormsLoader(
     answered.set(src.id, { id: src.id, title, submitted, opensAt });
   }
 
+  // Derived ONCE: the effect and both derived values below share it.
+  const list = $derived(sources());
+
   $effect(() => {
-    for (const src of sources()) {
+    for (const src of list) {
       if (asked.has(src.id)) continue;
       asked.add(src.id);
       Log.d('POSTS', `attached form ${src.id} asked`);
@@ -114,16 +122,12 @@ export function attachedFormsLoader(
   });
 
   const infos = $derived(
-    sources().flatMap((s) => {
+    list.flatMap((s) => {
       const info = answered.get(s.id);
       return info ? [info] : [];
     })
   );
-  const pending = $derived(
-    sources()
-      .map((s) => s.id)
-      .filter((id) => !answered.has(id))
-  );
+  const pending = $derived(list.map((s) => s.id).filter((id) => !answered.has(id)));
 
   return {
     get infos() {

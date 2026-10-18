@@ -33,7 +33,11 @@ const switchOf = (category: string) =>
 beforeEach(() => {
   vi.clearAllMocks();
   notificationPreferences.reset();
-  api.fetchNotificationPreferences.mockResolvedValue({ disabled: [], groupLevels: {} });
+  api.fetchNotificationPreferences.mockResolvedValue({
+    disabled: [],
+    groupLevels: {},
+    groupCalls: {},
+  });
   api.saveDisabledCategories.mockResolvedValue(undefined);
 });
 
@@ -60,7 +64,11 @@ describe('SettingsNotificationsSection', () => {
   });
 
   it('shows the account state the server returned', async () => {
-    api.fetchNotificationPreferences.mockResolvedValue({ disabled: ['posts'], groupLevels: {} });
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: ['posts'],
+      groupLevels: {},
+      groupCalls: {},
+    });
     await render();
     expect(switchOf('posts').getAttribute('aria-checked')).toBe('false');
     expect(switchOf('messages').getAttribute('aria-checked')).toBe('true');

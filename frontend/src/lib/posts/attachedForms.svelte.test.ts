@@ -116,6 +116,22 @@ describe('attachedFormsLoader', () => {
   });
 });
 
+describe('attachedFormsLoader sources', () => {
+  it('builds the source list once per change, not once per reader of it', async () => {
+    const { reads } = readsWithHandControlledChecks();
+    const post = $state({ forms: [{ id: 'A', title: 'a' }] });
+    const build = vi.fn(() => post.forms.map((f) => ({ id: f.id, title: f.title })));
+    const cleanup = $effect.root(() => {
+      const loader = attachedFormsLoader(build, reads);
+      void loader.infos;
+      void loader.pending;
+    });
+    await settle();
+    expect(build).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+});
+
 describe('attachedFormSources', () => {
   it('a post naming one form twice yields it once, and says so', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -128,6 +144,19 @@ describe('attachedFormSources', () => {
     } as never);
     expect(sources.map((s) => s.id)).toEqual(['A']);
     expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('says it ONCE per post however often the list is rebuilt, and once per post id', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const dup = (id: string) =>
+      ({ id, forms: [{ id: 'A' }, { id: 'A' }] }) as unknown as Parameters<
+        typeof attachedFormSources
+      >[0];
+    for (let i = 0; i < 3; i++) attachedFormSources(dup('warn-once-1'));
+    expect(warn).toHaveBeenCalledTimes(1);
+    attachedFormSources(dup('warn-once-2'));
+    expect(warn).toHaveBeenCalledTimes(2);
     warn.mockRestore();
   });
 

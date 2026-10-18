@@ -27,6 +27,9 @@ vi.mock('$lib/utils/chat/callSystemMessages', () => ({
   getCallSystemMessageContext: () => null,
   recordCallMissed: vi.fn(),
 }));
+vi.mock('$lib/stores/notificationPreferences.svelte', () => ({
+  notificationPreferences: { callsAllowed: vi.fn(() => true) },
+}));
 vi.mock('$lib/stores/auth', () => ({ getToken: async () => 'session-token' }));
 vi.mock('$lib/utils/callAudio', () => ({
   buildCallAudioConstraints: () => true,
@@ -421,6 +424,21 @@ describe('the ring window, both sides', () => {
 
     expect(get(service.callState)).toBe('idle');
     expect(recordCallMissed).not.toHaveBeenCalled();
+  });
+
+  it('does not ring in a conversation whose call permission refuses it', async () => {
+    const { notificationPreferences } = await import('$lib/stores/notificationPreferences.svelte');
+    vi.mocked(notificationPreferences.callsAllowed).mockReturnValueOnce(false);
+    const service = new CallService(fakeMls);
+    await service.handleCallSignal(
+      'peer@example.org',
+      'group-1',
+      invite(5),
+      'me@example.org',
+      'device-1'
+    );
+    expect(notificationPreferences.callsAllowed).toHaveBeenCalledWith('group-1');
+    expect(get(service.callState)).toBe('idle');
   });
 
   it('does not ring for an invite that carries no window', async () => {
