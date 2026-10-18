@@ -9,7 +9,8 @@ import {
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
-import { GroupMember } from '../entities/group-member.entity';
+import { callsAllowedFor, GroupMember } from '../entities/group-member.entity';
+import { cutUserId } from '../utils/log-repeat';
 import { PushToken } from '../entities/push-token.entity';
 import * as jwt from 'jsonwebtoken';
 import * as crypto from 'crypto';
@@ -562,10 +563,12 @@ export class CallsService {
       this.logger.warn(`[ring] call=${callId} group=${groupId} has no other member to ring`);
       return { rang: 0 };
     }
+    const ringable = await this.membersWhoTakeCalls(groupId, callId, calleeIds);
+    if (ringable.length === 0) return { rang: 0 };
 
     const callerName = await resolveUserDisplayName(this.groupMemberRepo.manager, callerId);
     const groupName = await this.resolveGroupName(groupId);
-    const tokens = await this.pushTokenRepo.find({ where: { userId: In(calleeIds) } });
+    const tokens = await this.pushTokenRepo.find({ where: { userId: In(ringable) } });
     // Checked once per fan-out rather than once per device: without Firebase every FCM ring is
     // skipped, and `rang=0/N` on its own reads as "nobody was reachable" when the truth is that
     // this server never asked anyone. iOS VoIP goes straight to APNs and is unaffected.
@@ -697,6 +700,34 @@ export class CallsService {
         });
       }
     }
+  }
+
+  /**
+   * The callees this conversation may RING: each member's call permission (`callsAllowed`, resolved
+   * against `notifLevel` by {@link callsAllowedFor}). A member who refused calls here is not pushed
+   * at all - no CallStyle, no CallKit, whatever build the phone runs - and the caller is not told
+   * why (the call simply goes unanswered, like any other). Read with the ring, never cached, so a
+   * choice made a second ago already holds. A read that fails throws: the ring request fails and
+   * the caller's call ends as `call_setup_failed`, rather than ringing somebody who may have said no.
+   */
+  private async membersWhoTakeCalls(
+    groupId: string,
+    callId: string,
+    calleeIds: string[]
+  ): Promise<string[]> {
+    const rows = await this.groupMemberRepo.find({
+      where: { groupId, userId: In(calleeIds) },
+      select: { userId: true, notifLevel: true, callsAllowed: true },
+    });
+    const withheld = new Set(
+      rows.filter((r) => !callsAllowedFor(r.notifLevel, r.callsAllowed)).map((r) => r.userId)
+    );
+    if (withheld.size > 0) {
+      this.logger.log(
+        `[ring] call=${callId} group=${groupId} withheld from ${withheld.size} member(s) - calls not allowed in this conversation: ${[...withheld].map(cutUserId).join(',')}`
+      );
+    }
+    return calleeIds.filter((id) => !withheld.has(id));
   }
 
   /** Membership guard shared by the ring endpoints. */

@@ -6,6 +6,14 @@
 > [calls lot 1](calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only). WP-C1's Tier A
 > runs on it next.
 >
+> **Decisions 2026-10-18 (the user), recorded on [calls](calls.md#the-users-decisions-of-2026-10-18):**
+> (6) the caller's name on a silent ring comes from the phone's LOCAL copy, never the payload, and an
+> unknown caller shows the neutral "Canari call"; (ICE) `iceTransportPolicy` stays `'all'`, direct
+> first, TURN as the fallback; (block) no call crosses a block, also inside an existing conversation
+> (`403 USER_BLOCKED`, neutral); (7) calls get their OWN per-conversation permission, independent of
+> the notification level - BUILT 2026-10-18
+> ([call permission](calls.md#the-call-permission---its-own-setting-per-conversation-decided-2026-10-18)).
+>
 > **Note 2026-10-17:** the user's 2026-10-16 decisions supersede parts of this plan: 1:1 calls go peer-to-peer DIRECT with Cloudflare TURN as the fallback (not relay-only through the SFU), and `1.2.9` ships without #1955. Where the sections below assume "both ends relay-only" or an SFU for 1:1, read them as the 2026-10-15 state, to be re-planned.
 
 > **Status: a plan, nothing built.** Calling is held off since 0.14.15 (`CALLS_ENABLED = false`,
@@ -116,7 +124,8 @@ ring/invite: MLS SystemMsg over chat-gateway + POST /api/calls/ring (FCM data / 
     as this page.
 13. Carried from [calls](calls.md): the push payload no longer carries `senderName`/`groupName` on a
     silent frame (the ring banner would be untitled), and a conversation at notification level `none`
-    sends the MLS invite silent.
+    sends the MLS invite silent. Both decided 2026-10-18: the name from the phone's local copy, and a
+    per-conversation call permission ([calls](calls.md#the-users-decisions-of-2026-10-18)).
 
 ## 3. Goals and non-goals
 
@@ -346,9 +355,9 @@ migrations and the adversarial reviews; **sonnet** for mechanical work.
 | WP-C2 | The `[CALL_REPORT]` line (section 6) | `CallService.ts` (new `callStats.ts` util beside `callAudio.ts`) | unit test on a fake `RTCStatsReport`; no wall clock | sonnet | - | the line on every exit path; read once from a phone's exported log |
 | WP-C3 | E2E correctness: refuse instead of degrade; fix the asymmetric legacy path; header-in-clear framing per codec (VP8/H.264) or force VP8+Opus; decrypt failures into `appendLog` | `encryption.worker.ts`, `CallService.attachMediaTransforms` / `setupReceiverTransform` | worker unit tests per codec; K2 Chrome <-> WKWebView | opus + adversarial review | WP-C1 (which codecs actually negotiate) | `dec_fail = 0` on every Tier A/B video cell; no engine can join in clear |
 | WP-C4 | **Decision**: keep Rust SFU 0.17 pinned / port to 0.20 / managed SFU | this page section 5, the feasibility page | - | the user, on the lead's recommendation | **F1, F2, F3, F7**, WP-C1 | a recorded decision; if "keep", `webrtc = "=0.17.n"` pinned |
-| WP-C5 | Android: ring and background - FSI back + `canUseFullScreenIntent`, foreground service `phoneCall`, caller name from the device cache (not the payload), notif-level decision, audio routing incl. Bluetooth | `CanariFirebaseMessagingService.kt`, `AndroidManifest.xml`, `androidFcmManifest.test.ts` | K6, K7, K8, K10 on E4; NOTIF rows unaffected | opus | WP-C1 | Tier B Android cells `PASS` |
+| WP-C5 | Android: ring and background - FSI back + `canUseFullScreenIntent`, foreground service `phoneCall`, caller name from the device cache (not the payload; decided 2026-10-18, an unknown caller shows "Canari call"), the native `call_invite` branch honouring the per-conversation call permission, audio routing incl. Bluetooth | `CanariFirebaseMessagingService.kt`, `AndroidManifest.xml`, `androidFcmManifest.test.ts` | K6, K7, K8, K10 on E4; NOTIF rows unaffected | opus | WP-C1 | Tier B Android cells `PASS` |
 | WP-C6 | iOS: **spike first** - does WKWebView keep capturing and playing with the screen locked under an active CallKit call, and can the answer reach a call while MLS sits behind the PIN? Then PushKit/CallKit, `voip` + `audio` modes, `AVAudioSession` handover | `canari_push.mm`, `canari_iOS/Info.plist`, `iosCallDeclarations.test.ts`, `stores/pendingCallAccept.ts` | K6, K7, K8 on E6 | opus | WP-C1 | spike verdict recorded; if WKWebView cannot, the user chooses: foreground-only calls without `voip`, or a native media path (a separate chantier) |
-| WP-C7 | Call UX: history list from the call system messages, busy/second-call answer, ~~blocked users never ring~~ (built 2026-10-18), permission strings naming calls (asserted against `CALLS_COMPILED` since 2026-10-18; the text is written in the revival commit), the ring obeying (or not) the conversation level | `callSystemMessages.ts`, `CallOverlay.svelte`, `calls.service.ts` ring fan-out, `messages/fr.json` / `en.json` | unit + K9, K12 | sonnet (strings, UI), opus review of the ring rule | - | CALL-4/5/7/17/18/19 `PASS` |
+| WP-C7 | Call UX: history list from the call system messages, busy/second-call answer, ~~blocked users never ring~~ (built 2026-10-18), permission strings naming calls (asserted against `CALLS_COMPILED` since 2026-10-18; the text is written in the revival commit), ~~the ring obeying (or not) the conversation level~~ (decided and built 2026-10-18: the per-conversation call permission, [calls](calls.md#the-call-permission---its-own-setting-per-conversation-decided-2026-10-18)) | `callSystemMessages.ts`, `CallOverlay.svelte`, `calls.service.ts` ring fan-out, `messages/fr.json` / `en.json` | unit + K9, K12 | sonnet (strings, UI), opus review of the ring rule | - | CALL-4/5/7/17/18/19 `PASS` |
 | WP-C8 | The campaign: rung 15 CALL-1..20 + the matrix tiers B then C, video recorded from the iPhone cells | [board](../../cross-client-testing.md), `tools/cross-client-harness/README.md` | the rows themselves | lead + device agents + the user for N4/SIM/headset | WP-C2..C7 | Tier B green on an alpha (mode `testers`); Tier C green before the stable |
 | WP-C9 | Store: the Apple video + notes, privacy labels, Play FSI/FGS declarations, privacy policy text | this page section 8, `store/`, [store-listings](../../store-listings.md) | `submit.mjs --check-notes` | sonnet + the user (App Store Connect, Play Console are one-off clicks) | WP-C8 Tier B | the stable passes App Review with `voip` declared |
 | WP-C10 | ICE restart on network change (K11) instead of ending the call | `CallService.ts` `onconnectionstatechange`, SFU renegotiation | K11 on both phones | opus | WP-C4 | Wi-Fi -> 4G keeps the call with a gap measured in `[CALL_REPORT]` |
@@ -403,7 +412,7 @@ the only copy. What it changes here:
   `Offer`/`Answer`/`IceCandidate` between the two room members. E2E is unchanged (the transform and
   the `exportSecret` key do not care what is on the other end). **A new WP-C1a precedes WP-C1**: the
   P2P mode in `CallService.ts` (`iceTransportPolicy`, polite/impolite roles) and the relay in
-  `main.rs`; WP-C1's Tier A then runs on it. **Two decisions for the user:** `iceTransportPolicy:
+  `main.rs`; WP-C1's Tier A then runs on it. **Two decisions for the user** (the first taken 2026-10-18: `'all'` stays): `iceTransportPolicy:
   'all'` (a contact learns your public IP; direct calls cost nothing) or `'relay'` (every call through
   Cloudflare, IP hidden, billed); and whether the TURN estimator (`CALL_RELAY_KBPS_PER_DEVICE`) counts
   only calls whose `[CALL_REPORT]` `pair=` says `relay`.

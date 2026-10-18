@@ -248,6 +248,41 @@ describe('CallsService', () => {
       );
     });
 
+    it('never pushes a ring to a member whose call permission refuses this conversation', async () => {
+      // First read: who is in the group. Second: each callee's permission and level.
+      groupMemberRepo.find
+        .mockResolvedValueOnce([
+          { userId: 'caller' },
+          { userId: 'refused' },
+          { userId: 'muted' },
+          { userId: 'muted-but-allows' },
+          { userId: 'default' },
+        ])
+        .mockResolvedValueOnce([
+          { userId: 'refused', notifLevel: 'all', callsAllowed: false },
+          { userId: 'muted', notifLevel: 'none', callsAllowed: null },
+          { userId: 'muted-but-allows', notifLevel: 'none', callsAllowed: true },
+          { userId: 'default', notifLevel: 'mentions', callsAllowed: null },
+        ]);
+      pushTokenRepo.find.mockResolvedValue([]);
+
+      await service.ringGroup('caller', 'group-1', 'call-1', false);
+
+      const lookup = pushTokenRepo.find.mock.calls[0][0].where.userId._value as string[];
+      expect(lookup.sort()).toEqual(['default', 'muted-but-allows']);
+    });
+
+    it('rings nobody, and asks for no token, when every callee refused calls', async () => {
+      groupMemberRepo.find
+        .mockResolvedValueOnce([{ userId: 'caller' }, { userId: 'refused' }])
+        .mockResolvedValueOnce([{ userId: 'refused', notifLevel: 'all', callsAllowed: false }]);
+
+      expect(await service.ringGroup('caller', 'group-1', 'call-1', false)).toEqual({ rang: 0 });
+      expect(pushTokenRepo.find).not.toHaveBeenCalled();
+      expect(fcmSend).not.toHaveBeenCalled();
+      expect(apnsVoip.sendVoipPush).not.toHaveBeenCalled();
+    });
+
     it('clears the voipToken when APNs reports it gone', async () => {
       pushTokenRepo.find.mockResolvedValue([
         {
