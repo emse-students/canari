@@ -1038,7 +1038,10 @@
       outsideBubble
     />
 
-    <ControlRefusedNotice {messageId} {isOwn} />
+    <!-- A tombstone has nothing left to retry: its refusals are cleared where the delete lands. -->
+    {#if !isDeleted}
+      <ControlRefusedNotice {messageId} {isOwn} excerpt={textContent} />
+    {/if}
 
     <MessageEmojiPicker
       origin={emojiPickerOrigin}

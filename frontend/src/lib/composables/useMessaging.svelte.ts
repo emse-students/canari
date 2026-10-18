@@ -30,7 +30,7 @@ import { applySalonEchoChange } from '$lib/utils/chat/salonEcho';
 import type { UnsentSalonText } from '$lib/utils/chat/salonUnsent';
 import { resetOwedSalonWrites } from '$lib/utils/chat/salonOwed';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
-import { applyPin, isMessagePinned } from '$lib/stores/pinStore.svelte';
+import { applyPin, isMessagePinned, pinEntries } from '$lib/stores/pinStore.svelte';
 import {
   indexMessagesById,
   isStaleInboundMessage,
@@ -72,6 +72,7 @@ import { MediaService } from '$lib/media';
 import { isReelMessage } from '$lib/reels/chatReel';
 import {
   applyEditToBody,
+  envelopeBodyText,
   getPreviewText,
   mkMediaEnvelope,
   parseEnvelope,
@@ -98,8 +99,12 @@ import { enqueueOutboxMessage, isEnqueueQuotaFailure } from '$lib/utils/chat/out
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
 import {
   clearControlRefusal,
+  clearMessageControlRefusals,
+  forgetControlRefusals,
+  loadControlRefusals,
   recordControlRefusal,
-  type ControlRefusalKind,
+  type ControlAct,
+  type ControlRefusal,
 } from '$lib/utils/chat/controlRefusals.svelte';
 import { ChannelService } from '$lib/services/ChannelService';
 import {
@@ -218,6 +223,8 @@ export function useMessaging() {
     // Salon writes owed to a reconnect were the leaving account's: none may go out under the next.
     resetOwedSalonWrites();
     forgetSalonSendsOfEndedSession();
+    // The refused control actions shown are the leaving account's; its persisted list stays its own.
+    forgetControlRefusals();
   }
 
   /** Replaces the staged files of `conversationKey`; an empty list removes its entry. */
@@ -1882,45 +1889,141 @@ export function useMessaging() {
       await persistLocalMutation(nextMsgs[msgIdx], ctx);
     }
 
-    const reactionDeps = {
+    const act: ControlAct = { kind: 'reaction', emoji, remove: alreadyReacted, at };
+    const queued = await sendControlAct(messageId, act, controlDeps(ctx, convo));
+    settleControl(ctx, convo.id, messageId, act, queued);
+  }
+
+  /** The deps every control act is sent with, from the context of the moment. */
+  function controlDeps(ctx: MessagingContext, convo: Conversation) {
+    return {
       mlsService: ctx.ensureMls(),
       userId: ctx.userId,
       deviceKeyB64: ctx.deviceKeyB64,
       conversation: convo,
       currentUserDisplayName: getUserDisplayNameSync(ctx.userId),
     };
-    const send = () =>
-      alreadyReacted
-        ? removeReaction(messageId, emoji, at, reactionDeps)
-        : addReaction(messageId, emoji, at, reactionDeps);
-    await settleControl(messageId, 'reaction', send);
   }
 
   /**
-   * Runs one control act and settles its mention: a refusal by the durable queue records a notice on
-   * the message whose Retry re-runs `act` (same instants, same payload); a taken act clears any
-   * earlier notice. The act is the caller's closure so a retry cannot drift from the original.
+   * Sends one reaction, edit or pin act (a delete has its own outcome - see `deleteMessage`). `text`
+   * is an edit's new body text, the one piece of an act a refusal does not store.
+   *
+   * @returns whether the durable queue took it.
    */
-  async function settleControl(
+  async function sendControlAct(
     messageId: string,
-    kind: ControlRefusalKind,
-    act: () => Promise<boolean>,
-    onQueuedLate?: () => Promise<void>
+    act: Exclude<ControlAct, { kind: 'delete' }>,
+    deps: ReturnType<typeof controlDeps>,
+    text = ''
   ): Promise<boolean> {
-    const queued = await act();
-    if (queued) {
-      clearControlRefusal(messageId);
+    switch (act.kind) {
+      case 'reaction':
+        return act.remove
+          ? removeReaction(messageId, act.emoji, act.at, deps)
+          : addReaction(messageId, act.emoji, act.at, deps);
+      case 'edit':
+        return editMessage(messageId, text, act.editedAt, deps);
+      case 'pin':
+        return setMessagePinned(messageId, act.pinned, act.at, deps);
+    }
+  }
+
+  /**
+   * Settles the mention of one control act: a refusal by the durable queue records a notice for THAT
+   * act (message, kind, emoji); a taken act clears only the refusal it supersedes - the same key, or
+   * every refusal on the message for a delete. A 👍 refused then a pin taken keeps the 👍's notice.
+   */
+  function settleControl(
+    ctx: MessagingContext,
+    conversationId: string,
+    messageId: string,
+    act: ControlAct,
+    queued: boolean
+  ): void {
+    loadControlRefusals(ctx.userId);
+    if (!queued) {
+      recordControlRefusal(ctx.userId, { conversationId, messageId, act });
+    } else if (act.kind === 'delete') {
+      clearMessageControlRefusals(messageId);
+    } else {
+      clearControlRefusal(ctx.userId, messageId, act);
+    }
+  }
+
+  /**
+   * Whether the local state still SHOWS the refused act. A refusal outlives a reload, the optimistic
+   * state it describes may not have (a failed row write): retrying an act this device no longer shows
+   * would hand the peers what this device lacks. Not standing = moot, dropped, nothing sent.
+   */
+  function refusalStillStands(refusal: ControlRefusal, msg: ChatMessage, me: string): boolean {
+    const { act } = refusal;
+    if (msg.isDeleted) return false;
+    switch (act.kind) {
+      case 'delete':
+        return true;
+      case 'edit':
+        return msg.editedAt?.getTime() === act.editedAt;
+      case 'pin': {
+        const held = pinEntries(refusal.conversationId).find((e) => e.id === msg.id);
+        return held?.at === act.at && held.pinned === act.pinned;
+      }
+      case 'reaction':
+        return (messageReactions.get(msg.id) ?? msg.reactions ?? []).some(
+          (r) =>
+            r.userId.toLowerCase() === me &&
+            r.emoji === act.emoji &&
+            (r.at ?? 0) === act.at &&
+            (r.removed === true) === act.remove
+        );
+    }
+  }
+
+  /**
+   * Runs a refused act again (the Retry of `ControlRefusedNotice`), with the context and the
+   * conversation of THIS moment - never a snapshot taken when it was refused. The refusal is cleared
+   * as soon as the queue takes the act and BEFORE any local follow-up, so a follow-up that throws
+   * cannot leave a mention whose second tap would queue the act twice.
+   *
+   * @returns true when the queue took it.
+   */
+  async function retryRefusedControl(
+    refusal: ControlRefusal,
+    ctx: MessagingContext
+  ): Promise<boolean> {
+    const { messageId, act } = refusal;
+    const tag = `[OUTBOX] retry "${act.kind}" on ${messageId.slice(0, 8)}`;
+    loadControlRefusals(ctx.userId);
+    const found = [...ctx.conversations.entries()].find(([, c]) => c.id === refusal.conversationId);
+    if (!found) {
+      ctx.log(`${tag}: its conversation is gone here, the refusal is dropped`);
+      clearMessageControlRefusals(messageId);
+      return false;
+    }
+    const [convoKey, convo] = found;
+    const msg = convo.messages.find((m) => m.id === messageId);
+    if (!msg) {
+      ctx.log(`${tag}: the message is not loaded, kept for a later Retry`);
+      return false;
+    }
+    if (!refusalStillStands(refusal, msg, ctx.userId.toLowerCase())) {
+      ctx.log(`${tag}: no longer shown locally, the refusal is moot and dropped`);
+      clearControlRefusal(ctx.userId, messageId, act);
+      return false;
+    }
+    const deps = controlDeps(ctx, convo);
+    if (act.kind === 'delete') {
+      const outcome = await deleteMessage(messageId, deps);
+      if (outcome === 'refused') return false;
+      settleControl(ctx, convo.id, messageId, act, true);
+      await applyDeleteLocally(outcome, messageId, convoKey, ctx);
       return true;
     }
-    recordControlRefusal(messageId, {
-      kind,
-      retry: async () => {
-        const ok = await act();
-        if (ok) await onQueuedLate?.();
-        return ok;
-      },
-    });
-    return false;
+    const text = act.kind === 'edit' ? envelopeBodyText(msg.content) : undefined;
+    const queued = await sendControlAct(messageId, act, deps, text);
+    if (queued) settleControl(ctx, convo.id, messageId, act, true);
+    else ctx.log(`${tag}: refused again, the notice stays`);
+    return queued;
   }
 
   /**
@@ -1955,56 +2058,62 @@ export function useMessaging() {
     if (!target || !isOwnMessage(target.senderId, ctx.userId)) return;
 
     const convoKey = ctx.selectedContact;
-    const deleteDeps = {
-      mlsService: ctx.ensureMls(),
-      userId: ctx.userId,
-      deviceKeyB64: ctx.deviceKeyB64,
-      conversation: convo,
-    };
-    const outcome = await deleteMessage(messageId, deleteDeps);
-
+    const act: ControlAct = { kind: 'delete' };
+    const outcome = await deleteMessage(messageId, controlDeps(ctx, convo));
     // THE QUEUE REFUSED THE DELETE: the peers still hold the message, so it is NOT shown as deleted
     // here. The mention carries Retry, and only a retry the queue takes writes the tombstone.
-    if (outcome === 'refused') {
-      recordControlRefusal(messageId, {
-        kind: 'delete',
-        retry: async () => {
-          const retried = await deleteMessage(messageId, deleteDeps);
-          if (retried === 'refused') return false;
-          await tombstoneLocalMessage(messageId, ctx, convo, convoKey);
-          return true;
-        },
-      });
-      return;
-    }
-    clearControlRefusal(messageId);
+    settleControl(ctx, convo.id, messageId, act, outcome !== 'refused');
+    if (outcome === 'refused') return;
+    await applyDeleteLocally(outcome, messageId, convoKey, ctx);
+  }
 
+  /**
+   * The local half of a delete the queue took (or that never needed it): a withdrawal drops the row,
+   * a broadcast tombstones it. Reads the conversation from the map at THIS moment, by key.
+   */
+  async function applyDeleteLocally(
+    outcome: 'withdrawn' | 'broadcast',
+    messageId: string,
+    convoKey: string,
+    ctx: MessagingContext
+  ): Promise<void> {
     // A withdrawal is not a deletion the peers have to be told about - it is a message that never
     // existed anywhere but here, so the row goes, rather than becoming a tombstone standing for
     // nothing. Measured before the fix: every withdrawal left a row no other device held, which
     // `recon.mjs` reports as a loss on the sender for ever.
     if (outcome === 'withdrawn') {
-      ctx.conversations.set(ctx.selectedContact, {
+      const convo = ctx.conversations.get(convoKey);
+      if (!convo) {
+        ctx.log(`[DELETE] withdrawn ${messageId.slice(0, 8)}: its conversation left the map`);
+        return;
+      }
+      ctx.conversations.set(convoKey, {
         ...convo,
         messages: convo.messages.filter((m) => m.id !== messageId),
       });
       await forgetLocalMessage(messageId, convo.id, ctx);
       return;
     }
-
-    await tombstoneLocalMessage(messageId, ctx, convo, convoKey);
+    await tombstoneLocalMessage(messageId, ctx, convoKey);
   }
 
-  /** Marks `messageId` deleted in the local conversation (the row stays: the tombstone survives a reload). */
+  /**
+   * Marks `messageId` deleted in the local conversation (the row stays: the tombstone survives a
+   * reload). The conversation is read from the map NOW: writing back a snapshot taken before an await
+   * would resurrect whatever arrived meanwhile, and a conversation that left the map stays gone.
+   */
   async function tombstoneLocalMessage(
     messageId: string,
     ctx: MessagingContext,
-    fromConvo?: Conversation,
-    key: string | null = ctx.selectedContact
+    key: string
   ): Promise<void> {
-    if (!key) return;
-    const convo = ctx.conversations.get(key) ?? fromConvo;
-    if (!convo) return;
+    const convo = ctx.conversations.get(key);
+    if (!convo) {
+      ctx.log(
+        `[DELETE] tombstone of ${messageId.slice(0, 8)} skipped: its conversation left the map`
+      );
+      return;
+    }
     const msgs = [...convo.messages];
     const idx = msgs.findIndex((m) => m.id === messageId);
     if (idx !== -1) {
@@ -2029,13 +2138,9 @@ export function useMessaging() {
     // the timestamp decides which of two concurrent edits survives, the difference is a device that
     // can lose to its own frame.
     const editedAt = Date.now();
-    const editDeps = {
-      mlsService: ctx.ensureMls(),
-      userId: ctx.userId,
-      deviceKeyB64: ctx.deviceKeyB64,
-      conversation: convo,
-    };
-    await settleControl(messageId, 'edit', () => editMessage(messageId, text, editedAt, editDeps));
+    const act: ControlAct = { kind: 'edit', editedAt };
+    const queued = await sendControlAct(messageId, act, controlDeps(ctx, convo), text);
+    settleControl(ctx, convo.id, messageId, act, queued);
     const msgs = [...convo.messages];
     const idx = msgs.findIndex((m) => m.id === messageId);
     // The row is defended against our own edit by the same rule that defends it against a peer's:
@@ -2069,13 +2174,9 @@ export function useMessaging() {
     // apply and the broadcast differently, for the same act.
     const at = Date.now();
     applyPin(convo.id, messageId, next, at);
-    const pinDeps = {
-      mlsService: ctx.ensureMls(),
-      userId: ctx.userId,
-      deviceKeyB64: ctx.deviceKeyB64,
-      conversation: convo,
-    };
-    await settleControl(messageId, 'pin', () => setMessagePinned(messageId, next, at, pinDeps));
+    const act: ControlAct = { kind: 'pin', pinned: next, at };
+    const queued = await sendControlAct(messageId, act, controlDeps(ctx, convo));
+    settleControl(ctx, convo.id, messageId, act, queued);
   }
 
   // ── Reply ─────────────────────────────────────────────────────────────────
@@ -2288,6 +2389,8 @@ export function useMessaging() {
     handleEditMessage,
     /** Toggles a message's pinned state (optimistic local + pin/unpin MLS system event). */
     handleTogglePin,
+    /** Runs a refused reaction/edit/pin/delete again (the notice's Retry), with a fresh context. */
+    retryRefusedControl,
     /** Sets the message to reply to (shown as a quote in the next send). */
     handleReply,
     /** Clears the pending reply state. */

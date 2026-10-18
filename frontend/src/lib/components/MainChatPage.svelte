@@ -37,6 +37,10 @@
     recordDmReadMark,
     recordSalonReadMark,
   } from '$lib/utils/chat/salonReadMarkQueue';
+  import {
+    loadControlRefusals,
+    setControlRetryExecutor,
+  } from '$lib/utils/chat/controlRefusals.svelte';
   import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
   import { mayPinMessage } from '$lib/utils/chat/pinPermission';
   // NOT from `CallService`: calling is held off, and naming its error type here would pull the
@@ -811,6 +815,17 @@
         }
       }
     };
+  });
+
+  // ─── Refused control actions: the account's list, and the Retry that runs them ────
+  // The notices are durable per account, so they are bound to whoever is signed in; a Retry runs
+  // with the context of the tap (`msgCtx()` is built fresh), never one captured at the refusal.
+  $effect(() => {
+    if (session.userId) loadControlRefusals(session.userId);
+  });
+  onMount(() => {
+    setControlRetryExecutor((refusal) => messaging.retryRefusedControl(refusal, msgCtx()));
+    return () => setControlRetryExecutor(null);
   });
 
   // ─── Mount: event listeners (window focus, visibility, debug shortcut) ────

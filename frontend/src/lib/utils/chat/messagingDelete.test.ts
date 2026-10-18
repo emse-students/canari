@@ -16,6 +16,7 @@ vi.mock('./outbox', async (importOriginal) => ({
 }));
 
 import { deleteMessage } from './messaging';
+import { OutboxEnqueueError } from './outbox';
 import { decodeAppMessage } from '$lib/proto/codec';
 import type { Conversation } from '$lib/types';
 
@@ -33,19 +34,23 @@ function systemEventOf(call: unknown[]): string | null {
   return decodeAppMessage(entry.controlProto)?.system?.event ?? null;
 }
 
-import { OutboxEnqueueError } from './outbox';
-
 describe('deleteMessage', () => {
-  it('reports refused when the queue cannot take the delete event', async () => {
-    outboxMock.cancelOutboxMessage.mockResolvedValueOnce(false);
-    outboxMock.enqueueOutboxMessage.mockRejectedValueOnce(new OutboxEnqueueError('no storage'));
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect(await deleteMessage('m1', deps)).toBe('refused');
-  });
-
   beforeEach(() => {
     outboxMock.cancelOutboxMessage.mockClear();
     outboxMock.enqueueOutboxMessage.mockClear();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('reports refused when the queue cannot take the delete event', async () => {
+    outboxMock.cancelOutboxMessage.mockResolvedValueOnce(false);
+    outboxMock.enqueueOutboxMessage.mockRejectedValueOnce(new OutboxEnqueueError('no storage'));
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await deleteMessage('m1', deps)).toBe('refused');
+    expect(err).toHaveBeenCalledWith(
+      expect.stringContaining('control event "delete_message" not queued')
+    );
   });
 
   it('withdraws a message still queued, and broadcasts NOTHING about it', async () => {
