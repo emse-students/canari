@@ -380,7 +380,6 @@ export class TauriMlsService extends BaseMlsService {
   ): Promise<void> {
     if (isChannelEventFrame(msgType)) {
       if (this.onChannelEvent) {
-        console.log(`[WS RCV] Triggering onChannelEvent for ${msgType}`);
         this.onChannelEvent({ type: msgType, data: parsed.data });
       } else {
         console.warn(`[WS RCV] Received channel event but no onChannelEvent registered.`);
