@@ -15,7 +15,8 @@ import { ACCOUNT_KEY, keystoreAlias } from './accountLocalKeys';
  * 2. the keystore alias is built by `keystoreAlias` alone;
  * 3. no `localStorage`/`sessionStorage` call builds its key inline;
  * 4. no key-shaped template literal interpolates a user id outside the list - a module-local
- *    `keyFor(userId)` fails here. The few names that are NOT storage keys are named with a reason.
+ *    `keyFor(userId)` fails here, and so does a concatenation (`'x_' + userId`, `PREFIX + userId`).
+ *    The few names that are NOT storage keys are named with a reason.
  */
 
 const ROOT = 'src';
@@ -118,5 +119,40 @@ describe('the per-account key list is the one list', () => {
         .filter((hit) => !Object.keys(USER_NAMES_NOT_STORAGE_KEYS).some((k) => hit.startsWith(k)))
     );
     expect(found).toEqual([]);
+  });
+
+  /** Concatenated names built from a user id that are NOT `localStorage` keys, each with its reason. */
+  const USER_CONCATENATIONS_NOT_STORAGE_KEYS: Record<string, string> = {
+    'lib/db/outboxBlob.ts:DB_PREFIX + userId':
+      '`CanariDBOutbox_` + id, a database name - deleted by accountIndexedDbNames',
+    'lib/utils/hex.ts:IDB_NAME + userId':
+      '`CanariDBMls_` + id, a database name - deleted by accountIndexedDbNames',
+  };
+
+  it('rule 4 - nor does a string concatenation (a literal or a CONSTANT, then + a user id)', () => {
+    // The shape `migration.ts` used for the legacy conversations (`'canari_conv_' + userId + '_'`),
+    // which rule 4's template-literal pattern never saw.
+    const re =
+      /(?:(['"])[A-Za-z][A-Za-z0-9_.:-]*[_.:-]\1|\b[A-Z][A-Z0-9_]{2,})\s*\+\s*(?:[A-Za-z_$][\w$]*\.)*[\w$]*(?:[uU]ser[A-Za-z]*|\buid\b|savedUser)/g;
+    const found = SOURCES.filter((s) => s.file !== LIST_FILE).flatMap((s) =>
+      [...s.text.matchAll(re)]
+        .map((m) => `${s.file}:${m[0]}`)
+        .filter((hit) => !(hit in USER_CONCATENATIONS_NOT_STORAGE_KEYS))
+    );
+    expect(found).toEqual([]);
+  });
+
+  it('rule 4 catches the concatenation shapes it is written for', () => {
+    const re =
+      /(?:(['"])[A-Za-z][A-Za-z0-9_.:-]*[_.:-]\1|\b[A-Z][A-Z0-9_]{2,})\s*\+\s*(?:[A-Za-z_$][\w$]*\.)*[\w$]*(?:[uU]ser[A-Za-z]*|\buid\b|savedUser)/;
+    for (const shape of [
+      "'canari_conv_' + userId",
+      '"x:" + this.userId',
+      'DB_PREFIX + userId',
+      'IDB_NAME + ctx.getUserId',
+    ]) {
+      expect(re.test(shape), shape).toBe(true);
+    }
+    expect(re.test("'Bearer ' + token")).toBe(false);
   });
 });

@@ -32,6 +32,13 @@ vi.mock('$lib/stores/nativeRefreshToken', () => ({
 const { clearAuth, clearAuthLocally, accountLiveness, refresh, setToken } =
   await import('$lib/stores/auth');
 
+const {
+  markDeletedAccountWipePending,
+  pendingDeletedAccountWipes,
+  resumePendingDeletedAccountWipes,
+} = await import('$lib/utils/accountLocalWipe');
+const { ACCOUNT_KEY } = await import('$lib/utils/accountLocalKeys');
+
 const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>();
 
 function tokenFor(sub: string): string {
@@ -66,12 +73,17 @@ describe('clearAuthLocally - the tab another tab told of a deletion', () => {
 });
 
 describe('accountLiveness - what the resumed deletion wipe asks', () => {
-  it('names the saved account and the subject of the live token, and nobody else', () => {
+  it('names only the subject of a token that landed here, never the saved identity', () => {
     expect(accountLiveness.isLive('user-1')).toBe(true);
     expect(accountLiveness.isLive('user-2')).toBe(false);
     savedUserId = null;
-    // The token alone still says who is signed in.
+    // The token alone says who signed in.
     expect(accountLiveness.isLive('user-1')).toBe(true);
+    // And the saved identity alone says NOTHING: a kill before `clearAuth()` leaves it naming the
+    // deleted account (P2-1 of the review of #2023).
+    savedUserId = 'user-1';
+    setToken('not-a-jwt');
+    expect(accountLiveness.isLive('user-1')).toBe(false);
   });
 
   it('reports a refresh in flight as a sign-in, and settles once it lands', async () => {
@@ -98,5 +110,44 @@ describe('accountLiveness - what the resumed deletion wipe asks', () => {
     await waiting;
     expect(settled).toBe(true);
     expect(accountLiveness.signInInFlight()).toBe(false);
+  });
+});
+
+describe('the resumed deletion wipe, against the real accountLiveness (P2-1 of #2023)', () => {
+  const deleted: string[] = [];
+  beforeEach(() => {
+    deleted.length = 0;
+    localStorage.clear();
+    vi.stubGlobal('indexedDB', {
+      deleteDatabase: (name: string) => {
+        const req: Record<string, unknown> = {};
+        deleted.push(name);
+        queueMicrotask(() => (req.onsuccess as () => void)?.());
+        return req;
+      },
+    });
+  });
+
+  it('a kill before clearAuth left the saved user at the deleted account: the wipe still runs', async () => {
+    // The process was killed between the marker and `clearAuth()`: `canari_saved_user` still
+    // names user-1, and this start has no token (an offline cold start).
+    savedUserId = 'user-1';
+    setToken('not-a-jwt');
+    markDeletedAccountWipePending('user-1');
+    localStorage.setItem(ACCOUNT_KEY.salonUnsent('user-1'), 'plaintext');
+    await resumePendingDeletedAccountWipes(accountLiveness);
+    expect(deleted).toContain('CanariDB_user-1');
+    expect(localStorage.getItem(ACCOUNT_KEY.salonUnsent('user-1'))).toBeNull();
+    expect(pendingDeletedAccountWipes()).toEqual([]);
+  });
+
+  it('the subject signed in again (a token naming it landed here): nothing wiped, marker dropped', async () => {
+    setToken(tokenFor('user-1'));
+    markDeletedAccountWipePending('user-1');
+    localStorage.setItem(ACCOUNT_KEY.salonUnsent('user-1'), 'the new session');
+    await resumePendingDeletedAccountWipes(accountLiveness);
+    expect(deleted).toEqual([]);
+    expect(localStorage.getItem(ACCOUNT_KEY.salonUnsent('user-1'))).toBe('the new session');
+    expect(pendingDeletedAccountWipes()).toEqual([]);
   });
 });

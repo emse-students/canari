@@ -10,6 +10,7 @@ import {
   caseCollidingAccountIdsIn,
   isWipeableAccountId,
   keystoreAlias,
+  legacyConversationKeysIn,
   SESSION_META_STORE,
 } from '$lib/utils/accountLocalKeys';
 
@@ -144,7 +145,11 @@ function clearDeletedAccountWipePending(userId: string): void {
  * load the session stack. Every answer is read AT THE MOMENT of asking - never cached across an await.
  */
 export interface AccountLiveness {
-  /** Whether `userId` is the account signed in here: the saved user, or the subject of the live token. */
+  /**
+   * Whether `userId` SIGNED IN AGAIN: a token that landed in this process (an OIDC callback, a
+   * refresh) names it. Never the saved user, which a kill before `clearAuth()` leaves naming the
+   * deleted account - an answer read from it dropped the marker and kept the data for ever.
+   */
   isLive: (userId: string) => boolean;
   /** Whether a sign-in (a refresh, an OIDC callback) is in flight, whose account is not known yet. */
   signInInFlight: () => boolean;
@@ -172,10 +177,11 @@ function resumeStopFor(userId: string, live: AccountLiveness): () => WipeStop | 
  * id and the vault slot UNDER THE NEW LIVE SESSION. So:
  *
  * - it first waits for any sign-in already in flight to land, so the identity it reads is settled;
- * - before EVERY destructive step it asks again ({@link resumeStopFor}): `X` signed in here
- *   (`account-live-again`) stops the wipe and drops the marker at ERROR - that account is live, and
- *   its data is no longer the deleted one's; a NEW sign-in in flight (`sign-in-in-flight`) stops the
- *   wipe and KEEPS the marker, since whose sign-in it is cannot be known yet - the next start resumes.
+ * - before EVERY destructive step it asks again ({@link resumeStopFor}): `X` signed in AGAIN (a
+ *   token naming it landed in this process, `account-live-again`) stops the wipe and drops the
+ *   marker at ERROR - that account is live, and its data is no longer the deleted one's; a NEW
+ *   sign-in in flight (`sign-in-in-flight`) stops the wipe and KEEPS the marker, since whose sign-in
+ *   it is cannot be known yet - the next start resumes.
  *
  * What it cannot close: a sign-in that STARTS while one step's own await runs (an IndexedDB delete).
  * A session opening `CanariDB_X` then queues behind the delete and opens an empty database - which
@@ -238,6 +244,9 @@ export interface WipeDeletedAccountOptions {
   stopIf?: () => WipeStop | null;
 }
 
+/** The ids whose case collision this start already reported - see {@link wipeDeletedAccountLocalData}. */
+const reportedCaseCollisions = new Set<string>();
+
 /** The failure a wipe stopped by a sign-in in flight reports; its marker is KEPT. */
 export const STOPPED_BY_SIGN_IN = 'stopped: a sign-in is in flight';
 /** The failure a wipe stopped by its account being signed in again reports; its marker is DROPPED. */
@@ -273,10 +282,14 @@ export async function wipeDeletedAccountLocalData(
   }
   const twins = caseCollidingAccountIdsIn(localStorage, userId);
   if (twins.length > 0) {
-    // Kept as owed on purpose: each start reports it again until a human looks.
-    console.error(
-      `${tag} refusing to wipe: ${twins.length} other account(s) on this device differ from it only by letter case, and three keys and the native database file would be shared`
-    );
+    // Kept as owed on purpose: reported at ERROR once per start (the resume and the live wipe may
+    // both ask), with the twins named, until a human looks.
+    if (!reportedCaseCollisions.has(userId)) {
+      reportedCaseCollisions.add(userId);
+      console.error(
+        `${tag} refusing to wipe, and the wipe stays OWED: ${twins.length} other account(s) on this device (${twins.map((t) => t.slice(0, 8)).join(', ')}) differ from it only by letter case, and three keys and the native database file would be shared - a human must decide`
+      );
+    }
     return [REFUSED_CASE_COLLISION];
   }
   const failures: string[] = [];
@@ -324,10 +337,24 @@ export async function wipeDeletedAccountLocalData(
       });
       console.log(`${tag} native database: ${removed} file(s) removed`);
     });
+    // The push side's plaintext (unsent protos, push-decrypted messages, the bearer push token),
+    // removed natively ONLY when `push_context.json` names this account - see `push.rs`.
+    await step('the native push files', async () => {
+      const { invoke } = await import('@tauri-apps/api/core');
+      const removed = await invoke<number>('delete_user_push_files', { userId });
+      console.log(`${tag} native push files: ${removed} file(s) removed`);
+    });
     // The device id is read BEFORE the keys below go: it is the other half of the alias.
     await step('the platform keystore entry', async () => {
       const deviceId = localStorage.getItem(ACCOUNT_KEY.deviceId(userId));
-      if (!deviceId) return;
+      if (!deviceId) {
+        // The alias is `<userId>_<deviceId>`: without the id an entry cannot be named, so one that
+        // exists (a device id lost to WebView eviction) is LEFT - said, never assumed absent.
+        console.warn(
+          `${tag} no device id recorded for this account - no keystore entry can be named, none removed`
+        );
+        return;
+      }
       const alias = keystoreAlias(userId, deviceId);
       const { BiometricService } = await import('$lib/services/biometric');
       if (!(await BiometricService.isKeyPresent(alias))) return;
@@ -352,6 +379,12 @@ export async function wipeDeletedAccountLocalData(
     );
     for (const key of keys) localStorage.removeItem(key);
     console.log(`${tag} removed ${keys.length} per-account local key(s)`);
+    const { ambiguous } = legacyConversationKeysIn(localStorage, userId);
+    if (ambiguous.length > 0) {
+      console.warn(
+        `${tag} ${ambiguous.length} legacy plaintext conversation key(s) KEPT: each may be another account's (an id starting with this one and '_')`
+      );
+    }
   });
 
   await step('the device-key vault slot', async () => {

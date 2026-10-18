@@ -490,7 +490,7 @@ pub(crate) fn delete_user_database(
 /// The id is the MiConnect `sub`, which may be a UUID, a hash, a username or an email, hence `.` and
 /// `@`. A path separator is what could make "this account's database" name something else, and it is
 /// outside the set; `..` inside `canari_<id>.db` is an ordinary file name, never a parent.
-fn is_wipeable_account_id(user_id: &str) -> bool {
+pub(crate) fn is_wipeable_account_id(user_id: &str) -> bool {
     !user_id.is_empty()
         && user_id.len() <= 255
         && user_id
@@ -566,7 +566,7 @@ fn wipe_by_prefix(
 
 /// Removes one file or directory tree, counting the outcome. Logs at a level that ACCUSES on
 /// failure: what a wipe leaves behind is only ever found by reading the disk afterwards.
-fn remove_entry(path: &std::path::Path, removed: &mut usize, failures: &mut usize) {
+pub(crate) fn remove_entry(path: &std::path::Path, removed: &mut usize, failures: &mut usize) {
     let result = if path.is_dir() {
         std::fs::remove_dir_all(path)
     } else {

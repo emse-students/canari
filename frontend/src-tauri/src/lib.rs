@@ -46,11 +46,12 @@ use crate::commands::mls::{
 use crate::commands::notifications::{notifier_message_natif, store_avatar_mirror};
 use crate::commands::picked_files::take_picked_file;
 use crate::commands::push::{
-    check_push_secret_health, forget_graine_channel, forget_graine_sessions, get_fcm_token,
-    get_push_diagnostic, get_voip_token, load_push_context, read_and_clear_fcm_cache,
-    read_and_clear_outbox_sent, read_and_clear_pending_call_accept, read_and_clear_read_watermarks,
-    read_outbox_mirror, set_push_context_locale, store_device_identity, store_graine_seed,
-    store_outbox_mirror, store_push_context, store_push_secret,
+    check_push_secret_health, delete_user_push_files, forget_graine_channel,
+    forget_graine_sessions, get_fcm_token, get_push_diagnostic, get_voip_token, load_push_context,
+    read_and_clear_fcm_cache, read_and_clear_outbox_sent, read_and_clear_pending_call_accept,
+    read_and_clear_read_watermarks, read_outbox_mirror, set_push_context_locale,
+    store_device_identity, store_graine_seed, store_outbox_mirror, store_push_context,
+    store_push_secret,
 };
 use crate::commands::storage::{
     clear_app_data, delete_mls_state, delete_user_database, get_installer_package,
@@ -1084,6 +1085,7 @@ pub fn run() {
             store_push_secret,
             clear_app_data,
             delete_user_database,
+            delete_user_push_files,
             remove_native_flag,
             set_native_flag,
             get_native_flags,

@@ -124,7 +124,9 @@ describe('wipeDeletedAccountLocalData', () => {
     expect(invokeMock).not.toHaveBeenCalled();
     tauri = true;
     await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
-    expect(invokeMock).toHaveBeenCalledTimes(1);
+    expect(invokeMock).toHaveBeenCalledTimes(2);
+    // The push side's plaintext files too - gated natively on the owner `push_context.json` names.
+    expect(invokeMock).toHaveBeenCalledWith('delete_user_push_files', { userId: 'user-a' });
     expect(invokeMock).toHaveBeenCalledWith('delete_user_database', {
       userId: 'user-a',
       expectDatabase: false,
@@ -146,6 +148,19 @@ describe('wipeDeletedAccountLocalData', () => {
     const failures = await wipeDeletedAccountLocalData('user-a', AFTER_DELETE);
     expect(failures).toEqual(['the native message database']);
     expect(await loadDeviceKey('user-a')).toBeNull();
+  });
+
+  it('reports a push-files step that failed, so the wipe stays owed', async () => {
+    tauri = true;
+    markDeletedAccountWipePending('user-a');
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'delete_user_push_files') throw new Error('1 push file(s) could not be removed');
+    });
+    expect(await wipeDeletedAccountLocalData('user-a', AFTER_DELETE)).toEqual([
+      'the native push files',
+    ]);
+    expect(pendingDeletedAccountWipes()).toEqual(['user-a']);
+    invokeMock.mockImplementation(async () => {});
   });
 
   it('reports a delete another tab blocks', async () => {
@@ -265,6 +280,45 @@ describe('wipeDeletedAccountLocalData - what else goes with the account', () => 
     expect(order).toEqual([]);
     expect(localStorage.getItem(ACCOUNT_KEY.salonUnsent('abc'))).toBe('their texts');
     expect(pendingDeletedAccountWipes()).toEqual(['Abc']);
+  });
+
+  it('removes only the legacy plaintext conversations PROVEN to be that account', async () => {
+    // `_` is in the id allowlist: `canari_conv_a_` also opens account `a_b`'s keys.
+    const own = ACCOUNT_KEY.legacyConversation('a', 'bob');
+    const othersAccount = ACCOUNT_KEY.legacyConversation('a_b', 'carol');
+    const ambiguous = ACCOUNT_KEY.legacyConversation('a', 'x_y');
+    const otherPrefix = ACCOUNT_KEY.legacyConversation('ab', 'dan');
+    for (const k of [own, othersAccount, ambiguous, otherPrefix]) localStorage.setItem(k, '{}');
+    const warn = vi.spyOn(console, 'warn');
+    expect(await wipeDeletedAccountLocalData('a', AFTER_DELETE)).toEqual([]);
+    expect(localStorage.getItem(own)).toBeNull();
+    expect(localStorage.getItem(othersAccount)).toBe('{}');
+    expect(localStorage.getItem(ambiguous)).toBe('{}');
+    expect(localStorage.getItem(otherPrefix)).toBe('{}');
+    // `canari_conv_a_b_carol` and `canari_conv_a_x_y` cannot be told apart: both kept, and said.
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('2 legacy plaintext'))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it('reports a case collision at ERROR once per start, naming the twins', async () => {
+    const error = vi.spyOn(console, 'error');
+    localStorage.setItem(ACCOUNT_KEY.deviceId('xyz'), 'dev-1');
+    await wipeDeletedAccountLocalData('Xyz', AFTER_DELETE);
+    await wipeDeletedAccountLocalData('Xyz', AFTER_DELETE);
+    const lines = error.mock.calls
+      .map((c) => String(c[0]))
+      .filter((l) => l.includes('letter case'));
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toContain('xyz');
+    error.mockRestore();
+  });
+
+  it('says so when no device id names a keystore entry, instead of passing in silence', async () => {
+    tauri = true;
+    const warn = vi.spyOn(console, 'warn');
+    expect(await wipeDeletedAccountLocalData('user-a', AFTER_DELETE)).toEqual([]);
+    expect(warn.mock.calls.some((c) => String(c[0]).includes('no device id recorded'))).toBe(true);
+    warn.mockRestore();
   });
 
   it('accepts an email-shaped subject', async () => {

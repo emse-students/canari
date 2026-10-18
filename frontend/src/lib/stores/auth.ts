@@ -10,7 +10,7 @@
  * Refresh token → HttpOnly cookie set by the backend (never accessible to JS).
  */
 
-import { saveUserLocally, clearUserLocally, currentUserId, getSavedUserId } from '$lib/stores/user';
+import { saveUserLocally, clearUserLocally, currentUserId } from '$lib/stores/user';
 import type { AccountLiveness } from '$lib/utils/accountLocalWipe';
 import { setGlobalAdmin } from '$lib/stores/userState.svelte';
 import { noteSessionAnswered } from '$lib/stores/sessionAnswer.svelte';
@@ -474,12 +474,17 @@ const _signInsInFlight = new Set<Promise<unknown>>();
  * Whether an account is signed in here, and whether one is about to be - for the resume of an
  * account-deletion wipe (`resumePendingDeletedAccountWipes`), which must never delete what a live
  * session uses. Each answer is read at the moment it is asked.
+ *
+ * `isLive` IS PROVEN BY A TOKEN, NEVER BY THE SAVED IDENTITY. The saved user (`canari_saved_user`)
+ * is a leftover, not a sign-in: a kill between the pending-wipe marker and `clearAuth()` leaves it
+ * naming the deleted account, and an answer read from it made the next start drop the marker and keep
+ * the data for ever (every offline cold start). Access tokens live in memory only, so one held here
+ * landed IN THIS PROCESS - by an OIDC callback or a refresh - and every resume runs in a process
+ * started after the deletion was confirmed; the server refuses a refresh for a deleted account, so a
+ * token naming it can only come from that subject signing in AGAIN.
  */
 export const accountLiveness: AccountLiveness = {
-  isLive: (userId) =>
-    getSavedUserId() === userId ||
-    currentUserId() === userId ||
-    (_accessToken !== null && decodeTokenClaims(_accessToken)?.sub === userId),
+  isLive: (userId) => _accessToken !== null && decodeTokenClaims(_accessToken)?.sub === userId,
   signInInFlight: () => _pendingRefresh !== null || _signInsInFlight.size > 0,
   whenSignInSettled: async () => {
     while (accountLiveness.signInInFlight()) {

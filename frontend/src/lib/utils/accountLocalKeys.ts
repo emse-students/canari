@@ -62,6 +62,13 @@ export const ACCOUNT_KEY = {
    * the {@link SESSION_META_STORE} native store, which the deletion clears too.
    */
   lastActive: (userId: string) => `canari_last_active:${userId}`,
+  /**
+   * `migration.ts`: one conversation of the builds that kept them in PLAINTEXT `localStorage`, read
+   * once and migrated. NOT swept as a prefix: `_` is in the id allowlist, so `canari_conv_a_` also
+   * opens account `a_b`'s keys - see {@link legacyConversationKeysIn} for the rule that is.
+   */
+  legacyConversation: (userId: string, contactName: string) =>
+    `canari_conv_${userId}_${contactName}`,
   /** No longer written; removed by the device reset and the deletion where an old build left it. */
   syncGuideSeen: (userId: string) => `canari_sync_guide_seen_${userId}`,
   /** `history.ts`: the processed-ciphertext fingerprints of one group. */
@@ -168,8 +175,36 @@ export function caseCollidingAccountIdsIn(store: Storage, userId: string): strin
 }
 
 /**
+ * `userId`'s legacy plaintext conversation keys ({@link ACCOUNT_KEY}`.legacyConversation`), split
+ * into the ones PROVEN to be its own and the ones that may be another account's.
+ *
+ * THE RULE: `canari_conv_<id>_<rest>` is proven `<id>`'s when `<rest>` holds no `_`. Any account
+ * whose id STARTS with `<id>_` - the only kind that can share the prefix - writes
+ * `canari_conv_<id>_<more>_<contact>`, whose rest always holds one. A rest WITH a `_` (a contact
+ * name carrying one, or another account's key) cannot be told apart, so it is `ambiguous`: kept, and
+ * the deletion says how many.
+ */
+export function legacyConversationKeysIn(
+  store: Storage,
+  userId: string
+): { proven: string[]; ambiguous: string[] } {
+  const prefix = ACCOUNT_KEY.legacyConversation(userId, '');
+  const proven: string[] = [];
+  const ambiguous: string[] = [];
+  for (let i = 0; i < store.length; i++) {
+    const key = store.key(i);
+    if (key === null || !key.startsWith(prefix)) continue;
+    const rest = key.slice(prefix.length);
+    if (rest.length > 0 && !rest.includes('_')) proven.push(key);
+    else ambiguous.push(key);
+  }
+  return { proven, ambiguous };
+}
+
+/**
  * The keys of `store` that belong to `userId`, and ONLY those: an ALLOWLIST of the shapes above, so
  * a key nobody listed is never removed. Throws for an id {@link isWipeableAccountId} refuses.
+ * The legacy conversations are included only where PROVEN ({@link legacyConversationKeysIn}).
  */
 export function accountLocalStorageKeysIn(store: Storage, userId: string): string[] {
   if (!isWipeableAccountId(userId)) {
@@ -183,5 +218,6 @@ export function accountLocalStorageKeysIn(store: Storage, userId: string): strin
     if (key === null) continue;
     if (exact.has(key) || prefixes.some((p) => key.startsWith(p))) found.push(key);
   }
+  found.push(...legacyConversationKeysIn(store, userId).proven);
   return found;
 }
