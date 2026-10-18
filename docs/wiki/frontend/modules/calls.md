@@ -237,7 +237,16 @@ client makes at sign-in, as `groupCalls` (explicit choices only - an absent grou
 refreshes on the same three occasions as the level
 ([chat-delivery](../../services/chat-delivery.md#a-conversations-notification-level---the-server-applies-none-the-device-decides-mentions)),
 and the server reads the column at each ring, so a stale client copy can only mis-draw the in-app
-ring of an OPEN session, never a push. Like the level, it is a member's own setting on their
+ring of an OPEN session, never a push. **Named case: a cold start.** An invite replayed before the
+first `load()` answers (or after it failed) finds no preference, so every conversation reads as
+`all`: it rings in-app, and is written as `started` rather than missed, even where the member
+refused. Holding the decision needs a counted wait on the replay path and a rule for a `load()`
+that never answers, so it is left; the push is unaffected. **The endpoint's body is constant
+(`{ ok: true }`) and the fan-out runs after the answer**, so neither the body nor the response time
+tells the caller whether a callee refused (the count stays in the server log). `PATCH .../calls`
+accepts a group conversation id too, though the control is drawn only in a direct one - WP-C11
+(group calls) must decide what a group-wide refusal means before it draws the control there.
+Like the level, it is a member's own setting on their
 membership row, not a new processing purpose, so the register of processing is unchanged.
 
 **The control.** `CallPermissionControl.svelte` (two radios, Paraglide `chat_calls_permission_*`, fr

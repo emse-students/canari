@@ -121,6 +121,15 @@ function monthlyTurnUsageKey(now: Date = new Date()): string {
  * Mints short-lived TURN credentials via Cloudflare Calls.
  * Returns HTTP 503 when Cloudflare credentials are not configured.
  */
+/** What `prepareRing` hands the background fan-out. */
+interface RingPlan {
+  callerId: string;
+  groupId: string;
+  callId: string;
+  hasVideo: boolean;
+  calleeIds: string[];
+}
+
 @Injectable()
 export class CallsService {
   private readonly logger = new Logger(CallsService.name);
@@ -547,7 +556,28 @@ export class CallsService {
     groupId: string,
     callId: string,
     hasVideo: boolean
-  ): Promise<{ rang: number }> {
+  ): Promise<void> {
+    const plan = await this.prepareRing(callerId, groupId, callId, hasVideo);
+    if (!plan) return;
+    // The caller is answered BEFORE the fan-out, and with a body that says nothing about it: how
+    // long the pushes take, and how many went out, would otherwise tell the caller whether a callee
+    // refused calls (the refused path skips every push). A failure is logged, never thrown at a
+    // caller who has already been answered.
+    void this.fanOutRing(plan).catch((e: unknown) =>
+      this.logger.error(`[ring] call=${callId} group=${groupId} fan-out failed`, e as Error)
+    );
+  }
+
+  /**
+   * The part of a ring the caller must wait for: it may refuse (not a member, a block), and it
+   * opens the answer window. Resolves null when there is nobody to ring.
+   */
+  private async prepareRing(
+    callerId: string,
+    groupId: string,
+    callId: string,
+    hasVideo: boolean
+  ): Promise<RingPlan | null> {
     this.logger.debug(`[ring] ringGroup caller=${callerId} group=${groupId} call=${callId}`);
     await this.assertMembership(callerId, groupId, 'ring');
     const calleeIds = await this.otherMemberIds(groupId, callerId);
@@ -561,10 +591,19 @@ export class CallsService {
 
     if (calleeIds.length === 0) {
       this.logger.warn(`[ring] call=${callId} group=${groupId} has no other member to ring`);
+      return null;
+    }
+    return { callerId, groupId, callId, hasVideo, calleeIds };
+  }
+
+  /** The push fan-out of a ring; resolves with how many devices were handed the ring. */
+  private async fanOutRing(plan: RingPlan): Promise<{ rang: number }> {
+    const { callerId, groupId, callId, hasVideo, calleeIds } = plan;
+    const ringable = await this.membersWhoTakeCalls(groupId, callId, calleeIds);
+    if (ringable.length === 0) {
+      this.logger.log(`[ring] call=${callId} group=${groupId} rang=0 - nobody may be rung`);
       return { rang: 0 };
     }
-    const ringable = await this.membersWhoTakeCalls(groupId, callId, calleeIds);
-    if (ringable.length === 0) return { rang: 0 };
 
     const callerName = await resolveUserDisplayName(this.groupMemberRepo.manager, callerId);
     const groupName = await this.resolveGroupName(groupId);
