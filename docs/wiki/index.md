@@ -38,6 +38,7 @@
 - [media-streaming-upload](services/media-streaming-upload.md) — Design: parts under 8 MiB, bounded-memory upload and download (the host firewall's body limit)
 - [social-service](services/social-service.md) — Posts, channels, associations, forms
 - [reels](services/reels.md) — CanaReels server half: the `reel` post kind, its 30-day deletion, the API contract
+- [lives](services/lives.md) — Live server half (WP-L2, WP-L3): the live row and key, segment ingest, the manifest, deletion at the end; switched off on production
 - [Community rework](services/community-rework.md) — the master plan for the community subsystem: what triggered it, the three axes, and the crypto axis still to do
 - [NestJS framework](services/nestjs-framework.md) — which major each of the four services runs, why they differ, and what an ESM-only framework did to jest
 - [Account erasure](account-erasure.md) — `DELETE /users/me` as a durable, retried, journalled queue; every service's delete set asserted against its schema; what is NOT covered

@@ -218,6 +218,17 @@ for key in FRONTEND_HOST_PORT GARAGE_API_HOST_PORT GARAGE_ADMIN_HOST_PORT; do
   fi
 done
 
+# THE LIVE SWITCH IS CLOSED ON PRODUCTION AND OPEN ON DEV, read from the RENDERED files for the reason
+# the ports are: the template says `false`, so a dev render that forgot to override would look right
+# in every file but the one the estate reads (docs/wiki/services/lives.md).
+live_prod="$(port_of "$TMP/ports-prod.env" LIVE_ENABLED)"
+live_dev="$(port_of "$TMP/ports-dev.env" LIVE_ENABLED)"
+if [ "$live_prod" = "false" ] && [ "$live_dev" = "true" ]; then
+  pass "LIVE_ENABLED renders false on production and true on dev"
+else
+  fail "LIVE_ENABLED renders prod='$live_prod' dev='$live_dev' - production must be false, dev true"
+fi
+
 # AND NEITHER ESTATE MAY ASK FOR A PORT THE SHARED HOST HAS ALREADY GIVEN AWAY. The loop above
 # asserts that prod and dev do not collide with EACH OTHER, which is what the 2026-09-01 defect was
 # - and it is not what the 2026-09-25 outage was. Production asked for 8080, another local service
