@@ -1,4 +1,4 @@
-# Live - the plan (R4 / decision C9, not started)
+# Live - the plan (R4 / decision C9; the server half WP-L2/L3 built 2026-10-18, nothing else)
 
 > **Note 2026-10-17:** the user's 2026-10-16 calls decisions - 1:1 calls go peer-to-peer direct with Cloudflare TURN as the fallback - post-date this plan; every "relay-only" and SFU statement below describes the code of 2026-10-15, not the target, and WP-L0 is to be re-read against them.
 
@@ -166,8 +166,8 @@ Q1 = C; WP-L0 stays first by the user's decision (L7).
 | --- | --- | --- | --- |
 | **WP-L0** | **Calls revival**: the five switches in one commit, the SIXTH (no names in a silent invite) and the SEVENTH (`none` level vs. a ring) decided, rung 15 CALL + CALL-13 on real hardware, the by-hand relay-path call, then **the screen recording App Review asks for**. | `frontend/src/lib/features.ts` `CALLS_ENABLED` and the switch table in [calls](calls.md) | the board rows `PASS`; the video recorded; a build accepted with calls on |
 | **WP-L1** | **The C feasibility bench, before any product code**: on both phones, record 720p into short fMP4 segments for 30-60 min, seal and upload them, and play a growing source through MSE in the WebView. **And the host's usable uplink**, from the DSI's answer first (Q3), which sets the viewer cap L8 turns into. | `frontend/src/lib/mediaSegmented.ts`, the camera of [reels](reels.md), the segmented reader | latency, phone uplink, battery and heat measured on Mi 9T and iPhone 12, and the host's usable uplink, written here; or a refutation of C |
-| **WP-L2** | **The live row and its key**: a `lives` record (broadcaster, as-association, key, `started_at`, `ended_at`), removed-viewer list, the end as durable state. | social-service posts / reels server ([reels (server)](../../services/reels.md)) | API tests: key served as a post CEK to members; refused to a removed viewer; nothing after `ended_at` |
-| **WP-L3** | **Segment ingest and the manifest**: a growing sealed object or one object per segment, a manifest viewers poll, deletion at `ended_at` plus a sweep (Q10). | the upload session ([media-streaming-upload](../../services/media-streaming-upload.md)) | specs: a segment out of order is refused; the manifest stops at `ended_at`; everything is gone after the sweep |
+| **WP-L2** (**built 2026-10-18, server only, [lives](../../services/lives.md)**) | **The live row and its key**: a `lives` record (broadcaster, as-association, key, `started_at`, `ended_at`), removed-viewer list, the end as durable state. | social-service posts / reels server ([reels (server)](../../services/reels.md)) | API tests: key served as a post CEK to members; refused to a removed viewer; nothing after `ended_at` |
+| **WP-L3** (**built 2026-10-18, server only, [lives](../../services/lives.md)**) | **Segment ingest and the manifest**: a growing sealed object or one object per segment, a manifest viewers poll, deletion at `ended_at` plus a sweep (Q10). | the upload session ([media-streaming-upload](../../services/media-streaming-upload.md)) | specs: a segment out of order is refused; the manifest stops at `ended_at`; everything is gone after the sweep |
 | **WP-L4** | **Segments served by nginx**: an unauthenticated route for sealed live segments answered by Canari's own nginx (cache or static files), never reaching media-service or the database; the per-host viewer cap from WP-L1's uplink figure, refused with a clear "live full" screen. | `infrastructure/local/Dockerfile.frontend` (Canari's nginx), `GET /api/media/public/:id` as the model | a second viewer's fetch is served without a media-service log line; viewer N+1 past the cap is refused |
 | **WP-L5** | **Broadcaster and viewer UI**: composer "Live" entry, broadcast screen, viewer screen, reconnect state (Q5), first-live rules (L11). | the composer ([posts](posts.md)) and camera ([reels](reels.md)) | e2e on two browser contexts; phone readings on Mi 9T and iPhone 12 |
 | **WP-L6** | **Live chat and floating reactions**, encrypted with the live key, ephemeral. | the WS gateway ([chat-gateway](../../services/chat-gateway.md)) | tests: messages unreadable without the key; nothing persisted after `ended_at` |
@@ -177,6 +177,8 @@ Q1 = C; WP-L0 stays first by the user's decision (L7).
 | **WP-L10** (only if A is kept) | **Low-latency small-audience mode on the SFU**: a `broadcast` room kind (broadcaster-only publish, receive-only viewers, a cap, a server-side kick), frame E2E keyed by the live key with **no cleartext path**, the SFU bench with 1 then 30 subscribers. | `apps/call-service/src/main.rs` `on_track`, `tests/relay_path.rs`, `CallService.ts` `setupEncryption` | Rust tests: a viewer's track is refused, a kicked peer cannot rejoin; a missing transform refuses to broadcast; TURN GB per live-hour measured |
 
 ## See also
+
+- [lives](../../services/lives.md) - the server half as built (WP-L2, WP-L3), and its switch
 
 - [calls](calls.md) - the switches and why calls are held off
 - [call-service](../../services/call-service.md) - the SFU

@@ -38,6 +38,22 @@ describe('IndexedDbStorage.updateOutboxEntry with a scheduling patch', () => {
     storage.close();
   });
 
+  it('keeps the consecutive 5xx count across a re-open (the reload of a page)', async () => {
+    const name = `idb-patch-reload-${n++}`;
+    const first = new IndexedDbStorage(name);
+    await first.init();
+    await first.saveOutboxEntry(entry('r'), KEY);
+    await first.updateOutboxEntry('r', { serverErrors: 4, attempts: 4 }, KEY);
+    first.close();
+    const second = new IndexedDbStorage(name);
+    await second.init();
+    const [row] = await second.getOutboxQueue(KEY);
+    expect(row).toMatchObject({ id: 'r', serverErrors: 4, text: 'hello' });
+    await second.updateOutboxEntry('r', { serverErrors: 0 }, KEY);
+    expect((await second.getOutboxQueue(KEY))[0].serverErrors).toBe(0);
+    second.close();
+  });
+
   it('does not resurrect a row deleted before the write', async () => {
     const storage = await open();
     await storage.saveOutboxEntry(entry('b'), KEY);

@@ -1,0 +1,25 @@
+{
+  "$comment": [
+    "THE BOOKING WINDOW OF A SPACE (D26), ASSERTED ON BOTH SIDES.",
+    "",
+    "`bookingWindowRefusal` is one file copied between the social service",
+    "(apps/social-service/src/bookings/booking-window.ts) and the screen",
+    "(frontend/src/lib/bookings/bookingWindow.ts). Both specs read these cases, so the server that",
+    "decides and the screen that only draws cannot disagree on a rule or on its order.",
+    "Instants are offsets in minutes from `now`; null is an unset setting."
+  ],
+  "cases": [
+    { "name": "no setting takes a coming range", "opensAt": null, "notice": null, "horizon": null, "start": 60, "expected": null },
+    { "name": "a range that has begun is history", "opensAt": null, "notice": null, "horizon": null, "start": -1, "expected": "started" },
+    { "name": "a range starting now has begun", "opensAt": null, "notice": null, "horizon": null, "start": 0, "expected": "started" },
+    { "name": "before the opening instant", "opensAt": 1440, "notice": null, "horizon": null, "start": 2880, "expected": "not-open-yet" },
+    { "name": "the opening is judged first, even for a started range", "opensAt": 1, "notice": null, "horizon": null, "start": -10, "expected": "not-open-yet" },
+    { "name": "at the opening instant it is open", "opensAt": 0, "notice": null, "horizon": null, "start": 60, "expected": null },
+    { "name": "sooner than the notice", "opensAt": null, "notice": 60, "horizon": null, "start": 59, "expected": "notice" },
+    { "name": "exactly the notice is enough", "opensAt": null, "notice": 60, "horizon": null, "start": 60, "expected": null },
+    { "name": "a started range is history before it is short notice", "opensAt": null, "notice": 60, "horizon": null, "start": 0, "expected": "started" },
+    { "name": "beyond the horizon", "opensAt": null, "notice": null, "horizon": 7, "start": 10081, "expected": "beyond-horizon" },
+    { "name": "exactly the horizon is inside it", "opensAt": null, "notice": null, "horizon": 7, "start": 10080, "expected": null },
+    { "name": "the notice is judged before the horizon", "opensAt": null, "notice": 60, "horizon": 1, "start": 30, "expected": "notice" }
+  ]
+}

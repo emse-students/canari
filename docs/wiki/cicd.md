@@ -30,7 +30,7 @@ every pull request and `CI passed` was green for the reason that they had not ru
 was written, the migration 082 spec turned out to have failed on EVERY run since its merge (#1913).
 The job runs them in band against production's PostgreSQL, pinned by the digest the compose files
 carry, and its last step FAILS unless jest ran as many suites as there are files on disk and skipped
-none: `--passWithNoTests` and the gate itself would otherwise turn "ran nothing" back into a pass.
+none: a jest run that selects nothing is no longer a pass (the `test` scripts lost `--passWithNoTests` in WP-T2), but a gate that selects by name still needs its own count of what ran.
 **ONE spec is excluded from it, by name in both steps: `internal/account-erasure.integration.spec.ts`**,
 which copies every social table out of `public` and so needs the schema `synchronize` builds; it runs
 in `boot-nest-apps` right after the boot built that schema (2026-10-17, found by rebasing on the
@@ -650,7 +650,7 @@ Gate 4 costs one extra pre-release in a real emergency, which deploys dev in min
 **THE ADMIN BYPASS SHORTENS NOTHING, AND THAT IS THE DOCUMENTED PRICE (decided 2026-10-06, the
 cheaper of the two options the 2026-09-06 outage left).** `gh pr merge --admin` skips the ruleset's
 `CI passed` on the PULL REQUEST; gate 3 then refuses the release until `CI passed` has run on the
-merged commit - main's own CI, ~8 minutes after the merge, the same suite the bypass avoided. So the
+merged commit - main's own CI, 14-22 minutes after the merge (measured 2026-10-18), the same suite the bypass avoided. So the
 sequence in an emergency is: admin-merge, `gh run list --branch main` until CI is green, publish the
 pre-release (or `gh run rerun` a refused one - it needs no new tag, and rescues only this gate), then
 the stable. Gate 3's refusal says so in its own words (`release-preflight.sh`, pinned by
@@ -890,6 +890,15 @@ ghcr.io/emse-students/canari/<service>:<tag>
 **The two moving tags never cross**, and that is what lets one registry feed two estates from two
 different commits. Production is deployed by the release's `v<version>`; dev by its moving `dev`
 (a rollback of dev is not a goal).
+
+## Hosted runners are pinned to `ubuntu-24.04`, never `ubuntu-latest` (2026-10-18)
+
+GitHub moves `ubuntu-latest` to Ubuntu 26 on 2026-10-19. Every hosted job now says `runs-on: ubuntu-24.04`,
+the image the runs used the day before (a `main` run's "Set up job" log reads `Ubuntu 24.04.5 LTS`), so the
+pin changes nothing today. Self-hosted labels are untouched. **Revisit on or after 2026-11-18**: move to
+`ubuntu-26.04` deliberately, as ONE pull request whose CI is the trial run, never as a side effect of a
+floating label. `tools/ecosystem-shape` does not assert the hosted label (only the self-hosted one), so
+no assertion needed adapting.
 
 ## Self-hosted runner
 
@@ -1883,7 +1892,7 @@ npm is gone (`node --run test` replaced the one `npm test` in `ci.yml` and the o
 ## Notable CI gotchas
 
 - **A CONFLICTING PR PRODUCES NO `pull_request` RUN, AND THE CHECKS LIST STILL LOOKS BUSY.** The `pull_request` event is computed against the MERGE ref; with a conflict GitHub cannot build one, so `CI` is never queued - not red, not skipped, simply never created. `arm-auto-merge` is `pull_request_target`, evaluates against the base, and runs anyway, so one green row sits there while nothing tests the code. PR #525 waited twice and survived a close/reopen before the state was actually asked for. `gh run list` returning nothing is an ANSWER: read `gh pr view <n> --json mergeable,mergeStateStatus` (`CONFLICTING` / `DIRTY`), then rebase on a freshly fetched `main` and `git push --force-with-lease`.
-- **`CHANGELOG.md`'s `## [Unreleased]` heading WAS an anchor every fix wrote to, so two PRs opened the same day conflicted by construction** - #837 and #838 did exactly that (2026-09-18). The first answer, `CHANGELOG.md merge=union` in `.gitattributes`, was verified with `git merge-file --union` and **never worked where it mattered: GitHub ignores `.gitattributes` merge drivers when it computes mergeability and squash-merges a PR.** Measured 2026-09-24 on #1067: `git merge-tree origin/main HEAD` merged clean locally while GitHub reported `CONFLICTING`. The anchor is gone instead: each PR adds its entry as a file in `changelog.d/`, the stable bump folds them under `## [X.Y.Z]` and deletes them ([changelog.d/README.md](../../changelog.d/README.md)), and `docsMergeArtefacts.test.ts` fails a PR that writes under `[Unreleased]`. **A merge behaviour verified with local git is verified for local git** - the platform that performs the merge is the one to measure.
+- **`CHANGELOG.md`'s `## [Unreleased]` heading WAS an anchor every fix wrote to, so two PRs opened the same day conflicted by construction** - #837 and #838 did exactly that (2026-09-18). The first answer, `CHANGELOG.md merge=union` in `.gitattributes`, was verified with `git merge-file --union` and **never worked where it mattered: GitHub ignores `.gitattributes` merge drivers when it computes mergeability and squash-merges a PR.** Measured 2026-09-24 on #1067: `git merge-tree origin/main HEAD` merged clean locally while GitHub reported `CONFLICTING`. The anchor is gone instead: each PR adds its entry as a file in `changelog.d/`, the stable bump folds them under `## [X.Y.Z]` and deletes them ([changelog.d/README.md](../../changelog.d/README.md)), and `.github/scripts/tests/docs-merge-artefacts.test.mjs` fails a PR that writes under `[Unreleased]`. **A merge behaviour verified with local git is verified for local git** - the platform that performs the merge is the one to measure.
 - **A Tauri plugin's JS package and its Rust crate must agree on major.minor, and only a RELEASE used to discover when they did not.** The CLI refuses to build (`tauri-plugin-log (v2.8.0) : @tauri-apps/plugin-log (v2.9.0)`), but nothing else in this pipeline compiles the Tauri app, so an ordinary `bun install` that re-resolves the JS half lands green and kills the next tag - it took out Android Release and AppImage Release on v0.14.6, while iOS Release passed because its path never runs the check. `frontend/scripts/check-tauri-plugin-versions.mjs` (step `Guard the Tauri JS/Rust version parity` in `code-analysis.yml`) now compares the two committed files on every run. Fix the Rust side with `cd frontend/src-tauri && cargo update -p <crate>`.
 - **Recorded flake, not reproduced:** `chat-delivery-service` failed one test in one of five local runs on 2026-08-31; if it recurs, capture the suite name first and do not widen the dependency ceiling to feel safe.
 - iOS `altool` can exit 0 while output says `UPLOAD FAILED` — the workflow greps for failure markers in the transcript.

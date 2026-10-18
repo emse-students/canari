@@ -1220,6 +1220,10 @@ drains its own entries oldest first. Rules that came with it:
 - **`MAX_CONCURRENT_SENDS = 3`** frames on the wire across lanes (a slot is handed to the next waiter,
   never freed and re-raced): enough that one stalled lane freezes only itself, few enough that a
   50 kbit/s uplink is not cut into slivers that each miss their deadline.
+- **An attachment's UPLOAD runs outside the lane and holds no send slot** (WP-OFF-9, 2026-10-18): the
+  lane starts it and moves on, so a text written after a big file is not held by it; only the media
+  message's small MLS send takes the lane once the upload ended. Display order stays `sentAt`; the
+  rules and the order semantics are in [offline-and-weak-network 13.8](../offline-and-weak-network.md#138-wp-off-9-built-the-upload-runs-outside-the-lane-2026-10-18).
 - The send POST is under a `write` deadline ([offline-and-weak-network](../offline-and-weak-network.md#11-wp-off-5-shipped-a-deadline-a-slow-state-and-lanes)),
   so a stalled lane ends as `DeliveryUnreachableError` and takes the ordinary backoff.
 
@@ -3692,6 +3696,38 @@ the two loads in the other order, which is why it "healed".
 ## Profile fetches that failed on a device, and the denominator that is owed (2026-08-16)
 
 The symptom was seen twice on 2026-08-16, on both platforms: nine of ten sidebar rows carrying "Utilisateur inconnu" for twenty seconds. The log line that makes it countable did not exist then; since 2026-08-19 every warn in `displayName.ts` ends `(failed/attempted lookups failed this session, X%)`, counting only lookups that reached the network. Do not assume it is the same fault as the avatar endpoint, and do not assume it is not. The number is read from a device or browser console during a campaign run: there is no client telemetry, and server-side is not an option (`GET /api/users/:id` is not request-logged, and a client that never reached the network would not appear anyway). **Then decide about `FAILURE_BACKOFF_MS`**: a high rate says the two-minute suppression does real work against a refusing server; a rate near zero says it is a clock hiding a name for two minutes over a blip the reconnection listener already handles.
+
+### A muted salon and a membership notice raise no badge (2026-10-18)
+
+WP-SALON-UNREAD, decided by the user 2026-10-18. Two rows the badge counted that its owner never
+wanted to read:
+
+- **The "X joined" notice.** It is an encrypted row, so the server could not tell it from a message
+  and counted it until the salon was opened (the 2026-10-11 fix only made it coverable). The one
+  writer (`inviteMemberToChannel`) now sends it `silent`, the flag the server already skips in
+  `listUnreadCounts`; as a side effect it no longer rings phones either. `listMessages` returns the
+  silent rows of a salon with NO body at all, so a salon holding only notices still shows them, and
+  on a SHORT page (fewer bodies than asked - the end of the history) it drops the lower bound on the
+  silent rows and keeps only the cursor: the join notice written before a salon's first body is in
+  no later page, since none is ever asked for below a short one.
+  **Notices written before this stay counted until the salon is opened**, which the read mark now
+  reaches - no data repair. **An inviter on an older client keeps sending ordinary (non-silent)
+  notices**, which stay counted the same way until `minClientVersion` reaches this build.
+- **A muted salon.** `notifLevels[channel] = 'none'` is left out of the SQL, and the answer gains
+  `muted: string[]` (raw channel ids) so the client's LIVE tally stays quiet for them too
+  (`isSalonMuted`, read by both arrival paths in `useMessaging`; `reconcileSalonUnread` sets a muted
+  salon to 0). The settings panel updates the set at once (`noteSalonNotificationLevel`); a badge
+  already on screen when the member mutes falls at the next count. That local choice is stamped on
+  the same tick counter as `openedAtTick`, so an answer asked BEFORE it and landing after cannot
+  undo it. **Unmuting brings back what arrived while muted**: the server counts against the read
+  mark, which muting never moved, so those messages re-enter the badge at the next count - a mute
+  silences, it does not read. **`mentions` still counts**: the
+  row is encrypted, the server cannot tell which rows mention the member. An older server sends no
+  `muted`, and nothing is muted then.
+
+Tests: `channel-unread-counts.spec.ts`, `channel.service.spec.ts`, `salonUnread.test.ts`,
+`useChannelWorkspaces.svelte.test.ts`. **Owed on a device:** mute a salon, post into it from another
+account, read the community rail dot and the tab title; add a member and read the other member's badge.
 
 ### A salon read mark reaches its membership notices (2026-10-11)
 

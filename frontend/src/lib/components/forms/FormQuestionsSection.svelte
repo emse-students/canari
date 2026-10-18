@@ -34,6 +34,8 @@
      * there is no form id to attach an upload to yet.
      */
     imageUploadFn?: (file: File) => Promise<string>;
+    /** What a FILE question says it does, in the editor; a booking space passes its own. */
+    fileHint?: string;
   }
 
   let {
@@ -43,6 +45,7 @@
     tiers = [],
     formations = [],
     imageUploadFn,
+    fileHint,
   }: Props = $props();
 
   let dragIndex = $state(-1);
@@ -135,6 +138,7 @@
           {tiers}
           {formations}
           {imageUploadFn}
+          {fileHint}
         />
       </div>
     {/each}

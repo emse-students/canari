@@ -29,7 +29,7 @@ function build() {
     stored.push(data);
     return Promise.resolve('logo-id');
   });
-  return { stored, controller: new MediaController(svc, {} as never) };
+  return { stored, controller: new MediaController(svc, {} as never, {} as never) };
 }
 
 const prevSecret = process.env.JWT_SECRET;

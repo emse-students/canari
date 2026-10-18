@@ -62,6 +62,10 @@ export async function fetchOrUnreachable(
   try {
     return await fetch(url, init);
   } catch (e: unknown) {
+    // THE CALLER CANCELLED IT (a sign-out aborting the login in flight): nobody failed to reach
+    // anything, so there is no transport line and no `ServerUnreachableError`. The abort is passed
+    // through as it came; the caller that aborted already knows why.
+    if (init.signal?.aborted) throw e;
     // ACCUSED IN THE CONSOLE, EXPLAINED ON SCREEN. The raw cause is the only thing that tells a
     // developer which host was unreachable, and it is exactly what a user must not be shown.
     console.warn(`[fetch] ${url.replace(/\?.*$/, '')} could not be reached:`, e);

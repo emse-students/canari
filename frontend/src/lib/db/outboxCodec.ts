@@ -6,7 +6,7 @@ import type { OutboxEntry } from './types';
 //
 // An outbox row splits into:
 //  - clear columns (id, conversationId, sentAt, kind, status, attempts, lastAttemptAt,
-//    nextAttemptAt, createdAt): authoritative for querying/sorting/re-keying without the PIN,
+//    nextAttemptAt, serverErrors, createdAt): authoritative for querying/sorting/re-keying without the PIN,
 //    mirroring the StoredMessage convention (timestamp/conversationId stored in the clear).
 //  - an encrypted blob: the sensitive payload { text, replyTo, media }. Binary media bytes are
 //    base64-encoded so they survive JSON serialization inside encryptData/decryptData.
@@ -22,6 +22,7 @@ export interface OutboxClearColumns {
   attempts: number;
   lastAttemptAt?: number;
   nextAttemptAt?: number;
+  serverErrors?: number;
   createdAt: number;
 }
 
@@ -60,6 +61,7 @@ export function outboxClearColumns(entry: OutboxEntry): OutboxClearColumns {
     attempts: entry.attempts,
     lastAttemptAt: entry.lastAttemptAt,
     nextAttemptAt: entry.nextAttemptAt,
+    serverErrors: entry.serverErrors,
     createdAt: entry.createdAt,
   };
 }
@@ -122,6 +124,7 @@ export function decodeOutboxEntry(clear: OutboxClearColumns, payload?: any): Out
     attempts: clear.attempts,
     lastAttemptAt: clear.lastAttemptAt,
     nextAttemptAt: clear.nextAttemptAt,
+    serverErrors: clear.serverErrors,
     createdAt: clear.createdAt,
     text: typeof payload?.text === 'string' ? payload.text : undefined,
     replyTo: payload?.replyTo,
@@ -134,17 +137,28 @@ export function decodeOutboxEntry(clear: OutboxClearColumns, payload?: any): Out
 }
 
 /**
- * True when a patch touches ONLY the clear scheduling columns (status, attempts, lastAttemptAt,
- * nextAttemptAt), so a store can update them in place without decoding or re-encrypting the
- * payload - which for a media entry holds the whole file.
+ * The clear scheduling columns a store may update in place. ONE list, read by both stores, so a
+ * column added here cannot be written by one and silently dropped by the other.
+ */
+export const OUTBOX_CLEAR_PATCH_KEYS = [
+  'status',
+  'attempts',
+  'lastAttemptAt',
+  'nextAttemptAt',
+  'serverErrors',
+] as const;
+
+/**
+ * True when a patch touches ONLY the clear scheduling columns ({@link OUTBOX_CLEAR_PATCH_KEYS}), so a
+ * store can update them in place without decoding or re-encrypting the payload - which for a media
+ * entry holds the whole file.
  */
 export function isOutboxClearPatch(patch: Partial<OutboxEntry>): boolean {
   const keys = Object.keys(patch).filter(
     (k) => (patch as Record<string, unknown>)[k] !== undefined
   );
   return (
-    keys.length > 0 &&
-    keys.every((k) => ['status', 'attempts', 'lastAttemptAt', 'nextAttemptAt'].includes(k))
+    keys.length > 0 && keys.every((k) => (OUTBOX_CLEAR_PATCH_KEYS as readonly string[]).includes(k))
   );
 }
 

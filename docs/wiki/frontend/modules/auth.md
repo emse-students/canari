@@ -786,9 +786,18 @@ holds the lock and, if one does, says so on screen (stage `waiting_tabs`,
 `auth_changepin_progress_waiting_tabs`: close that tab or bring it to the front).
 
 Without `navigator.locks` (WebKitGTK; the unit tests) the realm is alone, the reading `tabLeader.ts`
-makes of the same absence. Left open: a change made FROM a follower tab re-seals its own older
-capture, which the version guard refuses - so it now ends in a recovery instead of a silent "Done",
-but it still costs that recovery ([backlog](../../backlog.md)).
+makes of the same absence.
+
+**A change is made from the LEADER tab only** (`thisTabMayChangeDeviceKey` in `pinChange.ts`,
+asked by `changePinImpl` before the server verifier is rotated). A follower re-seals its own live
+client, loaded from an older snapshot than the leader last wrote, so the version guard refuses that
+write and the change ended in a recovery prompt every time. Re-sealing the STORED state instead was
+weighed and rejected: the change makes the leader go stale and reload, the reload frees the leader
+lock, the follower is PROMOTED, and the promotion handler (`useChatSession.svelte.ts`) reloads it in
+the middle of its own change - holding that promotion would be a new cross-tab mechanism. So a
+follower (or a tab whose leadership is still undecided) refuses on the settings screen with
+`auth_pin_change_follower_tab` - change it from the active tab, or take over here first - and
+nothing is asked of the server. Pinned by `pinChange.followerTab.test.ts` (two realms).
 
 **Resumable, because it cannot be atomic.** SQLite through the Tauri plugin has no multi-statement
 transaction (`sqliteBatch.ts`), so a history of thousands of rows cannot be swapped in one step, and
@@ -1343,14 +1352,8 @@ disposed only when no session has registered since; and installing hooks for a N
 the old ones instead of being skipped by a stale "installed" flag. The login's wait above already
 orders this; the guards make it hold without relying on that order.
 
-**OPEN, P2 (pre-existing): a sign-out during a login in progress is not cancelled.** A login can run
-~12 s inside the native decrypt of `mls.bin` (Mi 9T). A sign-out in that window finds no live
-session (`isLoggedIn` is still false), so `endSessionImpl` stops nothing, and the login then
-completes and sets `isLoggedIn` true for a signed-out user (what follows was not measured). The
-clean fix is a sign-out GENERATION that `loginImpl`
-captures at its start and re-reads before `setIsLoggedIn(true)`, tearing down what it set up if a
-sign-out happened; it touches every registration the login makes, so it is its own change
-([backlog](../../backlog.md)).
+**A sign-out during a login in progress stops that login** - see
+[the section below](#a-sign-out-during-a-login-in-progress-completed-the-login---fixed-2026-10-18).
 
 **What a sign-out still keeps, deliberately**: `mls.bin`, the message database and the device-key
 vault ("deconnecter seulement, garder l'etat", see `handlePinSignOut`). So a device signed out with
@@ -1440,6 +1443,84 @@ unlocks it again by itself. Only a NEW sign-in of the same account reopens it wi
 `[PIN] Device key restored` and no `[AUTH] Session expired` after `[A] signout requested by the
 user`, and lands on `/login` (not `?returnTo=`), on the Mi 9T on the vault path. The ordering is
 proven here; the Svelte effect scheduling on the real WebView is not.
+
+### A sign-out during a login in progress completed the login - FIXED 2026-10-18
+
+**The defect.** A login can run ~12 s inside the native decrypt of `mls.bin` (Mi 9T). A sign-out in
+that window found no live session (`isLoggedIn` still false), so `endSessionImpl` stopped nothing,
+and the login then completed: `isLoggedIn` true for a signed-out user, its gateway socket open (the
+handshake starts beside the state load). A sign-out AFTER `setIsLoggedIn(true)` did end the session,
+but the login kept running past it - its next awaits opened the gateway, installed the history-probe
+sender and started the watchdogs for the account that had left.
+
+**The fix is the sign-out GENERATION, not a flag or a clock.** `stores/auth.ts` exports
+`signOutGeneration()` (the `_signOutGeneration` every `clearAuth` increments first). `loginImpl`
+captures it before its first await and re-reads it right after EVERY await of its main sequence
+(`stopIfSignedOut(stage)`): a sign-out can only run while the login is suspended, so nothing after a
+re-read can act for a signed-out account. The one that closes the defect sits after the final
+`getToken` and before `setIsLoggedIn(true)`, with no await between them. A re-read inside a block
+whose `catch` swallows errors is placed after that block.
+
+**The stop is a TYPE, `LoginStoppedBySignOutError(stage)`** (`loginErrors.ts`), and the outer catch
+treats three shapes as that one outcome: the refresh refused during a sign-out
+(`SignOutInProgressError`), the login's own re-read, and a `SessionExpiredError` met after a sign-out
+began - that sign-out's own revocation, which `onSessionExpired` would have turned into a second
+sign-out. **Any error thrown once a sign-out began is that sign-out's** (review of #2067): an await
+that REJECTS after it never reaches a re-read - the PIN check meeting the revoked session (401), a
+restore reading the store the teardown closed (`TypeError`) - and took the failure path (a PIN
+error over the sign-out, `clearDeviceKey`). The catch reads the generation, by type and code, never
+by message; the one exception is this login's own revocation wipe (`device_revoked`), which signs
+out on purpose. The `getToken` catch hands any failure after a sign-out over the same way. No error
+is shown, no callback runs, the vault slot is kept, and the line names the stage
+(`[INIT] Login stopped - the account signed out during it (after mls-init-and-storage).`). A
+revocation answer read after a sign-out wipes nothing: the next login asks the server again - and
+no wipe may START after a sign-out, because it waits for the MLS retirement that sign-out chained on
+this very login (a re-read sits right before both wipe calls). The session's identity and the
+tab-leader callback are set only after the first re-read.
+
+**Two logins can overlap** - the PIN gate clears `isLoginInProgress` to start a sign-in beside a
+login still decrypting (`handlePinSubmit`) - **so a stopped login releases only what it owns.** A
+sign-out during a login RETIRES the login's client on that login's end (`endSessionImpl`, not-live
+branch: `retireMls(loginInFlightSettled)`): the holder lets go at once, the next sign-in waits on
+`whenMlsRetired` and builds its own client, and the stopped login's client is destroyed once that
+login has paused its socket. The login flag is cleared only by the login that set it last
+(`loginFlowOwner`), so the stopped login's exit never releases the newer one's flow. The cost,
+accepted: a sign-in started during a stopped login's decrypt waits for that decrypt to end.
+
+**That wait is bounded by the SIGN-OUT, not by a clock** (second review of #2067). Its network
+awaits - the refresh, the PIN salt, pin-check, the revocation question - have no deadline of their
+own, so a hung one held the next sign-in, the forgot-PIN reset, `recoverPinImpl` and the deletion
+wipe behind it. The sign-out now ABORTS the login in flight (`loginInFlightAbort`, aborted in
+`endSessionImpl`): the salt and pin-check requests carry its signal, and every network await goes
+through `untilSignedOut(work, stage)`, which rejects at once with `LoginStoppedBySignOutError` -
+the stop path, never a transport failure or a logout. The local MLS decrypt is NOT cancelled: the
+next login opens the same state. A key proven after the sign-out is not installed either. An
+aborted request is not a transport failure: `fetchOrUnreachable` passes an abort its caller asked
+for through as it came, with no `could not be reached` line. **The login's OWN revocation wipe is
+exempt** (third review): its `clearAuth` reaches `endSessionImpl` like any sign-out, and aborting
+the login doing the wipe turned a revoked device on the PIN path into a silent stopped login with a
+false `wipe FAILED` line. `startOwnWipe` withdraws the login from `loginInFlightAbort` first, so its
+outcome stays `device_revoked`.
+
+**A revocation wipe that fails after its own `clearAuth`** (a blocked factory reset) is a sign-out
+of the login's own making with a code other than `device_revoked`, so it lands on the stop path - and
+is accused first, at ERROR (`[SECURITY] The revoked-device wipe FAILED - local data may remain`).
+
+**What a stopped login releases: its socket, then its MLS client** - the same two steps as
+`endSessionImpl`, through the same primitives (`pauseSocket`, the holder). The client is held by
+NAME: `ctx.resetMls(client)` destroys it only while the holder still holds it, because after a
+sign-out of a live session the holder has already retired it, and the next sign-in may have built
+its own since (`MlsHolder.reset(only)`). A handshake still in flight is released when it settles.
+Nothing else needs undoing: before `setIsLoggedIn(true)` the login registers nothing global, and
+after it the sign-out's own `endSessionImpl` has torn the session down.
+
+Tests: `signOutDuringLogin.test.ts` runs the real `loginImpl`, `clearAuth` and `endSessionImpl` with
+the init and the gateway held by deferred promises - a sign-out during the decrypt, and one after
+the session went live, a restore rejecting after the sign-out, a PIN check answered 401 after it,
+a sign-in started beside a stopped login, a hung pin-check the sign-out cancels, and a failed
+revocation wipe (each fails without its fix); `offlineUnlock.test.ts`
+and `landingPreviewOrder.test.ts` pin the catches;
+`mlsHolder.test.ts` the named reset.
 
 **What a sign-out does NOT keep: the saved community list (2026-10-14).** The rail and salon rows
 the last listing drew are saved per account (`canari_workspace_snapshot:v1:<userId>`,

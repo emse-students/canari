@@ -341,6 +341,54 @@ export class UserTagService {
   }
 
   /**
+   * {@link listHeldCotisationTiers} for MANY associations at once, in three queries whatever their
+   * number: the associations' modes, their membership products, and the user's active tags. A list
+   * of spaces judged on cotisation conditions (the bookings' Reservations page) asks this once
+   * rather than once per association. Same answer per association: the variant keys held, `null`
+   * being the base tier, and nothing for an association that sells no cotisation.
+   */
+  async heldCotisationTiersByAssociation(
+    userId: string,
+    assocIds: readonly string[]
+  ): Promise<Map<string, (string | null)[]>> {
+    const ids = [...new Set(assocIds)];
+    const held = new Map<string, (string | null)[]>(ids.map((id) => [id, []]));
+    if (ids.length === 0) return held;
+    const runner = this.repo.manager;
+    const [assos, products, active]: [
+      { id: string; slug: string; cotisationMode: CotisationMode | null }[],
+      { associationId: string; variantKey: string | null }[],
+      { tagName: string }[],
+    ] = await Promise.all([
+      runner.query(`SELECT id, slug, "cotisationMode" FROM associations WHERE id = ANY($1)`, [ids]),
+      runner.query(
+        `SELECT "associationId", "variantKey" FROM association_products
+          WHERE "associationId" = ANY($1) AND type = 'membership'`,
+        [ids]
+      ),
+      runner.query(
+        `SELECT "tagName" FROM user_tags
+          WHERE "userId" = $1 AND ("expiresAt" IS NULL OR "expiresAt" > now())`,
+        [userId]
+      ),
+    ]);
+    const activeNames = new Set(active.map((t) => t.tagName));
+    const now = new Date();
+    for (const asso of assos) {
+      if (!asso.cotisationMode) continue;
+      const mode = asso.cotisationMode;
+      const keys = held.get(asso.id) ?? [];
+      for (const p of products.filter((x) => x.associationId === asso.id)) {
+        const { tagName } = deriveCotisationTag(asso.slug, mode, now, p.variantKey);
+        if (activeNames.has(tagName) && !keys.includes(p.variantKey)) keys.push(p.variantKey);
+      }
+      held.set(asso.id, keys);
+    }
+    this.logger.debug(`[UserTag] held tiers read for ${ids.length} associations in one pass`);
+    return held;
+  }
+
+  /**
    * Which of the given tiers the user has an active tag for. The one place a tier list becomes a
    * membership answer, so `holdsOneOfTiers` and `listHeldCotisationTiers` cannot disagree.
    */

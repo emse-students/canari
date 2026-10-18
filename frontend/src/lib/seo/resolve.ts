@@ -39,6 +39,8 @@ export const PRIVATE_PREFIXES = [
   // was asked for, so it has no content and no canonical URL of its own.
   '/app-shell',
   '/auth',
+  // Reservations: a member's own bookings, and spaces reached by a link that is not a search result.
+  '/bookings',
   // The CanaReels camera: a device, not a page.
   '/camera',
   '/chat',
@@ -328,10 +330,16 @@ export function mergeSeo(base: SeoMeta, override?: Partial<SeoMeta> | null): Seo
   };
 }
 
+/**
+ * What `formatDocumentTitle` appends. Exported so a caller fitting a title into a length budget
+ * (`og:title`, `<title>`) can subtract it rather than restate it.
+ */
+export const DOCUMENT_TITLE_SUFFIX = ` - ${SITE.name}`;
+
 /** Ensures titles end with the site name when appropriate. */
 export function formatDocumentTitle(title: string): string {
   const t = title.trim();
   if (!t) return SITE.name;
   if (t.toLowerCase().includes(SITE.name.toLowerCase())) return t;
-  return `${t} - ${SITE.name}`;
+  return `${t}${DOCUMENT_TITLE_SUFFIX}`;
 }

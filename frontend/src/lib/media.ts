@@ -55,6 +55,10 @@ export type MediaType = 'image' | 'video' | 'audio' | 'file';
  * - `'reel-pending'` - what a feed reel is UPLOADED as: deleted by AGE a day after upload unless
  *   the post's claim promotes it to `'reel'` first, so a publish that fails after its upload
  *   leaves nothing behind ([media-service](docs/wiki/services/media-service.md)).
+ * - `'poster-pending'` - what a booking space's POSTER is UPLOADED as, and nothing else is: deleted by
+ *   AGE unless the space's save claims it, which binds it to that one space. So a poster is never an
+ *   object another surface shows, and removing it can never send a post's image to the sweep
+ *   ([bookings-chantier](docs/wiki/bookings-chantier.md)).
  * - `'chat-reel'` - a CanaReel sent in a conversation: deleted by AGE, 30 days after upload, and
  *   counted against the member's 500 MB a day. Naming it can only SHORTEN an object's life, which
  *   is why the client may set it ([media-service](docs/wiki/services/media-service.md)).
@@ -72,6 +76,7 @@ export type MediaRetentionClass =
   | 'association'
   | 'reel'
   | 'reel-pending'
+  | 'poster-pending'
   | 'chat-reel';
 
 export interface MediaRef {

@@ -168,8 +168,11 @@ export interface SessionContext {
   // ── Services ───────────────────────────────────────────────────────────────
   /** Returns the current MLS service instance, creating it lazily if needed. */
   ensureMls(): IMlsService;
-  /** Destroys the MLS instance (destroy + null) to force a clean reinitialisation. */
-  resetMls(): void;
+  /**
+   * Destroys the MLS instance (destroy + null) to force a clean reinitialisation. With `only`, only
+   * when that is the instance held - see `MlsHolder.reset`.
+   */
+  resetMls(only?: IMlsService): void;
   /**
    * Lets go of the MLS client at a sign-out and destroys it once `finalWrite` (the teardown's final
    * checkpoint) has landed - see `mlsHolder.ts`. The next `ensureMls` builds a fresh client.

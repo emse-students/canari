@@ -69,6 +69,57 @@ export interface BookingView {
   holderName?: string;
   participantNames?: string[];
   answers?: Record<string, unknown> | null;
+  /**
+   * The ORGANISER's reading of the FILE answers (D7, WP-B6), as forms' submissions carry it: the
+   * name each kept file is saved under, by id, and the ids the purge took ("file deleted").
+   */
+  fileNames?: Record<string, string>;
+  deletedFileIds?: string[];
+}
+
+/** What the organiser's screen knows of one booking file: its booking, its name, whether purged. */
+export interface BookingFileState {
+  bookingId: string;
+  fileName: string;
+  purged: boolean;
+}
+
+/**
+ * The file answers of one booking, split: the LIVE ones (a file of THIS booking the purge has not
+ * taken) by id with their name, and every other id a FILE question's answer holds - purged, or gone
+ * with its uploader's account (the erasure deletes the row) - which reads "file deleted".
+ */
+export function splitAnswerFiles(
+  bookingId: string,
+  answers: Record<string, unknown> | null | undefined,
+  items: ReadonlyArray<{ id: string; type?: string }>,
+  files: ReadonlyMap<string, BookingFileState>
+): { live: Record<string, string>; deleted: string[] } {
+  const live: Record<string, string> = {};
+  const deleted: string[] = [];
+  for (const item of items) {
+    if (item.type !== 'file') continue;
+    const value = answers?.[item.id];
+    if (typeof value !== 'string' || value === '') continue;
+    const file = files.get(value);
+    if (file && file.bookingId === bookingId && !file.purged) live[value] = file.fileName;
+    else deleted.push(value);
+  }
+  return { live, deleted };
+}
+
+/**
+ * Adds to an ORGANISER's view what its file answers are (`files`: the booking files of these
+ * bookings, `BookingFilesService.answerFiles`), read through {@link splitAnswerFiles}.
+ */
+export function withAnswerFiles(
+  view: BookingView,
+  items: ReadonlyArray<{ id: string; type?: string }>,
+  files: ReadonlyMap<string, BookingFileState>
+): BookingView {
+  const { live, deleted } = splitAnswerFiles(view.id, view.answers, items, files);
+  if (Object.keys(live).length === 0 && deleted.length === 0) return view;
+  return { ...view, fileNames: live, deletedFileIds: deleted };
 }
 
 /** The view of one booking for one relation and one space setting. */

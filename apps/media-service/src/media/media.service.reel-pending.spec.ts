@@ -257,7 +257,7 @@ describe('reel-pending: never applied to an existing id', () => {
   it('is refused by internal/retention-class, so a claimed reel cannot be made sweepable', async () => {
     const svc = Object.create(MediaService.prototype) as MediaService;
     const setRetentionClass = jest.spyOn(svc, 'setRetentionClass');
-    const controller = new MediaController(svc, {} as never);
+    const controller = new MediaController(svc, {} as never, {} as never);
 
     await expect(
       controller.setRetentionClass(

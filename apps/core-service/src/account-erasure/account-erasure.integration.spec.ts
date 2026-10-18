@@ -15,6 +15,7 @@ import { join } from 'node:path';
 import { Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { AccountErasureService } from './account-erasure.service';
+import { subjectDigest } from './erasure-policy';
 
 jest.mock('axios');
 
@@ -24,6 +25,10 @@ const maybe = URL ? describe : describe.skip;
 /** A UUID, because `platform_announcement_seen.user_id` is one. */
 const SUBJECT = '0a0a0a0a-0000-4000-8000-00000000e1a5';
 const OTHER = '0b0b0b0b-0000-4000-8000-00000000e1a5';
+/** The restore case's three accounts: erased after the archive, back with a new account, owed. */
+const RESTORED = '0c0c0c0c-0000-4000-8000-00000000e1a5';
+const RETURNER = '0d0d0d0d-0000-4000-8000-00000000e1a5';
+const OWED = '0e0e0e0e-0000-4000-8000-00000000e1a5';
 
 const CORE_TABLES = [
   'users',
@@ -172,5 +177,55 @@ maybe('account erasure queue against PostgreSQL', () => {
     }
     expect(await service.erasureState(SUBJECT)).toBe('none');
     expect(await service.report()).toEqual({ pending: 0, blocked: 0, overdue: 0, completed24h: 4 });
+  }, 60_000);
+
+  it('a restore erases again what the archive predates, and keeps the new account of a person who came back', async () => {
+    axios.delete = jest.fn(async () => ({ data: { ok: true } }));
+    const service = new AccountErasureService(ds);
+    // The journal of the database about to be replaced: RESTORED and RETURNER erased two days ago
+    // (complete), OWED still pending.
+    for (const id of [RESTORED, RETURNER]) {
+      await ds.query(
+        `INSERT INTO account_erasure_jobs ("subjectId", service, "requestedAt", "credentialsExpireAt", "completedAt")
+         VALUES ($1, 'core', now() - interval '2 days', now() - interval '2 days', now() - interval '1 day')`,
+        [subjectDigest(id)]
+      );
+    }
+    await ds.query(
+      `INSERT INTO account_erasure_jobs ("subjectId", service, "credentialsExpireAt")
+       VALUES ($1, 'social', now())`,
+      [OWED]
+    );
+    const journal = await service.exportJournal();
+
+    // The restore: the archive's journal knows none of it, and its users table holds RESTORED and
+    // OWED as they were a month ago, and RETURNER's NEW account, opened after the erasure.
+    await ds.query(`DELETE FROM account_erasure_jobs`);
+    for (const id of [RESTORED, OWED]) {
+      await ds.query(
+        `INSERT INTO users (id, "displayName", "createdAt") VALUES ($1, 'Restored', now() - interval '30 days')`,
+        [id]
+      );
+    }
+    await ds.query(`INSERT INTO users (id, "displayName") VALUES ($1, 'Back again')`, [RETURNER]);
+
+    const replay = await service.replayAfterRestore(journal);
+    await service.drain();
+    expect(replay).toEqual({
+      candidates: 3,
+      replayed: 2,
+      keptNewer: 1,
+    });
+    expect(await count(`users WHERE id = ANY($1)`, [[RESTORED, OWED]])).toBe(0);
+    expect(await count(`users WHERE id = $1`, [RETURNER])).toBe(1);
+    expect(await service.erasureState(RESTORED)).not.toBe('none');
+    expect(await service.erasureState(OWED)).not.toBe('none');
+    expect(await service.erasureState(RETURNER)).toBe('none');
+
+    // Idempotent: a second run (a restore re-run with the same export) adds nothing.
+    const jobs = await count(`account_erasure_jobs`);
+    await service.replayAfterRestore(journal);
+    await service.drain();
+    expect(await count(`account_erasure_jobs`)).toBe(jobs);
   }, 60_000);
 });

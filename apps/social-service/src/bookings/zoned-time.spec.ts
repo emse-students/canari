@@ -7,6 +7,7 @@ import {
   isoWeekday,
   isoWeekMonday,
   localDate,
+  localTime,
   offsetMs,
   timeToSeconds,
   zonedToUtcMs,
@@ -105,6 +106,12 @@ describe('the calendar helpers', () => {
 
   it('reads a local date past UTC midnight', () => {
     expect(localDate(Date.parse('2026-01-15T23:30:00Z'), 'Europe/Paris')).toBe('2026-01-16');
+  });
+
+  it('reads a local wall time, midnight as 00:00 and both hours of a fall-back night', () => {
+    expect(localTime(Date.parse('2026-01-15T23:00:00Z'), 'Europe/Paris')).toBe('00:00');
+    expect(localTime(Date.parse('2026-10-25T00:30:00Z'), 'Europe/Paris')).toBe('02:30');
+    expect(localTime(Date.parse('2026-10-25T01:30:00Z'), 'Europe/Paris')).toBe('02:30');
   });
 
   it('counts days, weekdays and ISO weeks', () => {

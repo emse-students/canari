@@ -173,6 +173,96 @@ export function subjectDigest(subjectId: string): string {
 }
 
 /**
+ * What a backup restore must carry across, read from the journal BEFORE the database is replaced:
+ * the restored journal predates every erasure made after the archive, so without this export a
+ * restore silently brings those accounts back (docs/wiki/account-erasure.md#a-restore-replays-the-erasures).
+ *
+ * Every entry carries the LATEST time an erasure of its subject was requested. That time is what
+ * tells the erased account from a NEW one the same person opened afterwards (allowed once every job
+ * completed, and under the same id - `users.id` is the OIDC subject).
+ */
+export interface ErasureJournalExport {
+  /** One entry per completed subject, known only by its digest. */
+  completed: Array<{ digest: string; requestedAt: string }>;
+  /** One entry per subject with an erasure still owed - a pending row carries the id itself. */
+  pending: Array<{ subjectId: string; requestedAt: string }>;
+}
+
+/** A restored account the export names, and the request its row must predate to be erased. */
+export interface ReplayCandidate {
+  subjectId: string;
+  /**
+   * The account is erased again ONLY if its restored row was created before this time. A row
+   * created after it is the person's new account, which nobody asked to erase - and that holds for a
+   * pending erasure too, because the replay may be re-run long after the restore, once a replayed
+   * erasure completed and the person came back.
+   */
+  requestedBefore: string;
+}
+
+/**
+ * Which of the restored database's accounts the export names. A completed subject is known only by
+ * its digest, so every restored id is hashed ({@link subjectDigest}, the one implementation) and
+ * matched; a pending one is named outright. A subject named both ways takes the later request.
+ * An exported subject with no restored row is not a candidate: it held no account at the archive's
+ * instant, so the restore brought nothing of it back.
+ */
+export function replayCandidates(
+  journal: ErasureJournalExport,
+  restoredUserIds: readonly string[]
+): ReplayCandidate[] {
+  const pending = new Map(journal.pending.map((p) => [p.subjectId, p.requestedAt]));
+  const completed = new Map(journal.completed.map((c) => [c.digest, c.requestedAt]));
+  const candidates: ReplayCandidate[] = [];
+  for (const subjectId of restoredUserIds) {
+    const times = [pending.get(subjectId), completed.get(subjectDigest(subjectId))].filter(
+      (t): t is string => t !== undefined
+    );
+    if (times.length === 0) continue;
+    const latest = times.reduce((a, b) => (Date.parse(a) >= Date.parse(b) ? a : b));
+    candidates.push({ subjectId, requestedBefore: latest });
+  }
+  return candidates;
+}
+
+/** A replay body that is not an {@link ErasureJournalExport}; the reason names the first fault. */
+export class MalformedErasureJournalError extends Error {
+  readonly code = 'MALFORMED_ERASURE_JOURNAL';
+}
+
+const isTime = (t: unknown): t is string => typeof t === 'string' && !Number.isNaN(Date.parse(t));
+
+/**
+ * Checks a replay body is an {@link ErasureJournalExport} and returns it typed. A malformed body is
+ * REFUSED rather than replayed in part: a restore that replays half its erasures and says nothing is
+ * the defect this whole mechanism exists to prevent.
+ */
+export function parseErasureJournal(body: unknown): ErasureJournalExport {
+  const b = body as { completed?: unknown; pending?: unknown } | null;
+  if (!b || !Array.isArray(b.completed) || !Array.isArray(b.pending)) {
+    throw new MalformedErasureJournalError('expected { completed: [], pending: [] }');
+  }
+  for (const c of b.completed as Array<{ digest?: unknown; requestedAt?: unknown }>) {
+    if (typeof c?.digest !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(c.digest)) {
+      throw new MalformedErasureJournalError('a completed entry has no sha256 digest');
+    }
+    if (!isTime(c.requestedAt)) {
+      throw new MalformedErasureJournalError('a completed entry has no requestedAt time');
+    }
+  }
+  for (const p of b.pending as Array<{ subjectId?: unknown; requestedAt?: unknown }>) {
+    const id = p?.subjectId;
+    if (typeof id !== 'string' || id.length === 0 || id.startsWith('sha256:')) {
+      throw new MalformedErasureJournalError('a pending entry is not a subject id');
+    }
+    if (!isTime(p.requestedAt)) {
+      throw new MalformedErasureJournalError('a pending entry has no requestedAt time');
+    }
+  }
+  return b as ErasureJournalExport;
+}
+
+/**
  * A failure as the journal records it: the status, plus the error CODE a service put in its body
  * (`HTTP 409 ERASURE_WORKSPACE_REPAIR_FAILED`), or the transport's error code - never a URL, which
  * would carry the id. A bare driver error carries its normalised message (see below).

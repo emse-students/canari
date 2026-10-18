@@ -98,6 +98,22 @@ export class LoginFailure extends LocalizedError {
 }
 
 /**
+ * A login STOPPED because the account signed out while it was running - not a failure.
+ *
+ * Thrown by `loginImpl` when the sign-out generation it captured at its start has moved
+ * (`signOutGeneration`), at the first statement after the await the sign-out happened during. Its
+ * catch releases what the login took (its MLS client, its gateway socket) and does nothing else: no
+ * error under the PIN, no `onSessionExpired` (a second sign-out), no forgotten vault slot - the
+ * sign-out IS the outcome. `stage` names the await it was found after, for the log.
+ */
+export class LoginStoppedBySignOutError extends Error {
+  constructor(readonly stage: string) {
+    super(`login stopped after ${stage} - the account signed out meanwhile`);
+    this.name = 'LoginStoppedBySignOutError';
+  }
+}
+
+/**
  * Reads the failure code off an unknown thrown value, defaulting to `'other'`.
  * Use this instead of matching on `error.message`.
  */

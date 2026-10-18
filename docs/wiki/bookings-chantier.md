@@ -1,6 +1,6 @@
 # Bookings (reservation of rooms and slots) - the chantier, decisions as taken
 
-**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) merged as #2002; WP-B4's organiser API (#2006) and its screens are draft pull requests, the screens stacked on the API; WP-B5 (the booker's screens) next. **Owed by WP-B6, carried from WP-B4: the space poster (D35: column by migration, purge) and the bookings FILE question.** Decisions are written here the day the
+**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) merged as #2002; WP-B4's organiser API merged as #2006; its screens (#2019), WP-B5's API (#2029) and WP-B5's screens (#2035, stacked on #2019) are draft pull requests. WP-B6 (file answers, the poster, the purge, the export) is draft #2045, stacked on #2035; WP-B7 (live checks) is what is left. Decisions are written here the day the
 user takes them; the work packages are written last, once every question is closed. Pointer in
 [backlog](backlog.md) to be added when the plan is complete.
 
@@ -58,7 +58,7 @@ see who else booked.
 
 | D29 | Editing availability | **Refused while coming bookings fall inside the change, naming them**; the organiser cancels them explicitly (D20) and retries. Blocking a free range stays immediate. |
 
-| D30 | Right to manage | **A NEW `MANAGE_BOOKINGS` right, distinct from `MANAGE_FORMS`**: one more bit in the association bitmask, granted per role. The BDA can entrust the music room to someone without giving them forms. It needs a migration of existing roles and a row in the role editor ([association-permissions](association-permissions.md)). A global admin keeps everything. |
+| D30 | Right to manage | **A NEW `MANAGE_BOOKINGS` right, distinct from `MANAGE_FORMS`**: one more bit in the association bitmask, granted per role. The BDA can entrust the music room to someone without giving them forms. It needs a migration of existing roles and a row in the role editor ([association-permissions](association-permissions.md)). A global admin keeps everything **except a booking's FILES** (WP-B6, review of #2045): a CV is downloaded by the space's own managers alone. The carve-out is the files only - a global admin still reads the answers, the views and the export. |
 
 | D31 | Discoverability | **A setting per space**: listed on the Reservations page for those the audience (D6) allows, or **link only** (no list anywhere, reached by link or QR code - the psychologist case). The audience is enforced by the server in both modes, never by hiding it in the interface alone. |
 | D32 | Private information | **An "after booking" field per resource and per space** beside the public one (sector, remark): the video link, the room code, instructions. Only the booking's people see it, while the booking exists; gone on cancellation. The server returns it only to them. |
@@ -75,6 +75,7 @@ see who else booked.
 | D40 | File on a public form (E3) | **Refused in v1, to reopen later** (user): the upload needs a session token and an anonymous file write is the biggest abuse surface of the chantier. Refused at save time with a clear sentence, as `assertPublicConfigValid` does for price and audience. A "public form" is `forms.isPublic`, answered at `/f/:id` with no account; its payment half is PARKED, not forbidden in principle: it needs WP-LYDIA-1 (Lydia live in production) plus a guest payment route and a fulfilment with no `userId`. The user wants a PAID PUBLIC form (ticketing for an outside event): it is its OWN chantier, [public-paid-forms-chantier](public-paid-forms-chantier.md), planned in parallel. Bookings do not depend on it (D6 needs an account). |
 
 | D42 | Deleting a RESOURCE (review of #2006, Master's decision, the user having delegated it) | **Refused while the resource has ANY booking - past, coming or cancelled** (`resource-has-bookings`). A booking is history, and D15 freezes history while its space exists; D27 lets only the deletion of the whole SPACE erase it. A resource that is no longer offered is CLOSED instead (its availability emptied, or a closure). A resource nobody ever booked may be deleted. (Numbered D42: D36 was already the holder-edits decision.) |
+| D43 | A PERSONAL space in the listing (review of #2029, Master's decision) | **A personal space is NEVER listed to anyone but its owner**, whatever its discoverability: it is reached by its link or QR code. No decision lets a member publish free text (a space's name and description) on a page the whole school reads, and v1 has no report button (D21). A space of an ARCHIVED association is not listed either. |
 | D41 | File retention in forms (WP-F) | **The SAME rule as D8 and D23, one mechanism with two starting points**: a file is purged N days after the EVENT (default 7, adjustable 1 to 30 by the manager), the event being the slot's end for a booking and the DATE OF THE ANSWER for a form. The answer row stays; the file goes. The user pointed out this was already decided: a duplicate question was asked and is recorded here so nobody asks it a third time. |
 
 **Master's notes (2026-10-15):** no open pull request touches forms (open: #1896, #1897, #1898, #1884), so WP-F has no known conflict; rebase on `main` before each batch; **check the next free migration number on `main` when opening each pull request**, as other pull requests may take one.
@@ -264,7 +265,7 @@ reads the tables for them. Nothing here is a route yet (that is WP-B3).
 |---|---|
 | `src/bookings/zoned-time.ts` | Local wall time in a zone <-> UTC, with `Intl` alone and no library. The holes are resolved as `Temporal`'s `'compatible'`: a time in a spring-forward GAP moves forward by the gap, and a time that exists TWICE is the EARLIER instant. `24:00` is the next day's 00:00. |
 | `src/bookings/slots.ts` | `availabilityWindows`, `slotUnits`, `checkRangeShape`, `unitStates`, `bookingsOutsideAvailability` (D29) |
-| `src/bookings/booking-rules.ts` | `checkBookingWindow` (D26), `checkQuotas` (D17), `participantMayWithdraw` (D5), each refusal a CODE |
+| `src/bookings/booking-rules.ts` | `checkBookingWindow` (D26, over `booking-window.ts`, the file the screen copies), `checkQuotas` (D17), `participantMayWithdraw` (D5), each refusal a CODE |
 | `src/bookings/booking-slots.service.ts` | `spaceSlots(spaceId, from, to)` (at most 62 local days) and `assertAvailabilityChangeAllowed` (409 `bookings-inside-change`, naming the booking ids) |
 
 **Generation.** A line applied to one local date is a PIECE.
@@ -347,7 +348,7 @@ per request; `BookingsService` takes that `nowMs`, so no rule reads a wall clock
 | `GET mine` | anyone: at most 200, newest first - their bookings as holder or participant (withdrawn ones marked), and every booking of a resource LINKED to them (`linked: true`, D10); private texts of the LIVE ones they are one of the people of (D32) | - |
 | `GET spaces/:id` | the audience (D6, D31) or the organiser; no private text | `space-not-found`, `audience` |
 | `GET spaces/:id/slots?from&to` | same; each booking cut to what the viewer may read (D9) | `slot-range` |
-| `GET spaces/:id/bookings?offset&limit` | the organiser: names and answers, by start, pages of at most 200 (`{ items, nextOffset }`) | `not-manager`, `offset` |
+| `GET spaces/:id/bookings?offset&limit&ids` | the organiser: names and answers, by start, pages of at most 200 (`{ items, nextOffset }`); `ids` (comma-separated, at most 200) narrows it to the bookings a D29 refusal named, an id of another space not answered | `not-manager`, `offset`, `ids` |
 | `POST spaces/:id/bookings` | the audience; the organiser alone books on behalf (`holderId`, outside quotas) | `range`, `holder-is-participant`, `answer-required`, `resource-not-found`, `space-changed`, `too-many-people`, `outside-availability`, `misaligned`, `too-many-steps`, `not-open-yet`, `started`, `notice`, `beyond-horizon`, `blocked`, `unknown-account`, `participant-blocked`, `active-bookings`, `minutes-per-period`, `slot-taken`, `try-again` (a deadlock: send it again) |
 | `POST :id/cancel` | the holder or the organiser, ANY TIME before the start (D5) | `not-yours`, then `already-cancelled`, `history-frozen` |
 | `POST :id/withdraw` | a participant still in, until `participantWithdrawMinMinutes` before the start (D5) | `not-a-participant`, then `already-cancelled`, `history-frozen`, `withdrawal-delay` |
@@ -425,7 +426,7 @@ screens come in a pull request of their own; this half is what they write throug
 | `GET managed?associationId` | the entity's organiser; without the parameter, the actor's PERSONAL spaces | `not-manager` |
 | `POST spaces` | anyone for a personal space (D16), at most 20 per account; `MANAGE_BOOKINGS` for an entity's (`associationId`) | `not-manager`, `too-many-spaces`, `association-not-found` (an id that names no entity, which only a global admin can send), and the settings codes below |
 | `GET spaces/:id/manage` | the organiser: every setting, every resource with its linked account, private text and availability | `space-not-found`, `not-manager` |
-| `PATCH spaces/:id` | the organiser; any subset of the settings (D35), `null` clears | `time-zone`, `step-shape`, `quota-pair`, `file-question-not-yet`, `item-id` (missing or DUPLICATE), `opens-at` (an instant without `Z` or an offset), `audience-invalid`, `bookings-inside-change` (with `bookingIds`) |
+| `PATCH spaces/:id` | the organiser; any subset of the settings (D35), `null` clears | `time-zone`, `step-shape`, `quota-pair`, `item-id` (missing or DUPLICATE), `opens-at` (an instant without `Z` or an offset), `audience-invalid`, `bookings-inside-change` (with `bookingIds`) |
 | `DELETE spaces/:id` | the organiser: the space and EVERYTHING under it (D27), other people's coming bookings included, with no notice (D13); how many is logged | `not-manager` |
 | `POST spaces/:id/resources`, `PATCH resources/:id` | the organiser; a linked account must exist; at most 60 resources per space | `unknown-account`, `too-many-resources` |
 | `DELETE resources/:id` | the organiser; only a resource that was NEVER booked (D42) | `resource-has-bookings` |
@@ -462,12 +463,11 @@ screens come in a pull request of their own; this half is what they write throug
   space, a global admin. Creating an entity's space asks the same right.
 - **The audience and each question's condition** go through the forms' `parseAudienceCondition`,
   with the entity's cotisation tiers, so a space and a form agree on who an ICM is.
-- **A FILE question is refused (`file-question-not-yet`) until WP-B6** brings the bookings half of
-  WP-F's storage and purge: accepted now, it would be a question nobody could answer.
+- **A FILE question was refused (`file-question-not-yet`) until WP-B6**, which brought the bookings
+  half of WP-F's storage and purge and lifted the refusal ([WP-B6 as built](#wp-b6-as-built---file-answers-the-poster-the-purge-the-export-2026-10-18)).
 - **Times** are stored `HH:MM:SS`, `24:00` included; a window crossing midnight is two lines (WP-B2).
-- **The poster (D35) is SCHEDULED IN WP-B6, not dropped** (Master, 2026-10-17): 087 has no column
-  for it, so WP-B6 adds the column and its purge with a migration; the General section of the
-  editor gains the field then.
+- **The poster (D35) was SCHEDULED IN WP-B6, not dropped** (Master, 2026-10-17), and WP-B6 built
+  it: migration 092 adds the column, the General section the field.
 - **Nothing new to erase**: no column was added. The linked account was already covered by
   `BOOKINGS_ERASURE_STATEMENTS` (WP-B1).
 
@@ -478,3 +478,326 @@ and step, a resource with history (cancelled included) never deleted and one nev
 must exist, a space deleted with everything, duplicate question ids, a zoneless opening, an entity
 that does not exist, both caps, and a forged body (`id`, `ownerId`, `associationId`, `spaceId`)
 sent through the real HTTP layer with no ValidationPipe, changing none of them.
+
+## WP-B4 as built - the organiser's screens (2026-10-18)
+
+| Where | What |
+|---|---|
+| `associations/editSections.ts` | a `reservations` section, opened on `MANAGE_BOOKINGS` alone (D30), for associations, institutions AND lists (`LIST_EDIT_SECTIONS`, D38) |
+| `components/bookings/organiser/EditBookingsTab.svelte` | the entity's tab: its spaces (`GET managed`), a new one by its name, which opens its editor |
+| `routes/bookings/spaces/[spaceId]/edit` | loads the space and its entity (name, tiers, formations); the editing is `SpaceEditor.svelte` |
+| `SpaceEditor.svelte` | D35's five sections: General; Resources and availability; Who and how (the forms' audience switch and editor, then the questions); Booking rules and Data, collapsed, the first with a badge counting what is set |
+| `ResourceEditor.svelte`, `AvailabilityEditor.svelte` | per resource: its fields and linked account, then its availability - each SAVED ON ITS OWN, because each is its own call and a D29 refusal of one must not lose what was typed in the other |
+| `lib/bookings/api.ts` | the typed client; a refusal is a `BookingsApiError` carrying `bookingIds` |
+| `lib/bookings/refusals.ts` | every organiser code to its sentence, then the status, then the generic line - never the server's message |
+| `lib/bookings/spaceSettings.ts` | the editor's text draft to the API and back, the DTO's bounds per field, the badge's count |
+| `lib/bookings/availability.ts` | the ranges as the organiser thinks of them to the stored lines and back (see WP-B2), the times offered, the 24/7 warning |
+| `StrandedBookings.svelte`, `lib/bookings/stranded.ts` | the bookings a D29 refusal NAMED, listed under the refused save - when (on the space's clock), which resource, whose - each with its cancel, then "save again" |
+| `lib/bookings/zonedTime.ts`, `wallTime.ts` | the space's wall clock to UTC and back: `zonedTime.ts` is the server's `zoned-time.ts` COPIED BYTE FOR BYTE (a declared duplicate, both DST holes resolved the same way), `wallTime.ts` puts the date field's value on it |
+| `lib/navigation/unsavedChanges.ts` | asks before an editor with unsaved changes is left: the browser's prompt on a tab close, the app's dialog on an in-app navigation, replayed on yes |
+
+- **A range crossing midnight is ONE range on screen** ("Friday 22:00 to 02:00", marked "ends the
+  next day") and two stored lines; reading folds the pair back once, never a whole day.
+- **THE 24/7 WARNING IS SHOWN** when whole days (00:00-24:00) follow each other, naming them: no
+  booking can cross the midnight between two whole days (WP-B2's rule).
+- **Every choice is drawn by the app** ([durable-rules](durable-rules.md)): times are a `Select` on
+  the space's saved step (15 min for fixed slots), keeping an off-step value; a date is
+  `DateTimeField`, which gained `dateOnly` (value `YYYY-MM-DD`, no time columns).
+- **Deleting a resource that has history is refused (D42)**: the confirmation and the refusal both
+  say so, and point at closing it instead (its hours removed, or a closure).
+- **D29 NAMES THE BOOKINGS, AND SO DOES THE SCREEN.** A refused availability or settings save lists
+  the bookings in the way (`GET spaces/:id/bookings?ids=`, the first 200; the rest are named by the
+  next refusal), each with a cancel button that says the holder is not notified (D13). When none is
+  left, "save again" replays the save.
+- **DELETING A SPACE SAYS WHAT IT COSTS OTHERS**: its coming bookings disappear and the people who
+  made them are NOT told (D13, D27) - the confirmation asks the organiser to tell them first.
+- **The opening date is the SPACE's wall time (D25)**, named under the field; a change of zone
+  keeps the wall time on screen and moves the instant saved.
+- **Unsaved changes are asked about** before leaving the editor (settings, a resource's fields, an
+  availability), and the editor reloads when the route's space id changes, not only on mount.
+- **The file question was not offered until WP-B6**, which deleted `FormQuestionsSection`'s
+  `withoutTypes` with its only use.
+- **Large text**: `FormSection`'s header wraps at 200 % text (the badge and the chevron left the
+  card before - forms' sections too).
+
+**Seen** at 390 and 1280 and at 200 % text on a local build, on a fixture space (a temporary
+signed-out preview route, not committed): no horizontal scroll, the night range folded, the 24/7
+warning, the date sheet. Not yet seen against a running API - the first organiser to use it on dev
+is that reading. **Proof**: `availability.test.ts`, `spaceSettings.test.ts` (the opening in the
+space's zone), `refusals.test.ts`, `stranded.test.ts`, `wallTime.test.ts` (both DST holes),
+`unsavedChanges.test.ts`, `editSections.test.ts`, `DateTimeField.svelte.test.ts`; on the server,
+`bookings.controller.spec.ts` (the `ids` filter's shape) and the integration case "narrows the
+organiser list to the bookings a D29 refusal named".
+
+## WP-B5 as built - the booker's API (2026-10-18)
+
+What the booker's screens need and WP-B3 did not serve. Three additions, no migration.
+
+| Route | Who | Refusal codes |
+|---|---|---|
+| `GET spaces` | anyone signed in: every LISTED association space (D31) of a live association whose audience (D6) admits them, or that they manage, and their OWN listed personal spaces (D43), by name, at most 200 (the limit is in SQL) - with its entity's name and its resource count; never a private text | - |
+| `GET :id/calendar-link` | the booking's PEOPLE (holder, participant still in, the account linked to its resource) and its organiser: `{ path }` of a `.ics` signed FOR THEM | `not-yours` (also for an id that names nothing, and for a global admin who is not of the booking), then `already-cancelled` |
+| `GET :id/calendar.ics?u=&sig=` | NO SESSION - a calendar app; authorised by `sig` over the booking AND the recipient `u` | 400 for a malformed id, `calendar-signature` (checked before anything is read), `booking-not-found`, `calendar-revoked`, 410 `booking-cancelled` |
+
+`GET spaces/:id` now names `hiddenItemIds`: the questions the reader's PROFILE hides (promo,
+formation, cotisation), decided by `profileHiddenItemIds` in `forms/visibility.ts` - the one rule
+a form's page and a space's share. The screen evaluates the answer half as the booker types, so it
+never asks a question the server would drop.
+
+And in `GET spaces/:id/slots`, a blocked unit carries `blockId` for whoever may LIFT it - the
+organiser, and the account linked to the resource (the server still lets that account lift only
+the blocks it created). Nobody else is sent it.
+
+- **A LINK-ONLY SPACE IS NEVER LISTED, WHOEVER ASKS** - its organiser included: it is reached by
+  its link or QR code (the psychologist case). **A PERSONAL space is listed to its owner alone
+  (D43), and an ARCHIVED association's to nobody.** The audience is judged per space with that
+  space's own association's facts, as `assertMayUse` judges a read, so a listed space always opens.
+- **THE LISTING COSTS A FIXED NUMBER OF QUERIES, NOT ONE PER SPACE**: the rows (limit in SQL), the
+  manage rights in one `mayActOnAny`, the cotisations of every association in one
+  `cotisationTiersByAssociation`, and the profile (core-service) ONCE, only when some audience needs
+  it. **If core-service fails, the page stays**: only the spaces whose audience needs the profile
+  are left out, with an error logged - a 503 would hide spaces that need nothing from it, and
+  listing one would open onto a refusal.
+- **THE `.ics` IS SIGNED FOR ONE RECIPIENT** (`booking-calendar.ts`). A calendar app sends no
+  identity, so the link carries it: `sig` is an HMAC of `booking-ics|v1|<id>|<recipient>` under
+  `AGENDA_SIGNING_KEY` - the agenda's key, through one `signWithAgendaKey`, the prefix keeping the
+  two kinds of link from ever reading as each other, in both directions (tested). No new secret,
+  nothing to deploy. The comparison is constant-time and comes before any read.
+- **REVOCATION IS PER PERSON, AT EVERY FETCH**: after the signature, the route checks that the
+  recipient's account still exists and is still OF the booking (the same `isOfBooking` that issued
+  the link). A withdrawn participant, an account unlinked from the resource, an organiser whose
+  right was taken away, an ERASED account (its `users` row is gone) - each gets `calendar-revoked`,
+  and an erased account's past bookings stop being fetchable. **Rotating the key is the last
+  resort**: it ends every saved link of both kinds at once, and the app fetches a fresh one the
+  next time someone taps "Add to my calendar". An unset key is a 503 (fails closed), never an
+  unsigned link; so is an unset `FRONTEND_URL` (`common/frontend-url.ts`, no default).
+- **WHAT THE FILE CARRIES: the names of the place - the space's and the resource's, which may be a
+  PERSON's (D10, a resource can be someone) - the start, the end, a link back to the space. NEVER
+  the answers, the private texts (D32), the holder's or the participants' names** - a link can be
+  forwarded, and on an 'occupied' space (D9) names are not the link-holder's to read. A cancelled
+  booking answers 410, so a stale import cannot write it back. The link back is
+  `/bookings/spaces/:id`, a screen WP-B5's screens (#2035) add.
+- **The route is declared public by intent** in `.github/scripts/tests/auth-request-coverage.test.mjs`
+  (its own controller, `BookingCalendarController`, without the session guard); it sits behind the
+  same `/api/bookings` location, whose `auth_request` identifies and refuses nobody.
+
+**Proof.** `booking-calendar.spec.ts` (only that booking and that recipient, never an agenda
+signature and never read as one, dead after a rotation, no key no link, nothing but the place and
+the range). `booking-calendar.controller.spec.ts` at the HTTP layer: `text/calendar`,
+`Cache-Control: private, no-store`, a malformed id a 400 before the service is called. In
+`bookings.service.integration.spec.ts`, "the booker's page and the calendar link (WP-B5)": the
+listing per audience, manager and link-only, a personal space to its owner alone, an archived
+association's to nobody, the page kept when core-service fails; a distinct link per person,
+refused to strangers (a global admin included), to a withdrawn participant and for a cancelled
+booking; the file without the answer, the private texts or the holder's name, refused for another
+booking's or another recipient's signature, a forged or missing one and after a rotation, 410 once
+cancelled; revoked when its recipient withdraws, is unlinked, loses the right or is erased; a block
+id to the organiser and the linked account, not to a booker.
+## WP-B5 as built - the booker's screens (2026-10-18)
+
+| Where | What |
+|---|---|
+| `routes/bookings` | **Reservations** (D16): my coming bookings first (soonest first), the past, cancelled and left ones folded below, the listed spaces (a `SectionHub`), then my PERSONAL spaces, created here (`EditBookingsTab` with `associationId` null - the same panel as an entity's tab) |
+| `routes/bookings/spaces/[spaceId]` | the booker's page of a space: grid or planning, the three sheets, the link and the QR code (`QrCodeModal`), a pencil to the editor for whoever manages it |
+| `components/bookings/booker/SpaceGrid.svelte` | the grid of ONE date (D14): resources as columns, units as rows; every cell a button named with its whole reading; the table scrolls inside its own box, never the page |
+| `SpacePlanning.svelte` | per resource, its next six units bookable NOW over the next 14 days; a resource with none says so |
+| `BookingSheet.svelte` | the range (a slot whole, or 1..`maxSteps` steps from the one tapped), the participants (`UserAutocomplete`, up to `maxPeople`), the questions (`FormQuestion`, `visibleItems` with the server's `hiddenItemIds`), and - for an organiser - "book for someone" (D20) |
+| `BlockSheet.svelte` | "Indisponible" from the unit tapped over a run of free units (at most `BLOCK_LENGTH_CHOICES` = 48 lengths, each naming its end's day when it is not the start's), a reason, shown or not (D20) |
+| `UnitDetailSheet.svelte` | a taken unit: names as D9 allows, private texts to the booking's people (D32), answers to the organiser, cancel / leave / "Add to my calendar"; a block's reason and lifting it |
+| `MyBookingCard.svelte` | one of my bookings on Reservations: where, when (the space's zone), my part, the private texts while live, the same three gestures |
+| `lib/bookings/grid.ts` | pure: a unit's day, the ranges as text, the grid rows, the free run a booking or a block may cover, the planning, and `windowRefusal` - on `zonedTime.ts` and `bookingWindow.ts`, both the server's own files copied byte for byte |
+| `lib/bookings/bookingWindow.ts` | the booking window (D26) - `apps/social-service/src/bookings/booking-window.ts` COPIED, a declared duplicate, both copies answering `libs/contracts/booking-window.cases.json` |
+| `lib/bookings/redrawClock.ts` | the redraw: every minute, at the opening instant, and when the page is seen again |
+| `lib/bookings/bookingActions.ts` | cancel, leave and lift: ONE implementation each (ask, call, say), shared by both pages; the calendar event of a booking |
+| `lib/bookings/refusals.ts` | every booker code (`BOOKER_REFUSAL_CODES`) to its sentence, beside the organiser's |
+
+- **THE DEFAULT VIEW FOLLOWS THE WIDTH** as the agenda's (`SCHEDULE_AGENDA_QUERY`): the planning
+  on a phone, the grid wider - until the reader picks one, then theirs holds.
+- **TIMES ARE THE SPACE'S** (D25), read in its zone; when the device's clock reads differently,
+  the page names the zone. **A unit's DAY is the local date of its START**, not the date its
+  window started (which the server stamps on it): a night window stays one block of rows on the
+  grid of the day it opened, its rows after midnight marked "(lendemain)", and every sentence that
+  names a day names the right one. An end at midnight reads `24:00`; a time in a fall-back night's
+  doubled hour carries its offset ("02:00 (UTC+2) - 02:00 (UTC+1)"), so two ranges never read alike.
+- **THE CLOCK THAT DECIDES IS THE SERVER'S.** The device's clock only DRAWS: a unit outside the
+  window is drawn "Non réservable", redrawn every minute and at the opening instant, and it STILL
+  OPENS - the sheet says the device thinks it is not bookable, and the server answers. Like the
+  server, only the START of a range is judged: a run of steps is never trimmed by the window.
+- **A NIGHT WINDOW STILL RUNNING AFTER MIDNIGHT STAYS IN VIEW** (review of #2035). The server
+  keeps a unit in `spaceSlots(from, to)` when its WINDOW's date is in the range, so every read
+  starts THE DAY BEFORE the date shown (`slotsReadRange`), and the grid opens - and "today" leads -
+  on that window's date while it runs (`gridOpeningDate`). At Saturday 00:15 the 00:30 of a Friday
+  22:00-02:00 window is on Friday's grid, marked the next day, and first in the planning.
+- **AN ANSWER THAT NEVER CAME IS SAID AS SUCH**: a booking or a block whose call reached nobody
+  (a timeout, a lost connection) or came back 5xx with no code may have been written
+  (`outcomeUnknown`); any 4xx, a validation 400 with no code included, is a refusal. The booking
+  sheet says the outcome is unknown and re-reads the grid and my bookings. **The block sheet
+  re-reads and CLOSES**: the server does not refuse a block over another block (a P2 in
+  [backlog](backlog.md)), so a second tap from the open sheet could write the same block twice;
+  the grid shows whether it landed. Every failed read or gesture is logged, transport failures
+  included.
+- **"Add to my calendar" asks for its signed link ON THE TAP** (`bookingIcsUrl`), never once per
+  card on screen; a browser tab is opened inside the tap and pointed at it.
+- **A refusal that means the grid is stale** (`slot-taken`, `blocked`, `space-changed`) closes the
+  sheet and re-reads the grid and my bookings, so the reader sees why.
+- **The holder's gestures come from `GET mine`**: a unit's view says `mine` but not holder or
+  participant, so the page indexes my own bookings by id - which also carries the private texts.
+- **THE KNOWN COSTS ARE SAID ON SCREEN, NOT HIDDEN**: no notification (D13, on both pages and in
+  the organiser's cancel confirmation); people added directly, no acceptance (D34); a booking is
+  never edited, cancel and book again (D36); a personal space's coming bookings vanish with its
+  owner's account (WP-B1's erasure).
+- **Navigation (D37)**: a `bookings` place in `places.ts` (the desktop sidebar, which now draws
+  `PLACE_ICONS` rather than its own copy), a row in the dashboard's Explorer group, no bottom tab.
+  `/bookings` is private for search (`PRIVATE_PREFIXES`), an in-app route, and an app link on iOS
+  and Android (`MOBILE_UNIVERSAL_LINK_PATHS`, `tauri.conf.json`, `AndroidManifest.xml`), so a
+  shared link or a scanned QR code opens the app.
+- **A personal space's editor** now leads back to Reservations (its crumbs, and after deletion).
+
+**Seen** at 390 and 1280 and at 200 % text on a local build, on a fixture space (a temporary
+signed-out preview route, not committed): no page scroll sideways (the grid's third column
+scrolls in its box), the booking sheet with steps, people and questions, the detail with answers;
+after the review, a fall-back night window on the grid and the block lengths over it. Not yet
+seen against a running API, nor on a phone - WP-B7's readings. **Proof**: `grid.test.ts` (a
+unit's day, `24:00`, the next-day and further-day ends, both DST nights, a night window's rows,
+the free run, the planning, a night window read at Saturday 00:15), `BlockSheet.svelte.test.ts`
+(an unknown outcome closes, a 400 with no code does not), `bookingWindow.contract.test.ts` and the server's
+`booking-window.spec.ts` (one contract), `redrawClock.test.ts`, `refusals.test.ts` (every booker
+code worded), the dashboard's row order.
+
+## WP-B6 as built - file answers, the poster, the purge, the export (2026-10-18)
+
+Draft #2045, stacked on #2035. Migration **092** (`092_booking_files_and_poster.sql`; renumbered from 091, which the lives server #2044 took) adds two things, and is idempotent: it is applied twice in its spec, and its catalogue check is scoped to the schema.
+- `booking_files`: what a FILE answer's id names.
+- `booking_spaces.poster`: the poster.
+
+| Route | Who | Refusal codes |
+|---|---|---|
+| `POST spaces/:id/files` (multipart `file`, `itemId`) | anyone the space's audience admits (`assertMayUse`) | `file-question` (not a FILE question of this space), `file-empty`, 413 `file-too-large`, `file-type` (read from the bytes), 429 `files-pending` (ten unsent on this space), 429 `files-pending-account` (thirty unsent across spaces) |
+| `GET :bookingId/files/:fileId` | the organiser only (D22), judged before the file is looked at - a global admin who is not an organiser is refused too (review of #2045) | `not-manager`, `file-not-found`, 410 `file-purged` |
+| `GET spaces/:id/export?labels=` | the organiser; served `nosniff` | `not-manager`, `export-labels` (a word missing, empty or over 200 characters) |
+| `PATCH spaces/:id` `{ poster }` | the organiser; `null` removes it | a malformed reference is a validation 400; `poster-not-yours` (not the actor's own fresh `poster-pending` upload, or already another space's poster); 503 `try-again` (the media service did not answer the claim) |
+
+`POST spaces/:id/bookings` can now refuse a file answer in two ways:
+- `file-answer`: the value is not a file id.
+- `file-not-yours`: the uploader, the question, the space, the one-day window or the unsent state does not match. The claim is one `UPDATE`, so the booking rolls back with it.
+
+**File answers**
+- **ONE STORAGE FOR BOTH MODULES.** The bytes go through the media service's `form-file` class, through `FormFilesService` (`storeBlob`, `fetchBlob`, `purgeBlobs`), now exported by `FormsModule`.
+  - The bytes are plaintext, served to social-service alone, and the organiser reads them (D22). So this is NOT the client-encrypted media path, and the register says so (C17).
+  - The forms' loop over due files is now `runFileRetentionPass` (`forms/file-retention-purge.ts`), shared by both schedulers.
+- **THE STATE IS THE ROW.**
+  - `bookingId` NULL means uploaded and not sent: it can be attached for a day, then the blob is purged, then the row.
+  - `bookingId` set means it belongs to a booking.
+  - `purgedAt` means the blob is gone, and the organiser reads "file deleted".
+  - The foreign key to `bookings` is the module's one `ON DELETE SET NULL`. A booking deleted with its space (D27) or past one year (D19) turns its file back into an unsent upload, and the next purge takes it. A cascade would drop the only record of a blob that still exists.
+  - `spaceId` has no foreign key, for the same reason.
+- **The organiser books on someone's behalf with their own upload**: the uploader is whoever booked, which is what the claim checks.
+- **Who sees what.**
+  - The organiser's views carry `fileNames`, and `deletedFileIds` for the files that are purged, erased or another booking's.
+  - Nobody else is sent answers (D9).
+  - A file answer is never shown as its id. `answerText` throws without its words.
+
+**The poster (D35)**
+- **ENCRYPTED BY THE CLIENT, AS A POST'S IMAGE.** The client uses `preparePostMedia`, then `encryptAndUpload(..., 'poster-pending')` - a class ONLY the poster field names, swept by age (48 h) if no save claims it. The row stores the reference, field by field (`posterOf`).
+- **`BookingPosterMedia` handles its life at the media service.**
+  - **IT IS CLAIMED INSIDE THE TRANSACTION THAT STORES THE ROW** (media-service `POST media/internal/poster-claim`, review of #2045), under an advisory lock on the media id (`booking-poster:<id>`) held until the commit. The claim succeeds only on the ACTING member's own `poster-pending` upload, at most a day old, not purged, not a public asset. It then becomes `poster-association` for an entity's space (it survives its uploader's erasure, as an association document does) or `poster` for a personal one, BOUND TO THAT SPACE (`claimedFor`). A refused claim refuses the save (`poster-not-yours`); an unanswered one too (`try-again`). Before this, any member could cite an id they had seen - a stranger's image, an association document, even their OWN post's photo - then remove the poster and hand that object to the idle sweep.
+  - **ONE POSTER, ONE SPACE, AND A REPEATED CLAIM IS IDEMPOTENT.** A claim by the same member for the same space answers claimed again and changes nothing (a double submit, a retried save); for another space it is refused. So two spaces never share a poster. A create's space id is chosen before its transaction, so the claim can name it.
+  - **THE RELEASE TOUCHES CLAIMED POSTERS ONLY.** `internal/poster-release` moves `poster`/`poster-association` to `ephemeral` and refuses every other class, so a release can never reach a post's image or a document. `internal/retention-class` never moves a claimed poster either. It runs when a poster is replaced or removed, when its space or association is deleted (`associations.service.ts` `remove`), and when a save that claimed one fails - each id in its own transaction, under the same lock, the citation re-read there (`releaseUncitedPosters`). A release racing a claim in flight therefore waits for its commit and finds it cited.
+  - **A CRASH BETWEEN A CLAIM AND ITS COMMIT IS RECONCILED, NOT TIMED OUT.** `BookingPosterMedia.reconcileOnce` (hourly at :47) lists the claimed posters (`internal/poster-list`) and releases those no space cites, through the same locked release. No grace period: a claim in flight holds the lock, so "uncited" is only ever read once nothing can still commit a citation. A release the media service did not answer is found again the next hour.
+  - Every release is best-effort and logs what it left.
+- **The editor saves it ON ITS OWN, the moment it is picked** (`SpacePosterField.svelte`). An image uploaded and left in an unsaved draft would be ciphertext nobody cites.
+- **The space page shows it** (`SpacePoster.svelte`), decrypted on the device.
+- **Reservations' space rows do not show it**: `SectionHub` rows carry an icon, not an image.
+
+**The purge** (`booking-retention.scheduler.ts`, hourly at :41, one database clock per run, intervals in hours). It runs four passes, then sweeps the rows of unsent files that are already gone.
+1. A booking's files go `retentionDays` after its slot's END (D8, D41): the blob first, then the row is marked.
+2. Unsent uploads go after a day: the blob, then the row - **CLAIMED UNDER A ROW LOCK** (`purgeUnsent`, `FOR UPDATE SKIP LOCKED`, held across the blob delete and the row delete, review of #2045). `attach` reads the window with its transaction's `NOW()`, so a booking that began inside the window could commit after an unlocked purge read the row, citing a deleted blob with `purgedAt` NULL. Now a row a booking holds is skipped, and a booking reaching a row the purge holds waits and finds it gone (`file-not-yours`).
+3. Answers go after the same N days: they are set NULL and `answersPurgedAt` is stamped (D18).
+4. Bookings and blocks whose slot ended over a year ago are deleted, in batches of 100 (D19).
+
+A blob the media service refuses to delete keeps its row, which is retried next hour. **A deleted space's files wait for the unsent pass**, up to a day and an hour after the deletion.
+
+**The export (D24)**, `booking-export.ts`:
+- **The client supplies every word**, as in the forms' `ExportLabels`; there is no default.
+- **Each row has**:
+  - the local date and times in the space's zone (an end on another day is prefixed with its date);
+  - the resource, the holder and the participants still in;
+  - the cancelled word;
+  - one column per question, through `answerText`.
+- **What a cell holds once data is purged**:
+  - A FILE answer is a word, never the file.
+  - A purged answer is an empty cell.
+- **The workbook is named after the space**, and the client names the downloaded file the same way.
+
+**Account erasure**:
+- `bookings_files` deletes the account's uploads.
+- The coverage map lists `booking_files.uploaderId` and `.fileName`.
+- `booking_spaces.poster` is marked as naming no account.
+
+**Proof.**
+- `bookings.files.integration.spec.ts`, against PostgreSQL (migrations applied twice), covers:
+  - upload refusals and the audience;
+  - attaching one's own file versus another's, with the rollback;
+  - booking on someone's behalf;
+  - who sees the answers, and the download rights;
+  - a blob gone at the media service, marked purged;
+  - the purge after N days, run twice;
+  - a refused blob kept;
+  - an unsent upload purged;
+  - a deleted space's files;
+  - the one-year age;
+  - erasure;
+  - the poster claimed, released and forged, over the REAL `BookingPosterMedia` and a fake media service that applies the claim rule: a stranger's image refused (and left untouched), the member's own post image, a document and a stale upload refused, one poster refused to a second space, a failed create's claim released, a release that waits for a claim in flight (FAILS without the lock), and the reconciliation releasing an orphan and nothing cited;
+  - the two orders of a booking and the purge on one unsent file (both FAILED on the unlocked purge: it deadlocked on the booking's row lock);
+  - the per-account cap across spaces, and a global admin refused a file;
+  - the export parsed back with ExcelJS.
+- `associations.service.remove-forms.spec.ts`: an association's deletion releases its spaces' posters, except one another space still cites.
+- `booking-export.spec.ts`: a text starting with `=`, `+`, `-` or `@` lands as a STRING cell, never a formula, in every column and header.
+- media-service `media.service.poster-claim.spec.ts`: the claim rule (own fresh `poster-pending` only, idempotent for its space), the release allowlist (claimed posters only), the list, and the age sweep of an unclaimed upload.
+- Frontend:
+  - `refusals.test.ts` puts a sentence on every new code.
+  - `exportLabels.test.ts` checks every word the server requires.
+  - `spaceSettings.test.ts` checks that the settings bar never sends the poster.
+
+**WP-B7, 2026-10-18.**
+- **The live API was run against the LOCAL estate** (nginx, migration 092 applied twice over the synchronized schema) and every row answered as specified:
+  - refusals: `file-question`, `file-type` on a text file named `.pdf`, `file-not-yours` (another's file, and one file cited twice), `not-manager` to a booker downloading or exporting, `export-labels`;
+  - the organiser's slot carried `fileNames`, and the booker's carried no answers;
+  - the download was byte-identical, with `Content-Disposition`;
+  - the export returned an `.xlsx`;
+  - the poster was set, read back and removed;
+  - deleting the space left its files unsent (`bookingId` NULL) for the purge.
+- **Screens, in Chrome with an override, at 390, at 1280 and at 200 % text.** This covered the editor (poster field, FILE question, Data section with the export), the booking sheet with a FILE question, and the detail with a file answer. Two defects were found and fixed:
+  - the question editor said a FILE question's file is read by "the form's managers, see Advanced settings" (`FormQuestionsSection` now takes `fileHint`);
+  - a long file name broke letter by letter at 200 % text (the whole row is now the download, the name cut, the full name its title).
+- **NOT SEEN**: a real poster picked, encrypted and decrypted on screen, and a real file picked on a phone - both need a signed-in device.
+
+**OWED BEFORE THE FIRST RELEASE: the privacy policy (`routes/legal/privacy`) says nothing about
+bookings yet**, while C17 is its register row - the two are changed together. The paragraph below
+is a PROPOSAL, not published: `routes/legal/privacy` is untouched until the lead approves it.
+
+### PROPOSAL - the privacy-policy paragraph on bookings (French, awaiting approval)
+
+> **Réservations.** Lorsque vous réservez un créneau (une salle, un objet, un rendez-vous), Canari
+> enregistre la réservation : la ressource, le début et la fin, votre identifiant et le nom affiché
+> au moment de la réservation, les participants que vous ajoutez, et vos réponses aux questions de
+> l'espace. Ces réponses, y compris les fichiers que vous joignez (PDF ou image, 8 Mo au plus), ne
+> sont lisibles que par les organisateurs de l'espace ; les fichiers sont conservés en clair sur nos
+> serveurs, sans chiffrement de bout en bout, pour qu'ils puissent les lire. Les autres personnes
+> ne voient votre nom que si l'espace l'affiche, sinon seulement « occupé ». L'affiche d'un espace
+> est chiffrée sur l'appareil de l'organisateur, comme l'image d'une publication.
+>
+> **Durées de conservation.** Les réponses et les fichiers sont supprimés automatiquement N jours
+> après la fin du créneau (N est choisi par l'organisateur, entre 1 et 30 jours, 7 par défaut, et
+> indiqué sous chaque question « fichier ») ; un fichier envoyé sans réservation est supprimé après
+> un jour ; la réservation elle-même est supprimée un an après la fin de son créneau. Un organisateur
+> peut exporter les réservations de son espace dans un tableur ; un fichier n'y figure que par un
+> mot, jamais par son contenu.
+>
+> **Suppression de votre compte.** Vos réservations à venir sont annulées, vos réponses et vos
+> fichiers sont supprimés, et votre identifiant est effacé des réservations passées, qui gardent le
+> nom affiché jusqu'à leur suppression à un an. Vos espaces personnels sont supprimés avec tout ce
+> qu'ils contiennent, y compris les réservations à venir d'autres personnes, qui n'en sont pas
+> prévenues. L'affiche d'un espace d'association est conservée : elle appartient à l'association.
+>
+> Base légale : exécution du service (art. 6.1.b RGPD). Registre : traitement C17.

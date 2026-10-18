@@ -132,6 +132,7 @@ describe('dashboard hub', () => {
       'institutions',
       'shop',
       'forms',
+      'bookings',
       'notifications',
       'settings',
       'sign-out',
