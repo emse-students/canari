@@ -3308,15 +3308,48 @@ export class ChannelService implements OnApplicationBootstrap {
     };
   }
 
+  /**
+   * Every fan-out running in THIS process, by message id. It answers two questions by proof rather
+   * than by a clock: `settleFanouts` (what must finish before a replaced replica exits - a normal
+   * deploy is the commonest process death there is) and `drainFanout` (an entry whose fan-out is
+   * running here is not drained a second time). It cannot see another replica's fan-outs: a claim
+   * across replicas is out of scope, and a duplicate there is settled downstream (see
+   * {@link runFanout}).
+   */
+  private readonly fanoutsInFlight = new Map<string, Promise<void>>();
+
+  /** Starts `work` as THE fan-out of `messageId`, visible to {@link settleFanouts} until it ends. */
+  private trackFanout(messageId: string, work: () => Promise<void>): Promise<void> {
+    const running = work().finally(() => this.fanoutsInFlight.delete(messageId));
+    this.fanoutsInFlight.set(messageId, running);
+    return running;
+  }
+
+  /**
+   * Resolves once every fan-out running in this process has ended, successfully or not. The SIGTERM
+   * path awaits it before the process exits (`drainOnSigterm`): a replaced replica's last requests
+   * were answered BEFORE their broadcast and push ran, and exiting first would leave their entries
+   * for a boot that may be days away. Bounded by nothing of its own: the shutdown mechanism's
+   * existing stop timeout is the bound.
+   */
+  async settleFanouts(): Promise<void> {
+    while (this.fanoutsInFlight.size > 0) {
+      this.logger.log(
+        `[CHANNEL_FANOUT] waiting for ${this.fanoutsInFlight.size} fan-out(s) before exit`
+      );
+      await Promise.allSettled(this.fanoutsInFlight.values());
+    }
+  }
+
   /** Runs {@link runFanout} off the request path; a failure is logged and leaves the entry for the drain. */
   private fanoutInBackground(
     channel: Channel,
     row: ChannelMessage,
     payload: ChannelFanoutPayload
   ): void {
-    this.runFanout(channel, row, payload).catch((err) =>
+    this.trackFanout(row.id, () => this.runFanout(channel, row, payload)).catch((err) =>
       this.logger.error(
-        `[CHANNEL_FANOUT] channel=${channel.id} message=${row.id} failed, the entry stays for the next drain: ${err}`
+        `[CHANNEL_FANOUT] channel=${channel.id} message=${row.id} failed, the entry stays for the next drain: ${String(err)}`
       )
     );
   }
@@ -3402,6 +3435,12 @@ export class ChannelService implements OnApplicationBootstrap {
    * none (the ordinary answer to a repeat of a send that completed).
    */
   private async drainFanout(messageId: string): Promise<boolean> {
+    if (this.fanoutsInFlight.has(messageId)) {
+      this.logger.log(
+        `[CHANNEL_FANOUT] message=${messageId.slice(0, 8)} is being fanned out here - not drained`
+      );
+      return false;
+    }
     const entries: { payload: ChannelFanoutPayload }[] = await this.messageRepo.query(
       `SELECT payload FROM channel_message_fanout WHERE "messageId" = $1`,
       [messageId]
@@ -3419,17 +3458,19 @@ export class ChannelService implements OnApplicationBootstrap {
       ]);
       return false;
     }
+    // Checked again here: the awaits above are where a send's own fan-out can have started.
+    if (this.fanoutsInFlight.has(messageId)) return false;
     this.logger.log(
       `[CHANNEL_FANOUT] finishing the fan-out of message=${messageId.slice(0, 8)} channel=${channel.id} - its writer never handed it off`
     );
-    await this.runFanout(channel, row, entries[0].payload ?? {});
+    await this.trackFanout(messageId, () => this.runFanout(channel, row, entries[0].payload ?? {}));
     return true;
   }
 
   /** A repeat's drain: never blocks the answer, logs what it cannot do. */
   private drainFanoutInBackground(messageId: string): void {
     this.drainFanout(messageId).catch((err) =>
-      this.logger.error(`[CHANNEL_FANOUT] drain of message=${messageId} failed: ${err}`)
+      this.logger.error(`[CHANNEL_FANOUT] drain of message=${messageId} failed: ${String(err)}`)
     );
   }
 
@@ -3459,8 +3500,13 @@ export class ChannelService implements OnApplicationBootstrap {
 
   /** Boot: finish the fan-outs a dead process left, without holding the boot. */
   onApplicationBootstrap(): void {
+    // Not a precondition of serving, so a failure is said once at ERROR and the next boot repeats it.
+    // The table comes from migration 093, applied before any service starts; CI's boot job and local
+    // stacks build it from the entity.
     this.drainPendingFanouts().catch((err) =>
-      this.logger.error(`[CHANNEL_FANOUT] boot drain failed: ${err}`)
+      this.logger.error(
+        `[CHANNEL_FANOUT] boot drain failed, retried at the next boot: ${String(err)}`
+      )
     );
   }
 

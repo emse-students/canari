@@ -209,8 +209,9 @@ maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
     await settled();
     publish.mockClear();
     pushes.mockClear();
-    // The process "dies" after the commit: the broadcast is refused, so nothing is handed off.
-    publish.mockRejectedValueOnce(new Error('killed before the broadcast'));
+    // The fan-out does not complete (the production RedisService swallows publish errors, so it is
+    // the push step that fails here): nothing is handed off, the entry stays.
+    pushes.mockRejectedValueOnce(new Error('the fan-out did not complete'));
     const lost = await send(ME);
     await new Promise((resolve) => setImmediate(resolve));
     await settled();

@@ -1198,6 +1198,9 @@ describe('ChannelService security hardening', () => {
       );
     });
 
+    // The production RedisService swallows its own publish errors, so a Redis outage deletes the
+    // entry: the outbox covers process death and database failures. A rejection reaching here is
+    // what a failing audience read looks like; the mock rejects the publish to model it.
     it.each([
       ['the broadcast', 'publish'],
       ['the push', 'push'],
@@ -1278,6 +1281,47 @@ describe('ChannelService security hardening', () => {
         })
       );
       expect(entries).toEqual({});
+    });
+
+    it('settleFanouts waits for a fan-out still running, so a replaced replica does not exit on it', async () => {
+      const { service, redis } = arrange();
+      let release: () => void = () => {};
+      redis.publishChannelEvent.mockImplementation(
+        () => new Promise<void>((resolve) => (release = resolve))
+      );
+      await service.sendMessage('ch1', body as never);
+      await flush();
+
+      let settled = false;
+      const waiting = service.settleFanouts().then(() => (settled = true));
+      await flush();
+      expect(settled).toBe(false);
+      release();
+      await waiting;
+      expect(settled).toBe(true);
+      // Nothing left to wait for.
+      await service.settleFanouts();
+    });
+
+    it('a repeat does not drain an entry whose fan-out is running in this process', async () => {
+      const repos = arrange();
+      let release: () => void = () => {};
+      repos.redis.publishChannelEvent.mockImplementation(
+        () => new Promise<void>((resolve) => (release = resolve))
+      );
+      outbox(repos, { m1: {} });
+      repos.messageRepo.findOne.mockResolvedValue(null);
+      await repos.service.sendMessage('ch1', { ...body, messageId: CLIENT_ID } as never);
+      await flush();
+      expect(repos.redis.publishChannelEvent).toHaveBeenCalledTimes(1);
+
+      // The winner's fan-out is in flight; the repeat finds the stored row and must not start a second.
+      repos.messageRepo.findOne.mockResolvedValue({ ...stored, silent: false, metadata: {} });
+      await repos.service.sendMessage('ch1', { ...body, messageId: CLIENT_ID } as never);
+      await flush();
+      expect(repos.redis.publishChannelEvent).toHaveBeenCalledTimes(1);
+      release();
+      await repos.service.settleFanouts();
     });
 
     it('boot with an empty outbox does nothing', async () => {
