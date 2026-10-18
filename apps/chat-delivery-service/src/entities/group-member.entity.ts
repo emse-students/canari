@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Unique } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index, Unique } from 'typeorm';
 
 /** A member's notification level for one conversation - the salon's three levels. */
 export type GroupNotificationLevel = 'all' | 'mentions' | 'none';
@@ -30,6 +30,23 @@ export function isGroupNotificationLevel(value: unknown): value is GroupNotifica
 }
 
 /**
+ * Whether a call in this conversation may ring this member - THE rule, read by the ring fan-out.
+ *
+ * An explicit choice (`callsAllowed` true/false) wins whatever the level. A member who never chose
+ * (NULL - every row an older client ever touched) is rung unless the conversation is at `none`: a
+ * conversation muted to silence does not start ringing because somebody pressed call, and a member
+ * who wants calls there says so once. The client applies the same rule to its own copy
+ * (`notifications/callPermission.ts`); docs/wiki/frontend/modules/calls.md says why this default.
+ */
+export function callsAllowedFor(
+  notifLevel: GroupNotificationLevel | undefined,
+  callsAllowed: boolean | null | undefined
+): boolean {
+  if (typeof callsAllowed === 'boolean') return callsAllowed;
+  return notifLevel !== 'none';
+}
+
+/**
  * Records the user-level membership of a person in an MLS group, independently
  * of which devices that user currently has enrolled. A user has exactly one row
  * here per group, while they may have many `DeviceGroupMembership` rows (one per device).
@@ -54,6 +71,10 @@ export function isGroupNotificationLevel(value: unknown): value is GroupNotifica
  */
 @Entity('dm_group_members')
 @Unique(['groupId', 'userId'])
+// The viewer lookup of every presence poll and `getUserGroups` filter on userId alone, which the
+// unique (groupId, userId) cannot serve. Named as migration 031 names it, so dev's synchronize and
+// production carry the same index.
+@Index('IDX_dm_group_members_user', ['userId'])
 export class GroupMember {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -82,6 +103,16 @@ export class GroupMember {
    */
   @Column({ type: 'varchar', length: 16, default: 'all' })
   notifLevel: GroupNotificationLevel;
+
+  /**
+   * Whether a call in this conversation may ring THIS member: true, false, or NULL for "never
+   * chose", which {@link callsAllowedFor} resolves against {@link notifLevel}. Its own setting rather
+   * than a fourth level, because whether a conversation may RING is a different question from how
+   * loud its messages are. Applied by the server at the ring fan-out (`CallsService.ringGroup`) and
+   * by the client at the in-app invite. Migration 032.
+   */
+  @Column({ type: 'boolean', nullable: true, default: null })
+  callsAllowed: boolean | null;
 
   /**
    * When this membership was CREATED, and never anything else.

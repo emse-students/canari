@@ -90,6 +90,10 @@ The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is t
 | POST   | `/api/media/internal/form-file`        | `INTERNAL_SECRET` | multipart `file` + `ownerId`: store a form answer's PLAINTEXT file as class `form-file` ([form-file](#the-form-file-class-plaintext-read-by-the-server-only-2026-10-15)) |
 | POST   | `/api/media/internal/form-file-purge`  | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - delete form files, class AND owner allowlist, one outcome per id |
 | GET    | `/api/media/internal/form-file/:id`    | `INTERNAL_SECRET` | The ONE read of a form file, for social-service's manager-gated download; serves nothing else |
+| POST   | `/api/media/internal/live/:liveId/:name` | `INTERNAL_SECRET` | multipart `file`: one sealed live segment (1 B to 4 MiB) stored under `live/<liveId>/<name>`; 404 unless `LIVE_ENABLED` ([lives](lives.md)) |
+| POST   | `/api/media/internal/live-purge`       | `INTERNAL_SECRET` | `{liveId}` - delete every object under the live's prefix, then re-list: `{deleted, failed, remaining}`; runs whatever the switch says |
+| POST   | `/api/media/internal/live-list`        | `INTERNAL_SECRET` | `{liveIds}` - one id per `live/<liveId>/` folder (a delimiter listing), for social-service's orphan reaper, which purges a folder with no live row behind it; runs whatever the switch says |
+| GET    | `/api/media/live/:liveId/:name`        | JWT               | One sealed live segment, by the name its manifest gave, `no-store`; 404 unless `LIVE_ENABLED` ([lives](lives.md)) |
 
 (`retention-class` refuses `reel`: that class is only ever set through its owner, and `chat-reel`, `reel-pending` and `form-file`: they are attached at the upload that creates the object. Every CLIENT upload route refuses `form-file` with a 400.)
 
@@ -405,6 +409,15 @@ sets the class yet** (the sender is RC-4, the resumable upload RC-5), so on prod
   `encryptAndUpload` class argument now accepts `'chat-reel'` but nothing passes it, and the storage
   forecast re-read with a real send rate (RC-0). **Tested with unit specs over a stubbed store, NOT
   against a real media-service over HTTP**: that bench run (window shortened by env) is still owed.
+
+## Live segments: outside the index, deleted by prefix (WP-L3, 2026-10-18)
+
+A live's sealed segments are stored under `live/<liveId>/<name>` and are NOT entries of the metadata
+index: one every few seconds would rewrite the whole JSON index every few seconds, and nothing the
+index records applies (the owner is the live, the retention its end, the reaper social-service's live
+sweep, which purges by prefix). So the idle sweep and the account fan-out never see them, and
+`getStorageStats` reports them as `liveSegmentCount` / `liveSegmentBytes` instead of `untracked`. The
+contract, the switch and the proof the purge answers are on [lives](lives.md).
 
 ## The `form-file` class: plaintext, read by the server only (2026-10-15)
 
@@ -726,6 +739,7 @@ machine-locally under the rig's state directory, `ios-bench/r2-evidence/`.
 | `MEDIA_UPLOAD_SESSION_TTL_MS`           | no       | The resume window, from the opening (default 24 h)                                                                                                                                                           |
 | `MEDIA_UPLOAD_SESSION_MAX_OPEN`         | no       | Open sessions per member (default 4)                                                                                                                                                                         |
 | `MEDIA_UPLOAD_SESSION_MAX_STAGED_BYTES` | no       | Total declared size of open sessions (default 2 GiB)                                                                                                                                                         |
+| `LIVE_ENABLED`                          | no       | `true` opens the two live segment routes; anything else is a 404. Rendered `true` on dev, `false` on production ([lives](lives.md)) |
 
 **Every one of these was named `MINIO_*` until 2026-08-18**, four days after the store itself
 stopped being MinIO. Renamed rather than kept: a name that lies about what it configures is read

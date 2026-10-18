@@ -282,6 +282,12 @@ import { Log } from '$lib/utils/Log';
  * it - `readErrorDetail` in `useChannelWorkspaces` - are unchanged. The `code` half is the same
  * contract `DEVICE_REVOKED` uses on the delivery service.
  */
+/**
+ * The 410 code a salon send gets when it repeats a message deleted since its first send landed
+ * (social-service migration 090's tombstone): nothing is left to send or to offer again.
+ */
+export const CHANNEL_MESSAGE_DELETED = 'CHANNEL_MESSAGE_DELETED';
+
 export class ChannelApiError extends ApiRefusalError {
   constructor(status: number, code: string | null, message: string) {
     super(status, code, message);
@@ -712,10 +718,15 @@ export class ChannelService {
     return res.json();
   }
 
+  /**
+   * POSTs one sealed salon row. Since migration 090 the answer carries back the `clientMessageId` it
+   * was posted under, which is how a client learns a repeat is answered with the stored row
+   * (`salonRepeatProof.ts`).
+   */
   async sendMessage(
     channelId: string,
     dto: SendChannelMessageDto
-  ): Promise<{ id?: string; createdAt?: unknown }> {
+  ): Promise<{ id?: string; createdAt?: unknown; clientMessageId?: string | null }> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/messages`, {
       method: 'POST',

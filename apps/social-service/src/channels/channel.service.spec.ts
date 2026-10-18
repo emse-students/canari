@@ -2,11 +2,12 @@ import {
   ForbiddenException,
   BadRequestException,
   ConflictException,
+  GoneException,
   NotFoundException,
   Logger,
 } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import { CHANNEL_SIGNATURE_REQUIRED, ChannelService } from './channel.service';
+import { CHANNEL_SIGNATURE_REQUIRED, ChannelService, clientIdLockSql } from './channel.service';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -23,6 +24,9 @@ import {
 
 /** A well-formed Graine v2 signature: every salon row carries one (channel-encryption 21.8). */
 const SIGNATURE = Buffer.alloc(64, 7).toString('base64');
+
+/** A client message id as `crypto.randomUUID()` mints it (migration 090). */
+const CLIENT_ID = '3f1c2b9a-7d4e-4c1a-9b2e-5a6d7c8e9f01';
 
 describe('ChannelService security hardening', () => {
   const previousSecret = process.env.INTERNAL_SECRET;
@@ -97,12 +101,19 @@ describe('ChannelService security hardening', () => {
       create: jest.fn((x: unknown) => x),
       save: jest.fn((x: unknown) => Promise.resolve(x)),
       delete: jest.fn(() => Promise.resolve({ affected: 1 })),
+      // Raw SQL: the client-id tombstones of migration 090 (none by default).
+      query: jest.fn((_sql: string, _params?: unknown[]) => Promise.resolve([] as unknown[])),
       find: jest.fn(),
       findOne: jest.fn(),
       manager: {
         transaction: jest.fn(),
       },
     };
+    // By default a transaction runs against the repository itself: the client-id lock, the
+    // tombstone and the row land in `query`, `save` and `delete` above, in order.
+    messageRepo.manager.transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) =>
+      cb({ query: messageRepo.query, getRepository: () => messageRepo })
+    );
     const inviteRepo = {
       findOne: jest.fn(),
       find: jest.fn(() => Promise.resolve([])),
@@ -548,10 +559,27 @@ describe('ChannelService security hardening', () => {
     const { service, channelRepo, memberRepo, messageRepo, redis } = makeService();
     arrangePollAccess(channelRepo, memberRepo);
     messageRepo.findOne.mockResolvedValue({ id: 'm1', channelId: 'ch1', authorId: 'u1' });
+    // The row lock finds the row.
+    messageRepo.query.mockResolvedValueOnce([{}]);
 
     await service.deleteChannelMessage('ch1', 'm1', 'u1');
 
     expect(messageRepo.delete).toHaveBeenCalledWith({ id: 'm1', channelId: 'ch1' });
+    // In ONE transaction (migration 090): the ROW's lock first (what an account erasure's delete
+    // waits on, or makes this wait on), then the client id's lock - the one a send takes around its
+    // tombstone check and its insert - then the tombstone, then the row.
+    expect(messageRepo.manager.transaction).toHaveBeenCalledTimes(1);
+    const [[rowSql, rowParams], [lockSql, lockParams], [sql, params]] =
+      messageRepo.query.mock.calls;
+    expect(rowSql).toContain('FOR UPDATE');
+    expect(rowParams).toEqual(['m1', 'ch1']);
+    expect(lockSql).toContain(clientIdLockSql('"authorId"', '"channelId"', '"clientMessageId"'));
+    expect(lockParams).toEqual(['m1', 'ch1']);
+    expect(sql).toContain('INSERT INTO channel_message_client_tombstones');
+    expect(params).toEqual(['m1', 'ch1']);
+    expect(messageRepo.query.mock.invocationCallOrder[2]).toBeLessThan(
+      messageRepo.delete.mock.invocationCallOrder[0]
+    );
     expect(redis.publishChannelEvent).toHaveBeenCalledWith(
       'channel.message.deleted',
       expect.objectContaining({ channelId: 'ch1', messageId: 'm1', deletedBy: 'u1' }),
@@ -584,10 +612,29 @@ describe('ChannelService security hardening', () => {
       channelId: 'ch1',
       authorId: 'someone-else',
     });
+    messageRepo.query.mockResolvedValueOnce([{}]);
 
     await service.deleteChannelMessage('ch1', 'm1', 'u1');
 
     expect(messageRepo.delete).toHaveBeenCalledWith({ id: 'm1', channelId: 'ch1' });
+  });
+
+  it('deleteChannelMessage writes NO tombstone for a row removed while it waited (an erasure)', async () => {
+    const { service, channelRepo, memberRepo, messageRepo, redis } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    messageRepo.findOne.mockResolvedValue({ id: 'm1', channelId: 'ch1', authorId: 'u1' });
+    // Read before the transaction, gone once its row lock was granted.
+    messageRepo.query.mockResolvedValueOnce([]);
+
+    await service.deleteChannelMessage('ch1', 'm1', 'u1');
+
+    expect(messageRepo.query).toHaveBeenCalledTimes(1);
+    expect(messageRepo.delete).not.toHaveBeenCalled();
+    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.message.deleted',
+      expect.objectContaining({ messageId: 'm1' }),
+      expect.any(Array)
+    );
   });
 
   it("setMessagePinned rejects a plain member pinning someone else's message", async () => {
@@ -808,6 +855,98 @@ describe('ChannelService security hardening', () => {
     // that shows less history the more people react to it, with nothing saying so.
     expect(page.map((m) => m.id)).toEqual(['m2', 'r1', 'm1']);
     expect(page.find((m) => m.id === 'r1')?.silent).toBe(true);
+  });
+
+  // A membership notice is sent silent (it must not count as unread nor ring a phone), so a salon
+  // holding nothing else would otherwise open on an empty history.
+  it('listMessages returns the silent rows of a salon that has no body at all', async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    const notice = {
+      id: 'n1',
+      channelId: 'ch1',
+      authorId: 'u1',
+      content: 'c',
+      createdAt: new Date(100),
+      silent: true,
+      metadata: {},
+    };
+    messageRepo.find.mockImplementation(async (opts: any) =>
+      opts.where.silent === true ? [notice] : []
+    );
+
+    const page = await service.listMessages('ch1', 'u1', 50);
+
+    expect(page.map((m) => m.id)).toEqual(['n1']);
+  });
+
+  // A join notice is written BEFORE the salon's first body (the member joins, then speaks). The
+  // silent rows used to be fetched only from the oldest body down, so on a salon shorter than one
+  // page that notice was in no page at all: no later page is ever asked for below a short one.
+  describe('listMessages on a salon shorter than one page (notice, then body, then the page)', () => {
+    const row = (id: string, ms: number, silent: boolean) => ({
+      id,
+      channelId: 'ch1',
+      authorId: 'u1',
+      content: 'c',
+      createdAt: new Date(ms),
+      silent,
+      metadata: {},
+    });
+    // Evaluates the TypeORM operators the service builds, so the fixture is filtered the way
+    // PostgreSQL would filter it rather than by what each test pre-decides to return.
+    const matches = (op: any, d: Date): boolean => {
+      if (op === undefined) return true;
+      switch (op.type) {
+        case 'lessThan':
+          return d.getTime() < op.value.getTime();
+        case 'moreThanOrEqual':
+          return d.getTime() >= op.value.getTime();
+        case 'and':
+          return (op.value as any[]).every((o) => matches(o, d));
+        default:
+          throw new Error(`unexpected operator ${op.type}`);
+      }
+    };
+    const serve = (rows: ReturnType<typeof row>[]) => async (opts: any) =>
+      rows
+        .filter((r) => r.silent === opts.where.silent && matches(opts.where.createdAt, r.createdAt))
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .slice(0, opts.take ?? Infinity);
+
+    it('returns the notice older than the first body', async () => {
+      const { service, channelRepo, memberRepo, messageRepo } = makeService();
+      arrangePollAccess(channelRepo, memberRepo);
+      messageRepo.find.mockImplementation(serve([row('join', 100, true), row('m1', 200, false)]));
+
+      const page = await service.listMessages('ch1', 'u1', 50);
+
+      expect(page.map((m) => m.id)).toEqual(['m1', 'join']);
+    });
+
+    it('still bounds the silent rows by the cursor on a short page', async () => {
+      const { service, channelRepo, memberRepo, messageRepo } = makeService();
+      arrangePollAccess(channelRepo, memberRepo);
+      messageRepo.find.mockImplementation(
+        serve([row('join', 100, true), row('m1', 200, false), row('late', 400, true)])
+      );
+
+      const page = await service.listMessages('ch1', 'u1', 50, new Date(300).toISOString());
+
+      expect(page.map((m) => m.id)).toEqual(['m1', 'join']);
+    });
+
+    it('keeps the lower bound on a FULL page, whose older silent rows belong to the next one', async () => {
+      const { service, channelRepo, memberRepo, messageRepo } = makeService();
+      arrangePollAccess(channelRepo, memberRepo);
+      messageRepo.find.mockImplementation(
+        serve([row('join', 100, true), row('m1', 200, false), row('m2', 300, false)])
+      );
+
+      const page = await service.listMessages('ch1', 'u1', 2);
+
+      expect(page.map((m) => m.id)).toEqual(['m2', 'm1']);
+    });
   });
 
   it('rejects listMessages for a private channel when the user is neither admin nor allow-listed', async () => {
@@ -1212,7 +1351,7 @@ describe('ChannelService security hardening', () => {
         messageIndex: 4,
       };
       const shapes: [string, Record<string, unknown>][] = [
-        ['a text message with its seed frame', { messageId: 'client-1', ...FRAME }],
+        ['a text message with its seed frame', { messageId: CLIENT_ID, ...FRAME }],
         ['a silent reaction or edit', { silent: true }],
         [
           'a poll',
@@ -1273,6 +1412,167 @@ describe('ChannelService security hardening', () => {
         throw new Error('connection reset');
       });
       await expect(done).rejects.toThrow('connection reset');
+    });
+  });
+
+  /**
+   * WP-OFF-3: a send repeated after a lost answer is answered with the row it already made. The
+   * client's durable queue re-posts a salon message whose first POST got no answer; without this the
+   * repeat of a POST that DID land wrote a second row (a duplicate on every member's screen).
+   */
+  describe('a repeated send is answered with its stored row (migration 090)', () => {
+    const STORED = {
+      id: 'm-first',
+      channelId: 'ch1',
+      authorId: 'u1',
+      clientMessageId: CLIENT_ID,
+      createdAt: new Date(1_000),
+    };
+    const send = (
+      extra: Record<string, unknown>,
+      opts: { stored?: unknown; save?: (row: any) => Promise<unknown> } = {}
+    ) => {
+      const repos = makeService();
+      repos.channelRepo.findOne.mockResolvedValue({
+        id: 'ch1',
+        workspaceId: 'ws1',
+        isPrivate: false,
+      });
+      repos.memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
+      repos.memberRepo.find.mockResolvedValue([]);
+      repos.messageRepo.findOne.mockResolvedValue(opts.stored ?? null);
+      repos.messageRepo.create.mockImplementation((row: any) => row);
+      repos.messageRepo.save.mockImplementation(
+        opts.save ?? (async (row: any) => ({ ...row, id: 'm-new', createdAt: new Date(2_000) }))
+      );
+      const done = repos.service.sendMessage('ch1', {
+        senderId: 'u1',
+        ciphertext: 'abc',
+        nonce: 'def',
+        senderSessionId: 'sess-1',
+        messageIndex: 3,
+        signature: SIGNATURE,
+        ...extra,
+      } as never);
+      return { ...repos, done };
+    };
+    const settle = () => new Promise((resolve) => setImmediate(resolve));
+
+    it('stores the client id with a new row', async () => {
+      const { done, messageRepo } = send({ messageId: CLIENT_ID });
+      await expect(done).resolves.toMatchObject({ id: 'm-new' });
+      expect(messageRepo.findOne).toHaveBeenCalledWith({
+        where: { channelId: 'ch1', authorId: 'u1', clientMessageId: CLIENT_ID },
+      });
+      expect(messageRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ clientMessageId: CLIENT_ID })
+      );
+    });
+
+    it('answers a repeat with the STORED row and writes, publishes and pushes nothing', async () => {
+      const { done, messageRepo, redis } = send(
+        // A repeat sealed anew (the roster moved): another session, the same client id.
+        { messageId: CLIENT_ID, senderSessionId: 'sess-2', messageIndex: 0 },
+        { stored: STORED }
+      );
+      await expect(done).resolves.toBe(STORED);
+      await settle();
+      expect(messageRepo.save).not.toHaveBeenCalled();
+      expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+    });
+
+    it('echoes the client id in the answer, even when the read did not select it', async () => {
+      const { clientMessageId: _unselected, ...read } = STORED;
+      const { done } = send({ messageId: CLIENT_ID }, { stored: { ...read } });
+      await expect(done).resolves.toMatchObject({ id: 'm-first', clientMessageId: CLIENT_ID });
+      const fresh = send({ messageId: CLIENT_ID });
+      await expect(fresh.done).resolves.toMatchObject({ clientMessageId: CLIENT_ID });
+    });
+
+    it('refuses a repeat of a DELETED message with a typed 410, writing nothing', async () => {
+      const repos = send({ messageId: CLIENT_ID });
+      repos.messageRepo.query
+        .mockResolvedValueOnce([]) // the client id's lock
+        .mockResolvedValueOnce([{ '?column?': 1 }]); // its tombstone
+      const error = await repos.done.catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(GoneException);
+      expect(((error as GoneException).getResponse() as { code?: string }).code).toBe(
+        'CHANNEL_MESSAGE_DELETED'
+      );
+      // The check runs UNDER the lock a delete takes, in the transaction that would insert: a check
+      // made before it let a delete fall between the check and the insert, and re-post the row.
+      const [[lockSql, lockParams], [checkSql, checkParams]] = repos.messageRepo.query.mock.calls;
+      expect(lockSql).toContain(clientIdLockSql('$1', '$2', '$3'));
+      expect(lockParams).toEqual(['u1', 'ch1', CLIENT_ID]);
+      expect(checkSql).toContain('channel_message_client_tombstones');
+      expect(checkParams).toEqual(['u1', 'ch1', CLIENT_ID]);
+      expect(repos.messageRepo.manager.transaction).toHaveBeenCalledTimes(1);
+      await settle();
+      expect(repos.messageRepo.save).not.toHaveBeenCalled();
+      expect(repos.redis.publishChannelEvent).not.toHaveBeenCalled();
+    });
+
+    it('reads the id in either case: the stored key is lower case', async () => {
+      const { done, messageRepo } = send(
+        { messageId: CLIENT_ID.toUpperCase() },
+        { stored: STORED }
+      );
+      await expect(done).resolves.toBe(STORED);
+      expect(messageRepo.findOne).toHaveBeenCalledWith({
+        where: { channelId: 'ch1', authorId: 'u1', clientMessageId: CLIENT_ID },
+      });
+    });
+
+    it('answers the loser of two racing repeats with the winner row, never a 409', async () => {
+      const repos = send(
+        { messageId: CLIENT_ID },
+        {
+          save: async () => {
+            throw Object.assign(new Error('duplicate key value'), { code: '23505' });
+          },
+        }
+      );
+      // Absent at the lookup, present once the insert collided.
+      repos.messageRepo.findOne.mockResolvedValueOnce(null).mockResolvedValueOnce(STORED);
+      await expect(repos.done).resolves.toBe(STORED);
+      await settle();
+      expect(repos.redis.publishChannelEvent).not.toHaveBeenCalled();
+    });
+
+    it('still answers a key reused under ANOTHER client id with the typed 409', async () => {
+      const repos = send(
+        { messageId: CLIENT_ID },
+        {
+          save: async () => {
+            throw Object.assign(new Error('duplicate key value'), { code: '23505' });
+          },
+        }
+      );
+      const error = await repos.done.catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(ConflictException);
+    });
+
+    it('leaves a row with no client id alone: a silent row is never looked up', async () => {
+      const { done, messageRepo } = send({ silent: true });
+      await done;
+      expect(messageRepo.findOne).not.toHaveBeenCalled();
+      expect(messageRepo.create).toHaveBeenCalledWith(
+        expect.objectContaining({ clientMessageId: null })
+      );
+    });
+
+    it.each([
+      ['a string that is not a UUID', 'client-1'],
+      ['a number', 42],
+      ['an empty string', ''],
+    ])('refuses %s as the client id, storing nothing', async (_label, messageId) => {
+      const { done, messageRepo } = send({ messageId });
+      const response = await done.then(
+        () => null,
+        (e: BadRequestException) => e.getResponse() as { code?: string }
+      );
+      expect(response?.code).toBe('CHANNEL_CLIENT_MESSAGE_ID_INVALID');
+      expect(messageRepo.save).not.toHaveBeenCalled();
     });
   });
 

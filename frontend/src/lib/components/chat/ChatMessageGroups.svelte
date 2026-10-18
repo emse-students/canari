@@ -335,7 +335,9 @@
               onTogglePin={mayPinMessage(pinStanding) && !msg.awaitingServerId
                 ? onTogglePin
                 : undefined}
-              onRetry={msg.awaitingServerId && msg.status === 'error' && onRetrySend
+              onRetry={msg.awaitingServerId &&
+              (msg.status === 'error' || msg.status === 'unconfirmed') &&
+              onRetrySend
                 ? () => onRetrySend?.(msg.id)
                 : undefined}
               onDiscard={msg.awaitingServerId &&

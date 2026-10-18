@@ -74,6 +74,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // member's device - a row with no session asks peers for a seed nobody can send.
   'channel_messages.authorId': { action: 'delete' },
   'channel_messages.senderSessionId': { action: 'delete', via: 'authorId' },
+  // The client ids its DELETED salon messages left (migration 090): what keeps a repeated send from
+  // posting a removed message again. An erased account repeats no send, so they go with it.
+  'channel_message_client_tombstones.authorId': { action: 'delete' },
   'channel_members.userId': {
     action: 'code',
     by: 'ChannelService.removeAccountFromWorkspaces (governance repair before each removal)',
@@ -181,6 +184,13 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
       'D15: a deleted account leaves the name it had in a frozen booking; the one-year maximum age (D19) bounds it',
   },
 
+  // -- Lives ({@link LIVES_ERASURE_STATEMENTS}, docs/wiki/services/lives.md) ---------------------
+  // A live is its broadcaster's content and has no replay (L3): the erasure ENDS it and anonymises
+  // it in one statement, and the live sweep then deletes its segments and its row.
+  'lives.broadcasterId': { action: 'anonymise' },
+  'live_removed_viewers.viewerId': { action: 'delete' },
+  'live_starts.broadcasterId': { action: 'delete' },
+
   // -- Not an account reference, despite the name ----------------------------------------------
   'associations.contactEmail': {
     action: 'kept',
@@ -268,6 +278,38 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
 ];
 
 /**
+ * The lives part of the erasure (docs/wiki/services/lives.md, "A deleted account").
+ *
+ * - A live the account broadcast is ENDED (reason `erased`, unless it had already ended) and its
+ *   broadcaster becomes {@link DELETED_ACCOUNT}, in ONE statement: an open live never carries the
+ *   tombstone, and the partial unique index (one OPEN live per broadcaster) never sees two. The live
+ *   sweep deletes the segments and then the row within one run; nothing of it is served meanwhile,
+ *   because every read of an ended live is a 410.
+ * - The account's place on another live's removed-viewer list is deleted.
+ * - Its `live_starts` rows (the rolling hour `LIVE_STARTS_PER_HOUR` counts) are deleted.
+ *
+ * Exported apart so `lives.integration.spec.ts` runs exactly these against the schema 091 builds.
+ */
+export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
+  {
+    label: 'lives_broadcaster',
+    sql: `UPDATE lives
+             SET "broadcasterId" = $2,
+                 "endReason" = COALESCE("endReason", 'erased'),
+                 "endedAt" = COALESCE("endedAt", now())
+           WHERE "broadcasterId" = $1`,
+  },
+  {
+    label: 'live_removed_viewers',
+    sql: `DELETE FROM live_removed_viewers WHERE "viewerId" = $1`,
+  },
+  {
+    label: 'live_starts',
+    sql: `DELETE FROM live_starts WHERE "broadcasterId" = $1`,
+  },
+];
+
+/**
  * Every statement, in the order they must run inside ONE transaction. Order matters where a row
  * references another (`minesweeper_scores` before `minesweeper_challenges`), and where one statement
  * reads what the next rewrites (an association's posts are anonymised before the account's own posts
@@ -322,6 +364,10 @@ export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   // Its salon messages, reactions and pins included. The pinned ones are read back
   // ({@link ERASED_PINS_SQL}) BEFORE this runs, so the salons can be told their pin is gone.
   { label: 'channel_messages', sql: `DELETE FROM channel_messages WHERE "authorId" = $1` },
+  {
+    label: 'channel_message_client_tombstones',
+    sql: `DELETE FROM channel_message_client_tombstones WHERE "authorId" = $1`,
+  },
   // Its vote on somebody else's salon poll.
   {
     label: 'channel_poll_votes',
@@ -333,6 +379,8 @@ export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   },
   // Its bookings: a personal space deleted, the coming ones cancelled, the history tombstoned.
   ...BOOKINGS_ERASURE_STATEMENTS,
+  // Its lives: ended and anonymised, for the live sweep to delete; its removals by others, deleted.
+  ...LIVES_ERASURE_STATEMENTS,
 
   // Anonymised
   {

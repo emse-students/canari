@@ -18,6 +18,7 @@ import { createDataSource } from './common/synchronize-prerequisites';
 import { MinesweeperModule } from './minesweeper/minesweeper.module';
 import { CoorganisationModule } from './coorganisation/coorganisation.module';
 import { BookingsModule } from './bookings/bookings.module';
+import { LivesModule } from './lives/lives.module';
 import { HealthController } from './health.controller';
 
 /** Root NestJS module - wires up TypeORM, config, Redis, and all social feature modules. */
@@ -63,6 +64,8 @@ import { HealthController } from './health.controller';
     CoorganisationModule,
     // Bookings of rooms and slots (docs/wiki/bookings-chantier.md); WP-B1: the data model only.
     BookingsModule,
+    // Lives (docs/wiki/services/lives.md), every route behind LIVE_ENABLED: WP-L2 and WP-L3.
+    LivesModule,
   ],
   controllers: [HealthController],
 })

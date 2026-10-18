@@ -10,6 +10,7 @@ import type { ICallMsg } from '$lib/proto/codec';
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import type { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
+import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 
 /** Dependencies required to insert or update call system messages in a conversation. */
 export interface CallSystemMessageContext {
@@ -190,6 +191,14 @@ export async function handleCallSignalForChat(
 
   if (isCallInvite(callMsg)) {
     if (senderNorm === userNorm) return;
+    // A conversation that may not ring this account (its call permission, read by `CallService`
+    // too, which therefore does not ring): the call is written as MISSED at once, so it is visible
+    // in the timeline instead of the ring. Missed is final (`endedAt` set), so the caller's later
+    // hangup leaves it as it is.
+    if (!notificationPreferences.callsAllowed(groupId)) {
+      await recordCallMissed(ctx, groupId, callMsg.callId, senderId);
+      return;
+    }
     await recordCallStarted(ctx, groupId, callMsg.callId, senderId);
   }
 }

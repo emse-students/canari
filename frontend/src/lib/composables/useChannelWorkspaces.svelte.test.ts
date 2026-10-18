@@ -11,6 +11,8 @@ import { conformPluginFetch } from '$lib/utils/transportFailure';
 import { setCurrentUserId } from '$lib/stores/userState.svelte';
 import { getChannelReactions } from '$lib/stores/reactionStore.svelte';
 import { activeReactions } from '$lib/utils/chat/messageReactions';
+import { connectivity } from '$lib/stores/connectivity.svelte';
+import { resetOwedSalonWrites } from '$lib/utils/chat/salonOwed';
 
 // THE ERROR CLASSES COME FROM THE REAL MODULE, not from the mock. `isRetryableLoadError` decides
 // by `instanceof`, and a stand-in class would make every one of those tests pass against a type the
@@ -41,6 +43,7 @@ vi.mock('$lib/paraglide/messages', () => ({
     channel_action_error_generic: vi.fn(
       ({ action, detail }: { action: string; detail: string }) => `${action}: ${detail}`
     ),
+    chat_system_member_added: vi.fn(() => 'notice'),
     chat_send_error_seal_no_session: vi.fn(() => 'seal: no-session'),
     chat_send_error_seal_unknown_channel: vi.fn(() => 'seal: unknown-channel'),
     chat_send_error_seal_key_group_missing: vi.fn(() => 'seal: key-group-missing'),
@@ -56,10 +59,11 @@ vi.mock('$lib/stores/toast.svelte', () => ({
 
 vi.mock('$lib/utils/chat/channelCrypto', () => ({
   isChannelConversationId: (id: string) => id.startsWith('channel_'),
-  sendEncryptedChannelMessage: vi.fn(),
+  sendEncryptedChannelMessage: (...args: unknown[]) => sendEncryptedChannelMessage(...args),
   sendChannelReaction: (...args: unknown[]) => sendChannelReaction(...args),
 }));
 const sendChannelReaction = vi.fn();
+const sendEncryptedChannelMessage = vi.fn();
 
 const listUserWorkspaces = vi.fn();
 const listChannels = vi.fn();
@@ -67,6 +71,7 @@ const createWorkspace = vi.fn();
 const createChannel = vi.fn();
 const renameChannel = vi.fn();
 const reorderChannels = vi.fn();
+const inviteToChannel = vi.fn();
 
 // Same reason as the auth mock above: `ChannelApiError` must be the real class, because that is
 // what `ChannelService.handleError` throws and what the code under test tests for.
@@ -79,9 +84,14 @@ vi.mock('$lib/services/ChannelService', async (importOriginal) => ({
     createChannel = createChannel;
     renameChannel = renameChannel;
     reorderChannels = reorderChannels;
+    inviteToChannel = inviteToChannel;
     // Every listing asks the unread counts at its end; a fake without them logged a TypeError there.
     listUnreadCounts = vi.fn().mockResolvedValue([]);
   },
+}));
+
+vi.mock('$lib/utils/users/displayName', () => ({
+  resolveDisplayNames: vi.fn().mockResolvedValue((id: string) => id),
 }));
 
 const ensureCommunityDistributionGroup = vi.fn().mockResolvedValue(true);
@@ -1394,12 +1404,19 @@ describe('useChannelWorkspaces - a reaction that could not be sent', () => {
   const standingOn = (messageId: string) =>
     activeReactions(getChannelReactions(messageId)).filter((r) => r.userId === 'u1');
 
+  // Each case states its own send outcome and its own link: a rejection another test left on the
+  // mock, or a store an earlier test left offline, would decide the outcome instead of the case.
   beforeEach(() => {
     vi.clearAllMocks();
+    sendChannelReaction.mockReset();
+    connectivity.reset();
+    resetOwedSalonWrites();
     setCurrentUserId('u1');
   });
 
-  it('names a transport failure by its TYPE, with the network sentence, and takes the pill back', async () => {
+  // A lost answer with the link up is an UNKNOWN outcome (WP-OFF-4, `nothingLeftTheDevice`): the
+  // server may hold the frame and peers may have it, so the pill stays and only the toast speaks.
+  it('names a transport failure by its TYPE, with the network sentence, and keeps the pill', async () => {
     const api = useChannelWorkspaces();
     const ctx = makeContext();
     sendChannelReaction.mockRejectedValue(
@@ -1409,17 +1426,17 @@ describe('useChannelWorkspaces - a reaction that could not be sent', () => {
     await api.toggleChannelReaction('channel_c1', 'm-rollback-1', '👍', ctx);
 
     expect(showToast).toHaveBeenCalledWith(expect.stringContaining('network error'), 'error');
-    expect(standingOn('m-rollback-1')).toHaveLength(0);
+    expect(standingOn('m-rollback-1')).toHaveLength(1);
   });
 
-  it('puts a removed reaction back when the removal was not sent', async () => {
+  it('puts a removed reaction back when the server refused the removal', async () => {
     const api = useChannelWorkspaces();
     const ctx = makeContext();
     sendChannelReaction.mockResolvedValueOnce(undefined);
     await api.toggleChannelReaction('channel_c1', 'm-rollback-2', '👍', ctx);
     expect(standingOn('m-rollback-2')).toHaveLength(1);
 
-    sendChannelReaction.mockRejectedValue(new DeliveryUnreachableError('offline'));
+    sendChannelReaction.mockRejectedValue(new ChannelApiError(403, null, 'Forbidden'));
     await api.toggleChannelReaction('channel_c1', 'm-rollback-2', '👍', ctx);
 
     expect(standingOn('m-rollback-2')).toHaveLength(1);
@@ -1433,5 +1450,31 @@ describe('useChannelWorkspaces - a reaction that could not be sent', () => {
     await api.toggleChannelReaction('channel_c1', 'm-rollback-3', '👍', ctx);
 
     expect(standingOn('m-rollback-3')).toHaveLength(1);
+  });
+});
+
+describe('useChannelWorkspaces - the membership notice', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setCurrentUserId('inviter');
+    inviteToChannel.mockResolvedValue({ alreadyMember: true });
+    sendEncryptedChannelMessage.mockResolvedValue(null);
+  });
+
+  // The row is encrypted, so the server cannot tell a notice from a message: the sender says so.
+  // Sent as an ordinary row it counted as unread for every member of the salon (and rang their
+  // phones) until each opened it - the "X joined" badge of 2026-10-08.
+  it('is sent SILENT, so it neither counts as unread nor rings anyone', async () => {
+    await useChannelWorkspaces().inviteMemberToChannel(
+      'channel_c1',
+      'newcomer',
+      'member',
+      makeContext()
+    );
+
+    expect(sendEncryptedChannelMessage).toHaveBeenCalledTimes(1);
+    const [channelId, , , , , options] = sendEncryptedChannelMessage.mock.calls[0];
+    expect(channelId).toBe('channel_c1');
+    expect(options).toEqual({ silent: true });
   });
 });

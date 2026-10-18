@@ -2,8 +2,10 @@ import { closeOpenIndexedDbStores } from '$lib/db';
 import { closeOutboxBlobStores } from '$lib/db/outboxBlob';
 import { forgetMirroredAvatars } from '$lib/utils/avatarMirror';
 import { closeMlsDb } from '$lib/utils/hex';
+import { deleteIndexedDbByName } from '$lib/utils/indexedDbDelete';
 import { discardAppLog } from '$lib/utils/appLog';
 import { isTauriRuntime } from '$lib/utils/openExternal';
+import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
 
 /**
  * Everything still on this device that a factory wipe was supposed to remove.
@@ -45,14 +47,15 @@ async function surveyDeviceStorage(): Promise<string[]> {
  * MUST BE READ BEFORE `localStorage.clear()`, which is why it is a separate step and not inlined.
  */
 function recordedKeystoreAliases(): string[] {
+  const DEVICE_ID_PREFIX = ACCOUNT_KEY.deviceId('');
   const aliases: string[] = [];
   try {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key === null || !key.startsWith('mls_device_id_')) continue;
-      const userId = key.slice('mls_device_id_'.length);
+      if (key === null || !key.startsWith(DEVICE_ID_PREFIX)) continue;
+      const userId = key.slice(DEVICE_ID_PREFIX.length);
       const deviceId = localStorage.getItem(key);
-      if (userId && deviceId) aliases.push(`mls_device_key_${userId}_${deviceId}`);
+      if (userId && deviceId) aliases.push(keystoreAlias(userId, deviceId));
     }
   } catch (e) {
     console.warn('[RESET] could not read the recorded device ids back:', e);
@@ -168,29 +171,7 @@ export async function wipeDeviceToFactory(): Promise<string[]> {
     await Promise.all(
       all
         .filter((db) => db.name?.startsWith('CanariDB'))
-        .map(
-          (db) =>
-            new Promise<void>((resolve) => {
-              if (!db.name) return resolve();
-              const req = indexedDB.deleteDatabase(db.name);
-              req.onsuccess = () => resolve();
-              // A DELETE THAT FAILED USED TO LOOK EXACTLY LIKE ONE THAT WORKED. `resolve()` alone
-              // left the survey as the only witness, which says WHAT remains and never WHY - and
-              // the two databases HEAL-REVOKE-5 found surviving were distinguishable only by the
-              // one that happened to log `blocked`. Every swallowed branch logs.
-              req.onerror = () => {
-                console.error(`[RESET] could not delete ${db.name}:`, req.error);
-                resolve();
-              };
-              // Reached only if something else still holds the database open - a second tab, for
-              // instance. The delete then completes when that connection closes, so the reset is
-              // not lost, only deferred; saying so is what stops it reading as success.
-              req.onblocked = () => {
-                console.warn(`[RESET] ${db.name} is still open elsewhere - delete deferred`);
-                resolve();
-              };
-            })
-        )
+        .map((db) => (db.name ? deleteIndexedDbByName(db.name, '[RESET]') : Promise.resolve(true)))
     );
   });
 

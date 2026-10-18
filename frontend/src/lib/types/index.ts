@@ -47,10 +47,12 @@ export type MessageReference = {
 
 /**
  * Where an own message stands on its way to the server. `unconfirmed` exists for a salon message
- * only (WP-OFF-2): the request left and NO answer came back (the link dropped, or a gateway 5xx after
- * the server may have stored it). Nobody knows whether the server holds it, so it is neither `sent`
- * nor `error`: a retry could post it twice, so the row offers Delete and "put back in the composer"
- * instead, and the frame or a history page settles it if the server did take it.
+ * only (WP-OFF-2): the request left and NO answer came back while the link still works (a gateway 5xx
+ * after the server may have stored it, a stall). Nobody knows whether the server holds it, so it is
+ * neither `sent` nor `error`; the row offers Retry - safe, the server answers a repeat of its client
+ * id with the row it holds (WP-OFF-3) - Delete and "put back in the composer", and the frame or a
+ * history page settles it if the server did take it. With the link DOWN the row is `pending` instead,
+ * owed to the reconnect.
  */
 export type MessageSendStatus = 'pending' | 'sending' | 'sent' | 'error' | 'unconfirmed';
 

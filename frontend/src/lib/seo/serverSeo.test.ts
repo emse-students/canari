@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { wordingFor } from '$lib/associations/kindWording';
+import { formatDocumentTitle } from '$lib/seo/resolve';
 
 const fetchJson = vi.fn();
 vi.mock('$lib/seo/internalApi', () => ({
@@ -37,5 +38,31 @@ describe('the edit page head, resolved by the KIND of the entity', () => {
     const meta = await resolveServerSeo('/associations/ghost/edit');
     expect(meta.title).toBe(wordingFor('association').editTitle());
     expect(meta.noindex).toBe(true);
+  });
+});
+
+describe('a shared post card fits the lengths an unfurler shows', () => {
+  beforeEach(() => fetchJson.mockReset());
+
+  const LONG_POST =
+    "Le BDE vous invite a la soiree d'integration de la promo 2029, rendez-vous jeudi soir au foyer pour un moment convivial avec musique, jeux et surprises. Venez nombreux, inscription obligatoire via le formulaire en lien, places limitees.";
+
+  it('og:title stays within 60 characters and the description within 125, cut between words', async () => {
+    fetchJson.mockResolvedValue({
+      markdown: LONG_POST,
+      createdAt: '2026-10-17T10:00:00.000Z',
+      association: { name: 'Bureau des Eleves', slug: 'bde', logoUrl: null },
+      image: null,
+    });
+    const meta = await resolveServerSeo('/posts/3f1c2b7e-1111-4222-8333-123456789abc');
+    const ogTitle = formatDocumentTitle(meta.title);
+    expect(ogTitle.length).toBeLessThanOrEqual(60);
+    expect(meta.description.length).toBeLessThanOrEqual(125);
+    // The word before the ellipsis is a whole word of the post, never a fragment of one.
+    for (const cut of [meta.title, meta.description]) {
+      expect(cut.endsWith('…')).toBe(true);
+      const lastWord = cut.slice(0, -1).trim().split(' ').pop()!;
+      expect(LONG_POST.split(/\s+/)).toContain(lastWord);
+    }
   });
 });

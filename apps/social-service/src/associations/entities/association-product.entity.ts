@@ -10,7 +10,8 @@ import {
 
 /**
  * A product in an association's shop.
- * Products are inactive until the association completes Stripe Connect onboarding.
+ * Products are inactive until the association's payments are ready (payout account onboarded
+ * with the active provider, docs/wiki/stripe-archive.md).
  */
 @Entity('association_products')
 export class AssociationProduct {
@@ -127,7 +128,7 @@ export class AssociationProduct {
 
   /**
    * Whether the product is available to buyers.
-   * Forced to false until the association completes Stripe Connect onboarding.
+   * Forced to false until the association's payments are ready (see `activationWithheld`).
    */
   @Column({ default: true })
   isActive: boolean;

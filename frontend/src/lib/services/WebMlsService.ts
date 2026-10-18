@@ -28,7 +28,11 @@ import type {
   MlsKeyPackageRequest,
   MlsKeyPackageResponse,
 } from '$lib/mls-client/mlsWorkerProtocol';
-import { isChannelEventFrame, isHeartbeatFrame } from '$lib/mls-client/channelEventTypes';
+import {
+  isChannelEventFrame,
+  isEphemeralFrame,
+  isHeartbeatFrame,
+} from '$lib/mls-client/channelEventTypes';
 import { parseServerTimestampMs } from '$lib/mls-client/incomingDelivery';
 import { getToken } from '$lib/stores/auth';
 import {
@@ -43,6 +47,7 @@ import MlsKeyPackageWorker from '../workers/mlsKeyPackage.worker?worker';
 import { BaseMlsService } from './BaseMlsService';
 import { beginBootSpan, endBootSpan } from '$lib/mls-client/bootBenchmark';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /**
  * Worker result for key package generation done off the main thread.
@@ -555,13 +560,17 @@ export class WebMlsService extends BaseMlsService {
     // frame that was perfectly well formed. A reader who learns to skip that is a reader who
     // will skip the next real one, and one who does not learns nothing from three `undefined`s.
     // The payload fields are logged on the payload branch below, where they exist.
-    console.log(
-      `[WS RCV] ${sanitizeForLog(frameType || 'payload')} frame for group ` +
-        sanitizeForLog(String(msg.groupId ?? '-'))
-    );
+    // A typing signal or a read receipt decides nothing and arrives by the dozen (33 + 17 lines
+    // in two hours of one web console, 2026-10-18), so they are not announced; every other frame
+    // still is.
+    if (!isEphemeralFrame(frameType)) {
+      console.log(
+        `[WS RCV] ${sanitizeForLog(frameType || 'payload')} frame for group ` +
+          sanitizeForLog(String(msg.groupId ?? '-'))
+      );
+    }
     if (isChannelEventFrame(frameType)) {
       if (this.onChannelEvent) {
-        console.log(`[WS RCV] Triggering onChannelEvent for ${sanitizeForLog(String(msg.type))}`);
         this.onChannelEvent({ type: msg.type, data: msg.data });
       } else {
         console.warn(`[WS RCV] Received channel/post event but no onChannelEvent registered.`);
@@ -1378,7 +1387,7 @@ export class WebMlsService extends BaseMlsService {
   async publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void> {
     const base64 = toBase64(keyPackage.bytes);
     const storedName =
-      localStorage.getItem(`device-name:${this.userId}:${this.deviceId}`) || undefined;
+      localStorage.getItem(ACCOUNT_KEY.deviceName(this.userId, this.deviceId)) || undefined;
     await this.delivery.registerDeviceKeyPackage({
       keyPackageBase64: base64,
       notAfterSecs: keyPackage.notAfterSecs,

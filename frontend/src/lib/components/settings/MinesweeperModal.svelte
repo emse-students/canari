@@ -59,6 +59,7 @@
     X,
   } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
+  import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
   import { showConfirm } from '$lib/stores/confirm.svelte';
   import { globalAdminState } from '$lib/stores/userState.svelte';
 
@@ -489,7 +490,14 @@
     } catch (err) {
       console.debug('[minesweeper] submit failed', err);
       submitError = true;
-      submitMessage = m.minesweeper_submit_fail();
+      // 400 is the replay verdict (the specific line); any other answered status is worded from
+      // the TYPE the throw carries, and no answer at all keeps the generic line.
+      const status = refusalStatus(err);
+      submitMessage =
+        status === 400
+          ? m.minesweeper_submit_fail()
+          : (describeApiRefusal(status, m.minesweeper_submit_action()) ??
+            m.minesweeper_submit_fail());
     } finally {
       submitPending = false;
     }

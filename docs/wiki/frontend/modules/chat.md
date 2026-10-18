@@ -516,27 +516,101 @@ reader's.
   until it updates. Rotating the key ends that path for them (their search then fails), and is the
   owner's call ([backlog](../../backlog.md)).
 
-**What the browser still says to KLIPY, and why it is not proxied yet.** Three paths remain, all on
-`static.klipy.com` (the CDN), none carrying a query:
+### The GIF relay: no reader's browser asks KLIPY for a GIF (2026-10-18)
 
-| Path | Who | What KLIPY's CDN learns |
-| --- | --- | --- |
-| The picker grid's thumbnails (`<img src>` = `preview.url`) | the person searching | their IP and user agent, and which results they were shown - not the query text, though a results set can hint at it |
-| A comment's GIF bytes (`PostComments.handleGifSelected`, `connect-src`) | the person attaching it | their IP, once, at attach time; the bytes are then encrypted and uploaded, so readers never touch KLIPY |
-| **A GIF sent in a chat** (`GifEmbed`, mounted by `MessageTextBody`; `<img src>` = the sent URL) | **every recipient, on every render that misses the browser cache** | each reader's IP, user agent and the moment the message came into view - the leak `previewImageProxy.ts` closed for link previews, still open for GIFs. `isGifUrl` matches any `.gif` URL, so a GIF from any host behaves the same |
+**Why.** After the search moved to the server, three paths still went from the browser to
+`static.klipy.com`, KLIPY's CDN: the picker grid's thumbnails (the searcher's IP, and which results
+they were shown), a comment's GIF bytes (the attacher's IP, once), and - the one that mattered - **a
+GIF sent in a chat, loaded by every recipient on every render that missed the browser cache**: each
+reader's IP, user agent and the moment the message came into view, the leak `previewImageProxy.ts`
+had closed for link previews.
 
-The proxy that would close the last row exists - `/api/mls/link-preview/image` (ticket-gated,
-SSRF-guarded, `image/*` only, [chat-delivery](../../services/chat-delivery.md)) - but routing GIFs
-through it is not the one-line change it looks like, so it was NOT done here: its ceiling is 3 MB
-(`IMAGE_MAX_BYTES`) and KLIPY's `md` renditions exceed it for 29 of 144 GIFs (20%; p50 1.1 MB, p90
-4.4 MB, max 11.7 MB; `sm` fits, max 2.9 MB; measured 2026-10-18 over trending and 5 searches, `HEAD`
-content-length), so about one GIF in five would turn into a broken frame; only images up to `IMAGE_CACHEABLE_BYTES`
-are cached server-side, so every larger GIF would be re-downloaded per reader through Canari's
-bandwidth; and the `#cn-size` fragment the frame reserves from must survive the rewrite. The work is
-a GIF-specific route (an allowlist of `static.klipy.com`, a measured ceiling (about 12 MB), a byte cache keyed on
-the content URL, streaming rather than buffering) plus the client rewrite at the three GIF
-renderers ([backlog](../../backlog.md)). The CSP cannot narrow this either way: `img-src` stays
-`https:` because the feed renders arbitrary user-posted images.
+**What.** `GET /api/mls/gifs/media?url=<CDN URL>&t=<ticket>` (chat-delivery,
+`controllers/gif-media.controller.ts`, policy in `utils/gif-media.ts`) fetches the GIF and streams it
+to the reader. KLIPY sees chat-delivery's address and a `User-Agent` - once per 24 h for a GIF
+the cache keeps, once per miss for a larger one. The client rewrites at
+**render time only**, through ONE helper, `frontend/src/lib/utils/gifMediaProxy.ts`
+(`proxiedGifUrl`, `fetchGifFile`), at the four places that draw or read a GIF: `GifEmbed` (the
+bubble, via `MessageTextBody`), `ReplyGifThumb` (a quoted GIF, also the composer's reply strip),
+`GifGrid` (the picker's thumbnails) and `PostComments.handleGifSelected` (a comment's attach). **A
+sent message keeps its ORIGINAL KLIPY URL on the wire**, so a client older than this renders it as
+it always did.
+
+- **Its own route, not the link-preview proxy.** That proxy's 3 MB ceiling would have broken one
+  `md` GIF in five, and its small-image cache would have re-fetched every larger one per reader.
+  MEASURED 2026-10-18 over 144 GIFs (trending and searches): `sm` max 2.9 MB; `md` median 1.1 MB,
+  p90 4.4 MB, max 11.7 MB. **Ceiling 12 MiB** (`GIF_MEDIA_MAX_BYTES`), checked on the declared
+  length (413 before a byte is read) and on the bytes (the stream is cut, logged `too-large`).
+- **One host, no query.** `static.klipy.com`, https, no credentials, no explicit port, and NO query
+  (400 `query-not-allowed`: KLIPY's paths are content-addressed, and `?x=N` would make every request
+  a new cache key) (`parseKlipyCdnUrl`), then the SAME SSRF guard and pinned dispatcher as the preview proxy (`assertSafeExternalUrl`,
+  `ssrfSafeFetch`, `OUTBOUND_BUDGET_MS` per leg). **Redirects are refused (502 `redirected`), not
+  followed**: the allowlist names a host and a redirect is another. `image/gif` only (415 `not-gif`;
+  measured: the CDN answers `image/gif` with a `content-length`).
+- **Streamed.** `Readable.fromWeb(body) -> GifByteCounter -> res`, with backpressure: the reader gets
+  bytes as they arrive, and a reader who leaves (`res` closes) aborts the upstream request. The only
+  copy held is the cache's, and only while the GIF stays under `GIF_MEDIA_CACHE_ENTRY_MAX_BYTES`
+  (4 MiB, about nine in ten `md` renditions) - which also bounds a request's memory.
+- **A byte cache** keyed on the content URL with the fragment dropped (`TtlCache` with a weight
+  budget: 64 MiB in all, 500 entries, 24 h - KLIPY's paths are content-addressed and its CDN says
+  `max-age=86400`). A GIF is kept only when it is provably whole: KLIPY declared a length and that
+  many bytes came (the debug line says which reason skipped a write). Upstream asked with
+  `accept-encoding: identity`, so the bytes counted are the GIF's own.
+- **Single-flight and a cap.** Identical misses wait on the ONE fetch in flight
+  (`GifMediaController.inFlight`) and are answered from the cache it fills - so a GIF of at most
+  4 MiB sent to a group of forty is fetched from KLIPY once per 24 h, even when they open it at the
+  same moment. A refusal KLIPY gave (404, not a GIF, too large, timed out) is SHARED with the
+  waiters. A GIF the cache did not keep (over 4 MiB, no declared length, a failed stream) releases
+  every waiter at once to fetch IN PARALLEL - the Nth reader waits two fetch times, never N - and
+  the reader's browser keeps it (`private, max-age=86400`). A waiter follows its leader's pace
+  (backpressure), a cost taken for one fetch. At most `GIF_MEDIA_MAX_IN_FLIGHT` (16) fetches run at
+  once, released waiters counted, so in-flight memory stays under 64 MiB; beyond, 503 `busy`,
+  logged.
+- **A deadline on the whole fetch.** `ssrfSafeFetch` bounds only the connect step, so a stalled
+  KLIPY body would hold a slot and every waiter on it. `GIF_MEDIA_FETCH_DEADLINE_MS` (30 s, headers
+  and body: 12 MiB at ~3.3 Mbit/s) aborts it: 504 `timed-out` before any byte, a logged cut-off
+  after.
+- **A per-address throttle**, because the ticket is shared and lives a day: `ClientIpThrottlerGuard`
+  (keyed on nginx's `X-Real-IP`, the twin of social-service's) at `GIF_MEDIA_LIMIT_PER_MINUTE` (600)
+  - generous on purpose: a picker page is 24 thumbnails, and one address may be a campus NAT.
+- **A ticket of its own kind, a DAY long.** The URL is an `<img src>` (no Bearer; on
+  `tauri://localhost` no cookie), so it is ticket-gated like the preview proxy - but the ticket is
+  part of the URL the browser caches under, and the preview ticket's five-minute bucket would have
+  given each GIF a new URL, a new download of up to 12 MiB, every five minutes. `gifTicket`
+  (`GIF_MEDIA_TICKET_BUCKET_MS`, a different HMAC label) rides on the same
+  `GET /api/mls/link-preview/ticket` answer; its value changes once a day. Neither kind opens the
+  other's route (`previewTicket.spec.ts`).
+- **Every refusal is typed and logged** (`GifMediaRefusedError`, one reason per line: `missing-url`,
+  `invalid-url`, `not-https`, `host-not-allowed`, `credentials`, `non-default-port`,
+  `query-not-allowed`, `busy`, `blocked-address`, `redirected`, `upstream-not-found`, `upstream-status`, `not-gif`, `empty-body`,
+  `too-large`), bodyless like the preview proxy's. KLIPY unreachable is a 502 logged apart; a reader
+  leaving is a debug line, told apart from a stream failure by which happened FIRST.
+- **The query is not logged by THIS repository's nginx**, which writes the route as
+  `/api/mls/gifs/media?query-redacted` (`access-log-redaction.test.mjs`): which GIF a reader loaded,
+  beside their address, is what the relay keeps from KLIPY. **Not covered:** the host-level nginx
+  in front of it and the Cloudflare edge (legacy names) log the FULL URL, `url=` and `t=` included
+  ([nginx](../../infrastructure/nginx.md#the-access-log-never-records-a-token-2026-10-06)) - their
+  formats are the host's.
+- **The `#cn-size` fragment** is cut from the relayed `url=` (a browser never sends one, and it must
+  not make one GIF several cache entries) and put back on the END of the rewritten URL; the frame
+  still reads the size off the message's own URL (`measureKey` too, so the size cache does not
+  change when the ticket does).
+- **No ticket yet: no `<img>`.** `proxiedGifUrl` answers `''` until the ticket lands; `GifEmbed`
+  holds its frame empty and `ReplyGifThumb` shows its `[GIF]` label - an empty `src` would fire
+  `error` and latch the link.
+- **A GIF from ANY OTHER HOST** (`isGifUrl` matches any `.gif` URL, and tenor/giphy pages through
+  `getGifEmbedUrl`) **still loads directly, as before** (owner decision 2026-10-18: no regression,
+  no detour through the 3 MB preview proxy, no ticket churn). So **a reader of a pasted giphy,
+  tenor or other `.gif` link still reaches that host** - how often is UNMEASURED (the picker never
+  sends one). Routing them later is one line in `proxiedGifUrl`: return
+  `proxiedPreviewImageUrl(rawUrl)` for a non-KLIPY URL.
+- **CSP unchanged.** `img-src` stays `https:` (the feed renders arbitrary user-posted images).
+  `connect-src` still names `https://static.klipy.com`, which the current bundle no longer needs: it
+  serves a web tab still running an older bundle (its comment attach would fail until it reloads).
+  Dropping it is a narrowing the owner may take; `csp.test.ts` says so.
+- **Not proven here:** that a real browser on a deployed estate makes ZERO request to
+  `static.klipy.com` - owed as a network trace on dev after an alpha, and on the phones
+  ([backlog](../../backlog.md)).
 
 ### The GIF search is the whole screen, and a quoted GIF is a picture (2026-10-05)
 
@@ -1146,6 +1220,10 @@ drains its own entries oldest first. Rules that came with it:
 - **`MAX_CONCURRENT_SENDS = 3`** frames on the wire across lanes (a slot is handed to the next waiter,
   never freed and re-raced): enough that one stalled lane freezes only itself, few enough that a
   50 kbit/s uplink is not cut into slivers that each miss their deadline.
+- **An attachment's UPLOAD runs outside the lane and holds no send slot** (WP-OFF-9, 2026-10-18): the
+  lane starts it and moves on, so a text written after a big file is not held by it; only the media
+  message's small MLS send takes the lane once the upload ended. Display order stays `sentAt`; the
+  rules and the order semantics are in [offline-and-weak-network 13.8](../offline-and-weak-network.md#138-wp-off-9-built-the-upload-runs-outside-the-lane-2026-10-18).
 - The send POST is under a `write` deadline ([offline-and-weak-network](../offline-and-weak-network.md#11-wp-off-5-shipped-a-deadline-a-slow-state-and-lanes)),
   so a stalled lane ends as `DeliveryUnreachableError` and takes the ordinary backoff.
 
@@ -1244,24 +1322,27 @@ fix is sender-side - the import path declares `voiceNote: false`, or the flag be
 not built. Do not delete the name rule as a heuristic: it is what keeps pre-2026-09-17 recordings
 out of the tab.
 
-**A push does not read the field.** A voice note on a locked phone is still announced as an audio
-file: the sentence is chosen in the Rust push scanner (`mobile/proto_fields.rs`,
-`extract_full_message_info`, from the `MediaKind` varint), not in Kotlin, and field 11 sits unread
-beside it. The same file writes SIXTEEN user-visible sentences as French literals, whatever the
-app's language:
+**A push reads the field, and words its sentences in the app's language (WP-PUSH-I18N, built
+2026-10-18, not shipped).** The Rust push scanner (`mobile/proto_fields.rs`,
+`extract_full_message_info`) decides WHAT a decrypted message is and reads `voice_note` (field 11)
+beside the `MediaKind`: a declared recording is announced `Message vocal` / `Voice message`, an
+undeclared audio (an import, or a recording from before 2026-09-17) `Fichier audio` / `Audio file`.
+Every sentence it composes - the system events, `a réagi {emoji}`, the four media placeholders, the
+poll line, the two call lines and the `événement de groupe ({event})` trap - is written ONCE, in both
+languages, in `mobile/push_text.rs` (`PushText::render`): a closed enum whose exhaustive `match`
+refuses to compile a sentence written in one language only, and a test that writes out all of them.
+The text somebody TYPED passes through untouched.
 
-| builder | sentences |
-| --- | ---: |
-| `format_system_event_text` - renamed (2 forms), image changed, member added (2 forms), removed, left, deleted, invitation | **9** |
-| the reaction arm - `a réagi {emoji}` | **1** |
-| the media arm - `Photo`, `Vidéo`, `Audio`, `Pièce jointe` | **4** |
-| the call arm - `Appel vidéo entrant`, `Appel entrant` | **2** |
-
-Its fallback arm prints `événement de groupe ({event})`, a raw protocol name; the silence list beside
-it is what keeps that a trap rather than live noise. The text is what the FCM cache persists as a
-message body, so emitting a KIND for the native side to word (which `appLocaleContext` already
-localises on Android) changes what that cache stores - which is why it is a design, not a
-translation chore.
+**The language comes down with the call, it is not looked up.** Each native caller passes the
+`locale` it already read from `push_context.json` (the mirror `set_push_context_locale` writes) to
+`nativeDecryptMessageWithKey`, `nativeDecryptMessageWithCommitsWithKey` and `nativeOpenGrainePush`
+on Android, and to their three `canari_native_*` twins on iOS (the NSE and `canari_push.mm`).
+`PushLanguage::from_tag` reads `en`/`en-*` as English and everything else - the empty tag of a device
+that never mirrored its choice included - as French, the base locale. Android's own tables fall back
+to the OS locale in that one case, so the two may disagree on a device that has never opened a build
+that mirrors the locale; a device that has, cannot. Why Rust and not a KIND worded natively: the text
+is what the FCM cache persists as a message body, and one implementation keeps Android and iOS from
+diverging ([mobile](../mobile.md#the-language-a-notification-speaks)).
 
 ### A system event is executed, never displayed
 
@@ -3535,7 +3616,7 @@ A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), a
 
 `sendChatMessage` (channel branch) draws a local ECHO row before the POST - `status: 'pending'`, then `'sending'` while in flight - using the same `ChatMessage.status` union and `MessageMetadata` labels as DMs and groups; no second model. The row is memory only (`skipDbSave`) and flagged `awaitingServerId`, because a salon message has TWO ids: the client UUID it is drawn under, and the one the server mints for its row (R4 in [offline-and-weak-network](../offline-and-weak-network.md)), which react/edit/delete/pin address. `utils/chat/salonEcho.ts` re-keys the echo IN PLACE (no remount) to the server id on whichever answer comes first: the POST reply (`sendEncryptedChannelMessage` now resolves with the row id) or the `channel.message.created` frame, matched on the client UUID sealed inside the ciphertext (`channelEventHandler.ts`). A second answer is a no-op; if the server row is already in the list the echo is dropped, never drawn twice. A refusal sets `error` and the text STAYS in the row, with "Reessayer" (same payload, same client id) and "Supprimer" in the status line, which now shows an `error` on any own message, not only the last. Until re-keyed the row offers no reply/forward/react/edit/delete/pin, and it is not announced to the sibling tabs (`salonEcho` option of `addMessageToChat`); the re-key announces it. The composer keeps nothing once a row exists (`result.echoed`); WP-OFF-1's draft restore now covers only the case where no row could be drawn.
 
-**What settles it, and who may.** The frame re-keys an echo ONLY when its sender is this user (the client UUID inside the ciphertext is author-chosen, so another member could otherwise swap any awaiting row). The outcome of the POST is classified at the throw: a 4xx (`ApiRefusalError`) or an unsendable seal (`GraineSealUnavailableError`, nothing left the device) is an ANSWER and marks the row `error` (Retry/Delete); a throw with NO status, OR A 5xx, is an UNKNOWN outcome - a 502/504 may come from a gateway AFTER the social service stored the row - and the row becomes `unconfirmed` (2026-10-12, review of #1649): its own amber label ("Non confirme"), distinguishable from a failure, offering Delete and "Remettre dans le champ" (`takeBackSalonSend`: the row and its ledger entry go, the text returns to the composer through WP-OFF-1's `restoreFailedDraft`), and NO Retry. No clock, no heal: the frame or the next history load still settles it if the server did take it (`loadChannelHistory` re-keys any own echo whose client UUID, `DecodedChannelMessage.clientMessageId`, appears in the page, whatever its state; this also covers a reply that carried no id, typed `null` from `sendEncryptedChannelMessage` and logged as an error). **The server does NOT dedupe on the client id** (`ChannelService.sendMessage` mints its own row id and never reads `messageId`), which is why an unknown outcome offers no retry: that dedupe is WP-OFF-3. **What makes Retry safe is a proof the server does NOT hold the message** - a 4xx (refused before the insert) or a seal that never left the device; anything else may post it twice until the server dedupes on the client id (WP-OFF-3), and only then may `unconfirmed` offer Retry. A Retry already in flight refuses a second click (`retrying` in `utils/chat/messaging.ts`; test "a double-click on Retry sends once").
+**What settles it, and who may.** The frame re-keys an echo ONLY when its sender is this user (the client UUID inside the ciphertext is author-chosen, so another member could otherwise swap any awaiting row). The outcome of the POST is classified at the throw: a 4xx (`ApiRefusalError`) or an unsendable seal (`GraineSealUnavailableError`, nothing left the device) is an ANSWER and marks the row `error` (Retry/Delete); a throw with NO status, OR A 5xx, is an UNKNOWN outcome - a 502/504 may come from a gateway AFTER the social service stored the row - and the row becomes `unconfirmed` (2026-10-12, review of #1649): its own amber label ("Non confirme"), distinguishable from a failure, offering Delete, "Remettre dans le champ" (`takeBackSalonSend`: the row and its ledger entry go, the text returns to the composer through WP-OFF-1's `restoreFailedDraft`), and - since WP-OFF-3 - Retry. No clock, no heal: the frame or the next history load still settles it if the server did take it (`loadChannelHistory` re-keys any own echo whose client UUID, `DecodedChannelMessage.clientMessageId`, appears in the page, whatever its state; this also covers a reply that carried no id, typed `null` from `sendEncryptedChannelMessage` and logged as an error). **The server dedupes on the client id since WP-OFF-3 (migration 088)**: a repeat of the same `messageId` by the same author in the same salon is answered with the stored row, which is what makes Retry safe on an unknown outcome ([offline-and-weak-network](../offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17)). A transport failure that leaves the device OFFLINE is `pending` and sent again on the reconnect - once an answer has proven the server answers a repeat with its row (`salonRepeatProof.ts`); before that it is `unconfirmed` like any unknown outcome, and goes on its own when the proof arrives. A Retry already in flight refuses a second click (`retrying` in `utils/chat/messaging.ts`; test "a double-click on Retry sends once").
 
 **Tabs.** Only the leader receives the frame, so a FOLLOWER that composed the message learns the server row from the leader's `message_added`, which now carries the client UUID (`clientMessageId`, set by `channelEventHandler` for an own frame and by `applySalonEchoChange` on a re-key). The follower settles its echo under that id (`mergeAnnouncedMessage`) and forgets the send (`forgetDeliveredSalonSend`) instead of drawing the server row beside it; test: `salonEcho.test.ts` "shows ONE row, in both orders". **The unsent ledger is shared by every tab**, so each entry names the PAGE LIFE that wrote it, and that page life holds the Web Lock `canari.salon-unsent.owner.<id>` until its document goes away. A leftover is taken only when it is this page life's and no live send owns it, or its owner's lock is no longer held - the browser's release IS the proof of death, no heartbeat. The ledger is read BEFORE the locks are queried and only that read's entries can be taken (an entry is written after its owner's lock is requested, so a living writer is always in the snapshot that follows); read after, an entry a sibling or this life's own send wrote during the query was taken from a living writer. Without Web Locks a foreign entry is never taken, and that is logged; an entry written before owners existed is taken. Test: `salonUnsent.test.ts`.
 
@@ -3545,7 +3626,7 @@ A salon text has no bubble and no queue entry (OFF-2 and OFF-3 are not built), a
 
 **Why it matters, measured (production web console, `v1.2.5`, 2026-10-12).** One salon send: click 17:12:08.052, bubble 17:12:14.191 - **6.1 s with nothing on screen**, because the bubble was the server's broadcast. The time was two round trips in series on a slow link (`[CONNECTIVITY] slow link (latency floor 1123 ms)`): the community's key group had taken a commit 10 s earlier, so the send minted a new Graine session and distributed its seed (`POST /api/mls/send`, 4055 ms) before posting the message (`POST /channels/<id>/messages`, 2049 ms). With the echo the row is on screen at the click and only its status waits for those two. DMs and groups were already drawn at the click (`[ADD_MSG]` at +3 ms, bubble ~+120 ms on the Mi 9T), so both now share one status model.
 
-**What it is not:** durable as a row. A reload loses the echo (WP-OFF-3); the text comes back from the ledger. Tests: `salonUnsent.test.ts`, `salonEcho.test.ts`, `useMessaging.salonRefusal.svelte.test.ts`, `channelEventHandler.salonEcho.test.ts`, `messagingChannelRefusal.test.ts`, `MessageMetadata.retry.svelte.test.ts`.
+**What it is not:** durable as a row. A reload loses the echo; since WP-OFF-3 the ledger is the queue's durable half, and the next session-up SENDS AGAIN what a dead page life left there (same id, `sentAt` and quote). An entry written before WP-OFF-3 has no `sentAt` and still comes back to the composer. Tests: `salonUnsent.test.ts`, `salonEcho.test.ts`, `useMessaging.salonRefusal.svelte.test.ts`, `channelEventHandler.salonEcho.test.ts`, `messagingChannelRefusal.test.ts`, `MessageMetadata.retry.svelte.test.ts`.
 
 ### A salon not yet loaded holds the send, it does not refuse it (2026-10-13)
 
@@ -3615,6 +3696,38 @@ the two loads in the other order, which is why it "healed".
 ## Profile fetches that failed on a device, and the denominator that is owed (2026-08-16)
 
 The symptom was seen twice on 2026-08-16, on both platforms: nine of ten sidebar rows carrying "Utilisateur inconnu" for twenty seconds. The log line that makes it countable did not exist then; since 2026-08-19 every warn in `displayName.ts` ends `(failed/attempted lookups failed this session, X%)`, counting only lookups that reached the network. Do not assume it is the same fault as the avatar endpoint, and do not assume it is not. The number is read from a device or browser console during a campaign run: there is no client telemetry, and server-side is not an option (`GET /api/users/:id` is not request-logged, and a client that never reached the network would not appear anyway). **Then decide about `FAILURE_BACKOFF_MS`**: a high rate says the two-minute suppression does real work against a refusing server; a rate near zero says it is a clock hiding a name for two minutes over a blip the reconnection listener already handles.
+
+### A muted salon and a membership notice raise no badge (2026-10-18)
+
+WP-SALON-UNREAD, decided by the user 2026-10-18. Two rows the badge counted that its owner never
+wanted to read:
+
+- **The "X joined" notice.** It is an encrypted row, so the server could not tell it from a message
+  and counted it until the salon was opened (the 2026-10-11 fix only made it coverable). The one
+  writer (`inviteMemberToChannel`) now sends it `silent`, the flag the server already skips in
+  `listUnreadCounts`; as a side effect it no longer rings phones either. `listMessages` returns the
+  silent rows of a salon with NO body at all, so a salon holding only notices still shows them, and
+  on a SHORT page (fewer bodies than asked - the end of the history) it drops the lower bound on the
+  silent rows and keeps only the cursor: the join notice written before a salon's first body is in
+  no later page, since none is ever asked for below a short one.
+  **Notices written before this stay counted until the salon is opened**, which the read mark now
+  reaches - no data repair. **An inviter on an older client keeps sending ordinary (non-silent)
+  notices**, which stay counted the same way until `minClientVersion` reaches this build.
+- **A muted salon.** `notifLevels[channel] = 'none'` is left out of the SQL, and the answer gains
+  `muted: string[]` (raw channel ids) so the client's LIVE tally stays quiet for them too
+  (`isSalonMuted`, read by both arrival paths in `useMessaging`; `reconcileSalonUnread` sets a muted
+  salon to 0). The settings panel updates the set at once (`noteSalonNotificationLevel`); a badge
+  already on screen when the member mutes falls at the next count. That local choice is stamped on
+  the same tick counter as `openedAtTick`, so an answer asked BEFORE it and landing after cannot
+  undo it. **Unmuting brings back what arrived while muted**: the server counts against the read
+  mark, which muting never moved, so those messages re-enter the badge at the next count - a mute
+  silences, it does not read. **`mentions` still counts**: the
+  row is encrypted, the server cannot tell which rows mention the member. An older server sends no
+  `muted`, and nothing is muted then.
+
+Tests: `channel-unread-counts.spec.ts`, `channel.service.spec.ts`, `salonUnread.test.ts`,
+`useChannelWorkspaces.svelte.test.ts`. **Owed on a device:** mute a salon, post into it from another
+account, read the community rail dot and the tab title; add a member and read the other member's badge.
 
 ### A salon read mark reaches its membership notices (2026-10-11)
 

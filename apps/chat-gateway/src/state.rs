@@ -1,3 +1,4 @@
+use crate::audience::PresenceAudience;
 use redis::Client as RedisClient;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, atomic::AtomicU64};
@@ -22,16 +23,25 @@ pub struct AppState {
     pub next_conn_id: AtomicU64,
     /// HS256 secret used to validate the `canari_ws_token` JWT on upgrade.
     pub jwt_secret: String,
+    /// Who may see whose presence: asked of chat-delivery and social-service on every
+    /// `GET /api/presence` (WP-PRESENCE).
+    pub presence_audience: PresenceAudience,
 }
 
 impl AppState {
-    /// Create a new `AppState` from an open Redis client and a JWT secret string.
-    pub fn new(redis_client: RedisClient, jwt_secret: String) -> Self {
+    /// Create a new `AppState` from an open Redis client, a JWT secret string and the client that
+    /// establishes the presence audience.
+    pub fn new(
+        redis_client: RedisClient,
+        jwt_secret: String,
+        presence_audience: PresenceAudience,
+    ) -> Self {
         AppState {
             redis_client,
             connected_users: Arc::new(Mutex::new(HashMap::new())),
             next_conn_id: AtomicU64::new(0),
             jwt_secret,
+            presence_audience,
         }
     }
 
@@ -87,6 +97,7 @@ mod tests {
         AppState::new(
             RedisClient::open("redis://127.0.0.1/").unwrap(),
             "test-secret".to_string(),
+            PresenceAudience::new(String::new(), String::new(), String::new()),
         )
     }
 

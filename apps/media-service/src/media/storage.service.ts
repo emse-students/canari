@@ -174,11 +174,14 @@ export class StorageService implements OnModuleInit {
    *
    * Acceptable at this bucket's current scale (low hundreds of objects); past that it would need
    * the server-side data-usage API, and the panel would lose the per-object breakdown with it.
+   *
+   * `prefix` narrows the listing to the keys that start with it - the segments of one live,
+   * `live/<liveId>/` - so a purge lists its own objects and never the bucket.
    */
-  async listObjects(): Promise<StoredObject[]> {
+  async listObjects(prefix = ''): Promise<StoredObject[]> {
     return new Promise((resolve, reject) => {
       const objects: StoredObject[] = [];
-      const stream = this.client.listObjectsV2(this.bucket, '', true);
+      const stream = this.client.listObjectsV2(this.bucket, prefix, true);
       stream.on('data', (obj) => {
         if (!obj.name) return;
         objects.push({
@@ -188,6 +191,22 @@ export class StorageService implements OnModuleInit {
         });
       });
       stream.on('end', () => resolve(objects));
+      stream.on('error', reject);
+    });
+  }
+
+  /**
+   * The "folders" one level under `prefix` (`live/` -> `live/<liveId>/`, ...), listed with a
+   * delimiter so the store answers one entry per folder rather than every object inside them.
+   */
+  async listPrefixes(prefix: string): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+      const prefixes: string[] = [];
+      const stream = this.client.listObjectsV2(this.bucket, prefix, false);
+      stream.on('data', (obj) => {
+        if (obj.prefix) prefixes.push(obj.prefix);
+      });
+      stream.on('end', () => resolve(prefixes));
       stream.on('error', reject);
     });
   }

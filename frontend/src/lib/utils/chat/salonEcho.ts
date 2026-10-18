@@ -22,7 +22,9 @@ export type SalonEchoChange =
    * The server has the message. `serverId` is its row id and `serverMs` its `createdAt` when this
    * answer carries them.
    */
-  | { kind: 'settled'; serverId?: string | null; serverMs?: number };
+  | { kind: 'settled'; serverId?: string | null; serverMs?: number }
+  /** The message was deleted after it landed (a refused repeat): its row goes. */
+  | { kind: 'gone' };
 
 /**
  * The messages after `change`, or `null` when nothing changed (no flagged row under `localId`, or
@@ -37,6 +39,7 @@ export function nextEchoMessages(
   if (idx === -1) return null;
   const row = messages[idx];
 
+  if (change.kind === 'gone') return messages.filter((_, i) => i !== idx);
   if (change.kind === 'state') {
     if (row.status === change.status) return null;
     const next = [...messages];
@@ -114,7 +117,11 @@ export function applySalonEchoChange(
   conversations.set(key, { ...convo, messages });
   log(
     `[SALON-ECHO] ${localId.slice(0, 8)}… ${
-      change.kind === 'state' ? change.status : `settled as ${change.serverId?.slice(0, 8) ?? '?'}…`
+      change.kind === 'state'
+        ? change.status
+        : change.kind === 'gone'
+          ? 'removed: deleted after it landed'
+          : `settled as ${change.serverId?.slice(0, 8) ?? '?'}…`
     }`
   );
   if (change.kind === 'settled' && change.serverId) {

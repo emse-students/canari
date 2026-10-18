@@ -760,7 +760,8 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProto(CanariPushContext *c
   char *jsonPtr = canari_native_decrypt_message(
       (const unsigned char *)stateBytes.bytes, stateBytes.length, ctx.deviceKeyB64.UTF8String,
       ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String,
-      senderId.UTF8String, (const unsigned char *)cipher.bytes, cipher.length);
+      senderId.UTF8String, (const unsigned char *)cipher.bytes, cipher.length,
+      (ctx.locale ?: @"").UTF8String);
   if (jsonPtr == nil) {
     return nil;
   }
@@ -824,7 +825,7 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProtoWithCommits(
       (const unsigned char *)stateBytes.bytes, stateBytes.length, ctx.deviceKeyB64.UTF8String,
       ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String, senderId.UTF8String,
       commitsJson.UTF8String,
-      (const unsigned char *)cipher.bytes, cipher.length);
+      (const unsigned char *)cipher.bytes, cipher.length, (ctx.locale ?: @"").UTF8String);
   if (jsonPtr == nil) {
     return nil;
   }
@@ -1003,7 +1004,7 @@ static void CanariWriteSentMessageToCache(NSString *groupId, NSString *selfUserI
 
 /**
  * Moves the entries the Notification Service Extension wrote into the App Group container over
- * to the app's own `fcm_message_cache.ndjson`, which is the only file `read_and_clear_fcm_cache`
+ * to the app's own `fcm_message_cache.ndjson`, which is the only file `take_fcm_cache`
  * looks at. An app extension has its own data container, so this hop is what makes a push
  * decrypted while the app was killed visible to the app at all.
  */
@@ -2581,9 +2582,9 @@ static void CanariRefreshTokenOnBackend(CanariPushContext *ctx, NSString *secret
 // `read_and_clear_pending_call_accept` Tauri command) and the CallKit session is closed as soon as
 // the app becomes active - the in-app call UI takes over from there.
 
-/// Mirrors CALLS_ENABLED in frontend/src/lib/features.ts, which holds the whole calling surface
-/// off until it has been run on hardware (rung 15 CALL / CALL-13). It is duplicated rather than
-/// read from JS because this code runs BEFORE the webview exists - a PushKit registry is installed
+/// Mirrors CALLS_COMPILED in frontend/src/lib/features.ts (callsCompiled.test.ts asserts it),
+/// which holds calling as the store binaries carry it off until it has been run on hardware
+/// (rung 15 CALL / CALL-13). It is duplicated rather than read from JS because this code runs BEFORE the webview exists - a PushKit registry is installed
 /// at process start, and there is nothing to ask. The two must be flipped in the same commit,
 /// together with the `voip` UIBackgroundModes entry that Info.plist no longer carries: without that
 /// entry PKPushRegistry can never obtain a token, so installing it here would be a permanent
@@ -3075,12 +3076,15 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
       NSString *signature =
           [data[@"signature"] isKindOfClass:[NSString class]] ? data[@"signature"] : @"";
       NSString *dir = CanariTauriDataDir();
+      // The app language Rust words its own sentences in; "" when none was mirrored.
+      NSString *locale = CanariLoadPushContext().locale ?: @"";
       char *jsonPtr =
           dir == nil ? nil
                      : canari_native_open_graine_push(
                            dir.UTF8String, channelId.UTF8String, sessionId.UTF8String,
                            (uint32_t)[messageIndexStr intValue], senderId.UTF8String,
-                           nonce.UTF8String, ciphertext.UTF8String, signature.UTF8String);
+                           nonce.UTF8String, ciphertext.UTF8String, signature.UTF8String,
+                           locale.UTF8String);
       if (jsonPtr != nil) {
         NSString *jsonStr = [NSString stringWithUTF8String:jsonPtr];
         canari_free_string(jsonPtr);

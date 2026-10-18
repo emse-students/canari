@@ -9,7 +9,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type { ChatMessage } from '$lib/types';
 import { serializeEnvelope, mkTextEnvelope, mkPollEnvelope, parseEnvelope } from '$lib/envelope';
 import { encodeAppMessage, decodeAppMessage, mkEdit } from '$lib/proto/codec';
-import { applyChannelEdit, applyChannelEdits } from './channelEdit';
+import { applyChannelEdit, applyChannelEdits, revertChannelEdit } from './channelEdit';
 
 const text = (t: string) => serializeEnvelope(mkTextEnvelope(t));
 
@@ -122,5 +122,32 @@ describe('applyChannelEdit', () => {
     const again = applyChannelEdit(once, edit(), log);
     expect(again.applied).toBe(false);
     expect(log).not.toHaveBeenCalled();
+  });
+});
+
+describe('revertChannelEdit (WP-OFF-4: the author takes back an edit nothing of which left)', () => {
+  it('restores the body, the flag and the date the row had before', () => {
+    const before = msg();
+    const { messages } = applyChannelEdit([before], edit());
+    const { messages: undone, reverted } = revertChannelEdit(messages, before, {
+      newContent: 'second',
+      editedAt: 2_000,
+    });
+    expect(reverted).toBe(true);
+    expect(bodyOf(undone[0])).toBe('first');
+    expect(undone[0].isEdited).toBeUndefined();
+    expect(undone[0].editedAt).toBeUndefined();
+  });
+
+  it('never erases a LATER edit that superseded the one being taken back', () => {
+    const before = msg();
+    const ours = applyChannelEdit([before], edit()).messages;
+    const later = applyChannelEdit(ours, edit({ newContent: 'third', editedAt: 3_000 })).messages;
+    const { messages, reverted } = revertChannelEdit(later, before, {
+      newContent: 'second',
+      editedAt: 2_000,
+    });
+    expect(reverted).toBe(false);
+    expect(bodyOf(messages[0])).toBe('third');
   });
 });

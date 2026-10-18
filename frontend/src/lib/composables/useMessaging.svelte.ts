@@ -7,6 +7,7 @@
  * - File selection + validation
  */
 import { isAppInForeground } from '$lib/utils/appForeground';
+import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate } from 'svelte/reactivity';
 import { getToken } from '$lib/stores/auth';
@@ -17,6 +18,8 @@ import {
   retrySalonSend,
   discardSalonSend,
   takeBackSalonSend,
+  resumeUnsentSalonSends,
+  forgetSalonSendsOfEndedSession,
   type SendMessageDeps,
   addReaction,
   removeReaction,
@@ -25,6 +28,8 @@ import {
   setMessagePinned,
 } from '$lib/utils/chat/messaging';
 import { applySalonEchoChange } from '$lib/utils/chat/salonEcho';
+import type { UnsentSalonText } from '$lib/utils/chat/salonUnsent';
+import { resetOwedSalonWrites } from '$lib/utils/chat/salonOwed';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { applyPin, isMessagePinned } from '$lib/stores/pinStore.svelte';
 import {
@@ -206,6 +211,9 @@ export function useMessaging() {
     log(
       `[MEDIA] signed out: staging of ${staged} and replies of ${replies} conversation(s) forgotten`
     );
+    // Salon writes owed to a reconnect were the leaving account's: none may go out under the next.
+    resetOwedSalonWrites();
+    forgetSalonSendsOfEndedSession();
   }
 
   /** Replaces the staged files of `conversationKey`; an empty list removes its entry. */
@@ -652,6 +660,26 @@ export function useMessaging() {
     else ctx.log(`[SEND] retry refusal not shown: the conversation changed (${refusal})`);
   }
 
+  /**
+   * Sends again the salon messages a past page life left unanswered (WP-OFF-3): every salon's when
+   * `conversationKey` is null (the session is up), one salon's when it was just opened. Each echo is
+   * drawn in its own conversation, looked up when its salon is sendable. Returns the texts written
+   * before the ledger kept enough to rebuild them, for the caller to hand back to the composer.
+   */
+  function resumeUnsentSends(
+    ctx: MessagingContext,
+    conversationKey: string | null
+  ): Promise<UnsentSalonText[]> {
+    return resumeUnsentSalonSends(
+      ctx.userId,
+      (key) => {
+        const convo = ctx.conversations.get(key);
+        return convo ? makeSendDeps(ctx, convo) : null;
+      },
+      conversationKey
+    );
+  }
+
   /** Drops a failed salon message the member gave up on: its registration and its row. */
   function discardSend(ctx: MessagingContext, messageId: string): void {
     const key = ctx.selectedContact;
@@ -882,6 +910,7 @@ export function useMessaging() {
     // something nobody reads at all.
     const shouldMarkUnread =
       !isConversationOpen &&
+      !isSalonMuted(normalized) &&
       isUnreadForUser(newMsg, watermarkFor(convo.readWatermarks, ctx.userId.toLowerCase()));
     const nextUnreadCount = shouldMarkUnread
       ? (convo.unreadCount ?? 0) + 1
@@ -1135,7 +1164,10 @@ export function useMessaging() {
     const heldNow = current && current !== convo ? indexMessagesById(current.messages) : null;
     const toAdd = heldNow ? brandNew.filter((m) => !heldNow.has(m.id)) : brandNew;
     const myWatermark = watermarkFor(base.readWatermarks, ctx.userId.toLowerCase());
-    const addedUnread = toAdd.filter((msg) => isUnreadForUser(msg, myWatermark)).length;
+    // A MUTED SALON RAISES NOTHING, the server's count of it being zero by the same rule.
+    const addedUnread = isSalonMuted(normalized)
+      ? 0
+      : toAdd.filter((msg) => isUnreadForUser(msg, myWatermark)).length;
     const nextUnreadCount = isConversationOpen ? 0 : (base.unreadCount ?? 0) + addedUnread;
 
     const withUpgrades = base.messages.map((m) => upgradedById.get(m.id) ?? m);
@@ -2180,6 +2212,7 @@ export function useMessaging() {
     retrySend,
     discardSend,
     takeBackSend,
+    resumeUnsentSends,
     forwardMessage,
     /** Validates and enqueues files (with image compression) for the next send. */
     handleFilesSelected,

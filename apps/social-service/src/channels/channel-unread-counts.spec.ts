@@ -77,6 +77,52 @@ describe('ChannelService - unread counts', () => {
     );
   });
 
+  // 2026-10-18: a salon the member set to `none` shows no badge. Told to the client too, so its
+  // live tally stays quiet for the salon instead of re-raising what the server left out.
+  it('leaves a muted salon out of the count and names it in `muted`', async () => {
+    const channels = [
+      { id: 'loud', workspaceId: 'ws', isPrivate: false, allowedUsers: [] },
+      { id: 'quiet', workspaceId: 'ws', isPrivate: false, allowedUsers: [] },
+      { id: 'mentions', workspaceId: 'ws', isPrivate: false, allowedUsers: [] },
+    ];
+    const { service, messageRepo } = makeService(
+      channels,
+      [{ channelId: 'loud', n: '2' }],
+      [{ ...member, notifLevels: { quiet: 'none', mentions: 'mentions' } }]
+    );
+
+    const answer = await service.listUnreadCounts(ME);
+
+    const [, params] = messageRepo.query.mock.calls[0] as [string, unknown[]];
+    expect(params[1]).toEqual(['loud', 'mentions']);
+    expect(answer.muted).toEqual(['quiet']);
+    expect(answer.counts).toEqual({ loud: 2 });
+  });
+
+  it('asks nothing when every readable salon is muted', async () => {
+    const { service, messageRepo } = makeService(
+      [{ id: 'quiet', workspaceId: 'ws', isPrivate: false, allowedUsers: [] }],
+      [],
+      [{ ...member, notifLevels: { quiet: 'none' } }]
+    );
+
+    const answer = await service.listUnreadCounts(ME);
+
+    expect(messageRepo.query).not.toHaveBeenCalled();
+    expect(answer.counts).toEqual({});
+    expect(answer.muted).toEqual(['quiet']);
+  });
+
+  it('still excludes silent rows (membership notices are sent silent) in the SQL', async () => {
+    const { service, messageRepo } = makeService(
+      [{ id: 'open', workspaceId: 'ws', isPrivate: false, allowedUsers: [] }],
+      []
+    );
+    await service.listUnreadCounts(ME);
+    const [sql] = messageRepo.query.mock.calls[0] as [string];
+    expect(sql).toMatch(/m\.silent = false/);
+  });
+
   it('answers empty, without a query, for a caller in no community', async () => {
     const { service, messageRepo } = makeService([], [], []);
     await expect(service.listUnreadCounts(ME)).resolves.toMatchObject({ counts: {} });

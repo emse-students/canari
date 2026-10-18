@@ -629,6 +629,15 @@ export interface IStorage {
     deviceKeyB64: string
   ): Promise<StoredGraineSession[]>;
   /**
+   * How many session ROWS a community has, sealed or not - read from the clear column, no key.
+   *
+   * Not {@link getGraineSessionsForWorkspace}'s length: that read skips a row it cannot decrypt (a
+   * PIN-change re-seal in progress, a backup row sealed under another key), so an empty list there
+   * is "nothing this key opens", never "nothing held". Only a count of 0 here proves the second -
+   * which is what an answer of "I hold nothing" (channel-encryption section 24) claims.
+   */
+  countGraineSessionsForWorkspace(workspaceId: string): Promise<number>;
+  /**
    * Drop every session of a community, returning how many went.
    *
    * The scope is deliberately the COMMUNITY and not the channel: leaving takes away every salon at
