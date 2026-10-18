@@ -1,5 +1,6 @@
 import { isTauriRuntime } from '$lib/utils/openExternal';
 import { withDeviceKeyHeld } from '$lib/db/deviceKeyGate';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /** Converts a Uint8Array to a lowercase hex string (e.g. `Uint8Array([0xde,0xad])` → `"dead"`). */
 export function toHex(buffer: Uint8Array): string {
@@ -426,14 +427,14 @@ async function readMlsState(userId: string): Promise<Uint8Array | null> {
   }
 
   // Migration path: read legacy localStorage entry, move it to IDB, erase from localStorage.
-  const saved = localStorage.getItem('mls_autosave_' + userId);
+  const saved = localStorage.getItem(ACCOUNT_KEY.legacyMlsAutosave(userId));
   if (!saved) return null;
   const bytes = saved.startsWith(B64_PREFIX)
     ? fromBase64(saved.slice(B64_PREFIX.length))
     : fromHex(saved);
   // Already inside the gate (`loadMlsState`): the ungated write, or it would wait on itself.
   await writeMlsState(userId, bytes);
-  localStorage.removeItem('mls_autosave_' + userId);
+  localStorage.removeItem(ACCOUNT_KEY.legacyMlsAutosave(userId));
   // The migration path answers the same question, so it takes the same rule: a legacy entry that
   // decoded to nothing is not a state to hand to init either.
   return stateOrAbsent(bytes);
@@ -443,7 +444,7 @@ async function readMlsState(userId: string): Promise<Uint8Array | null> {
 export async function removeMlsState(userId: string): Promise<void> {
   // Remove legacy localStorage entry always
   try {
-    localStorage.removeItem('mls_autosave_' + userId);
+    localStorage.removeItem(ACCOUNT_KEY.legacyMlsAutosave(userId));
   } catch {
     /* ignore */
   }

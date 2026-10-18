@@ -286,8 +286,10 @@ function nestRoutes(dir) {
  */
 const RUST_AUTH = [
   // `presence.rs` - nginx's `x-user-id` arrives EMPTY for a caller the auth sub-request did not
-  // recognise, so a blank value is what an anonymous caller looks like.
-  'is_authenticated',
+  // recognise, so a blank value is what an anonymous caller looks like. `caller_id` answers `None`
+  // for it and `get_presence` 401s; it replaced the boolean `is_authenticated` on 2026-10-18, when
+  // the handler needed WHO is asking (the presence audience) and not only whether anybody is.
+  'caller_id',
   // `get_admin_presence` - the same header contract, one claim further along.
   'x-global-admin',
   // Both WebSocket upgrades - the `canari_ws_token` JWT, which nginx never reads and `auth_request`

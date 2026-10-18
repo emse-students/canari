@@ -463,3 +463,26 @@ Run section 8's totals, kind and seat queries again after each fix. F1 is workin
 community's bundles of 16 KB or more drop from about 40 copies per payload to 1-3. F4 is working
 when the no-session share of seats falls from 42 %. The daily rows written (section 1) is the line
 to watch for a regression.
+
+## Log lines per frame, and what aggregates them (2026-10-18)
+
+WP-LOG-AGGREGATE, decided 2026-10-18: fewer lines, NO retention change. Measured from the code path
+of `MessagingService.sendMessage` (no production access): for each of the ~100 recipient devices of
+one frame, `deliverQueuedFrame` wrote `recipient=... online=...` and, for an online device,
+`PUBLISHED`; `sendFcmForQueued` wrote `FCM sent` per accepted token; and a transport frame's
+`TRANSPORT_SKIPPED_OFFLINE` listed every offline device id (18 628 in the 37 minutes of
+[section 2](#the-37-minutes-the-delivery-log-still-holds-0828-0905-utc)).
+
+What replaces them for a fan-out (`FanOutTally`, passed as `batch`):
+
+- `DONE queued=N realtime=M offline=K` - the existing line, plus the number of offline pushes.
+- `[PUSH_SEND] FCM sent batch pushed=P of K offline device(s)` - ONE line, printed when the last
+  fire-and-forget push settles.
+- `TRANSPORT_SKIPPED_OFFLINE` names five devices then `+N more`; `count=` stays exact.
+
+Kept per device, because each is a decision or an error: no push token (already rate-limited), a
+refused category, FCM failures, invalid-token deletes, the deferred-fallback pair (an unACKed row),
+and a lone Welcome's two lines (one device, followed by trace id). The harness classifier's patterns
+(`srvlog.mjs`) still match `DONE` and `FCM sent `. **Not done:** the gateway's per-delivery
+`tracing::info!` lines in `subscribers.rs` and the client-side per-frame logs - measure them against
+production before touching them.

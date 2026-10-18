@@ -81,7 +81,9 @@ workerScope.onrtctransform = (event: Event) => {
               self.postMessage({ type: 'videoKeyframeIn', count: videoKeyframesIn });
             }
           }
-          await decryptFrame(frame, controller);
+          // Counted only when it decrypted: a failed frame is `decryptError`, and counting it here
+          // too made a wrong-key call log `decryptOk` (measured in Chrome 155, 2026-10-17).
+          if (!(await decryptFrame(frame, controller))) return;
           decrypted[mediaKind]++;
           if (decrypted[mediaKind] === 1 || decrypted[mediaKind] % 300 === 0) {
             self.postMessage({ type: 'decryptOk', count: decrypted[mediaKind], mediaKind });
@@ -131,12 +133,13 @@ async function encryptFrame(
   controller.enqueue(frame);
 }
 
+/** Decrypts one frame and forwards it; `false` when it was dropped (too short, or wrong key). */
 async function decryptFrame(
   frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame,
   controller: TransformStreamDefaultController
-) {
+): Promise<boolean> {
   const data = new Uint8Array(frame.data);
-  if (data.byteLength < ivLength) return;
+  if (data.byteLength < ivLength) return false;
 
   const iv = data.slice(0, ivLength);
   const ciphertext = data.slice(ivLength);
@@ -145,12 +148,13 @@ async function decryptFrame(
     const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, callKey!, ciphertext);
     frame.data = plaintext;
     controller.enqueue(frame);
+    return true;
   } catch (e) {
     decryptFailures++;
     if (decryptFailures <= 3 || decryptFailures % 100 === 0) {
       const detail = String(e);
       self.postMessage({ type: 'decryptError', detail, count: decryptFailures });
     }
-    console.error('[Worker] Decryption failed', e);
+    return false;
   }
 }

@@ -16,6 +16,7 @@
  */
 import type { ReadWatermarks } from '$lib/types';
 import { appendLog } from '$lib/utils/sessionLog';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import { mergeReadWatermarks, watermarkFor } from './readState';
 
 /** One owed mark: `at` is the read point, `serverAt` the server clock of the newest row it covers. */
@@ -29,7 +30,7 @@ type Owed = Record<string, OwedSalonMark>;
 /** What the flush calls to deliver one mark; throws on a refusal. */
 export type SendSalonMark = (channelId: string, at: number, serverAt?: number) => Promise<unknown>;
 
-const keyFor = (userId: string): string => `canari.salonReadMarks.${userId.toLowerCase()}`;
+const keyFor = (userId: string): string => ACCOUNT_KEY.salonReadMarks(userId);
 
 function load(userId: string): Owed {
   try {

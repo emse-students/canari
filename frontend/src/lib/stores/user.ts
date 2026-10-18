@@ -3,6 +3,7 @@ import type { Campus, CursusEntry, Post } from '$lib/profile/miconnectProfile';
 import { forgetReaderCaches, SharedCache } from '$lib/utils/sharedCache';
 import { setCurrentUserId, setGlobalAdmin, setFeedAudience } from '$lib/stores/userState.svelte';
 import { coreUrl } from '$lib/utils/apiUrl';
+import { decodeTokenClaims } from '$lib/utils/jwtClaims';
 import { clearWorkspaceSnapshots } from '$lib/utils/chat/workspaceSnapshot';
 import { forgetStoredFeeds } from '$lib/posts/feedStoreEpoch';
 // The notepad envelope is the same on both sides (AES-256-GCM under a hex key
@@ -121,6 +122,23 @@ export class UserProfileFetchError extends Error {
 }
 
 /**
+ * The server NAMED this id as a deleted account (`deleted` in the batch answer): a typed answer
+ * carrying no name, because none is kept. It is a 404 to every caller that only asks "is it
+ * absent" (`isAbsentUserError`), and the one thing a renderer may add is the deleted-account label.
+ */
+export class DeletedAccountError extends UserProfileFetchError {
+  constructor() {
+    super(404);
+    this.name = 'DeletedAccountError';
+  }
+}
+
+/** `true` when the server answered that this account is deleted (see `DeletedAccountError`). */
+export function isDeletedAccountError(e: unknown): boolean {
+  return e instanceof DeletedAccountError;
+}
+
+/**
  * `true` when the refusal MEANS there is no such user, rather than that we could not go and ask.
  *
  * A 404 from this endpoint is an ANSWER - the account never existed, or was deleted, and neither
@@ -194,9 +212,9 @@ let pendingProfileBatch: Map<
 /**
  * Issues one request per chunk of `ids` and settles every waiting caller from its answer.
  *
- * An id the server did not return is an ANSWER - that account does not exist - so it rejects with
- * the same `UserProfileFetchError(404)` the single-id route produced, and every caller's existing
- * classification (`isAbsentUserError`) keeps working unchanged. A transport failure rejects every
+ * An id the server NAMES in `deleted` is an ANSWER - that account is gone - so it rejects with a
+ * `DeletedAccountError` (a 404 to every existing classification, `isAbsentUserError`). An answer
+ * with no `deleted` field is an older server's, where absence is the plain 404. A transport failure rejects every
  * id in the chunk with what actually went wrong, which is not an answer and is not cached.
  */
 async function flushProfileBatch(
@@ -215,13 +233,33 @@ async function flushProfileBatch(
           `${coreUrl()}/api/users/batch?ids=${chunk.map(encodeURIComponent).join(',')}`
         );
         if (!res.ok) throw new UserProfileFetchError(res.status);
-        const { users } = (await res.json()) as { users: UserProfile[] };
+        const { users, deleted } = (await res.json()) as {
+          users: UserProfile[];
+          deleted?: string[];
+        };
+        // LEGACY SHIM (docs/wiki/legacy-compatibility.md, "The profile batch without `deleted`"):
+        // a server older than 2026-10-18 has no `deleted` field and answers an unknown id by its
+        // ABSENCE. That absence is the old answer, not a breach - a plain 404, cached, quiet.
+        const legacyAnswer = deleted === undefined;
+        if (legacyAnswer) {
+          console.debug(
+            '[USER] batch answer has no `deleted` field (older server) - absence = 404'
+          );
+        }
+        const deletedIds = new Set(deleted ?? []);
         const byId = new Map(users.map((u) => [u.id, u]));
         for (const id of chunk) {
           const profile = byId.get(id);
           for (const waiter of batch.get(id) ?? []) {
             if (profile) waiter.resolve(profile);
-            else waiter.reject(new UserProfileFetchError(404));
+            else if (deletedIds.has(id)) waiter.reject(new DeletedAccountError());
+            else if (legacyAnswer) waiter.reject(new UserProfileFetchError(404));
+            else {
+              // Neither a profile nor a deletion from a server that SENDS `deleted`: it broke its
+              // contract, which is not an answer about this account and must not be cached as one.
+              console.error('[USER] batch answer names neither a profile nor a deletion', { id });
+              waiter.reject(new UserProfileFetchError(502));
+            }
           }
         }
       } catch (e) {
@@ -383,10 +421,20 @@ export async function saveMyNotes(notes: string): Promise<void> {
  * Permanently deletes the authenticated user's account and all associated data.
  * Throws if the server returns a non-204 response.
  * The caller is responsible for clearing local auth state and redirecting to /login.
+ *
+ * @returns the `sub` of the access token the server ACCEPTED for the delete - the account that is
+ *   actually gone, which is not necessarily the one the page shows (another tab may have signed in
+ *   as someone else meanwhile). `null` when the token names nobody readable.
  */
-export async function deleteMyAccount(): Promise<void> {
-  const res = await apiFetch(`${coreUrl()}/api/users/me`, { method: 'DELETE' });
+export async function deleteMyAccount(): Promise<{ deletedSubject: string | null }> {
+  let bearer: string | null = null;
+  const res = await apiFetch(`${coreUrl()}/api/users/me`, {
+    method: 'DELETE',
+    onAuthorization: (token) => (bearer = token),
+  });
   if (res.status !== 204) {
     throw new Error(`Account deletion failed (${res.status})`);
   }
+  const sub = bearer ? decodeTokenClaims(bearer)?.sub : undefined;
+  return { deletedSubject: typeof sub === 'string' && sub ? sub : null };
 }

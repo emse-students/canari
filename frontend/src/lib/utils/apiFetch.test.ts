@@ -227,3 +227,40 @@ describe('apiFetch when the request itself is answered 401', () => {
     expect(callsTo('/api/social/feed')).toHaveLength(2);
   });
 });
+
+describe('apiFetch onAuthorization - whose request the server answered', () => {
+  it('reports the bearer of the attempt whose response is returned', async () => {
+    const fresh = freshAccessToken();
+    setToken(fresh);
+    const seen: string[] = [];
+    await apiFetch(TARGET, { onAuthorization: (t) => seen.push(t) });
+    expect(seen).toEqual([fresh]);
+  });
+
+  it('reports the REFRESHED bearer after a 401 retry, last', async () => {
+    const fresh = freshAccessToken();
+    setToken(fresh);
+    refreshStatus = 200;
+    let targetCalls = 0;
+    vi.stubGlobal('fetch', async (url: string) => {
+      if (!String(url).includes('/api/auth/refresh')) {
+        targetCalls++;
+        return new Response('{}', { status: targetCalls === 1 ? 401 : 200 });
+      }
+      // A refreshed token that differs from the first one by more than its second of issue.
+      const claims = btoa(
+        JSON.stringify({ sub: 'user-1', exp: Math.floor(Date.now() / 1000) + 7200 })
+      );
+      return new Response(JSON.stringify({ access_token: `h.${claims}.refreshed` }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+    const seen: string[] = [];
+    const res = await apiFetch(TARGET, { onAuthorization: (t) => seen.push(t) });
+    expect(res.status).toBe(200);
+    expect(seen).toHaveLength(2);
+    expect(seen[0]).toBe(fresh);
+    expect(seen[1]).toMatch(/\.refreshed$/);
+  });
+});

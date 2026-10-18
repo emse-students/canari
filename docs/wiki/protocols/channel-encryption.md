@@ -928,7 +928,8 @@ not already asked in this app session - in memory, so a restart is free to ask a
 answerer may simply have been offline. Neither is a clock. The ask sits in
 `ensureCommunityDistributionGroup`, on BOTH its branches: entering the group is what makes asking
 possible, and a device that joined while its answerer was offline must still ask on the next start.
-It is best-effort and never fails the join.
+It is best-effort and never fails the join. An explicit "I hold nothing" answer is the one thing
+recorded durably, per roster ([section 24](#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)).
 
 **The answerer is the lowest OTHER member with a device online** (presence since 2026-09-26, see
 [WP-33](#wp-33-and-the-answerer-nobody-elects)). This user is named only when another device of
@@ -2714,7 +2715,12 @@ a path that was never given a sender and compares nothing.
 **What it is compared with.** `mls-client/verifiedSender.ts` `checkVerifiedSender` is the ONE
 comparison, on four paths - `live` (the WebSocket and pull queue), `distribution` (a key-group
 frame), `welcome-replay` and `history`. The envelope's user is compared with the credential's user,
-and its `senderDeviceId`, where the envelope carries one, with the credential's device. Three kinds:
+and its `senderDeviceId`, where the envelope carries one AND the path hands it over, with the
+credential's device. **Only `live` and `history` hand it over today**: `openDistributionFrame` passes the user
+alone, so on `distribution` the device is never compared and `senderDeviceId` stays self-asserted
+(read as such in [section 24](#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18));
+comparing it there is a behaviour change with no production reading behind it, owed on an alpha
+first ([backlog](../backlog.md#p3---the-distribution-paths-device-check-ship-on-an-alpha-read-sender_mismatch-pathdistribution-first)). Three kinds:
 `user`, `device`, `unverifiable`. The envelope's device is itself what the SENDING client's request
 body claimed, so a `device` mismatch is either the server relabelling a frame or a client lying
 about which device sent it - both worth knowing, and the measurement does not need to tell them
@@ -3488,3 +3494,121 @@ not: commits and application frames share one per-group FIFO, and its `control` 
 the native `group_reset`. The frames were LIVE requests (339-469 B) sealed by other members' devices
 3-6 epochs behind, so every up-to-date member found them unreadable, and each loss drives a re-ask.
 The sender side is open in the [backlog](../backlog.md).
+
+## 24. A history ask answered "I hold nothing" is final for its roster (WP-HOLD-NOTHING, decided 2026-10-18)
+
+**The defect.** A device holding no seed of a community asks ONE member for its past
+(`requestCommunityHistory`, [WP-34](#wp-3435-and-the-rule-the-server-cannot-enforce)). An answerer
+holding nothing answered by SILENCE (`answerSeedRequest` returned on an empty gathering), so the
+requester had no answer to record and asked again at every launch. The Mi 9T did it for eight bench
+communities per launch ([offline-and-weak-network section 15](../frontend/offline-and-weak-network.md#15-an-offline-cold-start-sends-nothing-it-knows-will-fail-2026-10-15)).
+A durable "asked at epoch E" was rejected there and still is: it would strand a community whose
+answerer missed the live request. What can be recorded is an ANSWER.
+
+### What changed on the wire
+
+`GraineBundleMsg.holds_nothing = 6` (bool). An answerer that may hand the past over (the community
+is `shared`) and holds NO seed ROW of the community answers a HISTORY request with an empty bundle that
+says so, echoing the `request_id`, addressed to the device that asked as key material like every
+answer ([section 23](#23-a-seed-answer-goes-only-to-the-device-that-asked---fixed-2026-10-12)). The
+`joined` refusal stays silent (the requester knows the rule), and a SESSIONS request is unchanged.
+
+**"Nothing" is a count of ROWS, never of what decrypted** (adversarial review of #2027). The seed read
+skips a row the device key cannot open - a PIN change re-sealing the store, backup rows sealed under
+another key - so an empty read is not an empty store, and claiming "nothing" from it would put a
+durable record at the requester while the past sits on the answerer. The claim is made only when
+`countGraineSessionsForWorkspace` (one `COUNT` on the clear `workspace_id` column, no key, both
+stores) is 0, read after the seeds; rows present and none opened answer as before this section:
+silence, with a warn naming the count.
+
+### What the requester does with it
+
+`noteHistoryHeldNothing` binds the answer to the ask in flight exactly as a session decline is bound
+(`noteSeedUnavailable`): the same request id, the member it was addressed to, a device it named (or,
+when it named none, a device of that member on the key group's tree). Anything else is ignored at
+debug.
+
+**The record is keyed on the answering DEVICE, never on its member or the roster** (re-review of
+#2027, 2026-10-18). A request names only the member's devices ONLINE, so a member whose online phone
+said "nothing" while a laptop of theirs sat on the key group offline has NOT answered: the laptop may
+hold the past. A member counts as answered (`exhausted`) only once EVERY device of theirs on the key
+group's MLS TREE (`getGroupMemberIdentities`, never presence) is recorded; the same rule holds for
+our own other devices. Recorded durably (`utils/graine/historyAnswered.ts`, `localStorage` per
+account, `canari_graine_history_held_nothing:v1:<userId>`) as `{groupId, epoch, devices[], final?}`
+(`user:device`) against the key group and the distribution epoch the request was sealed at:
+
+- **One launch walks the roster one member at a time**: one roster read and one sealed send per
+  member, once per epoch. Once every device the request named has answered (or, when it named none,
+  every tree device of the member), the next member is asked at once, from the answer itself. A
+  device recorded already never moves the walk again, so a repeated answer cannot loop it.
+- The election skips a member whose devices are all recorded (`exhausted`), and for now a member
+  whose ONLINE devices are all recorded (`spent`) - only the unrecorded online devices are named.
+- A member offline and never asked keeps the ask open (parked on presence, as before). A member
+  `spent` but not `exhausted` (its other tree devices offline), or our own other devices offline,
+  is filed against the epoch for the session and asked at the next start that sees such a device
+  online - not parked, because the presence waiter watches USERS and that user is online (backlog,
+  "Four things the offline cold start fix left open").
+- **A roster member with NO leaf on a known tree** (never signed in, or no device on the key group)
+  holds nothing sealed to it: skipped, never parked on, and counted as answered for FINAL. A leaf
+  naming no device keeps its member on the tree (never `exhausted`, never leafless). An unreadable
+  tree proves nothing about anyone, as below.
+- **FINAL** = every other member `exhausted` or leafless, and our own other devices on the tree all
+  recorded (or none exist). Read from the tree, so a device offline throughout is never final by omission. A
+  tree that cannot be read proves nothing exhausted and never goes final. Marked durably, and a final
+  record skips even the roster read on the next start - the tree cannot change without moving the
+  epoch.
+- **The epoch is the tree's version** - every membership change commits to the key group - so a
+  moved tree replaces the record and asks again from the lowest member, with no clock anywhere.
+  A re-join (`evenIfSeedsHeld`) and the community leaving the device forget the record. A request
+  sealed with no ridable epoch is not recorded (said at info). Holding a seed already ends the ask.
+
+**The device an answer names is SELF-ASSERTED.** `senderDeviceId` is what the sending client wrote in
+its request body, and on the distribution path only the USER is compared with the MLS credential
+([section 21.1](#211-the-verified-sender-measured-then-refused-wp-g2-1-g2-1b)); the decrypted
+credential's device is not handed to the seed handler, so a claim naming another device than the
+sealing one cannot be detected here. What bounds it: the user IS verified, so a wrong device can
+only be a sibling of the same account; and a claim counts only for a device the request named (or
+on the tree when it named none), once. Comparing the device on this path is a behaviour change -
+refusing frames - with no production reading behind it, so it is its own item, shipped on an alpha
+first ([backlog](../backlog.md#p3---the-distribution-paths-device-check-ship-on-an-alpha-read-sender_mismatch-pathdistribution-first)).
+
+What it does NOT cover, said rather than guessed: a device that answered "nothing" and LATER gains
+the past without the epoch moving. Two routes: another member of the roster, who is either still
+unrecorded (and asked) or answered "nothing" too; and a **backup import** (`importBackup` ->
+`importEncryptedGraineRow`), which restores seed rows onto a device already on the tree. The record
+of that "nothing" lives at the REQUESTER, so forgetting anything on the importing device would not
+reach it, and no frame tells the requester. Accepted, because the cost is bounded: the requester's
+unreadable rows each still ask their session's sender (`noteMissingSeed`, the SESSIONS path,
+which reads no "nothing" record), the next membership change moves the epoch and asks again, and a
+new seed minted later reaches the requester directly and ends the ask.
+
+**The account wipe owes the key, and takes it from the ONE list.** The key is built by
+`ACCOUNT_KEY.historyHeldNothing` in `utils/accountLocalKeys.ts` (#2023, WP-DEL-LOCAL), and the
+deletion's allowlist removes it whole: one key per account, written only by that account's device,
+so the other members' ids it holds are that account's records and nothing of anyone else's. Nothing
+in `historyAnswered.ts` is called by the wipe; its own clear and key export are deleted.
+
+### Old clients, side by side (checked before writing, 2026-10-18)
+
+| Case | What happens |
+|---|---|
+| Old requester, new answerer | The old reader (`absorbSeedBundle`, the same shape since `1.0.3` and in the floor `1.2.7`) decodes the bundle, skips the unknown field 6 (protobufjs skips unknown tags), loops over zero seeds and zero declines, announces no salon, and writes one `debug` line. No warn, no error. It keeps asking per launch, as today. |
+| New requester, old answerer | Silence, as today; the ask stays open and the next start asks again. |
+| Native push path (Rust `proto_fields`) | The bundle is classified `graine_key_material` with zero seeds, `ok: false` - silent, as a decline-only bundle already is. |
+
+Tests: `frameHandler.test.ts` (the answer is sent and addressed; `joined` stays silent, an empty hand
+included; rows the key cannot open stay silent; the new bytes
+decoded by a schema WITHOUT field 6 are an empty bundle that changes nothing and logs nothing above
+debug; a claim carrying seeds is ignored out loud), `repair.test.ts` (final across a restart; asked
+again when the epoch moves, after a re-join, after a leave; a foreign id, member or device is
+ignored; one member's "nothing" asks the next; final only once every device on the tree answered,
+and then no roster read; a member whose online phone said "nothing" while a laptop of theirs on the
+tree is offline is not answered, and the laptop is asked when online; not final while our own other
+device is on the group and offline; a leafless roster member neither blocks final nor parks the ask,
+a device-less leaf does; one device counted once), `graineStore.test.ts` and
+`sqliteCountMessages.test.ts` (the row count includes rows the key cannot open), `historyAnswered.test.ts`
+(per-device keying, a repeated answer is not new, version replacement, malformed records), `proto_fields.rs`
+(`a_bundle_saying_it_holds_nothing_is_silent_key_material_with_no_seed`). **Owed:** one bench
+reading - a cold start with every other member online, then a second start: the first shows one
+`holds nothing ... at distribution epoch N - recorded, asking the next member` per member and then
+`is final at distribution epoch N`; the second shows no `asked ... no-seed-held` for that community.

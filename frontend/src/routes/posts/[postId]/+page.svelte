@@ -11,8 +11,13 @@
   import { copyPublicShareLink } from '$lib/utils/copyShareLink';
   import { m } from '$lib/paraglide/messages';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
+  import { page } from '$app/state';
+  import { POST_COMMENT_PARAM } from '$lib/mobile/deepLinkRoutes';
 
   let { data }: { data: { post: Promise<PostEntity | null> } } = $props();
+
+  /** The comment a comment, reply or mention notification opened this post at, if any. */
+  const focusCommentId = $derived(page.url.searchParams.get(POST_COMMENT_PARAM) ?? undefined);
 
   /**
    * The post once it has arrived: `undefined` while it is on its way, `null` when it is absent or
@@ -103,6 +108,7 @@
       currentUserId={userId}
       {authToken}
       commentsOpen
+      {focusCommentId}
       onDelete={() => goto('/posts')}
     />
   {:else}

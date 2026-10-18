@@ -88,6 +88,23 @@
   }
 
   /**
+   * Escape closes an open popover - listened for ONLY while one is open, like `clickOutside` below.
+   * It was a `<svelte:window onkeydown>`, which put one window listener per MOUNTED BUBBLE for a
+   * key that only ever means something to the one toolbar whose popover is open; the render window
+   * only grows, so a long read of a thread carried thousands of them.
+   */
+  $effect(() => {
+    if (!quickOpen && !menuOpen) return;
+    const onKeydown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return;
+      e.stopPropagation();
+      closeAll();
+    };
+    window.addEventListener('keydown', onKeydown);
+    return () => window.removeEventListener('keydown', onKeydown);
+  });
+
+  /**
    * WHICH SIDE OF THE BUBBLE A POPOVER OPENS ON, AND WHY IT IS NOT ALWAYS ABOVE.
    *
    * Both popovers used to be `bottom-full` unconditionally. On a message near the top of the thread
@@ -186,15 +203,6 @@
     grow === 'outward' ? (isOwn ? 'right-0' : 'left-0') : isOwn ? 'left-0' : 'right-0'
   );
 </script>
-
-<svelte:window
-  onkeydown={(e) => {
-    if (e.key === 'Escape' && (quickOpen || menuOpen)) {
-      e.stopPropagation();
-      closeAll();
-    }
-  }}
-/>
 
 <!--
   THREE BUTTONS BESIDE THE BUBBLE, NOT ONE STRIP ABOVE IT.

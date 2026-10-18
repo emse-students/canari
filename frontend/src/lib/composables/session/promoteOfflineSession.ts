@@ -13,7 +13,7 @@
  * the device was away), and that logs the user out. A transport failure says nothing, and leaves
  * the session offline for the next attempt.
  */
-import { getToken, SessionExpiredError } from '$lib/stores/auth';
+import { getToken, SessionExpiredError, SignOutInProgressError } from '$lib/stores/auth';
 import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
 import { connectivity } from '$lib/stores/connectivity.svelte';
@@ -77,6 +77,12 @@ async function runPromotion(
   try {
     token = await getToken();
   } catch (err) {
+    // The user is signing out: the session stays offline until the sign-out ends it. Neither an
+    // expiry (a second sign-out) nor an unreachable server (it may well be reachable).
+    if (err instanceof SignOutInProgressError) {
+      cb.log('[PROMOTE] Stopped - a sign-out is in progress.');
+      return;
+    }
     if (err instanceof SessionExpiredError) {
       // The server answered: this session is dead. Log out. The local encrypted store is NOT
       // touched - this is not a PIN reset - so signing back in restores the full history.

@@ -48,10 +48,109 @@ import {
   type GraineClearColumns,
 } from './graineCodec';
 import { fromMessagePayload, mergeStoredMessage, toMessagePayload } from './messagePayload';
+import { readStoredTimestampMs } from '$lib/utils/dates';
 
 // ---------------------------------------------------------------------------
 // IndexedDB implementation (Web / PWA)
 // ---------------------------------------------------------------------------
+
+/** The schema version `init` opens; every branch of its upgrade handler is written against it. */
+const IDB_SCHEMA_VERSION = 11;
+
+/**
+ * The messages index a page is read from: `[conversationId, timestamp]`, so one conversation's rows
+ * are CONTIGUOUS and already in time order. `byConversation` orders a conversation's rows by id,
+ * which is why a page used to read every row of the conversation and sort them to keep fifty.
+ */
+const MESSAGES_BY_CONVERSATION_TIME = 'byConversationTime';
+
+/**
+ * The page read's key range: one conversation's rows whose timestamp is a NUMBER, below `before`
+ * when given (exclusive, the "load older" contract).
+ *
+ * Bounded by numbers on both ends because an IndexedDB key orders every number before every string:
+ * an unbounded `[conversationId, ...]` range would hand a row whose timestamp was stored as a string
+ * to the reverse cursor FIRST, as the newest message. The v11 upgrade rewrites those rows
+ * ({@link normalizeStoredTimestamps}) and `importEncryptedRow` refuses to write new ones.
+ */
+function conversationTimeRange(conversationId: string, before?: number): IDBKeyRange {
+  return before === undefined
+    ? IDBKeyRange.bound([conversationId, -Infinity], [conversationId, Infinity])
+    : IDBKeyRange.bound([conversationId, -Infinity], [conversationId, before], false, true);
+}
+
+/**
+ * Rewrites every stored timestamp that is not a number into one, inside the v11 upgrade.
+ *
+ * WHY THEY EXIST. `SqliteStorage.getAllEncryptedRows` handed its `timestamp` column to the backup
+ * as the plugin returned it, and on Android an INTEGER column can come back as a STRING
+ * (`readStoredTimestampMs`). A backup taken on a phone and restored in a browser therefore wrote
+ * string timestamps here. The old page read sorted with `b.timestamp - a.timestamp`, which coerces,
+ * so nothing showed; an index orders a string after every number, so the new read would not.
+ *
+ * Cheap on purpose: it walks the NEW index and jumps from each conversation's first numeric key
+ * straight past its numbers (`continue([conversationId, ''])` - the lowest string key), so it reads
+ * one entry per conversation plus the rows it repairs, never every row. A row whose timestamp
+ * cannot be read as a time at all is left as it is and counted, and so is a row with no timestamp,
+ * which no compound index can hold: neither can be placed in a conversation's order, and the
+ * warning is the only trace a later reader would have that a page leaves them out.
+ */
+function normalizeStoredTimestamps(tx: IDBTransaction): void {
+  const store = tx.objectStore('messages');
+  let repaired = 0;
+  let unreadable = 0;
+  const cursorReq = store.index(MESSAGES_BY_CONVERSATION_TIME).openCursor();
+  cursorReq.onerror = () => {
+    console.error('[IDB] Migration v10->v11: timestamp cursor error', cursorReq.error);
+    tx.abort();
+  };
+  cursorReq.onsuccess = () => {
+    const cursor = cursorReq.result;
+    if (!cursor) {
+      reportUnplacedRows(store, repaired, unreadable);
+      return;
+    }
+    const [conversationId, raw] = cursor.key as [string, unknown];
+    if (typeof raw === 'number') {
+      cursor.continue([conversationId, '']);
+      return;
+    }
+    const ms = readStoredTimestampMs(raw);
+    if (ms === undefined) {
+      unreadable++;
+    } else {
+      cursor.update({ ...cursor.value, timestamp: ms });
+      repaired++;
+    }
+    cursor.continue();
+  };
+}
+
+/**
+ * The end of {@link normalizeStoredTimestamps}: says what it repaired, and counts the rows the new
+ * index cannot hold (no timestamp) against the ones `byConversation` holds - two index counts,
+ * nothing decrypted. Silent when there is nothing to say, which is every database written by a
+ * browser alone.
+ */
+function reportUnplacedRows(store: IDBObjectStore, repaired: number, unreadable: number): void {
+  const all = store.index('byConversation').count();
+  all.onsuccess = () => {
+    const indexed = store.index(MESSAGES_BY_CONVERSATION_TIME).count();
+    indexed.onsuccess = () => {
+      const missing = all.result - indexed.result;
+      if (repaired > 0) {
+        console.warn(
+          `[IDB] Migration v10->v11: ${repaired} message row(s) carried a string timestamp (a backup restored from a phone) - rewritten as numbers`
+        );
+      }
+      if (unreadable > 0 || missing > 0) {
+        console.error(
+          `[IDB] Migration v10->v11: ${unreadable} message row(s) with an unreadable timestamp and ${missing} with none - no page will show them`
+        );
+      }
+    };
+  };
+}
 
 /**
  * The local store could not be opened, with the browser's own reason attached.
@@ -145,7 +244,6 @@ export class IndexedDbStorage implements IStorage {
     return this.db !== null;
   }
 
-  /** Open (or upgrade) the IndexedDB database and apply schema migrations up to version 6. */
   /**
    * Closes the connection so the database can be DELETED deterministically.
    *
@@ -190,6 +288,7 @@ export class IndexedDbStorage implements IStorage {
     if (typeof window !== 'undefined') window.location.reload();
   }
 
+  /** Open (or upgrade) the IndexedDB database, applying the schema migrations up to {@link IDB_SCHEMA_VERSION}. */
   async init(): Promise<void> {
     return new Promise((resolve, reject) => {
       // Version 3: conversation.id is now the MLS groupId UUID (was human-readable contactName).
@@ -202,7 +301,8 @@ export class IndexedDbStorage implements IStorage {
       // Version 8: adds the `pendingGroupExits` store (a delete/leave the server has not answered).
       // Version 9: adds the `distributionGroups` store (which held groups carry Graine seeds).
       // Version 10: adds the `feedPages` store (the feed's stored first pages, sealed).
-      const request = indexedDB.open(this.dbName, 10);
+      // Version 11: adds the `byConversationTime` index on messages ([conversationId, timestamp]).
+      const request = indexedDB.open(this.dbName, IDB_SCHEMA_VERSION);
 
       request.onerror = () =>
         reject(new StorageOpenError(this.dbName, false, { cause: request.error }));
@@ -329,6 +429,20 @@ export class IndexedDbStorage implements IStorage {
           if (!db.objectStoreNames.contains('feedPages')) {
             db.createObjectStore('feedPages', { keyPath: 'key' });
           }
+        }
+
+        if (oldVersion < 11) {
+          // The page read's index (see `getMessagesPage`). Built over the rows already stored, inside
+          // this upgrade transaction, so no row exists that it does not cover. Taken from the
+          // TRANSACTION rather than a handle above: a database below v6 recreated `messages` in this
+          // same upgrade, and the index belongs on the store that now exists.
+          const messages = tx.objectStore('messages');
+          if (!messages.indexNames.contains(MESSAGES_BY_CONVERSATION_TIME)) {
+            messages.createIndex(MESSAGES_BY_CONVERSATION_TIME, ['conversationId', 'timestamp'], {
+              unique: false,
+            });
+          }
+          if (oldVersion >= 6) normalizeStoredTimestamps(tx);
         }
 
         if (oldVersion < 3 && oldVersion >= 2) {
@@ -686,10 +800,13 @@ export class IndexedDbStorage implements IStorage {
   }
 
   /**
-   * Decrypt and return a paginated slice of messages for `conversationId`.
-   * Rows are sorted descending by timestamp, the most recent `limit` rows are taken,
-   * then re-sorted ascending before being returned so callers always get chronological order.
-   * Pass `beforeTimestamp` (Unix ms) to implement "load older messages" infinite scroll.
+   * Decrypt and return a paginated slice of messages for `conversationId`: the most recent `limit`
+   * rows (below `beforeTimestamp`, exclusive, for "load older"), in chronological order.
+   *
+   * READS `limit` ROWS, NOT THE CONVERSATION. A reverse cursor on `[conversationId, timestamp]`
+   * walks newest-first and stops at `limit`; the read it replaces `getAll`ed every row of the
+   * conversation through `byConversation` and sorted them in JS to keep fifty - 28-31 ms for 5 000
+   * rows on every page, measured in the 2026-10-12 performance audit, and more on every load-older.
    */
   async getMessagesPage(
     conversationId: string,
@@ -698,26 +815,23 @@ export class IndexedDbStorage implements IStorage {
     beforeTimestamp?: number
   ): Promise<StoredMessage[]> {
     const db = this.ensureDb();
-    const allRows: any[] = await new Promise((resolve, reject) => {
+    const page: any[] = await new Promise((resolve, reject) => {
+      const rows: any[] = [];
+      if (limit <= 0) return resolve(rows);
       const tx = db.transaction('messages', 'readonly');
       const req = tx
         .objectStore('messages')
-        .index('byConversation')
-        .getAll(IDBKeyRange.only(conversationId));
-      req.onsuccess = () => resolve(req.result);
+        .index(MESSAGES_BY_CONVERSATION_TIME)
+        .openCursor(conversationTimeRange(conversationId, beforeTimestamp), 'prev');
+      req.onsuccess = () => {
+        const cursor = req.result;
+        if (!cursor) return resolve(rows);
+        rows.push(cursor.value);
+        if (rows.length >= limit) return resolve(rows);
+        cursor.continue();
+      };
       req.onerror = () => reject(req.error);
     });
-
-    // Sort descending by timestamp to easily pick the most recent slice
-    allRows.sort((a, b) => b.timestamp - a.timestamp);
-
-    // If beforeTimestamp is given, skip all rows at or after that timestamp
-    const filtered =
-      beforeTimestamp !== undefined
-        ? allRows.filter((r) => r.timestamp < beforeTimestamp)
-        : allRows;
-
-    const page = filtered.slice(0, limit);
 
     const results: StoredMessage[] = [];
     for (const row of page) {
@@ -775,11 +889,21 @@ export class IndexedDbStorage implements IStorage {
   /** Non-destructive insert: write the encrypted row only if no row with this id already exists. */
   async importEncryptedRow(row: EncryptedMessageRow): Promise<void> {
     invalidateHistoryStateKey(row.conversationId);
+    // A backup is INPUT, and one taken on a phone before 2026-10-17 carries the timestamp as the
+    // SQLite plugin returned it - a string on Android. Stored as a string it would sort after every
+    // number in `byConversationTime` and no page would place it (see `conversationTimeRange`).
+    const timestamp = readStoredTimestampMs(row.timestamp);
+    if (timestamp === undefined) {
+      console.error(
+        `[IDB] importEncryptedRow: row ${row.id} of ${row.conversationId.slice(0, 8)} has no readable timestamp (${typeof row.timestamp}) - not imported, no page could place it`
+      );
+      return;
+    }
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {
       const tx = db.transaction('messages', 'readwrite');
       // `add` skips on duplicate; `put` would overwrite newer local messages.
-      const req = tx.objectStore('messages').add(row);
+      const req = tx.objectStore('messages').add({ ...row, timestamp });
       req.onsuccess = () => resolve();
       req.onerror = (e) => {
         const err = (e.target as IDBRequest).error;
@@ -1188,6 +1312,17 @@ export class IndexedDbStorage implements IStorage {
       req.onerror = () => reject(req.error);
     });
     return this.decodeGraineRows(rows, deviceKeyB64);
+  }
+
+  /** A community's session rows, decryptable or not. See {@link IStorage.countGraineSessionsForWorkspace}. */
+  async countGraineSessionsForWorkspace(workspaceId: string): Promise<number> {
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('graine', 'readonly');
+      const req = tx.objectStore('graine').index('byWorkspace').count(workspaceId);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
   }
 
   async deleteGraineSessionsForWorkspace(workspaceId: string): Promise<number> {

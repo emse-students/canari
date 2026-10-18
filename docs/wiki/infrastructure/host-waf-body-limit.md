@@ -36,11 +36,13 @@ It is not a slow-link problem and no retry changes it.
 ## What else POSTs a big body
 
 Everything chat, salon, post, comment, reel and camera goes through `MediaService.encryptAndUpload` and is
-covered. **Not covered, listed in the [backlog](../backlog.md#p2---the-host-waf-drops-any-request-body-over-10-mib-found-2026-10-10)**:
-the association document vault (`AssociationDocumentManager.svelte` posts the packed document as ONE
-`/api/media/upload` through `apiFetch`, no cap), the raw image uploads (`uploadRaw` for avatars and community
-icons, `associations/api.ts` logos, product, partnership and event images, `forms/api.ts` banners and
-question images: one multipart POST of the file as picked, no client cap), and the encrypted backup is a
+covered. **Covered by a client cap, not the chunk route** (2026-10-17): the association document vault, `uploadRaw`
+(avatars, community icons), the `associations/api.ts` logos, product, partnership and event images and the
+`forms/api.ts` banners and question images call `assertWithinRequestBudget` (`mediaRequestLimits.ts`), which
+refuses a body over 8 MiB BEFORE any byte leaves with a typed `RequestBodyTooLargeError`; the callers show its
+Paraglide message (`chat_media_too_large`) through `uploadFailureText`. A cap and not chunks because these
+endpoints take one multipart POST and an image or an icon has no reason to be that large; a vault document
+over 8 MiB still needs the chunk route and is refused with the same message. The encrypted backup is a
 download, not a POST. MLS blobs and history are small JSON/protobuf frames.
 
 ## Owed to the user

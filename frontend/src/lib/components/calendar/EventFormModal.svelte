@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { uploadFailureText } from '$lib/utils/mediaRequestLimits';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import { X, ImagePlus, Link2 } from '@lucide/svelte';
   import { portal } from '$lib/actions/portal';
@@ -125,8 +126,8 @@
     if (!file || !poster) return;
     try {
       await poster.onUpload(file);
-    } catch {
-      error = m.asso_calendar_image_upload_error();
+    } catch (e) {
+      error = uploadFailureText(e, m.asso_calendar_image_upload_error());
     } finally {
       input.value = '';
     }

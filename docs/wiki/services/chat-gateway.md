@@ -18,7 +18,7 @@ It does **not** perform encryption, store messages, or make business logic decis
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/ws` | yes (JWT cookie) | WebSocket upgrade |
-| GET | `/api/presence` | yes | Online presence for a user |
+| GET | `/api/presence` | yes | Online presence of the asked users the caller may see ([audience](#who-may-see-whose-presence-wp-presence-2026-10-18)) |
 | GET | `/api/admin/presence` | yes (global admin) | Admin view of all connected devices |
 | GET | `/api/health` | no | Liveness probe |
 
@@ -269,6 +269,85 @@ protect the key was exactly what stopped it being restored. Peers read the user 
 surviving socket's next `refresh_presence`. The decision is covered by five unit tests in
 `state.rs` that need neither Redis nor a socket.
 
+### Who may see whose presence (WP-PRESENCE, 2026-10-18)
+
+Decided by the user: **"is X online" is visible to X, and to anyone who shares a live conversation
+or a community with X** - nobody else. Until then any signed-in caller could ask about any user id
+(and before 2026-09-10 any caller at all).
+
+The gateway owns no table that says who shares what, so `GET /api/presence` asks the two services
+that do, concurrently, each about its own tables, and takes the union (`audience.rs`):
+
+| Asked of | Route (`X-Internal-Secret`) | Table |
+|---|---|---|
+| chat-delivery | `POST /api/internal/presence/shared-conversations` | `dm_group_members`, tombstoned conversations excluded |
+| social-service | `POST /api/internal/presence/shared-communities` | `channel_members` on a common `workspaceId` |
+
+Both take `{ viewerId, userIds }` and answer `{ userIds }`, the visible subset, lowercased (the
+spelling every Nest guard stores ids under). The caller always sees themself without asking. A
+key-distribution group has no `dm_group_members` row, so it cannot widen the audience.
+
+**The answers, and why each one:**
+
+- An asked user the caller may not see is **absent from the map** - not `false`, and never a
+  401/403, which a client may read as "sign out". An old client (floors 1.2.7 / 1.0.3) merges the
+  map into its own, so the key never turning up just leaves its dot off: it degrades quietly. A new
+  client (`presenceStore.ts`) reads absence as "not visible" and drops the id, so someone who
+  stopped sharing anything does not keep a dot frozen at its last value.
+- **503** when either service cannot answer, when `INTERNAL_SECRET` / a service URL is unset (also
+  logged at boot), or when Redis cannot be read. Half an audience would hide exactly the people the
+  missing half would show, and an empty map would read as "nobody is visible". A service refusing the
+  GATEWAY (403) reaches the client as this 503, never as a refusal of the client.
+- **400** above `MAX_PRESENCE_USERS` (1000) ids; the URL bounds an honest client well below it.
+- The SCAN of `user:online:{id}:*` runs only for the visible ids, so a crafted id never reaches a
+  SCAN pattern unless a service has matched it to a real membership.
+
+**The costs taken knowingly, each written down so nobody files it as a defect:**
+
+- **"Not visible" and "offline" are two answers, and the map tells them apart by ABSENCE** - a
+  deviation from the old contract, where every asked id came back with a boolean. A visible user
+  who is offline is `false`; a user the caller may not see is missing. Answering `false` for both
+  would state "offline" about someone who may be online, and would make "hidden" and "offline" one
+  value no client could ever separate again; the price is that a client must read a missing key as
+  a fact (`presenceStore.ts` does) rather than as "not answered yet".
+- **A block does not hide presence.** The audience reads membership tables only, and a block ends
+  no membership ([moderation-and-blocking](../moderation-and-blocking.md#what-a-block-does-not-do)).
+- **An OLD client keeps a frozen dot for someone who left the only conversation it shared.** It
+  merges the map, so a key that stops coming keeps its last value - `true` included - until the
+  app restarts or the store is rebuilt. Only `presenceStore.ts`'s drop of an absent id fixes it,
+  and that rides the next client release; nothing server-side can reach a client that merges.
+- **A rolling deploy has a 503 window.** A gateway that comes up before chat-delivery or
+  social-service serve `/internal/presence/*` gets 404s, answers 503, and logs
+  `[presence] audience unavailable ... answering 503` at WARN once per poll per open client (every
+  10 s) until both services are up. The client keeps its previous map through a 503, so nothing on
+  screen moves; the lines are the expected trace of the window, and lines that OUTLIVE a deploy
+  are a broken audience, not noise.
+- **The 1000-id cap is one number in three places** (`MAX_PRESENCE_USERS` here, and the validator
+  the two services share byte for byte, `src/utils/presence-audience.ts`, declared in
+  `declared-duplicates.mjs`). `libs/contracts/presence-audience.cases.json` is the one copy the
+  three assert against ([libs](../libs.md#presence-audiencecasesjson)).
+- **Both viewer lookups have an index of their own**: `IDX_dm_group_members_user` (chat-delivery
+  migration 031) and `IDX_channel_members_user` (social-service migration 089). The only indexes
+  before were the unique (`groupId`, `userId`) and (`workspaceId`, `userId`), which cannot serve a
+  predicate on `userId` alone, so every poll scanned both membership tables. **No time-based cache
+  in front of them**: a 10 s poll behind a 5-10 s cache is a clock deciding what a member sees
+  after leaving, and the index is what makes the question cheap.
+
+Covered by `presence.rs` (the real handler against fake services on loopback, Redis deliberately
+down so the STATUS says how far a request got), `audience.rs`, one spec per service, the shared
+contract above, and `internal-presence.integration.spec.ts` (social-service, the community query
+and migration 089 against a real PostgreSQL).
+
+**The push is NOT done, and the 10 s poll stands.** A push needs a presence TRANSITION event, and the
+gateway emits none: the key is set in one place (connect), refreshed in another, deleted in three
+(`ConnectionGuard::drop`, `handle_disconnect`, the delivery-failure DEL in `subscribers.rs`), and
+expires by TTL with no event at all. Replacing the poll means (1) one publish on every online/offline
+EDGE of a USER (a device leaving while another stays is no edge, which needs a SCAN after each DEL),
+(2) a per-connection watch set checked against this same audience, (3) a client that keeps polling
+until the gateway proves it pushes (a phone build can reach the stores before production carries the
+gateway that answers it). **None of the three is built**, and the backlog entry that owns the poll
+says so ([backlog](../backlog.md#p3---the-phone-polls-presence-every-ten-seconds-over-a-live-websocket-2026-09-02)).
+
 ## CORS: the list is a fact about the clients
 
 `ALLOW_ORIGIN` is a comma-separated allowlist, `*` allows all, and `chat_gateway_cors_layer`
@@ -362,5 +441,8 @@ wrong**, and nothing said so for either.
 |---|---|---|---|
 | `REDIS_URL` | no | `redis://127.0.0.1/` | Redis connection string |
 | `JWT_SECRET` | yes | - | HS256 JWT secret (shared with core-service) |
+| `DELIVERY_SERVICE_URL` | yes | - | chat-delivery base, no `/api` (`http://chat-delivery-service:3010`); asked for the conversation half of the presence audience. Unset: every presence read is a 503, logged at boot |
+| `SOCIAL_SERVICE_URL` | yes | - | social-service base, no `/api` (`http://social-service:3014`); asked for the community half. Unset: same |
+| `INTERNAL_SECRET` | yes | - | Sent as `X-Internal-Secret` on both audience questions. Unset: same |
 | `ALLOW_ORIGIN` | **yes under compose** | `*` (binary only) | CORS allowlist. `docker-compose.prod.yml` uses `${ALLOW_ORIGIN:?}` and the deploy stops without it; the binary's own `*` default is for running it by hand and logs a WARN accusing the missing declaration |
 | `RUST_LOG` | no | `chat_gateway=debug,tower_http=debug` | Log filter |

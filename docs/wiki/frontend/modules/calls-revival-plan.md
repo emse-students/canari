@@ -1,5 +1,11 @@
 # Calls - the revival plan (DRAFT, 2026-10-15, not started)
 
+> **Lot 1 BUILT 2026-10-17 (WP-C1a and part of WP-C3):** the P2P mode in `CallService.ts` and the
+> two-person relay in `call-service`, `iceTransportPolicy: 'all'`, E2E refused rather than degraded,
+> in-app 1:1 audio on DEV builds only. What was verified and what is owed (devices, dev TURN keys):
+> [calls lot 1](calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only). WP-C1's Tier A
+> runs on it next.
+>
 > **Note 2026-10-17:** the user's 2026-10-16 decisions supersede parts of this plan: 1:1 calls go peer-to-peer DIRECT with Cloudflare TURN as the fallback (not relay-only through the SFU), and `1.2.9` ships without #1955. Where the sections below assume "both ends relay-only" or an SFU for 1:1, read them as the 2026-10-15 state, to be re-planned.
 
 > **Status: a plan, nothing built.** Calling is held off since 0.14.15 (`CALLS_ENABLED = false`,

@@ -5,6 +5,7 @@
  */
 import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 import type { IStorage, ConversationMeta, StoredMessage } from '$lib/db';
 import {
   mapStoredMessagesToChatMessages,
@@ -317,7 +318,7 @@ export function markConversationDeletedRemotely(
 
 /** Returns the localStorage key used to store the set of archived conversation IDs for a user. */
 export function archiveStorageKey(uid: string): string {
-  return `canari_archived_conversations_${uid.toLowerCase()}`;
+  return ACCOUNT_KEY.archivedConversations(uid);
 }
 
 /** Saves the current set of archived conversation IDs for a user to localStorage. */
@@ -838,6 +839,9 @@ export function restoredConversationRow(
 export async function loadExistingConversations(ctx: LoadConversationsContext) {
   await migrateFromLocalStorage(ctx.userId, ctx.deviceKeyB64, ctx.storage, ctx.log);
 
+  // WHAT THE MAP HELD WHEN THE STORE WAS READ, so the prune below can tell a row the read could not
+  // have seen from one storage no longer holds. Taken before the read, in the same tick as its call.
+  const rowsBeforeRead = new Set(ctx.conversations.keys());
   const convMetas = await ctx.storage.getConversations();
   const mergedConvMetas = await mergeDirectConversationDuplicates(
     convMetas,
@@ -891,19 +895,36 @@ export async function loadExistingConversations(ctx: LoadConversationsContext) {
   // every tap on one - lit, never opened, until a restart (`restoreKeepsSalonRows.test.ts`). A
   // salon row in memory is the community load's, kept with its messages; a stale one is pruned by
   // that load, never by this one.
-  const keptSalons = new Set<string>();
+  //
+  // NOR IS A ROW WRITTEN AFTER THE STORE WAS READ. The read cannot have seen it, so its absence from
+  // `mergedConvMetas` says nothing about it - and the restore awaits between that read and this prune,
+  // during which the inbound pipeline keeps running. A Welcome redelivered for a group the push service
+  // joined in the background writes its row exactly there at a cold start (backlog, "A group joined in
+  // the background has no conversation row at cold start"); deleting it here sent every frame of the
+  // group back to `absent-conversation`, and its own `saveConversation`, reading the map, then saved
+  // nothing. Such a row is newer than anything the read returned, so it is kept like a salon's: whole,
+  // with only what it lacks seeded from storage below.
+  const kept = new Set<string>();
+  let keptSalons = 0;
   for (const key of Array.from(ctx.conversations.keys())) {
-    if (isChannelConversationId(key)) keptSalons.add(key);
-    else ctx.conversations.delete(key);
+    if (isChannelConversationId(key)) {
+      kept.add(key);
+      keptSalons++;
+    } else if (!rowsBeforeRead.has(key)) {
+      kept.add(key);
+      ctx.log(
+        `[RESTORE] kept ${key.slice(0, 8)}... - its row was written after the store was read, which therefore could not hold it`
+      );
+    } else ctx.conversations.delete(key);
   }
-  if (keptSalons.size > 0) {
-    ctx.log(`[RESTORE] kept ${keptSalons.size} salon row(s) the community load owns`);
+  if (keptSalons > 0) {
+    ctx.log(`[RESTORE] kept ${keptSalons} salon row(s) the community load owns`);
   }
   ctx.messageReactions.clear();
 
   // Phase 1 - fast, immediately usable conversation stubs.
   for (const meta of mergedConvMetas) {
-    if (keptSalons.has(meta.id)) {
+    if (kept.has(meta.id)) {
       // KEPT, BUT STILL SEEDED: the community load builds a cold row with none of the state this
       // device persisted for the salon, and skipping the stored row outright would drop it for the
       // session - the read watermarks behind "Lu par" and the unread recount, the history floor,

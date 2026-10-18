@@ -12,6 +12,7 @@
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import AssociationTile from '$lib/components/associations/AssociationTile.svelte';
+  import { groupAssociationsForSelect } from '$lib/associations/selectGroups';
   import { ChevronDown } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
 
@@ -44,6 +45,19 @@
   });
 
   const myIds = $derived(new Set(myAssociations.map((a) => a.id)));
+  /** The reader's memberships, one section per kind (the ONE classifier), empty ones dropped. */
+  const mineSections = $derived.by(() => {
+    const { assos, lists, institutions } = groupAssociationsForSelect(myAssociations);
+    return [
+      { key: 'assos', heading: m.assoc_list_mine_heading(), items: assos },
+      { key: 'lists', heading: m.assoc_list_mine_lists_heading(), items: lists },
+      {
+        key: 'institutions',
+        heading: m.assoc_list_mine_institutions_heading(),
+        items: institutions,
+      },
+    ].filter((s) => s.items.length > 0);
+  });
   const activeAssociations = $derived(associations.filter((a) => !a.archived));
   const archivedAssociations = $derived(associations.filter((a) => a.archived));
 
@@ -76,16 +90,17 @@
       </div>
     {:else}
       <!-- My associations -->
-      {#if myAssociations.length > 0}
+      <!-- One section per kind, never mixed: "Mes associations" holds associations only. -->
+      {#each mineSections as sec (sec.key)}
         <section>
-          <h2 class="text-text-main mb-3 text-base font-bold">{m.assoc_list_mine_heading()}</h2>
+          <h2 class="text-text-main mb-3 text-base font-bold">{sec.heading}</h2>
           <div class={CARD_GRID}>
-            {#each myAssociations as asso (asso.id)}
+            {#each sec.items as asso (asso.id)}
               <AssociationTile association={asso} href={memberHref(asso)} isMember />
             {/each}
           </div>
         </section>
-      {/if}
+      {/each}
 
       <!-- All associations -->
       <section>

@@ -33,6 +33,7 @@ import {
 } from '@lucide/svelte';
 import { m } from '$lib/paraglide/messages';
 import type { Association } from '$lib/associations/api';
+import { groupAssociationsForSelect } from '$lib/associations/selectGroups';
 import { editSectionHref } from '$lib/associations/editSections';
 import type { AdminScopeLabels } from '$lib/admin/access';
 import type { HubRow } from '$lib/components/navigation/breadcrumb';
@@ -46,7 +47,24 @@ import type { HubRow } from '$lib/components/navigation/breadcrumb';
  * their arrival can only push Compte DOWN (a reserved row collapsing for a member pulled sign-out up
  * under a finger aimed at settings).
  */
-export type DashboardGroupKey = 'identity' | 'explore' | 'managed' | 'admin' | 'review' | 'account';
+export type DashboardGroupKey =
+  | 'identity'
+  | 'explore'
+  | 'managed'
+  | 'managedLists'
+  | 'managedInstitutions'
+  | 'admin'
+  | 'review'
+  | 'account';
+
+/** The managed groups, one per kind: each under its own heading, never mixed. */
+type ManagedKey = 'managed' | 'managedLists' | 'managedInstitutions';
+
+const MANAGED_KEYS: readonly DashboardGroupKey[] = [
+  'managed',
+  'managedLists',
+  'managedInstitutions',
+];
 
 /** The groups drawn before the probes settle: they read nothing a probe returns. */
 const SETTLED_FREE: readonly DashboardGroupKey[] = ['identity', 'explore', 'account'];
@@ -80,7 +98,7 @@ export interface DashboardActions {
 
 interface DashboardEntry {
   key: string;
-  group: Exclude<DashboardGroupKey, 'managed'>;
+  group: Exclude<DashboardGroupKey, ManagedKey>;
   /** A route, or `signOut` for the one row that is an action rather than a place. */
   target: string | { action: keyof DashboardActions };
   label: (f: DashboardFacts) => string;
@@ -206,21 +224,32 @@ const ENTRIES: readonly DashboardEntry[] = [
   },
 ];
 
+/** One managed organisation as a row: its logo when it has one, its kind's glyph otherwise. */
+function managedRow(a: Association): HubRow {
+  return {
+    key: `managed-${a.id}`,
+    href: editSectionHref(a.slug, null, a.type === 'list' ? '/lists' : '/associations'),
+    label: a.name,
+    summary: a.role || undefined,
+    icon: a.type === 'list' ? Building2 : a.type === 'institution' ? Landmark : Users,
+    logo: { name: a.name, logoUrl: a.logoUrl },
+  };
+}
+
 /**
- * The associations the reader MANAGES: a live membership holding at least one right (`isAdmin`,
- * which `/api/associations/me/list` sets from the bitmask) - the same test the association page
- * applies to its own "Manage" link for a member. A list's management area lives under `/lists`.
+ * The organisations of ONE kind the reader MANAGES (a live membership holding at least one right:
+ * `isAdmin`, which `/api/associations/me/list` sets from the bitmask - the same test the
+ * association page applies to its own "Manage" link). THE KIND IS `groupAssociationsForSelect`'s,
+ * the ONE classifier every picker uses; it also leaves archived rows out. Each kind is its OWN
+ * group under its own heading: "Mes associations" holds associations only (user, 2026-10-18). A
+ * list's management area lives under `/lists`.
  */
-function managedRows(memberships: readonly Association[]): HubRow[] {
-  return memberships
-    .filter((a) => a.isAdmin && !a.archived)
-    .map((a) => ({
-      key: `managed-${a.id}`,
-      href: editSectionHref(a.slug, null, a.type === 'list' ? '/lists' : '/associations'),
-      label: a.name,
-      summary: a.role || undefined,
-      icon: a.type === 'list' ? Building2 : Users,
-    }));
+function managedRows(memberships: readonly Association[], key: ManagedKey): HubRow[] {
+  const { assos, lists, institutions } = groupAssociationsForSelect(
+    memberships.filter((a) => a.isAdmin)
+  );
+  const kind = key === 'managed' ? assos : key === 'managedLists' ? lists : institutions;
+  return kind.map(managedRow);
 }
 
 /** The heading of each group; the identity row stands alone, under no heading. */
@@ -232,6 +261,10 @@ function groupLabel(key: DashboardGroupKey, f: DashboardFacts): string {
       return m.dashboard_explore_heading();
     case 'managed':
       return m.dashboard_managed_heading();
+    case 'managedLists':
+      return m.dashboard_managed_lists_heading();
+    case 'managedInstitutions':
+      return m.dashboard_managed_institutions_heading();
     case 'admin':
       return f.adminScope.title();
     case 'review':
@@ -245,6 +278,8 @@ const GROUP_ORDER: readonly DashboardGroupKey[] = [
   'identity',
   'explore',
   'managed',
+  'managedLists',
+  'managedInstitutions',
   'admin',
   'review',
   'account',
@@ -275,12 +310,11 @@ export function dashboardHubGroups(
 ): DashboardGroup[] {
   return GROUP_ORDER.filter((key) => facts.probesSettled || SETTLED_FREE.includes(key))
     .map((key) => {
-      const rows =
-        key === 'managed'
-          ? managedRows(facts.memberships)
-          : ENTRIES.filter((e) => e.group === key && (e.may?.(facts) ?? true)).map((e) =>
-              toRow(e, facts, actions)
-            );
+      const rows = MANAGED_KEYS.includes(key)
+        ? managedRows(facts.memberships, key as ManagedKey)
+        : ENTRIES.filter((e) => e.group === key && (e.may?.(facts) ?? true)).map((e) =>
+            toRow(e, facts, actions)
+          );
       return {
         key,
         label: groupLabel(key, facts),

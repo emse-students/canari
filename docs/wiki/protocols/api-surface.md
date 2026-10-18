@@ -96,7 +96,7 @@ deployment change and is deliberately not bundled with a correctness fix.**
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/ws` | yes (JWT cookie) | WebSocket upgrade |
-| GET | `/api/presence` | yes | Online presence for a user |
+| GET | `/api/presence` | yes | Online presence of the asked users the caller shares a conversation or a community with ([audience](../services/chat-gateway.md#who-may-see-whose-presence-wp-presence-2026-10-18)) |
 | GET | `/api/admin/presence` | yes (global admin) | Admin view of all connected devices |
 | GET | `/api/health` | no | Liveness probe |
 
@@ -221,7 +221,7 @@ WebSocket frames: see `docs/wiki/services/chat-gateway.md`.
 | Method | Path | Description |
 |---|---|---|
 | POST | `/api/calls/initiate` | Verify membership, return a room token for the `call-service` SFU |
-| GET | `/api/calls/room-token` | Get room token for recipient |
+| GET | `/api/calls/room-token` | Get room token for recipient (403 another group's room, 410 unknown room or ring window closed) |
 | GET | `/api/calls/ice-servers` | Get ICE server config |
 | POST | `/api/calls/presence` | Report device presence in call |
 | GET | `/api/calls/sibling-status` | Check sibling device call status |

@@ -31,6 +31,7 @@
   import { reportLineClamp } from '$lib/actions/reportLineClamp';
   import { showToast } from '$lib/stores/toast.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import { Log } from '$lib/utils/Log';
 
   type SortMode = 'recent' | 'oldest' | 'liked';
 
@@ -78,6 +79,11 @@
      * the reader sees their comment immediately and cannot act on an id that does not exist yet.
      */
     pendingCommentIds?: ReadonlySet<string>;
+    /**
+     * The comment a notification tap opened the post at (`?comment=` on `/posts/[postId]`): scrolled
+     * into view once it is drawn, and marked so the reader sees which one they were told about.
+     */
+    focusCommentId?: string;
   }
 
   let {
@@ -99,7 +105,33 @@
     onLoadAllComments,
     onKeyDown,
     pendingCommentIds,
+    focusCommentId,
   }: Props = $props();
+
+  /** The DOM id of a comment's row, the anchor a notification tap scrolls to. */
+  function commentAnchorId(id: string): string {
+    return `comment-${id}`;
+  }
+
+  /** The focus id already acted on, so a later redraw (a new comment, a like) never scrolls again. */
+  let focusHandled: string | undefined;
+  $effect(() => {
+    const id = focusCommentId;
+    if (!id || focusHandled === id || !showComments) return;
+    if (!comments.some((c) => c.id === id)) {
+      // Deleted since the push, or not in this list: the post is shown, and the log says why the
+      // page did not move.
+      Log.d(`[PostComments] focus comment ${id.slice(0, 8)} not in the thread - post shown at top`);
+      focusHandled = id;
+      return;
+    }
+    focusHandled = id;
+    void tick().then(() => {
+      const el = document.getElementById(commentAnchorId(id));
+      Log.d(`[PostComments] focus comment ${id.slice(0, 8)} found=${el !== null}`);
+      el?.scrollIntoView({ block: 'center' });
+    });
+  });
 
   const mediaService = new MediaService();
   let pendingMedia = $state<PostMediaRef | null>(null);
@@ -345,8 +377,13 @@
   {@const isOwn = comment.userId === currentUserId}
   {@const isEditing = editingCommentId === comment.id}
   {@const isPending = pendingCommentIds?.has(comment.id) ?? false}
+  {@const isFocused = comment.id === focusCommentId}
   <div
-    class="flex items-start gap-2.5 {isReply ? 'mt-2.5' : 'mt-4'} {isPending ? 'opacity-60' : ''}"
+    id={commentAnchorId(comment.id)}
+    data-focused={isFocused || undefined}
+    class="flex scroll-mt-24 items-start gap-2.5 {isReply ? 'mt-2.5' : 'mt-4'} {isPending
+      ? 'opacity-60'
+      : ''}"
   >
     <a
       href="/profile/{encodeURIComponent(comment.userId)}"
@@ -386,8 +423,12 @@
           </button>
         </div>
       {:else}
+        <!-- The comment a notification tap opened the post at carries a ring: the bubble only, so
+             a focused comment does not mark the replies drawn under it. -->
         <div
-          class="w-fit max-w-full rounded-2xl rounded-tl-sm border border-black/5 bg-black/5 px-3.5 py-2.5 shadow-sm dark:border-white/5 dark:bg-white/5"
+          class="w-fit max-w-full rounded-2xl rounded-tl-sm border border-black/5 bg-black/5 px-3.5 py-2.5 shadow-sm dark:border-white/5 dark:bg-white/5 {isFocused
+            ? 'ring-2 ring-amber-500/60'
+            : ''}"
         >
           <a
             href="/profile/{encodeURIComponent(comment.userId)}"

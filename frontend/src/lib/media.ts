@@ -188,6 +188,7 @@ import {
 import { refresh, SessionExpiredError } from '$lib/stores/auth';
 import { uploadRefusalFrom } from '$lib/utils/mediaErrors';
 import {
+  assertWithinRequestBudget,
   GATEWAY_MAX_BODY_BYTES,
   MEDIA_REQUEST_BODY_BUDGET_BYTES,
   requestBodyBytes,
@@ -944,6 +945,7 @@ export class MediaService {
   async uploadRaw(file: File, authToken: string): Promise<string> {
     const formData = new FormData();
     formData.append('file', file, file.name);
+    assertWithinRequestBudget(formData);
 
     const res = await fetchUpload(
       `${this.baseUrl}/api/media/upload/public`,

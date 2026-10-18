@@ -53,6 +53,7 @@ vi.mock('$lib/utils/chat/recovery', () => ({
 }));
 
 import { setupMessageHandler } from './setupMessageHandler';
+import { resetUnackedFrames } from './unackedFrames';
 import { m } from '$lib/paraglide/messages';
 import * as codec from '$lib/proto/codec';
 import { createMlsServiceStub } from '../test/fixtures/mlsServiceStub';
@@ -587,6 +588,188 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
     expect(mls.processWelcome).not.toHaveBeenCalled();
     expect(mls.sendWelcomeRequest).not.toHaveBeenCalled();
     expect(onGroupReady).toHaveBeenCalledWith(groupId);
+  });
+
+  /**
+   * A group the push service joined in the BACKGROUND is held with no conversation row, and the
+   * redelivered Welcome at the next cold start used to promote an existing row and create none: every
+   * frame of the group was then refused `absent-conversation`, and 47 of 150 were lost once the gap
+   * healer had jumped the epochs they were sent in (Pixel 6a, prod 1.2.7, 2026-10-14).
+   */
+  describe('a group joined in the background, held with no conversation row', () => {
+    const bgGroup = '44444444-4444-4444-8444-444444444444';
+
+    beforeEach(() => resetUnackedFrames());
+
+    function heldWithoutRow(meta: unknown) {
+      const deps = baseDeps({ conversations: createTestConversations([]) });
+      const mls = deps.mlsService as any;
+      mls.getLocalGroups = vi.fn().mockReturnValue([bgGroup]);
+      mls.getGroupMeta = vi.fn().mockResolvedValue(meta);
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0] as (...a: unknown[]) => Promise<boolean>;
+      return { deps, mls, onMsg };
+    }
+
+    it('the redelivered Welcome writes the row from the server row and announces it', async () => {
+      const { deps, mls, onMsg } = heldWithoutRow({ name: 'Equipe', isGroup: true });
+
+      expect(await onMsg('peer', new Uint8Array([1]), bgGroup, true, undefined)).toBe(true);
+
+      expect(mls.processWelcome).not.toHaveBeenCalled();
+      const row = deps.conversations.get(bgGroup);
+      expect(row).toMatchObject({ id: bgGroup, name: 'Equipe', lifecycle: 'active' });
+      expect(row?.conversationType).toBe('group');
+      expect(deps.saveConversation).toHaveBeenCalledWith(bgGroup);
+      // The frames refused for lack of this row are what the announcement re-fetches.
+      expect(mls.notifyConversationAvailable).toHaveBeenCalledWith(bgGroup);
+    });
+
+    it('an unreadable server row gives an id placeholder, never a label guessed from the sender', async () => {
+      const { deps, mls, onMsg } = heldWithoutRow(null);
+
+      await onMsg('peer', new Uint8Array([1]), bgGroup, true, undefined);
+
+      const row = deps.conversations.get(bgGroup);
+      expect(row?.name).toBe(bgGroup);
+      expect(row?.lifecycle).toBe('active');
+      expect(mls.notifyConversationAvailable).toHaveBeenCalledWith(bgGroup);
+    });
+
+    it('a row STORAGE holds and the restore has not seeded yet is put back as stored, never overwritten', async () => {
+      // Cold start before the restore: the map is empty for every group, including those with a
+      // stored row. Writing a fresh one from the server row would erase its read watermarks.
+      const stored = {
+        id: bgGroup,
+        name: 'Equipe',
+        lifecycle: 'pending' as const,
+        updatedAt: 1_700_000_000_000,
+        readWatermarks: { 'user-b': 1_699_000_000_000 },
+        historyFloor: 1_600_000_000_000,
+      };
+      const deps = baseDeps({
+        conversations: createTestConversations([]),
+        storage: { getConversation: vi.fn().mockResolvedValue(stored) },
+      });
+      const mls = deps.mlsService as any;
+      mls.getLocalGroups = vi.fn().mockReturnValue([bgGroup]);
+      mls.getGroupMeta = vi.fn().mockResolvedValue({ name: 'Renamed on server', isGroup: true });
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0] as (...a: unknown[]) => Promise<boolean>;
+
+      await onMsg('peer', new Uint8Array([1]), bgGroup, true, undefined);
+
+      const row = deps.conversations.get(bgGroup);
+      expect(row).toMatchObject({
+        lifecycle: 'active',
+        readWatermarks: stored.readWatermarks,
+        historyFloor: stored.historyFloor,
+      });
+      expect(row?.name).toBe('Equipe');
+      // Written back only to promote `pending` -> `active`, from the row that carries the watermarks.
+      expect(deps.saveConversation).toHaveBeenCalledWith(bgGroup);
+      expect(mls.notifyConversationAvailable).toHaveBeenCalledWith(bgGroup);
+    });
+
+    it('a FAILED storage read is not "no stored row": nothing is written, nothing announced', async () => {
+      const deps = baseDeps({
+        conversations: createTestConversations([]),
+        storage: { getConversation: vi.fn().mockRejectedValue(new Error('SQLITE_BUSY')) },
+      });
+      const mls = deps.mlsService as any;
+      mls.getLocalGroups = vi.fn().mockReturnValue([bgGroup]);
+      mls.getGroupMeta = vi.fn().mockResolvedValue({ name: 'Equipe', isGroup: true });
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0] as (...a: unknown[]) => Promise<boolean>;
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      await onMsg('peer', new Uint8Array([1]), bgGroup, true, undefined);
+
+      expect(deps.conversations.get(bgGroup)).toBeUndefined();
+      expect(deps.saveConversation).not.toHaveBeenCalled();
+      expect(mls.notifyConversationAvailable).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('UNREADABLE'));
+      warn.mockRestore();
+    });
+
+    it('control: a held group that HAS a row gets no second row and no announcement', async () => {
+      const deps = baseDeps();
+      const mls = deps.mlsService as any;
+      mls.getLocalGroups = vi.fn().mockReturnValue([groupId]);
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0] as (...a: unknown[]) => Promise<boolean>;
+
+      await onMsg('peer', new Uint8Array([1]), groupId, true, undefined);
+
+      expect(deps.conversations.size).toBe(1);
+      expect(mls.notifyConversationAvailable).not.toHaveBeenCalled();
+    });
+  });
+
+  /**
+   * The gap healer replays COMMITS from the archive, never the application frames between them. When
+   * those frames are still in the server queue - refused earlier for lack of a row - a replay jumps
+   * the group past their epochs and every one of them is then lost as a past-epoch frame.
+   */
+  describe('an epoch gap while frames refused for lack of a row are still queued', () => {
+    const gapGroup = '55555555-5555-4555-8555-555555555555';
+    const live = { channel: 'live', queuedMessageId: 'q-live' };
+    const pulled = { channel: 'pull', queuedMessageId: 'q-live' };
+
+    beforeEach(() => resetUnackedFrames());
+
+    function gapSetup() {
+      const deps = baseDeps({ conversations: createTestConversations([]) });
+      const mls = deps.mlsService as any;
+      mls.getLocalGroups = vi.fn().mockReturnValue([gapGroup]);
+      mls.getEpoch = vi.fn().mockReturnValue(1);
+      mls.processIncomingMessage = vi
+        .fn()
+        .mockRejectedValue(new Error('Process error: epoch gap [msg_epoch=18, group_epoch=1]'));
+      mls.fetchCommitsSince = vi.fn().mockResolvedValue({
+        commits: [],
+        activeEpoch: 18,
+        belowFloor: false,
+      });
+      setupMessageHandler(deps as any);
+      const onMsg = mls.onMessage.mock.calls[0][0] as (...a: unknown[]) => Promise<boolean>;
+      const frame = (meta: unknown) =>
+        onMsg('peer', new Uint8Array([7]), gapGroup, false, undefined, false, meta);
+      return { deps, mls, frame };
+    }
+
+    it('a live frame is held behind the backlog: not ACKed, no commit replay, the backlog re-fetched', async () => {
+      const { deps, mls, frame } = gapSetup();
+      // The backlog: refused while the group had no row.
+      expect(await frame({ channel: 'pull', queuedMessageId: 'q-old' })).toBe(false);
+      deps.conversations.set(gapGroup, emptyConversation(gapGroup, { lifecycle: 'active' }));
+
+      expect(await frame(live)).toBe(false);
+
+      expect(mls.fetchCommitsSince).not.toHaveBeenCalled();
+      expect(mls.notifyConversationAvailable).toHaveBeenCalledWith(gapGroup);
+    });
+
+    it('terminates: the pull that hands the held frame back runs the ladder on it', async () => {
+      const { deps, mls, frame } = gapSetup();
+      await frame({ channel: 'pull', queuedMessageId: 'q-old' });
+      deps.conversations.set(gapGroup, emptyConversation(gapGroup, { lifecycle: 'active' }));
+      await frame(live);
+
+      await frame(pulled);
+
+      expect(mls.fetchCommitsSince).toHaveBeenCalled();
+    });
+
+    it('control: with no refused backlog, a live gap frame goes straight to the commit replay', async () => {
+      const { deps, mls, frame } = gapSetup();
+      deps.conversations.set(gapGroup, emptyConversation(gapGroup, { lifecycle: 'active' }));
+
+      expect(await frame(live)).toBe(true);
+
+      expect(mls.fetchCommitsSince).toHaveBeenCalled();
+      expect(mls.notifyConversationAvailable).not.toHaveBeenCalled();
+    });
   });
 
   describe('a Welcome into a KEY-DISTRIBUTION group (channel-encryption section 20)', () => {

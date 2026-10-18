@@ -38,6 +38,12 @@
 		E5F6012345678ABCDEF02 /* canari_push.mm in Sources */ = {isa = PBXBuildFile; fileRef = F6012345678ABCDEF0123 /* canari_push.mm */; };
 		BDCC40C02FED454100576E31 /* KeyboardMediaBridge.mm in Sources */ = {isa = PBXBuildFile; fileRef = BDCC40C12FED454100576E31 /* KeyboardMediaBridge.mm */; };
 		EB4C666589AF7B0EDEBED1B6 /* assets in Resources */ = {isa = PBXBuildFile; fileRef = 686315A99C66DB3616192FD2 /* assets */; };
+		DA10CA11E0000000000005B1 /* canari_gazouillis_message.wav in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000005F1 /* canari_gazouillis_message.wav */; };
+		DA10CA11E0000000000005B2 /* canari_gazouillis_mention.wav in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000005F2 /* canari_gazouillis_mention.wav */; };
+		DA10CA11E0000000000005B3 /* canari_gazouillis_reaction.wav in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000005F3 /* canari_gazouillis_reaction.wav */; };
+		DA10CA11E0000000000005C1 /* canari_gazouillis_message.wav in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000005F1 /* canari_gazouillis_message.wav */; };
+		DA10CA11E0000000000005C2 /* canari_gazouillis_mention.wav in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000005F2 /* canari_gazouillis_mention.wav */; };
+		DA10CA11E0000000000005C3 /* canari_gazouillis_reaction.wav in Resources */ = {isa = PBXBuildFile; fileRef = DA10CA11E0000000000005F3 /* canari_gazouillis_reaction.wav */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -109,6 +115,9 @@
 		BDCC40C22FED454100576E31 /* KeyboardMediaBridge.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = KeyboardMediaBridge.h; sourceTree = "<group>"; };
 		DA10CA11E0000000000000D1 /* AppIcon.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = AppIcon.icon; sourceTree = "<group>"; };
 		FC45C8DC231D096C520FA226 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		DA10CA11E0000000000005F1 /* canari_gazouillis_message.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = canari_gazouillis_message.wav; sourceTree = "<group>"; };
+		DA10CA11E0000000000005F2 /* canari_gazouillis_mention.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = canari_gazouillis_mention.wav; sourceTree = "<group>"; };
+		DA10CA11E0000000000005F3 /* canari_gazouillis_reaction.wav */ = {isa = PBXFileReference; lastKnownFileType = audio.wav; path = canari_gazouillis_reaction.wav; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -232,7 +241,19 @@
 				106085A54D24FE9BE2117546 /* Frameworks */,
 				80EB529A999B6336917EDB30 /* Products */,
 				BD75ADFF300EA0AC003EBA05 /* canari_iOS/GoogleService-Info.plist */,
+				DA10CA11E0000000000005A0 /* NotificationSounds */,
 			);
+			sourceTree = "<group>";
+		};
+		DA10CA11E0000000000005A0 /* NotificationSounds */ = {
+			isa = PBXGroup;
+			children = (
+				DA10CA11E0000000000005F1 /* canari_gazouillis_message.wav */,
+				DA10CA11E0000000000005F2 /* canari_gazouillis_mention.wav */,
+				DA10CA11E0000000000005F3 /* canari_gazouillis_reaction.wav */,
+			);
+			name = NotificationSounds;
+			path = ../android/app/src/main/res/raw;
 			sourceTree = "<group>";
 		};
 		AC8B5A6764A83C0B858D140E /* Externals */ = {
@@ -393,6 +414,9 @@
 				BD75AE00300EA0AC003EBA05 /* canari_iOS/GoogleService-Info.plist in Resources */,
 				DA10CA11E0000000000000B1 /* InfoPlist.strings in Resources */,
 				DA10CA11E0000000000000B2 /* Localizable.strings in Resources */,
+				DA10CA11E0000000000005B1 /* canari_gazouillis_message.wav in Resources */,
+				DA10CA11E0000000000005B2 /* canari_gazouillis_mention.wav in Resources */,
+				DA10CA11E0000000000005B3 /* canari_gazouillis_reaction.wav in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -401,6 +425,9 @@
 			buildActionMask = 2147483647;
 			files = (
 				DA10CA11E0000000000000B3 /* Localizable.strings in Resources */,
+				DA10CA11E0000000000005C1 /* canari_gazouillis_message.wav in Resources */,
+				DA10CA11E0000000000005C2 /* canari_gazouillis_mention.wav in Resources */,
+				DA10CA11E0000000000005C3 /* canari_gazouillis_reaction.wav in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

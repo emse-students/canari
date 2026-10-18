@@ -10,9 +10,13 @@
  * nicer name, and the next reader cannot tell the difference.
  */
 
+import { deployEnvironment } from '$lib/utils/deployEnvironment';
+
 /**
- * Audio and video calling: the call buttons, the incoming-call UI, and every WebRTC/SFU path
- * behind them ({@link import('./services/CallService').CallService}).
+ * Calling as the STORE BINARIES carry it: the native ring (Android CallStyle + full-screen intent,
+ * iOS PushKit/CallKit) and the two store declarations that go with it. Mirrored by `CALLS_ENABLED`
+ * in `CanariFirebaseMessagingService.kt` - the push service runs when no webview exists and cannot
+ * read this file - and `pushSilentDecrypt.test.ts` asserts the two agree.
  *
  * **OFF.** The whole calling surface has never been exercised on hardware: the campaign board
  * carries twenty CALL rows and NOT ONE has ever run (`docs/wiki/mechanism-audit.md`), the SFU has
@@ -29,4 +33,31 @@
  * `canari_push.mm` and Android's `USE_FULL_SCREEN_INTENT` were removed alongside it and must come
  * back in the same commit - see `docs/wiki/frontend/modules/calls.md`.
  */
-export const CALLS_ENABLED = false;
+export const CALLS_COMPILED = false;
+
+/**
+ * In-app 1:1 calling: the call buttons, the in-app ring, and the peer-to-peer WebRTC path behind
+ * them ({@link import('./services/CallService').CallService}).
+ *
+ * **ON FOR A DEV BUILD ONLY (lot 1, 2026-10-17).** A build made for `dev.canari-emse.fr` - the dev
+ * web estate and every pre-release app, which the pipelines refuse to point anywhere else - carries
+ * `VITE_DEPLOY_ENVIRONMENT=development`, and that is the whole test. Production builds never set it
+ * (unset MEANS production, `deployEnvironment.ts`), so a stable can only call once
+ * {@link CALLS_COMPILED} is flipped. What is on is the in-app half only: the invite rings an OPEN
+ * app over the chat socket; a killed or backgrounded phone is not rung, because the native ring is
+ * {@link CALLS_COMPILED}'s and stays off.
+ *
+ * **Turns into `CALLS_COMPILED` alone when** the revival's Tier B cells pass on real hardware
+ * (`docs/wiki/frontend/modules/calls-revival-plan.md` section 7).
+ */
+export const CALLS_ENABLED = CALLS_COMPILED || deployEnvironment() === 'development';
+
+/**
+ * Video in a call: the video-call button and the camera toggle inside a call.
+ *
+ * **OFF.** Lot 1 of the revival is AUDIO: the E2E transform encrypts the whole frame, header
+ * included, which is known to suit Opus and known to break H.264 packetization - and Safari and
+ * WKWebView may negotiate H.264. **Turns back on when** the revival's WP-C3 (header-in-clear
+ * framing per codec, or VP8 forced) has passed a video call Chrome <-> WKWebView.
+ */
+export const CALLS_VIDEO_ENABLED = false;

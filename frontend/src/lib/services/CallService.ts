@@ -16,11 +16,16 @@ import {
   logCallAudioTrackSettings,
 } from '$lib/utils/callAudio';
 import { publishCallPresence } from '$lib/utils/callPresence';
-import { CallInitiateError } from '$lib/utils/callFailure';
+import {
+  CallE2eUnsupportedError,
+  CallInitiateError,
+  describeCallFailure,
+} from '$lib/utils/callFailure';
 import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/callSystemMessages';
 import { CALLS_ENABLED } from '$lib/features';
+import { describeSelectedPair } from '$lib/utils/callStats';
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'incall' | 'ended';
 
@@ -45,22 +50,61 @@ export interface CallChatNotifier {
   onCallEnded: (groupId: string, callId: string) => void | Promise<void>;
 }
 
-/** Gecko (Firefox) - standard `RTCRtpScriptTransform`; no Chromium-only PC flags. */
-function isGeckoBrowser(): boolean {
-  return typeof navigator !== 'undefined' && /firefox/i.test(navigator.userAgent);
-}
-
-function canUseRtpScriptTransform(): boolean {
+/**
+ * Whether this engine can run the E2E frame transform. It is the ONLY way call media is encrypted
+ * end to end, so its absence refuses the call ({@link CallE2eUnsupportedError}) - there is no
+ * legacy `createEncodedStreams` path and no "transport-only" call any more.
+ */
+export function canUseRtpScriptTransform(): boolean {
   return typeof RTCRtpScriptTransform !== 'undefined';
 }
 
 /**
- * Manages WebRTC group/DM calls: MLS signaling for ring/hangup, SFU for media,
- * MLS-derived keys for insertable-stream encryption, Cloudflare TURN for relay.
+ * The ICE policy of a 1:1 call: DIRECT first (host, then server-reflexive), the Cloudflare TURN
+ * relay last. Decided by the user on 2026-10-16 - the production host cannot carry media (no UDP
+ * out, realtime-media-feasibility section 8) and a direct path costs nothing. The trade, stated
+ * once: each party can learn the other's public IP address. `'relay'` would hide it and bill every
+ * call through Cloudflare.
+ */
+export const CALL_ICE_TRANSPORT_POLICY: RTCIceTransportPolicy = 'all';
+
+/** A server-to-client frame of the signalling socket (`apps/call-service`, `SignalMessage`). */
+export type SignalFrame =
+  | { type: 'Joined'; room_id?: string }
+  | { type: 'PeerReady'; initiator: boolean }
+  | { type: 'PeerLeft' }
+  | { type: 'Refused'; reason: string }
+  | { type: 'Offer' | 'Answer'; sdp: string }
+  | { type: 'IceCandidate'; candidate: string };
+
+/**
+ * Manages 1:1 calls: MLS signalling for ring/answer/hangup, a PEER-TO-PEER media path negotiated
+ * through `call-service`'s two-person relay (`/api/call`, `mode: "p2p"`), MLS-derived keys for the
+ * mandatory E2E frame transform, and Cloudflare TURN as the last-resort relay.
  */
 export class CallService {
   private pc: RTCPeerConnection | null = null;
   private signaledWs: WebSocket | null = null;
+  /** ICE servers fetched for this call before ringing, so a missing TURN key fails the call early. */
+  private iceServers: RTCIceServer[] | null = null;
+  /**
+   * Perfect negotiation (W3C WebRTC section 10.5). `polite` is the side that yields on an offer
+   * collision - the callee, as the server's `PeerReady { initiator: false }` says.
+   */
+  private polite = false;
+  private makingOffer = false;
+  private ignoreOffer = false;
+  /**
+   * The ring window's timer, on either side. Its LENGTH is never this file's: it is the
+   * `ringTimeoutMs` chat-delivery returned to the caller, relayed to the callee in the invite. A
+   * wrong timer only stops a ring early or late; whether a callee may still answer is decided by
+   * the server's own deadline (`room-token` answers 410), which no timer here can overrule.
+   */
+  private ringTimer: number | null = null;
+  /** The invite reached the group, so an unanswered end IS a missed call (F7). */
+  private inviteSent = false;
+  /** The relay paired the two parties: the ring is over whatever the media then does. */
+  private peerArrived = false;
   private localStream: MediaStream | null = null;
   private encryptionWorker: Worker | null = null;
   private workerKeyReady: Promise<void> | null = null;
@@ -91,12 +135,6 @@ export class CallService {
   public localStreamStore = writable<MediaStream | null>(null);
   public isMuted = writable<boolean>(false);
   public isVideoOff = writable<boolean>(false);
-  /**
-   * Whether the media is end-to-end encrypted (insertable-stream transforms active).
-   * Goes false when E2E is disabled by flag or unsupported by the browser, so the UI
-   * can warn that the call degraded to transport-only (SFU-visible) encryption.
-   */
-  public e2eActive = writable<boolean>(true);
 
   private chatNotifier: CallChatNotifier | null = null;
 
@@ -165,12 +203,22 @@ export class CallService {
         return;
       }
       if (get(this.callState) !== 'idle') return;
+      // An invite with no window comes from a build before the ring window existed: it would
+      // ring here for as long as nobody touched it. Calls are dev-only, so it is refused, named.
+      const ringTimeoutMs = callMsg.ringTimeoutMs ?? 0;
+      if (ringTimeoutMs <= 0) {
+        appendLog(
+          `[Call] WARN invite ${callMsg.callId} carries no ring window - an older build, not rung`
+        );
+        return;
+      }
 
       this.currentCallId = callMsg.callId;
       this.currentGroupId = groupId;
       this.incomingCallerId = senderNorm;
       this.incomingHasVideo = callMsg.hasVideo !== false;
       this.callState.set('incoming');
+      this.armRingTimer(callMsg.callId, ringTimeoutMs, 'incoming');
 
       // WP-XP-5: the user may have ALREADY answered this call on a system surface (Android
       // CallStyle notification deep link / iOS CallKit) before the app was unlocked and the
@@ -188,6 +236,32 @@ export class CallService {
     this.cleanup();
   }
 
+  /**
+   * Ends the ring when the server's window closes. On the caller nobody answered: the call ends
+   * as a missed one, for both parties (hangup + ring-end). On the callee the caller's own timer
+   * does the same, so this only covers a caller that vanished without saying so - the ring stops
+   * and nothing is written, the missed-call line being the caller's to write.
+   */
+  private armRingTimer(callId: string, ringTimeoutMs: number, side: 'calling' | 'incoming') {
+    this.clearRingTimer();
+    this.ringTimer = window.setTimeout(() => {
+      this.ringTimer = null;
+      if (this.currentCallId !== callId || get(this.callState) !== side || this.peerArrived) {
+        return;
+      }
+      appendLog(`[Call] ring window (${ringTimeoutMs} ms) closed unanswered - call=${callId}`);
+      if (side === 'calling') this.endCall(true);
+      else this.dismissIncomingCall();
+    }, ringTimeoutMs);
+  }
+
+  private clearRingTimer() {
+    if (this.ringTimer !== null) {
+      window.clearTimeout(this.ringTimer);
+      this.ringTimer = null;
+    }
+  }
+
   /** Starts an outgoing call in the given MLS group. */
   public async startCall(groupId: string, video: boolean = true) {
     // The buttons that call this are not rendered while calls are held off (see CALLS_ENABLED);
@@ -198,33 +272,76 @@ export class CallService {
       return;
     }
     if (get(this.callState) !== 'idle') return;
+    // Refused BEFORE any request: no room, no ring, nothing the other party could answer.
+    if (!canUseRtpScriptTransform()) {
+      appendLog('[Call] startCall refused - RTCRtpScriptTransform unavailable, no E2E possible');
+      throw new CallE2eUnsupportedError();
+    }
 
     this.currentGroupId = groupId;
 
     try {
       this.callState.set('calling');
       // Get server-issued room ID and access token before connecting.
-      const { roomId, roomToken } = await this.fetchInitiateCall(groupId);
+      const { roomId, roomToken, ringTimeoutMs } = await this.fetchInitiateCall(groupId);
       this.currentCallId = roomId;
       this.currentRoomToken = roomToken;
+      // Before ringing: a server without TURN credentials (503) fails the call here, not after
+      // the callee has answered into a call that can never connect.
+      this.iceServers = await this.fetchIceServers(groupId, roomId);
       await this.setupMedia(video);
       this.installBackgroundHandler();
       await this.setupEncryption(groupId, this.currentCallId!);
-      await this.connectToSfu(this.currentCallId!);
+      // The caller joins first, so the relay makes it the initiator when the callee arrives.
+      await this.connectSignalling(roomId);
+      // The ring OPENS the server's answer window, and it goes BEFORE the invite: no callee can
+      // learn of the call before the server would hand it a token, so an early answer (a quick tap,
+      // an auto-accept) can never meet a 410 and hang up a call that was fine. Nothing the caller
+      // did before (ICE servers, a first microphone prompt, the join) eats into the window. The
+      // server's clock therefore starts a little BEFORE the callee's timer (armed on the invite's
+      // arrival): the ends differ by the invite's delivery time, and a callee answering in that
+      // last stretch is told the call is over. WP-XP-5: the ring also fans out call_ring (Android)
+      // / APNs VoIP (iOS CallKit) for killed devices.
+      await this.triggerServerRing(groupId, roomId, video);
+      // From here on devices may be ringing: an unanswered or failed end is a missed call, and the
+      // hangup + ring-end must go out. Before it (initiate refused, no ICE servers, no microphone,
+      // a refused ring - the server opens the window BEFORE it fans out) nobody was rung.
+      this.inviteSent = true;
+      if (!this.stillCalling(roomId, 'after the ring')) {
+        // The hangup's ring-end left while this ring was still fanning out, so it may have reached
+        // the server FIRST; this one is ordered after a fan-out known to be complete.
+        void this.endServerRing(groupId, roomId, 'cancelled');
+        return;
+      }
       const deviceId = this.mlsService.getDeviceId();
-      await this.sendMlsNotification(groupId, mkCallInvite(this.currentCallId!, video, deviceId));
-      // WP-XP-5: explicit cleartext ring for killed/background devices - the server cannot
-      // read the MLS invite, so it fans out call_ring (Android) / APNs VoIP (iOS CallKit).
-      void this.triggerServerRing(groupId, this.currentCallId!, video);
-      void this.chatNotifier?.onCallStarted(groupId, this.currentCallId!);
+      await this.sendMlsNotification(groupId, mkCallInvite(roomId, video, deviceId, ringTimeoutMs));
+      if (!this.stillCalling(roomId, 'after the invite')) return;
+      // The caller's timer starts after the window opened, so it never gives up before the server.
+      this.armRingTimer(roomId, ringTimeoutMs, 'calling');
+      void this.chatNotifier?.onCallStarted(groupId, roomId);
       this.syncCallPresence(true);
     } catch (e) {
       const msg = String(e);
       appendLog(`[Call] startCall failed: ${msg}`);
       console.error('Error starting call:', e);
-      this.endCall(false);
+      // Once the invite has left, the other party is ringing: hang up so it stops, rather than
+      // leaving it to ring into a call that will never answer.
+      this.endCall(this.inviteSent);
       throw e;
     }
+  }
+
+  /**
+   * Whether the call `roomId` is still this service's ringing call after an await. A hangup (or a
+   * peer leaving) during the await has already cleaned up; going on would arm a timer for nothing
+   * or publish presence `active: true` with no call behind it.
+   */
+  private stillCalling(roomId: string, when: string): boolean {
+    if (this.currentCallId === roomId && get(this.callState) === 'calling') return true;
+    appendLog(
+      `[Call] call ${roomId} ended ${when} (state=${get(this.callState)}) - not arming the ring`
+    );
+    return false;
   }
 
   /** Accepts an incoming call after the user taps accept. */
@@ -233,9 +350,15 @@ export class CallService {
 
     this.currentGroupId = groupId;
     this.currentCallId = callId;
+    // Answered: the server's deadline, not this timer, now decides (a late token is a 410).
+    this.clearRingTimer();
     const useVideo = video ?? this.incomingHasVideo;
 
     try {
+      if (!canUseRtpScriptTransform()) {
+        appendLog('[Call] acceptCall refused - RTCRtpScriptTransform unavailable, no E2E possible');
+        throw new CallE2eUnsupportedError();
+      }
       this.callState.set('incall');
       const deviceId = this.mlsService.getDeviceId();
       // Tell our other devices to stop ringing before joining the SFU.
@@ -244,15 +367,16 @@ export class CallService {
       void this.endServerRing(groupId, callId, 'answered');
       // Fetch our own room token before connecting (the initiator already has theirs).
       this.currentRoomToken = await this.fetchRoomToken(groupId, callId);
+      this.iceServers = await this.fetchIceServers(groupId, callId);
       await this.setupMedia(useVideo);
       this.installBackgroundHandler();
       await this.setupEncryption(groupId, callId);
-      await this.connectToSfu(callId);
+      await this.connectSignalling(callId);
       this.syncCallPresence(true);
     } catch (e) {
       const msg = String(e);
       appendLog(`[Call] acceptCall failed: ${msg}`);
-      console.error('Error accepting call:', e);
+      showToast(describeCallFailure(e), 'warning');
       this.endCall();
     }
   }
@@ -261,8 +385,11 @@ export class CallService {
   public endCall(notify: boolean = true) {
     const groupId = this.currentGroupId;
     const callId = this.currentCallId;
-    // Guard against double-calls: if cleanup already ran, do not re-enter.
-    if (get(this.callState) === 'idle') return;
+    // Guard against double-calls: if cleanup already ran - or the call is already showing its
+    // ended summary - do not re-enter. A peer-to-peer hangup arrives TWICE (the MLS `call_hangup`
+    // and the relay's `PeerLeft`), and a second pass would write a second "call ended" message.
+    const state = get(this.callState);
+    if (state === 'idle' || state === 'ended') return;
     // Captured BEFORE cleanup: 'calling' means nobody answered yet (ring cancellation).
     const wasCalling = get(this.callState) === 'calling';
     if (notify && groupId && callId) {
@@ -275,7 +402,9 @@ export class CallService {
     }
     if (groupId && callId) {
       void this.chatNotifier?.onCallEnded(groupId, callId);
-      if (wasCalling) {
+      // Missed only if someone was actually rung: a call that failed before its invite (the
+      // initiate refused, no ICE servers, no microphone) rang nobody and missed nothing.
+      if (wasCalling && this.inviteSent) {
         const ctx = getCallSystemMessageContext();
         const callerId = ctx?.userId ?? '';
         void recordCallMissed(ctx, groupId, callId, callerId);
@@ -326,6 +455,9 @@ export class CallService {
   }
 
   private cleanup() {
+    this.clearRingTimer();
+    this.inviteSent = false;
+    this.peerArrived = false;
     this.removeBackgroundHandler();
     this.syncCallPresence(false);
     this.callState.set('idle');
@@ -337,7 +469,10 @@ export class CallService {
     this.currentRoomToken = null;
     this.mergedRemoteStream = null;
     this.pendingRemoteIceCandidates = [];
-    this.e2eActive.set(true);
+    this.iceServers = null;
+    this.polite = false;
+    this.makingOffer = false;
+    this.ignoreOffer = false;
     this.incomingHasVideo = true;
     this.callHasVideo = false;
 
@@ -366,24 +501,30 @@ export class CallService {
   }
 
   /**
-   * Triggers the cleartext incoming-call ring fan-out (WP-XP-5): POST /api/calls/ring makes the
-   * backend push call_ring (Android CallStyle) / APNs VoIP (iOS CallKit) to every other member
-   * device. Best-effort: a ring failure must never break the call itself.
+   * `POST /api/calls/ring`: opens the server's answer window for this room (G1), then fans out the
+   * cleartext ring (WP-XP-5: call_ring for Android CallStyle, APNs VoIP for iOS CallKit). The
+   * fan-out stays best-effort on the server - a device it cannot reach does not fail the request -
+   * but the REQUEST is load-bearing: a refused or unreachable ring means no callee could ever get
+   * a token, so it throws and the call ends.
    */
   private async triggerServerRing(groupId: string, callId: string, hasVideo: boolean) {
-    try {
-      const { historyUrl } = resolveMlsPublicUrls();
-      const url = new URL('/api/calls/ring', historyUrl);
-      const res = await apiFetch(url.toString(), {
-        method: 'POST',
-        credentials: 'include',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ groupId, callId, hasVideo }),
-      });
-      appendLog(`[Call] server ring ${res.ok ? 'sent' : `failed (${res.status})`}`);
-    } catch (e) {
-      appendLog(`[Call] server ring error: ${String(e)}`);
+    const { historyUrl } = resolveMlsPublicUrls();
+    const url = new URL('/api/calls/ring', historyUrl);
+    const res = await apiFetch(url.toString(), {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ groupId, callId, hasVideo }),
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      throw new CallInitiateError(
+        'ring',
+        res.status,
+        `calls/ring failed (${res.status})${detail ? `: ${detail}` : ''}`
+      );
     }
+    appendLog('[Call] server ring sent - answer window open');
   }
 
   /**
@@ -414,7 +555,9 @@ export class CallService {
    * Asks chat-delivery-service to create a new call room.
    * Returns the server-generated `roomId` and a signed `roomToken` proving group membership.
    */
-  private async fetchInitiateCall(groupId: string): Promise<{ roomId: string; roomToken: string }> {
+  private async fetchInitiateCall(
+    groupId: string
+  ): Promise<{ roomId: string; roomToken: string; ringTimeoutMs: number }> {
     const { historyUrl } = resolveMlsPublicUrls();
     const url = new URL('/api/calls/initiate', historyUrl);
     const res = await apiFetch(url.toString(), {
@@ -429,11 +572,12 @@ export class CallService {
       // to tell one refusal from another - see `CallInitiateError`.
       const detail = await res.text().catch(() => '');
       throw new CallInitiateError(
+        'initiate',
         res.status,
         `calls/initiate failed (${res.status})${detail ? `: ${detail}` : ''}`
       );
     }
-    return res.json() as Promise<{ roomId: string; roomToken: string }>;
+    return res.json() as Promise<{ roomId: string; roomToken: string; ringTimeoutMs: number }>;
   }
 
   /**
@@ -447,8 +591,14 @@ export class CallService {
     url.searchParams.set('roomId', roomId);
     const res = await apiFetch(url.toString(), { method: 'GET', credentials: 'include' });
     if (!res.ok) {
+      // Typed, as the initiate's refusal is: a 410 HERE (ring window closed) is told as "this call
+      // is over" by `describeCallFailure`, which reads the step and the status, never the message.
       const detail = await res.text().catch(() => '');
-      throw new Error(`calls/room-token failed (${res.status})${detail ? `: ${detail}` : ''}`);
+      throw new CallInitiateError(
+        'room-token',
+        res.status,
+        `calls/room-token failed (${res.status})${detail ? `: ${detail}` : ''}`
+      );
     }
     const data = (await res.json()) as { roomToken: string };
     return data.roomToken;
@@ -510,49 +660,41 @@ export class CallService {
       .slice(0, 2)
       .map((u) => (typeof u === 'string' ? u.split('?')[0] : u))
       .join(', ');
-    appendLog(`[Call] ${mapped.length} ICE server(s) (relay-only): ${urlPreview}`);
+    appendLog(
+      `[Call] ${mapped.length} ICE server(s) (direct first, TURN relay last): ${urlPreview}`
+    );
 
     return mapped;
   }
 
-  /** Applies remote SDP from the SFU, handling renegotiation and offer glare. */
-  private async applyRemoteSdp(sdp: RTCSessionDescriptionInit) {
+  /**
+   * Applies one remote description under perfect negotiation (W3C WebRTC section 10.5): an offer
+   * that collides with our own is dropped by the impolite side and wins on the polite side, where
+   * `setRemoteDescription` rolls our offer back implicitly. Every applied offer is answered.
+   */
+  private async handleRemoteDescription(sdp: RTCSessionDescriptionInit): Promise<void> {
     const pc = this.pc;
-    if (!pc) return;
-
-    if (sdp.type === 'offer') {
-      if (pc.signalingState === 'have-local-offer') {
-        await pc.setLocalDescription({ type: 'rollback' });
-      }
-      await pc.setRemoteDescription(sdp);
-      await this.flushPendingRemoteIceCandidates();
-      if (pc.signalingState === 'have-remote-offer') {
-        const answer = await pc.createAnswer();
-        await pc.setLocalDescription(answer);
-        appendLog(`[Call] SFU renegotiation → Answer (${answer.sdp?.length ?? 0} bytes)`);
-        this.sendSfuMessage({ type: 'Answer', sdp: JSON.stringify(answer) });
-        await this.flushPendingRemoteIceCandidates();
-        this.attachMediaTransforms();
-        await configureCallAudioSenders(pc, this.callHasVideo);
-      }
+    if (!pc) {
+      appendLog(`[Call] remote ${sdp.type} with no peer connection - dropped`);
       return;
     }
-
-    if (sdp.type === 'answer') {
-      if (pc.signalingState !== 'have-local-offer') {
-        // No outstanding local offer to answer: a stale/duplicate Answer (e.g. after a
-        // glare rollback). Applying it would throw InvalidStateError; log so a stalled
-        // renegotiation is diagnosable instead of failing silently.
-        appendLog(`[Call] ignoring SFU Answer in signalingState=${pc.signalingState}`);
-        return;
-      }
-      await pc.setRemoteDescription(sdp);
-      await this.flushPendingRemoteIceCandidates();
-      await configureCallAudioSenders(pc, this.callHasVideo);
+    const collision = sdp.type === 'offer' && (this.makingOffer || pc.signalingState !== 'stable');
+    this.ignoreOffer = !this.polite && collision;
+    if (this.ignoreOffer) {
+      appendLog('[Call] offer collision - the impolite side keeps its own offer');
+      return;
     }
+    await pc.setRemoteDescription(sdp);
+    await this.flushPendingRemoteIceCandidates();
+    if (sdp.type === 'offer') {
+      await pc.setLocalDescription();
+      appendLog(`[Call] answer (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`);
+      this.sendSignal({ type: 'Answer', sdp: JSON.stringify(pc.localDescription) });
+    }
+    await configureCallAudioSenders(pc, this.callHasVideo);
   }
 
-  /** Queues or applies a trickle ICE candidate from the SFU. */
+  /** Queues or applies a trickle ICE candidate from the other party. */
   private async addRemoteIceCandidate(init: RTCIceCandidateInit): Promise<void> {
     const pc = this.pc;
     if (!pc) return;
@@ -575,8 +717,11 @@ export class CallService {
         appendLog('[Call] remote ICE end-of-candidates');
       }
     } catch (e) {
-      const msg = String(e);
-      appendLog(`[Call] addIceCandidate failed: ${msg}`);
+      // A candidate for the offer we just ignored (impolite side, collision) is expected to fail;
+      // anything else is a defect and is named.
+      if (!this.ignoreOffer) {
+        appendLog(`[Call] addIceCandidate failed: ${String(e)}`);
+      }
     }
   }
 
@@ -591,10 +736,13 @@ export class CallService {
     }
   }
 
-  private async connectToSfu(roomId: string) {
-    // `apiUrl.ts` owns this decision - see `resolveServiceUrl`. Calling is held off behind
-    // CALLS_ENABLED, so this path is not exercised today; it is fixed with its siblings rather
-    // than left as the one copy that still prefers the baked origin.
+  /**
+   * Opens the signalling socket (`/api/call`, the existing HTTPS origin - no port of its own) and
+   * joins the call's PEER-TO-PEER room. Resolves once the relay has seated us; the peer connection
+   * is built later, when `PeerReady` says the other party is there and which role this side plays.
+   */
+  private async connectSignalling(roomId: string) {
+    // `apiUrl.ts` owns this decision - see `resolveServiceUrl`.
     const callBaseUrl = resolveServiceUrl(
       (import.meta as { env?: Record<string, string | undefined> }).env?.VITE_CALL_URL,
       ''
@@ -613,18 +761,21 @@ export class CallService {
         tokenParam = `?token=${encodeURIComponent(token)}`;
       }
     } catch {
-      appendLog('[Call] SFU WS: no in-memory token, relying on canari_ws_token cookie');
+      appendLog('[Call] signalling WS: no in-memory token, relying on canari_ws_token cookie');
     }
 
     const wsUrl = `${wsBase}/api/call${tokenParam}`;
     appendLog(
-      `[Call] connecting SFU WebSocket${tokenParam ? ' (token in query)' : ' (cookie auth)'}`
+      `[Call] connecting signalling WebSocket${tokenParam ? ' (token in query)' : ' (cookie auth)'}`
     );
 
     return new Promise<void>((resolve, reject) => {
       const ws = new WebSocket(wsUrl);
       this.signaledWs = ws;
       let settled = false;
+      // Frames are handled ONE AT A TIME, in arrival order: building the peer connection on
+      // `PeerReady` awaits the E2E worker, and the initiator's Offer can arrive meanwhile.
+      let chain: Promise<void> = Promise.resolve();
 
       const fail = (err: unknown) => {
         if (settled) return;
@@ -638,138 +789,125 @@ export class CallService {
       };
 
       const connectTimeout = window.setTimeout(() => {
-        fail(new Error('SFU WebSocket connection timeout (15s)'));
+        fail(new Error('call signalling WebSocket connection timeout (15s)'));
         ws.close();
       }, 15_000);
 
       let joinTimeout = 0;
 
-      const startPeerSetup = () => {
-        void this.initPeerConnection()
-          .then(() => {
-            clearTimers();
-            if (!settled) {
-              settled = true;
-              resolve();
-            }
-          })
-          .catch((err) => {
-            clearTimers();
-            fail(err);
-          });
-      };
-
       ws.onopen = () => {
         window.clearTimeout(connectTimeout);
-        appendLog('[Call] connected to SFU, joining room…');
-        this.sendSfuMessage({
+        appendLog('[Call] signalling connected, joining p2p room...');
+        this.sendSignal({
           type: 'Join',
           room_id: roomId,
           room_token: this.currentRoomToken ?? undefined,
+          mode: 'p2p',
         });
         joinTimeout = window.setTimeout(() => {
-          fail(new Error('SFU Join ack timeout (20s) - redeploy call-service'));
+          fail(new Error('call signalling Join ack timeout (20s)'));
           ws.close();
         }, 20_000);
       };
 
       ws.onerror = () => {
         clearTimers();
-        appendLog('[Call] SFU WebSocket error');
-        fail(new Error('SFU WebSocket connection failed'));
+        appendLog('[Call] signalling WebSocket error');
+        fail(new Error('call signalling WebSocket connection failed'));
       };
 
       ws.onclose = (ev) => {
         clearTimers();
         if (!settled) {
-          fail(new Error(`SFU WebSocket closed before ready (code=${ev.code})`));
-        } else if (get(this.callState) !== 'idle') {
-          // Unexpected drop mid-call (SFU restart, network): cleanup() closes the socket
-          // only after setting state to idle, so reaching here means the media path died.
-          this.failCall(`SFU WebSocket closed code=${ev.code}`);
+          fail(new Error(`call signalling WebSocket closed before ready (code=${ev.code})`));
+        } else if (this.signaledWs === ws && get(this.callState) !== 'idle') {
+          // cleanup() detaches the socket before closing it, so reaching here means the server
+          // or the network dropped it mid-call.
+          this.failCall(`signalling WebSocket closed code=${ev.code}`);
         }
       };
 
-      ws.onmessage = async (event) => {
+      ws.onmessage = (event) => {
+        let frame: SignalFrame;
         try {
-          const msg = JSON.parse(event.data as string);
-
-          if (msg.type === 'Joined') {
-            window.clearTimeout(joinTimeout);
-            appendLog(`[Call] SFU room ready (${msg.room_id ?? roomId})`);
-            if (!settled) startPeerSetup();
-            return;
-          }
-
-          if (!this.pc) return;
-
-          if (msg.type === 'Offer' || msg.type === 'Answer') {
-            const sdp = JSON.parse(msg.sdp) as RTCSessionDescriptionInit;
-            appendLog(`[Call] SFU → ${msg.type} (signaling=${this.pc.signalingState})`);
-            await this.applyRemoteSdp(sdp);
-            if (msg.type === 'Answer') {
-              this.attachMediaTransforms();
-            } else if (msg.type === 'Offer') {
-              appendLog('[Call] SFU renegotiation offer handled');
-            }
-          } else if (msg.type === 'IceCandidate') {
-            const candidate = JSON.parse(msg.candidate) as RTCIceCandidateInit;
-            await this.addRemoteIceCandidate(candidate);
-          }
+          frame = JSON.parse(event.data as string) as SignalFrame;
         } catch (err) {
-          const detail = String(err);
-          appendLog(`[Call] signaling error: ${detail}`);
-          console.error('Signaling error:', err);
+          appendLog(`[Call] unparseable signalling frame: ${String(err)}`);
+          return;
         }
+        if (frame.type === 'Joined') {
+          clearTimers();
+          appendLog(`[Call] p2p room ready (${frame.room_id ?? roomId})`);
+          if (!settled) {
+            settled = true;
+            resolve();
+          }
+          return;
+        }
+        if (frame.type === 'Refused') {
+          clearTimers();
+          appendLog(`[Call] signalling refused: ${frame.reason}`);
+          if (!settled) {
+            fail(new Error(`call signalling refused: ${frame.reason}`));
+          } else {
+            this.failCall(`signalling refused: ${frame.reason}`);
+          }
+          return;
+        }
+        chain = chain
+          .then(() => this.handleSignalFrame(frame))
+          .catch((err) => {
+            appendLog(`[Call] signalling ${frame.type} failed: ${String(err)}`);
+            this.failCall(`signalling ${frame.type} failed`);
+          });
       };
     });
   }
 
-  /** When false, media is relayed cleartext through the SFU (debug / fallback). */
-  private isE2eMediaEnabled(): boolean {
-    return import.meta.env.VITE_CALL_E2E_ENCRYPTION !== 'false';
+  /** Acts on one frame from the relay, after the room is joined. */
+  private async handleSignalFrame(frame: SignalFrame): Promise<void> {
+    switch (frame.type) {
+      case 'PeerReady':
+        await this.onPeerReady(frame.initiator);
+        return;
+      case 'PeerLeft':
+        appendLog('[Call] the other party left the call room');
+        this.endCall(false);
+        return;
+      case 'Offer':
+      case 'Answer': {
+        const sdp = JSON.parse(frame.sdp) as RTCSessionDescriptionInit;
+        appendLog(`[Call] peer -> ${frame.type} (signaling=${this.pc?.signalingState ?? 'none'})`);
+        await this.handleRemoteDescription(sdp);
+        return;
+      }
+      case 'IceCandidate':
+        await this.addRemoteIceCandidate(JSON.parse(frame.candidate) as RTCIceCandidateInit);
+        return;
+      default:
+        appendLog(`[Call] unexpected signalling frame ${frame.type} - ignored`);
+    }
   }
 
-  /** Attaches MLS insertable-stream transforms after the SDP handshake (SFU is not extension-aware). */
-  private attachMediaTransforms() {
-    if (!this.pc || !this.callKey) return;
-    if (!this.isE2eMediaEnabled()) {
-      appendLog('[Call] E2E media encryption disabled (VITE_CALL_E2E_ENCRYPTION=false)');
-      this.e2eActive.set(false);
-      return;
+  /**
+   * The other party is in the room. Builds the peer connection with this side's role; a second
+   * `PeerReady` means the other party's device was replaced, and negotiation restarts from nothing.
+   */
+  private async onPeerReady(initiator: boolean): Promise<void> {
+    this.polite = !initiator;
+    this.peerArrived = true;
+    this.clearRingTimer();
+    appendLog(`[Call] peer ready - this side is ${initiator ? 'initiator' : 'polite'}`);
+    if (this.pc) {
+      appendLog('[Call] the other device was replaced - rebuilding the peer connection');
+      this.pc.close();
+      this.pc = null;
+      this.mergedRemoteStream = null;
+      this.pendingRemoteIceCandidates = [];
+      this.makingOffer = false;
+      this.ignoreOffer = false;
     }
-    if (!canUseRtpScriptTransform()) {
-      appendLog(
-        '[Call] RTCRtpScriptTransform unavailable - E2E disabled (Firefox >= 117: check media.peerconnection.scripttransform.enabled)'
-      );
-      this.e2eActive.set(false);
-      return;
-    }
-    appendLog('[Call] attaching E2E media transforms');
-    void this.attachMediaTransformsAsync();
-  }
-
-  private async attachMediaTransformsAsync() {
-    const pc = this.pc;
-    if (!pc || !this.callKey || !this.isE2eMediaEnabled()) return;
-    try {
-      let senders = 0;
-      let receivers = 0;
-      for (const sender of pc.getSenders()) {
-        await this.setupSenderTransform(sender);
-        senders++;
-      }
-      for (const receiver of pc.getReceivers()) {
-        const kind = receiver.track?.kind ?? 'unknown';
-        await this.setupReceiverTransform(receiver, kind);
-        receivers++;
-      }
-      appendLog(`[Call] E2E transforms attached (${senders} sender(s), ${receivers} receiver(s))`);
-      this.e2eActive.set(true);
-    } catch (e) {
-      const msg = String(e);
-      appendLog(`[Call] E2E transforms failed: ${msg}`);
-    }
+    await this.initPeerConnection();
   }
 
   /** Wires decrypt transform before exposing the track to the UI (avoids black video). */
@@ -778,8 +916,20 @@ export class CallService {
       `[Call] remote track kind=${track.kind} id=${track.id.slice(0, 8)}… readyState=${track.readyState} muted=${track.muted}`
     );
 
-    if (this.callKey && this.isE2eMediaEnabled()) {
+    try {
+      if (!receiver.transform) {
+        // A receiver the peer's offer created (a kind this side never sent). Attaching here is
+        // the only option left, and Chrome 155 was measured NOT to deliver frames to a transform
+        // attached this late - so this line accuses: expect silence on this track.
+        appendLog(
+          `[Call] WARN late E2E receiver transform (${track.kind}) - attached in ontrack, measured to receive no frames in Chrome`
+        );
+      }
       await this.setupReceiverTransform(receiver, track.kind);
+    } catch (e) {
+      appendLog(`[Call] E2E receiver transform failed: ${String(e)}`);
+      this.failCall('E2E receiver transform failed');
+      return;
     }
 
     if (!this.mergedRemoteStream) {
@@ -802,12 +952,11 @@ export class CallService {
       appendLog(`[Call] remote track unmuted kind=${track.kind}`);
       this.publishRemoteStream();
     };
-    // Watchdog: a remote track that never unmutes means the SFU never forwarded media to
-    // us (ICE/relay issue or the publisher's track never reached the SFU) - the usual cause
-    // of "no audio on this call". Logged so a failing call is diagnosable from the console.
+    // Watchdog: a remote track that never unmutes means no media reached us - the usual cause
+    // of "no audio on this call". Logged so a failing call is diagnosable from the exported log.
     setTimeout(() => {
       if (track.readyState === 'live' && track.muted) {
-        appendLog(`[Call] WARN remote ${track.kind} still muted after 5s - no media forwarded`);
+        appendLog(`[Call] WARN remote ${track.kind} still muted after 5s - no media received`);
       }
     }, 5000);
     track.onended = () => {
@@ -831,69 +980,86 @@ export class CallService {
     this.remoteStreams.set(new Map([['remote', stream]]));
   }
 
+  /**
+   * Builds the peer connection to the OTHER PARTY (no SFU in between), attaches the E2E sender
+   * transform to every local track, and lets `negotiationneeded` drive the offers.
+   */
   private async initPeerConnection() {
-    if (!this.currentGroupId || !this.currentCallId) {
+    if (!this.currentGroupId || !this.currentCallId || !this.iceServers) {
       throw new Error('No active call context');
     }
 
-    const iceServers = await this.fetchIceServers(this.currentGroupId, this.currentCallId);
-
     appendLog(
-      `[Call] creating PeerConnection (${isGeckoBrowser() ? 'Firefox' : 'non-Firefox'}, ` +
-        `RTCRtpScriptTransform=${canUseRtpScriptTransform() ? 'yes' : 'no'})`
+      `[Call] creating PeerConnection (policy=${CALL_ICE_TRANSPORT_POLICY}, ${this.iceServers.length} ICE server(s))`
     );
-    const pcConfig: RTCConfiguration = {
-      iceServers,
-      iceTransportPolicy: 'relay',
-    };
-    // Legacy Chromium flag - not used by Firefox (standard API since FF 117).
-    if (!isGeckoBrowser()) {
-      (
-        pcConfig as RTCConfiguration & { encodedInsertableStreams?: boolean }
-      ).encodedInsertableStreams = true;
-    }
-    this.pc = new RTCPeerConnection(pcConfig);
+    const pc = new RTCPeerConnection({
+      iceServers: this.iceServers,
+      iceTransportPolicy: CALL_ICE_TRANSPORT_POLICY,
+    });
+    this.pc = pc;
 
-    let relayCandidateCount = 0;
+    const gathered = { host: 0, srflx: 0, relay: 0, prflx: 0 };
 
-    this.pc.onicecandidate = (e) => {
+    pc.onicecandidate = (e) => {
       if (e.candidate) {
-        if (e.candidate.type === 'relay' || e.candidate.candidate.includes('typ relay')) {
-          relayCandidateCount++;
-        }
-        this.sendSfuMessage({ type: 'IceCandidate', candidate: JSON.stringify(e.candidate) });
+        const type = e.candidate.type;
+        if (type && type in gathered) gathered[type as keyof typeof gathered]++;
+        this.sendSignal({ type: 'IceCandidate', candidate: JSON.stringify(e.candidate) });
       } else {
-        appendLog(`[Call] ICE gathering complete (${relayCandidateCount} relay candidate(s) sent)`);
-        this.sendSfuMessage({
+        appendLog(
+          `[Call] ICE gathering complete (host=${gathered.host} srflx=${gathered.srflx} relay=${gathered.relay})`
+        );
+        this.sendSignal({
           type: 'IceCandidate',
           candidate: JSON.stringify({ candidate: '' } satisfies RTCIceCandidateInit),
         });
-        if (relayCandidateCount === 0) {
+        if (gathered.relay === 0) {
           appendLog(
-            '[Call] No TURN relay candidate - Cloudflare TURN unavailable or misconfigured'
+            '[Call] WARN no TURN relay candidate - a call that cannot go direct will fail (Cloudflare TURN unreachable or misconfigured)'
           );
         }
       }
     };
 
-    this.pc.onicegatheringstatechange = () => {
-      appendLog(`[Call] iceGatheringState=${this.pc?.iceGatheringState}`);
+    pc.onnegotiationneeded = async () => {
+      // The polite side never opens the negotiation: it answers the initiator's first offer,
+      // which already carries a slot for its tracks. After that, either side may renegotiate.
+      if (this.polite && !pc.remoteDescription) return;
+      try {
+        this.makingOffer = true;
+        await pc.setLocalDescription();
+        appendLog(`[Call] offer (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`);
+        this.sendSignal({ type: 'Offer', sdp: JSON.stringify(pc.localDescription) });
+      } catch (e) {
+        appendLog(`[Call] creating an offer failed: ${String(e)}`);
+      } finally {
+        this.makingOffer = false;
+      }
     };
 
-    this.pc.onsignalingstatechange = () => {
-      appendLog(`[Call] signalingState=${this.pc?.signalingState}`);
+    pc.onicegatheringstatechange = () => {
+      appendLog(`[Call] iceGatheringState=${pc.iceGatheringState}`);
     };
 
-    this.pc.ontrack = (e) => {
+    pc.onsignalingstatechange = () => {
+      appendLog(`[Call] signalingState=${pc.signalingState}`);
+    };
+
+    pc.ontrack = (e) => {
       const { track, receiver } = e;
       void this.handleRemoteTrack(track, receiver);
     };
 
-    this.pc.onconnectionstatechange = () => {
-      const state = this.pc?.connectionState;
+    pc.onconnectionstatechange = () => {
+      if (this.pc !== pc) return;
+      const state = pc.connectionState;
       appendLog(`[Call] connectionState=${state}`);
-      if (state === 'connected' && get(this.callState) !== 'idle') {
-        this.callState.set('incall');
+      if (state === 'connected') {
+        if (get(this.callState) !== 'idle') this.callState.set('incall');
+        void pc
+          .getStats()
+          .then((stats) => appendLog(`[Call] selected path ${describeSelectedPair(stats)}`))
+          .catch((e: unknown) => appendLog(`[Call] getStats failed: ${String(e)}`));
       }
       if (state === 'disconnected') {
         // 'disconnected' is often transient (WebRTC may recover); log but do not tear down.
@@ -904,17 +1070,13 @@ export class CallService {
       }
     };
 
-    this.pc.oniceconnectionstatechange = () => {
-      const iceState = this.pc?.iceConnectionState;
+    pc.oniceconnectionstatechange = () => {
+      if (this.pc !== pc) return;
+      const iceState = pc.iceConnectionState;
       appendLog(`[Call] iceConnectionState=${iceState}`);
-      if (iceState === 'connected' || iceState === 'completed') {
-        if (get(this.callState) !== 'idle') {
-          this.callState.set('incall');
-        }
-      }
       if (iceState === 'failed') {
         appendLog(
-          '[Call] ICE failed - check Cloudflare TURN on chat-delivery and call-service (same secrets)'
+          '[Call] ICE failed - no direct path and no TURN relay pair (check Cloudflare TURN on chat-delivery)'
         );
         this.failCall('iceConnectionState=failed');
       }
@@ -924,26 +1086,31 @@ export class CallService {
       const tracks = this.localStream.getTracks();
       appendLog(`[Call] adding ${tracks.length} local track(s) to PeerConnection`);
       for (const track of tracks) {
-        const sender = this.pc!.addTrack(track, this.localStream!);
-        // Firefox/MDN: attach sender transform right after addTrack so the encoder pipeline is covered.
-        if (this.callKey && this.isE2eMediaEnabled() && canUseRtpScriptTransform()) {
-          void this.setupSenderTransform(sender);
-        }
+        const sender = pc.addTrack(track, this.localStream);
+        // Before the first frame is encoded: a sender without its transform would send clear media.
+        await this.setupSenderTransform(sender);
+        // The RECEIVER of the same transceiver, now, before any negotiation. Measured in Chrome 155
+        // (2026-10-17): a receiver transform attached in `ontrack` never sees a single frame - the
+        // call connects, packets arrive, and every sample is concealed silence. Attached here, at
+        // transceiver creation, every frame decrypts. Both ends add an audio track before
+        // negotiating, and the polite side's offer-answer reuses this transceiver, so the remote
+        // audio always lands on a receiver that already decrypts.
+        const transceiver = pc.getTransceivers().find((t) => t.sender === sender);
+        if (transceiver) await this.setupReceiverTransform(transceiver.receiver, track.kind);
         if (track.kind === 'video') void this.applyVideoSenderLimits(sender);
       }
-      await configureCallAudioSenders(this.pc!, this.callHasVideo);
+      await configureCallAudioSenders(pc, this.callHasVideo);
     }
-
-    appendLog('[Call] creating SDP offer…');
-    const offer = await this.pc.createOffer();
-    await this.pc.setLocalDescription(offer);
-    appendLog(`[Call] local offer set (${offer.sdp?.length ?? 0} bytes), sending to SFU`);
-    this.sendSfuMessage({ type: 'Offer', sdp: JSON.stringify(this.pc.localDescription) });
   }
 
-  private sendSfuMessage(msg: Record<string, unknown>) {
+  /** Writes one frame to the signalling socket. A frame that cannot leave is named, never dropped silently. */
+  private sendSignal(msg: Record<string, unknown>) {
     if (this.signaledWs && this.signaledWs.readyState === WebSocket.OPEN) {
       this.signaledWs.send(JSON.stringify(msg));
+    } else {
+      appendLog(
+        `[Call] signalling ${String(msg.type)} NOT sent - socket ${this.signaledWs ? `state ${this.signaledWs.readyState}` : 'absent'}`
+      );
     }
   }
 
@@ -1028,111 +1195,27 @@ export class CallService {
     return this.workerKeyReady;
   }
 
-  private async setupSenderTransform(sender: RTCRtpSender) {
-    if (!this.callKey || !this.isE2eMediaEnabled()) return;
+  /**
+   * Attaches the E2E encrypt transform to a sender. THROWS when it cannot: a call is refused,
+   * never sent in clear (`CallE2eUnsupportedError` already refused an engine without the API).
+   */
+  private async setupSenderTransform(sender: RTCRtpSender): Promise<void> {
     if (sender.transform) return;
-
-    try {
-      if (canUseRtpScriptTransform()) {
-        const worker = this.getOrCreateEncryptionWorker();
-        await this.ensureWorkerKeyReady();
-        sender.transform = new RTCRtpScriptTransform(worker, { side: 'sender' });
-        return;
-      }
-    } catch (e) {
-      const msg = String(e);
-      appendLog(`[Call] sender transform failed: ${msg}`);
-      return;
-    }
-
-    const s = sender as RTCRtpSender & {
-      createEncodedStreams?: () => { readable: ReadableStream; writable: WritableStream };
-    };
-    const streams = s.createEncodedStreams?.();
-    if (streams) {
-      const transformer = new TransformStream({
-        transform: async (frame, controller) => {
-          await this.encryptFrame(frame, controller);
-        },
-      });
-      streams.readable.pipeThrough(transformer).pipeTo(streams.writable);
-    } else {
-      console.warn('Insertable Streams not supported');
-    }
+    if (!this.callKey) throw new Error('no call key for the sender transform');
+    const worker = this.getOrCreateEncryptionWorker();
+    await this.ensureWorkerKeyReady();
+    sender.transform = new RTCRtpScriptTransform(worker, { side: 'sender' });
+    appendLog(`[Call] E2E sender transform attached (${sender.track?.kind ?? 'unknown'})`);
   }
 
+  /** Attaches the E2E decrypt transform to a receiver. THROWS when it cannot, like the sender. */
   private async setupReceiverTransform(receiver: RTCRtpReceiver, mediaKind = 'unknown') {
-    if (!this.callKey || !this.isE2eMediaEnabled()) return;
     if (receiver.transform) return;
-
-    try {
-      if (canUseRtpScriptTransform()) {
-        const worker = this.getOrCreateEncryptionWorker();
-        await this.ensureWorkerKeyReady();
-        receiver.transform = new RTCRtpScriptTransform(worker, { side: 'receiver' });
-        appendLog(`[Call] E2E receiver transform attached (${mediaKind})`);
-        return;
-      }
-    } catch (e) {
-      const msg = String(e);
-      appendLog(`[Call] receiver transform failed: ${msg}`);
-      return;
-    }
-
-    const r = receiver as RTCRtpReceiver & {
-      createEncodedStreams?: () => { readable: ReadableStream; writable: WritableStream };
-    };
-    const streams = r.createEncodedStreams?.();
-    if (streams) {
-      const transformer = new TransformStream({
-        transform: async (frame, controller) => {
-          await this.decryptFrame(frame, controller);
-        },
-      });
-      streams.readable.pipeThrough(transformer).pipeTo(streams.writable);
-    }
-  }
-
-  private async encryptFrame(
-    frame: RTCEncodedVideoFrame,
-    controller: TransformStreamDefaultController
-  ) {
-    const iv = crypto.getRandomValues(new Uint8Array(12));
-    const data = frame.data;
-
-    try {
-      const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, this.callKey!, data);
-      const packed = new Uint8Array(iv.byteLength + ciphertext.byteLength);
-      packed.set(iv, 0);
-      packed.set(new Uint8Array(ciphertext), 12);
-      frame.data = packed.buffer;
-      controller.enqueue(frame);
-    } catch (e) {
-      console.error('Encryption failed', e);
-    }
-  }
-
-  private async decryptFrame(
-    frame: RTCEncodedVideoFrame,
-    controller: TransformStreamDefaultController
-  ) {
-    const data = new Uint8Array(frame.data);
-    if (data.byteLength < 12) return;
-
-    const iv = data.slice(0, 12);
-    const ciphertext = data.slice(12);
-
-    try {
-      const plaintext = await crypto.subtle.decrypt(
-        { name: 'AES-GCM', iv },
-        this.callKey!,
-        ciphertext
-      );
-      frame.data = plaintext;
-      controller.enqueue(frame);
-    } catch (e) {
-      console.error('Decryption failed', e);
-    }
+    if (!this.callKey) throw new Error('no call key for the receiver transform');
+    const worker = this.getOrCreateEncryptionWorker();
+    await this.ensureWorkerKeyReady();
+    receiver.transform = new RTCRtpScriptTransform(worker, { side: 'receiver' });
+    appendLog(`[Call] E2E receiver transform attached (${mediaKind})`);
   }
 
   /**
@@ -1241,7 +1324,7 @@ export class CallService {
   /**
    * Toggles the local camera. When the call started audio-only there is no video
    * track yet, so enabling it acquires the camera, adds the track (with the E2E
-   * sender transform) and renegotiates with the SFU. Otherwise it just flips the
+   * sender transform) and renegotiates with the peer. Otherwise it just flips the
    * existing track's `enabled` flag.
    */
   public async toggleVideo() {
@@ -1259,15 +1342,14 @@ export class CallService {
         if (!videoTrack) return;
         this.localStream.addTrack(videoTrack);
         this.callHasVideo = true;
+        // `negotiationneeded` fires from this addTrack and carries the new m-line to the peer; no
+        // frame leaves before that negotiation completes, so the transform is in place first.
         const sender = this.pc.addTrack(videoTrack, this.localStream);
-        if (this.callKey && this.isE2eMediaEnabled() && canUseRtpScriptTransform()) {
-          void this.setupSenderTransform(sender);
-        }
+        await this.setupSenderTransform(sender);
         void this.applyVideoSenderLimits(sender);
         this.localStreamStore.set(this.localStream);
-        await this.renegotiate();
         this.isVideoOff.set(false);
-        appendLog('[Call] camera acquired and added mid-call (renegotiated)');
+        appendLog('[Call] camera acquired and added mid-call (renegotiating)');
       } catch (e) {
         const msg = String(e);
         appendLog(`[Call] enabling camera failed: ${msg}`);
@@ -1279,19 +1361,5 @@ export class CallService {
       t.enabled = !off;
     });
     this.isVideoOff.set(off);
-  }
-
-  /**
-   * Client-initiated renegotiation: creates a fresh offer reflecting the current
-   * senders and sends it to the SFU, which replies with an Answer handled by
-   * {@link applyRemoteSdp}. Used after adding a track mid-call.
-   */
-  private async renegotiate(): Promise<void> {
-    const pc = this.pc;
-    if (!pc || pc.signalingState !== 'stable') return;
-    const offer = await pc.createOffer();
-    await pc.setLocalDescription(offer);
-    appendLog(`[Call] renegotiation offer (${offer.sdp?.length ?? 0} bytes) → SFU`);
-    this.sendSfuMessage({ type: 'Offer', sdp: JSON.stringify(pc.localDescription) });
   }
 }

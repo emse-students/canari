@@ -10,7 +10,7 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository, type EntityManager } from 'typeorm';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
-import { isExclusionViolation } from '../common/pg-errors';
+import { isDeadlock, isExclusionViolation } from '../common/pg-errors';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { matchesCondition, needsProfile, type PricingFacts } from '../pricing/audience';
 import { normaliseCondition, visibleItemIds, type ConditionalItem } from '../forms/visibility';
@@ -38,6 +38,27 @@ export type SlotForViewer = Omit<SlotView, 'bookingId' | 'blockId'> & {
   blockReason?: string | null;
 };
 
+/**
+ * THE ONE RIGHTS POLICY OF THE MODULE: may `actor` manage a space owned like this - an existing
+ * space, or one about to be created (`ownerId` = the creator)? A global admin, else
+ * `MANAGE_BOOKINGS` on the owning association (`AssociationsService.mayAct`), else - for a PERSONAL
+ * space (`associationId` null) - its owner. `ownerId` grants nothing on an association space: it
+ * only names the creator.
+ */
+export async function mayManageSpace(
+  associations: Pick<AssociationsService, 'mayAct'>,
+  space: { associationId: string | null; ownerId: string },
+  actor: Actor
+): Promise<boolean> {
+  if (actor.isGlobalAdmin) return true;
+  if (space.associationId === null) return space.ownerId === actor.userId;
+  return associations.mayAct(
+    actor.userId,
+    space.associationId,
+    AssociationPermissionFlag.MANAGE_BOOKINGS
+  );
+}
+
 const DAY_MS = 86_400_000;
 
 /** `mine` answers at most this many bookings, newest first. */
@@ -49,6 +70,12 @@ export const SPACE_BOOKINGS_PAGE = 200;
  * quota counts in is an ISO week of LOCAL dates, so seven days plus a zone's offset.
  */
 const QUOTA_LOOKBACK_MS = 8 * DAY_MS;
+/**
+ * How far behind the server's clock a block's start may be and still mean "from now": the screen's
+ * now reaches the server after a request's flight and a phone's clock skew. Such a start moves up
+ * to the server's now; an older one is the past and stays refused (`history-frozen`).
+ */
+export const NEAR_NOW_MS = 10_000;
 
 /**
  * THE BOOKINGS API'S RULES (WP-B3, docs/wiki/bookings-chantier.md "WP-B3 as built").
@@ -84,15 +111,9 @@ export class BookingsService {
 
   // -- Rights ------------------------------------------------------------------------------------
 
-  /** Whether the actor manages the space: see the class comment. */
-  async mayManage(space: BookingSpace, actor: Actor): Promise<boolean> {
-    if (actor.isGlobalAdmin) return true;
-    if (space.associationId === null) return space.ownerId === actor.userId;
-    return this.associations.mayAct(
-      actor.userId,
-      space.associationId,
-      AssociationPermissionFlag.MANAGE_BOOKINGS
-    );
+  /** Whether the actor manages the space: {@link mayManageSpace}. */
+  mayManage(space: BookingSpace, actor: Actor): Promise<boolean> {
+    return mayManageSpace(this.associations, space, actor);
   }
 
   private async loadSpace(spaceId: string): Promise<BookingSpace> {
@@ -572,6 +593,15 @@ export class BookingsService {
         this.logger.log(`[BOOKINGS] slot taken resource=${dto.resourceId.slice(0, 8)}`);
         throw new ConflictException({ code: 'slot-taken' });
       }
+      // Every writer of these tables takes space, then resource, then booking (the erasure too,
+      // `BOOKINGS_ERASURE_STATEMENTS`), so a deadlock here is a writer that broke the order. The
+      // transaction was rolled back whole: the booker may send the same request again.
+      if (isDeadlock(err)) {
+        this.logger.error(
+          `[BOOKINGS] deadlock while booking resource=${dto.resourceId.slice(0, 8)}`
+        );
+        throw new ConflictException({ code: 'try-again' });
+      }
       throw err;
     }
   }
@@ -653,7 +683,8 @@ export class BookingsService {
   /**
    * "Indisponible" over a coming range (D10, D20): the organiser, or the account linked to the
    * resource. NOTHING ON THE PAST (D15, D20): a block may not START before now - the screen offers
-   * now as its earliest start - so no past instant is ever marked. Refused while COMING live
+   * now as its earliest start, and a start within `NEAR_NOW_MS` of the server's now moves up to it -
+   * so no past instant is ever marked. Refused while COMING live
    * bookings fall inside it, naming them (D29): the organiser cancels them explicitly first. A
    * booking already under way cannot be cancelled, so it neither refuses the block nor is named.
    */
@@ -666,7 +697,17 @@ export class BookingsService {
       throw new ForbiddenException({ code: 'not-manager' });
     }
     const range = this.parseRange(dto.startsAt, dto.endsAt);
-    if (range.startMs < nowMs) throw new ConflictException({ code: 'history-frozen' });
+    // The screen offers ITS now as the earliest start, which reaches the server a moment late: a
+    // start that close is the booker's "from now" and moves up to the server's now. Anything
+    // clearly in the past is still refused.
+    if (range.startMs < nowMs - NEAR_NOW_MS) {
+      throw new ConflictException({ code: 'history-frozen' });
+    }
+    if (range.startMs < nowMs) {
+      this.logger.debug(`[BOOKINGS] addBlock start moved up to now by ${nowMs - range.startMs}ms`);
+      range.startMs = nowMs;
+      if (range.endMs <= range.startMs) throw new BadRequestException({ code: 'range' });
+    }
     if (range.endMs - range.startMs > 366 * DAY_MS) {
       throw new BadRequestException({ code: 'range' });
     }

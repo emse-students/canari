@@ -1056,6 +1056,93 @@ pub(crate) fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Val
     }
 }
 
+/// The per-install files that hold ONE account's data in the clear and die with that account when it
+/// is DELETED: unsent `AppMessage` protos (`store_outbox_mirror`), messages decrypted by a push
+/// (`read_and_clear_fcm_cache`), the read marks and sent ids the background side handed over. Not
+/// `mls.bin`, `graine_seeds.json` or the push secret - kept by this command on purpose.
+const ACCOUNT_PUSH_FILES: [&str; 4] = [
+    "outbox_pending.ndjson",
+    "fcm_message_cache.ndjson",
+    "read_watermarks.ndjson",
+    "outbox_sent.ndjson",
+];
+
+/// The file that NAMES whose the files above are - removed last, since it is the proof.
+const PUSH_CONTEXT_FILE: &str = "push_context.json";
+
+/// Deletes the push-side files of a DELETED account (WP-DEL-LOCAL) - see [`remove_user_push_files`].
+#[tauri::command]
+pub(crate) fn delete_user_push_files(
+    app: tauri::AppHandle,
+    user_id: String,
+) -> Result<usize, String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    remove_user_push_files(&data_dir, &user_id)
+}
+
+/// Removes [`ACCOUNT_PUSH_FILES`] and `push_context.json` (`userId`, `deviceId`, the bearer
+/// `pushToken`) ONLY WHEN `push_context.json` NAMES `user_id`. An allowlist by owner: none of the
+/// NDJSON files carries its account, so the context is the one fact that can prove whose they are.
+///
+/// - names `user_id`: every file goes, the context LAST - a failure keeps the proof for the resume;
+/// - names another account: nothing is touched - that account signed in after, the files are its;
+/// - absent, unreadable or naming nobody: nothing is touched and it is logged - an unknown owner is
+///   never a licence to delete.
+///
+/// Returns how many files were removed.
+pub(crate) fn remove_user_push_files(
+    data_dir: &std::path::Path,
+    user_id: &str,
+) -> Result<usize, String> {
+    if !crate::commands::storage::is_wipeable_account_id(user_id) {
+        log::error!("[DEL-LOCAL] push files: refusing a user id outside the allowlist");
+        return Err("invalid user id".to_string());
+    }
+    let context_path = data_dir.join(PUSH_CONTEXT_FILE);
+    let bytes = match std::fs::read(&context_path) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            log::warn!(
+                "[DEL-LOCAL] push files: no {PUSH_CONTEXT_FILE}, owner unknown - left alone"
+            );
+            return Ok(0);
+        }
+        Err(e) => return Err(format!("{PUSH_CONTEXT_FILE} unreadable: {e}")),
+    };
+    let owner = serde_json::from_slice::<serde_json::Value>(&bytes)
+        .ok()
+        .and_then(|v| v.get("userId")?.as_str().map(str::to_string))
+        .filter(|o| !o.is_empty());
+    match owner.as_deref() {
+        None => {
+            log::warn!(
+                "[DEL-LOCAL] push files: {PUSH_CONTEXT_FILE} names no account - owner unknown, left alone"
+            );
+            return Ok(0);
+        }
+        Some(o) if o != user_id => {
+            log::info!(
+                "[DEL-LOCAL] push files belong to another account signed in since - left alone"
+            );
+            return Ok(0);
+        }
+        Some(_) => {}
+    }
+    let mut removed = 0usize;
+    let mut failures = 0usize;
+    for name in ACCOUNT_PUSH_FILES {
+        crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
+    }
+    if failures == 0 {
+        crate::commands::storage::remove_entry(&context_path, &mut removed, &mut failures);
+    }
+    log::info!("[DEL-LOCAL] push files: {removed} removed, {failures} failed");
+    if failures > 0 {
+        return Err(format!("{failures} push file(s) could not be removed"));
+    }
+    Ok(removed)
+}
+
 /// The app's own handoff file: read FIRST by every in-app reader, then moved into the Keystore /
 /// Keychain (`retrievePushSecret`, `CanariRetrievePushSecret`).
 const PENDING_PUSH_SECRET_FILE: &str = "pending_push_secret.txt";
@@ -1426,5 +1513,88 @@ mod push_secret_tests {
         assert!(write_push_secret(&app, Some(&missing), "s").is_err());
         // The app's own readers still get the secret: their copy is written first.
         assert_eq!(read(&app, PENDING_PUSH_SECRET_FILE), "s");
+    }
+}
+
+#[cfg(test)]
+mod delete_user_push_files_tests {
+    use super::{remove_user_push_files, ACCOUNT_PUSH_FILES, PUSH_CONTEXT_FILE};
+
+    fn dir_with(tag: &str, context: Option<&str>) -> std::path::PathBuf {
+        let dir =
+            std::env::temp_dir().join(format!("canari_del_push_{tag}_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in ACCOUNT_PUSH_FILES {
+            std::fs::write(dir.join(f), b"{}\n").unwrap();
+        }
+        std::fs::write(dir.join("mls.bin"), b"x").unwrap();
+        std::fs::write(dir.join("graine_seeds.json"), b"[]").unwrap();
+        if let Some(c) = context {
+            std::fs::write(dir.join(PUSH_CONTEXT_FILE), c).unwrap();
+        }
+        dir
+    }
+
+    fn untouched(dir: &std::path::Path) -> bool {
+        ACCOUNT_PUSH_FILES.iter().all(|f| dir.join(f).exists())
+    }
+
+    /// The context names the deleted account: its plaintext files and the context go, the
+    /// per-install files stay.
+    #[test]
+    fn removes_the_files_the_context_proves_are_the_deleted_accounts() {
+        let dir = dir_with(
+            "own",
+            Some(r#"{"userId":"a.b@x.fr","deviceId":"d","pushToken":"t"}"#),
+        );
+        assert_eq!(remove_user_push_files(&dir, "a.b@x.fr").unwrap(), 5);
+        for f in ACCOUNT_PUSH_FILES {
+            assert!(!dir.join(f).exists(), "{f}");
+        }
+        assert!(!dir.join(PUSH_CONTEXT_FILE).exists());
+        assert!(dir.join("mls.bin").exists());
+        assert!(dir.join("graine_seeds.json").exists());
+        // Idempotent: a resumed wipe finds no context and touches nothing.
+        assert_eq!(remove_user_push_files(&dir, "a.b@x.fr").unwrap(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Another account signed in since: the files are its own, nothing is touched.
+    #[test]
+    fn never_touches_files_another_account_owns() {
+        let dir = dir_with("other", Some(r#"{"userId":"b","deviceId":"d"}"#));
+        assert_eq!(remove_user_push_files(&dir, "a").unwrap(), 0);
+        assert!(untouched(&dir));
+        assert!(dir.join(PUSH_CONTEXT_FILE).exists());
+        // A prefix of the owner is another account too.
+        assert_eq!(remove_user_push_files(&dir, "b_").unwrap(), 0);
+        assert!(untouched(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// No context, a malformed one, or one naming nobody: the owner is unknown, nothing goes.
+    #[test]
+    fn an_unknown_owner_is_never_a_licence_to_delete() {
+        for (tag, ctx) in [
+            ("none", None),
+            ("garbage", Some("not json")),
+            ("anon", Some(r#"{"locale":"fr"}"#)),
+            ("empty", Some(r#"{"userId":""}"#)),
+        ] {
+            let dir = dir_with(tag, ctx);
+            assert_eq!(remove_user_push_files(&dir, "a").unwrap(), 0, "{tag}");
+            assert!(untouched(&dir), "{tag}");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// An id outside the allowlist is refused before anything is read.
+    #[test]
+    fn refuses_an_id_outside_the_allowlist() {
+        let dir = dir_with("bad", Some(r#"{"userId":"../x"}"#));
+        assert!(remove_user_push_files(&dir, "../x").is_err());
+        assert!(untouched(&dir));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

@@ -61,6 +61,8 @@ services:
   # ─────────────────────────────────────────────────────
   redis:
     logging: *logging
+    labels:
+      canari.deploy.replace: pinned
     # PINNED BY DIGEST TO WHAT PRODUCTION IS PROVEN TO RUN, not to whatever the tag resolved to
     # the morning somebody rebuilt. `redis:alpine` is a FLOATING MAJOR - it was serving 8.8.0 on
     # 2026-09-01 and a `docker compose pull` could have moved it to 9 without a line changing
@@ -101,6 +103,8 @@ services:
 
   postgres:
     logging: *logging
+    labels:
+      canari.deploy.replace: pinned
     # DEV CROSSES WITH PRODUCTION, IN THE SAME COMMIT, AND THAT IS THE POINT OF THIS ENVIRONMENT.
     # It carries production's schema (with a fictional seed), so it is the only place an 18 can be
     # met before production meets it - which is why the two lines move together rather than dev going first and
@@ -141,6 +145,8 @@ services:
   # ─────────────────────────────────────────────────────
   chat-gateway:
     logging: *logging
+    labels:
+      canari.deploy.replace: overlap
     # TAG IS REQUIRED, WITH NO DEFAULT. Production defaults to `:latest`; the previous version of
     # this file defaulted to `:dev`, a MUTABLE tag, which means a redeploy could not be reproduced
     # and a rollback had no name to roll back to. CD passes the commit sha.
@@ -154,15 +160,30 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       REDIS_URL: redis://redis:6379
       DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
+      # The presence audience (WP-PRESENCE): who shares a conversation or a community with whom is
+      # asked of chat-delivery and social-service over this network. Unset, every presence read is a 503.
+      SOCIAL_SERVICE_URL: http://social-service:3014
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       # Never `*`. This environment is publicly resolvable and testers sign in with real accounts;
       # a wildcard allowlist there is a different thing from a wildcard on a laptop.
       ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}
+    # Production's, plus `start_interval`: a replaced replica leaves once its successor is healthy
+    # (docs/wiki/cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to).
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+      start_interval: 2s
     depends_on:
       redis:
         condition: service_healthy
 
   call-service:
     logging: *logging
+    labels:
+      canari.deploy.replace: exclusive
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/call-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -172,9 +193,9 @@ services:
       RUST_LOG: info
       PORT: "3004"
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
-      # No TURN and no Cloudflare Calls credentials in dev: `CALLS_ENABLED` is false since 0.14.15
-      # and the surface has never been properly tested, so there is nothing here to point at a
-      # relay. Sharing production's would also mean a dev client consuming production's TURN quota.
+      # No TURN credentials HERE, deliberately: since lot 1 (2026-10-17) dev's 1:1 calls are peer to
+      # peer and this service only relays their handshake - it opens no peer connection, so it has
+      # nothing to point at a relay. The CLIENTS get TURN from chat-delivery-service, below.
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
 
   # ─────────────────────────────────────────────────────
@@ -182,6 +203,8 @@ services:
   # ─────────────────────────────────────────────────────
   chat-delivery-service:
     logging: *logging
+    labels:
+      canari.deploy.replace: overlap
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/chat-delivery-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -210,6 +233,11 @@ services:
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       MEDIA_SERVICE_URL: ${MEDIA_SERVICE_URL:-http://media-service:3011}
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
+      # Short-lived Cloudflare TURN credentials for dev's calls (`/api/calls/ice-servers`, lot 1).
+      # Rendered from the DEV_CLOUDFLARE_* secrets (env-manifest.tsv), never production's names.
+      # Unset: the endpoint answers 503 and a call fails before it rings.
+      CLOUDFLARE_CALLS_API_TOKEN: ${CLOUDFLARE_CALLS_API_TOKEN:-}
+      CLOUDFLARE_TURN_KEY_ID: ${CLOUDFLARE_TURN_KEY_ID:-}
       # Server-side Safe Browsing lookup for shared links (WP-SAFELINK-1). Optional and
       # fails open: unset means no check, never a blocked link.
       GOOGLE_SAFE_BROWSING_API_KEY: ${GOOGLE_SAFE_BROWSING_API_KEY:-}
@@ -233,12 +261,15 @@ services:
       timeout: 5s
       retries: 5
       start_period: 50s
+      start_interval: 2s
 
   # ─────────────────────────────────────────────────────
   # Garage - S3-compatible object storage for encrypted media blobs
   # ─────────────────────────────────────────────────────
   garage:
     logging: *logging
+    labels:
+      canari.deploy.replace: pinned
     # `v2.3.0` is an exact version rather than a floating tag, which is why it is not digest-pinned
     # the way redis and postgres are - and it matches production exactly, deliberately.
     image: dxflrs/garage:v2.4.1
@@ -278,6 +309,8 @@ services:
   # Stores only opaque encrypted blobs; never sees decryption keys.
   media-service:
     logging: *logging
+    labels:
+      canari.deploy.replace: exclusive
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/media-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -313,6 +346,8 @@ services:
   # Handles Auth, Users, Payment
   core-service:
     logging: *logging
+    labels:
+      canari.deploy.replace: overlap
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/core-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -374,6 +409,13 @@ services:
       # moved onto dev. Production deliberately renders nothing here, so prod stays null and a
       # non-null build IS dev.
       DEPLOY_BUILD: ${DEPLOY_BUILD:-}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3012/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+      start_interval: 2s
     depends_on:
       postgres:
         condition: service_healthy
@@ -381,6 +423,8 @@ services:
   # Handles Channels, Posts, Forms
   social-service:
     logging: *logging
+    labels:
+      canari.deploy.replace: overlap
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/social-service:${TAG:?TAG is required - CD passes an immutable tag}
     restart: always
     <<: *dev-limits
@@ -430,6 +474,13 @@ services:
       REDIS_URL: redis://redis:6379
       # Absent, not inherited: this key reaches Le Cercle's estate, which has no dev environment.
       CERCLE_API_KEY: ${CERCLE_API_KEY:-}
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3014/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+      start_interval: 2s
     depends_on:
       postgres:
         condition: service_healthy
@@ -460,6 +511,8 @@ services:
   # up - `up -d` alone sees no reason to recreate a container whose tag has not changed.
   frontend-ssr:
     logging: *logging
+    labels:
+      canari.deploy.replace: overlap
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend-ssr:${FRONTEND_TAG:-dev}
     restart: always
     <<: *dev-limits
@@ -472,6 +525,15 @@ services:
       SOCIAL_SERVICE_URL: http://social-service:3014
       CORE_SERVICE_URL: http://core-service:3012
       DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
+    # The image's own HEALTHCHECK, restated with `start_interval` so a new replica is known healthy
+    # within seconds of booting rather than one 30 s interval later.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/login').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 2s
     depends_on:
       social-service:
         condition: service_started
@@ -480,12 +542,14 @@ services:
       chat-delivery-service:
         condition: service_started
 
-  # nginx serving a build. THE ONLY container here that binds a host port, and the only one the
-  # cloudflared tunnel needs to reach: its ingress rule for `dev.canari-emse.fr` points at
-  # `http://localhost:3080`. Dev runs its OWN nginx, so production's single public entry point is
-  # never edited to accommodate a second environment.
+  # nginx serving a build. Dev runs its OWN nginx and its own edge, so production's single public
+  # entry point is never edited to accommodate a second environment. It publishes NOTHING since
+  # 2026-10-17: the host port is the edge's, below, so that a release can start this container's
+  # successor beside it.
   frontend:
     logging: *logging
+    labels:
+      canari.deploy.replace: overlap
     image: ${REGISTRY:-ghcr.io}/${IMAGE_PREFIX:-emse-students/canari}/frontend:${FRONTEND_TAG:-dev}
     restart: always
     <<: *dev-limits
@@ -495,12 +559,38 @@ services:
       # ORIGIN / VITE_GATEWAY_URL / VITE_DELIVERY_URL are absent for the same reason as in
       # `docker-compose.prod.yml`: this image is nginx serving a build, nothing reads them at
       # runtime, and a `VITE_` variable is baked in at BUILD time.
-    ports:
-      # Loopback only. Production binds its frontend on all interfaces; there is no reason for a
-      # second environment to be reachable except through the tunnel.
-      - "127.0.0.1:${FRONTEND_HOST_PORT:-3080}:80"
+    expose:
+      - "80"
+    # `/nginx-health` answers from this nginx alone (no upstream, no access-log line), so healthy means
+    # "this image's configuration loaded and it is listening" - what the edge needs to send it traffic.
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 2s
     depends_on:
       frontend-ssr:
+        condition: service_started
+
+  # THE ONE CONTAINER THAT HOLDS THE HOST PORT, and a release never replaces it - see
+  # `edge/nginx.conf` and the production file. Loopback only: the host's nginx is the public entry
+  # point for `dev.canari-emse.fr` and reaches this over `http://127.0.0.1:3080`.
+  edge:
+    logging: *logging
+    labels:
+      canari.deploy.replace: pinned
+    image: nginx:1.30.6-alpine@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5
+    restart: always
+    <<: *dev-limits
+    command: ["nginx", "-c", "/etc/nginx/edge/nginx.conf", "-g", "daemon off;"]
+    volumes:
+      - ./edge:/etc/nginx/edge:ro
+    ports:
+      - "127.0.0.1:${FRONTEND_HOST_PORT:-3080}:80"
+    depends_on:
+      frontend:
         condition: service_started
 
 volumes:

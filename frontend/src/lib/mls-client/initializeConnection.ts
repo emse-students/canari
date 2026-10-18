@@ -177,6 +177,14 @@ export async function openGatewayConnection(
     }
     return true;
   } catch (wsErr: unknown) {
+    // A SIGN-OUT STOPPED IT: nothing failed, so nothing is logged as a failure, and it is re-thrown
+    // like an expiry so no caller schedules a backoff reconnect into a session being ended. Matched by
+    // its type NAME, as the expiry below is, because `auth` is imported lazily here.
+    if (wsErr instanceof Error && wsErr.name === 'SignOutInProgressError') {
+      setIsWsConnected(false);
+      log('Gateway connection stopped - a sign-out is in progress.');
+      throw wsErr;
+    }
     const msg = String(wsErr);
     setIsWsConnected(false);
     log(`Gateway inaccessible: ${msg}`);

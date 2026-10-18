@@ -4,7 +4,11 @@
 **Components**: `src/lib/components/calls/`, `src/lib/composables/useCallSession.svelte.ts`  
 **Service**: `src/lib/services/CallService.ts`
 
-> **THE WHOLE SURFACE IS HELD OFF SINCE 0.14.15 - `CALLS_ENABLED = false`
+> **SINCE 2026-10-17 (LOT 1): IN-APP 1:1 AUDIO IS ON FOR DEV BUILDS ONLY, PEER TO PEER** - see
+> [lot 1](#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only) below. Everything else in this
+> banner still holds for production and for the native ring: `CALLS_COMPILED = false`.
+>
+> **THE WHOLE SURFACE WAS HELD OFF SINCE 0.14.15 - `CALLS_ENABLED = false`
 > (`frontend/src/lib/features.ts`).** Everything below still describes the code exactly, and none of
 > it was deleted; none of it RUNS. The reason is that it never did: the campaign board carries twenty
 > CALL rows and not one has ever been executed, the SFU has never had a peer connection opened
@@ -58,6 +62,142 @@
 > 443) are the two it cannot use. No inbound port is needed. The minimal ask to the DSI is ONE
 > outbound rule, and it belongs in the revival commit's preconditions
 > ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md)).
+
+## Lot 1 (2026-10-17) - 1:1 audio, peer to peer, dev builds only
+
+**What it is.** The user's 2026-10-16 decision made concrete: a 1:1 call goes DIRECT between the
+two clients, with Cloudflare TURN as the last resort, and the host carries only signalling over the
+443 it already serves. The host cannot send UDP out (the School border), so the SFU path can never
+connect from production ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md#8-what-works-with-no-port-opened-by-the-dsi-measured-2026-10-16)).
+Nothing in this lot needs the DSI.
+
+**The switches** (`frontend/src/lib/features.ts`, pinned by `features.test.ts`):
+
+| Constant | Value | Holds |
+|---|---|---|
+| `CALLS_COMPILED` | `false` | the store binaries' calling: native ring, `voip`, `USE_FULL_SCREEN_INTENT`. Mirrored by the Kotlin `CALLS_ENABLED` (`pushSilentDecrypt.test.ts` asserts the two agree). The four native switches of the table above did NOT move |
+| `CALLS_ENABLED` | `CALLS_COMPILED \|\| deployEnvironment() === 'development'` | the in-app call buttons, `startCall`, `handleCallSignal`, the sibling check |
+| `CALLS_VIDEO_ENABLED` | `false` | the video-call button and both camera toggles; waits for WP-C3 (whole-frame encryption vs H.264) |
+
+`VITE_DEPLOY_ENVIRONMENT=development` is written by `build.yml` for the dev web estate and by
+`android.yml` / `ios.yml` for every pre-release - and those pipelines refuse a pre-release whose
+backend is not `dev.canari-emse.fr`. A production build never sets it. So: **dev web + alpha apps
+call; production web and stable apps do not.** A local workstation build sets nothing either; set
+`VITE_DEPLOY_ENVIRONMENT=development` in `frontend/.env` to call locally (it also raises the banner).
+
+**The flow.** Ring and hangup are unchanged (MLS `call_invite` / `call_answered` / `call_hangup`,
+silent, over the chat socket - so an OPEN app rings; a killed one does not, that is `CALLS_COMPILED`).
+Then, on each side:
+
+0. `POST /api/calls/initiate` binds the new room id to its group in Redis (`call:room:<id>`, TTL =
+   ring window + 4 h call horizon) and returns `ringTimeoutMs`, THE ring window
+   (`CALL_RING_TIMEOUT_SEC = 60`, chat-delivery `calls.service.ts`, the single source). The caller
+   relays it in the invite (`CallMsg.ring_timeout_ms`, a duration, so no device compares clocks).
+   `GET /calls/room-token` refuses a room bound to another group (403), an unknown or expired one
+   (410) and a request outside the window (410) - the deadline is enforced there, on one clock.
+   **The window OPENS at the caller's `POST /calls/ring`** (G1, 2026-10-17), sent and awaited
+   BEFORE the invite: no callee can learn of the call before the server would issue it a token, so
+   an early answer (a quick tap, an auto-accept) can never meet a 410 whose hangup would end a sound
+   call. Nothing the caller does first (ICE servers, a first-time microphone prompt, key
+   derivation, the join) eats into the callee's 60 s. Only the room's caller may open it, once: the
+   deadline is its own key, `call:room:<id>:answer_by`, written with ONE `SET NX` that expires with
+   the binding (never restarting its TTL), so concurrent rings cannot both open it. A refused ring
+   rings nobody (the server opens the window before it fans out): no invite, no missed call, and the
+   caller reads `call_setup_failed`. A call hung up while its ring was in flight is not invited,
+   armed or published, and a second ring-end follows the completed fan-out. What is left: the
+   server's clock starts a little BEFORE the callee's timer (armed on the invite's arrival), by the
+   invite's delivery time - an answer in that last stretch is told `call_over` ("this call is
+   over", a 410 from `room-token` mapped by `describeCallFailure` on the typed step), never a
+   failure. A binding written by the lot 1 build (no `callerId`) is refused as expired, with a
+   warning: a one-deploy gap, dev only.
+1. `GET /api/calls/ice-servers` BEFORE ringing (caller) or joining (callee): a server without TURN
+   credentials answers 503 and the call fails there, not after the callee has answered. A call that
+   fails before its invite (initiate refused, no ICE servers, no microphone) writes NO missed-call
+   message: nobody was rung.
+2. `wss://<origin>/api/call` -> `{ type: 'Join', room_id, room_token, mode: 'p2p' }` -> `Joined`.
+3. When both are in the room the relay sends `PeerReady { initiator }`: the caller (first in) is the
+   initiator and offers; the callee is the POLITE side of perfect negotiation and never opens - it
+   answers. `negotiationneeded` drives every offer, so a later camera-on renegotiates the same way.
+4. `Offer` / `Answer` / `IceCandidate` cross the relay verbatim. `iceTransportPolicy: 'all'`
+   (`CALL_ICE_TRANSPORT_POLICY`): host, then server-reflexive, then the Cloudflare relay. The trade:
+   each party can learn the other's public IP.
+5. On `connected` the client logs `[Call] selected path pair=<local>/<proto>-><remote>/<proto>
+   relayed=yes|no [relay_proto=] [rtt_ms=]` (`utils/callStats.ts`, no address) - the only place
+   that says whether a call was billed.
+6. `PeerLeft` (the other socket is gone, or this device was replaced by a sibling) ends the call;
+   a second `PeerReady` (the other party's device was replaced) rebuilds the peer connection.
+7. **The ring window.** Both sides arm a timer of `ringTimeoutMs`. The caller's, if no `PeerReady`
+   came, ends the call as MISSED (hangup + ring-end `cancelled` + the missed-call line). The callee's
+   only covers a caller that vanished silently: the ring stops and nothing is written. A timer is a
+   timer here by nature; what is DETERMINISTIC is that both read the server's one value, and that a
+   late answer is refused by the server's own deadline, whatever either timer did. An invite with no
+   window (an older dev build) does not ring and is logged.
+
+Calls are offered in **direct** conversations only: the room seats two users, a third is `Refused
+{ reason: 'room-full' }`, and a valid token for the same room id signed for ANOTHER group is
+`Refused { reason: 'group-mismatch' }` before it is seated, so it never sees a candidate. Groups wait
+for the group design (WP-C4/WP-C11).
+
+**E2E is mandatory, never degraded.** No `RTCRtpScriptTransform` -> `CallE2eUnsupportedError`
+before any request, with its own toast (`call_e2e_unsupported`). The legacy `createEncodedStreams`
+path, the `encodedInsertableStreams` flag, `VITE_CALL_E2E_ENCRYPTION` and the "not encrypted" badge
+are gone. **`android.yml` and `ios.yml` used to bake `VITE_CALL_E2E_ENCRYPTION=false` into EVERY app
+build**, so an alpha app would have sent cleartext to a web peer that decrypts - removed. A transform
+that fails to attach ends the call.
+
+**Measured in Chrome 155 (2026-10-17), and it changed the code:** a RECEIVER transform attached in
+`ontrack` never sees a frame - the call connects, packets arrive, every sample is concealed
+silence. Attached to the receiver of the transceiver `addTrack` created, before negotiation, every
+frame decrypts. `initPeerConnection` now does that; `ontrack` attaching late logs a WARN. The same
+session found the worker counting a failed decrypt as `decryptOk` (fixed: `decryptError` only).
+
+**Server half:** [call-service p2p mode](../../services/call-service.md#peer-to-peer-mode-2026-10-17).
+
+**What was verified, and how** (no device, no local estate):
+
+| Claim | Evidence |
+|---|---|
+| The relay pairs, assigns roles, forwards verbatim, refuses a third user, a token for another group and a mode mismatch, announces a leave and a sibling replacement, and closes a socket on a frame over 64 KiB | `apps/call-service/tests/p2p_signalling.rs` (the real binary over real WebSockets) + `src/p2p.rs` unit tests (incl. the relay never waiting on a full partner queue) |
+| A room is bound to its group; a token for it is refused for another group, an unknown room and after the ring window | `apps/chat-delivery-service/src/services/calls.service.spec.ts` |
+| The client speaks that protocol (Join p2p, roles, offers only as initiator, answers as polite, refuses without the transform, rebuilds on replacement), honours the ring window on both sides, and writes no missed call for a call that never rang | `CallService.p2p.test.ts` (fakes of WebSocket, RTCPeerConnection, worker) |
+| Two Chrome 155 contexts connect DIRECT (`host/udp->host/udp`) through the real relay, the REAL `encryption.worker.ts` encrypts and decrypts Opus, and the callee hears the caller's 440 Hz tone (RMS 0.71, peak 445 Hz) | a scratch page mirroring `CallService`'s negotiation, by hand, chrome-devtools MCP; a wrong key yields only `decryptError` and no decoded sample |
+| The signalling socket survives an idle call | the same run: one socket held 3.6 h with only the 25 s keepalive pings (local, no proxy in front) |
+
+**NOT verified - owed:** the real app end to end (no local estate was up); a TURN-relayed call;
+anything on the Mi 9T or the iPhone (Android System WebView's and
+WKWebView's `RTCRtpScriptTransform`, the late-receiver behaviour on WebKit, microphone permission in
+the Tauri WebViews, audio routing); cellular and campus networks; the host nginx's 60 s timeout and
+the Cloudflare tunnel in front of dev (the keepalive is there for them, unmeasured through them).
+
+**The dev TURN secrets EXIST since 2026-10-17** (`DEV_CLOUDFLARE_CALLS_API_TOKEN`,
+`DEV_CLOUDFLARE_TURN_KEY_ID`, GitHub secrets). `serve-dev.yml` and `env-manifest.tsv` read them, and
+`docker-compose.dev.yml` hands them to chat-delivery-service since lot 1 (it did not before - the
+secrets alone would have changed nothing). They reach dev at the next pre-release deploy; until then
+dev answers 503 on `/api/calls/ice-servers` and every call fails at step 1 - by design, not a
+fallback to STUN only.
+
+**Still open from the plan:** the TURN budget estimator (`CALL_RELAY_KBPS_PER_DEVICE`) counts EVERY
+call as relayed; in P2P only `relayed=yes` calls cost, so it over-counts (harmless on dev). A
+conversation at level `none` still rings an OPEN app: the in-app ring is the MLS frame on the chat
+socket, which the level does not filter (it filters pushes) - the decision the SEVENTH item above
+asks for is still owed.
+
+**OWED BEFORE `CALLS_COMPILED` FLIPS** (the review of #1997, 2026-10-17; none of it blocks a dev-only
+build, all of it blocks production):
+
+- **F4 - say who sees what.** `iceTransportPolicy: 'all'` lets each party learn the other's public
+  IP, and Cloudflare (TURN) becomes a recipient of call metadata and relayed media. Both belong in
+  `docs/wiki/compliance/register-of-processing.md` and on `/legal/privacy` before production calls.
+- **F5 - a key both ends AGREE on, or a failure the user SEES.** Each side derives its key alone
+  (`exportSecret(groupId, 'mls-webrtc-media', callId)`); two devices at different MLS epochs derive
+  different keys and the call "connects" in silence. Owed: an epoch/fingerprint agreement over the
+  signalling channel, or at least a visible "decrypt failing" toast driven by the worker's
+  `decryptError` count.
+- **One key, both directions, no AAD.** The same AES-GCM key encrypts both parties' frames and the
+  frame header is not bound as additional data; a per-direction key (or the sender's leaf index in
+  the IV/AAD) closes the nonce-collision and reflection questions.
+- **The `fp=` log line prints the first 4 BYTES OF THE KEY** (`CallService.setupEncryption`). Log a
+  hash of the key instead (e.g. the first bytes of SHA-256), never key material.
 
 ## Responsibilities
 
@@ -182,8 +322,8 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/calls/initiate` | Verify membership, return a room token + room ID. **Not LiveKit** - the SFU is the in-repo Rust `call-service`; the token is an HS256 JWT signed with `CALL_ROOM_SECRET`, valid 5 minutes |
-| GET | `/api/calls/room-token` | Get room token for recipient |
+| POST | `/api/calls/initiate` | Verify membership, bind the new room ID to the group (Redis `call:room:<id>`), return a room token + room ID + `ringTimeoutMs`. **Not LiveKit** - the SFU is the in-repo Rust `call-service`; the token is an HS256 JWT signed with `CALL_ROOM_SECRET` (`room_id`, `sub`, `group_id`), valid 5 minutes |
+| GET | `/api/calls/room-token` | Get room token for recipient: 403 for a room bound to another group, 410 for an unknown/expired room or after the ring window |
 | GET | `/api/calls/ice-servers` | Get ICE server configuration (Cloudflare TURN) |
 | POST | `/api/calls/presence` | Report device presence in call |
 | GET | `/api/calls/sibling-status` | Check sibling device call status |

@@ -22,7 +22,7 @@ import { attemptCommitReplay } from '$lib/utils/chat/commitReplay';
 import { runExclusiveForGroup } from '$lib/utils/chat/groupMutationQueue';
 import { handleSystemEvent } from './systemMessageHandler';
 import { handleChannelEvent } from './channelEventHandler';
-import { noteUnackedFrame } from './unackedFrames';
+import { noteUnackedFrame, refusedBacklogIsQueued } from './unackedFrames';
 import { frameFingerprint, hasFrameBeenProcessed, noteFrameProcessed } from '../inboundFrameLedger';
 import {
   answerAfterMailboxDrained,
@@ -51,6 +51,7 @@ import {
   retractEvictionNotice,
 } from '$lib/utils/chat/eviction';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
+import { restoredConversationRow } from '$lib/utils/chat/conversations';
 import { holdsGroupState } from '$lib/utils/chat/groupUsability';
 import type { GroupMeta } from '../IMlsService';
 import { channelScope, workspaceScope } from '../distributionScope';
@@ -455,6 +456,9 @@ async function handleWelcome({
     if (convo && convo.lifecycle !== 'active') {
       deps.conversations.set(terminalId, { ...convo, lifecycle: 'active' });
       await saveConversation(terminalId).catch(() => {});
+    }
+    if (!findConversationKeyByGroupId(deps.conversations, terminalId)) {
+      await writeRowForHeldGroup(terminalId, groupMeta, sender, deps);
     }
     // Server-side promotion of the membership to 'active' - REQUIRED even on this idempotent path.
     // Real case: a device that joins the group in the BACKGROUND (Welcome via FCM/JNI) does not go
@@ -964,7 +968,10 @@ async function handleKnownGroup({
    * consumes its generation exactly like a message does, and the replay would trip on it the same
    * way.
    */
+  let consumedNoted = false;
   const noteConsumed = (): void => {
+    if (consumedNoted) return;
+    consumedNoted = true;
     noteFrameProcessed(groupId, fingerprint);
     markHistoryFrameConsumed(userId, groupId, fingerprint);
   };
@@ -983,6 +990,11 @@ async function handleKnownGroup({
       // as a forked device) does NOT catch up the divergent branch: resetting the timer
       // here would permanently prevent the forget+re-welcome escalation that fixes the fork (H7).
       clearEpochGap(groupId);
+      // THE MARK BEFORE THE CHECKPOINT: `persistNow` exports the ratchet AFTER a yield, and a mark
+      // added later than that export finds the state clean, so nothing raises the flag again and the
+      // commit epoch becomes durable WITHOUT its mark (a cold replay then fails `wrong-epoch`).
+      // The commit consumed its generation the moment it merged; say so first.
+      noteConsumed();
       statePersister.persistNow();
       // THE COMMIT NAMED US, SO THIS IS WHERE THE EVICTION IS LEARNT. A Remove commit carrying our
       // own leaf leaves the group inactive the instant it merges, and asking is one cheap call on a
@@ -1174,6 +1186,29 @@ async function handleKnownGroup({
       // `epoch gap [msg_epoch=…, group_epoch=…]`: our local epoch is behind the sender's.
       const now = Date.now();
       const since = markEpochGap(groupId);
+
+      // THE MISSING EPOCHS MAY ALREADY BE ON THEIR WAY, AND THEN A REPLAY IS WHAT LOSES THEM. When
+      // this group's earlier frames were refused for lack of a conversation row, they are still in
+      // the server queue, in order - commits AND the application frames between them. Rung 1 would
+      // re-apply the commits alone from the archive, and every application frame of the jumped
+      // epochs then arrives `past epoch application frame`: 47 of 150 lost on a Pixel 6a, prod
+      // 1.2.7, 2026-10-14. So a LIVE frame waits behind that backlog: left in the queue (it carries
+      // a queue id, so it comes back), and the pull that re-fetches the backlog hands it over after
+      // them. Terminates on that pull: it delivers this very frame as `pull`, which this hold never
+      // applies to, so the ladder below runs on it if the gap is still real; and the pull listing
+      // the whole mailbox discharges the mark (`noteMailboxListed`).
+      if (
+        deliveryMeta?.channel === 'live' &&
+        deliveryMeta.queuedMessageId &&
+        refusedBacklogIsQueued(groupId)
+      ) {
+        log(
+          `[GAP] ${groupId.slice(0, 8)}... live frame ahead of the group epoch while frames refused for lack of a row are still queued - held behind them, no commit replay`
+        );
+        noteUnackedFrame(groupId, 'behind-refused-backlog');
+        mlsService.notifyConversationAvailable(groupId);
+        return false;
+      }
 
       // Rung 1 (non-destructive): fetch the ordered commits we missed from the server commit-log
       // and re-apply them so our epoch catches up - no state loss, no re-Welcome. This is the
@@ -1459,6 +1494,103 @@ async function upsertConversation(
       `[WELCOME] undismissGroup(${joinedGroupId}) failed - other devices keep purging it: ${String(e)}`
     );
   });
+}
+
+/**
+ * Writes the conversation row for a group this device HOLDS and has no row for, then announces it.
+ *
+ * WHO REACHES THIS: the Android push service joins a group in the background (Welcome via FCM/JNI)
+ * and writes no conversation row. At the next cold start the server redelivers that Welcome, the
+ * group is already held, and the idempotent branch used to promote an EXISTING row and create none -
+ * so every frame of the group was refused `absent-conversation` until some later sweep happened to
+ * create the row. Measured on a Pixel 6a, prod 1.2.7, 2026-10-14: 150 frames refused twice, and 47 of
+ * them lost once the gap healer had jumped the group past their epochs (backlog, "A group joined in
+ * the background has no conversation row at cold start").
+ *
+ * THE SAME DERIVATION AS THE INSTALL PATH ({@link upsertConversation}) when the server's row is in
+ * hand. When it is not, the row is labelled by its id - which `resolveConversationListPresentation`
+ * renders as a group placeholder through Paraglide - rather than by the sender: a guess written now
+ * would be the label for good (durable-rules, "A PLACEHOLDER MUST BE ABLE TO SAY THAT IT IS ONE").
+ *
+ * STORAGE IS ASKED FIRST, because "the map has no row" is also what a cold start looks like before
+ * the restore has seeded it - and a Welcome redelivered in that window for a group this device DOES
+ * have a stored row for would otherwise overwrite that row with a fresh one, losing its read
+ * watermarks, history floor and sort key. A stored row is put on screen as the restore would build
+ * it ({@link restoredConversationRow}), and written back only to promote its lifecycle.
+ *
+ * The announcement is the invariant `ensureConversationForServerGroup` keeps: a row appearing is the
+ * event that makes a frame refused for lack of it readable, and nothing else collects that frame.
+ */
+async function writeRowForHeldGroup(
+  groupId: string,
+  groupMeta: GroupMeta | null,
+  sender: string,
+  deps: MessageHandlerDeps
+): Promise<void> {
+  const { mlsService, userId, log } = deps;
+  let stored: Awaited<
+    ReturnType<NonNullable<MessageHandlerDeps['storage']>['getConversation']>
+  > | null = null;
+  if (deps.storage) {
+    try {
+      stored = await deps.storage.getConversation(groupId);
+    } catch (e: unknown) {
+      // A failed read is NOT "no stored row": writing a fresh one would overwrite the stored row's
+      // watermarks, floor and sort key. The restore seeds and announces the row, as it does when
+      // membership cannot be read.
+      console.warn(
+        `[WELCOME] ${groupId.slice(0, 8)}... stored conversation row UNREADABLE - no row written, the restore owns it: ${String(e)}`
+      );
+      log(
+        `[WELCOME] ${groupId.slice(0, 8)}... stored conversation row UNREADABLE - no row written, the restore owns it: ${String(e)}`
+      );
+      return;
+    }
+  }
+  if (findConversationKeyByGroupId(deps.conversations, groupId)) {
+    // The restore seeded it while storage was being read: its writer owns it, and announces it.
+    log(
+      `[WELCOME] ${groupId.slice(0, 8)}... conversation row appeared meanwhile - left as written`
+    );
+    return;
+  }
+  if (stored) {
+    deps.conversations.set(groupId, {
+      ...restoredConversationRow(stored, userId),
+      lifecycle: 'active',
+    });
+    if (stored.lifecycle !== 'active') {
+      await deps.saveConversation(groupId).catch((e: unknown) => {
+        log(`[WELCOME] conversation ${groupId} not persisted after its promotion: ${String(e)}`);
+      });
+    }
+    log(
+      `[WELCOME] ${groupId.slice(0, 8)}... held, stored row not restored yet - put on screen from storage`
+    );
+    mlsService.notifyConversationAvailable(groupId);
+    return;
+  }
+  if (groupMeta) {
+    await runExclusiveForGroup(groupId, () =>
+      upsertConversation(groupId, groupMeta, sender, userId, deps)
+    );
+  } else {
+    deps.conversations.set(
+      groupId,
+      buildConversationRow({
+        id: groupId,
+        lifecycle: 'active',
+        identity: { contactName: groupId, displayName: groupId },
+      })
+    );
+    await deps.saveConversation(groupId).catch((e: unknown) => {
+      log(`[WELCOME] conversation ${groupId} not persisted after the held-group row: ${String(e)}`);
+    });
+  }
+  log(
+    `[WELCOME] ${groupId.slice(0, 8)}... held with no conversation row (joined in the background) - row written ${groupMeta ? 'from the server row' : 'as an id placeholder, the server row was unreadable'}`
+  );
+  mlsService.notifyConversationAvailable(groupId);
 }
 
 /**

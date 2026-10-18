@@ -18,6 +18,28 @@
  */
 export const DECLARED_GROUPS = [
   {
+    what: 'the SIGTERM drain a release relies on to retire a replica without dropping a request',
+    compare: 'exact',
+    why: 'no shared TS package, for the reason the CORS allowlist below gives; each image must carry the handler itself',
+    files: [
+      'apps/chat-delivery-service/src/drain-on-sigterm.ts',
+      'apps/core-service/src/drain-on-sigterm.ts',
+      'apps/media-service/src/drain-on-sigterm.ts',
+      'apps/social-service/src/drain-on-sigterm.ts',
+    ],
+  },
+  {
+    what: 'the drain test that guards it',
+    compare: 'exact',
+    why: 'a copied module needs a copied test beside it, or three services assert the behaviour and the fourth only inherits the file',
+    files: [
+      'apps/chat-delivery-service/src/drain-on-sigterm.spec.ts',
+      'apps/core-service/src/drain-on-sigterm.spec.ts',
+      'apps/media-service/src/drain-on-sigterm.spec.ts',
+      'apps/social-service/src/drain-on-sigterm.spec.ts',
+    ],
+  },
+  {
     what: 'the CORS origin allowlist every service applies',
     compare: 'exact',
     why: 'no shared TS package; one would add a build stage and the --install-links trap to four production images (see the docblock in any copy)',
@@ -141,6 +163,24 @@ export const DECLARED_GROUPS = [
     files: [
       'apps/chat-delivery-service/src/utils/user-display-name.spec.ts',
       'apps/social-service/src/utils/user-display-name.spec.ts',
+    ],
+  },
+  {
+    what: 'the presence-audience question, validated on both answering services',
+    compare: 'exact',
+    why: 'the gateway asks chat-delivery (shared conversations) and social-service (shared communities) ONE question, `{ viewerId, userIds }`, and takes the union of the answers - so the two must parse it identically, or one half refuses what the other answers and every presence read is a 503. No shared TS package; the cap is the same number as MAX_PRESENCE_USERS in the gateway, pinned by libs/contracts/presence-audience.cases.json, which both specs and presence.rs read.',
+    files: [
+      'apps/chat-delivery-service/src/utils/presence-audience.ts',
+      'apps/social-service/src/utils/presence-audience.ts',
+    ],
+  },
+  {
+    what: 'the contract spec that guards the presence-audience question',
+    compare: 'exact',
+    why: 'a copied module needs a copied test beside it, or one service asserts the behaviour and the other only inherits the file',
+    files: [
+      'apps/chat-delivery-service/src/utils/presence-audience.spec.ts',
+      'apps/social-service/src/utils/presence-audience.spec.ts',
     ],
   },
   {

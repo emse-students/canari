@@ -28,7 +28,14 @@ export type UnackedReason =
    * name yet (a salon's group before its community loaded): a seed cannot be filed without it.
    * Discharged by the registration that names the scope - see `registerDistributionGroup`.
    */
-  | 'unscoped-distribution-group';
+  | 'unscoped-distribution-group'
+  /**
+   * A LIVE frame ahead of the group's epoch, for a group whose earlier frames were refused
+   * `absent-conversation` and have not been redelivered yet: they are in the server queue, in order,
+   * so the frame waits behind them instead of the gap healer jumping the epochs they live in. Taken
+   * with `absent-conversation`, by the conversation existing - see {@link refusedBacklogIsQueued}.
+   */
+  | 'behind-refused-backlog';
 
 /** How many distinct groups a report names before it stops listing them. */
 const SAMPLE_LIMIT = 5;
@@ -78,6 +85,50 @@ export function noteUnackedFrame(groupId: string, reason: UnackedReason): void {
     awaiting.set(reason, waiting);
   }
   waiting.add(groupId);
+  if (reason === 'absent-conversation') refusedBacklog.set(groupId, ++refusalSeq);
+}
+
+/**
+ * Groups whose server queue holds frames this device refused `absent-conversation` and has not been
+ * handed again since. A THIRD record, and neither of the other two can answer its question:
+ * `tally` is cleared by the reporter and `awaiting` by the re-fetch that is TAKEN for it - while
+ * the frames that re-fetch asked for are still on the wire. What this answers is "are there earlier
+ * frames of this group still to come", which is what the gap healer must ask before it replays
+ * commits past the epochs those frames were sent in (47 frames lost that way on a Pixel 6a,
+ * 2026-10-14).
+ *
+ * Discharged by an EVENT, never a clock: a pull that listed the WHOLE mailbox and whose rows the
+ * queue has then HANDLED ({@link dischargeRefusedBacklog}). A refused frame is never acknowledged, so
+ * a pull started after the refusal lists it, and once the queue is idle again it has been read - or
+ * refused once more, which marks the group again under a later sequence number. Not the first pulled
+ * frame of the group: a 500-row page can deliver that while the rest of the backlog is still on the
+ * next page. Not the end of the listing either: a live frame already in the queue AHEAD of the
+ * listed rows would then reach the healer with the mark gone and its predecessors still behind it.
+ *
+ * Each mark carries the sequence number it was written under, so a pull discharges only the marks
+ * that were already written when it STARTED - the refusals it is certain to have listed.
+ */
+const refusedBacklog = new Map<string, number>();
+let refusalSeq = 0;
+
+/** Whether frames refused `absent-conversation` for `groupId` are still waiting in the server queue. */
+export function refusedBacklogIsQueued(groupId: string): boolean {
+  return refusedBacklog.has(groupId);
+}
+
+/** The sequence number a pull starting now is certain to cover - pass it to the discharge. */
+export function refusedBacklogMark(): number {
+  return refusalSeq;
+}
+
+/**
+ * A pull that started at `upTo` listed the whole mailbox, and the queue has handled what it listed:
+ * every refusal marked at or before `upTo` has been delivered again. Later marks are kept.
+ */
+export function dischargeRefusedBacklog(upTo: number): void {
+  for (const [groupId, seq] of refusedBacklog) {
+    if (seq <= upTo) refusedBacklog.delete(groupId);
+  }
 }
 
 /**
@@ -140,4 +191,6 @@ export function reportUnackedFrames(log: (msg: string) => void): void {
 export function resetUnackedFrames(): void {
   tally.clear();
   awaiting.clear();
+  refusedBacklog.clear();
+  refusalSeq = 0;
 }

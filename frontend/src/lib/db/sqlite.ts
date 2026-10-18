@@ -101,7 +101,7 @@ function base64ToUint8(val: unknown): Uint8Array {
  * Used on Tauri desktop and mobile builds.  Binary fields (iv, salt, cipherText) are stored
  * as base64-encoded TEXT columns rather than BLOBs to work around a Tauri SQL serialisation
  * bug where BLOB values are read back as JSON arrays after an app restart.
- * Database file path: `<app-data-dir>/canari_<userId>.db`.
+ * Database file path: `<app-config-dir>/canari_<userId>.db` (the plugin resolves `app_config_dir()`).
  */
 export class SqliteStorage implements IStorage {
   private db: any = null;
@@ -192,6 +192,13 @@ export class SqliteStorage implements IStorage {
 
     await this.db.execute(
       'CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id)'
+    );
+    // The page read's index (`getMessagesPage`): with it, `WHERE conversation_id = ? ORDER BY
+    // timestamp DESC LIMIT n` walks n entries backwards; without it SQLite collected the whole
+    // conversation into a temp B-tree to sort it (`EXPLAIN QUERY PLAN`: USE TEMP B-TREE FOR ORDER BY).
+    // Unconditional like the one above, so an existing database gains it on its next open.
+    await this.db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_messages_conv_time ON messages(conversation_id, timestamp)'
     );
 
     // Outbox: queued outgoing messages. Cleartext columns so sorting/re-keying works without the
@@ -646,6 +653,7 @@ export class SqliteStorage implements IStorage {
    * Rows are fetched in descending timestamp order (most recent first) then re-sorted
    * ascending before return so callers always receive chronological order.
    * Pass `beforeTimestamp` (Unix ms) to implement "load older messages" infinite scroll.
+   * Both statements are answered by `idx_messages_conv_time` with no sort step.
    */
   async getMessagesPage(
     conversationId: string,
@@ -700,7 +708,9 @@ export class SqliteStorage implements IStorage {
     return rows.map((row) => ({
       id: row.id,
       conversationId: row.conversation_id,
-      timestamp: row.timestamp,
+      // Read like every other row of this table: on Android the plugin returns INTEGER columns as
+      // strings, and a backup that carried one wrote a string timestamp into the browser's store.
+      timestamp: rowTimestampMs(row.timestamp),
       iv: base64ToUint8(row.iv),
       cipherText: base64ToUint8(row.cipher_text),
     }));
@@ -1119,6 +1129,15 @@ export class SqliteStorage implements IStorage {
       workspaceId,
     ]);
     return this.decodeGraineRows(rows, deviceKeyB64);
+  }
+
+  /** A community's session rows, decryptable or not. See {@link IStorage.countGraineSessionsForWorkspace}. */
+  async countGraineSessionsForWorkspace(workspaceId: string): Promise<number> {
+    const rows: { n: number }[] = await this.db.select(
+      'SELECT COUNT(*) AS n FROM graine WHERE workspace_id = $1',
+      [workspaceId]
+    );
+    return Number(rows[0]?.n ?? 0);
   }
 
   /** Erase a community's seeds and report how many. See {@link IStorage.deleteGraineSessionsForWorkspace}. */

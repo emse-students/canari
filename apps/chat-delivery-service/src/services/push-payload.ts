@@ -93,6 +93,25 @@ export interface PushMessageInput {
 export const APNS_PAYLOAD_LIMIT = 4096;
 
 /**
+ * The palette-A trills an iPhone plays for a banner, as the APNs `sound` names them
+ * (docs/wiki/frontend/sounds.md).
+ *
+ * The files are the Android ones (`res/raw/canari_gazouillis_*.wav`, rendered by
+ * `tools/notification-sounds/render.mjs`), bundled by `project.pbxproj` into the app and the
+ * extension. A name the installed build does not bundle - any build older than the one that added
+ * them - plays the system default, so naming them ahead of a release costs nothing.
+ *
+ * A MENTION is not decided here for an MLS message: the server cannot read who it names, so the
+ * extension sets the mention trill after decrypting. `iosNotificationSounds.test.ts` holds this table,
+ * the bundle and the two native spellings together.
+ */
+export const IOS_NOTIFICATION_SOUND = {
+  message: 'canari_gazouillis_message.wav',
+  mention: 'canari_gazouillis_mention.wav',
+  reaction: 'canari_gazouillis_reaction.wav',
+} as const;
+
+/**
  * Generic notification text used before the client decrypts the real content, per language.
  *
  * The iOS NSE replaces this with the decrypted preview; if decryption fails the user still sees who
@@ -353,7 +372,9 @@ export function buildApnsRequest(
       aps: {
         'mutable-content': 1,
         alert: { title, body: apnsFallbackBody(locale) },
-        ...(quiet ? { 'interruption-level': 'passive' } : { sound: 'default' }),
+        ...(quiet
+          ? { 'interruption-level': 'passive' }
+          : { sound: IOS_NOTIFICATION_SOUND.message }),
         // Groups a conversation's notifications together in the iOS notification centre.
         'thread-id': input.groupId,
       },
@@ -425,7 +446,7 @@ export function buildInternalApnsRequest(
       aps: {
         'mutable-content': 1,
         alert: { title: title || 'Canari', body: body || apnsFallbackBody(locale) },
-        sound: 'default',
+        sound: internalApnsSound(data),
         'thread-id': threadId,
       },
       ...data,
@@ -433,6 +454,27 @@ export function buildInternalApnsRequest(
     pushType: 'alert',
     priority: 10,
   };
+}
+
+/**
+ * The banner sound of an internal alert, chosen as the Android service chooses its channel.
+ *
+ * - a salon message: the "mention" trill when the server computed that it names this recipient
+ *   (`mentioned`, from the sender's cleartext `mentionedUserIds`), the "message" trill otherwise -
+ *   Android's `canari_mentions_v2` / `canari_messages_v2`;
+ * - a reaction to one of the recipient's messages (`reaction`): the "reaction" trill -
+ *   `canari_reactions_v2`;
+ * - everything else (a post, a comment, a form, the agenda): the system default, which is what
+ *   Android's `canari_social` and `canari_forms` channels play.
+ */
+function internalApnsSound(data: Record<string, string>): string {
+  if (data.channelId) {
+    return data.mentioned === 'true'
+      ? IOS_NOTIFICATION_SOUND.mention
+      : IOS_NOTIFICATION_SOUND.message;
+  }
+  if (data.reaction === 'true') return IOS_NOTIFICATION_SOUND.reaction;
+  return 'default';
 }
 
 /** One platform's half of an internal push, and whether the inline group made it in. */

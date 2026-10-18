@@ -22,8 +22,14 @@ vi.mock('$lib/stores/auth', () => ({ getToken: () => 'token' }));
 
 const fakeMls = { getDeviceId: () => 'device-1' } as unknown as IMlsService;
 
-/** An invite exactly as a peer on an older build still sends it. */
-const INVITE = { callId: 'call-1', hasVideo: true, offerSdp: 'START', deviceId: 'device-2' };
+/** An invite as a lot-1 caller sends it: with the server's ring window (`ring_timeout_ms`). */
+const INVITE = {
+  callId: 'call-1',
+  hasVideo: true,
+  offerSdp: 'START',
+  deviceId: 'device-2',
+  ringTimeoutMs: 60_000,
+};
 
 describe('CallService with calls enabled', () => {
   it('rings on an invite the held-off build ignores', () => {
@@ -34,5 +40,15 @@ describe('CallService with calls enabled', () => {
     expect(get(service.callState)).toBe('incoming');
     expect(service.currentCallId).toBe('call-1');
     expect(service.incomingCallerId).toBe('peer@example.org');
+  });
+
+  it('does not ring on an invite from a build before the ring window', () => {
+    // Such an invite would ring until someone touched it: nothing on this side could end it.
+    const service = new CallService(fakeMls);
+    const { ringTimeoutMs: _, ...older } = INVITE;
+
+    service.handleCallSignal('peer@example.org', 'group-1', older, 'me@example.org', 'device-1');
+
+    expect(get(service.callState)).toBe('idle');
   });
 });

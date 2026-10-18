@@ -79,6 +79,8 @@
      * the same reason.
      */
     commentsOpen?: boolean;
+    /** The comment a notification tap opened this post at: scrolled to and marked once drawn. */
+    focusCommentId?: string;
   }
 
   let {
@@ -88,6 +90,7 @@
     onRefresh: _onRefresh,
     onDelete,
     commentsOpen = false,
+    focusCommentId,
   }: Props = $props();
 
   // Local mutable copy - updated directly after interactions to avoid a full list reload.
@@ -832,6 +835,7 @@
       {pendingCommentIds}
       {currentUserId}
       {authToken}
+      {focusCommentId}
       onToggleComments={() => (showComments = !showComments)}
       onCommentTextChange={async (text) => {
         commentText = text;
