@@ -25,6 +25,8 @@
     exportCalendarMonth,
     DEFAULT_EXPORT_OPTIONS,
     VIGNETTE_MAX,
+    CELL_BORDER_WIDTHS,
+    CELL_BORDER_COLORS,
     BLUR_MAX_PX,
     CALENDAR_CONTAINER_HEIGHT,
     CALENDAR_CONTAINER_WIDTH,
@@ -162,6 +164,19 @@
   let previewScale = $derived(
     previewContainerWidth > 0 ? previewContainerWidth / CALENDAR_CONTAINER_WIDTH : 0
   );
+
+  // ── Cell border ──────────────────────────────────────────────────
+  /** The label of each frame width and ink, in the order the constants list them. */
+  const borderWidthLabel = {
+    0: m.calendar_export_border_none,
+    1: m.calendar_export_border_thin,
+    2: m.calendar_export_border_medium,
+    3: m.calendar_export_border_thick,
+  } as const;
+  const borderColorLabel = {
+    dark: m.calendar_export_border_dark,
+    light: m.calendar_export_border_light,
+  } as const;
 
   // ── PDF / PNG export ─────────────────────────────────────────────
   /** The format being generated, or null. One at a time: both rasterise the same offscreen sheet. */
@@ -395,6 +410,49 @@
                 class="accent-cn-dark w-28"
               />
             </div>
+            <!-- The day frame and the rule between stacked events, one setting for both (user,
+                 2026-10-18: *"les bords noirs des cases sont reglables ?"*). Page state like every
+                 other control here, so Reset brings back the 2px dark default. -->
+            <div role="radiogroup" aria-labelledby="cell-border-label" class="space-y-1">
+              <span id="cell-border-label" class="text-text-muted text-xs"
+                >{m.calendar_export_border_label()}</span
+              >
+              <div class="flex flex-wrap gap-1">
+                {#each CELL_BORDER_WIDTHS as width (width)}
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={opts.cellBorderWidth === width}
+                    data-testid="cell-border-width-{width}"
+                    onclick={() => (opts.cellBorderWidth = width)}
+                    class="border-cn-border text-text-main aria-checked:bg-cn-yellow aria-checked:text-cn-ink hover:bg-cn-bg min-h-11 flex-1 basis-16 rounded-lg border px-2 text-xs font-semibold transition-colors"
+                  >
+                    {borderWidthLabel[width]()}
+                  </button>
+                {/each}
+              </div>
+            </div>
+            {#if opts.cellBorderWidth > 0}
+              <div role="radiogroup" aria-labelledby="cell-border-color-label" class="space-y-1">
+                <span id="cell-border-color-label" class="text-text-muted text-xs"
+                  >{m.calendar_export_border_color_label()}</span
+                >
+                <div class="flex flex-wrap gap-1">
+                  {#each CELL_BORDER_COLORS as color (color)}
+                    <button
+                      type="button"
+                      role="radio"
+                      aria-checked={opts.cellBorderColor === color}
+                      data-testid="cell-border-color-{color}"
+                      onclick={() => (opts.cellBorderColor = color)}
+                      class="border-cn-border text-text-main aria-checked:bg-cn-yellow aria-checked:text-cn-ink hover:bg-cn-bg min-h-11 flex-1 basis-16 rounded-lg border px-2 text-xs font-semibold transition-colors"
+                    >
+                      {borderColorLabel[color]()}
+                    </button>
+                  {/each}
+                </div>
+              </div>
+            {/if}
             <div class="flex items-center justify-between gap-2">
               <span class="text-text-muted text-xs"
                 >{m.calendar_export_logo_strength({ value: opts.logoOpacity })}</span

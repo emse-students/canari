@@ -74,4 +74,29 @@ describe('the agenda export offers a PNG next to the PDF', { timeout: 30_000 }, 
     expect(pdfCall[3]).toBe('pdf');
     expect(pngCall.slice(0, 3)).toEqual(pdfCall.slice(0, 3));
   });
+
+  it('carries the chosen cell border into the export, and offers no colour without a border', async () => {
+    await render();
+    const thick = document.querySelector<HTMLButtonElement>('[data-testid="cell-border-width-3"]')!;
+    expect(
+      document.querySelector('[data-testid="cell-border-width-2"]')?.getAttribute('aria-checked')
+    ).toBe('true');
+    thick.click();
+    flushSync();
+    expect(thick.getAttribute('aria-checked')).toBe('true');
+    document.querySelector<HTMLButtonElement>('[data-testid="cell-border-color-light"]')!.click();
+    flushSync();
+    document.querySelector<HTMLButtonElement>('[data-testid="calendar-export-png"]')!.click();
+    for (let i = 0; i < 3; i++) await tick();
+    const opts = (exportCalendarMonth.mock.calls as unknown as unknown[][])[0][2] as Record<
+      string,
+      unknown
+    >;
+    expect(opts.cellBorderWidth).toBe(3);
+    expect(opts.cellBorderColor).toBe('light');
+
+    document.querySelector<HTMLButtonElement>('[data-testid="cell-border-width-0"]')!.click();
+    flushSync();
+    expect(document.querySelector('[data-testid="cell-border-color-dark"]')).toBeNull();
+  });
 });

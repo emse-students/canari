@@ -28,6 +28,8 @@ import {
   offDayShade,
   splitLogoBands,
   splitLogoWatermark,
+  dayFrameHtml,
+  sheetRuleCss,
 } from './calendarExport';
 import type { AssociationCalendarFeedEvent } from '$lib/associations/api';
 
@@ -472,5 +474,36 @@ describe('the sheet reads at print size, and nothing moved (November 2026, 2026-
     expect(cellOf(html, 26).innerHTML).toContain(frame);
     expect(cellOf(html, 26).innerHTML.match(/border-top:2px solid/g)).toHaveLength(1);
     expect(cellOf(html, 2).innerHTML).toContain(frame);
+  });
+});
+
+describe('the cell border is adjustable (user, 2026-10-18)', () => {
+  const ev = [
+    makeEvent({ id: 'a', title: 'A', startsAt: '2026-11-26T17:00:00.000Z' }),
+    makeEvent({ id: 'b', title: 'B', startsAt: '2026-11-26T18:00:00.000Z' }),
+  ];
+
+  it('draws the 2px dark frame by default', () => {
+    expect(DEFAULT_EXPORT_OPTIONS.cellBorderWidth).toBe(2);
+    expect(DEFAULT_EXPORT_OPTIONS.cellBorderColor).toBe('dark');
+    expect(buildPreviewInnerHtml(ev, 2026, 10)).toContain('border:2px solid rgba(17,17,17,0.75)');
+  });
+
+  it('follows the chosen width and ink on the frame and the rule alike', () => {
+    const html = buildPreviewInnerHtml(ev, 2026, 10, {
+      cellBorderWidth: 3,
+      cellBorderColor: 'light',
+    });
+    expect(html).toContain('border:3px solid rgba(255,255,255,0.75)');
+    expect(html).toContain('border-top:3px solid rgba(255,255,255,0.75)');
+    expect(html).not.toContain('rgba(17,17,17,0.75)');
+  });
+
+  it('draws no frame at none, and keeps the faint rule between stacked events', () => {
+    expect(dayFrameHtml(0, 'dark')).toBe('');
+    expect(sheetRuleCss(0, 'light')).toBe('border-top:1px solid rgba(0,0,0,0.10);');
+    const html = buildPreviewInnerHtml(ev, 2026, 10, { cellBorderWidth: 0 });
+    expect(html).not.toMatch(/position:absolute;inset:0;border:/);
+    expect(html).toContain('border-top:1px solid rgba(0,0,0,0.10);');
   });
 });

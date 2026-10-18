@@ -68,10 +68,20 @@ const DAY_NUM_SIZE = 15;
  * between stacked events. One colour, so the sheet reads as one drawing rather than three.
  */
 const SHEET_INK = '#111111';
-/** Width of a day's frame and of the rule between two stacked events, in sheet px (~0.55 mm on A4). */
-const SHEET_RULE_W = 2;
-/** Opacity of that rule: dark enough to separate two saturated tiles, not a black cage. */
+/**
+ * The widths a day's frame and the rule between stacked events may take, in sheet px: none, thin,
+ * medium, thick (user, 2026-10-18: *"les bords noirs des cases sont reglables ?"*). 2px is ~0.55 mm
+ * on A4 and the default.
+ */
+export const CELL_BORDER_WIDTHS = [0, 1, 2, 3] as const;
+export type CellBorderWidth = (typeof CELL_BORDER_WIDTHS)[number];
+/** The two inks a frame may be drawn in: the sheet's dark ink, or white for a dark photograph. */
+export const CELL_BORDER_COLORS = ['dark', 'light'] as const;
+export type CellBorderColor = (typeof CELL_BORDER_COLORS)[number];
+/** Opacity of the frame and rule: dark enough to separate two saturated tiles, not a black cage. */
 const SHEET_RULE_ALPHA = 0.75;
+/** The rule between stacked events when the frames are off - the sheet's rule before 2026-10-18. */
+const FAINT_RULE_CSS = 'border-top:1px solid rgba(0,0,0,0.10);';
 /** A day card's corner, in sheet px - the app's card radius (`--radius-*`: 8px card). */
 const SHEET_CELL_RADIUS = 8;
 
@@ -171,9 +181,18 @@ export function textOutlineCss(fontSize: number): string {
   return `color:${EVENT_TEXT_FILL};-webkit-text-stroke:${width}px ${SHEET_INK};paint-order:stroke fill;stroke-linejoin:round;`;
 }
 
-/** The dark rule between two stacked tiles, as a `border-top`. */
-function sheetRuleCss(): string {
-  return `border-top:${SHEET_RULE_W}px solid ${hexToRgba(SHEET_INK, SHEET_RULE_ALPHA * 100)};`;
+/** The CSS colour of a frame drawn in `color`. */
+function borderInk(color: CellBorderColor): string {
+  return hexToRgba(color === 'light' ? '#ffffff' : SHEET_INK, SHEET_RULE_ALPHA * 100);
+}
+
+/**
+ * The rule between two stacked tiles, as a `border-top`, in the frame's width and ink. With the
+ * frames off it is the faint 1px rule the sheet always had, so two tiles still do not merge.
+ */
+export function sheetRuleCss(width: CellBorderWidth, color: CellBorderColor): string {
+  if (width === 0) return FAINT_RULE_CSS;
+  return `border-top:${width}px solid ${borderInk(color)};`;
 }
 
 /**
@@ -181,8 +200,9 @@ function sheetRuleCss(): string {
  * colour nor a logo can cover it. An overlay rather than the cell's own border because the tiles
  * fill the cell edge to edge and would paint over an inset shadow.
  */
-function dayFrameHtml(): string {
-  return `<div style="position:absolute;inset:0;border:${SHEET_RULE_W}px solid ${hexToRgba(SHEET_INK, SHEET_RULE_ALPHA * 100)};border-radius:${SHEET_CELL_RADIUS}px;pointer-events:none;box-sizing:border-box;"></div>`;
+export function dayFrameHtml(width: CellBorderWidth, color: CellBorderColor): string {
+  if (width === 0) return '';
+  return `<div style="position:absolute;inset:0;border:${width}px solid ${borderInk(color)};border-radius:${SHEET_CELL_RADIUS}px;pointer-events:none;box-sizing:border-box;"></div>`;
 }
 
 /**
@@ -230,6 +250,10 @@ export interface CalendarExportOptions {
   cellBg?: string;
   /** Day cell fill opacity in percent (0-100). Default: 82 - the photo reads between the cards. */
   cellBgOpacity?: number;
+  /** Width of each day's frame and of the rule between stacked events, in sheet px. Default: 2. */
+  cellBorderWidth?: CellBorderWidth;
+  /** Ink of that frame and rule: the sheet's dark ink or white. Default: dark. */
+  cellBorderColor?: CellBorderColor;
   /**
    * Association logo watermark opacity in percent (0-100). Default: 55.
    *
@@ -252,6 +276,8 @@ export const DEFAULT_EXPORT_OPTIONS: Required<Omit<CalendarExportOptions, 'bgDat
   // 82, not 58 (2026-10-18): on the November 2026 sheet's autumn photograph the days faded into
   // the picture. The photo still reads in the gaps between the cards; a reader dials it back.
   cellBgOpacity: 82,
+  cellBorderWidth: 2,
+  cellBorderColor: 'dark',
   logoOpacity: 55,
 };
 
@@ -680,7 +706,7 @@ function buildCalendarHtml(
           : '';
 
       if (dayEvents.length === 0) {
-        return `<div style="position:relative;${cellBase}background:${bg};padding:6px 8px;"><span data-pdf-text style="position:relative;font-size:${DAY_NUM_SIZE}px;font-weight:800;line-height:1;${dayNumberPaint}">${day}</span>${dayFrameHtml()}${breakStamp}</div>`;
+        return `<div style="position:relative;${cellBase}background:${bg};padding:6px 8px;"><span data-pdf-text style="position:relative;font-size:${DAY_NUM_SIZE}px;font-weight:800;line-height:1;${dayNumberPaint}">${day}</span>${dayFrameHtml(opts.cellBorderWidth, opts.cellBorderColor)}${breakStamp}</div>`;
       }
 
       const nVisible = dayEvents.length > MAX_SHOW ? MAX_SHOW - 1 : dayEvents.length;
@@ -751,7 +777,7 @@ function buildCalendarHtml(
               : splitLogoWatermark(logoSrcs, logoSize, logoAlpha);
 
           // A dark rule between two stacked events, so two saturated tiles never merge into one band.
-          const sep = idx > 0 ? sheetRuleCss() : '';
+          const sep = idx > 0 ? sheetRuleCss(opts.cellBorderWidth, opts.cellBorderColor) : '';
           // Every title is white with a dark outline, CENTRED IN ITS WHOLE TILE both ways: the day
           // number is pinned top-left on top of the tile instead of owning a row the title must
           // dodge, which is what pushed the first title of a cell below the centre (user,
@@ -775,7 +801,7 @@ function buildCalendarHtml(
           : []),
       ];
 
-      return `<div style="position:relative;${cellBase}background:${bg};">${rows.join('')}${dayFrameHtml()}${breakStamp}${breakStrip}</div>`;
+      return `<div style="position:relative;${cellBase}background:${bg};">${rows.join('')}${dayFrameHtml(opts.cellBorderWidth, opts.cellBorderColor)}${breakStamp}${breakStrip}</div>`;
     })
     .join('');
 

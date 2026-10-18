@@ -684,6 +684,13 @@ changed is paint only:
 | the title had an outline, the empty days' numbers and "+N" none | all are white with the dark outline, in the same place and size |
 | a sliver of a clamped title's next line under its last one | `outlineRoomCss` pads left and right only |
 
+**THE FRAME IS A SETTING (user, 2026-10-18: *"les bords noirs des cases sont reglables ?"*).** Under
+the cell-opacity slider: "Bordure des cases" (none / thin 1px / medium 2px / thick 3px, default 2px)
+and, unless it is none, "Couleur de la bordure" (dark / light). One setting drives both the frame
+and the rule between stacked events (`cellBorderWidth`, `cellBorderColor`); at none the frame goes
+and the rule falls back to the sheet's old faint 1px. Page state like every control here: Reset
+restores it, nothing is stored. The PDF and the PNG read the same options.
+
 Open: the number can still sit on a long title in a busy cell, which the placement decision accepts;
 the real November photograph has not been re-exported - the user's look is owed.
 
