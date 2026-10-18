@@ -942,11 +942,6 @@ user's look at the status bar and the home indicator on the iPhone, with the liq
 ([backlog](#the-liquid-glass-conversation-chrome---decided-2026-09-30-wp-g1-then-wp-g2)). This closes
 by hardware, never by a fix against a suspected bug nobody has seen.
 
-### P3 - nothing records which BUILD each device runs, though two mechanisms already carry it (2026-08-27)
-
-DECIDED 2026-10-18: a REPORT from the version already stored with the key packages, no new column, no dashboard ([WP-VERSION-REPORT](#decided-by-the-user-on-2026-10-18---every-design-question-answered)). The two mechanisms are on
-[core-service](services/core-service.md#nothing-records-which-build-each-device-runs-2026-08-27).
-
 ### P3 - the native refresh credential could live in the platform keychain, on BOTH platforms (2026-08-27)
 
 An upgrade, not a defect; do it when native work is happening anyway. Why it is not trivial (a
@@ -1168,7 +1163,7 @@ Open: a staged-tray assertion in the shared entry point, like `clearOverlays` ([
 
 ### P3 - TWO out-of-tree directories are both called `canari-harness`, and a decoy `names.mjs` sits in the one the harness does not read (2026-09-04)
 
-Owed to the USER, one-off on the workstation: merge the directories or delete the decoy `names.mjs` (both hold credentials and Chrome profiles). The preflight prints `rig state: <STATE_DIR>` first ([table](cross-client-harness-findings.md#two-out-of-tree-directories-are-both-called-canari-harness-2026-09-04)).
+Owed to the USER, one-off on the workstation: merge the directories or delete the decoy `names.mjs` (both hold credentials and Chrome profiles). The preflight prints `rig state: <STATE_DIR>` first ([table](cross-client-harness-findings.md#two-out-of-tree-directories-are-both-called-canari-harness-2026-09-04)). **Re-read 2026-10-18 on the workstation, still true, and it is not only a decoy:** the directory the rig does NOT read still holds the decoy `names.mjs`, two stale test-account files, the Play Console service-account key the play-vitals tooling DOES use (move it, do not delete it), and identity-provider database dumps from 2026-09-02 and 2026-09-04 - production personal data past the 14 days the privacy policy promises for backups, so those dumps are deleted (GDPR), not merged.
 
 ## The graphical pass - every page at 100 % (user, 2026-09-13)
 
@@ -1237,36 +1232,6 @@ The principle is accepted (user, 2026-08-26) and **DECIDED 2026-10-18: planned N
 `mls-wasm` and `src-tauri` carry committed locks and depend on `mls-core` by path, so Dependabot's single pull request (against `mls-core/Cargo.toml`) is incomplete by construction and fails CI's lockfile step - the one dependency update that cannot merge unattended. **Remedy, not done:** one cargo workspace with ONE `Cargo.lock` for `frontend/`, which restructures a Tauri build this workstation can only compile. Until then such a bump is done by hand in one commit refreshing all three locks ([cicd](cicd.md#dependency-updates-and-the-auto-merge-that-ships-them)).
 
 **A mechanism was designed and tested 2026-10-09, and is PARKED on a decision (nothing of it is in the repository).** A scheduled job takes each Dependabot pull request whose only failure is the lock guard, opens a NEW pull request (never a push onto Dependabot's branch, which [cicd](cicd.md) records as refused for good) carrying Dependabot's cherry-picked commits plus `cargo update --precise` refreshes of the locks, closes the original with a pointer, and lets `CI passed` decide. It refuses, once and with a comment, a plugin whose crate drags `tauri`/`wry`/`tao`, a lock still failing `cargo metadata --locked`, and anything `lib/ceiling.sh` has no gate for; it runs only when every commit is Dependabot's and every changed file a manifest or lockfile. Tested with fake `cargo`/`gh` and a local bare remote (29 assertions). **Was blocked on a decision, DECIDED 2026-10-18: YES** - `arm-auto-merge.yml` may arm a pull request opened by the `canari-auto-merge` App, limited to dependency files and a green `CI passed` ([WP-RUST-LOCK-AUTOMERGE](#decided-by-the-user-on-2026-10-18---every-design-question-answered)); the design is rebuilt from this paragraph in about a day.
-
-### P3 - `submissions.formId` names a form nothing keeps, and 29 rows point at deleted ones
-
-**Re-measured read-only on 2026-10-11, prod AND dev (dev is a copy of prod, identical numbers): 29 orphan submissions of 79, over 13 missing forms, 5 `paid` (3600 cents).** The 2026-08-31 count was 28 over twelve: ONE row and one form are NEW (`547d1d0c`, free, 2026-09-21, form `1c54ee8e`), so the mechanism below is still live. **Decision owed**, not "add a foreign key" (a cascade would delete paid submissions).
-
-**THE 29 ORPHANS ARE DELETED ON DEV THEN PROD (2026-10-11, owner's explicit authorisation; the 5 paid were the owner's own old Stripe test charges, nobody is owed anything).** Per estate: the orphan set was re-derived live and matched the 29 ids below exactly (79 submissions; no foreign key, trigger or rule points at `submissions`). The 29 rows and the 3 linked `purchase_records` (by `formId`) were dumped as CSV first, and a restore test into a scratch schema matched the live rows' md5, after which the schema was dropped. Then ONE transaction deleted the 29 listed ids and checked "29 deleted, 0 orphans left" before COMMIT. Result on both: `deleted 29`, `orphans_after 0`, 50 submissions left, the 3 `purchase_records` rows KEPT, `forms`/`form_respondents` untouched. Backup: `~jolan.boudin/orphan-submissions-backup-2026-10-11/` on the Portail-etu host (dir 700, files 600, `canari-{dev,prod}-{submissions,purchase_records}.csv`), NOT in the repo (pseudonymised payer ids, Stripe session ids). Migration 081 (PR `fix/forms-soft-delete-fk`) now finds 0 orphans on both estates, so it no longer refuses to run.
-
-**What the data says.**
-
-- **Every orphan is a form that was deleted; none is NULL** (`formId` is `NOT NULL`; no foreign key on `submissions` or `forms`, measured). `forms` holds 5 rows, the oldest created 2026-08-11, so the 12 older missing forms (13 May - 6 Jun 2026) were removed before then.
-- **The form cannot be recovered from the database.** No form-definition history table exists; `form_respondents` and `form_reminders` hold 0 rows for these ids; `purchase_records` names the form id but carries only `productName` (3 rows, below). `answers` is keyed by item ids that lived on the deleted form, so the payload shape identifies NOTHING. Backups keep 14 days ([backup](infrastructure/backup.md#retention)): a form deleted in May is in none; only `1c54ee8e` (gone around 2026-09-21) could still have been in a dump, and that window has closed too.
-- **Writer of the orphan: ONE path, still live.** `FormsService.delete` (`forms.service.ts`, `formRepo.remove(form)`) leaves the submissions ("the payers' records"); the association delete (`associations.service.ts`, `manager.delete(Form, { associationId })`, since 2026-10-07) does the same. Submission WRITES cannot create one: `submit` loads the form first and 404s, and every `submissionRepo.save` site works on a loaded form. So the count grows exactly when a form that has answers is deleted.
-- **What an orphan then breaks:** `assertSubmissionAccess` finds the submission but `assertFormManager(sub.formId)` throws on the missing form, so only the submitter can read it; the purchase history lists a paid orphan with no form to name.
-
-**Inventory** (submission id | form id | created, 2026 | payer = first 8 hex of the pseudonymised user id | cents | status). Class A = free (17), B = unpaid, never captured (7), C = paid (5).
-
-The 29 rows (17 free, 7 unpaid and never captured, 5 paid) were listed here by id; they are deleted, and the per-row inventory is kept privately.
-
-**The five paid are almost certainly the developers' own tests, and the "36,00 EUR" is mostly not money:** two are Stripe TEST-mode sessions (30,00 EUR that never moved), and the three live-mode ones total 6,00 EUR (0,50 + 5,00 + 0,50) and each has a `purchase_records` row (`productName` "Formulaire Test", "TEST", "t"; two payer accounts, one of them on 9 of the 29 rows, so a test account). That is an inference from names and amounts, NOT a proof: the user confirms it.
-
-**Proposed repair, per class (nothing applied).**
-
-1. **A and B: do NOT re-attach.** No form is recoverable and nothing identifies one, so "unambiguous re-attach" has no case. A holds no money: leave. B is `pending`/`cancelled` on a test or abandoned session: leave, or delete in one reviewed statement once the user agrees.
-2. **C (paid, 5): never delete, never edit an amount.** Proof needed first, per row: the full `stripeSessionId` looked up in the Stripe dashboard (live vs test mode, status paid, amount, payment-intent id), and for the three live ones matched to their `purchase_records` row (same amount, same payer, same date). If the three live ones are the team's own 6,00 EUR test charges, note it here and keep the rows as the audit trail. If any is a real third-party charge it is refunded or documented BEFORE anything else, and the payer is told from the purchase history (its form title is unknown).
-3. **All classes: the owner deletes them on prod and dev (decided 2026-10-11), NO tombstone rows.** That deletion is the owner's gesture, not code.
-
-**The prevention is BUILT (PR `fix/forms-soft-delete-fk`, 2026-10-11): soft delete + a foreign key.** Migration `081_forms_soft_delete_submissions_fk.sql` adds `forms."deletedAt"` and `submissions_form_fk` (`ON DELETE RESTRICT`); it RAISES with the orphan count while any remain, so **IT MUST NOT DEPLOY BEFORE THE ORPHANS ARE DELETED** (a deploy that hits it fails loudly instead of adding no key). `retireForms` (`forms/retire-forms.ts`) is the one removal path: `FormsService.delete` and the association delete ARCHIVE a form that holds submissions and hard-delete one with none. Lists, the member and public reads, `submit`, `hasSubmission` and the reminder subscription filter `deletedAt IS NULL`; `assertFormManager` and `getSubmissions` do not, so staff read an archived form's submissions by id. Mechanism: [forms module](frontend/modules/forms.md#a-form-with-submissions-is-archived-never-removed-2026-10-11). OWED: the integration run of migration 081 on a database (no database was reachable when it was written), and the purchase-history name of a paid submission of an archived form (the form row still exists, so it is nameable; not exercised).
-- Tests: deleting a form with a paid submission archives it and the purchase history still names it; an empty form is removed; an association delete archives its answered forms; a raw `DELETE FROM forms` of an answered form is refused by the constraint.
-
-**Decision needed from the user:** (a) soft delete + foreign key (recommended) or a `formTitle` on the submission; (b) confirm the 5 paid rows are test charges (Stripe dashboard, test and live) so no payer is owed anything; (c) A and B deleted, or all 29 kept under tombstone parents; (d) may the tombstone insert run on prod (13 rows written).
 
 ### P3 - MiGallery's `resolve()` bypasses, and an inherited disable is the only reason nobody sees them
 
