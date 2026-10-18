@@ -340,6 +340,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/mls-forward-compat.test.sh
 	@bun .github/scripts/tests/changes-outputs.test.mjs
 	@bun .github/scripts/tests/ci-passed-gate.test.mjs
+	@bun .github/scripts/tests/smoke-login.test.mjs
 	@bash .github/scripts/tests/dependabot-cargo-reach.test.sh
 	@bash .github/scripts/tests/cargo-blocked-update-report.test.sh
 	@bash .github/scripts/tests/github-alerts-report.test.sh
