@@ -160,6 +160,7 @@ jobs:
           DEV_MIGALLERY_API_KEY: ${{ secrets.DEV_MIGALLERY_API_KEY }}
           DEV_GOOGLE_SAFE_BROWSING_API_KEY: ${{ secrets.DEV_GOOGLE_SAFE_BROWSING_API_KEY }}
           DEV_KLIPY_API_KEY: ${{ secrets.DEV_KLIPY_API_KEY }}
+          DEV_ANDROID_APP_LINK_SHA256: ${{ secrets.DEV_ANDROID_APP_LINK_SHA256 }}
           DEV_SERVICE_ACCOUNT_USER_ID: ${{ secrets.DEV_SERVICE_ACCOUNT_USER_ID }}
           # Push, iOS half. Available on dev on purpose: what stops a test notification reaching a
           # real member is the copy's `TRUNCATE TABLE push_token`, not an absent key, so a dev estate
