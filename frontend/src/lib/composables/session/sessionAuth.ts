@@ -205,6 +205,13 @@ let loginFlowOwner = 0;
  * login's client is destroyed only once that login has released its socket. Null when no login runs.
  */
 let loginInFlightSettled: Promise<void> | null = null;
+/**
+ * Cancels the network waits of the login in flight, aborted by a sign-out (`endSessionImpl`). The
+ * retirement above waits for that login to END, and a request with no deadline (a refresh, the PIN
+ * salt, pin-check, the revocation question) would hold the next sign-in behind it for as long as the
+ * network chose. The sign-out ends those waits by cancelling them, not a clock. Null when no login runs.
+ */
+let loginInFlightAbort: AbortController | null = null;
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
@@ -691,6 +698,36 @@ export async function loginImpl(
   let settleLogin: () => void = () => {};
   const thisLoginSettled = new Promise<void>((done) => (settleLogin = done));
   loginInFlightSettled = thisLoginSettled;
+  const loginAbort = new AbortController();
+  loginInFlightAbort = loginAbort;
+  /**
+   * `work`, unless a sign-out cancels this login first: then it rejects at once with the stop, typed,
+   * and `work`'s own late answer (or rejection) is dropped. For the awaits that wait on the NETWORK
+   * only - a local step (the MLS decrypt) is let finish, because the next login opens the same state.
+   */
+  const untilSignedOut = <T>(work: Promise<T>, stage: string): Promise<T> =>
+    new Promise<T>((resolveWork, rejectWork) => {
+      const onAbort = (): void =>
+        rejectWork(new LoginStoppedBySignOutError(`${stage} (cancelled)`));
+      if (loginAbort.signal.aborted) {
+        onAbort();
+        void work.catch(() => {});
+        return;
+      }
+      loginAbort.signal.addEventListener('abort', onAbort, { once: true });
+      work.then(
+        (value) => {
+          loginAbort.signal.removeEventListener('abort', onAbort);
+          resolveWork(value);
+        },
+        (e: unknown) => {
+          loginAbort.signal.removeEventListener('abort', onAbort);
+          rejectWork(e);
+        }
+      );
+    });
+  /** Set once this login starts its OWN revocation wipe, which signs out on purpose. */
+  let ownWipeStarted = false;
   /** Clears the login flag only while this login still owns the flow - see `loginFlowOwner`. */
   const releaseLoginFlag = (): void => {
     if (loginFlowOwner !== loginId) {
@@ -848,7 +885,7 @@ export async function loginImpl(
     let accessToken: string;
     try {
       beginBootSpan('access-token');
-      accessToken = await getToken();
+      accessToken = await untilSignedOut(getToken(), 'access-token');
       endBootSpan('access-token');
     } catch (err) {
       // THE USER IS SIGNING OUT, OR SIGNED OUT WHILE THIS WAS ASKED: this login stops, and that is
@@ -979,37 +1016,46 @@ export async function loginImpl(
       // (`prefetchPinSaltImpl`); the check, the derivations and the order between them are
       // `unlockWithPin`'s, where they are exercised on their own (`pinUnlock.test.ts`).
       const userIdForPin = ctx.getUserId();
-      deviceKeyB64 = await unlockWithPin({
-        saltAhead: takePinSaltAhead(userIdForPin),
-        fetchSalt: () => fetchPinSalt(ctx, userIdForPin, accessToken),
-        computeVerifier: (salt) => computePinVerifier(userIdForPin, pin, salt),
-        deriveDeviceKey: (salt) => deriveDeviceKeyB64(userIdForPin, pin, salt),
-        resolveDeviceId: () => mlsService.resolveDeviceId(userIdForPin),
-        checkPin: async ({ verifier, deviceId, salt }) => {
-          const res = await fetchOrUnreachable(
-            `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`,
-            {
-              method: 'POST',
-              headers: {
-                'Content-Type': 'application/json',
-                Authorization: `Bearer ${accessToken}`,
+      deviceKeyB64 = await untilSignedOut(
+        unlockWithPin({
+          saltAhead: takePinSaltAhead(userIdForPin),
+          fetchSalt: () => fetchPinSalt(ctx, userIdForPin, accessToken, loginAbort.signal),
+          computeVerifier: (salt) => computePinVerifier(userIdForPin, pin, salt),
+          deriveDeviceKey: (salt) => deriveDeviceKeyB64(userIdForPin, pin, salt),
+          resolveDeviceId: () => mlsService.resolveDeviceId(userIdForPin),
+          checkPin: async ({ verifier, deviceId, salt }) => {
+            const res = await fetchOrUnreachable(
+              `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-check`,
+              {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${accessToken}`,
+                },
+                body: JSON.stringify({ userId: userIdForPin, verifier, deviceId, salt }),
+                signal: loginAbort.signal,
               },
-              body: JSON.stringify({ userId: userIdForPin, verifier, deviceId, salt }),
-            },
-            m.auth_pin_check_unreachable()
-          );
-          if (!res.ok) throw new LocalizedError(m.auth_pin_check_unreachable());
-          return (await res.json()) as PinCheckAnswer;
-        },
-        // Re-read first: the wipe waits for the MLS retirement, which a sign-out during this login
-        // chains on this login's own end - a wipe started after one would wait on itself.
-        wipeRevokedDevice: () => {
-          stopIfSignedOut('pin-check-revoked');
-          return wipeRevokedDevice(ctx, cb);
-        },
-        installDeviceKey: (key) => ctx.setDeviceKey(key),
-        log: cb.log,
-      });
+              m.auth_pin_check_unreachable()
+            );
+            if (!res.ok) throw new LocalizedError(m.auth_pin_check_unreachable());
+            return (await res.json()) as PinCheckAnswer;
+          },
+          // Re-read first: the wipe waits for the MLS retirement, which a sign-out during this login
+          // chains on this login's own end - a wipe started after one would wait on itself.
+          wipeRevokedDevice: () => {
+            stopIfSignedOut('pin-check-revoked');
+            ownWipeStarted = true;
+            return wipeRevokedDevice(ctx, cb);
+          },
+          // A key proven after a sign-out belongs to nobody signed in.
+          installDeviceKey: (key) => {
+            stopIfSignedOut('pin-check-install');
+            ctx.setDeviceKey(key);
+          },
+          log: cb.log,
+        }),
+        'pin-check'
+      );
       stopIfSignedOut('pin-check');
       // Unlocked: any round trip a retry asked meanwhile belongs to a keypad that is gone.
       forgetPinSaltAhead('unlocked with the PIN', cb.log);
@@ -1120,7 +1166,8 @@ export async function loginImpl(
     // already ended the session, and the next login asks the server again.
     stopIfSignedOut('mls-init-and-storage');
     beginBootSpan('revocation-gate');
-    const revoked = revocationAnswer !== null && (await revocationAnswer);
+    const revoked =
+      revocationAnswer !== null && (await untilSignedOut(revocationAnswer, 'revocation-gate'));
     endBootSpan('revocation-gate', { asked: revocationAnswer !== null });
     stopIfSignedOut('revocation-gate');
     if (revoked) {
@@ -1131,6 +1178,7 @@ export async function loginImpl(
       if (landingPreview) await landingPreview;
       // Same reason as on the PIN path: a wipe started after a sign-out would wait on this login.
       stopIfSignedOut('revocation-preview-settled');
+      ownWipeStarted = true;
       await wipeRevokedDevice(ctx, cb);
       cb.log('[SECURITY] Revoked device: signed out and reset to a fresh install.');
       throw new LoginFailure('device_revoked', m.auth_device_revoked_reset());
@@ -1219,7 +1267,7 @@ export async function loginImpl(
     // destroy the very session that just unlocked. The empty token is what every network-touching
     // helper reads as "not authenticated yet"; promoteOfflineSession fills it in.
     beginBootSpan('auth-token-final');
-    const sessionToken = offlineSession ? '' : await getToken();
+    const sessionToken = offlineSession ? '' : await untilSignedOut(getToken(), 'auth-token-final');
     endBootSpan('auth-token-final', { offline: offlineSession });
     // THE LAST READ BEFORE THE SESSION GOES LIVE, and the one the defect was about. Nothing below
     // awaits before `setIsLoggedIn(true)`, so from here a sign-out finds a live session and
@@ -2004,6 +2052,12 @@ export async function loginImpl(
     // check, a refresh), a store the teardown closed. Read by type and by code, never by message.
     // The one exception is this login's own revocation wipe, which signs out on purpose and whose
     // outcome (`device_revoked`) the PIN gate must still show.
+    if (ownWipeStarted && loginErrorCode(_e) !== 'device_revoked') {
+      // THE WIPE ITSELF FAILED, after its own `clearAuth`: the sign-out below is the wipe's, and what
+      // must be read in the log is that a revoked device may still hold its data.
+      cb.log(`[SECURITY] The revoked-device wipe FAILED - local data may remain: ${String(_e)}`);
+      console.error('[SECURITY] The revoked-device wipe failed - local data may remain:', _e);
+    }
     if (
       _e instanceof SignOutInProgressError ||
       _e instanceof LoginStoppedBySignOutError ||
@@ -2075,6 +2129,7 @@ export async function loginImpl(
     if (loginFlowOwner === loginId) ctx.setIsMessagingInitializing(false);
     releaseLoginFlag();
     if (loginInFlightSettled === thisLoginSettled) loginInFlightSettled = null;
+    if (loginInFlightAbort === loginAbort) loginInFlightAbort = null;
     settleLogin();
   }
 }
@@ -2213,10 +2268,15 @@ export async function biometricLoginImpl(
  * account verifier ({@link computePinVerifier}) and this device's at-rest key
  * ({@link deriveDeviceKeyB64}), so every flow that touches the PIN needs it.
  */
-async function fetchPinSalt(ctx: SessionContext, userId: string, token: string): Promise<string> {
+async function fetchPinSalt(
+  ctx: SessionContext,
+  userId: string,
+  token: string,
+  signal?: AbortSignal
+): Promise<string> {
   const res = await fetchOrUnreachable(
     `${ctx.getHistoryBaseUrl()}/api/mls/security/pin-salt/${encodeURIComponent(userId)}`,
-    { headers: { Authorization: `Bearer ${token}` } },
+    { headers: { Authorization: `Bearer ${token}` }, signal },
     m.auth_pin_salt_unreachable()
   );
   if (!res.ok) throw new LocalizedError(m.auth_pin_salt_unreachable());
@@ -2588,6 +2648,9 @@ export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): v
     // own); the client is destroyed once that login has stopped and released its socket.
     const stopping = loginInFlightSettled;
     if (stopping) {
+      // ITS NETWORK WAITS ARE CANCELLED, so it ends now rather than when a hung request gives up -
+      // the retirement below, and the next sign-in behind it, wait for that end.
+      loginInFlightAbort?.abort();
       cb.log(
         '[LOGOUT] Signed out during a login - its MLS client is retired once that login stops.'
       );

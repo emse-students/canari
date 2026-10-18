@@ -1478,6 +1478,19 @@ login has paused its socket. The login flag is cleared only by the login that se
 (`loginFlowOwner`), so the stopped login's exit never releases the newer one's flow. The cost,
 accepted: a sign-in started during a stopped login's decrypt waits for that decrypt to end.
 
+**That wait is bounded by the SIGN-OUT, not by a clock** (second review of #2067). Its network
+awaits - the refresh, the PIN salt, pin-check, the revocation question - have no deadline of their
+own, so a hung one held the next sign-in, the forgot-PIN reset, `recoverPinImpl` and the deletion
+wipe behind it. The sign-out now ABORTS the login in flight (`loginInFlightAbort`, aborted in
+`endSessionImpl`): the salt and pin-check requests carry its signal, and every network await goes
+through `untilSignedOut(work, stage)`, which rejects at once with `LoginStoppedBySignOutError` -
+the stop path, never a transport failure or a logout. The local MLS decrypt is NOT cancelled: the
+next login opens the same state. A key proven after the sign-out is not installed either.
+
+**A revocation wipe that fails after its own `clearAuth`** (a blocked factory reset) is a sign-out
+of the login's own making with a code other than `device_revoked`, so it lands on the stop path - and
+is accused first, at ERROR (`[SECURITY] The revoked-device wipe FAILED - local data may remain`).
+
 **What a stopped login releases: its socket, then its MLS client** - the same two steps as
 `endSessionImpl`, through the same primitives (`pauseSocket`, the holder). The client is held by
 NAME: `ctx.resetMls(client)` destroys it only while the holder still holds it, because after a
@@ -1489,7 +1502,8 @@ after it the sign-out's own `endSessionImpl` has torn the session down.
 Tests: `signOutDuringLogin.test.ts` runs the real `loginImpl`, `clearAuth` and `endSessionImpl` with
 the init and the gateway held by deferred promises - a sign-out during the decrypt, and one after
 the session went live, a restore rejecting after the sign-out, a PIN check answered 401 after it,
-and a sign-in started beside a stopped login (each fails without its fix); `offlineUnlock.test.ts`
+a sign-in started beside a stopped login, a hung pin-check the sign-out cancels, and a failed
+revocation wipe (each fails without its fix); `offlineUnlock.test.ts`
 and `landingPreviewOrder.test.ts` pin the catches;
 `mlsHolder.test.ts` the named reset.
 

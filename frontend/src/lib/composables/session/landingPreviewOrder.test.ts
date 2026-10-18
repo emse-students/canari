@@ -25,7 +25,7 @@ describe('loginImpl and the landing preview', () => {
   it('starts the vault preview BEFORE the token is awaited (the decision of 2026-10-12)', () => {
     const vault = at(loginBody, 'if (isVaultLogin && !vaultOwnerUnproven) {');
     const start = at(loginBody, 'startLandingPreview(storageOpen, deviceKeyB64);');
-    const token = at(loginBody, 'accessToken = await getToken();');
+    const token = at(loginBody, "accessToken = await untilSignedOut(getToken(), 'access-token');");
     expect(vault).toBeLessThan(start);
     expect(start).toBeLessThan(token);
   });
@@ -34,7 +34,7 @@ describe('loginImpl and the landing preview', () => {
     // `unlockWithPin` returns the device key only once pin-check answered `ok` or `registered` and
     // the `mismatch` and `resetRequired` branches were passed (`pinUnlock.test.ts`, by behaviour), so
     // the preview starting after its return is the whole of the ordering left to pin here.
-    const unlock = at(loginBody, 'deviceKeyB64 = await unlockWithPin(');
+    const unlock = at(loginBody, 'deviceKeyB64 = await untilSignedOut(');
     const starts = [
       ...loginBody.matchAll(/startLandingPreview\(storageOpen, deviceKeyB64\);/g),
     ].map((m) => m.index ?? -1);

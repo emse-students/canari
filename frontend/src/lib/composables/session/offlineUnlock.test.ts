@@ -81,7 +81,7 @@ describe('an account deleted from this device opens nothing (scenario B of #2023
     for (const opener of [
       'storageOpen = getStorage(',
       'loadMlsState(ctx.getUserId())',
-      'accessToken = await getToken();',
+      "accessToken = await untilSignedOut(getToken(), 'access-token');",
       'offlineSession = true;',
     ]) {
       const at = loginImplBody.indexOf(opener);
@@ -103,7 +103,9 @@ describe('an account deleted from this device opens nothing (scenario B of #2023
 
 describe('a server answer is never read as a missing network', () => {
   it('returns on SessionExpiredError before the offline branch can run', () => {
-    const catchStart = loginImplBody.indexOf('accessToken = await getToken();');
+    const catchStart = loginImplBody.indexOf(
+      "accessToken = await untilSignedOut(getToken(), 'access-token');"
+    );
     const catchEnd = loginImplBody.indexOf('// Collect the MLS state');
     expect(catchStart).toBeGreaterThan(-1);
     expect(catchEnd).toBeGreaterThan(catchStart);
@@ -124,7 +126,9 @@ describe('a server answer is never read as a missing network', () => {
     // `SignOutInProgressError` is not a verdict: answering it with `onSessionExpired` was a second
     // sign-out, and neither is any failure met after a sign-out began (its own revocation). Its
     // branch comes first and hands the stop, as a type, to the outer catch - without calling back.
-    const catchStart = loginImplBody.indexOf('accessToken = await getToken();');
+    const catchStart = loginImplBody.indexOf(
+      "accessToken = await untilSignedOut(getToken(), 'access-token');"
+    );
     const catchBlock = loginImplBody.slice(
       catchStart,
       loginImplBody.indexOf('// Collect the MLS state')
@@ -147,7 +151,7 @@ describe('the offline session never re-enters the destructive catch', () => {
     // This call sits inside the try whose catch runs resetMls() + clearDeviceKey(). Letting it
     // throw offline would destroy the session that just unlocked.
     expect(loginImplBody).toMatch(
-      /const sessionToken = offlineSession \? '' : await getToken\(\);/
+      /const sessionToken = offlineSession \? '' : await untilSignedOut\(getToken\(\), 'auth-token-final'\);/
     );
     expect(loginImplBody).toContain('ctx.setIsOfflineSession(offlineSession);');
   });
@@ -405,7 +409,7 @@ describe('the revocation answer is held across the decrypt, never dropped', () =
    */
   const gate = (() => {
     const at = loginImplBody.indexOf(
-      'const revoked = revocationAnswer !== null && (await revocationAnswer);'
+      "revocationAnswer !== null && (await untilSignedOut(revocationAnswer, 'revocation-gate'));"
     );
     expect(at).toBeGreaterThan(-1);
     return at;

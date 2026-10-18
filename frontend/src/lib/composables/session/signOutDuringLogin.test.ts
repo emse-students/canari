@@ -35,6 +35,14 @@ vi.mock('$lib/utils/hex', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/hex')>()),
   loadMlsState: vi.fn(async () => undefined),
   mlsStateSize: vi.fn(async () => 0),
+  removeMlsState: vi.fn(async () => {}),
+}));
+
+/** The factory reset at the end of a revocation wipe - made to fail by one case. */
+const wipeDeviceToFactory = vi.fn(async (): Promise<string[]> => []);
+vi.mock('$lib/utils/deviceReset', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/deviceReset')>()),
+  wipeDeviceToFactory: () => wipeDeviceToFactory(),
 }));
 
 // The PIN path's two PBKDF2 runs: the outcome under test is the server's answer, not the derivation.
@@ -145,6 +153,7 @@ function session(clients: IMlsService[], pin = '') {
     getUserId: () => userId,
     setUserId: (v) => (userId = v),
     getPin: () => pin,
+    setPin: (v) => (pin = v),
     getDeviceKey: () => (pin ? '' : btoa('k'.repeat(32))),
     isLoggedIn: () => loggedIn,
     setIsLoggedIn: vi.fn((v: boolean) => (loggedIn = v)),
@@ -196,13 +205,26 @@ function session(clients: IMlsService[], pin = '') {
 const logs = (cb: ChatSessionCallbacks) =>
   (cb.log as ReturnType<typeof vi.fn>).mock.calls.flat().join('\n');
 
-/** The server: `pin-salt` answers, `pin-check` answers 401 (the session the sign-out revoked). */
+/**
+ * The server: `pin-salt` answers, `pin-check` answers 401 (the session the sign-out revoked) - or,
+ * with `pinCheckHangs`, never answers and rejects only when its request is aborted.
+ */
+let pinCheckHangs = false;
+let pinCheckReached = deferred();
 function server() {
   vi.stubGlobal(
     'fetch',
-    vi.fn(async (url: string | URL | Request) => {
+    vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
       const u = String(url);
       if (u.includes('pin-salt')) return Response.json({ salt: 'salt' });
+      if (u.includes('pin-check') && pinCheckHangs) {
+        pinCheckReached.resolve();
+        return new Promise<Response>((_, reject) =>
+          init?.signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          )
+        );
+      }
       if (u.includes('pin-check')) return new Response('', { status: 401 });
       return new Response('', { status: 200 });
     })
@@ -210,6 +232,8 @@ function server() {
 }
 
 beforeEach(() => {
+  pinCheckHangs = false;
+  pinCheckReached = deferred();
   server();
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -358,5 +382,39 @@ describe('a sign-out during a login in progress', () => {
     await loginB;
     expect(s.ctx.isLoggedIn()).toBe(true);
     expect(s.ctx.ensureMls()).toBe(b.client);
+  });
+  it('a request that never answers does not hold the next sign-in: the sign-out cancels it', async () => {
+    pinCheckHangs = true;
+    const a = fakeClient();
+    const b = fakeClient();
+    const s = session([a.client, b.client], '1234');
+
+    const loginA = loginImpl(s.ctx, s.cb);
+    await pinCheckReached.promise;
+    // The user signs out while pin-check hangs; A ends because its request is cancelled.
+    await clearAuth();
+    await loginA;
+    expect(logs(s.cb)).toContain('after pin-check (cancelled)');
+
+    // The next sign-in (the vault this time) is not held behind the hung request.
+    s.ctx.setPin('');
+    await loginImpl(s.ctx, s.cb);
+    expect(b.known.init).toHaveBeenCalled();
+    expect(s.ctx.isLoggedIn()).toBe(true);
+    expect(s.wentLive()).toHaveBeenCalledTimes(1);
+    expectQuietStop(s);
+  });
+  it('a revocation wipe that fails after its own sign-out is accused, not filed as a stopped login', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    wipeDeviceToFactory.mockRejectedValueOnce(new Error('IndexedDB delete blocked'));
+    const a = fakeClient();
+    a.known.isDeviceRevoked.mockResolvedValue(true);
+    const s = session([a.client]);
+
+    await loginImpl(s.ctx, s.cb);
+
+    expect(s.ctx.isLoggedIn()).toBe(false);
+    expect(logs(s.cb)).toContain('[SECURITY] The revoked-device wipe FAILED');
+    expect(errors.mock.calls.flat().join(' ')).toContain('revoked-device wipe failed');
   });
 });
