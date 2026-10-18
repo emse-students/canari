@@ -5,35 +5,52 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { HttpService } from '@nestjs/axios';
+import { Cron } from '@nestjs/schedule';
 import { InjectRepository } from '@nestjs/typeorm';
 import { firstValueFrom } from 'rxjs';
-import type { Repository } from 'typeorm';
-import { applyMediaRetentionClass } from '../internal/media-retention-class';
+import type { EntityManager, Repository } from 'typeorm';
 import { mediaUrl } from '../internal/service-urls';
 import { BookingSpace, type SpacePoster } from './entities/booking-space.entity';
 
-/** The query a release needs, so the association's delete can run it without this module. */
-type Query = (sql: string, params: unknown[]) => Promise<unknown[]>;
+const internalHeaders = () => ({ 'x-internal-secret': process.env.INTERNAL_SECRET ?? '' });
+
+/**
+ * The lock every write that changes WHO CITES a poster takes on its media id, inside its
+ * transaction: a claim (held until the citing row commits) and a release (held across its re-read
+ * of the citations and its call). So a release never reads "uncited" while a claim it races is
+ * between the media service and its commit (review of #2045).
+ */
+async function lockPoster(m: Pick<EntityManager, 'query'>, mediaId: string): Promise<void> {
+  await m.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+    `booking-poster:${mediaId}`,
+  ]);
+}
 
 /**
  * THE POSTER'S LIFETIME AT THE MEDIA SERVICE (D35, WP-B6), for the one image a space cites.
  *
- * The client uploads a poster `archive`, as a post image. This side then:
- * - CLAIMS it before the space stores it (`internal/poster-claim`, the reels' rule tightened): the
- *   media service sets `association` (an entity's space: it outlives its uploader's erasure, as an
- *   association post's media does) or keeps `archive` (a personal space) ONLY on the acting member's
- *   own fresh upload no other surface has classified. An id is not a secret: without this, a member
- *   could cite a stranger's image or an association document, then remove the poster and hand that
- *   object to the idle sweep (review of #2045). A refused claim refuses the save (`poster-not-yours`);
- *   a media service that does not answer refuses it too (`try-again`) - never stored on trust.
- * - RELEASES a poster to `ephemeral` once NO space cites it any more (replaced, removed, its space
- *   or its association deleted), read from the database after the commit - so a poster two spaces
- *   share is not taken from the one still showing it. Never an immediate delete: the idle sweep
- *   reclaims it in its own time, the posts' rule for an image an edit removed.
+ * The client uploads a poster `poster-pending` - a class only the poster field names, swept by age
+ * if nothing claims it. This side then:
+ * - CLAIMS it INSIDE the transaction that stores the space's row (`internal/poster-claim`), under
+ *   the poster's lock: the media service moves it to `poster-association` (an entity's space: it
+ *   outlives its uploader's erasure, as an association document does) or `poster` (a personal
+ *   space), bound to THAT space, ONLY when it is the acting member's own fresh poster upload. An id
+ *   is not a secret: without this, a member could cite a stranger's image, an association document
+ *   or their own post's photo, then remove the poster and hand that object to the idle sweep
+ *   (review of #2045). A refused claim refuses the save (`poster-not-yours`); an unanswered one too
+ *   (`try-again`) - never stored on trust. A repeated claim for the same space is idempotent.
+ * - RELEASES it (`internal/poster-release`, which moves a claimed poster and nothing else) once NO
+ *   space cites it, re-read under the poster's lock - replaced, removed, its space or its association
+ *   deleted, or its save rolled back.
+ * - RECONCILES every hour: a claimed poster no space cites - a save that died between its claim and
+ *   its commit - is released. No grace period is needed: a claim in flight holds the poster's lock,
+ *   so the release waits for its commit and then finds it cited.
+ * Never an immediate delete: the idle sweep reclaims a released poster in its own time.
  */
 @Injectable()
 export class BookingPosterMedia {
   private readonly logger = new Logger(BookingPosterMedia.name);
+  private reconciling = false;
 
   constructor(
     private readonly http: HttpService,
@@ -41,34 +58,41 @@ export class BookingPosterMedia {
   ) {}
 
   /**
-   * Claims `mediaId` for `actorId` as the poster of a space of `associationId` (null: personal),
-   * or throws: 400 `poster-not-yours`, 503 `try-again`.
+   * Claims `mediaId` for `actorId` as the poster of `spaceId` (of `associationId`, null: personal),
+   * inside `m`, the transaction that will store the row - or throws: 400 `poster-not-yours`, 503
+   * `try-again`, and the transaction rolls back.
    */
-  async claim(mediaId: string, actorId: string, associationId: string | null): Promise<void> {
-    const retentionClass = associationId ? 'association' : 'archive';
+  async claim(
+    m: Pick<EntityManager, 'query'>,
+    mediaId: string,
+    actorId: string,
+    spaceId: string,
+    associationId: string | null
+  ): Promise<void> {
+    const retentionClass = associationId ? 'poster-association' : 'poster';
     this.logger.debug(
       `[BOOKINGS] poster claim media=${mediaId.slice(0, 8)} as '${retentionClass}'`
     );
-    let refused: string[];
+    await lockPoster(m, mediaId);
+    let claimed: string[];
     try {
       const res = await firstValueFrom(
         this.http.post<{ claimed: string[]; refused: string[] }>(
           mediaUrl('media/internal/poster-claim'),
-          { mediaIds: [mediaId], ownerId: actorId, retentionClass },
-          { headers: { 'x-internal-secret': process.env.INTERNAL_SECRET ?? '' } }
+          { mediaIds: [mediaId], ownerId: actorId, spaceId, retentionClass },
+          { headers: internalHeaders() }
         )
       );
-      refused = res.data?.refused ?? [mediaId];
-      if (!(res.data?.claimed ?? []).includes(mediaId)) refused = [mediaId];
+      claimed = res.data?.claimed ?? [];
     } catch (err) {
       this.logger.warn(
         `[BOOKINGS] poster claim failed, the save is refused: ${err instanceof Error ? err.message : String(err)}`
       );
       throw new ServiceUnavailableException({ code: 'try-again' });
     }
-    if (refused.length > 0) {
+    if (!claimed.includes(mediaId)) {
       this.logger.warn(
-        `[BOOKINGS] poster refused: media=${mediaId.slice(0, 8)} is not user=${actorId.slice(0, 8)}'s fresh upload`
+        `[BOOKINGS] poster refused: media=${mediaId.slice(0, 8)} is not user=${actorId.slice(0, 8)}'s fresh poster upload for space=${spaceId.slice(0, 8)}`
       );
       throw new BadRequestException({ code: 'poster-not-yours' });
     }
@@ -79,57 +103,113 @@ export class BookingPosterMedia {
 
   /** Releases the posters among `mediaIds` that no space cites any more. */
   releaseUncited(mediaIds: string[], why: string): Promise<void> {
-    return releaseUncitedPosters(
-      this.http,
-      (sql, params) => this.spaces.query(sql, params),
-      this.logger,
-      mediaIds,
-      why
+    return releaseUncitedPosters(this.http, this.spaces.manager, this.logger, mediaIds, why);
+  }
+
+  /** Hourly, at :47 - off the minutes the other purges use. */
+  @Cron('47 * * * *')
+  async reconcile(): Promise<void> {
+    if (this.reconciling) {
+      this.logger.warn(`[BOOKINGS] poster reconciliation still running - this tick is skipped`);
+      return;
+    }
+    this.reconciling = true;
+    try {
+      await this.reconcileOnce();
+    } catch (e) {
+      this.logger.warn(
+        `[BOOKINGS] poster reconciliation failed - retried next hour: ${e instanceof Error ? e.message : String(e)}`
+      );
+    } finally {
+      this.reconciling = false;
+    }
+  }
+
+  /**
+   * Releases every CLAIMED poster no space cites: the media service lists them, the database says
+   * which are cited, and the rest go through {@link releaseUncitedPosters}, which re-reads each under
+   * its lock. Returns how many were handed to the release.
+   */
+  async reconcileOnce(): Promise<number> {
+    const res = await firstValueFrom(
+      this.http.get<{ posters: Array<{ mediaId: string; spaceId: string | null }> }>(
+        mediaUrl('media/internal/poster-list'),
+        { headers: internalHeaders() }
+      )
     );
+    const ids = (res.data?.posters ?? []).map((p) => p.mediaId);
+    if (ids.length === 0) return 0;
+    const cited = new Set(
+      (
+        (await this.spaces.query(
+          `SELECT DISTINCT poster->>'mediaId' AS id FROM booking_spaces WHERE poster->>'mediaId' = ANY($1)`,
+          [ids]
+        )) as { id: string }[]
+      ).map((r) => r.id)
+    );
+    const orphans = ids.filter((id) => !cited.has(id));
+    if (orphans.length === 0) return 0;
+    this.logger.warn(
+      `[BOOKINGS] ${orphans.length} claimed poster(s) cited by no space (a save that died between its claim and its commit, or a release that failed) - released`
+    );
+    await this.releaseUncited(orphans, 'reconciliation');
+    return orphans.length;
   }
 }
 
 /**
- * Releases to the idle sweep (`ephemeral`) the posters among `mediaIds` that no booking space
- * cites any more - the one release path, also used by an association's delete. Best-effort, as
- * every caller of {@link applyMediaRetentionClass}: a failure is logged with the ids it left.
+ * Releases to the idle sweep the posters among `mediaIds` that no booking space cites any more -
+ * the one release path, also used by an association's delete. Each id in its own transaction,
+ * under its lock: the citation is re-read there, so a claim racing the release is either committed
+ * (cited: kept) or rolled back (uncited: released), never half-seen. Best-effort: a failure is
+ * logged with the id it left, and the hourly reconciliation finds it again.
  */
 export async function releaseUncitedPosters(
   http: HttpService,
-  query: Query,
+  db: Pick<EntityManager, 'transaction'>,
   logger: Logger,
   mediaIds: string[],
   why: string
 ): Promise<void> {
-  const unique = [...new Set(mediaIds)];
-  if (unique.length === 0) return;
-  let cited: { id: string }[];
-  try {
-    cited = (await query(
-      `SELECT DISTINCT poster->>'mediaId' AS id FROM booking_spaces WHERE poster->>'mediaId' = ANY($1)`,
-      [unique]
-    )) as { id: string }[];
-  } catch (err) {
-    // Not knowing who cites them, none is released: a kept poster costs storage, a wrong release
-    // costs another space its image.
-    logger.warn(
-      `[BOOKINGS] ${unique.length} poster(s) NOT released (${why}) - the citation read failed: ${err instanceof Error ? err.message : String(err)}`
-    );
-    return;
+  let released = 0;
+  let kept = 0;
+  for (const id of new Set(mediaIds)) {
+    try {
+      const outcome = await db.transaction(async (m) => {
+        await lockPoster(m, id);
+        const cited = (await m.query(
+          `SELECT 1 FROM booking_spaces WHERE poster->>'mediaId' = $1 LIMIT 1`,
+          [id]
+        )) as unknown[];
+        if (cited.length > 0) return 'cited' as const;
+        const res = await firstValueFrom(
+          http.post<{ released: string[]; refused: string[] }>(
+            mediaUrl('media/internal/poster-release'),
+            { mediaIds: [id] },
+            { headers: internalHeaders() }
+          )
+        );
+        return (res.data?.released ?? []).includes(id)
+          ? ('released' as const)
+          : ('refused' as const);
+      });
+      if (outcome === 'released') released++;
+      else if (outcome === 'cited') kept++;
+      else {
+        // Not a claimed poster at the media service: an upload never claimed (the sweep takes it
+        // by age) or one already released. Nothing to do, and nothing else may be touched.
+        logger.log(`[BOOKINGS] poster ${id} (${why}): not a claimed poster at the media service`);
+      }
+    } catch (err) {
+      logger.warn(
+        `[BOOKINGS] poster ${id} NOT released (${why}) - retried by the hourly reconciliation: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
   }
-  const still = new Set(cited.map((c) => c.id));
-  const free = unique.filter((id) => !still.has(id));
-  if (still.size > 0) {
-    logger.log(`[BOOKINGS] ${still.size} poster(s) kept (${why}): another space still cites them`);
-  }
-  if (free.length === 0) return;
-  const changed = await applyMediaRetentionClass(http, logger, free, 'ephemeral');
-  if (changed === null) {
-    logger.warn(
-      `[BOOKINGS] ${free.length} poster(s) NOT released (${why}) - the media service keeps them: ${free.join(',')}`
+  if (released + kept > 0) {
+    logger.log(
+      `[BOOKINGS] posters (${why}): ${released} released, ${kept} kept - another space still cites them`
     );
-  } else {
-    logger.log(`[BOOKINGS] ${free.length} poster(s) released (${why}) changed=${changed}`);
   }
 }
 

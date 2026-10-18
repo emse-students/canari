@@ -58,7 +58,7 @@ see who else booked.
 
 | D29 | Editing availability | **Refused while coming bookings fall inside the change, naming them**; the organiser cancels them explicitly (D20) and retries. Blocking a free range stays immediate. |
 
-| D30 | Right to manage | **A NEW `MANAGE_BOOKINGS` right, distinct from `MANAGE_FORMS`**: one more bit in the association bitmask, granted per role. The BDA can entrust the music room to someone without giving them forms. It needs a migration of existing roles and a row in the role editor ([association-permissions](association-permissions.md)). A global admin keeps everything. |
+| D30 | Right to manage | **A NEW `MANAGE_BOOKINGS` right, distinct from `MANAGE_FORMS`**: one more bit in the association bitmask, granted per role. The BDA can entrust the music room to someone without giving them forms. It needs a migration of existing roles and a row in the role editor ([association-permissions](association-permissions.md)). A global admin keeps everything **except a booking's FILES** (WP-B6, review of #2045): a CV is downloaded by the space's own managers alone. The carve-out is the files only - a global admin still reads the answers, the views and the export. |
 
 | D31 | Discoverability | **A setting per space**: listed on the Reservations page for those the audience (D6) allows, or **link only** (no list anywhere, reached by link or QR code - the psychologist case). The audience is enforced by the server in both modes, never by hiding it in the interface alone. |
 | D32 | Private information | **An "after booking" field per resource and per space** beside the public one (sector, remark): the video link, the room code, instructions. Only the booking's people see it, while the booking exists; gone on cancellation. The server returns it only to them. |
@@ -675,7 +675,7 @@ Draft #2045, stacked on #2035. Migration **092** (`092_booking_files_and_poster.
 | `POST spaces/:id/files` (multipart `file`, `itemId`) | anyone the space's audience admits (`assertMayUse`) | `file-question` (not a FILE question of this space), `file-empty`, 413 `file-too-large`, `file-type` (read from the bytes), 429 `files-pending` (ten unsent on this space), 429 `files-pending-account` (thirty unsent across spaces) |
 | `GET :bookingId/files/:fileId` | the organiser only (D22), judged before the file is looked at - a global admin who is not an organiser is refused too (review of #2045) | `not-manager`, `file-not-found`, 410 `file-purged` |
 | `GET spaces/:id/export?labels=` | the organiser; served `nosniff` | `not-manager`, `export-labels` (a word missing, empty or over 200 characters) |
-| `PATCH spaces/:id` `{ poster }` | the organiser; `null` removes it | a malformed reference is a validation 400; `poster-not-yours` (not the actor's own fresh, unclassified upload); 503 `try-again` (the media service did not answer the claim) |
+| `PATCH spaces/:id` `{ poster }` | the organiser; `null` removes it | a malformed reference is a validation 400; `poster-not-yours` (not the actor's own fresh `poster-pending` upload, or already another space's poster); 503 `try-again` (the media service did not answer the claim) |
 
 `POST spaces/:id/bookings` can now refuse a file answer in two ways:
 - `file-answer`: the value is not a file id.
@@ -698,11 +698,12 @@ Draft #2045, stacked on #2035. Migration **092** (`092_booking_files_and_poster.
   - A file answer is never shown as its id. `answerText` throws without its words.
 
 **The poster (D35)**
-- **ENCRYPTED BY THE CLIENT, AS A POST'S IMAGE.** The client uses `preparePostMedia`, then `encryptAndUpload(..., 'archive')`. The row stores the reference, field by field (`posterOf`).
+- **ENCRYPTED BY THE CLIENT, AS A POST'S IMAGE.** The client uses `preparePostMedia`, then `encryptAndUpload(..., 'poster-pending')` - a class ONLY the poster field names, swept by age (48 h) if no save claims it. The row stores the reference, field by field (`posterOf`).
 - **`BookingPosterMedia` handles its life at the media service.**
-  - **IT IS CLAIMED BEFORE THE ROW CITES IT** (media-service `POST media/internal/poster-claim`, review of #2045). The claim succeeds only on the ACTING member's own upload, at most a day old, still `archive` (no other surface classified it), not purged, not a public asset. It then becomes `association` for an entity's space (it survives its uploader's erasure, as an association post's media does) or stays `archive` for a personal one. A refused claim refuses the save (`poster-not-yours`); an unanswered one too (`try-again`). Before this, any member could cite an id they had seen - a stranger's image, an association document - then remove the poster and hand that object to the idle sweep, or keep a stranger's image alive past their erasure as `association`.
-  - It is released to `ephemeral` when it is replaced or removed, or when its space or its association is deleted (`associations.service.ts` `remove`) - **and only if no space still cites it** (`releaseUncitedPosters`, one read after the commit), so a poster two spaces share is never taken from the one still showing it. A failed citation read releases nothing.
-  - A claim whose save then fails is released the same way. An update whose poster changed under it between the read and the lock is refused `try-again`, never stored unclaimed.
+  - **IT IS CLAIMED INSIDE THE TRANSACTION THAT STORES THE ROW** (media-service `POST media/internal/poster-claim`, review of #2045), under an advisory lock on the media id (`booking-poster:<id>`) held until the commit. The claim succeeds only on the ACTING member's own `poster-pending` upload, at most a day old, not purged, not a public asset. It then becomes `poster-association` for an entity's space (it survives its uploader's erasure, as an association document does) or `poster` for a personal one, BOUND TO THAT SPACE (`claimedFor`). A refused claim refuses the save (`poster-not-yours`); an unanswered one too (`try-again`). Before this, any member could cite an id they had seen - a stranger's image, an association document, even their OWN post's photo - then remove the poster and hand that object to the idle sweep.
+  - **ONE POSTER, ONE SPACE, AND A REPEATED CLAIM IS IDEMPOTENT.** A claim by the same member for the same space answers claimed again and changes nothing (a double submit, a retried save); for another space it is refused. So two spaces never share a poster. A create's space id is chosen before its transaction, so the claim can name it.
+  - **THE RELEASE TOUCHES CLAIMED POSTERS ONLY.** `internal/poster-release` moves `poster`/`poster-association` to `ephemeral` and refuses every other class, so a release can never reach a post's image or a document. `internal/retention-class` never moves a claimed poster either. It runs when a poster is replaced or removed, when its space or association is deleted (`associations.service.ts` `remove`), and when a save that claimed one fails - each id in its own transaction, under the same lock, the citation re-read there (`releaseUncitedPosters`). A release racing a claim in flight therefore waits for its commit and finds it cited.
+  - **A CRASH BETWEEN A CLAIM AND ITS COMMIT IS RECONCILED, NOT TIMED OUT.** `BookingPosterMedia.reconcileOnce` (hourly at :47) lists the claimed posters (`internal/poster-list`) and releases those no space cites, through the same locked release. No grace period: a claim in flight holds the lock, so "uncited" is only ever read once nothing can still commit a citation. A release the media service did not answer is found again the next hour.
   - Every release is best-effort and logs what it left.
 - **The editor saves it ON ITS OWN, the moment it is picked** (`SpacePosterField.svelte`). An image uploaded and left in an unsaved draft would be ciphertext nobody cites.
 - **The space page shows it** (`SpacePoster.svelte`), decrypted on the device.
@@ -746,13 +747,13 @@ A blob the media service refuses to delete keeps its row, which is retried next 
   - a deleted space's files;
   - the one-year age;
   - erasure;
-  - the poster claimed, released and forged, over the REAL `BookingPosterMedia` and a fake media service that applies the claim rule: a stranger's image refused (and left `archive`), a classified or stale one refused, a shared one kept while another space cites it;
+  - the poster claimed, released and forged, over the REAL `BookingPosterMedia` and a fake media service that applies the claim rule: a stranger's image refused (and left untouched), the member's own post image, a document and a stale upload refused, one poster refused to a second space, a failed create's claim released, a release that waits for a claim in flight (FAILS without the lock), and the reconciliation releasing an orphan and nothing cited;
   - the two orders of a booking and the purge on one unsent file (both FAILED on the unlocked purge: it deadlocked on the booking's row lock);
   - the per-account cap across spaces, and a global admin refused a file;
   - the export parsed back with ExcelJS.
 - `associations.service.remove-forms.spec.ts`: an association's deletion releases its spaces' posters, except one another space still cites.
 - `booking-export.spec.ts`: a text starting with `=`, `+`, `-` or `@` lands as a STRING cell, never a formula, in every column and header.
-- media-service `media.service.poster-claim.spec.ts`: the claim rule.
+- media-service `media.service.poster-claim.spec.ts`: the claim rule (own fresh `poster-pending` only, idempotent for its space), the release allowlist (claimed posters only), the list, and the age sweep of an unclaimed upload.
 - Frontend:
   - `refusals.test.ts` puts a sentence on every new code.
   - `exportLabels.test.ts` checks every word the server requires.

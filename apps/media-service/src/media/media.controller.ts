@@ -70,6 +70,7 @@ import {
   boundedSharp,
   FORM_FILE_MAX_BYTES,
   isRetentionClass,
+  POSTER_CLASSES,
   SERVER_READ_ONLY_CLASS,
   type FormFilePurgeOutcome,
   type MediaStorageStats,
@@ -117,11 +118,17 @@ const RETENTION_CLASS_MAX_IDS = 500;
  * An unrecognised value is ignored rather than refused (an old client sends none, and failing an
  * upload over it would break posting; an unclassified object is KEPT). `form-file` is REFUSED: it is
  * the plaintext class only social-service may create (`POST internal/form-file`), and a client naming
- * it would mint an object nobody tracks, kept for ever and readable by nobody.
+ * it would mint an object nobody tracks, kept for ever and readable by nobody. A CLAIMED poster's
+ * class (`poster`, `poster-association`) is refused too: only `internal/poster-claim` sets it, on
+ * a `poster-pending` upload, and a client minting `poster-association` would keep its object past
+ * its own erasure, bound to no space.
  */
 export function clientRetentionClass(value: unknown): RetentionClass | undefined {
-  if (value === SERVER_READ_ONLY_CLASS) {
-    throw new BadRequestException(`class '${SERVER_READ_ONLY_CLASS}' is not a client upload class`);
+  if (
+    value === SERVER_READ_ONLY_CLASS ||
+    (typeof value === 'string' && POSTER_CLASSES.has(value))
+  ) {
+    throw new BadRequestException(`class '${String(value)}' is not a client upload class`);
   }
   return isRetentionClass(value) ? value : undefined;
 }
@@ -556,10 +563,14 @@ export class MediaController {
     // the size) are known: applying either to an existing id would make that object sweepable by
     // age - a claimed reel's blob deleted under its live post.
     // `form-file` likewise: only `internal/form-file` creates one, with its uploader.
+    // The poster classes likewise: `poster-pending` at upload, the claimed ones by
+    // `internal/poster-claim` with an owner and a space.
     if (
       retentionClass === 'chat-reel' ||
       retentionClass === 'reel-pending' ||
-      retentionClass === SERVER_READ_ONLY_CLASS
+      retentionClass === SERVER_READ_ONLY_CLASS ||
+      retentionClass === 'poster-pending' ||
+      POSTER_CLASSES.has(retentionClass)
     ) {
       throw new BadRequestException(
         `class '${retentionClass}' is set by the upload that creates the object`
@@ -645,7 +656,8 @@ export class MediaController {
    */
   @Post('internal/poster-claim')
   async claimPosters(
-    @Body() body: { mediaIds?: unknown; ownerId?: unknown; retentionClass?: unknown },
+    @Body()
+    body: { mediaIds?: unknown; ownerId?: unknown; spaceId?: unknown; retentionClass?: unknown },
     @Headers('x-internal-secret') internalSecret: string | undefined
   ): Promise<{ claimed: string[]; refused: string[] }> {
     assertInternalSecret(internalSecret);
@@ -653,10 +665,38 @@ export class MediaController {
     if (typeof body?.ownerId !== 'string' || body.ownerId.length === 0) {
       throw new BadRequestException('ownerId must be a non-empty string');
     }
-    if (body.retentionClass !== 'archive' && body.retentionClass !== 'association') {
-      throw new BadRequestException("retentionClass must be 'archive' or 'association'");
+    if (typeof body.spaceId !== 'string' || body.spaceId.length === 0) {
+      throw new BadRequestException('spaceId must be a non-empty string');
     }
-    return this.mediaService.claimPosters(ids, body.ownerId, body.retentionClass);
+    if (body.retentionClass !== 'poster' && body.retentionClass !== 'poster-association') {
+      throw new BadRequestException("retentionClass must be 'poster' or 'poster-association'");
+    }
+    return this.mediaService.claimPosters(ids, body.ownerId, body.spaceId, body.retentionClass);
+  }
+
+  /**
+   * Releases claimed posters to the idle sweep. Sole consumer: social-service's
+   * `releaseUncitedPosters`; the class allowlist is {@link MediaService.releasePosters}.
+   */
+  @Post('internal/poster-release')
+  async releasePosters(
+    @Body() body: { mediaIds?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ released: string[]; refused: string[] }> {
+    assertInternalSecret(internalSecret);
+    return this.mediaService.releasePosters(this.boundedIds(body?.mediaIds, 'mediaIds'));
+  }
+
+  /**
+   * Every claimed poster and its space. Sole consumer: social-service's poster reconciliation
+   * (`BookingPosterMedia.reconcileOnce`).
+   */
+  @Get('internal/poster-list')
+  listPosters(@Headers('x-internal-secret') internalSecret: string | undefined): {
+    posters: Array<{ mediaId: string; spaceId: string | null }>;
+  } {
+    assertInternalSecret(internalSecret);
+    return { posters: this.mediaService.listPosters() };
   }
 
   // ---------------------------------------------------------------------------

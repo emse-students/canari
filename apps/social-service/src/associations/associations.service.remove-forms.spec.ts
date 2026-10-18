@@ -14,21 +14,30 @@ jest.mock('../forms/retire-forms', () => ({
  * paid form of a deleted institution stayed alive and was shown as "Personnel", because
  * `forms.associationId` carries no foreign key and `remove` never touched the table.
  */
-function makeService(posters: { id: string }[] = [], stillCited: { id: string }[] = []) {
-  const manager = { delete: jest.fn(() => Promise.resolve({ affected: 1 })) };
+function makeService(posters: { id: string }[] = [], stillCited: string[] = []) {
+  // The release re-reads, per poster and under its lock, whether a surviving space cites it.
+  const manager = {
+    delete: jest.fn(() => Promise.resolve({ affected: 1 })),
+    query: jest.fn((sql: string, params: unknown[]) =>
+      Promise.resolve(
+        sql.includes('LIMIT 1') && stillCited.includes(params[0] as string) ? [1] : []
+      )
+    ),
+  };
   const assoRepo = {
     manager: {
       transaction: jest.fn((work: (m: typeof manager) => unknown) => work(manager)),
-      // The first read lists the association's posters; the second, after the commit, which of
-      // them a surviving space still cites.
-      query: jest.fn((sql: string) =>
-        Promise.resolve(sql.includes('ANY($1)') ? stillCited : posters)
-      ),
+      // The association's posters, read before its delete.
+      query: jest.fn(() => Promise.resolve(posters)),
     },
   };
   const count = jest.fn(() => Promise.resolve(2));
   const redis = { scan: jest.fn(), del: jest.fn() };
-  const httpService = { post: jest.fn(() => of({ data: { changed: posters.length } })) };
+  const httpService = {
+    post: jest.fn((_url: string, body: { mediaIds: string[] }) =>
+      of({ data: { released: body.mediaIds, refused: [] } })
+    ),
+  };
   const service = new AssociationsService(
     assoRepo as never, // assoRepo
     { count } as never, // memberRepo
@@ -84,27 +93,29 @@ describe('AssociationsService.remove - its booking spaces go, and their posters 
       expect.stringContaining('FROM booking_spaces'),
       ['asso-1']
     );
-    expect(httpService.post).toHaveBeenCalledTimes(1);
-    expect(httpService.post.mock.calls[0]).toEqual([
-      expect.stringContaining('media/internal/retention-class'),
-      { mediaIds: ['poster-1', 'poster-2'], retentionClass: 'ephemeral' },
-      expect.anything(),
+    expect(httpService.post.mock.calls).toEqual([
+      [
+        expect.stringContaining('media/internal/poster-release'),
+        { mediaIds: ['poster-1'] },
+        expect.anything(),
+      ],
+      [
+        expect.stringContaining('media/internal/poster-release'),
+        { mediaIds: ['poster-2'] },
+        expect.anything(),
+      ],
     ]);
   });
 
   it('keeps a poster another space still cites (review of #2045)', async () => {
     const { service, httpService } = makeService(
       [{ id: 'poster-1' }, { id: 'poster-2' }],
-      [{ id: 'poster-2' }]
+      ['poster-2']
     );
 
     await service.remove('asso-1', 'admin-1');
 
-    expect(httpService.post).toHaveBeenCalledTimes(1);
-    expect((httpService.post.mock.calls[0] as unknown[])[1]).toEqual({
-      mediaIds: ['poster-1'],
-      retentionClass: 'ephemeral',
-    });
+    expect(httpService.post.mock.calls.map((c) => c[1])).toEqual([{ mediaIds: ['poster-1'] }]);
   });
 
   it('asks the media service nothing when no space had a poster', async () => {

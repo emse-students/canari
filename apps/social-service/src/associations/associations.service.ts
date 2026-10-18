@@ -577,7 +577,7 @@ export class AssociationsService {
     // Released only where no surviving space cites them, the one release rule of every poster.
     await releaseUncitedPosters(
       this.httpService,
-      (sql, params) => this.assoRepo.manager.query(sql, params),
+      this.assoRepo.manager,
       this.logger,
       posters.map((p) => p.id),
       `association ${id} was deleted`

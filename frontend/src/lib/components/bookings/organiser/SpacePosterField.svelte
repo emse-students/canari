@@ -54,7 +54,8 @@
         file,
         await getToken(),
         dims,
-        'archive'
+        // The class only a poster upload names: the space's save claims it (review of #2045).
+        'poster-pending'
       );
       const next: Poster = {
         type: 'image',

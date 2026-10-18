@@ -108,6 +108,7 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
   let organiser: BookingSpacesService;
   let retention: BookingRetentionScheduler;
   let files: BookingFilesService;
+  let posterMedia: BookingPosterMedia;
   const grants = new Set<string>();
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
 
@@ -120,8 +121,8 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
    * whatever it holds held - how a race is staged without a clock.
    */
   let purgeGate: { fileId: string; entered: () => void; open: Promise<void> } | null = null;
-  /** The media service's images: owner, retention class, still inside the claim window. */
-  const images = new Map<string, { owner: string; cls: string; fresh: boolean }>();
+  /** The media service's images: owner, retention class, inside the claim window, claimed for. */
+  const images = new Map<string, { owner: string; cls: string; fresh: boolean; space?: string }>();
 
   beforeAll(async () => {
     admin = new Client({ connectionString: URL });
@@ -187,39 +188,64 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
         return out;
       },
     } as unknown as FormFilesService;
-    // The REAL poster lifetime, over a media service that answers as `claimPosters` and
-    // `setRetentionClass` do: a claim succeeds only on the caller's own fresh `archive` upload.
+    // The REAL poster lifetime, over a media service that answers as `claimPosters`,
+    // `releasePosters` and `listPosters` do: a claim succeeds only on the caller's own fresh
+    // `poster-pending` upload (or again, for the same space), a release moves a claimed poster alone.
+    const CLAIMED = new Set(['poster', 'poster-association']);
     const mediaHttp = {
       post: (
         url: string,
-        body: { mediaIds: string[]; ownerId?: string; retentionClass: string }
+        body: { mediaIds: string[]; ownerId?: string; spaceId?: string; retentionClass?: string }
       ) => {
         if (url.endsWith('media/internal/poster-claim')) {
           const claimed: string[] = [];
           const refused: string[] = [];
           for (const id of body.mediaIds) {
             const object = images.get(id);
-            if (object?.owner === body.ownerId && object.cls === 'archive' && object.fresh) {
-              object.cls = body.retentionClass;
+            if (
+              object?.owner === body.ownerId &&
+              object.cls === body.retentionClass &&
+              object.space === body.spaceId
+            ) {
               claimed.push(id);
+            } else if (
+              object?.owner === body.ownerId &&
+              object.cls === 'poster-pending' &&
+              object.fresh
+            ) {
+              object.cls = body.retentionClass!;
+              object.space = body.spaceId;
+              claimed.push(id);
+              posterCalls.push(`claim:${body.retentionClass}:${id}`);
             } else refused.push(id);
           }
-          posterCalls.push(...claimed.map((id) => `claim:${body.retentionClass}:${id}`));
           return of({ data: { claimed, refused } });
         }
-        let changed = 0;
-        for (const id of body.mediaIds) {
-          const object = images.get(id);
-          if (object && object.cls !== body.retentionClass) {
-            object.cls = body.retentionClass;
-            changed++;
+        if (url.endsWith('media/internal/poster-release')) {
+          const released: string[] = [];
+          const refused: string[] = [];
+          for (const id of body.mediaIds) {
+            const object = images.get(id);
+            if (object && CLAIMED.has(object.cls)) {
+              object.cls = 'ephemeral';
+              object.space = undefined;
+              released.push(id);
+              posterCalls.push(`release:${id}`);
+            } else refused.push(id);
           }
-          posterCalls.push(`${body.retentionClass}:${id}`);
+          return of({ data: { released, refused } });
         }
-        return of({ data: { changed } });
+        throw new Error(`unexpected media call ${url}`);
+      },
+      get: (url: string) => {
+        if (!url.endsWith('media/internal/poster-list')) throw new Error(`unexpected ${url}`);
+        const posters = [...images.entries()]
+          .filter(([, o]) => CLAIMED.has(o.cls))
+          .map(([mediaId, o]) => ({ mediaId, spaceId: o.space ?? null }));
+        return of({ data: { posters } });
       },
     } as unknown as HttpService;
-    const posterMedia = new BookingPosterMedia(mediaHttp, ds.getRepository(BookingSpace));
+    posterMedia = new BookingPosterMedia(mediaHttp, ds.getRepository(BookingSpace));
 
     const repo = <T extends object>(e: new () => T) => ds.getRepository(e);
     const slots = new BookingSlotsService(
@@ -316,6 +342,13 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       as(actor),
       NOW
     );
+
+  /** A second connection, to hold a transaction open while the code under test runs. */
+  const raceClient = async () => {
+    const client = new Client({ connectionString: URL, options: `-c search_path=${schema}` });
+    await client.connect();
+    return client;
+  };
 
   /** The database's clock: the files' `createdAt` is written by it. */
   const dbNow = async () => new Date((await q(`SELECT now() AS n`))[0].n as string);
@@ -563,11 +596,6 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
      * after the purge judged the file unsent. Staged here with a second connection holding the
      * booking's transaction open, and the media service's delete held open by `purgeGate`.
      */
-    const raceClient = async () => {
-      const client = new Client({ connectionString: URL, options: `-c search_path=${schema}` });
-      await client.connect();
-      return client;
-    };
     const managerOf = (client: Client) =>
       ({
         query: async (sql: string, params: unknown[]) => (await client.query(sql, params)).rows,
@@ -700,9 +728,9 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
   });
 
   describe('the poster (D35)', () => {
-    /** A poster citing a fresh `archive` image uploaded by `owner`. */
+    /** A poster citing a fresh `poster-pending` image uploaded by `owner`. */
     const poster = (owner: string, mediaId = randomUUID()) => {
-      images.set(mediaId, { owner, cls: 'archive', fresh: true });
+      images.set(mediaId, { owner, cls: 'poster-pending', fresh: true });
       return {
         type: 'image' as const,
         mediaId,
@@ -729,13 +757,14 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
         NOW
       );
       expect(await posterOfRow(space.id)).toEqual(first);
-      expect(posterCalls).toEqual([`claim:association:${first.mediaId}`]);
+      expect(posterCalls).toEqual([`claim:poster-association:${first.mediaId}`]);
+      expect(images.get(first.mediaId)!.space).toBe(space.id);
 
       const second = poster(ORGA);
       await organiser.update(space.id, { poster: second }, as(ORGA), NOW);
       expect(posterCalls.slice(1)).toEqual([
-        `claim:association:${second.mediaId}`,
-        `ephemeral:${first.mediaId}`,
+        `claim:poster-association:${second.mediaId}`,
+        `release:${first.mediaId}`,
       ]);
       // A save that does not touch the poster - or re-sends the same one - asks nothing.
       await organiser.update(space.id, { name: 'Renamed' }, as(ORGA), NOW);
@@ -744,15 +773,16 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
 
       expect((await service.getSpace(space.id, as(ALICE))).poster).toEqual(second);
       await organiser.remove(space.id, as(ORGA), NOW);
-      expect(posterCalls.slice(3)).toEqual([`ephemeral:${second.mediaId}`]);
+      expect(posterCalls.slice(3)).toEqual([`release:${second.mediaId}`]);
     });
 
-    it("claims a person's poster as theirs (archive), and removing it releases it", async () => {
+    it("claims a person's poster as theirs, and removing it releases it", async () => {
       const mine = poster(ALICE);
       const { id } = await organiser.create({ name: 'Psy', poster: mine } as never, as(ALICE));
-      expect(posterCalls[posterCalls.length - 1]).toBe(`claim:archive:${mine.mediaId}`);
+      expect(posterCalls[posterCalls.length - 1]).toBe(`claim:poster:${mine.mediaId}`);
+      expect(images.get(mine.mediaId)!.space).toBe(id);
       await organiser.update(id, { poster: null }, as(ALICE), NOW);
-      expect(posterCalls[posterCalls.length - 1]).toBe(`ephemeral:${mine.mediaId}`);
+      expect(posterCalls[posterCalls.length - 1]).toBe(`release:${mine.mediaId}`);
       expect(await posterOfRow(id)).toBeNull();
     });
 
@@ -766,36 +796,113 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
         code(organiser.create({ name: 'Mine', poster: bobs } as never, as(ALICE)))
       ).resolves.toBe('poster-not-yours');
       expect(await posterOfRow(space.id)).toBeNull();
-      // Neither `association` (it would outlive Bob's erasure) nor `ephemeral` (the sweep).
-      expect(images.get(bobs.mediaId)!.cls).toBe('archive');
+      expect(images.get(bobs.mediaId)!.cls).toBe('poster-pending');
     });
 
-    it('refuses an image already classified elsewhere, or no longer a fresh upload', async () => {
+    it("refuses the member's OWN post image or document, and a stale upload - only a poster upload qualifies", async () => {
       const { space } = await setup();
-      const asDocument = poster(ORGA);
-      images.get(asDocument.mediaId)!.cls = 'association';
+      const postImage = poster(ORGA);
+      images.get(postImage.mediaId)!.cls = 'archive';
+      const document = poster(ORGA);
+      images.get(document.mediaId)!.cls = 'association';
       const old = poster(ORGA);
       images.get(old.mediaId)!.fresh = false;
-      for (const p of [asDocument, old]) {
+      for (const p of [postImage, document, old]) {
         await expect(code(organiser.update(space.id, { poster: p }, as(ORGA), NOW))).resolves.toBe(
           'poster-not-yours'
         );
       }
-      expect(images.get(asDocument.mediaId)!.cls).toBe('association');
-      expect(images.get(old.mediaId)!.cls).toBe('archive');
+      // Nothing the refused saves named was moved - least of all to the sweep.
+      expect([postImage, document, old].map((p) => images.get(p.mediaId)!.cls)).toEqual([
+        'archive',
+        'association',
+        'poster-pending',
+      ]);
     });
 
-    it('never releases a poster another space still cites', async () => {
-      const shared = poster(ALICE);
-      const a = await organiser.create({ name: 'A', poster: shared } as never, as(ALICE));
-      // The same fresh upload cited by a second personal space of the same member.
-      const b = await organiser.create({ name: 'B', poster: shared } as never, as(ALICE));
+    it('one poster, one space: a second space of the same member is refused it', async () => {
+      const mine = poster(ALICE);
+      const a = await organiser.create({ name: 'A', poster: mine } as never, as(ALICE));
+      expect(await code(organiser.create({ name: 'B', poster: mine } as never, as(ALICE)))).toBe(
+        'poster-not-yours'
+      );
+      expect(images.get(mine.mediaId)).toEqual(
+        expect.objectContaining({ cls: 'poster', space: a.id })
+      );
+    });
+
+    it('a claim whose save then fails is released, not kept', async () => {
+      const mine = poster(ORGA);
       posterCalls.length = 0;
-      await organiser.update(a.id, { poster: null }, as(ALICE), NOW);
-      expect(posterCalls).toEqual([]);
-      expect(images.get(shared.mediaId)!.cls).toBe('archive');
-      await organiser.remove(b.id, as(ALICE), NOW);
-      expect(posterCalls).toEqual([`ephemeral:${shared.mediaId}`]);
+      // A global admin naming an entity that does not exist: claimed, then the row's key refuses.
+      expect(
+        await code(
+          organiser.create({ name: 'Ghost', associationId: randomUUID(), poster: mine } as never, {
+            userId: ORGA,
+            isGlobalAdmin: true,
+          })
+        )
+      ).toBe('association-not-found');
+      expect(posterCalls).toEqual([
+        `claim:poster-association:${mine.mediaId}`,
+        `release:${mine.mediaId}`,
+      ]);
+    });
+
+    it('a release waits for a claim in flight, then finds the poster cited (review of #2045)', async () => {
+      const { space } = await setup();
+      const mine = poster(ORGA);
+      images.set(mine.mediaId, {
+        owner: ORGA,
+        cls: 'poster-association',
+        fresh: true,
+        space: space.id,
+      });
+      const writer = await raceClient();
+      try {
+        // A save between its claim and its commit: it holds the poster's lock and its row change.
+        await writer.query('BEGIN');
+        await writer.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
+          `booking-poster:${mine.mediaId}`,
+        ]);
+        await writer.query(`UPDATE booking_spaces SET poster = $1 WHERE id = $2`, [
+          JSON.stringify(mine),
+          space.id,
+        ]);
+        let settled = false;
+        const release = posterMedia
+          .releaseUncited([mine.mediaId], 'raced')
+          .finally(() => (settled = true));
+        // The writer commits only once the release has either finished or is WAITING on the lock -
+        // read from the server, never from a clock - so an unlocked release reads "uncited" first.
+        for (;;) {
+          const [{ n }] = (
+            await admin.query(
+              `SELECT count(*)::int AS n FROM pg_locks WHERE locktype = 'advisory' AND NOT granted`
+            )
+          ).rows as { n: number }[];
+          if (n > 0 || settled) break;
+        }
+        await writer.query('COMMIT');
+        await release;
+      } finally {
+        await writer.end();
+      }
+      expect(images.get(mine.mediaId)!.cls).toBe('poster-association');
+    });
+
+    it('the hourly reconciliation releases a claimed poster no space cites, and only that one', async () => {
+      const { space } = await setup();
+      const cited = poster(ORGA);
+      await organiser.update(space.id, { poster: cited }, as(ORGA), NOW);
+      // A save that died between its claim and its commit: claimed for a space that never existed.
+      const orphan = randomUUID();
+      images.set(orphan, { owner: ORGA, cls: 'poster', fresh: true, space: randomUUID() });
+      posterCalls.length = 0;
+      expect(await posterMedia.reconcileOnce()).toBeGreaterThanOrEqual(1);
+      expect(posterCalls).toContain(`release:${orphan}`);
+      expect(posterCalls).not.toContain(`release:${cited.mediaId}`);
+      expect(await posterMedia.reconcileOnce()).toBe(0);
     });
   });
 
