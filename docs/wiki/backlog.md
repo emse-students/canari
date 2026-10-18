@@ -682,6 +682,9 @@ can the browser failure rate be re-counted without the probes.
 Both media show "Format non supporte / Telecharger" on the Mi 9T while the iPhone lists them as
 "[Media]". Unexplained; the swipe half of that report is fixed
 ([mobile](frontend/mobile.md#a-modal-closed-by-its-owners-state-left-the-overlay-stack-and-the-tab-swipe-stood-down-2026-10-09)).
+**The refusal now logs its cause (2026-10-18, draft PR `fix/voice-player-error-log`)**; owed: that
+`[voice] ... refused its source` line from the Mi 9T on the conversation, which decides the fix
+([chat](frontend/modules/chat.md#format-non-supporte-names-its-cause-in-the-log-2026-10-18)).
 
 ### P1 - Graine v2 - an author that is proven, and a ciphertext bound to its place (decided 2026-09-28)
 
