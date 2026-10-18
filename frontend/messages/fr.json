@@ -2739,6 +2739,8 @@
   "dashboard_identity_summary": "Voir mon profil",
   "dashboard_profile_label": "Mon profil",
   "dashboard_managed_heading": "Mes associations",
+  "dashboard_managed_lists_heading": "Mes listes",
+  "dashboard_managed_institutions_heading": "Mes institutions",
   "dashboard_signout_label": "Se déconnecter",
   "auth_signout_failed": "La déconnexion n'a pas abouti. Réessayez.",
   "dashboard_unread_notifications_label": [
@@ -2781,6 +2783,8 @@
   "assoc_nav_aria": "Sections des associations",
   "asso_members_role_publisher": "Publie en son nom",
   "assoc_list_mine_heading": "Mes associations",
+  "assoc_list_mine_lists_heading": "Mes listes",
+  "assoc_list_mine_institutions_heading": "Mes institutions",
   "assoc_list_all_heading": "Toutes les associations",
   "assoc_list_empty_title": "Aucune association",
   "assoc_list_empty_desc": "Soyez le premier à créer une association !",

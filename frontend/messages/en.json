@@ -2707,6 +2707,8 @@
   "dashboard_identity_summary": "View my profile",
   "dashboard_profile_label": "My profile",
   "dashboard_managed_heading": "My associations",
+  "dashboard_managed_lists_heading": "My lists",
+  "dashboard_managed_institutions_heading": "My institutions",
   "dashboard_signout_label": "Sign out",
   "auth_signout_failed": "Signing out did not finish. Try again.",
   "dashboard_unread_notifications_label": [
@@ -2749,6 +2751,8 @@
   "assoc_nav_aria": "Association sections",
   "asso_members_role_publisher": "Publishes in its name",
   "assoc_list_mine_heading": "My associations",
+  "assoc_list_mine_lists_heading": "My lists",
+  "assoc_list_mine_institutions_heading": "My institutions",
   "assoc_list_all_heading": "All associations",
   "assoc_list_empty_title": "No association",
   "assoc_list_empty_desc": "Be the first to create an association!",
