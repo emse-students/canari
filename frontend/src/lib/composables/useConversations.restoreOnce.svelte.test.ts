@@ -28,6 +28,7 @@ vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
 }));
 
 const { useConversations } = await import('./useConversations.svelte');
+const { reportRejectionOnce } = await import('$lib/utils/reportRejectionOnce');
 
 function makeCtx(userId = 'u1') {
   const mls = {
@@ -137,6 +138,73 @@ describe('loadAndRestoreConversations - one restore at a time, at most one queue
     releases[1].resolve();
     await expect(queued).resolves.toBeUndefined();
     expect(convs.conversationsRestored).toBe(true);
+  });
+
+  it('never runs a restore the signed-out session queued, and its callers resolve', async () => {
+    const releases = holdEachRestore();
+    const convs = useConversations();
+    const ctxA = makeCtx('alice');
+
+    const first = convs.loadAndRestoreConversations(ctxA);
+    await settle();
+    const queued = convs.loadAndRestoreConversations(makeCtx('alice'));
+
+    // Alice signs out while her first restore runs and a second one waits behind it.
+    convs.invalidateRestores();
+    releases[0].resolve();
+    await first;
+    await expect(queued).resolves.toBeUndefined();
+    await settle();
+
+    // The queued restore would have run as Alice, on a map the teardown just cleared.
+    expect(loadExistingConversations).toHaveBeenCalledTimes(1);
+    // Nor did the retired pass wake Alice's client, or mark the next session's map restored.
+    const mls = (
+      ctxA as unknown as { ensureMls: () => { notifyConversationsRestored: unknown } }
+    ).ensureMls().notifyConversationsRestored;
+    expect(mls).not.toHaveBeenCalled();
+    expect(convs.conversationsRestored).toBe(false);
+  });
+
+  it('a restore still running from a signed-out session never blocks the next one', async () => {
+    const releases = holdEachRestore();
+    const convs = useConversations();
+
+    // Alice's restore never settles.
+    void convs.loadAndRestoreConversations(makeCtx('alice'));
+    await settle();
+    convs.invalidateRestores();
+
+    // Bob signs in on the same tab: his restore starts at once, on its own chain.
+    const bob = convs.loadAndRestoreConversations(makeCtx('bob'));
+    await settle();
+    expect(loadExistingConversations).toHaveBeenCalledTimes(2);
+    expect(loadExistingConversations).toHaveBeenLastCalledWith(
+      expect.objectContaining({ userId: 'bob' })
+    );
+    releases[1].resolve();
+    await expect(bob).resolves.toBeUndefined();
+    expect(convs.conversationsRestored).toBe(true);
+  });
+
+  it('hands the queued failure to every folded caller, and it is reported once', async () => {
+    const releases = holdEachRestore();
+    const convs = useConversations();
+
+    const first = convs.loadAndRestoreConversations(makeCtx());
+    await settle();
+    const folded = Array.from({ length: 5 }, () => convs.loadAndRestoreConversations(makeCtx()));
+    // Each Welcome caller reports through the same helper `sessionAuth` uses.
+    const report = vi.fn();
+    const reports = folded.map((p) => reportRejectionOnce(p, report));
+
+    releases[0].resolve();
+    await first;
+    await settle();
+    releases[1].reject(new Error('IndexedDB unavailable'));
+    for (const p of folded) await expect(p).rejects.toThrow('IndexedDB unavailable');
+    await Promise.all(reports);
+    expect(report).toHaveBeenCalledTimes(1);
   });
 
   it('starts at once when nothing runs, each time', async () => {

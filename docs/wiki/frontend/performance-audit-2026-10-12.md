@@ -298,9 +298,39 @@ saved its row - so it is queued as the ONE restore after it, and every further a
 waits is folded into it, with the latest context. A burst of 80 Welcomes in one drain costs two
 restores instead of 80, and the restores no longer overlap on the WASM client their phase 2 is
 serialised for. Ordered by the calls alone, no timer. The queued restore logs once, as it starts,
-`[RESTORE] one restore for N ask(s) made while the previous one ran`. Pinned by `composables/useConversations.restoreOnce.svelte.test.ts` (81 asks -> 2 restores;
-the queued one runs after a failed one; the latest context wins). Not measured on a device: the
-count of `[RESTORE] ... seeded` lines on a new device joining many groups is the reading.
+`[RESTORE] one restore for N ask(s) made while the previous one ran`.
+
+**A chain belongs to ONE session: a generation the sign-out retires.** `useConversations` is a
+global singleton that outlives a sign-out, so the running/queued pair lives in a
+`RestoreGeneration`, and `tearDownLiveSession` calls `invalidateRestores()` next to clearing the map
+(`ChatSessionCallbacks.invalidateRestores`). Three things follow, none of them from a timer:
+
+- **A queued restore of a retired generation never starts.** It would have run with the signed-out
+  account's storage, user id and device key - recreating an MLS client through `ensureMls()` and
+  refilling the map the teardown had just cleared. Its folded callers RESOLVE (nothing is left to
+  wait for), and one line says so: `[RESTORE] N queued ask(s) dropped - generation G ended before
+  they ran`.
+- **A restore still running from a retired generation blocks nothing.** The next login asks on a
+  fresh generation and starts its own chain at once, so a restore that never settles costs at most
+  its own session, never every later one in the tab. The stale pass cannot be interrupted, but its
+  end neither marks the map restored nor wakes a client.
+- **A pass wakes the client it restored into**: `restoreOnce` names `ensureMls()` once, at its
+  start, and its `finally` calls `notifyConversationsRestored()` on THAT client - asking `ensureMls()`
+  again at the end would create one after a sign-out.
+
+**A failure folded into one run is reported once.** Every caller folded into the queued restore
+holds THE SAME promise, so the Welcome handler (`sessionAuth`) reports through
+`utils/reportRejectionOnce.ts`, keyed by the promise's identity: N Welcomes behind one failed
+restore write one `[WARN] Error resyncing convs (Welcome)`, not N - and every caller still receives
+the rejection.
+
+Pinned by `composables/useConversations.restoreOnce.svelte.test.ts` (81 asks -> 2 restores; the
+queued one runs after a failed one; the latest context wins; ask, queue, sign out, release the
+first -> no second `loadExistingConversations`; a never-settling restore of a retired generation
+does not block the next one's; five folded callers of a failed run -> five rejections, one report)
+and by `session/signOutTimeline.test.ts` (the sign-out retires the chain once). Not measured on a
+device: the count of `[RESTORE] ... seeded` lines on a new device joining many groups is the
+reading.
 
 ## How to re-measure
 
