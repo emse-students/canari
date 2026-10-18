@@ -59,3 +59,20 @@ describe('createMlsHolder - a retirement always settles', () => {
     expect(holder.isRetiring()).toBe(false);
   });
 });
+
+describe('createMlsHolder - a reset that names its client', () => {
+  it('destroys only the named client, never one built after it was retired', () => {
+    const { holder, made } = holderWith(() => {});
+    const stopped = holder.ensure();
+    // A sign-out retires the stopped login's client, and the next sign-in builds its own.
+    void holder.retire(new Promise<void>(() => {}));
+    const next = holder.ensure();
+    holder.reset(stopped);
+    expect(holder.ensure()).toBe(next);
+    expect(made[1].destroy).not.toHaveBeenCalled();
+    // Named and still held: destroyed, and the next caller builds a fresh one.
+    holder.reset(next);
+    expect(made[1].destroy).toHaveBeenCalledTimes(1);
+    expect(holder.ensure()).not.toBe(next);
+  });
+});

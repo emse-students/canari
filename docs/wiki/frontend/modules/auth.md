@@ -1343,14 +1343,8 @@ disposed only when no session has registered since; and installing hooks for a N
 the old ones instead of being skipped by a stale "installed" flag. The login's wait above already
 orders this; the guards make it hold without relying on that order.
 
-**OPEN, P2 (pre-existing): a sign-out during a login in progress is not cancelled.** A login can run
-~12 s inside the native decrypt of `mls.bin` (Mi 9T). A sign-out in that window finds no live
-session (`isLoggedIn` is still false), so `endSessionImpl` stops nothing, and the login then
-completes and sets `isLoggedIn` true for a signed-out user (what follows was not measured). The
-clean fix is a sign-out GENERATION that `loginImpl`
-captures at its start and re-reads before `setIsLoggedIn(true)`, tearing down what it set up if a
-sign-out happened; it touches every registration the login makes, so it is its own change
-([backlog](../../backlog.md)).
+**A sign-out during a login in progress stops that login** - see
+[the section below](#a-sign-out-during-a-login-in-progress-completed-the-login---fixed-2026-10-18).
 
 **What a sign-out still keeps, deliberately**: `mls.bin`, the message database and the device-key
 vault ("deconnecter seulement, garder l'etat", see `handlePinSignOut`). So a device signed out with
@@ -1440,6 +1434,45 @@ unlocks it again by itself. Only a NEW sign-in of the same account reopens it wi
 `[PIN] Device key restored` and no `[AUTH] Session expired` after `[A] signout requested by the
 user`, and lands on `/login` (not `?returnTo=`), on the Mi 9T on the vault path. The ordering is
 proven here; the Svelte effect scheduling on the real WebView is not.
+
+### A sign-out during a login in progress completed the login - FIXED 2026-10-18
+
+**The defect.** A login can run ~12 s inside the native decrypt of `mls.bin` (Mi 9T). A sign-out in
+that window found no live session (`isLoggedIn` still false), so `endSessionImpl` stopped nothing,
+and the login then completed: `isLoggedIn` true for a signed-out user, its gateway socket open (the
+handshake starts beside the state load). A sign-out AFTER `setIsLoggedIn(true)` did end the session,
+but the login kept running past it - its next awaits opened the gateway, installed the history-probe
+sender and started the watchdogs for the account that had left.
+
+**The fix is the sign-out GENERATION, not a flag or a clock.** `stores/auth.ts` exports
+`signOutGeneration()` (the `_signOutGeneration` every `clearAuth` increments first). `loginImpl`
+captures it before its first await and re-reads it right after EVERY await of its main sequence
+(`stopIfSignedOut(stage)`): a sign-out can only run while the login is suspended, so nothing after a
+re-read can act for a signed-out account. The one that closes the defect sits after the final
+`getToken` and before `setIsLoggedIn(true)`, with no await between them. A re-read inside a block
+whose `catch` swallows errors is placed after that block.
+
+**The stop is a TYPE, `LoginStoppedBySignOutError(stage)`** (`loginErrors.ts`), and the outer catch
+treats three shapes as that one outcome: the refresh refused during a sign-out
+(`SignOutInProgressError`), the login's own re-read, and a `SessionExpiredError` met after a sign-out
+began - that sign-out's own revocation, which `onSessionExpired` would have turned into a second
+sign-out. The `getToken` catch hands any failure after a sign-out to it the same way. No error is
+shown, no callback runs, the vault slot is kept, and the line names the stage
+(`[INIT] Login stopped - the account signed out during it (after mls-init-and-storage).`). A
+revocation answer read after a sign-out wipes nothing: the next login asks the server again.
+
+**What a stopped login releases: its socket, then its MLS client** - the same two steps as
+`endSessionImpl`, through the same primitives (`pauseSocket`, the holder). The client is held by
+NAME: `ctx.resetMls(client)` destroys it only while the holder still holds it, because after a
+sign-out of a live session the holder has already retired it, and the next sign-in may have built
+its own since (`MlsHolder.reset(only)`). A handshake still in flight is released when it settles.
+Nothing else needs undoing: before `setIsLoggedIn(true)` the login registers nothing global, and
+after it the sign-out's own `endSessionImpl` has torn the session down.
+
+Tests: `signOutDuringLogin.test.ts` runs the real `loginImpl`, `clearAuth` and `endSessionImpl` with
+the init and the gateway held by deferred promises - a sign-out during the decrypt, and one after
+the session went live (both fail without the fix); `offlineUnlock.test.ts` pins the two catches;
+`mlsHolder.test.ts` the named reset.
 
 **What a sign-out does NOT keep: the saved community list (2026-10-14).** The rail and salon rows
 the last listing drew are saved per account (`canari_workspace_snapshot:v1:<userId>`,

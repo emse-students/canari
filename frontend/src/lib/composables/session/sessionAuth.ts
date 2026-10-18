@@ -29,6 +29,7 @@ import { fetchOrUnreachable } from '$lib/utils/fetchOrUnreachable';
 import { LocalizedError, localizedMessage } from '$lib/utils/localizedError';
 import {
   LoginFailure,
+  LoginStoppedBySignOutError,
   isExpectedLoginOutcome,
   isVaultRefusal,
   loginErrorCode,
@@ -47,6 +48,7 @@ import {
   SessionExpiredError,
   SignOutInProgressError,
   isRefreshCredentialProvenDead,
+  signOutGeneration,
 } from '$lib/stores/auth';
 import { IdentitySplitError, isIdentitySplit } from '$lib/stores/tokenIdentity.svelte';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
@@ -539,6 +541,43 @@ export async function wipeRevokedDevice(ctx: SessionContext, cb: ChatSessionCall
 }
 
 /**
+ * Releases what a login stopped by a sign-out took: its gateway socket and its MLS client.
+ *
+ * THE SAME TWO STEPS AS `endSessionImpl`, and for the same reason - the socket goes first (a socket
+ * left open keeps decrypting and ACKing the leaving account's frames), then the client goes, so the
+ * next sign-in builds a fresh one. Nothing else: the session never went live, or it did and the
+ * sign-out's own `endSessionImpl` already tore it down, and the stop is found right after the await
+ * the sign-out ran during, so nothing was registered since.
+ *
+ * `client` is the client THIS login built, held by name: after a sign-out of a live session the
+ * holder has already let go of it, and the socket a late handshake opens is on it. `handshake`, when
+ * the login started one, may still be in flight; the socket it opens is released when it settles
+ * (it never rejects - see `StartedHandshake`).
+ */
+function releaseLoginStoppedBySignOut(
+  ctx: SessionContext,
+  cb: ChatSessionCallbacks,
+  client: ReturnType<SessionContext['ensureMls']> | null,
+  handshake: ReturnType<typeof startGatewayHandshake>
+): void {
+  if (client) {
+    client.pauseSocket();
+    if (handshake) {
+      void handshake.then(() => {
+        cb.log('[INIT] Stopped login: its gateway handshake settled - socket released.');
+        client.pauseSocket();
+      });
+    }
+  }
+  // A live session here is another login's (this one's was ended by the sign-out), and so is its flag.
+  if (!ctx.isLoggedIn()) ctx.setIsWsConnected(false);
+  // THIS LOGIN'S CLIENT ONLY. A sign-out of the live session has already retired it (and destroys it
+  // after its final write), and the next sign-in may have built its own since - which is not ours.
+  if (client) ctx.resetMls(client);
+  cb.log('[INIT] Stopped login released its socket and its MLS client.');
+}
+
+/**
  * Full login flow: verifies the PIN against the server (unless biometric mode),
  * initialises MLS, opens IndexedDB, restores conversations, connects the WebSocket,
  * and schedules device-sync.
@@ -635,6 +674,17 @@ export async function loginImpl(
   }
   ctx.setIsLoginInProgress(true);
 
+  // A SIGN-OUT DURING THIS LOGIN STOPS IT, read after every await. The sign-out finds no live session
+  // while the login runs (`isLoggedIn` is still false), so `endSessionImpl` stops nothing; left alone,
+  // the login completed afterwards and set `isLoggedIn` for a signed-out user. A sign-out can only
+  // run while this function is suspended, so a re-read right after each await is enough for nothing
+  // below it to act for a signed-out account. Thrown as a type; the catch releases what was taken.
+  const signOutsAtStart = signOutGeneration();
+  const signedOutSinceStart = (): boolean => signOutGeneration() !== signOutsAtStart;
+  const stopIfSignedOut = (stage: string): void => {
+    if (signedOutSinceStart()) throw new LoginStoppedBySignOutError(stage);
+  };
+
   // THE PREVIOUS ACCOUNT'S FINAL CHECKPOINT LANDS FIRST. A sign-out retires its MLS client once that
   // write is on disk (`endSessionImpl`), and this login reads the disk: opening the state while the
   // write is in flight would start from a state one write behind. Settles at once when nothing is
@@ -701,8 +751,14 @@ export async function loginImpl(
     previewWithdrawn = true;
     cb.discardLandingPreview?.(reason, loginId);
   };
+  // WHAT A LOGIN STOPPED BY A SIGN-OUT MUST RELEASE, named as they are taken: the client this login
+  // builds and the handshake it starts beside the state load (see `releaseLoginStoppedBySignOut`).
+  let loginClient: ReturnType<SessionContext['ensureMls']> | null = null;
+  let loginHandshake: ReturnType<typeof startGatewayHandshake> = null;
 
   try {
+    // The wait above is the first await a sign-out can run during.
+    stopIfSignedOut('previous-account-retired');
     // AN ACCOUNT DELETED FROM THIS DEVICE OPENS NOTHING, refused before the first store is touched
     // (the landing preview and the MLS state lookup below both open one). Its wipe is owed or running,
     // and a session would re-create what the wipe removes - the offline unlock above all, which has no
@@ -717,6 +773,7 @@ export async function loginImpl(
       throw new LoginFailure('account_deleted', m.auth_account_deleted_here());
     }
     const mlsService = ctx.ensureMls();
+    loginClient = mlsService;
     if (isVaultLogin && !vaultOwnerUnproven) {
       // The vault returned the device key before this function was called, so the store can be
       // opened and read now - nothing about either needs the token. `getStorage` shares one handle
@@ -749,6 +806,7 @@ export async function loginImpl(
     // which call answered. The log used to report "IndexedDB" on a mobile launch that had just read
     // mls.bin, which is a misleading thing to hand someone debugging local storage.
     const { loadMlsState, mlsStateSize } = await import('$lib/utils/hex');
+    stopIfSignedOut('state-lookup-import');
     const mlsStatePromise = (async (): Promise<
       { bytes?: Uint8Array; source: 'native' | 'indexeddb' } | undefined
     > => {
@@ -767,14 +825,13 @@ export async function loginImpl(
       accessToken = await getToken();
       endBootSpan('access-token');
     } catch (err) {
-      // THE USER IS SIGNING OUT: this login stops, and that is all. Not a session loss - answering
-      // it with `onSessionExpired` was the second sign-out (Mi 9T, 2026-10-17) - and not a failed
-      // login either, which would put the PIN gate up over the sign-out.
-      if (err instanceof SignOutInProgressError) {
-        cb.log('[LOGIN] Stopped - a sign-out is in progress.');
-        withdrawLandingPreview('sign-out in progress');
-        ctx.setIsLoginInProgress(false);
-        return;
+      // THE USER IS SIGNING OUT, OR SIGNED OUT WHILE THIS WAS ASKED: this login stops, and that is
+      // all. Not a session loss - answering it with `onSessionExpired` was the second sign-out (Mi 9T,
+      // 2026-10-17), and a 401 met after a sign-out is that sign-out's own revocation - and not a
+      // failed login either, which would put the PIN gate up over the sign-out. Handed to the outer
+      // catch, which releases what this login took.
+      if (err instanceof SignOutInProgressError || signedOutSinceStart()) {
+        throw new LoginStoppedBySignOutError('access-token');
       }
       // A SessionExpiredError means the refresh cookie is dead (HTTP 401/403) - the session
       // cannot be recovered by re-entering the PIN. Surface it as a session loss (logout +
@@ -828,9 +885,11 @@ export async function loginImpl(
         return;
       }
     }
+    stopIfSignedOut('access-token');
 
     // Collect the MLS state that was loading in the background.
     const mlsStateResult = await mlsStatePromise;
+    stopIfSignedOut('state-lookup');
     if (mlsStateResult) {
       cb.log(
         mlsStateResult.source === 'native'
@@ -920,6 +979,7 @@ export async function loginImpl(
         installDeviceKey: (key) => ctx.setDeviceKey(key),
         log: cb.log,
       });
+      stopIfSignedOut('pin-check');
       // Unlocked: any round trip a retry asked meanwhile belongs to a keypad that is gone.
       forgetPinSaltAhead('unlocked with the PIN', cb.log);
       // The first instant this path can decrypt anything: the PIN is proven and the device is not
@@ -948,6 +1008,7 @@ export async function loginImpl(
       beginBootSpan('resolve-device-id');
       const deviceId = await mlsService.resolveDeviceId(ctx.getUserId());
       endBootSpan('resolve-device-id');
+      stopIfSignedOut('resolve-device-id');
       revocationAnswer = mlsService.isDeviceRevoked(ctx.getUserId(), deviceId);
     }
 
@@ -964,6 +1025,7 @@ export async function loginImpl(
     beginBootSpan('tab-leadership');
     const tabLeaderNow = await initTabLeadershipAsync(cb.log);
     endBootSpan('tab-leadership', { leader: tabLeaderNow });
+    stopIfSignedOut('tab-leadership');
     ctx.setIsTabLeader(tabLeaderNow);
     if (!tabLeaderNow) {
       cb.log('[TAB] Follower tab - WebSocket active in another Canari tab.');
@@ -983,6 +1045,7 @@ export async function loginImpl(
     const startedHandshake = offlineSession
       ? null
       : startGatewayHandshake({ mlsService, log: cb.log });
+    loginHandshake = startedHandshake;
 
     // THE PAIR KEEPS ITS CLOCK AND EACH HALF GAINS ONE, because the pair's clock cannot answer the
     // question the pair's cost raises. On the Mi 9T this block was 1621.9 ms - 78% of everything
@@ -1021,9 +1084,14 @@ export async function loginImpl(
     // await can neither throw into the destructive catch below nor leave a rejection unhandled when
     // an earlier line throws past it.
     endBootSpan('mls-init-and-storage');
+    // THE LONGEST AWAIT OF THE LOGIN (~12 s of native decrypt on a Mi 9T), and the window the open
+    // defect was found in. A signed-out device is not wiped for a revocation either: the sign-out
+    // already ended the session, and the next login asks the server again.
+    stopIfSignedOut('mls-init-and-storage');
     beginBootSpan('revocation-gate');
     const revoked = revocationAnswer !== null && (await revocationAnswer);
     endBootSpan('revocation-gate', { asked: revocationAnswer !== null });
+    stopIfSignedOut('revocation-gate');
     if (revoked) {
       // What the local preview drew comes off the screen BEFORE the wipe, and the wipe starts only
       // once the read is over - it deletes the store that read was reading. The store is already
@@ -1071,6 +1139,7 @@ export async function loginImpl(
       beginBootSpan('keystore-session-key');
       const sessionKey = await mlsService.resolveSessionDeviceKey();
       endBootSpan('keystore-session-key');
+      stopIfSignedOut('keystore-session-key');
       if (!sessionKey || !isValidDeviceKeyB64(sessionKey)) {
         throw new LoginFailure('keystore_empty', m.auth_keystore_empty_enter_pin());
       }
@@ -1096,6 +1165,7 @@ export async function loginImpl(
     // is one read. Wired first, so the loop's own registrations below are stored too.
     mlsService.setDistributionGroupStore(storageSettled.value);
     await mlsService.hydrateDistributionGroups();
+    stopIfSignedOut('distribution-groups');
 
     // Notify only on genuine private browsing (blocked / ephemeral storage).
     void isLikelyPrivateBrowsing()
@@ -1116,8 +1186,13 @@ export async function loginImpl(
     // destroy the very session that just unlocked. The empty token is what every network-touching
     // helper reads as "not authenticated yet"; promoteOfflineSession fills it in.
     beginBootSpan('auth-token-final');
-    ctx.setAuthToken(offlineSession ? '' : await getToken());
+    const sessionToken = offlineSession ? '' : await getToken();
     endBootSpan('auth-token-final', { offline: offlineSession });
+    // THE LAST READ BEFORE THE SESSION GOES LIVE, and the one the defect was about. Nothing below
+    // awaits before `setIsLoggedIn(true)`, so from here a sign-out finds a live session and
+    // `endSessionImpl` stops it - and every await further down re-reads the generation.
+    stopIfSignedOut('auth-token-final');
+    ctx.setAuthToken(sessionToken);
     ctx.setIsOfflineSession(offlineSession);
 
     ctx.setIsLoggedIn(true);
@@ -1438,6 +1513,7 @@ export async function loginImpl(
      * conversations this device holds and must not run before they are loaded.
      */
     await mlsService.markInboundReady();
+    stopIfSignedOut('inbound-ready');
 
     // Offline: skip the connection entirely rather than let it fail. `openGatewayConnection` would
     // degrade correctly on its own, but the attempt costs a timeout on a launch that already knows
@@ -1451,6 +1527,7 @@ export async function loginImpl(
       // `startGatewayHandshake` above. Everything after the socket opens is unchanged.
       gatewayIsOpen = await openGatewayConnection(makeConnectionDeps(ctx, cb), startedHandshake);
       endStartupCatchupPhase();
+      stopIfSignedOut('open-gateway');
     }
 
     // Adopt anything the native side queued on its own (an undelivered notification quick reply
@@ -1460,6 +1537,7 @@ export async function loginImpl(
     await adoptOrphanedMirrorEntries(ctx.getStorage()!, ctx.getDeviceKey(), ctx.getUserId()).catch(
       (e) => cb.log(`[OUTBOX_MIRROR] Adoption pass failed: ${String(e)}`)
     );
+    stopIfSignedOut('mirror-adoption');
 
     // EVERYTHING FROM HERE TO THE FCM MERGE IS ONE SPAN, and a deep-link landing must not conclude
     // anything about this device's conversations until it closes. The restore below marks itself
@@ -1474,10 +1552,12 @@ export async function loginImpl(
       // the restore would be a stale copy the restore no longer knows about. Long settled by now
       // on every path - it is one store read, and the gateway was awaited since.
       if (landingPreview) await landingPreview;
+      stopIfSignedOut('landing-preview');
       // Load conversations first: consumeFcmCache can access
       // the conversations Map via addMessageToChat once it is populated.
       beginStartupCatchupPhase('load_conversations');
       await cb.loadAndRestoreConversations();
+      stopIfSignedOut('load-conversations');
       {
         const stats = summarizeConversationStats(cb.conversations);
         endStartupCatchupPhase({
@@ -1491,8 +1571,10 @@ export async function loginImpl(
       await reconcileOutboxSent(ctx.getStorage()!).catch((e) =>
         cb.log(`[OUTBOX_MIRROR] Login reconcile failed: ${String(e)}`)
       );
+      stopIfSignedOut('outbox-reconcile');
       // Re-mark "pending" messages still in the outbox queue (derived status, not persisted).
       await applyOutboxPendingStatuses();
+      stopIfSignedOut('outbox-statuses');
 
       beginStartupCatchupPhase('fcm_cache');
       // THE PLACEHOLDERS TRAVEL WITH THE MESSAGES, and at login as much as on resume: the
@@ -1504,6 +1586,7 @@ export async function loginImpl(
         ctx.getStorage()!,
         ctx.getUserId()
       ).catch(() => ({ messages: [], placeholders: new Map<string, PushPlaceholder>() }));
+      stopIfSignedOut('fcm-cache');
       if (fcmInjected.messages.length > 0) {
         const mergedCount = mergeFcmMessagesIntoConversations(
           fcmInjected.messages,
@@ -1528,6 +1611,7 @@ export async function loginImpl(
     await consumeNativeReadWatermarks(cb.conversations, ctx.getUserId(), cb.saveConversation).catch(
       (e) => cb.log(`[READ_WATERMARK] Merge pass failed: ${String(e)}`)
     );
+    stopIfSignedOut('read-watermarks');
 
     try {
       const localMlsGroups = new SvelteSet(mlsService.getLocalGroups());
@@ -1579,6 +1663,8 @@ export async function loginImpl(
     } catch (e) {
       console.warn('[INIT] Error detecting missing MLS groups:', e);
     }
+    // After the block, not inside it: its catch would swallow the stop.
+    stopIfSignedOut('restore-verdict');
 
     // processDeviceInvitationsLocally is called at the end of syncConnectionAfterWsOpen -
     // calling it here before the WebSocket is opened is redundant.
@@ -1778,6 +1864,7 @@ export async function loginImpl(
       beginStartupCatchupPhase('initialize_connection');
       if (gatewayIsOpen)
         passVerdicts = await syncConnectionAfterWsOpen(makeConnectionDeps(ctx, cb));
+      stopIfSignedOut('connection-sync');
       {
         const stats = summarizeConversationStats(cb.conversations);
         endStartupCatchupPhase({
@@ -1830,6 +1917,7 @@ export async function loginImpl(
         /* non-blocking */
       }
     }
+    stopIfSignedOut('last-active');
     const nowMs = Date.now();
     localStorage.setItem(lastActiveKey, String(nowMs));
     // Persist to Tauri Store so the value survives Android process kills.
@@ -1876,10 +1964,22 @@ export async function loginImpl(
     // login that did not complete), and NOTHING ELSE: no error under the PIN, no `onSessionExpired`
     // (a second sign-out), and above all not `clearDeviceKey` below, which would forget this
     // account's "Rester connecte" slot that a sign-out keeps on purpose.
-    if (_e instanceof SignOutInProgressError) {
-      withdrawLandingPreview('sign-out in progress');
-      cb.log('[INIT] Login stopped - a sign-out is in progress.');
-      ctx.resetMls();
+    //
+    // Three shapes, one outcome, each a type: a refresh refused during the sign-out, this login's own
+    // re-read of the sign-out generation, and a 401 met AFTER a sign-out - that sign-out's own
+    // revocation, which answered with `onSessionExpired` would be a second sign-out.
+    if (
+      _e instanceof SignOutInProgressError ||
+      _e instanceof LoginStoppedBySignOutError ||
+      (_e instanceof SessionExpiredError && signedOutSinceStart())
+    ) {
+      withdrawLandingPreview('signed out during the login');
+      cb.log(
+        `[INIT] Login stopped - the account signed out during it (${
+          _e instanceof LoginStoppedBySignOutError ? `after ${_e.stage}` : _e.name
+        }).`
+      );
+      releaseLoginStoppedBySignOut(ctx, cb, loginClient, loginHandshake);
       return;
     }
     // A login that failed shows nothing it drew before the session: the PIN gate, the recovery
