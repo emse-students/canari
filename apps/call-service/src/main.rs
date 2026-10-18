@@ -733,7 +733,9 @@ async fn main() -> anyhow::Result<()> {
     let port = std::env::var("PORT").unwrap_or_else(|_| "3004".to_string());
     let addr = format!("0.0.0.0:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    info!("Call service listening on {}", addr);
+    // The BOUND address, not the requested one: with `PORT=0` the kernel picks the port, and this
+    // line is how `tests/p2p_signalling.rs` learns it - a port no other test can have taken.
+    info!("Call service listening on {}", listener.local_addr()?);
     axum::serve(listener, app).await?;
 
     Ok(())
