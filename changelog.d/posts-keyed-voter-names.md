@@ -1,0 +1,1 @@
+- Fix: a poll's voter list no longer crashes the card when two voters share a display name, and the duplicate-form warning fires once per post.
