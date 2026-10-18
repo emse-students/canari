@@ -64,8 +64,9 @@ describe('the cleartext fact that decides whether a silent frame is opened at al
 
   it('the Kotlin reads that exact key, and nothing decrypts a silent frame without it', () => {
     expect(kotlin).toContain('data["isKeyDistribution"]');
-    // The guard is the whole fix: `silent && !CALLS_ENABLED` alone dropped the seed.
-    expect(kotlin).toMatch(/if \(silent && !CALLS_ENABLED && isKeyDistribution != true\)/);
+    // The guard is the whole fix: skipping every silent frame alone dropped the seed. It no longer
+    // reads the calls switch (pushSilentDecrypt.test.ts says why).
+    expect(kotlin).toMatch(/if \(silent && isKeyDistribution != true\)/);
   });
 
   it('treats an absent key as "not told" rather than as "no" - `!= true`, never `== false`', () => {

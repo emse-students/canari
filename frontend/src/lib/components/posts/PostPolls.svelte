@@ -50,7 +50,8 @@
 
   // Tooltip state
   let tooltipOptionId = $state<string | null>(null);
-  let voterNames = $state<Record<string, string[]>>({});
+  /** Voters per option, carried WITH their id: two voters may share a display name, never an id. */
+  let voterNames = $state<Record<string, { id: string; name: string }[]>>({});
   let tooltipPos = $state<{ top: number; right: number } | null>(null);
 
   function getVoteCount(votes: string[] | number | undefined): number {
@@ -88,7 +89,10 @@
     const names = await Promise.all(ids.map((id) => resolveUserDisplayName(id)));
     voterNames = {
       ...voterNames,
-      [optionId]: names.map((n, i) => n ?? getUserDisplayNameSync(ids[i], ids[i])),
+      [optionId]: names.map((n, i) => ({
+        id: ids[i],
+        name: n ?? getUserDisplayNameSync(ids[i], ids[i]),
+      })),
     };
   }
 
@@ -364,8 +368,8 @@
     </p>
     {#if names}
       <ul class="space-y-0.5">
-        {#each names as name (name)}
-          <li class="truncate">{name}</li>
+        {#each names as voter (voter.id)}
+          <li class="truncate">{voter.name}</li>
         {/each}
       </ul>
     {:else}

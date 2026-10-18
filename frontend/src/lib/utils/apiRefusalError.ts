@@ -34,3 +34,33 @@ export class ApiRefusalError extends Error {
     this.name = 'ApiRefusalError';
   }
 }
+
+/**
+ * TYPES A REFUSED RESPONSE AT THE THROW: the status always, the server's stable `code` when its JSON
+ * body carries a string one (Nest serialises `{ code, message }` as the body itself). The ONE
+ * implementation for every endpoint that used to `throw new Error('... failed (' + status + ')')`,
+ * which spelt the number into a sentence nobody could read back.
+ *
+ * `message` is dev-facing and English (a log line), never display copy - a screen words the refusal
+ * from the status and code. A body that is not JSON (an edge page) carries no code. The body is read
+ * from a CLONE, so a caller that still wants it (`res.text()`) is not starved.
+ *
+ * @param res The refused response.
+ * @param message What was being attempted, for the log; the status is appended.
+ */
+export async function refusalFromResponse(
+  res: Response,
+  message: string
+): Promise<ApiRefusalError> {
+  let code: string | null = null;
+  try {
+    const parsed: unknown = await res.clone().json();
+    if (parsed && typeof parsed === 'object') {
+      const raw = (parsed as Record<string, unknown>).code;
+      if (typeof raw === 'string') code = raw;
+    }
+  } catch {
+    // Not JSON (or already consumed): the refusal then has no machine-readable name, only a status.
+  }
+  return new ApiRefusalError(res.status, code, `${message} (${res.status})`);
+}

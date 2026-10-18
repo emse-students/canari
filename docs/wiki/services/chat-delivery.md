@@ -1915,8 +1915,8 @@ answers "not an address" and skips the literal check entirely. `unbracketHost` s
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/calls/initiate` | Verify membership, bind the room ID to the group and its caller (Redis `call:room:<id>`, TTL = 60 s ring window + 4 h), return a room token + room ID + `ringTimeoutMs` for the in-repo `call-service`. The answer window is NOT open yet: `/api/calls/ring` opens it |
-| GET | `/api/calls/room-token` | Get room token for recipient: 403 for a room bound to another group, 410 for an unknown/expired room or after the ring window ([calls lot 1](../frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)) |
+| POST | `/api/calls/initiate` | Verify membership, bind the room ID to the group and its caller (Redis `call:room:<id>`, TTL = 60 s ring window + 4 h), return a room token + room ID + `ringTimeoutMs` for the in-repo `call-service`. The answer window is NOT open yet: `/api/calls/ring` opens it. 403 `USER_BLOCKED` when a block stands between the caller and the other member - no room is bound ([calls](../frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)) |
+| GET | `/api/calls/room-token` | Get room token for recipient: 403 for a room bound to another group, 403 `USER_BLOCKED` for a block set while it rang, 410 for an unknown/expired room or after the ring window ([calls lot 1](../frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)) |
 | GET | `/api/calls/ice-servers` | Get ICE server configuration |
 | POST | `/api/calls/presence` | Report device presence in call |
 | GET | `/api/calls/sibling-status` | Check sibling device call status |

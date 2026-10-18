@@ -1322,24 +1322,27 @@ fix is sender-side - the import path declares `voiceNote: false`, or the flag be
 not built. Do not delete the name rule as a heuristic: it is what keeps pre-2026-09-17 recordings
 out of the tab.
 
-**A push does not read the field.** A voice note on a locked phone is still announced as an audio
-file: the sentence is chosen in the Rust push scanner (`mobile/proto_fields.rs`,
-`extract_full_message_info`, from the `MediaKind` varint), not in Kotlin, and field 11 sits unread
-beside it. The same file writes SIXTEEN user-visible sentences as French literals, whatever the
-app's language:
+**A push reads the field, and words its sentences in the app's language (WP-PUSH-I18N, built
+2026-10-18, not shipped).** The Rust push scanner (`mobile/proto_fields.rs`,
+`extract_full_message_info`) decides WHAT a decrypted message is and reads `voice_note` (field 11)
+beside the `MediaKind`: a declared recording is announced `Message vocal` / `Voice message`, an
+undeclared audio (an import, or a recording from before 2026-09-17) `Fichier audio` / `Audio file`.
+Every sentence it composes - the system events, `a réagi {emoji}`, the four media placeholders, the
+poll line, the two call lines and the `événement de groupe ({event})` trap - is written ONCE, in both
+languages, in `mobile/push_text.rs` (`PushText::render`): a closed enum whose exhaustive `match`
+refuses to compile a sentence written in one language only, and a test that writes out all of them.
+The text somebody TYPED passes through untouched.
 
-| builder | sentences |
-| --- | ---: |
-| `format_system_event_text` - renamed (2 forms), image changed, member added (2 forms), removed, left, deleted, invitation | **9** |
-| the reaction arm - `a réagi {emoji}` | **1** |
-| the media arm - `Photo`, `Vidéo`, `Audio`, `Pièce jointe` | **4** |
-| the call arm - `Appel vidéo entrant`, `Appel entrant` | **2** |
-
-Its fallback arm prints `événement de groupe ({event})`, a raw protocol name; the silence list beside
-it is what keeps that a trap rather than live noise. The text is what the FCM cache persists as a
-message body, so emitting a KIND for the native side to word (which `appLocaleContext` already
-localises on Android) changes what that cache stores - which is why it is a design, not a
-translation chore.
+**The language comes down with the call, it is not looked up.** Each native caller passes the
+`locale` it already read from `push_context.json` (the mirror `set_push_context_locale` writes) to
+`nativeDecryptMessageWithKey`, `nativeDecryptMessageWithCommitsWithKey` and `nativeOpenGrainePush`
+on Android, and to their three `canari_native_*` twins on iOS (the NSE and `canari_push.mm`).
+`PushLanguage::from_tag` reads `en`/`en-*` as English and everything else - the empty tag of a device
+that never mirrored its choice included - as French, the base locale. Android's own tables fall back
+to the OS locale in that one case, so the two may disagree on a device that has never opened a build
+that mirrors the locale; a device that has, cannot. Why Rust and not a KIND worded natively: the text
+is what the FCM cache persists as a message body, and one implementation keeps Android and iOS from
+diverging ([mobile](../mobile.md#the-language-a-notification-speaks)).
 
 ### A system event is executed, never displayed
 

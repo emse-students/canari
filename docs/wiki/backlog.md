@@ -122,6 +122,7 @@ phone passes already taken are history: [device-readings-2026-10](device-reading
 
 | What | The measurement that closes it |
 | --- | --- |
+| calls lot 1 (#1997, #2010): 1:1 audio peer to peer on dev builds, never placed on a phone - BLOCKED 2026-10-18, no tag carries it ([bench readings](device-readings-calls-live-2026-10-18.md#1-calls---blocked-no-build-within-reach-carries-lot-1)) | after the next pre-release: a call PC <-> Mi 9T and Mi 9T <-> iPhone 12 on dev - setup time, the selected pair (direct or Cloudflare TURN), audio heard both ways, the ring on a throttled uplink, and a key mismatch on a build with #2013 |
 | a reply swipe along a thumb's arc (45-70 px of vertical drift) replies once the bubble shows armed (2026-10-14; 0 of 14 before, unit and component tests since) | on the Mi 9T, next pre-release: the class-A cells of the matrix (`<harness-dir>/swipe-reply-r1014/`), 110 px across with 45 and 60 px drift, own and received; on the iPhone 12, the same arc by finger, its swipe never having been read on WebKit ([design-reference](frontend/design-reference.md#the-reply-swipe-that-sometimes-did-nothing-two-classes-measured-mi-9t-2026-10-14)) |
 | an Android relaunch (navigation-mode switch, WebView update) destroys the old WebView, so its Web Locks no longer withhold refused salon texts (2026-10-14; compiled and source-gated, never run) | on the Mi 9T, next pre-release: switch the navigation mode twice, CDP lists ONE page, a salon text refused before the switch comes back to its composer; restore gestural ([mobile](frontend/mobile.md#a-relaunched-activity-left-its-webview-alive-and-the-orphan-kept-its-web-locks-2026-10-14)) |
 | a post push tapped with the session dead lands on `/login?returnTo=` the post (2026-10-09) | check H step 4 on the Mi 9T, killed app AND backgrounded ([device-verification](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android)); a bare `/login` with no `[hooks] Processing URL` means the intent never reached the JS |
@@ -856,9 +857,11 @@ The mechanisms are on [mobile](frontend/mobile.md#one-builder-two-triggers),
 
 - **G1 - one human reading of a DESKTOP banner**: what a salon and a DM notification say, and where a
   tap lands.
-- **P3 - DECIDED 2026-10-18, native work: the push scanner's sixteen sentences are French literals and
-  a voice note is announced as an audio file** (`mobile/proto_fields.rs`). They are worded in Rust from
-  the app language ([WP-PUSH-I18N](#decided-by-the-user-on-2026-10-18---every-design-question-answered)); needs an Android and an iPhone reading to ship.
+- **P3 - BUILT 2026-10-18, NOT SHIPPED: the push scanner's sentences are worded in Rust from the app
+  language, and a declared voice note is announced as one** (`mobile/push_text.rs`,
+  [chat](frontend/modules/chat.md#a-voice-note-declares-itself-because-nothing-downstream-can-tell)).
+  Owed: an Android and an iPhone reading with the app set to English (a reaction, a photo, a voice
+  note); the iOS FFI and the Kotlin/Swift callers are verified by compiling only.
 - **P2 - one observation: the post its publisher could not delete (2026-09-17)** - the post's URL, or
   whether its publisher held `POST_AS_ASSO` on that association.
 - **P2 - one observation: the member who could not publish (2026-09-21)** - once he is past `0.18.14`
@@ -970,6 +973,12 @@ Lot 1 calls dev builds only. Before the production switch flips: F4, the IP expo
 between the two ends, or a visible "decrypt failing" toast; one AES-GCM key used in both directions
 with no AAD; and the `fp=` log line printing 4 bytes of the key, to become a hash
 ([calls](frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)).
+
+P3, owed by WP-C11 (group calls): `refuseIfBlocked` (`calls.service.ts`) lets ANY block between the
+caller and ANY other member refuse the whole call, at `initiate`, `ring` and `room-token`, and 1:1 is
+enforced only by the client. Acceptable while group calls are off; WP-C11 must decide whether one
+block refuses the call or only drops that member
+([calls](frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)).
 
 ### P2 - what made the profile fetches fail on that device at that moment
 
@@ -1271,9 +1280,11 @@ The English-on-a-French-screen sweep is finished ([durable-rules](durable-rules.
 **Done 2026-10-10:** `SocialApiError` extends `ApiRefusalError` (so `refusalStatus`/`refusalCode` read it),
 and every refused call of `forms/api.ts` and every bare-`fetch` upload, export and provider lookup of
 `associations/api.ts` throws it with the status and the code (`refusal`, `socialRefusal`).
-**Still owed, per endpoint, most-used screens first:** the plain `throw new Error('... failed')` sites of
-`minesweeper/api.ts`, `mls/groupInvites.ts`, `mls-client/mlsDeliveryApi.ts` (key package publish, device
-update, commit submission), `adminerSession.ts`, `vaultDownload.ts`, then the codes themselves (a stable
+**Done 2026-10-18:** `minesweeper/api.ts`, `mls/groupInvites.ts`, `adminerSession.ts`, `vaultDownload.ts`
+and `mlsDeliveryApi.ts` (key package publish, device update, commit submit and replay) throw
+`refusalFromResponse`'s `ApiRefusalError`; the join page and the minesweeper submit word it from the status.
+**Still owed:** the other plain `new Error('... failed: <status>')` sites of `mlsDeliveryApi.ts` (device list,
+GroupInfo, rename, members, dismiss, kick), then the server codes themselves (a stable
 name per refusal a user can act on; model: `DEVICE_REVOKED`, `PARTNERSHIP_NO_CODES_LEFT`). The
 `sessionAuth.ts` site closed with step 2 of the damaged-MLS-state P1 (PK1): the init throws typed errors,
 and `serverProse.test.ts`'s allowlist is empty.
@@ -1400,7 +1411,7 @@ Each line: the decision, its scope as a work package (WP), and what blocks it. R
 - **WP-SALON-UNREAD (S-M, server + client, no MLS): the salon unread badge ignores join announcements AND muted salons.** The notice rows are encrypted, so the count needs the client or a flag on the notice; design first.
 - **WP-MENTION-DELETED (S, server, no MLS): the lookup of a deleted account answers "deleted account" with NO name** (200, no browser-level 404); no name snapshot anywhere.
 - **WP-MENTION-NAME (M, native Android and iOS, OPUS): a mention notification names its author from the phone's local copy of names**, "someone" if unknown; the name never rides the push. Owed: one look on each phone.
-- **WP-PUSH-I18N (M, Rust + native readings, OPUS): the 16 notification sentences of `mobile/proto_fields.rs` are translated in Rust from the app language, and a voice note stops being announced as an audio file.** One implementation for Android and iOS; a reading on each.
+- **WP-PUSH-I18N (M, Rust + native readings, OPUS): the 16 notification sentences of `mobile/proto_fields.rs` are translated in Rust from the app language, and a voice note stops being announced as an audio file.** One implementation for Android and iOS; a reading on each. **BUILT 2026-10-18** (`mobile/push_text.rs`), owed the two readings.
 - **WP-COORG-ACCEPT-NOTICE (S-M, server + native tables, no MLS): notify the organiser when a co-organisation is accepted** (`CoorganisationService.apply`), a push content in the Android, iOS and NSE tables like `coorganise_proposed`. **Blocks: ships only once `minClientVersion` covers the unknown-type fix (#1911)**, the same floor as the paid-form organiser alert.
 - **WP-NICK-COMMUNITY-RULES (part of the nicknames build, S): in a community the renamed person sees "set by X"**, and **a nickname STAYS when its setter leaves** (the target may always reset it); same for groups. Closes the two questions left open in the nicknames entry.
 - **DECIDED, NO WORK: the stale "added a member to the group" bubbles on devices from before #1870 are left alone** (no data deletion; they age out of view).
