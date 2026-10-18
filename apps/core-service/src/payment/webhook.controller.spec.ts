@@ -151,6 +151,24 @@ describe('PaymentWebhookController.handleLydiaRequestCallback', () => {
     expect(body).toEqual({ requestId: 'r1', vendorToken: VENDOR });
   });
 
+  // A cancel is a trigger too: social-service reads the row's request at Lydia before releasing
+  // the seat, and a read that failed decided nothing - Lydia must be told to retry.
+  it.each(['cancel', 'expire'])(
+    'answers a retryable 503 when a %s could not read the row request at Lydia',
+    async (outcome) => {
+      mockedAxios.post.mockResolvedValue({ data: { ok: false, outcome: 'unreadable' } });
+      jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+      const controller = makeController(VERIFIED);
+      await expect(
+        controller.handleLydiaRequestCallback(outcome, {
+          request_id: 'r1',
+          order_ref: 'form:sub-1',
+          sig: 'valid-sig',
+        })
+      ).rejects.toMatchObject({ status: 503, message: 'Failed to process callback' });
+    }
+  );
+
   it('does nothing on a cancelled/expired product order_ref - no pending row exists to undo', async () => {
     const controller = makeController(VERIFIED);
 

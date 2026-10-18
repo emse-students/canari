@@ -697,16 +697,30 @@ describe('FormsService - the seat a pending payment holds', () => {
   });
 
   describe('a cancel callback', () => {
+    const OTHER_UUID = 'ffeeddccbbaa99887766554433221100';
+
     // The status check and the write are one locked step: a cancel never overwrites a payment.
-    it('cancels a pending row and leaves a paid one alone', async () => {
+    it('cancels a pending row Lydia reads closed, and leaves a paid one alone', async () => {
       const { service, rows } = makeStore({
         maxSubmissions: 1,
         rows: [
-          row({ id: 'p', paymentStatus: 'pending', paymentRequestId: '1' }),
-          row({ id: 'q', paymentStatus: 'paid', paymentRequestId: '2' }),
+          row({
+            id: 'p',
+            paymentStatus: 'pending',
+            paymentRequestId: '1',
+            stripeSessionId: LYDIA_UUID,
+          }),
+          row({
+            id: 'q',
+            paymentStatus: 'paid',
+            paymentRequestId: '2',
+            stripeSessionId: OTHER_UUID,
+          }),
         ],
       });
-      await service.cancelPendingSubmission('p', { requestId: '1' }, 'vendor');
+      await expect(
+        service.cancelPendingSubmission('p', { requestId: '1' }, 'vendor')
+      ).resolves.toEqual({ ok: true, outcome: 'closed' });
       await service.cancelPendingSubmission('q', { requestId: '2' }, 'vendor');
       expect(rows.map((r) => r.paymentStatus)).toEqual(['cancelled', 'paid']);
     });
@@ -714,14 +728,16 @@ describe('FormsService - the seat a pending payment holds', () => {
     // Fails without the comparison: after a retry, the cancel of the OLD request would cancel the
     // answer whose NEW request the payer is paying right now.
     it('applies only to the request the row is waiting on, by either id', async () => {
-      const { service, rows } = makeStore({
+      const { service, rows, core } = makeStore({
         maxSubmissions: 1,
-        rows: [row({ id: 'p', paymentRequestId: '600', stripeSessionId: 'uuid-600' })],
+        rows: [row({ id: 'p', paymentRequestId: '600', stripeSessionId: LYDIA_UUID })],
       });
       await service.cancelPendingSubmission('p', { requestId: '555' }, 'vendor');
-      await service.cancelPendingSubmission('p', { sessionId: 'uuid-555' }, 'vendor');
+      await service.cancelPendingSubmission('p', { sessionId: OTHER_UUID }, 'vendor');
       expect(rows[0].paymentStatus).toBe('pending');
-      await service.cancelPendingSubmission('p', { sessionId: 'uuid-600' }, 'vendor');
+      // A report about another request is not even read at Lydia.
+      expect(core.calls).toEqual([]);
+      await service.cancelPendingSubmission('p', { sessionId: LYDIA_UUID }, 'vendor');
       expect(rows[0].paymentStatus).toBe('cancelled');
     });
 
@@ -734,6 +750,70 @@ describe('FormsService - the seat a pending payment holds', () => {
         BadRequestException
       );
       await service.cancelPendingSubmission('p', { requestId: '555' }, 'vendor');
+      expect(rows[0].paymentStatus).toBe('pending');
+    });
+
+    // THE CALLBACK IS A TRIGGER FOR A CANCEL TOO. A signed cancel proves only that the Business's
+    // key signed it, and that key is whatever its payout manager typed: a forged cancel for a
+    // request Lydia still holds open must not release the seat. Fails if `cancel-pending` cancels
+    // on the callback's word.
+    it.each([
+      ['still open', 'open'],
+      ['in an unmeasured state', 'other'],
+    ] as const)('keeps the seat of a request Lydia reads %s', async (_label, state) => {
+      const { service, rows, core } = makeStore({
+        maxSubmissions: 1,
+        rows: [row({ id: 'p', paymentRequestId: '1', stripeSessionId: LYDIA_UUID })],
+      });
+      core.stateAnswer = state;
+      await expect(
+        service.cancelPendingSubmission('p', { requestId: '1' }, 'vendor')
+      ).resolves.toEqual({ ok: true, outcome: state });
+      expect(rows[0].paymentStatus).toBe('pending');
+      // It read the ROW's own request, with the verified Business.
+      expect(core.calls.map((c) => [c.route, c.body])).toEqual([
+        ['request-state', { sessionId: LYDIA_UUID, connectAccountId: 'vendor' }],
+      ]);
+    });
+
+    it('records the payment instead of cancelling when Lydia reads the request paid', async () => {
+      const { service, rows, core, userTagService } = makeStore({
+        maxSubmissions: 1,
+        rows: [row({ id: 'p', paymentRequestId: '1', stripeSessionId: LYDIA_UUID })],
+      });
+      core.stateAnswer = 'paid';
+      await expect(
+        service.cancelPendingSubmission('p', { requestId: '1' }, 'vendor')
+      ).resolves.toEqual({ ok: true, outcome: 'paid' });
+      expect(rows[0].paymentStatus).toBe('paid');
+      expect(userTagService.grantCotisant).toHaveBeenCalledTimes(1);
+    });
+
+    // A failed read is not a verdict: the seat is kept and core answers Lydia a retryable 503.
+    it('keeps the seat and answers unreadable when the state read fails', async () => {
+      const { service, rows, core } = makeStore({
+        maxSubmissions: 1,
+        rows: [row({ id: 'p', paymentRequestId: '1', stripeSessionId: LYDIA_UUID })],
+      });
+      core.stateAnswer = new Error('timeout');
+      await expect(
+        service.cancelPendingSubmission('p', { requestId: '1' }, 'vendor')
+      ).resolves.toEqual({ ok: false, outcome: 'unreadable' });
+      expect(rows[0].paymentStatus).toBe('pending');
+    });
+
+    // The read happens outside the row lock: a retry that replaced the request meanwhile keeps
+    // its row, because the cancel re-checks under the lock that the row still names what was read.
+    it('cancels nothing when a retry replaced the request during the read', async () => {
+      const { service, rows, core } = makeStore({
+        maxSubmissions: 1,
+        rows: [row({ id: 'p', paymentRequestId: '1', stripeSessionId: LYDIA_UUID })],
+      });
+      core.duringState = () => {
+        rows[0].paymentRequestId = '2';
+        rows[0].stripeSessionId = OTHER_UUID;
+      };
+      await service.cancelPendingSubmission('p', { requestId: '1' }, 'vendor');
       expect(rows[0].paymentStatus).toBe('pending');
     });
   });
@@ -880,7 +960,8 @@ describe('FormsService - the seat a pending payment holds', () => {
         maxSubmissions: 1,
         basePrice: 1500,
         provider: 'lydia',
-        rows: [mine()],
+        // A real request uuid: the cancel callback reads it at Lydia (closed) before it cancels.
+        rows: [mine({ stripeSessionId: LYDIA_UUID })],
       });
       core.duringCancel = () =>
         service.cancelPendingSubmission('mine', { requestId: '555' }, 'vendor');
@@ -1302,7 +1383,10 @@ describe('FormsService - the seat a pending payment holds', () => {
     // anyway: decided from the row, once, and over capacity when the seat went meanwhile.
     it('a payment after its own expiry is decided from the row, once', async () => {
       const r = makeRoutes({}, 1, [row({ id: 'other', paymentStatus: 'pending', userId: 'u2' })]);
+      // Lydia reads the request closed when the expiry callback lands, paid once the money did.
+      r.core.stateAnswer = 'closed';
       await r.cancelPending({ requestId: '1001' });
+      r.core.stateAnswer = 'paid';
       r.rows[1].paymentStatus = 'paid';
       await r.callback();
       await r.payerReturn();

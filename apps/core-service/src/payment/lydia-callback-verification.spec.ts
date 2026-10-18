@@ -31,6 +31,15 @@ describe('lydiaCallbackSignedFields', () => {
     expect(lydiaCallbackSignedFields(wide)).toBeNull();
     expect(lydiaCallbackSignedFields({ a: 'x'.repeat(1000) })).toBeNull();
   });
+
+  // Carried over from #1946 (observableFields, deleted with the observation): a JSON body chooses
+  // its own names, and an assignment of `__proto__` would hit the prototype setter instead.
+  it('keeps a sender-chosen __proto__ name as a plain key and never touches the prototype', () => {
+    const body = JSON.parse('{"__proto__":"x","amount":"1","sig":"s"}');
+    const result = lydiaCallbackSignedFields(body);
+    expect(Object.keys(result ?? {})).toEqual(['__proto__', 'amount']);
+    expect(Object.getPrototypeOf(result)).toBe(Object.prototype);
+  });
 });
 
 describe('verifyLydiaCallback', () => {

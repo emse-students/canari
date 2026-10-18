@@ -1,4 +1,4 @@
--- Migration 086: the Lydia Business private token of an association, ENCRYPTED, to verify its callbacks.
+-- Migration 092: the Lydia Business private token of an association, ENCRYPTED, to verify its callbacks.
 --
 -- See docs/wiki/frontend/modules/payments.md ("What confirms a payment").
 --

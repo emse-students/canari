@@ -72,7 +72,8 @@ export class InternalFormsController {
    * Cancels a pending submission when ITS payment request expired or was cancelled. The body names
    * that request (`requestId`: Lydia's numeric id from a callback; `sessionId`: the request_uuid),
    * and a report about a request the row no longer uses changes nothing (`cancelPendingSubmission`),
-   * nor does one whose `vendorToken` is not the row's payee.
+   * nor does one whose `vendorToken` is not the row's payee. A trigger only: the seat is released once
+   * Lydia, read server to server, says the row's own request is closed.
    */
   @Post('submissions/:submissionId/cancel-pending')
   cancelPending(

@@ -160,6 +160,15 @@ map $upstream_http_x_canari_degraded $ssr_cache_control {\n\
     default $ssr_cache_control_declared;\n\
     "~." "no-store";\n\
 }\n\
+# THE LYDIA CALLBACK IS THE ONE PUBLIC POST THAT READS A KEY AND THEN ASKS LYDIA (payments.md): a\n\
+# signature is checked per call against a Business key fetched from social-service, and a verified\n\
+# one makes social-service read the request at Lydia. Lydia sends a handful per payment; 5 r/s burst\n\
+# 50 per client address is far above that and bounds what a flood of forged bodies can cost.\n\
+map $request_method $lydia_callback_key {\n\
+    default "";\n\
+    POST $binary_remote_addr;\n\
+}\n\
+limit_req_zone $lydia_callback_key zone=lydia_callback:1m rate=5r/s;\n\
 \n\
 server {\n\
     listen 80;\n\
@@ -819,6 +828,27 @@ server {\n\
     proxy_set_header X-Internal-Token $internal_token;\n\
     set $upstream_post social-service:3014;\n\
     proxy_pass http://$upstream_post;\n\
+    proxy_set_header Host $host;\n\
+    proxy_set_header X-Real-IP $remote_addr;\n\
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
+    proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
+    }\n\
+    \n\
+    # The public Lydia callback, rate-limited at the edge (zone lydia_callback); otherwise /api/payments.\n\
+    location = /api/payments/lydia-request-callback {\n\
+    limit_req zone=lydia_callback burst=50 nodelay;\n\
+    limit_req_status 429;\n\
+    auth_request /internal/auth/verify;\n\
+    auth_request_set $user_id $upstream_http_x_user_id;\n\
+    auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
+    auth_request_set $global_admin $upstream_http_x_global_admin;\n\
+    auth_request_set $internal_token $upstream_http_x_internal_token;\n\
+    proxy_set_header X-User-Id $user_id;\n\
+    proxy_set_header X-User-Logged-In $user_logged_in;\n\
+    proxy_set_header X-Global-Admin $global_admin;\n\
+    proxy_set_header X-Internal-Token $internal_token;\n\
+    set $upstream_payment core-service:3012;\n\
+    proxy_pass http://$upstream_payment;\n\
     proxy_set_header Host $host;\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\

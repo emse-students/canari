@@ -35,12 +35,12 @@ export function lydiaCallbackSignedFields(
     ([name]) => name !== LYDIA_CALLBACK_SIGNATURE_FIELD
   );
   if (entries.length === 0 || entries.length > LYDIA_CALLBACK_MAX_FIELDS) return null;
-  const fields: Record<string, string> = {};
-  for (const [name, value] of entries) {
+  for (const [, value] of entries) {
     if (typeof value !== 'string' || value.length > LYDIA_CALLBACK_MAX_VALUE_LENGTH) return null;
-    fields[name] = value;
   }
-  return fields;
+  // fromEntries defines OWN properties, so a sender-chosen `__proto__` name stays a plain key
+  // (an assignment would hit the prototype setter and drop it from the signed set).
+  return Object.fromEntries(entries as [string, string][]);
 }
 
 /** Why a callback was refused - for the server log only; the caller always gets the same 400. */

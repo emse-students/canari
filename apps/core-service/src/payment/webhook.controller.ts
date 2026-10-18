@@ -91,26 +91,29 @@ export class PaymentWebhookController {
   }
 
   /**
-   * Cancels a pending form submission via the internal social-service route, naming the request
+   * Hands a VERIFIED cancel/expire callback to social-service as a trigger, naming the request
    * Lydia reported (its numeric `request_id`): social-service applies it only if that is still the
-   * row's current request, so the cancel of a request a retry replaced changes nothing, and only if
-   * the row's payee account is `vendorToken`, the Business whose key verified the callback.
+   * row's current request and the row's payee account is `vendorToken`, the Business whose key
+   * verified the callback - and then only once Lydia, read server to server, says the row's own
+   * request is closed (`cancelPendingSubmission`). Answers the state social-service read.
    */
   private async cancelPendingSubmissionInternal(
     submissionId: string,
     requestId: string,
     vendorToken: string
-  ): Promise<void> {
+  ): Promise<{ outcome?: string }> {
     assertValidSubmissionId(submissionId);
-    await axios.post(
+    const { data } = await axios.post<{ outcome?: string }>(
       internalSubmissionUrl(submissionId, 'cancel-pending'),
       { requestId, vendorToken },
       {
         ...internalSocialRequestConfig(),
-        timeout: 15_000,
+        // The same budget as a confirm: social-service reads the row's request at Lydia first.
+        timeout: 30_000,
         validateStatus: (s) => s >= 200 && s < 300,
       }
     );
+    return data ?? {};
   }
 
   /**
@@ -231,13 +234,19 @@ export class PaymentWebhookController {
       } else if (ref.kind === 'form') {
         // No pending row exists for a boutique purchase (unlike a form submission), so a
         // cancelled/expired Lydia request for one is simply never fulfilled - nothing to undo.
-        await this.cancelPendingSubmissionInternal(
+        // A trigger, like a confirm: social-service reads the row's own request at Lydia and
+        // releases the seat only when Lydia says it is closed.
+        const { outcome: read } = await this.cancelPendingSubmissionInternal(
           ref.submissionId,
           requestId,
           verifiedVendorToken
         );
+        if (read === 'unreadable') {
+          // Nothing was decided: a 2xx would tell Lydia this report was handled.
+          throw new Error(`the row's request could not be read at Lydia`);
+        }
         this.logger.log(
-          `Reported Lydia ${outcome} of request ${requestId} for submission ${ref.submissionId}`
+          `Lydia ${outcome} of request ${requestId} for submission ${ref.submissionId}: ${read ?? 'unknown'}`
         );
       }
     } catch (err: unknown) {

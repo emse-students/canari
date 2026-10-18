@@ -460,9 +460,24 @@ active) is that `vendorToken` - so an authentic callback of association A naming
 (`request/state`, with the verified Business) and calls `markPaid` only if Lydia answers paid. That is
 the very settle the payer's return makes (`settleFromProvider`); nothing of the callback's amount or
 request id decides a status. A confirm naming a request the row no longer holds is logged at ERROR (a
-payment nothing would record). The internal `mark-paid` route is gone. A cancel or expire callback
-posts `{ requestId, vendorToken }` to `cancel-pending`, which applies only to the row's current
-request AND only if `vendorToken` is its payee.
+payment nothing would record). The internal `mark-paid` route is gone. **A cancel or expire callback is
+a trigger by the same rule (2026-10-18):** core posts `{ requestId, vendorToken }` to `cancel-pending`,
+which acts only on the row's current request AND only if `vendorToken` is its payee, and then reads
+that request at Lydia (`settleFromProvider` again): `closed` (state 6) releases the seat, under the row
+lock and only while the row still names the request read; `paid` records the payment instead; `open`,
+an unmeasured state or a failed read keeps the seat (`unreadable` becomes core's retryable 503). So a
+cancel signed with a key the payout manager typed cannot release a seat Lydia still holds open.
+
+**The signature is not canonical, and nothing depends on it being so.** Lydia's scheme joins
+`key=value` pairs with `&` and escapes neither, so `{a: '1&b=2'}` and `{a: '1', b: '2'}` sign the same
+string: one signed body can be re-split into another with the same digest. That is Lydia's format, not
+ours to change, and it costs nothing here because no outcome is decided from a callback's fields - every
+one re-reads the row's own request at Lydia. The signed set is built with `Object.fromEntries`, so a
+sender-chosen `__proto__` name stays a plain key (the protection of #1946).
+
+**The public route is rate-limited at the edge:** nginx's `lydia_callback` zone, 5 r/s burst 50 per
+client address on `POST`, answering 429 - far above the handful of callbacks Lydia sends per payment,
+and a bound on what a flood of forged bodies (each one a key lookup) can cost.
 
 **The boutique is REFUSED on the callback path until lot B3.** A product checkout stores no row naming
 its request, so there is nothing of ours to settle from - and a verified signature proves only that the
@@ -476,7 +491,7 @@ callback verified at all.
 
 **Where the key comes from: the payout manager types it.** `PUT /api/associations/:id/lydia-business-key`
 (`MANAGE_PAYOUT_ACCOUNT`, the permission of every other Lydia route) stores it ENCRYPTED in
-`associations."lydiaBusinessKeyCiphertext"` (migration 086): AES-256-GCM (`common/secret-box.ts`)
+`associations."lydiaBusinessKeyCiphertext"` (migration 092): AES-256-GCM (`common/secret-box.ts`)
 under a key derived by HKDF from `LYDIA_KEY_ENCRYPTION_SECRET`, with `<associationId>:<vendorToken>` as
 additional data, so a ciphertext copied to another row, or kept across a re-onboarding to another
 Business, does not open. **Write-only:** `GET` on the same path answers `{ set }` and nothing else, the
