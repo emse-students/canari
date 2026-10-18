@@ -197,9 +197,9 @@ describe('sealMlsStateBlobV2', () => {
     expect(isMlsStateBlobV2(blob.slice(0, 15))).toBe(false);
   });
 
-  it('ships with the writer OFF: the reader release comes first', () => {
-    // Read-first, write-later - see MLS_STATE_SEAL_V2_WRITER_ENABLED. Flipping it is the one-line
-    // change the wiki names, and this assertion moves with it, deliberately.
-    expect(MLS_STATE_SEAL_V2_WRITER_ENABLED).toBe(false);
+  it('writes v2: the reader shipped first (v1.2.7) and the floor is at it', () => {
+    // Read-first, write-later - see MLS_STATE_SEAL_V2_WRITER_ENABLED. Turning it back off is one
+    // line, but every v2 blob already written stays v2, so the readers above are permanent.
+    expect(MLS_STATE_SEAL_V2_WRITER_ENABLED).toBe(true);
   });
 });

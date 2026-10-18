@@ -78,7 +78,7 @@ three app-level consequences are not measured:
   a send, a commit, the background edge, logout.
 - A COUNT bound, never a clock: a checkpoint is forced after K deferred receive generations, with K
   well under the 2000 window (for example 200).
-- Lever one (the v2 seal, writer OFF) cuts the web side about four-fold with no change in
+- Lever one (the v2 seal, writer ON since 2026-10-18, on a pre-release first) cuts the web side about four-fold with no change in
   semantics, and should be switched on first.
 
 **Not built, deliberately.** Item 2 must be measured on the Mi 9T before any of it:

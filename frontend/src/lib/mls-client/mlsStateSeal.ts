@@ -33,19 +33,24 @@
  */
 
 /**
- * WHETHER THE WEB CHECKPOINT WRITES V2. `false` IN THE RELEASE THAT SHIPS THE READER, DELIBERATELY.
+ * WHETHER THE WEB CHECKPOINT WRITES V2. ON SINCE 2026-10-18, the reader having shipped first.
  *
  * Read-first, write-later - the same sequence `state_blob`'s v1 header follows, for the same reason:
  * a build that predates the reader fails a v2 blob (loudly, into `STATE_UNDECRYPTABLE`, destroying
  * nothing - but the user is then asked for a PIN and holds a state no PIN opens in that build).
  * Three paths hand a v2 blob to such a build: a web deploy ROLLED BACK; a tab still running the
  * previous bundle that re-reads IndexedDB (an unlock after a deploy); and a `.canari` backup
- * exported on the web and restored on a phone whose store build predates the reader. Flipping this
- * is one line, owed once (a) a stable carrying the reader has served the web and (b)
- * `minClientVersion` is at or past that release, which closes the backup path
- * (`docs/wiki/protocols/mls-protocol.md`, "The state blob's framing").
+ * exported on the web and restored on a phone whose store build predates the reader. Both
+ * conditions now hold: the reader shipped in the stable `v1.2.7` (#1793), which served the web, and
+ * production's `minClientVersion` is `1.2.7`, which closes the backup path.
+ *
+ * THIS IS A ONE-WAY DOOR FOR THE DATA, NOT FOR THE CODE. Turning it back to `false` only stops new
+ * v2 writes; every blob already written stays v2 until its next checkpoint, so the READERS
+ * (`openMlsStateBlobV2` here, `state_blob::open_v2` in `mls-core`) are permanent, and a web rollback
+ * must never go below `v1.2.7` (`docs/wiki/protocols/mls-protocol.md`, "v2 - the browser seals with
+ * WebCrypto").
  */
-export const MLS_STATE_SEAL_V2_WRITER_ENABLED = false;
+export const MLS_STATE_SEAL_V2_WRITER_ENABLED = true;
 
 /** "CANARIS", shared with every framed version - `state_blob::MAGIC`. */
 export const MLS_STATE_BLOB_MAGIC = new Uint8Array([0x43, 0x41, 0x4e, 0x41, 0x52, 0x49, 0x53]);

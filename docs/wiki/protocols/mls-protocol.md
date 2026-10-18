@@ -970,12 +970,30 @@ has the before/after table).
 **Downgrade story.** A build with the v1 reader (`>= v0.18.18`) refuses version 2 by name
 ("written by a newer client, so this is a downgrade"); an older one reads `CANARIS\x02` as a nonce
 and fails the ChaCha tag. Both are `STATE_UNDECRYPTABLE`: loud, nothing destroyed, the user asked for
-the PIN - and holding a state that build cannot open. That is why **the writer ships OFF**
-(`MLS_STATE_SEAL_V2_WRITER_ENABLED = false`), read-first like v1. Three paths would hand a v2 blob to
-an old build: a web deploy rolled back; a tab still running the previous bundle that re-reads
-IndexedDB; and a web `.canari` backup restored on a phone whose store build predates the reader.
-**The flip is one line, owed once a stable carrying this reader has served the web AND
-`minClientVersion` is at or past it** (the second closes the backup path).
+the PIN - and holding a state that build cannot open. That is why **the writer shipped OFF**,
+read-first like v1. Three paths would hand a v2 blob to an old build: a web deploy rolled back; a tab
+still running the previous bundle that re-reads IndexedDB; and a web `.canari` backup restored on a
+phone whose store build predates the reader.
+
+**The flip (2026-10-18, `MLS_STATE_SEAL_V2_WRITER_ENABLED = true`, rides a `1.3.0` pre-release
+first, user's decision).** Both conditions were checked, not assumed: the reader (#1793) is first in
+the stable `v1.2.7`, which served the web, and production's `/api/version` answers
+`minClientVersion: 1.2.7`. Every reader was enumerated on `main` before the flip: the web load
+(`loadAndInitWasm` -> `openMlsStateBlobV2`) is the ONE entry of the init, the PIN-recovery open
+(`openLocalStateWithKey` -> `loadStateWithKey`) and the reload after a key-package round; every
+native load (Tauri commands, `concurrency.rs`, the Android background JNI, the iOS NSE, the
+`.canari` restore probe in `storage.rs`, the other-account check) goes through
+`MlsManager::load_with_key` / `state_blob::parse`, which reads v2. Nothing else in the frontend reads
+the blob's bytes. Native builds still never WRITE v2 (`sealWebMlsState` throws inside Tauri), so on a
+phone the flip changes only the phone's BROWSER.
+
+**It is a one-way door for the DATA, never for the code.** Setting the constant back to `false` stops
+new v2 writes and nothing else: a v2 blob stays v2 until its next checkpoint rewrites it legacy. So
+**both v2 readers are permanent**, and **a web rollback below `v1.2.7` is forbidden from now on** - it
+would hand every browser a state it cannot open (`STATE_UNDECRYPTABLE`, nothing destroyed, PIN asked
+for nothing). The encrypt worker and `encryptMlsStateOnMainThread` keep their legacy caller until the
+flip has shipped in a stable, so the revert stays one line while the alpha is read; they are deleted
+after.
 
 **Pinned by** `mls-core/tests/state_blob_v2.rs` (the TypeScript writer's own bytes, frozen in
 `tests/fixtures/webcrypto-v2-peer-state.bin` by `frontend/scripts/freeze-v2-state-blob-fixture.ts`,
