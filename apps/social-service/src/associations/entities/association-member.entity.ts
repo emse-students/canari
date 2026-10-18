@@ -28,7 +28,7 @@ export enum AssociationPermissionFlag {
   MODERATE = 1 << 7,
   /** Create, edit and delete boutique products. */
   MANAGE_PRODUCTS = 1 << 8,
-  /** Start or resume Stripe Connect onboarding for the association. */
+  /** Start or resume the association's payout-account onboarding (Lydia, the active provider). */
   MANAGE_PAYOUT_ACCOUNT = 1 << 9,
   /** Create, edit and delete partnership cards, and view/add their codes. */
   MANAGE_PARTNERSHIPS = 1 << 10,
@@ -78,7 +78,7 @@ export const SUPER_ADMIN_EXCLUDED_FLAGS =
  * Intentionally excludes:
  * - MANAGE_PAYOUT_ACCOUNT (1 << 9): sensitive financial flag, granted separately via
  *   ASSOCIATION_ADMIN_PRESET in the frontend or via migration 004. Admins who should
- *   manage Stripe onboarding must be explicitly granted this flag.
+ *   manage the payout-account onboarding must be explicitly granted this flag.
  * - VALIDATE_EVENTS / MANAGE_ASSO / MODERATE: BDE-only flags with no effect in
  *   non-BDE associations (read through `spaces/bde.ts`: the BDE of a space, scoped to the
  *   associations reaching that space - MODERATE excepted, which is global).

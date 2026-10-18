@@ -22,11 +22,13 @@ extern "C" {
 /// Decrypts an MLS application message. Returns a heap JSON string
 /// (`{"ok":true,"text":...}` or `{"ok":false,"reason":...}`); free with canari_free_string.
 /// sender_id is the push's own: a frame MLS verified as sent by somebody else is refused with
-/// `reason=sender-mismatch` (WP-G2-1b).
+/// `reason=sender-mismatch` (WP-G2-1b). locale is push_context.json's `locale` ("" when none was
+/// mirrored): Rust words the sentences it composes itself in that language (WP-PUSH-I18N).
 char *canari_native_decrypt_message(const unsigned char *state_ptr, size_t state_len,
                                     const char *device_key_b64, const char *user_id, const char *device_id,
                                     const char *group_id, const char *sender_id,
-                                    const unsigned char *cipher_ptr, size_t cipher_len);
+                                    const unsigned char *cipher_ptr, size_t cipher_len,
+                                    const char *locale);
 
 /// Returns the persisted group's current MLS epoch, or -1 if unknown / unreadable.
 /// Used to compute the `sinceEpoch` before an in-memory commit catch-up.
@@ -41,7 +43,8 @@ char *canari_native_decrypt_message_with_commits(const unsigned char *state_ptr,
                                                  const char *device_key_b64, const char *user_id,
                                                  const char *device_id, const char *group_id,
                                                  const char *sender_id, const char *commits_json,
-                                                 const unsigned char *cipher_ptr, size_t cipher_len);
+                                                 const unsigned char *cipher_ptr, size_t cipher_len,
+                                                 const char *locale);
 
 /// Opens a community-channel push sealed under a Graine session (AES-256-GCM, not MLS) against
 /// data_dir/graine_seeds.json: Rust reads the session and applies the floor and, under a v2 session,
@@ -51,7 +54,8 @@ char *canari_native_decrypt_message_with_commits(const unsigned char *state_ptr,
 char *canari_native_open_graine_push(const char *data_dir, const char *channel_id,
                                      const char *session_id, uint32_t message_index,
                                      const char *sender_id, const char *nonce_b64,
-                                     const char *ciphertext_b64, const char *signature_b64);
+                                     const char *ciphertext_b64, const char *signature_b64,
+                                     const char *locale);
 
 /// Writes the seeds of a key-material frame (the `seeds` array of a graine-key-material refusal)
 /// into data_dir/graine_seeds.json, under the file lock every writer takes. Returns how many were

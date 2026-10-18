@@ -103,3 +103,33 @@ export function applyChannelEdits(
   }
   return current;
 }
+
+/**
+ * Takes back this device's OWN optimistic edit when nothing of it left the device (WP-OFF-4): the row
+ * gets `before`'s body, edit flag and date again - but only while it still carries exactly the edit
+ * being taken back. A later edit (another device's, or the author's next) has superseded it, and
+ * reverting would erase that one instead.
+ */
+export function revertChannelEdit(
+  messages: ChatMessage[],
+  before: ChatMessage,
+  edit: Pick<DecodedChannelEdit, 'newContent' | 'editedAt'>
+): { messages: ChatMessage[]; reverted: boolean } {
+  const idx = messages.findIndex((m) => m.id === before.id);
+  if (idx === -1) return { messages, reverted: false };
+  const row = messages[idx];
+  if (
+    row.editedAt?.getTime() !== edit.editedAt ||
+    envelopeBodyText(row.content) !== edit.newContent
+  ) {
+    return { messages, reverted: false };
+  }
+  const next = [...messages];
+  next[idx] = {
+    ...row,
+    isEdited: before.isEdited,
+    editedAt: before.editedAt,
+    content: before.content,
+  };
+  return { messages: next, reverted: true };
+}

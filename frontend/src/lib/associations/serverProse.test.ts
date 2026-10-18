@@ -160,17 +160,27 @@ describe('no member-facing tree renders a server sentence', () => {
     expect(files).toContain('src/hooks.client.ts');
   });
 
-  it.each(files.map((f) => [f]))('%s', (file) => {
-    // The SHARED stripper: the rule has to be documentable beside the code it governs, and a
-    // docblock explaining why nothing may render `.message` necessarily writes `.message`.
-    const offends = SERVER_PROSE.test(withoutAnyComments(readFileSync(join(ROOT, file), 'utf8')));
-    if (ALLOWED[file]) {
-      // An allowlisted file must STILL offend, or the entry is stale and buys nothing.
-      expect(offends).toBe(true);
-      expect(ALLOWED[file].length).toBeGreaterThan(20);
-      return;
+  it('no file renders a server sentence (every offender listed)', () => {
+    // ONE case for the rule, not one per file: the failure names EVERY offender, so a pass that
+    // breaks the rule in three files reads as three entries, not three red cases among a thousand
+    // green ones.
+    const offenders: string[] = [];
+    const staleAllowed: string[] = [];
+    for (const file of files) {
+      // The SHARED stripper: the rule has to be documentable beside the code it governs, and a
+      // docblock explaining why nothing may render `.message` necessarily writes `.message`.
+      const code = withoutAnyComments(readFileSync(join(ROOT, file), 'utf8'));
+      const offends = SERVER_PROSE.test(code);
+      if (ALLOWED[file]) {
+        // An allowlisted file must STILL offend, or the entry is stale and buys nothing.
+        if (!offends || ALLOWED[file].length <= 20) staleAllowed.push(file);
+        continue;
+      }
+      if (!offends) continue;
+      // Lines are not reported: comment removal shifts them, so the offending text is named.
+      offenders.push(`${file}: ${code.match(SERVER_PROSE)?.[0]}`);
     }
-    expect(offends).toBe(false);
+    expect({ offenders, staleAllowed }).toEqual({ offenders: [], staleAllowed: [] });
   });
 
   it('allowlists nothing that is not in the tree', () => {

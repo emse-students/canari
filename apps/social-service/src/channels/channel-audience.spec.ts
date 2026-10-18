@@ -83,10 +83,16 @@ describe('channel audience', () => {
       create: jest.fn((x: unknown) => x),
       save: jest.fn((x: Record<string, unknown>) => Promise.resolve({ ...x, id: 'msg-1' })),
       delete: jest.fn(() => Promise.resolve({ affected: 1 })),
+      query: jest.fn(() => Promise.resolve([])),
       findOne: jest.fn(() =>
         Promise.resolve({ id: 'msg-1', channelId: channel.id, authorId: INSIDER, pinned: false })
       ),
+      // A delete runs its client-id lock, tombstone and row in one transaction (migration 090).
+      manager: { transaction: jest.fn() },
     };
+    messageRepo.manager.transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) =>
+      cb({ query: messageRepo.query, getRepository: () => messageRepo })
+    );
     const redis = { publishChannelEvent: jest.fn(() => Promise.resolve()) };
 
     const service = new ChannelService(

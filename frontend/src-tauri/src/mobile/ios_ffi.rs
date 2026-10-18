@@ -19,6 +19,7 @@ use super::background::{
     process_welcome_background_with_key, send_messages_background_with_key, GrainePush, PushFrame,
 };
 use super::proto_fields::{build_read_watermark_app_message, build_text_app_message};
+use super::push_text::PushLanguage;
 
 fn json_to_c_string(value: serde_json::Value) -> *mut c_char {
     CString::new(value.to_string())
@@ -53,7 +54,11 @@ pub extern "C" fn canari_free_string(ptr: *mut c_char) {
 }
 
 /// Decrypts an MLS message and returns a heap-allocated UTF-8 JSON string. Read-only.
+///
+/// `locale` is the app language mirrored in `push_context.json` (`""` when none was), and words
+/// every sentence the scanner composes itself (`PushLanguage::from_tag`).
 #[no_mangle]
+#[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn canari_native_decrypt_message(
     state_ptr: *const u8,
     state_len: usize,
@@ -64,6 +69,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message(
     sender_id: *const c_char,
     cipher_ptr: *const u8,
     cipher_len: usize,
+    locale: *const c_char,
 ) -> *mut c_char {
     if state_ptr.is_null()
         || device_key_b64.is_null()
@@ -72,6 +78,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message(
         || group_id.is_null()
         || sender_id.is_null()
         || cipher_ptr.is_null()
+        || locale.is_null()
     {
         return json_to_c_string(serde_json::json!({ "ok": false }));
     }
@@ -96,6 +103,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message(
             sender_id: &str_from_c_str(sender_id),
             ciphertext,
         },
+        PushLanguage::from_tag(&str_from_c_str(locale)),
     ))
 }
 
@@ -143,7 +151,9 @@ pub unsafe extern "C" fn canari_native_group_epoch(
 /// `commits_json` (JSON array of base64 commits) to an ephemeral manager to reach the message's
 /// epoch, then decrypts `cipher_ptr`. Returns the same JSON as `canari_native_decrypt_message`, or
 /// `{"ok":false}`. Never writes mls.bin - the durable state catches up later in the foreground.
+/// `locale` as for `canari_native_decrypt_message`.
 #[no_mangle]
+#[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
     state_ptr: *const u8,
     state_len: usize,
@@ -155,6 +165,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
     commits_json: *const c_char,
     cipher_ptr: *const u8,
     cipher_len: usize,
+    locale: *const c_char,
 ) -> *mut c_char {
     if state_ptr.is_null()
         || device_key_b64.is_null()
@@ -164,6 +175,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
         || sender_id.is_null()
         || commits_json.is_null()
         || cipher_ptr.is_null()
+        || locale.is_null()
     {
         return json_to_c_string(serde_json::json!({ "ok": false }));
     }
@@ -187,6 +199,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
             sender_id: &str_from_c_str(sender_id),
             ciphertext,
         },
+        PushLanguage::from_tag(&str_from_c_str(locale)),
     ))
 }
 
@@ -194,7 +207,7 @@ pub unsafe extern "C" fn canari_native_decrypt_message_with_commits(
 /// implementation both platforms share (`background::open_graine_push`). `signature_b64` is an
 /// empty string when the push carried none. Returns the same JSON as
 /// `canari_native_decrypt_message`. Read-only and lock-free. FFI mirror of the Android JNI
-/// `nativeOpenGrainePush`.
+/// `nativeOpenGrainePush`. `locale` as for `canari_native_decrypt_message`.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn canari_native_open_graine_push(
@@ -206,6 +219,7 @@ pub unsafe extern "C" fn canari_native_open_graine_push(
     nonce_b64: *const c_char,
     ciphertext_b64: *const c_char,
     signature_b64: *const c_char,
+    locale: *const c_char,
 ) -> *mut c_char {
     if [
         data_dir,
@@ -215,6 +229,7 @@ pub unsafe extern "C" fn canari_native_open_graine_push(
         nonce_b64,
         ciphertext_b64,
         signature_b64,
+        locale,
     ]
     .iter()
     .any(|p| p.is_null())
@@ -239,6 +254,7 @@ pub unsafe extern "C" fn canari_native_open_graine_push(
             ciphertext_b64: &ciphertext,
             signature_b64: &signature,
         },
+        PushLanguage::from_tag(&str_from_c_str(locale)),
     ))
 }
 

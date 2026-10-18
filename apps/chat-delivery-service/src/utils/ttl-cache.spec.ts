@@ -49,4 +49,44 @@ describe('TtlCache', () => {
     expect(cache.get('a')).toBe(9);
     expect(cache.get('b')).toBeUndefined();
   });
+
+  describe('with a weight budget (the GIF relay holds bytes, not entries)', () => {
+    const bytes = () => new TtlCache<Buffer>(100, { maxWeight: 10, weigh: (b) => b.length });
+
+    it('evicts least recently used entries until the summed weight fits', () => {
+      const cache = bytes();
+      cache.set('a', Buffer.alloc(4), 60_000);
+      cache.set('b', Buffer.alloc(4), 60_000);
+      expect(cache.get('a')).toBeDefined(); // 'b' is now the least recently used
+      cache.set('c', Buffer.alloc(4), 60_000);
+
+      expect(cache.get('b')).toBeUndefined();
+      expect(cache.get('a')).toBeDefined();
+      expect(cache.get('c')).toBeDefined();
+      expect(cache.weight).toBe(8);
+    });
+
+    it('refuses a value heavier than the whole budget and keeps what it held', () => {
+      const cache = bytes();
+      cache.set('a', Buffer.alloc(3), 60_000);
+      expect(cache.set('huge', Buffer.alloc(11), 60_000)).toBe(false);
+      expect(cache.get('huge')).toBeUndefined();
+      expect(cache.get('a')).toBeDefined();
+      expect(cache.weight).toBe(3);
+    });
+
+    it('gives back the weight of an overwritten, an expired and a cleared entry', () => {
+      jest.useFakeTimers();
+      const cache = bytes();
+      cache.set('a', Buffer.alloc(5), 1000);
+      cache.set('a', Buffer.alloc(2), 1000);
+      expect(cache.weight).toBe(2);
+      jest.advanceTimersByTime(1001);
+      expect(cache.get('a')).toBeUndefined();
+      expect(cache.weight).toBe(0);
+      cache.set('b', Buffer.alloc(6), 1000);
+      cache.clear();
+      expect(cache.weight).toBe(0);
+    });
+  });
 });

@@ -13,7 +13,8 @@
  *   base image's `main` and leave the unredacted line beside the redacted one;
  * - no location overrides it with another format (`access_log off;` is allowed: it records nothing);
  * - a `/api/mls/gifs` line drops its whole query: the route exists so a search is never tied to the
- *   reader's address, and this line carries the address.
+ *   reader's address, and this line carries the address. The GIF relay (`/api/mls/gifs/media`) keeps
+ *   its own path and drops its query too: it names which GIF the reader loaded.
  *
  * STATIC (CI has no Docker daemon); the behaviour was run against nginx:stable-alpine on 2026-10-06
  * with five request lines, one log line each, the token redacted and `xtoken=` left alone.
@@ -79,6 +80,11 @@ else {
       ['/api/mls/gifs?q=chat%20noir&page=2', '/api/mls/gifs?query-redacted'],
       ['/api/mls/gifs?page=1&q=x&token=eyJSECRET', '/api/mls/gifs?query-redacted'],
       ['/api/mls/gifsy?q=keep', '/api/mls/gifsy?q=keep'],
+      // The GIF relay: which GIF, beside the reader's address, is not logged either (2026-10-18).
+      [
+        '/api/mls/gifs/media?url=https%3A%2F%2Fstatic.klipy.com%2Fii%2Fa%2Fb.gif&t=abc',
+        '/api/mls/gifs/media?query-redacted',
+      ],
     ];
     for (const [input, expected] of cases) {
       if (apply(input) !== expected) fail(`${input} logs as ${apply(input)}, expected ${expected}`);

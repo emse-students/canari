@@ -25,7 +25,13 @@ import { MessagingService } from '../services/messaging.service';
 import { HeaderAuthGuard } from '../guards/header-auth.guard';
 import { ThrottlerGuard } from '@nestjs/throttler';
 import { sanitizeQueryValue, sanitizeOptionalQueryValue } from '../utils/sanitize';
-import { mintPreviewTicket, verifyPreviewTicket } from '../utils/previewTicket';
+import {
+  mintGifMediaTicket,
+  mintPreviewTicket,
+  requireTicketSecret,
+  verifyPreviewTicket,
+} from '../utils/previewTicket';
+import { writeRelayedImageHeaders } from '../utils/gif-media';
 import {
   assertSafeExternalUrl,
   fetchYouTubeOEmbed,
@@ -69,24 +75,6 @@ const IMAGE_MAX_BYTES = 3_000_000;
 const IMAGE_CACHEABLE_BYTES = 256_000;
 
 /** PIN verifier and link-preview (SSRF-protected) endpoints. */
-/**
- * The secret both halves of the preview ticket are HMAC'd with.
- *
- * `INTERNAL_SHARED_SECRET` is the same secret `HeaderAuthGuard` verifies nginx's per-minute token
- * with, and `env-from-prod.sh` regenerates it for every estate, so it is present wherever this
- * service runs. It FAILS CLOSED when it is not: a ticket nobody can verify is a route nobody can
- * refuse, which is the state this replaced.
- */
-function requirePreviewTicketSecret(): string {
-  const secret = process.env.INTERNAL_SHARED_SECRET?.trim();
-  if (!secret) {
-    throw new InternalServerErrorException(
-      'INTERNAL_SHARED_SECRET is not configured - the link preview ticket cannot be minted or verified'
-    );
-  }
-  return secret;
-}
-
 @Controller()
 export class SecurityController {
   private readonly logger = new Logger(SecurityController.name);
@@ -408,11 +396,16 @@ export class SecurityController {
    * It is its own route rather than a field on the preview payload because the client proxies more
    * images than the payload names: the favicon chain is derived client-side from the page URL, so
    * anything signed per-URL server-side would cover the cover image and none of the favicons.
+   *
+   * `gifTicket` rides along for `mls/gifs/media`, the GIF relay: one authenticated call for both,
+   * and a separate kind because its bucket is a day (see `GIF_MEDIA_TICKET_BUCKET_MS`). The client
+   * re-reads it with every preview ticket, and its value changes once a day.
    */
   @UseGuards(HeaderAuthGuard)
   @Get('mls/link-preview/ticket')
-  getLinkPreviewTicket(): { ticket: string; expiresInMs: number } {
-    return mintPreviewTicket(requirePreviewTicketSecret());
+  getLinkPreviewTicket(): { ticket: string; expiresInMs: number; gifTicket: string } {
+    const secret = requireTicketSecret();
+    return { ...mintPreviewTicket(secret), gifTicket: mintGifMediaTicket(secret).ticket };
   }
 
   /**
@@ -682,7 +675,7 @@ export class SecurityController {
     // BODYLESS, like every other refusal on this route: the response is decoded by an `<img>`, and
     // a JSON body handed to an image destination is what produces three console lines for one
     // benign miss.
-    if (!verifyPreviewTicket(ticket, requirePreviewTicketSecret())) {
+    if (!verifyPreviewTicket(ticket, requireTicketSecret())) {
       res.status(401).end();
       return;
     }
@@ -765,12 +758,11 @@ export class SecurityController {
 
   /** Writes a proxied image with the headers that let the browser stop asking. */
   private sendProxiedImage(res: ExpressResponse, image: CachedImage): void {
-    res.setHeader('Content-Type', image.contentType);
-    res.setHeader('Content-Length', image.body.length);
-    res.setHeader('Cache-Control', `public, max-age=${Math.floor(IMAGE_TTL_MS / 1000)}`);
-    // The bytes come from a third party: refuse to let a browser sniff them
-    // into anything other than the image type declared above.
-    res.setHeader('X-Content-Type-Options', 'nosniff');
+    writeRelayedImageHeaders(res, {
+      contentType: image.contentType,
+      length: image.body.length,
+      cacheControl: `public, max-age=${Math.floor(IMAGE_TTL_MS / 1000)}`,
+    });
     res.end(image.body);
   }
 }

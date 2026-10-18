@@ -170,8 +170,10 @@ jobs:
           # ── Rust matrix ──
           rust=()
           # chat-gateway generates its protobufs from `libs/proto`; since `libs/shared-rust`
-          # was deleted on 2026-08-31 that is its ONLY path dependency inside this repo.
-          if has '^libs/proto/' || has '^apps/chat-gateway/'; then
+          # was deleted on 2026-08-31 that is its ONLY path dependency inside this repo. Its TESTS
+          # also read `libs/contracts/` (the presence-audience cap, `presence.rs`), so a contract
+          # change runs them: ask what the gate reads.
+          if has '^libs/proto/' || has '^libs/contracts/' || has '^apps/chat-gateway/'; then
             rust+=('{"name":"Chat Gateway","path":"apps/chat-gateway","cmd":"cargo test","check":true}')
           fi
           # THE SFU, WHICH NOTHING HERE COMPILED UNTIL 2026-08-27 - the same hole as the native

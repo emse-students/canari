@@ -145,8 +145,22 @@ Three properties carry it, and each is asserted in `users.batch.spec.ts`:
   name is kept nowhere once the account is erased (an id that never existed answers the same). The
   store rejects it with `DeletedAccountError` (a `UserProfileFetchError(404)`, so `isAbsentUserError`
   and the display-name cache needed no change) and the resolver renders the Paraglide
-  `user_deleted_label`. An id in NEITHER list is a contract breach (an older server): it rejects 502,
-  is logged, never cached, never rendered as deleted. `GET /api/users/:id` still answers 404.
+  `user_deleted_label`. An answer with NO `deleted` field is an older server's (rolling deploy,
+  rollback, a store build live before production): absence is the plain 404 it always was, cached
+  and quiet - a dated shim in [legacy-compatibility](../legacy-compatibility.md#no-date-yet---the-profile-batch-answered-without-deleted-by-a-server-older-than-2026-10-18).
+  Only an id in NEITHER list from a server that SENDS `deleted` is a contract breach: it rejects
+  502, is logged, never cached, never rendered as deleted. `GET /api/users/:id` still answers 404.
+
+  **A KNOWN COST, ACCEPTED (2026-10-18): an id that never existed reads "Compte supprimé" for the
+  session** - an id from the other estate, or a malformed one in a mention. The server keeps no
+  tombstone, so "erased" and "never existed" are the same absence, and telling them apart would
+  mean keeping a trace of every erased account, which the erasure exists to avoid. **Letter case
+  cannot put one id in both lists**: `users.id` is `varchar(255)` under the deterministic default
+  collation, so `IN (...)` matches byte-exact (checked on `postgres:18-alpine`: `IN ('ABC','abc')`
+  returns only `abc`), the controller computes `deleted` from the ids it got back, and every
+  requested string lands in exactly one list. What case CAN do is the client's `normalizeUserId`
+  lowercasing before it asks: a stored id carrying an upper-case letter would read deleted. The
+  identity provider's subjects are lower-case hex, so none exists today.
 - **A list longer than `MAX_PROFILE_BATCH` (100) is REFUSED, not truncated.** A silently shortened
   answer is indistinguishable from a page of deleted accounts. 100 is above every shape that exists
   (production 2026-09-15: 421 accounts, largest association roster 27, largest DM group 2), so the

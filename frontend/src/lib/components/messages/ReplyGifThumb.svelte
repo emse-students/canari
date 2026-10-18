@@ -7,10 +7,15 @@
   at reduced opacity so it reads as a quote and not as the message. The size the sender wrote into
   the URL (`#cn-size`) reserves the box before the picture arrives, so the quote does not grow when
   it loads. A GIF that cannot load becomes its `[GIF]` label, as `GifEmbed` becomes its link.
+  A KLIPY GIF's bytes come through Canari (`proxiedGifUrl`), never from KLIPY's CDN; until the
+  ticket lands the label stands in, since an empty `src` would fire `error` and latch it.
   docs/wiki/frontend/modules/chat.md
 -->
 <script lang="ts">
+  import { onMount } from 'svelte';
   import { gifSizeFromUrl } from '$lib/utils/chat/messageDisplay';
+  import { proxiedGifUrl } from '$lib/utils/gifMediaProxy';
+  import { ensurePreviewTicket } from '$lib/utils/previewTicket.svelte';
   import { Log } from '$lib/utils/Log';
   import { m } from '$lib/paraglide/messages';
 
@@ -24,7 +29,12 @@
   let { url, class: className = '' }: Props = $props();
 
   const declared = $derived(gifSizeFromUrl(url));
+  const src = $derived(proxiedGifUrl(url));
   let failed = $state(false);
+
+  onMount(() => {
+    void ensurePreviewTicket();
+  });
 
   function onError(): void {
     Log.d('ReplyGifThumb', 'the quoted GIF did not load - showing its label instead');
@@ -32,11 +42,11 @@
   }
 </script>
 
-{#if failed}
+{#if failed || !src}
   <span class={className}>{m.chat_preview_gif()}</span>
 {:else}
   <img
-    src={url}
+    {src}
     alt={m.chat_preview_gif()}
     width={declared?.width}
     height={declared?.height}

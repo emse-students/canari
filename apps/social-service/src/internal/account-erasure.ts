@@ -74,6 +74,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // member's device - a row with no session asks peers for a seed nobody can send.
   'channel_messages.authorId': { action: 'delete' },
   'channel_messages.senderSessionId': { action: 'delete', via: 'authorId' },
+  // The client ids its DELETED salon messages left (migration 090): what keeps a repeated send from
+  // posting a removed message again. An erased account repeats no send, so they go with it.
+  'channel_message_client_tombstones.authorId': { action: 'delete' },
   'channel_members.userId': {
     action: 'code',
     by: 'ChannelService.removeAccountFromWorkspaces (governance repair before each removal)',
@@ -322,6 +325,10 @@ export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   // Its salon messages, reactions and pins included. The pinned ones are read back
   // ({@link ERASED_PINS_SQL}) BEFORE this runs, so the salons can be told their pin is gone.
   { label: 'channel_messages', sql: `DELETE FROM channel_messages WHERE "authorId" = $1` },
+  {
+    label: 'channel_message_client_tombstones',
+    sql: `DELETE FROM channel_message_client_tombstones WHERE "authorId" = $1`,
+  },
   // Its vote on somebody else's salon poll.
   {
     label: 'channel_poll_votes',

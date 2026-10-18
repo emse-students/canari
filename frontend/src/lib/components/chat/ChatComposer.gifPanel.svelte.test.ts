@@ -29,12 +29,12 @@ const gifs = vi.hoisted(() => ({
     gifs: [
       {
         id: 'wide',
-        preview: { url: 'https://g/wide-s.gif', width: 200, height: 100 },
+        preview: { url: 'https://static.klipy.com/ii/w/wide-s.gif', width: 200, height: 100 },
         full: { url: 'https://g/wide-m.gif', width: 498, height: 249 },
       },
       {
         id: 'tall',
-        preview: { url: 'https://g/tall-s.gif', width: 100, height: 200 },
+        preview: { url: 'https://static.klipy.com/ii/t/tall-s.gif', width: 100, height: 200 },
         full: { url: 'https://g/tall-m.gif', width: 240, height: 480 },
       },
     ],
@@ -44,6 +44,12 @@ const gifs = vi.hoisted(() => ({
 vi.mock('$lib/utils/chat/gifSearch', () => ({
   fetchGifPage: gifs.page,
   GifSearchUnavailableError: class extends Error {},
+}));
+// The thumbnails go through Canari's relays, which take a ticket; minting one is a network call.
+vi.mock('$lib/utils/previewTicket.svelte', () => ({
+  ensurePreviewTicket: async () => {},
+  previewTicket: () => 'preview-ticket',
+  gifMediaTicket: () => 'gif-ticket',
 }));
 
 afterAll(adoptTransitionAnimations());
@@ -155,6 +161,22 @@ describe('the GIF panel', () => {
     }
     flushSync();
     expect(geometry()).toEqual(before);
+  });
+
+  it('draws every KLIPY thumbnail through the GIF relay, never from the CDN (2026-10-18)', async () => {
+    mountComposer();
+    openGifPanel();
+    await vi.waitFor(() => expect(tiles()).toHaveLength(2));
+    flushSync();
+    const srcs = [...document.querySelectorAll<HTMLImageElement>('[data-media-frame] img')].map(
+      (img) => new URL(img.getAttribute('src')!)
+    );
+    expect(srcs).toHaveLength(2);
+    for (const src of srcs) {
+      expect(src.hostname).not.toBe('static.klipy.com');
+      expect(src.pathname).toBe('/api/mls/gifs/media');
+      expect(src.searchParams.get('t')).toBe('gif-ticket');
+    }
   });
 
   it('sends a tapped GIF carrying the size of the rendition sent (#cn-size), and closes', async () => {
