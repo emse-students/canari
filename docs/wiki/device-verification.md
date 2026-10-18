@@ -1173,6 +1173,7 @@ the build it names.**
 | #1742 reel frame parity | PR | **WAITS** (merged, in no release yet) |
 | #1738 IndexedDB eviction: kill with a queued 13 MB file, relaunch | PR #1738 (open) | **WAITS**: the PR is not merged |
 | #1744 feed reel fetch, playback start | PR #1744 (open) | **WAITS**: not merged |
+| An account deletion empties the App Group copies: delete a throwaway account on a debug (inspectable) build, then list `group.fr.emse.canari` - no `push_context.json` or `fcm_message_cache.ndjson` left, `mls.bin` / `graine_seeds.json` / `push_secret.txt` kept; `[DEL-LOCAL] push files: N removed from the extension's container` in the log, no `no App Group container` | [auth](frontend/modules/auth.md#an-account-deletion-wipes-that-accounts-local-database-and-vault-slot-wp-del-local-2026-10-18), added 2026-10-19 | **WAITS for a pre-release carrying it**: the `#[cfg(target_os = "ios")]` branch is not even compiled before the release's iOS build |
 | PDF viewer performance | branch `perf/pdf-viewer` | **WAITS**: no pull request yet |
 | Session holds, check P | CLAUDE.md | **not re-read by rule**: proven, "must not be re-verified" |
 

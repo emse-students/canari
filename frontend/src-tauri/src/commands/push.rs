@@ -1289,18 +1289,55 @@ const ACCOUNT_PUSH_FILES: [&str; 4] = [
 const PUSH_CONTEXT_FILE: &str = "push_context.json";
 
 /// Deletes the push-side files of a DELETED account (WP-DEL-LOCAL) - see [`remove_user_push_files`].
+///
+/// On iOS the App Group container is part of the deletion: `CanariMirrorPushStateToAppGroup`
+/// copies `push_context.json` there and the notification extension writes its decrypted
+/// `fcm_message_cache.ndjson` there, and neither writer ever deletes. With no container the
+/// app's own files still go and the error is returned: the mirror resolves the container through
+/// the same entitlement, so a container this call cannot reach is one nothing was copied into.
+///
+/// A SYNCHRONOUS command: on iOS it runs inline in WebKit's URL-scheme callback (wry 0.57 and
+/// tauri 2.12 add no thread hop for a sync command), which is the main thread - the thread the
+/// mirror runs on at `didBecomeActive` / `willResignActive` - so a mirror cannot copy the context
+/// back between this deletion's proof and its removals. Making it `async` would reopen that window.
+/// Read from source, not observed on a device.
 #[tauri::command]
 pub(crate) fn delete_user_push_files(
     app: tauri::AppHandle,
     user_id: String,
 ) -> Result<usize, String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    remove_user_push_files(&data_dir, &user_id)
+    #[cfg(target_os = "ios")]
+    {
+        let group = crate::app_group::app_group_dir();
+        let removed = remove_user_push_files(&data_dir, group.as_deref().ok(), &user_id)?;
+        if let Err(e) = group {
+            log::error!(
+                "[DEL-LOCAL] no App Group container - the extension's copies were not reached: {e}"
+            );
+            return Err(e);
+        }
+        Ok(removed)
+    }
+    #[cfg(not(target_os = "ios"))]
+    remove_user_push_files(&data_dir, None, &user_id)
+}
+
+/// The names in [`ACCOUNT_PUSH_FILES`] plus `push_context.json` that can also exist in the iOS App
+/// Group container: the extension's own `fcm_message_cache.ndjson` and the mirrored context. The
+/// whole account list is swept there, so a file the extension starts keeping later is covered
+/// without a second list to forget.
+fn extension_account_files() -> impl Iterator<Item = &'static str> {
+    ACCOUNT_PUSH_FILES
+        .into_iter()
+        .chain(std::iter::once(PUSH_CONTEXT_FILE))
 }
 
 /// Removes [`ACCOUNT_PUSH_FILES`] and `push_context.json` (`userId`, `deviceId`, the bearer
 /// `pushToken`) ONLY WHEN `push_context.json` NAMES `user_id`. An allowlist by owner: none of the
 /// NDJSON files carries its account, so the context is the one fact that can prove whose they are.
+/// The same names go from `extension_dir` (the iOS App Group container, `None` elsewhere) on the
+/// same proof: what is there is a copy of this directory's files or the extension's half of them.
 ///
 /// - names `user_id`: every file goes, the context LAST - a failure keeps the proof for the resume;
 /// - names another account: nothing is touched - that account signed in after, the files are its;
@@ -1313,9 +1350,10 @@ pub(crate) fn delete_user_push_files(
 /// Returns how many files were removed.
 pub(crate) fn remove_user_push_files(
     data_dir: &std::path::Path,
+    extension_dir: Option<&std::path::Path>,
     user_id: &str,
 ) -> Result<usize, String> {
-    remove_user_push_files_proved(data_dir, user_id, || {})
+    remove_user_push_files_proved(data_dir, extension_dir, user_id, || {})
 }
 
 /// [`remove_user_push_files`], with `after_proof` run once the context has proved `user_id` owns
@@ -1323,6 +1361,7 @@ pub(crate) fn remove_user_push_files(
 /// a test fills with a concurrent sign-in.
 fn remove_user_push_files_proved(
     data_dir: &std::path::Path,
+    extension_dir: Option<&std::path::Path>,
     user_id: &str,
     after_proof: impl FnOnce(),
 ) -> Result<usize, String> {
@@ -1369,6 +1408,16 @@ fn remove_user_push_files_proved(
     }
     for (_, name) in taken_files(data_dir) {
         crate::commands::storage::remove_entry(&data_dir.join(name), &mut removed, &mut failures);
+    }
+    if let Some(dir) = extension_dir {
+        let before = removed;
+        for name in extension_account_files() {
+            crate::commands::storage::remove_entry(&dir.join(name), &mut removed, &mut failures);
+        }
+        log::info!(
+            "[DEL-LOCAL] push files: {} removed from the extension's container",
+            removed - before
+        );
     }
     if failures == 0 {
         crate::commands::storage::remove_entry(&context_path, &mut removed, &mut failures);
@@ -1791,7 +1840,7 @@ mod delete_user_push_files_tests {
 ",
         )
         .unwrap();
-        assert_eq!(remove_user_push_files(&dir, "a.b@x.fr").unwrap(), 6);
+        assert_eq!(remove_user_push_files(&dir, None, "a.b@x.fr").unwrap(), 6);
         assert!(!dir.join("fcm_message_cache.taken.3.ndjson").exists());
         for f in ACCOUNT_PUSH_FILES {
             assert!(!dir.join(f).exists(), "{f}");
@@ -1800,7 +1849,7 @@ mod delete_user_push_files_tests {
         assert!(dir.join("mls.bin").exists());
         assert!(dir.join("graine_seeds.json").exists());
         // Idempotent: a resumed wipe finds no context and touches nothing.
-        assert_eq!(remove_user_push_files(&dir, "a.b@x.fr").unwrap(), 0);
+        assert_eq!(remove_user_push_files(&dir, None, "a.b@x.fr").unwrap(), 0);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1808,11 +1857,11 @@ mod delete_user_push_files_tests {
     #[test]
     fn never_touches_files_another_account_owns() {
         let dir = dir_with("other", Some(r#"{"userId":"b","deviceId":"d"}"#));
-        assert_eq!(remove_user_push_files(&dir, "a").unwrap(), 0);
+        assert_eq!(remove_user_push_files(&dir, None, "a").unwrap(), 0);
         assert!(untouched(&dir));
         assert!(dir.join(PUSH_CONTEXT_FILE).exists());
         // A prefix of the owner is another account too.
-        assert_eq!(remove_user_push_files(&dir, "b_").unwrap(), 0);
+        assert_eq!(remove_user_push_files(&dir, None, "b_").unwrap(), 0);
         assert!(untouched(&dir));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1827,17 +1876,85 @@ mod delete_user_push_files_tests {
             ("empty", Some(r#"{"userId":""}"#)),
         ] {
             let dir = dir_with(tag, ctx);
-            assert_eq!(remove_user_push_files(&dir, "a").unwrap(), 0, "{tag}");
+            assert_eq!(remove_user_push_files(&dir, None, "a").unwrap(), 0, "{tag}");
             assert!(untouched(&dir), "{tag}");
             let _ = std::fs::remove_dir_all(&dir);
         }
+    }
+
+    /// What the iOS App Group container holds once the mirror and the extension have run: the
+    /// mirrored context and the extension's decrypted cache (the deleted account's), and the
+    /// per-install copies the deletion keeps.
+    fn extension_container(dir: &std::path::Path, context: &str) -> std::path::PathBuf {
+        let group = dir.join("app_group");
+        std::fs::create_dir_all(&group).unwrap();
+        std::fs::write(group.join(PUSH_CONTEXT_FILE), context).unwrap();
+        std::fs::write(group.join(super::FCM_CACHE_FILE), b"{}\n").unwrap();
+        for kept in ["mls.bin", "graine_seeds.json", "push_secret.txt"] {
+            std::fs::write(group.join(kept), b"x").unwrap();
+        }
+        group
+    }
+
+    /// The defect: the App Group copy of `push_context.json` (userId, deviceId, the bearer
+    /// pushToken) and the extension's decrypted cache outlived the account's deletion, because the
+    /// mirror never deletes and the deletion never looked there. Both go now, on the same proof.
+    #[test]
+    fn removes_the_deleted_accounts_copies_from_the_extensions_container() {
+        let ctx = r#"{"userId":"a","deviceId":"d","pushToken":"t"}"#;
+        let dir = dir_with("group_own", Some(ctx));
+        let group = extension_container(&dir, ctx);
+        assert_eq!(remove_user_push_files(&dir, Some(&group), "a").unwrap(), 7);
+        assert!(!group.join(PUSH_CONTEXT_FILE).exists());
+        assert!(!group.join(super::FCM_CACHE_FILE).exists());
+        for kept in ["mls.bin", "graine_seeds.json", "push_secret.txt"] {
+            assert!(group.join(kept).exists(), "{kept}");
+        }
+        assert!(!dir.join(PUSH_CONTEXT_FILE).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The container is reached on the app's proof only: another owner, or none, leaves it whole.
+    #[test]
+    fn never_touches_the_extensions_container_without_the_proof() {
+        for (tag, ctx) in [
+            ("group_other", Some(r#"{"userId":"b","deviceId":"d"}"#)),
+            ("group_none", None),
+        ] {
+            let dir = dir_with(tag, ctx);
+            let group = extension_container(&dir, r#"{"userId":"b","deviceId":"d"}"#);
+            assert_eq!(
+                remove_user_push_files(&dir, Some(&group), "a").unwrap(),
+                0,
+                "{tag}"
+            );
+            assert!(group.join(PUSH_CONTEXT_FILE).exists(), "{tag}");
+            assert!(group.join(super::FCM_CACHE_FILE).exists(), "{tag}");
+            let _ = std::fs::remove_dir_all(&dir);
+        }
+    }
+
+    /// A copy the container refuses to give up keeps the app's context - the proof the resumed
+    /// deletion needs to come back for it.
+    #[cfg(unix)]
+    #[test]
+    fn a_container_copy_that_stays_keeps_the_proof() {
+        let ctx = r#"{"userId":"a","deviceId":"d"}"#;
+        let dir = dir_with("group_fail", Some(ctx));
+        // A FILE where the container should be: every removal under it fails with ENOTDIR,
+        // which is not "not found".
+        let group = dir.join("not_a_dir");
+        std::fs::write(&group, b"x").unwrap();
+        assert!(remove_user_push_files(&dir, Some(&group), "a").is_err());
+        assert!(dir.join(PUSH_CONTEXT_FILE).exists());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// An id outside the allowlist is refused before anything is read.
     #[test]
     fn refuses_an_id_outside_the_allowlist() {
         let dir = dir_with("bad", Some(r#"{"userId":"../x"}"#));
-        assert!(remove_user_push_files(&dir, "../x").is_err());
+        assert!(remove_user_push_files(&dir, None, "../x").is_err());
         assert!(untouched(&dir));
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1978,7 +2095,7 @@ mod push_context_lock_tests {
         write_session_push_context(&dir, "deleted", "d1", "https://x", "t1", None).unwrap();
 
         let mut sign_in = None;
-        let removed = remove_user_push_files_proved(&dir, "deleted", || {
+        let removed = remove_user_push_files_proved(&dir, None, "deleted", || {
             // The proof and the removals are one critical section.
             assert!(PUSH_CONTEXT_LOCK.try_lock().is_err());
             let d = dir.clone();
