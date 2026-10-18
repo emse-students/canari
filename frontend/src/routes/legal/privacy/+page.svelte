@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="16/10/2026"
+  updated="18/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -114,6 +114,15 @@
           Pour chaque appareil : un identifiant, son nom et son système, la version de
           l'application, ses clés publiques de chiffrement et le jeton de notification attribué par
           Google (FCM) ou Apple (APNs), avec la langue de l'appareil.
+        </dd>
+      </div>
+      <div>
+        <dt>Présence en ligne</dt>
+        <dd>
+          Tant qu'un de vos appareils est connecté, le serveur note qu'il est en ligne. En dehors
+          des administrateurs de la plateforme, seules les personnes avec qui vous partagez une
+          conversation ou une communauté voient si vous êtes en ligne. Un blocage ne masque pas
+          cette information.
         </dd>
       </div>
       <div>
@@ -345,6 +354,10 @@
           <tr>
             <td>Sessions de connexion</td>
             <td>7 jours sans utilisation</td>
+          </tr>
+          <tr>
+            <td>Présence en ligne</td>
+            <td>Effacée à la déconnexion de l'appareil, 90 secondes au plus après</td>
           </tr>
           <tr>
             <td>Messages privés en attente de remise (chiffrés)</td>
@@ -588,14 +601,13 @@
       <p class="legal-callout-title">Supprimer votre compte</p>
       <p>
         Depuis l'application : <strong>Paramètres > Supprimer mon compte</strong>. La suppression
-        est immédiate : profil, publications, adhésions, appareils, jetons de notification et
-        messages en attente sont effacés. Vos messages dans les salons et vos achats sont conservés
-        sous une forme détachée de votre compte (auteur « supprimé »), pour ne pas trouer les
-        conversations des autres membres ni la comptabilité des associations. Certaines données ne
-        sont pas encore atteintes par cette suppression, notamment vos réponses aux formulaires, vos
-        commentaires et réactions sur les publications d'autres membres et l'historique des
-        modifications de votre profil : leur intégration est en cours, et vous pouvez en demander
-        l'effacement par e-mail dès maintenant.
+        est immédiate : profil, publications, adhésions, appareils, jetons de notification, messages
+        en attente et messages de salon (avec leurs réactions et épingles) sont effacés. Vos achats
+        sont conservés sous une forme détachée de votre compte (auteur « supprimé »), pour ne pas
+        trouer la comptabilité des associations. Certaines données ne sont pas encore atteintes par
+        cette suppression, notamment vos réponses aux formulaires, vos commentaires et réactions sur
+        les publications d'autres membres et l'historique des modifications de votre profil : leur
+        intégration est en cours, et vous pouvez en demander l'effacement par e-mail dès maintenant.
       </p>
       <p class="legal-fineprint">
         Les données supprimées subsistent dans les sauvegardes pendant la durée indiquée en section

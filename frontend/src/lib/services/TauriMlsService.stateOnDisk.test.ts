@@ -8,7 +8,7 @@ vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }));
 vi.mock('@tauri-apps/plugin-websocket', () => ({ default: { connect: vi.fn() } }));
 vi.mock('$lib/stores/auth', () => ({ getToken: vi.fn().mockResolvedValue('') }));
 
-import { MLS_LOCAL_STATE_UNDECRYPTABLE } from '$lib/mls-client';
+import { SavedStateUnopenedError } from '$lib/mls-client';
 import { TauriMlsService } from './TauriMlsService';
 
 /**
@@ -97,7 +97,7 @@ describe('TauriMlsService init - the state that is on disk and never crosses the
     // as absent, the raw error would propagate instead and the recovery would never be offered.
     await expect(
       svc._initImpl(USER, KEY, undefined, { noFreshStart: true, stateOnDisk: true })
-    ).rejects.toThrow(MLS_LOCAL_STATE_UNDECRYPTABLE);
+    ).rejects.toBeInstanceOf(SavedStateUnopenedError);
   });
 
   it('carries the flag through the legacy-envelope retry, which reloads the same file', async () => {

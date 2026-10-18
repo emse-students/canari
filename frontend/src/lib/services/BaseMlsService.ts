@@ -600,20 +600,15 @@ export abstract class BaseMlsService implements IMlsService {
    * needs a key fingerprint in the envelope's own framing, which is a write-format change and
    * therefore a two-release sequence; see `docs/wiki/backlog.md`.
    *
-   * **`rotated` IS THE HALF OF `undecryptable` THAT A KEY FINGERPRINT CAN FINALLY SEPARATE**, and it
-   * arrives with the reader rather than one release behind it. `mls-core` throws
-   * `STATE_KEY_MISMATCH` when a FRAMED state's header names a key other than the one in hand: no
-   * guess, no failed decrypt to interpret - the blob says so. **It cannot fire yet**, because nothing
-   * writes a header until step 2 flips the writer (`state_blob`'s module docs give the reason: a
-   * downgrade handed a header reads it as a nonce and reports this very defect). It is here so that
-   * the token is RECOGNISED the day it appears - routed through `unknown` it would print
-   * "not typed by mls-core" about an error mls-core types, which is the accusation lying.
-   *
-   * It needs no new branch at the call sites and that is not an accident: every `cause !== 'mismatch'`
-   * path already pauses and asks for the old PIN, which is exactly right for a real rotation, and the
-   * pre-v0.11.0 Argon2id retry keys off `undecryptable` and must NOT fire for a v1-framed blob. The
-   * user-facing sentence that finally states the cause outright belongs with step 2, when it becomes
-   * true.
+   * **`rotated` AND `altered` ARE THE TWO HALVES OF `undecryptable` THAT A KEY FINGERPRINT
+   * SEPARATES**, and since step 2 framed every save (2026-10-17) both fire. `mls-core` (and the web's
+   * v2 reader) throws `STATE_KEY_MISMATCH` when a FRAMED state's header names a key other than the
+   * one in hand - the old PIN opens it - and `STATE_ALTERED` when the header names THE KEY IN HAND
+   * and the tag still fails: the bytes were altered and no PIN ever will (CORRUPT-1, CORRUPT-2). No
+   * guess, no failed decrypt to interpret - the blob says so. A LEGACY blob, written before the flip
+   * and not yet rewritten, still answers `undecryptable`. `rotated` pauses for the old PIN; `altered`
+   * rotates the device identity like a `mismatch` ({@link noPinOpensState}); the pre-v0.11.0
+   * Argon2id retry keys off `undecryptable` alone and must NOT fire for a framed blob.
    *
    * `unknown` is the fourth answer and it is deliberately not folded into any of the others: it means the
    * failure came from somewhere this classifier has never been taught about. The caller treats it
@@ -629,6 +624,7 @@ export abstract class BaseMlsService implements IMlsService {
     const errStr = String(error);
     if (errStr.includes('IDENTITY_MISMATCH')) return 'mismatch';
     if (errStr.includes('STATE_KEY_MISMATCH')) return 'rotated';
+    if (errStr.includes('STATE_ALTERED')) return 'altered';
     if (errStr.includes('STATE_UNDECRYPTABLE')) return 'undecryptable';
     if (isKeystoreKeyUnavailable(error)) return 'keystore_unavailable';
     // ACCUSING, AND HERE RATHER THAN AT THE CALL SITES so that no future caller can forget it.

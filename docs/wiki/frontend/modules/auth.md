@@ -452,11 +452,13 @@ left its old copy on offer to every other account for ever.
   (`auth_vault_unverified`: the saved unlock could not be verified for this account) and the gate is
   the ordinary one.
 
-**What this does NOT fix, and is open** ([backlog](../../backlog.md)): on a phone `mls.bin` is still
-one file per install. The reset is withheld only when the refusal PROVED the file foreign. Once every
-vault is labelled, B has no slot, takes the PIN path, cannot open A's `mls.bin`
-(`local_state_unopenable`) - and that gate still offers the reset, which deletes A's state on B's
-explicit request. Withholding it there needs an owner recorded beside `mls.bin`.
+**The PIN path is covered by an owner record (PK1, 2026-10-17, unshipped)**: on a phone `mls.bin` is
+still one file per install, so once every vault is labelled B takes the PIN path and cannot open A's
+file. `initialiser_mls` now records `mls.owner` beside `mls.bin` whenever a state opens, and a failed
+load whose record names another account is `device_holds_other_account` on the keypad path too
+(`applyPinFailure` -> `noteOtherAccountState`): the reset is withheld. An install whose state
+predates the record is covered only after its owner signs in once on the new build
+([mls-protocol](../../protocols/mls-protocol.md#the-state-blobs-framing---read-first-write-later)).
 
 Tests: `utils/deviceKeyVault.test.ts` (slots, binding, the unlabelled offer),
 `services/TauriMlsService.vaultOwner.test.ts` and `services/WebMlsService.vaultOwner.test.ts` (a

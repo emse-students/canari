@@ -4,6 +4,7 @@ import { ValidationPipe } from '@nestjs/common';
 import * as bodyParser from 'body-parser';
 import cookieParser from 'cookie-parser';
 import { buildAllowedOrigins, corsOptions } from './cors-origins';
+import { drainOnSigterm } from './drain-on-sigterm';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -21,5 +22,7 @@ async function bootstrap() {
   app.use(bodyParser.urlencoded({ limit: '15mb', extended: true }));
 
   await app.listen(process.env.PORT ?? 3012);
+  // A release retires this replica with SIGTERM once its successor is healthy; see the module.
+  drainOnSigterm(app.getHttpServer());
 }
 void bootstrap();

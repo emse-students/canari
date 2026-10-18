@@ -100,12 +100,16 @@ peer connection** - nothing in this mode touches webrtc-rs, TURN or a port - and
   group-mismatch }` BEFORE any eviction - not seated, so never paired and never sent a candidate.
   chat-delivery binds the room id to its group at `initiate` and refuses a `room-token` for another
   group, so this is the second of two locks: knowing a room id buys nothing.
-- **The relay never waits on a partner:** a frame is handed over with `try_send` (`p2p::deliver`).
-  Awaiting room in the partner's bounded queue would let a peer that stopped reading freeze the
-  sender's own socket task; a full or closed queue drops the frame with a `p2p ... DROPPED` warning
-  (and `ice_out_failed` on the partner's record for a candidate).
-- **Frame size:** 64 KiB per message and per frame (`MAX_SIGNAL_MESSAGE_BYTES`, both modes); a
-  larger one ends the socket. The largest legitimate frame is an SDP, a few KiB.
+- **Nothing in this mode awaits a queue:** every frame - relayed, or the server's own `Joined`,
+  `Refused`, `PeerReady`, `PeerLeft` - goes through `p2p::deliver` (`try_send`), so `p2p_join` and
+  `p2p_leave` are synchronous. Awaiting room in another peer's bounded queue would let a peer that
+  stopped reading freeze this one's socket task; awaiting this task's OWN queue would deadlock it.
+  A full or closed queue drops the frame with a `p2p ... DROPPED` warning (and `ice_out_failed` on
+  the partner's record for a candidate).
+- **Size:** 64 KiB per message AND per frame (`MAX_SIGNAL_MESSAGE_BYTES`, both modes); either over
+  ends the socket. The two caps are tested apart - one oversized frame, and an oversized message
+  sent as small fragments, which only the message cap refuses. The largest legitimate frame is an
+  SDP, a few KiB.
 - **Roles:** arrival order, decided under the room's lock: the first in (the caller) is the
   initiator. Both ends are told in one `PeerReady` each.
 - **Lifetime:** kept in `AppState.p2p_rooms`, apart from SFU rooms, and **never reaped on a clock**:
@@ -122,7 +126,11 @@ peer connection** - nothing in this mode touches webrtc-rs, TURN or a port - and
   signalling once connected, and production's host nginx closes a proxied socket after 60 s without
   a read from upstream (realtime-media-feasibility section 9, 4a).
 - **Pinned by** `src/p2p.rs` tests and `tests/p2p_signalling.rs`, which runs the real binary over
-  real WebSockets with real room tokens.
+  real WebSockets with real room tokens. Each test starts the binary on `PORT=0` and reads the port
+  it BOUND from its `Call service listening on <addr>` line (logged after `bind`, so it is also the
+  readiness event). Picking a free port in the test and releasing it for the child to bind later
+  let parallel tests collide: a readiness probe answered for another test's service, and a socket
+  was reset under it (1 run in 30 failed that way, 0 in 90 since, 2026-10-18).
 
 ## Room lifecycle
 

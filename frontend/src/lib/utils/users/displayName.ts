@@ -3,6 +3,7 @@ import {
   fetchUserProfile,
   getSavedDisplayName,
   isAbsentUserError,
+  isDeletedAccountError,
 } from '$lib/stores/user';
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { TransportFailureError } from '$lib/utils/transportFailure';
@@ -372,9 +373,9 @@ export async function resolveUserDisplayName(userId: string): Promise<string | n
         profileAsked.add(normalized);
         // A seeded name outranks the label: the 404 here was only a first-name lookup.
         if (cached) return cached;
-        const label = m.user_unknown_label();
+        const label = isDeletedAccountError(e) ? m.user_deleted_label() : m.user_unknown_label();
         console.log(
-          `[DISPLAYNAME] no such user - the server answered 404, so this id renders as ` +
+          `[DISPLAYNAME] no such user - the server answered it is gone, so this id renders as ` +
             `"${label}" for the rest of the session and is not asked for again`,
           { userId: normalized }
         );

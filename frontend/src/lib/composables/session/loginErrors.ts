@@ -31,8 +31,19 @@ export type LoginErrorCode =
    * The old-PIN recovery is still offered for it - it costs nothing, it is not destructive, and it
    * is one of the two real possibilities. What changed is that the name, and the message beside it,
    * no longer claim to know which one this is.
+   *
+   * Since step 2 framed every save (2026-10-17) it is left with what the bytes still cannot say: a
+   * LEGACY state written before the flip and not yet rewritten, and a failure nothing types. A framed
+   * state names its key, and is `local_state_sealed_under_old_pin` or, altered, rotated by `init`.
    */
   | 'local_state_unopenable'
+  /**
+   * PIN accepted, and this device's local MLS state is FRAMED under ANOTHER key: its header's
+   * fingerprint names a key other than the one this PIN derives. That is a fact, not a guess - the
+   * PIN was changed on another device (or reset) and the old one opens it - so the sentence says so,
+   * and offers the old-PIN recovery without the "otherwise damaged" branch the fingerprint ruled out.
+   */
+  | 'local_state_sealed_under_old_pin'
   /** Biometric mode with nothing in the platform keystore yet. */
   | 'keystore_empty'
   /** This device was revoked; local state has been wiped and it must re-register. */
@@ -53,9 +64,10 @@ export type LoginErrorCode =
    */
   | 'vault_not_this_account'
   /**
-   * The same refusal, on a phone, where it is PROVEN that the one `mls.bin` of this install holds
-   * ANOTHER account's state: the vaulted key opened it and its credential named someone else.
-   * The gate that follows must not offer the reset, which would delete that account's state.
+   * On a phone, it is PROVEN that the one `mls.bin` of this install holds ANOTHER account's state:
+   * either a vaulted key opened it and its credential named someone else, or this account's key did
+   * not open it and the record beside it (`mls.owner`) names another account. The gate that follows
+   * must not offer the reset, which would delete that account's state.
    */
   | 'device_holds_other_account'
   /**
@@ -100,7 +112,7 @@ export function loginErrorCode(error: unknown): LoginErrorCode {
 
 /** True when the "PIN changed on another device" recovery flow can resolve this failure. */
 export function isRecoverableWithOldPin(code: LoginErrorCode): boolean {
-  return code === 'pin_mismatch' || code === 'local_state_unopenable';
+  return code === 'pin_mismatch' || provesLocalStateExists(code);
 }
 
 /**
@@ -120,7 +132,7 @@ export function isRecoverableWithOldPin(code: LoginErrorCode): boolean {
  * keeps the reset off the screen. Measured on W2, 2026-09-21.
  */
 export function provesLocalStateExists(code: LoginErrorCode): boolean {
-  return code === 'local_state_unopenable';
+  return code === 'local_state_unopenable' || code === 'local_state_sealed_under_old_pin';
 }
 
 /**
@@ -152,7 +164,7 @@ export function provesLocalStateExists(code: LoginErrorCode): boolean {
 export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
   return (
     code === 'pin_mismatch' ||
-    code === 'local_state_unopenable' ||
+    provesLocalStateExists(code) ||
     code === 'keystore_empty' ||
     code === 'server_unreachable' ||
     code === 'account_deleted' ||

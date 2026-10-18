@@ -13,6 +13,7 @@ vi.mock('$lib/utils/hex', async (importOriginal) => ({
 }));
 
 import { WebMlsService } from './WebMlsService';
+import { SavedStateUnopenedError } from '$lib/mls-client';
 
 // THE CODES `mls-core` THROWS, not the sentences it used to. Both are this crate's own throws and
 // both are typed since 2026-09-08, because the classifier that routes on them had a default arm
@@ -23,6 +24,19 @@ const UNOPENABLE = new Error('STATE_UNDECRYPTABLE: aead::Error');
 const MISMATCH = new Error(
   'IDENTITY_MISMATCH: expected u:web-u-new but state contains u:web-u-old'
 );
+// The two halves a FRAMED blob's fingerprint separates (step 2, 2026-10-17).
+const ROTATED = new Error("STATE_KEY_MISMATCH: the state's header names a different device key");
+const ALTERED = new Error('STATE_ALTERED: v2 AES-GCM tag did not verify under the right key');
+
+/** Asserts `init` paused for the old PIN, typed, with the cause the login reads. */
+async function expectPaused(run: Promise<void>, reason: string): Promise<void> {
+  const err = await run.then(
+    () => null,
+    (e: unknown) => e
+  );
+  expect(err).toBeInstanceOf(SavedStateUnopenedError);
+  expect((err as SavedStateUnopenedError).reason).toBe(reason);
+}
 
 /**
  * Drives `_initImpl` against stubbed primitives. Only the members it touches are provided, so a
@@ -116,8 +130,9 @@ describe('WebMlsService._initImpl legacy migration', () => {
     const ctx = makeCtx({ loadStateWithKey: vi.fn().mockRejectedValue(UNOPENABLE) });
     migrateLegacyMlsStateBlob.mockResolvedValue(null);
 
-    await expect(initImpl(ctx, stored, { noFreshStart: true, legacyPin: '1234' })).rejects.toThrow(
-      'MLS_LOCAL_STATE_UNDECRYPTABLE'
+    await expectPaused(
+      initImpl(ctx, stored, { noFreshStart: true, legacyPin: '1234' }),
+      'undecryptable'
     );
     expect(ctx.generateDeviceId).not.toHaveBeenCalled();
   });
@@ -125,9 +140,33 @@ describe('WebMlsService._initImpl legacy migration', () => {
   it('does not attempt a migration without a PIN (biometric and vault paths)', async () => {
     const ctx = makeCtx({ loadStateWithKey: vi.fn().mockRejectedValue(UNOPENABLE) });
 
-    await expect(initImpl(ctx, stored, { noFreshStart: true })).rejects.toThrow(
-      'MLS_LOCAL_STATE_UNDECRYPTABLE'
-    );
+    await expectPaused(initImpl(ctx, stored, { noFreshStart: true }), 'undecryptable');
     expect(migrateLegacyMlsStateBlob).not.toHaveBeenCalled();
+  });
+
+  it('pauses a state framed under ANOTHER key as `rotated` - the old PIN opens it, so nothing is rotated', async () => {
+    const ctx = makeCtx({ loadStateWithKey: vi.fn().mockRejectedValue(ROTATED) });
+
+    await expectPaused(initImpl(ctx, stored, { noFreshStart: true, legacyPin: '1234' }), 'rotated');
+    // A framed blob is never a pre-v0.11.0 envelope, and its history is the old PIN's to recover.
+    expect(migrateLegacyMlsStateBlob).not.toHaveBeenCalled();
+    expect(ctx.generateDeviceId).not.toHaveBeenCalled();
+    expect(ctx.deleteDevice).not.toHaveBeenCalled();
+  });
+
+  it('rotates a state ALTERED under the key in hand even under noFreshStart - no PIN opens it (DE7)', async () => {
+    const ctx = makeCtx({
+      loadStateWithKey: vi.fn().mockRejectedValueOnce(ALTERED).mockResolvedValueOnce(undefined),
+    });
+
+    await expect(
+      initImpl(ctx, stored, { noFreshStart: true, legacyPin: '1234' })
+    ).resolves.toBeUndefined();
+
+    // Before step 2 this paused for an old PIN that never existed (CORRUPT-2).
+    expect(migrateLegacyMlsStateBlob).not.toHaveBeenCalled();
+    expect(ctx.generateDeviceId).toHaveBeenCalled();
+    expect(localStorage.getItem('mls_device_id_u')).toBe('web-u-fresh');
+    expect(ctx.deleteDevice).toHaveBeenCalledWith('u', 'web-u-new');
   });
 });

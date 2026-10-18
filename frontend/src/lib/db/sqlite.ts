@@ -1131,6 +1131,15 @@ export class SqliteStorage implements IStorage {
     return this.decodeGraineRows(rows, deviceKeyB64);
   }
 
+  /** A community's session rows, decryptable or not. See {@link IStorage.countGraineSessionsForWorkspace}. */
+  async countGraineSessionsForWorkspace(workspaceId: string): Promise<number> {
+    const rows: { n: number }[] = await this.db.select(
+      'SELECT COUNT(*) AS n FROM graine WHERE workspace_id = $1',
+      [workspaceId]
+    );
+    return Number(rows[0]?.n ?? 0);
+  }
+
   /** Erase a community's seeds and report how many. See {@link IStorage.deleteGraineSessionsForWorkspace}. */
   async deleteGraineSessionsForWorkspace(workspaceId: string): Promise<number> {
     const rows: any[] = await this.db.select(

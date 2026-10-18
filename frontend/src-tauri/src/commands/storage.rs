@@ -271,14 +271,87 @@ pub(crate) fn pause_mls_foreground() {
     crate::concurrency::mark_foreground_inactive();
 }
 
+/// Deletes `mls.bin` and, with it, the record of whose state it was ([`MLS_STATE_OWNER_FILE`]) -
+/// an owner left beside no state would name an account this install no longer holds anything of.
 #[tauri::command]
 pub(crate) fn delete_mls_state(app: tauri::AppHandle) -> Result<(), String> {
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let path = data_dir.join("mls.bin");
-    if path.exists() {
-        std::fs::remove_file(path).map_err(|e| e.to_string())
-    } else {
-        Ok(())
+    remove_mls_state_in(&data_dir)
+}
+
+/// [`delete_mls_state`] minus the `AppHandle`, so the pair it removes is tested on a real directory.
+fn remove_mls_state_in(data_dir: &std::path::Path) -> Result<(), String> {
+    for name in ["mls.bin", MLS_STATE_OWNER_FILE] {
+        let path = data_dir.join(name);
+        if path.exists() {
+            std::fs::remove_file(&path).map_err(|e| format!("remove {name}: {e}"))?;
+        }
+    }
+    Ok(())
+}
+
+/// The file beside `mls.bin` naming the account whose state it is.
+///
+/// **`mls.bin` IS ONE FILE PER INSTALL, AND NOTHING IN IT SAYS WHOSE IT IS WITHOUT OPENING IT.** When
+/// account B signs in on a phone that holds account A's state, B's key cannot open A's blob, and the
+/// gate used to read that exactly like a PIN rotated elsewhere or a damaged state - and offered the
+/// reset, which deletes A's state. With this record the gate can say "another account's messages are
+/// here" and withhold the reset (`TauriMlsService._initImpl`, `device_holds_other_account`).
+///
+/// Written ONLY by [`write_mls_state_owner`] after `initialiser_mls` LOADED or created a state for
+/// that account - the credential check in `load_or_create` is what proves the state is that
+/// account's - so a record can never name an account whose state was not opened under it.
+pub(crate) const MLS_STATE_OWNER_FILE: &str = "mls.owner";
+
+/// Records `user_id` as the owner of `mls.bin` ([`MLS_STATE_OWNER_FILE`]). Atomic (tmp + rename), so a
+/// reader sees the old owner or the new one, never a torn name. Skipped when it already says so.
+pub(crate) fn write_mls_state_owner(app: &tauri::AppHandle, user_id: &str) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    record_mls_state_owner(&data_dir, user_id)
+}
+
+/// [`write_mls_state_owner`] minus the `AppHandle`, testable on a real directory.
+fn record_mls_state_owner(data_dir: &std::path::Path, user_id: &str) -> Result<(), String> {
+    std::fs::create_dir_all(data_dir).map_err(|e| e.to_string())?;
+    let path = data_dir.join(MLS_STATE_OWNER_FILE);
+    if std::fs::read_to_string(&path).ok().as_deref() == Some(user_id) {
+        return Ok(());
+    }
+    let tmp = data_dir.join(format!("{MLS_STATE_OWNER_FILE}.tmp"));
+    std::fs::write(&tmp, user_id).map_err(|e| format!("write {MLS_STATE_OWNER_FILE}.tmp: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("rename {MLS_STATE_OWNER_FILE}: {e}"))?;
+    log::info!("[MLS] mls.bin owner recorded");
+    Ok(())
+}
+
+/// The account `mls.bin` was last opened for ([`MLS_STATE_OWNER_FILE`]), `None` when nothing was
+/// ever recorded - an install whose state predates the record, or a first install. `None` is
+/// ABSENCE OF PROOF and the frontend treats it so: it never claims the state is another account's.
+#[tauri::command]
+pub(crate) fn mls_state_owner(app: tauri::AppHandle) -> Option<String> {
+    let data_dir = match app.path().app_data_dir() {
+        Ok(d) => d,
+        Err(e) => {
+            log::warn!("[MLS] app_data_dir() failed: {e}");
+            return None;
+        }
+    };
+    read_mls_state_owner(&data_dir)
+}
+
+/// [`mls_state_owner`] minus the `AppHandle`, testable on a real directory.
+fn read_mls_state_owner(data_dir: &std::path::Path) -> Option<String> {
+    match std::fs::read_to_string(data_dir.join(MLS_STATE_OWNER_FILE)) {
+        Ok(owner) if !owner.is_empty() => Some(owner),
+        Ok(_) => {
+            log::warn!("[MLS] {MLS_STATE_OWNER_FILE} is empty - read as no owner recorded");
+            None
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            log::warn!("[MLS] read {MLS_STATE_OWNER_FILE}: {e}");
+            None
+        }
     }
 }
 
@@ -961,6 +1034,46 @@ mod tests {
         let path = dir.join(rel);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, b"x").unwrap();
+    }
+
+    /// THE A -> B -> A RECORD (backlog "switching accounts on one iPhone"). The owner beside
+    /// `mls.bin` is what lets B's gate say "another account's messages are here" instead of offering
+    /// the reset that deletes them: it must name the LAST account a state was opened for, read back
+    /// absent as `None` (absence of proof, never a claim), and leave with the state it describes.
+    #[test]
+    fn the_owner_beside_mls_bin_names_the_last_account_and_leaves_with_the_state() {
+        let dir = temp_dir("mls-owner");
+        assert_eq!(
+            read_mls_state_owner(&dir),
+            None,
+            "no record on a first install"
+        );
+
+        record_mls_state_owner(&dir, "user-a").unwrap();
+        assert_eq!(read_mls_state_owner(&dir).as_deref(), Some("user-a"));
+        // Re-recording the same owner is a no-op, and a new one replaces it whole (tmp + rename).
+        record_mls_state_owner(&dir, "user-a").unwrap();
+        record_mls_state_owner(&dir, "user-b").unwrap();
+        assert_eq!(read_mls_state_owner(&dir).as_deref(), Some("user-b"));
+        assert!(
+            !dir.join(format!("{MLS_STATE_OWNER_FILE}.tmp")).exists(),
+            "the temporary file must not survive the rename"
+        );
+
+        // An empty record is not an owner.
+        std::fs::write(dir.join(MLS_STATE_OWNER_FILE), b"").unwrap();
+        assert_eq!(read_mls_state_owner(&dir), None);
+
+        // The reset deletes the state AND the record: an owner left beside no state would withhold
+        // a later reset over nothing.
+        record_mls_state_owner(&dir, "user-a").unwrap();
+        file(&dir, "mls.bin");
+        remove_mls_state_in(&dir).unwrap();
+        assert!(!dir.join("mls.bin").exists());
+        assert_eq!(read_mls_state_owner(&dir), None);
+        // And it is idempotent on an install that holds neither.
+        remove_mls_state_in(&dir).unwrap();
+        std::fs::remove_dir_all(&dir).ok();
     }
 
     /// The measurement of 2026-08-28, as a test: a revoked device kept its Graine seeds, its

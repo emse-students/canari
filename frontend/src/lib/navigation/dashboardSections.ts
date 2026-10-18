@@ -47,7 +47,24 @@ import type { HubRow } from '$lib/components/navigation/breadcrumb';
  * their arrival can only push Compte DOWN (a reserved row collapsing for a member pulled sign-out up
  * under a finger aimed at settings).
  */
-export type DashboardGroupKey = 'identity' | 'explore' | 'managed' | 'admin' | 'review' | 'account';
+export type DashboardGroupKey =
+  | 'identity'
+  | 'explore'
+  | 'managed'
+  | 'managedLists'
+  | 'managedInstitutions'
+  | 'admin'
+  | 'review'
+  | 'account';
+
+/** The managed groups, one per kind: each under its own heading, never mixed. */
+type ManagedKey = 'managed' | 'managedLists' | 'managedInstitutions';
+
+const MANAGED_KEYS: readonly DashboardGroupKey[] = [
+  'managed',
+  'managedLists',
+  'managedInstitutions',
+];
 
 /** The groups drawn before the probes settle: they read nothing a probe returns. */
 const SETTLED_FREE: readonly DashboardGroupKey[] = ['identity', 'explore', 'account'];
@@ -81,7 +98,7 @@ export interface DashboardActions {
 
 interface DashboardEntry {
   key: string;
-  group: Exclude<DashboardGroupKey, 'managed'>;
+  group: Exclude<DashboardGroupKey, ManagedKey>;
   /** A route, or `signOut` for the one row that is an action rather than a place. */
   target: string | { action: keyof DashboardActions };
   label: (f: DashboardFacts) => string;
@@ -220,26 +237,19 @@ function managedRow(a: Association): HubRow {
 }
 
 /**
- * The organisations the reader MANAGES (a live membership holding at least one right: `isAdmin`,
- * which `/api/associations/me/list` sets from the bitmask - the same test the association page
- * applies to its own "Manage" link), split Associations, Lists, Institutions, an empty one
- * dropped. THE KIND IS `groupAssociationsForSelect`'s, the ONE classifier every picker uses - not a
- * second one; it also leaves archived rows out of the three. A list's management area lives under
- * `/lists`.
+ * The organisations of ONE kind the reader MANAGES (a live membership holding at least one right:
+ * `isAdmin`, which `/api/associations/me/list` sets from the bitmask - the same test the
+ * association page applies to its own "Manage" link). THE KIND IS `groupAssociationsForSelect`'s,
+ * the ONE classifier every picker uses; it also leaves archived rows out. Each kind is its OWN
+ * group under its own heading: "Mes associations" holds associations only (user, 2026-10-18). A
+ * list's management area lives under `/lists`.
  */
-function managedSections(memberships: readonly Association[]): DashboardSection[] {
+function managedRows(memberships: readonly Association[], key: ManagedKey): HubRow[] {
   const { assos, lists, institutions } = groupAssociationsForSelect(
     memberships.filter((a) => a.isAdmin)
   );
-  return [
-    { key: 'assos', label: m.asso_select_group_assos(), rows: assos.map(managedRow) },
-    { key: 'lists', label: m.asso_select_group_lists(), rows: lists.map(managedRow) },
-    {
-      key: 'institutions',
-      label: m.asso_select_group_institutions(),
-      rows: institutions.map(managedRow),
-    },
-  ].filter((s) => s.rows.length > 0);
+  const kind = key === 'managed' ? assos : key === 'managedLists' ? lists : institutions;
+  return kind.map(managedRow);
 }
 
 /** The heading of each group; the identity row stands alone, under no heading. */
@@ -251,6 +261,10 @@ function groupLabel(key: DashboardGroupKey, f: DashboardFacts): string {
       return m.dashboard_explore_heading();
     case 'managed':
       return m.dashboard_managed_heading();
+    case 'managedLists':
+      return m.dashboard_managed_lists_heading();
+    case 'managedInstitutions':
+      return m.dashboard_managed_institutions_heading();
     case 'admin':
       return f.adminScope.title();
     case 'review':
@@ -264,6 +278,8 @@ const GROUP_ORDER: readonly DashboardGroupKey[] = [
   'identity',
   'explore',
   'managed',
+  'managedLists',
+  'managedInstitutions',
   'admin',
   'review',
   'account',
@@ -282,15 +298,6 @@ export interface DashboardGroup {
   label: string;
   heading: boolean;
   rows: HubRow[];
-  /** The managed group only: its rows under sub-headings; `rows` stays the flat list of them. */
-  sections?: DashboardSection[];
-}
-
-/** A sub-heading of a group and the rows under it. */
-export interface DashboardSection {
-  key: string;
-  label: string;
-  rows: HubRow[];
 }
 
 /**
@@ -303,9 +310,8 @@ export function dashboardHubGroups(
 ): DashboardGroup[] {
   return GROUP_ORDER.filter((key) => facts.probesSettled || SETTLED_FREE.includes(key))
     .map((key) => {
-      const sections = key === 'managed' ? managedSections(facts.memberships) : undefined;
-      const rows = sections
-        ? sections.flatMap((s) => s.rows)
+      const rows = MANAGED_KEYS.includes(key)
+        ? managedRows(facts.memberships, key as ManagedKey)
         : ENTRIES.filter((e) => e.group === key && (e.may?.(facts) ?? true)).map((e) =>
             toRow(e, facts, actions)
           );
@@ -314,7 +320,6 @@ export function dashboardHubGroups(
         label: groupLabel(key, facts),
         heading: !HEADINGLESS.includes(key),
         rows,
-        ...(sections ? { sections } : {}),
       };
     })
     .filter((g) => g.rows.length > 0);

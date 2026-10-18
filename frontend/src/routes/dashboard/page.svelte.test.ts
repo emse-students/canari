@@ -148,7 +148,14 @@ describe('dashboard hub', () => {
       asso({ id: 'p', slug: 'plain', isAdmin: false }),
     ];
     await render();
-    expect(groupHeadings()).toEqual(['explore', 'managed', 'account']);
+    // One group per kind, never mixed: associations, then lists.
+    expect(groupHeadings()).toEqual(['explore', 'managed', 'managedLists', 'account']);
+    const inGroup = (g: string) =>
+      [...document.querySelectorAll(`section[aria-labelledby="group-${g}"] [data-hub-row]`)].map(
+        (e) => e.getAttribute('data-hub-row')
+      );
+    expect(inGroup('managed')).toEqual(['managed-c']);
+    expect(inGroup('managedLists')).toEqual(['managed-l']);
     expect(rows().filter(([k]) => k.startsWith('managed-'))).toEqual([
       ['managed-c', '/associations/club/edit'],
       ['managed-l', '/lists/ma-liste/edit'],

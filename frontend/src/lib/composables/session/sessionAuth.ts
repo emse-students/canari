@@ -34,7 +34,8 @@ import {
   loginErrorCode,
 } from './loginErrors';
 import {
-  MLS_LOCAL_STATE_UNDECRYPTABLE,
+  SavedStateUnopenedError,
+  SavedStateOfAnotherAccountError,
   isKeystoreKeyUnavailable,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
@@ -361,6 +362,29 @@ function vaultRefusedFailure(refusal: VaultRefusal): LoginFailure {
     return new LoginFailure('device_holds_other_account', m.auth_vault_other_account_device());
   }
   return new LoginFailure('vault_not_this_account', m.auth_vault_unverified());
+}
+
+/**
+ * The login failure for a saved state that `init` refused to open or replace (`noFreshStart`).
+ *
+ * READ FROM THE TYPE, NEVER FROM `reason.message`: it used to compare the message against one
+ * shared marker, which collapsed every cause into one screen. Three answers now, each with the
+ * sentence its cause has EARNED. Another account's state (`mls.owner`) is
+ * `device_holds_other_account`, the gate withholding the reset. A framed state whose header names
+ * another key (`rotated`) is a fact - the old PIN opens it - and says so without the "otherwise
+ * damaged" branch, which the fingerprint has ruled out. A legacy blob or an untyped failure is
+ * still only the observation, and keeps the sentence naming both remedies.
+ */
+export function savedStateFailure(
+  reason: SavedStateUnopenedError | SavedStateOfAnotherAccountError
+): LoginFailure {
+  if (reason instanceof SavedStateOfAnotherAccountError) {
+    return new LoginFailure('device_holds_other_account', m.auth_vault_other_account_device());
+  }
+  if (reason.reason === 'rotated') {
+    return new LoginFailure('local_state_sealed_under_old_pin', m.auth_local_state_old_pin());
+  }
+  return new LoginFailure('local_state_unopenable', m.auth_local_state_unopenable());
 }
 
 // ── Exported functions ────────────────────────────────────────────────────────
@@ -1015,10 +1039,11 @@ export async function loginImpl(
       const reason = mlsInitSettled.reason;
       // The init changed nothing (`MlsInitOptions.vaultOwnerUnproven`): the PIN gate, typed.
       if (reason instanceof VaultOwnerUnprovenError) throw vaultRefusedFailure(reason.refusal);
-      const reasonStr = reason instanceof Error ? reason.message : String(reason);
-      const isUndecryptable = reasonStr === MLS_LOCAL_STATE_UNDECRYPTABLE;
-      if (isUndecryptable) {
-        throw new LoginFailure('local_state_unopenable', m.auth_local_state_unopenable());
+      if (
+        reason instanceof SavedStateUnopenedError ||
+        reason instanceof SavedStateOfAnotherAccountError
+      ) {
+        throw savedStateFailure(reason);
       }
       // Empty keystore on biometric path: no key stored yet (first launch or
       // keystore was wiped). Surface a clean message and let the caller recover.

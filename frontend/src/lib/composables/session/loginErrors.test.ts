@@ -26,6 +26,7 @@ import { ServerUnreachableError } from '$lib/utils/fetchOrUnreachable';
 const EVERY_CODE: LoginErrorCode[] = [
   'pin_mismatch',
   'local_state_unopenable',
+  'local_state_sealed_under_old_pin',
   'keystore_empty',
   'device_revoked',
   'server_unreachable',
@@ -63,6 +64,11 @@ describe('isExpectedLoginOutcome', () => {
     expect(isRecoverableWithOldPin('local_state_unopenable')).toBe(true);
   });
 
+  it('and so is a framed state whose header names another key - the old PIN opens it', () => {
+    expect(isExpectedLoginOutcome('local_state_sealed_under_old_pin')).toBe(true);
+    expect(isRecoverableWithOldPin('local_state_sealed_under_old_pin')).toBe(true);
+  });
+
   it('and an empty keystore, which is a device that has enrolled nothing yet', () => {
     expect(isExpectedLoginOutcome('keystore_empty')).toBe(true);
   });
@@ -85,6 +91,7 @@ describe('isExpectedLoginOutcome', () => {
     expect(EVERY_CODE.filter(isExpectedLoginOutcome)).toEqual([
       'pin_mismatch',
       'local_state_unopenable',
+      'local_state_sealed_under_old_pin',
       'keystore_empty',
       'server_unreachable',
     ]);
@@ -110,6 +117,9 @@ describe('provesLocalStateExists - is this device new, which is a different ques
 
   it('classifies every code the union declares, so a new one cannot arrive undecided', () => {
     for (const code of EVERY_CODE) expect(typeof provesLocalStateExists(code)).toBe('boolean');
-    expect(EVERY_CODE.filter(provesLocalStateExists)).toEqual(['local_state_unopenable']);
+    expect(EVERY_CODE.filter(provesLocalStateExists)).toEqual([
+      'local_state_unopenable',
+      'local_state_sealed_under_old_pin',
+    ]);
   });
 });

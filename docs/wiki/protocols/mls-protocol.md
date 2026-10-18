@@ -870,28 +870,29 @@ migration's own failure and applied by the normal path below. Doing this from in
 
 | Verdict | Thrown as | Meaning | Recovery |
 |---|---|---|---|
-| `undecryptable` | `STATE_UNDECRYPTABLE:` | The AEAD tag did not verify. An OBSERVATION with two causes the legacy blob cannot separate: sealed under another device key (a PIN rotated elsewhere) or ALTERED (corruption, an interrupted flush). | Honour `MlsInitOptions.noFreshStart`: throw `MLS_LOCAL_STATE_UNDECRYPTABLE`; the gate (`auth_local_state_unopenable`) names BOTH causes, offers the old PIN and names the reset. |
-| `rotated` | `STATE_KEY_MISMATCH:` | A FRAMED blob's header names a key other than the one in hand - checked before the cipher. | As `undecryptable`, and the pre-v0.11.0 Argon2id retry must NOT fire. |
+| `undecryptable` | `STATE_UNDECRYPTABLE:` | The AEAD tag did not verify. An OBSERVATION with two causes the legacy blob cannot separate: sealed under another device key (a PIN rotated elsewhere) or ALTERED (corruption, an interrupted flush). | Honour `MlsInitOptions.noFreshStart`: throw `SavedStateUnopenedError('undecryptable')`; the gate (`auth_local_state_unopenable`) names BOTH causes, offers the old PIN and names the reset. |
+| `rotated` | `STATE_KEY_MISMATCH:` | A FRAMED blob's header names a key other than the one in hand - checked before the cipher. | `SavedStateUnopenedError('rotated')`; the gate (`auth_local_state_old_pin`) states it as a fact. The pre-v0.11.0 Argon2id retry must NOT fire. |
+| `altered` | `STATE_ALTERED:` | A FRAMED blob's header names THE KEY IN HAND and the tag fails: the bytes were altered. | Rotate, like `mismatch`: no PIN ever opens it, so `noFreshStart` does NOT apply (DE7). |
 | `mismatch` | `IDENTITY_MISMATCH:` | The blob decrypted; its credential names another device (localStorage cleared, reinstall, or an interrupted fresh start). | Fresh start. `noFreshStart` does NOT apply - no PIN can repair an identity, so pausing would strand the user. |
 | `keystore_unavailable` | `KEYSTORE_KEY_UNAVAILABLE` | The native keystore holds no key (a refused fingerprint). | The PIN modal. |
-| `unknown` | anything else | Not typed by `mls-core`. | WARNs, and pauses rather than rotating: the blocking test is `!== 'mismatch'`. |
+| `unknown` | anything else | Not typed by `mls-core`. | WARNs, and pauses rather than rotating: the blocking test is `!noPinOpensState(cause)`. |
 
 **It used to branch on prose, with a default arm of `sealed`** - so every unrecognised failure,
 corruption included, told the user *"your PIN was changed on another device"*. Measured by CORRUPT-2
 and CORRUPT-1 on 2026-09-08 (one flipped byte; the state cut to half its length): the message sent
 the user after an old PIN that never existed, and the correct PIN left the gate `LOCKED+overlay` five
 passes running. Typed in `v0.18.18`; `state_load_failure_is_typed.rs` and the classifier tests
-assert that the OLD PROSE no longer classifies. **The only exit from a damaged state today is
-`onForgotPinReset`** (it destroys the messaging state); signing out keeps the local state by design
-(`handlePinSignOut`), so it returns to the same wall.
+assert that the OLD PROSE no longer classifies. **Since step 2 (PK1, 2026-10-17) a damaged FRAMED
+state exits by itself** (`altered` rotates); a damaged LEGACY blob still exits only through
+`onForgotPinReset` until its first rewrite, since its bytes cannot say it was altered.
 
 ### The state blob's framing - read-first, write-later
 
 `mls-core/src/state_blob.rs` is the one place either platform decides what shape a state blob is:
 
 ```
-legacy : [nonce (12) || ciphertext]                                  <- every installed device
-v1     : [b"CANARIS" || 1 || key_fingerprint (8) || nonce || ct]     <- nothing writes this yet
+legacy : [nonce (12) || ciphertext]                                  <- written before step 2
+v1     : [b"CANARIS" || 1 || key_fingerprint (8) || nonce || ct]     <- every save since step 2
 v2     : [b"CANARIS" || 2 || key_fingerprint (8) || iv (12) || AES-256-GCM ct || tag (16)]
                                                                      <- the WEB writer, switched off
 ```
@@ -908,9 +909,28 @@ share it; the probe on its own would have read a header as a nonce and DELETED a
 **The header goes at the STATE layer, never in `security::encrypt_blob`**, which also seals the
 PIN-protected backup files. **The writer cannot move first**: an older build handed a framed blob
 reads the magic as a nonce and reports the state unopenable - this very defect, caused by a
-downgrade. So the reader shipped first (`v0.18.18`, behaviourally inert), and the writer flip
-(`state_blob::frame_v1` at `save_encrypted_with_key`, one line) waits until `minClientVersion`
-makes that reader the floor everywhere ([backlog](../backlog.md#p1---a-damaged-local-mls-state-is-reported-as-a-pin-rotation-and-the-pin-the-user-actually-holds-does-not-get-them-back-in-measured-2026-09-08)).
+downgrade. So the reader shipped first (`v0.18.18`, behaviourally inert), and the writer flipped
+once `minClientVersion` (`1.0.3`) made that reader the floor everywhere: **step 2 (PK1, 2026-10-17)**
+- `encrypt_state_blob_with_key`, the one native and WASM writer, calls `frame_v1`
+([backlog](../backlog.md#p1---a-damaged-local-mls-state-is-reported-as-a-pin-rotation-and-the-pin-the-user-actually-holds-does-not-get-them-back-in-measured-2026-09-08)).
+**Never roll a client back past `v0.18.18`.**
+
+**What each verdict does at `init`** (both platforms, `noFreshStart` set):
+
+| `mls-core` code | `StateLoadFailure` | `init` | the gate |
+| --- | --- | --- | --- |
+| `STATE_KEY_MISMATCH` | `rotated` | pauses, `SavedStateUnopenedError('rotated')` | `local_state_sealed_under_old_pin`: the old PIN opens it, said as a fact |
+| `STATE_ALTERED` | `altered` | ROTATES the device identity - no PIN ever opens it (DE7) | none: the session starts |
+| `STATE_UNDECRYPTABLE` (legacy blob, stub) | `undecryptable` | pauses, `SavedStateUnopenedError('undecryptable')` | `local_state_unopenable`: both remedies named |
+| `IDENTITY_MISMATCH` | `mismatch` | rotates, as before | none |
+
+**On a phone, an owner record comes first.** `mls.bin` is one file per install, so `initialiser_mls`
+writes `mls.owner` (the account id) each time a state OPENS, and `delete_mls_state` removes both. When
+a load fails and the record names ANOTHER account, `TauriMlsService._initImpl` throws
+`SavedStateOfAnotherAccountError` before any branch above runs - nothing re-sealed, rotated or
+written - and the gate (`device_holds_other_account`) withholds the reset that would delete that
+account's state. No record is absence of proof and changes nothing. The browser keeps one state per
+account and has no record.
 
 #### v2 - the browser seals with WebCrypto, every platform reads it (2026-10-12)
 
@@ -939,7 +959,8 @@ has the before/after table).
   AES opened 7.7 MB in 610 ms against 240 ms for ChaCha - a cold-start regression that would have
   eaten the checkpoint saving. Every OTHER shape still goes to `mls-core` sealed. The two v2 readers
   open the same committed fixture and throw the same codes (`STATE_KEY_MISMATCH` before the cipher,
-  `STATE_UNDECRYPTABLE` for a stub or a failed tag), which is what keeps them from drifting.
+  `STATE_ALTERED` for a failed tag, `STATE_UNDECRYPTABLE` for a stub), which is what keeps them from
+  drifting.
 - **The seal runs on the calling thread, not the encrypt worker**: WebCrypto already runs the cipher
   off the JavaScript thread; what remains on it is the input copy, measured as the main thread's
   longest stall.

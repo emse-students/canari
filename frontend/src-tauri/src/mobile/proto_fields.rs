@@ -981,6 +981,26 @@ mod tests {
         }
     }
 
+    /// `GraineBundleMsg.holds_nothing` (field 6, channel-encryption section 24) is unknown to this
+    /// reader and must stay harmless: the "I hold nothing" answer to a history ask is an empty
+    /// bundle with that varint set, and it reaches a phone's push path as silent key material
+    /// carrying no seed - exactly what a decline-only bundle already does.
+    #[test]
+    fn a_bundle_saying_it_holds_nothing_is_silent_key_material_with_no_seed() {
+        let mut bundle = Vec::new();
+        write_string_field(&mut bundle, 1, "ws-1");
+        write_string_field(&mut bundle, 2, "r-h");
+        write_tag(&mut bundle, 6, 0);
+        write_varint(&mut bundle, 1);
+        let mut msg = Vec::new();
+        write_bytes_field(&mut msg, 12, &bundle);
+
+        let info = extract_full_message_info(&msg);
+        assert_eq!(info["ok"], false);
+        assert_eq!(info["kind"], "graine_key_material");
+        assert_eq!(info["seeds"].as_array().expect("seeds").len(), 0);
+    }
+
     /// THE DEFECT THIS WHOLE PATH EXISTS FOR: the seed reaches the phone inside a frame nothing
     /// read, so every notification of that session fell back to "new message in #salon". Silent is
     /// not the same as worthless - the frame must still ring nobody AND state what it carries.
