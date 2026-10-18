@@ -307,6 +307,49 @@ async fn an_oversized_frame_closes_the_socket() {
     assert!(ended.is_ok(), "an oversized frame must end the socket");
 }
 
+/// The MESSAGE cap, apart from the frame cap: 65 KiB sent as five 13 KiB fragments, every frame
+/// well under 64 KiB. Only `max_message_size` can refuse it - without it the reassembled message
+/// would be parsed and relayed.
+#[tokio::test]
+async fn an_oversized_message_in_small_frames_closes_the_socket() {
+    use tokio_tungstenite::tungstenite::protocol::frame::coding::{Data, OpCode};
+    use tokio_tungstenite::tungstenite::protocol::frame::Frame;
+
+    let svc = start().await;
+    let mut alice = join(&svc, "alice", "room-fragments").await;
+    recv(&mut alice).await; // Joined
+
+    let fragment = vec![b'a'; 13 * 1024];
+    for i in 0..5 {
+        let opcode = if i == 0 {
+            OpCode::Data(Data::Text)
+        } else {
+            OpCode::Data(Data::Continue)
+        };
+        // A write may already fail once the server has closed; only the ending is asserted.
+        let _ = alice
+            .send(Message::Frame(Frame::message(
+                fragment.clone(),
+                opcode,
+                i == 4,
+            )))
+            .await;
+    }
+    let ended = timeout(LIVENESS, async {
+        loop {
+            match alice.next().await {
+                None | Some(Err(_)) | Some(Ok(Message::Close(_))) => return,
+                Some(Ok(_)) => continue,
+            }
+        }
+    })
+    .await;
+    assert!(
+        ended.is_ok(),
+        "a message over the cap must end the socket, whatever its frame sizes"
+    );
+}
+
 #[tokio::test]
 async fn a_room_id_belongs_to_one_mode() {
     let svc = start().await;
