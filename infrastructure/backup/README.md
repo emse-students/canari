@@ -259,6 +259,12 @@ Ou depuis une archive locale precise :
 > La restauration est **destructive** : elle ecrase les donnees actuelles.
 > Elle exige le drapeau `--yes`.
 
+> **Le core-service doit tourner** : avant d ecraser la base, `restore.sh` lui fait
+> lire le journal d effacements courant, puis le lui rend une fois la base restauree
+> pour effacer a nouveau les comptes que l archive precede (sans quoi elle les
+> ressusciterait). Un export impossible arrete tout avant la moindre ecriture
+> ([account-erasure](../../docs/wiki/account-erasure.md#a-restore-replays-the-erasures)).
+
 ## LE CORRECTIF ETAIT DANS LE DEPOT ET LA BOITE NE L AVAIT JAMAIS EU - 2026-09-24
 
 Mesure sur la machine de production le jour ou Authentik a demenage vers l hote

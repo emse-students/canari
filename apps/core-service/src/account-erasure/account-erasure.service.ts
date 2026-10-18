@@ -10,8 +10,10 @@ import {
   afterSuccess,
   classifyFailure,
   describeFailure,
+  replayCandidates,
   retryDelayMs,
   subjectDigest,
+  type ErasureJournalExport,
 } from './erasure-policy';
 
 /** How often the worker looks for due jobs. A request also starts a drain at once. */
@@ -187,6 +189,91 @@ export class AccountErasureService implements OnModuleInit, OnModuleDestroy {
       await eraseCoreRows(manager, subjectId);
       return state;
     });
+  }
+
+  /**
+   * The CURRENT journal, in the form a restore carries across ({@link ErasureJournalExport}). Read by
+   * `restore-replay export` BEFORE a backup replaces the database: the restored journal predates
+   * every erasure made after the archive, so this is the only record of them that survives.
+   */
+  async exportJournal(): Promise<ErasureJournalExport> {
+    const completed = (await this.dataSource.query(
+      `SELECT "subjectId" AS digest, max("requestedAt") AS "requestedAt"
+         FROM account_erasure_jobs WHERE "completedAt" IS NOT NULL
+        GROUP BY "subjectId" ORDER BY "subjectId"`
+    )) as Array<{ digest: string; requestedAt: Date | string }>;
+    const pending = (await this.dataSource.query(
+      `SELECT DISTINCT "subjectId" FROM account_erasure_jobs WHERE "completedAt" IS NULL
+        ORDER BY "subjectId"`
+    )) as Array<{ subjectId: string }>;
+    this.logger.log(
+      `[ERASURE] journal exported for a restore: completed=${completed.length} pending=${pending.length}`
+    );
+    return {
+      completed: completed.map((r) => ({
+        digest: r.digest,
+        requestedAt: new Date(r.requestedAt).toISOString(),
+      })),
+      pending: pending.map((r) => r.subjectId),
+    };
+  }
+
+  /**
+   * Erases again every account a backup restore brought back: called once the restored database is
+   * live, with the journal {@link exportJournal} read from the database it replaced.
+   *
+   * A pending subject is requested again whatever its row. A completed one is requested again only
+   * if its restored row was created BEFORE the erasure was requested - an account created after it
+   * is the same person's NEW account (same id: `users.id` is the OIDC subject), which nobody asked
+   * to erase, and it is logged as kept rather than touched. Each replay is {@link requestErasure}
+   * itself, so the account is deactivated at once and its jobs run like any other erasure.
+   * Idempotent: a subject already replayed has no user row left and its jobs are already pending.
+   *
+   * Throws on the first failure: the restore must then stop and say so, not report itself complete.
+   */
+  async replayAfterRestore(
+    journal: ErasureJournalExport
+  ): Promise<{ candidates: number; replayed: number; keptNewer: number }> {
+    const restored = (await this.dataSource.query(`SELECT id FROM users`)) as Array<{ id: string }>;
+    const candidates = replayCandidates(
+      journal,
+      restored.map((r) => r.id)
+    );
+    this.logger.log(
+      `[ERASURE] replay after a restore: journal completed=${journal.completed.length} ` +
+        `pending=${journal.pending.length} restoredUsers=${restored.length} ` +
+        `candidates=${candidates.length}`
+    );
+    let replayed = 0;
+    let keptNewer = 0;
+    for (const c of candidates) {
+      if (c.requestedBefore !== null) {
+        // `createdAt` is a `timestamp` written by the same database's CURRENT_TIMESTAMP, so the cast
+        // to compare it with the journal's `timestamptz` reads it in the zone it was written in.
+        const older = (await this.dataSource.query(
+          `SELECT 1 FROM users WHERE id = $1 AND "createdAt" < $2::timestamptz`,
+          [c.subjectId, c.requestedBefore]
+        )) as unknown[];
+        if (older.length === 0) {
+          keptNewer++;
+          this.logger.log(
+            `[ERASURE] replay keeps user=${c.subjectId.slice(0, 8)}: its account was created after ` +
+              `its erasure was requested (${c.requestedBefore}), so it is a new account`
+          );
+          continue;
+        }
+      }
+      this.logger.log(
+        `[ERASURE] replay erases user=${c.subjectId.slice(0, 8)} again ` +
+          `(${c.requestedBefore === null ? 'pending' : 'completed'} in the replaced journal)`
+      );
+      await this.requestErasure(c.subjectId);
+      replayed++;
+    }
+    this.logger.log(
+      `[ERASURE] replay done: candidates=${candidates.length} replayed=${replayed} keptNewer=${keptNewer}`
+    );
+    return { candidates: candidates.length, replayed, keptNewer };
   }
 
   /**

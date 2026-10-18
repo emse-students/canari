@@ -313,9 +313,9 @@ The background keychain copy (`mls_bg_key_`, no access control) is what the 12 h
 
 `performPinChange` re-seals the MLS state with `mls.changeDeviceKey`, which persists the client IN MEMORY. In a follower tab that client was loaded from a snapshot older than the leader's last checkpoint, so the version guard of `saveMlsStateEncrypted` refuses the write (`stale` or `collision`) and the stored state STAYS UNDER THE OLD KEY - it is never overwritten with the older ratchet. Since #1898 the refusal is typed (`MlsStateWriteRefusedError`), the session ends into the recovery and the recovery finishes the move from the STORED state ([auth](frontend/modules/auth.md#the-other-tabs-of-the-account)): no data is lost, but the change costs a recovery prompt. **Owed**: re-seal the state as STORED (read under the exclusive lock, after the leader let go) rather than the follower's memory - or refuse the change outside the leader on the settings screen - and a two-realm test.
 
-## P2 - A backup restore resurrects every account erased since that backup (found 2026-10-16, account erasure)
+## P2 - A backup restore resurrects every account erased since that backup (found 2026-10-16, account erasure) - BUILT, draft PR
 
-Backups keep 14 days. Restoring one brings back every account erased after it was taken, and nothing replays those erasures: a completed `account_erasure_jobs` row carries only `sha256:<digest>` of its subject, so the replay cannot be a list of ids - it must hash every `users.id` (and every account column downstream) and match. **Owed**: a replay step in the restore procedure that reads the completed digests from the CURRENT journal (the restored one predates them), re-queues the matching subjects, and a test on a restored copy ([account-erasure](account-erasure.md#what-is-not-covered-and-why)).
+`restore.sh` exports the current erasure journal before it replaces the database and replays it after; a returner's new account is kept ([account-erasure](account-erasure.md#a-restore-replays-the-erasures)). Delete this entry when a release carries it: both the host's checkout of `restore.sh` and the core-service image move only with a release ([backup README](../../infrastructure/backup/README.md)).
 
 ## P2 - Deleting the account leaves its local message database at rest (found 2026-10-15, review of #1892) - DECIDED 2026-10-18
 

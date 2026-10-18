@@ -144,9 +144,9 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
 ## What is NOT covered, and why
 
 - **Backups keep everything for their retention (14 days)**, then rotate out. An erasure cannot
-  reach into a backup; restoring one would resurrect erased accounts, and the restore procedure owes
-  a replay of the completed erasures (their subjects are digests, so the replay must be by digest
-  match, which is not built - see [backlog](backlog.md)).
+  reach into a backup; restoring one REPLAYS the erasures the archive predates
+  ([below](#a-restore-replays-the-erasures)). What no replay can reach: an erasure made after the
+  last archive on a server lost WITH its database - its journal is gone with it.
 - **A queued commit or Welcome keeps its `senderId`** in chat-delivery: it is the recipient's protocol
   state, read when it is delivered (push suppression, routing), and rewriting it was not shown safe.
   It leaves the queue when delivered.
@@ -174,6 +174,41 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
 - **The MiConnect (authentik) identity is not deleted**: it is the school's identity provider, not
   Canari's data. Signing in after the erasure creates a new, empty Canari account.
 - **Logs** keep the first eight characters of the subject on the erasure lines, for their retention.
+
+## A restore replays the erasures
+
+Restoring an archive brings back every account erased after it was taken, and the restored journal
+predates those erasures, so nothing in the restored database remembers them. `restore.sh` therefore
+reads the CURRENT journal first and hands it back once the restored database is live:
+
+```
+restore.sh
+  core-service: bun dist/account-erasure/restore-replay.js export  -> GET  /api/internal/account-erasure/journal
+  psql < postgres_auth_db.sql                                         (the archive replaces the database)
+  core-service: bun dist/account-erasure/restore-replay.js replay  -> POST /api/internal/account-erasure/replay
+```
+
+**The export** (`exportJournal`) is one entry per completed subject - its digest and the LATEST time
+an erasure of it was requested - and every pending subject, which a pending row names outright. It is
+written to a `0600` file beside the backups and deleted once the replay succeeded; an export that
+fails stops the restore BEFORE anything is overwritten, because the file is then the only record of
+those erasures.
+
+**The replay** (`replayAfterRestore`) hashes every restored `users.id` with `subjectDigest` (the one
+implementation) to find the completed subjects, and calls `requestErasure` for each match and each
+pending subject - the same transaction and the same jobs as a person's own request, so the account
+is deactivated at once. **One case is NOT replayed**: a completed subject whose restored row was
+created AFTER the erasure was requested. A person may come back once every job completed, and
+`users.id` is the OIDC subject, so that row is their NEW account, under the same id; erasing it would
+delete an account nobody asked to erase. It is logged as `replay keeps user=... it is a new account`.
+A pending subject is replayed whatever its row's age: nobody can sign in while an erasure is pending.
+
+Why `users.id` is the whole match: every service's tables live in `auth_db`, which one archive
+restores at one instant. An account erased BEFORE that instant is in the restored journal itself
+(pending rows are re-run by the worker, completed ones are done); one erased after it still had its
+`users` row at that instant. Both calls are idempotent, so a restore run twice with the same export
+adds nothing. Tested against a real PostgreSQL in `account-erasure.integration.spec.ts` (an erased
+account restored, a returner's new account kept, a pending one replayed, a second run inert).
 
 ## Ordering, failure classes and operating it
 

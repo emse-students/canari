@@ -102,10 +102,29 @@ tar xzf "$ARCHIVE" -C "$STAGE"
 [ -f "$STAGE/MANIFEST.txt" ] && cat "$STAGE/MANIFEST.txt"
 
 # ── PostgreSQL Canari ─────────────────────────────────────────────────────────
+# UNE RESTAURATION RESSUSCITE TOUT COMPTE EFFACE APRES L ARCHIVE : la base restauree porte
+# un journal d effacements anterieur a eux. Le journal COURANT est donc lu AVANT d ecraser
+# la base (core-service, restore-replay.js export), puis rendu au core-service une fois la
+# base restauree (replay), qui efface a nouveau chaque compte qu il nomme - sauf le NOUVEAU
+# compte d une personne revenue apres son effacement (docs/wiki/account-erasure.md#a-restore-replays-the-erasures).
+# Un export qui echoue ARRETE la restauration avant toute ecriture : sans lui, ces effacements
+# seraient perdus pour toujours.
+REPLAY_CLI=(exec -T core-service bun dist/account-erasure/restore-replay.js)
+ERASURE_JOURNAL="$BACKUP_DIR/erasure-journal-avant-restauration.json"
 if [ -f "$STAGE/postgres_auth_db.sql.gz" ]; then
+  log "Lecture du journal d effacements courant (avant d ecraser la base)…"
+  ( umask 077; "${DC[@]}" "${REPLAY_CLI[@]}" export > "$ERASURE_JOURNAL" ) \
+    || fail "journal d effacements illisible (core-service demarre ?) - rien n a ete restaure"
   log "Restauration PostgreSQL auth_db…"
   gunzip -c "$STAGE/postgres_auth_db.sql.gz" \
     | "${DC[@]}" exec -T postgres psql -U "$POSTGRES_USER" -d auth_db -v ON_ERROR_STOP=0
+  log "Rejeu des effacements que l archive precede…"
+  "${DC[@]}" "${REPLAY_CLI[@]}" replay < "$ERASURE_JOURNAL" \
+    || fail "rejeu des effacements en echec : des comptes effaces sont REVENUS. Le journal est
+  garde dans $ERASURE_JOURNAL ; relancer :
+    ${DC[*]} ${REPLAY_CLI[*]} replay < $ERASURE_JOURNAL"
+  # Il nomme des comptes en attente d effacement : il ne survit pas a un rejeu reussi.
+  rm -f "$ERASURE_JOURNAL"
 fi
 
 # MONGODB : rien a restaurer. Le service a ete supprime le 2026-08-18 et les

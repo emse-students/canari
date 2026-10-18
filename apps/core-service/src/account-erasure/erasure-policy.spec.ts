@@ -4,7 +4,10 @@ import {
   UNKNOWN_SERVICE,
   afterSuccess,
   classifyFailure,
+  MalformedErasureJournalError,
   describeFailure,
+  parseErasureJournal,
+  replayCandidates,
   retryDelayMs,
   subjectDigest,
 } from './erasure-policy';
@@ -104,6 +107,46 @@ describe('erasure policy', () => {
         new Error('duplicate key (subjectId)=(0a0a0a0a0a0a0a0a) 4711')
       );
       expect(withId).not.toMatch(/0a0a0a0a|4711|subjectId/);
+    });
+  });
+
+  describe('the replay a restore owes', () => {
+    const at = '2026-10-16T12:00:00.000Z';
+
+    it('names a restored account by its digest, and a pending subject outright, each once', () => {
+      const journal = {
+        completed: [
+          { digest: subjectDigest('erased'), requestedAt: at },
+          { digest: subjectDigest('half-done'), requestedAt: at },
+          { digest: subjectDigest('never-restored'), requestedAt: at },
+        ],
+        pending: ['half-done', 'pending-only'],
+      };
+      expect(replayCandidates(journal, ['erased', 'kept', 'half-done'])).toEqual([
+        { subjectId: 'half-done', requestedBefore: null },
+        { subjectId: 'pending-only', requestedBefore: null },
+        { subjectId: 'erased', requestedBefore: at },
+      ]);
+    });
+
+    it('names nobody when the journal is empty', () => {
+      expect(replayCandidates({ completed: [], pending: [] }, ['a', 'b'])).toEqual([]);
+    });
+
+    it('refuses a body it cannot replay whole, rather than replaying part of it', () => {
+      const good = { completed: [{ digest: subjectDigest('x'), requestedAt: at }], pending: ['y'] };
+      expect(parseErasureJournal(good)).toBe(good);
+      for (const bad of [
+        null,
+        {},
+        { completed: [], pending: 'y' },
+        { completed: [{ digest: 'x', requestedAt: at }], pending: [] },
+        { completed: [{ digest: subjectDigest('x'), requestedAt: 'not a time' }], pending: [] },
+        { completed: [], pending: [subjectDigest('y')] },
+        { completed: [], pending: [''] },
+      ]) {
+        expect(() => parseErasureJournal(bad)).toThrow(MalformedErasureJournalError);
+      }
     });
   });
 });
