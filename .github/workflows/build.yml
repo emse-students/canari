@@ -80,7 +80,7 @@ jobs:
 
   enumerate-services:
     name: Enumerate the services to build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       matrix: ${{ steps.detect.outputs.matrix }}
       services_csv: ${{ steps.detect.outputs.services_csv }}
@@ -196,7 +196,7 @@ jobs:
     # the first call, so the second has nothing left to build and only has to deploy what is already
     # in the registry.
     if: needs.enumerate-services.outputs.frontend_changed == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -362,7 +362,7 @@ jobs:
 
   build-docker-images:
     name: Build & Push Docker Images
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: [enumerate-services, build-frontend]
     if: |
       always() &&

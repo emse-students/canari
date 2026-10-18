@@ -237,7 +237,7 @@ jobs:
       github.event.schedule == '0 2 * * *' ||
       (github.event_name == 'workflow_dispatch' &&
       contains(fromJSON('["all", "alerts"]'), inputs.job))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -285,7 +285,7 @@ jobs:
       github.event.schedule == '0 3 * * 0' ||
       (github.event_name == 'workflow_dispatch' &&
       contains(fromJSON('["all", "caches"]'), inputs.job))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       actions: write
     steps:
@@ -338,7 +338,7 @@ jobs:
       github.event.schedule == '0 3 * * 0' ||
       (github.event_name == 'workflow_dispatch' &&
       contains(fromJSON('["all", "ghcr-cleanup"]'), inputs.job))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       packages: write
     steps:
@@ -511,7 +511,7 @@ jobs:
       github.event.schedule == '0 9 * * *' ||
       (github.event_name == 'workflow_dispatch' &&
       contains(fromJSON('["all", "stores"]'), inputs.job))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read
@@ -575,7 +575,7 @@ jobs:
       github.event.schedule == '0 4 * * 1' ||
       (github.event_name == 'workflow_dispatch' &&
       contains(fromJSON('["all", "cargo-unreachable"]'), inputs.job))
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read

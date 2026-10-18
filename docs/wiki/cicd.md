@@ -891,6 +891,15 @@ ghcr.io/emse-students/canari/<service>:<tag>
 different commits. Production is deployed by the release's `v<version>`; dev by its moving `dev`
 (a rollback of dev is not a goal).
 
+## Hosted runners are pinned to `ubuntu-24.04`, never `ubuntu-latest` (2026-10-18)
+
+GitHub moves `ubuntu-latest` to Ubuntu 26 on 2026-10-19. Every hosted job now says `runs-on: ubuntu-24.04`,
+the image the runs used the day before (a `main` run's "Set up job" log reads `Ubuntu 24.04.5 LTS`), so the
+pin changes nothing today. Self-hosted labels are untouched. **Revisit on or after 2026-11-18**: move to
+`ubuntu-26.04` deliberately, as ONE pull request whose CI is the trial run, never as a side effect of a
+floating label. `tools/ecosystem-shape` does not assert the hosted label (only the self-hosted one), so
+no assertion needed adapting.
+
 ## Self-hosted runner
 
 **THE DEPLOY JOB RUNS ON THE MACHINE IT DEPLOYS, AND AFTER 2026-09-24 THAT IS NOT A PREFERENCE.**
