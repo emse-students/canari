@@ -810,7 +810,7 @@ export class MlsDeliveryApi {
     // three times - the pending-invitation sweep, the welcome-request answer and the group
     // reconcile each sent theirs. The entry lives as long as the request, so no answer is served
     // older than the request a caller joined (see {@link joinInFlight}).
-    return this.joinInFlight(`devices:${userId}`, async () => {
+    return this.joinInFlight(`${userId}:devices`, async () => {
       const res = await this.f(`${this.historyUrl}/api/mls/devices/${userId}`, {
         headers: await this.auth(),
       });
@@ -1758,7 +1758,7 @@ export class MlsDeliveryApi {
   async getUserGroups(userId: string): Promise<UserGroupRow[]> {
     // ONE REQUEST FOR SIMULTANEOUS ASKERS (WP-W4): the boot reads this list from the conversation
     // load, the sweep and the reconcile, three requests for one answer.
-    return this.joinInFlight(`user-groups:${userId}`, async () => {
+    return this.joinInFlight(`${userId}:user-groups`, async () => {
       const res = await this.f(`${this.historyUrl}/api/mls/users/${userId}/groups`, {
         headers: await this.auth(),
       });
