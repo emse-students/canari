@@ -28,6 +28,8 @@ export interface LiveSegmentStore {
   store(liveId: string, name: string, data: Buffer): Promise<void>;
   /** Deletes every segment of a live and re-lists. THROWS on a transport failure. */
   purge(liveId: string): Promise<LivePurgeResult>;
+  /** The live ids that have a `live/<id>/` folder in the store - the orphan reaper's listing. */
+  listLives(): Promise<string[]>;
 }
 
 const internalHeaders = () => ({ 'x-internal-secret': process.env.INTERNAL_SECRET ?? '' });
@@ -70,5 +72,22 @@ export class HttpLiveSegmentStore implements LiveSegmentStore {
       throw new Error('the media service answered the live purge without its three counts');
     }
     return body;
+  }
+
+  async listLives(): Promise<string[]> {
+    this.logger.debug('[LIVE] listing the live folders of the store');
+    const res = await firstValueFrom(
+      this.http.post<{ liveIds?: unknown }>(
+        mediaUrl('media/internal/live-list'),
+        {},
+        { headers: internalHeaders() }
+      )
+    );
+    const ids = res.data?.liveIds;
+    if (!Array.isArray(ids) || ids.some((id) => typeof id !== 'string')) {
+      // A listing that is not a list of ids reaps nothing: the caller acts only on what it names.
+      throw new Error('the media service answered the live listing without its liveIds');
+    }
+    return ids as string[];
   }
 }

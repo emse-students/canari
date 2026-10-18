@@ -787,6 +787,23 @@ export class MediaController {
     return this.liveSegments.purge(body.liveId);
   }
 
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/live-list - the live ids that have segments in the store
+  // ---------------------------------------------------------------------------
+  /**
+   * One id per `live/<liveId>/` folder. Sole consumer: social-service's orphan reaper, which purges
+   * a folder only when no live row is behind it (a store that outlived its timeout and landed after
+   * its live's purge). Runs whatever the switch says, as the purge does.
+   */
+  @Post('internal/live-list')
+  @HttpCode(200)
+  async listLives(
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ liveIds: string[] }> {
+    assertInternalSecret(internalSecret);
+    return { liveIds: await this.liveSegments.listLives() };
+  }
+
   /** A string array bounded like every internal batch, ids that are not strings dropped. */
   private boundedIds(value: unknown, field: string): string[] {
     if (!Array.isArray(value)) {
@@ -900,9 +917,17 @@ export class MediaController {
   /**
    * One sealed segment of a live, to a signed-in member, by the random name its manifest listed.
    * The bytes are ciphertext under the live's key; WHO may read the key and the names is decided by
-   * social-service (a removed viewer is refused both), and this route only proves an account. Not
-   * cached anywhere yet: serving these from Canari's nginx is WP-L4. Two segments, so it never
-   * collides with the catch-all `@Get(':id')` below.
+   * social-service (a removed viewer is refused both), and this route only proves an account.
+   *
+   * WHY NO PER-VIEWER CHECK HERE, deliberately (docs/wiki/services/lives.md, "Reading a segment"):
+   * a live is the whole network's (L2), so "a member" IS the audience and the JWT proves it. The one
+   * account a check here could still refuse - a viewer removed, or blocked, AFTER reading the key -
+   * can only ask for names it already learned from a manifest, i.e. segments it was allowed to
+   * fetch and decrypt then; a NEW name is learned only from the manifest, which social-service
+   * refuses it. Asking social-service on every segment fetch (one every few seconds per viewer)
+   * would buy nothing more and put a cross-service call on the hottest path, which WP-L4 moves to
+   * nginx's cache anyway. The tokens carry no audience claim to narrow them by (one HS256 token
+   * for every service). Two path segments, so it never collides with the catch-all `@Get(':id')`.
    */
   @Get('live/:liveId/:name')
   async downloadLiveSegment(

@@ -5,8 +5,11 @@ import {
   GoneException,
   Inject,
   Injectable,
+  HttpException,
+  HttpStatus,
   Logger,
   NotFoundException,
+  PayloadTooLargeException,
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
@@ -19,10 +22,17 @@ import { isUniqueViolation } from '../common/pg-errors';
 import { isBlockedBetween } from '../common/user-blocks';
 import { ModerationService } from '../moderation/moderation.service';
 import {
+  LIVE_BYTE_BUDGET,
+  LIVE_INGEST_MAX_CONCURRENT,
   LIVE_KEY_HEX_RE,
   LIVE_MANIFEST_WINDOW,
   LIVE_MAX_DURATION_MS,
   LIVE_RECONNECT_WINDOW_MS,
+  LIVE_RESERVATION_TTL_MS,
+  LIVE_SEGMENT_BURST,
+  LIVE_SEGMENT_MIN_DURATION_MS,
+  LIVE_START_WINDOW_MS,
+  LIVE_STARTS_PER_HOUR,
   type LiveEndReason,
 } from './live.constants';
 import { LIVE_SEGMENT_STORE, type LiveSegmentStore } from './live-segment-store';
@@ -79,6 +89,20 @@ export interface LiveEndResult {
 /** The outcome of deleting an ended live's segments and row. */
 export type LivePurgeOutcome = 'deleted' | 'kept';
 
+/** What one pass of the orphan reaper did ({@link LivesService.reapOrphans}). */
+export interface LiveOrphanReport {
+  /** `live/<id>/` folders with no live row behind them, emptied and proven empty. */
+  reaped: number;
+  /** Orphan folders the store refused to empty, left for the next run. */
+  kept: number;
+}
+
+/** What the reservation step decided: answer a repeat, report an end, or go on to the store. */
+type IngestStep =
+  | { kind: 'repeat'; result: LiveIngestResult }
+  | { kind: 'ended' }
+  | { kind: 'reserved'; name: string };
+
 /** The columns every access decision reads. */
 interface LiveRow {
   id: string;
@@ -106,14 +130,24 @@ const short = (id: string) => id.slice(0, 8);
  * docs/wiki/services/lives.md).
  *
  * EVERY WRITE TO A LIVE TAKES ITS ROW LOCK, so the three things that change a live - a segment, an
- * end, a removal - are serialised by PostgreSQL rather than reconciled afterwards: an ingest holds
- * `FOR UPDATE` from its checks until its segment is stored and counted, an end (here or in the
- * sweep) is an `UPDATE` that waits for it, and the purge only ever touches a live whose end has
- * committed. So no segment can be stored after its live's end, and none can outlive the purge.
+ * end, a removal - are serialised by PostgreSQL rather than reconciled afterwards. NO LOCK, AND NO
+ * POOLED CONNECTION, IS HELD ACROSS THE CALL TO MEDIA-SERVICE: an ingest RESERVES its index in one
+ * short committed transaction (`pendingName`), stores with no transaction open, and CONFIRMS in a
+ * second short one. The reservation is what orders the rest:
+ *
+ * - only one ingest of an index stores at a time (another is a 409 `LIVE_SEGMENT_IN_PROGRESS`);
+ * - an end commits at once, and the CONFIRM that follows it records nothing and answers 410;
+ * - the PURGE leaves a live alone while its reservation is set, and no reservation can be taken
+ *   once the end has committed, so the store it waits for is the last one that can ever land.
+ *
+ * So no segment is recorded after its live's end, and none is stored after its purge - except a
+ * write that outlives the store's own timeout, which the orphan reaper takes.
  */
 @Injectable()
 export class LivesService {
   private readonly logger = new Logger(LivesService.name);
+  /** Segment ingests running in this instance, bounded by {@link LIVE_INGEST_MAX_CONCURRENT}. */
+  private ingestsInFlight = 0;
 
   constructor(
     @InjectDataSource() private readonly db: DataSource,
@@ -159,12 +193,31 @@ export class LivesService {
     }
     let row: LiveRow;
     try {
-      const rows: LiveRow[] = await this.db.query(
-        `INSERT INTO lives ("broadcasterId", "associationId", "liveKey")
-         VALUES ($1, $2, $3) RETURNING ${LIVE_COLUMNS}`,
-        [broadcasterId, associationId, input.key]
-      );
-      row = rows[0];
+      row = await this.db.transaction(async (tx) => {
+        // The rolling hour of starts, from rows that outlive their live (`live_starts`). Two starts
+        // racing both read the same count, and the one-open-live index lets one of them through.
+        const [{ recent }]: { recent: number }[] = await tx.query(
+          `SELECT count(*)::int AS recent FROM live_starts
+            WHERE "broadcasterId" = $1 AND "startedAt" + $2 * interval '1 millisecond' > now()`,
+          [broadcasterId, LIVE_START_WINDOW_MS]
+        );
+        if (recent >= LIVE_STARTS_PER_HOUR) {
+          this.logger.warn(
+            `[LIVE] start refused: ${short(broadcasterId)} started ${recent} lives in the hour`
+          );
+          throw new HttpException(
+            { code: 'LIVE_START_RATE', limit: LIVE_STARTS_PER_HOUR },
+            HttpStatus.TOO_MANY_REQUESTS
+          );
+        }
+        const rows: LiveRow[] = await tx.query(
+          `INSERT INTO lives ("broadcasterId", "associationId", "liveKey")
+           VALUES ($1, $2, $3) RETURNING ${LIVE_COLUMNS}`,
+          [broadcasterId, associationId, input.key]
+        );
+        await tx.query(`INSERT INTO live_starts ("broadcasterId") VALUES ($1)`, [broadcasterId]);
+        return rows[0];
+      });
     } catch (e) {
       if (isUniqueViolation(e)) {
         this.logger.debug(`[LIVE] start refused: ${short(broadcasterId)} already has an open live`);
@@ -231,9 +284,13 @@ export class LivesService {
    * - `index < nextIndex`: a repeat. The same bytes answer as the first time did (a lost answer
    *   retried); different bytes are a 409, never a replacement.
    * - `index > nextIndex`: out of order, 409 - the manifest is a gapless sequence.
+   * - `nextIndex` reserved by an ingest still storing: 409 `LIVE_SEGMENT_IN_PROGRESS`.
+   * - past the live's rate (`LIVE_SEGMENT_BURST`): 429 `LIVE_SEGMENT_TOO_FAST`; past its byte budget:
+   *   413 `LIVE_BUDGET_EXHAUSTED`; {@link LIVE_INGEST_MAX_CONCURRENT} ingests already running here:
+   *   503 `LIVE_INGEST_BUSY`.
    *
-   * After `endedAt`, or once the hour is up (which this call then writes as the end), 410.
-   * The row lock is held while the store is written: see the class comment.
+   * After `endedAt`, or once the hour is up (which this call then writes as the end), 410. The
+   * three steps - reserve, store, confirm - are in the class comment.
    */
   async ingest(
     broadcasterId: string,
@@ -241,13 +298,90 @@ export class LivesService {
     index: number,
     data: Buffer
   ): Promise<LiveIngestResult> {
+    if (this.ingestsInFlight >= LIVE_INGEST_MAX_CONCURRENT) {
+      // A signal, not a path: it means media-service is slow enough for ingests to pile up.
+      this.logger.warn(
+        `[LIVE] segment ${index} of ${liveId} refused: ${this.ingestsInFlight} ingests already storing`
+      );
+      throw new ServiceUnavailableException({ code: 'LIVE_INGEST_BUSY' });
+    }
+    this.ingestsInFlight += 1;
+    try {
+      return await this.ingestOnce(broadcasterId, liveId, index, data);
+    } finally {
+      this.ingestsInFlight -= 1;
+    }
+  }
+
+  private async ingestOnce(
+    broadcasterId: string,
+    liveId: string,
+    index: number,
+    data: Buffer
+  ): Promise<LiveIngestResult> {
     const sha256 = createHash('sha256').update(data).digest('hex');
-    const outcome = await this.db.transaction(async (tx): Promise<LiveIngestResult | 'ended'> => {
-      const rows: (LiveRow & { overDuration: boolean })[] = await tx.query(
-        `SELECT ${LIVE_COLUMNS},
-                "startedAt" + $2 * interval '1 millisecond' <= now() AS "overDuration"
+    const step = await this.reserve(broadcasterId, liveId, index, data.length, sha256);
+    if (step.kind === 'repeat') return step.result;
+    if (step.kind === 'ended') throw new GoneException({ code: 'LIVE_ENDED' });
+
+    // NO TRANSACTION IS OPEN HERE: the reservation committed, and the store may take its time.
+    try {
+      await this.store.store(liveId, step.name, data);
+    } catch (e) {
+      this.logger.warn(
+        `[LIVE] segment ${index} of ${liveId} not stored, reservation released: ${causeOf(e)}`
+      );
+      await this.release(liveId, step.name);
+      throw new ServiceUnavailableException({ code: 'LIVE_STORE_UNAVAILABLE' });
+    }
+
+    const outcome = await this.confirm(liveId, index, step.name, data.length, sha256);
+    if (outcome === 'ended') {
+      // The live ended while this segment was storing: nothing was recorded, and this was the store
+      // its purge was waiting for - so the purge runs now rather than at the next sweep.
+      await this.purgeBestEffort(liveId, 'after an ingest that met the end');
+      throw new GoneException({ code: 'LIVE_ENDED' });
+    }
+    return outcome;
+  }
+
+  /**
+   * Step one of an ingest, ONE SHORT TRANSACTION: every check under the row lock, then the
+   * reservation of `nextIndex` (`pendingName`, `pendingSha256`, `pendingAt`), committed before the
+   * store is called. A reservation older than {@link LIVE_RESERVATION_TTL_MS} is one whose ingest
+   * cannot still be waiting on its store (a crash, a lost release): it is taken over, with a warn.
+   */
+  private async reserve(
+    broadcasterId: string,
+    liveId: string,
+    index: number,
+    bytes: number,
+    sha256: string
+  ): Promise<IngestStep> {
+    return this.db.transaction(async (tx): Promise<IngestStep> => {
+      const rows: (LiveRow & {
+        pendingName: string | null;
+        overDuration: boolean;
+        reservationLive: boolean | null;
+        allowance: number;
+        overBudget: boolean;
+      })[] = await tx.query(
+        `SELECT ${LIVE_COLUMNS}, "pendingName",
+                "startedAt" + $2 * interval '1 millisecond' <= now() AS "overDuration",
+                "pendingAt" + $3 * interval '1 millisecond' > now() AS "reservationLive",
+                ($4::int + floor(extract(epoch FROM now() - "startedAt") * 1000 / $5::int))::int
+                  AS "allowance",
+                "storedBytes" + $6::bigint > $7::bigint AS "overBudget"
            FROM lives WHERE id = $1 FOR UPDATE`,
-        [liveId, LIVE_MAX_DURATION_MS]
+        [
+          liveId,
+          LIVE_MAX_DURATION_MS,
+          LIVE_RESERVATION_TTL_MS,
+          LIVE_SEGMENT_BURST,
+          LIVE_SEGMENT_MIN_DURATION_MS,
+          bytes,
+          LIVE_BYTE_BUDGET,
+        ]
       );
       const row = rows[0];
       if (!row) throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
@@ -266,8 +400,8 @@ export class LivesService {
           [liveId]
         );
         this.logger.log(`[LIVE] ${liveId} ended: max_duration (reached at segment ${index})`);
-        // Returned, not thrown: the end must COMMIT, and it is the state the 410 below reports.
-        return 'ended';
+        // Returned, not thrown: the end must COMMIT, and it is the state the 410 reports.
+        return { kind: 'ended' };
       }
       if (index < row.nextIndex) {
         const prior: { name: string; sha256: string }[] = await tx.query(
@@ -276,7 +410,10 @@ export class LivesService {
         );
         if (prior[0]?.sha256 === sha256) {
           this.logger.debug(`[LIVE] segment ${index} of ${liveId} repeated, same bytes`);
-          return { index, name: prior[0].name, nextIndex: row.nextIndex };
+          return {
+            kind: 'repeat',
+            result: { index, name: prior[0].name, nextIndex: row.nextIndex },
+          };
         }
         this.logger.warn(`[LIVE] segment ${index} of ${liveId} repeated with DIFFERENT bytes`);
         throw new ConflictException({ code: 'LIVE_SEGMENT_CONFLICT', nextIndex: row.nextIndex });
@@ -290,34 +427,138 @@ export class LivesService {
           nextIndex: row.nextIndex,
         });
       }
-      const name = randomUUID();
-      try {
-        await this.store.store(liveId, name, data);
-      } catch (e) {
+      if (row.pendingName !== null) {
+        if (row.reservationLive) {
+          this.logger.debug(`[LIVE] segment ${index} of ${liveId} is already being stored`);
+          throw new ConflictException({
+            code: 'LIVE_SEGMENT_IN_PROGRESS',
+            nextIndex: row.nextIndex,
+          });
+        }
         this.logger.warn(
-          `[LIVE] segment ${index} of ${liveId} not stored, nothing recorded: ${causeOf(e)}`
+          `[LIVE] segment ${index} of ${liveId}: an abandoned reservation (${row.pendingName}) is taken over`
         );
-        throw new ServiceUnavailableException({ code: 'LIVE_STORE_UNAVAILABLE' });
+      }
+      if (index >= row.allowance) {
+        this.logger.warn(
+          `[LIVE] segment ${index} of ${liveId} refused: faster than the live's age allows (${row.allowance})`
+        );
+        throw new HttpException(
+          { code: 'LIVE_SEGMENT_TOO_FAST', nextIndex: row.nextIndex },
+          HttpStatus.TOO_MANY_REQUESTS
+        );
+      }
+      if (row.overBudget) {
+        this.logger.warn(
+          `[LIVE] segment ${index} of ${liveId} refused: the live's byte budget is spent`
+        );
+        throw new PayloadTooLargeException({
+          code: 'LIVE_BUDGET_EXHAUSTED',
+          budget: LIVE_BYTE_BUDGET,
+        });
+      }
+      const name = randomUUID();
+      await tx.query(
+        `UPDATE lives SET "pendingName" = $2, "pendingSha256" = $3, "pendingAt" = now()
+          WHERE id = $1`,
+        [liveId, name, sha256]
+      );
+      this.logger.debug(`[LIVE] segment ${index} of ${liveId} reserved as ${name}`);
+      return { kind: 'reserved', name };
+    });
+  }
+
+  /**
+   * Step three of an ingest, ONE SHORT TRANSACTION: under the row lock, record the segment and clear
+   * the reservation - unless the live ended meanwhile (the reservation is cleared, nothing recorded,
+   * `'ended'`) or the reservation is no longer this ingest's (taken over as abandoned: 409).
+   */
+  private async confirm(
+    liveId: string,
+    index: number,
+    name: string,
+    bytes: number,
+    sha256: string
+  ): Promise<LiveIngestResult | 'ended'> {
+    return this.db.transaction(async (tx): Promise<LiveIngestResult | 'ended'> => {
+      const rows: { endedAt: Date | null; pendingName: string | null; nextIndex: number }[] =
+        await tx.query(
+          `SELECT "endedAt", "pendingName", "nextIndex" FROM lives WHERE id = $1 FOR UPDATE`,
+          [liveId]
+        );
+      const row = rows[0];
+      if (!row) {
+        this.logger.warn(`[LIVE] segment ${index} of ${liveId} stored after its live was deleted`);
+        return 'ended';
+      }
+      if (row.endedAt) {
+        await tx.query(
+          `UPDATE lives SET "pendingName" = NULL, "pendingSha256" = NULL, "pendingAt" = NULL
+            WHERE id = $1 AND "pendingName" = $2`,
+          [liveId, name]
+        );
+        this.logger.debug(`[LIVE] segment ${index} of ${liveId} stored, but the live has ended`);
+        return 'ended';
+      }
+      if (row.pendingName !== name || row.nextIndex !== index) {
+        this.logger.warn(
+          `[LIVE] segment ${index} of ${liveId}: its reservation was taken over, nothing recorded`
+        );
+        throw new ConflictException({
+          code: 'LIVE_SEGMENT_RESERVATION_LOST',
+          nextIndex: row.nextIndex,
+        });
       }
       await tx.query(
         `INSERT INTO live_segments ("liveId", "index", name, bytes, sha256)
          VALUES ($1, $2, $3, $4, $5)`,
-        [liveId, index, name, data.length, sha256]
+        [liveId, index, name, bytes, sha256]
       );
       await tx.query(
-        `UPDATE lives SET "nextIndex" = "nextIndex" + 1, "lastSegmentAt" = now() WHERE id = $1`,
-        [liveId]
+        `UPDATE lives SET "nextIndex" = "nextIndex" + 1, "lastSegmentAt" = now(),
+                "storedBytes" = "storedBytes" + $2,
+                "pendingName" = NULL, "pendingSha256" = NULL, "pendingAt" = NULL
+          WHERE id = $1`,
+        [liveId, bytes]
       );
-      this.logger.debug(`[LIVE] segment ${index} of ${liveId} stored (${data.length} B)`);
+      this.logger.debug(`[LIVE] segment ${index} of ${liveId} stored (${bytes} B)`);
       return { index, name, nextIndex: index + 1 };
     });
-    if (outcome === 'ended') throw new GoneException({ code: 'LIVE_ENDED' });
-    return outcome;
   }
 
   /**
-   * Ends a live, by its broadcaster. Idempotent: an ended live answers its end again. The segments
-   * and the row are deleted at once (L3); a store that refuses leaves them to the sweep.
+   * Clears a reservation whose store failed, so the same index is accepted at once. Only THIS
+   * ingest's (`pendingName`). A failure here is logged and left to the reservation's age.
+   */
+  private async release(liveId: string, name: string): Promise<void> {
+    try {
+      await this.db.query(
+        `UPDATE lives SET "pendingName" = NULL, "pendingSha256" = NULL, "pendingAt" = NULL
+          WHERE id = $1 AND "pendingName" = $2`,
+        [liveId, name]
+      );
+    } catch (e) {
+      this.logger.warn(
+        `[LIVE] ${liveId}: reservation ${name} not released, it expires with its age: ${causeOf(e)}`
+      );
+    }
+  }
+
+  /** {@link purgeEnded}, logged rather than thrown - the sweep finishes what this does not. */
+  private async purgeBestEffort(liveId: string, when: string): Promise<void> {
+    try {
+      await this.purgeEnded(liveId);
+    } catch (e) {
+      this.logger.warn(`[LIVE] ${liveId}: purge ${when} failed, the sweep retries: ${causeOf(e)}`);
+    }
+  }
+
+  /**
+   * Ends a live, by its broadcaster. Idempotent WHILE THE ROW EXISTS: an ended live answers its end
+   * again. The segments and the row are deleted at once (L3) - a store that refuses, or a segment
+   * still storing, leaves them to the sweep - and once the row is gone a repeated end is a
+   * 404 `LIVE_NOT_FOUND`, which the broadcaster's client reads as "ended and deleted": nothing keeps a
+   * deleted live's end (no replay, L3), so there is nothing to answer it with.
    */
   async end(broadcasterId: string, liveId: string): Promise<LiveEndResult> {
     // An UPDATE ... RETURNING answers `[rows, affected]` through TypeORM's postgres driver.
@@ -344,11 +585,7 @@ export class LivesService {
     } else {
       this.logger.log(`[LIVE] ${liveId} ended by its broadcaster`);
     }
-    try {
-      await this.purgeEnded(liveId);
-    } catch (e) {
-      this.logger.warn(`[LIVE] ${liveId}: purge at end failed, the sweep retries: ${causeOf(e)}`);
-    }
+    await this.purgeBestEffort(liveId, 'at end');
     return ended;
   }
 
@@ -427,11 +664,31 @@ export class LivesService {
    *
    * THE ROW GOES ONLY ON A PROOF: the store re-lists the live's prefix after deleting, and the row
    * is deleted only when that listing is EMPTY and nothing failed. A refusal keeps the row - the only
-   * record that the prefix exists - for the next sweep. The `DELETE` names `"endedAt" IS NOT NULL`
-   * itself, so an open live cannot be reached by this path whatever id arrives. THROWS on a
-   * transport failure, which the callers log and leave to the next sweep.
+   * record that the prefix exists - for the next sweep.
+   *
+   * NOT WHILE A SEGMENT IS STORING: a live whose reservation is younger than
+   * {@link LIVE_RESERVATION_TTL_MS} is `'kept'` before the store is touched (its confirm purges it).
+   * No reservation can be taken after the end, so once this read finds none, no store of this live
+   * is in flight but one past its own timeout. An OPEN live is never touched (`'kept'`, with a warn),
+   * and an id with NO ROW is purged in the store alone - the orphan reaper's case.
+   * THROWS on a transport failure, which the callers log and leave to the next sweep.
    */
   async purgeEnded(liveId: string): Promise<LivePurgeOutcome> {
+    const rows: { ended: boolean; storeInFlight: boolean | null }[] = await this.db.query(
+      `SELECT "endedAt" IS NOT NULL AS ended,
+              "pendingAt" + $2 * interval '1 millisecond' > now() AS "storeInFlight"
+         FROM lives WHERE id = $1`,
+      [liveId, LIVE_RESERVATION_TTL_MS]
+    );
+    const row = rows[0];
+    if (row && !row.ended) {
+      this.logger.warn(`[LIVE_GC] ${liveId} is OPEN: the purge path refuses it`);
+      return 'kept';
+    }
+    if (row?.storeInFlight) {
+      this.logger.debug(`[LIVE_GC] ${liveId} kept: a segment is still storing`);
+      return 'kept';
+    }
     const result = await this.store.purge(liveId);
     if (result.failed > 0 || result.remaining > 0) {
       this.logger.warn(
@@ -439,9 +696,55 @@ export class LivesService {
       );
       return 'kept';
     }
-    await this.db.query(`DELETE FROM lives WHERE id = $1 AND "endedAt" IS NOT NULL`, [liveId]);
+    if (row) {
+      await this.db.query(`DELETE FROM lives WHERE id = $1 AND "endedAt" IS NOT NULL`, [liveId]);
+    }
     this.logger.debug(`[LIVE_GC] ${liveId} deleted (${result.deleted} segment object(s))`);
     return 'deleted';
+  }
+
+  /**
+   * THE ORPHAN REAPER: every `live/<id>/` folder the store holds with NO live row behind it is
+   * purged and proven empty. A ROW-STATE RULE, NOT A CLOCK: a folder is written only under a
+   * reservation, which needs the row, and a row is deleted only once its prefix proved empty with no
+   * reservation in flight - so a folder whose row is gone was written after its purge, by a store
+   * that outlived its own timeout. The listing is read BEFORE the rows, so a live started in between
+   * is never mistaken for one (its folder was not listed).
+   */
+  async reapOrphans(): Promise<LiveOrphanReport> {
+    const report: LiveOrphanReport = { reaped: 0, kept: 0 };
+    const listed = (await this.store.listLives()).filter((id) => UUID_RE.test(id));
+    if (listed.length === 0) return report;
+    const known: { id: string }[] = await this.db.query(
+      `SELECT id FROM lives WHERE id = ANY($1::uuid[])`,
+      [listed]
+    );
+    const rowed = new Set(known.map((r) => r.id.toLowerCase()));
+    for (const id of listed) {
+      if (rowed.has(id.toLowerCase())) continue;
+      this.logger.warn(`[LIVE_GC] ${id}: a segment folder with no live row - reaping it`);
+      try {
+        if ((await this.purgeEnded(id)) === 'deleted') {
+          report.reaped += 1;
+          continue;
+        }
+      } catch (e) {
+        this.logger.warn(`[LIVE_GC] orphan ${id} kept for the next run: ${causeOf(e)}`);
+      }
+      report.kept += 1;
+    }
+    return report;
+  }
+
+  /** Deletes the `live_starts` rows older than the window they are counted in. */
+  async pruneStarts(): Promise<number> {
+    const [, affected] = (await this.db.query(
+      `DELETE FROM live_starts WHERE "startedAt" + $1 * interval '1 millisecond' <= now()`,
+      [LIVE_START_WINDOW_MS]
+    )) as [unknown, number];
+    if (affected > 0)
+      this.logger.debug(`[LIVE_GC] ${affected} start(s) older than the hour deleted`);
+    return affected;
   }
 
   /**

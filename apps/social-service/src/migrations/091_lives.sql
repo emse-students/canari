@@ -11,13 +11,13 @@
 --
 -- A DELETED ACCOUNT (`LIVES_ERASURE_STATEMENTS` in src/internal/account-erasure.ts): its lives are
 -- ENDED (reason 'erased') and anonymised, so the sweep deletes them with their segments; a removed-
--- viewer row naming it is deleted.
+-- viewer row naming it is deleted, and so are its `live_starts` rows.
 --
 -- User ids are varchar(255): a user id is a 64-char hex digest, never a uuid (`user-id-column.spec.ts`).
 -- No foreign key to associations: a live names the association it speaks for only to say so, and an
 -- association deleted during a live leaves a live that still ends and is still deleted.
 --
--- Additive: three new tables, nothing existing changes. Idempotent for CD: IF NOT EXISTS, or a
+-- Additive: four new tables, nothing existing changes. Idempotent for CD: IF NOT EXISTS, or a
 -- catalogue check scoped to the current schema. 091: 089 and 090 are the highest on main.
 
 CREATE TABLE IF NOT EXISTS lives (
@@ -29,7 +29,15 @@ CREATE TABLE IF NOT EXISTS lives (
   "lastSegmentAt" timestamptz NULL,
   "nextIndex" integer NOT NULL DEFAULT 0,
   "endedAt" timestamptz NULL,
-  "endReason" varchar(16) NULL
+  "endReason" varchar(16) NULL,
+  -- The sum of the stored segments' sizes: the per-live byte budget reads it (LIVE_BYTE_BUDGET).
+  "storedBytes" bigint NOT NULL DEFAULT 0,
+  -- THE RESERVATION of index "nextIndex" by an ingest whose store is in flight (all three or none):
+  -- written in a committed step BEFORE the store, so no connection is held across it, and cleared
+  -- when the segment is counted or its store failed. The purge waits for it (lives.md).
+  "pendingName" uuid NULL,
+  "pendingSha256" character(64) NULL,
+  "pendingAt" timestamptz NULL
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS lives_one_open_per_broadcaster
@@ -45,6 +53,16 @@ CREATE TABLE IF NOT EXISTS live_segments (
   "createdAt" timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT live_segments_pkey PRIMARY KEY ("liveId", "index")
 );
+
+-- The starts of the last hour, per account (LIVE_STARTS_PER_HOUR): a live's own row is deleted at
+-- its end, so the count needs rows that outlive it. The sweep deletes them after the hour; an account
+-- erasure deletes the account's.
+CREATE TABLE IF NOT EXISTS live_starts (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  "broadcasterId" varchar(255) NOT NULL,
+  "startedAt" timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS live_starts_broadcaster_idx ON live_starts ("broadcasterId", "startedAt");
 
 CREATE TABLE IF NOT EXISTS live_removed_viewers (
   "liveId" uuid NOT NULL,
@@ -68,6 +86,13 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'lives_next_index' AND connamespace = ns) THEN
     ALTER TABLE lives ADD CONSTRAINT lives_next_index CHECK ("nextIndex" >= 0);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'lives_stored_bytes' AND connamespace = ns) THEN
+    ALTER TABLE lives ADD CONSTRAINT lives_stored_bytes CHECK ("storedBytes" >= 0);
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'lives_pending_whole' AND connamespace = ns) THEN
+    ALTER TABLE lives ADD CONSTRAINT lives_pending_whole
+      CHECK (("pendingName" IS NULL) = ("pendingSha256" IS NULL) AND ("pendingName" IS NULL) = ("pendingAt" IS NULL));
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'live_segments_index' AND connamespace = ns) THEN
     ALTER TABLE live_segments ADD CONSTRAINT live_segments_index CHECK ("index" >= 0);

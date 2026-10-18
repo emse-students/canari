@@ -98,7 +98,7 @@ export class LivesController {
     return this.lives.ingest(callerOf(userId), id, at, data);
   }
 
-  /** Ends the live, by its broadcaster; idempotent. Its segments and row are deleted at once. */
+  /** Ends the live, by its broadcaster: idempotent while the row exists, 404 once it is deleted. */
   @Post(':id/end')
   @HttpCode(200)
   end(@Param('id', ParseUUIDPipe) id: string, @Headers('x-user-id') userId: string) {

@@ -11,8 +11,10 @@ export interface LiveSweepReport {
   ended: number;
   /** Ended lives whose segments and row were deleted. */
   deleted: number;
-  /** Ended lives kept for the next run: the store refused, or still listed something. */
+  /** Ended lives kept for the next run: the store refused, still listed something, or a segment is storing. */
   kept: number;
+  /** Segment folders with no live row behind them, emptied by the orphan reaper. */
+  orphans: number;
 }
 
 /**
@@ -22,6 +24,9 @@ export interface LiveSweepReport {
  *    is up - writing the end as the row's durable state (`LivesService.endDue`).
  * 2. DELETES every ended live: its segments from the store, then its row, the row only once the
  *    store proves the live's prefix empty (`LivesService.purgeEnded`).
+ * 3. REAPS every segment folder with no live row behind it - a store that outlived its own timeout
+ *    and landed after its live's purge (`LivesService.reapOrphans`, a row-state rule, no clock) -
+ *    and deletes the `live_starts` rows older than the hour they are counted in.
  *
  * THE STATE IS THE ROW: a live with `endedAt` and a row is due, a deleted row is done - no "last
  * run", no marker. Idempotent: a crash between the store and the row leaves an ended row whose
@@ -62,7 +67,7 @@ export class LiveRetentionScheduler {
 
   /** The whole run, separated so a test can call it without a scheduler. */
   async sweepOnce(): Promise<LiveSweepReport> {
-    const report: LiveSweepReport = { ended: 0, deleted: 0, kept: 0 };
+    const report: LiveSweepReport = { ended: 0, deleted: 0, kept: 0, orphans: 0 };
     report.ended = (await this.lives.endDue()).length;
 
     const kept: string[] = [];
@@ -88,9 +93,18 @@ export class LiveRetentionScheduler {
       }
     }
 
-    if (report.ended + report.deleted + report.kept > 0) {
+    // After the purges, so a live this run deleted is not met again as an orphan. Its own `try`: a
+    // store that cannot list must not cost the report of what the purges did.
+    try {
+      report.orphans = (await this.lives.reapOrphans()).reaped;
+    } catch (e) {
+      this.logger.warn(`[LIVE_GC] orphan reaper skipped this run: ${String(e)}`);
+    }
+    await this.lives.pruneStarts();
+
+    if (report.ended + report.deleted + report.kept + report.orphans > 0) {
       this.logger.log(
-        `[LIVE_GC] ended=${report.ended} deleted=${report.deleted} kept=${report.kept}`
+        `[LIVE_GC] ended=${report.ended} deleted=${report.deleted} kept=${report.kept} orphans=${report.orphans}`
       );
     }
     return report;

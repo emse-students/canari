@@ -194,4 +194,20 @@ export class StorageService implements OnModuleInit {
       stream.on('error', reject);
     });
   }
+
+  /**
+   * The "folders" one level under `prefix` (`live/` -> `live/<liveId>/`, ...), listed with a
+   * delimiter so the store answers one entry per folder rather than every object inside them.
+   */
+  async listPrefixes(prefix: string): Promise<string[]> {
+    return new Promise((resolve, reject) => {
+      const prefixes: string[] = [];
+      const stream = this.client.listObjectsV2(this.bucket, prefix, false);
+      stream.on('data', (obj) => {
+        if (obj.prefix) prefixes.push(obj.prefix);
+      });
+      stream.on('end', () => resolve(prefixes));
+      stream.on('error', reject);
+    });
+  }
 }

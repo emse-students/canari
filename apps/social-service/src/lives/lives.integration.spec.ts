@@ -2,8 +2,9 @@
  * LIVES AGAINST A REAL POSTGRESQL - migration 091, `LivesService`, the live sweep and the lives part
  * of the account erasure (WP-L2, WP-L3; docs/wiki/services/lives.md).
  *
- * What a mocked repository cannot judge is exactly what this module rests on: the row lock that
- * orders a segment and an end, the partial unique index (one open live per broadcaster), the CHECK
+ * What a mocked repository cannot judge is exactly what this module rests on: the row lock and the
+ * committed reservation that order a segment and an end without holding a pooled connection across
+ * the store, the partial unique index (one open live per broadcaster), the CHECK
  * tying an end to its reason, the cascade from a live to its segments and removed viewers, and the
  * sweep's predicates read against the DATABASE clock. So the service runs here on a real connection,
  * with the media store replaced by an in-memory one that keeps the media service's vocabulary.
@@ -28,6 +29,12 @@ import { LIVE_ENTITIES } from './lives.module';
 import { LivesService } from './lives.service';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
 import type { LivePurgeResult, LiveSegmentStore } from './live-segment-store';
+import {
+  LIVE_BYTE_BUDGET,
+  LIVE_INGEST_MAX_CONCURRENT,
+  LIVE_SEGMENT_BURST,
+  LIVE_STARTS_PER_HOUR,
+} from './live.constants';
 import type { AssociationsService } from '../associations/associations.service';
 import type { ModerationService } from '../moderation/moderation.service';
 import {
@@ -49,8 +56,9 @@ const ASSO = '11111111-1111-4111-8111-111111111111';
 
 /**
  * The media store, in memory, answering as `POST media/internal/live-purge` does: the deletes, the
- * failures, and a RE-LISTING after them. `failStore` / `failPurge` make it refuse; `holdStore`
- * suspends one store until released, which is how a test holds an ingest inside its row lock.
+ * failures, and a RE-LISTING after them. `failStore` / `failPurge` make it refuse; `holdNextStore`
+ * suspends the next store until released, `holdStores` every store - which is how a test stalls a
+ * slow media-service while an ingest is between its reservation and its confirm.
  */
 class MemoryStore implements LiveSegmentStore {
   readonly objects = new Map<string, Buffer>();
@@ -60,6 +68,7 @@ class MemoryStore implements LiveSegmentStore {
   /** The purge ANSWERS, but with a store that refused some deletes (the media service's `failed`). */
   refuseDeletes = false;
   private hold: { entered: () => void; release: Promise<void> } | null = null;
+  private gate: { entered: number; release: Promise<void> } | null = null;
 
   /** The next store waits for `release`; resolves `entered` once it is inside. */
   holdNextStore(): { entered: Promise<void>; release: () => void } {
@@ -71,12 +80,31 @@ class MemoryStore implements LiveSegmentStore {
     return { entered: enteredP, release };
   }
 
+  /** EVERY store waits until `release`; `entered()` counts the ones waiting. */
+  holdStores(): { entered: () => number; release: () => void } {
+    let release!: () => void;
+    const gate = { entered: 0, release: new Promise<void>((r) => (release = r)) };
+    this.gate = gate;
+    return {
+      entered: () => gate.entered,
+      release: () => {
+        this.gate = null;
+        release();
+      },
+    };
+  }
+
   async store(liveId: string, name: string, data: Buffer): Promise<void> {
     const hold = this.hold;
     if (hold) {
       this.hold = null;
       hold.entered();
       await hold.release;
+    }
+    const gate = this.gate;
+    if (gate) {
+      gate.entered += 1;
+      await gate.release;
     }
     if (this.failStore) throw Object.assign(new Error('store down'), { code: 'ECONNREFUSED' });
     this.objects.set(`live/${liveId}/${name}`, data);
@@ -89,6 +117,10 @@ class MemoryStore implements LiveSegmentStore {
     if (this.refuseDeletes) return { deleted: 0, failed: keys.length, remaining: keys.length };
     for (const k of keys) this.objects.delete(k);
     return { deleted: keys.length, failed: 0, remaining: 0 };
+  }
+
+  async listLives(): Promise<string[]> {
+    return [...new Set([...this.objects.keys()].map((k) => k.split('/')[1]))];
   }
 
   countFor(liveId: string): number {
@@ -140,6 +172,7 @@ maybe('lives against PostgreSQL (migration 091)', () => {
 
   beforeEach(async () => {
     await q(`DELETE FROM lives`);
+    await q(`DELETE FROM live_starts`);
     await q(`DELETE FROM user_blocks`);
     muted.clear();
     mayActAs.clear();
@@ -342,28 +375,249 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       expect((await refusal(lives.manifest(BOB, live.id))).status).toBe(HttpStatus.NOT_FOUND);
     });
 
-    it('orders an end AFTER an ingest that holds the row: the segment stored inside is purged with it', async () => {
+    it('orders an end against an ingest still storing: nothing recorded after it, nothing outlives the purge', async () => {
       const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
       const hold = store.holdNextStore();
-      const ingest = lives.ingest(ALICE, live.id, 0, segment(0));
+      const ingest = lives.ingest(ALICE, live.id, 1, segment(1));
       await hold.entered;
-      const end = lives.end(ALICE, live.id);
-      // The proof the end is WAITING on the ingest's row lock, read from the server.
-      for (let i = 0; ; i++) {
-        const waiting = await admin.query(
-          `SELECT 1 FROM pg_stat_activity
-            WHERE wait_event_type = 'Lock' AND query LIKE 'UPDATE lives SET "endedAt"%'`
-        );
-        if (waiting.rows.length > 0) break;
-        if (i > 200) throw new Error('the end never waited on the ingest');
-        await new Promise((r) => setTimeout(r, 10));
-      }
+      // The end does not wait on the store: no lock is held across it. Its purge is KEPT, because a
+      // segment is still storing - the store it would otherwise race.
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ endReason: 'broadcaster' });
+      expect(
+        await q(`SELECT "pendingName" IS NOT NULL AS p FROM lives WHERE id = $1`, [live.id])
+      ).toEqual([{ p: true }]);
+      expect(store.countFor(live.id)).toBe(1);
+
       hold.release();
-      await expect(ingest).resolves.toMatchObject({ index: 0 });
-      await expect(end).resolves.toMatchObject({ endReason: 'broadcaster' });
-      // The segment stored under the lock did not outlive the purge that followed the end.
+      expect(await refusal(ingest)).toEqual({ status: HttpStatus.GONE, code: 'LIVE_ENDED' });
+      // The confirm recorded nothing after the end, and purged the live itself.
       expect(store.countFor(live.id)).toBe(0);
       expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+      expect(await q(`SELECT 1 FROM live_segments WHERE "liveId" = $1`, [live.id])).toEqual([]);
+    });
+  });
+
+  describe('the reservation: no pooled connection held across the store (P2-1)', () => {
+    it('A STALLED STORE DOES NOT BLOCK AN UNRELATED QUERY on the same pool, even a pool of ONE', async () => {
+      const one = new DataSource({
+        type: 'postgres',
+        url: URL,
+        entities: LIVE_ENTITIES,
+        synchronize: false,
+        extra: { options: `-c search_path=${schema}`, max: 1 },
+      });
+      await one.initialize();
+      try {
+        const onOne = new LivesService(
+          one,
+          store,
+          { mayAct: async () => false } as unknown as AssociationsService,
+          { isUserMuted: async () => false } as unknown as ModerationService
+        );
+        const live = await onOne.start(ALICE, { key: KEY });
+        const hold = store.holdNextStore();
+        const ingest = onOne.ingest(ALICE, live.id, 0, segment(0));
+        await hold.entered;
+        // The ONE connection is free while media-service is stalled: another route's query runs.
+        await expect(one.query(`SELECT 1 AS ok`)).resolves.toEqual([{ ok: 1 }]);
+        await expect(onOne.manifest(BOB, live.id)).resolves.toMatchObject({ nextIndex: 0 });
+        hold.release();
+        await expect(ingest).resolves.toMatchObject({ index: 0, nextIndex: 1 });
+      } finally {
+        await one.destroy();
+      }
+    });
+
+    it('releases the index when the store fails: nothing pending, the same index accepted at once', async () => {
+      const live = await start();
+      store.failStore = true;
+      expect((await refusal(lives.ingest(ALICE, live.id, 0, segment(0)))).code).toBe(
+        'LIVE_STORE_UNAVAILABLE'
+      );
+      expect(
+        await q(`SELECT "pendingName", "pendingAt", "nextIndex" FROM lives WHERE id = $1`, [
+          live.id,
+        ])
+      ).toEqual([{ pendingName: null, pendingAt: null, nextIndex: 0 }]);
+      store.failStore = false;
+      await expect(lives.ingest(ALICE, live.id, 0, segment(0))).resolves.toMatchObject({
+        nextIndex: 1,
+      });
+    });
+
+    it('refuses a second ingest of an index still storing, and takes over an ABANDONED reservation', async () => {
+      const live = await start();
+      const hold = store.holdNextStore();
+      const first = lives.ingest(ALICE, live.id, 0, segment(0));
+      await hold.entered;
+      expect(await refusal(lives.ingest(ALICE, live.id, 0, segment(0)))).toEqual({
+        status: HttpStatus.CONFLICT,
+        code: 'LIVE_SEGMENT_IN_PROGRESS',
+      });
+      hold.release();
+      await expect(first).resolves.toMatchObject({ nextIndex: 1 });
+
+      // A reservation whose ingest died: older than the store's timeout, moved back by SQL.
+      await q(
+        `UPDATE lives SET "pendingName" = gen_random_uuid(), "pendingSha256" = repeat('0', 64),
+                          "pendingAt" = now() - interval '10 minutes' WHERE id = $1`,
+        [live.id]
+      );
+      await expect(lives.ingest(ALICE, live.id, 1, segment(1))).resolves.toMatchObject({
+        nextIndex: 2,
+      });
+    });
+
+    it('a purge waits for a live reservation, and ignores an abandoned one', async () => {
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await q(
+        `UPDATE lives SET "endedAt" = now(), "endReason" = 'dropped', "pendingName" = gen_random_uuid(),
+                          "pendingSha256" = repeat('0', 64), "pendingAt" = now() WHERE id = $1`,
+        [live.id]
+      );
+      await expect(lives.purgeEnded(live.id)).resolves.toBe('kept');
+      expect(store.countFor(live.id)).toBe(1);
+      await q(`UPDATE lives SET "pendingAt" = now() - interval '10 minutes' WHERE id = $1`, [
+        live.id,
+      ]);
+      await expect(lives.purgeEnded(live.id)).resolves.toBe('deleted');
+      expect(store.countFor(live.id)).toBe(0);
+    });
+
+    it('never touches an OPEN live through the purge path: its segments stay', async () => {
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await expect(lives.purgeEnded(live.id)).resolves.toBe('kept');
+      expect(store.countFor(live.id)).toBe(1);
+    });
+
+    it(`refuses an ingest beyond ${LIVE_INGEST_MAX_CONCURRENT} storing at once: 503 LIVE_INGEST_BUSY`, async () => {
+      const broadcasters = Array.from({ length: LIVE_INGEST_MAX_CONCURRENT + 1 }, (_, i) =>
+        String(i + 1)
+          .repeat(64)
+          .slice(0, 64)
+      );
+      const ids: string[] = [];
+      for (const b of broadcasters) ids.push((await lives.start(b, { key: KEY })).id);
+      const gate = store.holdStores();
+      const running = broadcasters
+        .slice(0, LIVE_INGEST_MAX_CONCURRENT)
+        .map((b, i) => lives.ingest(b, ids[i], 0, segment(0)));
+      for (let i = 0; gate.entered() < LIVE_INGEST_MAX_CONCURRENT; i++) {
+        if (i > 500) throw new Error('the ingests never reached the store');
+        await new Promise((r) => setTimeout(r, 5));
+      }
+      expect(
+        await refusal(
+          lives.ingest(
+            broadcasters[LIVE_INGEST_MAX_CONCURRENT],
+            ids[LIVE_INGEST_MAX_CONCURRENT],
+            0,
+            segment(0)
+          )
+        )
+      ).toEqual({ status: HttpStatus.SERVICE_UNAVAILABLE, code: 'LIVE_INGEST_BUSY' });
+      gate.release();
+      await Promise.all(running);
+      await expect(
+        lives.ingest(
+          broadcasters[LIVE_INGEST_MAX_CONCURRENT],
+          ids[LIVE_INGEST_MAX_CONCURRENT],
+          0,
+          segment(0)
+        )
+      ).resolves.toMatchObject({ nextIndex: 1 });
+    });
+  });
+
+  describe('what one broadcaster may store (P2-2)', () => {
+    it('refuses a segment that would cross the byte budget: 413, nothing recorded', async () => {
+      const live = await start();
+      await q(`UPDATE lives SET "storedBytes" = $2 WHERE id = $1`, [
+        live.id,
+        LIVE_BYTE_BUDGET - segment(0).length + 1,
+      ]);
+      expect(await refusal(lives.ingest(ALICE, live.id, 0, segment(0)))).toEqual({
+        status: HttpStatus.PAYLOAD_TOO_LARGE,
+        code: 'LIVE_BUDGET_EXHAUSTED',
+      });
+      await q(`UPDATE lives SET "storedBytes" = $2 WHERE id = $1`, [
+        live.id,
+        LIVE_BYTE_BUDGET - segment(0).length,
+      ]);
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      expect(await q(`SELECT "storedBytes" FROM lives WHERE id = $1`, [live.id])).toEqual([
+        { storedBytes: String(LIVE_BYTE_BUDGET) },
+      ]);
+    });
+
+    it("counts the segments against the live's age: past the burst, 429 until the live is older", async () => {
+      const live = await start();
+      // The live's age is read from the database clock; a start moved AHEAD of now() by SQL takes
+      // ten segments off the allowance, whatever this test's own timing.
+      await q(`UPDATE lives SET "startedAt" = now() + interval '10 seconds' WHERE id = $1`, [
+        live.id,
+      ]);
+      const allowed = LIVE_SEGMENT_BURST - 10;
+      for (let i = 0; i < allowed; i++) await lives.ingest(ALICE, live.id, i, segment(i));
+      expect(await refusal(lives.ingest(ALICE, live.id, allowed, segment(allowed)))).toEqual({
+        status: HttpStatus.TOO_MANY_REQUESTS,
+        code: 'LIVE_SEGMENT_TOO_FAST',
+      });
+      // A live 30 s old may hold burst + 30 segments.
+      await q(`UPDATE lives SET "startedAt" = now() - interval '30 seconds' WHERE id = $1`, [
+        live.id,
+      ]);
+      await expect(lives.ingest(ALICE, live.id, allowed, segment(allowed))).resolves.toMatchObject({
+        nextIndex: allowed + 1,
+      });
+    });
+
+    it(`refuses a ${LIVE_STARTS_PER_HOUR + 1}th start in the hour, and forgets a start after it`, async () => {
+      for (let i = 0; i < LIVE_STARTS_PER_HOUR; i++) {
+        const live = await start(CAROL);
+        await lives.end(CAROL, live.id);
+      }
+      expect(await refusal(start(CAROL))).toEqual({
+        status: HttpStatus.TOO_MANY_REQUESTS,
+        code: 'LIVE_START_RATE',
+      });
+      // Another account is not counted with it.
+      await expect(start(BOB)).resolves.toBeDefined();
+      await q(`UPDATE live_starts SET "startedAt" = now() - interval '61 minutes'`);
+      await sweeper.sweepOnce();
+      expect(await q(`SELECT 1 FROM live_starts WHERE "broadcasterId" = $1`, [CAROL])).toEqual([]);
+      await expect(start(CAROL)).resolves.toBeDefined();
+    });
+  });
+
+  describe('the orphan reaper', () => {
+    it('empties a segment folder with NO live row behind it, and leaves every live with a row alone', async () => {
+      const kept = await start(ALICE);
+      await lives.ingest(ALICE, kept.id, 0, segment(0));
+      const orphan = '99999999-9999-4999-8999-999999999999';
+      // A store that outlived its timeout and landed after its live's purge: a folder, no row.
+      store.objects.set(
+        `live/${orphan}/${'0'.repeat(8)}-0000-4000-8000-${'0'.repeat(12)}`,
+        segment(9)
+      );
+      const report = await sweeper.sweepOnce();
+      expect(report.orphans).toBe(1);
+      expect(store.countFor(orphan)).toBe(0);
+      expect(store.countFor(kept.id)).toBe(1);
+      // Nothing left to reap.
+      expect((await sweeper.sweepOnce()).orphans).toBe(0);
+    });
+
+    it('answers a repeated end after the purge with 404, as the contract says', async () => {
+      const live = await start();
+      await lives.end(ALICE, live.id);
+      expect(await refusal(lives.end(ALICE, live.id))).toEqual({
+        status: HttpStatus.NOT_FOUND,
+        code: 'LIVE_NOT_FOUND',
+      });
     });
   });
 
@@ -379,7 +633,7 @@ maybe('lives against PostgreSQL (migration 091)', () => {
         [silent.id]
       );
       const report = await sweeper.sweepOnce();
-      expect(report).toEqual({ ended: 1, deleted: 1, kept: 0 });
+      expect(report).toEqual({ ended: 1, deleted: 1, kept: 0, orphans: 0 });
       expect(store.countFor(silent.id)).toBe(0);
       await expect(lives.get(CAROL, talking.id)).resolves.toBeDefined();
       expect(store.countFor(talking.id)).toBe(1);
@@ -390,7 +644,7 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       await q(`UPDATE lives SET "startedAt" = now() - interval '2 minutes' WHERE id = $1`, [
         live.id,
       ]);
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 1, deleted: 1, kept: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({ ended: 1, deleted: 1, kept: 0, orphans: 0 });
     });
 
     it('ends a live past its hour, from the sweep or from the ingest that finds it', async () => {
@@ -421,17 +675,17 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       await lives.removeViewer(ALICE, live.id, BOB);
       store.failPurge = true;
       await lives.end(ALICE, live.id);
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 0, kept: 1 });
+      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 0, kept: 1, orphans: 0 });
       expect(store.countFor(live.id)).toBe(1);
 
       store.failPurge = false;
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 1, kept: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 1, kept: 0, orphans: 0 });
       expect(store.objects.size).toBe(0);
       for (const table of ['lives', 'live_segments', 'live_removed_viewers']) {
         expect(await q(`SELECT 1 FROM ${table}`)).toEqual([]);
       }
       // And a second run finds nothing to do.
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 0, kept: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 0, kept: 0, orphans: 0 });
     });
 
     it('keeps the row while the store still lists a segment, even when the call itself answered', async () => {
@@ -439,12 +693,12 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       await lives.ingest(ALICE, live.id, 0, segment(0));
       store.refuseDeletes = true;
       await lives.end(ALICE, live.id);
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 0, kept: 1 });
+      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 0, kept: 1, orphans: 0 });
       expect(await q(`SELECT "endReason" FROM lives WHERE id = $1`, [live.id])).toEqual([
         { endReason: 'broadcaster' },
       ]);
       store.refuseDeletes = false;
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 1, kept: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 1, kept: 0, orphans: 0 });
     });
 
     it('never ends an open live through the purge path, whatever id reaches it', async () => {
@@ -485,7 +739,7 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       );
       // Idempotent: a second run changes nothing.
       await erase(ALICE);
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 1, kept: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 1, kept: 0, orphans: 0 });
       expect(store.countFor(own.id)).toBe(0);
       await expect(lives.get(BOB, other.id)).resolves.toBeDefined();
     });

@@ -34,6 +34,13 @@ function bucket() {
       [...objects.entries()]
         .filter(([id]) => id.startsWith(prefix))
         .map(([id, data]) => ({ id, size: data.length, lastModifiedMs: null })),
+    listPrefixes: async (prefix: string): Promise<string[]> => [
+      ...new Set(
+        [...objects.keys()]
+          .filter((id) => id.startsWith(prefix))
+          .map((id) => prefix + id.slice(prefix.length).split('/')[0] + '/')
+      ),
+    ],
   };
   return {
     objects,
@@ -95,6 +102,16 @@ describe('LiveSegmentsService', () => {
     await svc.store(LIVE, SEG_B, Buffer.from('b'));
     undeletable.add(`live/${LIVE}/${SEG_B}`);
     await expect(svc.purge(LIVE)).resolves.toEqual({ deleted: 1, failed: 1, remaining: 1 });
+  });
+
+  it('lists one id per live folder, and leaves a folder that is not a live alone', async () => {
+    const { svc, objects } = bucket();
+    await svc.store(LIVE, SEG_A, Buffer.from('a'));
+    await svc.store(LIVE, SEG_B, Buffer.from('b'));
+    await svc.store(OTHER, SEG_A, Buffer.from('c'));
+    objects.set('live/not-a-uuid/x', Buffer.from('?'));
+    objects.set(SEG_A, Buffer.from('a chat blob'));
+    expect((await svc.listLives()).sort()).toEqual([LIVE, OTHER].sort());
   });
 });
 
@@ -162,5 +179,14 @@ describe('the live routes of MediaController', () => {
       failed: 0,
       remaining: 0,
     });
+  });
+
+  it('lists the live folders for the internal secret only, whatever the switch says', async () => {
+    process.env.LIVE_ENABLED = 'false';
+    process.env.INTERNAL_SECRET = 's3cret';
+    const { controller, svc } = rig();
+    await svc.store(LIVE, SEG_A, Buffer.from('a'));
+    expect(await statusOf(() => controller.listLives('wrong'))).toBe(HttpStatus.FORBIDDEN);
+    await expect(controller.listLives('s3cret')).resolves.toEqual({ liveIds: [LIVE] });
   });
 });

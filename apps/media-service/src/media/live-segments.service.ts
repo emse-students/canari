@@ -82,6 +82,22 @@ export class LiveSegmentsService {
   }
 
   /**
+   * The live ids that have a folder under `live/` - what social-service's orphan reaper compares
+   * with its rows. One entry per folder (a delimiter listing), never one per segment; a folder whose
+   * name is not a uuid is skipped with a warn, since nothing here writes one.
+   */
+  async listLives(): Promise<string[]> {
+    const ids: string[] = [];
+    for (const folder of await this.storage.listPrefixes(LIVE_PREFIX)) {
+      const id = folder.slice(LIVE_PREFIX.length).replace(/\/$/, '');
+      if (UUID_RE.test(id)) ids.push(id.toLowerCase());
+      else this.logger.warn(`[LIVE_GC] ${folder} is not a live folder - left alone`);
+    }
+    this.logger.debug(`[LIVE_GC] ${ids.length} live folder(s) in the store`);
+    return ids;
+  }
+
+  /**
    * Deletes every object under one live's prefix, then LISTS IT AGAIN and says how many remain.
    * A delete the store refuses is counted and logged, never thrown, so the caller always receives
    * the re-listing; social-service deletes its live row only on `failed === 0 && remaining === 0`.

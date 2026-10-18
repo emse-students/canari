@@ -6,13 +6,15 @@ import { ModerationModule } from '../moderation/moderation.module';
 import { Live } from './entities/live.entity';
 import { LiveSegment } from './entities/live-segment.entity';
 import { LiveRemovedViewer } from './entities/live-removed-viewer.entity';
+import { LiveStart } from './entities/live-start.entity';
+import { LIVE_STORE_TIMEOUT_MS } from './live.constants';
 import { HttpLiveSegmentStore, LIVE_SEGMENT_STORE } from './live-segment-store';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
 import { LivesController } from './lives.controller';
 import { LivesService } from './lives.service';
 
 /** Every table of the module (migration 091), parent first. */
-export const LIVE_ENTITIES = [Live, LiveSegment, LiveRemovedViewer];
+export const LIVE_ENTITIES = [Live, LiveSegment, LiveRemovedViewer, LiveStart];
 
 /**
  * Lives (docs/wiki/services/lives.md): the row, its key and removed viewers (WP-L2), the segment
@@ -21,11 +23,10 @@ export const LIVE_ENTITIES = [Live, LiveSegment, LiveRemovedViewer];
 @Module({
   imports: [
     TypeOrmModule.forFeature(LIVE_ENTITIES),
-    // The ingest holds its live's row until the store answers, which is what keeps a segment from
-    // landing after its live's purge (LivesService). The 30 s bound is what a hung media service may
-    // cost that row; the one write it cannot order is a store still running past it, named on
-    // docs/wiki/services/lives.md ("What is not proven").
-    HttpModule.register({ timeout: 30_000, maxRedirects: 0 }),
+    // The ingest RESERVES its index in a committed step and holds no database connection while it
+    // waits here (LivesService.ingest), so this bound costs a broadcaster a slow answer, never the
+    // pool. A Garage write still running past it is the orphan the live sweep's reaper takes.
+    HttpModule.register({ timeout: LIVE_STORE_TIMEOUT_MS, maxRedirects: 0 }),
     AssociationsModule,
     ModerationModule,
   ],

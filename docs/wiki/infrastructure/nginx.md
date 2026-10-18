@@ -29,7 +29,7 @@ Most `/api` locations carry `auth_request /internal/auth/verify`, which calls `c
 | `/api/posts/*` | `social-service:3014` | yes | News feed |
 | `/api/forms/*` | `social-service:3014` | yes | Forms with payments |
 | `/api/bookings/*` | `social-service:3014` | yes | Bookings of rooms and slots |
-| `/api/lives/*` | `social-service:3014` | yes | Live broadcasts, 404 unless `LIVE_ENABLED` ([lives](../services/lives.md)) |
+| `/api/lives/*` | `social-service:3014` | yes | Live broadcasts, 404 unless `LIVE_ENABLED` ([lives](../services/lives.md)). `client_max_body_size 5m` (a segment is at most 4 MiB), and the ONE `limit_req` zone of this file, `lives_ingest`: 2 r/s burst 20 per client address on `PUT` only (viewers polling from one campus address share it), answering 429. nginx's own 413 and 429 go to `@api_error_413` / `@api_error_429` with the WebView CORS headers, like its 5xx (`api-error-cors.test.mjs`) |
 | `/api/associations/*` | `social-service:3014` | yes | Clubs (Stripe Connect) |
 | `/api/channels/*` | `social-service:3014` | yes | Workspaces and channels |
 | `/api/auth/*` | `core-service:3012` | no | OIDC login, refresh, logout |

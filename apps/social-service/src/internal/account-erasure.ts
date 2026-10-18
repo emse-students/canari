@@ -189,6 +189,7 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // it in one statement, and the live sweep then deletes its segments and its row.
   'lives.broadcasterId': { action: 'anonymise' },
   'live_removed_viewers.viewerId': { action: 'delete' },
+  'live_starts.broadcasterId': { action: 'delete' },
 
   // -- Not an account reference, despite the name ----------------------------------------------
   'associations.contactEmail': {
@@ -285,6 +286,7 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
  *   sweep deletes the segments and then the row within one run; nothing of it is served meanwhile,
  *   because every read of an ended live is a 410.
  * - The account's place on another live's removed-viewer list is deleted.
+ * - Its `live_starts` rows (the rolling hour `LIVE_STARTS_PER_HOUR` counts) are deleted.
  *
  * Exported apart so `lives.integration.spec.ts` runs exactly these against the schema 091 builds.
  */
@@ -300,6 +302,10 @@ export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'live_removed_viewers',
     sql: `DELETE FROM live_removed_viewers WHERE "viewerId" = $1`,
+  },
+  {
+    label: 'live_starts',
+    sql: `DELETE FROM live_starts WHERE "broadcasterId" = $1`,
   },
 ];
 

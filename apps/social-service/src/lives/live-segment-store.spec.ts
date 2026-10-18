@@ -53,4 +53,17 @@ describe('HttpLiveSegmentStore', () => {
     post.mockReturnValue(of({ data: { deleted: 2 } }));
     await expect(store.purge(LIVE)).rejects.toThrow(/three counts/);
   });
+
+  it('lists the live folders, and refuses an answer that is not a list of ids', async () => {
+    const post = jest.fn().mockReturnValue(of({ data: { liveIds: [LIVE] } }));
+    const store = new HttpLiveSegmentStore({ post } as unknown as HttpService);
+    await expect(store.listLives()).resolves.toEqual([LIVE]);
+    expect(post).toHaveBeenCalledWith(
+      'http://media-service:3011/api/media/internal/live-list',
+      {},
+      { headers: { 'x-internal-secret': 's3cret' } }
+    );
+    post.mockReturnValue(of({ data: { liveIds: [1] } }));
+    await expect(store.listLives()).rejects.toThrow(/liveIds/);
+  });
 });

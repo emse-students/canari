@@ -29,6 +29,11 @@ export const LIVES_ONE_OPEN_PER_BROADCASTER = 'lives_one_open_per_broadcaster';
   `"endReason" IS NULL OR "endReason" IN ('broadcaster', 'dropped', 'max_duration', 'erased')`
 )
 @Check('lives_next_index', `"nextIndex" >= 0`)
+@Check('lives_stored_bytes', `"storedBytes" >= 0`)
+@Check(
+  'lives_pending_whole',
+  `("pendingName" IS NULL) = ("pendingSha256" IS NULL) AND ("pendingName" IS NULL) = ("pendingAt" IS NULL)`
+)
 export class Live {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -61,4 +66,23 @@ export class Live {
 
   @Column({ type: 'varchar', length: 16, nullable: true })
   endReason: LiveEndReason | null;
+
+  /** The sum of the stored segments' sizes, which the per-live byte budget reads. bigint: a string. */
+  @Column({ type: 'bigint', default: 0 })
+  storedBytes: string;
+
+  /**
+   * THE RESERVATION of index `nextIndex` by an ingest whose store is in flight: the name it stores
+   * under, the bytes' digest and when it was taken (all three or none). Written in a committed step
+   * BEFORE the store, so no database connection is held across the call to media-service; cleared
+   * when the segment is counted or its store failed. The purge leaves the live alone while it is set.
+   */
+  @Column({ type: 'uuid', nullable: true })
+  pendingName: string | null;
+
+  @Column({ type: 'char', length: 64, nullable: true })
+  pendingSha256: string | null;
+
+  @Column({ type: 'timestamptz', nullable: true })
+  pendingAt: Date | null;
 }

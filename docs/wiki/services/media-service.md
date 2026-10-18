@@ -92,6 +92,7 @@ The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is t
 | GET    | `/api/media/internal/form-file/:id`    | `INTERNAL_SECRET` | The ONE read of a form file, for social-service's manager-gated download; serves nothing else |
 | POST   | `/api/media/internal/live/:liveId/:name` | `INTERNAL_SECRET` | multipart `file`: one sealed live segment (1 B to 4 MiB) stored under `live/<liveId>/<name>`; 404 unless `LIVE_ENABLED` ([lives](lives.md)) |
 | POST   | `/api/media/internal/live-purge`       | `INTERNAL_SECRET` | `{liveId}` - delete every object under the live's prefix, then re-list: `{deleted, failed, remaining}`; runs whatever the switch says |
+| POST   | `/api/media/internal/live-list`        | `INTERNAL_SECRET` | `{liveIds}` - one id per `live/<liveId>/` folder (a delimiter listing), for social-service's orphan reaper, which purges a folder with no live row behind it; runs whatever the switch says |
 | GET    | `/api/media/live/:liveId/:name`        | JWT               | One sealed live segment, by the name its manifest gave, `no-store`; 404 unless `LIVE_ENABLED` ([lives](lives.md)) |
 
 (`retention-class` refuses `reel`: that class is only ever set through its owner, and `chat-reel`, `reel-pending` and `form-file`: they are attached at the upload that creates the object. Every CLIENT upload route refuses `form-file` with a 400.)

@@ -16,7 +16,7 @@ Every `/api/lives` route and the two media routes that serve or store segments a
 `LIVE_ENABLED` is exactly `true`** (`live-enabled.guard.ts`, `isLiveEnabled` in media-service).
 `render-env.sh` computes it per estate (`compute_live_enabled`): **`true` on dev, `false` on
 production**, asserted on the rendered files by `deploy-env.test.sh`. The local compose defaults it
-to `true`. Two things run whatever it says, on purpose: the live sweep and the media purge route, so
+to `true`. Three things run whatever it says, on purpose: the live sweep and the media purge and live-list routes, so
 a live started while the switch was on is still ended and deleted after it is turned off.
 
 ## The numbers, and where each is the ONE copy
@@ -27,8 +27,14 @@ a live started while the switch was on is still ended and deleted after it is tu
 | Reconnect window (Q5) | 60 s without a segment ends the live | `LIVE_RECONNECT_WINDOW_MS`, same file | same route |
 | Longest live (L4) | 60 min | `LIVE_MAX_DURATION_MS`, same file | same route |
 | Manifest window | 10 segments | `LIVE_MANIFEST_WINDOW`, same file | same route |
+| Byte budget per live | 1 687 500 000 B = 2.5 Mb/s (`LIVE_PLANNING_BITRATE_BPS`) x 60 min x 1.5 (`LIVE_BYTE_BUDGET_MARGIN`: encoder overshoot, container, AEAD tag) | `LIVE_BYTE_BUDGET`, same file | same route (`byteBudget`) |
+| Segment rate | segment `index` accepted only while `index < 15 + floor(age / 1 s)` | `LIVE_SEGMENT_BURST`, `LIVE_SEGMENT_MIN_DURATION_MS` | same route |
+| Starts per account | 6 in a rolling hour; ONE open at a time (the partial unique index) | `LIVE_STARTS_PER_HOUR`, `LIVE_START_WINDOW_MS` | same route (`startsPerHour`) |
+| Ingests storing at once, per instance | 4 (the database pool is 10) | `LIVE_INGEST_MAX_CONCURRENT` | - |
+| Store timeout / reservation age | 30 s / 35 s | `LIVE_STORE_TIMEOUT_MS`, `LIVE_RESERVATION_TTL_MS` | - |
 
-The 60 s window is the plan's figure, **to be confirmed on the WP-L1 bench**.
+The 60 s window, the bitrate, the margin and the one-second segment floor are planning figures,
+**to be confirmed on the WP-L1 bench**.
 
 ## The API contract (`/api/lives`, signed-in members, social-service)
 
@@ -38,11 +44,11 @@ Refusals are typed: the body's `code` is the discriminator, never the message.
 | --- | --- | --- |
 | `GET /api/lives/limits` | any member | the four numbers above |
 | `GET /api/lives` | any member | the open lives the caller may watch, newest first, at most 50, **no key** |
-| `POST /api/lives` `{ key, associationId? }` | any member (L1) | `201` the live with its key. `400 LIVE_KEY_INVALID` (not 64 lower-case hex), `400 LIVE_ASSOCIATION_INVALID`, `403 LIVE_MUTED`, `403 LIVE_ASSOCIATION_FORBIDDEN` (no `POST_AS_ASSO` there), `409 LIVE_ALREADY_OPEN` |
+| `POST /api/lives` `{ key, associationId? }` | any member (L1) | `201` the live with its key. `400 LIVE_KEY_INVALID` (not 64 lower-case hex), `400 LIVE_ASSOCIATION_INVALID`, `403 LIVE_MUTED`, `403 LIVE_ASSOCIATION_FORBIDDEN` (no `POST_AS_ASSO` there), `409 LIVE_ALREADY_OPEN`, `429 LIVE_START_RATE` (6 starts in the hour) |
 | `GET /api/lives/:id` | a member who may watch | `{ id, broadcasterId, associationId, startedAt, lastSegmentAt, nextIndex, key }` |
 | `GET /api/lives/:id/manifest?from=<index>` | same | `{ liveId, nextIndex, lastSegmentAt, serverNow, segments: [{ index, name, bytes }] }` - the newest 10, or from `from` on |
-| `PUT /api/lives/:id/segments/:index` raw `application/octet-stream` | the broadcaster | `{ index, name, nextIndex }`. `409 LIVE_SEGMENT_OUT_OF_ORDER` (with `nextIndex`), `409 LIVE_SEGMENT_CONFLICT` (a stored index sent with other bytes), `413` over 4 MiB, `400 LIVE_SEGMENT_EMPTY`, `503 LIVE_STORE_UNAVAILABLE` (nothing recorded) |
-| `POST /api/lives/:id/end` | the broadcaster | `{ id, endedAt, endReason }`, idempotent |
+| `PUT /api/lives/:id/segments/:index` raw `application/octet-stream` | the broadcaster | `{ index, name, nextIndex }`. `409 LIVE_SEGMENT_OUT_OF_ORDER` (with `nextIndex`), `409 LIVE_SEGMENT_CONFLICT` (a stored index sent with other bytes), `409 LIVE_SEGMENT_IN_PROGRESS` (that index is still storing: retry, the repeat then answers), `409 LIVE_SEGMENT_RESERVATION_LOST` (its reservation was taken over as abandoned), `413` over 4 MiB, `413 LIVE_BUDGET_EXHAUSTED`, `429 LIVE_SEGMENT_TOO_FAST`, `429` from nginx (no `code`), `400 LIVE_SEGMENT_EMPTY`, `503 LIVE_STORE_UNAVAILABLE` (nothing recorded, the index released), `503 LIVE_INGEST_BUSY` |
+| `POST /api/lives/:id/end` | the broadcaster | `{ id, endedAt, endReason }`, idempotent while the row exists; once the end's purge deleted it, a repeat is `404 LIVE_NOT_FOUND`, which the client reads as "ended and deleted" - nothing keeps a deleted live's end to answer with (no replay, L3) |
 | `POST /api/lives/:id/removed-viewers` `{ viewerId }` | the broadcaster | `{ liveId, viewerId }`, idempotent; `400 LIVE_VIEWER_IS_SELF` |
 
 **Who may watch** (the key and the manifest, the same rule): absent, or a block between the viewer
@@ -54,6 +60,17 @@ the broadcaster removed is `403 LIVE_VIEWER_REMOVED`. A write on another member'
 **A segment is read from media-service**, `GET /api/media/live/<liveId>/<name>` (JWT), by the `name`
 the manifest gives. Serving it from Canari's own nginx without reaching media-service is WP-L4; until
 then it is `Cache-Control: no-store` and streamed by media-service from the store.
+
+### Reading a segment: why the route checks an account and nothing more
+
+Decided 2026-10-18 on review, not overlooked. A live is the whole network's (L2), so "a signed-in
+member" IS its audience, and the JWT proves exactly that. The only account a further check could
+refuse is one removed (or blocked) AFTER reading the key - and it can ask only for names it already
+learned from a manifest, i.e. segments it was allowed to fetch and decrypt at the time; a NEW name is
+learned only from the manifest, which social-service refuses it. A per-fetch call to social-service
+(one every few seconds per viewer) would buy nothing beyond that and put a cross-service round trip on
+the hottest path, which WP-L4 moves into nginx's cache anyway. There is no token audience to narrow
+by: one HS256 token, no `aud` claim, serves every service.
 
 ## The key (Q4): served like a post CEK, removal enforced by the server
 
@@ -82,12 +99,63 @@ fetched, and fetch an older one whose name it already had.
 the drop predicate reads. "Reconnecting" on a viewer's screen is the client's to show from
 `lastSegmentAt` and `serverNow` (both the database's clock); the END is never a client timer.
 
-**Every write takes the live's row lock.** The ingest holds `SELECT ... FOR UPDATE` from its checks
-until its segment is stored AND counted; an end (the route, the sweep's `UPDATE`) waits for it and
-re-reads its predicate afterwards, so a live that just took a segment is never ended by a sweep
-that started before it; the purge only touches a live whose end has committed. Proven on a real
-PostgreSQL by `lives.integration.spec.ts`, which reads the end WAITING on the ingest's lock from
-`pg_stat_activity` and then finds the segment stored inside the lock purged with the live.
+**Every write takes the live's row lock, and none holds it across the network.** Until the review
+of 2026-10-18 the ingest held `SELECT ... FOR UPDATE` - a pooled connection - while it posted up to
+4 MiB to media-service, up to the 30 s timeout: ten broadcasters on a slow Garage would have parked
+every connection of the pool (10) and stalled every other route of social-service. The ingest is now
+THREE steps:
+
+1. **Reserve** - one short transaction: every check under the row lock (owner, end, hour, order,
+   repeat, rate, budget), then `pendingName` / `pendingSha256` / `pendingAt` written and COMMITTED.
+2. **Store** - no transaction open, no connection held.
+3. **Confirm** - one short transaction: under the row lock, insert the segment, advance `nextIndex`,
+   add to `storedBytes`, clear the reservation. A failed store CLEARS it instead (the index is free at
+   once).
+
+**The lock-order argument, restated for the reservation:**
+
+- *Only the next index, gapless*: the reservation is of `nextIndex` and nothing else; only the
+  confirm that holds `pendingName` advances it, and a second ingest of a reserved index is
+  `409 LIVE_SEGMENT_IN_PROGRESS` while the reservation is younger than `LIVE_RESERVATION_TTL_MS`.
+- *Same bytes idempotent*: unchanged - a repeat of an index below `nextIndex` is answered from
+  `live_segments`' `sha256`.
+- *An end against an ingest in progress*: an end (the route, the sweep's `UPDATE`) takes the row lock
+  only for its own statement, so it waits at most for a reserve or a confirm, never for a store. The
+  confirm that follows an end records NOTHING (410) and clears the reservation; the drop predicate
+  still reads `lastSegmentAt`, written only by a confirm, so a live that just took a segment is never
+  ended by a sweep that started before it.
+- *No orphan*: the purge reads the row first and is `kept` while a reservation younger than the TTL is
+  set - before it touches the store - and no reservation can be taken once the end has committed (the
+  reserve checks `endedAt` under the lock). So when the purge proceeds, the only store of this live
+  that can still land is one past its own 30 s timeout; the confirm that met the end purges at once.
+- *A reservation whose ingest died* (a crash between reserve and confirm): older than the TTL (the
+  store timeout + 5 s, so the HTTP call cannot still be waiting in this process), it is taken over by
+  the next ingest with a `warn`, and ignored by the purge.
+
+On top of it, **at most 4 ingests store at once per instance** (`503 LIVE_INGEST_BUSY` beyond, a
+`warn`): no connection is held across a store any more, but each holds up to 4 MiB and a
+media-service request. Proven on a real PostgreSQL by `lives.integration.spec.ts`: a stalled store on
+a pool of ONE connection does not block another query on it; a failed store leaves nothing pending;
+an end during a stalled store answers at once, the ingest then gets 410, and nothing outlives the
+purge; a purge waits for a live reservation and ignores an abandoned one.
+
+## What one broadcaster may store
+
+Decided 2026-10-18 on review (nothing limited it before). Four bounds, each a typed refusal:
+
+- **A byte budget per live**, `storedBytes` on the row against `LIVE_BYTE_BUDGET` (table above). A
+  segment that would cross it is REFUSED (`413 LIVE_BUDGET_EXHAUSTED`) and the live is NOT ended by
+  it: nothing more is accepted, so it ends by its broadcaster or, with no segment for 60 s, by the
+  sweep - one end path, not a second one for a case only an abusive client reaches.
+- **A segment rate held as a COUNT in durable state**: `nextIndex` is the number of segments taken,
+  compared with the live's age read from the database clock (`index < 15 + floor(age / 1 s)`), so
+  one segment a second on average, whatever retries do, with a burst that covers a reconnect's
+  backlog. `429 LIVE_SEGMENT_TOO_FAST`. The specs move `startedAt` by SQL; no wall clock is asserted.
+- **Lives per account**: one OPEN at a time (the partial unique index, `409 LIVE_ALREADY_OPEN`), and
+  6 STARTED in a rolling hour (`429 LIVE_START_RATE`), counted in `live_starts` because a live's own
+  row is deleted at its end. The sweep deletes the rows older than the hour.
+- **At the edge**: nginx's `lives_ingest` zone, 2 r/s burst 20 per client address on `PUT` only, and
+  `client_max_body_size 5m` ([nginx](../infrastructure/nginx.md)).
 
 ## Deletion: at the end, plus a sweep (Q10, L3)
 
@@ -98,7 +166,16 @@ other end, and any purge that failed, is finished by `LiveRetentionScheduler` (e
 2. for every ended live: media-service deletes everything under `live/<liveId>/` and **lists the
    prefix again**; social-service deletes the row (segments and removed viewers cascade) **only when
    that listing is empty and no delete failed** - termination from a proof, not from a call that
-   returned. A refusal keeps the row, invisible (410), for the next run; a `try` per live.
+   returned. A refusal keeps the row, invisible (410), for the next run; a `try` per live. A live
+   with a segment still storing is kept too (above), and an OPEN live is never purged by this path;
+3. **the orphan reaper**: media-service lists the `live/` folders (`POST /media/internal/live-list`,
+   a delimiter listing, one entry per folder) and every folder with NO live row behind it is purged
+   and proven empty the same way. A ROW-STATE RULE, NOT A CLOCK: a folder is written only under a
+   reservation, which needs the row, and a row is deleted only once its prefix proved empty with no
+   reservation in flight - so a folder with no row was written after its purge, by a store that
+   outlived its own timeout. The listing is read BEFORE the rows, so a live started in between is not
+   in it. Reported as `orphans=` on the `[LIVE_GC]` line, each one a `warn`;
+4. the `live_starts` rows older than the hour are deleted.
 
 Observed by `[LIVE]` / `[LIVE_GC]` lines, and the storage panel's `liveSegmentCount` /
 `liveSegmentBytes` (media-service `getStorageStats`): segments are outside the media metadata index
@@ -113,13 +190,14 @@ stopped.**
 (`erased`, unless already ended) and its broadcaster becomes `[deleted]` **in one statement**, so an
 open live never carries the tombstone and the one-open-live index never sees two; the sweep deletes
 its segments and row within one run. The account's place on another live's removed-viewer list is
-deleted. `broadcaster` and `viewer` were added to the shared account-column pattern
+deleted, and so are its `live_starts` rows. `broadcaster` and `viewer` were added to the shared account-column pattern
 (`libs/contracts/account-reference-columns.json`) so the coverage spec sees both columns. Register
 row C19 ([register-of-processing](../compliance/register-of-processing.md)).
 
 ## The migration: `091_lives.sql`
 
-Three new tables, nothing existing changes; idempotent (applied twice by the integration spec), and
+Four new tables (`lives`, `live_segments`, `live_removed_viewers`, `live_starts`), nothing existing
+changes; idempotent (applied twice by the integration spec), and
 `synchronize` against it changes nothing on a live table (asserted). User ids are `varchar(255)`.
 No foreign key to `associations`: an association deleted during a live leaves a live that still ends
 and is still deleted.
@@ -130,13 +208,14 @@ and is still deleted.
   specs are a real PostgreSQL with an in-memory store, media-service unit specs over a fake bucket,
   and the HTTP client over a fake transport. The first reading is a dev deploy plus a scripted
   broadcaster.
-- **A store that outlives its own timeout.** The ingest's call to media-service is bounded at 30 s
-  (`LivesModule`); a Garage write still running past it lands after the ingest rolled back. While the
-  live lasts, that object is under the live's prefix and the end's purge takes it. Only a write that
-  lands AFTER the purge's re-listing - more than 30 s late, after the live ended and was purged -
-  would be orphaned, and it shows on the panel's `liveSegment*` line.
-- The 60 s window and the 4 MiB bound are planning figures until WP-L1 measures segment sizes and
-  reconnect times.
+- **A store that outlives its own timeout** is no longer left behind: while the live lasts it is
+  under the live's prefix and the end's purge takes it; one that lands after the purge is a folder
+  with no row, which the next sweep's reaper takes. What is not proven is the reaper against a real
+  Garage listing (the delimiter listing is exercised on a fake bucket).
+- **The ingest semaphore is per instance.** social-service runs one replica (two for a moment during
+  a rolling deploy); a second permanent replica would double the bound.
+- The 60 s window, the 4 MiB bound, the 2.5 Mb/s budget and its 1.5 margin, and the one-second
+  segment floor are planning figures until WP-L1 measures segment sizes and reconnect times.
 
 ## See also
 

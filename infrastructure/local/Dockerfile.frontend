@@ -103,6 +103,17 @@ map $http_origin $api_error_cors_origin {\n\
     "tauri://localhost" $http_origin;\n\
 }\n\
 \n\
+# A LIVE SEGMENT IS THE ONE UPLOAD A CLIENT SENDS EVERY FEW SECONDS (docs/wiki/services/lives.md).\n\
+# The per-account limits are the service (byte budget, segment rate, starts per hour); this is the\n\
+# edge ceiling in front of them, per client address (real_ip below). PUT ONLY: viewers polling the\n\
+# manifest from one campus address share it, and an empty key is never limited. 2 r/s is four times\n\
+# the planned rate of one broadcaster (a segment every 2-3 s); the burst absorbs a reconnect.\n\
+map $request_method $lives_ingest_key {\n\
+    default "";\n\
+    PUT $binary_remote_addr;\n\
+}\n\
+limit_req_zone $lives_ingest_key zone=lives_ingest:1m rate=2r/s;\n\
+\n\
 server {\n\
     listen 80;\n\
     # SERVER LEVEL ON PURPOSE: the base image's nginx.conf declares `access_log ... main` at http level,\n\
@@ -184,10 +195,22 @@ server {\n\
     # error MADE HERE reaches these: proxy_intercept_errors is off, so a 5xx a service answers passes\n\
     # through with its own CORS headers. `location /` declares its own error_page (the app shell)\n\
     # and so does not inherit this; the other locations serve files and make no 5xx of their own.\n\
+    # 413 and 429 too (2026-10-18): client_max_body_size and limit_req answer them HERE, and a\n\
+    # broadcaster told "too large" or "too fast" must read a status, not a transport failure.\n\
+    error_page 413 @api_error_413;\n\
+    error_page 429 @api_error_429;\n\
     error_page 500 @api_error_500;\n\
     error_page 502 @api_error_502;\n\
     error_page 503 @api_error_503;\n\
     error_page 504 @api_error_504;\n\
+    location @api_error_413 {\n\
+    include /etc/nginx/snippets/api-error-headers.conf;\n\
+    return 413 "{\\"statusCode\\":413,\\"message\\":\\"request body too large\\"}";\n\
+    }\n\
+    location @api_error_429 {\n\
+    include /etc/nginx/snippets/api-error-headers.conf;\n\
+    return 429 "{\\"statusCode\\":429,\\"message\\":\\"too many requests\\"}";\n\
+    }\n\
     location @api_error_500 {\n\
     include /etc/nginx/snippets/api-error-headers.conf;\n\
     return 500 "{\\"statusCode\\":500,\\"message\\":\\"edge error\\"}";\n\
@@ -719,6 +742,10 @@ server {\n\
     }\n\
     \n\
     location /api/lives {\n\
+    # A segment is at most 4 MiB (LIVE_SEGMENT_MAX_BYTES); the server default of 100m is for media.\n\
+    client_max_body_size 5m;\n\
+    limit_req zone=lives_ingest burst=20 nodelay;\n\
+    limit_req_status 429;\n\
     auth_request /internal/auth/verify;\n\
     auth_request_set $user_id $upstream_http_x_user_id;\n\
     auth_request_set $user_logged_in $upstream_http_x_logged_in;\n\
