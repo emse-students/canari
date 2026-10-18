@@ -84,7 +84,9 @@ old value after the other two are updated. One definition makes that impossible.
 one `include`, KLIPY's GIF host `static.klipy.com` present in `connect-src` and its search API
 `api.klipy.com` ABSENT (the search goes through chat-delivery since 2026-10-16,
 [chat](../frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)), and no bare
-scheme there. It lives in the
+scheme there. Since the GIF relay (2026-10-18) the current bundle reads no byte from
+`static.klipy.com` either; the host stays listed for a web tab still on an older bundle
+([chat](../frontend/modules/chat.md#the-gif-relay-no-readers-browser-asks-klipy-for-a-gif-2026-10-18)). It lives in the
 frontend suite on purpose - what invalidates the policy is frontend code calling a host nobody
 added.
 

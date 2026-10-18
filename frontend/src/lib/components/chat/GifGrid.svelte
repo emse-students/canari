@@ -8,6 +8,8 @@
     type GifResult,
   } from '$lib/utils/chat/gifSearch';
   import { columnsFor, layoutMasonry, nearEnd, visibleTiles } from '$lib/utils/chat/gifMasonry';
+  import { proxiedGifUrl } from '$lib/utils/gifMediaProxy';
+  import { ensurePreviewTicket } from '$lib/utils/previewTicket.svelte';
   import MediaFrame from '$lib/components/shared/MediaFrame.svelte';
 
   /**
@@ -18,7 +20,8 @@
    * (`gifMasonry.ts`), and drawn as a `MediaFrame sizing="intrinsic"` declared at that size: the grid
    * never reflows as GIFs arrive, and each tile shows the frame's surface tone until its own GIF
    * covers it (KLIPY sends no ThumbHash). Only the tiles near the scrolled window are mounted; the
-   * next page is asked for when the reader nears the end.
+   * next page is asked for when the reader nears the end. Every thumbnail is drawn through the GIF
+   * relay (`proxiedGifUrl`), so KLIPY's CDN never sees the searcher either.
    * [media-frame](../../../../../docs/wiki/frontend/media-frame.md)
    */
   interface Props {
@@ -97,6 +100,12 @@
       }
     }
   }
+
+  // The thumbnails come through the GIF relay, which takes a ticket: minted as the grid opens, in
+  // parallel with the first page, and a no-op once one is held.
+  $effect(() => {
+    if (active) void ensurePreviewTicket();
+  });
 
   // A new search (or the grid opening) starts again at page 1 of that search.
   $effect(() => {
@@ -210,15 +219,18 @@
               class="bg-black/5 dark:bg-white/10"
             >
               {#snippet children(frame)}
-                <img
-                  src={gif.preview.url}
-                  alt=""
-                  width={gif.preview.width}
-                  height={gif.preview.height}
-                  decoding="async"
-                  onload={frame.onLoad}
-                  class="h-full w-full object-cover"
-                />
+                {@const src = proxiedGifUrl(gif.preview.url)}
+                {#if src}
+                  <img
+                    {src}
+                    alt=""
+                    width={gif.preview.width}
+                    height={gif.preview.height}
+                    decoding="async"
+                    onload={frame.onLoad}
+                    class="h-full w-full object-cover"
+                  />
+                {/if}
               {/snippet}
             </MediaFrame>
           </button>

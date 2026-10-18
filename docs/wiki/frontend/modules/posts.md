@@ -1002,14 +1002,17 @@ paste, the in-app GIF picker (`GifPickerModal`/KLIPY — fetches the chosen `.gi
 Android keyboard's GIF button (the `canari-keyboard-media` event; only the focused comment box
 handles it). GIFs are uploaded as-is — never canvas-compressed, which would flatten the animation.
 
-**The picker's path crosses an origin, and the CSP has to name it.** A picked GIF is fetched from
-KLIPY's CDN (`static.klipy.com`) so its bytes can be encrypted before upload — unlike a GIF in
-**chat**, which is sent as its URL and never read by the client. So `connect-src` must list that
-host, and listing only the search API (`api.klipy.com`) blocked every picked GIF while leaving the
-grid visible: the failure and the one-definition policy that replaced three copies are on
+**The picker's path reads the bytes through Canari since 2026-10-18.** A picked GIF's bytes are
+read (`fetchGifFile`, `gifMediaProxy.ts`) so they can be encrypted before upload — unlike a GIF in
+**chat**, which is sent as its URL. They come through chat-delivery's GIF relay
+(`/api/mls/gifs/media`), so KLIPY's CDN no longer sees the person attaching it
+([chat](chat.md#the-gif-relay-no-readers-browser-asks-klipy-for-a-gif-2026-10-18)). Before that the
+bytes were fetched from `static.klipy.com` directly, so `connect-src` had to list that host, and
+listing only the search API (`api.klipy.com`) once blocked every picked GIF while leaving the grid
+visible: the failure and the one-definition policy that replaced three copies are on
 [cloudflare-edge](../../infrastructure/cloudflare-edge.md#the-origin-policy-is-stated-once-and-it-is-a-description-of-the-clients-code),
-guarded by `frontend/src/lib/security/csp.test.ts`. The keyboard path is unaffected — it is handed
-the bytes directly, so a keyboard GIF worked throughout.
+guarded by `frontend/src/lib/security/csp.test.ts` (the host stays listed for a tab on an older
+bundle). The keyboard path is unaffected — it is handed the bytes directly.
 
 **All three paths report their failure.** Each one ends in a toast (`post_comment_gif_fetch_error`
 for the CDN fetch, `post_comment_media_error` for the encrypt/upload and the keyboard decode), and

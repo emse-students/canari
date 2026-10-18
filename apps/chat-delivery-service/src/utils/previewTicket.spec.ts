@@ -1,9 +1,12 @@
 import { createHmac } from 'crypto';
 
 import {
+  GIF_MEDIA_TICKET_BUCKET_MS,
   PREVIEW_TICKET_BUCKET_MS,
+  mintGifMediaTicket,
   mintPreviewTicket,
   previewTicketBucket,
+  verifyGifMediaTicket,
   verifyPreviewTicket,
 } from './previewTicket';
 
@@ -67,5 +70,41 @@ describe('previewTicket', () => {
     const a = mintPreviewTicket(SECRET, MID_BUCKET).ticket;
     const b = mintPreviewTicket(SECRET, MID_BUCKET + PREVIEW_TICKET_BUCKET_MS).ticket;
     expect(a).not.toBe(b);
+  });
+
+  it('keeps the link-preview ticket byte-identical to what clients already hold', () => {
+    // The refactor into kinds must not change the preview HMAC's message, or every ticket in a
+    // client at deploy time is refused for up to ten minutes.
+    const bucket = previewTicketBucket(MID_BUCKET);
+    const expected = createHmac('sha256', SECRET)
+      .update(`link-preview-image:${bucket}`)
+      .digest('hex');
+    expect(mintPreviewTicket(SECRET, MID_BUCKET).ticket).toBe(expected);
+  });
+});
+
+describe('the GIF relay ticket', () => {
+  const MID_DAY = 400 * GIF_MEDIA_TICKET_BUCKET_MS + GIF_MEDIA_TICKET_BUCKET_MS / 2;
+
+  it('is accepted for its day and the next, and refused after', () => {
+    const { ticket } = mintGifMediaTicket(SECRET, MID_DAY);
+    expect(verifyGifMediaTicket(ticket, SECRET, MID_DAY)).toBe(true);
+    expect(verifyGifMediaTicket(ticket, SECRET, MID_DAY + GIF_MEDIA_TICKET_BUCKET_MS)).toBe(true);
+    expect(verifyGifMediaTicket(ticket, SECRET, MID_DAY + 2 * GIF_MEDIA_TICKET_BUCKET_MS)).toBe(
+      false
+    );
+  });
+
+  it('does not change for a whole day, so a GIF keeps ONE URL in the browser cache', () => {
+    const early = MID_DAY - GIF_MEDIA_TICKET_BUCKET_MS / 2 + 1;
+    const late = MID_DAY + GIF_MEDIA_TICKET_BUCKET_MS / 2 - 1;
+    expect(mintGifMediaTicket(SECRET, early).ticket).toBe(mintGifMediaTicket(SECRET, late).ticket);
+  });
+
+  it('never opens the other route: the two kinds are not interchangeable', () => {
+    const gif = mintGifMediaTicket(SECRET, MID_DAY).ticket;
+    const preview = mintPreviewTicket(SECRET, MID_DAY).ticket;
+    expect(verifyPreviewTicket(gif, SECRET, MID_DAY)).toBe(false);
+    expect(verifyGifMediaTicket(preview, SECRET, MID_DAY)).toBe(false);
   });
 });

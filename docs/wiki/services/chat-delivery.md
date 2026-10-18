@@ -1599,6 +1599,7 @@ parity row.
 | GET | `/api/mls/link-preview/image?url=` | Proxy a preview's `og:image` or favicon |
 | GET | `/api/mls/link-safety?url=` | Google Safe Browsing verdict for a URL (WP-SAFELINK-1) |
 | GET | `/api/mls/gifs?q=&page=` | The GIF picker's search/trending, asked of KLIPY by the server with `KLIPY_API_KEY`; per-user throttled; the query reaches no log line, nginx's access line included ([chat](../frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16)) |
+| GET | `/api/mls/gifs/media?url=&t=` | The GIF relay: one GIF from KLIPY's CDN only (no query), streamed, 12 MiB, byte-cached 24 h, single-flight, 16 in flight (`busy` 503 beyond), 600/min per address; gated by the day-long `gifTicket` the ticket route also returns; query dropped from this repo's nginx log, NOT from the host nginx's or the edge's ([chat](../frontend/modules/chat.md#the-gif-relay-no-readers-browser-asks-klipy-for-a-gif-2026-10-18)) |
 
 #### Who carries the MiGallery key, and who does not
 
@@ -1750,9 +1751,15 @@ Client-side the rewrite is one helper, `frontend/src/lib/utils/previewImageProxy
 nothing server-side would have rewritten them. It skips URLs already on our own origin, which is
 what keeps the MiGallery cover proxy from being proxied twice.
 
-The CSP `img-src` is deliberately **not** tightened to match: KLIPY GIFs and other remote sources
-still load directly. What a GIF in a chat tells KLIPY's CDN, and why this proxy does not carry it
-yet, is on [chat](../frontend/modules/chat.md#the-gif-search-goes-through-canari-2026-10-16).
+The CSP `img-src` is deliberately **not** tightened to match: the feed renders arbitrary user-posted
+images. GIFs do not come through this route: KLIPY's go through the GIF relay,
+`/api/mls/gifs/media` (`gif-media.controller.ts` - its own 12 MiB ceiling, streamed, a byte cache,
+single-flight, a day-long ticket kind), and a GIF from any other host still loads directly in the
+reader's browser, as before (owner decision; unmeasured; routing it here is one line in
+`proxiedGifUrl`). Both
+share `writeRelayedImageHeaders` (`utils/gif-media.ts`) and `requireTicketSecret`
+(`utils/previewTicket.ts`); the mechanism is on
+[chat](../frontend/modules/chat.md#the-gif-relay-no-readers-browser-asks-klipy-for-a-gif-2026-10-18).
 
 #### A relative reference belongs to the page that answered, not to the link that was written (2026-09-23)
 
