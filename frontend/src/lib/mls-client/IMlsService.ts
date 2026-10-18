@@ -109,10 +109,9 @@ export interface DistributionFrame {
   sender: string;
   /**
    * The sending DEVICE the delivery envelope names, when it names one - what a seed answer is
-   * addressed to (channel-encryption section 23). Written by the sender into its request body, then
-   * CHECKED against the MLS credential that sealed the frame (`openDistributionFrame`; a mismatch is
-   * a refused frame), so it is the device that spoke - which is what lets an "I hold nothing" count
-   * per named device (section 24).
+   * addressed to (channel-encryption section 23). Self-asserted by the sender, and that is enough
+   * for an address: the server delivers only to a `userId:deviceId` that is a live member of the
+   * group, so a lie about it reaches nobody else.
    */
   senderDeviceId?: string;
   /** The decrypted payload - a Graine control message, never a chat message. */

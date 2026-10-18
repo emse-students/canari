@@ -94,6 +94,10 @@ the MiConnect terms PR #1955 (merged, then HELD out of production on 2026-10-17 
 the Le Cercle history rewrite (owed: the permission system refused the destructive git step, the user
 runs it or approves it explicitly); sending the DPO dossier; the DSI log-retention request. **Done 2026-10-17:** Authentik's event retention is `days=90` (a dump was taken first) and Le Cercle's MR !29 is merged and deployed.
 
+## P3 - The distribution path's device check: ship on an alpha, read `[SENDER_MISMATCH] path=distribution` first
+
+On a key-group frame `openDistributionFrame` compares only the envelope's USER with the MLS credential; the envelope's `senderDeviceId` stays self-asserted ([channel-encryption section 21.1](protocols/channel-encryption.md#211-the-verified-sender-measured-then-refused-wp-g2-1-g2-1b)). Handing it to the sender check would REFUSE every frame whose device disagrees, and production has never been read for `path=distribution kind=device`, so it was taken out of #2027 (user, 2026-10-18). What it would buy: a device could no longer answer "I hold nothing" in a sibling's name ([section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)). Order: ship the comparison on an alpha, read `[SENDER_MISMATCH] path=distribution` on chat-delivery on dev, then on production, before any stable carries it.
+
 ## P3 - `[TAURI] Couldn't find callback id` every ~15 s after a text-size WebView reload (2026-10-17)
 
 One id, repeated at 15 s, from the previous page's callback. Suspect, unproven: the `plugin-websocket` listener of `TauriMlsService` outliving the page (no `pagehide` release). Evidence and next step: [device-verification](device-verification.md#2026-10-17-follow-up-the-sort-row-fixed-and-the-stale-tauri-callback-open-cause-not-proven). Delete this item when the cause is shipped.

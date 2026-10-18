@@ -17,6 +17,7 @@ import {
   forgetAskedSession,
   releaseRequestsHeldForKeyGroup,
 } from './repair';
+import { historyHeldNothingFinalAt } from './historyAnswered';
 import {
   registerChannelWorkspace,
   registerCommunityHistoryVisibility,
@@ -539,6 +540,89 @@ describe('a history ask answered "I hold nothing" (section 24)', () => {
     await settle();
     expect(sendMessage).toHaveBeenCalledTimes(2);
     expect(sentAsk(1).answerer).toBe('carol');
+  });
+
+  it('a member whose online phone said "nothing" is NOT answered while a laptop of theirs on the tree is offline - asked when it is online', async () => {
+    // bob's laptop is a leaf of the key group and offline: presence names only the phone.
+    treeLeaves = ['bob:web-bob', 'bob:bob-laptop', 'alice:device-1', 'carol:web-carol'];
+    await requestCommunityHistory('ws-1');
+    expect(sentAsk(0)).toMatchObject({ answerer: 'bob', devices: ['web-bob'] });
+    await answerNothing(0);
+    // The walk moves on - bob's phone is spent - but bob is not recorded as answered.
+    expect(sentAsk(1).answerer).toBe('carol');
+    await answerNothing(1);
+
+    // Nobody left to ask NOW, and still not final: the laptop may hold the past.
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(historyHeldNothingFinalAt('alice', 'ws-1', { groupId: 'dist-group', epoch: 7 })).toBe(
+      false
+    );
+
+    // The laptop comes online: the next start asks it, and it alone.
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'bob', online: true, onlineDevices: ['web-bob', 'bob-laptop'] },
+      { userId: 'alice', online: true, onlineDevices: ['device-1'] },
+      { userId: 'carol', online: true, onlineDevices: ['web-carol'] },
+    ]);
+    restart();
+    await requestCommunityHistory('ws-1');
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(sentAsk(2)).toMatchObject({ answerer: 'bob', devices: ['bob-laptop'] });
+
+    // Once it too says "nothing", every device on the tree has: final, no roster read again.
+    await answerNothing(2);
+    restart();
+    listWorkspaceMembers.mockClear();
+    await requestCommunityHistory('ws-1');
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(listWorkspaceMembers).not.toHaveBeenCalled();
+  });
+
+  it('is NOT final while our own other device is on the group and offline, every other member answered', async () => {
+    treeLeaves = ['bob:web-bob', 'alice:device-1', 'alice:device-2', 'carol:web-carol'];
+    ownDevices = ['device-1', 'device-2'];
+    await requestCommunityHistory('ws-1');
+    await answerNothing(0);
+    await answerNothing(1);
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+
+    // Our other device was never asked: it holds the group and may hold the past.
+    expect(historyHeldNothingFinalAt('alice', 'ws-1', { groupId: 'dist-group', epoch: 7 })).toBe(
+      false
+    );
+    restart();
+    listWorkspaceMembers.mockClear();
+    await requestCommunityHistory('ws-1');
+    expect(listWorkspaceMembers).toHaveBeenCalled();
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+
+    // Online at the next start, it is the one asked.
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'bob', online: true, onlineDevices: ['web-bob'] },
+      { userId: 'alice', online: true, onlineDevices: ['device-1', 'device-2'] },
+      { userId: 'carol', online: true, onlineDevices: ['web-carol'] },
+    ]);
+    restart();
+    await requestCommunityHistory('ws-1');
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(sentAsk(2)).toMatchObject({ answerer: 'alice', devices: ['device-2'] });
+  });
+
+  it('counts one device once - the same device answering twice does not walk on', async () => {
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'bob', online: true, onlineDevices: ['web-bob', 'bob-phone'] },
+      { userId: 'alice', online: true, onlineDevices: ['device-1'] },
+      { userId: 'carol', online: true, onlineDevices: ['web-carol'] },
+    ]);
+    treeLeaves = ['bob:web-bob', 'bob:bob-phone', 'alice:device-1', 'carol:web-carol'];
+    await requestCommunityHistory('ws-1');
+    const { requestId } = sentAsk();
+
+    noteHistoryHeldNothing('ws-1', 'bob', requestId, 'web-bob');
+    noteHistoryHeldNothing('ws-1', 'bob', requestId, 'web-bob');
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(1);
   });
 
   it('after a RE-JOIN asks again whatever was answered - the skipped epochs are gone', async () => {

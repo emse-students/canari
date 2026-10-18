@@ -3886,7 +3886,7 @@ export abstract class BaseMlsService implements IMlsService {
 
     let plaintext: Uint8Array | null;
     try {
-      plaintext = await this.openDistributionFrame(groupId, sender, ciphertext, senderDeviceId);
+      plaintext = await this.openDistributionFrame(groupId, sender, ciphertext);
     } catch (e) {
       // A FRAME FROM AN EPOCH THIS DEVICE HAS NOT REACHED IS THE ONE REFUSAL A REPLAY REPAIRS, and it
       // used to be refused bare: not acknowledged, no gap armed, so nothing caught the group up and
@@ -3905,7 +3905,7 @@ export abstract class BaseMlsService implements IMlsService {
       while (!opened) {
         if (!(await this.stepDistributionGroup(groupId))) return false;
         try {
-          plaintext = await this.openDistributionFrame(groupId, sender, ciphertext, senderDeviceId);
+          plaintext = await this.openDistributionFrame(groupId, sender, ciphertext);
           opened = true;
         } catch (again) {
           if (classifyIncomingDecryptError(again) !== 'epoch-gap') {
@@ -3975,17 +3975,12 @@ export abstract class BaseMlsService implements IMlsService {
   private async openDistributionFrame(
     groupId: string,
     sender: string,
-    ciphertext: Uint8Array,
-    senderDeviceId?: string
+    ciphertext: Uint8Array
   ): Promise<Uint8Array | null> {
     let plaintext: Uint8Array | null;
     try {
-      // THE DEVICE TOO, not only the user (channel-encryption section 24): a seed answer names its
-      // device, and an "I hold nothing" is counted per named device. Checked against the credential
-      // as the live path checks it, so a sibling device cannot speak for another.
       plaintext = await this.processIncomingMessage(groupId, ciphertext, {
         userId: sender,
-        ...(senderDeviceId ? { deviceId: senderDeviceId } : {}),
         path: 'distribution',
       });
     } catch (e) {

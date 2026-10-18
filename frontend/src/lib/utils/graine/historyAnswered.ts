@@ -8,14 +8,15 @@
  * (`GraineBundleMsg.holds_nothing`), and THIS is where it is kept.
  *
  * **What a record answers, and only that:** "at this key group and this distribution epoch, THESE
- * members, each asked in turn, said they hold nothing of this community's past". It is keyed on
- * the ANSWERER, not on the roster: only ONE member is asked at a time (the lowest id with a device
- * online), so one "nothing" says nothing about the others. The election skips the members recorded
- * here and asks the next one; the ask is final only when no eligible member is left unrecorded.
- * The epoch is the version of the roster (every membership change commits to the key group), so a
- * record whose epoch the group has left answers nothing and the next start asks again from the
- * lowest member - the same version `historyUnanswerableAt` keys "nobody to ask" on. No clock is
- * involved anywhere.
+ * DEVICES, each asked, said they hold nothing of this community's past". It is keyed on the
+ * answering DEVICE, never on its member: a member's online phone saying "nothing" says nothing
+ * about a laptop of the same member that is on the key group, offline, and may hold the past. A
+ * member counts as answered only once EVERY device of theirs on the key group's MLS tree is
+ * recorded here - the tree, not presence, because presence names only the devices online when the
+ * ask went out. The epoch is the version of the tree (every membership change commits to the key
+ * group), so a record whose epoch the group has left answers nothing and the next start asks again
+ * from the lowest member - the same version `historyUnanswerableAt` keys "nobody to ask" on. No
+ * clock is involved anywhere.
  *
  * In `localStorage` per account, like `sendRatchetLedger`: a few bytes, read synchronously, and
  * it survives a restart, which is the whole point. A storage that refuses the read is logged and
@@ -30,23 +31,32 @@ export interface HistoryAskVersion {
   epoch: number;
 }
 
-/** One community's record: the roster version, and who answered "I hold nothing" at it. */
+/** One community's record: the tree version, and which devices answered "I hold nothing" at it. */
 interface HistoryHeldNothing extends HistoryAskVersion {
-  /** Lower-cased user ids, each of whom answered "I hold nothing" at exactly this version. */
-  answerers: string[];
+  /** Each device that answered "I hold nothing" at exactly this version, as {@link answeredDevice}. */
+  devices: string[];
   /**
-   * Every member of the roster at this version (this user included when another of its devices is
-   * on the group) is among `answerers`. Durable for the version because the roster IS the version:
-   * nobody can join or leave the key group without moving its epoch.
+   * Every device on the key group's tree at this version (our own other devices included) is among
+   * `devices`. Durable for the version because the tree IS the version: no leaf joins or leaves the
+   * key group without moving its epoch.
    */
   final?: boolean;
 }
 
 type Records = Record<string, HistoryHeldNothing>;
 
-/** The `localStorage` key holding `userId`'s records - exported so an account wipe can name it. */
+/**
+ * The `localStorage` key holding `userId`'s records - exported so an account wipe can name it.
+ * Pull request #2023 lists the same key as `ACCOUNT_KEY.historyHeldNothing`; once it is merged this
+ * builder is built from that one list and {@link clearHistoryHeldNothing} is deleted.
+ */
 export function historyHeldNothingStorageKey(userId: string): string {
   return `${KEY_PREFIX}${userId}`;
+}
+
+/** How one answering device is named in a record: its user lower-cased, a colon, its device id. */
+export function answeredDevice(user: string, device: string): string {
+  return `${user.toLowerCase()}:${device}`;
 }
 
 function isRecord(value: unknown): value is HistoryHeldNothing {
@@ -55,8 +65,8 @@ function isRecord(value: unknown): value is HistoryHeldNothing {
   return (
     typeof r.groupId === 'string' &&
     typeof r.epoch === 'number' &&
-    Array.isArray(r.answerers) &&
-    r.answerers.every((a) => typeof a === 'string') &&
+    Array.isArray(r.devices) &&
+    r.devices.every((d) => typeof d === 'string') &&
     (r.final === undefined || typeof r.final === 'boolean')
   );
 }
@@ -107,44 +117,52 @@ function writeAll(userId: string, records: Records): void {
 }
 
 /**
- * The members (lower-cased) who answered "I hold nothing" for the history of `workspaceId` at
- * exactly this key group and epoch. Empty when the record names another version - a moved roster,
- * where every member is worth asking again.
+ * The devices ({@link answeredDevice}) that answered "I hold nothing" for the history of
+ * `workspaceId` at exactly this key group and epoch. Empty when the record names another version -
+ * a moved tree, where every device is worth asking again.
  */
-export function historyHeldNothingBy(
+export function historyHeldNothingDevices(
   userId: string,
   workspaceId: string,
   at: HistoryAskVersion
 ): Set<string> {
   const record = readAll(userId)[workspaceId];
   if (!record || record.groupId !== at.groupId || record.epoch !== at.epoch) return new Set();
-  return new Set(record.answerers);
+  return new Set(record.devices);
 }
 
 /**
- * Records that `answerer` answered the history ask of `workspaceId`, sealed at `at`, with "I hold
- * nothing". A record of another version is REPLACED, not merged: its answers were about a roster
- * the group has left.
+ * Records that `device` of `answerer` answered the history ask of `workspaceId`, sealed at `at`,
+ * with "I hold nothing". A record of another version is REPLACED, not merged: its answers were
+ * about a tree the group has left.
+ *
+ * @returns whether the device was new at this version - the only fact allowed to move the walk on,
+ *   so an answer repeated by the same device can never re-ask in a loop.
  */
 export function recordHistoryHeldNothing(
   userId: string,
   workspaceId: string,
   at: HistoryAskVersion,
-  answerer: string
-): void {
+  answerer: string,
+  device: string
+): boolean {
   const records = readAll(userId);
   const previous = records[workspaceId];
   const sameVersion =
     previous !== undefined && previous.groupId === at.groupId && previous.epoch === at.epoch;
-  const answerers = new Set(sameVersion ? previous.answerers : []);
-  answerers.add(answerer.toLowerCase());
-  records[workspaceId] = { groupId: at.groupId, epoch: at.epoch, answerers: [...answerers].sort() };
+  const devices = new Set(sameVersion ? previous.devices : []);
+  const named = answeredDevice(answerer, device);
+  if (devices.has(named)) return false;
+  devices.add(named);
+  records[workspaceId] = { groupId: at.groupId, epoch: at.epoch, devices: [...devices].sort() };
   writeAll(userId, records);
+  return true;
 }
 
 /**
- * True when EVERY eligible member was asked at this version and answered "I hold nothing" - the one
- * state in which a start skips even the roster read, because the roster cannot have changed.
+ * True when EVERY device on the key group's tree was asked at this version and answered "I hold
+ * nothing" - the one state in which a start skips even the roster read, because the tree cannot
+ * have changed.
  */
 export function historyHeldNothingFinalAt(
   userId: string,
@@ -156,7 +174,7 @@ export function historyHeldNothingFinalAt(
 }
 
 /**
- * Marks the record of `workspaceId` at `at` final: the election found no eligible member left
+ * Marks the record of `workspaceId` at `at` final: the election found no device on the tree left
  * unrecorded. A record of another version (or none) is left alone and said - there is nothing at
  * this version to finalise.
  */
@@ -189,8 +207,9 @@ export function forgetHistoryHeldNothing(userId: string, workspaceId: string): v
 }
 
 /**
- * Removes EVERY record of `userId` - for the account wipe (WP-DEL-LOCAL), after which nobody can
- * sign in as that account again on this install and its records are only a residue.
+ * Removes EVERY record of `userId` - an account wipe's residue. Called by nobody yet: pull request
+ * #2023 sweeps this key itself from its `ACCOUNT_KEY` list, and this function is deleted when it
+ * merges.
  */
 export function clearHistoryHeldNothing(userId: string): void {
   try {

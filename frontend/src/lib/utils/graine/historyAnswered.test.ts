@@ -2,41 +2,53 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   clearHistoryHeldNothing,
   forgetHistoryHeldNothing,
-  historyHeldNothingBy,
+  historyHeldNothingDevices,
   historyHeldNothingFinalAt,
   historyHeldNothingStorageKey,
   markHistoryHeldNothingFinal,
   recordHistoryHeldNothing,
 } from './historyAnswered';
 
-/** The durable "I hold nothing" record (channel-encryption section 24), keyed per answerer. */
+/** The durable "I hold nothing" record (channel-encryption section 24), keyed per answering device. */
 describe('historyAnswered', () => {
   const at = { groupId: 'g-1', epoch: 7 };
 
   beforeEach(() => localStorage.clear());
   afterEach(() => localStorage.clear());
 
-  it('keeps each answerer of one roster version, lower-cased', () => {
-    recordHistoryHeldNothing('alice', 'ws-1', at, 'Bob');
-    recordHistoryHeldNothing('alice', 'ws-1', at, 'carol');
+  it('keeps each answering DEVICE of one tree version, its user lower-cased', () => {
+    expect(recordHistoryHeldNothing('alice', 'ws-1', at, 'Bob', 'web')).toBe(true);
+    expect(recordHistoryHeldNothing('alice', 'ws-1', at, 'bob', 'laptop')).toBe(true);
+    expect(recordHistoryHeldNothing('alice', 'ws-1', at, 'carol', 'web')).toBe(true);
 
-    expect([...historyHeldNothingBy('alice', 'ws-1', at)].sort()).toEqual(['bob', 'carol']);
+    expect([...historyHeldNothingDevices('alice', 'ws-1', at)].sort()).toEqual([
+      'bob:laptop',
+      'bob:web',
+      'carol:web',
+    ]);
+  });
+
+  it('says a repeated answer from the same device is not new - the walk must not move on it', () => {
+    recordHistoryHeldNothing('alice', 'ws-1', at, 'bob', 'web');
+
+    expect(recordHistoryHeldNothing('alice', 'ws-1', at, 'BOB', 'web')).toBe(false);
+    expect(historyHeldNothingDevices('alice', 'ws-1', at).size).toBe(1);
   });
 
   it('reads nothing at another version, and an answer at a new version replaces the old ones', () => {
-    recordHistoryHeldNothing('alice', 'ws-1', at, 'bob');
-    expect(historyHeldNothingBy('alice', 'ws-1', { groupId: 'g-1', epoch: 8 }).size).toBe(0);
-    expect(historyHeldNothingBy('alice', 'ws-1', { groupId: 'g-2', epoch: 7 }).size).toBe(0);
+    recordHistoryHeldNothing('alice', 'ws-1', at, 'bob', 'web');
+    expect(historyHeldNothingDevices('alice', 'ws-1', { groupId: 'g-1', epoch: 8 }).size).toBe(0);
+    expect(historyHeldNothingDevices('alice', 'ws-1', { groupId: 'g-2', epoch: 7 }).size).toBe(0);
 
-    recordHistoryHeldNothing('alice', 'ws-1', { groupId: 'g-1', epoch: 8 }, 'carol');
-    expect([...historyHeldNothingBy('alice', 'ws-1', { groupId: 'g-1', epoch: 8 })]).toEqual([
-      'carol',
+    recordHistoryHeldNothing('alice', 'ws-1', { groupId: 'g-1', epoch: 8 }, 'carol', 'web');
+    expect([...historyHeldNothingDevices('alice', 'ws-1', { groupId: 'g-1', epoch: 8 })]).toEqual([
+      'carol:web',
     ]);
-    expect(historyHeldNothingBy('alice', 'ws-1', at).size).toBe(0);
+    expect(historyHeldNothingDevices('alice', 'ws-1', at).size).toBe(0);
   });
 
   it('is final only when marked, and only at the version marked', () => {
-    recordHistoryHeldNothing('alice', 'ws-1', at, 'bob');
+    recordHistoryHeldNothing('alice', 'ws-1', at, 'bob', 'web');
     expect(historyHeldNothingFinalAt('alice', 'ws-1', at)).toBe(false);
 
     markHistoryHeldNothingFinal('alice', 'ws-1', { groupId: 'g-1', epoch: 6 });
@@ -52,26 +64,26 @@ describe('historyAnswered', () => {
       historyHeldNothingStorageKey('alice'),
       JSON.stringify({
         'ws-1': { groupId: 'g-1', epoch: 7 },
-        'ws-2': { ...at, answerers: ['bob'] },
+        'ws-2': { ...at, devices: ['bob:web'] },
       })
     );
 
-    expect(historyHeldNothingBy('alice', 'ws-1', at).size).toBe(0);
-    expect([...historyHeldNothingBy('alice', 'ws-2', at)]).toEqual(['bob']);
+    expect(historyHeldNothingDevices('alice', 'ws-1', at).size).toBe(0);
+    expect([...historyHeldNothingDevices('alice', 'ws-2', at)]).toEqual(['bob:web']);
   });
 
   it('forgets one community, and the account wipe removes the whole key', () => {
-    recordHistoryHeldNothing('alice', 'ws-1', at, 'bob');
-    recordHistoryHeldNothing('alice', 'ws-2', at, 'bob');
-    recordHistoryHeldNothing('dave', 'ws-1', at, 'bob');
+    recordHistoryHeldNothing('alice', 'ws-1', at, 'bob', 'web');
+    recordHistoryHeldNothing('alice', 'ws-2', at, 'bob', 'web');
+    recordHistoryHeldNothing('dave', 'ws-1', at, 'bob', 'web');
 
     forgetHistoryHeldNothing('alice', 'ws-1');
-    expect(historyHeldNothingBy('alice', 'ws-1', at).size).toBe(0);
-    expect(historyHeldNothingBy('alice', 'ws-2', at).size).toBe(1);
+    expect(historyHeldNothingDevices('alice', 'ws-1', at).size).toBe(0);
+    expect(historyHeldNothingDevices('alice', 'ws-2', at).size).toBe(1);
 
     clearHistoryHeldNothing('alice');
     expect(localStorage.getItem(historyHeldNothingStorageKey('alice'))).toBeNull();
     // Another account on the same install keeps its own.
-    expect(historyHeldNothingBy('dave', 'ws-1', at).size).toBe(1);
+    expect(historyHeldNothingDevices('dave', 'ws-1', at).size).toBe(1);
   });
 });
