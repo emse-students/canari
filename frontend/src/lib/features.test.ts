@@ -17,25 +17,18 @@ afterEach(() => {
 });
 
 describe('CALLS_ENABLED', () => {
-  it('is on for a dev build', async () => {
-    vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', 'development');
-    expect((await load()).CALLS_ENABLED).toBe(true);
-  });
+  // THE REVIVAL (CALLS_COMPILED = true): calling is on in every build, production included.
+  it.each([['development'], [''], ['staging']])(
+    'is on for VITE_DEPLOY_ENVIRONMENT=%j',
+    async (env) => {
+      vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', env);
+      expect((await load()).CALLS_ENABLED).toBe(true);
+    }
+  );
 
-  it('is off for a production build, which sets nothing', async () => {
-    vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', '');
-    expect((await load()).CALLS_ENABLED).toBe(false);
-  });
-
-  it('is off for a value nobody planned for', async () => {
-    vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', 'staging');
-    expect((await load()).CALLS_ENABLED).toBe(false);
-  });
-
-  it('leaves the native ring and video off whatever the build', async () => {
-    vi.stubEnv('VITE_DEPLOY_ENVIRONMENT', 'development');
+  it('carries the native ring, and leaves video off until WP-C3', async () => {
     const f = await load();
-    expect(f.CALLS_COMPILED).toBe(false);
+    expect(f.CALLS_COMPILED).toBe(true);
     expect(f.CALLS_VIDEO_ENABLED).toBe(false);
   });
 });

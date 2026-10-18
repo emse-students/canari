@@ -2588,7 +2588,7 @@ static void CanariRefreshTokenOnBackend(CanariPushContext *ctx, NSString *secret
 /// together with the `voip` UIBackgroundModes entry that Info.plist no longer carries: without that
 /// entry PKPushRegistry can never obtain a token, so installing it here would be a permanent
 /// silent failure rather than a feature.
-static const BOOL kCanariCallsEnabled = NO;
+static const BOOL kCanariCallsEnabled = YES;
 
 static NSString *const kVoipTokenFileName = @"voip_token.txt";
 static NSString *const kPendingCallAcceptFileName = @"pending_call_accept.json";

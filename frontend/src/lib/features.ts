@@ -19,7 +19,8 @@ import { deployEnvironment } from '$lib/utils/deployEnvironment';
  * read this file - and `callsCompiled.test.ts` asserts that it, the ObjC `kCanariCallsEnabled`, the iOS
  * `voip` background mode and Android's `USE_FULL_SCREEN_INTENT` all agree with this constant.
  *
- * **OFF.** The whole calling surface has never been exercised on hardware: the campaign board
+ * **ON (the revival commit - DRAFT, not to merge before the conditions below).** Until it, OFF:
+ * the whole calling surface had never been exercised on hardware: the campaign board
  * carries twenty CALL rows and NOT ONE has ever run (`docs/wiki/mechanism-audit.md`), the SFU has
  * never had a peer connection opened against it (measured on prod 2026-09-01: one log line since
  * start, and `resolve_ice_servers()` only runs per peer connection), and no iPhone has ever
@@ -34,7 +35,7 @@ import { deployEnvironment } from '$lib/utils/deployEnvironment';
  * `canari_push.mm` and Android's `USE_FULL_SCREEN_INTENT` were removed alongside it and must come
  * back in the same commit - see `docs/wiki/frontend/modules/calls.md`.
  */
-export const CALLS_COMPILED = false;
+export const CALLS_COMPILED = true;
 
 /**
  * In-app 1:1 calling: the call buttons, the in-app ring, and the peer-to-peer WebRTC path behind
