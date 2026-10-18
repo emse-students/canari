@@ -127,10 +127,12 @@ describe(`the five calls switches agree with CALLS_COMPILED (= ${COMPILED})`, ()
   });
 
   it('the microphone purpose string names calls exactly when calls are compiled', () => {
+    // Whole words: a substring match would read "rappel" or "locally" as naming calls.
     for (const { where, text } of microphonePurposes()) {
-      expect(/appel|call/i.test(text), `NSMicrophoneUsageDescription (${where}): "${text}"`).toBe(
-        COMPILED
-      );
+      expect(
+        /\b(appels?|calls?)\b/i.test(text),
+        `NSMicrophoneUsageDescription (${where}): "${text}"`
+      ).toBe(COMPILED);
     }
   });
 });

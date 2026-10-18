@@ -163,7 +163,7 @@ Two write paths never checked `anonymous` before resolving and storing the real 
 - Neither can **invite the other into a private salon** - inside a shared community included.
 - The two **follows** are severed, in both directions.
 - Neither can **call** the other, in an existing conversation included: a call is a new ring, not
-  the existing conversation (`initiate` and `room-token` answer `403 USER_BLOCKED`,
+  the existing conversation (`initiate`, `ring` and `room-token` answer `403 USER_BLOCKED`,
   [calls](frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)).
 - Neither is shown the other's **personal posts**, nor their **comments** under anybody's post -
   in the feed, in search, by id, and under an agenda event. **An association post and an anonymous
@@ -270,7 +270,7 @@ mutations:
 | --- | --- | --- |
 | `POST /mls/groups/:groupId/members` | chat-delivery | `403 { code: 'USER_BLOCKED' }` |
 | `POST /api/channels/:channelId/members/invite` | social-service | `403 { code: 'USER_BLOCKED' }` |
-| `POST /api/calls/initiate`, `GET /api/calls/room-token` | chat-delivery | `403 { code: 'USER_BLOCKED' }` |
+| `POST /api/calls/initiate`, `POST /api/calls/ring`, `GET /api/calls/room-token` | chat-delivery | `403 { code: 'USER_BLOCKED' }` |
 
 `addGroupMember` is the choke point for **both** paths a block closes. Without a `GroupMember` row
 the target's devices never receive a pending membership, so no Welcome is ever built for them. It is

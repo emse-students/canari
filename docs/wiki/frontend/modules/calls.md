@@ -223,13 +223,20 @@ pre-WP-XP-5 caller.
 
 **A call is never placed across a block (WP-C7).** `initiate` refuses `403 { code: 'USER_BLOCKED' }`
 when a block stands between the caller and the other member, in either direction - before a room is
-bound, so no ring window opens, no invite leaves and nothing rings, in-app or native. `room-token`
-refuses the same for a block set while the call rang. The client reads the code
-(`CallInitiateError.code`) and says `call_unavailable` ("this call cannot be placed"), never
-who blocked whom ([moderation-and-blocking](../../moderation-and-blocking.md#what-a-block-does-exhaustively)).
-Pinned by `calls.service.spec.ts` and `callFailure.test.ts`. Not covered: a MODIFIED client that
-sends the MLS `call_invite` without `initiate` still rings an open app; its answer is refused at
-`room-token` (no binding), so no media can flow.
+bound, so no ring window opens, no invite leaves and nothing rings, in-app or native. `ring`
+refuses it again before the fan-out and before the answer window opens: between `initiate` and
+`ring` the caller waits on the first microphone prompt with no limit, so a block set meanwhile is
+caught there, and a refused ring already ends the call on the client. `room-token` refuses the same
+for a block set while the call rang; the callee asks for the token BEFORE it sends `call_answered`,
+so a refused answer tells nobody it was answered (its siblings stop ringing one round trip later).
+The client reads the code (`CallInitiateError.code`) and says `call_unavailable` ("this call cannot
+be placed"), never who blocked whom ([moderation-and-blocking](../../moderation-and-blocking.md#what-a-block-does-exhaustively)).
+A MODIFIED client that skips `initiate` and `ring` and sends the MLS `call_invite` itself does not
+ring the in-app UI either: `handleCallSignal` asks `isBlockedWith` before it rings, and a failure to
+ask does not ring (logged at error). Pinned by `calls.service.spec.ts`, `callFailure.test.ts`,
+`CallService.callsEnabled.test.ts` and `CallService.p2p.test.ts`. **Any block with any other member
+refuses the WHOLE call** - right for 1:1, which only the client enforces today; WP-C11 must decide it
+for a group ([backlog](../../backlog.md#p1-blocks-calls_compiled-not-dev---four-things-owed-before-production-calls-review-of-1997-2026-10-17)).
 
 ## Responsibilities
 

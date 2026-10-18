@@ -549,10 +549,15 @@ export class CallsService {
   ): Promise<{ rang: number }> {
     this.logger.debug(`[ring] ringGroup caller=${callerId} group=${groupId} call=${callId}`);
     await this.assertMembership(callerId, groupId, 'ring');
+    const calleeIds = await this.otherMemberIds(groupId, callerId);
+    // Re-checked here and not only at `initiate`: between the two the caller's client waits on the
+    // first microphone prompt with no limit, so a block set meanwhile must still stop the ring. A
+    // refused ring already ends the call on the client. Before the window opens, so a refused call
+    // leaves no answer window behind.
+    await this.refuseIfBlocked(callerId, calleeIds, `ring call=${callId}`);
     // BEFORE the fan-out: the window must not depend on how long FCM and APNs take to answer.
     await this.openRingWindow(callerId, groupId, callId);
 
-    const calleeIds = await this.otherMemberIds(groupId, callerId);
     if (calleeIds.length === 0) {
       this.logger.warn(`[ring] call=${callId} group=${groupId} has no other member to ring`);
       return { rang: 0 };

@@ -967,6 +967,12 @@ between the two ends, or a visible "decrypt failing" toast; one AES-GCM key used
 with no AAD; and the `fp=` log line printing 4 bytes of the key, to become a hash
 ([calls](frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)).
 
+P3, owed by WP-C11 (group calls): `refuseIfBlocked` (`calls.service.ts`) lets ANY block between the
+caller and ANY other member refuse the whole call, at `initiate`, `ring` and `room-token`, and 1:1 is
+enforced only by the client. Acceptable while group calls are off; WP-C11 must decide whether one
+block refuses the call or only drops that member
+([calls](frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)).
+
 ### P2 - what made the profile fetches fail on that device at that moment
 
 Owed: the DENOMINATOR (the `(failed/attempted lookups failed this session, X%)` suffix on every

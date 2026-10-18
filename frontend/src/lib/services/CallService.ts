@@ -25,7 +25,7 @@ import { showToast } from '$lib/stores/toast.svelte';
 import { m } from '$lib/paraglide/messages';
 import { getCallSystemMessageContext, recordCallMissed } from '$lib/utils/chat/callSystemMessages';
 import { CALLS_ENABLED } from '$lib/features';
-import { refusalCodeOf } from '$lib/users/blocks';
+import { isBlockedWith, refusalCodeOf } from '$lib/users/blocks';
 import { describeSelectedPair } from '$lib/utils/callStats';
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'incall' | 'ended';
@@ -149,14 +149,17 @@ export class CallService {
   /**
    * Handles an incoming MLS `CallMsg` for a specific group conversation.
    * Ignores invites from the same user (other device) and dismisses sibling rings on `answered`.
+   *
+   * Hangups and `answered` frames are handled synchronously; an invite rings only after the
+   * block check of {@link admitInvite}, so the returned promise settles once that is decided.
    */
-  public handleCallSignal(
+  public async handleCallSignal(
     senderId: string,
     groupId: string,
     callMsg: canari.ICallMsg,
     currentUserId: string,
     currentDeviceId: string
-  ) {
+  ): Promise<void> {
     if (!callMsg?.callId) return;
 
     // Calls are held off (see CALLS_ENABLED). This device no longer initiates, but a peer still
@@ -214,6 +217,8 @@ export class CallService {
         return;
       }
 
+      if (!(await this.admitInvite(senderNorm, callMsg.callId))) return;
+
       this.currentCallId = callMsg.callId;
       this.currentGroupId = groupId;
       this.incomingCallerId = senderNorm;
@@ -230,6 +235,30 @@ export class CallService {
         void this.acceptCall(groupId, callMsg.callId);
       }
     }
+  }
+
+  /**
+   * Whether an invite from `senderNorm` may ring here. The server refuses `initiate` and `ring`
+   * across a block, so an honest caller never sends this invite; a client that skips them can
+   * still send the MLS `call_invite` itself, and THIS is where that ring is stopped - a block must
+   * not ring the in-app UI either. A failure to ASK is not an answer, so it does not ring and says
+   * so at error level. Re-checks the slot afterwards: another invite may have rung during the await.
+   */
+  private async admitInvite(senderNorm: string, callId: string): Promise<boolean> {
+    try {
+      if (await isBlockedWith(senderNorm)) {
+        appendLog(`[Call] invite ${callId} from ${senderNorm} dropped: a block stands between us`);
+        return false;
+      }
+    } catch (e) {
+      console.error(`[Call] invite ${callId} not rung: could not ask whether a block stands`, e);
+      return false;
+    }
+    if (get(this.callState) !== 'idle' || this.currentCallId) {
+      appendLog(`[Call] invite ${callId} not rung: another call took this device meanwhile`);
+      return false;
+    }
+    return true;
   }
 
   /** Stops an incoming ring without notifying the group (sibling device answered). */
@@ -361,13 +390,15 @@ export class CallService {
         throw new CallE2eUnsupportedError();
       }
       this.callState.set('incall');
+      // The token FIRST: it is where the server refuses (a block set while the call rang, a closed
+      // window), and a refused answer must not have told anyone it was answered. Our siblings stop
+      // ringing one round trip later than they would otherwise - nothing reads that gap.
+      this.currentRoomToken = await this.fetchRoomToken(groupId, callId);
       const deviceId = this.mlsService.getDeviceId();
       // Tell our other devices to stop ringing before joining the SFU.
       await this.sendMlsNotification(groupId, mkCallAnswered(callId, deviceId));
       // WP-XP-5: also stop the system-surface rings (CallStyle notifs / CallKit) everywhere.
       void this.endServerRing(groupId, callId, 'answered');
-      // Fetch our own room token before connecting (the initiator already has theirs).
-      this.currentRoomToken = await this.fetchRoomToken(groupId, callId);
       this.iceServers = await this.fetchIceServers(groupId, callId);
       await this.setupMedia(useVideo);
       this.installBackgroundHandler();

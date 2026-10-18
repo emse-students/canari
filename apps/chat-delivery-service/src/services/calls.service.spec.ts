@@ -642,6 +642,28 @@ describe('CallsService', () => {
       await expect(service.initiateCall('caller', 'group-1')).resolves.toHaveProperty('roomId');
     });
 
+    it('refuses the ring for a block set between initiate and ring, and opens no window', async () => {
+      const log = jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
+      // The caller sat on the first microphone prompt; the callee blocked meanwhile.
+      const { roomId } = await service.initiateCall('caller', 'group-1');
+      blockBetweenCallerAndCallee();
+
+      const refusal = await service
+        .ringGroup('caller', 'group-1', roomId, false)
+        .catch((e: unknown) => e);
+
+      expect(refusal).toBeInstanceOf(ForbiddenException);
+      expect((refusal as ForbiddenException).getResponse()).toMatchObject({ code: 'USER_BLOCKED' });
+      // Nothing fanned out, and no answer window was left behind.
+      expect(pushTokenRepo.find).not.toHaveBeenCalled();
+      expect(fcmSend).not.toHaveBeenCalled();
+      expect(apnsVoip.sendVoipPush).not.toHaveBeenCalled();
+      expect([...redisStore.keys()].some((k) => k.endsWith(':answer_by'))).toBe(false);
+      expect(captured(log)).toContain(
+        `[call] ring call=${roomId} REFUSED user=caller: a block stands between the two`
+      );
+    });
+
     it('refuses the join token for a block set while the call rang', async () => {
       jest.spyOn(Logger.prototype, 'log').mockImplementation(() => {});
       jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => {});
