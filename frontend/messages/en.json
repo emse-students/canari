@@ -3910,6 +3910,7 @@
   "bookings_refusal_not_a_participant": "You are not part of this booking.",
   "bookings_refusal_withdrawal_delay": "It is too late to leave this booking.",
   "bookings_refusal_inside_block": "Upcoming bookings ({count}) fall inside this unavailability: cancel them first, then retry.",
+  "bookings_refusal_block_exists": "This range already overlaps an existing unavailability of this resource.",
   "bookings_refusal_block_not_found": "This unavailability no longer exists.",
   "bookings_stranded_title": "The bookings in the way",
   "bookings_stranded_hint": "Cancel the ones that must go, then save again. The people concerned are not notified: tell them yourself.",

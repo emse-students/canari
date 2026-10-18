@@ -205,7 +205,7 @@ concurrent inserts on one slot gave one winner and seven `40P01` deadlocks, not 
 `SELECT id FROM booking_resources WHERE id = $1 FOR UPDATE` first, in the same transaction, every
 loser is told `23P01` (`isExclusionViolation` in `src/common/pg-errors.ts`). The same lock is what
 must serialise a block against a booking (D29): no constraint stops a block overlapping a live
-booking. **For WP-B3: an ASSOCIATION space is managed through `MANAGE_BOOKINGS` on its association (`AssociationsService.mayAct`), NEVER through `ownerId`** - that column names the creator, becomes `'[deleted]'` with the creator's account, and grants nothing; only a PERSONAL space (`associationId` NULL) is managed by its `ownerId`. Also left to B3: the holder must not also be a participant (no cross-table check), and the
+booking. A block overlapping an existing block of the same resource is refused `block-exists` (409, same lock, 2026-10-18). **For WP-B3: an ASSOCIATION space is managed through `MANAGE_BOOKINGS` on its association (`AssociationsService.mayAct`), NEVER through `ownerId`** - that column names the creator, becomes `'[deleted]'` with the creator's account, and grants nothing; only a PERSONAL space (`associationId` NULL) is managed by its `ownerId`. Also left to B3: the holder must not also be a participant (no cross-table check), and the
 name snapshots are filled at write time. The file of a booking answer (D22) reuses WP-F's mechanism
 in WP-B6, so B1 adds no file table. The poster of D35 is not a column yet: WP-B4 adds it with the
 screen that sets it.

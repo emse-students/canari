@@ -50,6 +50,12 @@ describe('describeBookingRefusal', () => {
     expect(text).toBe(m.bookings_refusal_inside_block({ count: 2 }));
   });
 
+  it('says the unavailability already exists', () => {
+    expect(describeBookingRefusal(refused('block-exists', 409), 'Bloquer')).toBe(
+      m.bookings_refusal_block_exists()
+    );
+  });
+
   it('falls back on the status for a code it does not know, then on the generic line', () => {
     expect(describeBookingRefusal(refused('brand-new', 403), 'Enregistrer')).toBe(
       m.api_refusal_forbidden({ action: 'Enregistrer' })

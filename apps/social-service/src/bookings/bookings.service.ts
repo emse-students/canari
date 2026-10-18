@@ -962,7 +962,8 @@ export class BookingsService {
    * now as its earliest start, and a start within `NEAR_NOW_MS` of the server's now moves up to it -
    * so no past instant is ever marked. Refused while COMING live
    * bookings fall inside it, naming them (D29): the organiser cancels them explicitly first. A
-   * booking already under way cannot be cancelled, so it neither refuses the block nor is named.
+   * booking already under way cannot be cancelled, so it neither refuses the block nor is named. A range
+   * overlapping an existing block of the same resource is refused `block-exists`.
    */
   async addBlock(resourceId: string, dto: CreateBlockDto, actor: Actor, nowMs: number) {
     this.logger.debug(`[BOOKINGS] addBlock resource=${resourceId}`);
@@ -999,6 +1000,18 @@ export class BookingsService {
           code: 'bookings-inside-block',
           bookingIds: inside.map((b) => b.id),
         });
+      }
+      // The same resource already unavailable somewhere in this range: the answer is typed so the
+      // screen says the block exists, instead of stacking a second row that lifts separately.
+      const overlapping: unknown[] = await m.query(
+        `SELECT 1 FROM booking_blocks WHERE "resourceId" = $1 AND "startsAt" < $3 AND "endsAt" > $2 LIMIT 1`,
+        [resourceId, new Date(range.startMs), new Date(range.endMs)]
+      );
+      if (overlapping.length) {
+        this.logger.debug(
+          `[BOOKINGS] addBlock refused: block-exists resource=${resourceId.slice(0, 8)}`
+        );
+        throw new ConflictException({ code: 'block-exists' });
       }
       const [row]: { id: string }[] = await m.query(
         `INSERT INTO booking_blocks ("resourceId", "startsAt", "endsAt", reason, "reasonVisible", "createdById")

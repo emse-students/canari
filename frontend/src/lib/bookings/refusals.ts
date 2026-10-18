@@ -66,6 +66,7 @@ export const BOOKER_REFUSAL_CODES = [
   'not-a-participant',
   'withdrawal-delay',
   'bookings-inside-block',
+  'block-exists',
   'block-not-found',
   'file-question',
   'file-empty',
@@ -181,6 +182,8 @@ function bookerSentenceFor(code: string, count: number): string | null {
       return m.bookings_refusal_withdrawal_delay();
     case 'bookings-inside-block':
       return m.bookings_refusal_inside_block({ count });
+    case 'block-exists':
+      return m.bookings_refusal_block_exists();
     case 'block-not-found':
       return m.bookings_refusal_block_not_found();
     default:

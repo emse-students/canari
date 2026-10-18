@@ -749,6 +749,20 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       await expect(service.removeBlock(orgas.id, as(ORGA), NOW)).resolves.toEqual({ ok: true });
     });
 
+    it('refuses a block overlapping an existing block of the same resource', async () => {
+      const { resourceIds } = await setup();
+      const r = resourceIds[0];
+      await service.addBlock(r, { startsAt: on('09:00'), endsAt: on('12:00') }, as(ORGA), NOW);
+      expect(
+        await refusal(
+          service.addBlock(r, { startsAt: on('11:00'), endsAt: on('13:00') }, as(ORGA), NOW)
+        )
+      ).toEqual({ code: 'block-exists' });
+      await expect(
+        service.addBlock(r, { startsAt: on('12:00'), endsAt: on('13:00') }, as(ORGA), NOW)
+      ).resolves.toHaveProperty('id');
+    });
+
     it('refuses a block starting in the past; a booking under way neither refuses nor is named', async () => {
       const { space, resourceIds } = await setup();
       const r = resourceIds[0];
