@@ -3,8 +3,9 @@ import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 /**
- * WP-MENTION-NAME: the names this device resolved, handed to the native push path at the moment
- * the app is hidden - the one moment before which a native mention banner cannot be drawn.
+ * WP-MENTION-NAME: the names this device resolved, handed to the native push path when they
+ * CHANGE (one write per task, one in flight at a time), with the hide as an extra flush only, and a
+ * deleted account dropped.
  *
  * Three toolchains read one FILE NAME (Rust writes it, Kotlin, Swift and ObjC read it), so the name
  * is pinned here, where all four sources can be read at once.
@@ -16,7 +17,8 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...args: unknown[]) => invoke(
 vi.mock('$lib/utils/appVersion', () => ({ isMobileTauriRuntime: () => mobile }));
 vi.mock('$lib/stores/user', () => ({ currentUserId: () => me }));
 
-const { noteResolvedName, flushNameMirror, pendingMirroredNames } = await import('./nameMirror');
+const { noteResolvedName, noteDeletedAccount, flushNameMirror, pendingMirroredNames } =
+  await import('./nameMirror');
 
 const here = dirname(fileURLToPath(import.meta.url));
 const TAURI = resolve(here, '../../../../src-tauri');
@@ -25,49 +27,85 @@ const read = (rel: string) => readFileSync(join(TAURI, rel), 'utf8');
 const ALICE = '1'.repeat(64);
 const BOB = '2'.repeat(64);
 
+/** Lets the scheduled microtask and the write it starts run to the end. */
+const settle = () => flushNameMirror();
+
 beforeEach(async () => {
   invoke.mockReset();
   invoke.mockResolvedValue(2);
   mobile = true;
   me = 'a'.repeat(64);
   // Drain whatever a previous case left.
-  await flushNameMirror();
+  await settle();
   invoke.mockReset();
   invoke.mockResolvedValue(2);
 });
 
 describe('the native name mirror', () => {
-  it('writes the names learned since the last hide, once, under the signed-in account', async () => {
+  it('writes a burst of names ONCE, at the end of the task that learned them - no hide needed', async () => {
     noteResolvedName(ALICE.toUpperCase(), ' Alice ');
     noteResolvedName(BOB, 'Bob');
-    document.dispatchEvent(new Event('visibilitychange'));
-    // jsdom/happy-dom report `visible` unless told otherwise, so the hide is driven directly.
-    await flushNameMirror();
-    expect(invoke).toHaveBeenCalledTimes(1);
+    expect(invoke).not.toHaveBeenCalled();
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
     expect(invoke).toHaveBeenCalledWith('store_display_names', {
       userId: me,
       names: { [ALICE]: 'Alice', [BOB]: 'Bob' },
+      removed: [],
     });
-    await flushNameMirror();
+    await settle();
     expect(invoke).toHaveBeenCalledTimes(1);
   });
 
-  it('flushes when the document is hidden, and not while it is visible', async () => {
+  it('keeps one write in flight, and sends what changed meanwhile right after it', async () => {
+    let release!: (v: number) => void;
+    invoke.mockImplementationOnce(() => new Promise<number>((r) => (release = r)));
     noteResolvedName(ALICE, 'Alice');
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    noteResolvedName(BOB, 'Bob');
+    await Promise.resolve();
+    expect(invoke).toHaveBeenCalledTimes(1);
+    release(1);
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
+    expect(invoke).toHaveBeenLastCalledWith('store_display_names', {
+      userId: me,
+      names: { [BOB]: 'Bob' },
+      removed: [],
+    });
+  });
+
+  it('drops a deleted account, and the later of a name and a deletion wins', async () => {
+    noteResolvedName(BOB, 'Bob');
+    noteDeletedAccount(BOB.toUpperCase());
+    await settle();
+    expect(invoke).toHaveBeenCalledWith('store_display_names', {
+      userId: me,
+      names: {},
+      removed: [BOB],
+    });
+  });
+
+  it('flushes on hide as well, and not while visible', async () => {
+    invoke.mockRejectedValueOnce(new Error('suspended'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    noteResolvedName(ALICE, 'Alice');
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
+    expect(pendingMirroredNames()).toBe(1);
     const state = vi.spyOn(document, 'visibilityState', 'get');
     state.mockReturnValue('visible');
     document.dispatchEvent(new Event('visibilitychange'));
     await Promise.resolve();
-    expect(invoke).not.toHaveBeenCalled();
+    expect(invoke).toHaveBeenCalledTimes(1);
     state.mockReturnValue('hidden');
     document.dispatchEvent(new Event('visibilitychange'));
-    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(invoke).toHaveBeenCalledTimes(2));
     state.mockRestore();
+    warn.mockRestore();
   });
 
   it('notes nothing a mention cannot name, nor anything off a phone', () => {
     noteResolvedName('not-a-user-id', 'X');
     noteResolvedName(ALICE, '   ');
+    noteDeletedAccount('not-a-user-id');
     expect(pendingMirroredNames()).toBe(0);
     mobile = false;
     noteResolvedName(ALICE, 'Alice');
@@ -77,22 +115,23 @@ describe('the native name mirror', () => {
   it("never writes one account's names under the account that signed in after it", async () => {
     noteResolvedName(ALICE, 'Alice');
     me = 'b'.repeat(64);
-    await flushNameMirror();
+    await settle();
     expect(invoke).not.toHaveBeenCalled();
     expect(pendingMirroredNames()).toBe(0);
   });
 
-  it('keeps the names of a failed write for the next hide', async () => {
+  it('keeps the names of a failed write for the next change', async () => {
     invoke.mockRejectedValueOnce(new Error('disk full'));
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     noteResolvedName(ALICE, 'Alice');
-    await flushNameMirror();
+    await vi.waitFor(() => expect(warn).toHaveBeenCalled());
     expect(pendingMirroredNames()).toBe(1);
-    expect(warn).toHaveBeenCalled();
-    await flushNameMirror();
+    noteResolvedName(BOB, 'Bob');
+    await settle();
     expect(invoke).toHaveBeenLastCalledWith('store_display_names', {
       userId: me,
-      names: { [ALICE]: 'Alice' },
+      names: { [ALICE]: 'Alice', [BOB]: 'Bob' },
+      removed: [],
     });
     warn.mockRestore();
   });
@@ -101,7 +140,7 @@ describe('the native name mirror', () => {
     const rust = read('src/commands/display_names.rs');
     expect(rust).toMatch(/pub\(crate\) const DISPLAY_NAMES_FILE: &str = "display_names\.json";/);
     expect(rust).toMatch(
-      /fn store_display_names\(\s*app: tauri::AppHandle,\s*user_id: String,\s*names: HashMap<String, String>,/
+      /fn store_display_names\(\s*app: tauri::AppHandle,\s*user_id: String,\s*names: HashMap<String, String>,\s*removed: Vec<String>,/
     );
     expect(read('src/lib.rs')).toContain('store_display_names,');
     for (const native of [

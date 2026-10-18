@@ -471,6 +471,21 @@ describe('formatProfileDisplayName (indirect)', () => {
     expect(vi.mocked(userModule.fetchUserProfile)).toHaveBeenCalledTimes(1);
   });
 
+  it("drops a deleted account from the phone's native names, so no banner names it (WP-MENTION-NAME)", async () => {
+    vi.resetModules();
+    const noteDeletedAccount = vi.fn();
+    vi.doMock('./nameMirror', () => ({ noteResolvedName: vi.fn(), noteDeletedAccount }));
+    const userModule = await import('$lib/stores/user');
+    const mod = await import('./displayName');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.mocked(userModule.fetchUserProfile).mockRejectedValue(new userModule.DeletedAccountError());
+    // Seeded first: the name the web may keep showing is still no licence for a native banner.
+    mod.seedUserDisplayName('usr_erased', 'Bob');
+    await mod.resolveUserDisplayName('usr_erased');
+    expect(noteDeletedAccount).toHaveBeenCalledWith('usr_erased');
+    vi.doUnmock('./nameMirror');
+  });
+
   it('does not re-ask for an absent user when connectivity returns', async () => {
     // `failedAt` is cleared on reconnect, because a failure recorded while the network was down is
     // evidence about the network. An absent account is evidence about the account, so a reconnect

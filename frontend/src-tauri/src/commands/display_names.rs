@@ -47,11 +47,17 @@ fn is_mention_id(id: &str) -> bool {
 /// - Over [`DISPLAY_NAMES_MAX`]: the names of THIS write are kept first, then the stored ones in key
 ///   order until the cap - so what the app resolved most recently survives, deterministically.
 ///
+/// - An id in `removed` is DROPPED, from the stored names and from this write alike: the server
+///   answered that the account does not exist (deleted), so no banner may name it again - a token
+///   for it then reads "someone", as the web reads its own label. The caller never puts one id in
+///   both, since the later of the two facts wins in `nameMirror.ts`; a removal is applied last.
+///
 /// Ids are lower-cased; an id that is not a mention id and an empty name are skipped and counted.
 pub(crate) fn merge_display_names(
     dir: &Path,
     owner: &str,
     names: &HashMap<String, String>,
+    removed: &[String],
 ) -> Result<usize, String> {
     let owner = owner.trim().to_lowercase();
     if owner.is_empty() {
@@ -79,12 +85,16 @@ pub(crate) fn merge_display_names(
         Err(e) => return Err(format!("read {DISPLAY_NAMES_FILE}: {e}")),
     };
 
+    let gone: std::collections::HashSet<String> =
+        removed.iter().map(|id| id.trim().to_lowercase()).collect();
+    let dropped = stored.keys().filter(|id| gone.contains(*id)).count();
+
     let mut fresh: Vec<(String, String)> = Vec::with_capacity(names.len());
     let mut skipped = 0usize;
     for (id, name) in names {
         let id = id.trim().to_lowercase();
         let name: String = name.trim().chars().take(DISPLAY_NAME_MAX_CHARS).collect();
-        if !is_mention_id(&id) || name.is_empty() {
+        if !is_mention_id(&id) || name.is_empty() || gone.contains(&id) {
             skipped += 1;
             continue;
         }
@@ -101,9 +111,12 @@ pub(crate) fn merge_display_names(
         if out.len() >= DISPLAY_NAMES_MAX {
             break;
         }
-        if name.is_string() && is_mention_id(&id) && !out.contains_key(&id) {
+        if name.is_string() && is_mention_id(&id) && !out.contains_key(&id) && !gone.contains(&id) {
             out.insert(id, name);
         }
+    }
+    if dropped > 0 {
+        log::info!("[NAME_MIRROR] {dropped} name(s) of deleted account(s) dropped");
     }
 
     let count = out.len();
@@ -143,19 +156,25 @@ pub(crate) fn remove_display_names_of(dir: &Path, owner: &str) -> Result<bool, S
 }
 
 /// Mirrors the names the WebView resolved since its last call, for `user_id` (the signed-in
-/// account). Written to the app's data directory, and on iOS to the App Group container too, which
-/// is the only copy the notification extension can read - written here, at the call, rather than
-/// left to the next lifecycle mirror, so a banner never waits a whole session for a name.
+/// account), and drops the ids in `removed` - accounts the server answered do not exist. Written to
+/// the app's data directory, and on iOS to the App Group container too, which is the only copy the
+/// notification extension can read - written here, at the call, rather than left to the next
+/// lifecycle mirror, so a banner never waits a whole session for a name.
 #[tauri::command]
 pub(crate) fn store_display_names(
     app: tauri::AppHandle,
     user_id: String,
     names: HashMap<String, String>,
+    removed: Vec<String>,
 ) -> Result<usize, String> {
     use tauri::Manager;
-    log::debug!("[NAME_MIRROR] store_display_names: {} name(s)", names.len());
+    log::debug!(
+        "[NAME_MIRROR] store_display_names: {} name(s), {} removal(s)",
+        names.len(),
+        removed.len()
+    );
     let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let held = merge_display_names(&data_dir, &user_id, &names)?;
+    let held = merge_display_names(&data_dir, &user_id, &names, &removed)?;
     #[cfg(target_os = "ios")]
     {
         let group = crate::app_group::app_group_dir().map_err(|e| {
@@ -164,7 +183,7 @@ pub(crate) fn store_display_names(
             );
             e
         })?;
-        merge_display_names(&group, &user_id, &names)?;
+        merge_display_names(&group, &user_id, &names, &removed)?;
     }
     Ok(held)
 }
@@ -194,9 +213,9 @@ mod tests {
     fn names_are_merged_for_the_same_owner_and_a_rename_overrides() {
         let dir = temp_dir("merge");
         let first = HashMap::from([(id(1), "Alice".to_string()), (id(2), "Bob".to_string())]);
-        assert_eq!(merge_display_names(&dir, OWNER, &first), Ok(2));
+        assert_eq!(merge_display_names(&dir, OWNER, &first, &[]), Ok(2));
         let second = HashMap::from([(id(2).to_uppercase(), " Robert ".to_string())]);
-        assert_eq!(merge_display_names(&dir, OWNER, &second), Ok(2));
+        assert_eq!(merge_display_names(&dir, OWNER, &second, &[]), Ok(2));
         let v = read(&dir);
         assert_eq!(v["userId"], OWNER);
         assert_eq!(v["names"][id(1)], "Alice");
@@ -207,8 +226,14 @@ mod tests {
     #[test]
     fn another_accounts_names_are_replaced_never_merged() {
         let dir = temp_dir("owner");
-        merge_display_names(&dir, "other", &HashMap::from([(id(1), "Alice".into())])).unwrap();
-        merge_display_names(&dir, OWNER, &HashMap::from([(id(2), "Bob".into())])).unwrap();
+        merge_display_names(
+            &dir,
+            "other",
+            &HashMap::from([(id(1), "Alice".into())]),
+            &[],
+        )
+        .unwrap();
+        merge_display_names(&dir, OWNER, &HashMap::from([(id(2), "Bob".into())]), &[]).unwrap();
         let v = read(&dir);
         assert_eq!(v["userId"], OWNER);
         assert!(
@@ -227,7 +252,7 @@ mod tests {
             (id(1), "   ".to_string()),
             (id(2), "B".repeat(300)),
         ]);
-        assert_eq!(merge_display_names(&dir, OWNER, &names), Ok(1));
+        assert_eq!(merge_display_names(&dir, OWNER, &names, &[]), Ok(1));
         assert_eq!(
             read(&dir)["names"][id(2)].as_str().unwrap().chars().count(),
             DISPLAY_NAME_MAX_CHARS
@@ -241,10 +266,10 @@ mod tests {
         let old: HashMap<String, String> = (0..DISPLAY_NAMES_MAX as u32)
             .map(|n| (id(n), format!("old {n}")))
             .collect();
-        merge_display_names(&dir, OWNER, &old).unwrap();
+        merge_display_names(&dir, OWNER, &old, &[]).unwrap();
         let fresh = HashMap::from([(id(900_000), "New".to_string())]);
         assert_eq!(
-            merge_display_names(&dir, OWNER, &fresh),
+            merge_display_names(&dir, OWNER, &fresh, &[]),
             Ok(DISPLAY_NAMES_MAX)
         );
         assert_eq!(read(&dir)["names"][id(900_000)], "New");
@@ -252,9 +277,32 @@ mod tests {
     }
 
     #[test]
+    fn a_deleted_account_is_dropped_and_never_named_again() {
+        let dir = temp_dir("gone");
+        let first = HashMap::from([(id(1), "Alice".to_string()), (id(2), "Bob".to_string())]);
+        merge_display_names(&dir, OWNER, &first, &[]).unwrap();
+        // Bob's account is deleted: dropped from the stored names, upper-case id or not.
+        assert_eq!(
+            merge_display_names(&dir, OWNER, &HashMap::new(), &[id(2).to_uppercase()]),
+            Ok(1)
+        );
+        let v = read(&dir);
+        assert!(
+            v["names"].get(id(2)).is_none(),
+            "a deleted account kept its name"
+        );
+        assert_eq!(v["names"][id(1)], "Alice");
+        // A removal outranks a name for the same id in the same write.
+        let both = HashMap::from([(id(3), "Carol".to_string())]);
+        assert_eq!(merge_display_names(&dir, OWNER, &both, &[id(3)]), Ok(1));
+        assert!(read(&dir)["names"].get(id(3)).is_none());
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn the_deletion_removes_only_the_deleted_accounts_file() {
         let dir = temp_dir("remove");
-        merge_display_names(&dir, OWNER, &HashMap::from([(id(1), "A".into())])).unwrap();
+        merge_display_names(&dir, OWNER, &HashMap::from([(id(1), "A".into())]), &[]).unwrap();
         assert_eq!(remove_display_names_of(&dir, "someone-else"), Ok(false));
         assert!(dir.join(DISPLAY_NAMES_FILE).exists());
         assert_eq!(remove_display_names_of(&dir, OWNER), Ok(true));

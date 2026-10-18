@@ -1971,18 +1971,36 @@ them. The name never rides the push and is never fetched on the push path (user 
 
 - **Writer**: the WebView. `displayName.ts` notes every name it RESOLVES (a seeded name, or a
   fetched profile that carries one - never the unknown-user label) in `nameMirror.ts`, which hands
-  the batch to `store_display_names` (`commands/display_names.rs`) when the document turns
-  `hidden`. That is a proof, not a schedule: a native banner is only drawn while the app is not in
-  front, and leaving the front fires `visibilitychange` first. No timer.
+  it to `store_display_names` (`commands/display_names.rs`) **when it changes**: one write at the
+  end of the task that learned it (a microtask, so a profile batch is one IPC), one write in flight
+  at a time. No timer. Hiding the app flushes too, as an extra chance only - **not a guarantee**:
+  WKWebView may suspend the page before an IPC started at `hidden` completes. What is guaranteed:
+  a name is handed over in the task that learned it, so a name learned before the app left the
+  front is on disk unless the page was suspended in that same instant (that banner says "someone";
+  the next change or hide writes it). A failed write is kept and retried the same way. **Owed on
+  hardware**: the iPhone reading of a mention by somebody first shown just before backgrounding.
+- **A deleted account is dropped.** When the server answers that an id does not exist
+  (`isAbsentUserError`, the typed deleted-account answer included), `noteDeletedAccount` sends it in
+  `removed`; Rust drops it from the stored names, so a banner says "someone" (the web says "deleted
+  account"). The phone only learns it when its app next asks for that id; a name stored before
+  that stays until then.
 - **The file**: `{"userId": <owner>, "names": {<id>: <name>}}`, merged per owner, capped at 2000
   names (this write's names kept first), written by temp file + rename. On iOS the command also
   writes the App Group copy the extension reads, at the call rather than at the next lifecycle
   mirror.
 - **Readers** use it only when its owner is the account in `push_context.json`; the account
   deletion (`delete_user_push_files`) removes it only when its owner is the deleted account, in
-  the data directory and the App Group. The factory wipe takes it with every other top-level file.
-- **Pinned** by `nameMirror.test.ts` (the hide trigger, the owner, the one file name across four
-  toolchains), `nativeStrings.test.ts` (the author line on the salon path of all three composers,
+  the data directory and the App Group - and a failure there is logged and returned AFTER the
+  other push files are removed, never before them. The factory wipe takes it with every other
+  top-level file.
+- **A sign-out leaves it, like every other push file**: sign-out unregisters the device on the
+  server and removes no local push file (`push_context.json` and the outbox stay too). The owner
+  check keeps it from any banner of another account, the next account's first write replaces it,
+  and the same account signing back in reuses it.
+- **Pinned** by `nameMirror.test.ts` (write on change, one in flight, the deletion, the hide as an
+  extra flush, the owner, the one file name across four toolchains), the Rust tests in
+  `display_names.rs` and `push.rs` (a deleted id dropped; an unreadable names copy does not stop
+  the rest of the deletion), `displayName.spec.ts`, `nativeStrings.test.ts` (the author line on the salon path of all three composers,
   the MLS path left alone, the sentence in every table) and `initialsFallback.test.ts`; nothing
   here runs Kotlin, Swift or ObjC. **Owed**: one look on each phone - a salon mention by somebody
   the app has shown, then by somebody it never has ([backlog](../backlog.md)).

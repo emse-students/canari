@@ -1093,7 +1093,7 @@ Both owed to a product choice; the designs are on
 [campaign-measured-defects](protocols/campaign-measured-defects.md#mentions).
 
 - **P3 - a mention of a deleted account writes a browser-level 404 no client code can suppress (2026-09-08).** DECIDED 2026-10-18: the server answers "deleted account" with NO name ([WP-MENTION-DELETED](#decided-by-the-user-on-2026-10-18---every-design-question-answered)). Never an `ignoringExpectedLog` on the row.
-- **P3 - a mention banner says "someone" where the NAME could be: BUILT 2026-10-18, NOT SHIPPED.** A salon mention of the reader now names its AUTHOR ("Alice vous a mentionné", "Quelqu'un" if unknown) from the phone's local copy (`display_names.json`, written by the WebView when it is hidden), never from the push; the mentioned person inside the text comes from the same copy ([mobile](frontend/mobile.md#a-mention-names-its-author-from-the-phones-own-copy-wp-mention-name-2026-10-18)). Owed: one look on each phone (a salon mention by somebody the app has shown, then by somebody it never has); Kotlin, Swift and ObjC never run.
+- **P3 - a mention banner says "someone" where the NAME could be: BUILT 2026-10-18, NOT SHIPPED.** A salon mention of the reader now names its AUTHOR ("Alice vous a mentionné", "Quelqu'un" if unknown) from the phone's local copy (`display_names.json`, written by the WebView as names change, a deleted account dropped), never from the push; the mentioned person inside the text comes from the same copy ([mobile](frontend/mobile.md#a-mention-names-its-author-from-the-phones-own-copy-wp-mention-name-2026-10-18)). Owed: one look on each phone (a salon mention by somebody the app has shown, then by somebody it never has); Kotlin, Swift and ObjC never run.
 
 ## The harness itself
 
