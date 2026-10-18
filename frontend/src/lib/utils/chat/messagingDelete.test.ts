@@ -33,7 +33,16 @@ function systemEventOf(call: unknown[]): string | null {
   return decodeAppMessage(entry.controlProto)?.system?.event ?? null;
 }
 
+import { OutboxEnqueueError } from './outbox';
+
 describe('deleteMessage', () => {
+  it('reports refused when the queue cannot take the delete event', async () => {
+    outboxMock.cancelOutboxMessage.mockResolvedValueOnce(false);
+    outboxMock.enqueueOutboxMessage.mockRejectedValueOnce(new OutboxEnqueueError('no storage'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(await deleteMessage('m1', deps)).toBe('refused');
+  });
+
   beforeEach(() => {
     outboxMock.cancelOutboxMessage.mockClear();
     outboxMock.enqueueOutboxMessage.mockClear();

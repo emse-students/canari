@@ -96,6 +96,11 @@ import type { BulkIngestPhase } from '$lib/mls-client';
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
 import { enqueueOutboxMessage, isEnqueueQuotaFailure } from '$lib/utils/chat/outbox';
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
+import {
+  clearControlRefusal,
+  recordControlRefusal,
+  type ControlRefusalKind,
+} from '$lib/utils/chat/controlRefusals.svelte';
 import { ChannelService } from '$lib/services/ChannelService';
 import {
   isChannelConversationId,
@@ -1884,11 +1889,38 @@ export function useMessaging() {
       conversation: convo,
       currentUserDisplayName: getUserDisplayNameSync(ctx.userId),
     };
-    if (alreadyReacted) {
-      await removeReaction(messageId, emoji, at, reactionDeps);
-    } else {
-      await addReaction(messageId, emoji, at, reactionDeps);
+    const send = () =>
+      alreadyReacted
+        ? removeReaction(messageId, emoji, at, reactionDeps)
+        : addReaction(messageId, emoji, at, reactionDeps);
+    await settleControl(messageId, 'reaction', send);
+  }
+
+  /**
+   * Runs one control act and settles its mention: a refusal by the durable queue records a notice on
+   * the message whose Retry re-runs `act` (same instants, same payload); a taken act clears any
+   * earlier notice. The act is the caller's closure so a retry cannot drift from the original.
+   */
+  async function settleControl(
+    messageId: string,
+    kind: ControlRefusalKind,
+    act: () => Promise<boolean>,
+    onQueuedLate?: () => Promise<void>
+  ): Promise<boolean> {
+    const queued = await act();
+    if (queued) {
+      clearControlRefusal(messageId);
+      return true;
     }
+    recordControlRefusal(messageId, {
+      kind,
+      retry: async () => {
+        const ok = await act();
+        if (ok) await onQueuedLate?.();
+        return ok;
+      },
+    });
+    return false;
   }
 
   /**
@@ -1922,12 +1954,30 @@ export function useMessaging() {
     const target = convo.messages.find((m) => m.id === messageId);
     if (!target || !isOwnMessage(target.senderId, ctx.userId)) return;
 
-    const outcome = await deleteMessage(messageId, {
+    const convoKey = ctx.selectedContact;
+    const deleteDeps = {
       mlsService: ctx.ensureMls(),
       userId: ctx.userId,
       deviceKeyB64: ctx.deviceKeyB64,
       conversation: convo,
-    });
+    };
+    const outcome = await deleteMessage(messageId, deleteDeps);
+
+    // THE QUEUE REFUSED THE DELETE: the peers still hold the message, so it is NOT shown as deleted
+    // here. The mention carries Retry, and only a retry the queue takes writes the tombstone.
+    if (outcome === 'refused') {
+      recordControlRefusal(messageId, {
+        kind: 'delete',
+        retry: async () => {
+          const retried = await deleteMessage(messageId, deleteDeps);
+          if (retried === 'refused') return false;
+          await tombstoneLocalMessage(messageId, ctx, convo, convoKey);
+          return true;
+        },
+      });
+      return;
+    }
+    clearControlRefusal(messageId);
 
     // A withdrawal is not a deletion the peers have to be told about - it is a message that never
     // existed anywhere but here, so the row goes, rather than becoming a tombstone standing for
@@ -1942,11 +1992,24 @@ export function useMessaging() {
       return;
     }
 
+    await tombstoneLocalMessage(messageId, ctx, convo, convoKey);
+  }
+
+  /** Marks `messageId` deleted in the local conversation (the row stays: the tombstone survives a reload). */
+  async function tombstoneLocalMessage(
+    messageId: string,
+    ctx: MessagingContext,
+    fromConvo?: Conversation,
+    key: string | null = ctx.selectedContact
+  ): Promise<void> {
+    if (!key) return;
+    const convo = ctx.conversations.get(key) ?? fromConvo;
+    if (!convo) return;
     const msgs = [...convo.messages];
     const idx = msgs.findIndex((m) => m.id === messageId);
     if (idx !== -1) {
       msgs[idx] = { ...msgs[idx], isDeleted: true, content: chat_system_message_deleted() };
-      ctx.conversations.set(ctx.selectedContact, { ...convo, messages: msgs });
+      ctx.conversations.set(key, { ...convo, messages: msgs });
       await persistLocalMutation(msgs[idx], ctx);
     }
   }
@@ -1966,12 +2029,13 @@ export function useMessaging() {
     // the timestamp decides which of two concurrent edits survives, the difference is a device that
     // can lose to its own frame.
     const editedAt = Date.now();
-    await editMessage(messageId, text, editedAt, {
+    const editDeps = {
       mlsService: ctx.ensureMls(),
       userId: ctx.userId,
       deviceKeyB64: ctx.deviceKeyB64,
       conversation: convo,
-    });
+    };
+    await settleControl(messageId, 'edit', () => editMessage(messageId, text, editedAt, editDeps));
     const msgs = [...convo.messages];
     const idx = msgs.findIndex((m) => m.id === messageId);
     // The row is defended against our own edit by the same rule that defends it against a peer's:
@@ -2005,12 +2069,13 @@ export function useMessaging() {
     // apply and the broadcast differently, for the same act.
     const at = Date.now();
     applyPin(convo.id, messageId, next, at);
-    await setMessagePinned(messageId, next, at, {
+    const pinDeps = {
       mlsService: ctx.ensureMls(),
       userId: ctx.userId,
       deviceKeyB64: ctx.deviceKeyB64,
       conversation: convo,
-    });
+    };
+    await settleControl(messageId, 'pin', () => setMessagePinned(messageId, next, at, pinDeps));
   }
 
   // ── Reply ─────────────────────────────────────────────────────────────────

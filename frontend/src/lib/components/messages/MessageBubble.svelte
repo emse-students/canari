@@ -28,6 +28,7 @@
   import type { ChannelPollMeta } from '$lib/services/ChannelService';
   import MessageReactions from './MessageReactions.svelte';
   import type { MessageReaction, MessageSendStatus } from '$lib/types';
+  import ControlRefusedNotice from './ControlRefusedNotice.svelte';
   import { isOrphanMediaCandidate } from '$lib/utils/chat/orphanMedia';
   import { isOutboxEntryQueued } from '$lib/utils/chat/outbox';
   import {
@@ -1036,6 +1037,8 @@
       {readBy}
       outsideBubble
     />
+
+    <ControlRefusedNotice {messageId} {isOwn} />
 
     <MessageEmojiPicker
       origin={emojiPickerOrigin}
