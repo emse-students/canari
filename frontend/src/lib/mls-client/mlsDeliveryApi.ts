@@ -806,27 +806,33 @@ export class MlsDeliveryApi {
       deviceAppVersion?: string;
     }>
   > {
-    const res = await this.f(`${this.historyUrl}/api/mls/devices/${userId}`, {
-      headers: await this.auth(),
-    });
-    if (!res.ok) throw new Error(`fetchUserDevices failed: ${res.status}`);
-    // Raw device rows as returned by the server (untyped JSON). Optional metadata fields
-    // are re-validated with `typeof` below before being kept.
-    const devices = (await res.json()) as Array<{
-      keyPackage: string;
-      deviceId: string;
-      deviceName?: string;
-      deviceOs?: string;
-      deviceAppVersion?: string;
-    }>;
+    // SIMULTANEOUS ASKERS SHARE ONE REQUEST (WP-W4): a boot asked for the account's own device list
+    // three times - the pending-invitation sweep, the welcome-request answer and the group
+    // reconcile each sent theirs. The entry lives as long as the request, so no answer is served
+    // older than the request a caller joined (see {@link joinInFlight}).
+    return this.joinInFlight(`devices:${userId}`, async () => {
+      const res = await this.f(`${this.historyUrl}/api/mls/devices/${userId}`, {
+        headers: await this.auth(),
+      });
+      if (!res.ok) throw new Error(`fetchUserDevices failed: ${res.status}`);
+      // Raw device rows as returned by the server (untyped JSON). Optional metadata fields
+      // are re-validated with `typeof` below before being kept.
+      const devices = (await res.json()) as Array<{
+        keyPackage: string;
+        deviceId: string;
+        deviceName?: string;
+        deviceOs?: string;
+        deviceAppVersion?: string;
+      }>;
 
-    return devices.map((d) => ({
-      keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
-      deviceId: d.deviceId,
-      deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
-      deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
-      deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
-    }));
+      return devices.map((d) => ({
+        keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
+        deviceId: d.deviceId,
+        deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
+        deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
+        deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
+      }));
+    });
   }
 
   /**
@@ -1750,13 +1756,17 @@ export class MlsDeliveryApi {
 
   /** Returns all groups `userId` belongs to, including soft-deleted tombstones (`deletedAt`). */
   async getUserGroups(userId: string): Promise<UserGroupRow[]> {
-    const res = await this.f(`${this.historyUrl}/api/mls/users/${userId}/groups`, {
-      headers: await this.auth(),
+    // ONE REQUEST FOR SIMULTANEOUS ASKERS (WP-W4): the boot reads this list from the conversation
+    // load, the sweep and the reconcile, three requests for one answer.
+    return this.joinInFlight(`user-groups:${userId}`, async () => {
+      const res = await this.f(`${this.historyUrl}/api/mls/users/${userId}/groups`, {
+        headers: await this.auth(),
+      });
+      if (!res.ok) {
+        throw new Error(`getUserGroups failed: ${res.status}`);
+      }
+      return (await res.json()) as UserGroupRow[];
     });
-    if (!res.ok) {
-      throw new Error(`getUserGroups failed: ${res.status}`);
-    }
-    return await res.json();
   }
 
   /**

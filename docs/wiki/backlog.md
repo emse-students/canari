@@ -560,9 +560,9 @@ A candidate cause is fixed in #1862 (the MLS client and its device id survived a
 
 The login completes after the sign-out and sets `isLoggedIn` for a signed-out user. Fix shape (a sign-out generation re-read before `setIsLoggedIn(true)`) in [auth](frontend/modules/auth.md#a-sign-out-ended-the-session-on-the-server-and-left-it-live-on-the-device---fixed-2026-10-14).
 
-### P3 - every cold start re-registers the device and fetches `/groups` two or three times
+### P3 - a cold start still sends `unread-counts` twice, and the boot has no recorded-boot counting test
 
-`POST /api/mls/register-device` runs on every cold start; the Mi 9T also sends `POST /mls/history-request` twice.
+`devices` and `users/<id>/groups` are single-flight since [section 17](frontend/offline-and-weak-network.md#17-wp-w4-first-part-the-account-level-reads-of-a-boot-are-shared-while-in-flight-2026-10-18); `register-device` stays, it is the liveness clock. Left: `unread-counts` twice (needs an ordering against the read-mark flush), the per-community triplet, ETag/304, a counting test over a recorded boot, and whether the Mi 9T's two `history-request` hit one group.
 
 ### P3 - the harness gamma bench PIN is refused on dev
 
