@@ -50,7 +50,12 @@ import {
   toEncryptedGraineRow,
 } from './graineCodec';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
-import { SCHEMA_VERSION, isFreshDatabase, legacyBlobPurgeStatement } from './sqliteMigrations';
+import {
+  SCHEMA_VERSION,
+  isFreshDatabase,
+  legacyBlobPurgeStatement,
+  outboxServerErrorsStatement,
+} from './sqliteMigrations';
 import { fromMessagePayload, mergeStoredMessage, toMessagePayload } from './messagePayload';
 import {
   MESSAGE_ROWS_PER_STATEMENT,
@@ -214,6 +219,7 @@ export class SqliteStorage implements IStorage {
                 attempts        INTEGER DEFAULT 0,
                 last_attempt_at INTEGER,
                 next_attempt_at INTEGER,
+                server_errors   INTEGER DEFAULT 0,
                 created_at      INTEGER,
                 iv              TEXT,
                 cipher_text     TEXT
@@ -426,6 +432,17 @@ export class SqliteStorage implements IStorage {
       //
       // Stamped at 13, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
       await this.db.execute('PRAGMA user_version = 13');
+    }
+
+    if (currentVersion < 14) {
+      // v13->v14: the outbox row counts its CONSECUTIVE 5xx answers (`server_errors`), so a text the
+      // server keeps failing reaches its terminal state across reloads. Additive and 0 on arrival:
+      // a queued row starts a fresh run, which costs at most N more attempts.
+      const cols: any[] = await this.db.select('PRAGMA table_info(outbox)');
+      const add = outboxServerErrorsStatement(cols.map((c) => String(c.name)));
+      if (add) await this.db.execute(add);
+      // Stamped at 14, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
+      await this.db.execute('PRAGMA user_version = 14');
     }
   }
 
@@ -788,6 +805,7 @@ export class SqliteStorage implements IStorage {
       attempts: typeof row.attempts === 'number' ? row.attempts : 0,
       lastAttemptAt: row.last_attempt_at ?? undefined,
       nextAttemptAt: row.next_attempt_at ?? undefined,
+      serverErrors: typeof row.server_errors === 'number' ? row.server_errors : undefined,
       createdAt: rowTimestampMs(row.created_at),
     };
   }
@@ -829,8 +847,8 @@ export class SqliteStorage implements IStorage {
       const c = outboxClearColumns(entry);
       await this.db.execute(
         `INSERT OR REPLACE INTO outbox
-         (id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, created_at, iv, cipher_text)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+         (id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, server_errors, created_at, iv, cipher_text)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
         [
           c.id,
           c.conversationId,
@@ -840,6 +858,7 @@ export class SqliteStorage implements IStorage {
           c.attempts,
           c.lastAttemptAt ?? null,
           c.nextAttemptAt ?? null,
+          c.serverErrors ?? 0,
           c.createdAt,
           uint8ToBase64(encrypted.iv),
           uint8ToBase64(encrypted.cipherText),
@@ -872,7 +891,7 @@ export class SqliteStorage implements IStorage {
    */
   async getOutboxQueue(deviceKeyB64: string): Promise<OutboxEntry[]> {
     const rows: any[] = await this.db.select(
-      `SELECT id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, created_at,
+      `SELECT id, conversation_id, sent_at, kind, status, attempts, last_attempt_at, next_attempt_at, server_errors, created_at,
          CASE WHEN kind = 'media' THEN NULL ELSE iv END AS iv,
          CASE WHEN kind = 'media' THEN NULL ELSE cipher_text END AS cipher_text
        FROM outbox ORDER BY sent_at ASC, id ASC`
@@ -923,7 +942,8 @@ export class SqliteStorage implements IStorage {
       // INSERT took 1.5 s on EVERY backoff of one queued media entry.
       await this.db.execute(
         `UPDATE outbox SET status = COALESCE($2, status), attempts = COALESCE($3, attempts),
-           last_attempt_at = COALESCE($4, last_attempt_at), next_attempt_at = COALESCE($5, next_attempt_at)
+           last_attempt_at = COALESCE($4, last_attempt_at), next_attempt_at = COALESCE($5, next_attempt_at),
+           server_errors = COALESCE($6, server_errors)
          WHERE id = $1`,
         [
           id,
@@ -931,6 +951,7 @@ export class SqliteStorage implements IStorage {
           patch.attempts ?? null,
           patch.lastAttemptAt ?? null,
           patch.nextAttemptAt ?? null,
+          patch.serverErrors ?? null,
         ]
       );
       return;

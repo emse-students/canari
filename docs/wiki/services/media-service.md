@@ -86,6 +86,9 @@ The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is t
 | DELETE | `/api/media/:id`                       | `INTERNAL_SECRET` | Delete media blob - **server-to-server only** (`assertInternalSecret`)                                                                                                           |
 | POST   | `/api/media/internal/retention-class`  | `INTERNAL_SECRET` | Set an existing object's class (`ephemeral`, `archive`, `association`; required, no `null`) - see retention below                                                                |
 | POST   | `/api/media/internal/reel-claim`       | `INTERNAL_SECRET` | `{mediaIds, ownerId}` - class `reel` on what `ownerId` uploaded; see [reels](reels.md)                                                                                           |
+| POST | `/api/media/internal/poster-claim` | `INTERNAL_SECRET` | `{mediaIds, ownerId, spaceId, retentionClass}` - `poster`/`poster-association` on `ownerId`'s fresh `poster-pending` upload, bound to `spaceId`; idempotent for that space |
+| POST | `/api/media/internal/poster-release` | `INTERNAL_SECRET` | `{mediaIds}` - a CLAIMED poster to `ephemeral`; any other class is refused and untouched |
+| GET | `/api/media/internal/poster-list` | `INTERNAL_SECRET` | every claimed poster and its space, for social-service's hourly reconciliation |
 | POST   | `/api/media/internal/reel-purge`       | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - delete on the owner's say-so, one outcome per id (`deleted`/`absent`/`refused`/`failed`)                                                        |
 | POST   | `/api/media/internal/form-file`        | `INTERNAL_SECRET` | multipart `file` + `ownerId`: store a form answer's PLAINTEXT file as class `form-file` ([form-file](#the-form-file-class-plaintext-read-by-the-server-only-2026-10-15)) |
 | POST   | `/api/media/internal/form-file-purge`  | `INTERNAL_SECRET` | `{items:[{mediaId, ownerId}]}` - delete form files, class AND owner allowlist, one outcome per id |
@@ -95,7 +98,7 @@ The 2026-10-02 fix above covered the QUEUED half of the same teardown; this is t
 | POST   | `/api/media/internal/live-list`        | `INTERNAL_SECRET` | `{liveIds}` - one id per `live/<liveId>/` folder (a delimiter listing), for social-service's orphan reaper, which purges a folder with no live row behind it; runs whatever the switch says |
 | GET    | `/api/media/live/:liveId/:name`        | JWT               | One sealed live segment, by the name its manifest gave, `no-store`; 404 unless `LIVE_ENABLED` ([lives](lives.md)) |
 
-(`retention-class` refuses `reel`: that class is only ever set through its owner, and `chat-reel`, `reel-pending` and `form-file`: they are attached at the upload that creates the object. Every CLIENT upload route refuses `form-file` with a 400.)
+(`retention-class` refuses `reel`: that class is only ever set through its owner, and `chat-reel`, `reel-pending`, `form-file` and the three poster classes: they are attached at the upload that creates the object, or by the poster claim. Every CLIENT upload route refuses `form-file`, `poster` and `poster-association` with a 400, and `retention-class` never moves a claimed poster.)
 
 Neither `DELETE` is reachable by a client. `:id` is called by
 `AssociationsService.deleteMediaBestEffort` (logos, event images, documents, form banners) and
@@ -236,6 +239,9 @@ community image (`channel_workspaces`) was unclassified, uploaded before `upload
 | `reel-pending` | the client at upload of a FEED reel ([below](#the-reel-pending-class-a-feed-reel-whose-post-does-not-exist-yet-2026-10-11)) | **by AGE: 24 h from upload**, unless claimed | takes it         |
 | `chat-reel`    | the client at upload ([below](#the-chat-reel-class-a-reel-sent-in-a-conversation-rc-2-2026-10-09))                          | **by AGE: 30 days from upload**              | takes it         |
 | `form-file`    | social-service only, at `internal/form-file` ([below](#the-form-file-class-plaintext-read-by-the-server-only-2026-10-15))   | keeps - social-service's purge deletes it    | takes it         |
+| `poster-pending` | the client at upload of a booking space's POSTER, and nothing else ([bookings-chantier](../bookings-chantier.md#wp-b6-as-built---file-answers-the-poster-the-purge-the-export-2026-10-18)) | **by AGE: 48 h from upload**, unless claimed | takes it |
+| `poster` | social-service's `internal/poster-claim`, proven by `ownerId`, bound to ONE space; moved out by `internal/poster-release` alone | keeps | takes it |
+| `poster-association` | the same claim, for an entity's space | keeps | **keeps** |
 | none           | an old client, anything before 2026-10-01, an entry re-created after an index loss                                          | **keeps**                                    | takes it         |
 
 - **The client's `encryptAndUpload` takes the class as a REQUIRED argument**, so no new call site

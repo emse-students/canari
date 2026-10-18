@@ -24,6 +24,8 @@ import { SvelteMap } from 'svelte/reactivity';
  *   the member retries or deletes.
  * - `failed`: the last attempts each ended with no answer at all while online (the server, or a relay in
  *   front of it, never replied). Terminal until the member retries or deletes; nothing runs on its own.
+ *   On a TEXT (no upload at all) it is the one view the outbox writes: the server answered 5xx
+ *   `MAX_CONSECUTIVE_SERVER_ERRORS` times in a row, and the bubble offers its Retry from it.
  * - `error`: the attempts kept failing for a reason that is not the network (an unreadable file, an
  *   unexpected error) - terminal until the member retries or deletes; nothing runs on its own.
  * - `queued`: the entry is in the queue and has not started (its turn has not come, or the file is

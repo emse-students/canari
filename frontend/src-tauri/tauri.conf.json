@@ -101,6 +101,7 @@
             "/notifications",
             "/calendar",
             "/shop",
+            "/bookings",
             "/"
           ],
           "pathPrefix": [
@@ -114,7 +115,8 @@
             "/g/join/",
             "/notifications/",
             "/calendar/",
-            "/shop/"
+            "/shop/",
+            "/bookings/"
           ]
         },
         {
@@ -129,6 +131,7 @@
             "/notifications",
             "/calendar",
             "/shop",
+            "/bookings",
             "/"
           ],
           "pathPrefix": [
@@ -142,7 +145,8 @@
             "/g/join/",
             "/notifications/",
             "/calendar/",
-            "/shop/"
+            "/shop/",
+            "/bookings/"
           ]
         }
       ]

@@ -75,7 +75,7 @@ jobs:
   # =================================================================================================
   changes:
     name: Detect changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       rust-matrix: ${{ steps.matrix.outputs.rust }}
       ts-matrix: ${{ steps.matrix.outputs.ts }}
@@ -365,7 +365,7 @@ jobs:
     name: Test Rust (${{ matrix.component.name }})
     needs: [changes]
     if: ${{ needs.changes.outputs.rust-matrix != '[]' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -496,7 +496,7 @@ jobs:
     name: Boot the real AppModule (${{ matrix.service }})
     needs: [changes]
     if: ${{ needs.changes.outputs.ts-matrix != '[]' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # A HANG MUST BECOME A RED JOB, NOT A BURNT RUNNER. The first run of this job proved the point:
     # chat-delivery-service BOOTED - `Tests: 1 passed` - and then printed `Jest did not exit one
     # second after the test run has completed`, because its Redis client had no lifecycle hook and
@@ -658,7 +658,7 @@ jobs:
     name: Social-service integration specs (PostgreSQL)
     needs: [changes]
     if: ${{ contains(needs.changes.outputs.ts-matrix, 'apps/social-service') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -737,7 +737,7 @@ jobs:
     name: Test TS Backend (${{ matrix.service }})
     needs: [changes]
     if: ${{ needs.changes.outputs.ts-matrix != '[]' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
@@ -855,7 +855,7 @@ jobs:
     name: Test Frontend (Svelte)
     needs: [changes]
     if: ${{ needs.changes.outputs.run-frontend == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -982,7 +982,7 @@ jobs:
     name: Test Android (unit)
     needs: [changes]
     if: ${{ needs.changes.outputs.run-android == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1022,7 +1022,7 @@ jobs:
     name: Test Harness (self-tests)
     needs: [changes]
     if: ${{ needs.changes.outputs.run-harness == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1062,7 +1062,7 @@ jobs:
   # The recipe is seconds long, so ask what it READS and let the answer stand: everything.
   test-ci-scripts:
     name: Test CI Scripts (self-tests)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1092,7 +1092,7 @@ jobs:
       # Clean from any working directory, and proved able to fail: an unquoted `rm $f` spliced into
       # the library came back as SC2086. `-x` is what makes it follow the source.
       #
-      # THE VERSION IS PINNED AND THE RUNNER'S OWN COPY IS IGNORED. `ubuntu-latest` ships a
+      # THE VERSION IS PINNED AND THE RUNNER'S OWN COPY IS IGNORED. `ubuntu-24.04` ships a
       # shellcheck, but which one is the image's business and it moves without this repository
       # changing - a floating linter is the same defect as an unverified one, arriving later. The
       # digest is of the archive that produced the run described above, so CI lints with the binary
@@ -1167,7 +1167,7 @@ jobs:
   dependency-ceiling:
     name: Dependency ceiling
     if: github.event_name == 'pull_request' && github.event.pull_request.user.login == 'dependabot[bot]'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1274,7 +1274,7 @@ jobs:
     name: MLS cross-version compatibility
     needs: changes
     if: needs.changes.outputs.run-mls-compat == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7
         with:
@@ -1309,7 +1309,7 @@ jobs:
     name: MiConnect blueprints (fresh and upgraded)
     needs: [changes]
     if: ${{ needs.changes.outputs.run-miconnect == 'true' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v7
@@ -1331,7 +1331,7 @@ jobs:
     needs:
       [changes, test-rust, boot-nest-apps, test-social-integration, test-typescript-backend, test-frontend, test-android, test-harness,
       test-ci-scripts, dependency-ceiling, mls-forward-compat, test-miconnect-blueprints, security, dependency-audit]
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - name: Every job either passed or had nothing to do
         env:

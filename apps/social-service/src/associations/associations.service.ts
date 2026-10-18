@@ -18,6 +18,7 @@ import FormData from 'form-data';
 import { AxiosError } from 'axios';
 import { mediaUrl } from '../internal/service-urls';
 import { applyMediaRetentionClass } from '../internal/media-retention-class';
+import { releaseUncitedPosters } from '../bookings/booking-poster-media';
 import type { SpaceSelection } from './directory-query';
 import {
   AGENDA_SELECTION_FORBIDDEN,
@@ -561,12 +562,26 @@ export class AssociationsService {
     // submissions is ARCHIVED rather than deleted (`retireForms`, `submissions_form_fk`), because
     // they are the payers' records. An archived form is in no list, so it cannot be shown as
     // "Personnel"; the staff reach it by id.
+    // Its booking spaces go with it (their foreign key cascades, D27); their posters are class
+    // `association`, which no sweep takes, so they are released once nothing cites them.
+    const posters: { id: string }[] = await this.assoRepo.manager.query(
+      `SELECT poster->>'mediaId' AS id FROM booking_spaces WHERE "associationId" = $1 AND poster IS NOT NULL`,
+      [id]
+    );
     await this.assoRepo.manager.transaction(async (manager) => {
       await manager.delete(AssociationCalendarEvent, { associationId: id });
       await retireForms(manager, { associationId: id });
       await manager.delete(AssociationMember, { associationId: id });
       await manager.delete(Association, id);
     });
+    // Released only where no surviving space cites them, the one release rule of every poster.
+    await releaseUncitedPosters(
+      this.httpService,
+      this.assoRepo.manager,
+      this.logger,
+      posters.map((p) => p.id),
+      `association ${id} was deleted`
+    );
     await this.invalidatePostListCaches();
     return { ok: true };
   }

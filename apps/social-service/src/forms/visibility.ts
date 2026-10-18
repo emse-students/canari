@@ -60,6 +60,23 @@ export function visibleItemIds(items: ConditionalItem[], facts: PricingFacts): S
 }
 
 /**
+ * The questions a person is NOT shown because of WHO they are - the PROFILE half of each condition
+ * (promo, formation, cotisation), decided on the server because a browser cannot be trusted with
+ * someone's profile. The ANSWER half stays for the page to evaluate as the person types. One rule
+ * for a form and a booking space, so the two never disagree on who sees a question.
+ */
+export function profileHiddenItemIds(items: ConditionalItem[], facts: PricingFacts): string[] {
+  return items
+    .filter((item) => {
+      const condition = normaliseCondition(item);
+      if (!condition) return false;
+      const { answer: _answer, ...profileOnly } = condition;
+      return Object.keys(profileOnly).length > 0 && !matchesCondition(profileOnly, facts);
+    })
+    .map((item) => item.id);
+}
+
+/**
  * The two condition shapes a stored item may carry, as ONE condition.
  *
  * `dependsOn`/`dependsValue` is the same statement as `showIf.answer`, so it is translated rather

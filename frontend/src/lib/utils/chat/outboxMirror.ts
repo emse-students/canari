@@ -33,7 +33,11 @@
  */
 
 import type { IStorage, OutboxEntry, StoredMessage } from '$lib/db';
-import { buildOutboxProto, deliveryForOutboxEntry } from '$lib/utils/chat/outbox';
+import {
+  buildOutboxProto,
+  deliveryForOutboxEntry,
+  isServerFailureTerminal,
+} from '$lib/utils/chat/outbox';
 import { decodeAppMessage } from '$lib/proto/codec';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
 import { isTauriRuntime } from '$lib/utils/openExternal';
@@ -63,6 +67,9 @@ export interface OutboxMirrorEntry {
 
 /** Project a queued entry to its mirror form, or null if it cannot be mirrored (media, no proto). */
 export function toMirrorEntry(entry: OutboxEntry): OutboxMirrorEntry | null {
+  // A text FAILED on 5xx waits for its author's Retry: the background sender must not send what the
+  // bubble shows as failed.
+  if (isServerFailureTerminal(entry)) return null;
   // buildOutboxProto returns null for media (foreground upload only) and the verbatim proto for
   // text/reply and control (reaction/edit/delete/read). Control is mirrored now that C1/C2 make
   // background mls.bin writes safe - notably `delete`, so a retraction is not stuck behind an
