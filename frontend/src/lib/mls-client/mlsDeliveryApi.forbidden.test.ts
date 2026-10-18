@@ -5,6 +5,7 @@ import {
   SendEdgeRefusedError,
   SendForbiddenError,
   SenderNotActiveError,
+  SendServerError,
 } from './mlsDeliveryApi';
 import { classifyOutgoingSendError } from './mlsSendError';
 import { refusalStatus } from '$lib/utils/apiRefusal';
@@ -63,6 +64,53 @@ describe('postApplicationMessage on a 403', () => {
     expect(failure).toBeInstanceOf(SendEdgeRefusedError);
     expect(failure).not.toBeInstanceOf(SendForbiddenError);
     expect(refusalStatus(failure)).toBeNull();
+  });
+});
+
+/**
+ * A 5xx ON A SEND IS TYPED AT THE THROW (user, 2026-10-18): the outbox counts it by TYPE toward
+ * parking a text as failed, and any other status is an answer carried as a field, never a sentence.
+ */
+describe('postApplicationMessage on a 5xx or another status', () => {
+  const api = (res: Response) =>
+    new MlsDeliveryApi({
+      historyUrl: 'https://example.test',
+      getToken: async () => 'token',
+      fetchImpl: vi.fn().mockResolvedValue(res) as unknown as typeof fetch,
+    });
+
+  it('raises SendServerError with its status and WHO answered', async () => {
+    const gateway = await api(
+      new Response('{}', { status: 500, headers: { 'content-type': 'application/json' } })
+    )
+      .postApplicationMessage('g1', 'AAAA')
+      .catch((e: unknown) => e);
+    const edge = await api(
+      new Response('<html>bad gateway</html>', {
+        status: 502,
+        headers: { 'content-type': 'text/html' },
+      })
+    )
+      .postApplicationMessage('g1', 'AAAA')
+      .catch((e: unknown) => e);
+
+    expect(gateway).toBeInstanceOf(SendServerError);
+    expect((gateway as SendServerError).origin).toBe('gateway');
+    expect(refusalStatus(gateway)).toBe(500);
+    expect(edge).toBeInstanceOf(SendServerError);
+    expect((edge as SendServerError).origin).toBe('edge');
+    expect(classifyOutgoingSendError(edge)).toBe('unknown');
+  });
+
+  it('carries any other refusal status as a field, and it is not a SendServerError', async () => {
+    const failure = await api(
+      new Response('{}', { status: 400, headers: { 'content-type': 'application/json' } })
+    )
+      .postApplicationMessage('g1', 'AAAA')
+      .catch((e: unknown) => e);
+
+    expect(refusalStatus(failure)).toBe(400);
+    expect(failure).not.toBeInstanceOf(SendServerError);
   });
 });
 

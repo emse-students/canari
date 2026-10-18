@@ -9,7 +9,7 @@ import { toBase64, fromBase64 } from '$lib/utils/hex';
 import { trackedFetch } from '$lib/utils/trackedFetch';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
-import { ApiRefusalError, responseOrigin } from '$lib/utils/apiRefusal';
+import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
 import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 
 export type MlsDeliveryFetch = typeof fetch;
@@ -341,6 +341,26 @@ export class SendForbiddenError extends ApiRefusalError {
   constructor(readonly groupId: string) {
     super(403, null, `Message send refused with 403 for group ${groupId}`);
     this.name = 'SendForbiddenError';
+  }
+}
+
+/**
+ * The delivery service - or a proxy in front of it - ANSWERED an application frame with a 5xx.
+ *
+ * Typed at the throw so the outbox counts it by TYPE, never by the sentence: N of them in a row park
+ * a text as failed (`MAX_CONSECUTIVE_SERVER_ERRORS` in `outbox.ts`, user 2026-10-18), while a
+ * transport failure ({@link DeliveryUnreachableError}: nobody answered) never counts. A 5xx IS an
+ * answer, whoever wrote it; `origin` says who, for the log line that has to tell a broken gateway
+ * from a relay in front of it.
+ */
+export class SendServerError extends ApiRefusalError {
+  constructor(
+    readonly groupId: string,
+    status: number,
+    readonly origin: ResponseOrigin
+  ) {
+    super(status, null, `Message send answered ${status} (${origin}) for group ${groupId}`);
+    this.name = 'SendServerError';
   }
 }
 
@@ -1403,7 +1423,10 @@ export class MlsDeliveryApi {
       if (res.status === 410) {
         throw new GroupDeletedError(groupId);
       }
-      throw new Error(`Message send HTTP error: ${res.status}`);
+      if (res.status >= 500) throw new SendServerError(groupId, res.status, responseOrigin(res));
+      // ANY OTHER REFUSAL carries its status as a type too: an answer, which the outbox reads as
+      // breaking a run of 5xx - a sentence could not be read back.
+      throw new ApiRefusalError(res.status, null, `Message send HTTP error: ${res.status}`);
     }
     // The server's receive time for this frame - the `createdAt` every recipient's copy carries, and
     // the only server time the SENDER's own copy can ever get (it never receives its frame back). A

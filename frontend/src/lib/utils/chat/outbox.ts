@@ -37,7 +37,10 @@ import { isTransportFailure } from '$lib/utils/transportFailure';
 import { installReachabilityProbe } from '$lib/utils/reachabilityProbe';
 import {
   ExclusionsRefusedError,
+  GroupDeletedError,
   SendEdgeRefusedError,
+  SenderNotActiveError,
+  SendServerError,
   type SentFrame,
 } from '$lib/mls-client/mlsDeliveryApi';
 import {
@@ -83,6 +86,44 @@ const BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
  * that their file is unreadable.
  */
 export const MAX_UNEXPECTED_ATTEMPTS = 8;
+
+/**
+ * CONSECUTIVE 5xx answers after which a text (or reply) is parked as FAILED, with a Retry, instead of
+ * climbing the ladder for ever (user, 2026-10-18). On the ladder (2, 5, 15, 30 s) that is about a
+ * minute of a server answering errors. Counted in the durable row (`OutboxEntry.serverErrors`), so a
+ * reload keeps the run; any other ANSWER, a success or the member's retry resets it, and a transport
+ * failure - nobody answered - neither counts nor resets. Attachments and controls (reactions, edits,
+ * deletes, pins, read marks) are not bounded by it.
+ */
+export const MAX_CONSECUTIVE_SERVER_ERRORS = 5;
+
+/** The kinds {@link MAX_CONSECUTIVE_SERVER_ERRORS} applies to: a message the member typed. */
+function boundedOnServerErrors(entry: OutboxEntry): boolean {
+  return entry.kind === 'text' || entry.kind === 'reply';
+}
+
+/**
+ * True when `entry` reached its terminal 5xx state ({@link MAX_CONSECUTIVE_SERVER_ERRORS}) and waits
+ * for the member's retry. Read from the DURABLE count, so every reader - the flusher after a reload,
+ * the status pass, the native mirror - takes the same decision.
+ */
+export function isServerFailureTerminal(entry: OutboxEntry): boolean {
+  return boundedOnServerErrors(entry) && (entry.serverErrors ?? 0) >= MAX_CONSECUTIVE_SERVER_ERRORS;
+}
+
+/**
+ * True when the server (or something in front of it) ANSWERED the attempt, read from the TYPE: a
+ * status-carrying refusal, `sender_not_active`, an edge refusal, a 410. A transport failure and a
+ * local error are not answers.
+ */
+function isSendAnswer(e: unknown): boolean {
+  return (
+    refusalStatus(e) !== null ||
+    e instanceof SenderNotActiveError ||
+    e instanceof SendEdgeRefusedError ||
+    e instanceof GroupDeletedError
+  );
+}
 
 /**
  * The queued attachment cannot be read on THIS device: its row failed to load, or it holds no bytes
@@ -435,6 +476,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * or a success starts the count again.
    */
   const unexpected = new Map<string, number>();
+  /**
+   * Texts parked on {@link MAX_CONSECUTIVE_SERVER_ERRORS}, so the accusing line is written once per
+   * page life and a retry knows to reset the durable count. NOT the decision: that is the durable
+   * `serverErrors`, so a retry taken in another tab un-parks the entry here too.
+   */
+  const serverFailed = new Set<string>();
   const lanes = new Map<string, Promise<void>>();
   /** Conversations whose running lane must look at the queue once more (an enqueue or wake-up arrived). */
   const laneRerun = new Set<string>();
@@ -1142,7 +1189,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   async function holdForRetry(
     entry: OutboxEntry,
     describe: (attempts: number) => string,
-    opts: { transport?: boolean; repair?: boolean; local?: boolean; quiet?: boolean } = {}
+    opts: {
+      transport?: boolean;
+      repair?: boolean;
+      local?: boolean;
+      quiet?: boolean;
+      /** The run of consecutive 5xx to record with the backoff (the 5xx arm only). */
+      serverErrors?: number;
+    } = {}
   ): Promise<FlushOutcome> {
     if (opts.transport) transportHeld.add(entry.id);
     else transportHeld.delete(entry.id);
@@ -1169,6 +1223,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           attempts,
           lastAttemptAt: Date.now(),
           nextAttemptAt: Date.now() + backoffFor(attempts),
+          ...(opts.serverErrors !== undefined ? { serverErrors: opts.serverErrors } : {}),
         },
         deviceKey()
       )
@@ -1197,6 +1252,35 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     patchStatus(entry.id, 'pending');
     patchUpload(entry.id, { phase: 'error' });
     return 'parked';
+  }
+
+  /**
+   * Shows a text the server failed {@link MAX_CONSECUTIVE_SERVER_ERRORS} times in a row as FAILED
+   * (`error`, the bubble's Retry), and keeps it - nothing the user wrote is lost. Terminal until the
+   * member retries: the decision is the durable count, so this runs again after a reload, and the
+   * accusing line is written once per page life.
+   */
+  function parkServerFailure(entry: OutboxEntry, cause: string): FlushOutcome {
+    if (!serverFailed.has(entry.id)) {
+      const line = `[OUTBOX] ${entry.id.slice(0, 8)}… ${entry.kind} entry FAILED: ${cause} - parked as failed, Retry offered, entry kept`;
+      console.error(line);
+      log(line);
+    }
+    serverFailed.add(entry.id);
+    transportHeld.delete(entry.id);
+    patchStatus(entry.id, 'error');
+    // The view is how the bubble knows a Retry exists for it (`retryUpload` is the one handler).
+    patchUpload(entry.id, { phase: 'failed', attempt: entry.serverErrors ?? 0 });
+    return 'parked';
+  }
+
+  /** Writes a new consecutive-5xx count without touching the backoff. Logged when lost. */
+  async function writeServerErrors(id: string, count: number): Promise<void> {
+    await storage
+      ?.updateOutboxEntry(id, { serverErrors: count }, deviceKey())
+      .catch((err: unknown) =>
+        log(`[OUTBOX] ${id.slice(0, 8)}… 5xx count ${count} not persisted: ${String(err)}`)
+      );
   }
 
   /**
@@ -1267,10 +1351,25 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       noAnswer.delete(entry.id);
       bestLoaded.delete(entry.id);
       unexpected.delete(entry.id);
+      // THE MEMBER'S RETRY of a text failed on 5xx: the retry wrote the count back to 0, and this
+      // snapshot may predate that write. A reconnect's resume never reaches here (not `serverFailed`).
+      if (serverFailed.delete(entry.id)) entry = { ...entry, serverErrors: 0 };
     }
     // PARKED IS NOT BLOCKING: the entry waits for the member, and what was written after it goes.
     if (!resumed && parked.has(entry.id)) return 'parked';
     parked.delete(entry.id);
+    // FAILED ON 5xx, read from the DURABLE count: after a reload as well as in this page life.
+    if (!resumed && isServerFailureTerminal(entry)) {
+      return parkServerFailure(
+        entry,
+        `the server answered 5xx on ${entry.serverErrors} attempts in a row`
+      );
+    }
+    // Reset elsewhere (a retry in another tab wrote the count back): it goes again, said once.
+    if (serverFailed.delete(entry.id)) {
+      clearUpload(entry.id);
+      log(`[OUTBOX] ${entry.id.slice(0, 8)}… failed text retried (count reset) - sending again`);
+    }
     // AN UPLOAD THAT JUST ENDED makes its message due at once: the backoff on the row belonged to the
     // upload attempts before it, never to a send that has not been tried.
     // ONCE: the first attempt consumes it, so a send that fails after the upload keeps its backoff.
@@ -1583,6 +1682,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       log(`[OUTBOX] ${entry.id.slice(0, 8)}… upload cancelled - the transfer was aborted`);
       return 'gone';
     }
+    // ANY OTHER ANSWER BREAKS A RUN OF 5xx, so the count is truly consecutive. A transport failure is
+    // not an answer and leaves it as it is.
+    if (!(e instanceof SendServerError) && isSendAnswer(e) && (entry.serverErrors ?? 0) > 0) {
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… answered ${refusalStatus(e) ?? (e as Error).name} after ${entry.serverErrors} 5xx in a row - the run is reset`
+      );
+      await writeServerErrors(entry.id, 0);
+      entry = { ...entry, serverErrors: 0 };
+    }
     const kind = classifyOutgoingSendError(e);
     if (kind === 'sender-not-active') {
       log(
@@ -1701,6 +1809,26 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         `[OUTBOX] ${entry.id.slice(0, 8)}… send REFUSED as evicted, after isGroupActive answered that this device is still a member of ${terminalId.slice(0, 8)}… - the two disagree, and OpenMLS is the one that is right`
       );
       return failPermanently(entry, terminalId, 'evicted-late');
+    }
+    // A 5xx ON A TEXT IS COUNTED, read from the TYPE (`SendServerError`, typed at the throw): the
+    // Nth in a row parks it as failed (user, 2026-10-18). The count is written BEFORE the park, so a
+    // reload finds the same terminal state. Media and controls keep the uncounted ladder below.
+    if (e instanceof SendServerError && boundedOnServerErrors(entry)) {
+      const count = (entry.serverErrors ?? 0) + 1;
+      if (count >= MAX_CONSECUTIVE_SERVER_ERRORS) {
+        await writeServerErrors(entry.id, count);
+        return parkServerFailure(
+          { ...entry, serverErrors: count },
+          `the server answered ${e.status} (${e.origin}) in ${terminalId.slice(0, 8)}…, the ${count}th 5xx in a row`
+        );
+      }
+      const held = entry;
+      return holdForRetry(
+        held,
+        (attempts) =>
+          `[OUTBOX] ${held.id.slice(0, 8)}… server error ${e.status} (${e.origin}), ${count}/${MAX_CONSECUTIVE_SERVER_ERRORS} in a row (attempt ${attempts})`,
+        { serverErrors: count }
+      );
     }
     // Keep pending, back off. The message is never lost - that is true of both arms that reach
     // here, and it is the only thing they share.
@@ -1950,6 +2078,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // the other tabs' snapshots (a leader draining on our behalf).
     cancelled.add(messageId);
     parked.delete(messageId);
+    serverFailed.delete(messageId);
     noAnswer.delete(messageId);
     bestLoaded.delete(messageId);
     unexpected.delete(messageId);
@@ -2126,6 +2255,15 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       parked.delete(messageId);
       // A 403-parked entry used to ignore this button for the controller's whole life.
       forbiddenParked.delete(messageId);
+      // A TEXT FAILED ON 5xx: the retry starts a new run, DURABLY - written before the flush, so a
+      // reload (or the leader tab) does not find the old count and park it again.
+      if (serverFailed.has(messageId)) {
+        log(`[OUTBOX] ${messageId.slice(0, 8)}… failed text: retry asked, the 5xx count is reset`);
+        clearUpload(messageId);
+        patchStatus(messageId, 'pending');
+        void writeServerErrors(messageId, 0).then(() => runFlush());
+        return;
+      }
       const running = uploads.get(messageId);
       if (running) running.abort('retry');
       else runFlush();
@@ -2136,6 +2274,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       const entries = await readQueue('pending statuses');
       for (const entry of entries) {
         const found = findMessage(entry.id);
+        // A text failed on 5xx stays FAILED across a reload: its durable count says so.
+        if (found && isServerFailureTerminal(entry)) {
+          patchStatus(entry.id, 'error');
+          patchUpload(entry.id, { phase: 'failed', attempt: entry.serverErrors ?? 0 });
+          continue;
+        }
         // Only (re)apply 'pending'; do not clobber a live 'sending' transition.
         if (found && found.convo.messages[found.idx].status !== 'sending') {
           patchStatus(entry.id, 'pending');
