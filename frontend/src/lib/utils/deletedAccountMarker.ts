@@ -77,8 +77,8 @@ export function clearDeletedAccountWipePending(userId: string): void {
 }
 
 /**
- * The accounts whose wipe this process has started - the live one right after the DELETE, or a
- * resumed one. A wipe that FINISHES drops its marker, so without this an offline unlock of `X` that
+ * The accounts whose wipe this process has started RIGHT AFTER THE DELETE - never a resumed one,
+ * which a sign-in in ANOTHER tab could not clear from this process's set. A wipe that FINISHES drops its marker, so without this an offline unlock of `X` that
  * read its key before the resume deleted it would find no marker left by the time it asks, and
  * re-create `CanariDB_X` under a session of an account that no longer exists. Cleared only by a
  * sign-in of that account ({@link forgetDeletedAccountOnSignIn}).

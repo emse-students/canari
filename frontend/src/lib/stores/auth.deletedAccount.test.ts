@@ -38,7 +38,10 @@ const {
   markDeletedAccountWipePending,
   pendingDeletedAccountWipes,
   resumePendingDeletedAccountWipes,
+  wipeDeletedAccountLocalData,
 } = await import('$lib/utils/accountLocalWipe');
+/** The live wipe right after the DELETE, in the realm that ran the session. */
+const AFTER_DELETE = { closeThisRunsHandles: false, expectNativeDatabase: false };
 const { ACCOUNT_KEY } = await import('$lib/utils/accountLocalKeys');
 
 const fetchMock = vi.fn<(url: string, init?: RequestInit) => Promise<Response>>();
@@ -227,13 +230,12 @@ describe('isDeletedAccountHere - what every login asks before opening a store (s
     });
   });
 
-  it('holds while the wipe is owed, and AFTER the resume finished and dropped the marker', async () => {
-    // The offline unlock read its key before the resume ran; by the time it asks, the wipe may be
-    // done and the marker gone - the process still knows the account was deleted.
-    setToken('not-a-jwt');
+  it('holds while the wipe is owed, and AFTER the live wipe finished and dropped the marker', async () => {
+    // The offline unlock read its key before the wipe ran; by the time it asks, the wipe may be done
+    // and the marker gone - the process that ran the DELETE still knows the account was deleted.
     markDeletedAccountWipePending('user-3');
     expect(isDeletedAccountHere('user-3')).toBe(true);
-    await resumePendingDeletedAccountWipes(accountLiveness);
+    expect(await wipeDeletedAccountLocalData('user-3', AFTER_DELETE)).toEqual([]);
     expect(pendingDeletedAccountWipes()).toEqual([]);
     expect(isDeletedAccountHere('user-3')).toBe(true);
     expect(isDeletedAccountHere('user-4')).toBe(false);
@@ -241,9 +243,21 @@ describe('isDeletedAccountHere - what every login asks before opening a store (s
 
   it('is lifted by an online sign-in of that subject, and by nothing else', async () => {
     markDeletedAccountWipePending('user-5');
-    await resumePendingDeletedAccountWipes(accountLiveness);
+    await wipeDeletedAccountLocalData('user-5', AFTER_DELETE);
     expect(isDeletedAccountHere('user-5')).toBe(true);
     forgetDeletedAccountOnSignIn('user-5');
     expect(isDeletedAccountHere('user-5')).toBe(false);
+  });
+
+  it('a RESUMED wipe leaves no in-process flag: a sign-in from another tab must not be refused here', async () => {
+    // Tab A resumes a stale marker for user-6; the user then signs in again from tab B, whose
+    // callback drops the shared marker but cannot reach tab A's memory. Tab A's next login of
+    // user-6 must find the account NOT deleted (P3 of the fifth review of #2023).
+    setToken('not-a-jwt');
+    markDeletedAccountWipePending('user-6');
+    expect(isDeletedAccountHere('user-6')).toBe(true);
+    await resumePendingDeletedAccountWipes(accountLiveness);
+    expect(pendingDeletedAccountWipes()).toEqual([]);
+    expect(isDeletedAccountHere('user-6')).toBe(false);
   });
 });

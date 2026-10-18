@@ -23,7 +23,7 @@
  * read as no record, which ASKS - the reading that costs a request rather than a past.
  */
 
-const KEY_PREFIX = 'canari_graine_history_held_nothing:v1:';
+import { ACCOUNT_KEY } from '../accountLocalKeys';
 
 /** Where a history ask was answered "I hold nothing": the key group, and the epoch it was sealed at. */
 export interface HistoryAskVersion {
@@ -44,15 +44,6 @@ interface HistoryHeldNothing extends HistoryAskVersion {
 }
 
 type Records = Record<string, HistoryHeldNothing>;
-
-/**
- * The `localStorage` key holding `userId`'s records - exported so an account wipe can name it.
- * Pull request #2023 lists the same key as `ACCOUNT_KEY.historyHeldNothing`; once it is merged this
- * builder is built from that one list and {@link clearHistoryHeldNothing} is deleted.
- */
-export function historyHeldNothingStorageKey(userId: string): string {
-  return `${KEY_PREFIX}${userId}`;
-}
 
 /** How one answering device is named in a record: its user lower-cased, a colon, its device id. */
 export function answeredDevice(user: string, device: string): string {
@@ -75,7 +66,7 @@ function isRecord(value: unknown): value is HistoryHeldNothing {
 function readAll(userId: string): Records {
   let raw: string | null;
   try {
-    raw = localStorage.getItem(historyHeldNothingStorageKey(userId));
+    raw = localStorage.getItem(ACCOUNT_KEY.historyHeldNothing(userId));
   } catch (error) {
     console.warn(`[GRAINE] the answered history asks could not be read: ${String(error)}`);
     return {};
@@ -108,8 +99,8 @@ function readAll(userId: string): Records {
 function writeAll(userId: string, records: Records): void {
   try {
     if (Object.keys(records).length === 0)
-      localStorage.removeItem(historyHeldNothingStorageKey(userId));
-    else localStorage.setItem(historyHeldNothingStorageKey(userId), JSON.stringify(records));
+      localStorage.removeItem(ACCOUNT_KEY.historyHeldNothing(userId));
+    else localStorage.setItem(ACCOUNT_KEY.historyHeldNothing(userId), JSON.stringify(records));
   } catch (error) {
     // Lost, and said: the cost is one more ask at the next start, never a past withheld.
     console.warn(`[GRAINE] the answered history asks could not be written: ${String(error)}`);
@@ -204,18 +195,4 @@ export function forgetHistoryHeldNothing(userId: string, workspaceId: string): v
   if (!(workspaceId in records)) return;
   delete records[workspaceId];
   writeAll(userId, records);
-}
-
-/**
- * Removes EVERY record of `userId` - an account wipe's residue. Called by nobody yet: pull request
- * #2023 sweeps this key itself from its `ACCOUNT_KEY` list, and this function is deleted when it
- * merges.
- */
-export function clearHistoryHeldNothing(userId: string): void {
-  try {
-    localStorage.removeItem(historyHeldNothingStorageKey(userId));
-    console.debug(`[GRAINE] the answered history asks of ${userId.slice(0, 8)} are removed`);
-  } catch (error) {
-    console.warn(`[GRAINE] the answered history asks could not be removed: ${String(error)}`);
-  }
 }

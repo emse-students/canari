@@ -39,8 +39,8 @@ export const ACCOUNT_KEY = {
   /** `seenLedgerBounds.ts`: the index of the per-group seen ledgers. */
   seenCipherIndex: (userId: string) => `history_seen_cipher_index:${userId}`,
   /**
-   * The "this history ask was answered I-hold-nothing" record of pull request #2027
-   * (`utils/graine/historyAnswered.ts`), which builds its key from here once both are merged.
+   * `graine/historyAnswered.ts`: the history asks answered "I hold nothing" - every community of the
+   * account in one key, other members' ids included, all written by this account's device.
    */
   historyHeldNothing: (userId: string) => `canari_graine_history_held_nothing:v1:${userId}`,
   /**

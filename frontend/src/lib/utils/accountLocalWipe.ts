@@ -234,9 +234,12 @@ export async function wipeDeletedAccountLocalData(
     console.error(`${tag} refusing to wipe an account id outside the allowlist`);
     return ['the account id'];
   }
-  // Before the first step: from here on an offline unlock of this account is refused in this
-  // process even once the marker is gone (`isDeletedAccountHere`).
-  noteDeletedAccountWipeStarted(userId);
+  // THE LIVE WIPE ONLY (no `stopIf`), before the first step: from here on an offline unlock of this
+  // account is refused in this process even once the marker is gone (`isDeletedAccountHere`). NOT
+  // the resume: a stale marker resumed in two web tabs would leave the flag in tab A after the user
+  // signed in again from tab B, whose `forgetDeletedAccountOnSignIn` clears only its own process -
+  // and tab A would refuse the new account. The resume's own guard is the marker, which tab B drops.
+  if (!options.stopIf) noteDeletedAccountWipeStarted(userId);
   const twins = caseCollidingAccountIdsIn(localStorage, userId);
   if (twins.length > 0) {
     // Kept as owed on purpose: reported at ERROR once per start (the resume and the live wipe may

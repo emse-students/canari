@@ -457,6 +457,14 @@
    * implementation now, branching on the typed code and never on the message.
    */
   function applyPinFailure(uid: string, code: LoginErrorCode | undefined) {
+    if (code === 'account_deleted') {
+      // An account deleted from this device: nothing to retry and nothing to recover. No salt for a
+      // next try (the account exists nowhere to ask it of) and no state lookup - only the recovery
+      // a previous failure may have offered is withdrawn.
+      canRecoverPin = false;
+      appendLog('[PIN] No salt and no recovery asked - this account was deleted from this device.');
+      return;
+    }
     if (code && provesLocalStateExists(code)) isFirstPinSetup = false;
     // A TYPED PIN CAN MEET ANOTHER ACCOUNT'S STATE TOO, not only a saved unlock: `mls.owner` names
     // that account when this one's key does not open `mls.bin`. Read on every path, or the keypad

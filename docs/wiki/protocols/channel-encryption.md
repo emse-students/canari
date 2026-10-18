@@ -3582,15 +3582,11 @@ unreadable rows each still ask their session's sender (`noteMissingSeed`, the SE
 which reads no "nothing" record), the next membership change moves the epoch and asks again, and a
 new seed minted later reaches the requester directly and ends the ask.
 
-**MERGE ORDER WITH #2023:** its `accountLocalKeys.guard.test.ts` fails on a listed key's literal
-outside `ACCOUNT_KEY`, and `KEY_PREFIX` here is that literal - whichever of #2023 and #2027 merges
-SECOND derives the key from `ACCOUNT_KEY`.
-
-**The account wipe owes the key.** Pull request #2023 (WP-DEL-LOCAL) lists it in the ONE list of
-per-account keys, `ACCOUNT_KEY.historyHeldNothing` in `utils/accountLocalKeys.ts`, and sweeps it
-itself - nothing here is called by the wipe. Until #2023 merges, `historyHeldNothingStorageKey` keeps
-its own prefix (the same string); when it merges, that builder is built from `ACCOUNT_KEY` and
-`clearHistoryHeldNothing` is deleted.
+**The account wipe owes the key, and takes it from the ONE list.** The key is built by
+`ACCOUNT_KEY.historyHeldNothing` in `utils/accountLocalKeys.ts` (#2023, WP-DEL-LOCAL), and the
+deletion's allowlist removes it whole: one key per account, written only by that account's device,
+so the other members' ids it holds are that account's records and nothing of anyone else's. Nothing
+in `historyAnswered.ts` is called by the wipe; its own clear and key export are deleted.
 
 ### Old clients, side by side (checked before writing, 2026-10-18)
 

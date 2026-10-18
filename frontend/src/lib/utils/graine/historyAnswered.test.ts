@@ -1,10 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { ACCOUNT_KEY, accountLocalStorageKeysIn } from '../accountLocalKeys';
 import {
-  clearHistoryHeldNothing,
   forgetHistoryHeldNothing,
   historyHeldNothingDevices,
   historyHeldNothingFinalAt,
-  historyHeldNothingStorageKey,
   markHistoryHeldNothingFinal,
   recordHistoryHeldNothing,
 } from './historyAnswered';
@@ -61,7 +60,7 @@ describe('historyAnswered', () => {
 
   it('reads a malformed record as none - which asks, never withholds a past', () => {
     localStorage.setItem(
-      historyHeldNothingStorageKey('alice'),
+      ACCOUNT_KEY.historyHeldNothing('alice'),
       JSON.stringify({
         'ws-1': { groupId: 'g-1', epoch: 7 },
         'ws-2': { ...at, devices: ['bob:web'] },
@@ -72,7 +71,7 @@ describe('historyAnswered', () => {
     expect([...historyHeldNothingDevices('alice', 'ws-2', at)]).toEqual(['bob:web']);
   });
 
-  it('forgets one community, and the account wipe removes the whole key', () => {
+  it("forgets one community, and the account wipe names the account's key and no other", () => {
     recordHistoryHeldNothing('alice', 'ws-1', at, 'bob', 'web');
     recordHistoryHeldNothing('alice', 'ws-2', at, 'bob', 'web');
     recordHistoryHeldNothing('dave', 'ws-1', at, 'bob', 'web');
@@ -81,9 +80,11 @@ describe('historyAnswered', () => {
     expect(historyHeldNothingDevices('alice', 'ws-1', at).size).toBe(0);
     expect(historyHeldNothingDevices('alice', 'ws-2', at).size).toBe(1);
 
-    clearHistoryHeldNothing('alice');
-    expect(localStorage.getItem(historyHeldNothingStorageKey('alice'))).toBeNull();
+    // The one key holds every community of the account, OTHER members' ids included - all of it
+    // written by this account's device, so the deletion's allowlist takes it whole.
+    const swept = accountLocalStorageKeysIn(localStorage, 'alice');
+    expect(swept).toContain(ACCOUNT_KEY.historyHeldNothing('alice'));
     // Another account on the same install keeps its own.
-    expect(historyHeldNothingDevices('dave', 'ws-1', at).size).toBe(1);
+    expect(swept).not.toContain(ACCOUNT_KEY.historyHeldNothing('dave'));
   });
 });
