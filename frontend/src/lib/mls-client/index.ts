@@ -15,7 +15,9 @@ export type {
   LocalStateOpenResult,
 } from './IMlsService';
 export {
-  MLS_LOCAL_STATE_UNDECRYPTABLE,
+  SavedStateUnopenedError,
+  SavedStateOfAnotherAccountError,
+  noPinOpensState,
   isKeystoreKeyUnavailable,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
