@@ -8,10 +8,19 @@
 -- row. Now the server keeps it, and a repeat from the SAME author in the SAME salon with the SAME id
 -- returns the stored row instead of writing another.
 --
--- NULLABLE: a silent row (a reaction, an edit) and every row written before this migration carry
--- none, and they are left alone. The index is PARTIAL for the same reason, and scoped to the author
--- and the salon: the id is chosen by the client, so it can only ever name a row of its own author -
--- another member reusing it collides with nothing.
+-- NULLABLE: a system notice and every row written before this migration carry none, and they are
+-- left alone (an edit and a reaction carry their own row id since WP-OFF-4, so they are repeatable
+-- too). The index is PARTIAL for the same reason, and scoped to the author and the salon: the id is
+-- chosen by the client, so it can only ever name a row of its own author - another member reusing it
+-- collides with nothing.
+--
+-- A DELETED MESSAGE LEAVES ITS CLIENT ID BEHIND (`channel_message_client_tombstones`). A message
+-- delete drops the row, and the idempotence above only holds while the row exists: a repeat arriving
+-- after a delete (its first answer lost, the app killed, a moderator removing it meanwhile) would
+-- find nothing and post it again - a moderation removal undone with no one touching anything. The
+-- tombstone is written before the row goes, and a repeat that meets it is refused
+-- (`CHANNEL_MESSAGE_DELETED`, 410). It holds the author, the salon and a random id - nothing a
+-- reader of the salon did not already hold - and goes with its salon.
 --
 -- It reveals nothing new: the id is random, and every reader of the salon already holds it inside
 -- the ciphertext.
@@ -25,5 +34,13 @@ ALTER TABLE channel_messages ADD COLUMN IF NOT EXISTS "clientMessageId" VARCHAR(
 CREATE UNIQUE INDEX IF NOT EXISTS "UQ_channel_messages_author_client_id"
   ON channel_messages ("authorId", "channelId", "clientMessageId")
   WHERE "clientMessageId" IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS channel_message_client_tombstones (
+  "authorId" VARCHAR(255) NOT NULL,
+  "channelId" UUID NOT NULL REFERENCES channels (id) ON DELETE CASCADE,
+  "clientMessageId" VARCHAR(36) NOT NULL,
+  "deletedAt" TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY ("authorId", "channelId", "clientMessageId")
+);
 
 COMMIT;

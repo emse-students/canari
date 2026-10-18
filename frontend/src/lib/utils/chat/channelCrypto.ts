@@ -21,6 +21,7 @@ import { GraineSignatureError } from '$lib/crypto/graineV2';
 import { rawChannelId } from '$lib/utils/graine/runtime';
 import { noteMissingSeed } from '$lib/utils/graine/repair';
 import { SvelteDate } from 'svelte/reactivity';
+import { noteSalonSendAnswer } from './salonRepeatProof';
 
 const channelService = new ChannelService();
 
@@ -387,6 +388,8 @@ export async function sendEncryptedChannelMessage(
       ? { silent: true }
       : { seedFrame: sealed.seedFrame, seedGroupId: sealed.seedGroupId }),
   });
+  // An answer echoing the client id proves this server answers a repeat with its row (088).
+  if (messageId) noteSalonSendAnswer(messageId, row);
   // The id the SERVER gave its row, which the sender's own echo is re-keyed to (WP-OFF-2).
   if (typeof row?.id === 'string' && row.id) {
     return { id: row.id, serverMs: parseServerTimestampMs(row.createdAt) };

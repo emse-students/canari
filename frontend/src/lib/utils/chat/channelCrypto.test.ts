@@ -44,6 +44,8 @@ const { GraineDistributionUnavailableError } = await import('$lib/utils/graine/s
 const { sendEncryptedChannelMessage, sendChannelReaction } =
   await import('$lib/utils/chat/channelCrypto');
 const { decodeAppMessage } = await import('$lib/proto/codec');
+const { salonRepeatIsSafe, resetSalonRepeatProofForTests } =
+  await import('$lib/utils/chat/salonRepeatProof');
 const { fromBase64 } = await import('$lib/utils/hex');
 
 const CHANNEL = 'channel_11111111-2222-3333-4444-555555555555';
@@ -130,6 +132,18 @@ describe('sendEncryptedChannelMessage', () => {
     // `mentions` notification level as though somebody had been named.
     expect('mentionedUserIds' in body).toBe(false);
     expect('poll' in body).toBe(false);
+  });
+
+  it('learns a repeat is safe ONLY from an answer that echoes its client id (migration 088)', async () => {
+    resetSalonRepeatProofForTests();
+    // An older server answers with its row and nothing else: nothing is proven.
+    sendMessage.mockResolvedValueOnce({ id: 'srv-1', createdAt: 1 });
+    await sendEncryptedChannelMessage(CHANNEL, PAYLOAD, 'msg-old');
+    expect(salonRepeatIsSafe()).toBe(false);
+
+    sendMessage.mockResolvedValueOnce({ id: 'srv-2', createdAt: 2, clientMessageId: 'msg-new' });
+    await sendEncryptedChannelMessage(CHANNEL, PAYLOAD, 'msg-new');
+    expect(salonRepeatIsSafe()).toBe(true);
   });
 });
 

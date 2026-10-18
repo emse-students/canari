@@ -5,6 +5,7 @@ import {
   Logger,
   BadRequestException,
   ConflictException,
+  GoneException,
   HttpException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -87,6 +88,12 @@ const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 /** An Ed25519 signature is 64 bytes, which padded base64 spells in exactly 88 characters. */
 const SIGNATURE_BASE64_CHARS = 88;
+
+/**
+ * 410 code: a send repeating a message that was deleted after its first send landed (migration 088's
+ * tombstone). The client forgets the send instead of offering it again.
+ */
+export const CHANNEL_MESSAGE_DELETED = 'CHANNEL_MESSAGE_DELETED';
 
 /** A client message id is what `crypto.randomUUID()` mints: a canonical UUID, either case. */
 const CLIENT_MESSAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -3205,6 +3212,7 @@ export class ChannelService {
     if (clientMessageId) {
       const stored = await this.findByClientMessageId(channelId, input.senderId, clientMessageId);
       if (stored) return stored;
+      await this.assertNotDeleted(channelId, input.senderId, clientMessageId);
     }
 
     // A poll is just an encrypted message carrying a label-free descriptor: we
@@ -3413,8 +3421,41 @@ export class ChannelService {
         `[CHANNEL_SEND] repeat of client message ${clientMessageId.slice(0, 8)} channel=${channelId} ` +
           `sender=${authorId.slice(0, 8)} answered with its stored row ${stored.id.slice(0, 8)} - nothing written`
       );
+      // The column is `select: false`, so the read did not bring it: the answer carries it anyway,
+      // because the ECHO is how a client learns this server answers a repeat with its row.
+      stored.clientMessageId = clientMessageId;
     }
     return stored ?? null;
+  }
+
+  /**
+   * Refuses a send whose client id names a message this author's salon has DELETED (migration 088's
+   * tombstone). A delete drops the row, so the lookup above finds nothing for a repeat that arrives
+   * after it - a first POST whose answer was lost, its app killed, the message removed by a moderator
+   * or by its author on another device - and without this the repeat would post it again: a
+   * moderation removal undone with no one touching anything.
+   *
+   * @throws GoneException `CHANNEL_MESSAGE_DELETED` (410): the client forgets the send.
+   */
+  private async assertNotDeleted(
+    channelId: string,
+    authorId: string,
+    clientMessageId: string
+  ): Promise<void> {
+    const tombstones: unknown[] = await this.messageRepo.query(
+      `SELECT 1 FROM channel_message_client_tombstones
+        WHERE "authorId" = $1 AND "channelId" = $2 AND "clientMessageId" = $3`,
+      [authorId, channelId, clientMessageId]
+    );
+    if (tombstones.length === 0) return;
+    this.logger.warn(
+      `[CHANNEL_SEND] repeat of DELETED client message ${clientMessageId.slice(0, 8)} channel=${channelId} ` +
+        `sender=${authorId.slice(0, 8)} refused - the message was removed after its first send landed`
+    );
+    throw new GoneException({
+      code: CHANNEL_MESSAGE_DELETED,
+      message: 'this message was deleted: a repeat of it is not posted again',
+    });
   }
 
   /**
@@ -4308,6 +4349,18 @@ export class ChannelService {
       throw new ForbiddenException('Missing channel.moderate permission to delete this message');
     }
 
+    // ITS CLIENT ID OUTLIVES IT (migration 088): written BEFORE the row goes, so no instant exists
+    // where a repeat of this message finds neither the row nor its tombstone and posts it again. A
+    // tombstone left by a delete that then failed names a row that still exists, which the send's
+    // lookup answers first - harmless. A row with no client id (older than 088, a system notice)
+    // has nothing a repeat could name, and writes none.
+    await this.messageRepo.query(
+      `INSERT INTO channel_message_client_tombstones ("authorId", "channelId", "clientMessageId")
+       SELECT "authorId", "channelId", "clientMessageId" FROM channel_messages
+        WHERE id = $1 AND "channelId" = $2 AND "clientMessageId" IS NOT NULL
+       ON CONFLICT DO NOTHING`,
+      [messageId, channelId]
+    );
     await this.messageRepo.delete({ id: messageId, channelId });
 
     const audience = await this.channelAudience(channel);

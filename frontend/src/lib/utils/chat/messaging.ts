@@ -26,13 +26,18 @@ import { extractMentionUserIds } from '$lib/utils/mentions';
 import { notifyReaction } from '$lib/utils/chat/reactionNotify';
 import { m } from '$lib/paraglide/messages';
 import { cutReplyPreview, gifPreviewUrl } from '$lib/utils/chat/messageDisplay';
-import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
+import { describeApiRefusal, refusalCode, refusalStatus } from '$lib/utils/apiRefusal';
 import { GraineSealUnavailableError } from '$lib/utils/graine/sealUnavailable';
 import {
   salonGateRefusalMessage,
   sealUnavailableMessage,
 } from '$lib/utils/graine/sealUnavailableMessage';
-import { readSalonSendGate, whenSalonSendable } from '$lib/utils/graine/salonSendGate';
+import {
+  currentSalonSession,
+  isCurrentSalonSession,
+  readSalonSendGate,
+  whenSalonSendable,
+} from '$lib/utils/graine/salonSendGate';
 import type { SalonEchoChange } from './salonEcho';
 import {
   clearUnsentSalonText,
@@ -43,6 +48,8 @@ import {
 import { connectivity } from '$lib/stores/connectivity.svelte';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { forgetOwedSalonWrite, oweSalonWrite } from './salonOwed';
+import { salonRepeatIsSafe, whenSalonRepeatIsSafe } from './salonRepeatProof';
+import { CHANNEL_MESSAGE_DELETED } from '$lib/services/ChannelService';
 import { flushDmReadMarks } from './salonReadMarkQueue';
 
 /**
@@ -120,6 +127,46 @@ function oweOnReconnect(messageId: string): void {
   });
 }
 
+/**
+ * Sends whose first POST may have landed, waiting for an answer to prove this server answers a repeat
+ * with its row (`salonRepeatProof.ts`) - each with the function that stops its wait.
+ */
+const awaitingRepeatProof = new Map<string, () => void>();
+
+/**
+ * Holds a send whose outcome is UNKNOWN until a repeat is proven safe, instead of repeating it
+ * unasked: against a server without migration 088 the repeat would post it twice. Its row stays
+ * `unconfirmed`, so the author's Retry is offered meanwhile; once an answer proves it, the send goes
+ * again under its client id with no gesture.
+ */
+function awaitRepeatProof(messageId: string): void {
+  if (awaitingRepeatProof.has(messageId)) return;
+  const stop = whenSalonRepeatIsSafe(() => {
+    awaitingRepeatProof.delete(messageId);
+    const send = salonSends.get(messageId);
+    if (!send) {
+      console.debug(`[SEND] ${messageId.slice(0, 8)}... settled before a repeat was proven safe`);
+      return;
+    }
+    if (retrying.has(messageId)) {
+      send.deps.log(`[SEND] ${messageId.slice(0, 8)}... repeat proven safe, a retry is in flight`);
+      return;
+    }
+    send.deps.log(
+      `[SEND] ${messageId.slice(0, 8)}... repeat proven safe: sent again under its client id`
+    );
+    retrying.add(messageId);
+    void deliverSalonSend(messageId, send).finally(() => retrying.delete(messageId));
+  });
+  awaitingRepeatProof.set(messageId, stop);
+}
+
+/** Stops a send's wait for the repeat proof: it was settled, retried by hand or given up. */
+function stopAwaitingRepeatProof(messageId: string): void {
+  awaitingRepeatProof.get(messageId)?.();
+  awaitingRepeatProof.delete(messageId);
+}
+
 /** Ledger entries this page life took back and is waiting to send again (`resumeUnsentSalonSends`). */
 const resumingSalonSends = new Set<string>();
 
@@ -151,7 +198,10 @@ export function liveSalonSendIds(): ReadonlySet<string> {
  * hold the message - and since the server answers a repeat of the same client id with the row it
  * already holds (migration 088), sending it again is safe:
  * - a transport failure that left the device offline is OWED to the reconnect (`pending`), which
- *   re-delivers it with no gesture;
+ *   re-delivers it with no gesture - once an answer has proven this server answers a repeat with
+ *   its row (`salonRepeatProof.ts`); before that it is `unconfirmed` and waits for that proof;
+ * - a repeat of a message deleted since it landed is refused (410 `CHANNEL_MESSAGE_DELETED`): the
+ *   send is forgotten and its row removed;
  * - anything else (a 5xx, no answer while the link still works, a throw with no status) is
  *   `unconfirmed`: nothing known will change the answer, so it waits for the author's Retry.
  * The broadcast frame or the next history page still settle the row first whenever the first POST
@@ -199,6 +249,7 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
       send.mentionedUserIds
     );
     salonSends.delete(messageId);
+    stopAwaitingRepeatProof(messageId);
     clearUnsentSalonText(deps.userId, messageId);
     deps.patchSalonEcho(send.conversationKey, messageId, {
       kind: 'settled',
@@ -239,6 +290,19 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
     // send is owed to it. `isOffline` was set by this very failure (`trackedFetch` reports every
     // transport failure to the store before it rethrows), so it is a fact, not a guess.
     if (status === null && isTransportFailure(error) && connectivity.isOffline) {
+      // ...unless the POST may have landed on a server that would post a repeat twice: then nothing
+      // known makes the repeat safe until an answer proves it (`salonRepeatProof.ts`).
+      if (!salonRepeatIsSafe()) {
+        deps.log(
+          `[SEND] channel send ${messageId.slice(0, 8)}… OUTCOME UNKNOWN, offline: unconfirmed until an answer proves a repeat is answered with its row: ${String(error)}`
+        );
+        deps.patchSalonEcho(send.conversationKey, messageId, {
+          kind: 'state',
+          status: 'unconfirmed',
+        });
+        awaitRepeatProof(messageId);
+        return m.chat_send_unconfirmed();
+      }
       deps.log(
         `[SEND] channel send ${messageId.slice(0, 8)}… got no answer and the device is offline - sent again, same client id, on the reconnect: ${String(error)}`
       );
@@ -259,6 +323,18 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
         status: 'unconfirmed',
       });
       return m.chat_send_unconfirmed();
+    }
+    // A REPEAT OF A MESSAGE DELETED SINCE ITS FIRST SEND LANDED (migration 088's tombstone): it was
+    // posted, then removed by its author or a moderator. Nothing is left to send or to offer again.
+    if (refusalCode(error) === CHANNEL_MESSAGE_DELETED) {
+      deps.log(
+        `[SEND] channel send ${messageId.slice(0, 8)}… was DELETED after it landed: forgotten, its row removed`
+      );
+      salonSends.delete(messageId);
+      stopAwaitingRepeatProof(messageId);
+      clearUnsentSalonText(deps.userId, messageId);
+      deps.patchSalonEcho(send.conversationKey, messageId, { kind: 'gone' });
+      return null;
     }
     deps.log(
       `[SEND] channel send ${messageId.slice(0, 8)}… refused (status=${status}): ${String(error)}`
@@ -300,6 +376,7 @@ export async function retrySalonSend(
   retrying.add(messageId);
   // The author's gesture IS the delivery: nothing stays owed to the reconnect beside it.
   forgetOwedSalonWrite(sendKey(messageId));
+  stopAwaitingRepeatProof(messageId);
   deps.log(`[SEND] retrying salon message ${messageId.slice(0, 8)}…`);
   try {
     send.deps = deps;
@@ -325,6 +402,7 @@ export function takeBackSalonSend(messageId: string, userId: string): string | n
  * nothing is left to retry or to hand back.
  */
 export function forgetDeliveredSalonSend(messageId: string, userId: string): void {
+  stopAwaitingRepeatProof(messageId);
   if (salonSends.delete(messageId)) clearUnsentSalonText(userId, messageId);
 }
 
@@ -340,12 +418,18 @@ export function forgetSalonSendsOfEndedSession(): void {
     );
   }
   salonSends.clear();
+  for (const stop of awaitingRepeatProof.values()) stop();
+  awaitingRepeatProof.clear();
+  // A resume still waiting on its salon's gate re-checks the session itself (`resumeOrphans`); its
+  // entries stay in the ledger, so the next session of THAT account takes them.
+  resumingSalonSends.clear();
 }
 
 /** Forgets a failed salon send the member discarded: its row is removed by the caller. */
 export function discardSalonSend(messageId: string, userId: string): void {
   salonSends.delete(messageId);
   forgetOwedSalonWrite(sendKey(messageId));
+  stopAwaitingRepeatProof(messageId);
   clearUnsentSalonText(userId, messageId);
 }
 
@@ -370,10 +454,14 @@ function salonTextPayload(entry: QueuedSalonText): Uint8Array {
  *
  * `echoed: false` means no row could be drawn, nothing was recorded and nothing was sent: the caller
  * still holds the text.
+ *
+ * `mayHaveLanded` marks a send a past page life may already have POSTed: it goes at once only when a
+ * repeat is proven safe (`salonRepeatProof.ts`); until then its row is `unconfirmed`, with its Retry.
  */
 async function queueSalonSend(
   entry: QueuedSalonText,
-  deps: SendMessageDeps
+  deps: SendMessageDeps,
+  mayHaveLanded = false
 ): Promise<{ echoed: false } | { echoed: true; refusal: string | null }> {
   const { messageId, conversationKey, text, sentAt, replyTo } = entry;
   const send: SalonSend = {
@@ -411,6 +499,14 @@ async function queueSalonSend(
   salonSends.set(messageId, send);
   // Before the POST leaves: a kill from here on sends it again at the next start.
   recordUnsentSalonText(deps.userId, entry);
+  if (mayHaveLanded && !salonRepeatIsSafe()) {
+    deps.log(
+      `[SEND] unanswered salon message ${messageId.slice(0, 8)}... NOT sent again yet: no answer has proven this server answers a repeat with its row - unconfirmed, its Retry offered`
+    );
+    deps.patchSalonEcho(conversationKey, messageId, { kind: 'state', status: 'unconfirmed' });
+    awaitRepeatProof(messageId);
+    return { echoed: true, refusal: null };
+  }
   return { echoed: true, refusal: await deliverSalonSend(messageId, send) };
 }
 
@@ -420,7 +516,10 @@ let resumeTail: Promise<unknown> = Promise.resolve();
 /**
  * Sends again what a PAST page life left unanswered in the unsent ledger (WP-OFF-3), under the same
  * client id - the server answers a repeat with the row it holds, so a message that did arrive is not
- * posted twice. Only entries whose writer is PROVEN dead are taken (`takeOrphanedSalonTexts`).
+ * posted twice. That holds only on a server carrying migration 088, so each entry is drawn
+ * `unconfirmed` and waits until an answer has proven it (`salonRepeatProof.ts`). Only entries whose
+ * writer is PROVEN dead are taken (`takeOrphanedSalonTexts`), and one whose session ends while it
+ * waits stays in its account's ledger.
  *
  * `conversationKey` narrows it to one salon (the one just opened); `null` takes every salon's, which
  * the session runs once it is up. An entry's echo needs its salon's conversation, which the listing
@@ -447,6 +546,7 @@ async function resumeOrphans(
   depsFor: (conversationKey: string) => SendMessageDeps | null,
   conversationKey: string | null
 ): Promise<UnsentSalonText[]> {
+  const session = currentSalonSession();
   const orphans = await takeOrphanedSalonTexts(userId, conversationKey, liveSalonSendIds());
   if (orphans.length === 0) return [];
   const legacy = orphans.filter((o) => typeof o.sentAt !== 'number');
@@ -464,6 +564,15 @@ async function resumeOrphans(
     resumable.map(async (entry) => {
       try {
         const gate = await whenSalonSendable(entry.conversationKey.replace(/^channel_/, ''));
+        // THE SESSION THAT TOOK IT MAY HAVE ENDED during the wait: the conversation map is not
+        // cleared yet, and what would seal it is the NEXT account's session. It stays in this
+        // account's ledger, for its next session.
+        if (!isCurrentSalonSession(session)) {
+          console.log(
+            `[SEND] unanswered salon message ${entry.messageId.slice(0, 8)}... kept in the ledger: its session ended while it waited (gate=${gate.kind})`
+          );
+          return;
+        }
         const deps = depsFor(entry.conversationKey);
         if (!deps) {
           console.warn(
@@ -472,9 +581,9 @@ async function resumeOrphans(
           return;
         }
         deps.log(
-          `[SEND] unanswered salon message ${entry.messageId.slice(0, 8)}... of a past page life sent again under its client id`
+          `[SEND] unanswered salon message ${entry.messageId.slice(0, 8)}... of a past page life drawn again under its client id`
         );
-        const queued = await queueSalonSend(entry, deps);
+        const queued = await queueSalonSend(entry, deps, true);
         if (!queued.echoed) {
           console.error(
             `[SEND] unanswered salon message ${entry.messageId.slice(0, 8)}... not resumed: its row could not be drawn - kept in the ledger`

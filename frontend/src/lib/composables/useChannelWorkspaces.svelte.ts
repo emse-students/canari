@@ -2058,6 +2058,8 @@ export function useChannelWorkspaces() {
           ctx.log(
             `[CHANNEL] edit of ${messageId.slice(0, 8)} not sent, ${undone?.reverted ? 'taken back' : 'already superseded - left as is'}`
           );
+        } else {
+          ctx.log(`[CHANNEL] edit of ${messageId.slice(0, 8)} outcome unknown, kept on screen`);
         }
         ctx.log(toUiActionError(m.channel_action_message_edit(), outcome.error));
       }
@@ -2077,10 +2079,11 @@ export function useChannelWorkspaces() {
    * **OWED WHILE OFFLINE, ROLLED BACK ONLY WHEN NOTHING WAS SENT** (2026-10-06, WP-OFF-4): a reaction
    * made offline keeps its pill and goes on the reconnect, under the same row id and `at`
    * (`deliverSalonWrite`); a later toggle of the same emoji owes the later frame instead. When nothing
-   * of it left the device (`nothingLeftTheDevice`: no answer with the link up, a refusal below 500, a
-   * seal this device cannot make), the pill is a claim about a reaction nobody else will ever see, so
-   * it is undone - the inverse frame at a LATER `at`, applied locally and never sent. A 5xx may have
-   * reached peers, and unflipping there would disagree with the frame they hold - so it stays.
+   * of it left the device (`nothingLeftTheDevice`: a refusal below 500, a seal this device cannot
+   * make), the pill is a claim about a reaction nobody else will ever see, so it is undone - the
+   * inverse frame at a LATER `at`, applied locally and never sent. A 5xx or no answer with the link
+   * up may have reached peers, and unflipping there would disagree for good with the frame they hold
+   * - so it stays.
    */
   async function toggleChannelReaction(
     channelConversationId: string,
@@ -2129,6 +2132,8 @@ export function useChannelWorkspaces() {
             !standing
           );
           ctx.log(`[CHANNEL] reaction not sent, local pill rolled back: ${undone}`);
+        } else {
+          ctx.log(`[CHANNEL] reaction outcome unknown, local pill kept: the server may hold it`);
         }
         ctx.log(toUiActionError(m.channel_action_message_react(), outcome.error));
       }

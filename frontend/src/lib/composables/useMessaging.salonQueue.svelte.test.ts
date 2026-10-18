@@ -32,8 +32,24 @@ await import('./useMessaging.svelte');
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
 import { connectivity } from '$lib/stores/connectivity.svelte';
-import { openSalonSendGate, resetSalonSendGate } from '$lib/utils/graine/salonSendGate';
+import {
+  beginSalonListing,
+  openSalonSendGate,
+  resetSalonSendGate,
+} from '$lib/utils/graine/salonSendGate';
 import { decodeAppMessage } from '$lib/proto/codec';
+import {
+  noteSalonSendAnswer,
+  resetSalonRepeatProofForTests,
+} from '$lib/utils/chat/salonRepeatProof';
+import { ChannelApiError } from '$lib/services/ChannelService';
+
+/** An answer of a server carrying migration 088: it echoes the client id, so a repeat is safe. */
+function proveRepeatsSafe() {
+  noteSalonSendAnswer('00000000-0000-4000-8000-0000000000ff', {
+    clientMessageId: '00000000-0000-4000-8000-0000000000ff',
+  });
+}
 
 const CHANNEL = 'channel_7a1d0c2e-0000-4000-8000-000000000001';
 const LEDGER_KEY = 'canari.salon-unsent.me';
@@ -88,6 +104,9 @@ beforeEach(() => {
   resetSalonSendGate();
   openSalonSendGate(CHANNEL.replace(/^channel_/, ''));
   openSalonSendGate(CHANNEL);
+  // Every test but the ones about the proof itself runs against a server known to carry 088.
+  resetSalonRepeatProofForTests();
+  proveRepeatsSafe();
 });
 
 afterEach(() => {
@@ -272,5 +291,110 @@ describe('what a past page life left unanswered', () => {
     await vi.waitFor(() => expect(rows(ctx)[0]).toMatchObject({ id: 'srv-once' }));
     expect(rows(ctx)).toHaveLength(1);
     expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a repeat nobody asked for waits for the server to prove it safe', () => {
+  // Store builds meet the server WITHOUT migration 088 for days (production deploys once both
+  // stores serve the client), and that server posts a repeat twice. So no repeat goes unasked until
+  // an answer has echoed a client id.
+  beforeEach(() => resetSalonRepeatProofForTests());
+
+  it('a POST lost as the link went down is unconfirmed, then goes once an answer proves it', async () => {
+    sendMock.mockImplementationOnce(dropTheLink);
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const ctx = makeContext();
+
+    await useMessaging().handleSendChat(ctx, 'maybe landed');
+    const clientId = rows(ctx)[0].id;
+    expect(rows(ctx)[0].status).toBe('unconfirmed');
+
+    // The reconnect alone sends nothing: the old server would post it a second time.
+    connectivity.notifyServerReachable();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(sendMock).toHaveBeenCalledTimes(1);
+
+    sendMock.mockResolvedValueOnce({ id: 'srv-proven' });
+    proveRepeatsSafe();
+    await vi.waitFor(() => expect(rows(ctx)[0]).toMatchObject({ id: 'srv-proven' }));
+    expect(posted(1).messageId).toBe(clientId);
+  });
+
+  it('a send HELD offline before any POST still goes on the reconnect: nothing can have landed', async () => {
+    connectivity.notifyServerUnreachable();
+    sendMock.mockResolvedValue({ id: 'srv-held' });
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const ctx = makeContext();
+
+    await useMessaging().handleSendChat(ctx, 'never left');
+    connectivity.notifyServerReachable();
+    await vi.waitFor(() => expect(rows(ctx)[0]).toMatchObject({ id: 'srv-held' }));
+    expect(sendMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('what a past page life left is drawn unconfirmed, and sent once an answer proves it', async () => {
+    const clientId = '3d4e5f6a-7b8c-4d9e-8f0a-1b2c3d4e5f6a';
+    localStorage.setItem(
+      LEDGER_KEY,
+      JSON.stringify([{ messageId: clientId, conversationKey: CHANNEL, text: 'killed', sentAt: 3 }])
+    );
+    sendMock.mockResolvedValue({ id: 'srv-after-proof' });
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const ctx = makeContext();
+
+    await useMessaging().resumeUnsentSends(ctx, null);
+    await vi.waitFor(() => expect(rows(ctx)[0]?.status).toBe('unconfirmed'));
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(ledger().map((e) => e.messageId)).toEqual([clientId]);
+
+    proveRepeatsSafe();
+    await vi.waitFor(() => expect(rows(ctx)[0]).toMatchObject({ id: 'srv-after-proof' }));
+    expect(posted(0).messageId).toBe(clientId);
+  });
+});
+
+describe('a resume whose session ends while it waits', () => {
+  it('leaves the entry in its account ledger: the next account never seals it', async () => {
+    const clientId = '5f6a7b8c-9d0e-4f1a-8b2c-3d4e5f6a7b8c';
+    localStorage.setItem(
+      LEDGER_KEY,
+      JSON.stringify([
+        { messageId: clientId, conversationKey: CHANNEL, text: 'A wrote it', sentAt: 4 },
+      ])
+    );
+    resetSalonSendGate();
+    beginSalonListing(); // The salon is not entered yet: the resume waits on its gate.
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const ctx = makeContext();
+
+    await useMessaging().resumeUnsentSends(ctx, null);
+    resetSalonSendGate(); // Sign-out: the conversation map is still there, the session is not.
+
+    await vi.waitFor(() =>
+      expect(console.log).toHaveBeenCalledWith(expect.stringContaining('its session ended'))
+    );
+    expect(rows(ctx)).toHaveLength(0);
+    expect(sendMock).not.toHaveBeenCalled();
+    expect(ledger().map((e) => e.messageId)).toEqual([clientId]);
+  });
+});
+
+describe('a repeat of a message deleted since it landed', () => {
+  it('is forgotten and its row removed, never offered again', async () => {
+    sendMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    const { useMessaging } = await import('./useMessaging.svelte');
+    const messaging = useMessaging();
+    const ctx = makeContext();
+    await messaging.handleSendChat(ctx, 'removed by a moderator');
+    const clientId = rows(ctx)[0].id;
+    expect(rows(ctx)[0].status).toBe('unconfirmed');
+
+    sendMock.mockRejectedValueOnce(
+      new ChannelApiError(410, 'CHANNEL_MESSAGE_DELETED', 'this message was deleted')
+    );
+    await messaging.retrySend(ctx, clientId);
+
+    expect(rows(ctx)).toHaveLength(0);
+    expect(ledger()).toEqual([]);
   });
 });

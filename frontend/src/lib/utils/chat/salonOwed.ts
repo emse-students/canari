@@ -81,7 +81,8 @@ export type SalonWriteOutcome =
  * later settles through the same `settle`, so its caller writes its outcome handling once.
  *
  * Every other failure is `failed` and the caller decides, with {@link nothingLeftTheDevice}, whether
- * its optimistic local state must be taken back.
+ * its optimistic local state must be taken back - never for a transport failure, whose outcome is
+ * unknown.
  */
 export async function deliverSalonWrite(
   key: string,
@@ -113,13 +114,17 @@ export async function deliverSalonWrite(
 /**
  * Whether a failed salon write left NOTHING the server or a peer may hold - the only case where its
  * optimistic local state is taken back ("rollback only when nothing is left", WP-OFF-4): a seal this
- * device could not make, an answer below 500 (the server refused before storing), or no answer with
- * the link still up (nothing left the device that anyone acknowledged). A 5xx may come from a proxy
- * AFTER the write was stored, so it is NOT nothing.
+ * device could not make, or an answer below 500 (the server refused before storing).
+ *
+ * NO ANSWER IS NOT NOTHING. A transport failure with the link still up - a request deadline, a reply
+ * lost on the way back - is an UNKNOWN outcome, exactly as `deliverSalonSend` reads it: the server
+ * may have stored the write and broadcast it, and taking it back here would leave this device
+ * disagreeing for good with every peer that holds it (a reaction undone at a LATER instant beats this
+ * device's own frame when it arrives). So it stays on screen. A 5xx may come from a proxy AFTER the
+ * write was stored, so it is not nothing either.
  */
 export function nothingLeftTheDevice(error: unknown): boolean {
   if (error instanceof GraineSealUnavailableError) return true;
-  if (isTransportFailure(error)) return true;
   const status = refusalStatus(error);
   return status !== null && status < 500;
 }

@@ -109,10 +109,6 @@ describe('deliverSalonWrite', () => {
 
 describe('nothingLeftTheDevice', () => {
   it('is true only where nothing can have been stored', () => {
-    expect(nothingLeftTheDevice(new TypeError('Failed to fetch'))).toBe(true);
-    expect(nothingLeftTheDevice(new RequestDeadlineError('api' as never, 1, 'POST', '/x', 0))).toBe(
-      true
-    );
     expect(nothingLeftTheDevice(new ChannelApiError(403, null, 'no'))).toBe(true);
     expect(nothingLeftTheDevice(new GraineSealUnavailableError('no seal', 'no-session'))).toBe(
       true
@@ -120,5 +116,12 @@ describe('nothingLeftTheDevice', () => {
     // A 5xx may come from a proxy AFTER the write was stored; an untyped throw proves nothing.
     expect(nothingLeftTheDevice(new ChannelApiError(502, null, 'gateway'))).toBe(false);
     expect(nothingLeftTheDevice(new Error('who knows'))).toBe(false);
+  });
+
+  it('is false for no answer with the link up: the outcome is unknown, the server may hold it', () => {
+    expect(nothingLeftTheDevice(new TypeError('Failed to fetch'))).toBe(false);
+    expect(nothingLeftTheDevice(new RequestDeadlineError('api' as never, 1, 'POST', '/x', 0))).toBe(
+      false
+    );
   });
 });

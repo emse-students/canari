@@ -155,6 +155,18 @@ maybe('a repeated salon send against PostgreSQL (migration 088)', () => {
     expect(stored.clientMessageId).toBe(CLIENT_ID);
   });
 
+  it('a repeat of a DELETED message is refused, never posted again (the tombstone)', async () => {
+    const gone = '1a2b3c4d-5e6f-4a7b-8c9d-0e1f2a3b4c5d';
+    const first = await send(ME, gone);
+    await service.deleteChannelMessage(SALON, first.id, ME);
+    const before = await rows();
+    const error = await send(ME, gone).catch((e: unknown) => e);
+    expect((error as { getStatus?: () => number }).getStatus?.()).toBe(410);
+    expect(await rows()).toBe(before);
+    // Another author's message under the same id is untouched by this author's tombstone.
+    await expect(send(OTHER, gone)).resolves.toBeDefined();
+  });
+
   it('two repeats racing past the lookup leave ONE row and both get it', async () => {
     const racing = '0f1e2d3c-4b5a-4968-8776-655443322110';
     const before = await rows();

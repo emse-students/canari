@@ -5,7 +5,7 @@
  * just corrected snapped back with an error - and a reaction was rolled back on any transport
  * failure. Both now apply at once, are OWED to the reconnect when the link is down (`salonOwed.ts`),
  * and go again under the SAME row id, which the server answers with the row it holds (migration 088).
- * They are taken back only when nothing of them left the device.
+ * They are taken back only when nothing of them left the device - a refusal, never a lost answer.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
@@ -16,6 +16,7 @@ import { connectivity } from '$lib/stores/connectivity.svelte';
 import { ChannelApiError } from '$lib/services/ChannelService';
 import { serializeEnvelope, mkTextEnvelope, envelopeBodyText } from '$lib/envelope';
 import { resetOwedSalonWrites } from '$lib/utils/chat/salonOwed';
+import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 
 vi.mock('$lib/stores/toast.svelte', () => ({ showToast: vi.fn() }));
 
@@ -141,6 +142,16 @@ describe('a salon edit', () => {
 
     expect(body(ctx)).toBe('maybe stored');
   });
+
+  it('stays when no answer came with the link up: the outcome is unknown', async () => {
+    sendChannelEdit.mockRejectedValue(new TypeError('Failed to fetch'));
+    const ctx = makeContext();
+
+    await useChannelWorkspaces().editChannelMessage(SALON, 'srv-mine', 'answer lost', ctx);
+
+    expect(connectivity.isOffline).toBe(false);
+    expect(body(ctx)).toBe('answer lost');
+  });
 });
 
 describe('a salon reaction', () => {
@@ -181,6 +192,27 @@ describe('a salon reaction', () => {
     // Same `at` and row id: if the first POST had landed, the server answers this one with it.
     expect(repeat[3]).toBe(first[3]);
     expect(repeat[5]).toBe(first[5]);
+  });
+
+  it('keeps its pill when its answer is lost with the link up - the peers may hold it', async () => {
+    sendChannelReaction.mockRejectedValue(
+      new RequestDeadlineError('api' as never, 1, 'POST', '/x', 0)
+    );
+    const ctx = makeContext();
+
+    await useChannelWorkspaces().toggleChannelReaction(SALON, 'm-lost-1', '🎉', ctx);
+
+    // Rolled back here, at a LATER instant, it would beat this device's own frame for good.
+    expect(mine('m-lost-1')).toHaveLength(1);
+  });
+
+  it('is rolled back when the server refused it', async () => {
+    sendChannelReaction.mockRejectedValue(new ChannelApiError(403, null, 'no'));
+    const ctx = makeContext();
+
+    await useChannelWorkspaces().toggleChannelReaction(SALON, 'm-refused-1', '🎉', ctx);
+
+    expect(mine('m-refused-1')).toHaveLength(0);
   });
 
   it('placed then taken back offline owes the removal alone', async () => {

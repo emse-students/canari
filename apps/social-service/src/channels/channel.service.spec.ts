@@ -2,6 +2,7 @@ import {
   ForbiddenException,
   BadRequestException,
   ConflictException,
+  GoneException,
   NotFoundException,
   Logger,
 } from '@nestjs/common';
@@ -100,6 +101,8 @@ describe('ChannelService security hardening', () => {
       create: jest.fn((x: unknown) => x),
       save: jest.fn((x: unknown) => Promise.resolve(x)),
       delete: jest.fn(() => Promise.resolve({ affected: 1 })),
+      // Raw SQL: the client-id tombstones of migration 088 (none by default).
+      query: jest.fn((_sql: string, _params?: unknown[]) => Promise.resolve([] as unknown[])),
       find: jest.fn(),
       findOne: jest.fn(),
       manager: {
@@ -555,6 +558,13 @@ describe('ChannelService security hardening', () => {
     await service.deleteChannelMessage('ch1', 'm1', 'u1');
 
     expect(messageRepo.delete).toHaveBeenCalledWith({ id: 'm1', channelId: 'ch1' });
+    // Its client id's tombstone is written BEFORE the row goes (migration 088).
+    const [sql, params] = messageRepo.query.mock.calls[0];
+    expect(sql).toContain('INSERT INTO channel_message_client_tombstones');
+    expect(params).toEqual(['m1', 'ch1']);
+    expect(messageRepo.query.mock.invocationCallOrder[0]).toBeLessThan(
+      messageRepo.delete.mock.invocationCallOrder[0]
+    );
     expect(redis.publishChannelEvent).toHaveBeenCalledWith(
       'channel.message.deleted',
       expect.objectContaining({ channelId: 'ch1', messageId: 'm1', deletedBy: 'u1' }),
@@ -1343,6 +1353,28 @@ describe('ChannelService security hardening', () => {
       await settle();
       expect(messageRepo.save).not.toHaveBeenCalled();
       expect(redis.publishChannelEvent).not.toHaveBeenCalled();
+    });
+
+    it('echoes the client id in the answer, even when the read did not select it', async () => {
+      const { clientMessageId: _unselected, ...read } = STORED;
+      const { done } = send({ messageId: CLIENT_ID }, { stored: { ...read } });
+      await expect(done).resolves.toMatchObject({ id: 'm-first', clientMessageId: CLIENT_ID });
+      const fresh = send({ messageId: CLIENT_ID });
+      await expect(fresh.done).resolves.toMatchObject({ clientMessageId: CLIENT_ID });
+    });
+
+    it('refuses a repeat of a DELETED message with a typed 410, writing nothing', async () => {
+      const repos = send({ messageId: CLIENT_ID });
+      repos.messageRepo.query.mockResolvedValueOnce([{ '?column?': 1 }]);
+      const error = await repos.done.catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(GoneException);
+      expect(((error as GoneException).getResponse() as { code?: string }).code).toBe(
+        'CHANNEL_MESSAGE_DELETED'
+      );
+      expect(repos.messageRepo.query.mock.calls[0][1]).toEqual(['u1', 'ch1', CLIENT_ID]);
+      await settle();
+      expect(repos.messageRepo.save).not.toHaveBeenCalled();
+      expect(repos.redis.publishChannelEvent).not.toHaveBeenCalled();
     });
 
     it('reads the id in either case: the stored key is lower case', async () => {
