@@ -42,7 +42,12 @@ const CONTAINER_TYPES = new Set(['jsonb', 'json', 'simple-array', 'simple-json']
  * Tables created by migration SQL with no entity, and their account-holding columns' types: the
  * metadata cannot see them. Asserted against the migrations below, in both directions.
  */
-const RAW_TABLES = ['read_grants', 'read_grant_journal', 'post_audiences'];
+const RAW_TABLES = [
+  'read_grants',
+  'read_grant_journal',
+  'post_audiences',
+  'channel_message_client_tombstones',
+];
 
 const SRC = join(__dirname, '..');
 
@@ -103,8 +108,11 @@ function rawColumns(): FoundColumn[] {
       )?.[1];
       if (!body) continue;
       for (const line of body.split('\n')) {
-        const m = /^\s*"?([a-zA-Z_]+)"?\s+([a-z]+)/.exec(line);
-        if (m) out.push({ key: `${table}.${m[1]}`, container: /^(jsonb|json)$/.test(m[2]) });
+        // Either case for the type (migration 088 spells it `VARCHAR`, 078 `varchar`), and a
+        // table constraint (`PRIMARY KEY (...)`) is not a column.
+        const m = /^\s*"?([a-zA-Z_]+)"?\s+([a-z]+)/i.exec(line);
+        if (m && !/^(PRIMARY|CONSTRAINT|CHECK|UNIQUE|FOREIGN)$/i.test(m[1]))
+          out.push({ key: `${table}.${m[1]}`, container: /^(jsonb|json)$/i.test(m[2]) });
       }
     }
   }
@@ -132,6 +140,8 @@ describe('account erasure coverage (social)', () => {
           'associations.isBDE',
           'read_grants.user_id',
           'read_grant_journal.actor',
+          // An upper-case column type (`VARCHAR`) is read too.
+          'channel_message_client_tombstones.authorId',
         ].filter((k) => k !== 'associations.isBDE')
       )
     );

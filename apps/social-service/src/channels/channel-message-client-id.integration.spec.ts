@@ -19,7 +19,7 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
-import { ChannelService } from './channel.service';
+import { ChannelService, clientIdLockSql } from './channel.service';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -165,6 +165,37 @@ maybe('a repeated salon send against PostgreSQL (migration 088)', () => {
     expect(await rows()).toBe(before);
     // Another author's message under the same id is untouched by this author's tombstone.
     await expect(send(OTHER, gone)).resolves.toBeDefined();
+  });
+
+  it('a delete that falls between a repeat lookup and its insert still wins: no re-post', async () => {
+    // The interleaving the lock closes, made deterministic: a delete holds the client id's lock
+    // and has written its tombstone but not committed when the repeat reaches its insert. The
+    // repeat must WAIT for it and then read the committed tombstone - never insert past it.
+    const racing = '2b3c4d5e-6f70-4a81-9b2c-3d4e5f607182';
+    const deleter = new Client({ connectionString: URL });
+    await deleter.connect();
+    try {
+      await deleter.query(`SET search_path TO ${schema}`);
+      await deleter.query('BEGIN');
+      await deleter.query(`SELECT ${clientIdLockSql('$1', '$2', '$3')}`, [ME, SALON, racing]);
+      await deleter.query(
+        `INSERT INTO channel_message_client_tombstones ("authorId", "channelId", "clientMessageId")
+         VALUES ($1, $2, $3)`,
+        [ME, SALON, racing]
+      );
+      const before = await rows();
+      const repeat = send(ME, racing).catch((e: unknown) => e);
+      // The repeat is parked on the lock, not past it: nothing landed while the delete is open.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(await rows()).toBe(before);
+      await deleter.query('COMMIT');
+      const error = await repeat;
+      expect((error as { getStatus?: () => number }).getStatus?.()).toBe(410);
+      expect(await rows()).toBe(before);
+    } finally {
+      await deleter.query('ROLLBACK').catch(() => undefined);
+      await deleter.end();
+    }
   });
 
   it('two repeats racing past the lookup leave ONE row and both get it', async () => {

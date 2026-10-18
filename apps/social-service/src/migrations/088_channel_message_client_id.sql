@@ -18,9 +18,16 @@
 -- delete drops the row, and the idempotence above only holds while the row exists: a repeat arriving
 -- after a delete (its first answer lost, the app killed, a moderator removing it meanwhile) would
 -- find nothing and post it again - a moderation removal undone with no one touching anything. The
--- tombstone is written before the row goes, and a repeat that meets it is refused
--- (`CHANNEL_MESSAGE_DELETED`, 410). It holds the author, the salon and a random id - nothing a
--- reader of the salon did not already hold - and goes with its salon.
+-- tombstone and the delete commit together, and a repeat that meets it is refused
+-- (`CHANNEL_MESSAGE_DELETED`, 410); both sides take the same advisory lock on the client id
+-- (`clientIdLockSql` in channel.service.ts), so a delete cannot fall between a repeat's check and its
+-- insert. It holds the author, the salon and a random id - nothing a reader of the salon did not
+-- already hold - and goes with its salon, or with its author's account erasure.
+--
+-- ONLY A MESSAGE DELETE (`deleteChannelMessage`) WRITES ONE. The two other paths that drop rows do
+-- not: the retention GC (`channel-retention.scheduler.ts`) removes messages past the retention
+-- window, far older than any send a client still repeats, and an account erasure deletes the author's
+-- messages AND its tombstones (`account-erasure.ts`) - an erased account sends nothing again.
 --
 -- It reveals nothing new: the id is random, and every reader of the salon already holds it inside
 -- the ciphertext.

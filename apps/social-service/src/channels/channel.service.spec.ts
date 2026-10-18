@@ -7,7 +7,7 @@ import {
   Logger,
 } from '@nestjs/common';
 import { Repository } from 'typeorm';
-import { CHANNEL_SIGNATURE_REQUIRED, ChannelService } from './channel.service';
+import { CHANNEL_SIGNATURE_REQUIRED, ChannelService, clientIdLockSql } from './channel.service';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -109,6 +109,11 @@ describe('ChannelService security hardening', () => {
         transaction: jest.fn(),
       },
     };
+    // By default a transaction runs against the repository itself: the client-id lock, the
+    // tombstone and the row land in `query`, `save` and `delete` above, in order.
+    messageRepo.manager.transaction.mockImplementation((cb: (tx: unknown) => Promise<unknown>) =>
+      cb({ query: messageRepo.query, getRepository: () => messageRepo })
+    );
     const inviteRepo = {
       findOne: jest.fn(),
       find: jest.fn(() => Promise.resolve([])),
@@ -558,11 +563,15 @@ describe('ChannelService security hardening', () => {
     await service.deleteChannelMessage('ch1', 'm1', 'u1');
 
     expect(messageRepo.delete).toHaveBeenCalledWith({ id: 'm1', channelId: 'ch1' });
-    // Its client id's tombstone is written BEFORE the row goes (migration 088).
-    const [sql, params] = messageRepo.query.mock.calls[0];
+    // In ONE transaction (migration 088): the client id's lock - the one a send takes around its
+    // tombstone check and its insert - then the tombstone, then the row.
+    expect(messageRepo.manager.transaction).toHaveBeenCalledTimes(1);
+    const [[lockSql, lockParams], [sql, params]] = messageRepo.query.mock.calls;
+    expect(lockSql).toContain(clientIdLockSql('"authorId"', '"channelId"', '"clientMessageId"'));
+    expect(lockParams).toEqual(['m1', 'ch1']);
     expect(sql).toContain('INSERT INTO channel_message_client_tombstones');
     expect(params).toEqual(['m1', 'ch1']);
-    expect(messageRepo.query.mock.invocationCallOrder[0]).toBeLessThan(
+    expect(messageRepo.query.mock.invocationCallOrder[1]).toBeLessThan(
       messageRepo.delete.mock.invocationCallOrder[0]
     );
     expect(redis.publishChannelEvent).toHaveBeenCalledWith(
@@ -1365,13 +1374,22 @@ describe('ChannelService security hardening', () => {
 
     it('refuses a repeat of a DELETED message with a typed 410, writing nothing', async () => {
       const repos = send({ messageId: CLIENT_ID });
-      repos.messageRepo.query.mockResolvedValueOnce([{ '?column?': 1 }]);
+      repos.messageRepo.query
+        .mockResolvedValueOnce([]) // the client id's lock
+        .mockResolvedValueOnce([{ '?column?': 1 }]); // its tombstone
       const error = await repos.done.catch((e: unknown) => e);
       expect(error).toBeInstanceOf(GoneException);
       expect(((error as GoneException).getResponse() as { code?: string }).code).toBe(
         'CHANNEL_MESSAGE_DELETED'
       );
-      expect(repos.messageRepo.query.mock.calls[0][1]).toEqual(['u1', 'ch1', CLIENT_ID]);
+      // The check runs UNDER the lock a delete takes, in the transaction that would insert: a check
+      // made before it let a delete fall between the check and the insert, and re-post the row.
+      const [[lockSql, lockParams], [checkSql, checkParams]] = repos.messageRepo.query.mock.calls;
+      expect(lockSql).toContain(clientIdLockSql('$1', '$2', '$3'));
+      expect(lockParams).toEqual(['u1', 'ch1', CLIENT_ID]);
+      expect(checkSql).toContain('channel_message_client_tombstones');
+      expect(checkParams).toEqual(['u1', 'ch1', CLIENT_ID]);
+      expect(repos.messageRepo.manager.transaction).toHaveBeenCalledTimes(1);
       await settle();
       expect(repos.messageRepo.save).not.toHaveBeenCalled();
       expect(repos.redis.publishChannelEvent).not.toHaveBeenCalled();
