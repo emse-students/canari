@@ -302,3 +302,60 @@ describe('persistMlsStructuralCheckpoint', () => {
     expect(persistCheckpoint).toHaveBeenCalledWith();
   });
 });
+
+describe('createMlsStatePersister - receive-skip measurement switch', () => {
+  function make(receiveSkipBudget?: number) {
+    const persistCheckpoint = vi.fn().mockResolvedValue(undefined);
+    const persister = createMlsStatePersister({
+      mlsService: { persistCheckpoint } as any,
+      receiveSkipBudget,
+    });
+    return { persistCheckpoint, persister };
+  }
+
+  async function receiveOnlyDrain(persister: ReturnType<typeof make>['persister']) {
+    persister.onBulkIngestStart();
+    persister.scheduleDeferred();
+    await persister.onBulkIngestEnd();
+    await new Promise((r) => setTimeout(r, 5));
+  }
+
+  it('OFF (default) checkpoints after every receive-only drain, exactly as before', async () => {
+    for (const budget of [undefined, 0]) {
+      const { persistCheckpoint, persister } = make(budget);
+      for (let i = 0; i < 5; i++) await receiveOnlyDrain(persister);
+      expect(persistCheckpoint).toHaveBeenCalledTimes(5);
+    }
+  });
+
+  it('ON skips receive-only drains up to the budget, then checkpoints and starts over', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { persistCheckpoint, persister } = make(3);
+    for (let i = 0; i < 3; i++) await receiveOnlyDrain(persister);
+    expect(persistCheckpoint).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledTimes(3);
+    await receiveOnlyDrain(persister);
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+    for (let i = 0; i < 3; i++) await receiveOnlyDrain(persister);
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
+  it('ON never skips a drain that asked for durability (commit, Welcome, structural change)', async () => {
+    const { persistCheckpoint, persister } = make(10);
+    persister.onBulkIngestStart();
+    persister.persistNow();
+    await persister.onBulkIngestEnd();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+  });
+
+  it('ON still writes the skipped state on an explicit flush (background, logout, send)', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { persistCheckpoint, persister } = make(10);
+    await receiveOnlyDrain(persister);
+    expect(persistCheckpoint).not.toHaveBeenCalled();
+    await persister.flush();
+    expect(persistCheckpoint).toHaveBeenCalledTimes(1);
+  });
+});

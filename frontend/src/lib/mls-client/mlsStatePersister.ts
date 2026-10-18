@@ -6,6 +6,14 @@ import { yieldToMainThread } from '$lib/utils/scheduling/yieldToMainThread';
 export interface MlsStatePersisterConfig {
   mlsService: IMlsService;
   log?: (msg: string) => void;
+  /**
+   * MEASUREMENT SWITCH, DEFAULT 0 = OFF, and off is exactly the behaviour this file always had.
+   * When positive, a drain that only RECEIVED application frames (nothing called `persistNow`
+   * since the last checkpoint) leaves its checkpoint to the next trigger that already exists - a
+   * send, a commit, `flush` on background or logout - for up to this many drains in a row, then
+   * checkpoints anyway. A COUNT, never a clock. See `receiveCheckpointSkipBudget`.
+   */
+  receiveSkipBudget?: number;
 }
 
 /**
@@ -33,7 +41,7 @@ export interface MlsStatePersister {
  * flush() write a checkpoint to IndexedDB, sealed with the device key.
  */
 export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsStatePersister {
-  const { mlsService, log } = config;
+  const { mlsService, log, receiveSkipBudget = 0 } = config;
 
   let dirtyEncrypted = false;
   let immediateFlushQueued = false;
@@ -45,6 +53,10 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
    */
   let queuedEncrypted: Promise<void> | null = null;
   let bulkIngestDepth = 0;
+  /** A commit, a Welcome or a structural change asked for durability since the last checkpoint. */
+  let urgentSinceCheckpoint = false;
+  /** Receive-only drains whose checkpoint was skipped since the last checkpoint. */
+  let skippedReceiveDrains = 0;
 
   async function runSaveEncrypted(): Promise<void> {
     await yieldToMainThread();
@@ -67,6 +79,8 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
   function startFlight(): Promise<void> {
     if (!dirtyEncrypted) return Promise.resolve();
     dirtyEncrypted = false;
+    urgentSinceCheckpoint = false;
+    skippedReceiveDrains = 0;
     inFlightEncrypted = runSaveEncrypted()
       .catch((e) => {
         // A FAILED WRITE LEAVES THE STATE AHEAD OF THE DISK, so it is dirty again: the next trigger
@@ -122,6 +136,7 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
 
   function persistNow(): void {
     dirtyEncrypted = true;
+    urgentSinceCheckpoint = true;
     if (bulkIngestDepth > 0) return;
     if (immediateFlushQueued) return;
     immediateFlushQueued = true;
@@ -164,6 +179,20 @@ export function createMlsStatePersister(config: MlsStatePersisterConfig): MlsSta
     async onBulkIngestEnd() {
       bulkIngestDepth = Math.max(0, bulkIngestDepth - 1);
       if (bulkIngestDepth > 0) return;
+      if (
+        receiveSkipBudget > 0 &&
+        !urgentSinceCheckpoint &&
+        skippedReceiveDrains < receiveSkipBudget
+      ) {
+        // Receive-only drain inside the budget: the state stays dirty in memory and the next
+        // trigger (a send, a commit, `flush` on background or logout) writes it.
+        skippedReceiveDrains += 1;
+        dirtyEncrypted = true;
+        console.warn(
+          `[MLS] MEASUREMENT SWITCH ON: checkpoint skipped after a receive-only drain (${skippedReceiveDrains}/${receiveSkipBudget})`
+        );
+        return;
+      }
       log?.('[MLS] Bulk ingest done - flushing an encrypted checkpoint if needed.');
       dirtyEncrypted = true;
       void flushEncryptedInternal().catch(() => {

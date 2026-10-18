@@ -27,10 +27,10 @@ even a drain of one application frame. `mlsStatePersister.onBulkIngestEnd` sets
 
 **Measured.**
 
-| Mi 9T, native (`heavy_state_checkpoint` cross-built for aarch64) | 0.48 MB | 1.9 MB | 3.8 MB | 7.7 MB |
-| --- | ---: | ---: | ---: | ---: |
-| one decrypt | 0.55 ms | 0.48 ms | 0.49 ms | 0.49 ms |
-| export + seal | 2.7 ms | 11.7 ms | 25.6 ms | **49.3 ms** |
+| Mi 9T, native (`heavy_state_checkpoint` cross-built for aarch64) | 0.48 MB |  1.9 MB |  3.8 MB |      7.7 MB |
+| ---------------------------------------------------------------- | ------: | ------: | ------: | ----------: |
+| one decrypt                                                      | 0.55 ms | 0.48 ms | 0.49 ms |     0.49 ms |
+| export + seal                                                    |  2.7 ms | 11.7 ms | 25.6 ms | **49.3 ms** |
 
 The file write and the IPC come on top. On native the manager mutex is held across the export and
 the seal (performance-audit finding 12), so a send or a decrypt waits for all of it. On the bench
@@ -86,6 +86,14 @@ three app-level consequences are not measured:
 - kill the app (`am force-stop`) with deferred receives pending;
 - push frames while it is dead;
 - resume, and read the log for `live-ahead`, duplicates and `unreadable for good`.
+
+**The measurement switch (2026-10-18, inert).** No build holds a state ahead of the disk, so the
+protocol above cannot be run as written. `mlsStatePersister` takes a `receiveSkipBudget` (default 0 =
+today's behaviour, pinned by a test), read by `receiveCheckpointSkipBudget`
+(`mls-client/receiveCheckpointSkip.ts`) only on a development-estate build AND with an explicit
+`canari_dev_checkpoint_skip_k` key. It skips ONLY a drain that never called `persistNow` (so never a
+commit, a Welcome or a structural change), for at most K drains in a row, and logs at warn each time.
+An explicit `flush` (background, logout, send) writes the state as before.
 
 ### DECISION OWED - should a read receipt wait for a COUNT or an event instead of the 2 s window? (2026-10-15)
 
@@ -174,24 +182,24 @@ change that number.
 accept it.** This is not a defect in either file: both are internally consistent and each was written
 carefully. They have simply drifted apart, and only a decision separates them.
 
-**The standing rule that makes this a question at all** (user, 2026-08-31): *"Je prefere blinder de
-test et faire les choses automatiquement qu'avoir une review humaine qui n'arrive jamais"*, for *"un
-projet qui peut 'vivre tout seul'"*. So a refusal is never a routing decision to a human queue - it
+**The standing rule that makes this a question at all** (user, 2026-08-31): _"Je prefere blinder de
+test et faire les choses automatiquement qu'avoir une review humaine qui n'arrive jamais"_, for _"un
+projet qui peut 'vivre tout seul'"_. So a refusal is never a routing decision to a human queue - it
 is a statement that a gate is MISSING, and it must NAME the test that would lift it. **A queue
 nobody drains is worse than the merge it prevented.**
 
 **What each file says, and neither is wrong.** `.github/scripts/lib/ceiling.sh` refuses a `postgres`
 major bump and names its escape: a test that starts the NEW major against a data directory written
 by the OLD one. `infrastructure/dev/version-gap.yml` is where that test's result gets declared, and
-its taxonomy admits exactly one value that lifts a refusal - `in_place_upgrade`, *"the new major
-serves production's OWN data directory, carried across by the documented upgrade path"*. A
-`logical_restore` - `pg_dump` and restore into a cluster the new major built itself - *"lifts
-NOTHING"*, and that judgement was itself a correction made while writing the file, to stop a green
+its taxonomy admits exactly one value that lifts a refusal - `in_place_upgrade`, _"the new major
+serves production's OWN data directory, carried across by the documented upgrade path"_. A
+`logical_restore` - `pg_dump` and restore into a cluster the new major built itself - _"lifts
+NOTHING"_, and that judgement was itself a correction made while writing the file, to stop a green
 gate that proved nothing from re-arming the 2026-09-01 outage.
 
 **And the estate has since decided not to build the path the lifting value describes.** On
-2026-09-01, `auth_db` being small settled it: dump and restore, not `pg_upgrade`, *"which requires
-both binaries live in one image"* and *"should not be built"*. The 2026-09-15 rehearsal executed
+2026-09-01, `auth_db` being small settled it: dump and restore, not `pg_upgrade`, _"which requires
+both binaries live in one image"_ and _"should not be built"_. The 2026-09-15 rehearsal executed
 that decision end to end against production's own bytes and it is completely successful
 ([databases](infrastructure/databases.md#crossing-a-major-version---the-rehearsed-procedure)) - and
 it is a `logical_restore`. **So the ceiling's refusal can never be lifted by any work this estate
@@ -227,8 +235,8 @@ Found 2026-08-17 while writing the initials fallback, and it is a question rathe
 because settling it needs an iPhone. `CanariShowLocalNotification` hands `attachmentPath` straight to
 `UNNotificationAttachment`, and for an avatar that path IS the durable cache file `avatar_<id>.jpg`
 that `CanariFetchAvatar` writes and later re-reads. The NSE does the opposite on purpose: its
-`attachImage` copies to a temp file first, carrying the comment *"an attachment URL is
-consumed/moved by the OS, so we never hand it a shared cache file directly"*.
+`attachImage` copies to a temp file first, carrying the comment _"an attachment URL is
+consumed/moved by the OS, so we never hand it a shared cache file directly"_.
 
 Both cannot be right. If the OS really moves the file, the app-process cache is emptied by its own
 first hit and every subsequent notification re-fetches - a silent, permanent cache miss that no log
@@ -237,7 +245,6 @@ observation**: notify twice for the same person with the app alive, then look fo
 in the app container. If it is gone, the app path copies too, exactly as the extension does. The
 initials disc is unaffected either way - it writes to `NSTemporaryDirectory()` on both.
 
-
 ### Is a MiGallery application worth it?
 
 An open question, deliberately. The Canari formula (SvelteKit + Tauri) transfers, so the cost is
@@ -245,14 +252,13 @@ knowable - but MiGallery's value is a gallery that a browser already renders wel
 is what an app would add that the web version cannot do. Answer that before estimating anything.
 
 **STILL OPEN, AND NOW WITH A DELIVERABLE ATTACHED (user, 2026-09-10).** Asked directly, the user
-answered neither yes nor no: *"Dis-moi d'abord ce que ca coute."* So what is owed is a costed
+answered neither yes nor no: _"Dis-moi d'abord ce que ca coute."_ So what is owed is a costed
 scoping note - scope, dependencies, and **what it adds to the surface that has to be maintained**,
 which is the half that actually decides it. The paragraph above still governs the note's first
 section: it must answer what an app adds that the web cannot do before it estimates anything.
 Nothing is built until the note is read.
 
 ---
-
 
 ### Server - can occupancy be monitored, and will it hold?
 
@@ -291,7 +297,6 @@ would be a threshold nobody has measured against the population it would run on.
 > and `readersOf` derives the per-message display from it.
 
 ---
-
 
 ### QUESTION - iOS has the mention elevation on ONE path too, and the plugin cannot express it
 
@@ -373,15 +378,15 @@ agree" - and conflating them is the shape this repository keeps paying for.
 **ONE HALF OF THE TRADE IS NOW MEASURED, 2026-09-08, AND A THIRD OPTION APPEARED WITH IT.** The
 saving is not free: HEAL-repair heals three times in ten, and the arithmetic is the election's - three
 online members, one of which holds the messages, twenty requests routed 10 / 7 / 3 across them
-([backlog](backlog.md)). So the question is no longer *is one ack per group per ask affordable*; it
-is *is it more expensive than seven failed repairs in ten*.
+([backlog](backlog.md)). So the question is no longer _is one ack per group per ask affordable_; it
+is _is it more expensive than seven failed repairs in ten_.
 
 And the third option needs no new frame at all. The asker in that measurement DID hold local proof of
 its own incompleteness - frames it has and cannot read, the same proof `escalateReconciliation` is
 gated on - and the walk stopped anyway, because a responder that agrees on the state key answers with
 its COVERAGE, and adequate coverage is signalled by silence. So the termination is not being taken on
-an ambiguous silence at all: it is taken on a well-formed answer whose meaning, *I cover what you
-asked*, is being read as *and therefore you are complete*. Refusing to terminate while the local proof
+an ambiguous silence at all: it is taken on a well-formed answer whose meaning, _I cover what you
+asked_, is being read as _and therefore you are complete_. Refusing to terminate while the local proof
 stands costs nothing and adds no traffic. Whether it is sufficient - whether the walk then reaches the
 holder rather than merely re-asking the same agreeing peers - is the part still owed a measurement.
 
@@ -413,7 +418,7 @@ that asks for the ids it is missing would be SERVED the plaintext of the message
 re-encrypted under the current epoch.
 
 **Why that is not self-evidently a bug.** `sendFullHistoryBundle` hands a NEWLY INVITED member the
-group's whole backlog on purpose, so *"a member gets the history"* is the stated policy, and a re-joining
+group's whole backlog on purpose, so _"a member gets the history"_ is the stated policy, and a re-joining
 member is a member. GRP-3's assertion is about live delivery WHILE removed, and it holds - it says
 nothing about a later re-add.
 
@@ -472,7 +477,7 @@ in the store pipeline forces the question either.
 
 **So the question is for the USER, and it has three possible answers**: leave them French-only and
 carve them out of the Paraglide rule explicitly; translate them and state in the documents
-themselves which version governs; or serve an English *summary* that says plainly it is not the
+themselves which version governs; or serve an English _summary_ that says plainly it is not the
 binding text. Only the first costs nothing.
 
 **What must NOT happen is a session "fixing the lint" by machine-translating them.** That is the

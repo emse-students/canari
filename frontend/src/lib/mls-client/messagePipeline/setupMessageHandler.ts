@@ -41,6 +41,7 @@ import type { IncomingDeliveryMeta } from '../incomingDelivery';
 import { classifyIncomingDecryptError } from '../mlsDecryptError';
 import { SenderMismatchError } from '../verifiedSender';
 import { createMlsStatePersister } from '../mlsStatePersister';
+import { receiveCheckpointSkipBudget } from '../receiveCheckpointSkip';
 import { installMlsStatePersisterLifecycle } from '../mlsStatePersisterLifecycle';
 import { registerMlsStatePersister } from '../mlsStatePersisterRegistry';
 import type { MessageHandlerDeps } from './deps';
@@ -114,7 +115,13 @@ export function setupMessageHandler(deps: MessageHandlerDeps): void {
   // Same rationale for the recovery cooldowns: a re-login must not inherit a stale throttle.
   resetReAddCooldowns();
 
-  const statePersister = createMlsStatePersister({ mlsService, log });
+  const receiveSkipBudget = receiveCheckpointSkipBudget();
+  if (receiveSkipBudget > 0) {
+    console.warn(
+      `[MLS] MEASUREMENT SWITCH ON (non-production build): up to ${receiveSkipBudget} receive-only drains skip their checkpoint`
+    );
+  }
+  const statePersister = createMlsStatePersister({ mlsService, log, receiveSkipBudget });
   registerMlsStatePersister(statePersister);
   installMlsStatePersisterLifecycle(statePersister);
 
