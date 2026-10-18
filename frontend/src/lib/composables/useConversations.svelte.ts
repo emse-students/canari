@@ -1044,8 +1044,70 @@ export function useConversations() {
     return matches.sort((a, b) => a.ts - b.ts).map((m) => m.id);
   }
 
-  /** Reads all saved conversations from IndexedDB, verifies MLS state consistency, and populates the conversations map. */
-  async function loadAndRestoreConversations(ctx: ConversationContext) {
+  /**
+   * The restore running now, and the ONE restore queued behind it. Plain variables, not `$state`:
+   * nothing renders them, they only order calls.
+   */
+  let restoreRunning: Promise<void> | null = null;
+  let restoreQueued: Promise<void> | null = null;
+  /** The context the queued restore will run with - the latest one asked, as a later ask supersedes. */
+  let restoreQueuedCtx: ConversationContext | null = null;
+  /** How many asks the queued restore carries, reported once when it starts rather than per ask. */
+  let restoreQueuedAsks = 0;
+
+  /**
+   * Reads all saved conversations from IndexedDB, verifies MLS state consistency, and populates the
+   * conversations map.
+   *
+   * ONE RESTORE AT A TIME, AND AT MOST ONE QUEUED BEHIND IT (performance audit 2026-10-12, finding
+   * 8). Every Welcome for a group the map lacks asks for a whole restore - every stored
+   * conversation read, `/groups` asked, every history replayed - so a new device joining 80 groups
+   * in one drain restored 80 times, the restores overlapping on the one WASM client their phase 2
+   * is serialised for. An ask while a restore runs cannot join it: that run read the store before
+   * the asker saved its row. So it is queued as the run AFTER it, and every further ask while that
+   * one waits is folded into it - its caller awaits the same run, which starts after their rows
+   * were saved and therefore reads them. A burst of N asks costs at most two restores, decided by
+   * the order of the calls and nothing else.
+   */
+  function loadAndRestoreConversations(ctx: ConversationContext): Promise<void> {
+    if (!restoreRunning && !restoreQueued) return startRestore(ctx);
+    restoreQueuedCtx = ctx;
+    restoreQueuedAsks++;
+    // Folded silently: the queued restore names how many asks it carries when it starts, one line
+    // per burst instead of one per Welcome.
+    if (restoreQueued) return restoreQueued;
+    const running = restoreRunning as Promise<void>;
+    // The running restore's failure is delivered to ITS callers; the queued one runs either way,
+    // because the asks it carries were made after that run read the store.
+    restoreQueued = running
+      .then(
+        () => undefined,
+        () => undefined
+      )
+      .then(() => {
+        const next = restoreQueuedCtx as ConversationContext;
+        next.log(
+          `[RESTORE] one restore for ${restoreQueuedAsks} ask(s) made while the previous one ran`
+        );
+        restoreQueued = null;
+        restoreQueuedCtx = null;
+        restoreQueuedAsks = 0;
+        return startRestore(next);
+      });
+    return restoreQueued;
+  }
+
+  /** Starts one restore and marks it running until it settles. */
+  function startRestore(ctx: ConversationContext): Promise<void> {
+    const run = restoreOnce(ctx).finally(() => {
+      if (restoreRunning === run) restoreRunning = null;
+    });
+    restoreRunning = run;
+    return run;
+  }
+
+  /** One restore pass - see {@link loadAndRestoreConversations} for why passes never overlap. */
+  async function restoreOnce(ctx: ConversationContext) {
     if (!ctx.storage) return;
     // The restore supersedes any local preview: from here the map is the session's.
     landingPreviewKey = null;

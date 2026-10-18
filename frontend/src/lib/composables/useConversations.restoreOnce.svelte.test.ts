@@ -1,0 +1,149 @@
+/**
+ * A burst of restore asks costs at most two restores, and every asker is answered by a restore that
+ * started after its ask.
+ *
+ * Every Welcome for a group the map lacks asks for a whole restore (`sessionAuth`'s
+ * `onWelcomeProcessed`), so a new device joining 80 groups in one drain used to restore 80 times,
+ * overlapping on the one WASM client. The asks are ordered by the calls alone - each restore here is
+ * a deferred the test settles by hand, so no timer and no clock decides anything.
+ */
+import { SvelteMap } from 'svelte/reactivity';
+
+const loadExistingConversations = vi.hoisted(() => vi.fn());
+
+vi.mock('$lib/utils/chat/conversations', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('$lib/utils/chat/conversations')>();
+  return { ...actual, loadExistingConversations };
+});
+
+// Same isolation reasoning as the other composable tests: `useConversations` is reachable from the
+// global chat singleton's own module-scope instantiation, so importing it directly closes a cycle.
+vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
+  globalSession: {},
+  globalConvs: {},
+  globalMessaging: {},
+  globalChannels: {},
+  globalNotifs: {},
+  appendLog: vi.fn(),
+}));
+
+const { useConversations } = await import('./useConversations.svelte');
+
+function makeCtx(userId = 'u1') {
+  const mls = {
+    getLocalGroups: () => [],
+    getDeviceId: () => 'dev-1',
+    notifyConversationsRestored: vi.fn(),
+    notifyConversationRowsSeeded: vi.fn(),
+  };
+  return {
+    storage: { saveConversation: vi.fn(async () => undefined) },
+    ensureMls: () => mls,
+    userId,
+    deviceKeyB64: 'k',
+    messageReactions: new SvelteMap(),
+    log: vi.fn(),
+    addMessageToChat: vi.fn(),
+  } as never;
+}
+
+/** Each restore blocks on its own deferred, released by the test in the order it chooses. */
+function holdEachRestore() {
+  const releases: Array<{ resolve: () => void; reject: (e: Error) => void }> = [];
+  loadExistingConversations.mockImplementation(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        releases.push({ resolve, reject });
+      })
+  );
+  return releases;
+}
+
+/** Lets every pending continuation run, so a queued restore that is going to start has started. */
+async function settle() {
+  for (let i = 0; i < 10; i++) await Promise.resolve();
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('loadAndRestoreConversations - one restore at a time, at most one queued', () => {
+  it('folds a burst of asks made during a restore into ONE restore after it', async () => {
+    const releases = holdEachRestore();
+    const convs = useConversations();
+
+    const first = convs.loadAndRestoreConversations(makeCtx());
+    await settle();
+    expect(loadExistingConversations).toHaveBeenCalledTimes(1);
+
+    // Eighty Welcomes land while the first restore runs.
+    const contexts = Array.from({ length: 80 }, () => makeCtx());
+    const burst = contexts.map((ctx) => convs.loadAndRestoreConversations(ctx));
+    await settle();
+    // None of them may join the running restore: it read the store before their rows were saved.
+    expect(loadExistingConversations).toHaveBeenCalledTimes(1);
+
+    releases[0].resolve();
+    await first;
+    await settle();
+    // ONE more restore, started after every ask of the burst.
+    expect(loadExistingConversations).toHaveBeenCalledTimes(2);
+    // One line for the whole burst, written through the latest context.
+    const lastLog = (contexts[79] as unknown as { log: ReturnType<typeof vi.fn> }).log;
+    expect(lastLog).toHaveBeenCalledWith(
+      '[RESTORE] one restore for 80 ask(s) made while the previous one ran'
+    );
+    const firstLog = (contexts[0] as unknown as { log: ReturnType<typeof vi.fn> }).log;
+    expect(firstLog).not.toHaveBeenCalled();
+
+    releases[1].resolve();
+    await Promise.all(burst);
+    expect(loadExistingConversations).toHaveBeenCalledTimes(2);
+  });
+
+  it('runs the queued restore with the latest context asked', async () => {
+    const releases = holdEachRestore();
+    const convs = useConversations();
+
+    const first = convs.loadAndRestoreConversations(makeCtx('u1'));
+    await settle();
+    const second = convs.loadAndRestoreConversations(makeCtx('u2'));
+    const third = convs.loadAndRestoreConversations(makeCtx('u3'));
+
+    releases[0].resolve();
+    await first;
+    await settle();
+    expect(loadExistingConversations).toHaveBeenLastCalledWith(
+      expect.objectContaining({ userId: 'u3' })
+    );
+    releases[1].resolve();
+    await Promise.all([second, third]);
+  });
+
+  it('runs the queued restore after a failed one, and hands each failure to its own callers', async () => {
+    const releases = holdEachRestore();
+    const convs = useConversations();
+
+    const first = convs.loadAndRestoreConversations(makeCtx());
+    await settle();
+    const queued = convs.loadAndRestoreConversations(makeCtx());
+
+    releases[0].reject(new Error('IndexedDB unavailable'));
+    await expect(first).rejects.toThrow('IndexedDB unavailable');
+    await settle();
+    expect(loadExistingConversations).toHaveBeenCalledTimes(2);
+
+    releases[1].resolve();
+    await expect(queued).resolves.toBeUndefined();
+    expect(convs.conversationsRestored).toBe(true);
+  });
+
+  it('starts at once when nothing runs, each time', async () => {
+    loadExistingConversations.mockResolvedValue(undefined);
+    const convs = useConversations();
+    await convs.loadAndRestoreConversations(makeCtx());
+    await convs.loadAndRestoreConversations(makeCtx());
+    expect(loadExistingConversations).toHaveBeenCalledTimes(2);
+  });
+});
