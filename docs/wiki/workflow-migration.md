@@ -160,7 +160,7 @@ Measured during WP-0, and each one changes something downstream:
   `make test-ci-scripts` and the deploy-script tests are shell-only and tiny, so 9p costs nothing
   there, and it is a truer mirror of CI than Git Bash. **The complaint about Git Bash is real but
   narrow**, and this repo has already paid it: `jq` writes CRLF under Windows, which is why
-  `bump-app-version.sh` carries `strip_cr` and why `lineEndings.test.ts` exists.
+  `bump-app-version.sh` carries `strip_cr` and why `.github/scripts/tests/line-endings.test.mjs` exists.
 - **The Docker daemon was not running** when this started; WP-1 needs it up.
 
 ## 5. The checklist, in order
