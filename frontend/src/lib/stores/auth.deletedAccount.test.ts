@@ -29,8 +29,10 @@ vi.mock('$lib/stores/nativeRefreshToken', () => ({
   clearNativeRefreshToken: () => clearNativeRefreshToken(),
 }));
 
-const { clearAuth, clearAuthLocally, accountLiveness, refresh, setToken } =
+const { clearAuth, clearAuthLocally, accountLiveness, handleOidcCallback, refresh, setToken } =
   await import('$lib/stores/auth');
+const { isDeletedAccountHere, forgetDeletedAccountOnSignIn } =
+  await import('$lib/utils/deletedAccountMarker');
 
 const {
   markDeletedAccountWipePending,
@@ -149,5 +151,99 @@ describe('the resumed deletion wipe, against the real accountLiveness (P2-1 of #
     expect(deleted).toEqual([]);
     expect(localStorage.getItem(ACCOUNT_KEY.salonUnsent('user-1'))).toBe('the new session');
     expect(pendingDeletedAccountWipes()).toEqual([]);
+  });
+});
+
+describe('the subject comes back as a NEW account (scenario A of the fourth review of #2023)', () => {
+  const deleted: string[] = [];
+  beforeEach(() => {
+    deleted.length = 0;
+    localStorage.clear();
+    vi.stubGlobal('indexedDB', {
+      deleteDatabase: (name: string) => {
+        const req: Record<string, unknown> = {};
+        deleted.push(name);
+        queueMicrotask(() => (req.onsuccess as () => void)?.());
+        return req;
+      },
+    });
+  });
+
+  /** A successful OIDC callback for `sub`: the server let the subject in, its erasure completed. */
+  async function signInAgainAs(sub: string): Promise<void> {
+    localStorage.setItem('canari_oidc_state', 'st');
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ access_token: tokenFor(sub), user: { id: sub } }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    );
+    await handleOidcCallback('code', 'st');
+  }
+
+  it('the callback drops the marker, and a later tokenless resume wipes nothing of the new account', async () => {
+    // A marker that outlived the deletion (a refused case collision, a blocked delete).
+    markDeletedAccountWipePending('user-1');
+    await signInAgainAs('user-1');
+    expect(pendingDeletedAccountWipes()).toEqual([]);
+    expect(isDeletedAccountHere('user-1')).toBe(false);
+
+    // The new account's data, then a start that holds NO token: a second tab before its refresh,
+    // or a native cold start offline - exactly where `isLive` cannot see the new session.
+    localStorage.setItem(ACCOUNT_KEY.salonUnsent('user-1'), 'the new account');
+    setToken('not-a-jwt');
+    await resumePendingDeletedAccountWipes(accountLiveness);
+    expect(deleted).toEqual([]);
+    expect(localStorage.getItem(ACCOUNT_KEY.salonUnsent('user-1'))).toBe('the new account');
+  });
+
+  it('a callback for ANOTHER subject leaves the deleted account owed', async () => {
+    markDeletedAccountWipePending('user-1');
+    await signInAgainAs('user-2');
+    expect(pendingDeletedAccountWipes()).toEqual(['user-1']);
+    expect(isDeletedAccountHere('user-1')).toBe(true);
+  });
+
+  it('a refused callback (erasure still running) drops nothing', async () => {
+    markDeletedAccountWipePending('user-1');
+    localStorage.setItem('canari_oidc_state', 'st');
+    fetchMock.mockResolvedValueOnce(
+      new Response(JSON.stringify({ code: 'ACCOUNT_ERASURE_PENDING' }), { status: 403 })
+    );
+    await expect(handleOidcCallback('code', 'st')).rejects.toThrow();
+    expect(pendingDeletedAccountWipes()).toEqual(['user-1']);
+  });
+});
+
+describe('isDeletedAccountHere - what every login asks before opening a store (scenario B)', () => {
+  beforeEach(() => {
+    localStorage.clear();
+    vi.stubGlobal('indexedDB', {
+      deleteDatabase: () => {
+        const req: Record<string, unknown> = {};
+        queueMicrotask(() => (req.onsuccess as () => void)?.());
+        return req;
+      },
+    });
+  });
+
+  it('holds while the wipe is owed, and AFTER the resume finished and dropped the marker', async () => {
+    // The offline unlock read its key before the resume ran; by the time it asks, the wipe may be
+    // done and the marker gone - the process still knows the account was deleted.
+    setToken('not-a-jwt');
+    markDeletedAccountWipePending('user-3');
+    expect(isDeletedAccountHere('user-3')).toBe(true);
+    await resumePendingDeletedAccountWipes(accountLiveness);
+    expect(pendingDeletedAccountWipes()).toEqual([]);
+    expect(isDeletedAccountHere('user-3')).toBe(true);
+    expect(isDeletedAccountHere('user-4')).toBe(false);
+  });
+
+  it('is lifted by an online sign-in of that subject, and by nothing else', async () => {
+    markDeletedAccountWipePending('user-5');
+    await resumePendingDeletedAccountWipes(accountLiveness);
+    expect(isDeletedAccountHere('user-5')).toBe(true);
+    forgetDeletedAccountOnSignIn('user-5');
+    expect(isDeletedAccountHere('user-5')).toBe(false);
   });
 });

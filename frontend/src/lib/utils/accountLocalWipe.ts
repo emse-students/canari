@@ -13,6 +13,17 @@ import {
   legacyConversationKeysIn,
   SESSION_META_STORE,
 } from '$lib/utils/accountLocalKeys';
+import {
+  clearDeletedAccountWipePending,
+  noteDeletedAccountWipeStarted,
+  pendingDeletedAccountWipes,
+} from '$lib/utils/deletedAccountMarker';
+
+// The marker's writers, where the deletion's callers already import the wipe from.
+export {
+  markDeletedAccountWipePending,
+  pendingDeletedAccountWipes,
+} from '$lib/utils/deletedAccountMarker';
 
 /** The IndexedDB databases keyed by an account id, all of which die with that account. */
 export function accountIndexedDbNames(userId: string): string[] {
@@ -72,75 +83,6 @@ export function decideDeletedAccountWipe(
 }
 
 /**
- * THE DURABLE "A WIPE IS OWED FOR THIS ACCOUNT" MARKER, so a wipe the app did not finish - killed
- * mid-way, a store another tab held open - is finished at the next start instead of never.
- *
- * Written only after the server CONFIRMED the deletion (204) and before the first local deletion;
- * cleared by {@link wipeDeletedAccountLocalData} once every step succeeded. An allowlist: it holds
- * only ids a confirmed deletion named, and the resume touches nothing else.
- */
-const PENDING_WIPES_KEY = 'canari_deleted_account_wipe_pending:v1';
-
-/** The account ids a wipe is still owed for. Unreadable or malformed entries are reported, never used. */
-export function pendingDeletedAccountWipes(): string[] {
-  let raw: string | null;
-  try {
-    raw = localStorage.getItem(PENDING_WIPES_KEY);
-  } catch (e) {
-    console.error('[DEL-LOCAL] the pending-wipe marker cannot be read:', e);
-    return [];
-  }
-  if (raw === null) return [];
-  try {
-    const parsed: unknown = JSON.parse(raw);
-    if (!Array.isArray(parsed)) throw new Error('not a list');
-    const ids = parsed.filter((v): v is string => typeof v === 'string' && isWipeableAccountId(v));
-    if (ids.length !== parsed.length) {
-      console.error(
-        '[DEL-LOCAL] the pending-wipe marker holds entries outside the allowlist - ignored'
-      );
-    }
-    return ids;
-  } catch (e) {
-    console.error('[DEL-LOCAL] the pending-wipe marker is malformed - ignored:', e);
-    return [];
-  }
-}
-
-function writePendingWipes(ids: string[]): void {
-  if (ids.length === 0) localStorage.removeItem(PENDING_WIPES_KEY);
-  else localStorage.setItem(PENDING_WIPES_KEY, JSON.stringify(ids));
-}
-
-/**
- * Records that `userId`'s local data is owed a wipe. Call ONLY after the server confirmed the
- * deletion. A marker that cannot be written is logged: the wipe still runs, it just cannot resume.
- */
-export function markDeletedAccountWipePending(userId: string): void {
-  try {
-    const ids = pendingDeletedAccountWipes();
-    if (!ids.includes(userId)) writePendingWipes([...ids, userId]);
-  } catch (e) {
-    console.error(
-      `[DEL-LOCAL] the pending-wipe marker for ${userId.slice(0, 8)} was not written - an interrupted wipe will not resume:`,
-      e
-    );
-  }
-}
-
-/** Removes `userId` from the pending-wipe marker. */
-function clearDeletedAccountWipePending(userId: string): void {
-  try {
-    writePendingWipes(pendingDeletedAccountWipes().filter((id) => id !== userId));
-  } catch (e) {
-    console.error(
-      `[DEL-LOCAL] the pending-wipe marker for ${userId.slice(0, 8)} was not cleared:`,
-      e
-    );
-  }
-}
-
-/**
  * What the resume asks of the auth layer, injected so it is testable and so this module does not
  * load the session stack. Every answer is read AT THE MOMENT of asking - never cached across an await.
  */
@@ -158,12 +100,17 @@ export interface AccountLiveness {
 }
 
 /** Why a resumed wipe stopped before a destructive step. */
-export type WipeStop = 'account-live-again' | 'sign-in-in-flight';
+export type WipeStop = 'account-live-again' | 'sign-in-in-flight' | 'no-longer-owed';
 
-/** The check the resume runs before EACH destructive step of `userId`'s wipe. */
+/**
+ * The check the resume runs before EACH destructive step of `userId`'s wipe. The marker is re-read
+ * each time because another tab may drop it - its OIDC callback signed `userId` in again (the case
+ * that matters: this tab's token cannot see it), or its own resume finished the same wipe.
+ */
 function resumeStopFor(userId: string, live: AccountLiveness): () => WipeStop | null {
   return () => {
     if (live.isLive(userId)) return 'account-live-again';
+    if (!pendingDeletedAccountWipes().includes(userId)) return 'no-longer-owed';
     if (live.signInInFlight()) return 'sign-in-in-flight';
     return null;
   };
@@ -181,7 +128,12 @@ function resumeStopFor(userId: string, live: AccountLiveness): () => WipeStop | 
  *   token naming it landed in this process, `account-live-again`) stops the wipe and drops the
  *   marker at ERROR - that account is live, and its data is no longer the deleted one's; a NEW
  *   sign-in in flight (`sign-in-in-flight`) stops the wipe and KEEPS the marker, since whose sign-in
- *   it is cannot be known yet - the next start resumes.
+ *   it is cannot be known yet - the next start resumes; the marker gone (`no-longer-owed`) stops
+ *   it too - another tab's callback signed `X` in again (`forgetDeletedAccountOnSignIn`).
+ *
+ * A token is enough for `isLive` because the two ways `X` can open a session WITHOUT one are closed
+ * elsewhere: a sign-in drops the marker at its callback, and every login refuses an account deleted
+ * here before it opens a store (`isDeletedAccountHere`) - the offline unlock included.
  *
  * What it cannot close: a sign-in that STARTS while one step's own await runs (an IndexedDB delete).
  * A session opening `CanariDB_X` then queues behind the delete and opens an empty database - which
@@ -251,6 +203,8 @@ const reportedCaseCollisions = new Set<string>();
 export const STOPPED_BY_SIGN_IN = 'stopped: a sign-in is in flight';
 /** The failure a wipe stopped by its account being signed in again reports; its marker is DROPPED. */
 export const STOPPED_ACCOUNT_LIVE = 'stopped: the account is signed in here again';
+/** The failure a wipe whose marker disappeared under it reports; nothing more is removed. */
+export const STOPPED_NO_LONGER_OWED = 'stopped: the wipe is no longer owed';
 /** The failure a wipe refused for an id sharing storage with another by letter case reports. */
 export const REFUSED_CASE_COLLISION = 'the account id (it differs from another only by case)';
 
@@ -280,6 +234,9 @@ export async function wipeDeletedAccountLocalData(
     console.error(`${tag} refusing to wipe an account id outside the allowlist`);
     return ['the account id'];
   }
+  // Before the first step: from here on an offline unlock of this account is refused in this
+  // process even once the marker is gone (`isDeletedAccountHere`).
+  noteDeletedAccountWipeStarted(userId);
   const twins = caseCollidingAccountIdsIn(localStorage, userId);
   if (twins.length > 0) {
     // Kept as owed on purpose: reported at ERROR once per start (the resume and the live wipe may
@@ -405,6 +362,12 @@ export async function wipeDeletedAccountLocalData(
       `${tag} a sign-in is in flight - the wipe stops here and resumes at the next start`
     );
     return [...failures, STOPPED_BY_SIGN_IN];
+  }
+  if (stoppedBy === 'no-longer-owed') {
+    console.warn(
+      `${tag} the wipe is no longer owed (another tab finished it, or the account signed in again there) - stopped, nothing more removed`
+    );
+    return [...failures, STOPPED_NO_LONGER_OWED];
   }
   if (failures.length > 0) {
     console.error(

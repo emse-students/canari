@@ -12,6 +12,7 @@
 
 import { saveUserLocally, clearUserLocally, currentUserId } from '$lib/stores/user';
 import type { AccountLiveness } from '$lib/utils/accountLocalWipe';
+import { forgetDeletedAccountOnSignIn } from '$lib/utils/deletedAccountMarker';
 import { setGlobalAdmin } from '$lib/stores/userState.svelte';
 import { noteSessionAnswered } from '$lib/stores/sessionAnswer.svelte';
 import {
@@ -482,6 +483,12 @@ const _signInsInFlight = new Set<Promise<unknown>>();
  * landed IN THIS PROCESS - by an OIDC callback or a refresh - and every resume runs in a process
  * started after the deletion was confirmed; the server refuses a refresh for a deleted account, so a
  * token naming it can only come from that subject signing in AGAIN.
+ *
+ * A TOKEN IS ENOUGH ONLY BECAUSE THE TOKENLESS ENTRIES ARE CLOSED ELSEWHERE: a successful callback
+ * drops the marker of a subject the server let back in (`forgetDeletedAccountOnSignIn`, below), so
+ * another tab or a later offline start never resumes a wipe over the new account; and every login -
+ * the offline unlock is the one with no token - refuses an account deleted here before it opens a
+ * store (`isDeletedAccountHere` in `loginImpl`), so no session can re-create what the wipe removes.
  */
 export const accountLiveness: AccountLiveness = {
   isLive: (userId) => _accessToken !== null && decodeTokenClaims(_accessToken)?.sub === userId,
@@ -573,6 +580,10 @@ async function handleOidcCallbackUnderway(
   };
 
   console.debug('[auth] got access_token, saving user:', data.user?.id);
+  // THE SERVER LET THIS SUBJECT IN, so any erasure of it has completed and this is a new account: a
+  // wipe still owed on this device for the deleted one must never reach it (WP-DEL-LOCAL). First,
+  // before this session's token or identity exists anywhere another tab's resume could miss.
+  forgetDeletedAccountOnSignIn(data.user.id);
   // A NEW SIGN-IN NAMES ITS OWN USER (saved just below), so a split latched for the previous
   // identity is about somebody who is no longer here.
   clearIdentitySplit();

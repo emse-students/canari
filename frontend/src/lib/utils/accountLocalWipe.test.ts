@@ -8,6 +8,7 @@ import {
   REFUSED_CASE_COLLISION,
   STOPPED_ACCOUNT_LIVE,
   STOPPED_BY_SIGN_IN,
+  STOPPED_NO_LONGER_OWED,
   wipeDeletedAccountLocalData,
   type AccountLiveness,
 } from './accountLocalWipe';
@@ -440,6 +441,27 @@ describe('the pending-wipe marker', () => {
     // The second owed wipe is not started either.
     expect(order.join(' ')).not.toContain('user-c');
     expect(STOPPED_BY_SIGN_IN).toMatch(/sign-in/);
+  });
+
+  it('stops when ANOTHER tab signs the subject in mid-wipe, which this tab token cannot see', async () => {
+    // Scenario A across tabs: this tab holds no token, so `isLive` is false throughout; the other
+    // tab's OIDC callback drops the shared marker while this tab's database delete runs.
+    markDeletedAccountWipePending('user-a');
+    await saveDeviceKey('user-a', KEY_A);
+    localStorage.setItem(ACCOUNT_KEY.deviceId('user-a'), 'dev-new');
+    vi.stubGlobal('indexedDB', {
+      deleteDatabase: (name: string) => {
+        const req: Record<string, unknown> = {};
+        order.push(`delete:${name}`);
+        localStorage.removeItem('canari_deleted_account_wipe_pending:v1');
+        queueMicrotask(() => (req.onsuccess as () => void)?.());
+        return req;
+      },
+    });
+    await resumePendingDeletedAccountWipes(settledAs(null));
+    expect(localStorage.getItem(ACCOUNT_KEY.deviceId('user-a'))).toBe('dev-new');
+    expect((await loadDeviceKey('user-a'))?.deviceKeyB64).toBe(KEY_A);
+    expect(STOPPED_NO_LONGER_OWED).toMatch(/no longer owed/);
   });
 
   it('ignores entries outside the allowlist', () => {

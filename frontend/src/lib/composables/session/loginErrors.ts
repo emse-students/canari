@@ -58,6 +58,12 @@ export type LoginErrorCode =
    * The gate that follows must not offer the reset, which would delete that account's state.
    */
   | 'device_holds_other_account'
+  /**
+   * This account was DELETED from this device and has not signed in since (`isDeletedAccountHere`):
+   * its local data is owed a wipe, so no session may open it - offline above all, where no server is
+   * there to refuse it. Only an online sign-in (a new account, once the erasure completed) lifts it.
+   */
+  | 'account_deleted'
   /** Anything else (network, server, unexpected). */
   | 'other';
 
@@ -135,7 +141,8 @@ export function provesLocalStateExists(code: LoginErrorCode): boolean {
  * being asked to try something: a PIN that does not match, a local state sealed under an older key
  * (the recovery flow exists for exactly this), an empty keystore on a device that has enrolled
  * nothing yet, and a server nobody could reach - a train tunnel is not a defect. A fifth joined them
- * on 2026-10-14: a vault left by another account, refused as it should be.
+ * on 2026-10-14: a vault left by another account, refused as it should be; and a sixth on
+ * 2026-10-18: an account deleted from this device, refused as it should be.
  *
  * `device_revoked` is NOT one of them: local state is WIPED on that path, and an erasure deserves a
  * line that accuses whatever anybody later comes looking for. Neither is `other`, which is where the
@@ -148,6 +155,7 @@ export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
     code === 'local_state_unopenable' ||
     code === 'keystore_empty' ||
     code === 'server_unreachable' ||
+    code === 'account_deleted' ||
     isVaultRefusal(code)
   );
 }

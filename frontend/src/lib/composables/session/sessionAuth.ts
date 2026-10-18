@@ -177,6 +177,7 @@ import {
 } from './sessionConnection';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
 import { ACCOUNT_KEY, SESSION_META_STORE } from '$lib/utils/accountLocalKeys';
+import { isDeletedAccountHere } from '$lib/utils/deletedAccountMarker';
 
 /**
  * Unregisters this session's presence listener. Module-level because the presence store outlives
@@ -678,6 +679,19 @@ export async function loginImpl(
   };
 
   try {
+    // AN ACCOUNT DELETED FROM THIS DEVICE OPENS NOTHING, refused before the first store is touched
+    // (the landing preview and the MLS state lookup below both open one). Its wipe is owed or running,
+    // and a session would re-create what the wipe removes - the offline unlock above all, which has no
+    // server to refuse it and holds no token the resumed wipe could see. EVERY entry reaches this
+    // line: the vault and keystore unlocks of a saved user, the PIN gate, a reloaded follower tab.
+    // Lifted only by an online sign-in of that subject, which the server allows once the erasure
+    // completed (`forgetDeletedAccountOnSignIn`).
+    if (isDeletedAccountHere(ctx.getUserId()) || isDeletedAccountHere(userId.trim())) {
+      cb.log(
+        `[LOGIN] ${ctx.getUserId().slice(0, 8)} was deleted from this device - refused, an online sign-in is required`
+      );
+      throw new LoginFailure('account_deleted', m.auth_account_deleted_here());
+    }
     const mlsService = ctx.ensureMls();
     if (isVaultLogin && !vaultOwnerUnproven) {
       // The vault returned the device key before this function was called, so the store can be
