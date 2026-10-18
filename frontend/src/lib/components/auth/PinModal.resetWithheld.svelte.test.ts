@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * ON A PHONE WHOSE `mls.bin` IS PROVEN TO BE ANOTHER ACCOUNT'S, THE GATE OFFERS NO RESET.
  *

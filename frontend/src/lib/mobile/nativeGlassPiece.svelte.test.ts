@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { flushSync } from 'svelte';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ChevronLeft, Ellipsis, Images, Search } from '@lucide/svelte';

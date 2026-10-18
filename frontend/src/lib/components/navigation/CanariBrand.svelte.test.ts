@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE PHONE HEADER'S NAME IS SHOWN ONLY WHEN IT FITS, AND "FITS" IS MEASURED.
  *

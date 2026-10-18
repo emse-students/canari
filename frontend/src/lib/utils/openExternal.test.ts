@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 const openUrl = vi.fn();
 const confirmUnsafeLinkIfNeeded = vi.fn();
 

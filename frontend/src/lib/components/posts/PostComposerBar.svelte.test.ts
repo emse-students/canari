@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE COMPOSER BAR - which chooser each attachment asks the OS for, and that a pick only ADDS.
  *

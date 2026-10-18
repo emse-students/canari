@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { sendFullHistoryBundle, sendHistoryBundleForIds } from './groupActions';
 import { createMlsServiceStub } from '$lib/mls-client/test/fixtures/mlsServiceStub';
 import { decodeAppMessage } from '$lib/proto/codec';

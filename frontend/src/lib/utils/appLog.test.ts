@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The in-app log's ring: what it writes, when, how much, and what it does when it cannot write.
  *

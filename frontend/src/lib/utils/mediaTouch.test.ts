@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The rules that make the retention clock honest WITHOUT making it expensive.
  *

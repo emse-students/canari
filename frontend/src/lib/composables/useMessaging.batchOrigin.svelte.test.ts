@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A REPLAYED ARCHIVE IS NOT AN ARRIVAL, AND ONLY THE CALLER CAN TELL THEM APART.
  *

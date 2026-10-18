@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A PRICED FORM SAYS NOTHING ABOUT ITS PRICE UNTIL ITS PRICED QUESTIONS ARE ANSWERED (Mi 9T,
  * v1.2.9-alpha.3: "Cotisation BDE 2026" said "Combinaison indisponible" before any answer).

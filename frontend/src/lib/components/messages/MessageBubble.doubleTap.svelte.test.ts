@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * One tap opens the info panel, two taps like - NEVER BOTH (user, 2026-10-12).
  *

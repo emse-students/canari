@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A CanaReel sent in a conversation, as the BUBBLE treats it: NOTHING is downloaded before the tap
  * (a reel is 9-35 MB and the chat reads media whole), and it is NOT forwarded (forwarding copies the

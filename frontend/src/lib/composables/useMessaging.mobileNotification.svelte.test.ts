@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A PHONE IN A POCKET WAS TOLD NOTHING, and the reason was one early return.
  *

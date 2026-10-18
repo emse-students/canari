@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The open conversation is recomputed when IT changes, never when another conversation does.
  *

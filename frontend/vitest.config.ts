@@ -1,7 +1,6 @@
-import { defineConfig, coverageConfigDefaults, configDefaults } from 'vitest/config';
+import { defineConfig, coverageConfigDefaults } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { resolve } from 'path';
-import { DOM_TEST_FILES } from './vitest.dom-files.ts';
 
 export default defineConfig({
   plugins: [svelte()],
@@ -10,27 +9,13 @@ export default defineConfig({
     // point. Fourteen assertions depended on worker order until 2026-09-17 - see the file.
     setupFiles: ['./src/test/locale.ts', './src/test/noRealNetwork.ts'],
     globals: true,
-    // Two projects, one suite: `node` by default (no window is built), `happy-dom` for the
-    // component tests and the files named in vitest.dom-files.ts. Both share this config.
-    projects: [
-      {
-        extends: true,
-        test: {
-          name: 'node',
-          environment: 'node',
-          include: ['src/**/*.{test,spec}.ts'],
-          exclude: [...configDefaults.exclude, 'src/**/*.svelte.test.ts', ...DOM_TEST_FILES],
-        },
-      },
-      {
-        extends: true,
-        test: {
-          name: 'dom',
-          environment: 'happy-dom',
-          include: ['src/**/*.svelte.test.ts', ...DOM_TEST_FILES],
-        },
-      },
-    ],
+    // NODE BY DEFAULT: no window is built for a file that does not ask for one. A file that needs a
+    // DOM says so on its first line, `// @vitest-environment happy-dom`, and a file that needs one
+    // without saying so fails with `document is not defined` - pinned by
+    // `src/test/environment.test.ts`. Why a per-file docblock rather than a central list:
+    // docs/wiki/test-suite-reform.md (WP-T4).
+    environment: 'node',
+    include: ['src/**/*.{test,spec}.ts'],
     coverage: {
       exclude: [
         ...coverageConfigDefaults.exclude,

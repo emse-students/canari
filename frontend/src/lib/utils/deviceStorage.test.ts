@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { getDeviceStorageUsage, clearMediaCache, formatStorageBytes } from './deviceStorage';
 import { CIPHER_CACHE_NAME } from './mediaBlobCache';
 import { CACHE_NAME as ASSOCIATION_LOGO_CACHE_NAME } from './associationLogoCache';

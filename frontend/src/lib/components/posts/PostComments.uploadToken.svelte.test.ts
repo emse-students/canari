@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A COMMENT UPLOAD ASKS FOR A LIVE TOKEN, NOT THE COPY THE PAGE WAS GIVEN AT SIGN-IN.
  *

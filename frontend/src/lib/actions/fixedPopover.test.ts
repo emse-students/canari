@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';

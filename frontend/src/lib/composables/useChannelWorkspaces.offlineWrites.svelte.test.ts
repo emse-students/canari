@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A SALON EDIT OR REACTION MADE OFFLINE STAYS ON SCREEN AND GOES ON THE RECONNECT (WP-OFF-4).
  *

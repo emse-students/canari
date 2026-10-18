@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A COMMENT, REPLY OR MENTION NOTIFICATION OPENS THE POST AT THAT COMMENT (backlog, notification
  * taps item 1). The push names the comment (`?comment=` on `/posts/[postId]`); this section scrolls

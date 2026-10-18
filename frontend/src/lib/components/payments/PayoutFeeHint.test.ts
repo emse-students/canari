@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE HINT SHOWS THE LYDIA SCHEDULE, AND ONLY ONCE THE ACTIVE PROVIDER IS KNOWN TO BE LYDIA.
  *

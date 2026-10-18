@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * ONE BUILDER FOR A CONVERSATION ROW, DRIVEN THROUGH THE REAL ENTRY POINTS.
  *

@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * Closing the new-post composer keeps what it holds - its text as a stored draft, and since the Mi
  * 9T reading of v1.2.9-alpha.1 its MEDIA too, in memory: Back closed the composer holding a video

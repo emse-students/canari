@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The mark that stops a device reporting its own traffic as lost.
  *

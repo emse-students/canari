@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { SvelteMap } from 'svelte/reactivity';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';

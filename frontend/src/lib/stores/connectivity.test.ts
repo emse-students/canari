@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import {
   PROBE_DELAYS_AFTER_ONLINE_MS,
   SLOW_ENTER_MS,

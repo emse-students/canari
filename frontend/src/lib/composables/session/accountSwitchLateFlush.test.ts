@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import type { IMlsService } from '$lib/mls-client';
 import type { MlsStatePersister } from '$lib/mls-client/mlsStatePersister';

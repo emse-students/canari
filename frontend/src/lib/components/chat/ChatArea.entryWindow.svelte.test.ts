@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * F6 - THE FIRST FRAME OF AN ENTRY MOUNTS THE VIEWPORT TAIL, AND THE WIDEN DOES NOT MOVE THE READER.
  *

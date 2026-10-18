@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * A post of several media is a grid of SQUARE cells with a "+N" past four (user, 2026-10-05): cells
  * that kept their own shapes left blank areas in a two-column grid. Files are rows under the grid,

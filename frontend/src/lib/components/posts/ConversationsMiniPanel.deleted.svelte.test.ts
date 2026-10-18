@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The posts page's conversation panel opens the SAVED user's store with no login. A kill between an
  * account deletion's marker and `clearAuth()` leaves the saved user naming the deleted account, and

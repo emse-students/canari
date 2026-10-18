@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 import { SvelteMap } from 'svelte/reactivity';
 
 // Encryption is leader-only (WP-MULTITAB-1), so every flush case here is a leader unless it says

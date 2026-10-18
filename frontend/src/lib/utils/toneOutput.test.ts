@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE APP HOLDS NO AUDIO OUTPUT WHEN IT IS NOT PLAYING SOMETHING (2026-10-09, a Pixel 6a's
  * `dumpsys audio` showed the tones' stream `started` for ever, frozen app included).

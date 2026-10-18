@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * The feed's stored first page (local-first feed, 2026-10-15): drawn only for its own account while
  * no unlock is pending, never carrying the reader's rights, ended by a sign-out, a change of account

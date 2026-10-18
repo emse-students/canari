@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * THE PICKER SAYS A UNION THE THREE PRESETS CANNOT (an institution for ICM here and ISMIN there).
  * It is drawn from the same pure helpers as the `/admin/spaces` grid, so what it shows must follow

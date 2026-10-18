@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * "MARQUER TOUT COMME LU" ON A COMMUNITY ICON (user, 2026-10-13): a long press under a finger, a
  * right click with a mouse, as on Discord. The rail is a `svelte-dnd-action` zone too, so what is

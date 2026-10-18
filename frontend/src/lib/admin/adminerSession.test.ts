@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * OPENING ADMINER FROM THE APP (user, 2026-10-02: *"add an adminer route to canari, in a safe way"*).
  *
