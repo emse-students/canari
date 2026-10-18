@@ -42,6 +42,9 @@ import {
   AccountErasureService,
   type ErasureState,
 } from '../account-erasure/account-erasure.service';
+import type { User } from '../users/entities/user.entity';
+import { RestoreCredentialsService } from './restore/restore-credentials.service';
+import type { AuthenticationResponseJSON, RegistrationResponseJSON } from '@simplewebauthn/server';
 
 interface OidcCallbackDto {
   code: string;
@@ -74,6 +77,53 @@ interface BindDeviceDto {
   deviceId?: unknown;
 }
 
+/** Body of `POST /auth/restore/registration`. */
+interface RestoreRegistrationDto {
+  response?: unknown;
+  /** What the phone did: true when the key went to the Google backup, false on the second path. */
+  cloudBackup?: unknown;
+}
+
+/** Body of `POST /auth/restore/assertion`. */
+interface RestoreAssertionDto {
+  response?: unknown;
+}
+
+/** The account as a sign-in answers it - the MiConnect callback and a restore return the same shape. */
+interface SignedInUserDto {
+  id: string;
+  displayName: string;
+  promo: number | null;
+  firstName: string | null;
+  lastName: string | null;
+  bio: string | null;
+  admin: boolean;
+}
+
+/** What a sign-in answers, whichever way the account was proven. */
+interface IssuedSession {
+  access_token: string;
+  /** Present only for a client whose engine cannot keep the cookie - see `refresh-transport.ts`. */
+  refresh_token?: string;
+  user: SignedInUserDto;
+}
+
+/**
+ * The origins of the Android app's WebView. A restore key is created by Android's Credential
+ * Manager for this app, so a registration from any other origin is not this app - and refusing it
+ * is what stops a script holding a web session (an XSS) from registering a key of its own: a browser
+ * cannot forge `Origin` (docs/wiki/account-restore.md, threat model).
+ */
+const ANDROID_APP_ORIGINS: readonly string[] = [
+  'http://tauri.localhost',
+  'https://tauri.localhost',
+];
+
+/** A restore refusal, as a code the client branches on (never on the message). */
+function restoreRefusal(code: string, message: string): { code: string; message: string } {
+  return { code, message };
+}
+
 const REFRESH_COOKIE = 'canari_refresh';
 const REFRESH_MAX_AGE = SESSION_TTL_SECONDS; // 7 days in seconds - the cookie and the row must agree
 
@@ -102,7 +152,8 @@ export class AuthController {
     private readonly platformService: PlatformService,
     private readonly authSessions: AuthSessionsService,
     private readonly adminerAccess: AdminerAccessService,
-    private readonly accountErasure: AccountErasureService
+    private readonly accountErasure: AccountErasureService,
+    private readonly restoreCredentials: RestoreCredentialsService
   ) {
     const secret = process.env.JWT_SECRET;
     if (!secret || secret === 'change-me-in-production') {
@@ -410,45 +461,15 @@ export class AuthController {
       parseProfileClaims(userinfo)
     );
 
-    const platformConfig = await this.platformService.getConfig();
-    if (this.platformService.isAccessBlockedByMaintenance(platformConfig, !!user.admin)) {
-      throw new ServiceUnavailableException({
-        code: 'MAINTENANCE',
-        message:
-          platformConfig.maintenanceMessage ||
-          'Canari is under maintenance. Please try again later.',
-      });
-    }
+    await this.refuseDuringMaintenance(user);
 
     // 4b. Grant any cotisation a legacy estate recorded for them. On every sign-in, not just the
     // first: the claim terminates on durable state in social-service, so this is idempotent, and
     // a user who signed in before their association's list was loaded still gets their tag.
     await this.usersService.claimLegacyCotisations(user);
 
-    // 5. Issue internal JWT pair, backed by a session row so the refresh can be revoked
-    const access_token = jwt.sign({ sub: user.id, admin: !!user.admin }, this.jwtSecret, {
-      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
-    });
-    const session = await this.authSessions.create(user.id, this.clientInfo(req));
-    const refresh_token = this.signRefreshToken(user.id, session.sessionId, session.tokenId);
-
-    // 5b. The race step 3 cannot close: a `DELETE /users/me` that committed after the check. Under
-    // the erasure's per-subject lock, so it is either seen here (and what this sign-in wrote is
-    // erased again) or it runs after, deletes this session itself, and covers the access token
-    // with its final pass. The tokens are only returned once this has passed.
-    this.refuseDuringErasure(userinfo.sub, await this.accountErasure.confirmAfterSignIn(user.id));
-
-    // The cookie is set for EVERY client, including the ones that will drop it: it is unreadable by
-    // the page's own JavaScript, so it stays the preferred transport wherever it survives - and
-    // `tauri://localhost` covers desktop builds where it may well survive. The body copy is added
-    // only for origins whose engine can refuse the cookie, and only they are told to carry it.
-    this.setRefreshCookie(res, refresh_token);
-    const bodyTransport = this.carriesOwnRefreshCredential(req.get('origin'));
-    if (bodyTransport) {
-      this.logger.debug(
-        `OIDC callback: credential also returned in the body (origin=${req.get('origin')} may not keep a third-party cookie)`
-      );
-    }
+    // 5. Issue internal JWT pair, backed by a session row so the refresh can be revoked.
+    const issued = await this.issueSession(user, req, res);
 
     if (!tokenData.id_token) {
       // An `openid` exchange always carries one, so its absence is a provider misconfiguration - and
@@ -459,9 +480,58 @@ export class AuthController {
     }
 
     return {
+      ...issued,
+      ...(tokenData.id_token ? { id_token: tokenData.id_token } : {}),
+    };
+  }
+
+  /** Refuses a non-admin sign-in while the platform is in maintenance (503 `MAINTENANCE`). */
+  private async refuseDuringMaintenance(user: User): Promise<void> {
+    const platformConfig = await this.platformService.getConfig();
+    if (this.platformService.isAccessBlockedByMaintenance(platformConfig, !!user.admin)) {
+      throw new ServiceUnavailableException({
+        code: 'MAINTENANCE',
+        message:
+          platformConfig.maintenanceMessage ||
+          'Canari is under maintenance. Please try again later.',
+      });
+    }
+  }
+
+  /**
+   * MINTS A SESSION FOR AN ACCOUNT ALREADY PROVEN - the one sequence the MiConnect callback and a
+   * restore share, so the two can never drift (docs/wiki/account-restore.md).
+   *
+   * The access token, the session row, the erasure check that only the row can close, the cookie for
+   * everyone and the body copy for the clients that carry their own credential.
+   */
+  private async issueSession(user: User, req: Request, res: Response): Promise<IssuedSession> {
+    const access_token = jwt.sign({ sub: user.id, admin: !!user.admin }, this.jwtSecret, {
+      expiresIn: ACCESS_TOKEN_TTL_SECONDS,
+    });
+    const session = await this.authSessions.create(user.id, this.clientInfo(req));
+    const refresh_token = this.signRefreshToken(user.id, session.sessionId, session.tokenId);
+
+    // The race the check before the mint cannot close: a `DELETE /users/me` that committed after it.
+    // Under the erasure's per-subject lock, so it is either seen here (and what this sign-in wrote is
+    // erased again) or it runs after, deletes this session itself, and covers the access token with
+    // its final pass. The tokens are only returned once this has passed.
+    this.refuseDuringErasure(user.id, await this.accountErasure.confirmAfterSignIn(user.id));
+
+    // The cookie is set for EVERY client, including the ones that will drop it: it is unreadable by
+    // the page's own JavaScript, so it stays the preferred transport wherever it survives - and
+    // `tauri://localhost` covers desktop builds where it may well survive. The body copy is added
+    // only for origins whose engine can refuse the cookie, and only they are told to carry it.
+    this.setRefreshCookie(res, refresh_token);
+    const bodyTransport = this.carriesOwnRefreshCredential(req.get('origin'));
+    if (bodyTransport) {
+      this.logger.debug(
+        `Session issued: credential also returned in the body (origin=${req.get('origin')} may not keep a third-party cookie)`
+      );
+    }
+    return {
       access_token,
       ...(bodyTransport ? { refresh_token } : {}),
-      ...(tokenData.id_token ? { id_token: tokenData.id_token } : {}),
       user: {
         id: user.id,
         displayName: user.displayName || '',
@@ -658,6 +728,149 @@ export class AuthController {
     if (sessionId) await this.authSessions.revoke(sessionId);
     this.clearRefreshCookie(res);
     return { ok: true };
+  }
+
+  // ─── Restore keys (Android Restore Credentials, WP-RESTORE-1) ──────────────
+  // docs/wiki/account-restore.md. A restore key is bound to the session that registered it and a
+  // restore MOVES that session to the new phone: it never adds one.
+
+  /** 503 `RESTORE_UNAVAILABLE` when this estate has no signing fingerprint configured. */
+  private requireRestoreAvailable(): void {
+    if (!this.restoreCredentials.available) {
+      throw new ServiceUnavailableException(
+        restoreRefusal('RESTORE_UNAVAILABLE', 'Account restore is not configured on this server')
+      );
+    }
+  }
+
+  /**
+   * The caller's user and LIVE session, for the two registration routes - identified exactly as
+   * `PUT sessions/current/device` identifies it, and refused unless the request comes from the
+   * Android app (see {@link ANDROID_APP_ORIGINS}).
+   */
+  private async restoreRegistrationCaller(
+    req: Request
+  ): Promise<{ userId: string; sessionId: string }> {
+    const { userId } = this.requireAccessToken(req);
+    const origin = req.get('origin') ?? '';
+    if (!ANDROID_APP_ORIGINS.includes(origin)) {
+      this.logger.warn(
+        `[RESTORE] registration refused user=${userId}: origin=${origin || 'none'} is not the Android app`
+      );
+      throw new ForbiddenException(
+        restoreRefusal('RESTORE_ORIGIN_REFUSED', 'Restore keys are registered by the Android app')
+      );
+    }
+    const sessionId = this.currentSessionId(req);
+    if (
+      !sessionId ||
+      !(await this.restoreCredentials.isLiveSessionOf(userId, sessionId, new Date()))
+    ) {
+      this.logger.warn(`[RESTORE] registration refused user=${userId}: no live session`);
+      throw new NotFoundException(restoreRefusal('RESTORE_NO_SESSION', 'No live session'));
+    }
+    return { userId, sessionId };
+  }
+
+  /** Creation options for the restore key of the calling session. */
+  @Post('restore/registration/options')
+  @HttpCode(200)
+  async restoreRegistrationOptions(@Req() req: Request): Promise<unknown> {
+    this.requireRestoreAvailable();
+    const { sessionId } = await this.restoreRegistrationCaller(req);
+    return this.restoreCredentials.registrationOptions(sessionId, new Date());
+  }
+
+  /** Verifies and stores the restore key of the calling session (replacing its previous one). */
+  @Post('restore/registration')
+  @HttpCode(200)
+  async restoreRegistration(
+    @Req() req: Request,
+    @Body() body: RestoreRegistrationDto
+  ): Promise<{ registered: true }> {
+    this.requireRestoreAvailable();
+    const { userId, sessionId } = await this.restoreRegistrationCaller(req);
+    if (
+      !body?.response ||
+      typeof body.response !== 'object' ||
+      typeof body.cloudBackup !== 'boolean'
+    ) {
+      throw new BadRequestException('response and cloudBackup are required');
+    }
+    const result = await this.restoreCredentials.register(
+      userId,
+      sessionId,
+      body.response as RegistrationResponseJSON,
+      body.cloudBackup,
+      new Date()
+    );
+    switch (result.status) {
+      case 'registered':
+        return { registered: true };
+      case 'no-session':
+        throw new NotFoundException(restoreRefusal('RESTORE_NO_SESSION', 'No live session'));
+      case 'taken':
+        throw new ForbiddenException(
+          restoreRefusal('RESTORE_KEY_TAKEN', 'This key belongs to another session')
+        );
+      case 'invalid':
+        throw new BadRequestException(
+          restoreRefusal('RESTORE_REGISTRATION_INVALID', 'The restore key did not verify')
+        );
+    }
+  }
+
+  /** Request options for an anonymous restore. Writes nothing. */
+  @Post('restore/assertion/options')
+  @HttpCode(200)
+  async restoreAssertionOptions(): Promise<unknown> {
+    this.requireRestoreAvailable();
+    return this.restoreCredentials.assertionOptions(new Date());
+  }
+
+  /**
+   * Signs the new phone in from a restore key, then ends the session the key was bound to.
+   *
+   * THE ORDER IS THE TRANSFER: the key is consumed when it verifies (the service), the new session
+   * is minted through the SAME {@link issueSession} as a MiConnect sign-in, and only then is the old
+   * session revoked - so a failure to mint leaves the old phone signed in and costs only the key.
+   */
+  @Post('restore/assertion')
+  @HttpCode(200)
+  async restoreAssertion(
+    @Req() req: Request,
+    @Res({ passthrough: true }) res: Response,
+    @Body() body: RestoreAssertionDto
+  ): Promise<IssuedSession> {
+    this.requireRestoreAvailable();
+    if (!body?.response || typeof body.response !== 'object') {
+      throw new BadRequestException('response is required');
+    }
+    const result = await this.restoreCredentials.authenticate(
+      body.response as AuthenticationResponseJSON,
+      new Date()
+    );
+    if (result.status === 'unknown') {
+      throw new UnauthorizedException(
+        restoreRefusal('RESTORE_KEY_UNKNOWN', 'This restore key is not valid any more')
+      );
+    }
+    if (result.status === 'invalid') {
+      throw new UnauthorizedException(
+        restoreRefusal('RESTORE_ASSERTION_INVALID', 'The restore key did not verify')
+      );
+    }
+
+    this.refuseDuringErasure(result.userId, await this.accountErasure.erasureState(result.userId));
+    const user = await this.usersService.findOne(result.userId);
+    await this.refuseDuringMaintenance(user);
+    const issued = await this.issueSession(user, req, res);
+
+    await this.authSessions.revoke(result.sessionId);
+    this.logger.log(
+      `[RESTORE] session moved to a restored phone user=${user.id} from sid=${result.sessionId}`
+    );
+    return issued;
   }
 
   // ─── Session management ────────────────────────────────────────────────────
