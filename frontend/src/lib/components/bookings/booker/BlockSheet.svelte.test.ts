@@ -1,3 +1,4 @@
+// @vitest-environment happy-dom
 /**
  * AN UNKNOWN OUTCOME CLOSES THE BLOCK SHEET (review of #2035). The server refuses a block over a
  * booking but not over another block, so a sheet left open after a lost answer offered a second tap
