@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { IndexedDbStorage } from '$lib/db/indexeddb';
 import { gateStorage } from '$lib/db/deviceKeyGate';
+import type { OutboxBlobStore } from '$lib/db/outboxBlob';
 import { decryptData } from '$lib/encryption';
 import { toBase64 } from '$lib/utils/hex';
 import type { IMlsService, StateLoadFailure } from '$lib/mls-client';
@@ -686,6 +687,73 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
 
     expect((await s.gated.getOutboxEntry('o1', OLD))?.text).toBe('queued o1');
     expect(await s.gated.getGraineSession('s1', OLD)).toEqual(session('s1'));
+  });
+
+  it('a queued text, reaction and attachment each survive the change, the attachment blob untouched', async () => {
+    // Read the way the flusher reads them (`getOutboxEntry`, with the key the session now holds).
+    // The attachment's bytes live in the blob store, sealed by a key kept INSIDE the row: only the
+    // row is re-sealed, so the blob must be neither rewritten nor lost.
+    const { OLD, NEW } = keys();
+    const s = await populated(OLD);
+    storageForUser.set('u-outbox', s.gated);
+    const reaction: OutboxEntry = {
+      ...queued('r1'),
+      kind: 'control',
+      text: undefined,
+      controlProto: new Uint8Array([8, 1, 18, 2, 0x3a, 0x29]),
+    };
+    const bytes = crypto.getRandomValues(new Uint8Array(4096));
+    const attachment: OutboxEntry = {
+      ...queued('a1'),
+      kind: 'media',
+      text: undefined,
+      media: { kind: 1, mimeType: 'image/png', size: bytes.length, fileBytes: bytes },
+    };
+    await s.raw.saveOutboxEntry(reaction, OLD);
+    await s.raw.saveOutboxEntry(attachment, OLD);
+    const blobs = (s.raw as unknown as { blobs: OutboxBlobStore }).blobs;
+    const blobWrites = vi.spyOn(blobs, 'put');
+    const blobDeletes = vi.spyOn(blobs, 'delete');
+
+    await performPinChange(options('u-outbox', fakeMls()), OLD, NEW);
+
+    expect(blobWrites).not.toHaveBeenCalled();
+    expect(blobDeletes).not.toHaveBeenCalled();
+    expect((await s.raw.getOutboxEntry('o1', NEW))?.text).toBe('queued o1');
+    expect((await s.raw.getOutboxEntry('r1', NEW))?.controlProto).toEqual(reaction.controlProto);
+    const media = (await s.raw.getOutboxEntry('a1', NEW))?.media;
+    expect(media?.fileBytes).toEqual(bytes);
+    await expect(s.raw.getOutboxEntry('a1', OLD)).rejects.toThrow();
+  });
+
+  it('a flush that reads the outbox WHILE the rows move is held, then reads them under the new key', async () => {
+    // The flusher keeps the session's OLD key until the change ends. Reading a re-sealed row with it
+    // mid-pass would park the row as unreadable; the gate holds the read and forwards the key.
+    const { OLD, NEW } = keys();
+    const s = await populated(OLD);
+    storageForUser.set('u-flush', s.gated);
+    let flush: Promise<OutboxEntry | null> | undefined;
+    let passReadOutbox!: () => void;
+    const outboxRead = new Promise<void>((r) => (passReadOutbox = r));
+    const read = s.raw.getSealedPayloads.bind(s.raw);
+    vi.spyOn(s.raw, 'getSealedPayloads').mockImplementation(async (store) => {
+      const rows = await read(store);
+      if (store === 'outbox') {
+        flush = s.gated.getOutboxEntry('o1', OLD);
+        passReadOutbox();
+      }
+      return rows;
+    });
+    let flushSettled = false;
+
+    const change = performPinChange(options('u-flush', fakeMls()), OLD, NEW);
+    await outboxRead;
+    void flush!.then(() => (flushSettled = true));
+    await Promise.resolve();
+    expect(flushSettled).toBe(false);
+    await change;
+
+    expect((await flush!)?.text).toBe('queued o1');
   });
 });
 
