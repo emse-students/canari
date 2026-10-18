@@ -63,7 +63,7 @@
         onclick={() => onOpenCommunityAdmin?.()}
         class="ui-icon-button text-text-main bg-cn-surface rounded-full border border-white/45 transition-colors hover:bg-black/5 dark:border-white/10 dark:hover:bg-black/40"
         aria-label={m.chat_manage_community_roles_label()}
-        title={m.chat_manage_community_roles_title()}
+        title={m.chat_manage_community_roles_label()}
       >
         <Shield size={15} />
       </button>

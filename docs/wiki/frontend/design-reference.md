@@ -3193,7 +3193,13 @@ click-opened `MessageInfoTooltip`, and the panels (`ReactorsPanel`, `SeenByHeads
 - **An icon-only control has `title` AND `aria-label`, both from Paraglide, both the same string when
   the text is the same.** Where they differ on purpose (short hint vs a longer accessible name,
   "Rechercher" / "Rechercher dans la conversation") two keys are fine; two keys with identical text
-  are not (four were merged).
+  are not (four were merged on 2026-10-08, three more on 2026-10-18: unpin, record a voice
+  message, manage communities and roles). **`tooltipOneKey.test.ts` asserts it**: it walks every
+  `.svelte` file and refuses an element whose `title` and `aria-label` are two keys holding the same
+  text in BOTH locales; the 29 pairs that differ on purpose pass, and a floor on that count keeps the
+  scan from passing vacuously.
+- **Three hover/tap systems, no shared `Tooltip` component** (the native `title`, the `PostPolls`
+  voters bubble, the click-opened `MessageInfoTooltip`). Build a shared one only if a fourth appears.
 - **Never a raw literal, never a stored key or an id.** A reaction type is the wire value
   (`Marteau`): its name is `reactionTypeToLabel()`. `Avatar`, `AssociationAvatar`, `Modal` and the
   admin project rename carried French literals; they are messages now.
