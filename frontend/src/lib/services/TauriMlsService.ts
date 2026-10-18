@@ -33,6 +33,7 @@ import { keystoreUnlockPrompt } from './biometric';
 import { keystoreCommand } from './keystoreCommands';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
+import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
 /**
@@ -1083,7 +1084,7 @@ export class TauriMlsService extends BaseMlsService {
     } catch (e) {
       console.error('[MLS][Tauri] Keystore refused the new device key - deleting its entry:', e);
       await invoke(keystoreCommand('deleteKeyBytes'), {
-        payload: { alias: `mls_device_key_${this.userId}_${this.deviceId}` },
+        payload: { alias: keystoreAlias(this.userId, this.deviceId) },
       }).catch((d) =>
         console.error('[MLS][Tauri] Deleting the keystore entry after a refusal failed too:', d)
       );
@@ -1400,7 +1401,7 @@ export class TauriMlsService extends BaseMlsService {
   async publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void> {
     const base64 = toBase64(keyPackage.bytes);
     const storedName =
-      localStorage.getItem(`device-name:${this.userId}:${this.deviceId}`) || undefined;
+      localStorage.getItem(ACCOUNT_KEY.deviceName(this.userId, this.deviceId)) || undefined;
     const deviceAppVersion = getClientAppVersion();
     await this.delivery.registerDeviceKeyPackage({
       keyPackageBase64: base64,

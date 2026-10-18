@@ -33,8 +33,10 @@
  * gamble.
  */
 
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
+
 /** The prefix `BaseMlsService.resolveDeviceId` stores an enrolled device id under, per user. */
-export const MLS_DEVICE_ID_PREFIX = 'mls_device_id_';
+export const MLS_DEVICE_ID_PREFIX = ACCOUNT_KEY.deviceId('');
 
 /**
  * Whether this browser profile has ever enrolled an MLS device, and therefore will need the WASM.

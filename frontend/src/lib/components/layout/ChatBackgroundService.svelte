@@ -129,6 +129,7 @@
   import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
   import { mergeAnnouncedMessage } from '$lib/utils/chat/salonEcho';
   import { forgetDeliveredSalonSend } from '$lib/utils/chat/messaging';
+  import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
 
   /** Remote users to show on the call overlay (avatars / labels), excluding the local user. */
   function buildRemoteCallParticipants(): CallParticipant[] {
@@ -456,6 +457,14 @@
    * implementation now, branching on the typed code and never on the message.
    */
   function applyPinFailure(uid: string, code: LoginErrorCode | undefined) {
+    if (code === 'account_deleted') {
+      // An account deleted from this device: nothing to retry and nothing to recover. No salt for a
+      // next try (the account exists nowhere to ask it of) and no state lookup - only the recovery
+      // a previous failure may have offered is withdrawn.
+      canRecoverPin = false;
+      appendLog('[PIN] No salt and no recovery asked - this account was deleted from this device.');
+      return;
+    }
     if (code && provesLocalStateExists(code)) isFirstPinSetup = false;
     // A TYPED PIN CAN MEET ANOTHER ACCOUNT'S STATE TOO, not only a saved unlock: `mls.owner` names
     // that account when this one's key does not open `mls.bin`. Read on every path, or the keypad
@@ -1516,12 +1525,12 @@
         const isBiometricConfigured = await BiometricService.isConfigured();
 
         if (isBiometricConfigured) {
-          const deviceKey = `mls_device_id_${savedUser}`;
+          const deviceKey = ACCOUNT_KEY.deviceId(savedUser);
           const storedDeviceId = localStorage.getItem(deviceKey);
           const hasExistingDevice = storedDeviceId !== null;
 
           if (hasExistingDevice) {
-            const alias = `mls_device_key_${savedUser}_${storedDeviceId}`;
+            const alias = keystoreAlias(savedUser, storedDeviceId);
             const keyPresent = await BiometricService.isKeyPresent(alias).catch(() => false);
 
             if (keyPresent) {

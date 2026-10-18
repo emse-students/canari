@@ -70,6 +70,37 @@ describe('which logins may unlock offline', () => {
   });
 });
 
+describe('an account deleted from this device opens nothing (scenario B of #2023)', () => {
+  it('is refused before the first store is opened and before any token is asked', () => {
+    // The offline unlock of a deleted account racing its resumed wipe re-created `CanariDB_X` and
+    // per-account keys after the wipe had removed them. The refusal must come before every line
+    // that opens a store of the account - the landing preview's `getStorage`, the MLS state lookup -
+    // and before `getToken`, whose failure is what turns a login into an offline unlock.
+    const refusal = loginImplBody.indexOf('isDeletedAccountHere(ctx.getUserId())');
+    expect(refusal).toBeGreaterThan(-1);
+    for (const opener of [
+      'storageOpen = getStorage(',
+      'loadMlsState(ctx.getUserId())',
+      'accessToken = await getToken();',
+      'offlineSession = true;',
+    ]) {
+      const at = loginImplBody.indexOf(opener);
+      expect(at).toBeGreaterThan(-1);
+      expect(refusal).toBeLessThan(at);
+    }
+  });
+
+  it('refuses with its own code and a localized message, inside the try its catch reports from', () => {
+    const tryAt = loginImplBody.indexOf('  try {\n');
+    const refusal = loginImplBody.indexOf('isDeletedAccountHere(ctx.getUserId())');
+    expect(tryAt).toBeGreaterThan(-1);
+    expect(tryAt).toBeLessThan(refusal);
+    expect(loginImplBody).toContain(
+      "throw new LoginFailure('account_deleted', m.auth_account_deleted_here());"
+    );
+  });
+});
+
 describe('a server answer is never read as a missing network', () => {
   it('returns on SessionExpiredError before the offline branch can run', () => {
     const catchStart = loginImplBody.indexOf('accessToken = await getToken();');

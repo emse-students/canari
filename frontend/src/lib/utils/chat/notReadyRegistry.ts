@@ -10,10 +10,10 @@
 // the clock - see `markGroupNotReady`.
 // ---------------------------------------------------------------------------
 
-const PREFIX = 'mls_not_ready_since';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 function key(userId: string, groupId: string): string {
-  return `${PREFIX}:${userId}:${groupId}`;
+  return ACCOUNT_KEY.notReadySince(userId, groupId);
 }
 
 /**
@@ -65,7 +65,7 @@ export function clearGroupNotReady(userId: string, groupId: string): void {
  */
 export function enumerateNotReadyGroups(userId: string): string[] {
   if (typeof localStorage === 'undefined') return [];
-  const prefix = `${PREFIX}:${userId}:`;
+  const prefix = ACCOUNT_KEY.notReadySince(userId, '');
   const out: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const k = localStorage.key(i);
