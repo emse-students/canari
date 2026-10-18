@@ -356,6 +356,43 @@ mentioned. Everything about the estate itself is on
 not part of `all`), behind the same gate. Nothing copies production's data into dev since 2026-10-16
 ([dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16)).
 
+### The smoke sign-in (WP-SMOKE-LOGIN, decided 2026-10-18)
+
+`serve-dev.yml` runs `.github/scripts/smoke-login.mjs` right after the wasm check and BEFORE
+`dev-deployed` moves, so a refused sign-in leaves the marker where it was and gate 4 refuses the stable
+(a stable ships the pre-release that served dev). It walks what a browser walks: MiConnect's flow
+executor (`/api/v3/flows/executor/<slug>/`), the authorization code, `POST /api/auth/oidc/callback`,
+then `GET /api/auth/verify` with the minted token (the auth_request that guards every route). It
+needs no browser and no PIN: it proves the identity and token path, not the MLS vault.
+
+**Dev only, by construction (user, 2026-10-18).** The step lives in `serve-dev.yml` and reads
+`DEV_SMOKE_*` secrets of the `development` environment. No production credential exists in GitHub, and
+`serve-prod.yml` never signs in. Production's sign-in stays covered by the wasm check, the stable's
+gates and the dev run having passed on the same code.
+
+**Absent secrets are a named, loud skip, never a pass.** Neither set: exit 0 with a
+`::warning title=Smoke sign-in SKIPPED` and a run-summary block saying NO sign-in was tried. Only one
+of the pair set: exit 1 (a half-created pair must not read as "not configured"). A refusal exits 1 with
+the stage it died at (`ak-stage-password`, `oidc-callback`, `verify`...) and the reason, never the
+password; the summary says the marker was not moved.
+
+**What the USER must create** (nothing here can; the script was exercised only against local fakes in
+`.github/scripts/tests/smoke-login.test.mjs`, never against the live MiConnect):
+
+| Name | Kind | Where | What |
+| --- | --- | --- | --- |
+| `DEV_SMOKE_USERNAME` | secret | `development` environment | the login of a DEDICATED MiConnect account used by nothing else |
+| `DEV_SMOKE_PASSWORD` | secret | `development` environment | its password; it must be able to pass the flow with NO second factor (the campaign's service-account path has none, [cross-client-campaign](cross-client-campaign.md)) |
+| `DEV_SMOKE_FLOW_SLUG` | variable, optional | repository or `development` | the slug of that no-MFA flow, when the authorize endpoint does not lead to it by default |
+
+The account must exist in MiConnect and be allowed on the Canari application; it creates its own row on
+dev at first sign-in, and holds no admin right. It reuses `DEV_AUTHENTIK_URL` and
+`DEV_AUTHENTIK_CLIENT_ID`, which dev already has. **First run**: the log prints the stage sequence
+(`ak-stage-identification > ak-stage-password > xak-flow-redirect` is the expected one); a different
+component named in the failure is the flow asking for a stage the account cannot answer. Because the
+flow's exact shape (a CSRF header, a consent stage) was not observable from here, the first real run
+is the check of this script - read it before trusting a green.
+
 ### The store arms (`ios.yml`, `android.yml`)
 
 Called by `release.yml` with the sha, the version and the release kind, so the Play track
@@ -511,8 +548,7 @@ measurement, as a refusal instead of a report.
 runs `tools/cross-client-harness/deployed-wasm-check.mjs https://dev.canari-emse.fr` BEFORE its
 `Record the deployed commit` step, so a dev estate serving a wasm that can panic (the 2026-09-06
 class: every login refused as a wrong PIN, every status code 200) never moves the marker, and gate 4
-refuses the stable. It is not a login; the sign-in smoke test stays a user decision
-([backlog](backlog.md#the-delivery-chain-review---opened-by-the-2026-09-06-outage)).
+refuses the stable. It is not a login; the sign-in is the next step ([the smoke sign-in](#the-smoke-sign-in-wp-smoke-login-decided-2026-10-18)).
 `release-chain.test.sh` pins the order; `archive/deployed-wasm-selftest.mjs` pins the three exit codes.
 
 **A PULL REQUEST THAT MERGES BETWEEN THE PRE-RELEASE AND THE STABLE COSTS ONE MORE PRE-RELEASE, AND
