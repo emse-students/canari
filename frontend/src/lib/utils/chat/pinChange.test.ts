@@ -200,7 +200,7 @@ describe('resealDeviceKeyStores', () => {
 
   it('finishes a run killed half way: a row already under the new key is done, not damaged', async () => {
     const { OLD, NEW } = keys();
-    const { raw } = await populated(OLD, 450);
+    const { raw } = await populated(OLD, 5);
     // The kill: the second write batch never lands.
     const real = raw.swapSealedPayloads.bind(raw);
     let calls = 0;
@@ -208,16 +208,16 @@ describe('resealDeviceKeyStores', () => {
       if (++calls === 2) throw new Error('killed');
       return real(store, swaps);
     });
-    await expect(resealDeviceKeyStores(raw, OLD, NEW)).rejects.toThrow('killed');
+    await expect(resealDeviceKeyStores(raw, OLD, NEW, { batchSize: 2 })).rejects.toThrow('killed');
     spy.mockRestore();
     const half = await keysOf(raw, 'messages', { old: OLD, new: NEW });
     expect(half).toContain('old');
     expect(half).toContain('new');
     expect(await keysOf(raw, 'graine', { old: OLD, new: NEW })).toEqual(['old', 'old']);
 
-    const report = await resealDeviceKeyStores(raw, OLD, NEW);
+    const report = await resealDeviceKeyStores(raw, OLD, NEW, { batchSize: 2 });
 
-    expect(report.alreadyNew).toBe(200);
+    expect(report.alreadyNew).toBe(2);
     expect(report.unreadable).toBe(0);
     await everyRowUnder(raw, NEW);
   });
@@ -726,33 +726,25 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
     await expect(s.raw.getOutboxEntry('a1', OLD)).rejects.toThrow();
   });
 
-  it('a flush that reads the outbox WHILE the rows move is held, then reads them under the new key', async () => {
-    // The flusher keeps the session's OLD key until the change ends. Reading a re-sealed row with it
-    // mid-pass would park the row as unreadable; the gate holds the read and forwards the key.
+  it('a flush that reads the outbox AFTER its rows moved, before the key is retired, is held', async () => {
+    // The window the gate closes: the outbox rows are already under NEW, the session (and so the
+    // flusher) still holds OLD, and the retired key is not forwarded yet. A read let through here
+    // parks the row as unreadable; the gate holds it until the change retires OLD, then forwards it.
     const { OLD, NEW } = keys();
     const s = await populated(OLD);
     storageForUser.set('u-flush', s.gated);
     let flush: Promise<OutboxEntry | null> | undefined;
-    let passReadOutbox!: () => void;
-    const outboxRead = new Promise<void>((r) => (passReadOutbox = r));
-    const read = s.raw.getSealedPayloads.bind(s.raw);
-    vi.spyOn(s.raw, 'getSealedPayloads').mockImplementation(async (store) => {
-      const rows = await read(store);
-      if (store === 'outbox') {
-        flush = s.gated.getOutboxEntry('o1', OLD);
-        passReadOutbox();
-      }
-      return rows;
+    const swap = s.raw.swapSealedPayloads.bind(s.raw);
+    vi.spyOn(s.raw, 'swapSealedPayloads').mockImplementation(async (store, swaps) => {
+      const swapped = await swap(store, swaps);
+      // Issued, never awaited here: awaiting it inside the pass would wait on the pass itself.
+      if (store === 'outbox') flush = s.gated.getOutboxEntry('o1', OLD);
+      return swapped;
     });
-    let flushSettled = false;
 
-    const change = performPinChange(options('u-flush', fakeMls()), OLD, NEW);
-    await outboxRead;
-    void flush!.then(() => (flushSettled = true));
-    await Promise.resolve();
-    expect(flushSettled).toBe(false);
-    await change;
+    await performPinChange(options('u-flush', fakeMls()), OLD, NEW);
 
+    expect(flush).toBeDefined();
     expect((await flush!)?.text).toBe('queued o1');
   });
 });
