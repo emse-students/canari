@@ -59,3 +59,17 @@ describe('describeBookingRefusal', () => {
     );
   });
 });
+
+describe('a FILE answer refused (WP-B6)', () => {
+  it('reads a purged file as the deleted word the answers show, and a lost id as "pick it again"', () => {
+    expect(describeBookingRefusal(refused('file-purged', 410), 'Télécharger')).toBe(
+      m.form_answer_file_deleted()
+    );
+    expect(describeBookingRefusal(refused('file-not-yours'), 'Réserver')).toBe(
+      m.bookings_refusal_file_not_yours()
+    );
+    expect(describeBookingRefusal(refused('file-too-large', 413), 'Réserver')).toBe(
+      m.form_file_error_size()
+    );
+  });
+});

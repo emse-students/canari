@@ -17,8 +17,8 @@ function validatedProperties(target: new () => object): string[] {
 }
 
 describe('the keys a request may write', () => {
-  it('a space: every setting of SpaceSettingsDto, opensAt converted on its own', () => {
-    expect([...SPACE_SETTING_KEYS, 'opensAt'].sort()).toEqual(
+  it('a space: every setting of SpaceSettingsDto, opensAt and the poster converted on their own', () => {
+    expect([...SPACE_SETTING_KEYS, 'opensAt', 'poster'].sort()).toEqual(
       validatedProperties(SpaceSettingsDto)
     );
   });

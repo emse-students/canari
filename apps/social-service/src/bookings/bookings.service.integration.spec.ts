@@ -49,6 +49,10 @@ import { BookingSpacesService } from './booking-spaces.service';
 import { bookingCalendarPath } from './booking-calendar';
 import { BookingSpacesController } from './booking-spaces.controller';
 import { MAX_PERSONAL_SPACES, MAX_RESOURCES_PER_SPACE } from './dto/space.dto';
+import { BookingFilesService } from './booking-files.service';
+import { BookingFile } from './entities/booking-file.entity';
+import type { BookingPosterMedia } from './booking-poster-media';
+import type { FormFilesService } from '../forms/form-files.service';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -183,6 +187,11 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       repo(BookingBlock),
       repo(Booking)
     ));
+    // The media service is not under test here (WP-B6's files have their own integration spec,
+    // `bookings.files.integration.spec.ts`): a store that refuses to be reached says so if used.
+    const unreachable = () => {
+      throw new Error('the media service is not part of this spec');
+    };
     service = new BookingsService(
       repo(BookingSpace),
       repo(BookingResource),
@@ -191,7 +200,12 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       repo(BookingBlock),
       slots,
       associations,
-      pricingFacts
+      pricingFacts,
+      new BookingFilesService(repo(BookingFile), {
+        storeBlob: unreachable,
+        fetchBlob: unreachable,
+        purgeBlobs: unreachable,
+      } as unknown as FormFilesService)
     );
     organiser = new BookingSpacesService(
       repo(BookingSpace),
@@ -201,7 +215,8 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       repo(Booking),
       slots,
       associations,
-      { listCotisationTiers: async () => [] } as unknown as UserTagService
+      { listCotisationTiers: async () => [] } as unknown as UserTagService,
+      { claim: async () => {}, releaseUncited: async () => {} } as unknown as BookingPosterMedia
     );
   });
 
@@ -334,7 +349,14 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       const r = resourceIds[0];
       await q(`UPDATE booking_resources SET "linkedUserId" = $1 WHERE id = $2`, [CAROL, r]);
       await service.book(space.id, slot(r), as(CAROL), DAY_NOW);
-      const c = new Client({ connectionString: URL, options: `-c search_path=${schema}` });
+      // PostgreSQL aborts the backend whose `deadlock_timeout` runs out first. The booker waits
+      // first, so it is normally the one - but under a loaded run the erasure's check could fire
+      // first and the erasure would be the victim (seen 2026-10-18 with the specs in parallel).
+      // A longer timeout on the erasure's own connection makes the booker the victim, always.
+      const c = new Client({
+        connectionString: URL,
+        options: `-c search_path=${schema} -c deadlock_timeout=20s`,
+      });
       await c.connect();
       const db = {
         write: async (sql: string, params: unknown[]) => (await c.query(sql, params)).rowCount ?? 0,
@@ -1209,9 +1231,10 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       const patch = (dto: object) => organiser.update(id, dto as never, as(ALICE), NOW);
       expect(await refusal(patch({ timeZone: 'Mars/Olympus' }))).toEqual({ code: 'time-zone' });
       expect(await refusal(patch({ maxMinutesPerPeriod: 60 }))).toEqual({ code: 'quota-pair' });
-      expect(
-        await refusal(patch({ items: [{ id: 'q', label: 'CV', required: true, type: 'file' }] }))
-      ).toEqual({ code: 'file-question-not-yet' });
+      // WP-B6 brought the file question's storage and purge: it is accepted now.
+      await expect(
+        patch({ items: [{ id: 'q', label: 'CV', required: true, type: 'file' }] })
+      ).resolves.toEqual({ ok: true });
       await expect(patch({ slotMode: 'slots' })).resolves.toEqual({ ok: true });
       const view = await organiser.managedSpaceView(id, as(ALICE));
       expect([view.slotMode, view.stepMinutes, view.maxSteps]).toEqual(['slots', null, null]);

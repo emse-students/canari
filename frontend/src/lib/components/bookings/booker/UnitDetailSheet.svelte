@@ -1,7 +1,9 @@
 <script lang="ts">
   import Modal from '$lib/components/shared/Modal.svelte';
   import AddEventToCalendarButton from '$lib/components/calendar/AddEventToCalendarButton.svelte';
+  import { Download } from '@lucide/svelte';
   import {
+    downloadBookingAnswerFile,
     type BookerResource,
     type BookerSpace,
     type MyBooking,
@@ -16,7 +18,11 @@
   } from '$lib/bookings/bookingActions';
   import { formatBookingRange } from '$lib/bookings/grid';
   import { answerText } from '$lib/forms/answerText';
+  import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { m } from '$lib/paraglide/messages';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
+  import { Log } from '$lib/utils/Log';
 
   /**
    * WHAT A TAKEN UNIT IS, AND WHAT THE READER MAY DO WITH IT. A booking: its people as the space's
@@ -42,14 +48,45 @@
   const isParticipant = $derived(!!booking?.mine && !isHolder);
   const mayCancel = $derived(coming && (isHolder || space.canManage));
   const mayWithdraw = $derived(coming && isParticipant && !mine?.withdrawn);
-  const answers = $derived(
-    booking?.answers
-      ? space.items.flatMap((item) => {
-          const value = booking.answers?.[item.id];
-          return value === undefined ? [] : [{ label: item.label, text: answerText(value, item) }];
-        })
-      : []
-  );
+  /**
+   * The answers, to the organiser only (the server sends them to nobody else). A FILE answer reads
+   * as the name its file was uploaded under, with a download, or as "file deleted" once the purge
+   * (or its uploader's erasure) took it - never as its id.
+   */
+  const answers = $derived.by(() => {
+    if (!booking?.answers) return [];
+    const words = {
+      file: m.form_answer_file(),
+      fileDeleted: m.form_answer_file_deleted(),
+      deletedFiles: new Set(booking.deletedFileIds ?? []),
+    };
+    return space.items.flatMap((item) => {
+      const value = booking.answers?.[item.id];
+      if (value === undefined) return [];
+      const fileId =
+        item.type === 'file' && typeof value === 'string' && !words.deletedFiles.has(value)
+          ? value
+          : null;
+      const text = (fileId && booking.fileNames?.[fileId]) || answerText(value, item, words);
+      return [{ label: item.label, text, fileId }];
+    });
+  });
+
+  let downloading = $state<string | null>(null);
+
+  async function download(fileId: string, fileName: string) {
+    if (!booking || downloading) return;
+    downloading = fileId;
+    Log.d('BOOKINGS', `answer file download booking=${booking.id.slice(0, 8)}`);
+    try {
+      await downloadDecryptedFile(await downloadBookingAnswerFile(booking.id, fileId), fileName);
+    } catch (e) {
+      Log.i('BOOKINGS', `answer file download refused: ${String(e)}`);
+      showToast(describeBookingRefusal(e, m.form_answer_file_download()), 'error');
+    } finally {
+      downloading = null;
+    }
+  }
 
   async function cancel() {
     if (!booking) return;
@@ -120,7 +157,26 @@
           {#each answers as answer, i (i)}
             <div>
               <dt class="text-text-muted text-xs font-semibold">{answer.label}</dt>
-              <dd class="text-text-main whitespace-pre-line">{answer.text}</dd>
+              {#if answer.fileId}
+                {@const fileId = answer.fileId}
+                <!-- The whole row is the download: a long file name is cut, never broken letter by
+                     letter at 200 % text, and the full name is its title. -->
+                <dd>
+                  <button
+                    type="button"
+                    disabled={downloading !== null}
+                    onclick={() => download(fileId, answer.text)}
+                    class="border-cn-border text-text-main hover:border-cn-yellow/40 flex w-full min-w-0 items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors disabled:opacity-50"
+                    title={answer.text}
+                    aria-label={`${m.form_answer_file_download()} - ${answer.text}`}
+                  >
+                    <Download size={16} class="text-text-muted shrink-0" />
+                    <span class="min-w-0 flex-1 truncate">{answer.text}</span>
+                  </button>
+                </dd>
+              {:else}
+                <dd class="text-text-main whitespace-pre-line">{answer.text}</dd>
+              {/if}
             </div>
           {/each}
         </dl>

@@ -39,6 +39,8 @@ import { PricingModule } from '../pricing/pricing.module';
     FormFileRetentionScheduler,
     PushService,
   ],
-  exports: [FormsService],
+  // FormFilesService: the store and the purge of the `form-file` class, which a booking's file
+  // answers use too (BookingsModule, WP-B6).
+  exports: [FormsService, FormFilesService],
 })
 export class FormsModule {}

@@ -14,6 +14,7 @@
   } from '@lucide/svelte';
   import PageContainer from '$lib/components/layout/PageContainer.svelte';
   import PageHeader from '$lib/components/layout/PageHeader.svelte';
+  import SpacePoster from '$lib/components/bookings/SpacePoster.svelte';
   import EmptyState from '$lib/components/shared/EmptyState.svelte';
   import QrCodeModal from '$lib/components/shared/QrCodeModal.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
@@ -312,6 +313,12 @@
       {/if}
     {/snippet}
   </PageHeader>
+
+  {#if space?.poster}
+    <div class="mb-4">
+      <SpacePoster poster={space.poster} alt={m.bookings_poster_alt({ name: space.name })} />
+    </div>
+  {/if}
 
   {#if loading}
     <div class="flex items-center justify-center py-20">

@@ -13,6 +13,7 @@ const SPACE: ManagedSpace = {
   ownerId: 'o',
   associationId: null,
   resources: [],
+  poster: null,
   name: 'Salle de musique',
   description: null,
   timeZone: 'Europe/Paris',
@@ -36,8 +37,15 @@ const SPACE: ManagedSpace = {
 };
 
 describe('the draft round trip', () => {
-  it('sends back exactly what it read, nulls kept', () => {
-    const { id: _id, ownerId: _o, associationId: _a, resources: _r, ...settings } = SPACE;
+  it('sends back exactly what it read, nulls kept - and never the poster, saved on its own', () => {
+    const {
+      id: _id,
+      ownerId: _o,
+      associationId: _a,
+      resources: _r,
+      poster: _p,
+      ...settings
+    } = SPACE;
     expect(settingsFromDraft(draftFromSpace(SPACE))).toEqual(settings);
   });
 
