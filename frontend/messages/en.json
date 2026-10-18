@@ -4,6 +4,7 @@
   "settings_language_desc": "Interface language",
   "auth_brand_subtitle": "Mines Saint-Étienne",
   "auth_redirecting": "Redirecting…",
+  "auth_restore_in_progress": "Restoring your session...",
   "auth_sign_in": "Sign in",
   "auth_test_login_password": "External login (service account)",
   "auth_secure_login": "Secure login with your Mines account",

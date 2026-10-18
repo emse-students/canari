@@ -71,6 +71,11 @@ export const ACCOUNT_KEY = {
    */
   legacyConversation: (userId: string, contactName: string) =>
     `canari_conv_${userId}_${contactName}`,
+  /**
+   * `restoreKey.ts`: the current session of the account has registered its restore key
+   * (WP-RESTORE-1, Android). Called with `''` it is the prefix every session mint and sign-out drops.
+   */
+  restoreKeyRegistered: (userId: string) => `canari_restore_registered:${userId}`,
   /** No longer written; removed by the device reset and the deletion where an old build left it. */
   syncGuideSeen: (userId: string) => `canari_sync_guide_seen_${userId}`,
   /** `history.ts`: the processed-ciphertext fingerprints of one group. */
@@ -127,6 +132,7 @@ function exactKeys(userId: string): string[] {
     ACCOUNT_KEY.legacyMlsAutosave(userId),
     ACCOUNT_KEY.syncGuideSeen(userId),
     ACCOUNT_KEY.lastActive(userId),
+    ACCOUNT_KEY.restoreKeyRegistered(userId),
   ];
 }
 
