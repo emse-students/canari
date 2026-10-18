@@ -8,9 +8,9 @@
 -- crash is the only thing that leaves one behind). A repeat of a send (WP-OFF-3) drains its own row
 -- at once.
 --
--- THIS FILE SHIPS A RELEASE BEFORE THE CODE THAT WRITES IT. The deploy starts the services BEFORE it
--- runs the migrations, so a send that inserted here in the same release would fail whole, storing
--- nothing, for the seconds between the two (the lesson of migration 090).
+-- It may ride the same release as the code that writes it: the deploy applies the migrations BEFORE
+-- it replaces any application service (infrastructure/deploy/deploy-environment.sh), and a rollback
+-- leaves a harmless table nothing reads.
 --
 -- `payload` holds what the push needs and the row does not: the sender's cleartext
 -- `mentionedUserIds` and the seed frame (an MLS private message, opaque to the server) that rides
