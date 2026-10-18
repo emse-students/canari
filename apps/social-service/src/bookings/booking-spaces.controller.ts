@@ -80,7 +80,7 @@ export class BookingSpacesController {
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
-    return this.service.remove(spaceId, actorOf(userId, ga));
+    return this.service.remove(spaceId, actorOf(userId, ga), Date.now());
   }
 
   @Post('spaces/:spaceId/resources')
@@ -103,13 +103,14 @@ export class BookingSpacesController {
     return this.service.updateResource(resourceId, dto, actorOf(userId, ga));
   }
 
+  /** Deletes a resource that was never booked (D42); one with history is closed instead. */
   @Delete('resources/:resourceId')
   removeResource(
     @Param('resourceId', ParseUUIDPipe) resourceId: string,
     @Headers('x-user-id') userId: string,
     @Headers('x-global-admin') ga?: string
   ) {
-    return this.service.removeResource(resourceId, actorOf(userId, ga), Date.now());
+    return this.service.removeResource(resourceId, actorOf(userId, ga));
   }
 
   /** Replaces the resource's whole availability; refused over coming bookings (D29). */

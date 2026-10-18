@@ -14,8 +14,10 @@
  */
 import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
-import { randomUUID } from 'crypto';
-import { HttpException } from '@nestjs/common';
+import { createHmac, randomUUID } from 'crypto';
+import type { AddressInfo } from 'net';
+import { HttpException, Module, type INestApplication } from '@nestjs/common';
+import { NestFactory } from '@nestjs/core';
 import { DataSource } from 'typeorm';
 import { Client } from 'pg';
 import { BOOKING_ENTITIES } from './bookings.module';
@@ -39,6 +41,8 @@ import type { PricingFactsService } from '../pricing/pricing-facts.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import type { UserTagService } from '../users/user-tag.service';
 import { BookingSpacesService } from './booking-spaces.service';
+import { BookingSpacesController } from './booking-spaces.controller';
+import { MAX_PERSONAL_SPACES, MAX_RESOURCES_PER_SPACE } from './dto/space.dto';
 
 const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
@@ -953,16 +957,27 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
           bookingIds: [id],
         }
       );
-      expect(await refusal(organiser.removeResource(r, as(ORGA), NOW))).toEqual({
-        code: 'bookings-inside-change',
-        bookingIds: [id],
-      });
       // Keeping the booking inside: accepted.
       await expect(
         organiser.setAvailability(r, availability(EVERY_DAY), as(ORGA), NOW)
       ).resolves.toEqual({ ok: true });
+    });
+
+    it('never deletes a resource that has history, cancelled or past included (D42)', async () => {
+      const { space, resourceIds } = await setup({}, 2);
+      const [booked, never] = resourceIds;
+      const { id } = await book(space.id, booked, '10:00', '10:30');
+      expect(await refusal(organiser.removeResource(booked, as(ORGA)))).toEqual({
+        code: 'resource-has-bookings',
+      });
+      // Cancelled is still history (D15): still refused, and the row is still there.
       await service.cancel(id, as(ALICE), NOW);
-      await expect(organiser.removeResource(r, as(ORGA), NOW)).resolves.toEqual({ ok: true });
+      expect(await refusal(organiser.removeResource(booked, as(ORGA)))).toEqual({
+        code: 'resource-has-bookings',
+      });
+      expect(await ds.getRepository(Booking).countBy({ id })).toBe(1);
+      // A resource nobody ever booked goes.
+      await expect(organiser.removeResource(never, as(ORGA))).resolves.toEqual({ ok: true });
     });
 
     it('a booking racing an availability change: never both', async () => {
@@ -1001,8 +1016,147 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect((await ds.getRepository(BookingResource).findOneByOrFail({ id })).linkedUserId).toBe(
         DAN
       );
-      await organiser.remove(space.id, as(ORGA));
+      await organiser.remove(space.id, as(ORGA), NOW);
       expect(await ds.getRepository(BookingResource).countBy({ spaceId: space.id })).toBe(0);
+    });
+
+    it('refuses duplicate question ids, a zoneless opening, an entity that does not exist', async () => {
+      const { id } = await organiser.create({ name: 'x' }, as(ALICE));
+      const patch = (dto: object) => organiser.update(id, dto as never, as(ALICE), NOW);
+      const q1 = { id: 'q', label: 'Nom', required: false, type: 'text' };
+      expect(await refusal(patch({ items: [q1, { ...q1, label: 'Autre' }] }))).toEqual({
+        code: 'item-id',
+      });
+      expect(await refusal(patch({ opensAt: '2026-11-02T10:00:00' }))).toEqual({
+        code: 'opens-at',
+      });
+      await expect(patch({ opensAt: '2026-11-02T10:00:00+01:00' })).resolves.toEqual({ ok: true });
+      expect((await organiser.managedSpaceView(id, as(ALICE))).opensAt).toEqual(
+        new Date('2026-11-02T09:00:00Z')
+      );
+      expect(
+        await refusal(
+          organiser.create(
+            { name: 'ghost', associationId: randomUUID() },
+            { userId: ALICE, isGlobalAdmin: true }
+          )
+        )
+      ).toEqual({ code: 'association-not-found' });
+    });
+
+    it('caps personal spaces per account and resources per space', async () => {
+      const owner = RACERS[7];
+      for (let i = 0; i < MAX_PERSONAL_SPACES; i++) {
+        await organiser.create({ name: `s${i}` }, as(owner));
+      }
+      expect(await refusal(organiser.create({ name: 'one more' }, as(owner)))).toEqual({
+        code: 'too-many-spaces',
+        max: MAX_PERSONAL_SPACES,
+      });
+      const { space } = await setup({}, 0);
+      for (let i = 0; i < MAX_RESOURCES_PER_SPACE; i++) {
+        await organiser.addResource(space.id, { name: `r${i}` }, as(ORGA));
+      }
+      expect(
+        await refusal(organiser.addResource(space.id, { name: 'one more' }, as(ORGA)))
+      ).toEqual({ code: 'too-many-resources', max: MAX_RESOURCES_PER_SPACE });
+    });
+
+    /**
+     * THROUGH THE REAL HTTP LAYER, WITH NO ValidationPipe (review of #2006): the whitelist that
+     * strips unknown keys in production is not there, so the body reaches the service whole. What
+     * stops `ownerId`, `associationId`, `spaceId` or `id` from being written is the service's own
+     * list of the keys it copies - and that is what is under test here.
+     */
+    describe('a body naming fields it may not write (no whitelist)', () => {
+      const SECRET = 'bookings-http-it-secret';
+      let app: INestApplication;
+      let base: string;
+      let previousSecret: string | undefined;
+
+      const headersFor = (userId: string) => ({
+        'content-type': 'application/json',
+        'x-user-id': userId,
+        'x-internal-token': createHmac('sha256', SECRET)
+          .update(`${userId}:${Math.floor(Date.now() / 60000)}`)
+          .digest('hex'),
+      });
+      const send = (method: string, path: string, body: object) =>
+        fetch(`${base}/bookings${path}`, {
+          method,
+          headers: headersFor(ORGA),
+          body: JSON.stringify(body),
+        });
+
+      beforeAll(async () => {
+        previousSecret = process.env.INTERNAL_SHARED_SECRET;
+        process.env.INTERNAL_SHARED_SECRET = SECRET;
+        @Module({
+          controllers: [BookingSpacesController],
+          providers: [{ provide: BookingSpacesService, useValue: organiser }],
+        })
+        class HttpModule {}
+        app = await NestFactory.create(HttpModule, { logger: false });
+        await app.listen(0, '127.0.0.1');
+        base = `http://127.0.0.1:${(app.getHttpServer().address() as AddressInfo).port}`;
+      });
+
+      afterAll(async () => {
+        await app?.close();
+        if (previousSecret === undefined) delete process.env.INTERNAL_SHARED_SECRET;
+        else process.env.INTERNAL_SHARED_SECRET = previousSecret;
+      });
+
+      it('ignores id, ownerId and associationId on a space, id and spaceId on a resource', async () => {
+        const { space, resourceIds } = await setup();
+        const other = await setup();
+        const res = await send('PATCH', `/spaces/${space.id}`, {
+          name: 'Renamed',
+          id: randomUUID(),
+          ownerId: STRANGER,
+          associationId: other.space.associationId,
+          createdAt: '2000-01-01T00:00:00Z',
+        });
+        expect(res.status).toBe(200);
+        const row = await ds.getRepository(BookingSpace).findOneByOrFail({ id: space.id });
+        expect([row.name, row.ownerId, row.associationId]).toEqual([
+          'Renamed',
+          CREATOR,
+          space.associationId,
+        ]);
+
+        const patched = await send('PATCH', `/resources/${resourceIds[0]}`, {
+          name: 'Salle B',
+          id: randomUUID(),
+          spaceId: other.space.id,
+        });
+        expect(patched.status).toBe(200);
+        const r = await ds.getRepository(BookingResource).findOneByOrFail({ id: resourceIds[0] });
+        expect([r.name, r.spaceId]).toEqual(['Salle B', space.id]);
+
+        const forgedId = randomUUID();
+        const added = await send('POST', `/spaces/${space.id}/resources`, {
+          name: 'Salle C',
+          id: forgedId,
+          spaceId: other.space.id,
+        });
+        expect(added.status).toBe(201);
+        const { id } = (await added.json()) as { id: string };
+        expect(id).not.toBe(forgedId);
+        expect((await ds.getRepository(BookingResource).findOneByOrFail({ id })).spaceId).toBe(
+          space.id
+        );
+
+        const created = await send('POST', '/spaces', {
+          name: 'Mine',
+          ownerId: STRANGER,
+          id: forgedId,
+        });
+        expect(created.status).toBe(201);
+        const mine = (await created.json()) as { id: string };
+        const createdRow = await ds.getRepository(BookingSpace).findOneByOrFail({ id: mine.id });
+        expect([createdRow.id === forgedId, createdRow.ownerId]).toEqual([false, ORGA]);
+      });
     });
   });
 });

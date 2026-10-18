@@ -1,6 +1,6 @@
 # Bookings (reservation of rooms and slots) - the chantier, decisions as taken
 
-**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) is a draft pull request; WP-B4's organiser API is a draft stacked on it, its screens next. **Owed by WP-B6, carried from WP-B4: the space poster (D35: column by migration, purge) and the bookings FILE question.** Decisions are written here the day the
+**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) merged as #2002; WP-B4's organiser API (#2006) and its screens are draft pull requests, the screens stacked on the API; WP-B5 (the booker's screens) next. **Owed by WP-B6, carried from WP-B4: the space poster (D35: column by migration, purge) and the bookings FILE question.** Decisions are written here the day the
 user takes them; the work packages are written last, once every question is closed. Pointer in
 [backlog](backlog.md) to be added when the plan is complete.
 
@@ -74,6 +74,7 @@ see who else booked.
 | D39 | Initial right (E6) | **Holders of `MANAGE_FORMS` receive `MANAGE_BOOKINGS` in the migration** (user, against my recommendation of nobody: it grants a right to people who did not ask for it, which cuts against keeping the two responsibilities apart). A BDE super-admin inherits it by default (the user did not answer; written as the existing behaviour for anything not excluded). New roles: the "administrator" preset includes it. |
 | D40 | File on a public form (E3) | **Refused in v1, to reopen later** (user): the upload needs a session token and an anonymous file write is the biggest abuse surface of the chantier. Refused at save time with a clear sentence, as `assertPublicConfigValid` does for price and audience. A "public form" is `forms.isPublic`, answered at `/f/:id` with no account; its payment half is PARKED, not forbidden in principle: it needs WP-LYDIA-1 (Lydia live in production) plus a guest payment route and a fulfilment with no `userId`. The user wants a PAID PUBLIC form (ticketing for an outside event): it is its OWN chantier, [public-paid-forms-chantier](public-paid-forms-chantier.md), planned in parallel. Bookings do not depend on it (D6 needs an account). |
 
+| D42 | Deleting a RESOURCE (review of #2006, Master's decision, the user having delegated it) | **Refused while the resource has ANY booking - past, coming or cancelled** (`resource-has-bookings`). A booking is history, and D15 freezes history while its space exists; D27 lets only the deletion of the whole SPACE erase it. A resource that is no longer offered is CLOSED instead (its availability emptied, or a closure). A resource nobody ever booked may be deleted. (Numbered D42: D36 was already the holder-edits decision.) |
 | D41 | File retention in forms (WP-F) | **The SAME rule as D8 and D23, one mechanism with two starting points**: a file is purged N days after the EVENT (default 7, adjustable 1 to 30 by the manager), the event being the slot's end for a booking and the DATE OF THE ANSWER for a form. The answer row stays; the file goes. The user pointed out this was already decided: a duplicate question was asked and is recorded here so nobody asks it a third time. |
 
 **Master's notes (2026-10-15):** no open pull request touches forms (open: #1896, #1897, #1898, #1884), so WP-F has no known conflict; rebase on `main` before each batch; **check the next free migration number on `main` when opening each pull request**, as other pull requests may take one.
@@ -422,18 +423,39 @@ screens come in a pull request of their own; this half is what they write throug
 | Route | Who | Refusal codes |
 |---|---|---|
 | `GET managed?associationId` | the entity's organiser; without the parameter, the actor's PERSONAL spaces | `not-manager` |
-| `POST spaces` | anyone for a personal space (D16); `MANAGE_BOOKINGS` for an entity's (`associationId`) | `not-manager`, and the settings codes below |
+| `POST spaces` | anyone for a personal space (D16), at most 20 per account; `MANAGE_BOOKINGS` for an entity's (`associationId`) | `not-manager`, `too-many-spaces`, `association-not-found` (an id that names no entity, which only a global admin can send), and the settings codes below |
 | `GET spaces/:id/manage` | the organiser: every setting, every resource with its linked account, private text and availability | `space-not-found`, `not-manager` |
-| `PATCH spaces/:id` | the organiser; any subset of the settings (D35), `null` clears | `time-zone`, `step-shape`, `quota-pair`, `file-question-not-yet`, `item-id`, `audience-invalid`, `bookings-inside-change` (with `bookingIds`) |
-| `DELETE spaces/:id` | the organiser: the space and EVERYTHING under it (D27) | `not-manager` |
-| `POST spaces/:id/resources`, `PATCH resources/:id` | the organiser; a linked account must exist | `unknown-account` |
-| `DELETE resources/:id` | the organiser; refused while it has COMING live bookings (D29 applied to the whole resource) | `bookings-inside-change` |
+| `PATCH spaces/:id` | the organiser; any subset of the settings (D35), `null` clears | `time-zone`, `step-shape`, `quota-pair`, `file-question-not-yet`, `item-id` (missing or DUPLICATE), `opens-at` (an instant without `Z` or an offset), `audience-invalid`, `bookings-inside-change` (with `bookingIds`) |
+| `DELETE spaces/:id` | the organiser: the space and EVERYTHING under it (D27), other people's coming bookings included, with no notice (D13); how many is logged | `not-manager` |
+| `POST spaces/:id/resources`, `PATCH resources/:id` | the organiser; a linked account must exist; at most 60 resources per space | `unknown-account`, `too-many-resources` |
+| `DELETE resources/:id` | the organiser; only a resource that was NEVER booked (D42) | `resource-has-bookings` |
 | `PUT resources/:id/availability` | the organiser: the resource's WHOLE availability (weekly and dated lines, closures), replaced | `line-kind`, `line-date`, `line-order`, `exception-range`, `bookings-inside-change` |
 
 - **D29 UNDER THE SPACE LOCK.** A change of availability, of the zone, the mode, the step or the
-  step ceiling, and the deletion of a resource, all take the SPACE row lock - the first lock every
-  booking takes - and only then run `assertAvailabilityChangeAllowed`. No booking can be made
-  between the check and the write; a test races the two and only one ever succeeds.
+  step ceiling takes the SPACE row lock - the first lock every booking takes - and only then runs
+  `assertAvailabilityChangeAllowed`. No booking can be made between the check and the write; a
+  test races the two and only one ever succeeds. The deletion of a resource takes the same lock
+  for its own check (D42), and so do the resource cap and, for spaces, the deletion's count.
+- **WHAT D29 DOES NOT CHECK, AND THAT IS DELIBERATE.** Only a change of SHAPE (zone, mode, step,
+  step ceiling, availability) is held against the coming bookings. Every other setting - the
+  ceiling of people (`maxPeople`), the notice, the horizon, the opening, the quotas, the questions,
+  the audience - applies to the NEXT booking and leaves the live ones as they are: a booking made
+  under the old rule stays, even one that the new rule would refuse.
+- **THE BODY NEVER NAMES WHAT IS WRITTEN** (review of #2006: CodeQL's "remote property
+  injection"). A settings or resource write copies the keys of `SPACE_SETTING_KEYS` /
+  `RESOURCE_KEYS` and nothing else, so `id`, `ownerId`, `associationId` or `spaceId` in a body are
+  ignored even where no ValidationPipe whitelist strips them - proved through the HTTP layer with no
+  pipe at all. `booking-spaces.keys.spec.ts` holds both lists against their DTOs, so a setting added
+  to a DTO cannot be validated and then silently never saved.
+- **Caps** (review of #2006): 20 PERSONAL spaces per account (counted under an advisory lock on
+  the account) and 60 resources per space (under the space lock) - far above the cases that bound
+  the design (one music room; 14-21 alumni columns), low enough that one account cannot fill a
+  table. Every instant the module reads (a booking's range, a block's, the opening) must carry `Z`
+  or an offset: without one, `Date.parse` reads it in the SERVER's zone.
+- **D10's linked account and `unknown-account`, a disclosure stated.** An organiser who links a
+  resource to an id learns from `unknown-account` whether that account EXISTS. Only an organiser
+  can ask, ids are opaque, and the user picker of the screen already answers the same question for
+  any signed-in member; it is a cost accepted, not an oversight.
 - **The database's CHECKs are refused first, as codes** (`step-shape`, `quota-pair`), so a
   constraint violation is never a 500. Switching to predefined slots clears the step.
 - **Rights** are the module's: `MANAGE_BOOKINGS` on the owning entity, the owner of a personal
@@ -450,6 +472,9 @@ screens come in a pull request of their own; this half is what they write throug
   `BOOKINGS_ERASURE_STATEMENTS` (WP-B1).
 
 **Proof.** In `bookings.service.integration.spec.ts`, "the organiser (WP-B4)": rights per entity,
-the settings codes, availability written and read back, D29 naming the booking for availability,
-step and resource deletion, a booking racing an availability change (five rounds, never both), a
-linked account that must exist, a space deleted with everything.
+the settings codes, availability written and read back, D29 naming the booking for availability
+and step, a resource with history (cancelled included) never deleted and one never booked deleted
+(D42), a booking racing an availability change (five rounds, never both), a linked account that
+must exist, a space deleted with everything, duplicate question ids, a zoneless opening, an entity
+that does not exist, both caps, and a forged body (`id`, `ownerId`, `associationId`, `spaceId`)
+sent through the real HTTP layer with no ValidationPipe, changing none of them.

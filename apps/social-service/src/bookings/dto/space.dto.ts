@@ -17,11 +17,19 @@ import {
   ValidateNested,
 } from 'class-validator';
 import { FormItemDto } from '../../forms/dto/form.dto';
+import { ZONED_INSTANT, ZONED_INSTANT_MESSAGE } from './booking.dto';
 
 /** At most this many questions, availability lines and exceptions: far above any real space. */
 export const MAX_SPACE_ITEMS = 50;
 export const MAX_AVAILABILITY_LINES = 200;
 export const MAX_AVAILABILITY_EXCEPTIONS = 100;
+/**
+ * At most this many PERSONAL spaces per account, and resources per space (review of #2006): far
+ * above the cases that bound the design (one music room; 14-21 alumni columns), and low enough that
+ * one account cannot fill a table. Refused `too-many-spaces` / `too-many-resources`.
+ */
+export const MAX_PERSONAL_SPACES = 20;
+export const MAX_RESOURCES_PER_SPACE = 60;
 
 /** A wall time `HH:MM` or `HH:MM:SS`, `24:00` included (the end of a day). */
 export const WALL_TIME = /^(([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?|24:00(:00)?)$/;
@@ -97,6 +105,7 @@ export class SpaceSettingsDto {
   @IsOptional()
   @ValidateIf((_, v) => v !== null)
   @IsDateString()
+  @Matches(ZONED_INSTANT, { message: ZONED_INSTANT_MESSAGE })
   opensAt?: string | null;
 
   @IsOptional()

@@ -38,6 +38,27 @@ export type SlotForViewer = Omit<SlotView, 'bookingId' | 'blockId'> & {
   blockReason?: string | null;
 };
 
+/**
+ * THE ONE RIGHTS POLICY OF THE MODULE: may `actor` manage a space owned like this - an existing
+ * space, or one about to be created (`ownerId` = the creator)? A global admin, else
+ * `MANAGE_BOOKINGS` on the owning association (`AssociationsService.mayAct`), else - for a PERSONAL
+ * space (`associationId` null) - its owner. `ownerId` grants nothing on an association space: it
+ * only names the creator.
+ */
+export async function mayManageSpace(
+  associations: Pick<AssociationsService, 'mayAct'>,
+  space: { associationId: string | null; ownerId: string },
+  actor: Actor
+): Promise<boolean> {
+  if (actor.isGlobalAdmin) return true;
+  if (space.associationId === null) return space.ownerId === actor.userId;
+  return associations.mayAct(
+    actor.userId,
+    space.associationId,
+    AssociationPermissionFlag.MANAGE_BOOKINGS
+  );
+}
+
 const DAY_MS = 86_400_000;
 
 /** `mine` answers at most this many bookings, newest first. */
@@ -90,15 +111,9 @@ export class BookingsService {
 
   // -- Rights ------------------------------------------------------------------------------------
 
-  /** Whether the actor manages the space: see the class comment. */
-  async mayManage(space: BookingSpace, actor: Actor): Promise<boolean> {
-    if (actor.isGlobalAdmin) return true;
-    if (space.associationId === null) return space.ownerId === actor.userId;
-    return this.associations.mayAct(
-      actor.userId,
-      space.associationId,
-      AssociationPermissionFlag.MANAGE_BOOKINGS
-    );
+  /** Whether the actor manages the space: {@link mayManageSpace}. */
+  mayManage(space: BookingSpace, actor: Actor): Promise<boolean> {
+    return mayManageSpace(this.associations, space, actor);
   }
 
   private async loadSpace(spaceId: string): Promise<BookingSpace> {

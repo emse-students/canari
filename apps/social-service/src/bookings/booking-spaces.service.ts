@@ -7,31 +7,84 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, IsNull, MoreThan, Repository, type EntityManager } from 'typeorm';
+import { In, IsNull, Repository, type EntityManager } from 'typeorm';
 import { AssociationsService } from '../associations/associations.service';
-import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { UserTagService } from '../users/user-tag.service';
-import { parseAudienceCondition, type CriteriaContext } from '../pricing/validate';
+import { isForeignKeyViolation } from '../common/pg-errors';
+import { criteriaContextFor, parseAudienceCondition } from '../pricing/validate';
 import { FILE_QUESTION_TYPE } from '../forms/form-files.service';
 import { BookingSpace } from './entities/booking-space.entity';
 import { BookingResource } from './entities/booking-resource.entity';
 import { BookingAvailabilityRule } from './entities/booking-availability-rule.entity';
 import { BookingAvailabilityException } from './entities/booking-availability-exception.entity';
 import { Booking } from './entities/booking.entity';
-import { BookingSlotsService, BOOKINGS_INSIDE_CHANGE } from './booking-slots.service';
+import { BookingSlotsService } from './booking-slots.service';
 import type { AvailabilityException, AvailabilityLine, SlotConfig } from './slots';
 import { isCalendarDate, isValidTimeZone, timeToSeconds } from './zoned-time';
-import type { Actor } from './bookings.service';
-import type {
-  AvailabilityDto,
-  CreateResourceDto,
-  CreateSpaceDto,
-  ResourceDto,
-  SpaceSettingsDto,
+import { mayManageSpace, type Actor } from './bookings.service';
+import {
+  MAX_PERSONAL_SPACES,
+  MAX_RESOURCES_PER_SPACE,
+  type AvailabilityDto,
+  type CreateResourceDto,
+  type CreateSpaceDto,
+  type ResourceDto,
+  type SpaceSettingsDto,
 } from './dto/space.dto';
+import { ZONED_INSTANT } from './dto/booking.dto';
 
 /** The settings that change which shapes are bookable, so they run the D29 check (WP-B2). */
 const SHAPE_KEYS = ['timeZone', 'slotMode', 'stepMinutes', 'maxSteps'] as const;
+
+/**
+ * THE SETTINGS A REQUEST MAY WRITE ONTO A SPACE, by name - never the keys of the body (review of
+ * #2006: a body's own keys written onto the entity let `ownerId`, `associationId` or `id` through
+ * whenever the ValidationPipe's whitelist is not there to strip them). `opensAt` is converted on its
+ * own, so it is not in the list. `booking-spaces.keys.spec.ts` holds this list against the DTO.
+ */
+export const SPACE_SETTING_KEYS = [
+  'name',
+  'description',
+  'timeZone',
+  'slotMode',
+  'stepMinutes',
+  'maxSteps',
+  'nameVisibility',
+  'discoverability',
+  'audience',
+  'items',
+  'privateInfo',
+  'minNoticeMinutes',
+  'horizonDays',
+  'maxActiveBookings',
+  'maxMinutesPerPeriod',
+  'quotaPeriod',
+  'participantWithdrawMinMinutes',
+  'maxPeople',
+  'retentionDays',
+] as const satisfies readonly (keyof SpaceSettingsDto & keyof BookingSpace)[];
+
+/** The fields a request may write onto a resource, by name, for the reason above. */
+export const RESOURCE_KEYS = [
+  'name',
+  'description',
+  'privateInfo',
+  'linkedUserId',
+  'position',
+] as const satisfies readonly (keyof ResourceDto & keyof BookingResource)[];
+
+/** Copies the `keys` that `source` carries (not `undefined`) onto `target`, and nothing else. */
+function copyKeys<K extends string>(
+  target: object,
+  source: Partial<Record<K, unknown>>,
+  keys: readonly K[]
+) {
+  const into = target as Record<K, unknown>;
+  for (const key of keys) {
+    const value = source[key];
+    if (value !== undefined) into[key] = value;
+  }
+}
 
 /** `HH:MM` and `HH:MM:SS` stored alike, so the editor reads back what it wrote. */
 const fullTime = (t: string) => (t.length === 5 ? `${t}:00` : t);
@@ -67,22 +120,11 @@ export class BookingSpacesService {
 
   // -- Rights ------------------------------------------------------------------------------------
 
-  /** May the actor manage spaces of this entity (or a personal one, `associationId` null)? */
-  private async mayManageOwner(associationId: string | null, ownerId: string, actor: Actor) {
-    if (actor.isGlobalAdmin) return true;
-    if (associationId === null) return ownerId === actor.userId;
-    return this.associations.mayAct(
-      actor.userId,
-      associationId,
-      AssociationPermissionFlag.MANAGE_BOOKINGS
-    );
-  }
-
   /** The space, refused 404 when absent and 403 `not-manager` when the actor does not manage it. */
   private async managedSpace(spaceId: string, actor: Actor): Promise<BookingSpace> {
     const space = await this.spaces.findOneBy({ id: spaceId });
     if (!space) throw new NotFoundException({ code: 'space-not-found' });
-    if (!(await this.mayManageOwner(space.associationId, space.ownerId, actor))) {
+    if (!(await mayManageSpace(this.associations, space, actor))) {
       throw new ForbiddenException({ code: 'not-manager' });
     }
     return space;
@@ -104,7 +146,10 @@ export class BookingSpacesService {
    */
   async managedList(associationId: string | null, actor: Actor) {
     this.logger.debug(`[BOOKINGS] managedList association=${associationId ?? 'personal'}`);
-    if (associationId !== null && !(await this.mayManageOwner(associationId, '', actor))) {
+    if (
+      associationId !== null &&
+      !(await mayManageSpace(this.associations, { associationId, ownerId: '' }, actor))
+    ) {
       throw new ForbiddenException({ code: 'not-manager' });
     }
     const rows = await this.spaces.find({
@@ -190,21 +235,17 @@ export class BookingSpacesService {
     if (items.some((i) => i.type === FILE_QUESTION_TYPE)) {
       throw new BadRequestException({ code: 'file-question-not-yet' });
     }
-    if (items.some((i) => !i.id)) throw new BadRequestException({ code: 'item-id' });
+    // Every question its own id: an answer, a condition and the export are keyed by it.
+    const ids = items.map((i) => i.id);
+    if (ids.some((id) => !id) || new Set(ids).size !== ids.length) {
+      throw new BadRequestException({ code: 'item-id' });
+    }
     const withCondition = items.filter((i) => i.showIf != null);
     if (next.audience == null && withCondition.length === 0) return;
     const tiers = next.associationId
       ? await this.userTags.listCotisationTiers(next.associationId)
       : [];
-    const ctx: CriteriaContext = {
-      tierKeys: tiers.map((t) => t.variantKey),
-      questions: new Map(
-        items.map((i: { id?: string; options?: { id?: string }[] }) => [
-          i.id as string,
-          new Set((i.options ?? []).map((o) => o.id).filter((x): x is string => !!x)),
-        ])
-      ),
-    };
+    const ctx = criteriaContextFor(tiers, items as { id?: string; options?: { id?: string }[] }[]);
     try {
       if (next.audience != null) {
         next.audience = parseAudienceCondition(next.audience, ctx, 'audience');
@@ -216,13 +257,21 @@ export class BookingSpacesService {
     }
   }
 
-  /** Copies the settings a DTO carries onto `space`; absent keys are left as they are. */
+  /**
+   * Copies the settings a DTO carries onto `space` - the names of {@link SPACE_SETTING_KEYS} only,
+   * whatever else the body holds; absent keys are left as they are.
+   */
   private applySettings(space: BookingSpace, dto: SpaceSettingsDto) {
-    const { opensAt, ...rest } = dto;
-    for (const [k, v] of Object.entries(rest)) {
-      if (v !== undefined) (space as unknown as Record<string, unknown>)[k] = v;
+    copyKeys(space, dto, SPACE_SETTING_KEYS);
+    const { opensAt } = dto;
+    if (opensAt !== undefined) {
+      // The DTO's shape, held here too: an instant without its zone is read in the server's.
+      const ms = typeof opensAt === 'string' ? Date.parse(opensAt) : NaN;
+      if (opensAt !== null && (!ZONED_INSTANT.test(String(opensAt)) || !Number.isFinite(ms))) {
+        throw new BadRequestException({ code: 'opens-at' });
+      }
+      space.opensAt = opensAt === null ? null : new Date(ms);
     }
-    if (opensAt !== undefined) space.opensAt = opensAt === null ? null : new Date(opensAt);
     // A slots space carries no step: switching the mode clears it, so the CHECK never sees a mix.
     if (space.slotMode === 'slots') {
       space.stepMinutes = null;
@@ -230,27 +279,46 @@ export class BookingSpacesService {
     }
   }
 
-  /** A new space (D2, D16). An entity's space needs `MANAGE_BOOKINGS` on that entity. */
+  /**
+   * A new space (D2, D16). An entity's space needs `MANAGE_BOOKINGS` on that entity; an entity that
+   * does not exist (a global admin naming a stale id) is `association-not-found`, never a 500. A
+   * person holds at most {@link MAX_PERSONAL_SPACES} personal spaces, counted under a lock on
+   * their id so two creations at once cannot both pass the count.
+   */
   async create(dto: CreateSpaceDto, actor: Actor) {
     const associationId = dto.associationId ?? null;
     this.logger.debug(`[BOOKINGS] create space association=${associationId ?? 'personal'}`);
-    if (associationId !== null && !(await this.mayManageOwner(associationId, '', actor))) {
+    const owner = { associationId, ownerId: actor.userId };
+    if (!(await mayManageSpace(this.associations, owner, actor))) {
       throw new ForbiddenException({ code: 'not-manager' });
     }
-    const space = this.spaces.create({
-      ownerId: actor.userId,
-      associationId,
-      name: dto.name,
-      slotMode: 'step',
-      stepMinutes: 30,
-      maxSteps: 4,
-    });
-    const { associationId: _ignored, ...settings } = dto;
-    this.applySettings(space, settings);
+    const space = this.spaces.create({ ...owner, slotMode: 'step', stepMinutes: 30, maxSteps: 4 });
+    this.applySettings(space, dto);
     await this.assertSettingsValid(space);
-    const saved = await this.spaces.save(space);
-    this.logger.log(`[BOOKINGS] space created id=${saved.id.slice(0, 8)}`);
-    return { id: saved.id };
+    try {
+      const saved = await this.spaces.manager.transaction(async (m) => {
+        if (associationId === null) {
+          await m.query(`SELECT pg_advisory_xact_lock(hashtext('booking-personal:' || $1))`, [
+            actor.userId,
+          ]);
+          const held = await m.count(BookingSpace, {
+            where: { ownerId: actor.userId, associationId: IsNull() },
+          });
+          if (held >= MAX_PERSONAL_SPACES) {
+            throw new ConflictException({ code: 'too-many-spaces', max: MAX_PERSONAL_SPACES });
+          }
+        }
+        return m.save(BookingSpace, space);
+      });
+      this.logger.log(`[BOOKINGS] space created id=${saved.id.slice(0, 8)}`);
+      return { id: saved.id };
+    } catch (err) {
+      if (isForeignKeyViolation(err)) {
+        this.logger.warn(`[BOOKINGS] create refused: association ${associationId} does not exist`);
+        throw new NotFoundException({ code: 'association-not-found' });
+      }
+      throw err;
+    }
   }
 
   /**
@@ -282,12 +350,28 @@ export class BookingSpacesService {
     });
   }
 
-  /** Deletes the space and EVERYTHING under it, history included (D27). */
-  async remove(spaceId: string, actor: Actor) {
+  /**
+   * Deletes the space and EVERYTHING under it, history included (D27) - other people's COMING
+   * bookings too, hard-deleted with no notice (D13: no notification in v1). How many is logged, so
+   * a deletion that erased someone's evening is never silent in the logs.
+   */
+  async remove(spaceId: string, actor: Actor, nowMs: number) {
     this.logger.debug(`[BOOKINGS] remove space=${spaceId}`);
     await this.managedSpace(spaceId, actor);
-    await this.spaces.delete({ id: spaceId });
-    this.logger.log(`[BOOKINGS] space deleted id=${spaceId.slice(0, 8)}`);
+    const erased = await this.spaces.manager.transaction(async (m) => {
+      await this.lockSpace(m, spaceId);
+      const [{ n }]: { n: number }[] = await m.query(
+        `SELECT count(*)::int AS n FROM bookings b JOIN booking_resources r ON r.id = b."resourceId"
+          WHERE r."spaceId" = $1 AND b."cancelledAt" IS NULL AND b."startsAt" > $2
+            AND b."holderId" <> $3`,
+        [spaceId, new Date(nowMs), actor.userId]
+      );
+      await m.delete(BookingSpace, { id: spaceId });
+      return n;
+    });
+    this.logger.log(
+      `[BOOKINGS] space deleted id=${spaceId.slice(0, 8)} comingBookingsOfOthersErased=${erased}`
+    );
     return { ok: true };
   }
 
@@ -300,52 +384,65 @@ export class BookingSpacesService {
     if (rows.length === 0) throw new BadRequestException({ code: 'unknown-account' });
   }
 
-  private normaliseLink(dto: ResourceDto) {
-    if (typeof dto.linkedUserId === 'string') {
-      dto.linkedUserId = dto.linkedUserId.trim().toLowerCase() || null;
+  /** The resource fields of a request, by name ({@link RESOURCE_KEYS}), the link normalised. */
+  private resourceFields(dto: ResourceDto): Partial<BookingResource> {
+    const fields: Partial<BookingResource> = {};
+    copyKeys(fields, dto, RESOURCE_KEYS);
+    if (typeof fields.linkedUserId === 'string') {
+      fields.linkedUserId = fields.linkedUserId.trim().toLowerCase() || null;
     }
+    return fields;
   }
 
+  /**
+   * A new resource. At most {@link MAX_RESOURCES_PER_SPACE} per space, counted under the space
+   * lock so two additions at once cannot both pass the count.
+   */
   async addResource(spaceId: string, dto: CreateResourceDto, actor: Actor) {
     this.logger.debug(`[BOOKINGS] addResource space=${spaceId}`);
     await this.managedSpace(spaceId, actor);
-    this.normaliseLink(dto);
-    await this.assertAccount(this.resources.manager, dto.linkedUserId);
-    const saved = await this.resources.save(this.resources.create({ ...dto, spaceId }));
-    this.logger.log(`[BOOKINGS] resource added id=${saved.id.slice(0, 8)}`);
-    return { id: saved.id };
+    const fields = this.resourceFields(dto);
+    return this.spaces.manager.transaction(async (m) => {
+      await this.lockSpace(m, spaceId);
+      await this.assertAccount(m, fields.linkedUserId);
+      if ((await m.count(BookingResource, { where: { spaceId } })) >= MAX_RESOURCES_PER_SPACE) {
+        throw new ConflictException({ code: 'too-many-resources', max: MAX_RESOURCES_PER_SPACE });
+      }
+      const saved = await m.save(
+        BookingResource,
+        m.create(BookingResource, { ...fields, spaceId })
+      );
+      this.logger.log(`[BOOKINGS] resource added id=${saved.id.slice(0, 8)}`);
+      return { id: saved.id };
+    });
   }
 
   async updateResource(resourceId: string, dto: ResourceDto, actor: Actor) {
     this.logger.debug(`[BOOKINGS] updateResource resource=${resourceId}`);
     const { resource } = await this.managedResource(resourceId, actor);
-    this.normaliseLink(dto);
-    await this.assertAccount(this.resources.manager, dto.linkedUserId);
-    for (const [k, v] of Object.entries(dto)) {
-      if (v !== undefined) (resource as unknown as Record<string, unknown>)[k] = v;
-    }
+    const fields = this.resourceFields(dto);
+    await this.assertAccount(this.resources.manager, fields.linkedUserId);
+    Object.assign(resource, fields);
     await this.resources.save(resource);
     return { ok: true };
   }
 
   /**
-   * Deletes a resource. Refused while it has COMING live bookings, naming them (D29 applied to the
-   * whole resource); its past history goes with it, as with a space (D27).
+   * Deletes a resource that has NEVER BEEN BOOKED (D42, review of #2006). A booking - past,
+   * coming or cancelled - is history, and history is frozen while its space exists (D15): only
+   * deleting the SPACE erases it (D27). So a resource with any booking is refused
+   * `resource-has-bookings`; the organiser closes it instead (its availability, or a closure).
+   * Checked under the space lock, so no booking lands between the check and the delete.
    */
-  async removeResource(resourceId: string, actor: Actor, nowMs: number) {
+  async removeResource(resourceId: string, actor: Actor) {
     this.logger.debug(`[BOOKINGS] removeResource resource=${resourceId}`);
     const { space } = await this.managedResource(resourceId, actor);
     return this.spaces.manager.transaction(async (m) => {
       await this.lockSpace(m, space.id);
-      const coming = await m.find(Booking, {
-        where: { resourceId, cancelledAt: IsNull(), startsAt: MoreThan(new Date(nowMs)) },
-        order: { startsAt: 'ASC' },
-      });
-      if (coming.length) {
-        throw new ConflictException({
-          code: BOOKINGS_INSIDE_CHANGE,
-          bookingIds: coming.map((b) => b.id),
-        });
+      const booked = await m.count(Booking, { where: { resourceId } });
+      if (booked > 0) {
+        this.logger.debug(`[BOOKINGS] removeResource refused: ${booked} booking(s) of history`);
+        throw new ConflictException({ code: 'resource-has-bookings' });
       }
       await m.delete(BookingResource, { id: resourceId });
       this.logger.log(`[BOOKINGS] resource deleted id=${resourceId.slice(0, 8)}`);

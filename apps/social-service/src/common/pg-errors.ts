@@ -27,6 +27,17 @@ export function isExclusionViolation(err: unknown): boolean {
   return sqlState(err) === EXCLUSION_VIOLATION;
 }
 
+/** Postgres error code for a row naming a parent that does not exist. */
+const FOREIGN_KEY_VIOLATION = '23503';
+
+/**
+ * Whether a driver error is Postgres refusing a row whose foreign key names nothing - an id the
+ * caller sent that does not exist. Read from the SQLSTATE, like the others.
+ */
+export function isForeignKeyViolation(err: unknown): boolean {
+  return sqlState(err) === FOREIGN_KEY_VIOLATION;
+}
+
 /** Postgres error code for a transaction chosen as the victim of a deadlock. */
 const DEADLOCK_DETECTED = '40P01';
 
