@@ -968,7 +968,10 @@ async function handleKnownGroup({
    * consumes its generation exactly like a message does, and the replay would trip on it the same
    * way.
    */
+  let consumedNoted = false;
   const noteConsumed = (): void => {
+    if (consumedNoted) return;
+    consumedNoted = true;
     noteFrameProcessed(groupId, fingerprint);
     markHistoryFrameConsumed(userId, groupId, fingerprint);
   };
@@ -987,6 +990,11 @@ async function handleKnownGroup({
       // as a forked device) does NOT catch up the divergent branch: resetting the timer
       // here would permanently prevent the forget+re-welcome escalation that fixes the fork (H7).
       clearEpochGap(groupId);
+      // THE MARK BEFORE THE CHECKPOINT: `persistNow` exports the ratchet AFTER a yield, and a mark
+      // added later than that export finds the state clean, so nothing raises the flag again and the
+      // commit epoch becomes durable WITHOUT its mark (a cold replay then fails `wrong-epoch`).
+      // The commit consumed its generation the moment it merged; say so first.
+      noteConsumed();
       statePersister.persistNow();
       // THE COMMIT NAMED US, SO THIS IS WHERE THE EVICTION IS LEARNT. A Remove commit carrying our
       // own leaf leaves the group inactive the instant it merges, and asking is one cheap call on a

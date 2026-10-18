@@ -193,6 +193,13 @@ export class SqliteStorage implements IStorage {
     await this.db.execute(
       'CREATE INDEX IF NOT EXISTS idx_messages_conv ON messages(conversation_id)'
     );
+    // The page read's index (`getMessagesPage`): with it, `WHERE conversation_id = ? ORDER BY
+    // timestamp DESC LIMIT n` walks n entries backwards; without it SQLite collected the whole
+    // conversation into a temp B-tree to sort it (`EXPLAIN QUERY PLAN`: USE TEMP B-TREE FOR ORDER BY).
+    // Unconditional like the one above, so an existing database gains it on its next open.
+    await this.db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_messages_conv_time ON messages(conversation_id, timestamp)'
+    );
 
     // Outbox: queued outgoing messages. Cleartext columns so sorting/re-keying works without the
     // device key; the sensitive payload (text/replyTo/media) is encrypted in cipher_text
@@ -646,6 +653,7 @@ export class SqliteStorage implements IStorage {
    * Rows are fetched in descending timestamp order (most recent first) then re-sorted
    * ascending before return so callers always receive chronological order.
    * Pass `beforeTimestamp` (Unix ms) to implement "load older messages" infinite scroll.
+   * Both statements are answered by `idx_messages_conv_time` with no sort step.
    */
   async getMessagesPage(
     conversationId: string,
@@ -700,7 +708,9 @@ export class SqliteStorage implements IStorage {
     return rows.map((row) => ({
       id: row.id,
       conversationId: row.conversation_id,
-      timestamp: row.timestamp,
+      // Read like every other row of this table: on Android the plugin returns INTEGER columns as
+      // strings, and a backup that carried one wrote a string timestamp into the browser's store.
+      timestamp: rowTimestampMs(row.timestamp),
       iv: base64ToUint8(row.iv),
       cipherText: base64ToUint8(row.cipher_text),
     }));

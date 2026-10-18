@@ -259,6 +259,36 @@ held the manager lock across a checkpoint's write before this change either.
 | #1774 | a catch-up batch is merged with one sort                  | `utils/chat/messageOrder.test.ts` (1 sort; equal to the old loop on random input)                        |
 | #1775 | delete 16 exports nothing calls                           | grep evidence in the PR                                                                                  |
 
+## Findings 5, 9 and 10 - built 2026-10-17 (draft PR `perf/pk13-message-storage`)
+
+**5 - a page reads a page.** IndexedDB v11 adds `byConversationTime` (`[conversationId, timestamp]`)
+on `messages`; `getMessagesPage` walks it with a reverse cursor and stops at `limit`. The index orders
+EVERY number before every string, and a backup taken on Android carried timestamps as the SQLite
+plugin returned them - strings - so the v11 upgrade rewrites those rows as numbers (jumping per
+conversation past its numeric keys, so it reads one entry per conversation plus the rows it repairs),
+`importEncryptedRow` normalises its input, and `SqliteStorage.getAllEncryptedRows` reads the column
+like every other read of that table. A row with no readable timestamp is counted on an `error` line
+at upgrade time: no page can place it. SQLite gains `idx_messages_conv_time`, and `EXPLAIN QUERY PLAN`
+on the real `init` (via `node:sqlite`) shows the index used with no temp B-tree. Pinned by
+`db/messagesPage.test.ts` (4 cursor steps for a 5-row page of 200; the v10 -> v11 upgrade with a
+string timestamp; the plan). Owed: the 28-31 ms per page re-measured on a 5k conversation.
+
+**10 - the live mark waits for the checkpoint.** `markHistoryFrameConsumed` no longer flushes on
+its own microtask: it registers with the checkpoint-bound marks the replay already used
+(`commitPendingHistoryMarks`), so a drain of N frames writes each touched ledger ONCE, at the
+checkpoint that makes their ratchet advance durable - and never before it, which was the direction
+[history-reconciliation](../protocols/history-reconciliation.md#a-cold-start-re-accuses-frames-it-already-read-the-mark-must-be-one-write-with-the-advance-tab-3b-measured-2026-09-08)
+names as the worse one. Pinned by `history.consumedFrames.test.ts` (40 frames with an await between
+each: 0 writes, then 1 at the checkpoint).
+
+**9 - per-bubble listeners, the window left as it is.** The toolbar listens for Escape only while a
+popover is open (was a `<svelte:window>` per bubble), and `onCoarsePointerChange` shares ONE
+`MediaQueryList` listener among its subscribers. The non-passive `touchmove` stays per bubble: it
+is what lets a reply swipe `preventDefault` the tab swipe, and moving it to the list is a gesture
+change owed a phone. **The grow-only window is NOT changed**: it is a deliberate design
+(`renderWindow.ts` says why sliding failed three ways) and the DOM count on a seeded 5k thread was
+still not taken - that measurement decides whether shrinking is worth reopening.
+
 ## How to re-measure
 
 ```sh

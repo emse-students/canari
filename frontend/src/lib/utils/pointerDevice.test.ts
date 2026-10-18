@@ -64,6 +64,41 @@ describe('pointerDevice', () => {
     expect(listeners.size).toBe(0);
   });
 
+  it('puts ONE listener on the query however many subscribe - one per bubble is what it replaced', () => {
+    const { listeners } = stubMatchMedia(false);
+    const seen: boolean[][] = [[], [], []];
+    const stops = seen.map((log) => onCoarsePointerChange((coarse) => log.push(coarse)));
+    expect(listeners.size).toBe(1);
+
+    for (const fn of listeners) fn({ matches: true } as MediaQueryListEvent);
+    expect(seen).toEqual([[true], [true], [true]]);
+
+    stops[0]();
+    stops[0](); // a second teardown of the same subscription takes nothing else down
+    expect(listeners.size).toBe(1);
+    stops[1]();
+    stops[2]();
+    expect(listeners.size).toBe(0);
+  });
+
+  it('still notifies every subscriber when one of them throws', () => {
+    const { listeners } = stubMatchMedia(false);
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const seen: boolean[] = [];
+    const stopBad = onCoarsePointerChange(() => {
+      throw new Error('boom');
+    });
+    const stopGood = onCoarsePointerChange((coarse) => seen.push(coarse));
+
+    for (const fn of listeners) fn({ matches: true } as MediaQueryListEvent);
+
+    expect(seen).toEqual([true]);
+    expect(error).toHaveBeenCalledTimes(1);
+    stopBad();
+    stopGood();
+    error.mockRestore();
+  });
+
   it('returns a teardown that is safe to call when nothing could be observed', () => {
     (window as { matchMedia?: unknown }).matchMedia = undefined;
     const stop = onCoarsePointerChange(vi.fn());

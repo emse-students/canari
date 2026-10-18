@@ -2230,6 +2230,14 @@ silent real loss, strictly worse than a false accusation. The mark and the advan
 one write: the mark belongs INSIDE the checkpoint, or "have I already consumed this ciphertext" should be
 answered FROM the MLS state rather than from a parallel ledger that can disagree with it.
 
+**The live half followed on 2026-10-17** (draft PR `perf/pk13-message-storage`): `markHistoryFrameConsumed`
+no longer writes on its own microtask, it registers with the same checkpoint-bound marks as the replay, so
+EVERY fingerprint now becomes durable with the checkpoint holding its advance and never before it. Found
+through cost rather than correctness - a drain awaits between frames, so the microtask re-stringified the
+whole set per frame ([performance-audit](../frontend/performance-audit-2026-10-12.md#findings-5-9-and-10---built-2026-10-17-draft-pr-perfpk13-message-storage)).
+One path still writes `mls.bin` outside `persistCheckpoint` - Tauri's `live-ahead` resume persist - and
+leaves its marks for the next checkpoint: the survivable direction, a re-accusation if killed in between.
+
 **Still unmeasured**: which path spends the generations - live delivery, the queue drain, or the archive
 replay's own successful pages. A console tailer cannot answer it (the row destroys the CDP target it would
 attach to); it needs a purpose-built reproduction that brings W1 down between a known send and a known
