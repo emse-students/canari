@@ -1908,12 +1908,12 @@ answers "not an address" and skips the literal check entirely. `unbracketHost` s
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/calls/initiate` | Verify membership, bind the room ID to the group (Redis `call:room:<id>`, TTL = 60 s ring window + 4 h), return a room token + room ID + `ringTimeoutMs` for the in-repo `call-service` |
+| POST | `/api/calls/initiate` | Verify membership, bind the room ID to the group and its caller (Redis `call:room:<id>`, TTL = 60 s ring window + 4 h), return a room token + room ID + `ringTimeoutMs` for the in-repo `call-service`. The answer window is NOT open yet: `/api/calls/ring` opens it |
 | GET | `/api/calls/room-token` | Get room token for recipient: 403 for a room bound to another group, 410 for an unknown/expired room or after the ring window ([calls lot 1](../frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)) |
 | GET | `/api/calls/ice-servers` | Get ICE server configuration |
 | POST | `/api/calls/presence` | Report device presence in call |
 | GET | `/api/calls/sibling-status` | Check sibling device call status |
-| POST | `/api/calls/ring` | Fan out an incoming-call ring to all group members (WP-XP-5) |
+| POST | `/api/calls/ring` | Open the room's 60 s answer window (`call:room:<id>:answer_by`, one `SET NX` expiring with the binding; once, from its caller only; 403 otherwise, 410 for an unknown or expired room), then fan out an incoming-call ring to all group members (WP-XP-5) |
 | POST | `/api/calls/ring-end` | Stop the ring everywhere (reason: answered/cancelled/ended) |
 
 The room id returned by `/api/calls/initiate` **is** the `callId` used by every other call route and

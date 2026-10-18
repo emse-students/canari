@@ -51,9 +51,18 @@ export interface InitiateCallResponse {
  */
 interface CallRoomBinding {
   groupId: string;
-  /** Epoch ms on THIS server's clock after which no callee is issued a token. */
-  answerBy: number;
+  /** The user who opened the room: the only one who may open its ring window. */
+  callerId: string;
 }
+
+/*
+ * The ring window lives in its OWN key, `call:room:<id>:answer_by`: epoch ms on THIS server's clock
+ * after which no callee is issued a token. Absent until the caller's `POST /calls/ring`, so the
+ * window starts when the ringing does, not when the caller began preparing (ICE servers, a first
+ * microphone prompt, key derivation, the signalling join all come in between). A key of its own is
+ * what makes "opens once" ATOMIC: one `SET NX`, no read-then-write a concurrent ring could race,
+ * and the binding is never rewritten, so its TTL is never restarted.
+ */
 
 /** Stored in Redis while a user device is actively in a call. */
 export interface UserCallPresence {
@@ -95,6 +104,10 @@ function userCallPresenceKey(userId: string): string {
 
 function callRoomKey(roomId: string): string {
   return `call:room:${roomId}`;
+}
+
+function callAnswerByKey(roomId: string): string {
+  return `call:room:${roomId}:answer_by`;
 }
 
 /** Monthly bucket (e.g. `turn:usage:2026-06`) accumulating estimated relayed megabytes. */
@@ -154,13 +167,10 @@ export class CallsService {
 
     // Written BEFORE the room id leaves this server, so no callee can ever ask about a room this
     // binding does not yet name.
-    const binding: CallRoomBinding = {
-      groupId,
-      answerBy: Date.now() + CALL_RING_TIMEOUT_SEC * 1000,
-    };
+    // The window is NOT opened here: see `callAnswerByKey` and `ringGroup`.
     await this.redis.set(
       callRoomKey(roomId),
-      JSON.stringify(binding),
+      JSON.stringify({ groupId, callerId: userId } satisfies CallRoomBinding),
       'EX',
       CALL_ROOM_BINDING_TTL_SEC
     );
@@ -211,7 +221,17 @@ export class CallsService {
       );
       throw new ForbiddenException('This call does not belong to this conversation');
     }
-    if (Date.now() > binding.answerBy) {
+    const answerByRaw = await this.redis.get(callAnswerByKey(roomId));
+    const answerBy = answerByRaw === null ? null : Number(answerByRaw);
+    if (answerBy === null || !Number.isFinite(answerBy)) {
+      // The caller never reached `ring` (the client rings BEFORE its invite leaves, so no callee
+      // can normally see this), or the value is not a number - a defect of this service.
+      this.logger.warn(
+        `[call] join-token REFUSED room=${roomId} user=${userId}: the ring window never opened (${answerByRaw ?? 'absent'})`
+      );
+      throw new GoneException('This call is over');
+    }
+    if (Date.now() > answerBy) {
       this.logger.log(
         `[call] join-token REFUSED room=${roomId} user=${userId}: the ring window closed`
       );
@@ -229,17 +249,75 @@ export class CallsService {
     return { roomToken };
   }
 
-  /** The binding `initiate` wrote for `roomId`, or `null` when there is none (expired or never). */
+  /**
+   * Opens the room's ring window - ONCE, from the room's caller. `SET NX` is the whole of "once":
+   * two concurrent rings cannot both write, and a retry cannot extend the window. The window key
+   * expires with the binding (its remaining PTTL), never later. Throws the same answers as
+   * `room-token` for a room that is not this caller's to ring.
+   */
+  private async openRingWindow(callerId: string, groupId: string, roomId: string): Promise<void> {
+    const binding = await this.readRoomBinding(roomId);
+    if (!binding) {
+      this.logger.warn(`[ring] REFUSED call=${roomId} caller=${callerId}: no such room`);
+      throw new GoneException('This call is over');
+    }
+    if (binding.groupId !== groupId || binding.callerId !== callerId) {
+      this.logger.warn(
+        `[ring] REFUSED call=${roomId} caller=${callerId} group=${groupId}: not this caller's room`
+      );
+      throw new ForbiddenException('This call does not belong to this caller');
+    }
+    const remainingMs = await this.redis.pttl(callRoomKey(roomId));
+    if (remainingMs <= 0) {
+      // Expired between the read and now (or has no TTL, which `initiate` never writes).
+      this.logger.warn(
+        `[ring] REFUSED call=${roomId} caller=${callerId}: the room expired (pttl=${remainingMs})`
+      );
+      throw new GoneException('This call is over');
+    }
+    const opened = await this.redis.set(
+      callAnswerByKey(roomId),
+      String(Date.now() + CALL_RING_TIMEOUT_SEC * 1000),
+      'PX',
+      remainingMs,
+      'NX'
+    );
+    if (opened !== 'OK') {
+      this.logger.warn(`[ring] call=${roomId} rung again - the first window stands`);
+    }
+  }
+
+  /**
+   * The binding `initiate` wrote for `roomId`, or `null` when there is none (expired or never) or
+   * it is not a binding this version can trust. Validated, never cast: a value is evidence only of
+   * the shape it was written in.
+   */
   private async readRoomBinding(roomId: string): Promise<CallRoomBinding | null> {
     const raw = await this.redis.get(callRoomKey(roomId));
     if (!raw) return null;
+    let parsed: unknown;
     try {
-      return JSON.parse(raw) as CallRoomBinding;
+      parsed = JSON.parse(raw);
     } catch (e) {
       // Only `initiate` writes this key, so an unparseable value is a defect here, named as one.
       this.logger.error(`[call] room binding for ${roomId} is unreadable: ${String(e)}`);
       return null;
     }
+    const value = parsed as Partial<CallRoomBinding> | null;
+    if (typeof value?.groupId === 'string' && typeof value.callerId === 'string') {
+      return { groupId: value.groupId, callerId: value.callerId };
+    }
+    if (typeof value?.groupId === 'string') {
+      // The lot 1 shape (#1997, no `callerId`): a room opened by the build before this one. Nobody
+      // may ring it, so it is refused like an expired room. The gap is ONE deploy wide and dev
+      // only (calls are off in production), and closes on its own when those bindings expire.
+      this.logger.warn(
+        `[call] room binding for ${roomId} predates the ring window (no callerId) - refused`
+      );
+      return null;
+    }
+    this.logger.error(`[call] room binding for ${roomId} has no usable shape - refused`);
+    return null;
   }
 
   /**
@@ -464,6 +542,8 @@ export class CallsService {
   ): Promise<{ rang: number }> {
     this.logger.debug(`[ring] ringGroup caller=${callerId} group=${groupId} call=${callId}`);
     await this.assertMembership(callerId, groupId, 'ring');
+    // BEFORE the fan-out: the window must not depend on how long FCM and APNs take to answer.
+    await this.openRingWindow(callerId, groupId, callId);
 
     const members = await this.groupMemberRepo.find({
       where: { groupId },
