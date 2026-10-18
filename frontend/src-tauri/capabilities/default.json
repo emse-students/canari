@@ -25,6 +25,7 @@
     "keystore:default",
     "customtabs:default",
     "gallery:default",
+    "restore:default",
     "http:default",
     {
       "identifier": "http:allow-fetch",

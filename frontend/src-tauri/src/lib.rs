@@ -841,7 +841,9 @@ pub fn run() {
         .plugin(tauri_plugin_keystore::init())
         .plugin(tauri_plugin_deep_link::init())
         .plugin(tauri_plugin_customtabs::init())
-        .plugin(tauri_plugin_gallery::init());
+        .plugin(tauri_plugin_gallery::init())
+        // Android's Restore Credentials (WP-RESTORE-1); its commands answer Unsupported on iOS.
+        .plugin(tauri_plugin_restore::init());
 
     // The native tab bar, iOS only: see the dependency's comment in Cargo.toml.
     #[cfg(target_os = "ios")]
