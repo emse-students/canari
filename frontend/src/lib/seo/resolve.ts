@@ -328,10 +328,16 @@ export function mergeSeo(base: SeoMeta, override?: Partial<SeoMeta> | null): Seo
   };
 }
 
+/**
+ * What `formatDocumentTitle` appends. Exported so a caller fitting a title into a length budget
+ * (`og:title`, `<title>`) can subtract it rather than restate it.
+ */
+export const DOCUMENT_TITLE_SUFFIX = ` - ${SITE.name}`;
+
 /** Ensures titles end with the site name when appropriate. */
 export function formatDocumentTitle(title: string): string {
   const t = title.trim();
   if (!t) return SITE.name;
   if (t.toLowerCase().includes(SITE.name.toLowerCase())) return t;
-  return `${t} - ${SITE.name}`;
+  return `${t}${DOCUMENT_TITLE_SUFFIX}`;
 }
