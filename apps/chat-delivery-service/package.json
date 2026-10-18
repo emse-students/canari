@@ -6,7 +6,7 @@
     "build": "nest build",
     "start": "ts-node src/main.ts",
     "start:dev": "nest start --watch",
-    "test": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --passWithNoTests",
+    "test": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js",
     "test:boot": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --config ./jest-boot.json --runInBand",
     "lint": "oxlint -c ../../.oxlintrc.nest.json .",
     "lint:fix": "oxlint -c ../../.oxlintrc.nest.json --fix .",
