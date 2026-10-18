@@ -90,6 +90,8 @@ maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
     });
     await ds.initialize();
     await ds.synchronize();
+    // The outbox table (migration 093) must exist for every send below.
+    await ds.query(fanoutMigration);
     publish = jest.fn().mockResolvedValue(undefined);
     const members = ds.getRepository(ChannelMember);
     service = new ChannelService(
@@ -176,9 +178,10 @@ maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
     await q(fanoutMigration);
     await q(fanoutMigration);
     const sent = await send(ME);
-    await q(`INSERT INTO channel_message_fanout ("messageId", payload) VALUES ($1, '{}'::jsonb)`, [
-      sent.id,
-    ]);
+    await q(
+      `INSERT INTO channel_message_fanout ("messageId", payload) VALUES ($1, '{}'::jsonb) ON CONFLICT DO NOTHING`,
+      [sent.id]
+    );
     await q(`DELETE FROM channel_messages WHERE id = $1`, [sent.id]);
     const left: unknown[] = await q(`SELECT 1 FROM channel_message_fanout WHERE "messageId" = $1`, [
       sent.id,
@@ -188,6 +191,60 @@ maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
     await published();
     publish.mockClear();
     pushes.mockClear();
+  });
+
+  /** The outbox entries still in the table: what a dead process would have left. */
+  const entries = async (): Promise<string[]> =>
+    (await q(`SELECT "messageId" FROM channel_message_fanout`)).map(
+      (r: { messageId: string }) => r.messageId
+    );
+  /** Resolves once the fan-out of a send has finished: its entry is gone. */
+  const settled = async () => {
+    for (let round = 0; round < 200 && (await entries()).length > 0; round += 1) {
+      await new Promise((resolve) => setImmediate(resolve));
+    }
+  };
+
+  it('a send whose fan-out never completed leaves its entry, and the boot drain finishes it', async () => {
+    await settled();
+    publish.mockClear();
+    pushes.mockClear();
+    // The process "dies" after the commit: the broadcast is refused, so nothing is handed off.
+    publish.mockRejectedValueOnce(new Error('killed before the broadcast'));
+    const lost = await send(ME);
+    await new Promise((resolve) => setImmediate(resolve));
+    await settled();
+    expect(await entries()).toEqual([lost.id]);
+
+    publish.mockClear();
+    pushes.mockClear();
+    expect(await service.drainPendingFanouts()).toBe(1);
+    expect(publish).toHaveBeenCalledWith(
+      'channel.message.created',
+      expect.objectContaining({ messageId: lost.id, channelId: SALON }),
+      expect.anything()
+    );
+    expect(pushes).toHaveBeenCalledTimes(1);
+    expect(await entries()).toEqual([]);
+    // A second drain finds nothing to do.
+    publish.mockClear();
+    pushes.mockClear();
+    expect(await service.drainPendingFanouts()).toBe(0);
+    expect(publish).not.toHaveBeenCalled();
+    // Leave the table as the later tests expect it: their counts are of THEIR rows.
+    await q(`DELETE FROM channel_messages WHERE id = $1`, [lost.id]);
+  });
+
+  it('a send whose outbox entry cannot be written leaves no row at all', async () => {
+    await settled();
+    const before = await rows();
+    await q(`ALTER TABLE channel_message_fanout RENAME TO channel_message_fanout_away`);
+    try {
+      await expect(send(ME)).rejects.toBeDefined();
+    } finally {
+      await q(`ALTER TABLE channel_message_fanout_away RENAME TO channel_message_fanout`);
+    }
+    expect(await rows()).toBe(before);
   });
 
   it('a repeat is answered with the stored row: one row, one broadcast, one push', async () => {
