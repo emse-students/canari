@@ -611,6 +611,29 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(last.nextOffset).toBeNull();
     });
 
+    it('narrows the organiser list to the bookings a D29 refusal named, in this space only', async () => {
+      const { space, resourceIds } = await setup();
+      const other = await setup({ name: 'other' });
+      const a = await book(space.id, resourceIds[0], '10:00', '10:30');
+      await book(space.id, resourceIds[0], '11:00', '11:30');
+      const c = await book(space.id, resourceIds[0], '12:00', '12:30');
+      const elsewhere = await book(other.space.id, other.resourceIds[0], '10:00', '10:30');
+      const named = await service.spaceBookings(space.id, as(ORGA), 0, 200, [
+        c.id,
+        a.id,
+        elsewhere.id,
+      ]);
+      expect(named.items.map((b) => b.id)).toEqual([a.id, c.id]);
+      expect(named.items[0]).toHaveProperty('holderName');
+      await expect(service.spaceBookings(space.id, as(ORGA), 0, 200, [])).resolves.toEqual({
+        items: [],
+        nextOffset: null,
+      });
+      expect(await refusal(service.spaceBookings(space.id, as(ALICE), 0, 200, [a.id]))).toEqual({
+        code: 'not-manager',
+      });
+    });
+
     it('the account linked to a resource reads its bookings (D10): names, never answers', async () => {
       const { space, resourceIds } = await setup({ nameVisibility: 'occupied' });
       await ds.getRepository(BookingResource).update(resourceIds[0], { linkedUserId: DAN });

@@ -23,6 +23,21 @@ export const actorOf = (userId: string, globalAdmin: string | undefined): Actor 
   isGlobalAdmin: globalAdmin === 'true',
 });
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The `ids` filter of the organiser's list: absent is every booking; present, a comma-separated
+ * list of at most one page of UUIDs, or a 400 `ids` - never a query on a malformed id.
+ */
+export function parseIds(raw: string | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  const ids = raw.split(',').map((s) => s.trim().toLowerCase());
+  if (ids.length > SPACE_BOOKINGS_PAGE || !ids.every((id) => UUID.test(id))) {
+    throw new BadRequestException({ code: 'ids' });
+  }
+  return [...new Set(ids)];
+}
+
 /**
  * The bookings API (WP-B3, docs/wiki/bookings-chantier.md). Every route needs a signed-in account
  * (D6: no guest access). Ids are validated at the boundary, so a malformed one is a 400, never a
@@ -77,17 +92,21 @@ export class BookingsController {
     return this.service.spaceSlots(spaceId, from, to, actorOf(userId, ga));
   }
 
-  /** Every booking of the space, answers included: the organiser's list. */
+  /**
+   * Every booking of the space, answers included: the organiser's list. `ids` (comma-separated,
+   * at most one page) narrows it to the bookings a D29 refusal named.
+   */
   @Get('spaces/:spaceId/bookings')
   spaceBookings(
     @Param('spaceId', ParseUUIDPipe) spaceId: string,
     @Headers('x-user-id') userId: string,
     @Query('offset', new DefaultValuePipe(0), ParseIntPipe) offset: number,
     @Query('limit', new DefaultValuePipe(SPACE_BOOKINGS_PAGE), ParseIntPipe) limit: number,
+    @Query('ids') ids?: string,
     @Headers('x-global-admin') ga?: string
   ) {
     if (offset < 0) throw new BadRequestException({ code: 'offset' });
-    return this.service.spaceBookings(spaceId, actorOf(userId, ga), offset, limit);
+    return this.service.spaceBookings(spaceId, actorOf(userId, ga), offset, limit, parseIds(ids));
   }
 
   /** Books a range; an organiser may book on behalf of an account. */

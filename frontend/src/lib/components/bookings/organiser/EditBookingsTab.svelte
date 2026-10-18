@@ -1,0 +1,136 @@
+<script lang="ts">
+  import { onMount } from 'svelte';
+  import { goto } from '$app/navigation';
+  import { resolve } from '$app/paths';
+  import { CalendarClock, Pencil, Plus } from '@lucide/svelte';
+  import type { Association } from '$lib/associations/api';
+  import { createSpace, listManagedSpaces, type ManagedSpaceRow } from '$lib/bookings/api';
+  import { describeBookingRefusal } from '$lib/bookings/refusals';
+  import { spaceEditorHref } from '$lib/bookings/routes';
+  import Input from '$lib/components/ui/Input.svelte';
+  import { m } from '$lib/paraglide/messages';
+  import { Log } from '$lib/utils/Log';
+
+  /**
+   * The bookings tab of an association, a list or an institution (D16, D38): the entity's spaces,
+   * and a new one by its name. Every setting is edited on the space's own page; this tab is drawn
+   * only to a holder of `MANAGE_BOOKINGS`, which is what the server asks of every call here.
+   */
+  interface Props {
+    asso: Association;
+  }
+
+  let { asso }: Props = $props();
+
+  let spaces = $state<ManagedSpaceRow[]>([]);
+  let loading = $state(true);
+  let error = $state('');
+  let newName = $state('');
+  let creating = $state(false);
+
+  onMount(load);
+
+  async function load() {
+    Log.d('BOOKINGS', `tab load association=${asso.id}`);
+    loading = true;
+    error = '';
+    try {
+      spaces = await listManagedSpaces(asso.id);
+    } catch (e) {
+      error = describeBookingRefusal(e, m.common_load_error());
+    } finally {
+      loading = false;
+    }
+  }
+
+  async function create(event: SubmitEvent) {
+    event.preventDefault();
+    const name = newName.trim();
+    if (!name || creating) return;
+    creating = true;
+    error = '';
+    try {
+      const { id } = await createSpace(name, asso.id);
+      Log.i('BOOKINGS', `space created from the tab id=${id.slice(0, 8)}`);
+      await goto(resolve(spaceEditorHref(id)));
+    } catch (e) {
+      error = describeBookingRefusal(e, m.bookings_tab_create_button());
+    } finally {
+      creating = false;
+    }
+  }
+</script>
+
+<div class="border-cn-border bg-cn-surface space-y-5 rounded-2xl border p-4 shadow-sm sm:p-6">
+  <div>
+    <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
+      <CalendarClock size={20} />
+      {m.bookings_tab_label()}
+    </h2>
+    <p class="text-text-muted mt-1 text-sm">{m.bookings_tab_subtitle()}</p>
+  </div>
+
+  <form class="flex flex-col gap-3 sm:flex-row sm:items-end" onsubmit={create}>
+    <div class="min-w-0 flex-1">
+      <Input
+        id="bookings-new-space"
+        label={m.bookings_tab_new_label()}
+        placeholder={m.bookings_tab_new_placeholder()}
+        bind:value={newName}
+        maxlength={120}
+      />
+    </div>
+    <button
+      type="submit"
+      disabled={!newName.trim() || creating}
+      class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      <Plus size={16} />
+      {m.bookings_tab_create_button()}
+    </button>
+  </form>
+
+  {#if error}
+    <p
+      class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-4 py-3 text-sm"
+      role="alert"
+    >
+      {error}
+    </p>
+  {/if}
+
+  {#if loading}
+    <div class="flex justify-center py-8">
+      <div
+        class="border-cn-yellow h-6 w-6 animate-spin rounded-full border-4 border-t-transparent"
+      ></div>
+    </div>
+  {:else if spaces.length === 0}
+    <p class="text-text-muted py-6 text-center text-sm">{m.bookings_tab_empty()}</p>
+  {:else}
+    <ul class="space-y-3">
+      {#each spaces as space (space.id)}
+        <li
+          class="border-cn-border/70 bg-cn-bg flex flex-wrap items-center justify-between gap-3 rounded-xl border px-4 py-3"
+        >
+          <div class="min-w-0 flex-1">
+            <p class="text-text-main truncate text-sm font-semibold">{space.name}</p>
+            <p class="text-text-muted mt-0.5 text-xs">
+              {m.bookings_tab_resources_count({ count: space.resourceCount })} · {space.discoverability ===
+              'link'
+                ? m.bookings_discoverability_link()
+                : m.bookings_discoverability_listed()}
+            </p>
+          </div>
+          <a
+            href={resolve(spaceEditorHref(space.id))}
+            class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
+          >
+            <Pencil size={12} />
+            {m.bookings_tab_edit_action()}
+          </a>
+        </li>
+      {/each}
+    </ul>
+  {/if}
+</div>

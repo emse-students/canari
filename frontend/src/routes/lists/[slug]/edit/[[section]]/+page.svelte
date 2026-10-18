@@ -14,11 +14,12 @@
   } from '$lib/associations/api';
   import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
   import { resolveUserDisplayName, rosterDisplayName } from '$lib/utils/users/displayName';
-  import { Building2, Users, TriangleAlert } from '@lucide/svelte';
+  import { Building2, Users, TriangleAlert, CalendarClock } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import EditProfileTab from '$lib/components/associations/edit/EditProfileTab.svelte';
   import EditMembersTab from '$lib/components/associations/edit/EditMembersTab.svelte';
   import EditDangerTab from '$lib/components/associations/edit/EditDangerTab.svelte';
+  import EditBookingsTab from '$lib/components/bookings/organiser/EditBookingsTab.svelte';
   import SectionHub from '$lib/components/navigation/SectionHub.svelte';
   import type { HubIcon, HubRow } from '$lib/components/navigation/breadcrumb';
   import {
@@ -41,7 +42,7 @@
   /**
    * The open section is a ROUTE segment (`/lists/<slug>/edit/<section>`), never local state: Back
    * goes up one level, a reload keeps the place. `null` is the hub; a segment that is not one of the
-   * list's three sections never reaches here - `+page.ts` redirects it.
+   * list's four sections never reaches here - `+page.ts` redirects it.
    */
   let editSection = $derived<EditSection | null>(parseEditSection(page.params.section));
 
@@ -80,6 +81,7 @@
   const SECTION_ICONS: Partial<Record<EditSection, HubIcon>> = {
     profile: Building2,
     members: Users,
+    reservations: CalendarClock,
     danger: TriangleAlert,
   };
 
@@ -90,6 +92,8 @@
         return m.common_members_label();
       case 'danger':
         return m.asso_edit_tab_danger();
+      case 'reservations':
+        return m.bookings_tab_label();
       default:
         return m.asso_edit_tab_profile();
     }
@@ -212,6 +216,10 @@
 
       {#if editSection === 'members' && canManageMembers}
         <EditMembersTab asso={list} bind:members bind:resolvedMemberNames />
+      {/if}
+
+      {#if editSection === 'reservations' && rights.bookings}
+        <EditBookingsTab asso={list} />
       {/if}
 
       {#if editSection === 'danger' && canArchiveList}

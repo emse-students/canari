@@ -521,19 +521,29 @@ export class BookingsService {
 
   /**
    * One page of a space's bookings with names and answers, by start - the organiser's list (D15,
-   * D20). `offset` is the position in that order; `nextOffset` is null on the last page.
+   * D20). `offset` is the position in that order; `nextOffset` is null on the last page. `ids`
+   * narrows it to those bookings - the ones a D29 refusal named, which the organiser's screen lists
+   * with their cancel button; an id of another space is simply not found.
    */
-  async spaceBookings(spaceId: string, actor: Actor, offset = 0, limit = SPACE_BOOKINGS_PAGE) {
-    this.logger.debug(`[BOOKINGS] spaceBookings space=${spaceId} offset=${offset}`);
+  async spaceBookings(
+    spaceId: string,
+    actor: Actor,
+    offset = 0,
+    limit = SPACE_BOOKINGS_PAGE,
+    ids?: readonly string[]
+  ) {
+    this.logger.debug(
+      `[BOOKINGS] spaceBookings space=${spaceId} offset=${offset} ids=${ids?.length ?? 'all'}`
+    );
     const space = await this.loadSpace(spaceId);
     if (!(await this.mayManage(space, actor))) {
       throw new ForbiddenException({ code: 'not-manager' });
     }
     const take = Math.min(Math.max(limit, 1), SPACE_BOOKINGS_PAGE);
     const resources = await this.resources.findBy({ spaceId });
-    if (resources.length === 0) return { items: [], nextOffset: null };
+    if (resources.length === 0 || ids?.length === 0) return { items: [], nextOffset: null };
     const rows = await this.bookings.find({
-      where: { resourceId: In(resources.map((r) => r.id)) },
+      where: { resourceId: In(resources.map((r) => r.id)), ...(ids ? { id: In([...ids]) } : {}) },
       order: { startsAt: 'ASC', id: 'ASC' },
       skip: offset,
       take: take + 1,
