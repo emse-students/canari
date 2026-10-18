@@ -383,6 +383,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/swift-syntax.test.sh
 	@bun tools/app-store/submit.test.mjs
 	@bun tools/store-divergence/divergence.test.mjs
+	@bun tools/version-report/lib.test.mjs
 	@bun test tools/store-listings
 
 # THE 158 SCRIPTS THAT PRODUCE EVERY CAMPAIGN VERDICT ARE LINTED HERE, and were linted by nothing at
