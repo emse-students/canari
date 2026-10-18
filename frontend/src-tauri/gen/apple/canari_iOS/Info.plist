@@ -25,14 +25,9 @@
 		<string>remote-notification</string>
 		<string>processing</string>
 		<string>fetch</string>
-		<!-- NO `voip` HERE, DELIBERATELY. The mode is only legitimate for an app that reports an
-		     incoming call to CallKit, and calling is held off (frontend/src/lib/features.ts,
-		     CALLS_COMPILED; callsCompiled.test.ts asserts the two agree) until it has been run on hardware. App Review refused the declaration
-		     under guideline 2.5.4 on 2026-08-31 for a VoIP service it could not locate - correctly,
-		     since on that build no iPad could even register a push token. Re-add it in the SAME
-		     commit that flips CALLS_COMPILED and restores CanariCallKitSetup(), never before: an
-		     undeclared-but-unused mode is a rejection, and a used-but-undeclared one cannot get a
-		     PushKit token at all. -->
+		<!-- `voip`: PushKit tokens for the CallKit ring. Moves with CALLS_COMPILED
+		     (callsCompiled.test.ts); App Review needs the call video with it (2.5.4). -->
+		<string>voip</string>
 	</array>
 	<!-- BGTaskScheduler identifiers the app may submit. Must list every identifier passed to
 	     registerForTaskWithIdentifier: / submitTaskRequest: or BGTaskScheduler throws. This
@@ -110,7 +105,7 @@
 	<key>NSCameraUsageDescription</key>
 	<string>Canari utilise l'appareil photo pour prendre des photos à partager dans vos conversations, des photos et vidéos pour vos publications, et pour filmer vos CanaReels.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Canari utilise le microphone pour enregistrer des messages vocaux et le son des vidéos que vous filmez pour vos publications et vos CanaReels.</string>
+	<string>Canari utilise le microphone pour enregistrer des messages vocaux et le son des vidéos que vous filmez pour vos publications et vos CanaReels, et pour passer des appels.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Canari accède à vos photos pour les partager dans vos conversations.</string>
 	<key>NSPhotoLibraryAddUsageDescription</key>

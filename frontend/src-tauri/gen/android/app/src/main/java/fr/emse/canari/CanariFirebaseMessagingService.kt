@@ -173,7 +173,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
          * turning calls on would have reopened that lane; the silent guard in `handleMlsFrame` no
          * longer reads it (2026-10-18), and says why.
          */
-        private const val CALLS_ENABLED = false
+        private const val CALLS_ENABLED = true
 
         /** A ring is abandoned after 60s (same order as the OS phone app). */
         private const val CALL_RING_TIMEOUT_MS = 60_000L
