@@ -4003,4 +4003,79 @@ describe('outbox uploads run OUTSIDE the lane - a text written after a big file 
     expect(mls.sendMessage).not.toHaveBeenCalled();
     outbox.dispose();
   });
+
+  it('a dispose during the queue read that feeds the backoff arms no timer on the dead controller', async () => {
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
+    });
+    try {
+      const storage = makeStorage([textEntry('text', 'g1', 100)]);
+      const mls = makeMls({
+        send: async () => {
+          throw new Error('503 from the delivery service');
+        },
+      });
+      const realRead = storage.getOutboxQueue;
+      let releaseRead: (() => void) | null = null;
+      storage.getOutboxQueue = vi.fn(async (...args: unknown[]) => {
+        // The read after the failed send is the one `runFlush` arms its backoff from.
+        if (mls.sendMessage.mock.calls.length > 0 && !releaseRead) {
+          await new Promise<void>((r) => (releaseRead = r));
+        }
+        return realRead(...args);
+      });
+      const outbox = createOutbox(
+        makeDeps({ mlsService: mls, storage, isGroupHealthy: () => true })
+      );
+
+      const flushing = outbox.flush();
+      await outboxIdle();
+      expect(releaseRead).not.toBeNull();
+      outbox.dispose();
+      releaseRead!();
+      await flushing;
+      // No timer at all: one left armed would raise a flush on a controller nobody owns.
+      expect(vi.getTimerCount()).toBe(0);
+      await vi.advanceTimersByTimeAsync(60_000);
+      await outboxIdle();
+
+      expect(mls.sendMessage).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a retry during a slot wait leaves no arming behind: the upload that then fails keeps its fresh backoff', async () => {
+    const storage = makeStorage();
+    const up = deferredUploads();
+    const mls = makeMls();
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: mls,
+        storage,
+        uploadMedia: up.uploadMedia,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.enqueue(smallMedia('a', 'g1'));
+    await outbox.enqueue(smallMedia('b', 'g2'));
+    await outbox.enqueue(smallMedia('c', 'g3'));
+    await outboxIdle();
+    outbox.retryUpload('c');
+    up.calls[0].release(REF);
+    await vi.waitFor(() => expect(up.calls.map((c) => c.fileName)).toContain('c.pdf'));
+    up.calls
+      .find((c) => c.fileName === 'c.pdf')!
+      .fail(new UploadStalledError(45_000, '/api/media/upload', 1));
+    await vi.waitFor(() =>
+      expect((storage._map.get('c') as OutboxEntry).nextAttemptAt).toBeGreaterThan(Date.now())
+    );
+
+    void outbox.flush();
+    await outboxIdle();
+
+    expect(up.calls.filter((c) => c.fileName === 'c.pdf')).toHaveLength(1);
+    outbox.dispose();
+  });
 });

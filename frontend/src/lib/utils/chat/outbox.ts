@@ -1730,6 +1730,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
 
   /** Schedule a single backoff re-flush at the earliest pending `nextAttemptAt`. */
   function scheduleBackoff(entries: OutboxEntry[]): void {
+    // A controller disposed (sign-out, a new session) during the queue read that fed this must arm
+    // nothing: the timer would raise a flush on a dead controller.
+    if (disposed) {
+      log('[OUTBOX] backoff not armed - the controller was disposed during the queue read');
+      return;
+    }
     const now = Date.now();
     const next = entries
       .map((e) => e.nextAttemptAt ?? 0)
@@ -2104,20 +2110,22 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     },
 
     retryUpload(messageId: string): void {
-      // Skip the backoff for this entry (the one `resuming` already exists for) and, when its
-      // transfer is on the wire and stalled, abandon it: the flush then restarts it at once.
-      resuming.add(messageId);
-      parked.delete(messageId);
-      // A 403-parked entry used to ignore this button for the controller's whole life.
-      forbiddenParked.delete(messageId);
       // Still waiting for an upload slot: nothing has left, so there is nothing to restart, and
-      // aborting would only send it to the back of the queue (review of #2061).
+      // aborting would only send it to the back of the queue (review of #2061). Answered BEFORE any
+      // arming: a `resuming` mark left here would outlive this attempt and let a later failure of
+      // it skip its fresh backoff and reset its no-answer count.
       if (slotWaiting.has(messageId)) {
         log(
           `[OUTBOX] ${messageId.slice(0, 8)}… retry: not started yet, it keeps its place in line`
         );
         return;
       }
+      // Skip the backoff for this entry (the one `resuming` already exists for) and, when its
+      // transfer is on the wire and stalled, abandon it: the flush then restarts it at once.
+      resuming.add(messageId);
+      parked.delete(messageId);
+      // A 403-parked entry used to ignore this button for the controller's whole life.
+      forbiddenParked.delete(messageId);
       const running = uploads.get(messageId);
       if (running) running.abort('retry');
       else runFlush();
