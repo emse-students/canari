@@ -963,7 +963,9 @@ Calls are UNVERIFIED, not broken; it becomes P1 the day calling is revived. What
 relay-path call, two peers, audio and video, TURN as production configures it, taken by hand (the in-process half of it runs in CI since 2026-10-09: `apps/call-service/tests/relay_path.rs`)
 ([calls](frontend/modules/calls.md#the-sfu-runs-six-webrtc-majors-it-has-never-placed-a-call-on-2026-08-27)).
 
-P3, owed by WP-C11 (group calls): `refuseIfBlocked` (`calls.service.ts`) lets ANY block between the
+### P3 (owed by WP-C11) - one block refuses a whole group call
+
+`refuseIfBlocked` (`calls.service.ts`) lets ANY block between the
 caller and ANY other member refuse the whole call, at `initiate`, `ring` and `room-token`, and 1:1 is
 enforced only by the client. Acceptable while group calls are off; WP-C11 must decide whether one
 block refuses the call or only drops that member

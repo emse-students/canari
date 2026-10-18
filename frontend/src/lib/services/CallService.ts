@@ -38,11 +38,13 @@ import {
 } from '$lib/utils/callStats';
 import { isAndroidTauriRuntime, isIosTauriRuntime } from '$lib/utils/appVersion';
 import {
+  callMediaKind,
   DECRYPT_MISMATCH_FAILURES,
   deriveCallKeys,
   keyFingerprint,
   type CallKeys,
   type CallRole,
+  type CallTransformOptions,
 } from '$lib/utils/callKeys';
 
 /** How often a live call writes its `[CALL_REPORT]` (revival plan section 6). */
@@ -1153,6 +1155,9 @@ export class CallService {
       this.pc = null;
       // A new pc counts its bytes from zero: a rate against the old one's totals would be negative.
       this.lastSnapshot = null;
+      // A new device derives its own keys: what the old one decrypted proves nothing about them,
+      // and keeping it would silence the mismatch notice (F5) for the rest of the call.
+      this.decryptedAny = false;
       this.mergedRemoteStream = null;
       this.pendingRemoteIceCandidates = [];
       this.makingOffer = false;
@@ -1482,20 +1487,26 @@ export class CallService {
   private async setupSenderTransform(sender: RTCRtpSender): Promise<void> {
     if (sender.transform) return;
     if (!this.callKeys) throw new Error('no call key for the sender transform');
+    const kind = callMediaKind(sender.track?.kind);
+    if (!kind) throw new Error(`no media kind for the sender transform (${sender.track?.kind})`);
     const worker = this.getOrCreateEncryptionWorker();
     await this.ensureWorkerKeyReady();
-    sender.transform = new RTCRtpScriptTransform(worker, { side: 'sender' });
-    appendLog(`[Call] E2E sender transform attached (${sender.track?.kind ?? 'unknown'})`);
+    const options: CallTransformOptions = { side: 'sender', kind };
+    sender.transform = new RTCRtpScriptTransform(worker, options);
+    appendLog(`[Call] E2E sender transform attached (${kind})`);
   }
 
   /** Attaches the E2E decrypt transform to a receiver. THROWS when it cannot, like the sender. */
-  private async setupReceiverTransform(receiver: RTCRtpReceiver, mediaKind = 'unknown') {
+  private async setupReceiverTransform(receiver: RTCRtpReceiver, trackKind: string) {
     if (receiver.transform) return;
     if (!this.callKeys) throw new Error('no call key for the receiver transform');
+    const kind = callMediaKind(trackKind);
+    if (!kind) throw new Error(`no media kind for the receiver transform (${trackKind})`);
     const worker = this.getOrCreateEncryptionWorker();
     await this.ensureWorkerKeyReady();
-    receiver.transform = new RTCRtpScriptTransform(worker, { side: 'receiver' });
-    appendLog(`[Call] E2E receiver transform attached (${mediaKind})`);
+    const options: CallTransformOptions = { side: 'receiver', kind };
+    receiver.transform = new RTCRtpScriptTransform(worker, options);
+    appendLog(`[Call] E2E receiver transform attached (${kind})`);
   }
 
   /**

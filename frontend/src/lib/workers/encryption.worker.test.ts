@@ -34,7 +34,12 @@ async function loadWorker() {
 }
 
 /** Runs `frames` through a transform of `side` and waits until the stream has drained. */
-async function runTransform(scope: Scope, side: 'sender' | 'receiver', frames: unknown[]) {
+async function runTransform(
+  scope: Scope,
+  side: 'sender' | 'receiver',
+  frames: unknown[],
+  kind: string | null = 'audio'
+) {
   const readable = new ReadableStream({
     start(controller) {
       for (const f of frames) controller.enqueue(f);
@@ -51,7 +56,7 @@ async function runTransform(scope: Scope, side: 'sender' | 'receiver', frames: u
     close: () => finished(),
   });
   scope.onrtctransform?.({
-    transformer: { readable, writable, options: { side } },
+    transformer: { readable, writable, options: { side, kind } },
   } as unknown as Event);
   await done;
   return out;
@@ -124,20 +129,44 @@ describe('the encryption worker', () => {
     expect(counters()).toMatchObject({ decFrames: 0, decFail: 1 });
   });
 
-  it('does not open an audio frame offered as video', async () => {
+  it('does not open an audio frame on a video receiver', async () => {
     const sealed = await sealAsCaller({ data: new Uint8Array([1, 2, 3]).buffer });
-    // The worker reads the kind from the frame's class name, as the browser's frames carry it.
+
+    const { scope, send } = await loadWorker();
+    await send(keysFor('callee'));
+    const out = await runTransform(scope, 'receiver', [{ data: sealed }], 'video');
+
+    expect(out).toHaveLength(0);
+    await send({ type: 'getCounters' });
+    expect(counters()).toMatchObject({ decFrames: 0, decFail: 1 });
+  });
+
+  it("takes the kind from the page's transform options, never from the frame's class name", async () => {
+    const sealed = await sealAsCaller({ data: new Uint8Array([1, 2, 3]).buffer });
+    // A frame whose class NAME says video, on the audio receiver it was sealed for: it opens.
     class RTCEncodedVideoFrame {
       constructor(public data: ArrayBuffer) {}
     }
 
     const { scope, send } = await loadWorker();
     await send(keysFor('callee'));
-    const out = await runTransform(scope, 'receiver', [new RTCEncodedVideoFrame(sealed)]);
+    const out = await runTransform(scope, 'receiver', [new RTCEncodedVideoFrame(sealed)], 'audio');
+
+    expect(out).toHaveLength(1);
+  });
+
+  it('forwards nothing, and says so, on a transform that carries no media kind', async () => {
+    const { scope, send } = await loadWorker();
+    await send(keysFor('caller'));
+
+    const out = await runTransform(scope, 'sender', [{ data: new Uint8Array([1]).buffer }], null);
 
     expect(out).toHaveLength(0);
+    expect(
+      posted.some((p) => p.type === 'warn' && p.detail?.includes('without a media kind'))
+    ).toBe(true);
     await send({ type: 'getCounters' });
-    expect(counters()).toMatchObject({ decFrames: 0, decFail: 1 });
+    expect(counters()).toMatchObject({ encFrames: 0 });
   });
 
   it('reports transform errors sampled - the first three, then every 100th - never one per frame', async () => {

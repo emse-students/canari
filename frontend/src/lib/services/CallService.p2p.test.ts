@@ -236,7 +236,7 @@ class FakePeerConnection {
 class FakeTransform {
   constructor(
     public worker: unknown,
-    public options: { side: string }
+    public options: { side: string; kind: string }
   ) {}
 }
 
@@ -365,10 +365,17 @@ describe('a peer-to-peer call, client side', () => {
     // The E2E transform is on every sender before any offer exists.
     expect(pc.senders).toHaveLength(1);
     expect(pc.senders[0].transform).toBeInstanceOf(FakeTransform);
-    expect((pc.senders[0].transform as FakeTransform).options.side).toBe('sender');
+    // Each transform carries its track's kind: the worker binds it into every frame's AAD.
+    expect((pc.senders[0].transform as FakeTransform).options).toEqual({
+      side: 'sender',
+      kind: 'audio',
+    });
     // And on the RECEIVER of the same transceiver, before negotiation: Chrome 155 delivers no
     // frame to a receiver transform attached later, in `ontrack` (measured 2026-10-17).
-    expect((pc.receivers[0].transform as FakeTransform).options.side).toBe('receiver');
+    expect((pc.receivers[0].transform as FakeTransform).options).toEqual({
+      side: 'receiver',
+      kind: 'audio',
+    });
 
     await pc.onnegotiationneeded!();
     const offers = ws.framesOfType('Offer');
@@ -827,7 +834,7 @@ describe('the call keys', () => {
 
   it('the callee holds the same two keys, the other way round', async () => {
     const service = new CallService(fakeMls);
-    service.handleCallSignal(
+    await service.handleCallSignal(
       'peer@example.org',
       'group-1',
       {
@@ -897,6 +904,24 @@ describe('the call keys', () => {
       } as MessageEvent);
       fail(100);
       expect(showToast).not.toHaveBeenCalled();
+    });
+
+    it('is shown for a replacing device that decrypts nothing, though the old one did', async () => {
+      const { showToast } = await import('$lib/stores/toast.svelte');
+      vi.mocked(showToast).mockClear();
+      const ws = await callerJoined(new CallService(fakeMls));
+      ws.deliver({ type: 'PeerReady', initiator: true });
+      await settle();
+      workers[0].onmessage?.({
+        data: { type: 'decryptOk', count: 1, mediaKind: 'audio' },
+      } as MessageEvent);
+
+      // The other party's device is replaced: what the old one decrypted proves nothing now.
+      ws.deliver({ type: 'PeerReady', initiator: true });
+      await settle();
+      fail(100);
+
+      expect(showToast).toHaveBeenCalledWith(m.call_e2e_key_mismatch(), 'error');
     });
   });
 });

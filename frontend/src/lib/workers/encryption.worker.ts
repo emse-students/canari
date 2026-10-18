@@ -5,11 +5,16 @@ interface TransformEventLike {
   transformer: {
     readable: ReadableStream;
     writable: WritableStream;
-    options?: { side?: string };
+    options?: Partial<CallTransformOptions>;
   };
 }
 
-import { frameAad } from '../utils/callKeys';
+import {
+  callMediaKind,
+  frameAad,
+  type CallMediaKind,
+  type CallTransformOptions,
+} from '../utils/callKeys';
 
 /** One key per direction (`utils/callKeys.ts`): this device encrypts with `send`, decrypts with `receive`. */
 let sendKey: CryptoKey | null = null;
@@ -81,14 +86,25 @@ self.onmessage = async (
 
 workerScope.onrtctransform = (event: Event) => {
   const transformEvent = event as unknown as TransformEventLike;
-  const side = (transformEvent.transformer.options as { side?: string } | undefined)?.side;
+  const options = transformEvent.transformer.options;
+  const side = options?.side;
+  // The kind comes from the page, which knows the track: it is bound into every frame's AAD, so a
+  // transform without one forwards nothing rather than guessing.
+  const mediaKind = callMediaKind(options?.kind);
 
   if (side !== 'sender' && side !== 'receiver') {
     self.postMessage({ type: 'warn', detail: `unknown transform side: ${String(side)}` });
   }
+  if (!mediaKind) {
+    self.postMessage({
+      type: 'warn',
+      detail: `transform without a media kind (${String(options?.kind)}) - every frame dropped`,
+    });
+  }
 
   const transform = new TransformStream({
     transform: async (frame, controller) => {
+      if (!mediaKind) return;
       if (!sendKey || !receiveKey) {
         droppedNoKey++;
         if (droppedNoKey <= 3 || droppedNoKey % 200 === 0) {
@@ -97,7 +113,6 @@ workerScope.onrtctransform = (event: Event) => {
         return;
       }
       try {
-        const mediaKind = frameTypeLabel(frame);
         if (side === 'sender') {
           await encryptFrame(frame, mediaKind, controller);
           encrypted[mediaKind]++;
@@ -139,10 +154,6 @@ workerScope.onrtctransform = (event: Event) => {
     .pipeTo(transformEvent.transformer.writable);
 };
 
-function frameTypeLabel(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): 'audio' | 'video' {
-  return frame.constructor.name.includes('Video') ? 'video' : 'audio';
-}
-
 /** True when an encoded video frame is a keyframe (IDR). Browser support varies. */
 function isVideoKeyframe(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): boolean {
   const f = frame as unknown as {
@@ -159,7 +170,7 @@ function isVideoKeyframe(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): bo
 
 async function encryptFrame(
   frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame,
-  kind: 'audio' | 'video',
+  kind: CallMediaKind,
   controller: TransformStreamDefaultController
 ) {
   const iv = crypto.getRandomValues(new Uint8Array(ivLength));
@@ -180,7 +191,7 @@ async function encryptFrame(
 /** Decrypts one frame and forwards it; `false` when it was dropped (too short, or wrong key). */
 async function decryptFrame(
   frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame,
-  kind: 'audio' | 'video',
+  kind: CallMediaKind,
   controller: TransformStreamDefaultController
 ): Promise<boolean> {
   const data = new Uint8Array(frame.data);

@@ -278,14 +278,20 @@ Mi 9T and on the iPhone.
   `exportSecret(groupId, 'mls-webrtc-media-v2', '<callId>|<sender role>', 32)`; the caller sends
   with `caller` and decrypts with `callee`, the callee the reverse. The worker imports the send key
   for `encrypt` only and the receive key for `decrypt` only, and every frame carries
-  `canari-call-v2|<audio|video>` as AES-GCM additional data. A reflected frame, a frame of the other
-  kind all fail, tested on the worker itself (`encryption.worker.test.ts`); another call derives
+  `canari-call-v2|<audio|video>` as AES-GCM additional data. **The kind is handed to the worker by
+  the page**, in each `RTCRtpScriptTransform`'s options (`{ side, kind }`, the track's own `kind`):
+  the worker never infers it from a frame (it used to read the frame's class NAME, an engine detail
+  that decided authentication), and a transform carrying no kind forwards nothing and says so. A
+  reflected frame, a frame of the other kind all fail, tested on the worker itself
+  (`encryption.worker.test.ts`); another call derives
   other keys (`callKeys.test.ts`). **Not covered: replay WITHIN one direction and kind** - a frame
   replayed by someone on the media path decrypts again (no sequence number is bound); DTLS-SRTP's
   own replay protection below the transform is what stands there today.
 - **F5 - a mismatch the user SEES.** `DECRYPT_MISMATCH_FAILURES` (100) failures with NOT ONE frame
   decrypted - a count a matching key never reaches, since it decrypts the first frame - logs an
-  `ERROR E2E key mismatch` and shows `call_e2e_key_mismatch` once per call. A key AGREEMENT over the
+  `ERROR E2E key mismatch` and shows `call_e2e_key_mismatch` once per call. "Decrypted a frame" is
+  forgotten when the other party's device is replaced (a second `PeerReady`): the new device derives
+  its own keys, and what the old one decrypted proves nothing about them. A key AGREEMENT over the
   signalling channel is not built: the relay carries a closed set of frames, and a mismatch is
   diagnosable from two exported logs, where one side's `send_fp` must equal the other's `recv_fp`.
 - **The key log is a hash.** `media keys derived from MLS (role= send_fp= recv_fp=)`: the first 4
@@ -330,7 +336,7 @@ ring the in-app UI either: `handleCallSignal` asks `isBlockedWith` before it rin
 ask does not ring (logged at error). Pinned by `calls.service.spec.ts`, `callFailure.test.ts`,
 `CallService.callsEnabled.test.ts` and `CallService.p2p.test.ts`. **Any block with any other member
 refuses the WHOLE call** - right for 1:1, which only the client enforces today; WP-C11 must decide it
-for a group ([backlog](../../backlog.md#p1-blocks-calls_compiled-not-dev---four-things-owed-before-production-calls-review-of-1997-2026-10-17)).
+for a group ([backlog](../../backlog.md#p3-owed-by-wp-c11---one-block-refuses-a-whole-group-call)).
 
 ## Responsibilities
 

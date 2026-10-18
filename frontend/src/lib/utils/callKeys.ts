@@ -66,8 +66,26 @@ export async function keyFingerprint(key: Uint8Array): Promise<string> {
     .join('');
 }
 
+/** The media kind of a call track, the one fact a frame's authentication binds it to. */
+export type CallMediaKind = 'audio' | 'video';
+
+/** What the page hands each `RTCRtpScriptTransform`: which way it runs, and its track's kind. */
+export interface CallTransformOptions {
+  side: 'sender' | 'receiver';
+  kind: CallMediaKind;
+}
+
+/**
+ * Narrows a track's `kind` to a call media kind, or `null`. The kind is KNOWN on the page (the
+ * track says it) and is handed to the worker with the transform, so the worker never infers it
+ * from a frame (a frame's class name is an engine detail, and it decided authentication).
+ */
+export function callMediaKind(kind: string | undefined): CallMediaKind | null {
+  return kind === 'audio' || kind === 'video' ? kind : null;
+}
+
 /** The additional authenticated data of a frame of `kind`: binds it to its track's media kind. */
-export function frameAad(kind: 'audio' | 'video'): Uint8Array {
+export function frameAad(kind: CallMediaKind): Uint8Array {
   return new TextEncoder().encode(`canari-call-v2|${kind}`);
 }
 
