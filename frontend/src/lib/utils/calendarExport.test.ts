@@ -425,59 +425,52 @@ describe('event titles - white with a dark outline, centred in the tile', () => 
     // No title or event day number is black any more (the luminance pick is gone).
     expect(html.match(/paint-order:stroke fill/g)?.length).toBeGreaterThanOrEqual(3);
     expect(html).not.toContain('text-shadow:-1px 1px 0 rgba(0,0,0,0.55)');
-    // The day number is no longer pinned over the first tile, where it sat on the title.
-    expect(html).not.toContain('position:absolute;top:6px;left:8px');
+    // The day number is pinned over the tile, not given a row the title must dodge.
+    expect(html).toContain('position:absolute;top:6px;left:8px');
     expect(html).not.toContain(`height:${DAY_NUM_H}px;flex-shrink:0`);
   });
 });
 
-describe('the sheet reads at print size (November 2026, 2026-10-18)', () => {
-  /** The cell of day `n`: the innermost grid child whose number row reads `n`. */
+describe('the sheet reads at print size, and nothing moved (November 2026, 2026-10-18)', () => {
+  /** The cell carrying day `n`. */
   function cellOf(html: string, n: number): HTMLElement {
     const host = document.createElement('div');
     host.innerHTML = html;
     const spans = Array.from(host.querySelectorAll<HTMLElement>('span[data-pdf-text]'));
     const num = spans.find((s) => s.textContent === String(n))!;
-    // span -> number row -> cell
-    return num.parentElement!.parentElement!;
+    let el: HTMLElement = num;
+    while (!el.getAttribute('style')?.includes('border-radius:8px')) el = el.parentElement!;
+    return el;
   }
 
   const busy = [
-    makeEvent({
-      id: 'a',
-      title: 'Conference Energie et Nucleaire',
-      startsAt: '2026-11-26T17:00:00.000Z',
-    }),
+    makeEvent({ id: 'a', title: 'Conference', startsAt: '2026-11-26T17:00:00.000Z' }),
     makeEvent({ id: 'b', title: 'Afterwork', startsAt: '2026-11-26T18:00:00.000Z' }),
   ];
 
-  it('gives every day number its own row above the tiles, so no title can reach it', () => {
-    const cell = cellOf(buildPreviewInnerHtml(busy, 2026, 10), 26);
-    const [numberRow, ...tiles] = Array.from(cell.children) as HTMLElement[];
-    expect(numberRow.textContent?.trim()).toBe('26');
-    expect(tiles.filter((t) => t.textContent?.includes('Conference'))).toHaveLength(1);
-    expect(tiles.some((t) => t.contains(numberRow.firstElementChild))).toBe(false);
-    // The number is white with the dark outline, like the titles.
-    expect(numberRow.innerHTML).toContain('paint-order:stroke fill');
+  it('keeps the day number pinned over the first tile, and only repaints it', () => {
+    const html = buildPreviewInnerHtml(busy, 2026, 10);
+    expect(html).toContain('position:absolute;top:6px;left:8px');
+    // An empty day keeps its padded corner, now white with the dark outline.
+    const empty = cellOf(html, 2);
+    expect(empty.getAttribute('style')).toContain('padding:6px 8px');
+    expect(empty.querySelector('span')!.getAttribute('style')).toContain('paint-order:stroke fill');
+  });
+
+  it('keeps the logo the centred watermark under the title', () => {
+    const tile = Array.from(cellOf(buildPreviewInnerHtml(busy, 2026, 10), 26).children).find((t) =>
+      t.textContent?.includes('Conference')
+    )!;
+    expect(tile.querySelector('img')!.parentElement!.getAttribute('style')).toContain(
+      'position:absolute;inset:0;display:flex;align-items:center;justify-content:center'
+    );
   });
 
   it('frames every day and rules between stacked events', () => {
     const html = buildPreviewInnerHtml(busy, 2026, 10);
-    const cell = cellOf(html, 26);
-    expect(cell.getAttribute('style')).toContain('border-radius:8px');
-    expect(cell.innerHTML).toContain('border:2px solid rgba(17,17,17,0.75)');
-    expect(cell.innerHTML.match(/border-top:2px solid/g)).toHaveLength(2);
-    // An empty day is framed too.
-    expect(cellOf(html, 2).innerHTML).toContain('border:2px solid rgba(17,17,17,0.75)');
-  });
-
-  it('puts the logo in a slot left of the title, never under it', () => {
-    const cell = cellOf(buildPreviewInnerHtml(busy, 2026, 10), 26);
-    const tile = Array.from(cell.children).find((t) => t.textContent?.includes('Conference'))!;
-    const slot = tile.querySelector('img')!.parentElement!;
-    expect(slot.getAttribute('style')).toMatch(/^position:absolute;left:4px;top:\d+px;width:\d+px/);
-    // The title's padding starts after the slot.
-    const size = Number(slot.getAttribute('style')!.match(/width:(\d+)px/)![1]);
-    expect(tile.getAttribute('style')).toContain(`0 ${8 + size}px;`);
+    const frame = 'border:2px solid rgba(17,17,17,0.75)';
+    expect(cellOf(html, 26).innerHTML).toContain(frame);
+    expect(cellOf(html, 26).innerHTML.match(/border-top:2px solid/g)).toHaveLength(1);
+    expect(cellOf(html, 2).innerHTML).toContain(frame);
   });
 });

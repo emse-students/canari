@@ -37,9 +37,6 @@ import {
   exportCalendarMonth,
   pngRasterScale,
   PNG_MAX_RASTER_SCALE,
-  titleLineWeight,
-  weightedSlotHeights,
-  slotHeights,
 } from './calendarExport';
 
 afterEach(() => {
@@ -94,29 +91,5 @@ describe('the PNG resolution', () => {
     // A screen that reports nothing usable is read as density 1, never as 0 or NaN.
     expect(pngRasterScale(Number.NaN)).toBe(2);
     expect(pngRasterScale(0)).toBe(2);
-  });
-});
-
-describe('tiles share the cell by what their titles need', () => {
-  it('sums EXACTLY to the cell, and equal weights are equal slots', () => {
-    for (let cellH = 40; cellH < 80; cellH++) {
-      for (const weights of [
-        [1, 2],
-        [2, 1, 1],
-        [2, 2, 1],
-        [1, 1, 1],
-      ]) {
-        const h = weightedSlotHeights(cellH, weights);
-        expect(h.reduce((a, b) => a + b, 0)).toBe(cellH);
-        expect(h.every(Number.isInteger)).toBe(true);
-      }
-      expect(weightedSlotHeights(cellH, [1, 1, 1])).toEqual(slotHeights(cellH, 3));
-    }
-  });
-
-  it('gives a two-line title twice the room of a one-word one', () => {
-    expect(weightedSlotHeights(60, [2, 1])).toEqual([40, 20]);
-    expect(titleLineWeight('Presentation des campagnes')).toBe(2);
-    expect(titleLineWeight('Soiree jeux')).toBe(1);
   });
 });

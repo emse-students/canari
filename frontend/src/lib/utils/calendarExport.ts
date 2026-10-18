@@ -64,17 +64,6 @@ export const DAY_NUM_H = 22;
 const DAY_NUM_SIZE = 15;
 
 /**
- * THE SHEET'S DAY NUMBER OWNS A ROW AT THE TOP OF ITS CELL, ABOVE EVERY EVENT TILE (2026-10-18).
- *
- * It was pinned over the first tile (2026-10-06) so the title could centre in the whole tile, and
- * the November 2026 sheet showed what that costs on a busy day: "26" sat on "Conference Energie et
- * Nucleaire", "19" on "Service STO'Mines" - *"rien ne doit se chevaucher"* was broken by the very
- * fix that served it. A row ABOVE the tiles keeps both promises: no tile holds the number, so each
- * title still centres in its whole tile, and nothing can reach the number.
- */
-const SHEET_NUM_ROW_H = 22;
-
-/**
  * The one dark ink of the sheet's outlines: the text outline, the day frame and the separator
  * between stacked events. One colour, so the sheet reads as one drawing rather than three.
  */
@@ -85,15 +74,6 @@ const SHEET_RULE_W = 2;
 const SHEET_RULE_ALPHA = 0.75;
 /** A day card's corner, in sheet px - the app's card radius (`--radius-*`: 8px card). */
 const SHEET_CELL_RADIUS = 8;
-/** Largest logo in a tile's fixed left slot, in sheet px. */
-const LOGO_SLOT_MAX = 26;
-/**
- * Smallest logo worth drawing, in sheet px: below it a logo is a coloured dot nobody can read, and
- * the title is better off with the width.
- */
-const LOGO_SLOT_MIN = 14;
-/** Gap between the logo slot and the edges around it, in sheet px. */
-const LOGO_SLOT_PAD = 4;
 
 /**
  * The break stamp: a word written across the day at an angle, the Canva's rendering of "Vacances".
@@ -178,34 +158,6 @@ export function slotHeights(cellH: number, nSlots: number): number[] {
 }
 
 /**
- * {@link slotHeights} with a weight per slot: integers proportional to `weights`, summing EXACTLY
- * to `cellH`. A title that needs two lines gets a taller tile than a one-word one beside it - the
- * November 2026 sheet cramped "Presentation des campagnes" into the same band as "Soiree jeux".
- * Equal weights give exactly {@link slotHeights}; the rounding remainder goes to the last slots.
- */
-export function weightedSlotHeights(cellH: number, weights: number[]): number[] {
-  const total = weights.reduce((a, b) => a + b, 0);
-  if (weights.length === 0 || total <= 0) return [];
-  if (weights.every((w) => w === weights[0])) return slotHeights(cellH, weights.length);
-  const heights = weights.map((w) => Math.floor((cellH * w) / total));
-  let rest = cellH - heights.reduce((a, b) => a + b, 0);
-  for (let i = heights.length - 1; rest > 0; i = (i - 1 + heights.length) % heights.length) {
-    heights[i] += 1;
-    rest -= 1;
-  }
-  return heights;
-}
-
-/**
- * How many lines a title will likely want in a sheet tile: 1 or 2, by length. An estimate is
- * enough here because it only SHARES the cell between tiles; `fitEventText` and the line clamp
- * still decide what is drawn, so a wrong guess costs a little room, never an overlap.
- */
-export function titleLineWeight(title: string): number {
-  return title.trim().length > 15 ? 2 : 1;
-}
-
-/**
  * The dark outline that gives that white its contrast, for text of `fontSize` px.
  *
  * The Canva draws every title white with a black outline (user, 2026-10-06) and the old rule - a
@@ -279,11 +231,11 @@ export interface CalendarExportOptions {
   /** Day cell fill opacity in percent (0-100). Default: 82 - the photo reads between the cards. */
   cellBgOpacity?: number;
   /**
-   * Association logo opacity in percent (0-100). Default: 100.
+   * Association logo watermark opacity in percent (0-100). Default: 55.
    *
-   * It was a watermark under the title (55, and 18-22 before that) until the November 2026 sheet
-   * showed the title and the logo fighting in every short tile; the logo has its own left slot
-   * since 2026-10-18, so the control only says how loud the logos of the month should be.
+   * It was 18-22 and hardcoded, which is what made the sheet look empty next to the Canva: there the
+   * logos are the loudest thing in a cell. It is a control rather than a constant because it trades
+   * directly against the title drawn over it, and that trade depends on the logos of the month.
    */
   logoOpacity?: number;
 }
@@ -300,9 +252,7 @@ export const DEFAULT_EXPORT_OPTIONS: Required<Omit<CalendarExportOptions, 'bgDat
   // 82, not 58 (2026-10-18): on the November 2026 sheet's autumn photograph the days faded into
   // the picture. The photo still reads in the gaps between the cards; a reader dials it back.
   cellBgOpacity: 82,
-  // 100, not 55 (2026-10-18): the logo sits in its own slot beside the title now, never under it,
-  // so fading it no longer buys the title anything.
-  logoOpacity: 100,
+  logoOpacity: 55,
 };
 
 /** Colour of the scrim - a legibility device over a photograph, never a design choice. */
@@ -685,13 +635,11 @@ function buildCalendarHtml(
   // asked for more of it (*"le WE et les jours de pause pourraient etre en un peu plus fonce"*).
   // A shade of the SAME colour keeps that a distinction rather than a second palette entry.
   const logoAlpha = opts.logoOpacity / 100;
-  // What the event tiles share once the day number has taken its row.
-  const tilesH = CELL_H - SHEET_NUM_ROW_H;
-  // EVERY day number is white with the dark outline, like the titles (2026-10-18): the November
-  // 2026 sheet drew the title in a heavy outline and the cells' own text in none, and a grey number
-  // on a grey card over a photograph was the first thing to disappear.
-  const numberRow = (day: number) =>
-    `<div style="position:relative;height:${SHEET_NUM_ROW_H}px;padding:3px 0 0 8px;box-sizing:border-box;"><span data-pdf-text style="position:relative;font-size:${DAY_NUM_SIZE}px;font-weight:800;line-height:1;${textOutlineCss(DAY_NUM_SIZE)}">${day}</span></div>`;
+  // EVERY day number is white with the dark outline, like the titles, WHERE IT ALWAYS WAS
+  // (2026-10-18): the November 2026 sheet drew the title in a heavy outline and the cells' own text
+  // in none, and a grey number on a grey card over a photograph was the first thing to disappear.
+  // Only its paint changed - placement and size are the 2026-10-06 design, kept by the user.
+  const dayNumberPaint = textOutlineCss(DAY_NUM_SIZE);
 
   const cellHtml = cells
     .map((day, i) => {
@@ -732,7 +680,7 @@ function buildCalendarHtml(
           : '';
 
       if (dayEvents.length === 0) {
-        return `<div style="position:relative;${cellBase}background:${bg};">${numberRow(day)}${dayFrameHtml()}${breakStamp}</div>`;
+        return `<div style="position:relative;${cellBase}background:${bg};padding:6px 8px;"><span data-pdf-text style="position:relative;font-size:${DAY_NUM_SIZE}px;font-weight:800;line-height:1;${dayNumberPaint}">${day}</span>${dayFrameHtml()}${breakStamp}</div>`;
       }
 
       const nVisible = dayEvents.length > MAX_SHOW ? MAX_SHOW - 1 : dayEvents.length;
@@ -745,26 +693,25 @@ function buildCalendarHtml(
         visible.map((ev) => dayOccupancy(ev, square)),
         overflowCount
       );
+      const heights = slotHeights(CELL_H, layout.nSlots);
+      // Rows are emitted in order and each takes the next height, so the slots sum to the cell.
+      let slotPos = 0;
       const loneSlot =
         visible.length === 1 && overflowCount === 0 && layout.nSlots === 2
           ? layout.slotOf[0]
           : null;
-      // A two-line title gets a taller tile than a one-word one beside it; the two halves of a lone
-      // half-day event stay halves, and the "+N" row is one short line.
-      const weights =
-        loneSlot !== null
-          ? [1, 1]
-          : [...visible.map((ev) => titleLineWeight(ev.title)), ...(overflowCount > 0 ? [1] : [])];
-      const heights = weightedSlotHeights(tilesH, weights);
-      // Rows are emitted in order and each takes the next height, so the slots sum to the cell.
-      let slotPos = 0;
-      // An empty half: the cell's own fill, nothing drawn - the number has its own row above.
-      const blankHalf = () =>
-        `<div style="height:${heights[slotPos++]}px;box-sizing:border-box;"></div>`;
+      // An empty half, carrying the day number when it is the FIRST slot - the number belongs to
+      // slot 0, and slot 0 no longer always holds an event.
+      const blankHalf = (withDayNumber: boolean) =>
+        `<div style="height:${heights[slotPos++]}px;position:relative;box-sizing:border-box;">${
+          withDayNumber
+            ? `<div style="padding:6px 0 0 8px;"><span data-pdf-text style="font-size:${DAY_NUM_SIZE}px;font-weight:800;line-height:1;${dayNumberPaint}">${day}</span></div>`
+            : ''
+        }</div>`;
 
       const rows = [
-        ...(loneSlot === 1 ? [blankHalf()] : []),
-        ...visible.map((ev) => {
+        ...(loneSlot === 1 ? [blankHalf(true)] : []),
+        ...visible.map((ev, idx) => {
           const slotH = heights[slotPos++];
           const evBg = eventBgCss(ev);
 
@@ -795,39 +742,40 @@ function buildCalendarHtml(
             }
           }
 
-          // THE LOGO HAS A FIXED SLOT ON THE LEFT AND THE TITLE TAKES WHAT IS LEFT (2026-10-18).
-          // It was a watermark centred UNDER the title, and in a short tile of the November 2026
-          // sheet the two simply sat on each other. Side by side, neither can cover the other.
-          const logoSize = Math.min(LOGO_SLOT_MAX, slotH - 2 * LOGO_SLOT_PAD);
-          const hasLogo = logoSize >= LOGO_SLOT_MIN && logoSrcs.some((src) => src !== null);
-          const logoTop = Math.round((slotH - logoSize) / 2);
-          const logoInner =
-            owners.length === 1
-              ? `<img src="${logoSrcs[0]}" style="height:${logoSize}px;width:${logoSize}px;max-width:none;max-height:none;border-radius:50%;object-fit:cover;opacity:${logoAlpha.toFixed(2)};" />`
+          const logoSize = Math.max(Math.round(slotH * 0.78), 16);
+          // Watermark stays absolute - decorative only, doesn't affect flow.
+          const watermark = logoSrcs.every((src) => src === null)
+            ? ''
+            : owners.length === 1
+              ? `<div style="position:absolute;inset:0;display:flex;align-items:center;justify-content:center;pointer-events:none;"><img src="${logoSrcs[0]}" style="height:${logoSize}px;width:${logoSize}px;border-radius:50%;object-fit:cover;opacity:${logoAlpha.toFixed(2)};" /></div>`
               : splitLogoWatermark(logoSrcs, logoSize, logoAlpha);
-          const logoSlot = hasLogo
-            ? `<div style="position:absolute;left:${LOGO_SLOT_PAD}px;top:${logoTop}px;width:${logoSize}px;height:${logoSize}px;pointer-events:none;">${logoInner}</div>`
-            : '';
 
-          // Every title is white with a dark outline, centred in its tile beside the logo slot.
-          // Every tile opens with the dark rule: it separates the tile from the number row above it
-          // and from the tile before it, so two saturated colours never merge into one band.
-          const fit = fitEventText(slotH - SHEET_RULE_W);
-          const padLeft = hasLogo ? LOGO_SLOT_PAD * 2 + logoSize : fit.ph;
-          return `<div style="height:${slotH}px;position:relative;background:${evBg};overflow:hidden;${sheetRuleCss()}display:flex;align-items:center;justify-content:center;padding:0 ${fit.ph}px 0 ${padLeft}px;box-sizing:border-box;">
-              ${logoSlot}
+          // A dark rule between two stacked events, so two saturated tiles never merge into one band.
+          const sep = idx > 0 ? sheetRuleCss() : '';
+          // Every title is white with a dark outline, CENTRED IN ITS WHOLE TILE both ways: the day
+          // number is pinned top-left on top of the tile instead of owning a row the title must
+          // dodge, which is what pushed the first title of a cell below the centre (user,
+          // 2026-10-06). The outline is what keeps the number readable if a long title reaches it.
+          const dayNumber =
+            idx === 0 && loneSlot !== 1
+              ? `<span data-pdf-text style="position:absolute;top:6px;left:8px;font-size:${DAY_NUM_SIZE}px;font-weight:800;line-height:1;${textOutlineCss(DAY_NUM_SIZE)}">${day}</span>`
+              : '';
+          const fit = fitEventText(slotH);
+          return `<div style="height:${slotH}px;position:relative;background:${evBg};overflow:hidden;${sep}display:flex;align-items:center;justify-content:center;padding:0 ${fit.ph}px;box-sizing:border-box;">
+              ${watermark}
+              ${dayNumber}
               <span style="font-size:${fit.fontSize}px;font-weight:800;line-height:${EVENT_TITLE_LINE_HEIGHT};text-align:center;position:relative;${textOutlineCss(fit.fontSize)}${outlineRoomCss(fit.fontSize)}${fit.clampCss}">${emojiHtml(ev.title)}</span>
             </div>`;
         }),
-        ...(loneSlot === 0 ? [blankHalf()] : []),
+        ...(loneSlot === 0 ? [blankHalf(false)] : []),
         ...(overflowCount > 0
           ? [
-              `<div style="height:${heights[slotPos++]}px;background:${hexToRgba(darken(opts.cellBg, 0.16), Math.min(100, opts.cellBgOpacity + 20))};${sheetRuleCss()}display:flex;align-items:center;justify-content:center;overflow:hidden;box-sizing:border-box;"><span data-pdf-text style="font-size:10px;font-weight:800;line-height:1.2;${textOutlineCss(10)}">${safe(m.calendar_export_more_events({ count: overflowCount }))}</span></div>`,
+              `<div style="height:${heights[slotPos++]}px;background:${hexToRgba(darken(opts.cellBg, 0.16), Math.min(100, opts.cellBgOpacity + 20))};display:flex;align-items:center;justify-content:center;overflow:hidden;"><span data-pdf-text style="font-size:10px;font-weight:800;${textOutlineCss(10)}">${safe(m.calendar_export_more_events({ count: overflowCount }))}</span></div>`,
             ]
           : []),
       ];
 
-      return `<div style="position:relative;${cellBase}background:${bg};">${numberRow(day)}${rows.join('')}${dayFrameHtml()}${breakStamp}${breakStrip}</div>`;
+      return `<div style="position:relative;${cellBase}background:${bg};">${rows.join('')}${dayFrameHtml()}${breakStamp}${breakStrip}</div>`;
     })
     .join('');
 
