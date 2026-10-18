@@ -419,6 +419,27 @@ export interface AckMessagesBody {
   messageIds: string[];
 }
 
+/** Offline device ids a TRANSPORT_SKIPPED_OFFLINE line names before it says "+N more". */
+const SKIPPED_DEVICES_LOGGED = 5;
+
+/**
+ * The ids a log line names for a list that can hold ~100 entries: the first
+ * {@link SKIPPED_DEVICES_LOGGED}, then `+N more`. The line carries the exact count separately.
+ */
+export function capLoggedDevices(ids: readonly string[]): string[] {
+  if (ids.length <= SKIPPED_DEVICES_LOGGED) return [...ids];
+  return [...ids.slice(0, SKIPPED_DEVICES_LOGGED), `+${ids.length - SKIPPED_DEVICES_LOGGED} more`];
+}
+
+/**
+ * What one fan-out (every recipient of one frame) accumulates so it prints ONE summary instead of
+ * a line per device: `pushed` counts FCM sends accepted, `pushes` holds the in-flight ones.
+ */
+interface FanOutTally {
+  pushed: number;
+  pushes: Promise<unknown>[];
+}
+
 @Injectable()
 export class MessagingService {
   private readonly logger = new Logger(MessagingService.name);
@@ -610,7 +631,8 @@ export class MessagingService {
     traceId: string,
     groupId: string,
     senderId: string,
-    silent = false
+    silent = false,
+    batch?: FanOutTally
   ): Promise<void> {
     if (getApps().length === 0) return;
 
@@ -814,9 +836,15 @@ export class MessagingService {
                 },
               }
         );
-        this.logger.log(
-          `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId} platform=${pt.platform} inlineProto=${!!inlineProto} bytes=${pt.platform === 'ios' ? apnsBytes : dataBytes}`
-        );
+        if (batch) {
+          // ONE LINE PER FAN-OUT, NOT PER DEVICE: a frame queued to ~100 offline seats wrote ~100
+          // of these and rolled the production log over in ~20 minutes. The caller prints the sum.
+          batch.pushed++;
+        } else {
+          this.logger.log(
+            `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId} platform=${pt.platform} inlineProto=${!!inlineProto} bytes=${pt.platform === 'ios' ? apnsBytes : dataBytes}`
+          );
+        }
       } catch (e) {
         if (this.isTerminalPushTokenError(e)) {
           await this.pushTokenRepo.delete({ id: pt.id });
@@ -941,22 +969,36 @@ export class MessagingService {
       online,
       silent,
       pushable,
-    }: { tag: string; traceId: string; online: boolean; silent: boolean; pushable: boolean }
+      batch,
+    }: {
+      tag: string;
+      traceId: string;
+      online: boolean;
+      silent: boolean;
+      pushable: boolean;
+      batch?: FanOutTally;
+    }
   ): Promise<boolean> {
     const groupId = queued.groupId ?? '';
     const senderId = queued.senderId ?? '';
-    this.logger.log(
-      `[${tag}][${traceId}] recipient=${queued.recipientId}:${queued.deviceId} ` +
-        `online=${online} queuedId=${queued.id}`
-    );
+    // A FAN-OUT PASSES ITS TALLY AND PRINTS ONE SUMMARY; a lone delivery (a Welcome) keeps its two
+    // lines, which name the one device and are what a reader follows by trace id.
+    if (!batch) {
+      this.logger.log(
+        `[${tag}][${traceId}] recipient=${queued.recipientId}:${queued.deviceId} ` +
+          `online=${online} queuedId=${queued.id}`
+      );
+    }
 
     if (!online) {
       // Fire-and-forget: the row is persisted, and blocking on FCM (2-5 s per device) would stall
       // the sender's request. Every swallowed branch logs - that is all a lost push leaves behind.
       if (pushable) {
-        void this.sendFcmForQueued(queued, traceId, groupId, senderId, silent).catch((e) =>
-          this.logger.warn(`[PUSH_SEND][${traceId}] async FCM error queuedId=${queued.id}: ${e}`)
+        const push = this.sendFcmForQueued(queued, traceId, groupId, senderId, silent, batch).catch(
+          (e) =>
+            this.logger.warn(`[PUSH_SEND][${traceId}] async FCM error queuedId=${queued.id}: ${e}`)
         );
+        batch?.pushes.push(push);
       }
       return false;
     }
@@ -981,10 +1023,12 @@ export class MessagingService {
         createdAt: queued.createdAt.toISOString(),
       })
     );
-    this.logger.log(
-      `[${tag}][${traceId}] PUBLISHED recipient=${queued.recipientId}:${queued.deviceId} ` +
-        `queuedId=${queued.id}`
-    );
+    if (!batch) {
+      this.logger.log(
+        `[${tag}][${traceId}] PUBLISHED recipient=${queued.recipientId}:${queued.deviceId} ` +
+          `queuedId=${queued.id}`
+      );
+    }
 
     if (pushable) {
       this.scheduleDeferredPush(queued, traceId, groupId, senderId, silent);
@@ -1390,9 +1434,12 @@ export class MessagingService {
       // a phone's seed request was dropped for one offline recipient while the only device it could
       // have meant was answering pings throughout, and this line could not settle which. The ids are
       // exactly what the presence lookup was keyed on, so they are the evidence it owed.
-      const skipped = ops
+      const skippedAll = ops
         .filter((q) => online.get(`${q.recipientId}:${q.deviceId}`) !== true)
         .map((q) => q.deviceId);
+      // CAPPED: a key group names ~100 offline seats per frame, and the full list was most of the
+      // bytes of this line (18 628 devices in 37 minutes). The count above is always exact.
+      const skipped = capLoggedDevices(skippedAll);
       this.logger.log(
         `[SEND][${traceId}] TRANSPORT_SKIPPED_OFFLINE count=${ops.length - toDeliver.length} ` +
           `group=${body.groupId ?? ''} devices=${skipped.join(',')} ` +
@@ -1537,6 +1584,7 @@ export class MessagingService {
     // unreachable anyway, because the filter above kept only online recipients. Passing it rather
     // than relying on that keeps the two facts independent.
     const silent = body.isCommit || body.isWelcome ? true : (body.silent ?? false);
+    const tally: FanOutTally = { pushed: 0, pushes: [] };
     for (const queued of toDeliver) {
       // Reuses the presence answer taken above rather than asking Redis a second time. A device
       // that went offline in between is covered the same way it always was: the row survives and
@@ -1547,14 +1595,27 @@ export class MessagingService {
         online: online.get(`${queued.recipientId}:${queued.deviceId}`) === true,
         silent,
         pushable: durable,
+        batch: tally,
       });
       if (delivered) sentCount++;
+    }
+    if (tally.pushes.length > 0) {
+      // The pushes are fire-and-forget (FCM takes 2-5 s per device), so their sum is printed when
+      // the last one settles. Failures and missing tokens already logged themselves per device.
+      const attempted = tally.pushes.length;
+      void Promise.all(tally.pushes).then(() =>
+        this.logger.log(
+          `[PUSH_SEND][${traceId}] FCM sent batch pushed=${tally.pushed} of ${attempted} offline device(s)`
+        )
+      );
     }
 
     // The count REPORTED is the count actually written, not the count considered - a transport frame
     // drops its offline recipients above, and a log that still said `ops.length` would describe rows
     // that do not exist.
-    this.logger.log(`[SEND][${traceId}] DONE queued=${toDeliver.length} realtime=${sentCount}`);
+    this.logger.log(
+      `[SEND][${traceId}] DONE queued=${toDeliver.length} realtime=${sentCount} offline=${tally.pushes.length}`
+    );
 
     return {
       status: 'processed',
