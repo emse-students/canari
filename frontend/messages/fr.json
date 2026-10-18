@@ -104,6 +104,7 @@
   "auth_server_unreachable": "Impossible de contacter le serveur. Vérifiez votre connexion puis réessayez.",
   "user_search_placeholder": "Rechercher un utilisateur…",
   "user_unknown_label": "Utilisateur inconnu",
+  "user_deleted_label": "Compte supprimé",
   "user_selector_remove_label": "Retirer cet utilisateur",
   "nav_main_landmark": "Navigation principale",
   "nav_conversations_landmark": "Liste des conversations",

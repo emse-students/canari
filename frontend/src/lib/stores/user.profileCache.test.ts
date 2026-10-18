@@ -54,7 +54,9 @@ describe('fetchUserProfile', () => {
       // the nineteen live ones beside it. "There is no such user" is therefore read from the answer
       // rather than from its status, and the store turns it back into the same 404 every caller
       // already classifies.
-      const apiFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ users: [] }) });
+      const apiFetch = vi
+        .fn()
+        .mockResolvedValue({ ok: true, json: async () => ({ users: [], deleted: ['gone'] }) });
       const mod = await load(apiFetch);
 
       await expect(mod.fetchUserProfile('gone')).rejects.toThrow();
@@ -99,7 +101,9 @@ describe('fetchUserProfile', () => {
   it(
     'carries the status as a field, so no caller reads it back out of a sentence',
     async () => {
-      const apiFetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ users: [] }) });
+      const apiFetch = vi
+        .fn()
+        .mockResolvedValue({ ok: true, json: async () => ({ users: [], deleted: ['gone'] }) });
       const mod = await load(apiFetch);
 
       const err = await mod.fetchUserProfile('gone').catch((e: unknown) => e);
@@ -177,10 +181,13 @@ describe('fetchUserProfile', () => {
     async () => {
       const apiFetch = vi.fn().mockImplementation(async (url: string) => {
         const ids = new URL(url).searchParams.get('ids')!.split(',');
-        // The batch route omits what it cannot find rather than failing the request.
+        // The batch route NAMES what it cannot find rather than failing the request.
         return {
           ok: true,
-          json: async () => ({ users: ids.filter((i) => i !== 'gone').map(profile) }),
+          json: async () => ({
+            users: ids.filter((i) => i !== 'gone').map(profile),
+            deleted: ids.filter((i) => i === 'gone'),
+          }),
         };
       });
       const mod = await load(apiFetch);
@@ -192,7 +199,30 @@ describe('fetchUserProfile', () => {
 
       expect((alive as { id: string }).id).toBe('alive');
       expect(mod.isAbsentUserError(missing)).toBe(true);
+      expect(mod.isDeletedAccountError(missing)).toBe(true);
       expect(apiFetch).toHaveBeenCalledTimes(1);
+    },
+    IMPORT_HEAVY_MS
+  );
+
+  it(
+    'an id the server names in NEITHER list is not a deleted account and is asked again',
+    async () => {
+      // A contract breach (an older server omitting the id) is not an answer about the account, so
+      // it is never cached as one and never rendered as "deleted".
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+      const apiFetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: async () => ({ users: [], deleted: [] }),
+      });
+      const mod = await load(apiFetch);
+
+      const first = await mod.fetchUserProfile('ghost').catch((e: unknown) => e);
+      await mod.fetchUserProfile('ghost').catch(() => undefined);
+
+      expect(mod.isDeletedAccountError(first)).toBe(false);
+      expect(mod.isAbsentUserError(first)).toBe(false);
+      expect(apiFetch).toHaveBeenCalledTimes(2);
     },
     IMPORT_HEAVY_MS
   );

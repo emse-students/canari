@@ -104,6 +104,7 @@
   "auth_server_unreachable": "Cannot reach the server. Check your connection and try again.",
   "user_search_placeholder": "Search for a user…",
   "user_unknown_label": "Unknown user",
+  "user_deleted_label": "Deleted account",
   "user_selector_remove_label": "Remove this user",
   "nav_main_landmark": "Main navigation",
   "nav_conversations_landmark": "Conversation list",

@@ -121,6 +121,23 @@ export class UserProfileFetchError extends Error {
 }
 
 /**
+ * The server NAMED this id as a deleted account (`deleted` in the batch answer): a typed answer
+ * carrying no name, because none is kept. It is a 404 to every caller that only asks "is it
+ * absent" (`isAbsentUserError`), and the one thing a renderer may add is the deleted-account label.
+ */
+export class DeletedAccountError extends UserProfileFetchError {
+  constructor() {
+    super(404);
+    this.name = 'DeletedAccountError';
+  }
+}
+
+/** `true` when the server answered that this account is deleted (see `DeletedAccountError`). */
+export function isDeletedAccountError(e: unknown): boolean {
+  return e instanceof DeletedAccountError;
+}
+
+/**
  * `true` when the refusal MEANS there is no such user, rather than that we could not go and ask.
  *
  * A 404 from this endpoint is an ANSWER - the account never existed, or was deleted, and neither
@@ -194,9 +211,8 @@ let pendingProfileBatch: Map<
 /**
  * Issues one request per chunk of `ids` and settles every waiting caller from its answer.
  *
- * An id the server did not return is an ANSWER - that account does not exist - so it rejects with
- * the same `UserProfileFetchError(404)` the single-id route produced, and every caller's existing
- * classification (`isAbsentUserError`) keeps working unchanged. A transport failure rejects every
+ * An id the server NAMES in `deleted` is an ANSWER - that account is gone - so it rejects with a
+ * `DeletedAccountError` (a 404 to every existing classification, `isAbsentUserError`). A transport failure rejects every
  * id in the chunk with what actually went wrong, which is not an answer and is not cached.
  */
 async function flushProfileBatch(
@@ -215,13 +231,23 @@ async function flushProfileBatch(
           `${coreUrl()}/api/users/batch?ids=${chunk.map(encodeURIComponent).join(',')}`
         );
         if (!res.ok) throw new UserProfileFetchError(res.status);
-        const { users } = (await res.json()) as { users: UserProfile[] };
+        const { users, deleted } = (await res.json()) as {
+          users: UserProfile[];
+          deleted: string[];
+        };
+        const deletedIds = new Set(deleted);
         const byId = new Map(users.map((u) => [u.id, u]));
         for (const id of chunk) {
           const profile = byId.get(id);
           for (const waiter of batch.get(id) ?? []) {
             if (profile) waiter.resolve(profile);
-            else waiter.reject(new UserProfileFetchError(404));
+            else if (deletedIds.has(id)) waiter.reject(new DeletedAccountError());
+            else {
+              // Neither a profile nor a deletion: the server broke its contract, which is not an
+              // answer about this account and must not be cached as one.
+              console.error('[USER] batch answer names neither a profile nor a deletion', { id });
+              waiter.reject(new UserProfileFetchError(502));
+            }
           }
         }
       } catch (e) {
