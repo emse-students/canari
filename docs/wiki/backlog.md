@@ -94,6 +94,17 @@ the MiConnect terms PR #1955 (merged, then HELD out of production on 2026-10-17 
 the Le Cercle history rewrite (owed: the permission system refused the destructive git step, the user
 runs it or approves it explicitly); sending the DPO dossier; the DSI log-retention request. **Done 2026-10-17:** Authentik's event retention is `days=90` (a dump was taken first) and Le Cercle's MR !29 is merged and deployed.
 
+## Decided by the user on 2026-10-18 (second batch)
+
+- **Salon-message tombstones are kept 30 days.** They are the rows that make a repeat idempotent. A purge goes into `channel-retention.scheduler.ts`; register-of-processing C4 and the privacy page must both say 30 days. Work package: a follow-up PR after #2005 merges, together with the other P3s of its re-review.
+- **`graine_seeds.json` and `channel_keys.json` stay on account deletion for now.** They are per-install native files holding community keys, with no owner. Backlog item: verify whether the next session re-mirrors them, then write an erasure rule using the same `push_context.json` ownership proof.
+- **The server refuses a resource block that overlaps an existing block of the same resource.** The answer is typed, and the client says the block already exists. Built after the bookings batch (#2019, #2029, #2035) has merged, since it touches `bookings.service`.
+- **Release: the lead cuts the next stable WITHOUT pausing for the user** (supersedes "pause when production is ready" of the same day). The number is `1.3.0`, bookings being a major visible feature. The production migrations of the batch (bookings 087-088, social-service 089-090, chat-delivery 031) are authorised. A direct production change other than a release deploy, or a destructive data migration, still waits for the user's yes.
+- **Dev smoke-login account (#2020).** The lead creates a dedicated smoke account (no second factor, random password) and sets the two smoke-login variables in the development environment secrets. The identity provider is a single instance, so this is a production identity change, authorised here.
+- **WP-RESTORE-1 (account restore through WebAuthn, native + server)** is built all the way to an alpha. It stays out of a stable until the user has read it on a phone.
+- **The MiConnect terms hold is lifted by the lead** as soon as the three preconditions listed above are verified; the lead tells the user.
+- **The KLIPY key is not rotated.** It was read container-side for the measurement and never printed.
+
 ## P3 - The distribution path's device check: ship on an alpha, read `[SENDER_MISMATCH] path=distribution` first
 
 On a key-group frame `openDistributionFrame` compares only the envelope's USER with the MLS credential; the envelope's `senderDeviceId` stays self-asserted ([channel-encryption section 21.1](protocols/channel-encryption.md#211-the-verified-sender-measured-then-refused-wp-g2-1-g2-1b)). Handing it to the sender check would REFUSE every frame whose device disagrees, and production has never been read for `path=distribution kind=device`, so it was taken out of #2027 (user, 2026-10-18). What it would buy: a device could no longer answer "I hold nothing" in a sibling's name ([section 24](protocols/channel-encryption.md#24-a-history-ask-answered-i-hold-nothing-is-final-for-its-roster-wp-hold-nothing-decided-2026-10-18)). Order: ship the comparison on an alpha, read `[SENDER_MISMATCH] path=distribution` on chat-delivery on dev, then on production, before any stable carries it.
@@ -111,6 +122,7 @@ phone passes already taken are history: [device-readings-2026-10](device-reading
 
 | What | The measurement that closes it |
 | --- | --- |
+| calls lot 1 (#1997, #2010): 1:1 audio peer to peer on dev builds, never placed on a phone - BLOCKED 2026-10-18, no tag carries it ([bench readings](device-readings-calls-live-2026-10-18.md#1-calls---blocked-no-build-within-reach-carries-lot-1)) | after the next pre-release: a call PC <-> Mi 9T and Mi 9T <-> iPhone 12 on dev - setup time, the selected pair (direct or Cloudflare TURN), audio heard both ways, the ring on a throttled uplink, and a key mismatch on a build with #2013 |
 | a reply swipe along a thumb's arc (45-70 px of vertical drift) replies once the bubble shows armed (2026-10-14; 0 of 14 before, unit and component tests since) | on the Mi 9T, next pre-release: the class-A cells of the matrix (`<harness-dir>/swipe-reply-r1014/`), 110 px across with 45 and 60 px drift, own and received; on the iPhone 12, the same arc by finger, its swipe never having been read on WebKit ([design-reference](frontend/design-reference.md#the-reply-swipe-that-sometimes-did-nothing-two-classes-measured-mi-9t-2026-10-14)) |
 | an Android relaunch (navigation-mode switch, WebView update) destroys the old WebView, so its Web Locks no longer withhold refused salon texts (2026-10-14; compiled and source-gated, never run) | on the Mi 9T, next pre-release: switch the navigation mode twice, CDP lists ONE page, a salon text refused before the switch comes back to its composer; restore gestural ([mobile](frontend/mobile.md#a-relaunched-activity-left-its-webview-alive-and-the-orphan-kept-its-web-locks-2026-10-14)) |
 | a post push tapped with the session dead lands on `/login?returnTo=` the post (2026-10-09) | check H step 4 on the Mi 9T, killed app AND backgrounded ([device-verification](device-verification.md#h-deep-link-from-an-os-notification-tap---re-opened-on-android)); a bare `/login` with no `[hooks] Processing URL` means the intent never reached the JS |
@@ -440,6 +452,10 @@ Four senders' devices sealed seed requests at epochs 135-138 while the key group
 ## P1 - Offline and weak network: the cold start is 103 s on Slow 3G (user, 2026-10-09; measured, partly built)
 
 Salon writes now wait for the link and a repeat is one row (WP-OFF-3/4, PK4 pull request, [section 16](frontend/offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17)); a salon photo, video or poll still needs the link. Cold start on Slow 3G: first paint 23 s, list usable 103 s (JS 57 s, then the 2 MB WASM 45 s, then the list); warm 2.1 s. Fourteen ordered work packages, each with its test, and the measured table: [offline-and-weak-network](frontend/offline-and-weak-network.md). Start with WP-OFF-1 (keep the salon draft on failure), WP-W1/W2 (compression, WASM preload), WP-W3. Owed: peer-side delivery, Android and iOS runs (the page lists them).
+
+## P3 - A salon row committed by a process that died before its broadcast is never broadcast or pushed (review of #2005, 2026-10-18)
+
+`sendMessage` commits the row, then publishes `channel.message.created` and fans out the push fire-and-forget. A process killed between the two leaves a stored row no peer is told about live and no phone is rung for; peers get it at their next history load. A repeat of that send (WP-OFF-3) is answered with the stored row and returns BEFORE the publish, so it does not heal it either. **Not fixed in the follow-up PR, deliberately:** (a) "publish on a replay of a young row" is a clock deciding a delivery; (b) a `published` column on `channel_messages` reopens the deploy window in which EVERY salon INSERT fails (TypeORM names each column in every INSERT, [section 16](frontend/offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17)); (c) a marker read only on a replay heals only the rare send whose answer was ALSO lost, while the same crash with no replay stays lost. **The fix is a transactional outbox**: a `channel_message_fanout` row inserted in the send's transaction, deleted once the publish and the push fan-out are handed off, and drained at boot (a crash is the only thing that leaves one behind), with the replay path draining its own row at once. One new table and a migration, so it gets its own pull request. Clients already settle a duplicate frame by message id.
 
 ## P2 - The host WAF drops any request body over 10 MiB (found 2026-10-10)
 
@@ -841,9 +857,11 @@ The mechanisms are on [mobile](frontend/mobile.md#one-builder-two-triggers),
 
 - **G1 - one human reading of a DESKTOP banner**: what a salon and a DM notification say, and where a
   tap lands.
-- **P3 - DECIDED 2026-10-18, native work: the push scanner's sixteen sentences are French literals and
-  a voice note is announced as an audio file** (`mobile/proto_fields.rs`). They are worded in Rust from
-  the app language ([WP-PUSH-I18N](#decided-by-the-user-on-2026-10-18---every-design-question-answered)); needs an Android and an iPhone reading to ship.
+- **P3 - BUILT 2026-10-18, NOT SHIPPED: the push scanner's sentences are worded in Rust from the app
+  language, and a declared voice note is announced as one** (`mobile/push_text.rs`,
+  [chat](frontend/modules/chat.md#a-voice-note-declares-itself-because-nothing-downstream-can-tell)).
+  Owed: an Android and an iPhone reading with the app set to English (a reaction, a photo, a voice
+  note); the iOS FFI and the Kotlin/Swift callers are verified by compiling only.
 - **P2 - one observation: the post its publisher could not delete (2026-09-17)** - the post's URL, or
   whether its publisher held `POST_AS_ASSO` on that association.
 - **P2 - one observation: the member who could not publish (2026-09-21)** - once he is past `0.18.14`
@@ -955,6 +973,12 @@ Lot 1 calls dev builds only. Before the production switch flips: F4, the IP expo
 between the two ends, or a visible "decrypt failing" toast; one AES-GCM key used in both directions
 with no AAD; and the `fp=` log line printing 4 bytes of the key, to become a hash
 ([calls](frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)).
+
+P3, owed by WP-C11 (group calls): `refuseIfBlocked` (`calls.service.ts`) lets ANY block between the
+caller and ANY other member refuse the whole call, at `initiate`, `ring` and `room-token`, and 1:1 is
+enforced only by the client. Acceptable while group calls are off; WP-C11 must decide whether one
+block refuses the call or only drops that member
+([calls](frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)).
 
 ### P2 - what made the profile fetches fail on that device at that moment
 
@@ -1385,7 +1409,7 @@ Each line: the decision, its scope as a work package (WP), and what blocks it. R
 - **WP-SALON-UNREAD (S-M, server + client, no MLS): the salon unread badge ignores join announcements AND muted salons.** The notice rows are encrypted, so the count needs the client or a flag on the notice; design first.
 - **WP-MENTION-DELETED (S, server, no MLS): the lookup of a deleted account answers "deleted account" with NO name** (200, no browser-level 404); no name snapshot anywhere.
 - **WP-MENTION-NAME (M, native Android and iOS, OPUS): a mention notification names its author from the phone's local copy of names**, "someone" if unknown; the name never rides the push. Owed: one look on each phone.
-- **WP-PUSH-I18N (M, Rust + native readings, OPUS): the 16 notification sentences of `mobile/proto_fields.rs` are translated in Rust from the app language, and a voice note stops being announced as an audio file.** One implementation for Android and iOS; a reading on each.
+- **WP-PUSH-I18N (M, Rust + native readings, OPUS): the 16 notification sentences of `mobile/proto_fields.rs` are translated in Rust from the app language, and a voice note stops being announced as an audio file.** One implementation for Android and iOS; a reading on each. **BUILT 2026-10-18** (`mobile/push_text.rs`), owed the two readings.
 - **WP-COORG-ACCEPT-NOTICE (S-M, server + native tables, no MLS): notify the organiser when a co-organisation is accepted** (`CoorganisationService.apply`), a push content in the Android, iOS and NSE tables like `coorganise_proposed`. **Blocks: ships only once `minClientVersion` covers the unknown-type fix (#1911)**, the same floor as the paid-form organiser alert.
 - **WP-NICK-COMMUNITY-RULES (part of the nicknames build, S): in a community the renamed person sees "set by X"**, and **a nickname STAYS when its setter leaves** (the target may always reset it); same for groups. Closes the two questions left open in the nicknames entry.
 - **DECIDED, NO WORK: the stale "added a member to the group" bubbles on devices from before #1870 are left alone** (no data deletion; they age out of view).

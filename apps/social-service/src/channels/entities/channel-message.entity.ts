@@ -91,10 +91,12 @@ export class ChannelMessage {
    *
    * `select: false`, `update: false`: the deploy starts the services BEFORE it applies migration 090
    * ([social-service](../../../../../docs/wiki/services/social-service.md#a-query-at-boot-runs-before-the-migration-that-adds-its-column-2026-10-02)),
-   * so no read and no save of a message may name the column - history and every lookup keep working
-   * in that window. Only a write carrying a client id names it (it must: the unique index is the
-   * idempotence) - a send, an edit, a reaction - and so does a message delete, which writes the
-   * id's tombstone; each of those fails whole in that window, stores nothing, and its repeat is safe.
+   * so no read and no UPDATE of a message names the column - history, every lookup and a pin keep
+   * working in that window. EVERY INSERT DOES: TypeORM lists each insertable column in its INSERT,
+   * `DEFAULT` for an absent value, so in the seconds between the services starting and 090 running
+   * every new salon row fails - a send, an edit, a reaction, a system notice, with a client id or
+   * without one - and so does a message delete, which writes the id's tombstone. Each fails whole and
+   * stores nothing (pinned by `channel-message-client-id.integration.spec.ts`), so a repeat is safe.
    */
   @Column({ type: 'varchar', length: 36, nullable: true, select: false, update: false })
   clientMessageId?: string | null;

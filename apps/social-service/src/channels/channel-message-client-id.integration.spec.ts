@@ -20,6 +20,8 @@ import { join } from 'path';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
 import { ChannelService, clientIdLockSql } from './channel.service';
+import { ChannelRetentionScheduler } from './channel-retention.scheduler';
+import { ERASURE_STATEMENTS } from '../internal/account-erasure';
 import { Workspace } from './entities/workspace.entity';
 import { Channel } from './entities/channel.entity';
 import { ChannelRole } from './entities/channel-role.entity';
@@ -40,6 +42,8 @@ const WS = '00000000-0000-4000-8000-0000000000a8';
 const SALON = '00000000-0000-4000-8000-0000000000c8';
 const ME = 'author';
 const OTHER = 'someone-else';
+/** An account being erased while one of its messages is deleted. */
+const ERASED = 'erased-author';
 const SIGNATURE = Buffer.alloc(64, 7).toString('base64');
 const CLIENT_ID = '7b0c1d2e-3f40-4a5b-8c6d-7e8f90a1b2c3';
 
@@ -107,6 +111,7 @@ maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
     );
     await members.save(members.create({ workspaceId: WS, userId: ME }));
     await members.save(members.create({ workspaceId: WS, userId: OTHER }));
+    await members.save(members.create({ workspaceId: WS, userId: ERASED }));
   });
 
   afterAll(async () => {
@@ -116,13 +121,39 @@ maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
     await admin.end();
   });
 
-  /** The first send's broadcast is fire-and-forget (its audience is read first): wait for it. */
+  /**
+   * The first send's broadcast is fire-and-forget (its audience is read first): resolves on the
+   * call itself - at once when it was already made - rather than after some wait.
+   */
   const published = async () => {
-    for (let i = 0; i < 200 && publish.mock.calls.length === 0; i++) {
-      await new Promise((resolve) => setTimeout(resolve, 5));
+    if (publish.mock.calls.length === 0) {
+      await new Promise<void>((resolve) =>
+        publish.mockImplementationOnce(() => {
+          resolve();
+          return Promise.resolve();
+        })
+      );
     }
     expect(publish).toHaveBeenCalledTimes(1);
   };
+
+  /**
+   * Resolves once some backend is WAITING on a lock `holder` (a backend pid) holds - read from the
+   * server's own lock table, so the test knows the other side is parked rather than hoping a pause
+   * was long enough. Each round is a real query, never a sleep; jest's timeout bounds it.
+   */
+  const blockedBy = async (holder: number) => {
+    for (;;) {
+      const waiting: unknown[] = await q(
+        `SELECT 1 FROM pg_stat_activity WHERE $1::int = ANY (pg_blocking_pids(pid))`,
+        [holder]
+      );
+      if (waiting.length > 0) return;
+    }
+  };
+  /** The backend pid of a raw client, the holder `blockedBy` waits on. */
+  const pidOf = async (client: Client): Promise<number> =>
+    Number((await client.query('SELECT pg_backend_pid() AS pid')).rows[0].pid);
 
   it('migration 090 applies over the schema the entity built, twice', async () => {
     await q(migration);
@@ -186,7 +217,7 @@ maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
       const before = await rows();
       const repeat = send(ME, racing).catch((e: unknown) => e);
       // The repeat is parked on the lock, not past it: nothing landed while the delete is open.
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      await blockedBy(await pidOf(deleter));
       expect(await rows()).toBe(before);
       await deleter.query('COMMIT');
       const error = await repeat;
@@ -196,6 +227,65 @@ maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
       await deleter.query('ROLLBACK').catch(() => undefined);
       await deleter.end();
     }
+  });
+
+  it('a delete racing an account erasure leaves NO tombstone of the erased account', async () => {
+    // The interleaving that left one, made deterministic: the erasure has deleted the author's
+    // messages and not committed when a delete of one of them (here its author's other device; a
+    // moderator's is the same path) starts. Before the row lock the delete read the still-committed
+    // row, wrote its tombstone - invisible to the erasure's own tombstone statement - and committed
+    // after it. It must now wait on the row, find it gone, and write nothing.
+    const doomed = '3c4d5e6f-7081-4a92-8b3c-4d5e6f708192';
+    const sent = await send(ERASED, doomed);
+    const statement = (label: string) => ERASURE_STATEMENTS.find((s) => s.label === label)!.sql;
+    const eraser = new Client({ connectionString: URL });
+    await eraser.connect();
+    try {
+      await eraser.query(`SET search_path TO ${schema}`);
+      await eraser.query('BEGIN');
+      await eraser.query(statement('channel_messages'), [ERASED]);
+      const deleting = service.deleteChannelMessage(SALON, sent.id, ERASED);
+      await blockedBy(await pidOf(eraser));
+      await eraser.query(statement('channel_message_client_tombstones'), [ERASED]);
+      await eraser.query('COMMIT');
+      await deleting;
+      const left: unknown[] = await q(
+        `SELECT 1 FROM channel_message_client_tombstones WHERE "authorId" = $1`,
+        [ERASED]
+      );
+      expect(left).toHaveLength(0);
+    } finally {
+      await eraser.query('ROLLBACK').catch(() => undefined);
+      await eraser.end();
+    }
+  });
+
+  it('tombstones are purged 30 days after the delete, at a FIXED instant, idempotently', async () => {
+    const now = new Date('2026-10-18T03:50:00.000Z');
+    const day = 24 * 3600 * 1000;
+    const tombstone = (clientId: string, deletedAt: Date) =>
+      q(
+        `INSERT INTO channel_message_client_tombstones
+           ("authorId", "channelId", "clientMessageId", "deletedAt") VALUES ($1, $2, $3, $4)`,
+        [OTHER, SALON, clientId, deletedAt.toISOString()]
+      );
+    const expired = '4d5e6f70-8192-4aa3-8c4d-5e6f708192a3';
+    const kept = '5e6f7081-92a3-4bb4-8d5e-6f708192a3b4';
+    await tombstone(expired, new Date(now.getTime() - 30 * day - 1000));
+    await tombstone(kept, new Date(now.getTime() - 30 * day + 1000));
+    const gc = new ChannelRetentionScheduler(ds.getRepository(ChannelMessage));
+
+    expect(await gc.purgeTombstonesOnce(now)).toBe(1);
+    expect(await gc.purgeTombstonesOnce(now)).toBe(0);
+    const left: { clientMessageId: string }[] = await q(
+      `SELECT "clientMessageId" FROM channel_message_client_tombstones WHERE "authorId" = $1`,
+      [OTHER]
+    );
+    expect(left.map((r) => r.clientMessageId)).toEqual([kept]);
+    // The purged id is a message again: its repeat is posted, the kept one is still refused.
+    await expect(send(OTHER, expired)).resolves.toBeDefined();
+    const refused = await send(OTHER, kept).catch((e: unknown) => e);
+    expect((refused as { getStatus?: () => number }).getStatus?.()).toBe(410);
   });
 
   it('two repeats racing past the lookup leave ONE row and both get it', async () => {
@@ -233,6 +323,11 @@ maybe('a repeated salon send against PostgreSQL (migration 090)', () => {
       row.pinned = true;
       await expect(messages.save(row)).resolves.toBeDefined();
       await expect(messages.find({ where: { channelId: SALON } })).resolves.not.toHaveLength(0);
+      // But EVERY insert names it - TypeORM lists each insertable column, DEFAULT for an absent
+      // value - so even a send with no client id fails whole in this window and stores nothing.
+      const before = await rows();
+      await expect(send(ME)).rejects.toThrow('clientMessageId');
+      expect(await rows()).toBe(before);
     } finally {
       await q(migration);
     }

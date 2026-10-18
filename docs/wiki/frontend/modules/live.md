@@ -121,6 +121,9 @@ Three shapes, compared honestly.
 - **Playback in the WebViews** goes through Media Source Extensions in the segmented reader today
   _(unverified for a live, growing source on iOS WebKit, where MSE availability has differed from
   Chromium)_ - a WP-L1 reading on both phones, before anything else is built.
+  **Read 2026-10-18 in Chrome and Safari** (not yet in the app's WebViews): a MediaRecorder fMP4
+  chunk appends to a growing `MediaSource` / `ManagedMediaSource` for 36-42 min with no error
+  ([bench readings](../../device-readings-calls-live-2026-10-18.md#2-live-wp-l1---capture-into-short-fmp4-segments-and-a-growing-mse-source-30-42-min)).
 
 **Recommendation.**
 

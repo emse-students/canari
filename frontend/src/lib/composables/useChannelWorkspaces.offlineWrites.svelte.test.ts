@@ -68,6 +68,14 @@ function makeContext(): ChannelWorkspaceContext {
 
 const body = (ctx: ChannelWorkspaceContext) =>
   envelopeBodyText(ctx.conversations.get(SALON)!.messages[0].content);
+/**
+ * Moves the clock one millisecond on. Two gestures made in one millisecond carry one instant, and the
+ * later one must be LATER (an edit's `editedAt`, a reaction's timestamp decide which wins) - so the
+ * clock is faked and stepped, never waited on: only `Date` is faked, `vi.waitFor` keeps real timers.
+ */
+function laterInstant(): void {
+  vi.setSystemTime(Date.now() + 1);
+}
 const mine = (messageId: string) =>
   activeReactions(getChannelReactions(messageId)).filter((r) => r.userId === 'u1');
 
@@ -78,12 +86,15 @@ beforeEach(() => {
   connectivity.reset();
   resetOwedSalonWrites();
   setCurrentUserId('u1');
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(1_700_000_000_000);
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'debug').mockImplementation(() => {});
 });
 
 afterEach(() => {
   connectivity.reset();
+  vi.useRealTimers();
   vi.restoreAllMocks();
 });
 
@@ -116,7 +127,7 @@ describe('a salon edit', () => {
     const api = useChannelWorkspaces();
 
     await api.editChannelMessage(SALON, 'srv-mine', 'one', ctx);
-    await new Promise((resolve) => setTimeout(resolve, 2));
+    laterInstant();
     await api.editChannelMessage(SALON, 'srv-mine', 'two', ctx);
     connectivity.notifyServerReachable();
 
@@ -222,7 +233,7 @@ describe('a salon reaction', () => {
     const api = useChannelWorkspaces();
 
     await api.toggleChannelReaction(SALON, 'm-offline-3', '😂', ctx);
-    await new Promise((resolve) => setTimeout(resolve, 2));
+    laterInstant();
     await api.toggleChannelReaction(SALON, 'm-offline-3', '😂', ctx);
     expect(mine('m-offline-3')).toHaveLength(0);
 

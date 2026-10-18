@@ -3,6 +3,7 @@ import { Repository } from 'typeorm';
 import {
   ChannelRetentionScheduler,
   CHANNEL_MESSAGE_RETENTION_DAYS,
+  CHANNEL_MESSAGE_TOMBSTONE_RETENTION_DAYS,
 } from './channel-retention.scheduler';
 import { ChannelService, MAX_LIVE_SESSION_QUERY } from './channel.service';
 import { Workspace } from './entities/workspace.entity';
@@ -68,6 +69,51 @@ describe('ChannelRetentionScheduler', () => {
     await expect(makeScheduler().purgeOnce()).rejects.toThrow('connection lost');
     await expect(makeScheduler().purgeExpiredChannelMessages()).resolves.toBeUndefined();
     expect(warn).toHaveBeenCalled();
+  });
+});
+
+/**
+ * A deleted message's client-id tombstone is kept 30 days (decision 2026-10-18), measured from its
+ * own `deletedAt` at the instant the run is handed - a fixed instant here, never the wall clock. The
+ * real rows, both sides of the boundary, are in `channel-message-client-id.integration.spec.ts`.
+ */
+describe('ChannelRetentionScheduler tombstones', () => {
+  const query = jest.fn();
+  const makeScheduler = () =>
+    new ChannelRetentionScheduler({ manager: { query } } as unknown as Repository<ChannelMessage>);
+  const NOW = new Date('2026-10-18T03:50:00.000Z');
+  let error: jest.SpyInstance;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    error = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
+    jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('deletes the tombstones older than 30 days at the instant it is handed', async () => {
+    query.mockResolvedValue([[], 3]);
+
+    expect(await makeScheduler().purgeTombstonesOnce(NOW)).toBe(3);
+
+    const [sql, params] = query.mock.calls[0] as [string, unknown[]];
+    expect(sql).toContain('DELETE FROM channel_message_client_tombstones');
+    expect(sql).toContain('"deletedAt" < $1::timestamptz');
+    expect(params).toEqual([NOW.toISOString(), 30]);
+    expect(CHANNEL_MESSAGE_TOMBSTONE_RETENTION_DAYS).toBe(30);
+  });
+
+  it('accuses a failed run at ERROR: a kept tombstone breaks the privacy policy', async () => {
+    query.mockRejectedValue(new Error('relation does not exist'));
+
+    await expect(makeScheduler().purgeTombstonesOnce(NOW)).rejects.toThrow('relation');
+    await expect(makeScheduler().purgeExpiredClientTombstones()).resolves.toBeUndefined();
+    expect(error).toHaveBeenCalledWith(
+      '[GC] purgeExpiredClientTombstones failed',
+      expect.any(Error)
+    );
   });
 });
 
