@@ -747,10 +747,19 @@ export class ChannelService {
         method: 'POST',
         body: JSON.stringify({ typing: isTyping }),
       });
-    } catch {
-      // Non-critical - ignore.
+      this.typingFailing = false;
+    } catch (e) {
+      // Non-critical, but never silent: ONE line per failing streak, not per keystroke - a dead
+      // network would otherwise print on every throttled signal. The next success re-arms it.
+      if (!this.typingFailing) {
+        this.typingFailing = true;
+        Log.i('TYPING', `channel typing signal not delivered (further failures not logged): ${e}`);
+      }
     }
   }
+
+  /** True while the typing POST is failing, so a streak logs once ({@link sendTyping}). */
+  private typingFailing = false;
 
   /** Returns the caller's push notification level for a channel (`all` when never set). */
   async getNotificationLevel(channelId: string): Promise<ChannelNotificationLevel> {
