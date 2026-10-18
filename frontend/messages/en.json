@@ -3211,6 +3211,7 @@
   "auth_pin_reset_failed": "The PIN reset did not complete. Try again in a moment.",
   "auth_device_revoked_reset": "This device has been revoked. Local state has been reset: sign in with your PIN to register it as a new device.",
   "auth_local_state_unopenable": "The messages saved on this device could not be opened. If you changed your PIN on another device, enter the old PIN below. Otherwise the local data is damaged: no old PIN will help, and a reset is what gets you back into your conversations.",
+  "auth_local_state_unreadable_now": "The messages saved on this device could not be read right now. Nothing was lost or changed: close the app or the tab and open it again. If this keeps happening, contact support before any reset.",
   "auth_local_state_old_pin": "The messages saved on this device are locked with a different PIN from this one. If you changed your PIN on another device, enter the old one below to keep them.",
   "auth_vault_unverified": "The unlock saved on this device could not be verified for this account. Enter your PIN to continue.",
   "auth_pin_reset_blocked_other_account": "This device holds another account's messages, and the app keeps only one account's at a time: the reset is turned off here because it would erase the other account's messages. You can sign out and let the other account sign back in. To use this account on this device, clear the app's data or uninstall and reinstall it: the other account's messages saved here will then be permanently lost.",

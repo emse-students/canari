@@ -199,14 +199,51 @@ export function isMlsStateBlobV2(blob: Uint8Array): boolean {
 }
 
 /**
+ * WebCrypto refused to open a v2 blob, and that refusal PROVES NOTHING ABOUT THE BYTES.
+ *
+ * WebCrypto answers a failed AES-GCM tag with `OperationError` - and WebKit answers an engine fault
+ * (memory pressure on a ~19 MB state, among others) with the same name. So no rejection from
+ * `crypto.subtle` is evidence of alteration, and this type is NOT `STATE_ALTERED`: it is
+ * "unreadable right now, nothing destroyed". The verdict on the bytes is asked of `mls-core`'s
+ * deterministic reader by `loadAndInitWasm` (`mlsWasmLoader.ts`), which turns it into `STATE_ALTERED`
+ * only when that reader fails the same tag; otherwise this travels on, the caller re-reads a
+ * bounded number of times and then stops with the blob untouched - never a rotation.
+ *
+ * It carries the evidence separating the causes it cannot itself distinguish: the blob's size, the
+ * engine's error name, whether the key derivation (the unwrap) had succeeded, and - once
+ * `loadAndInitWasm` asked - what the deterministic reader answered.
+ */
+export class MlsStateUnreadableNowError extends Error {
+  /** What `mls-core`'s reader answered for the same bytes, once asked (`loadAndInitWasm`). */
+  deterministicReader: string | null = null;
+
+  constructor(
+    readonly blobBytes: number,
+    readonly errorName: string,
+    readonly keyPrepared: boolean,
+    cause: unknown
+  ) {
+    super(
+      `STATE_UNREADABLE_NOW: WebCrypto refused the v2 state blob (${blobBytes} B, ${errorName}, key ${keyPrepared ? 'derived' : 'NOT derived'}) - not proof of alteration, nothing destroyed: ${String(cause)}`,
+      { cause }
+    );
+    this.name = 'MlsStateUnreadableNowError';
+  }
+}
+
+/** The engine's own name for a rejection, tested by NAME: a DOMException is realm-bound. */
+function errorNameOf(e: unknown): string {
+  return e instanceof Error ? e.name : typeof e;
+}
+
+/**
  * Opens a v2 blob on the web, returning the plain CBOR snapshot for the WASM to load.
  *
- * Rejects with the SAME codes `mls-core` throws, as an `Error` whose message leads with the code -
- * the contract `classifyStateLoadFailure` reads on both paths: `STATE_KEY_MISMATCH` when the header
- * names another device key (checked BEFORE the cipher, so a rotation is a fact, not a guess),
- * `STATE_ALTERED` for a tag that does not verify under the key the header names (WebCrypto's
- * `OperationError`, and nothing else), and `STATE_UNDECRYPTABLE` for a stub too short to carry a
- * body. Any other decrypt rejection leaves UNTYPED, so the classifier answers `unknown`.
+ * Rejects with the codes `classifyStateLoadFailure` reads: `STATE_KEY_MISMATCH` when the header
+ * names another device key (checked BEFORE the cipher, so a rotation is a fact, not a guess) and
+ * `STATE_UNDECRYPTABLE` for a stub too short to carry a body - both decided from the bytes alone,
+ * the same as `mls-core`. A rejection from WebCrypto itself (key derivation or decrypt) is
+ * {@link MlsStateUnreadableNowError}, NEVER `STATE_ALTERED`: see that type for why.
  */
 export async function openMlsStateBlobV2(
   blob: Uint8Array,
@@ -223,7 +260,16 @@ export async function openMlsStateBlobV2(
       `STATE_UNDECRYPTABLE: framed state blob (version 2) carries ${body.length} byte(s) after its header, too short to hold its 28-byte minimum`
     );
   }
-  const { header, aesKey } = await preparedKeyFor(deviceKeyB64);
+  let keyMaterial: PreparedKey;
+  try {
+    keyMaterial = await preparedKeyFor(deviceKeyB64);
+  } catch (e) {
+    console.error(
+      `[MLS] state open v2: the AES key could not be derived (${errorNameOf(e)}, blob ${blob.length} B) - unreadable right now, nothing destroyed`
+    );
+    throw new MlsStateUnreadableNowError(blob.length, errorNameOf(e), false, e);
+  }
+  const { header, aesKey } = keyMaterial;
   for (let i = MLS_STATE_BLOB_MAGIC.length + 1; i < MLS_STATE_BLOB_HEADER_LEN; i++) {
     if (blob[i] !== header[i]) {
       throw new Error(
@@ -244,22 +290,14 @@ export async function openMlsStateBlobV2(
       )
     );
   } catch (e) {
-    // ONLY `OperationError` is WebCrypto's answer for a tag that does not verify. Any other
-    // rejection (a key unusable for `decrypt`, an engine fault) proves nothing about the bytes, and
-    // `STATE_ALTERED` leads to a destructive identity rotation - so it leaves UNTYPED, and the
-    // classifier answers `unknown`: logged loudly, nothing destroyed. Tested by the NAME on an
-    // `Error` (a DOMException is one) rather than `instanceof DOMException`, which is realm-bound:
-    // under the test DOM WebCrypto throws Node's DOMException, not the global one, and the
-    // `instanceof` test then silently sent the real tag failure to `unknown`.
-    if (e instanceof Error && e.name === 'OperationError') {
-      throw new Error(
-        `STATE_ALTERED: v2 AES-GCM tag did not verify under the right key - the blob was altered: ${String(e)}`
-      );
-    }
-    throw new Error(
-      `v2 AES-GCM decrypt failed with something other than a tag check, so the state is not proven altered: ${String(e)}`,
-      { cause: e }
+    // `OperationError` IS a failed tag - AND a WebKit engine fault, under the same name. It was read
+    // as `STATE_ALTERED` here, which `init` answers with an IRREVERSIBLE identity rotation even under
+    // `noFreshStart`: an out-of-memory decrypt would have destroyed a healthy state. No WebCrypto
+    // rejection is a verdict on the bytes; `loadAndInitWasm` asks the deterministic reader for one.
+    console.error(
+      `[MLS] state open v2: WebCrypto refused the blob (${errorNameOf(e)}, blob ${blob.length} B, key derived) - not proof of alteration, nothing destroyed`
     );
+    throw new MlsStateUnreadableNowError(blob.length, errorNameOf(e), true, e);
   }
 }
 

@@ -958,9 +958,22 @@ has the before/after table).
   `loadAndInitWasm`) and the WASM gets plain CBOR. Measured, not chosen: the WASM reader's software
   AES opened 7.7 MB in 610 ms against 240 ms for ChaCha - a cold-start regression that would have
   eaten the checkpoint saving. Every OTHER shape still goes to `mls-core` sealed. The two v2 readers
-  open the same committed fixture and throw the same codes (`STATE_KEY_MISMATCH` before the cipher,
-  `STATE_ALTERED` for a failed tag, `STATE_UNDECRYPTABLE` for a stub), which is what keeps them from
-  drifting.
+  open the same committed fixture and throw the same codes for what the BYTES decide
+  (`STATE_KEY_MISMATCH` before the cipher, `STATE_UNDECRYPTABLE` for a stub), which is what keeps them
+  from drifting.
+- **A WebCrypto refusal is NOT `STATE_ALTERED` (review of #2074, 2026-10-18).** WebKit names an
+  engine fault (memory pressure on a ~19 MB state) and a failed tag with the same `OperationError`, and
+  `altered` makes `init` rotate the device identity even under `noFreshStart` - irreversibly. So the
+  web opener throws `MlsStateUnreadableNowError` (blob size, error name, whether the key derivation
+  succeeded), and `loadAndInitWasm` asks `mls-core`'s deterministic reader for the verdict: its
+  `STATE_ALTERED` is a failed tag and only then is the state `altered`; if it OPENS the bytes the
+  engine fault is proven, and its client is freed, never installed (a witness, not a second load
+  path). Anything else stays `unreadable_now`: `WebMlsService.loadStateWithKey` reads the state up to
+  `MLS_STATE_UNREADABLE_NOW_READS` (3) times, then `init` throws `SavedStateUnopenedError('unreadable_now')`
+  with or without `noFreshStart` - nothing rotated or written, the login says "could not be read
+  right now" (`local_state_unreadable_now`, in no recovery predicate), the next start reads again.
+  Pinned by `WebMlsService.unreadableNow.test.ts`, `mlsWasmLoader.test.ts` and, on the REAL WASM,
+  `mlsStateSeal.realWasm.test.ts`.
 - **The seal runs on the calling thread, not the encrypt worker**: WebCrypto already runs the cipher
   off the JavaScript thread; what remains on it is the input copy, measured as the main thread's
   longest stall.
@@ -987,7 +1000,9 @@ native load (Tauri commands, `concurrency.rs`, the Android background JNI, the i
 the blob's bytes. Native builds still never WRITE v2 (`sealWebMlsState` throws inside Tauri), so on a
 phone the flip changes only the phone's BROWSER.
 
-**It is a one-way door for the DATA, never for the code.** Setting the constant back to `false` stops
+**It is a one-way door for the DATA, never for the code - and a test enforces it**
+(`mlsStateSeal.test.ts`, "THE ONE-WAY DOOR": the writer stays on, and it fails if the web dispatch or
+`mls-core`'s `open_v2` leaves the tree). Setting the constant back to `false` stops
 new v2 writes and nothing else: a v2 blob stays v2 until its next checkpoint rewrites it legacy. So
 **both v2 readers are permanent**, and **a web rollback below `v1.2.7` is forbidden from now on** - it
 would hand every browser a state it cannot open (`STATE_UNDECRYPTABLE`, nothing destroyed, PIN asked

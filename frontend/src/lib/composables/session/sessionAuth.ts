@@ -406,6 +406,9 @@ export function savedStateFailure(
   if (reason.reason === 'rotated') {
     return new LoginFailure('local_state_sealed_under_old_pin', m.auth_local_state_old_pin());
   }
+  if (reason.reason === 'unreadable_now') {
+    return new LoginFailure('local_state_unreadable_now', m.auth_local_state_unreadable_now());
+  }
   return new LoginFailure('local_state_unopenable', m.auth_local_state_unopenable());
 }
 

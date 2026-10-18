@@ -26,7 +26,7 @@ import {
   resetMlsWasmModuleCacheForTests,
 } from './mlsWasmLoader';
 import { getBootReport, resetBootBench } from './bootBenchmark';
-import { sealMlsStateBlobV2 } from './mlsStateSeal';
+import { MlsStateUnreadableNowError, sealMlsStateBlobV2 } from './mlsStateSeal';
 
 function wasmMagicResponse(): Response {
   const buf = new Uint8Array([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]);
@@ -136,14 +136,50 @@ describe('loadAndInitWasm', () => {
       expect(WasmMlsClient).not.toHaveBeenCalled();
     });
 
-    it('rejects an altered v2 blob as STATE_ALTERED, never constructing a client', async () => {
+    it('calls a WebCrypto refusal ALTERED only when mls-core fails the same tag', async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
       const blob = await sealMlsStateBlobV2(plain, KEY_B64);
       blob[blob.length - 1] ^= 1;
+      WasmMlsClient.mockImplementationOnce(function AlteredReader() {
+        throw new Error('STATE_ALTERED: v2 AES-GCM tag did not verify');
+      });
       await expect(loadAndInitWasm('u', 'd', blob, KEY_B64, true)).rejects.toThrow(
         /^STATE_ALTERED: /
       );
-      expect(WasmMlsClient).not.toHaveBeenCalled();
+      // The deterministic reader was asked with the SEALED bytes and the key.
+      expect(WasmMlsClient).toHaveBeenCalledWith('u', 'd', blob, KEY_B64, true);
+    });
+
+    it('keeps a refusal mls-core OPENS as unreadable now, freeing the witness client', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+      const blob = await sealMlsStateBlobV2(plain, KEY_B64);
+      const free = vi.fn();
+      WasmMlsClient.mockImplementationOnce(function Witness(this: { free: () => void }) {
+        this.free = free;
+      });
+      const decrypt = vi.spyOn(crypto.subtle, 'decrypt');
+      decrypt.mockRejectedValueOnce(new DOMException('engine', 'OperationError'));
+      const error = await loadAndInitWasm('u', 'd', blob, KEY_B64, true).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(MlsStateUnreadableNowError);
+      expect((error as MlsStateUnreadableNowError).deterministicReader).toBe('opened');
+      expect(free).toHaveBeenCalledTimes(1);
+      expect(WasmMlsClient).toHaveBeenCalledTimes(1);
+    });
+
+    it('keeps a refusal mls-core cannot judge (out of memory) as unreadable now', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+      const blob = await sealMlsStateBlobV2(plain, KEY_B64);
+      WasmMlsClient.mockImplementationOnce(function OutOfMemoryReader() {
+        throw new RangeError('WebAssembly.Memory.grow(): Maximum memory size exceeded');
+      });
+      const decrypt = vi.spyOn(crypto.subtle, 'decrypt');
+      decrypt.mockRejectedValueOnce(new DOMException('engine', 'OperationError'));
+      const error = await loadAndInitWasm('u', 'd', blob, KEY_B64, true).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(MlsStateUnreadableNowError);
+      expect(String(error)).not.toMatch(/STATE_ALTERED/);
+      expect((error as MlsStateUnreadableNowError).deterministicReader).toMatch(
+        /^failed: RangeError/
+      );
     });
   });
 
