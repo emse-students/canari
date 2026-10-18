@@ -8,6 +8,7 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 
 use crate::mobile::graine::GRAINE_SEED_BYTES;
+use crate::mobile::push_text::{PushLanguage, PushText};
 
 /// Reads a protobuf varint from `bytes` at position `pos`.
 /// Returns (value, next_position), or None if invalid.
@@ -174,25 +175,20 @@ pub fn find_varint_field(bytes: &[u8], field_num: u32) -> Option<u64> {
     None
 }
 
-/// Builds a short French notification body for a decoded `SystemMsg`.
+/// Builds a short notification body for a decoded `SystemMsg`, in `language`.
 /// Returns None for silent/control events that should not produce a visible preview.
-fn format_system_event_text(event: &str, data: &str) -> Option<String> {
+fn format_system_event_text(event: &str, data: &str, language: PushLanguage) -> Option<String> {
     let data_json: serde_json::Value =
         serde_json::from_str(data).unwrap_or(serde_json::Value::Null);
 
-    match event {
-        "groupRenamed" => {
-            let name = data_json
+    let text = match event {
+        "groupRenamed" => PushText::GroupRenamed(
+            data_json
                 .get("newName")
                 .and_then(|v| v.as_str())
-                .unwrap_or("");
-            if name.is_empty() {
-                Some("a renommé le groupe".to_string())
-            } else {
-                Some(format!("a renommé le groupe en « {name} »"))
-            }
-        }
-        "groupImageChanged" => Some("a changé la photo du groupe".to_string()),
+                .filter(|name| !name.is_empty()),
+        ),
+        "groupImageChanged" => PushText::GroupImageChanged,
         "memberAdded" => {
             let count = data_json
                 .get("newUsers")
@@ -200,15 +196,12 @@ fn format_system_event_text(event: &str, data: &str) -> Option<String> {
                 .map(|a| a.len())
                 .filter(|&n| n > 0)
                 .or_else(|| data_json.get("newUser").and_then(|v| v.as_str()).map(|_| 1));
-            match count {
-                Some(1) => Some("a ajouté un membre au groupe".to_string()),
-                Some(n) => Some(format!("a ajouté {n} membres au groupe")),
-                None => Some("a ajouté un membre au groupe".to_string()),
-            }
+            // A frame that names nobody still added someone: it reads as one.
+            PushText::MembersAdded(count.unwrap_or(1))
         }
-        "memberRemoved" => Some("a retiré un membre du groupe".to_string()),
-        "memberLeft" => Some("a quitté le groupe".to_string()),
-        "groupDeleted" => Some("a supprimé la conversation".to_string()),
+        "memberRemoved" => PushText::MemberRemoved,
+        "memberLeft" => PushText::MemberLeft,
+        "groupDeleted" => PushText::GroupDeleted,
         // AN INVITATION IS A MESSAGE, NOT MACHINERY, and it was listed below as machinery until
         // 2026-09-28. The web draws it as a card with a Join button; the push that carries it is
         // VISIBLE, so a phone that answered `None` here rang the invitee with the generic "Nouveau
@@ -217,16 +210,12 @@ fn format_system_event_text(event: &str, data: &str) -> Option<String> {
         // any preview is built. Worded as `mkChannelInviteEnvelope` words the card - the community
         // first, the salon when the frame names no community.
         "channel_invitation" => {
-            let community = ["workspaceName", "channelName"].iter().find_map(|k| {
+            PushText::Invited(["workspaceName", "channelName"].iter().find_map(|k| {
                 data_json
                     .get(*k)
                     .and_then(|v| v.as_str())
                     .filter(|s| !s.is_empty())
-            });
-            Some(match community {
-                Some(name) => format!("vous a invité à rejoindre « {name} »"),
-                None => "vous a invité à rejoindre une communauté".to_string(),
-            })
+            }))
         }
         // Control / sync frames: no user-visible notification preview.
         //
@@ -250,9 +239,10 @@ fn format_system_event_text(event: &str, data: &str) -> Option<String> {
         | "history_digest_request"
         | "history_pull"
         | "history_range"
-        | "history_state" => None,
-        _ => Some(format!("événement de groupe ({event})")),
-    }
+        | "history_state" => return None,
+        _ => PushText::UnknownEvent(event),
+    };
+    Some(text.render(language))
 }
 
 fn ok_message_json(
@@ -356,7 +346,10 @@ fn graine_seeds(bytes: &[u8]) -> Option<Vec<serde_json::Value>> {
 }
 
 /// Extracts the full metadata of a decrypted `AppMessage` protobuf for push display.
-pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
+///
+/// `language` words every sentence this function composes itself (a system event, a reaction, a
+/// media placeholder, a poll, a call); the text somebody TYPED is passed through as written.
+pub fn extract_full_message_info(bytes: &[u8], language: PushLanguage) -> serde_json::Value {
     let message_id = find_length_delimited_field(bytes, 6)
         .and_then(|b| String::from_utf8(b).ok())
         .unwrap_or_default();
@@ -405,7 +398,12 @@ pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
         // silences by name. Notifying here would ring the user for a reaction being withdrawn.
         let removed = find_varint_field(&reaction_msg, 4).unwrap_or(0) != 0;
         if !emoji.is_empty() && !removed {
-            return ok_message_json(format!("a réagi {emoji}"), message_id, sent_at, "reaction");
+            return ok_message_json(
+                PushText::Reacted(&emoji).render(language),
+                message_id,
+                sent_at,
+                "reaction",
+            );
         }
         if removed {
             return serde_json::json!({ "ok": false });
@@ -423,11 +421,20 @@ pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
         let caption = find_length_delimited_field(&media_msg, 8)
             .and_then(|b| String::from_utf8(b).ok())
             .filter(|s| !s.is_empty());
-        let display_text = caption.unwrap_or_else(|| match kind_str {
-            "image" => "\u{1f4f7} Photo".to_string(),
-            "video" => "\u{1f3a5} Vid\u{00e9}o".to_string(),
-            "audio" => "\u{1f3a4} Audio".to_string(),
-            _ => "\u{1f4ce} Pi\u{00e8}ce jointe".to_string(),
+        // `voice_note` (field 11) is DECLARED BY THE SENDER: a recording and an imported `.m4a` are
+        // the same bytes and the same mime, so nothing else here could tell them apart. Absent reads
+        // as false, which is every message from before 2026-09-17 - announced as an audio file, as
+        // it always was (docs/wiki/frontend/modules/chat.md, "A voice note declares itself").
+        let voice_note = find_varint_field(&media_msg, 11).unwrap_or(0) != 0;
+        let display_text = caption.unwrap_or_else(|| {
+            match kind_str {
+                "image" => PushText::Photo,
+                "video" => PushText::Video,
+                "audio" if voice_note => PushText::VoiceNote,
+                "audio" => PushText::Audio,
+                _ => PushText::Attachment,
+            }
+            .render(language)
         });
         // Media reference + CEK (WP-XP-3): the native notification builder downloads the opaque
         // ciphertext by `mediaId` and AES-256-GCM-decrypts it with `mediaKey`/`mediaIv` to attach a
@@ -475,7 +482,7 @@ pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
             .and_then(|b| String::from_utf8(b).ok())
             .unwrap_or_default();
         if !event.is_empty() {
-            if let Some(text) = format_system_event_text(&event, &data) {
+            if let Some(text) = format_system_event_text(&event, &data, language) {
                 return ok_message_json(text, message_id, sent_at, "system");
             }
             return serde_json::json!({ "ok": false });
@@ -488,7 +495,7 @@ pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
             .unwrap_or_default();
         if !question.is_empty() {
             return ok_message_json(
-                format!("\u{1f4ca} Sondage : {question}"),
+                PushText::Poll(&question).render(language),
                 message_id,
                 sent_at,
                 "poll",
@@ -536,10 +543,11 @@ pub fn extract_full_message_info(bytes: &[u8]) -> serde_json::Value {
         let has_video = find_varint_field(&call_msg, 6).unwrap_or(0) == 1;
         if find_length_delimited_field(&call_msg, 2).is_some() {
             let text = if has_video {
-                "\u{1f4f9} Appel vid\u{00e9}o entrant".to_string()
+                PushText::VideoCallIncoming
             } else {
-                "\u{1f4de} Appel entrant".to_string()
-            };
+                PushText::CallIncoming
+            }
+            .render(language);
             let mut info = ok_message_json(text, message_id, sent_at, "call_invite");
             info["callId"] = serde_json::json!(call_id);
             info["hasVideo"] = serde_json::json!(has_video);
@@ -730,15 +738,23 @@ mod tests {
 
     #[test]
     fn system_group_renamed_preview() {
-        let text = format_system_event_text("groupRenamed", r#"{"newName":"Les Canaris"}"#)
-            .expect("preview");
+        let text = format_system_event_text(
+            "groupRenamed",
+            r#"{"newName":"Les Canaris"}"#,
+            PushLanguage::French,
+        )
+        .expect("preview");
         assert!(text.contains("Les Canaris"));
     }
 
     #[test]
     fn system_member_added_preview() {
-        let text = format_system_event_text("memberAdded", r#"{"newUsers":["u1","u2"]}"#)
-            .expect("preview");
+        let text = format_system_event_text(
+            "memberAdded",
+            r#"{"newUsers":["u1","u2"]}"#,
+            PushLanguage::French,
+        )
+        .expect("preview");
         assert!(text.contains("2 membres"));
     }
 
@@ -747,18 +763,28 @@ mod tests {
         let text = format_system_event_text(
             "channel_invitation",
             r#"{"channelId":"c1","channelName":"general","workspaceName":"Gala"}"#,
+            PushLanguage::French,
         )
         .expect("an invitation is a visible message");
         assert_eq!(text, "vous a invité à rejoindre « Gala »");
-        let bare = format_system_event_text("channel_invitation", r#"{"channelId":"c1"}"#)
-            .expect("an invitation naming nothing still says what it is");
+        let bare = format_system_event_text(
+            "channel_invitation",
+            r#"{"channelId":"c1"}"#,
+            PushLanguage::French,
+        )
+        .expect("an invitation naming nothing still says what it is");
         assert_eq!(bare, "vous a invité à rejoindre une communauté");
     }
 
     #[test]
     fn silent_system_events_return_none() {
-        assert!(format_system_event_text("read_receipt", "{}").is_none());
-        assert!(format_system_event_text("delete_message", r#"{"messageId":"x"}"#).is_none());
+        assert!(format_system_event_text("read_receipt", "{}", PushLanguage::French).is_none());
+        assert!(format_system_event_text(
+            "delete_message",
+            r#"{"messageId":"x"}"#,
+            PushLanguage::French
+        )
+        .is_none());
     }
 
     /// A `MediaMsg` as the TS encoder writes it: kind, id, key, iv, mime, and `encoding` when set.
@@ -779,7 +805,7 @@ mod tests {
 
     #[test]
     fn a_single_block_media_hands_its_key_to_the_thumbnail() {
-        let info = extract_full_message_info(&media_app_message(1, 0));
+        let info = extract_full_message_info(&media_app_message(1, 0), PushLanguage::French);
         assert_eq!(info["type"], "media");
         assert_eq!(info["mediaKind"], "image");
         assert_eq!(info["mediaKey"], BASE64.encode([7u8; 32]));
@@ -789,7 +815,8 @@ mod tests {
     #[test]
     fn a_segmented_media_withholds_its_key_so_no_thumbnail_is_attempted() {
         for encoding in [1u64, 7] {
-            let info = extract_full_message_info(&media_app_message(1, encoding));
+            let info =
+                extract_full_message_info(&media_app_message(1, encoding), PushLanguage::French);
             assert_eq!(info["type"], "media", "the banner still says it is a photo");
             assert_eq!(info["mediaId"], "m-1");
             assert_eq!(
@@ -825,7 +852,7 @@ mod tests {
     fn a_reel_message_is_read_as_a_plain_video_by_a_reader_that_ignores_its_declaration() {
         // The fields are skipped by number, so the banner reads "video", and a segmented blob still
         // withholds its key: the push never tries to decrypt a reel for a thumbnail.
-        let info = extract_full_message_info(&reel_message_app_message());
+        let info = extract_full_message_info(&reel_message_app_message(), PushLanguage::French);
         assert_eq!(info["type"], "media");
         assert_eq!(info["mediaKind"], "video");
         assert_eq!(info["mediaId"], "reel-1");
@@ -833,10 +860,82 @@ mod tests {
         assert_eq!(info["mimeType"], "video/mp4");
     }
 
+    /// An audio `MediaMsg`, declared a voice note (field 11) or not.
+    fn audio_app_message(voice_note: bool) -> Vec<u8> {
+        let mut media = Vec::new();
+        write_tag(&mut media, 1, 0);
+        write_varint(&mut media, 3); // MEDIA_KIND_AUDIO
+        write_string_field(&mut media, 2, "a-1");
+        write_string_field(&mut media, 5, "audio/mp4");
+        if voice_note {
+            write_tag(&mut media, 11, 0);
+            write_varint(&mut media, 1);
+        }
+        wrap_app_message(4, &media, "msg-a", 1)
+    }
+
+    /// WP-PUSH-I18N: a voice note is announced as one, and an undeclared audio - an import, or a
+    /// recording from before the field existed - stays an audio file. The sender's declaration is
+    /// the only thing that separates them; the bytes and the mime are the same.
+    #[test]
+    fn a_declared_voice_note_is_announced_as_a_voice_message() {
+        let voice = extract_full_message_info(&audio_app_message(true), PushLanguage::French);
+        assert_eq!(voice["mediaKind"], "audio");
+        assert_eq!(voice["text"], "\u{1f3a4} Message vocal");
+        let file = extract_full_message_info(&audio_app_message(false), PushLanguage::French);
+        assert_eq!(file["text"], "\u{1f3b5} Fichier audio");
+        let english = extract_full_message_info(&audio_app_message(true), PushLanguage::English);
+        assert_eq!(english["text"], "\u{1f3a4} Voice message");
+    }
+
+    /// The language reaches every sentence the scanner composes, and NEVER the text somebody typed.
+    #[test]
+    fn the_app_language_words_the_composed_sentences_and_leaves_typed_text_alone() {
+        let typed = build_text_app_message("m-1", 1, "bonjour");
+        assert_eq!(
+            extract_full_message_info(&typed, PushLanguage::English)["text"],
+            "bonjour"
+        );
+
+        let mut reaction = Vec::new();
+        write_string_field(&mut reaction, 1, "target-1");
+        write_string_field(&mut reaction, 2, "\u{1f44d}");
+        let mut msg = Vec::new();
+        write_bytes_field(&mut msg, 3, &reaction);
+        assert_eq!(
+            extract_full_message_info(&msg, PushLanguage::English)["text"],
+            "reacted \u{1f44d}"
+        );
+
+        assert_eq!(
+            format_system_event_text("memberLeft", "{}", PushLanguage::English).as_deref(),
+            Some("left the group")
+        );
+        assert_eq!(
+            format_system_event_text(
+                "groupRenamed",
+                r#"{"newName":"Gala"}"#,
+                PushLanguage::English
+            )
+            .as_deref(),
+            Some("renamed the group to \"Gala\"")
+        );
+
+        let mut call = Vec::new();
+        write_string_field(&mut call, 1, "room-1");
+        write_string_field(&mut call, 2, "START");
+        let mut msg = Vec::new();
+        write_bytes_field(&mut msg, 7, &call);
+        assert_eq!(
+            extract_full_message_info(&msg, PushLanguage::English)["text"],
+            "\u{1f4de} Incoming call"
+        );
+    }
+
     #[test]
     fn build_text_app_message_roundtrips_through_extract() {
         let bytes = build_text_app_message("msg-123", 1_700_000_000_000, "hello quick reply");
-        let info = extract_full_message_info(&bytes);
+        let info = extract_full_message_info(&bytes, PushLanguage::French);
         assert_eq!(info["ok"], true);
         assert_eq!(info["type"], "text");
         assert_eq!(info["text"], "hello quick reply");
@@ -848,7 +947,10 @@ mod tests {
     fn build_read_watermark_app_message_carries_the_instant_and_stays_silent() {
         let bytes = build_read_watermark_app_message(1_700_000_000_000);
         // Silent like every control frame: no preview may be fabricated for it.
-        assert_eq!(extract_full_message_info(&bytes)["ok"], false);
+        assert_eq!(
+            extract_full_message_info(&bytes, PushLanguage::French)["ok"],
+            false
+        );
         let system_msg = find_length_delimited_field(&bytes, 5).expect("system field present");
         let event = find_length_delimited_field(&system_msg, 1).unwrap();
         assert_eq!(String::from_utf8(event).unwrap(), "read_watermark");
@@ -882,7 +984,7 @@ mod tests {
             "history_state",
         ] {
             assert!(
-                format_system_event_text(event, "{}").is_none(),
+                format_system_event_text(event, "{}", PushLanguage::French).is_none(),
                 "{event} would be shown to the user as a notification"
             );
         }
@@ -897,7 +999,7 @@ mod tests {
         let mut msg = Vec::new();
         write_bytes_field(&mut msg, 3, &reaction);
 
-        let info = extract_full_message_info(&msg);
+        let info = extract_full_message_info(&msg, PushLanguage::French);
         assert_eq!(info["ok"], true);
         assert_eq!(info["type"], "reaction");
         assert!(info["text"].as_str().unwrap().contains("\u{1f44d}"));
@@ -916,7 +1018,10 @@ mod tests {
         let mut msg = Vec::new();
         write_bytes_field(&mut msg, 3, &reaction);
 
-        assert_eq!(extract_full_message_info(&msg)["ok"], false);
+        assert_eq!(
+            extract_full_message_info(&msg, PushLanguage::French)["ok"],
+            false
+        );
     }
 
     #[test]
@@ -931,7 +1036,10 @@ mod tests {
         let mut msg = Vec::new();
         write_bytes_field(&mut msg, 10, &graine);
 
-        assert_eq!(extract_full_message_info(&msg)["ok"], false);
+        assert_eq!(
+            extract_full_message_info(&msg, PushLanguage::French)["ok"],
+            false
+        );
     }
 
     /// Graine v2 (channel-encryption section 21): the floor and the five endorsement fields reach
@@ -951,7 +1059,7 @@ mod tests {
         let mut msg = Vec::new();
         write_bytes_field(&mut msg, 10, &graine);
 
-        let info = extract_full_message_info(&msg);
+        let info = extract_full_message_info(&msg, PushLanguage::French);
         let seed = &info["seeds"][0];
         assert_eq!(seed["firstIndex"], 12);
         assert_eq!(seed["version"], 2);
@@ -961,7 +1069,10 @@ mod tests {
         assert_eq!(seed["endorsementB64"], BASE64.encode([2u8; 64]));
 
         // A v1 seed carries none of the five, and a floor of 0.
-        let v1 = extract_full_message_info(&build_graine_app_message("ch-1", "s", &[7u8; 32], 1));
+        let v1 = extract_full_message_info(
+            &build_graine_app_message("ch-1", "s", &[7u8; 32], 1),
+            PushLanguage::French,
+        );
         assert_eq!(v1["seeds"][0]["firstIndex"], 0);
         assert!(v1["seeds"][0].get("version").is_none());
     }
@@ -974,7 +1085,7 @@ mod tests {
             let mut msg = Vec::new();
             write_bytes_field(&mut msg, field, &body);
             assert_eq!(
-                extract_full_message_info(&msg)["ok"],
+                extract_full_message_info(&msg, PushLanguage::French)["ok"],
                 false,
                 "AppMessage field {field} must be silent"
             );
@@ -995,7 +1106,7 @@ mod tests {
         let mut msg = Vec::new();
         write_bytes_field(&mut msg, 12, &bundle);
 
-        let info = extract_full_message_info(&msg);
+        let info = extract_full_message_info(&msg, PushLanguage::French);
         assert_eq!(info["ok"], false);
         assert_eq!(info["kind"], "graine_key_material");
         assert_eq!(info["seeds"].as_array().expect("seeds").len(), 0);
@@ -1009,7 +1120,7 @@ mod tests {
         let seed = [7u8; 32];
         let msg = build_graine_app_message("ch-1", "sess-1", &seed, 1_700_000_000_000);
 
-        let info = extract_full_message_info(&msg);
+        let info = extract_full_message_info(&msg, PushLanguage::French);
         assert_eq!(info["ok"], false, "key material must never ring");
         assert_eq!(info["kind"], "graine_key_material");
         let seeds = info["seeds"].as_array().expect("seeds array");
@@ -1038,7 +1149,7 @@ mod tests {
         let mut msg = Vec::new();
         write_bytes_field(&mut msg, 12, &bundle);
 
-        let info = extract_full_message_info(&msg);
+        let info = extract_full_message_info(&msg, PushLanguage::French);
         assert_eq!(info["ok"], false);
         let seeds = info["seeds"].as_array().expect("seeds array");
         let ids: Vec<&str> = seeds
@@ -1065,7 +1176,7 @@ mod tests {
         for (what, body) in cases {
             let mut msg = Vec::new();
             write_bytes_field(&mut msg, 10, &body);
-            let info = extract_full_message_info(&msg);
+            let info = extract_full_message_info(&msg, PushLanguage::French);
             assert_eq!(info["kind"], "graine_key_material", "{what}");
             assert_eq!(
                 info["seeds"].as_array().map(|a| a.len()),
@@ -1084,7 +1195,7 @@ mod tests {
         let mut msg = Vec::new();
         write_bytes_field(&mut msg, 11, &body);
 
-        let info = extract_full_message_info(&msg);
+        let info = extract_full_message_info(&msg, PushLanguage::French);
         assert_eq!(info["ok"], false);
         assert_eq!(info["kind"], "graine_request");
         assert!(info["seeds"].is_null(), "a request has no seeds to absorb");
@@ -1095,7 +1206,7 @@ mod tests {
     #[test]
     fn an_ordinary_message_carries_no_absorbable_kind() {
         let msg = build_text_app_message("m-1", 1_700_000_000_000, "bonjour");
-        let info = extract_full_message_info(&msg);
+        let info = extract_full_message_info(&msg, PushLanguage::French);
         assert_eq!(info["ok"], true);
         assert!(info["kind"].is_null());
     }
@@ -1112,7 +1223,7 @@ mod tests {
         write_bytes_field(&mut msg, 7, &call);
         write_string_field(&mut msg, 6, "mid-1");
 
-        let info = extract_full_message_info(&msg);
+        let info = extract_full_message_info(&msg, PushLanguage::French);
         assert_eq!(info["ok"], true);
         assert_eq!(info["type"], "call_invite");
         assert_eq!(info["callId"], "room-1");
@@ -1130,7 +1241,7 @@ mod tests {
         let mut msg = Vec::new();
         write_bytes_field(&mut msg, 7, &call);
 
-        let info = extract_full_message_info(&msg);
+        let info = extract_full_message_info(&msg, PushLanguage::French);
         assert_eq!(info["ok"], true);
         assert_eq!(info["type"], "call_control");
         assert_eq!(info["callEnded"], true);
