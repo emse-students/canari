@@ -619,13 +619,13 @@ Three minutes of a production web client idle on `/communities` ([web-console-lo
 
 ### P3 - 80 roster reads per connection for the stray-leaf sweep
 
-**Built (2026-10-13, draft PR `perf/group-rosters-batch`)**: one `POST /api/mls/group-rosters` per connection ([chat-delivery](services/chat-delivery.md#many-rosters-in-one-read---post-apimlsgroup-rosters-2026-10-13)). Owed once shipped: the per-connection count on a production console (expected 1 request where there were 80-81).
+**Merged as #1806, shipped in `v1.2.7`**: one `POST /api/mls/group-rosters` per connection ([chat-delivery](services/chat-delivery.md#many-rosters-in-one-read---post-apimlsgroup-rosters-2026-10-13)). Owed once shipped: the per-connection count on a production console (expected 1 request where there were 80-81).
 
 ### P3 - an avatar 404 is the only way to learn a person has no photo
 
 10 of 28 avatar reads answered 404 on one load. The client already keeps the absence for the session; removing the first ask needs the user record to say whether a photo exists, which only MiGallery knows.
 
-**Built (2026-10-14, draft PRs: MiGallery `feat/avatar-presence-batch`, Canari `feat/avatar-presence-batch`)**: one presence question per list ([core-service](services/core-service.md#which-faces-exist-asked-once-per-list-2026-10-14)). MiGallery ships first; Canari tolerates its absence. Owed once both ship: the salon walk's count on a console (0 avatar `404`s expected, 37 before). Delete this entry then.
+**Built (2026-10-14; Canari's half merged as #1840 and shipped in `v1.2.9`, MiGallery's on its `feat/avatar-presence-batch` branch)**: one presence question per list ([core-service](services/core-service.md#which-faces-exist-asked-once-per-list-2026-10-14)). MiGallery ships first; Canari tolerates its absence. Owed once both ship: the salon walk's count on a console (0 avatar `404`s expected, 37 before). Delete this entry then.
 
 ## Seen in the 2026-10-12 heavy-state performance audit - what is open
 
@@ -639,7 +639,7 @@ The framed `state_blob` v2 (WebCrypto AES-GCM on the web, read by `mls-core` eve
 
 `getMessagesPage` `getAll`s every row to return 50 (28-31 ms for 5000 rows); needs a `[conversationId, timestamp]` index (an IndexedDB version bump) and a reverse cursor. SQLite sorts in a temp B-tree for want of `(conversation_id, timestamp)`.
 
-**Built (2026-10-17, draft PR `perf/pk13-message-storage`)**: IndexedDB v11 and `idx_messages_conv_time` ([performance-audit](frontend/performance-audit-2026-10-12.md#findings-5-9-and-10---built-2026-10-17-draft-pr-perfpk13-message-storage)). Owed once shipped: the per-page time on a 5k conversation, and no `[IDB] Migration v10->v11` error line on an upgraded browser. Delete this entry then.
+**Merged as #1998 (2026-10-18), in `v1.3.0-alpha.1`, no stable yet**: IndexedDB v11 and `idx_messages_conv_time` ([performance-audit](frontend/performance-audit-2026-10-12.md#findings-5-9-and-10---built-2026-10-17-draft-pr-perfpk13-message-storage)). Owed once shipped: the per-page time on a 5k conversation, and no `[IDB] Migration v10->v11` error line on an upgraded browser. Delete this entry then.
 
 ### P3 - a Welcome re-runs the whole restore
 
@@ -647,15 +647,15 @@ The framed `state_blob` v2 (WebCrypto AES-GCM on the web, read by `mls-core` eve
 
 ### P3 - the thread's render window only grows, with listeners per bubble
 
-`renderWindow.ts` never shrinks the mounted range; each `MessageBubble` adds a non-passive `touchmove` listener. Owed: a DOM-node and listener count on a seeded 5k thread, which decides whether the grow-only window (deliberate, see `renderWindow.ts`) is worth reopening. **The per-bubble `matchMedia` and window `keydown` are gone (2026-10-17, draft PR `perf/pk13-message-storage`)** ([performance-audit](frontend/performance-audit-2026-10-12.md#findings-5-9-and-10---built-2026-10-17-draft-pr-perfpk13-message-storage)).
+`renderWindow.ts` never shrinks the mounted range; each `MessageBubble` adds a non-passive `touchmove` listener. Owed: a DOM-node and listener count on a seeded 5k thread, which decides whether the grow-only window (deliberate, see `renderWindow.ts`) is worth reopening. **The per-bubble `matchMedia` and window `keydown` are gone (#1998, in `v1.3.0-alpha.1`)** ([performance-audit](frontend/performance-audit-2026-10-12.md#findings-5-9-and-10---built-2026-10-17-draft-pr-perfpk13-message-storage)).
 
 ### P3 - the seen-cipher ledger is re-stringified per received frame
 
-**Built (2026-10-17, draft PR `perf/pk13-message-storage`)**: the live mark is written at the checkpoint, with the replay's ([performance-audit](frontend/performance-audit-2026-10-12.md#findings-5-9-and-10---built-2026-10-17-draft-pr-perfpk13-message-storage)). Owed once shipped: no new `frame never read here` line on a cold start after a drain (TAB-3b). Delete this entry then.
+**Merged as #1998 (2026-10-18), in `v1.3.0-alpha.1`, no stable yet**: the live mark is written at the checkpoint, with the replay's ([performance-audit](frontend/performance-audit-2026-10-12.md#findings-5-9-and-10---built-2026-10-17-draft-pr-perfpk13-message-storage)). Owed once shipped: no new `frame never read here` line on a cold start after a drain (TAB-3b). Delete this entry then.
 
 ### P3 - native checkpoints hold the MLS mutex across export, seal and file write
 
-`src-tauri/src/commands/mls.rs:216-231`: a send or decrypt waits for a whole checkpoint. Snapshot under the lock, seal and write outside it.
+**Fixed by #1826, shipped in `v1.2.7`**: the manager lock spans the export only, the seal and the write run on the copy ([performance-audit](frontend/performance-audit-2026-10-12.md#finding-12---the-manager-lock-released-at-the-export-2026-10-13)). Owed: the Mi 9T's `[MLS] checkpoint: manager lock held N ms` debug line on the same walk. Delete this entry then.
 
 ## Open defects, in severity order
 
