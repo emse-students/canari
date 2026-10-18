@@ -28,7 +28,7 @@
 <LegalDocument
   title={m.legal_cgu_title()}
   subtitle={m.legal_cgu_subtitle()}
-  updated="16/10/2026"
+  updated="18/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -291,8 +291,8 @@
         Vous pouvez supprimer votre compte à tout moment depuis
         <strong>Paramètres > Supprimer mon compte</strong>. La suppression est immédiate et
         irréversible : profil, publications, adhésions, appareils et jetons de notification sont
-        effacés ; vos messages de salon et vos achats sont conservés détachés de votre compte. Le
-        détail figure dans la
+        effacés, ainsi que vos messages de salon ; vos achats sont conservés détachés de votre
+        compte. Le détail figure dans la
         <a href="/legal/privacy#droits">{m.legal_privacy_link()} §10</a>.
       </p>
     </div>
