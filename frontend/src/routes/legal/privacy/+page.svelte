@@ -116,14 +116,14 @@
           Lorsque vous réservez un créneau (une salle, un objet, un rendez-vous), Canari enregistre
           la réservation : la ressource, le début et la fin, votre identifiant et le nom affiché au
           moment de la réservation, les participants que vous ajoutez et vos réponses aux questions
-          de l'espace. Ces réponses, y compris les fichiers que vous joignez (PDF ou image, 8 Mo au
-          plus), ne sont lisibles que par les organisateurs de l'espace et par les administrateurs
-          de la plateforme ; les fichiers sont conservés en clair sur nos serveurs, sans chiffrement
-          de bout en bout, pour qu'ils puissent les lire. Les autres personnes ne voient votre nom
-          que si l'espace l'affiche, sinon seulement « occupé ». L'affiche d'un espace est chiffrée
-          sur l'appareil de l'organisateur, comme l'image d'une publication. Un organisateur peut
-          exporter les réservations de son espace dans un tableur ; un fichier n'y figure que par un
-          mot, jamais par son contenu.
+          de l'espace. Ces réponses ne sont lisibles que par les organisateurs de l'espace et par
+          les administrateurs de la plateforme ; les fichiers que vous joignez (PDF ou image, 8 Mo
+          au plus) ne sont téléchargeables que par les organisateurs de l'espace, et sont conservés
+          en clair sur nos serveurs, sans chiffrement de bout en bout, pour qu'ils puissent les
+          lire. Les autres personnes ne voient votre nom que si l'espace l'affiche, sinon seulement
+          « occupé ». L'affiche d'un espace est chiffrée sur l'appareil de l'organisateur, comme
+          l'image d'une publication. Un organisateur peut exporter les réservations de son espace
+          dans un tableur ; un fichier n'y figure que par un mot, jamais par son contenu.
         </dd>
       </div>
       <div>
