@@ -616,7 +616,8 @@ and with `createdAt` after `GREATEST(the caller's mark, the caller's membership,
 because a mark is also the "Lu par" receipt other people see. `read-mark` accepts an optional `serverAt`
 (the row's own `createdAt`) and stores the later of it and `at`, still bounded by the newest message - the
 author's `sentAt` is earlier than `createdAt`, which left the newest message "unread" for ever. A
-membership notice that is not silent is counted until the salon is opened. The count is one LATERAL
+membership notice is sent silent (2026-10-18) and so is not counted; a salon at level `none` is left out and listed in `muted`
+(see [chat](../frontend/modules/chat.md#a-muted-salon-and-a-membership-notice-raise-no-badge-2026-10-18)). The count is one LATERAL
 per salon bounded by `createdAt >= since`, riding `IDX_channel_messages_channel_created` (migration 079):
 300 ms on 1.5M rows / 300 salons with the old `channelId` index, 6 ms with it (EXPLAIN, `jit=off`). Why the client needs it:
 [chat](../frontend/modules/chat.md#unread-counts-of-salons-the-server-counts-this-device-only-merges-2026-10-08).

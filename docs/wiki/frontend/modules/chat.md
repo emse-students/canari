@@ -3616,6 +3616,30 @@ the two loads in the other order, which is why it "healed".
 
 The symptom was seen twice on 2026-08-16, on both platforms: nine of ten sidebar rows carrying "Utilisateur inconnu" for twenty seconds. The log line that makes it countable did not exist then; since 2026-08-19 every warn in `displayName.ts` ends `(failed/attempted lookups failed this session, X%)`, counting only lookups that reached the network. Do not assume it is the same fault as the avatar endpoint, and do not assume it is not. The number is read from a device or browser console during a campaign run: there is no client telemetry, and server-side is not an option (`GET /api/users/:id` is not request-logged, and a client that never reached the network would not appear anyway). **Then decide about `FAILURE_BACKOFF_MS`**: a high rate says the two-minute suppression does real work against a refusing server; a rate near zero says it is a clock hiding a name for two minutes over a blip the reconnection listener already handles.
 
+### A muted salon and a membership notice raise no badge (2026-10-18)
+
+WP-SALON-UNREAD, decided by the user 2026-10-18. Two rows the badge counted that its owner never
+wanted to read:
+
+- **The "X joined" notice.** It is an encrypted row, so the server could not tell it from a message
+  and counted it until the salon was opened (the 2026-10-11 fix only made it coverable). The one
+  writer (`inviteMemberToChannel`) now sends it `silent`, the flag the server already skips in
+  `listUnreadCounts`; as a side effect it no longer rings phones either. `listMessages` returns the
+  silent rows of a salon with NO body at all, so a salon holding only notices still shows them.
+  **Notices written before this stay counted until the salon is opened**, which the read mark now
+  reaches - no data repair.
+- **A muted salon.** `notifLevels[channel] = 'none'` is left out of the SQL, and the answer gains
+  `muted: string[]` (raw channel ids) so the client's LIVE tally stays quiet for them too
+  (`isSalonMuted`, read by both arrival paths in `useMessaging`; `reconcileSalonUnread` sets a muted
+  salon to 0). The settings panel updates the set at once (`noteSalonNotificationLevel`); a badge
+  already on screen when the member mutes falls at the next count. **`mentions` still counts**: the
+  row is encrypted, the server cannot tell which rows mention the member. An older server sends no
+  `muted`, and nothing is muted then.
+
+Tests: `channel-unread-counts.spec.ts`, `channel.service.spec.ts`, `salonUnread.test.ts`,
+`useChannelWorkspaces.svelte.test.ts`. **Owed on a device:** mute a salon, post into it from another
+account, read the community rail dot and the tab title; add a member and read the other member's badge.
+
 ### A salon read mark reaches its membership notices (2026-10-11)
 
 **Reported:** community Pist'On Fire, salon `infos` showed a badge of 3 and the community a red dot;

@@ -3,6 +3,8 @@ import type { Conversation } from '$lib/types';
 import {
   beginUnreadReconcile,
   clearSalonUnreadLocally,
+  isSalonMuted,
+  noteSalonNotificationLevel,
   communityUnreadUpTo,
   noteSalonOpened,
   parseSalonUnreadAnswer,
@@ -248,11 +250,65 @@ describe('parseSalonUnreadAnswer', () => {
     expect(parseSalonUnreadAnswer({ asOf: 5, counts: { ABC: 2, def: 0 } })).toEqual({
       asOf: 5,
       counts: { abc: 2 },
+      muted: [],
     });
   });
   it('refuses a shape it does not know rather than half-applying it', () => {
     expect(parseSalonUnreadAnswer(null)).toBeNull();
     expect(parseSalonUnreadAnswer({ counts: {} })).toBeNull();
     expect(parseSalonUnreadAnswer({ asOf: 'x', counts: {} })).toBeNull();
+  });
+});
+
+/** 2026-10-18: a muted salon shows no badge, from the server's answer and from the live tally. */
+describe('a muted salon', () => {
+  const RAW = 'aaaaaaaa-0000-0000-0000-000000000001';
+  beforeEach(() => resetSalonUnread());
+
+  it('is cleared by the answer, whatever landed live after it', () => {
+    const map = new Map([
+      [SALON, convo({ unreadCount: 4, messages: [msg('late', 2000)] as never })],
+      [OTHER, convo({ id: OTHER, unreadCount: 0 })],
+    ]);
+    const changed = reconcileSalonUnread(
+      map,
+      { asOf: 1000, counts: { 'aaaaaaaa-0000-0000-0000-000000000002': 2 }, muted: [RAW] },
+      null,
+      ME,
+      beginUnreadReconcile()
+    );
+    expect(changed.sort()).toEqual([OTHER, SALON].sort());
+    expect(map.get(SALON)?.unreadCount).toBe(0);
+    expect(map.get(OTHER)?.unreadCount).toBe(2);
+    expect(isSalonMuted(SALON)).toBe(true);
+    expect(isSalonMuted(OTHER)).toBe(false);
+  });
+
+  it('is unmuted by a later answer that no longer names it', () => {
+    const map = new Map([[SALON, convo()]]);
+    reconcileSalonUnread(
+      map,
+      { asOf: 1, counts: {}, muted: [RAW] },
+      null,
+      ME,
+      beginUnreadReconcile()
+    );
+    reconcileSalonUnread(map, { asOf: 2, counts: {}, muted: [] }, null, ME, beginUnreadReconcile());
+    expect(isSalonMuted(SALON)).toBe(false);
+  });
+
+  it('follows a level the member chooses here, for either id spelling', () => {
+    noteSalonNotificationLevel(RAW, 'none');
+    expect(isSalonMuted(SALON)).toBe(true);
+    expect(isSalonMuted(RAW)).toBe(true);
+    noteSalonNotificationLevel(SALON, 'mentions');
+    expect(isSalonMuted(SALON)).toBe(false);
+  });
+
+  it('is read from the wire, an older server naming none included', () => {
+    expect(
+      parseSalonUnreadAnswer({ asOf: 1, counts: {}, muted: [RAW.toUpperCase(), 7] })?.muted
+    ).toEqual([RAW]);
+    expect(parseSalonUnreadAnswer({ asOf: 1, counts: {} })?.muted).toEqual([]);
   });
 });

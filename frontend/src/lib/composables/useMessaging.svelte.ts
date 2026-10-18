@@ -7,6 +7,7 @@
  * - File selection + validation
  */
 import { isAppInForeground } from '$lib/utils/appForeground';
+import { isSalonMuted } from '$lib/utils/chat/salonUnread';
 import { isMobileTauriRuntime } from '$lib/utils/appVersion';
 import { SvelteMap, SvelteDate } from 'svelte/reactivity';
 import { getToken } from '$lib/stores/auth';
@@ -882,6 +883,7 @@ export function useMessaging() {
     // something nobody reads at all.
     const shouldMarkUnread =
       !isConversationOpen &&
+      !isSalonMuted(normalized) &&
       isUnreadForUser(newMsg, watermarkFor(convo.readWatermarks, ctx.userId.toLowerCase()));
     const nextUnreadCount = shouldMarkUnread
       ? (convo.unreadCount ?? 0) + 1
@@ -1135,7 +1137,10 @@ export function useMessaging() {
     const heldNow = current && current !== convo ? indexMessagesById(current.messages) : null;
     const toAdd = heldNow ? brandNew.filter((m) => !heldNow.has(m.id)) : brandNew;
     const myWatermark = watermarkFor(base.readWatermarks, ctx.userId.toLowerCase());
-    const addedUnread = toAdd.filter((msg) => isUnreadForUser(msg, myWatermark)).length;
+    // A MUTED SALON RAISES NOTHING, the server's count of it being zero by the same rule.
+    const addedUnread = isSalonMuted(normalized)
+      ? 0
+      : toAdd.filter((msg) => isUnreadForUser(msg, myWatermark)).length;
     const nextUnreadCount = isConversationOpen ? 0 : (base.unreadCount ?? 0) + addedUnread;
 
     const withUpgrades = base.messages.map((m) => upgradedById.get(m.id) ?? m);

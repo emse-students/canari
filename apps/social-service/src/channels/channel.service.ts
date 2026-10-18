@@ -3722,14 +3722,24 @@ export class ChannelService {
    * that was refused: a mark is also the "Lu par" receipt other people see, and a baseline would
    * claim the member had read what they had not.
    *
-   * @returns `asOf`, the server clock the counts were taken at, and `counts` keyed by channel id,
-   *          absent when the count is zero.
+   * A MUTED SALON COUNTS NOTHING (2026-10-18). `notifLevels[channel] = 'none'` is the member's own
+   * "do not bother me with this salon", and a badge on it contradicted that. `mentions` still counts:
+   * the row is encrypted, so the server cannot tell which rows mention the caller. The muted ids are
+   * returned beside the counts so a client's LIVE tally can stay silent for them too - the server's
+   * zero alone would be re-raised by the next message that arrives while the app is open.
+   *
+   * A MEMBERSHIP NOTICE COUNTS NOTHING because the client now sends it `silent` (the row is opaque
+   * here, so the sender must say so). Notices written before that stay counted until the salon is
+   * opened, which the read mark now reaches.
+   *
+   * @returns `asOf`, the server clock the counts were taken at, `counts` keyed by channel id,
+   *          absent when the count is zero, and `muted`, the readable salons at level `none`.
    */
   async listUnreadCounts(
     userId: string
-  ): Promise<{ asOf: number; counts: Record<string, number> }> {
+  ): Promise<{ asOf: number; counts: Record<string, number>; muted: string[] }> {
     const members = await this.memberRepo.find({ where: { userId } });
-    if (members.length === 0) return { asOf: Date.now(), counts: {} };
+    if (members.length === 0) return { asOf: Date.now(), counts: {}, muted: [] };
     const memberOf = new Map(members.map((m) => [m.workspaceId, m]));
     const channels = await this.channelRepo.find({
       where: { workspaceId: In([...memberOf.keys()]) },
@@ -3740,7 +3750,13 @@ export class ChannelService {
         return !!member && this.canAccessChannel(c, member, userId);
       })
       .map((c) => c.id);
-    if (readable.length === 0) return { asOf: Date.now(), counts: {} };
+    if (readable.length === 0) return { asOf: Date.now(), counts: {}, muted: [] };
+    const muted = readable.filter((id) => {
+      const channel = channels.find((c) => c.id === id);
+      return !!channel && memberOf.get(channel.workspaceId)?.notifLevels?.[id] === 'none';
+    });
+    const countable = readable.filter((id) => !muted.includes(id));
+    if (countable.length === 0) return { asOf: Date.now(), counts: {}, muted };
 
     // asOf is taken HERE, right before the count, not at the top of the method: the client adds
     // every live message newer than it, so each millisecond between the two is a window in which a
@@ -3776,11 +3792,14 @@ export class ChannelService {
              AND floor(extract(epoch from m."createdAt") * 1000) > b.since
         ) u
         WHERE cm."userId" = $1 AND u.n > 0`,
-      [userId, readable, UNREAD_TRACKED_SINCE_MS]
+      [userId, countable, UNREAD_TRACKED_SINCE_MS]
     );
     const counts: Record<string, number> = {};
     for (const r of rows) counts[r.channelId] = Number(r.n);
-    return { asOf, counts };
+    this.logger.debug(
+      `[UNREAD] user=${userId.slice(0, 8)} salons=${countable.length} unread=${Object.keys(counts).length} muted=${muted.length}`
+    );
+    return { asOf, counts, muted };
   }
 
   /**
@@ -4313,9 +4332,20 @@ export class ChannelService {
       take: safeLimit,
     });
     const oldestInPage = bodies[bodies.length - 1]?.createdAt ?? null;
+    // NO BODY AT ALL: A salon whose only rows are membership notices (sent silent since 2026-10-18,
+    // so they ring and count nothing) would otherwise show an empty history. Bounded by the page
+    // limit, and by the cursor like everything else.
     const silentRows =
       bodies.length === 0
-        ? []
+        ? await this.messageRepo.find({
+            where: {
+              channelId,
+              silent: true,
+              ...(hasValidCursor ? { createdAt: LessThan(beforeDate) } : {}),
+            },
+            order: { createdAt: 'DESC' },
+            take: safeLimit,
+          })
         : await this.messageRepo.find({
             where: {
               channelId,

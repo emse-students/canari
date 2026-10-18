@@ -810,6 +810,29 @@ describe('ChannelService security hardening', () => {
     expect(page.find((m) => m.id === 'r1')?.silent).toBe(true);
   });
 
+  // A membership notice is sent silent (it must not count as unread nor ring a phone), so a salon
+  // holding nothing else would otherwise open on an empty history.
+  it('listMessages returns the silent rows of a salon that has no body at all', async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    const notice = {
+      id: 'n1',
+      channelId: 'ch1',
+      authorId: 'u1',
+      content: 'c',
+      createdAt: new Date(100),
+      silent: true,
+      metadata: {},
+    };
+    messageRepo.find.mockImplementation(async (opts: any) =>
+      opts.where.silent === true ? [notice] : []
+    );
+
+    const page = await service.listMessages('ch1', 'u1', 50);
+
+    expect(page.map((m) => m.id)).toEqual(['n1']);
+  });
+
   it('rejects listMessages for a private channel when the user is neither admin nor allow-listed', async () => {
     const { service, channelRepo, memberRepo, roleRepo } = makeService();
     channelRepo.findOne.mockResolvedValue({
