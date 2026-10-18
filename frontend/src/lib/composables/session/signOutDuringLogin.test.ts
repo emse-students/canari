@@ -210,6 +210,8 @@ const logs = (cb: ChatSessionCallbacks) =>
  * with `pinCheckHangs`, never answers and rejects only when its request is aborted.
  */
 let pinCheckHangs = false;
+/** `pin-check` answers that this device was revoked. */
+let pinCheckRevoked = false;
 let pinCheckReached = deferred();
 function server() {
   vi.stubGlobal(
@@ -225,6 +227,9 @@ function server() {
           )
         );
       }
+      if (u.includes('pin-check') && pinCheckRevoked) {
+        return Response.json({ status: 'ok', resetRequired: true });
+      }
       if (u.includes('pin-check')) return new Response('', { status: 401 });
       return new Response('', { status: 200 });
     })
@@ -233,6 +238,7 @@ function server() {
 
 beforeEach(() => {
   pinCheckHangs = false;
+  pinCheckRevoked = false;
   pinCheckReached = deferred();
   server();
   vi.spyOn(console, 'log').mockImplementation(() => {});
@@ -242,6 +248,7 @@ beforeEach(() => {
   gatewayReached = deferred();
   syncConnectionAfterWsOpen.mockClear();
   clearDeviceKey.mockClear();
+  wipeDeviceToFactory.mockClear();
 });
 
 afterEach(() => {
@@ -416,5 +423,19 @@ describe('a sign-out during a login in progress', () => {
     expect(s.ctx.isLoggedIn()).toBe(false);
     expect(logs(s.cb)).toContain('[SECURITY] The revoked-device wipe FAILED');
     expect(errors.mock.calls.flat().join(' ')).toContain('revoked-device wipe failed');
+  });
+  it('a revoked device on the PIN path ends as device_revoked: its own wipe does not cancel it', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    pinCheckRevoked = true;
+    const a = fakeClient();
+    const s = session([a.client], '1234');
+
+    await loginImpl(s.ctx, s.cb);
+
+    expect(wipeDeviceToFactory).toHaveBeenCalled();
+    expect(s.cb.onLoginFailed).toHaveBeenCalledWith(expect.any(String), 'device_revoked');
+    expect(logs(s.cb)).not.toContain('[INIT] Login stopped');
+    expect(logs(s.cb)).not.toContain('wipe FAILED');
+    expect(errors.mock.calls.flat().join(' ')).not.toContain('wipe failed');
   });
 });

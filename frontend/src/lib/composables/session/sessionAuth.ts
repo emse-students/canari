@@ -728,6 +728,18 @@ export async function loginImpl(
     });
   /** Set once this login starts its OWN revocation wipe, which signs out on purpose. */
   let ownWipeStarted = false;
+  /**
+   * Marks this login's own revocation wipe as started. The wipe's `clearAuth` reaches
+   * `endSessionImpl`, which aborts the login in flight - this one, doing the wipe - so the login
+   * withdraws itself from that abort first: its outcome is `device_revoked`, not a stopped login.
+   */
+  const startOwnWipe = (): void => {
+    ownWipeStarted = true;
+    if (loginInFlightAbort === loginAbort) loginInFlightAbort = null;
+    cb.log(
+      '[SECURITY] Revocation wipe started by this login - its own sign-out does not cancel it.'
+    );
+  };
   /** Clears the login flag only while this login still owns the flow - see `loginFlowOwner`. */
   const releaseLoginFlag = (): void => {
     if (loginFlowOwner !== loginId) {
@@ -1044,7 +1056,7 @@ export async function loginImpl(
           // chains on this login's own end - a wipe started after one would wait on itself.
           wipeRevokedDevice: () => {
             stopIfSignedOut('pin-check-revoked');
-            ownWipeStarted = true;
+            startOwnWipe();
             return wipeRevokedDevice(ctx, cb);
           },
           // A key proven after a sign-out belongs to nobody signed in.
@@ -1178,7 +1190,7 @@ export async function loginImpl(
       if (landingPreview) await landingPreview;
       // Same reason as on the PIN path: a wipe started after a sign-out would wait on this login.
       stopIfSignedOut('revocation-preview-settled');
-      ownWipeStarted = true;
+      startOwnWipe();
       await wipeRevokedDevice(ctx, cb);
       cb.log('[SECURITY] Revoked device: signed out and reset to a fresh install.');
       throw new LoginFailure('device_revoked', m.auth_device_revoked_reset());

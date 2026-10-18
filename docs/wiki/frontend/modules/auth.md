@@ -1485,7 +1485,13 @@ wipe behind it. The sign-out now ABORTS the login in flight (`loginInFlightAbort
 `endSessionImpl`): the salt and pin-check requests carry its signal, and every network await goes
 through `untilSignedOut(work, stage)`, which rejects at once with `LoginStoppedBySignOutError` -
 the stop path, never a transport failure or a logout. The local MLS decrypt is NOT cancelled: the
-next login opens the same state. A key proven after the sign-out is not installed either.
+next login opens the same state. A key proven after the sign-out is not installed either. An
+aborted request is not a transport failure: `fetchOrUnreachable` passes an abort its caller asked
+for through as it came, with no `could not be reached` line. **The login's OWN revocation wipe is
+exempt** (third review): its `clearAuth` reaches `endSessionImpl` like any sign-out, and aborting
+the login doing the wipe turned a revoked device on the PIN path into a silent stopped login with a
+false `wipe FAILED` line. `startOwnWipe` withdraws the login from `loginInFlightAbort` first, so its
+outcome stays `device_revoked`.
 
 **A revocation wipe that fails after its own `clearAuth`** (a blocked factory reset) is a sign-out
 of the login's own making with a code other than `device_revoked`, so it lands on the stop path - and
