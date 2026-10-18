@@ -2,6 +2,7 @@ import type { Handle } from '@sveltejs/kit';
 import { renderSeoTags, renderSeoTitle } from '$lib/seo/renderHead';
 import { resolveServerSeo } from '$lib/seo/serverSeo';
 import { SITE } from '$lib/seo/site';
+import { degradedHeaders } from '$lib/seo/upstream';
 // Lives in its own module so a test can import it WITHOUT pulling `$env/dynamic/private` in
 // through the SEO chain above - the same reason `handleError` is not written here either.
 import { preloadableAsset } from '$lib/server/preload';
@@ -64,13 +65,23 @@ export const handle: Handle = async ({ event, resolve }) => {
 
   let seoBlock: string | null = null;
   let seoTitle: string | null = null;
+  let degraded = false;
   try {
-    const meta = await resolveServerSeo(pathname);
-    seoBlock = renderSeoTags(meta, pathname);
-    seoTitle = renderSeoTitle(meta);
+    const result = await resolveServerSeo(pathname);
+    degraded = result.degraded;
+    seoBlock = renderSeoTags(result.meta, pathname);
+    seoTitle = renderSeoTitle(result.meta);
   } catch (err) {
     // The head is a bonus; the page is the app. Never let one failed lookup cost a navigation.
     console.log('[SEO] head resolution failed for', pathname, err);
+  }
+
+  // THE HEAD OF A PAGE WHOSE ENRICHMENT GOT NO ANSWER IS NOT TO BE REMEMBERED by any cache between
+  // here and an unfurler, and the access log carries `deg=1` for it (nginx `canari_redacted`).
+  // `no-store` replaces whatever SvelteKit set: a shared cache keeping this for its default
+  // lifetime is what turned one slow call into a card that stayed wrong.
+  if (degraded) {
+    event.setHeaders(degradedHeaders());
   }
 
   return resolve(event, {

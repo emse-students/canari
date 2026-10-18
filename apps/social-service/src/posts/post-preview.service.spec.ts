@@ -2,7 +2,13 @@
 
 import * as crypto from 'crypto';
 import { Repository } from 'typeorm';
-import { PostPreviewService, decryptPostMedia, pickPreviewMedia } from './post-preview.service';
+import sharp from 'sharp';
+import {
+  PostPreviewService,
+  decryptPostMedia,
+  pickPreviewMedia,
+  publicMediaId,
+} from './post-preview.service';
 import type { Post } from './entities/post.entity';
 import type { AssociationsService } from '../associations/associations.service';
 
@@ -251,5 +257,130 @@ describe('PostPreviewService.readShareableImage', () => {
       if (previousBase === undefined) delete process.env.MEDIA_SERVICE_URL;
       else process.env.MEDIA_SERVICE_URL = previousBase;
     }
+  });
+});
+
+describe('PostPreviewService.readShareableImage - the card it serves', () => {
+  /** Runs `body` with `fetch` answering `answer(url)` and records every URL asked. */
+  async function withFetch<T>(
+    answer: (url: string) => Response,
+    body: (seen: string[]) => Promise<T>
+  ): Promise<T> {
+    const previousSecret = process.env.INTERNAL_SECRET;
+    const previousBase = process.env.MEDIA_SERVICE_URL;
+    process.env.INTERNAL_SECRET = 'secret';
+    process.env.MEDIA_SERVICE_URL = 'http://media-service:3011';
+    const realFetch = global.fetch;
+    const seen: string[] = [];
+    global.fetch = jest.fn((url: unknown) => {
+      seen.push(String(url));
+      return Promise.resolve(answer(String(url)));
+    }) as unknown as typeof fetch;
+    try {
+      return await body(seen);
+    } finally {
+      global.fetch = realFetch;
+      if (previousSecret === undefined) delete process.env.INTERNAL_SECRET;
+      else process.env.INTERNAL_SECRET = previousSecret;
+      if (previousBase === undefined) delete process.env.MEDIA_SERVICE_URL;
+      else process.env.MEDIA_SERVICE_URL = previousBase;
+    }
+  }
+
+  const bytesOf = (buf: Buffer): Response =>
+    ({
+      ok: true,
+      status: 200,
+      arrayBuffer: () => Promise.resolve(new Uint8Array(buf).buffer),
+    }) as Response;
+
+  const png = (w: number, h: number) =>
+    sharp({ create: { width: w, height: h, channels: 3, background: '#ff8800' } })
+      .png()
+      .toBuffer();
+
+  it('serves a 1200x630 JPEG built from the association logo when the post has no photo', async () => {
+    const logo = await png(512, 512);
+    const assoc = {
+      name: 'BDE',
+      slug: 'bde',
+      logoUrl: '/api/media/public/logo-1?v=3',
+      archived: false,
+    };
+    await withFetch(
+      () => bytesOf(logo),
+      async (seen) => {
+        const card = await service(post(), assoc).readShareableImage(UUID);
+        expect(card?.contentType).toBe('image/jpeg');
+        const meta = await sharp(card!.data).metadata();
+        expect([meta.width, meta.height]).toEqual([1200, 630]);
+        // The public route, under the /api prefix, and without the stored cache-buster.
+        expect(seen).toEqual(['http://media-service:3011/api/media/public/logo-1']);
+      }
+    );
+  });
+
+  it('serves a plain 1200x630 card, and asks nobody, for an association without a logo', async () => {
+    const assoc = { name: 'BDE', slug: 'bde', logoUrl: null, archived: false };
+    await withFetch(
+      () => bytesOf(Buffer.alloc(0)),
+      async (seen) => {
+        const card = await service(post(), assoc).readShareableImage(UUID);
+        const meta = await sharp(card!.data).metadata();
+        expect([meta.width, meta.height]).toEqual([1200, 630]);
+        expect(seen).toEqual([]);
+      }
+    );
+  });
+
+  it('serves a 1200x630 JPEG built from the decrypted photo of the post', async () => {
+    const key = crypto.randomBytes(32);
+    const iv = crypto.randomBytes(12);
+    const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+    const body = Buffer.concat([cipher.update(await png(900, 1600)), cipher.final()]);
+    const ciphertext = Buffer.concat([body, cipher.getAuthTag()]);
+    const media = [
+      {
+        mediaId: 'm1',
+        key: key.toString('hex'),
+        iv: iv.toString('hex'),
+        mimeType: 'image/png',
+        width: 900,
+        height: 1600,
+      },
+    ];
+    await withFetch(
+      () => bytesOf(ciphertext),
+      async () => {
+        const card = await service(post({ media })).readShareableImage(UUID);
+        const meta = await sharp(card!.data).metadata();
+        expect([meta.width, meta.height, meta.format]).toEqual([1200, 630, 'jpeg']);
+      }
+    );
+  });
+
+  it('answers null, not a different card, when the logo cannot be read', async () => {
+    const assoc = {
+      name: 'BDE',
+      slug: 'bde',
+      logoUrl: '/api/media/public/logo-1',
+      archived: false,
+    };
+    await withFetch(
+      () => ({ ok: false, status: 500 }) as Response,
+      async () => {
+        expect(await service(post(), assoc).readShareableImage(UUID)).toBeNull();
+      }
+    );
+  });
+});
+
+describe('publicMediaId', () => {
+  it('reads the id out of a stored logo url and ignores the cache-buster', () => {
+    expect(publicMediaId('/api/media/public/abc-1?v=9')).toBe('abc-1');
+  });
+  it('is null for no url or a url that is not a public media one', () => {
+    expect(publicMediaId(null)).toBeNull();
+    expect(publicMediaId('https://elsewhere.example/logo.png')).toBeNull();
   });
 });

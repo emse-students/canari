@@ -169,7 +169,8 @@ export class PublicController {
   }
 
   /**
-   * The post's first image, decrypted, as `og:image` points at it.
+   * The post's card - its first image cropped, else its association's logo, always 1200x630 JPEG -
+   * as `og:image` points at it.
    *
    * `@Res()` rather than a returned buffer because the content type is the stored one and Nest
    * would otherwise serialise the Buffer as JSON. Cached for an hour: unfurlers refetch this far

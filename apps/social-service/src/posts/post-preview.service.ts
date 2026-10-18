@@ -7,6 +7,7 @@ import { Post } from './entities/post.entity';
 import { AssociationsService } from '../associations/associations.service';
 import { mediaUrl } from '../internal/service-urls';
 import { isExpiredReel } from './reel.constants';
+import { POST_CARD_CONTENT_TYPE, renderPostCard } from './post-card-image';
 
 /**
  * WHAT A SHARED `/posts/:id` LINK MAY DISCLOSE TO SOMEBODY WITH NO CANARI SESSION.
@@ -27,9 +28,12 @@ import { isExpiredReel } from './reel.constants';
  * both the JSON preview and the image bytes go through it.
  *
  * WHAT IT REFUSES, each of these being a row somebody could otherwise fish out with a guessed id:
- * a post whose association is archived, a moderation-hidden post, a scheduled post before its
- * publication instant, and a post whose author narrowed its audience with rules of its own (D33,
- * WP6b): an author who chose who sees a post did not choose "anyone holding the link". Reactions, comments, poll results, mentions and the author's user id are
+ * a post whose association is archived, a moderation-hidden post and a scheduled post before its
+ * publication instant. A per-post audience used to be a fourth refusal (D33, WP6b: an author who
+ * chose who sees a post did not choose "anyone holding the link"), but the per-post audiences table
+ * was dropped in migration 073 and nothing in {@link PostPreviewService.findShareable} reads one any
+ * more. Whether a campus-restricted post should still preview is a question left open for the user,
+ * not decided here. Reactions, comments, poll results, mentions and the author's user id are
  * not in the payload at all - a preview card needs none of them, and the cheapest way not to leak
  * a field is not to select it.
  */
@@ -43,7 +47,7 @@ export interface PostSharePreview {
   /**
    * The post's first image, when it has one an unfurler can be offered, else null.
    *
-   * Only the dimensions travel: the bytes are served by
+   * Only the dimensions of the SOURCE travel (the served card is always 1200x630): the bytes are served by
    * {@link PostPreviewService.readShareableImage} on their own URL, because an unfurler fetches
    * `og:image` as a separate request and a base64 blob in a `<head>` is not something any of them
    * read. The numbers matter on their own - `og:image:width`/`height` are what stop a card
@@ -52,10 +56,19 @@ export interface PostSharePreview {
   image: { width: number | null; height: number | null } | null;
 }
 
-/** The decrypted bytes of a post's preview image, ready to be sent. */
+/** The rendered card of a post, ready to be sent. */
 export interface PostPreviewImage {
   data: Buffer;
   contentType: string;
+}
+
+/**
+ * The media id inside an association's stored `logoUrl` (`/api/media/public/<id>?v=<n>`), or null.
+ * Reading the id, not the URL, keeps the fetch on the Docker-network route `mediaUrl` builds.
+ */
+export function publicMediaId(logoUrl: string | null | undefined): string | null {
+  const match = logoUrl?.match(/\/media\/public\/([^/?#]+)/);
+  return match ? decodeURIComponent(match[1]) : null;
 }
 
 /** One media entry as the `posts.images` jsonb column stores it. */
@@ -210,21 +223,49 @@ export class PostPreviewService {
   }
 
   /**
-   * The decrypted bytes of a shared post's first image, or null when there is nothing to serve.
+   * The 1200x630 card `og:image` points at, or null when there is nothing to serve.
    *
-   * It fetches the ciphertext from media-service over the Docker network with `X-Internal-Secret`
-   * and decrypts it here, because the key lives in the post row and nowhere else: media-service
-   * holds the blob and has never held the CEK. That asymmetry is why this cannot be one more
-   * `/media/public/:id` - the blob is not public, the DECISION to publish it is, and that decision
-   * is a property of the post.
+   * THE POST'S OWN PHOTO WHEN IT HAS ONE, THE ASSOCIATION'S LOGO ON A PLAIN BRAND BACKGROUND
+   * OTHERWISE, and always the same size and type (see {@link renderPostCard}): what the head
+   * declares is then true of every post. The route keeps its old URL, so a link already shared
+   * and already cached by an unfurler picks the new shape up on its next fetch.
+   *
+   * The photo's ciphertext is fetched from media-service over the Docker network with
+   * `X-Internal-Secret` and decrypted here, because the key lives in the post row and nowhere
+   * else: media-service holds the blob and has never held the CEK. That asymmetry is why this
+   * cannot be one more `/media/public/:id` - the blob is not public, the DECISION to publish it is,
+   * and that decision is a property of the post. The logo IS public, and is read that way.
+   *
+   * A source that cannot be read or decoded answers null and says why, rather than a card of a
+   * different kind: a photo post that quietly became a logo card would hide the defect behind a
+   * picture that looks fine.
    */
   async readShareableImage(postId: string): Promise<PostPreviewImage | null> {
     const found = await this.findShareable(postId);
     if (!found) return null;
 
     const media = pickPreviewMedia(found.post.media);
-    if (!media) return null;
+    try {
+      if (media) {
+        const photo = await this.readPostPhoto(media);
+        if (!photo) return null;
+        this.logger.debug(`post card ${postId}: own photo ${media.mediaId}`);
+        return { data: await renderPostCard({ photo }), contentType: POST_CARD_CONTENT_TYPE };
+      }
 
+      const logoId = publicMediaId(found.association.logoUrl);
+      const logo = logoId ? await this.readPublicLogo(logoId) : null;
+      if (logoId && !logo) return null;
+      this.logger.debug(`post card ${postId}: ${logo ? `logo ${logoId}` : 'plain background'}`);
+      return { data: await renderPostCard({ logo }), contentType: POST_CARD_CONTENT_TYPE };
+    } catch (err) {
+      this.logger.warn(`post card ${postId} could not be rendered: ${(err as Error)?.message}`);
+      return null;
+    }
+  }
+
+  /** Fetches and decrypts a post's photo. Null, logged, on any refusal or transport failure. */
+  private async readPostPhoto(media: StoredPostMedia): Promise<Buffer | null> {
     const secret = process.env.INTERNAL_SECRET?.trim();
     if (!secret) {
       // Fails closed, and accuses: a deployment that forgot the secret otherwise looks exactly
@@ -232,15 +273,33 @@ export class PostPreviewService {
       this.logger.error('INTERNAL_SECRET is unset - post preview images cannot be served');
       return null;
     }
+    const url = mediaUrl(`media/internal/${encodeURIComponent(media.mediaId!)}`);
+    const ciphertext = await this.fetchMediaBytes(url, media.mediaId!, {
+      'x-internal-secret': secret,
+    });
+    if (!ciphertext) return null;
+    if (ciphertext.length > MAX_PREVIEW_IMAGE_BYTES + GCM_TAG_BYTES) {
+      this.logger.warn(`preview image ${media.mediaId} is ${ciphertext.length} bytes - refused`);
+      return null;
+    }
+    return decryptPostMedia(ciphertext, media.key!, media.iv!);
+  }
 
+  /** Fetches an association logo through media-service's public route. Null, logged, on failure. */
+  private async readPublicLogo(mediaId: string): Promise<Buffer | null> {
+    const url = mediaUrl(`media/public/${encodeURIComponent(mediaId)}`);
+    return this.fetchMediaBytes(url, mediaId, {});
+  }
+
+  private async fetchMediaBytes(
+    url: string,
+    mediaId: string,
+    headers: Record<string, string>
+  ): Promise<Buffer | null> {
     const abort = new AbortController();
     const timer = setTimeout(() => abort.abort(), MEDIA_FETCH_TIMEOUT_MS);
     try {
-      const url = mediaUrl(`media/internal/${encodeURIComponent(media.mediaId!)}`);
-      const res = await fetch(url, {
-        headers: { 'x-internal-secret': secret },
-        signal: abort.signal,
-      });
+      const res = await fetch(url, { headers, signal: abort.signal });
       if (!res.ok) {
         // NAMES THE URL, BECAUSE A 404 HAS TWO AUTHORS AND THIS LINE CREDITED THE WRONG ONE.
         // `preview image <id> answered 404` reads as "media-service holds no such object", and for
@@ -248,20 +307,12 @@ export class PostPreviewService {
         // global `/api` prefix, and the blob was intact throughout. A status alone cannot separate
         // this service's own NotFoundException from the framework's unknown-route handler; the
         // path asked for can, and it is the one thing the reader cannot reconstruct.
-        this.logger.warn(`preview image ${media.mediaId} answered ${res.status} for ${url}`);
+        this.logger.warn(`preview image ${mediaId} answered ${res.status} for ${url}`);
         return null;
       }
-      const ciphertext = Buffer.from(await res.arrayBuffer());
-      if (ciphertext.length > MAX_PREVIEW_IMAGE_BYTES + GCM_TAG_BYTES) {
-        this.logger.warn(`preview image ${media.mediaId} is ${ciphertext.length} bytes - refused`);
-        return null;
-      }
-      return {
-        data: decryptPostMedia(ciphertext, media.key!, media.iv!),
-        contentType: media.mimeType!,
-      };
+      return Buffer.from(await res.arrayBuffer());
     } catch (err) {
-      this.logger.warn(`preview image ${media.mediaId} failed: ${(err as Error)?.message}`);
+      this.logger.warn(`preview image ${mediaId} failed: ${(err as Error)?.message}`);
       return null;
     } finally {
       clearTimeout(timer);

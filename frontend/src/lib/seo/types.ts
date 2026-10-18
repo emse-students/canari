@@ -26,6 +26,8 @@ export interface SeoMeta {
    */
   imageWidth?: number;
   imageHeight?: number;
+  /** MIME type of `image` (`image/jpeg`), declared as `og:image:type` where the enricher knows it. */
+  imageType?: string;
   /** ISO 8601 publication date, emitted as `article:published_time` for `ogType: 'article'`. */
   publishedAt?: string;
   /** Display name credited as the author of an article. */

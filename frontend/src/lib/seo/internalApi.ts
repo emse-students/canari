@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import { UpstreamUnavailableError } from '$lib/seo/upstream';
 
 /**
  * The one seam through which the SSR process talks to the services.
@@ -36,8 +37,17 @@ export function internalHeaders(): Record<string, string> {
   return { 'X-Internal-Secret': secret };
 }
 
-/** GETs JSON with a hard timeout. Returns null on any failure, logging the cause. */
-export async function fetchJson<T>(
+/**
+ * GETs JSON with a hard timeout, telling a REFUSAL from an UNAVAILABLE service.
+ *
+ * - 2xx: the parsed body;
+ * - 4xx: `null`, logged. The service answered, and its answer is "not for you" or "no such thing" -
+ *   a preview that stays generic and may be cached like any other answer;
+ * - anything else (a transport failure, the timeout, a 5xx, an unreadable body): throws
+ *   {@link UpstreamUnavailableError}. No answer was given, so nothing about the thing asked for is
+ *   known, and the caller must not store the absence as if it were one.
+ */
+export async function fetchJsonOrThrow<T>(
   url: string,
   headers: Record<string, string> = {},
   timeoutMs: number = FETCH_TIMEOUT_MS
@@ -46,16 +56,33 @@ export async function fetchJson<T>(
   const timer = setTimeout(() => abort.abort(), timeoutMs);
   try {
     const res = await fetch(url, { headers, signal: abort.signal });
+    if (res.status >= 500) throw new UpstreamUnavailableError(url, `answered ${res.status}`);
     if (!res.ok) {
       console.log(`[SEO] ${url} answered ${res.status}`);
       return null;
     }
     return (await res.json()) as T;
   } catch (err) {
+    if (err instanceof UpstreamUnavailableError) throw err;
     // `fetch` reports every transport failure as a bare TypeError; the diagnosis is in `cause`.
-    console.log(`[SEO] ${url} failed:`, (err as Error)?.message, (err as Error)?.cause ?? '');
-    return null;
+    const cause = (err as Error)?.cause;
+    const detail = cause ? ` (${String((cause as Error)?.message ?? cause)})` : '';
+    throw new UpstreamUnavailableError(url, `${(err as Error)?.message ?? 'failed'}${detail}`);
   } finally {
     clearTimeout(timer);
+  }
+}
+
+/** GETs JSON with a hard timeout. Returns null on any failure, logging the cause. */
+export async function fetchJson<T>(
+  url: string,
+  headers: Record<string, string> = {},
+  timeoutMs: number = FETCH_TIMEOUT_MS
+): Promise<T | null> {
+  try {
+    return await fetchJsonOrThrow<T>(url, headers, timeoutMs);
+  } catch (err) {
+    console.log(`[SEO] ${url} failed:`, (err as Error)?.message);
+    return null;
   }
 }

@@ -136,7 +136,7 @@ the payload at all — the cheapest way not to leak a field is not to select it.
 | Route | What it serves |
 |---|---|
 | `GET /api/public/posts/:id/preview` | text, association, image dimensions — `Cache-Control: max-age=300` |
-| `GET /api/public/posts/:id/preview-image` | the decrypted first image — `max-age=3600`, **ThrottlerGuard** |
+| `GET /api/public/posts/:id/preview-image` | the post's CARD, always 1200x630 JPEG (see below) — `max-age=3600`, **ThrottlerGuard** |
 | `GET /api/public/posts?limit=` | ids + `updatedAt` for the sitemap, capped at 500 |
 
 **The card's text is cut to what the unfurler shows, between words (2026-10-18).** The title was
@@ -156,6 +156,35 @@ the built server behind the production gzip settings: 16 768 bytes identity on e
 6 292 gzipped. The `@app_shell` fallback is the other shape - a constant size both ways (23 364 /
 7 145 locally), and LARGER than the SSR page uncompressed, because the prerendered shell inlines the
 `modulepreload` list the SSR answer sends as a header.
+
+**One card per post, and a failed enrichment is never remembered (2026-10-18).** Three changes for
+the intermittent Messenger preview failure, whose cause the access log could not name:
+
+- **The `og:image` is always a 1200x630 JPEG** (`post-card-image.ts`, sharp, in social-service): the
+  post's own photo cropped to cover, else the association's logo centred on the brand ink
+  (`#151b2c`), else the plain background. The URL did not change (`/preview-image`, no query), so a
+  link already shared picks the new shape up. `og:image:width`, `height` and `type` are declared for
+  it on EVERY post (`POST_CARD_IMAGE` in `serverSeo.ts` repeats the service's constants - another
+  deployable, so they move together). Before, a logo post offered a raw 512x512 crest with no
+  dimensions, the shape Messenger most often drops. The JPEG carries no metadata (EXIF stripped). A
+  photo or logo that cannot be read answers 404 and logs a warning; it never silently becomes a
+  different card.
+- **A transport failure of the 1.5 s enrichment is not a refusal.** `fetchJsonOrThrow`
+  (`internalApi.ts`) returns `null` for a 4xx (the service answered: cached like any answer) and
+  throws `UpstreamUnavailableError` for a timeout, a connection failure or a 5xx.
+  `resolveServerSeo` answers `{ meta, degraded }`; a degraded head is NEVER put in the 60 s cache
+  (that cache kept one timeout alive for a minute of every unfurler's retries), logs
+  `[SEO] DEGRADED head for <path>` at warn, and `hooks.server.ts` sends `Cache-Control: no-store`
+  and `X-Canari-Degraded: 1`.
+- **nginx honours it.** `@ssr` used to add `public, max-age=0, s-maxage=60` to everything, which
+  would have cached the degraded page at the edge. `$ssr_cache_control` (a map on
+  `$upstream_http_x_canari_degraded`) makes it `no-store` for a degraded page; `static-headers.test.mjs`
+  reads the map and refuses any other arm. The access log gained five fields to say which case a hit
+  was: [logging](../infrastructure/logging.md#the-access-log-diagnostic-fields-2026-10-18).
+
+**Not decided here, and the user's to decide:** the preview serves every association post, including one
+that used to carry a campus audience (the per-post audiences table went in migration 073, so nothing
+narrows a post any more). Whether a campus-restricted post should still preview is open.
 
 ### The image an unfurler can actually fetch
 
@@ -223,7 +252,7 @@ produces; it exists for rows that predate that preset.
 **`og:image:width`/`height` are declared only where both are known, and both or neither.** An
 unfurler reserves that box before the bytes arrive, so a guessed pair renders a gap the image never
 fills, and a lone width describes nothing. The site image's dimensions are constants and a post's
-photo carries its own; an association logo declares none. `renderHead.ts` and `SeoHead.svelte`
+photo carries its own; an association logo declares none. (A post's card is now a rendered 1200x630 image, so a post declares `1200x630` and `og:image:type` whichever source it was built from.) `renderHead.ts` and `SeoHead.svelte`
 compute the identical pair — they are meant to be comparable line by line, so a tag added to one is
 owed to the other.
 
