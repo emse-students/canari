@@ -10,6 +10,10 @@ import {
 /** TypeORM entity representing a user's membership in a workspace: their role IDs, per-channel notification levels and sidebar order. */
 @Entity('channel_members')
 @Index(['workspaceId', 'userId'], { unique: true })
+// The viewer lookup of every presence poll filters on userId alone, which the unique
+// (workspaceId, userId) cannot serve. Named as migration 089 names it, so dev's synchronize and
+// production carry the same index.
+@Index('IDX_channel_members_user', ['userId'])
 export class ChannelMember {
   @PrimaryGeneratedColumn('uuid')
   id: string;

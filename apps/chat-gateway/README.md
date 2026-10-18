@@ -17,7 +17,7 @@ It does **not** perform encryption, store messages, or make business logic decis
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/api/ws` | yes (JWT cookie) | WebSocket upgrade |
-| GET | `/api/presence` | yes | Online presence for a user |
+| GET | `/api/presence` | yes | Online presence of the asked users the caller may see: themself, and whoever shares a live conversation or a community with them ([audience](../../docs/wiki/services/chat-gateway.md#who-may-see-whose-presence-wp-presence-2026-10-18)) |
 | GET | `/api/admin/presence` | yes (global admin) | Admin view of all connected devices |
 | GET | `/api/health` | no | Liveness probe |
 
@@ -61,7 +61,10 @@ ever produced the topic, the shared constant spelled it `post_created` while the
 |---|---|---|---|
 | `REDIS_URL` | no | `redis://127.0.0.1/` | Redis connection string |
 | `JWT_SECRET` | yes | - | HS256 JWT secret (shared with core-service) |
-| `ALLOW_ORIGIN` | no | `*` | CORS allowed origins (comma-separated list for production) |
+| `DELIVERY_SERVICE_URL` | yes | - | chat-delivery base, no `/api` (`http://chat-delivery-service:3010`); asked for the conversation half of the presence audience. Unset: every presence read is a 503, logged at boot |
+| `SOCIAL_SERVICE_URL` | yes | - | social-service base, no `/api` (`http://social-service:3014`); asked for the community half. Unset: same |
+| `INTERNAL_SECRET` | yes | - | Sent as `X-Internal-Secret` on both audience questions. Unset: same |
+| `ALLOW_ORIGIN` | **yes under compose** | `*` (binary only) | CORS allowlist. `docker-compose.prod.yml` uses `${ALLOW_ORIGIN:?}` and the deploy stops without it; the binary's own `*` default is for running it by hand and logs a WARN accusing the missing declaration |
 | `RUST_LOG` | no | `chat_gateway=debug,tower_http=debug` | Log filter |
 
 ## Startup

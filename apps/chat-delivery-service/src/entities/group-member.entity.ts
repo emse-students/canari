@@ -1,4 +1,4 @@
-import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Unique } from 'typeorm';
+import { Entity, PrimaryGeneratedColumn, Column, CreateDateColumn, Index, Unique } from 'typeorm';
 
 /** A member's notification level for one conversation - the salon's three levels. */
 export type GroupNotificationLevel = 'all' | 'mentions' | 'none';
@@ -54,6 +54,10 @@ export function isGroupNotificationLevel(value: unknown): value is GroupNotifica
  */
 @Entity('dm_group_members')
 @Unique(['groupId', 'userId'])
+// The viewer lookup of every presence poll and `getUserGroups` filter on userId alone, which the
+// unique (groupId, userId) cannot serve. Named as migration 031 names it, so dev's synchronize and
+// production carry the same index.
+@Index('IDX_dm_group_members_user', ['userId'])
 export class GroupMember {
   @PrimaryGeneratedColumn('uuid')
   id: string;

@@ -6,6 +6,7 @@ import { InternalInvitesController } from './internal-invites.controller';
 import { InternalLegacyCotisationsController } from './internal-legacy-cotisations.controller';
 import { InternalProfileNotificationsController } from './internal-profile-notifications.controller';
 import { InternalChannelReadController } from './internal-channel-read.controller';
+import { InternalPresenceController } from './internal-presence.controller';
 import { PostsModule } from '../posts/posts.module';
 import { FormsModule } from '../forms/forms.module';
 import { AssociationsModule } from '../associations/associations.module';
@@ -54,6 +55,7 @@ import { ContentReport } from '../moderation/entities/content-report.entity';
     InternalLegacyCotisationsController,
     InternalProfileNotificationsController,
     InternalChannelReadController,
+    InternalPresenceController,
   ],
 })
 export class InternalModule {}

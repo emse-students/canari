@@ -117,6 +117,15 @@
         </dd>
       </div>
       <div>
+        <dt>Présence en ligne</dt>
+        <dd>
+          Tant qu'un de vos appareils est connecté, le serveur note qu'il est en ligne. En dehors
+          des administrateurs de la plateforme, seules les personnes avec qui vous partagez une
+          conversation ou une communauté voient si vous êtes en ligne. Un blocage ne masque pas
+          cette information.
+        </dd>
+      </div>
+      <div>
         <dt>Liens partagés</dt>
         <dd>
           Quand un lien est affiché avec un aperçu, son adresse est envoyée à notre serveur, qui
@@ -345,6 +354,10 @@
           <tr>
             <td>Sessions de connexion</td>
             <td>7 jours sans utilisation</td>
+          </tr>
+          <tr>
+            <td>Présence en ligne</td>
+            <td>Effacée à la déconnexion de l'appareil, 90 secondes au plus après</td>
           </tr>
           <tr>
             <td>Messages privés en attente de remise (chiffrés)</td>

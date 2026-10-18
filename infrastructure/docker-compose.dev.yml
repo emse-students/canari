@@ -160,6 +160,10 @@ services:
       JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
       REDIS_URL: redis://redis:6379
       DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
+      # The presence audience (WP-PRESENCE): who shares a conversation or a community with whom is
+      # asked of chat-delivery and social-service over this network. Unset, every presence read is a 503.
+      SOCIAL_SERVICE_URL: http://social-service:3014
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       # Never `*`. This environment is publicly resolvable and testers sign in with real accounts;
       # a wildcard allowlist there is a different thing from a wildcard on a laptop.
       ALLOW_ORIGIN: ${ALLOW_ORIGIN:-https://dev.canari-emse.fr}
