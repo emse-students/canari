@@ -2215,6 +2215,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     /** Decrypts an MLS message using the pre-derived device key (base64). */
     // `senderId` is the push's own: Rust refuses the frame (`reason=sender-mismatch`) when it is not
     // the sender MLS verified, so a banner never names someone the app would refuse (WP-G2-1b).
+    // `locale` is `PushContext.locale`, the app language: Rust words every sentence it composes
+    // itself (a reaction, a photo, a call...) in it - WP-PUSH-I18N.
     external fun nativeDecryptMessageWithKey(
         stateBytes: ByteArray,
         keyB64: String,
@@ -2222,7 +2224,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         deviceId: String,
         groupId: String,
         senderId: String,
-        ciphertext: ByteArray
+        ciphertext: ByteArray,
+        locale: String
     ): String
 
     /** Key-based variant of [nativeGroupEpoch]. */
@@ -2243,7 +2246,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         groupId: String,
         senderId: String,
         commitsJson: String,
-        ciphertext: ByteArray
+        ciphertext: ByteArray,
+        locale: String
     ): String
 
     /**
@@ -2274,7 +2278,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         senderId: String,
         nonceB64: String,
         ciphertextB64: String,
-        signatureB64: String
+        signatureB64: String,
+        locale: String
     ): String
 
     // Decrypts an end-to-end-encrypted media blob (AES-256-GCM) for a notification thumbnail
@@ -3480,6 +3485,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 stateBytes, ctx.userId, ctx.deviceId, groupId, protoB64,
                 senderId = senderId,
                 deviceKeyB64 = ctx.deviceKeyB64,
+                locale = ctx.locale,
             )
         } finally {
             MlsStateLock.LOCK.unlock()
@@ -3790,11 +3796,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         protoB64: String,
         deviceKeyB64: String? = null,
         senderId: String,
+        locale: String,
     ): PushDecrypt {
         return try {
             val cipherBytes = Base64.decode(protoB64, Base64.DEFAULT)
             val keyB64 = deviceKeyB64?.takeIf { it.isNotEmpty() } ?: return PushDecrypt.Refused
-            val jsonStr = nativeDecryptMessageWithKey(stateBytes, keyB64, userId, deviceId, groupId, senderId, cipherBytes)
+            val jsonStr = nativeDecryptMessageWithKey(stateBytes, keyB64, userId, deviceId, groupId, senderId, cipherBytes, locale)
             parseNativeDecrypt(jsonStr, "decryptProto")
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "decryptProto: native library not loaded: ${e.message}")
@@ -3870,6 +3877,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 stateBytes, ctx.userId, ctx.deviceId, groupId, commitsJson, cipherBytes,
                 senderId = senderId,
                 deviceKeyB64 = ctx.deviceKeyB64,
+                locale = ctx.locale,
             )
         }
     }
@@ -3951,10 +3959,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         cipherBytes: ByteArray,
         deviceKeyB64: String? = null,
         senderId: String,
+        locale: String,
     ): PushDecrypt {
         return try {
             val keyB64 = deviceKeyB64?.takeIf { it.isNotEmpty() } ?: return PushDecrypt.Refused
-            val jsonStr = nativeDecryptMessageWithCommitsWithKey(stateBytes, keyB64, userId, deviceId, groupId, senderId, commitsJson, cipherBytes)
+            val jsonStr = nativeDecryptMessageWithCommitsWithKey(stateBytes, keyB64, userId, deviceId, groupId, senderId, commitsJson, cipherBytes, locale)
             parseNativeDecrypt(jsonStr, "decryptProtoWithCommits")
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "decryptProtoWithCommits: native library not loaded: ${e.message}"); PushDecrypt.Refused
@@ -4699,8 +4708,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // The app addresses channels as `channel_<uuid>`; use it for the deep link + stable notif id.
         val conversationId = "channel_$channelId"
 
-        // Read once: the only id this device can name in a mention token is its own.
-        val myUserId = MlsContextLoader.loadPushContext(this)?.userId
+        // Read once: the only id this device can name in a mention token is its own, and the app
+        // language Rust words its own sentences in (empty when none was mirrored: the base locale).
+        val pushCtx  = MlsContextLoader.loadPushContext(this)
+        val myUserId = pushCtx?.userId
         // Set only where the banner's body IS the decrypted text: every other branch below posts the
         // generic line, on which "Marquer comme lu" would move a receipt for an unseen message.
         var showsMessage = false
@@ -4711,6 +4722,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         MlsContextLoader.tauriDataDir(this).absolutePath,
                         channelId, sessionId, messageIndex, senderId, nonce, ciphertext,
                         data["signature"] ?: "",
+                        pushCtx?.locale ?: "",
                     )
                 )
                 if (json.optBoolean("ok", false)) {

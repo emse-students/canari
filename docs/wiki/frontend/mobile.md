@@ -1962,6 +1962,11 @@ it from there:
 | Android | `res/values/strings.xml` (French, default) + `res/values-en/strings.xml` | `appLocaleContext(context)` in `AppLocale.kt` |
 | iOS app | `canari_iOS/{fr,en}.lproj/Localizable.strings` | `CanariLocalized()` in `canari_push.mm` |
 | iOS NSE | `canari_NSE/{fr,en}.lproj/Localizable.strings` | `NotificationService.localized()` |
+| Rust push scanner (both platforms) | `mobile/push_text.rs` (`PushText`, fr + en) | `PushLanguage::from_tag(locale)`, the tag each native caller passes down |
+
+The Rust row covers what the scanner composes from a DECRYPTED message - a system event, a reaction,
+a photo or a voice message, a poll, a call (WP-PUSH-I18N, 2026-10-18;
+[chat](modules/chat.md#a-voice-note-declares-itself-because-nothing-downstream-can-tell)).
 
 The appex has its OWN copy because an app extension is a separate bundle and `Bundle.main` there is
 the appex - that duplication is the platform's, not a choice, and it is what Android does not have

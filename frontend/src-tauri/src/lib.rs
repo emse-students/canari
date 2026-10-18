@@ -238,6 +238,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
 /// Opens a salon push against the seed mirror under `dataDir` - every v1 and v2 rule, in the one
 /// implementation both platforms share (`mobile::background::open_graine_push`). `signatureB64` is
 /// empty when the push carried none. Returns the same JSON as `nativeDecryptMessageWithKey`.
+/// `locale` is the app language mirrored in `push_context.json` (`""` when none was).
 #[cfg(target_os = "android")]
 #[no_mangle]
 #[allow(clippy::too_many_arguments)]
@@ -254,6 +255,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     nonce_b64: jni::objects::JString<'a>,
     ciphertext_b64: jni::objects::JString<'a>,
     signature_b64: jni::objects::JString<'a>,
+    locale: jni::objects::JString<'a>,
 ) -> jni::objects::JString<'a> {
     let result = (|| -> serde_json::Value {
         // A negative index cannot exist: it is a uint32 on the wire and in the derivation. Refusing
@@ -273,6 +275,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
             Some(nonce),
             Some(ciphertext),
             Some(signature),
+            Some(locale),
         ) = (
             read(&data_dir),
             read(&channel_id),
@@ -281,6 +284,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
             read(&nonce_b64),
             read(&ciphertext_b64),
             read(&signature_b64),
+            read(&locale),
         )
         else {
             return serde_json::json!({ "ok": false, "reason": "jni-string" });
@@ -296,6 +300,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
                 ciphertext_b64: &ciphertext,
                 signature_b64: &signature,
             },
+            mobile::push_text::PushLanguage::from_tag(&locale),
         )
     })();
 
@@ -306,8 +311,11 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
 
 // ─── Key-based JNI variants (biometric mode, no PIN) ────────────────────
 
+/// `locale` is the app language mirrored in `push_context.json` (`""` when none was), and words
+/// every sentence the scanner composes itself (`PushLanguage::from_tag`).
 #[cfg(target_os = "android")]
 #[no_mangle]
+#[allow(clippy::too_many_arguments)]
 pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptMessageWithKey<
     'a,
 >(
@@ -320,11 +328,16 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     group_id: jni::objects::JString<'a>,
     sender_id: jni::objects::JString<'a>,
     ciphertext: jni::objects::JByteArray<'a>,
+    locale: jni::objects::JString<'a>,
 ) -> jni::objects::JString<'a> {
     let result = (|| -> serde_json::Value {
         let state_vec = match env.convert_byte_array(&state_bytes) {
             Ok(v) => v,
             Err(_) => return serde_json::json!({ "ok": false, "reason": "jni-state-bytes" }),
+        };
+        let locale_str: String = match env.get_string(&locale) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false, "reason": "jni-locale" }),
         };
         let key_b64_str: String = match env.get_string(&key_b64) {
             Ok(s) => s.into(),
@@ -366,6 +379,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
                 sender_id: &sender_id_str,
                 ciphertext: &cipher_vec,
             },
+            mobile::push_text::PushLanguage::from_tag(&locale_str),
         )
     })();
 
@@ -406,8 +420,10 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     epoch.map(|e| e as jni::sys::jlong).unwrap_or(-1)
 }
 
+/// `locale` as for `nativeDecryptMessageWithKey`.
 #[cfg(target_os = "android")]
 #[no_mangle]
+#[allow(clippy::too_many_arguments)]
 pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_nativeDecryptMessageWithCommitsWithKey<
     'a,
 >(
@@ -421,8 +437,13 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
     sender_id: jni::objects::JString<'a>,
     commits_json: jni::objects::JString<'a>,
     ciphertext: jni::objects::JByteArray<'a>,
+    locale: jni::objects::JString<'a>,
 ) -> jni::objects::JString<'a> {
     let result = (|| -> serde_json::Value {
+        let locale_str: String = match env.get_string(&locale) {
+            Ok(s) => s.into(),
+            Err(_) => return serde_json::json!({ "ok": false, "reason": "jni-locale" }),
+        };
         let state_vec = match env.convert_byte_array(&state_bytes) {
             Ok(v) => v,
             Err(_) => return serde_json::json!({ "ok": false }),
@@ -468,6 +489,7 @@ pub extern "system" fn Java_fr_emse_canari_CanariFirebaseMessagingService_native
                 sender_id: &sender_id_str,
                 ciphertext: &cipher_vec,
             },
+            mobile::push_text::PushLanguage::from_tag(&locale_str),
         )
     })();
 
