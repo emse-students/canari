@@ -456,6 +456,46 @@ pub(crate) fn wipe_app_data(data_dir: &std::path::Path) -> Result<(), String> {
     }
 }
 
+/// Deletes ONE account's local message database - `canari_<userId>.db` and its WAL/SHM side files -
+/// and nothing else: not `mls.bin` (one file per install, which may belong to another account), not
+/// another account's database. The account-deletion path calls it after closing the SQLite handle.
+#[tauri::command]
+pub(crate) fn delete_user_database(app: tauri::AppHandle, user_id: String) -> Result<(), String> {
+    let data_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    remove_user_database(&data_dir, &user_id).map(|_| ())
+}
+
+/// The whole of `delete_user_database` minus the `AppHandle`, so it runs against a real directory.
+///
+/// The id becomes part of a file name, so anything but `[A-Za-z0-9_-]` is REFUSED rather than
+/// sanitised: a separator or `..` would turn "delete this account's database" into a delete of
+/// something else. Returns how many files were removed.
+pub(crate) fn remove_user_database(
+    data_dir: &std::path::Path,
+    user_id: &str,
+) -> Result<usize, String> {
+    if user_id.is_empty()
+        || !user_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        log::error!("[DEL-LOCAL] refusing a user id that is not a plain identifier");
+        return Err("invalid user id".to_string());
+    }
+    let mut removed = 0usize;
+    let mut failures = 0usize;
+    for suffix in ["", "-wal", "-shm"] {
+        let path = data_dir.join(format!("canari_{user_id}.db{suffix}"));
+        remove_entry(&path, &mut removed, &mut failures);
+    }
+    log::info!("[DEL-LOCAL] removed {removed} database file(s), {failures} failed");
+    if failures == 0 {
+        Ok(removed)
+    } else {
+        Err(format!("{failures} database file(s) could not be removed"))
+    }
+}
+
 /// Deletes the entries of `dir` whose name starts with one of `prefixes`, for the two
 /// directories Canari shares with a framework and therefore cannot empty wholesale.
 fn wipe_by_prefix(
@@ -1041,5 +1081,41 @@ mod tests {
         wipe_app_data(&dir).unwrap();
         wipe_app_data(&dir.join("never-existed")).unwrap();
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    /// A deletion removes THAT account's database and its side files, and leaves another account's
+    /// database and the per-install `mls.bin` exactly where they were.
+    #[test]
+    fn remove_user_database_touches_only_that_account() {
+        let dir = std::env::temp_dir().join(format!("canari_del_local_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        for f in [
+            "canari_a.db",
+            "canari_a.db-wal",
+            "canari_a.db-shm",
+            "canari_b.db",
+            "canari_b.db-wal",
+            "mls.bin",
+        ] {
+            std::fs::write(dir.join(f), b"x").unwrap();
+        }
+        assert_eq!(remove_user_database(&dir, "a").unwrap(), 3);
+        assert!(!dir.join("canari_a.db").exists());
+        assert!(!dir.join("canari_a.db-wal").exists());
+        assert!(dir.join("canari_b.db").exists());
+        assert!(dir.join("canari_b.db-wal").exists());
+        assert!(dir.join("mls.bin").exists());
+        // Idempotent: a second call finds nothing and succeeds.
+        assert_eq!(remove_user_database(&dir, "a").unwrap(), 0);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An id that could leave the app data directory is refused, never sanitised.
+    #[test]
+    fn remove_user_database_refuses_a_path_like_id() {
+        let dir = std::env::temp_dir();
+        for bad in ["", "../x", "a/b", "a\\b", "a.b"] {
+            assert!(remove_user_database(&dir, bad).is_err(), "{bad:?}");
+        }
     }
 }

@@ -2,7 +2,8 @@
   import { Log } from '$lib/utils/Log';
   import { Trash2, LoaderCircle, CircleAlert } from '@lucide/svelte';
   import { slide } from 'svelte/transition';
-  import { deleteMyAccount } from '$lib/stores/user';
+  import { currentUserId, deleteMyAccount } from '$lib/stores/user';
+  import { globalSession, appendLog } from '$lib/stores/globalChatSingleton.svelte';
   import { clearAuth, leaveSignedOut } from '$lib/stores/auth';
   import { m } from '$lib/paraglide/messages';
 
@@ -20,8 +21,20 @@
     deleting = true;
     deletionError = '';
     try {
+      // Read BEFORE `clearAuth`, which forgets who was signed in.
+      const deletedUserId = currentUserId();
       await deleteMyAccount();
       await clearAuth();
+      // THE ACCOUNT IS GONE FOR GOOD, so its rows on this device are only a cost. Its database and
+      // its vault slot go; nothing else does (another account here keeps its own). A failure is
+      // logged and never blocks the exit: the server has already deleted the account.
+      if (deletedUserId) {
+        try {
+          await globalSession.wipeDeletedAccount(deletedUserId, appendLog);
+        } catch (wipeErr) {
+          Log.d('wipeDeletedAccount failed', wipeErr);
+        }
+      }
       await leaveSignedOut();
     } catch (err) {
       Log.d('handleDeleteAccount failed', err);

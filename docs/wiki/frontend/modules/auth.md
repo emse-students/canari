@@ -1357,6 +1357,15 @@ account never sees that slot - [the vault names its account](#the-vault-names-it
 vault was never cleared by any live path, `v1.2.6` included. Whether a sign-out should end "Rester
 connecte" is a decision for the user, not a defect of this fix.
 
+### An account deletion wipes THAT account's local database and vault slot (WP-DEL-LOCAL, 2026-10-18)
+
+A sign-out keeps the local state on purpose; a deletion is the one exit after which nobody can open it again, so `SettingsDangerZone` now runs `deleteMyAccount()`, `clearAuth()`, then `globalSession.wipeDeletedAccount(userId)`, then `leaveSignedOut()` (the user id is read BEFORE `clearAuth` forgets it). Decided by the user 2026-10-18: never `wipeDeviceToFactory`, which takes other accounts' state too.
+
+- `wipeDeletedAccountImpl` (sessionAuth.ts) first awaits `whenMlsRetired()`, so the sign-out's final MLS checkpoint cannot recreate what is deleted, then calls `wipeDeletedAccountLocalData` (`utils/accountLocalWipe.ts`).
+- That closes this account's handles (`closeCachedStore`, the open IndexedDB stores, the outbox blobs, the MLS connection), deletes `CanariDB_<id>`, `CanariDBOutbox_<id>` and `CanariDBMls_<id>` by exact name, on Tauri asks the native `delete_user_database` command to remove `canari_<id>.db` plus its `-wal`/`-shm` (the id is refused unless `[A-Za-z0-9_-]`), and drops that account's vault slot with `clearDeviceKey(id)`.
+- LEFT ALONE, deliberately: every other account's database and slot, the in-app log, the preferences, and `mls.bin` (one file per install that may hold another account's state: [backlog](../../backlog.md), the shared `mls.bin` P3).
+- Best-effort per step, every failure logged and returned; a failure never blocks the exit, the server account is already gone. Tests: `accountLocalWipe.test.ts`, and two Rust tests in `commands/storage.rs`. What only a device proves: the SQLite file is really gone after the handle close on Android and iOS.
+
 ### One sign-out sent two logouts, and the vault logged the user back in during it - FIXED 2026-10-17
 
 **Found on the Mi 9T bench of `1.2.9-alpha.7`** ([device-verification](../../device-verification.md),

@@ -164,6 +164,7 @@ import {
 import { resetSiblingCallWarning } from '$lib/utils/callPresence';
 import { ChannelService } from '$lib/services/ChannelService';
 import type { ICallMsg } from '$lib/proto/codec';
+import { wipeDeletedAccountLocalData } from '$lib/utils/accountLocalWipe';
 import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import {
   scheduleReconnectImpl,
@@ -418,6 +419,27 @@ export async function resetDeviceAsFreshImpl(
   clearDeviceKeyAndWrapKey();
   clearUserLocally();
   cb.log('[SECURITY] Revoked device detected: local state purged, reconnection required.');
+}
+
+/**
+ * Removes a DELETED account's local message database and vault slot, once its session has ended.
+ *
+ * Called after `clearAuth()` (which ends the live session through the sign-out handler): the final
+ * MLS checkpoint of that session is awaited first, so no write in flight can recreate what is
+ * deleted. Never `wipeDeviceToFactory` - another account on the device keeps everything it has.
+ */
+export async function wipeDeletedAccountImpl(
+  ctx: SessionContext,
+  log: (msg: string) => void,
+  userId: string
+): Promise<void> {
+  await ctx.whenMlsRetired();
+  const failures = await wipeDeletedAccountLocalData(userId);
+  log(
+    failures.length === 0
+      ? `[DEL-LOCAL] Local data of the deleted account removed (${userId.slice(0, 8)}).`
+      : `[DEL-LOCAL] Local data of the deleted account NOT fully removed: ${failures.join(', ')}`
+  );
 }
 
 /**

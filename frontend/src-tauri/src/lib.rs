@@ -53,10 +53,10 @@ use crate::commands::push::{
     store_outbox_mirror, store_push_context, store_push_secret,
 };
 use crate::commands::storage::{
-    clear_app_data, delete_mls_state, get_installer_package, get_local_storage_usage,
-    get_native_flags, load_mls_state, mls_foreground_heartbeat, mls_state_size,
-    pause_mls_foreground, recharger_mls_au_resume, remove_native_flag, save_mls_state,
-    set_native_flag,
+    clear_app_data, delete_mls_state, delete_user_database, get_installer_package,
+    get_local_storage_usage, get_native_flags, load_mls_state, mls_foreground_heartbeat,
+    mls_state_size, pause_mls_foreground, recharger_mls_au_resume, remove_native_flag,
+    save_mls_state, set_native_flag,
 };
 
 // ─── JNI functions (Android background push) ──────────────────────────────
@@ -1083,6 +1083,7 @@ pub fn run() {
             mls_state_size,
             store_push_secret,
             clear_app_data,
+            delete_user_database,
             remove_native_flag,
             set_native_flag,
             get_native_flags,
