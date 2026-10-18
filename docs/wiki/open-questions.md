@@ -18,6 +18,8 @@ measurement or a device nobody here has. None of them is waiting on an implement
 
 ### DECISION OWED - may a drain that only RECEIVED application frames skip its full checkpoint? (2026-10-13)
 
+**ANSWERED 2026-10-18 (user): yes, but ONLY after the Mi 9T crash measurement below.** The work package is [WP-CHECKPOINT-SKIP](backlog.md#decided-by-the-user-on-2026-10-18---every-design-question-answered); this section stays as the measured reasoning and the protocol, and is deleted when the measurement is read and the build ships.
+
 **What happens today.** Every drain ends with a full encrypted checkpoint of the WHOLE MLS state,
 even a drain of one application frame. `mlsStatePersister.onBulkIngestEnd` sets
 `dirtyEncrypted = true` unconditionally, overriding the commit/application split
