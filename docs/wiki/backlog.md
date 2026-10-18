@@ -432,10 +432,6 @@ Letting the cursor jump the tail (`skipTo`) was built and deleted because it cou
 - the windows were repaired before the filter ran (no roster member is left without an open interval);
 - the client accepts a skip only when it is ahead of its cursor and at or before the walk head.
 
-## P3 - `isTransportFailure` still reads EVERY `TypeError` as a transport failure (review of #1843, 2026-10-14)
-
-The browser's `fetch` rejects a transport failure with a plain `TypeError`, and the predicate accepts any `TypeError` for that reason - so a programming error (`cannot read properties of undefined`) inside a `try` around a request is also read as "no answer" and retried or held. Fix proposed and NOT built: wrap the native rejection in `trackedFetch` as `TransportFailureError` (the plugin's is already, `conformPluginFetch`) and narrow the predicate to that class plus `RequestDeadlineError`. App-wide, since every `fetch` that bypasses `trackedFetch` would then stop being read as transport ([offline-and-weak-network](frontend/offline-and-weak-network.md#14-a-transport-failure-is-one-type-on-every-platform-2026-10-14)).
-
 ## P2 - How the browser lost the message an overheard digest exposed is not established (2026-10-13)
 
 Production, group `656597dc`: the browser lacked one message the owner's phone held. The repair is shipped: the overhearing device asks the digest's author, and asks once more on the author's next live frame ([history-reconciliation](protocols/history-reconciliation.md#a-digest-overheard-is-evidence-the-member-that-lacks-something-asks-its-author-2026-10-13)). **Open**: the CAUSE. Compare the phone's 7 ids with the browser's 6 to find how the browser lost it (inferred, not shown).

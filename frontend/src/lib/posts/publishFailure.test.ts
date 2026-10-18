@@ -41,9 +41,9 @@ describe('publishFailureMessage', () => {
   it('tells a reader the server could not be REACHED, rather than accusing them', () => {
     // The one cause here a reader can act on, and the one that used to read as "you are
     // restricted" on `PostCard.handleReaction`.
-    expect(publishFailureMessage(new TypeError('Failed to fetch'), FALLBACK)).toBe(
-      m.auth_server_unreachable()
-    );
+    expect(
+      publishFailureMessage(new TransportFailureError(new TypeError('Failed to fetch')), FALLBACK)
+    ).toBe(m.auth_server_unreachable());
     // Read by TYPE, never by words: Tauri's typed failure is reached, a sentence that merely SAYS
     // network is not (`transportFailure.ts`).
     expect(

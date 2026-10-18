@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 import { SvelteMap } from 'svelte/reactivity';
 import type { WorkspaceDto, ChannelDto } from '$lib/services/ChannelService';
 import { ChannelApiError } from '$lib/services/ChannelService';
@@ -296,7 +297,7 @@ describe('useChannelWorkspaces - loadChannelWorkspacesFromBackend', () => {
 
   it('retries on transient failure and succeeds on second attempt, preserving existing data', async () => {
     listUserWorkspaces
-      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockRejectedValueOnce(new TransportFailureError(new TypeError('Failed to fetch')))
       .mockResolvedValueOnce([makeWorkspaceDto('ws1', 'Community', 'community')]);
     listChannels.mockResolvedValue([makeChannelDto('ch1', 'general')]);
 
@@ -325,7 +326,9 @@ describe('useChannelWorkspaces - loadChannelWorkspacesFromBackend', () => {
   });
 
   it('sets workspacesLoadError and preserves channelWorkspaces after 3 retryable failures', async () => {
-    listUserWorkspaces.mockRejectedValue(new TypeError('Network failure'));
+    listUserWorkspaces.mockRejectedValue(
+      new TransportFailureError(new TypeError('Network failure'))
+    );
 
     const store = useChannelWorkspaces();
     const ctx = makeContext();
@@ -486,10 +489,10 @@ describe('useChannelWorkspaces - online/foreground refresh', () => {
 
   it('reloads workspaces when load error exists and refresh is triggered externally', async () => {
     listUserWorkspaces
-      .mockRejectedValueOnce(new TypeError('Offline'))
-      .mockRejectedValueOnce(new TypeError('Offline'))
-      .mockRejectedValueOnce(new TypeError('Offline'))
-      .mockRejectedValueOnce(new TypeError('Offline'))
+      .mockRejectedValueOnce(new TransportFailureError(new TypeError('Offline')))
+      .mockRejectedValueOnce(new TransportFailureError(new TypeError('Offline')))
+      .mockRejectedValueOnce(new TransportFailureError(new TypeError('Offline')))
+      .mockRejectedValueOnce(new TransportFailureError(new TypeError('Offline')))
       .mockResolvedValueOnce([makeWorkspaceDto('ws1', 'Community', 'community')]);
     listChannels.mockResolvedValue([makeChannelDto('ch1', 'general')]);
 

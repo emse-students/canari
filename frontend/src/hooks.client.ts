@@ -22,6 +22,7 @@ import { installConsoleIdTruncation } from '$lib/utils/logTruncate';
 import { captureConsoleLine, installAppLogFlushTriggers } from '$lib/utils/appLog';
 import { apiServiceOrigins } from '$lib/utils/apiUrl';
 import { createRoutedFetch } from '$lib/utils/fetchRouting';
+import { conformNativeFetch } from '$lib/utils/transportFailure';
 import { MOBILE_APP_PROTOCOL, OIDC_SIGNED_OUT_HOST } from '$lib/mobile/appSiteAssociation';
 import { CHECKOUT_RETURN_HOST } from '$lib/utils/checkoutCallbacks';
 
@@ -512,4 +513,16 @@ if (isTauriRuntime()) {
     .catch(() => {
       // May fail during an in-flight page reload; the next load will retry.
     });
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// WEB `fetch` - ITS TRANSPORT REJECTION IS TYPED WHERE IT IS RAISED
+// ════════════════════════════════════════════════════════════════════════════
+//
+// The browser rejects "no answer" with a bare `TypeError`, which `isTransportFailure` no longer
+// reads (a programming `TypeError` looks the same). Wrapping `window.fetch` once types it for every
+// bare `fetch(...)` call in the app; on Tauri `createRoutedFetch` does the same for both branches.
+if (!isTauriRuntime()) {
+  const originalFetch = window.fetch;
+  window.fetch = conformNativeFetch((input, init) => originalFetch.call(window, input, init));
 }
