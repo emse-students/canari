@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useMentionAutocomplete, type MentionUser } from './useMentionAutocomplete.svelte';
+import { flushMacrotask } from '../../test/flush';
 
 vi.mock('$lib/stores/auth', () => ({
   getToken: vi.fn().mockResolvedValue('test-token'),
@@ -24,7 +25,7 @@ function makeFetchStub(results: MentionUser[]) {
 }
 
 function tick() {
-  return new Promise<void>((resolve) => setTimeout(resolve, 0));
+  return flushMacrotask();
 }
 
 describe('useMentionAutocomplete - allowedUserIds filtering', () => {

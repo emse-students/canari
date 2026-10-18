@@ -22,6 +22,7 @@ import { setLocale } from '$lib/paraglide/runtime';
 import { m } from '$lib/paraglide/messages';
 import EventFormModal from './EventFormModal.svelte';
 import { blankEventFormValues, toCreatePayload } from '$lib/calendar/eventForm';
+import { flushMacrotask } from '../../../test/flush';
 
 const mounted: ReturnType<typeof mount>[] = [];
 
@@ -44,7 +45,7 @@ afterEach(() => {
   document.body.innerHTML = '';
 });
 
-const tick = () => new Promise((r) => setTimeout(r, 0));
+const tick = () => flushMacrotask();
 
 function search(): HTMLInputElement {
   return document.querySelector(

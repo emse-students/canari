@@ -5,6 +5,7 @@ import {
   type LayoutFingerprintParts,
 } from './editorPersistence';
 import type { PositionedBubble } from './layout';
+import { flushMacrotask } from '../../test/flush';
 
 function bubble(over: Partial<PositionedBubble> = {}): PositionedBubble {
   return {
@@ -78,7 +79,7 @@ describe('createSerialSaver - a publish may not overtake a save', () => {
   }
 
   /** Lets every already-queued microtask run, so "has it started yet" is a fair question. */
-  const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
+  const flush = () => flushMacrotask();
 
   it('waits for the save in flight instead of returning at once', async () => {
     const { persist, calls, started } = controllable();

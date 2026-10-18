@@ -30,6 +30,7 @@ import {
   resetAuditRecord,
   type HistoryProbeSender,
 } from './historyReconcile';
+import { flushMacrotask } from '../../../test/flush';
 
 vi.mock('$lib/utils/sessionLog', () => ({ appendLog: vi.fn() }));
 
@@ -582,7 +583,7 @@ describe('reconcileAllGroups', () => {
     mls.sendHistoryRequest.mockImplementation(async () => {
       inFlight++;
       peak = Math.max(peak, inFlight);
-      await new Promise((r) => setTimeout(r, 5));
+      await flushMacrotask();
       inFlight--;
       return {};
     });
@@ -600,7 +601,7 @@ describe('reconcileAllGroups', () => {
     mls.sendHistoryRequest.mockImplementation(async () => {
       inFlight++;
       peak = Math.max(peak, inFlight);
-      await new Promise((r) => setTimeout(r, 2));
+      await flushMacrotask();
       inFlight--;
       return {};
     });
