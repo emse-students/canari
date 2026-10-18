@@ -1,8 +1,8 @@
 /**
- * AN UNKNOWN OUTCOME CLOSES THE BLOCK SHEET (review of #2035). A retry could write a block twice; the
- * server now refuses one over another (`block-overlap`), but a sheet left open after a lost answer offered a second tap
- * all the same. The sheet re-reads the grid, says so, and closes; a plain
- * refusal (a 4xx, even with no code) keeps it open with its sentence and re-reads nothing.
+ * AN UNKNOWN OUTCOME CLOSES THE BLOCK SHEET (review of #2035). The first block may have landed
+ * after a lost answer, so the sheet re-reads the grid, says so, and closes (a second tap would be
+ * refused `block-overlap`, which also closes it). A plain refusal (a 4xx, even with no code) keeps
+ * it open with its sentence and re-reads nothing.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';

@@ -551,10 +551,17 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       expect(await ds.getRepository(BookingBlock).countBy({ resourceId: r })).toBe(3);
       // Racing the same block: one winner, the rest told it exists.
       const racing = { startsAt: on('15:00'), endsAt: on('16:00') };
-      const results = await Promise.allSettled(
-        Array.from({ length: 5 }, () => service.addBlock(r, racing, as(ORGA), NOW))
+      const racers = await Promise.all(
+        Array.from({ length: 5 }, () =>
+          service.addBlock(r, racing, as(ORGA), NOW).then(
+            () => 'won',
+            (err: unknown) => refusal(Promise.reject(err))
+          )
+        )
       );
-      expect(results.filter((x) => x.status === 'fulfilled')).toHaveLength(1);
+      expect(racers.filter((x) => x === 'won')).toHaveLength(1);
+      // Every loser is told the block exists: never a deadlock or a try-again.
+      expect(racers.filter((x) => x !== 'won')).toEqual(Array(4).fill({ code: 'block-overlap' }));
       expect(await ds.getRepository(BookingBlock).countBy({ resourceId: r })).toBe(4);
     });
 
