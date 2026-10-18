@@ -1,9 +1,7 @@
 import { BadRequestException, ForbiddenException, Logger } from '@nestjs/common';
 import { FindOperator, Repository } from 'typeorm';
-import {
-  InternalPresenceController,
-  MAX_PRESENCE_AUDIENCE_USERS,
-} from './internal-presence.controller';
+import { InternalPresenceController } from './internal-presence.controller';
+import { MAX_PRESENCE_AUDIENCE_USERS } from '../utils/presence-audience';
 import type { ChannelMember } from '../channels/entities/channel-member.entity';
 
 type Row = { workspaceId: string; userId: string };

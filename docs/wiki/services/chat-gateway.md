@@ -302,8 +302,41 @@ key-distribution group has no `dm_group_members` row, so it cannot widen the aud
 - The SCAN of `user:online:{id}:*` runs only for the visible ids, so a crafted id never reaches a
   SCAN pattern unless a service has matched it to a real membership.
 
+**The costs taken knowingly, each written down so nobody files it as a defect:**
+
+- **"Not visible" and "offline" are two answers, and the map tells them apart by ABSENCE** - a
+  deviation from the old contract, where every asked id came back with a boolean. A visible user
+  who is offline is `false`; a user the caller may not see is missing. Answering `false` for both
+  would state "offline" about someone who may be online, and would make "hidden" and "offline" one
+  value no client could ever separate again; the price is that a client must read a missing key as
+  a fact (`presenceStore.ts` does) rather than as "not answered yet".
+- **A block does not hide presence.** The audience reads membership tables only, and a block ends
+  no membership ([moderation-and-blocking](../moderation-and-blocking.md#what-a-block-does-not-do)).
+- **An OLD client keeps a frozen dot for someone who left the only conversation it shared.** It
+  merges the map, so a key that stops coming keeps its last value - `true` included - until the
+  app restarts or the store is rebuilt. Only `presenceStore.ts`'s drop of an absent id fixes it,
+  and that rides the next client release; nothing server-side can reach a client that merges.
+- **A rolling deploy has a 503 window.** A gateway that comes up before chat-delivery or
+  social-service serve `/internal/presence/*` gets 404s, answers 503, and logs
+  `[presence] audience unavailable ... answering 503` at WARN once per poll per open client (every
+  10 s) until both services are up. The client keeps its previous map through a 503, so nothing on
+  screen moves; the lines are the expected trace of the window, and lines that OUTLIVE a deploy
+  are a broken audience, not noise.
+- **The 1000-id cap is one number in three places** (`MAX_PRESENCE_USERS` here, and the validator
+  the two services share byte for byte, `src/utils/presence-audience.ts`, declared in
+  `declared-duplicates.mjs`). `libs/contracts/presence-audience.cases.json` is the one copy the
+  three assert against ([libs](../libs.md#presence-audiencecasesjson)).
+- **Both viewer lookups have an index of their own**: `IDX_dm_group_members_user` (chat-delivery
+  migration 031) and `IDX_channel_members_user` (social-service migration 089). The only indexes
+  before were the unique (`groupId`, `userId`) and (`workspaceId`, `userId`), which cannot serve a
+  predicate on `userId` alone, so every poll scanned both membership tables. **No time-based cache
+  in front of them**: a 10 s poll behind a 5-10 s cache is a clock deciding what a member sees
+  after leaving, and the index is what makes the question cheap.
+
 Covered by `presence.rs` (the real handler against fake services on loopback, Redis deliberately
-down so the STATUS says how far a request got), `audience.rs`, and one spec per service.
+down so the STATUS says how far a request got), `audience.rs`, one spec per service, the shared
+contract above, and `internal-presence.integration.spec.ts` (social-service, the community query
+and migration 089 against a real PostgreSQL).
 
 **The push is NOT done, and the 10 s poll stands.** A push needs a presence TRANSITION event, and the
 gateway emits none: the key is set in one place (connect), refreshed in another, deleted in three
@@ -312,7 +345,8 @@ expires by TTL with no event at all. Replacing the poll means (1) one publish on
 EDGE of a USER (a device leaving while another stays is no edge, which needs a SCAN after each DEL),
 (2) a per-connection watch set checked against this same audience, (3) a client that keeps polling
 until the gateway proves it pushes (a phone build can reach the stores before production carries the
-gateway that answers it). Tracked in [backlog](../backlog.md).
+gateway that answers it). **None of the three is built**, and the backlog entry that owns the poll
+says so ([backlog](../backlog.md#p3---the-phone-polls-presence-every-ten-seconds-over-a-live-websocket-2026-09-02)).
 
 ## CORS: the list is a fact about the clients
 

@@ -174,6 +174,13 @@ cursus filters, not a target picker, and punching a hole in it would make a bloc
 screen that has nothing to do with it. Invitation **links** are out of scope: a block stops somebody
 from pushing you somewhere, not from you walking in.
 
+**Presence is not hidden by a block** (WP-PRESENCE, 2026-10-18). Its audience is "shares a live
+conversation or a community with you" ([chat-gateway](services/chat-gateway.md#who-may-see-whose-presence-wp-presence-2026-10-18)),
+and a block ends neither, for the reason in the first paragraph above. So a blocked person who still
+shares a conversation or a community with you still sees your dot, and you theirs. The audience
+check reads only membership tables and never `user_blocks`: honouring a block there would mean the
+gateway asking a third service, and would make the block observable from the dot going dark.
+
 The blocked person is never notified. No administrator sees anything. They can, since posts started
 being hidden, NOTICE that one reader stopped seeing them - that is what a symmetric hide costs, and
 it was taken knowingly (2026-09-25): "not notified" is about the platform telling them, and the

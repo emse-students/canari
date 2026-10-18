@@ -1,23 +1,9 @@
-import {
-  BadRequestException,
-  Body,
-  Controller,
-  Headers,
-  HttpCode,
-  Logger,
-  Post,
-} from '@nestjs/common';
+import { Body, Controller, Headers, HttpCode, Logger, Post } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
 import { ChannelMember } from '../channels/entities/channel-member.entity';
+import { parsePresenceAudienceBody } from '../utils/presence-audience';
 import { assertInternalSecret } from './internal-secret.util';
-
-/**
- * The most user ids one presence-audience question may carry. The gateway refuses a larger
- * question before asking (`MAX_PRESENCE_USERS` in `apps/chat-gateway/src/presence.rs`), so reaching
- * this bound here is a caller bug, never a user's list.
- */
-export const MAX_PRESENCE_AUDIENCE_USERS = 1000;
 
 /**
  * The community half of the presence audience (WP-PRESENCE, decided by the user 2026-10-18): the
@@ -39,8 +25,12 @@ export class InternalPresenceController {
   /**
    * Which of `userIds` are members of at least one community (`channel_members` row on a common
    * `workspaceId`) the viewer is also a member of. Answers the SUBSET, lowercased - the spelling
-   * `NginxAuthGuard` stores ids under; the viewer is never in it. A malformed question is a 400, never an empty answer: "nobody"
-   * would read at the gateway as "every one of them is invisible to you".
+   * `NginxAuthGuard` stores ids under; the viewer is never in it. The question is validated by
+   * `parsePresenceAudienceBody`, the module chat-delivery's half shares byte for byte: a malformed
+   * one is a 400, never an empty answer.
+   *
+   * The viewer lookup (`WHERE "userId" = viewer`) rides `IDX_channel_members_user` (migration 089);
+   * the unique (`workspaceId`, `userId`) cannot serve it.
    */
   @Post('shared-communities')
   @HttpCode(200)
@@ -49,19 +39,8 @@ export class InternalPresenceController {
     @Body() body: { viewerId?: unknown; userIds?: unknown }
   ): Promise<{ userIds: string[] }> {
     assertInternalSecret(secret);
-    const viewerId = typeof body?.viewerId === 'string' ? body.viewerId.trim().toLowerCase() : '';
-    const raw = body?.userIds;
-    if (!viewerId || !Array.isArray(raw) || raw.some((id) => typeof id !== 'string')) {
-      this.logger.warn('[PRESENCE_AUDIENCE] refused: malformed body');
-      throw new BadRequestException('viewerId and an array of string userIds are required');
-    }
-    const targets = [
-      ...new Set((raw as string[]).map((id) => id.trim().toLowerCase()).filter(Boolean)),
-    ].filter((id) => id !== viewerId);
-    if (targets.length > MAX_PRESENCE_AUDIENCE_USERS) {
-      this.logger.warn(`[PRESENCE_AUDIENCE] refused: ${targets.length} userIds`);
-      throw new BadRequestException(`at most ${MAX_PRESENCE_AUDIENCE_USERS} userIds`);
-    }
+    const { viewerId, userIds } = parsePresenceAudienceBody(body);
+    const targets = userIds.filter((id) => id !== viewerId);
     if (targets.length === 0) return { userIds: [] };
 
     const viewerRows = await this.memberRepo.find({

@@ -449,6 +449,24 @@ mod tests {
         assert_eq!(services.hits(), 0);
     }
 
+    /// The cap is one number in three places - here and in the validator chat-delivery and
+    /// social-service share - and `libs/contracts/presence-audience.cases.json` is the one copy
+    /// all three assert against. A gateway allowing more than a service accepts would turn every
+    /// such question into a service 400, which this handler answers as a 503.
+    #[test]
+    fn the_cap_is_the_one_the_services_share() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../libs/contracts/presence-audience.cases.json"
+        );
+        let text = std::fs::read_to_string(path).expect("the presence-audience contract");
+        let contract: serde_json::Value = serde_json::from_str(&text).expect("valid JSON");
+        assert_eq!(
+            contract["maxUserIds"].as_u64(),
+            Some(MAX_PRESENCE_USERS as u64)
+        );
+    }
+
     #[test]
     fn requested_ids_trims_drops_blanks_and_collapses_duplicates() {
         assert_eq!(requested_ids(" bob,,carol , bob,"), vec!["bob", "carol"]);

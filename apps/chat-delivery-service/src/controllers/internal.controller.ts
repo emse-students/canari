@@ -211,6 +211,9 @@ export class InternalController {
    *
    * Answers the SUBSET, lowercased like every stored id. The viewer is never in it: "may I see
    * myself" is the gateway's decision, not a membership question.
+   *
+   * The viewer lookup (`WHERE "userId" = viewer`) rides `IDX_dm_group_members_user` (migration
+   * 031); the unique (`groupId`, `userId`) cannot serve it.
    */
   @Post('presence/shared-conversations')
   @HttpCode(200)
