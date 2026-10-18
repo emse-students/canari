@@ -149,6 +149,13 @@ for (const block of locations) {
     } else {
       const arms = [...mapBody.matchAll(/(\S+)\s+"([^"]*)"\s*;/g)];
       sharedValue = arms.find((a) => a[1] === 'default')?.[2];
+      if (sharedValue === undefined) {
+        // The default may chain to another map (`default $other;`): judge THAT map's quoted default,
+        // which is what a response that declares nothing of its own carries.
+        const next = mapBody.match(/default\s+\$(\w+)\s*;/)?.[1];
+        const nextBody = next && text.match(new RegExp(`map\\s+\\S+\\s+\\$${next}\\s*\\{([^}]*)\\}`))?.[1];
+        sharedValue = nextBody?.match(/default\s+"([^"]*)"\s*;/)?.[1];
+      }
       for (const [, key, value] of arms) {
         if (key !== 'default' && value !== 'no-store') {
           failures.push(

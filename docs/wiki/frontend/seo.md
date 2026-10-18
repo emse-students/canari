@@ -187,7 +187,7 @@ the intermittent Messenger preview failure, whose cause the access log could not
   and `X-Canari-Degraded: 1`.
 - **nginx honours it.** `@ssr` used to add `public, max-age=0, s-maxage=60` to everything, which
   would have cached the degraded page at the edge. `$ssr_cache_control` (a map on
-  `$upstream_http_x_canari_degraded`) makes it `no-store` for a degraded page; `static-headers.test.mjs`
+  `$upstream_http_x_canari_degraded`) makes it `no-store` for a degraded page (and lets the sitemap keep its own `public, max-age=3600` through `$ssr_cache_control_declared`); `static-headers.test.mjs`
   reads the map and refuses any other arm. The access log gained five fields to say which case a hit
   was: [logging](../infrastructure/logging.md#the-access-log-diagnostic-fields-2026-10-18).
 
