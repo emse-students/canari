@@ -90,8 +90,8 @@
           Les messages de salon sont chiffrés de bout en bout ; le nom des communautés et des
           salons, leurs membres et les accusés de lecture affichés dans un salon sont connus du
           serveur. Quand un message de salon est supprimé, le serveur garde son auteur et son
-          identifiant aléatoire, pour ne pas le republier si l'application renvoie un envoi
-          interrompu.
+          identifiant aléatoire pendant 30 jours, pour ne pas le republier si l'application renvoie
+          un envoi interrompu.
         </dd>
       </div>
       <div>
@@ -381,7 +381,10 @@
           </tr>
           <tr>
             <td>Trace d'un message de salon supprimé (auteur, identifiant aléatoire)</td>
-            <td>Jusqu'à la suppression du salon ou du compte de l'auteur</td>
+            <td>
+              30 jours après la suppression du message ; avant, avec le salon ou le compte de
+              l'auteur
+            </td>
           </tr>
           <tr>
             <td>Fichiers envoyés dans une conversation (chiffrés)</td>

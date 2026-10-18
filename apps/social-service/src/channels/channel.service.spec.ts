@@ -559,19 +559,25 @@ describe('ChannelService security hardening', () => {
     const { service, channelRepo, memberRepo, messageRepo, redis } = makeService();
     arrangePollAccess(channelRepo, memberRepo);
     messageRepo.findOne.mockResolvedValue({ id: 'm1', channelId: 'ch1', authorId: 'u1' });
+    // The row lock finds the row.
+    messageRepo.query.mockResolvedValueOnce([{}]);
 
     await service.deleteChannelMessage('ch1', 'm1', 'u1');
 
     expect(messageRepo.delete).toHaveBeenCalledWith({ id: 'm1', channelId: 'ch1' });
-    // In ONE transaction (migration 090): the client id's lock - the one a send takes around its
+    // In ONE transaction (migration 090): the ROW's lock first (what an account erasure's delete
+    // waits on, or makes this wait on), then the client id's lock - the one a send takes around its
     // tombstone check and its insert - then the tombstone, then the row.
     expect(messageRepo.manager.transaction).toHaveBeenCalledTimes(1);
-    const [[lockSql, lockParams], [sql, params]] = messageRepo.query.mock.calls;
+    const [[rowSql, rowParams], [lockSql, lockParams], [sql, params]] =
+      messageRepo.query.mock.calls;
+    expect(rowSql).toContain('FOR UPDATE');
+    expect(rowParams).toEqual(['m1', 'ch1']);
     expect(lockSql).toContain(clientIdLockSql('"authorId"', '"channelId"', '"clientMessageId"'));
     expect(lockParams).toEqual(['m1', 'ch1']);
     expect(sql).toContain('INSERT INTO channel_message_client_tombstones');
     expect(params).toEqual(['m1', 'ch1']);
-    expect(messageRepo.query.mock.invocationCallOrder[1]).toBeLessThan(
+    expect(messageRepo.query.mock.invocationCallOrder[2]).toBeLessThan(
       messageRepo.delete.mock.invocationCallOrder[0]
     );
     expect(redis.publishChannelEvent).toHaveBeenCalledWith(
@@ -606,10 +612,29 @@ describe('ChannelService security hardening', () => {
       channelId: 'ch1',
       authorId: 'someone-else',
     });
+    messageRepo.query.mockResolvedValueOnce([{}]);
 
     await service.deleteChannelMessage('ch1', 'm1', 'u1');
 
     expect(messageRepo.delete).toHaveBeenCalledWith({ id: 'm1', channelId: 'ch1' });
+  });
+
+  it('deleteChannelMessage writes NO tombstone for a row removed while it waited (an erasure)', async () => {
+    const { service, channelRepo, memberRepo, messageRepo, redis } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    messageRepo.findOne.mockResolvedValue({ id: 'm1', channelId: 'ch1', authorId: 'u1' });
+    // Read before the transaction, gone once its row lock was granted.
+    messageRepo.query.mockResolvedValueOnce([]);
+
+    await service.deleteChannelMessage('ch1', 'm1', 'u1');
+
+    expect(messageRepo.query).toHaveBeenCalledTimes(1);
+    expect(messageRepo.delete).not.toHaveBeenCalled();
+    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.message.deleted',
+      expect.objectContaining({ messageId: 'm1' }),
+      expect.any(Array)
+    );
   });
 
   it("setMessagePinned rejects a plain member pinning someone else's message", async () => {
