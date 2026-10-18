@@ -146,7 +146,8 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
 - **Backups keep everything for their retention (14 days)**, then rotate out. An erasure cannot
   reach into a backup; restoring one REPLAYS the erasures the archive predates
   ([below](#a-restore-replays-the-erasures)). What no replay can reach: an erasure made after the
-  last archive on a server lost WITH its database - its journal is gone with it.
+  last archive on a server lost WITH its database - its journal is gone with it. A server that is
+  only being LEFT still has it: export it there and hand it over (`ERASURE_JOURNAL_FROM`).
 - **A queued commit or Welcome keeps its `senderId`** in chat-delivery: it is the recipient's protocol
   state, read when it is delivered (push suppression, routing), and rewriting it was not shown safe.
   It leaves the queue when delivered.
@@ -188,20 +189,32 @@ restore.sh
   core-service: bun dist/account-erasure/restore-replay.js replay  -> POST /api/internal/account-erasure/replay
 ```
 
-**The export** (`exportJournal`) is one entry per completed subject - its digest and the LATEST time
-an erasure of it was requested - and every pending subject, which a pending row names outright. It is
+**The export** (`exportJournal`) is one entry per completed subject (its digest) and one per pending
+subject (named outright by its row), each with the LATEST time an erasure of it was requested. It is
 written to a `0600` file beside the backups and deleted once the replay succeeded; an export that
 fails stops the restore BEFORE anything is overwritten, because the file is then the only record of
-those erasures.
+those erasures. Three things guard that file:
+
+- **the public entry (`frontend`) is stopped from the export to the end of the replay** - a
+  `DELETE /users/me` in that window would land in the database being overwritten and in neither
+  journal, while the person was told their account is gone;
+- **an existing file REFUSES a new restore**: it is an unfinished replay, and a second export, read
+  from the already-restored database, would overwrite it with a journal that no longer knows those
+  erasures;
+- **a migration hands the OLD server's journal over** (`ERASURE_JOURNAL_FROM=<file>`, exported there
+  with the same command): on the new server the "current" journal is an empty database's.
 
 **The replay** (`replayAfterRestore`) hashes every restored `users.id` with `subjectDigest` (the one
-implementation) to find the completed subjects, and calls `requestErasure` for each match and each
-pending subject - the same transaction and the same jobs as a person's own request, so the account
-is deactivated at once. **One case is NOT replayed**: a completed subject whose restored row was
-created AFTER the erasure was requested. A person may come back once every job completed, and
-`users.id` is the OIDC subject, so that row is their NEW account, under the same id; erasing it would
-delete an account nobody asked to erase. It is logged as `replay keeps user=... it is a new account`.
-A pending subject is replayed whatever its row's age: nobody can sign in while an erasure is pending.
+implementation) to find the completed subjects, matches the pending ones by id, and calls
+`requestErasure` for each - the same transaction and the same jobs as a person's own request, so the
+account is deactivated at once. **ONLY a row created BEFORE that request is erased** (an allowlist,
+not a denylist). A person may come back once every job completed, and `users.id` is the OIDC subject,
+so a row created after the request is their NEW account, under the same id; erasing it would delete
+an account nobody asked to erase. It is logged as `replay keeps user=... it is a new account`. The
+test holds for a pending subject too, because the replay printed on a failure may be re-run hours
+later, after a replayed erasure completed and the person came back. `users."createdAt"` is a NOT NULL
+`timestamp` written by `CURRENT_TIMESTAMP` on core's own connection and compared on that same
+connection, so both sides read the one session zone (UTC in the images).
 
 Why `users.id` is the whole match: every service's tables live in `auth_db`, which one archive
 restores at one instant. An account erased BEFORE that instant is in the restored journal itself
