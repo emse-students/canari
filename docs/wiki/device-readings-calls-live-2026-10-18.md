@@ -61,11 +61,28 @@ target, and that is the host question (Q3).
 | App in the background for 20 s mid-live | capture **stops** (3 chunks in 33 s instead of ~16) with no `mute` event; the recorder stays `recording` and resumes on return | capture **stops**: the track fires `mute`, and resumes on return | confirms Q6: **a live drops when the broadcaster leaves the app**, on both |
 | The player after that gap | stays **~22.5 s behind** the live edge and plays the backlog | the same, **~22.3 s** | **a finding for WP-L5**: after a stall, a live player must seek to the live edge, not play the backlog |
 
+### 2b. The same live UNPLUGGED (2026-10-18, 10:50-11:25Z)
+
+The user pulled both cables. The probe, the page and the settings were the same as above; the Mi 9T
+was read over wireless adb (`USB powered: false` checked at the start). Battery level, voltage and
+the HAL temperatures were read every minute.
+
+| Reading | Mi 9T (Chrome 154), 35 min unplugged | iPhone 12 (Safari), 30 min unplugged from ~11:17Z |
+| --- | --- | --- |
+| Battery | **38 % -> 7 % in 31.3 min = ~59 %/h**, 5 % at the end; 3.52 -> 3.40 V under load. The replugged run above (~16 %/h) was USB covering most of the draw | before: 100 %; after: _pending, read by hand_ |
+| Heat | battery 31.5 -> 40.8 C, CPU 44 -> 54-56 C, GPU 38 -> 47.5 C; thermal status **0** throughout | _pending, by hand_ |
+| Stream | 806 MB, 714 appends, **0 append errors**, never paused, recorder never stopped; bitrate mean 3.06 Mb/s (60 s windows median 3.0, max 4.9); player behind the newest segment median 2.0 s, max 6.2 s | _pending: read from the page once replugged_ |
+| Degradation | dropped frames on the player 3 -> **571 of 63 015 (0.9 %)**, all after ~11:07Z, once the battery was under ~25 % and above ~38.5 C. The capture side held | - |
+
+**Verdict, Mi 9T: the stream is `PASS` for 30 min, the battery is not.** A 2019 phone streaming
+720p at ~3 Mb/s with the screen on empties **~60 % of its battery per hour**. So a 60 min live
+(the L4 ceiling) needs a charged phone, or a plugged one: the app should warn below ~60 %.
+
 **What this settles for option C.** On both phones, MediaRecorder already produces the segment
 format the plan wants (fMP4, H.264 + AAC), sealing it costs nothing, and a growing source plays
 through MSE / ManagedMediaSource for 40 minutes with no append error. Nothing found refutes C. The
-cost is the broadcaster's battery (~16 %/h on a 2019 Android phone), and on Android an encoder
-that does not hold its bitrate target.
+costs are the broadcaster's battery (~59 %/h unplugged on a 2019 Android phone, section 2b) and,
+on Android, an encoder that does not hold its bitrate target.
 
 **The limits of these readings.** They ran in Chrome and Safari, not in the app's WebViews: the
 installed builds are a store release and a TestFlight build, and neither can be inspected. Chrome
@@ -77,16 +94,14 @@ installed builds are a store release and a TestFlight build, and neither can be 
 1. **Cut the pre-release** that carries lot 1 (section 1). That is the lead's action, not a touch on
    a phone. Then the iPhone's TestFlight "Mettre a jour" tap, if the update does not install in the
    background.
-2. **An unplugged 30 min live on each phone**, for a real battery drain: someone has to pull the
-   USB cable and plug it back in afterwards. The probe and the sampler are ready
-   (`<harness-dir>/live-bench-2026-10-18/`). The Mi 9T is then driven over `adb tcpip`; the iPhone
-   cannot be driven unplugged, so its run is read at the end.
-3. **The iPhone's heat**: a hand on the back of the phone at the end of a 30 min live, or a reading
-   from Settings > Battery. The tooling has no temperature.
-4. **A WKWebView reading** of `ManagedMediaSource` needs an inspectable iOS bench build
+2. ~~An unplugged 30 min live on each phone~~ - TAKEN 2026-10-18 (section 2b). The iPhone half
+   waits for its "after" battery %, its heat by hand, and a replug so the page can be read. The
+   probe, samplers and logs are in `<harness-dir>/live-bench-2026-10-18/`. The iPhone has no Wi-Fi
+   pairing, so it was injected over USB, then unplugged, and is read back over USB.
+3. **A WKWebView reading** of `ManagedMediaSource` needs an inspectable iOS bench build
    (`tools/ios-device/sign-install.mjs`). That is the agents' to do, not a human's; it is listed so
    that it is not mistaken for done.
-5. **Cellular**: no SIM in either bench phone, so every reading above is on Wi-Fi.
+4. **Cellular**: no SIM in either bench phone, so every reading above is on Wi-Fi.
 
 ## See also
 
