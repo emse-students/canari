@@ -6,10 +6,13 @@
  * the server's answer the text therefore lived in ONE place, a row that a reload destroys; WP-OFF-1
  * had given the text back on a refusal, and this must not be a regression from it. So the text is also
  * written here, and removed the moment the server answers (settled) or the member discards the row.
- * What is still here at the next start is a message whose fate nobody observed: it is handed back to
- * the composer of its salon, never re-sent on its own (the server does not dedupe on the client id, so
- * an automatic re-send of a message that did arrive would post it twice - the durable queue that can
- * do that safely is WP-OFF-3).
+ *
+ * IT IS THE DURABLE HALF OF THE SALON QUEUE (WP-OFF-3). What is still here at the next start is a
+ * message whose fate nobody observed, and it is SENT AGAIN under the same client id: the server
+ * answers a repeat with the row it already holds (migration 088), so a message that did arrive is not
+ * posted twice - once an answer has proven this server does (`salonRepeatProof.ts`). An entry carries what rebuilding the identical payload needs (`sentAt`, `replyTo`);
+ * one written before those existed cannot be rebuilt as it was composed (its quote would be lost), so
+ * it still goes back to the composer instead (`messaging.ts`, `resumeUnsentSalonSends`).
  *
  * localStorage, one key per user: small, synchronous (it must be written BEFORE the POST leaves), and
  * wrapped so that an unavailable store costs the safety net and nothing else - and says so.
@@ -65,6 +68,13 @@ export interface UnsentSalonText {
   messageId: string;
   conversationKey: string;
   text: string;
+  /**
+   * The author's clock sealed in the payload. Its presence marks an entry this build can SEND again;
+   * absent on one written before WP-OFF-3, which goes back to the composer instead.
+   */
+  sentAt?: number;
+  /** The quoted message, as the payload carried it - the preview is the cut the composer made. */
+  replyTo?: { id: string; senderId: string; preview: string };
   /** The page life that wrote it; absent on an entry written before owners existed. */
   owner?: string;
 }
@@ -137,9 +147,11 @@ async function livePageLives(): Promise<Set<string> | null> {
 }
 
 /**
- * Removes and returns the entries of `conversationKey` whose writer is PROVEN gone: the leftovers of
- * a dead page life, to hand back to the composer. An entry of THIS page life is taken only when no
- * live send owns it; an entry of another page life only when its owner lock is no longer held.
+ * Removes and returns the entries of `conversationKey` (of every salon when it is null) whose writer
+ * is PROVEN gone: the leftovers of a dead page life, to send again or hand back to the composer. An
+ * entry of THIS page life is taken only when no live send owns it; an entry of another page life only
+ * when its owner lock is no longer held. Two tabs taking the same entry at once (localStorage has no
+ * transaction) both send it under the same client id, and the server answers both with one row.
  *
  * THE LEDGER IS READ BEFORE THE LOCKS ARE QUERIED, and only what that read held can be taken. An
  * entry is written after its owner's lock is requested, so every entry of the first read has its
@@ -151,14 +163,14 @@ async function livePageLives(): Promise<Set<string> | null> {
  */
 export async function takeOrphanedSalonTexts(
   userId: string,
-  conversationKey: string,
+  conversationKey: string | null,
   live: ReadonlySet<string>
 ): Promise<UnsentSalonText[]> {
   const candidates = readAll(userId);
   const alive = await livePageLives();
   let foreignKept = 0;
   const decided = candidates.filter((e) => {
-    if (e.conversationKey !== conversationKey) return false;
+    if (conversationKey !== null && e.conversationKey !== conversationKey) return false;
     if (e.owner === SALON_UNSENT_PAGE_LIFE) return !live.has(e.messageId);
     if (e.owner === undefined) return true;
     if (alive !== null && !alive.has(e.owner)) return true;

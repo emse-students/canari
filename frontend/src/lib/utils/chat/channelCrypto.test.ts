@@ -44,6 +44,8 @@ const { GraineDistributionUnavailableError } = await import('$lib/utils/graine/s
 const { sendEncryptedChannelMessage, sendChannelReaction } =
   await import('$lib/utils/chat/channelCrypto');
 const { decodeAppMessage } = await import('$lib/proto/codec');
+const { salonRepeatIsSafe, resetSalonRepeatProofForTests } =
+  await import('$lib/utils/chat/salonRepeatProof');
 const { fromBase64 } = await import('$lib/utils/hex');
 
 const CHANNEL = 'channel_11111111-2222-3333-4444-555555555555';
@@ -131,6 +133,18 @@ describe('sendEncryptedChannelMessage', () => {
     expect('mentionedUserIds' in body).toBe(false);
     expect('poll' in body).toBe(false);
   });
+
+  it('learns a repeat is safe ONLY from an answer that echoes its client id (migration 088)', async () => {
+    resetSalonRepeatProofForTests();
+    // An older server answers with its row and nothing else: nothing is proven.
+    sendMessage.mockResolvedValueOnce({ id: 'srv-1', createdAt: 1 });
+    await sendEncryptedChannelMessage(CHANNEL, PAYLOAD, 'msg-old');
+    expect(salonRepeatIsSafe()).toBe(false);
+
+    sendMessage.mockResolvedValueOnce({ id: 'srv-2', createdAt: 2, clientMessageId: 'msg-new' });
+    await sendEncryptedChannelMessage(CHANNEL, PAYLOAD, 'msg-new');
+    expect(salonRepeatIsSafe()).toBe(true);
+  });
 });
 
 describe('sendChannelReaction (WP-40)', () => {
@@ -153,6 +167,9 @@ describe('sendChannelReaction (WP-40)', () => {
     // make a delete or a pin ambiguous.
     expect(frame?.messageId).not.toBe('target-1');
     expect(String(frame?.messageId ?? '')).not.toHaveLength(0);
+    // The same id beside the ciphertext: a repeat owed to a reconnect (WP-OFF-4) is answered by the
+    // server with the row it already holds.
+    expect(body.messageId).toBe(frame?.messageId);
     expect(fromBase64(body.ciphertext).length).toBeGreaterThan(0);
   });
 });
@@ -171,6 +188,7 @@ describe('sendChannelEdit', () => {
     expect(frame?.edit?.newContent).toBe('Salut \u{1F600}');
     expect(Number(frame?.edit?.editedAt)).toBe(1_700_000_000_000);
     expect(frame?.messageId).not.toBe('target-1');
+    expect(body.messageId).toBe(frame?.messageId);
   });
 });
 

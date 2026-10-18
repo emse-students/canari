@@ -83,6 +83,7 @@ describe('channel audience', () => {
       create: jest.fn((x: unknown) => x),
       save: jest.fn((x: Record<string, unknown>) => Promise.resolve({ ...x, id: 'msg-1' })),
       delete: jest.fn(() => Promise.resolve({ affected: 1 })),
+      query: jest.fn(() => Promise.resolve([])),
       findOne: jest.fn(() =>
         Promise.resolve({ id: 'msg-1', channelId: channel.id, authorId: INSIDER, pinned: false })
       ),

@@ -3241,7 +3241,7 @@
   "open_in_app_banner_open": "Open in the app",
   "open_in_app_banner_dismiss": "Stay in this browser",
   "offline_banner_title": "Offline.",
-  "offline_banner_desc": "You can read your conversations. Messages in your private conversations will be sent once the connection is back; in a channel, wait for the connection before writing.",
+  "offline_banner_desc": "You can read your conversations. Your messages will be sent once the connection is back; in a channel, photos, videos and polls wait for the connection.",
   "offline_banner_reconnecting": "Connection restored, syncing your messages...",
   "slow_indicator_label": "Slow connection. Your messages are still sent; loading may take longer than usual.",
   "link_label_home": "Home",
