@@ -122,7 +122,7 @@ director and the host (**OPEN**, owed by a human).
 | Legacy names | `canari-emse.fr`, `dev.canari-emse.fr`, the archives and MiGallery still pass through Cloudflare (TLS terminated at the edge) | [cloudflare-edge](../infrastructure/cloudflare-edge.md) |
 | Database backups | nightly `auth_db` + `authentik_db` dumps, 14 days, local and mirrored to a second school VM; **to be encrypted (owner decision, OPEN)** | [backup](../infrastructure/backup.md) |
 | Media backups | restic (encrypted repository), 14 daily / 8 weekly / 6 monthly snapshots: **a deleted blob can survive 6 months**; most blobs are client-encrypted, but `form-file` objects (CVs) and association public assets (logos) are plaintext | `infrastructure/backup/backup-objects.sh` |
-| Logs | nginx `canari_redacted` format; json-file 10 MB x 3 per Canari container; deploy archive of the last 10 deploys; host `/var/log` under logrotate; **non-Canari containers unbounded** | [logging](../infrastructure/logging.md), [storage-and-retention](../infrastructure/storage-and-retention.md) |
+| Logs | nginx `canari_redacted` format (address, request line with tokens redacted, status, referrer, user agent, plus since 2026-10-18 five technical fields: request and upstream durations, upstream status, content encoding, a degraded-page marker - no new personal data); json-file 10 MB x 3 per Canari container; deploy archive of the last 10 deploys; host `/var/log` under logrotate; **non-Canari containers unbounded** | [logging](../infrastructure/logging.md), [storage-and-retention](../infrastructure/storage-and-retention.md) |
 
 ## 8. Processors and recipients
 

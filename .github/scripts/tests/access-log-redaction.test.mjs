@@ -48,6 +48,21 @@ if (/\$request(?![_\w])/.test(format) || /\$request_uri/.test(format)) {
   fail('the log format prints $request or $request_uri raw - the token would be logged');
 }
 if (!/\$logged_request_uri/.test(format)) fail('the log format does not print $logged_request_uri');
+// The diagnostic tail (2026-10-18): what lets one line say why a preview was slow, compressed or
+// degraded. Asserted PRESENT, and the format asserted free of the two request headers that would
+// turn a duration field into a credential leak.
+for (const field of [
+  'rt=$request_time',
+  'urt=$upstream_response_time',
+  'ust=$upstream_status',
+  'ce=$sent_http_content_encoding',
+  'deg=$sent_http_x_canari_degraded',
+]) {
+  if (!format.includes(field)) fail(`the log format lacks the diagnostic field ${field}`);
+}
+if (/\$http_(cookie|authorization)|\$cookie_/.test(format)) {
+  fail('the log format prints a cookie or an authorization header');
+}
 if (formatName === 'main') fail('the format is named `main`, a duplicate of the base image');
 
 const map = lines.join('\n').match(/map \$request_uri \$logged_request_uri \{([\s\S]*?)\n\}/)?.[1];
