@@ -88,6 +88,19 @@ describe('Graine sessions in IndexedDB', () => {
     expect(got.map((s) => s.sessionId)).toEqual(['readable']);
   });
 
+  it('counts the ROWS of a community, the ones its key cannot open included - "nothing opened" is not "nothing held"', async () => {
+    const storage = await freshStorage();
+    await storage.saveGraineSession(session({ sessionId: 'foreign-1' }), OTHER_KEY);
+    await storage.saveGraineSession(session({ sessionId: 'foreign-2' }), OTHER_KEY);
+    await storage.saveGraineSession(session({ sessionId: 'elsewhere', workspaceId: 'w2' }), KEY);
+
+    // What a history answer reads before claiming "I hold nothing" (section 24): the decoded list is
+    // empty, the store is not.
+    expect(await storage.getGraineSessionsForWorkspace('w1', KEY)).toEqual([]);
+    expect(await storage.countGraineSessionsForWorkspace('w1')).toBe(2);
+    expect(await storage.countGraineSessionsForWorkspace('w3')).toBe(0);
+  });
+
   it('purges a community and reports how many it erased', async () => {
     const storage = await freshStorage();
     await storage.saveGraineSession(session({ sessionId: 'a', workspaceId: 'w1' }), KEY);
