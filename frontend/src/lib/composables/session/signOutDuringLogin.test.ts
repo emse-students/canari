@@ -13,8 +13,8 @@ import type { ChatSessionCallbacks, SessionContext } from './sessionTypes';
  * Before the fix, a sign-out in the ~12 s native decrypt of a Mi 9T found no live session
  * (`isLoggedIn` still false), so `endSessionImpl` stopped nothing, and the login completed afterwards:
  * `isLoggedIn` true for a signed-out user, its gateway socket open. Stand-ins: the platform client
- * (whose `init` and `connect` the test resolves by hand - deferred promises, no clock), the token,
- * the stores and the tab lock.
+ * (whose steps the test resolves by hand - deferred promises, no clock), the token, the stores, the
+ * PIN derivations and the tab lock.
  */
 
 vi.mock('$lib/stores/auth', async (importOriginal) => ({
@@ -22,7 +22,10 @@ vi.mock('$lib/stores/auth', async (importOriginal) => ({
   getToken: vi.fn(async () => 'access-token'),
 }));
 
-const storage = { close: vi.fn(async () => {}) } as unknown as IStorage;
+// Every store call answers empty: the login's restore and outbox passes read it.
+const storage = new Proxy({} as Record<string | symbol, unknown>, {
+  get: (target, key) => (key === 'then' ? undefined : (target[key] ??= vi.fn(async () => []))),
+}) as unknown as IStorage;
 vi.mock('$lib/db', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/db')>()),
   getStorage: vi.fn(async () => storage),
@@ -34,11 +37,33 @@ vi.mock('$lib/utils/hex', async (importOriginal) => ({
   mlsStateSize: vi.fn(async () => 0),
 }));
 
-/** Resolves the step the test is holding; `reached` settles once the login is waiting on it. */
+// The PIN path's two PBKDF2 runs: the outcome under test is the server's answer, not the derivation.
+vi.mock('$lib/utils/chat/auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/chat/auth')>()),
+  computePinVerifier: vi.fn(async () => 'verifier'),
+}));
+vi.mock('$lib/crypto/deviceKey', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/crypto/deviceKey')>()),
+  deriveDeviceKeyB64: vi.fn(async () => btoa('p'.repeat(32))),
+}));
+
+/** What forgets the "Rester connecte" slot - a sign-out keeps it. */
+const clearDeviceKey = vi.fn();
+vi.mock('$lib/utils/deviceKeyVault', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('$lib/utils/deviceKeyVault')>()),
+  clearDeviceKey: (...args: unknown[]) => clearDeviceKey(...args),
+  saveDeviceKey: vi.fn(async () => {}),
+}));
+
+/** A step the test holds; `resolve` lets it go. */
 function deferred<T = void>() {
   let resolve!: (v: T) => void;
-  const promise = new Promise<T>((r) => (resolve = r));
-  return { promise, resolve };
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((r, j) => {
+    resolve = r;
+    reject = j;
+  });
+  return { promise, resolve, reject };
 }
 let gatewayHeld: ReturnType<typeof deferred<boolean>> | null = null;
 let gatewayReached = deferred();
@@ -68,14 +93,17 @@ const { clearAuth, setSignOutHandler } = await import('$lib/stores/auth');
 const { loginImpl, endSessionImpl } = await import('./sessionAuth');
 const { createMlsHolder } = await import('./mlsHolder');
 
-/** The platform client: `init` held by the test, a socket that is open between connect and pause. */
-function fakeClient(initHeld: { promise: Promise<void> } | null) {
+type Held = { promise: Promise<void> } | null;
+
+/** The platform client: steps the test may hold, a socket open between connect and pause. */
+function fakeClient(held: { init?: Held; resolveDeviceId?: Held } = {}) {
   const initReached = deferred();
+  const resolveReached = deferred();
   const state = { socketOpen: false };
   const known = {
     init: vi.fn(async () => {
       initReached.resolve();
-      if (initHeld) await initHeld.promise;
+      if (held.init) await held.init.promise;
     }),
     connect: vi.fn(async () => {
       state.socketOpen = true;
@@ -84,7 +112,11 @@ function fakeClient(initHeld: { promise: Promise<void> } | null) {
       state.socketOpen = false;
     }),
     destroy: vi.fn(),
-    resolveDeviceId: vi.fn(async () => 'device-1'),
+    resolveDeviceId: vi.fn(async () => {
+      resolveReached.resolve();
+      if (held.resolveDeviceId) await held.resolveDeviceId.promise;
+      return 'device-1';
+    }),
     isDeviceRevoked: vi.fn(async () => false),
     getDeviceId: () => 'device-1',
     getLocalGroups: () => [],
@@ -95,22 +127,25 @@ function fakeClient(initHeld: { promise: Promise<void> } | null) {
   const client = new Proxy(known as Record<string | symbol, unknown>, {
     get: (target, key) => (key in target ? target[key] : (target[key] = vi.fn())),
   }) as unknown as IMlsService;
-  return { client, known, state, initReached };
+  return { client, known, state, initReached, resolveReached };
 }
 
-/** A session context over a real MLS holder, recording every `isLoggedIn` it is given. */
-function session(client: IMlsService) {
+/**
+ * A session context over a real MLS holder that builds `clients` in order, recording every
+ * `isLoggedIn` it is given. `pin` empty means a vault login; set, the PIN path.
+ */
+function session(clients: IMlsService[], pin = '') {
   let loggedIn = false;
   let inProgress = false;
   let userId = 'alice';
   let held: IStorage | null = null;
-  const holder = createMlsHolder(() => client);
+  let built = 0;
+  const holder = createMlsHolder(() => clients[built++]);
   const known: Partial<SessionContext> = {
     getUserId: () => userId,
     setUserId: (v) => (userId = v),
-    getPin: () => '',
-    // A vault login: the key came from the vault, so no PIN check.
-    getDeviceKey: () => btoa('k'.repeat(32)),
+    getPin: () => pin,
+    getDeviceKey: () => (pin ? '' : btoa('k'.repeat(32))),
     isLoggedIn: () => loggedIn,
     setIsLoggedIn: vi.fn((v: boolean) => (loggedIn = v)),
     isReconnecting: () => false,
@@ -127,11 +162,13 @@ function session(client: IMlsService) {
     getHistoryBaseUrl: () => '',
     getAuthToken: () => '',
     getMyDeviceId: () => 'device-1',
+    setLoginError: vi.fn(),
     timers: { reconnect: null, health: null, syncWatchdog: null, connectionWatchdog: null },
   };
   const ctx = new Proxy(known as Record<string | symbol, unknown>, {
     get: (target, key) => (key in target ? target[key] : (target[key] = vi.fn())),
   }) as unknown as SessionContext;
+  const restore = deferred();
   const cb = {
     log: vi.fn(),
     conversations: new Map(),
@@ -145,23 +182,42 @@ function session(client: IMlsService) {
   } as unknown as ChatSessionCallbacks;
   // As the app shell wires it: every sign-out reaches the session.
   setSignOutHandler(() => endSessionImpl(ctx, cb));
-  return { ctx, cb, holder, wentLive: () => known.setIsLoggedIn as ReturnType<typeof vi.fn> };
+  return {
+    ctx,
+    cb,
+    holder,
+    restore,
+    wentLive: () => known.setIsLoggedIn as ReturnType<typeof vi.fn>,
+    shownErrors: () =>
+      (known.setLoginError as ReturnType<typeof vi.fn>).mock.calls.filter(([msg]) => msg !== ''),
+  };
 }
 
 const logs = (cb: ChatSessionCallbacks) =>
   (cb.log as ReturnType<typeof vi.fn>).mock.calls.flat().join('\n');
 
-beforeEach(() => {
+/** The server: `pin-salt` answers, `pin-check` answers 401 (the session the sign-out revoked). */
+function server() {
   vi.stubGlobal(
     'fetch',
-    vi.fn(async () => new Response('', { status: 200 }))
+    vi.fn(async (url: string | URL | Request) => {
+      const u = String(url);
+      if (u.includes('pin-salt')) return Response.json({ salt: 'salt' });
+      if (u.includes('pin-check')) return new Response('', { status: 401 });
+      return new Response('', { status: 200 });
+    })
   );
+}
+
+beforeEach(() => {
+  server();
   vi.spyOn(console, 'log').mockImplementation(() => {});
   vi.spyOn(console, 'warn').mockImplementation(() => {});
   vi.spyOn(console, 'debug').mockImplementation(() => {});
   gatewayHeld = null;
   gatewayReached = deferred();
   syncConnectionAfterWsOpen.mockClear();
+  clearDeviceKey.mockClear();
 });
 
 afterEach(() => {
@@ -170,59 +226,137 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** Nothing a failed login does: no callback, no error shown, the vault slot kept. */
+function expectQuietStop(s: ReturnType<typeof session>) {
+  expect(s.cb.onSessionExpired).not.toHaveBeenCalled();
+  expect(s.cb.onLoginFailed).not.toHaveBeenCalled();
+  expect(s.shownErrors()).toEqual([]);
+  expect(clearDeviceKey, 'the sign-out keeps the "Rester connecte" slot').not.toHaveBeenCalled();
+  expect(logs(s.cb)).toContain('[INIT] Login stopped - the account signed out during it');
+}
+
 describe('a sign-out during a login in progress', () => {
   it('stops it: no isLoggedIn, no socket left open, its client destroyed, no second sign-out', async () => {
     const initHeld = deferred();
-    const { client, known, state, initReached } = fakeClient(initHeld);
-    const { ctx, cb, wentLive } = session(client);
+    const a = fakeClient({ init: initHeld });
+    const s = session([a.client]);
 
-    const login = loginImpl(ctx, cb);
-    await initReached.promise;
+    const login = loginImpl(s.ctx, s.cb);
+    await a.initReached.promise;
     // The handshake started beside the state load, as on a device.
-    expect(state.socketOpen).toBe(true);
+    expect(a.state.socketOpen).toBe(true);
 
-    // The user signs out during the decrypt; the session is not live, so nothing is stopped yet.
+    // The user signs out during the decrypt.
     await clearAuth();
-    expect(logs(cb)).toContain('nothing to stop');
 
     initHeld.resolve();
     await login;
+    await s.holder.whenRetired();
 
-    expect(wentLive()).not.toHaveBeenCalledWith(true);
-    expect(ctx.isLoggedIn()).toBe(false);
-    expect(state.socketOpen, 'the stopped login left its gateway socket open').toBe(false);
-    expect(known.destroy).toHaveBeenCalledTimes(1);
-    expect(ctx.getIsLoginInProgress()).toBe(false);
-    expect(cb.onSessionExpired).not.toHaveBeenCalled();
-    expect(cb.onLoginFailed).not.toHaveBeenCalled();
-    expect(logs(cb)).toContain('after mls-init-and-storage');
+    expect(s.wentLive()).not.toHaveBeenCalledWith(true);
+    expect(s.ctx.isLoggedIn()).toBe(false);
+    expect(a.state.socketOpen, 'the stopped login left its gateway socket open').toBe(false);
+    expect(a.known.destroy).toHaveBeenCalledTimes(1);
+    expect(s.ctx.getIsLoginInProgress()).toBe(false);
+    expectQuietStop(s);
+    expect(logs(s.cb)).toContain('after mls-init-and-storage');
   });
 
   it('after the session went live: the sign-out ends it and the login opens nothing further', async () => {
     gatewayHeld = deferred<boolean>();
-    const { client, known, state } = fakeClient(null);
-    const { ctx, cb, holder } = session(client);
+    const a = fakeClient();
+    const s = session([a.client]);
 
-    const login = loginImpl(ctx, cb);
+    const login = loginImpl(s.ctx, s.cb);
     await gatewayReached.promise;
-    expect(ctx.isLoggedIn()).toBe(true);
+    expect(s.ctx.isLoggedIn()).toBe(true);
 
     // The sign-out finds a live session and ends it: socket paused, client retired.
     await clearAuth();
-    expect(ctx.isLoggedIn()).toBe(false);
-    expect(known.pauseSocket).toHaveBeenCalled();
+    expect(s.ctx.isLoggedIn()).toBe(false);
+    expect(a.known.pauseSocket).toHaveBeenCalled();
 
     // The gateway answers late, its socket open again on the retired client.
-    state.socketOpen = true;
+    a.state.socketOpen = true;
     gatewayHeld.resolve(true);
     await login;
-    await holder.whenRetired();
+    await s.holder.whenRetired();
 
-    expect(ctx.isLoggedIn()).toBe(false);
-    expect(state.socketOpen, 'the stopped login left its gateway socket open').toBe(false);
+    expect(s.ctx.isLoggedIn()).toBe(false);
+    expect(a.state.socketOpen, 'the stopped login left its gateway socket open').toBe(false);
     expect(syncConnectionAfterWsOpen).not.toHaveBeenCalled();
-    expect(ctx.getIsLoginInProgress()).toBe(false);
-    expect(cb.onSessionExpired).not.toHaveBeenCalled();
-    expect(logs(cb)).toContain('after open-gateway');
+    expect(s.ctx.getIsLoginInProgress()).toBe(false);
+    expectQuietStop(s);
+    expect(logs(s.cb)).toContain('after open-gateway');
+  });
+
+  it('an await that REJECTS after the sign-out is the sign-out, not a failed login', async () => {
+    const a = fakeClient();
+    const s = session([a.client]);
+    const restoreHeld = deferred();
+    const restoreReached = deferred();
+    (s.cb.loadAndRestoreConversations as ReturnType<typeof vi.fn>).mockImplementation(() => {
+      restoreReached.resolve();
+      return restoreHeld.promise;
+    });
+
+    const login = loginImpl(s.ctx, s.cb);
+    await restoreReached.promise;
+    await clearAuth();
+    // The teardown closed the store the restore was reading.
+    restoreHeld.reject(new TypeError("Cannot read properties of null (reading 'getAll')"));
+    await login;
+
+    expect(s.ctx.isLoggedIn()).toBe(false);
+    expectQuietStop(s);
+    expect(logs(s.cb)).toContain('TypeError thrown after the sign-out');
+  });
+
+  it('the PIN check meeting the session the sign-out revoked (401) shows no PIN error', async () => {
+    const resolveHeld = deferred();
+    const a = fakeClient({ resolveDeviceId: resolveHeld });
+    const s = session([a.client], '1234');
+
+    const login = loginImpl(s.ctx, s.cb);
+    await a.resolveReached.promise;
+    await clearAuth();
+    // pin-check now meets the revoked session and answers 401.
+    resolveHeld.resolve();
+    await login;
+
+    expect(s.wentLive()).not.toHaveBeenCalledWith(true);
+    expectQuietStop(s);
+  });
+
+  it('a sign-in started beside the stopped login gets its own client, and keeps its flag and socket', async () => {
+    const aInit = deferred();
+    const bInit = deferred();
+    const a = fakeClient({ init: aInit });
+    const b = fakeClient({ init: bInit });
+    const s = session([a.client, b.client]);
+
+    const loginA = loginImpl(s.ctx, s.cb);
+    await a.initReached.promise;
+    await clearAuth();
+
+    // The PIN gate clears the flag to start a sign-in while A still decrypts (`handlePinSubmit`).
+    s.ctx.setIsLoginInProgress(false);
+    const loginB = loginImpl(s.ctx, s.cb);
+    // B waits for A's client to be released before it touches MLS.
+    expect(b.known.init).not.toHaveBeenCalled();
+
+    aInit.resolve();
+    await loginA;
+    await b.initReached.promise;
+
+    expect(a.known.destroy).toHaveBeenCalledTimes(1);
+    expect(b.known.destroy, "A's release destroyed B's client").not.toHaveBeenCalled();
+    expect(b.state.socketOpen, "A's release closed B's socket").toBe(true);
+    expect(s.ctx.getIsLoginInProgress(), "A's exit released B's flag").toBe(true);
+
+    bInit.resolve();
+    await loginB;
+    expect(s.ctx.isLoggedIn()).toBe(true);
+    expect(s.ctx.ensureMls()).toBe(b.client);
   });
 });

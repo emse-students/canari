@@ -1456,10 +1456,27 @@ whose `catch` swallows errors is placed after that block.
 treats three shapes as that one outcome: the refresh refused during a sign-out
 (`SignOutInProgressError`), the login's own re-read, and a `SessionExpiredError` met after a sign-out
 began - that sign-out's own revocation, which `onSessionExpired` would have turned into a second
-sign-out. The `getToken` catch hands any failure after a sign-out to it the same way. No error is
-shown, no callback runs, the vault slot is kept, and the line names the stage
+sign-out. **Any error thrown once a sign-out began is that sign-out's** (review of #2067): an await
+that REJECTS after it never reaches a re-read - the PIN check meeting the revoked session (401), a
+restore reading the store the teardown closed (`TypeError`) - and took the failure path (a PIN
+error over the sign-out, `clearDeviceKey`). The catch reads the generation, by type and code, never
+by message; the one exception is this login's own revocation wipe (`device_revoked`), which signs
+out on purpose. The `getToken` catch hands any failure after a sign-out over the same way. No error
+is shown, no callback runs, the vault slot is kept, and the line names the stage
 (`[INIT] Login stopped - the account signed out during it (after mls-init-and-storage).`). A
-revocation answer read after a sign-out wipes nothing: the next login asks the server again.
+revocation answer read after a sign-out wipes nothing: the next login asks the server again - and
+no wipe may START after a sign-out, because it waits for the MLS retirement that sign-out chained on
+this very login (a re-read sits right before both wipe calls). The session's identity and the
+tab-leader callback are set only after the first re-read.
+
+**Two logins can overlap** - the PIN gate clears `isLoginInProgress` to start a sign-in beside a
+login still decrypting (`handlePinSubmit`) - **so a stopped login releases only what it owns.** A
+sign-out during a login RETIRES the login's client on that login's end (`endSessionImpl`, not-live
+branch: `retireMls(loginInFlightSettled)`): the holder lets go at once, the next sign-in waits on
+`whenMlsRetired` and builds its own client, and the stopped login's client is destroyed once that
+login has paused its socket. The login flag is cleared only by the login that set it last
+(`loginFlowOwner`), so the stopped login's exit never releases the newer one's flow. The cost,
+accepted: a sign-in started during a stopped login's decrypt waits for that decrypt to end.
 
 **What a stopped login releases: its socket, then its MLS client** - the same two steps as
 `endSessionImpl`, through the same primitives (`pauseSocket`, the holder). The client is held by
@@ -1471,7 +1488,9 @@ after it the sign-out's own `endSessionImpl` has torn the session down.
 
 Tests: `signOutDuringLogin.test.ts` runs the real `loginImpl`, `clearAuth` and `endSessionImpl` with
 the init and the gateway held by deferred promises - a sign-out during the decrypt, and one after
-the session went live (both fail without the fix); `offlineUnlock.test.ts` pins the two catches;
+the session went live, a restore rejecting after the sign-out, a PIN check answered 401 after it,
+and a sign-in started beside a stopped login (each fails without its fix); `offlineUnlock.test.ts`
+and `landingPreviewOrder.test.ts` pin the catches;
 `mlsHolder.test.ts` the named reset.
 
 **What a sign-out does NOT keep: the saved community list (2026-10-14).** The rail and salon rows

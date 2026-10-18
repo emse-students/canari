@@ -66,7 +66,7 @@ describe('loginImpl and the landing preview', () => {
       const block = loginBody.slice(at(loginBody, branch), at(loginBody, branch) + 900);
       const go = at(block, first);
       const withdraw = at(block, `withdrawLandingPreview(${reason});`);
-      const release = at(block, 'ctx.setIsLoginInProgress(false);');
+      const release = at(block, 'releaseLoginFlag();');
       expect(go).toBeLessThan(withdraw);
       expect(withdraw).toBeLessThan(release);
     }

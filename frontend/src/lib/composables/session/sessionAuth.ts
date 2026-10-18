@@ -192,6 +192,19 @@ let unregisterPeerReturn: (() => void) | null = null;
  * ends without a session removes ITS preview, never the one a later, overlapping login drew.
  */
 let loginSeq = 0;
+/**
+ * The login that set `isLoginInProgress` last, by its `loginSeq` number. A login clears the flag only
+ * while it still owns it: `handlePinSubmit` clears the flag to start a sign-in beside a login still
+ * running, and that older login's exit must not release the newer one's flow.
+ */
+let loginFlowOwner = 0;
+/**
+ * Settles when the login holding the flow has ended - its catch or its success, never a clock. A
+ * sign-out during that login retires the MLS client ON IT (`endSessionImpl`): the holder lets go at
+ * once, so the next sign-in waits (`whenMlsRetired`) and then builds its own client, and the stopped
+ * login's client is destroyed only once that login has released its socket. Null when no login runs.
+ */
+let loginInFlightSettled: Promise<void> | null = null;
 
 // ── Internal helpers ───────────────────────────────────────────────────────────
 
@@ -672,7 +685,20 @@ export async function loginImpl(
     );
     return;
   }
+  const loginId = ++loginSeq;
   ctx.setIsLoginInProgress(true);
+  loginFlowOwner = loginId;
+  let settleLogin: () => void = () => {};
+  const thisLoginSettled = new Promise<void>((done) => (settleLogin = done));
+  loginInFlightSettled = thisLoginSettled;
+  /** Clears the login flag only while this login still owns the flow - see `loginFlowOwner`. */
+  const releaseLoginFlag = (): void => {
+    if (loginFlowOwner !== loginId) {
+      cb.log('[LOGIN] Flag left set - a newer login owns the flow.');
+      return;
+    }
+    ctx.setIsLoginInProgress(false);
+  };
 
   // A SIGN-OUT DURING THIS LOGIN STOPS IT, read after every await. The sign-out finds no live session
   // while the login runs (`isLoggedIn` is still false), so `endSessionImpl` stops nothing; left alone,
@@ -694,18 +720,6 @@ export async function loginImpl(
   }
   await ctx.whenMlsRetired();
 
-  ctx.setLoginError('');
-  ctx.setUserId(userId.trim().toLowerCase());
-
-  // Clear any stale reconnect timer from a previous session
-  if (ctx.timers.reconnect !== null) {
-    clearTimeout(ctx.timers.reconnect);
-    ctx.timers.reconnect = null;
-  }
-  ctx.setReconnectAttempts(0);
-
-  ctx.setTabLeaderSessionCb(cb);
-
   // ── THE NOTIFICATION LANDING'S LOCAL PREVIEW (F1, decided by the user 2026-10-12) ──
   //
   // The landing's target is drawn from the local store the moment this login holds the device key
@@ -724,7 +738,6 @@ export async function loginImpl(
   // open hangs is never held behind it, and the login flag is released only after the cleanup. The
   // discard names `loginId`, so a later login that overlaps this one keeps what it drew. The
   // restore still awaits the read before rebuilding the map, so it cannot land after the rebuild.
-  const loginId = ++loginSeq;
   let landingPreview: Promise<void> | null = null;
   let previewWithdrawn = false;
   let storageOpen: Promise<IStorage> | null = null;
@@ -757,8 +770,21 @@ export async function loginImpl(
   let loginHandshake: ReturnType<typeof startGatewayHandshake> = null;
 
   try {
-    // The wait above is the first await a sign-out can run during.
+    // The wait above is the first await a sign-out can run during, so nothing - not even the
+    // session's identity or the tab-leader callback - is set before this re-read.
     stopIfSignedOut('previous-account-retired');
+
+    ctx.setLoginError('');
+    ctx.setUserId(userId.trim().toLowerCase());
+
+    // Clear any stale reconnect timer from a previous session
+    if (ctx.timers.reconnect !== null) {
+      clearTimeout(ctx.timers.reconnect);
+      ctx.timers.reconnect = null;
+    }
+    ctx.setReconnectAttempts(0);
+
+    ctx.setTabLeaderSessionCb(cb);
     // AN ACCOUNT DELETED FROM THIS DEVICE OPENS NOTHING, refused before the first store is touched
     // (the landing preview and the MLS state lookup below both open one). Its wipe is owed or running,
     // and a session would re-create what the wipe removes - the offline unlock above all, which has no
@@ -847,7 +873,7 @@ export async function loginImpl(
         if (cb.onSessionExpired) cb.onSessionExpired();
         else void goto(resolve('/login'), { replaceState: true });
         withdrawLandingPreview('session expired');
-        ctx.setIsLoginInProgress(false);
+        releaseLoginFlag();
         return;
       }
       // THE TOKEN IS FOR SOMEBODY ELSE THAN THIS DEVICE'S MLS IDENTITY. Not a transport failure
@@ -861,7 +887,7 @@ export async function loginImpl(
         );
         cb.onLoginFailed?.(m.identity_split_title());
         withdrawLandingPreview('identity split');
-        ctx.setIsLoginInProgress(false);
+        releaseLoginFlag();
         return;
       }
       // Anything else is a transport failure (no network, backend restarting): the server was
@@ -877,7 +903,7 @@ export async function loginImpl(
       } else {
         // The PIN path genuinely cannot continue: the salt it needs lives on the server. Keep the
         // PIN modal open with a truthful retryable message - do NOT claim the session expired.
-        ctx.setIsLoginInProgress(false);
+        releaseLoginFlag();
         const msg = m.auth_server_unreachable();
         ctx.setLoginError(msg);
         // Notify the caller so a PIN-modal spinner does not hang forever.
@@ -975,7 +1001,12 @@ export async function loginImpl(
           if (!res.ok) throw new LocalizedError(m.auth_pin_check_unreachable());
           return (await res.json()) as PinCheckAnswer;
         },
-        wipeRevokedDevice: () => wipeRevokedDevice(ctx, cb),
+        // Re-read first: the wipe waits for the MLS retirement, which a sign-out during this login
+        // chains on this login's own end - a wipe started after one would wait on itself.
+        wipeRevokedDevice: () => {
+          stopIfSignedOut('pin-check-revoked');
+          return wipeRevokedDevice(ctx, cb);
+        },
         installDeviceKey: (key) => ctx.setDeviceKey(key),
         log: cb.log,
       });
@@ -1098,6 +1129,8 @@ export async function loginImpl(
       // open here (the init above awaited it), so this wait is the read alone and cannot hang.
       withdrawLandingPreview('device revoked');
       if (landingPreview) await landingPreview;
+      // Same reason as on the PIN path: a wipe started after a sign-out would wait on this login.
+      stopIfSignedOut('revocation-preview-settled');
       await wipeRevokedDevice(ctx, cb);
       cb.log('[SECURITY] Revoked device: signed out and reset to a fresh install.');
       throw new LoginFailure('device_revoked', m.auth_device_revoked_reset());
@@ -1965,18 +1998,23 @@ export async function loginImpl(
     // (a second sign-out), and above all not `clearDeviceKey` below, which would forget this
     // account's "Rester connecte" slot that a sign-out keeps on purpose.
     //
-    // Three shapes, one outcome, each a type: a refresh refused during the sign-out, this login's own
-    // re-read of the sign-out generation, and a 401 met AFTER a sign-out - that sign-out's own
-    // revocation, which answered with `onSessionExpired` would be a second sign-out.
+    // Whatever was thrown, once a sign-out began it is THAT sign-out's consequence, not a failure:
+    // the refresh refused during it, this login's own re-read of the generation, and any await that
+    // REJECTED after it and so never reached a re-read - a 401 from the session it revoked (the PIN
+    // check, a refresh), a store the teardown closed. Read by type and by code, never by message.
+    // The one exception is this login's own revocation wipe, which signs out on purpose and whose
+    // outcome (`device_revoked`) the PIN gate must still show.
     if (
       _e instanceof SignOutInProgressError ||
       _e instanceof LoginStoppedBySignOutError ||
-      (_e instanceof SessionExpiredError && signedOutSinceStart())
+      (signedOutSinceStart() && loginErrorCode(_e) !== 'device_revoked')
     ) {
       withdrawLandingPreview('signed out during the login');
       cb.log(
         `[INIT] Login stopped - the account signed out during it (${
-          _e instanceof LoginStoppedBySignOutError ? `after ${_e.stage}` : _e.name
+          _e instanceof LoginStoppedBySignOutError
+            ? `after ${_e.stage}`
+            : `${_e instanceof Error ? _e.name : typeof _e} thrown after the sign-out`
         }).`
       );
       releaseLoginStoppedBySignOut(ctx, cb, loginClient, loginHandshake);
@@ -2034,8 +2072,10 @@ export async function loginImpl(
       });
     }
   } finally {
-    ctx.setIsLoginInProgress(false);
-    ctx.setIsMessagingInitializing(false);
+    if (loginFlowOwner === loginId) ctx.setIsMessagingInitializing(false);
+    releaseLoginFlag();
+    if (loginInFlightSettled === thisLoginSettled) loginInFlightSettled = null;
+    settleLogin();
   }
 }
 
@@ -2543,6 +2583,17 @@ export function tearDownLiveSession(
  */
 export function endSessionImpl(ctx: SessionContext, cb: ChatSessionCallbacks): void {
   if (!ctx.isLoggedIn()) {
+    // A LOGIN IN FLIGHT HOLDS A CLIENT THAT IS NOW THE SIGNED-OUT ACCOUNT'S. The holder lets go of it
+    // now, so the next sign-in cannot be handed it (it waits for this retirement, then builds its
+    // own); the client is destroyed once that login has stopped and released its socket.
+    const stopping = loginInFlightSettled;
+    if (stopping) {
+      cb.log(
+        '[LOGOUT] Signed out during a login - its MLS client is retired once that login stops.'
+      );
+      void ctx.retireMls(stopping);
+      return;
+    }
     cb.log('[LOGOUT] Signed out with no live session on this device - nothing to stop.');
     return;
   }
