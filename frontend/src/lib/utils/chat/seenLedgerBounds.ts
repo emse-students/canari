@@ -61,8 +61,6 @@ export function boundSeenEntries(entries: Iterable<string>): string[] {
   return all.filter((_, i) => keep[i]);
 }
 
-const LEDGER_PREFIX = 'history_seen_cipher:';
-
 function ledgerIndexKey(userId: string): string {
   return ACCOUNT_KEY.seenCipherIndex(userId);
 }
@@ -77,7 +75,7 @@ function readLedgerIndex(userId: string): string[] {
     const parsed: unknown = JSON.parse(raw);
     if (Array.isArray(parsed)) return parsed.filter((g): g is string => typeof g === 'string');
   }
-  const prefix = `${LEDGER_PREFIX}${userId}:`;
+  const prefix = ACCOUNT_KEY.seenCipher(userId, '');
   const groups: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);

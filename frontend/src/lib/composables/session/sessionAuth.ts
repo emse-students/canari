@@ -176,6 +176,7 @@ import {
   stopConnectionWatchdogImpl,
 } from './sessionConnection';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
+import { ACCOUNT_KEY, SESSION_META_STORE } from '$lib/utils/accountLocalKeys';
 
 /**
  * Unregisters this session's presence listener. Module-level because the presence store outlives
@@ -379,10 +380,10 @@ export async function resetDeviceAsFreshImpl(
   await ctx.whenMlsRetired();
   const { removeMlsState } = await import('$lib/utils/hex');
   await removeMlsState(userIdToReset);
-  localStorage.removeItem(`mls_device_id_${userIdToReset}`);
-  localStorage.removeItem(`canari_sync_guide_seen_${userIdToReset}`);
+  localStorage.removeItem(ACCOUNT_KEY.deviceId(userIdToReset));
+  localStorage.removeItem(ACCOUNT_KEY.syncGuideSeen(userIdToReset));
 
-  const deviceNamePrefix = `device-name:${userIdToReset}:`;
+  const deviceNamePrefix = ACCOUNT_KEY.deviceName(userIdToReset, '');
   const keysToDelete: string[] = [];
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
@@ -430,15 +431,20 @@ export async function resetDeviceAsFreshImpl(
  * Called after `clearAuth()` (which ends the live session through the sign-out handler): the final
  * MLS checkpoint of that session is awaited first, so no write in flight can recreate what is
  * deleted. Never `wipeDeviceToFactory` - another account on the device keeps everything it has.
+ *
+ * @param ranHere the deleted account is the one this realm ran (the page showed it): its handles are
+ *   closed first. FALSE when the server deleted another account than the one on screen - this realm's
+ *   handles are that other account's, and the deleted one's live in the tab its notice ends.
  */
 export async function wipeDeletedAccountImpl(
   ctx: SessionContext,
   log: (msg: string) => void,
-  userId: string
+  userId: string,
+  ranHere: boolean
 ): Promise<void> {
   await ctx.whenMlsRetired();
   const failures = await wipeDeletedAccountLocalData(userId, {
-    closeThisRunsHandles: true,
+    closeThisRunsHandles: ranHere,
     expectNativeDatabase: false,
   });
   log(
@@ -1758,7 +1764,7 @@ export async function loginImpl(
     }
 
     const STALE_SESSION_MS = 90 * 24 * 60 * 60 * 1_000;
-    const lastActiveKey = `canari_last_active:${ctx.getUserId()}`;
+    const lastActiveKey = ACCOUNT_KEY.lastActive(ctx.getUserId());
     const lastActiveRaw = localStorage.getItem(lastActiveKey);
     if (lastActiveRaw) {
       const lastActive = parseInt(lastActiveRaw, 10);
@@ -1771,7 +1777,7 @@ export async function loginImpl(
       // localStorage may be empty after Android process kill - try Tauri Store fallback.
       try {
         const { load } = await import('@tauri-apps/plugin-store');
-        const store = await load('session-meta.json', { autoSave: true, defaults: {} });
+        const store = await load(SESSION_META_STORE, { autoSave: true, defaults: {} });
         const nativeLastActive = await store.get<number>(lastActiveKey);
         if (
           typeof nativeLastActive === 'number' &&
@@ -1790,7 +1796,7 @@ export async function loginImpl(
     // Persist to Tauri Store so the value survives Android process kills.
     if (isTauriRuntime()) {
       import('@tauri-apps/plugin-store')
-        .then(({ load }) => load('session-meta.json', { autoSave: true, defaults: {} }))
+        .then(({ load }) => load(SESSION_META_STORE, { autoSave: true, defaults: {} }))
         .then((store) => store.set(lastActiveKey, nowMs))
         .catch(() => {});
     }

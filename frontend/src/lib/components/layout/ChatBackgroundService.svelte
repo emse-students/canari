@@ -129,6 +129,7 @@
   import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
   import { mergeAnnouncedMessage } from '$lib/utils/chat/salonEcho';
   import { forgetDeliveredSalonSend } from '$lib/utils/chat/messaging';
+  import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
 
   /** Remote users to show on the call overlay (avatars / labels), excluding the local user. */
   function buildRemoteCallParticipants(): CallParticipant[] {
@@ -1504,12 +1505,12 @@
         const isBiometricConfigured = await BiometricService.isConfigured();
 
         if (isBiometricConfigured) {
-          const deviceKey = `mls_device_id_${savedUser}`;
+          const deviceKey = ACCOUNT_KEY.deviceId(savedUser);
           const storedDeviceId = localStorage.getItem(deviceKey);
           const hasExistingDevice = storedDeviceId !== null;
 
           if (hasExistingDevice) {
-            const alias = `mls_device_key_${savedUser}_${storedDeviceId}`;
+            const alias = keystoreAlias(savedUser, storedDeviceId);
             const keyPresent = await BiometricService.isKeyPresent(alias).catch(() => false);
 
             if (keyPresent) {

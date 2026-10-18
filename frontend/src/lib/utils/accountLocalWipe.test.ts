@@ -5,9 +5,22 @@ import {
   markDeletedAccountWipePending,
   pendingDeletedAccountWipes,
   resumePendingDeletedAccountWipes,
+  REFUSED_CASE_COLLISION,
+  STOPPED_ACCOUNT_LIVE,
+  STOPPED_BY_SIGN_IN,
   wipeDeletedAccountLocalData,
+  type AccountLiveness,
 } from './accountLocalWipe';
-import { ACCOUNT_KEY } from './accountLocalKeys';
+import { ACCOUNT_KEY, keystoreAlias } from './accountLocalKeys';
+
+/** Nobody signed in here but `liveId`, and no sign-in in flight. */
+function settledAs(liveId: string | null): AccountLiveness {
+  return {
+    isLive: (id) => id === liveId,
+    signInInFlight: () => false,
+    whenSignInSettled: async () => {},
+  };
+}
 
 let tauri = false;
 vi.mock('$lib/utils/openExternal', () => ({ isTauriRuntime: () => tauri }));
@@ -32,6 +45,15 @@ vi.mock('$lib/db/outboxBlob', () => ({
   closeOutboxBlobStores: async () => void order.push('close-outbox'),
 }));
 vi.mock('$lib/utils/hex', () => ({ closeMlsDb: async () => void order.push('close-mls') }));
+
+// The native `session-meta.json` store, as one map.
+const sessionMeta = new Map<string, unknown>();
+vi.mock('@tauri-apps/plugin-store', () => ({
+  load: async () => ({
+    delete: async (k: string) => sessionMeta.delete(k),
+    save: async () => {},
+  }),
+}));
 
 const keystore = new Set<string>();
 const deleteKeyEntry = vi.fn(async (alias: string) => void keystore.delete(alias));
@@ -180,17 +202,25 @@ describe('wipeDeletedAccountLocalData - what else goes with the account', () => 
     tauri = true;
     localStorage.setItem(ACCOUNT_KEY.deviceId('user-a'), 'dev-a');
     localStorage.setItem(ACCOUNT_KEY.deviceId('user-b'), 'dev-b');
-    keystore.add('mls_device_key_user-a_dev-a');
-    keystore.add('mls_device_key_user-b_dev-b');
+    keystore.add(keystoreAlias('user-a', 'dev-a'));
+    keystore.add(keystoreAlias('user-b', 'dev-b'));
     expect(await wipeDeletedAccountLocalData('user-a', AFTER_DELETE)).toEqual([]);
-    expect([...keystore]).toEqual(['mls_device_key_user-b_dev-b']);
+    expect([...keystore]).toEqual([keystoreAlias('user-b', 'dev-b')]);
     expect(localStorage.getItem(ACCOUNT_KEY.deviceId('user-a'))).toBeNull();
+  });
+
+  it("removes that account's native last-active mirror and keeps another account's", async () => {
+    tauri = true;
+    sessionMeta.set(ACCOUNT_KEY.lastActive('user-a'), 1);
+    sessionMeta.set(ACCOUNT_KEY.lastActive('user-b'), 2);
+    expect(await wipeDeletedAccountLocalData('user-a', AFTER_DELETE)).toEqual([]);
+    expect([...sessionMeta.keys()]).toEqual([ACCOUNT_KEY.lastActive('user-b')]);
   });
 
   it('keeps the device id when the keystore entry survived, so the resume can find it', async () => {
     tauri = true;
     localStorage.setItem(ACCOUNT_KEY.deviceId('user-a'), 'dev-a');
-    keystore.add('mls_device_key_user-a_dev-a');
+    keystore.add(keystoreAlias('user-a', 'dev-a'));
     deleteKeyEntry.mockRejectedValueOnce(new Error('keystore'));
     expect(await wipeDeletedAccountLocalData('user-a', AFTER_DELETE)).toEqual([
       'the platform keystore entry',
@@ -203,6 +233,38 @@ describe('wipeDeletedAccountLocalData - what else goes with the account', () => 
     expect(await wipeDeletedAccountLocalData('a:b', AFTER_DELETE)).toEqual(['the account id']);
     expect(order).toEqual([]);
     expect(localStorage.getItem('mls_send_ledger_a:b')).toBe('{}');
+  });
+
+  it('sweeps every per-account key of the ONE list, the unsent salon plaintext included', async () => {
+    const keys = [
+      ACCOUNT_KEY.salonUnsent('User-A'),
+      ACCOUNT_KEY.salonReadMarks('User-A'),
+      ACCOUNT_KEY.notReadySince('User-A', 'g1'),
+      ACCOUNT_KEY.feedStoreEpoch('User-A'),
+      ACCOUNT_KEY.deviceName('User-A', 'd1'),
+      ACCOUNT_KEY.legacyMlsAutosave('User-A'),
+      ACCOUNT_KEY.syncGuideSeen('User-A'),
+      ACCOUNT_KEY.deviceId('User-A'),
+    ];
+    for (const k of keys) localStorage.setItem(k, 'x');
+    localStorage.setItem(ACCOUNT_KEY.salonUnsent('user-b'), 'kept');
+    expect(await wipeDeletedAccountLocalData('User-A', AFTER_DELETE)).toEqual([]);
+    for (const k of keys) expect(localStorage.getItem(k)).toBeNull();
+    expect(localStorage.getItem(ACCOUNT_KEY.salonUnsent('user-b'))).toBe('kept');
+  });
+
+  it('refuses an id that differs from another stored account only by case, and keeps it owed', async () => {
+    // Three keys lower-case the id, and `canari_<id>.db` sits on a case-insensitive disk on
+    // Windows and macOS: wiping Abc would take abc's unsent texts and its database with it.
+    localStorage.setItem(ACCOUNT_KEY.deviceId('abc'), 'dev-1');
+    localStorage.setItem(ACCOUNT_KEY.salonUnsent('abc'), 'their texts');
+    markDeletedAccountWipePending('Abc');
+    expect(await wipeDeletedAccountLocalData('Abc', AFTER_DELETE)).toEqual([
+      REFUSED_CASE_COLLISION,
+    ]);
+    expect(order).toEqual([]);
+    expect(localStorage.getItem(ACCOUNT_KEY.salonUnsent('abc'))).toBe('their texts');
+    expect(pendingDeletedAccountWipes()).toEqual(['Abc']);
   });
 
   it('accepts an email-shaped subject', async () => {
@@ -239,7 +301,7 @@ describe('the pending-wipe marker', () => {
 
   it('is resumed at the next start WITHOUT closing this realm handles', async () => {
     markDeletedAccountWipePending('user-a');
-    await resumePendingDeletedAccountWipes('user-b');
+    await resumePendingDeletedAccountWipes(settledAs('user-b'));
     expect(order.some((o) => o.startsWith('close'))).toBe(false);
     expect(order).toContain('delete:CanariDB_user-a');
     expect(order.join(' ')).not.toContain('user-b');
@@ -248,9 +310,82 @@ describe('the pending-wipe marker', () => {
 
   it('never wipes the account this install is signed in as, and drops its marker', async () => {
     markDeletedAccountWipePending('user-a');
-    await resumePendingDeletedAccountWipes('user-a');
+    await resumePendingDeletedAccountWipes(settledAs('user-a'));
     expect(order).toEqual([]);
     expect(pendingDeletedAccountWipes()).toEqual([]);
+  });
+
+  it('waits for a sign-in in flight, and never wipes the account it signed back in', async () => {
+    // The race of the review: a leftover marker for A, and A signing back in at start-up.
+    markDeletedAccountWipePending('user-a');
+    let live: string | null = null;
+    let land!: () => void;
+    const landed = new Promise<void>((r) => (land = r));
+    const resume = resumePendingDeletedAccountWipes({
+      isLive: (id) => id === live,
+      signInInFlight: () => live === null,
+      whenSignInSettled: () => landed,
+    });
+    await Promise.resolve();
+    expect(order).toEqual([]);
+    live = 'user-a';
+    land();
+    await resume;
+    expect(order).toEqual([]);
+    expect(pendingDeletedAccountWipes()).toEqual([]);
+  });
+
+  it('stops before the next step when the account signs in mid-wipe, and drops the marker', async () => {
+    markDeletedAccountWipePending('user-a');
+    await saveDeviceKey('user-a', KEY_A);
+    localStorage.setItem(ACCOUNT_KEY.deviceId('user-a'), 'dev-new');
+    let live: string | null = null;
+    vi.stubGlobal('indexedDB', {
+      deleteDatabase: (name: string) => {
+        const req: Record<string, unknown> = {};
+        order.push(`delete:${name}`);
+        // The new session lands while the database delete runs.
+        live = 'user-a';
+        queueMicrotask(() => (req.onsuccess as () => void)?.());
+        return req;
+      },
+    });
+    const failures = await wipeDeletedAccountLocalData('user-a', {
+      closeThisRunsHandles: false,
+      expectNativeDatabase: false,
+      stopIf: () => (live === 'user-a' ? 'account-live-again' : null),
+    });
+    expect(failures).toEqual([STOPPED_ACCOUNT_LIVE]);
+    // The new session's device id and vault slot are untouched.
+    expect(localStorage.getItem(ACCOUNT_KEY.deviceId('user-a'))).toBe('dev-new');
+    expect((await loadDeviceKey('user-a'))?.deviceKeyB64).toBe(KEY_A);
+    expect(pendingDeletedAccountWipes()).toEqual([]);
+  });
+
+  it('stops and KEEPS the marker when a sign-in of unknown account starts mid-wipe', async () => {
+    markDeletedAccountWipePending('user-a');
+    markDeletedAccountWipePending('user-c');
+    localStorage.setItem(ACCOUNT_KEY.sendRatchetLedger('user-a'), '{}');
+    let signingIn = false;
+    vi.stubGlobal('indexedDB', {
+      deleteDatabase: (name: string) => {
+        const req: Record<string, unknown> = {};
+        order.push(`delete:${name}`);
+        signingIn = true;
+        queueMicrotask(() => (req.onsuccess as () => void)?.());
+        return req;
+      },
+    });
+    await resumePendingDeletedAccountWipes({
+      isLive: () => false,
+      signInInFlight: () => signingIn,
+      whenSignInSettled: async () => {},
+    });
+    expect(localStorage.getItem(ACCOUNT_KEY.sendRatchetLedger('user-a'))).toBe('{}');
+    expect(pendingDeletedAccountWipes()).toEqual(['user-a', 'user-c']);
+    // The second owed wipe is not started either.
+    expect(order.join(' ')).not.toContain('user-c');
+    expect(STOPPED_BY_SIGN_IN).toMatch(/sign-in/);
   });
 
   it('ignores entries outside the allowlist', () => {
@@ -270,14 +405,15 @@ describe('decideDeletedAccountWipe', () => {
     });
   });
 
-  it('NEVER wipes when the server deleted another account than the one shown', () => {
-    // Two tabs: this one shows A, the cookie now belongs to B, the DELETE removed B.
+  it('wipes the DELETED account, never the one shown, when the two differ', () => {
+    // Two tabs: this one shows A, the cookie now belongs to B, the DELETE removed B. B is certainly
+    // gone, so its data goes; A still exists and is not named.
     expect(decideDeletedAccountWipe('user-b', 'user-a')).toEqual({
-      kind: 'subject-mismatch',
-      tokenSubject: 'user-b',
+      kind: 'wipe-other-account',
+      userId: 'user-b',
       displayedUserId: 'user-a',
     });
-    expect(decideDeletedAccountWipe('user-b', null).kind).toBe('subject-mismatch');
+    expect(decideDeletedAccountWipe('user-b', null).kind).toBe('wipe-other-account');
   });
 
   it('never wipes without a readable subject, or for an id outside the allowlist', () => {

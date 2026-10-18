@@ -42,6 +42,7 @@ import MlsKeyPackageWorker from '../workers/mlsKeyPackage.worker?worker';
 import { BaseMlsService } from './BaseMlsService';
 import { beginBootSpan, endBootSpan } from '$lib/mls-client/bootBenchmark';
 import { sanitizeForLog } from '$lib/utils/logSanitize';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /**
  * Worker result for key package generation done off the main thread.
@@ -1367,7 +1368,7 @@ export class WebMlsService extends BaseMlsService {
   async publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void> {
     const base64 = toBase64(keyPackage.bytes);
     const storedName =
-      localStorage.getItem(`device-name:${this.userId}:${this.deviceId}`) || undefined;
+      localStorage.getItem(ACCOUNT_KEY.deviceName(this.userId, this.deviceId)) || undefined;
     await this.delivery.registerDeviceKeyPackage({
       keyPackageBase64: base64,
       notAfterSecs: keyPackage.notAfterSecs,

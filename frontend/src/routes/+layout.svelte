@@ -34,8 +34,8 @@
   import IdentitySplitOverlay from '$lib/components/shared/IdentitySplitOverlay.svelte';
   import EnvironmentBanner from '$lib/components/shared/EnvironmentBanner.svelte';
   import MaintenanceAdminBanner from '$lib/components/shared/MaintenanceAdminBanner.svelte';
-  import { currentUserId, getSavedUserId, isGlobalAdmin } from '$lib/stores/user';
-  import { clearAuth } from '$lib/stores/auth';
+  import { currentUserId, isGlobalAdmin } from '$lib/stores/user';
+  import { accountLiveness, clearAuthLocally } from '$lib/stores/auth';
   import { startDeletedAccountGuards } from '$lib/utils/deletedAccountGuards';
   import MlsFatalErrorBanner from '$lib/components/shared/MlsFatalErrorBanner.svelte';
   import OfflineBanner from '$lib/components/shared/OfflineBanner.svelte';
@@ -153,10 +153,10 @@
     // The per-install id older builds sent to KLIPY with every GIF search (`retiredKlipyCustomerId.ts`).
     dropRetiredKlipyCustomerId();
     // A wipe a deleted account is still owed, and a deletion announced by another tab.
-    const stopDeletedAccountGuards = startDeletedAccountGuards(getSavedUserId(), {
+    const stopDeletedAccountGuards = startDeletedAccountGuards(accountLiveness, {
       currentUserId,
       endSession: async (userId) => {
-        await clearAuth();
+        await clearAuthLocally();
         await globalSession.releaseDeletedAccount(userId);
         await goto(resolve('/login'), { replaceState: true });
       },

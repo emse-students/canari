@@ -7,7 +7,10 @@ import { isTauriRuntime } from '$lib/utils/openExternal';
 import {
   ACCOUNT_KEY,
   accountLocalStorageKeysIn,
+  caseCollidingAccountIdsIn,
   isWipeableAccountId,
+  keystoreAlias,
+  SESSION_META_STORE,
 } from '$lib/utils/accountLocalKeys';
 
 /** The IndexedDB databases keyed by an account id, all of which die with that account. */
@@ -22,18 +25,21 @@ export function accountIndexedDbNames(userId: string): string[] {
  * The page's account (`currentUserId()`, read from `canari_saved_user`) and the server's account
  * (the token's `sub`) are two facts that can disagree: a second tab signed in as B rotates the
  * cookie while this tab still shows A, the DELETE then removes B, and wiping "the account on screen"
- * would destroy A - who still exists - on this device. So:
+ * would destroy A - who still exists - on this device. So the wipe ALWAYS names the token's subject:
  *
- * - `wipe`: the token named an account, it is the one on screen, and its id passes the allowlist;
- * - `subject-mismatch`: the server deleted ANOTHER account than the one shown - nothing is wiped;
+ * - `wipe`: the token's subject, which is also the account on screen - its stores ran in this realm;
+ * - `wipe-other-account`: the token's subject, which is NOT the account on screen. That account is
+ *   certainly gone (the server answered 204 for it), so its data goes too - it would otherwise stay
+ *   forever, since nothing else ever names it - but the account on screen is never touched, and
+ *   this realm's handles are not closed for it (they belong to the account on screen);
  * - `no-subject`: the token named nobody we could read - nothing is wiped;
  * - `unwipeable-id`: the id is outside the allowlist ({@link isWipeableAccountId}) - nothing is wiped.
  *
- * Every refusal is logged at ERROR here, at the decision: each is a deletion whose local data stays.
+ * Every refusal and the mismatch are logged at ERROR here, at the decision.
  */
 export type DeletedAccountWipeDecision =
   | { kind: 'wipe'; userId: string }
-  | { kind: 'subject-mismatch'; tokenSubject: string; displayedUserId: string | null }
+  | { kind: 'wipe-other-account'; userId: string; displayedUserId: string | null }
   | { kind: 'no-subject' }
   | { kind: 'unwipeable-id'; userId: string };
 
@@ -48,17 +54,17 @@ export function decideDeletedAccountWipe(
     );
     return { kind: 'no-subject' };
   }
-  if (tokenSubject !== displayedUserId) {
-    console.error(
-      `[DEL-LOCAL] the server deleted ${tokenSubject.slice(0, 8)} but this page shows ${displayedUserId?.slice(0, 8) ?? 'nobody'} - local data NOT wiped, the account on screen still exists`
-    );
-    return { kind: 'subject-mismatch', tokenSubject, displayedUserId };
-  }
   if (!isWipeableAccountId(tokenSubject)) {
     console.error(
       `[DEL-LOCAL] the deleted account id is outside the allowlist - local data NOT wiped (${tokenSubject.slice(0, 8)})`
     );
     return { kind: 'unwipeable-id', userId: tokenSubject };
+  }
+  if (tokenSubject !== displayedUserId) {
+    console.error(
+      `[DEL-LOCAL] the server deleted ${tokenSubject.slice(0, 8)} but this page shows ${displayedUserId?.slice(0, 8) ?? 'nobody'} - wiping the DELETED account only, the account on screen still exists`
+    );
+    return { kind: 'wipe-other-account', userId: tokenSubject, displayedUserId };
   }
   console.log(`[DEL-LOCAL] deleted account ${tokenSubject.slice(0, 8)} matches this page - wiping`);
   return { kind: 'wipe', userId: tokenSubject };
@@ -134,28 +140,64 @@ function clearDeletedAccountWipePending(userId: string): void {
 }
 
 /**
- * Finishes the wipes a previous run owed. At start-up, before any session for those ids exists.
- *
- * An id that is the account this install is SIGNED IN AS is never wiped: that account is live here
- * again (a new account with the same MiConnect subject), its data is not the deleted one's, and the
- * marker for it is dropped with an ERROR.
+ * What the resume asks of the auth layer, injected so it is testable and so this module does not
+ * load the session stack. Every answer is read AT THE MOMENT of asking - never cached across an await.
  */
-export async function resumePendingDeletedAccountWipes(savedUserId: string | null): Promise<void> {
+export interface AccountLiveness {
+  /** Whether `userId` is the account signed in here: the saved user, or the subject of the live token. */
+  isLive: (userId: string) => boolean;
+  /** Whether a sign-in (a refresh, an OIDC callback) is in flight, whose account is not known yet. */
+  signInInFlight: () => boolean;
+  /** Settles once no sign-in is in flight - immediately when none is. */
+  whenSignInSettled: () => Promise<void>;
+}
+
+/** Why a resumed wipe stopped before a destructive step. */
+export type WipeStop = 'account-live-again' | 'sign-in-in-flight';
+
+/** The check the resume runs before EACH destructive step of `userId`'s wipe. */
+function resumeStopFor(userId: string, live: AccountLiveness): () => WipeStop | null {
+  return () => {
+    if (live.isLive(userId)) return 'account-live-again';
+    if (live.signInInFlight()) return 'sign-in-in-flight';
+    return null;
+  };
+}
+
+/**
+ * Finishes the wipes a previous run owed, at start-up, SERIALISED AGAINST SIGN-IN.
+ *
+ * The danger it is shaped against: a marker left for `X`, and `X` (the same MiConnect subject, now a
+ * new account) signing back in while the resume runs - a wipe then deletes `CanariDB_X`, the device
+ * id and the vault slot UNDER THE NEW LIVE SESSION. So:
+ *
+ * - it first waits for any sign-in already in flight to land, so the identity it reads is settled;
+ * - before EVERY destructive step it asks again ({@link resumeStopFor}): `X` signed in here
+ *   (`account-live-again`) stops the wipe and drops the marker at ERROR - that account is live, and
+ *   its data is no longer the deleted one's; a NEW sign-in in flight (`sign-in-in-flight`) stops the
+ *   wipe and KEEPS the marker, since whose sign-in it is cannot be known yet - the next start resumes.
+ *
+ * What it cannot close: a sign-in that STARTS while one step's own await runs (an IndexedDB delete).
+ * A session opening `CanariDB_X` then queues behind the delete and opens an empty database - which
+ * removes only rows of the deleted account, never the new session's.
+ */
+export async function resumePendingDeletedAccountWipes(live: AccountLiveness): Promise<void> {
   const ids = pendingDeletedAccountWipes();
   if (ids.length === 0) return;
-  console.log(`[DEL-LOCAL] resuming ${ids.length} owed wipe(s)`);
+  console.log(`[DEL-LOCAL] resuming ${ids.length} owed wipe(s) - waiting for any sign-in first`);
+  await live.whenSignInSettled();
   for (const id of ids) {
-    if (id === savedUserId) {
-      console.error(
-        `[DEL-LOCAL] a wipe is owed for ${id.slice(0, 8)}, which is signed in here again - NOT wiped, marker dropped`
-      );
-      clearDeletedAccountWipePending(id);
-      continue;
-    }
-    await wipeDeletedAccountLocalData(id, {
+    const failures = await wipeDeletedAccountLocalData(id, {
       closeThisRunsHandles: false,
       expectNativeDatabase: false,
+      stopIf: resumeStopFor(id, live),
     });
+    if (failures.includes(STOPPED_BY_SIGN_IN)) {
+      console.warn(
+        '[DEL-LOCAL] a sign-in started - the remaining owed wipes wait for the next start'
+      );
+      return;
+    }
   }
 }
 
@@ -188,7 +230,20 @@ export interface WipeDeletedAccountOptions {
    * native delete that finds no file is a FAILURE - the command looked in the wrong place.
    */
   expectNativeDatabase: boolean;
+  /**
+   * Asked before EACH destructive step; a non-null answer ends the wipe there. Passed by the resume
+   * only ({@link resumePendingDeletedAccountWipes}): right after the deletion no sign-in can be
+   * running for an account the server has just refused.
+   */
+  stopIf?: () => WipeStop | null;
 }
+
+/** The failure a wipe stopped by a sign-in in flight reports; its marker is KEPT. */
+export const STOPPED_BY_SIGN_IN = 'stopped: a sign-in is in flight';
+/** The failure a wipe stopped by its account being signed in again reports; its marker is DROPPED. */
+export const STOPPED_ACCOUNT_LIVE = 'stopped: the account is signed in here again';
+/** The failure a wipe refused for an id sharing storage with another by letter case reports. */
+export const REFUSED_CASE_COLLISION = 'the account id (it differs from another only by case)';
 
 /**
  * Removes what ONE deleted account left on this device: its local message database, its slot of the
@@ -216,10 +271,25 @@ export async function wipeDeletedAccountLocalData(
     console.error(`${tag} refusing to wipe an account id outside the allowlist`);
     return ['the account id'];
   }
+  const twins = caseCollidingAccountIdsIn(localStorage, userId);
+  if (twins.length > 0) {
+    // Kept as owed on purpose: each start reports it again until a human looks.
+    console.error(
+      `${tag} refusing to wipe: ${twins.length} other account(s) on this device differ from it only by letter case, and three keys and the native database file would be shared`
+    );
+    return [REFUSED_CASE_COLLISION];
+  }
   const failures: string[] = [];
   console.log(`${tag} removing this account's local database, keys and vault slot`);
 
+  let stopped: WipeStop | null = null;
   const step = async (what: string, run: () => Promise<void>) => {
+    if (stopped) return;
+    stopped = options.stopIf?.() ?? null;
+    if (stopped) {
+      console.error(`${tag} stopped before ${what}: ${stopped}`);
+      return;
+    }
     try {
       await run();
     } catch (e) {
@@ -258,12 +328,18 @@ export async function wipeDeletedAccountLocalData(
     await step('the platform keystore entry', async () => {
       const deviceId = localStorage.getItem(ACCOUNT_KEY.deviceId(userId));
       if (!deviceId) return;
-      const alias = `mls_device_key_${userId}_${deviceId}`;
+      const alias = keystoreAlias(userId, deviceId);
       const { BiometricService } = await import('$lib/services/biometric');
       if (!(await BiometricService.isKeyPresent(alias))) return;
       await BiometricService.deleteKeyEntry(alias);
       if (await BiometricService.isKeyPresent(alias))
         throw new Error('the entry survived its delete');
+    });
+    // The native mirror of the last-active key (`sessionAuth.ts`), which no `localStorage` sweep reaches.
+    await step('the native session metadata', async () => {
+      const { load } = await import('@tauri-apps/plugin-store');
+      const store = await load(SESSION_META_STORE, { autoSave: true, defaults: {} });
+      if (await store.delete(ACCOUNT_KEY.lastActive(userId))) await store.save();
     });
   }
 
@@ -282,6 +358,21 @@ export async function wipeDeletedAccountLocalData(
     clearDeviceKey(userId);
   });
 
+  // A widened read: TypeScript narrows `stopped` to `null` here, unaware the closure above sets it.
+  const stoppedBy = stopped as WipeStop | null;
+  if (stoppedBy === 'account-live-again') {
+    console.error(
+      `${tag} is signed in here again - the rest of the wipe is NOT run, marker dropped (its data is the live account's now)`
+    );
+    clearDeletedAccountWipePending(userId);
+    return [...failures, STOPPED_ACCOUNT_LIVE];
+  }
+  if (stoppedBy === 'sign-in-in-flight') {
+    console.error(
+      `${tag} a sign-in is in flight - the wipe stops here and resumes at the next start`
+    );
+    return [...failures, STOPPED_BY_SIGN_IN];
+  }
   if (failures.length > 0) {
     console.error(
       `${tag} finished with ${failures.length} unfinished step(s): ${failures.join(', ')} - the wipe resumes at the next start`

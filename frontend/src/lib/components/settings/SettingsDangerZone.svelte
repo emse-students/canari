@@ -31,18 +31,25 @@
       const displayedUserId = currentUserId();
       const { deletedSubject } = await deleteMyAccount();
       // THE SERVER ANSWERED 204: the account named by the token it accepted is gone. Only THAT
-      // account's data may go, and only when it is the one on screen (`decideDeletedAccountWipe`).
+      // account's data may go - the token's subject, never the account on screen when the two
+      // differ (`decideDeletedAccountWipe`).
       const decision = decideDeletedAccountWipe(deletedSubject, displayedUserId);
-      if (decision.kind === 'wipe') markDeletedAccountWipePending(decision.userId);
+      const wipes = decision.kind === 'wipe' || decision.kind === 'wipe-other-account';
+      if (wipes) markDeletedAccountWipePending(decision.userId);
       else appendLog(`[DEL-LOCAL] local data NOT wiped: ${decision.kind}`);
       // Every other tab signed in as the deleted account stops writing and closes its stores.
       if (deletedSubject) announceAccountDeleted(deletedSubject);
       await clearAuth();
       // THE ACCOUNT IS GONE FOR GOOD, so its rows on this device are only a cost. A failure is
       // logged and never blocks the exit: the marker above resumes it at the next start.
-      if (decision.kind === 'wipe') {
+      if (wipes) {
         try {
-          await globalSession.wipeDeletedAccount(decision.userId, appendLog);
+          // This realm's handles are the deleted account's only when it is the one on screen.
+          await globalSession.wipeDeletedAccount(
+            decision.userId,
+            decision.kind === 'wipe',
+            appendLog
+          );
         } catch (wipeErr) {
           console.error(
             '[DEL-LOCAL] wipeDeletedAccount failed - resumed at the next start:',

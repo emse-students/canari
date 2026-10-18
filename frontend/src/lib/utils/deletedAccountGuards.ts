@@ -1,4 +1,7 @@
-import { resumePendingDeletedAccountWipes } from '$lib/utils/accountLocalWipe';
+import {
+  resumePendingDeletedAccountWipes,
+  type AccountLiveness,
+} from '$lib/utils/accountLocalWipe';
 
 /**
  * AN ACCOUNT DELETED IN ONE TAB MUST STOP EVERY OTHER TAB SIGNED IN AS IT.
@@ -35,7 +38,11 @@ export function announceAccountDeleted(userId: string): void {
 export interface DeletedElsewhereHandlers {
   /** The account this tab is signed in as, or `null`. */
   currentUserId: () => string | null;
-  /** Ends this tab's session for `userId`: clear the credentials, close its stores, go to `/login`. */
+  /**
+   * Ends this tab's session for `userId`: forget its LOCAL credentials only (`clearAuthLocally` - no
+   * logout request on the shared cookie, which may already belong to another account), close its
+   * stores, go to `/login`.
+   */
   endSession: (userId: string) => Promise<void>;
 }
 
@@ -84,13 +91,17 @@ export function listenForAccountDeletedElsewhere(handlers: DeletedElsewhereHandl
 /**
  * At start-up: finishes any wipe a previous run owed, then listens for deletions in other tabs.
  *
- * @param savedUserId the account this install is signed in as, never wiped by the resume
+ * The resume is not awaited here, and it does not need to be: it is serialised against sign-in by
+ * `liveness` itself - it waits for a sign-in in flight and re-checks the live account before every
+ * destructive step ({@link resumePendingDeletedAccountWipes}).
+ *
+ * @param liveness who is signed in here, and whether a sign-in is in flight (`stores/auth.ts`)
  */
 export function startDeletedAccountGuards(
-  savedUserId: string | null,
+  liveness: AccountLiveness,
   handlers: DeletedElsewhereHandlers
 ): () => void {
-  void resumePendingDeletedAccountWipes(savedUserId).catch((e: unknown) =>
+  void resumePendingDeletedAccountWipes(liveness).catch((e: unknown) =>
     console.error('[DEL-LOCAL] resuming the owed wipes failed:', e)
   );
   return listenForAccountDeletedElsewhere(handlers);

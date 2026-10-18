@@ -503,9 +503,9 @@ export function useChatSession() {
       userIdToReset: string,
       cb: import('./session/sessionTypes').ChatSessionCallbacks
     ) => resetDeviceAsFreshImpl(ctx, userIdToReset, cb),
-    /** Removes a deleted account's local database and vault slot only (after `clearAuth`). */
-    wipeDeletedAccount: (userId: string, log: (msg: string) => void) =>
-      wipeDeletedAccountImpl(ctx, log, userId),
+    /** Removes a deleted account's local database and vault slot only (after `clearAuth`); `ranHere` = its stores ran in this realm. */
+    wipeDeletedAccount: (userId: string, ranHere: boolean, log: (msg: string) => void) =>
+      wipeDeletedAccountImpl(ctx, log, userId, ranHere),
     /** Another tab deleted this account: stop writing and close its stores (after `clearAuth`). */
     releaseDeletedAccount: (userId: string) => releaseDeletedAccountImpl(ctx, userId),
     /**

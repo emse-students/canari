@@ -127,6 +127,7 @@ import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { recordWelcomeSent } from '$lib/utils/chat/welcomeSent';
 import { commitAdmits, commitRemovals } from '$lib/mls-client/commitAdmits';
 import { CommitRefusedError } from '$lib/mls-client/CommitRefusedError';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /**
  * How many times {@link BaseMlsService.externalJoin} may re-read the base and resubmit.
@@ -2333,7 +2334,7 @@ export abstract class BaseMlsService implements IMlsService {
    */
   async resolveDeviceId(userId: string): Promise<string> {
     if (this.deviceId && this.deviceId !== UNRESOLVED_DEVICE_ID) return this.deviceId;
-    const deviceKey = `mls_device_id_${userId}`;
+    const deviceKey = ACCOUNT_KEY.deviceId(userId);
     const stored = localStorage.getItem(deviceKey);
     let resolved = stored;
     if (!resolved) {
@@ -2622,7 +2623,7 @@ export abstract class BaseMlsService implements IMlsService {
     const oldDeviceId = this.deviceId;
     console.warn(`[MLS] Rotating device identity (${reason}), abandoning ${oldDeviceId}`);
     this.deviceId = this.generateDeviceId(this.userId);
-    localStorage.setItem(`mls_device_id_${this.userId}`, this.deviceId);
+    localStorage.setItem(ACCOUNT_KEY.deviceId(this.userId), this.deviceId);
     this.delivery.deviceId = this.deviceId;
     // A brand new identity has never held a state, and the load below deliberately passes none.
     // Left true, the abandonment of a device would report itself as a loss.

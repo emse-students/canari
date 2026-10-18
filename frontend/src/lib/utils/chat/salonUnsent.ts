@@ -23,7 +23,8 @@
  * owner dead) and that is logged; an entry of this page life is taken when no live send owns it.
  */
 
-const KEY_PREFIX = 'canari.salon-unsent.';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
+
 const OWNER_LOCK_PREFIX = 'canari.salon-unsent.owner.';
 
 /** This page life's identity, written into every entry it records. */
@@ -70,7 +71,7 @@ export interface UnsentSalonText {
 }
 
 function keyFor(userId: string): string {
-  return `${KEY_PREFIX}${userId.toLowerCase()}`;
+  return ACCOUNT_KEY.salonUnsent(userId);
 }
 
 function readAll(userId: string): UnsentSalonText[] {
