@@ -500,6 +500,8 @@ sent through the real HTTP layer with no ValidationPipe, changing none of them.
 - **Every choice is drawn by the app** ([durable-rules](durable-rules.md)): times are a `Select` on
   the space's saved step (15 min for fixed slots), keeping an off-step value; a date is
   `DateTimeField`, which gained `dateOnly` (value `YYYY-MM-DD`, no time columns).
+- **Deleting a resource that has history is refused (D42)**: the confirmation and the refusal both
+  say so, and point at closing it instead (its hours removed, or a closure).
 - **The file question is not offered** (`FormQuestionsSection` `withoutTypes`), and the screen
   says it comes later: the server refuses it until WP-B6.
 - **Large text**: `FormSection`'s header wraps at 200 % text (the badge and the chevron left the

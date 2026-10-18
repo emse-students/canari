@@ -26,6 +26,11 @@ export const ORGANISER_REFUSAL_CODES = [
   'line-order',
   'exception-range',
   'bookings-inside-change',
+  'resource-has-bookings',
+  'too-many-spaces',
+  'too-many-resources',
+  'association-not-found',
+  'opens-at',
 ] as const;
 
 export type OrganiserRefusalCode = (typeof ORGANISER_REFUSAL_CODES)[number];
@@ -59,6 +64,16 @@ function sentenceFor(code: string, count: number): string | null {
       return m.bookings_refusal_closure();
     case 'bookings-inside-change':
       return m.bookings_refusal_inside_change({ count });
+    case 'resource-has-bookings':
+      return m.bookings_refusal_resource_has_bookings();
+    case 'too-many-spaces':
+      return m.bookings_refusal_too_many_spaces();
+    case 'too-many-resources':
+      return m.bookings_refusal_too_many_resources();
+    case 'association-not-found':
+      return m.bookings_refusal_association_not_found();
+    case 'opens-at':
+      return m.bookings_refusal_opens_at();
     default:
       return null;
   }
