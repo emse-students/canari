@@ -1,5 +1,6 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
+import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 import { Log } from '$lib/utils/Log';
 
 /**
@@ -37,7 +38,7 @@ export async function openAdminerSession(): Promise<number> {
   const res = await apiFetch(`${coreUrl()}/api/auth/adminer-session`, { method: 'POST' });
   if (res.status === 404) throw new AdminerUnavailableError();
   if (res.status === 403) throw new AdminerForbiddenError();
-  if (!res.ok) throw new Error(`Adminer session refused (${res.status})`);
+  if (!res.ok) throw await refusalFromResponse(res, 'Adminer session refused');
   const body = (await res.json()) as { expiresInSeconds?: number };
   return typeof body.expiresInSeconds === 'number' ? body.expiresInSeconds : 0;
 }
