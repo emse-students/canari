@@ -14,6 +14,7 @@ import { BookingsService } from './bookings.service';
 import { BookingsController } from './bookings.controller';
 import { BookingSpacesService } from './booking-spaces.service';
 import { BookingSpacesController } from './booking-spaces.controller';
+import { BookingCalendarController } from './booking-calendar.controller';
 import { UserTagModule } from '../users/user-tag.module';
 
 /** Every table of the module (migrations 087 onwards), in parent-to-child order. */
@@ -30,7 +31,8 @@ export const BOOKING_ENTITIES = [
 /**
  * Bookings of rooms and slots (docs/wiki/bookings-chantier.md): the tables (WP-B1), slot
  * generation on demand (WP-B2, `BookingSlotsService`), the booker's API (WP-B3,
- * `BookingsController`) and the organiser's (WP-B4, `BookingSpacesController`).
+ * `BookingsController`), the organiser's (WP-B4, `BookingSpacesController`) and a booking's
+ * signed `.ics` (WP-B5, `BookingCalendarController`).
  */
 @Module({
   imports: [
@@ -39,7 +41,7 @@ export const BOOKING_ENTITIES = [
     PricingModule,
     UserTagModule,
   ],
-  controllers: [BookingsController, BookingSpacesController],
+  controllers: [BookingsController, BookingSpacesController, BookingCalendarController],
   providers: [BookingSlotsService, BookingsService, BookingSpacesService],
   exports: [BookingSlotsService],
 })
