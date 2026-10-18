@@ -3,7 +3,8 @@
  * REALMS (two fresh imports of a module, `vi.resetModules`) in one document: a Web Locks manager and
  * a BroadcastChannel bus. Both follow the specification on the points those tests rely on: a lock
  * queue is FIFO per name, shared holders coexist, `ifAvailable` answers `null` rather than queueing,
- * and a channel never delivers to the object that posted.
+ * `steal` is granted at once and rejects every current holder's request with an `AbortError`, and a
+ * channel never delivers to the object that posted.
  */
 
 interface Pending {
@@ -15,7 +16,7 @@ interface Pending {
 /** A Web Locks manager: FIFO per name, shared holders coexist, exclusive excludes everything. */
 export class FakeLocks {
   private queue: Pending[] = [];
-  private held: { name: string; mode: LockMode }[] = [];
+  private held: { name: string; mode: LockMode; abort: (e: unknown) => void }[] = [];
 
   request(
     name: string,
@@ -24,17 +25,27 @@ export class FakeLocks {
   ): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const mode = options.mode ?? 'exclusive';
-      const entry = { name, mode };
+      const entry = { name, mode, abort: reject };
       const run = () => {
         this.held.push(entry);
         Promise.resolve()
           .then(() => callback({ name, mode } as Lock))
           .then(resolve, reject)
           .finally(() => {
-            this.held.splice(this.held.indexOf(entry), 1);
+            // A stolen lock already left `held`: its callback ending releases nothing.
+            const at = this.held.indexOf(entry);
+            if (at >= 0) this.held.splice(at, 1);
             this.pump();
           });
       };
+      if (options.steal) {
+        for (const h of this.held.filter((x) => x.name === name)) {
+          this.held.splice(this.held.indexOf(h), 1);
+          h.abort(new DOMException('The lock was stolen', 'AbortError'));
+        }
+        run();
+        return;
+      }
       if (options.ifAvailable && !this.grantableNow(name, mode)) {
         Promise.resolve()
           .then(() => callback(null))
@@ -47,7 +58,7 @@ export class FakeLocks {
   }
 
   async query(): Promise<LockManagerSnapshot> {
-    return { held: this.held.map((h) => ({ ...h })), pending: [] };
+    return { held: this.held.map(({ name, mode }) => ({ name, mode })), pending: [] };
   }
 
   private grantableNow(name: string, mode: LockMode): boolean {
