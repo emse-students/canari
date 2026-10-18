@@ -1327,7 +1327,7 @@ Not started. **Venue DECIDED 2026-10-18: a test association on the DEV estate on
 
 ## THE DELIVERY CHAIN REVIEW - opened by the 2026-09-06 outage
 
-**Open: a real sign-in against the deployed estate, in the pipeline, right after the dev deploy and before a stable proceeds.** The wasm check ships as a gate (2026-10-06, [cicd](cicd.md)) but is not a login. **DECIDED 2026-10-18: a dedicated smoke account on the DEV estate only**, credentials as an environment secret, no production login in GitHub ([WP-SMOKE-LOGIN](#decided-by-the-user-on-2026-10-18---every-design-question-answered)). The other items shipped or were decided not to be built ([cicd](cicd.md#two-incident-time-items-decided-not-to-be-built-2026-10-06)); any proposal must keep four visible workflows.
+**Open: a real sign-in against the deployed estate, in the pipeline, right after the dev deploy and before a stable proceeds.** The wasm check ships as a gate (2026-10-06, [cicd](cicd.md)) but is not a login. **BUILT 2026-10-18 for DEV only (user decision: no production login in GitHub); owed the user's two secrets and a first-run read** ([cicd](cicd.md#the-smoke-sign-in-wp-smoke-login-decided-2026-10-18)). The other items shipped or were decided not to be built ([cicd](cicd.md#two-incident-time-items-decided-not-to-be-built-2026-10-06)); any proposal must keep four visible workflows.
 
 ## The first iOS feedback (2026-09-20) - one reading and one measurement
 
