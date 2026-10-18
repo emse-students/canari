@@ -1,16 +1,36 @@
-import { defineConfig, coverageConfigDefaults } from 'vitest/config';
+import { defineConfig, coverageConfigDefaults, configDefaults } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import { resolve } from 'path';
+import { DOM_TEST_FILES } from './vitest.dom-files.ts';
 
 export default defineConfig({
   plugins: [svelte()],
   test: {
-    environment: 'happy-dom',
     // The locale is global and some files move it; this gives every file the same starting
     // point. Fourteen assertions depended on worker order until 2026-09-17 - see the file.
     setupFiles: ['./src/test/locale.ts', './src/test/noRealNetwork.ts'],
     globals: true,
-    include: ['src/**/*.{test,spec}.ts'],
+    // Two projects, one suite: `node` by default (no window is built), `happy-dom` for the
+    // component tests and the files named in vitest.dom-files.ts. Both share this config.
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: 'node',
+          environment: 'node',
+          include: ['src/**/*.{test,spec}.ts'],
+          exclude: [...configDefaults.exclude, 'src/**/*.svelte.test.ts', ...DOM_TEST_FILES],
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: 'dom',
+          environment: 'happy-dom',
+          include: ['src/**/*.svelte.test.ts', ...DOM_TEST_FILES],
+        },
+      },
+    ],
     coverage: {
       exclude: [
         ...coverageConfigDefaults.exclude,

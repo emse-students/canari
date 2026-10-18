@@ -226,6 +226,16 @@ change failing.
 - **Risk**: low-medium: a test that silently relied on `window` for a fallback. Revalidate: same
   case count, same pass set, and the list of moved files in the PR.
 
+**Shipped 2026-10-18 (draft PR `chore/tests-t4-node-env`).** `vitest.config.ts` has two projects:
+`node` (default) and `dom` (`*.svelte.test.ts` plus the 149 plain files named in
+`frontend/vitest.dom-files.ts`, seeded from a whole-suite `--environment=node` run: 299 of 892 files
+failed, 150 of them `*.svelte.test.ts`). A new test that needs a DOM and is not listed fails with
+`document is not defined`. Measured on ONE machine saturated by other agents (CPU 85-100 %, so the
+wall times are an upper bound and noisy): 8,449 cases before and after; two interleaved runs each: happy-dom everywhere 784 s and 682 s (mean 733),
+node/dom split 712 s and 569 s (mean 641, -12 %), vitest's own breakdown moving from environment 49-52 % to 24-25 % of summed
+time. The failures in both runs are 5 s first-test timeouts of the loaded machine (16 and 7 vs 6 and 9), all
+green re-run alone. The CI delta must be read from the pull request's own job.
+
 ### WP-T5 (M) - Triage the 89 source-text tests
 
 - **Change**: each file gets one disposition, written in its header: (a) rewrite as a behavioural
