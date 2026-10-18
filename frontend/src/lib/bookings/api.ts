@@ -8,6 +8,11 @@
  * server's message.
  */
 import { apiFetch, type ApiFetchOptions } from '$lib/utils/apiFetch';
+import { getToken } from '$lib/stores/auth';
+import { fetchUpload } from '$lib/media';
+import type { UploadedAnswerFile } from '$lib/forms/api';
+import type { XhrUploadOptions } from '$lib/utils/uploadXhr';
+import { m } from '$lib/paraglide/messages';
 import { socialUrl } from '$lib/utils/apiUrl';
 import { SocialApiError } from '$lib/associations/api';
 import type { AudienceCondition, FormItem } from '$lib/forms/api';
@@ -59,6 +64,8 @@ export interface ManagedResource {
 /** `GET bookings/spaces/:id/manage`. */
 export interface ManagedSpace extends SpaceSettings {
   id: string;
+  /** The poster (D35): not a setting of the save bar - the editor saves it the moment it is picked. */
+  poster: SpacePoster | null;
   ownerId: string;
   associationId: string | null;
   resources: ManagedResource[];
@@ -146,6 +153,37 @@ export function updateSpace(spaceId: string, patch: Partial<SpaceSettings>): Pro
   return call('updateSpace', `/spaces/${encodeURIComponent(spaceId)}`, json('PATCH', patch));
 }
 
+/**
+ * A space's poster (D35): an image ENCRYPTED BY THE CLIENT, as a post's (`MediaService.encryptAndUpload`)
+ * - the server stores this reference and the media service holds ciphertext only. The fields are the
+ * server's `PosterDto`, no more: a `MediaRef`'s others are refused.
+ */
+export interface SpacePoster {
+  type: 'image';
+  mediaId: string;
+  key: string;
+  iv: string;
+  mimeType: string;
+  size: number;
+  width?: number;
+  height?: number;
+}
+
+/** The image types the server accepts for a poster (`POSTER_MIME_TYPES`). */
+export const POSTER_MIME_TYPES = ['image/jpeg', 'image/png', 'image/webp'] as const;
+
+/**
+ * Sets (or with `null` removes) the space's poster on its own. The server classifies the new one
+ * for keeping and releases the one it replaces (`booking-poster-media.ts`).
+ */
+export function setSpacePoster(spaceId: string, poster: SpacePoster | null): Promise<unknown> {
+  return call(
+    'setSpacePoster',
+    `/spaces/${encodeURIComponent(spaceId)}`,
+    json('PATCH', { poster })
+  );
+}
+
 /** Deletes the space and EVERYTHING under it, history included (D27). */
 export function deleteSpace(spaceId: string): Promise<unknown> {
   return call('deleteSpace', `/spaces/${encodeURIComponent(spaceId)}`, { method: 'DELETE' });
@@ -189,6 +227,10 @@ export interface BookingView {
   holderName?: string;
   participantNames?: string[];
   answers?: Record<string, unknown> | null;
+  /** With `answers`: the name each FILE answer's file was uploaded under, by file id (WP-B6). */
+  fileNames?: Record<string, string>;
+  /** With `answers`: the FILE answers whose file is gone (purged, or erased with its uploader). */
+  deletedFileIds?: string[];
 }
 
 /**
@@ -233,6 +275,7 @@ export interface ListedSpace {
   associationName: string | null;
   timeZone: string;
   resourceCount: number;
+  poster: SpacePoster | null;
 }
 
 /** A resource as a booker reads it: no private text (D32). */
@@ -263,6 +306,9 @@ export interface BookerSpace {
   horizonDays: number | null;
   participantWithdrawMinMinutes: number;
   maxPeople: number | null;
+  /** Days a FILE answer's file is kept after the END of its slot (D8, D41), said under the picker. */
+  retentionDays: number;
+  poster: SpacePoster | null;
   /** The reader manages the space: they book on behalf, block, cancel any coming booking. */
   canManage: boolean;
   resources: BookerResource[];
@@ -377,4 +423,89 @@ export function removeBlock(blockId: string): Promise<unknown> {
  */
 export function calendarLink(bookingId: string): Promise<{ path: string }> {
   return call('calendarLink', `/${encodeURIComponent(bookingId)}/calendar-link`);
+}
+
+// -- File answers and the export (WP-B6) -----------------------------------------------------------
+
+/**
+ * Uploads the file of one FILE question before the booking is sent - the forms' upload
+ * (`uploadFormAnswerFile`), on the space. The booking then carries `fileId`; the server accepts it
+ * only from the account that uploaded it, for this question, within a day.
+ */
+export async function uploadBookingAnswerFile(
+  spaceId: string,
+  itemId: string,
+  file: File,
+  transport: XhrUploadOptions = {}
+): Promise<UploadedAnswerFile> {
+  Log.d('BOOKINGS', `uploadBookingAnswerFile item=${itemId} ${file.size} B`);
+  const fd = new FormData();
+  fd.append('itemId', itemId);
+  fd.append('file', file);
+  const res = await fetchUpload(
+    `${socialUrl()}/api/bookings/spaces/${encodeURIComponent(spaceId)}/files`,
+    (token) => ({ method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd }),
+    await getToken(),
+    transport
+  );
+  if (!res.ok) throw await refusal(res, 'uploadBookingAnswerFile');
+  return res.json();
+}
+
+/** The organiser's download of one booking's answer file - the only way it is ever read (D22). */
+export async function downloadBookingAnswerFile(bookingId: string, fileId: string): Promise<Blob> {
+  Log.d('BOOKINGS', `downloadBookingAnswerFile booking=${bookingId.slice(0, 8)}`);
+  const res = await apiFetch(
+    `${socialUrl()}/api/bookings/${encodeURIComponent(bookingId)}/files/${encodeURIComponent(fileId)}`
+  );
+  if (!res.ok) throw await refusal(res, 'downloadBookingAnswerFile');
+  return res.blob();
+}
+
+/**
+ * The words of an export's columns, in this client's language: the server has no catalogue and
+ * refuses a request without them (`export-labels`) - the forms' `ExportLabels` reasoning. Mirrored
+ * by `apps/social-service/src/bookings/booking-export.ts`.
+ */
+export interface BookingExportLabels {
+  date: string;
+  start: string;
+  end: string;
+  resource: string;
+  holder: string;
+  participants: string;
+  status: string;
+  cancelled: string;
+  file: string;
+  fileDeleted: string;
+}
+
+/** The labels this client writes an export in, resolved through Paraglide. */
+export function bookingExportLabels(): BookingExportLabels {
+  return {
+    date: m.bookings_export_col_date(),
+    start: m.bookings_export_col_start(),
+    end: m.bookings_export_col_end(),
+    resource: m.bookings_export_col_resource(),
+    holder: m.bookings_export_col_holder(),
+    participants: m.bookings_export_col_participants(),
+    status: m.bookings_export_col_status(),
+    cancelled: m.bookings_export_cancelled(),
+    file: m.form_answer_file(),
+    fileDeleted: m.form_answer_file_deleted(),
+  };
+}
+
+/**
+ * The space's bookings as an `.xlsx` (D24). The caller names the file from the space it shows: a
+ * cross-origin answer's `Content-Disposition` is not readable here without an exposed header.
+ */
+export async function exportBookings(spaceId: string, labels: BookingExportLabels): Promise<Blob> {
+  Log.d('BOOKINGS', `exportBookings space=${spaceId.slice(0, 8)}`);
+  const query = encodeURIComponent(JSON.stringify(labels));
+  const res = await apiFetch(
+    `${socialUrl()}/api/bookings/spaces/${encodeURIComponent(spaceId)}/export?labels=${query}`
+  );
+  if (!res.ok) throw await refusal(res, 'exportBookings');
+  return res.blob();
 }

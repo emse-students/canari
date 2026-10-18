@@ -1,7 +1,9 @@
 <script lang="ts">
   import Modal from '$lib/components/shared/Modal.svelte';
   import AddEventToCalendarButton from '$lib/components/calendar/AddEventToCalendarButton.svelte';
+  import { Download } from '@lucide/svelte';
   import {
+    downloadBookingAnswerFile,
     type BookerResource,
     type BookerSpace,
     type MyBooking,
@@ -16,7 +18,11 @@
   } from '$lib/bookings/bookingActions';
   import { formatBookingRange } from '$lib/bookings/grid';
   import { answerText } from '$lib/forms/answerText';
+  import { describeBookingRefusal } from '$lib/bookings/refusals';
   import { m } from '$lib/paraglide/messages';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
+  import { Log } from '$lib/utils/Log';
 
   /**
    * WHAT A TAKEN UNIT IS, AND WHAT THE READER MAY DO WITH IT. A booking: its people as the space's
@@ -42,14 +48,45 @@
   const isParticipant = $derived(!!booking?.mine && !isHolder);
   const mayCancel = $derived(coming && (isHolder || space.canManage));
   const mayWithdraw = $derived(coming && isParticipant && !mine?.withdrawn);
-  const answers = $derived(
-    booking?.answers
-      ? space.items.flatMap((item) => {
-          const value = booking.answers?.[item.id];
-          return value === undefined ? [] : [{ label: item.label, text: answerText(value, item) }];
-        })
-      : []
-  );
+  /**
+   * The answers, to the organiser only (the server sends them to nobody else). A FILE answer reads
+   * as the name its file was uploaded under, with a download, or as "file deleted" once the purge
+   * (or its uploader's erasure) took it - never as its id.
+   */
+  const answers = $derived.by(() => {
+    if (!booking?.answers) return [];
+    const words = {
+      file: m.form_answer_file(),
+      fileDeleted: m.form_answer_file_deleted(),
+      deletedFiles: new Set(booking.deletedFileIds ?? []),
+    };
+    return space.items.flatMap((item) => {
+      const value = booking.answers?.[item.id];
+      if (value === undefined) return [];
+      const fileId =
+        item.type === 'file' && typeof value === 'string' && !words.deletedFiles.has(value)
+          ? value
+          : null;
+      const text = (fileId && booking.fileNames?.[fileId]) || answerText(value, item, words);
+      return [{ label: item.label, text, fileId }];
+    });
+  });
+
+  let downloading = $state<string | null>(null);
+
+  async function download(fileId: string, fileName: string) {
+    if (!booking || downloading) return;
+    downloading = fileId;
+    Log.d('BOOKINGS', `answer file download booking=${booking.id.slice(0, 8)}`);
+    try {
+      await downloadDecryptedFile(await downloadBookingAnswerFile(booking.id, fileId), fileName);
+    } catch (e) {
+      Log.i('BOOKINGS', `answer file download refused: ${String(e)}`);
+      showToast(describeBookingRefusal(e, m.form_answer_file_download()), 'error');
+    } finally {
+      downloading = null;
+    }
+  }
 
   async function cancel() {
     if (!booking) return;
@@ -120,7 +157,22 @@
           {#each answers as answer, i (i)}
             <div>
               <dt class="text-text-muted text-xs font-semibold">{answer.label}</dt>
-              <dd class="text-text-main whitespace-pre-line">{answer.text}</dd>
+              <dd class="text-text-main flex items-center gap-2 whitespace-pre-line">
+                <span class="min-w-0 flex-1 break-words">{answer.text}</span>
+                {#if answer.fileId}
+                  {@const fileId = answer.fileId}
+                  <button
+                    type="button"
+                    disabled={downloading !== null}
+                    onclick={() => download(fileId, answer.text)}
+                    class="ui-icon-button text-text-muted hover:text-text-main shrink-0 rounded-lg disabled:opacity-50"
+                    aria-label={m.form_answer_file_download()}
+                    title={m.form_answer_file_download()}
+                  >
+                    <Download size={16} />
+                  </button>
+                {/if}
+              </dd>
             </div>
           {/each}
         </dl>

@@ -1,6 +1,15 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { CalendarRange, Database, Info, ListChecks, Plus, Trash2, Users } from '@lucide/svelte';
+  import {
+    CalendarRange,
+    Database,
+    Download,
+    Info,
+    ListChecks,
+    Plus,
+    Trash2,
+    Users,
+  } from '@lucide/svelte';
   import FormSection from '$lib/components/forms/FormSection.svelte';
   import FormSaveBar from '$lib/components/forms/FormSaveBar.svelte';
   import FormQuestionsSection from '$lib/components/forms/FormQuestionsSection.svelte';
@@ -13,9 +22,12 @@
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import { CONTROL_HINT_CLASS, CONTROL_LABEL_CLASS } from '$lib/components/ui/controlClasses';
   import ResourceEditor from './ResourceEditor.svelte';
+  import SpacePosterField from './SpacePosterField.svelte';
   import {
     addResource,
+    bookingExportLabels,
     deleteSpace,
+    exportBookings,
     updateSpace,
     type ManagedResource,
     type ManagedSpace,
@@ -37,6 +49,7 @@
   import type { MembershipTier } from '$lib/associations/api';
   import type { FormationOption } from '$lib/pricing/criteriaOptions';
   import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { downloadDecryptedFile } from '$lib/utils/fileDownload';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
 
@@ -154,6 +167,26 @@
     delete dirtyResources[id];
   }
 
+  let exporting = $state(false);
+  let exportError = $state('');
+
+  /** The bookings as an .xlsx (D24), its columns in this client's words, named after the space. */
+  async function exportXlsx() {
+    if (exporting) return;
+    exporting = true;
+    exportError = '';
+    try {
+      const blob = await exportBookings(space.id, bookingExportLabels());
+      await downloadDecryptedFile(blob, `${space.name.replace(/[\\/:*?"<>|]+/g, '_')}.xlsx`);
+      Log.i('BOOKINGS', `export downloaded space=${space.id.slice(0, 8)}`);
+    } catch (e) {
+      Log.i('BOOKINGS', `export refused: ${String(e)}`);
+      exportError = describeBookingRefusal(e, m.bookings_export_button());
+    } finally {
+      exporting = false;
+    }
+  }
+
   async function removeSpace() {
     const confirmed = await showConfirm(m.bookings_delete_space_confirm({ name: space.name }), {
       danger: true,
@@ -186,6 +219,15 @@
     bind:value={draft.description}
     rows={3}
     maxlength={4000}
+  />
+  <SpacePosterField
+    spaceId={space.id}
+    spaceName={space.name}
+    poster={space.poster}
+    onChanged={(poster) => {
+      space.poster = poster;
+      onSaved(space);
+    }}
   />
   <div>
     <Select
@@ -327,14 +369,7 @@
   </div>
 </FormSection>
 
-<FormQuestionsSection
-  bind:items={draft.items}
-  requiresPayment={false}
-  {tiers}
-  {formations}
-  withoutTypes={['file']}
-/>
-<p class="{CONTROL_HINT_CLASS} -mt-2 mb-4">{m.bookings_questions_no_file()}</p>
+<FormQuestionsSection bind:items={draft.items} requiresPayment={false} {tiers} {formations} />
 
 <FormSection
   title={m.bookings_section_rules()}
@@ -430,6 +465,22 @@
     bind:value={draft.retentionDays}
     error={problemOf('retentionDays')}
   />
+  <p class={CONTROL_HINT_CLASS}>{m.bookings_field_retention_hint()}</p>
+  <div class="border-cn-border/60 space-y-2 border-t pt-4">
+    <p class="text-text-muted text-sm">{m.bookings_export_hint()}</p>
+    <button
+      type="button"
+      onclick={exportXlsx}
+      disabled={exporting}
+      class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors disabled:opacity-40"
+    >
+      <Download size={16} />
+      {m.bookings_export_button()}
+    </button>
+    {#if exportError}
+      <p class="text-red-err text-xs font-medium" role="alert">{exportError}</p>
+    {/if}
+  </div>
   <div class="border-cn-border/60 space-y-2 border-t pt-4">
     <p class="text-text-muted text-sm">{m.bookings_delete_space_hint()}</p>
     <button

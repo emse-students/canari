@@ -1,6 +1,6 @@
 # Bookings (reservation of rooms and slots) - the chantier, decisions as taken
 
-**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) merged as #2002; WP-B4's organiser API merged as #2006; its screens (#2019), WP-B5's API (#2029) and WP-B5's screens (#2035, stacked on #2019) are draft pull requests. **Owed by WP-B6, carried from WP-B4: the space poster (D35: column by migration, purge) and the bookings FILE question.** Decisions are written here the day the
+**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) merged as #2002; WP-B4's organiser API merged as #2006; its screens (#2019), WP-B5's API (#2029) and WP-B5's screens (#2035, stacked on #2019) are draft pull requests. WP-B6 (file answers, the poster, the purge, the export) is draft #2045, stacked on #2035; WP-B7 (live checks) is what is left. Decisions are written here the day the
 user takes them; the work packages are written last, once every question is closed. Pointer in
 [backlog](backlog.md) to be added when the plan is complete.
 
@@ -426,7 +426,7 @@ screens come in a pull request of their own; this half is what they write throug
 | `GET managed?associationId` | the entity's organiser; without the parameter, the actor's PERSONAL spaces | `not-manager` |
 | `POST spaces` | anyone for a personal space (D16), at most 20 per account; `MANAGE_BOOKINGS` for an entity's (`associationId`) | `not-manager`, `too-many-spaces`, `association-not-found` (an id that names no entity, which only a global admin can send), and the settings codes below |
 | `GET spaces/:id/manage` | the organiser: every setting, every resource with its linked account, private text and availability | `space-not-found`, `not-manager` |
-| `PATCH spaces/:id` | the organiser; any subset of the settings (D35), `null` clears | `time-zone`, `step-shape`, `quota-pair`, `file-question-not-yet`, `item-id` (missing or DUPLICATE), `opens-at` (an instant without `Z` or an offset), `audience-invalid`, `bookings-inside-change` (with `bookingIds`) |
+| `PATCH spaces/:id` | the organiser; any subset of the settings (D35), `null` clears | `time-zone`, `step-shape`, `quota-pair`, `item-id` (missing or DUPLICATE), `opens-at` (an instant without `Z` or an offset), `audience-invalid`, `bookings-inside-change` (with `bookingIds`) |
 | `DELETE spaces/:id` | the organiser: the space and EVERYTHING under it (D27), other people's coming bookings included, with no notice (D13); how many is logged | `not-manager` |
 | `POST spaces/:id/resources`, `PATCH resources/:id` | the organiser; a linked account must exist; at most 60 resources per space | `unknown-account`, `too-many-resources` |
 | `DELETE resources/:id` | the organiser; only a resource that was NEVER booked (D42) | `resource-has-bookings` |
@@ -463,12 +463,11 @@ screens come in a pull request of their own; this half is what they write throug
   space, a global admin. Creating an entity's space asks the same right.
 - **The audience and each question's condition** go through the forms' `parseAudienceCondition`,
   with the entity's cotisation tiers, so a space and a form agree on who an ICM is.
-- **A FILE question is refused (`file-question-not-yet`) until WP-B6** brings the bookings half of
-  WP-F's storage and purge: accepted now, it would be a question nobody could answer.
+- **A FILE question was refused (`file-question-not-yet`) until WP-B6**, which brought the bookings
+  half of WP-F's storage and purge and lifted the refusal ([WP-B6 as built](#wp-b6-as-built---file-answers-the-poster-the-purge-the-export-2026-10-18)).
 - **Times** are stored `HH:MM:SS`, `24:00` included; a window crossing midnight is two lines (WP-B2).
-- **The poster (D35) is SCHEDULED IN WP-B6, not dropped** (Master, 2026-10-17): 087 has no column
-  for it, so WP-B6 adds the column and its purge with a migration; the General section of the
-  editor gains the field then.
+- **The poster (D35) was SCHEDULED IN WP-B6, not dropped** (Master, 2026-10-17), and WP-B6 built
+  it: migration 091 adds the column, the General section the field.
 - **Nothing new to erase**: no column was added. The linked account was already covered by
   `BOOKINGS_ERASURE_STATEMENTS` (WP-B1).
 
@@ -516,8 +515,8 @@ sent through the real HTTP layer with no ValidationPipe, changing none of them.
   keeps the wall time on screen and moves the instant saved.
 - **Unsaved changes are asked about** before leaving the editor (settings, a resource's fields, an
   availability), and the editor reloads when the route's space id changes, not only on mount.
-- **The file question is not offered** (`FormQuestionsSection` `withoutTypes`), and the screen
-  says it comes later: the server refuses it until WP-B6.
+- **The file question was not offered until WP-B6**, which deleted `FormQuestionsSection`'s
+  `withoutTypes` with its only use.
 - **Large text**: `FormSection`'s header wraps at 200 % text (the badge and the chevron left the
   card before - forms' sections too).
 
@@ -664,3 +663,98 @@ the free run, the planning, a night window read at Saturday 00:15), `BlockSheet.
 (an unknown outcome closes, a 400 with no code does not), `bookingWindow.contract.test.ts` and the server's
 `booking-window.spec.ts` (one contract), `redrawClock.test.ts`, `refusals.test.ts` (every booker
 code worded), the dashboard's row order.
+
+## WP-B6 as built - file answers, the poster, the purge, the export (2026-10-18)
+
+Draft #2045, stacked on #2035. Migration **091** (`091_booking_files_and_poster.sql`) adds two things, and is idempotent: it is applied twice in its spec, and its catalogue check is scoped to the schema.
+- `booking_files`: what a FILE answer's id names.
+- `booking_spaces.poster`: the poster.
+
+| Route | Who | Refusal codes |
+|---|---|---|
+| `POST spaces/:id/files` (multipart `file`, `itemId`) | anyone the space's audience admits (`assertMayUse`) | `file-question` (not a FILE question of this space), `file-empty`, 413 `file-too-large`, `file-type` (read from the bytes), 429 `files-pending` |
+| `GET :bookingId/files/:fileId` | the organiser only (D22), judged before the file is looked at | `not-manager`, `file-not-found`, 410 `file-purged` |
+| `GET spaces/:id/export?labels=` | the organiser | `not-manager`, `export-labels` (a word missing, empty or over 200 characters) |
+| `PATCH spaces/:id` `{ poster }` | the organiser; `null` removes it | a malformed reference is a validation 400 |
+
+`POST spaces/:id/bookings` can now refuse a file answer in two ways:
+- `file-answer`: the value is not a file id.
+- `file-not-yours`: the uploader, the question, the space, the one-day window or the unsent state does not match. The claim is one `UPDATE`, so the booking rolls back with it.
+
+**File answers**
+- **ONE STORAGE FOR BOTH MODULES.** The bytes go through the media service's `form-file` class, through `FormFilesService` (`storeBlob`, `fetchBlob`, `purgeBlobs`), now exported by `FormsModule`.
+  - The bytes are plaintext, served to social-service alone, and the organiser reads them (D22). So this is NOT the client-encrypted media path, and the register says so (C17).
+  - The forms' loop over due files is now `runFileRetentionPass` (`forms/file-retention-purge.ts`), shared by both schedulers.
+- **THE STATE IS THE ROW.**
+  - `bookingId` NULL means uploaded and not sent: it can be attached for a day, then the blob is purged, then the row.
+  - `bookingId` set means it belongs to a booking.
+  - `purgedAt` means the blob is gone, and the organiser reads "file deleted".
+  - The foreign key to `bookings` is the module's one `ON DELETE SET NULL`. A booking deleted with its space (D27) or past one year (D19) turns its file back into an unsent upload, and the next purge takes it. A cascade would drop the only record of a blob that still exists.
+  - `spaceId` has no foreign key, for the same reason.
+- **The organiser books on someone's behalf with their own upload**: the uploader is whoever booked, which is what the claim checks.
+- **Who sees what.**
+  - The organiser's views carry `fileNames`, and `deletedFileIds` for the files that are purged, erased or another booking's.
+  - Nobody else is sent answers (D9).
+  - A file answer is never shown as its id. `answerText` throws without its words.
+
+**The poster (D35)**
+- **ENCRYPTED BY THE CLIENT, AS A POST'S IMAGE.** The client uses `preparePostMedia`, then `encryptAndUpload(..., 'archive')`. The row stores the reference, field by field (`posterOf`).
+- **`BookingPosterMedia` handles its life at the media service.**
+  - When it is set, it becomes `association` for an entity's space (it survives its uploader's erasure, as an association post's media does). It stays `archive` for a personal space.
+  - It is released to `ephemeral` when it is replaced or removed, or when its space or its association is deleted (`associations.service.ts` `remove`).
+  - Every call is best-effort and logs what it left.
+- **The editor saves it ON ITS OWN, the moment it is picked** (`SpacePosterField.svelte`). An image uploaded and left in an unsaved draft would be ciphertext nobody cites.
+- **The space page shows it** (`SpacePoster.svelte`), decrypted on the device.
+- **Reservations' space rows do not show it**: `SectionHub` rows carry an icon, not an image.
+
+**The purge** (`booking-retention.scheduler.ts`, hourly at :41, one database clock per run, intervals in hours). It runs four passes, then sweeps the rows of unsent files that are already gone.
+1. A booking's files go `retentionDays` after its slot's END (D8, D41): the blob first, then the row is marked.
+2. Unsent uploads go after a day: the blob, then the row.
+3. Answers go after the same N days: they are set NULL and `answersPurgedAt` is stamped (D18).
+4. Bookings and blocks whose slot ended over a year ago are deleted, in batches of 100 (D19).
+
+A blob the media service refuses to delete keeps its row, which is retried next hour. **A deleted space's files wait for the unsent pass**, up to a day and an hour after the deletion.
+
+**The export (D24)**, `booking-export.ts`:
+- **The client supplies every word**, as in the forms' `ExportLabels`; there is no default.
+- **Each row has**:
+  - the local date and times in the space's zone (an end on another day is prefixed with its date);
+  - the resource, the holder and the participants still in;
+  - the cancelled word;
+  - one column per question, through `answerText`.
+- **What a cell holds once data is purged**:
+  - A FILE answer is a word, never the file.
+  - A purged answer is an empty cell.
+- **The workbook is named after the space**, and the client names the downloaded file the same way.
+
+**Account erasure**:
+- `bookings_files` deletes the account's uploads.
+- The coverage map lists `booking_files.uploaderId` and `.fileName`.
+- `booking_spaces.poster` is marked as naming no account.
+
+**Proof.**
+- `bookings.files.integration.spec.ts`, against PostgreSQL (migrations applied twice), covers:
+  - upload refusals and the audience;
+  - attaching one's own file versus another's, with the rollback;
+  - booking on someone's behalf;
+  - who sees the answers, and the download rights;
+  - a blob gone at the media service, marked purged;
+  - the purge after N days, run twice;
+  - a refused blob kept;
+  - an unsent upload purged;
+  - a deleted space's files;
+  - the one-year age;
+  - erasure;
+  - the poster kept, released and forged;
+  - the export parsed back with ExcelJS.
+- `associations.service.remove-forms.spec.ts`: an association's deletion releases its spaces' posters.
+- Frontend:
+  - `refusals.test.ts` puts a sentence on every new code.
+  - `exportLabels.test.ts` checks every word the server requires.
+  - `spaceSettings.test.ts` checks that the settings bar never sends the poster.
+
+**Seen at 390, 1280 and 200 % text: owed by WP-B7.**
+
+**OWED BEFORE THE FIRST RELEASE: the privacy policy (`routes/legal/privacy`) says nothing about
+bookings yet**, while C17 is its register row - the two are changed together. Not written in WP-B6:
+it is a public legal text, for the user to read before it ships.

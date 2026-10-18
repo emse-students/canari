@@ -18,7 +18,7 @@ export const ORGANISER_REFUSAL_CODES = [
   'time-zone',
   'step-shape',
   'quota-pair',
-  'file-question-not-yet',
+  'export-labels',
   'item-id',
   'audience-invalid',
   'unknown-account',
@@ -66,6 +66,15 @@ export const BOOKER_REFUSAL_CODES = [
   'withdrawal-delay',
   'bookings-inside-block',
   'block-not-found',
+  'file-question',
+  'file-empty',
+  'file-too-large',
+  'file-type',
+  'files-pending',
+  'file-not-yours',
+  'file-answer',
+  'file-not-found',
+  'file-purged',
 ] as const;
 
 export type BookerRefusalCode = (typeof BOOKER_REFUSAL_CODES)[number];
@@ -84,8 +93,8 @@ function sentenceFor(code: string, count: number): string | null {
       return m.bookings_refusal_step_shape();
     case 'quota-pair':
       return m.bookings_refusal_quota_pair();
-    case 'file-question-not-yet':
-      return m.bookings_refusal_file_question();
+    case 'export-labels':
+      return m.bookings_refusal_export();
     case 'item-id':
     case 'audience-invalid':
       return m.bookings_refusal_questions();
@@ -170,6 +179,34 @@ function bookerSentenceFor(code: string, count: number): string | null {
       return m.bookings_refusal_inside_block({ count });
     case 'block-not-found':
       return m.bookings_refusal_block_not_found();
+    default:
+      return fileSentenceFor(code);
+  }
+}
+
+/** A FILE answer's refusals (WP-B6): its upload, its citation in a booking, its download. */
+function fileSentenceFor(code: string): string | null {
+  switch (code) {
+    // The question is no longer a FILE question: the space changed under the open sheet.
+    case 'file-question':
+      return m.bookings_refusal_space_changed();
+    case 'file-empty':
+      return m.bookings_refusal_file_empty();
+    case 'file-too-large':
+      return m.form_file_error_size();
+    case 'file-type':
+      return m.form_file_error_type();
+    case 'files-pending':
+      return m.bookings_refusal_files_pending();
+    // A file id this booking may not cite (not the uploader's, another question's, over a day old)
+    // or an answer that is not a file id: either way the file has to be picked again.
+    case 'file-not-yours':
+    case 'file-answer':
+      return m.bookings_refusal_file_not_yours();
+    case 'file-not-found':
+      return m.bookings_refusal_file_not_found();
+    case 'file-purged':
+      return m.form_answer_file_deleted();
     default:
       return null;
   }

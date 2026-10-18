@@ -34,12 +34,6 @@
      * there is no form id to attach an upload to yet.
      */
     imageUploadFn?: (file: File) => Promise<string>;
-    /**
-     * Question types this screen cannot take, left out of the picker. Bookings leave out `file`
-     * until WP-B6 gives them a file storage and purge: the server refuses it
-     * (`file-question-not-yet`), so offering it would only lead to a refusal.
-     */
-    withoutTypes?: readonly string[];
   }
 
   let {
@@ -49,10 +43,7 @@
     tiers = [],
     formations = [],
     imageUploadFn,
-    withoutTypes = [],
   }: Props = $props();
-
-  const offeredTypes = $derived(QUESTION_TYPES.filter((t) => !withoutTypes.includes(t.value)));
 
   let dragIndex = $state(-1);
   let dropIndex = $state(-1);
@@ -173,7 +164,7 @@
           {m.form_question_type_picker_label()}
         </p>
         <div class="grid grid-cols-2 gap-1.5 sm:grid-cols-4">
-          {#each offeredTypes as qtype (qtype.value)}
+          {#each QUESTION_TYPES as qtype (qtype.value)}
             {@const Icon = qtype.Icon}
             <button
               type="button"

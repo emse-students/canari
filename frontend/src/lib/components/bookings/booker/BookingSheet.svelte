@@ -6,7 +6,13 @@
   import FormQuestion from '$lib/components/forms/FormQuestion.svelte';
   import Select from '$lib/components/ui/Select.svelte';
   import Toggle from '$lib/components/ui/Toggle.svelte';
-  import { book, type BookerResource, type BookerSpace, type SlotUnit } from '$lib/bookings/api';
+  import {
+    book,
+    uploadBookingAnswerFile,
+    type BookerResource,
+    type BookerSpace,
+    type SlotUnit,
+  } from '$lib/bookings/api';
   import { formatBookingRange, formatTimeRange } from '$lib/bookings/grid';
   import { describeBookingRefusal, outcomeUnknown } from '$lib/bookings/refusals';
   import {
@@ -63,6 +69,9 @@
   let selections = $state(initialSelections(untrack(() => space.items)));
   let submitting = $state(false);
   let error = $state('');
+  /** The FILE questions uploading now, by item id: the booking waits for every file to have its id. */
+  let uploads = $state<Record<string, boolean>>({});
+  const uploading = $derived(Object.values(uploads).some(Boolean));
 
   const shown = $derived(visibleItems(items, selections, hidden));
   const first = $derived(run[0]);
@@ -88,7 +97,7 @@
   }
 
   async function submit() {
-    if (submitting) return;
+    if (submitting || uploading) return;
     error = '';
     if (onBehalf && !holder) {
       error = m.bookings_sheet_holder_missing();
@@ -254,6 +263,11 @@
             bind:value={selections[item.id]}
             disabled={submitting}
             formId={`booking-${space.id}`}
+            uploadFile={(itemId, file, transport) =>
+              uploadBookingAnswerFile(space.id, itemId, file, transport)}
+            fileHint={m.bookings_file_hint({ days: space.retentionDays })}
+            fileTooManyError={m.bookings_refusal_files_pending()}
+            onUploadingChange={(u) => (uploads[item.id] = u)}
           />
         {/each}
       </div>
@@ -289,7 +303,7 @@
       {/if}
       <button
         type="button"
-        disabled={submitting}
+        disabled={submitting || uploading}
         onclick={submit}
         class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
       >
