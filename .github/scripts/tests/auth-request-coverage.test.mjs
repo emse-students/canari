@@ -79,7 +79,7 @@ const PUBLIC_BY_INTENT = [
   },
   {
     route: 'GET /bookings/:bookingId/calendar.ics',
-    why: 'one booking opened by a calendar app, which carries no session; authorised by the HMAC the booking\'s own people were handed (booking-calendar.ts), and it never carries answers, private texts or names',
+    why: 'one booking opened by a calendar app, which carries no session; authorised by an HMAC bound to one of the booking\'s people, re-checked at every fetch (booking-calendar.ts); it carries the names of the place, which may be a person\'s (D10), never answers, private texts or the holder\'s or participants\' names',
   },
   {
     route: 'GET /forms/:id/calendar-link',

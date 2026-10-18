@@ -10,8 +10,10 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository, type EntityManager } from 'typeorm';
 import { AssociationsService } from '../associations/associations.service';
+import { Association } from '../associations/entities/association.entity';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { isDeadlock, isExclusionViolation } from '../common/pg-errors';
+import { frontendBaseUrl } from '../common/frontend-url';
 import { PricingFactsService } from '../pricing/pricing-facts.service';
 import { matchesCondition, needsProfile, type PricingFacts } from '../pricing/audience';
 import {
@@ -341,35 +343,81 @@ export class BookingsService {
   }
 
   /**
-   * The spaces a member may book from the Reservations page (D16, D31): every LISTED space whose
-   * audience (D6) admits them - or that they manage - by name, at most {@link LISTED_SPACES_LIMIT}.
-   * A 'link' space is never listed, whoever asks: it is reached by its link or QR code alone. The
-   * audience is judged here, per space, with the space's own association's facts - exactly as
-   * `assertMayUse` judges a read, so a listed space always opens.
+   * The spaces a member may book from the Reservations page (D16, D31), by name, at most
+   * {@link LISTED_SPACES_LIMIT} - the limit is the SQL's, so the page never reads more:
+   * - a LISTED space only: a 'link' space is never listed, whoever asks (the psychologist case);
+   * - an association space only while its association is not ARCHIVED;
+   * - a PERSONAL space only to its OWNER (D43): a person's free text is never published on the
+   *   whole school's page, and v1 has no report button (D21). Others reach it by link or QR code.
+   *
+   * The audience (D6) is judged here with the facts `assertMayUse` judges a read with, so a listed
+   * space always opens - but built ONCE for the page, never per space: the rights in one bulk
+   * question (`mayActOnAny`), the cotisations in one pass (`cotisationTiersByAssociation`), the
+   * profile in ONE core-service call, and only when a judged audience names a promo or a formation.
+   *
+   * IF THAT ONE CALL FAILS, the spaces whose audience needs the profile are left out - closed, as
+   * `assertMayUse` would refuse them - and the failure is logged; every other space is still
+   * listed. A 503 for the whole page would hide spaces that need nothing from core-service, and
+   * listing a promo-restricted space to someone it may not admit would open a page that refuses
+   * them. Opened by its link, such a space still answers by its own rule.
    */
   async listedSpaces(actor: Actor) {
     this.logger.debug(`[BOOKINGS] listedSpaces user=${actor.userId.slice(0, 8)}`);
-    const rows = await this.spaces.find({
-      where: { discoverability: 'listed' },
-      order: { name: 'ASC', id: 'ASC' },
-    });
-    const open: BookingSpace[] = [];
-    for (const space of rows) {
-      if (open.length >= LISTED_SPACES_LIMIT) break;
-      const canManage = await this.mayManage(space, actor);
-      if (
-        canManage ||
-        !space.audience ||
-        matchesCondition(space.audience, await this.factsFor(space, actor.userId))
-      ) {
-        open.push(space);
-      }
-    }
-    if (open.length === 0) return [];
-    const ids = open.map((s) => s.id);
+    const rows = await this.spaces
+      .createQueryBuilder('s')
+      .leftJoin(Association, 'a', 'a.id = s.associationId')
+      .where("s.discoverability = 'listed'")
+      .andWhere(
+        '((s.associationId IS NULL AND s.ownerId = :me) OR (s.associationId IS NOT NULL AND a.archived = false))',
+        { me: actor.userId }
+      )
+      .orderBy('s.name', 'ASC')
+      .addOrderBy('s.id', 'ASC')
+      .limit(LISTED_SPACES_LIMIT)
+      .getMany();
+    if (rows.length === 0) return [];
+
     const associationIds = [
-      ...new Set(open.flatMap((s) => (s.associationId ? [s.associationId] : []))),
+      ...new Set(rows.flatMap((s) => (s.associationId ? [s.associationId] : []))),
     ];
+    const managed = await this.associations.mayActOnAny(
+      actor.userId,
+      associationIds,
+      AssociationPermissionFlag.MANAGE_BOOKINGS,
+      { isGlobalAdmin: actor.isGlobalAdmin }
+    );
+    // A personal space here is the reader's own (the SQL above): they manage it.
+    const judged = rows.filter(
+      (s) => s.associationId !== null && !managed.has(s.associationId) && s.audience
+    );
+    const needProfile = judged.some((s) => needsProfile(s.audience));
+    const [profile, tiers] = await Promise.all([
+      this.pricingFacts.profileFor(actor.userId, needProfile).catch((e: unknown) => {
+        this.logger.error(
+          `[BOOKINGS] listedSpaces: profile unavailable, the spaces whose audience needs it are ` +
+            `left out of this answer: ${e instanceof Error ? e.message : String(e)}`
+        );
+        return null;
+      }),
+      judged.length
+        ? this.pricingFacts.cotisationTiersByAssociation(actor.userId, [
+            ...new Set(judged.map((s) => s.associationId as string)),
+          ])
+        : Promise.resolve(new Map<string, (string | null)[]>()),
+    ]);
+    const open = rows.filter((s) => {
+      if (!judged.includes(s)) return true;
+      if (needsProfile(s.audience) && profile === null) return false;
+      return matchesCondition(s.audience!, {
+        promo: profile?.promo ?? null,
+        formation: profile?.formation ?? null,
+        cotisationTiers: tiers.get(s.associationId as string) ?? [],
+        answers: {},
+      });
+    });
+    if (open.length === 0) return [];
+
+    const ids = open.map((s) => s.id);
     const [counts, names]: [{ spaceId: string; n: number }[], { id: string; name: string }[]] =
       await Promise.all([
         this.resources.manager.query(
@@ -396,45 +444,70 @@ export class BookingsService {
   }
 
   /**
-   * The signed `.ics` link of one booking (D13), for its PEOPLE and its organiser only - the same
-   * relation that reads its names (`relationTo`). Who is judged before the state, as in `cancel`:
-   * a stranger learns `not-yours` and nothing else. A cancelled booking has no link.
+   * Whether `userId` is one of a booking's PEOPLE or its organiser - the relation that reads its
+   * names (`relationTo`) - judged with NO global-admin override: the one test both a link's issue
+   * and every fetch of it make, so a link is never handed to someone its fetch would refuse.
+   */
+  private async isOfBooking(booking: Booking, userId: string) {
+    const resource = await this.resources.findOneByOrFail({ id: booking.resourceId });
+    const space = await this.loadSpace(resource.spaceId);
+    const people = await this.participants.findBy({ bookingId: booking.id });
+    const manages = await this.mayManage(space, { userId, isGlobalAdmin: false });
+    const relation = relationTo(booking, people, userId, manages, resource.linkedUserId);
+    return { related: relation !== 'other', resource, space };
+  }
+
+  /**
+   * The signed `.ics` link of one booking (D13) for the actor, if they are one of its people or its
+   * organiser (`isOfBooking`). Who is judged before the state, as in `cancel`: a stranger learns
+   * `not-yours` and nothing else. A cancelled booking has no link. The link names the actor
+   * (`booking-calendar.ts`): it dies when they stop being of the booking.
    */
   async calendarLink(bookingId: string, actor: Actor) {
     this.logger.debug(`[BOOKINGS] calendarLink booking=${bookingId}`);
     const booking = await this.bookings.findOneBy({ id: bookingId });
     if (!booking) throw new ForbiddenException({ code: 'not-yours' });
-    const resource = await this.resources.findOneByOrFail({ id: booking.resourceId });
-    const space = await this.loadSpace(resource.spaceId);
-    const people = await this.participants.findBy({ bookingId });
-    const relation = relationTo(
-      booking,
-      people,
-      actor.userId,
-      await this.mayManage(space, actor),
-      resource.linkedUserId
-    );
-    if (relation === 'other') throw new ForbiddenException({ code: 'not-yours' });
+    if (!(await this.isOfBooking(booking, actor.userId)).related) {
+      throw new ForbiddenException({ code: 'not-yours' });
+    }
     if (booking.cancelledAt) throw new ConflictException({ code: 'already-cancelled' });
-    return { path: bookingCalendarPath(bookingId) };
+    return { path: bookingCalendarPath(bookingId, actor.userId) };
   }
 
   /**
-   * The `.ics` a calendar app fetches with NO identity (`booking-calendar.ts`). The signature is
-   * checked BEFORE anything is read, so a wrong one learns nothing - not even whether the booking
-   * exists. A cancelled booking is 410: a stale link cannot write it back into an agenda.
+   * The `.ics` a calendar app fetches with NO identity (`booking-calendar.ts`). The signature over
+   * the booking AND the recipient `u` is checked BEFORE anything is read, so a wrong one learns
+   * nothing - not even whether the booking exists. Then the recipient must STILL have an account
+   * and still be of the booking (`calendar-revoked`): a participant who withdrew, an account
+   * unlinked from the resource, an organiser who lost the right, an erased account (its row gone,
+   * its ids tombstoned) - their links stop, past bookings included. A cancelled booking is 410: a
+   * stale link cannot write it back into an agenda.
    */
-  async calendarIcs(bookingId: string, sig: string | undefined): Promise<string> {
+  async calendarIcs(
+    bookingId: string,
+    recipientId: string | undefined,
+    sig: string | undefined
+  ): Promise<string> {
     this.logger.debug(`[BOOKINGS] calendarIcs booking=${bookingId}`);
-    if (!bookingCalendarSignatureMatches(bookingId, sig)) {
+    if (!bookingCalendarSignatureMatches(bookingId, recipientId, sig)) {
       this.logger.warn(`[BOOKINGS] calendarIcs: a signature was refused`);
       throw new ForbiddenException({ code: 'calendar-signature' });
     }
+    const recipient = recipientId as string;
     const booking = await this.bookings.findOneBy({ id: bookingId });
     if (!booking) throw new NotFoundException({ code: 'booking-not-found' });
+    const [account]: unknown[] = await this.bookings.manager.query(
+      `SELECT 1 FROM users WHERE id = $1`,
+      [recipient]
+    );
+    const { related, resource, space } = await this.isOfBooking(booking, recipient);
+    if (!account || !related) {
+      this.logger.log(
+        `[BOOKINGS] calendarIcs: a link outlived its recipient's place in booking=${bookingId.slice(0, 8)} account=${account ? 'present' : 'gone'}`
+      );
+      throw new ForbiddenException({ code: 'calendar-revoked' });
+    }
     if (booking.cancelledAt) throw new GoneException({ code: 'booking-cancelled' });
-    const resource = await this.resources.findOneByOrFail({ id: booking.resourceId });
-    const space = await this.loadSpace(resource.spaceId);
     return bookingIcs({
       bookingId,
       spaceId: space.id,
@@ -442,7 +515,7 @@ export class BookingsService {
       resourceName: resource.name,
       startsAt: booking.startsAt,
       endsAt: booking.endsAt,
-      frontendBaseUrl: process.env.FRONTEND_URL || 'http://localhost',
+      frontendBaseUrl: frontendBaseUrl(),
     });
   }
 
