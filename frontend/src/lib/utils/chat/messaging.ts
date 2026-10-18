@@ -313,10 +313,15 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
     // NO ANSWER WITH THE LINK UP, OR A GATEWAY'S 5xx, IS NOT A REFUSAL. The request may have reached
     // the server (a 502/504 may come from a proxy AFTER the social service stored the row), and no
     // event is known to change the answer, so the row is `unconfirmed` and its Retry - the author's
-    // gesture - repeats it under the same client id, which the server answers with its stored row.
+    // gesture - repeats it under the same client id. A server carrying migration 090 answers that
+    // with its stored row; an older one posts it again, so the log says which one this page knows.
     if (status === null || status >= 500) {
       deps.log(
-        `[SEND] channel send ${messageId.slice(0, 8)}… OUTCOME UNKNOWN (status=${status ?? 'none'}): unconfirmed, its Retry is safe (the server answers a repeat with its row): ${String(error)}`
+        `[SEND] channel send ${messageId.slice(0, 8)}… OUTCOME UNKNOWN (status=${status ?? 'none'}): unconfirmed, its Retry repeats it under the same client id - ${
+          salonRepeatIsSafe()
+            ? 'this server has echoed a client id, so it answers a repeat with its row'
+            : 'NOT proven safe: a server without migration 090 would post it a second time'
+        }: ${String(error)}`
       );
       deps.patchSalonEcho(send.conversationKey, messageId, {
         kind: 'state',

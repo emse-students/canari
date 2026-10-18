@@ -4380,7 +4380,24 @@ export class ChannelService {
     // insert - so no instant exists where a repeat of this message finds neither the row nor its
     // tombstone and posts it again. A row with no client id (older than 090, a system notice) has
     // nothing a repeat could name: it takes no lock and writes no tombstone.
-    await this.messageRepo.manager.transaction(async (tx) => {
+    //
+    // THE ROW IS LOCKED FIRST, and that is what keeps a tombstone from outliving an account erasure.
+    // The erasure deletes the author's messages, then its tombstones, in one transaction that takes
+    // no client-id lock. Without the row lock, a delete arriving while that transaction is open read
+    // the still-committed row, wrote its tombstone (invisible to the erasure's statement), then
+    // waited on the erasure's row lock and committed AFTER it - an erased account's id left behind.
+    // `FOR UPDATE` waits for the erasure instead and then finds no row, so the INSERT ... SELECT
+    // below writes nothing; and when the delete locks first, the erasure's DELETE waits for it and
+    // its tombstone statement, a later snapshot, sees and removes the committed tombstone.
+    // LOCK ORDER: the message row, then the client id's advisory lock. A send takes the advisory
+    // lock alone and inserts a NEW row (a duplicate is refused at once, never waited on: the unique
+    // check does not wait on a row lock), and the erasure takes row locks alone - no cycle.
+    const removed = await this.messageRepo.manager.transaction(async (tx) => {
+      const locked: unknown[] = await tx.query(
+        `SELECT 1 FROM channel_messages WHERE id = $1 AND "channelId" = $2 FOR UPDATE`,
+        [messageId, channelId]
+      );
+      if (locked.length === 0) return false;
       await tx.query(
         `SELECT ${clientIdLockSql('"authorId"', '"channelId"', '"clientMessageId"')}
            FROM channel_messages
@@ -4395,7 +4412,15 @@ export class ChannelService {
         [messageId, channelId]
       );
       await tx.getRepository(ChannelMessage).delete({ id: messageId, channelId });
+      return true;
     });
+    if (!removed) {
+      // Read above, gone once its lock was granted: an account erasure or another delete removed it
+      // meanwhile. Nothing was written; the frame below still tells the salon it is gone.
+      this.logger.log(
+        `[CHANNEL] message ${messageId} channel=${channelId} was removed concurrently - no tombstone written`
+      );
+    }
 
     const audience = await this.channelAudience(channel);
     await this.redis.publishChannelEvent(

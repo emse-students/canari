@@ -43,6 +43,7 @@ import {
   resetSalonRepeatProofForTests,
 } from '$lib/utils/chat/salonRepeatProof';
 import { ChannelApiError } from '$lib/services/ChannelService';
+import { deliverOwedSalonWrites, isSalonWriteOwed } from '$lib/utils/chat/salonOwed';
 
 /** An answer of a server carrying migration 090: it echoes the client id, so a repeat is safe. */
 function proveRepeatsSafe() {
@@ -309,9 +310,12 @@ describe('a repeat nobody asked for waits for the server to prove it safe', () =
     const clientId = rows(ctx)[0].id;
     expect(rows(ctx)[0].status).toBe('unconfirmed');
 
-    // The reconnect alone sends nothing: the old server would post it a second time.
+    // The reconnect alone sends nothing: the old server would post it a second time. Proven by
+    // STATE rather than by waiting a while: the send is not owed to the reconnect, and the
+    // reconnect's delivery (awaited here, so whatever it would send has been sent) finds nothing.
+    expect(isSalonWriteOwed(`send:${clientId}`)).toBe(false);
     connectivity.notifyServerReachable();
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await deliverOwedSalonWrites();
     expect(sendMock).toHaveBeenCalledTimes(1);
 
     sendMock.mockResolvedValueOnce({ id: 'srv-proven' });
