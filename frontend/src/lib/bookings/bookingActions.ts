@@ -27,6 +27,7 @@ async function confirmed(
     showToast(done, 'info');
     return true;
   } catch (e) {
+    Log.i('BOOKINGS', `${what} failed: ${String(e)}`);
     showToast(describeBookingRefusal(e, confirmLabel), 'error');
     return false;
   }

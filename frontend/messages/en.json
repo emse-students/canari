@@ -3891,5 +3891,5 @@
   "bookings_time_next_day": "(next day)",
   "bookings_sheet_window_note": "By this device's clock this range cannot be booked now; the server decides when you send it.",
   "bookings_sheet_outcome_unknown": "The answer did not arrive, so the booking may or may not have been made. The grid and your bookings were read again: check them before trying again.",
-  "bookings_block_outcome_unknown": "The answer did not arrive, so the block may or may not have been made. The grid was read again: check it before trying again."
+  "bookings_block_outcome_unknown": "The answer did not arrive, so the block may or may not have been made. The grid was read again and shows whether it exists: check it before blocking again."
 }

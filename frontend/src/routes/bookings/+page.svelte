@@ -68,6 +68,7 @@
       bookings = await myBookings();
       nowMs = Date.now();
     } catch (e) {
+      Log.i('BOOKINGS', `my bookings read failed: ${String(e)}`);
       bookingsError = describeBookingRefusal(e, m.common_load_error());
     }
   }
@@ -77,6 +78,7 @@
     try {
       spaces = await listSpaces();
     } catch (e) {
+      Log.i('BOOKINGS', `spaces read failed: ${String(e)}`);
       spacesError = describeBookingRefusal(e, m.common_load_error());
     }
   }

@@ -18,7 +18,7 @@ import { m } from '$lib/paraglide/messages';
 import { getLocale } from '$lib/paraglide/runtime';
 import type { BookerSpace, ResourceSlots, SlotUnit } from './api';
 import { bookingWindowRefusal, type WindowRefusal } from './bookingWindow';
-import { dayCount, localDate, localTime, offsetMs } from './zonedTime';
+import { addDays, dayCount, localDate, localTime, offsetMs } from './zonedTime';
 
 export type { WindowRefusal } from './bookingWindow';
 
@@ -187,6 +187,35 @@ export function gridRows(
   return [...rows.values()]
     .sort((a, b) => a.startMs - b.startMs || a.endMs - b.endMs)
     .map((row) => ({ ...row, label: formatTimeRange(row.startMs, row.endMs, zone) }));
+}
+
+/**
+ * The dates to read for a view anchored on `anchor` and showing `days` days: FROM THE DAY BEFORE.
+ * The server keeps a unit in a read only when its WINDOW's date is in the range (see the header),
+ * so the 00:30 of a "Friday 22:00 to 02:00" window, still to come at Saturday 00:15, is in no read
+ * that starts on Saturday. A window crosses at most one midnight (WP-B2), so one day back is enough.
+ */
+export function slotsReadRange(anchor: string, days: number): { from: string; to: string } {
+  return { from: addDays(anchor, -1), to: addDays(anchor, days - 1) };
+}
+
+/**
+ * The window date the grid opens on: the date of a window that started before `today` and is
+ * still running at `nowMs` (a night window after midnight), else `today`. The grid lays out a
+ * window date (`gridRows`), so opening on `today` after midnight would hide the rest of the night.
+ */
+export function gridOpeningDate(
+  slots: readonly ResourceSlots[],
+  today: string,
+  nowMs: number
+): string {
+  let opening = today;
+  for (const resource of slots) {
+    for (const unit of resource.units) {
+      if (unit.date < opening && unit.endMs > nowMs) opening = unit.date;
+    }
+  }
+  return opening;
 }
 
 /** A resource's units in time order (the server's order is by window; this does not rely on it). */

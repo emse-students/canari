@@ -8,7 +8,7 @@
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import { book, type BookerResource, type BookerSpace, type SlotUnit } from '$lib/bookings/api';
   import { formatBookingRange, formatTimeRange } from '$lib/bookings/grid';
-  import { describeBookingRefusal } from '$lib/bookings/refusals';
+  import { describeBookingRefusal, outcomeUnknown } from '$lib/bookings/refusals';
   import {
     firstMissingAnswer,
     initialSelections,
@@ -114,9 +114,10 @@
       onClose(true);
     } catch (e) {
       const code = refusalCode(e);
-      if (code === null) {
-        // No answer the server typed - a timeout, a lost connection, a gateway error: the booking
-        // may have been written before the answer was lost. Say so, and show what is true now.
+      if (outcomeUnknown(e)) {
+        // Nobody answered, or a 5xx with no code - a timeout, a lost connection, a gateway error:
+        // the booking may have been written before the answer was lost. Say so, and show what is
+        // true now.
         Log.i('BOOKINGS', `booking outcome unknown: ${String(e)}`);
         error = m.bookings_sheet_outcome_unknown();
         await onReread();

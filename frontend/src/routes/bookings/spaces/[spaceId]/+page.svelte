@@ -37,8 +37,10 @@
     bookingUnitLimit,
     formatDay,
     freeRunFrom,
+    gridOpeningDate,
     gridRows,
     planning,
+    slotsReadRange,
     unitsInOrder,
     windowRefusal,
     zoneDiffersFromDevice,
@@ -104,6 +106,8 @@
   let qrOpen = $state(false);
 
   const today = $derived(space ? localDate(nowMs, space.timeZone) : '');
+  /** Where "today" leads on the grid: a night window still running after midnight, else today. */
+  const homeDate = $derived(today ? gridOpeningDate(slots, today, nowMs) : '');
   const rows = $derived(
     space
       ? gridRows(
@@ -170,8 +174,12 @@
       nowMs = Date.now();
       date = localDate(nowMs, loadedSpace.timeZone);
       await Promise.all([readMine(), ensureSlots(true)]);
+      if (id !== spaceId) return;
+      // Every read starts the day before, so a night window still running is in hand.
+      date = gridOpeningDate(slots, date, nowMs);
     } catch (e) {
       if (id !== spaceId) return;
+      Log.i('BOOKINGS', `space read failed space=${id}: ${String(e)}`);
       loadError = describeBookingRefusal(e, m.common_load_error());
     } finally {
       if (id === spaceId) loading = false;
@@ -197,8 +205,8 @@
   /** The dates the current view shows, read when they are not already (or `force`d after a write). */
   async function ensureSlots(force = false) {
     if (!space) return;
-    const from = view === 'planning' ? today : date;
-    const to = addDays(from, (view === 'planning' ? PLANNING_DAYS : GRID_DAYS) - 1);
+    const { from, to } =
+      view === 'planning' ? slotsReadRange(today, PLANNING_DAYS) : slotsReadRange(date, GRID_DAYS);
     const span = view === 'planning' ? to : date;
     if (!force && loaded && loaded.from <= from && span <= loaded.to) return;
     slotsError = '';
@@ -207,6 +215,7 @@
       loaded = { from, to };
       nowMs = Date.now();
     } catch (e) {
+      Log.i('BOOKINGS', `slots read failed ${from}..${to}: ${String(e)}`);
       slotsError = describeBookingRefusal(e, m.common_load_error());
     }
   }
@@ -222,9 +231,11 @@
     void ensureSlots();
   }
 
-  function goToday() {
+  /** Back to today - or to the night window still running, which belongs to yesterday's grid. */
+  async function goToday() {
     date = today;
-    void ensureSlots();
+    await ensureSlots();
+    date = gridOpeningDate(slots, today, nowMs);
   }
 
   /**
@@ -365,11 +376,11 @@
             <p class="text-text-main truncate text-sm font-bold first-letter:uppercase">
               {formatDay(date, true)}
             </p>
-            {#if date !== today}
+            {#if date !== homeDate}
               <button
                 type="button"
                 class="text-xs font-semibold text-amber-700 hover:underline dark:text-amber-400"
-                onclick={goToday}
+                onclick={() => void goToday()}
               >
                 {m.bookings_day_today()}
               </button>

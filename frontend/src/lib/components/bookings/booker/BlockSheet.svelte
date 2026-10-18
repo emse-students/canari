@@ -5,12 +5,13 @@
   import Toggle from '$lib/components/ui/Toggle.svelte';
   import {
     addBlock,
+    BookingsApiError,
     type BookerResource,
     type BookerSpace,
     type SlotUnit,
   } from '$lib/bookings/api';
   import { formatBookingRange, formatTimeRange } from '$lib/bookings/grid';
-  import { describeBookingRefusal } from '$lib/bookings/refusals';
+  import { describeBookingRefusal, outcomeUnknown } from '$lib/bookings/refusals';
   import { m } from '$lib/paraglide/messages';
   import { showToast } from '$lib/stores/toast.svelte';
   import { refusalCode } from '$lib/utils/apiRefusal';
@@ -22,12 +23,16 @@
    * reader picks how far the block goes, each length naming its end's day when it is not the
    * start's. Blocking a free range is immediate (D29); a range a booking took meanwhile is refused
    * by the server (`bookings-inside-block`), which means the grid is stale: it is re-read.
+   *
+   * An unknown outcome CLOSES the sheet once the grid is re-read: the server does not refuse a block
+   * over another block, so a second tap could write the same block twice. The grid shows whether
+   * the first one landed.
    */
   interface Props {
     space: BookerSpace;
     resource: BookerResource;
     run: SlotUnit[];
-    /** Re-reads the grid, the sheet staying open. */
+    /** Re-reads the grid and the reader's bookings. */
     onReread: () => Promise<void>;
     onClose: (changed: boolean) => void;
   }
@@ -65,16 +70,22 @@
       onClose(true);
     } catch (e) {
       const code = refusalCode(e);
-      if (code === null) {
-        // No typed answer: the block may have been written before the answer was lost.
+      if (outcomeUnknown(e)) {
+        // Nobody answered, or a 5xx with no code: the block may have been written before the
+        // answer was lost. Re-read, then CLOSE - a retry from this sheet could block twice.
         Log.i('BOOKINGS', `block outcome unknown: ${String(e)}`);
-        error = m.bookings_block_outcome_unknown();
         await onReread();
+        showToast(m.bookings_block_outcome_unknown(), 'error');
+        onClose(false);
         return;
       }
       error = describeBookingRefusal(e, m.bookings_block_action());
       if (code === 'bookings-inside-block' || code === 'blocked') {
-        Log.i('BOOKINGS', `the block's range went stale: ${code}`);
+        const ids = e instanceof BookingsApiError ? e.bookingIds : [];
+        Log.i(
+          'BOOKINGS',
+          `the block's range went stale: ${code} bookings=${ids.map((id) => id.slice(0, 8)).join(',')}`
+        );
         showToast(error, 'error');
         onClose(true);
       }

@@ -624,9 +624,19 @@ id to the organiser and the linked account, not to a booker.
   window is drawn "Non réservable", redrawn every minute and at the opening instant, and it STILL
   OPENS - the sheet says the device thinks it is not bookable, and the server answers. Like the
   server, only the START of a range is judged: a run of steps is never trimmed by the window.
-- **AN ANSWER THAT NEVER CAME IS SAID AS SUCH**: a booking or a block whose call fails with no
-  typed code (a timeout, a lost connection) may have been written - the sheet says the outcome is
-  unknown and re-reads the grid and my bookings before anything is tried again.
+- **A NIGHT WINDOW STILL RUNNING AFTER MIDNIGHT STAYS IN VIEW** (review of #2035). The server
+  keeps a unit in `spaceSlots(from, to)` when its WINDOW's date is in the range, so every read
+  starts THE DAY BEFORE the date shown (`slotsReadRange`), and the grid opens - and "today" leads -
+  on that window's date while it runs (`gridOpeningDate`). At Saturday 00:15 the 00:30 of a Friday
+  22:00-02:00 window is on Friday's grid, marked the next day, and first in the planning.
+- **AN ANSWER THAT NEVER CAME IS SAID AS SUCH**: a booking or a block whose call reached nobody
+  (a timeout, a lost connection) or came back 5xx with no code may have been written
+  (`outcomeUnknown`); any 4xx, a validation 400 with no code included, is a refusal. The booking
+  sheet says the outcome is unknown and re-reads the grid and my bookings. **The block sheet
+  re-reads and CLOSES**: the server does not refuse a block over another block (a P2 in
+  [backlog](backlog.md)), so a second tap from the open sheet could write the same block twice;
+  the grid shows whether it landed. Every failed read or gesture is logged, transport failures
+  included.
 - **"Add to my calendar" asks for its signed link ON THE TAP** (`bookingIcsUrl`), never once per
   card on screen; a browser tab is opened inside the tap and pointed at it.
 - **A refusal that means the grid is stale** (`slot-taken`, `blocked`, `space-changed`) closes the
@@ -650,6 +660,7 @@ scrolls in its box), the booking sheet with steps, people and questions, the det
 after the review, a fall-back night window on the grid and the block lengths over it. Not yet
 seen against a running API, nor on a phone - WP-B7's readings. **Proof**: `grid.test.ts` (a
 unit's day, `24:00`, the next-day and further-day ends, both DST nights, a night window's rows,
-the free run, the planning), `bookingWindow.contract.test.ts` and the server's
+the free run, the planning, a night window read at Saturday 00:15), `BlockSheet.svelte.test.ts`
+(an unknown outcome closes, a 400 with no code does not), `bookingWindow.contract.test.ts` and the server's
 `booking-window.spec.ts` (one contract), `redrawClock.test.ts`, `refusals.test.ts` (every booker
 code worded), the dashboard's row order.

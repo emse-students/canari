@@ -176,6 +176,16 @@ function bookerSentenceFor(code: string, count: number): string | null {
 }
 
 /**
+ * Whether a failed WRITE may still have been written: nobody answered (a transport failure, an
+ * abort), or a 5xx came back with no code (a gateway timeout, a crash after the commit). A 4xx is
+ * a refusal whatever its body - a validation 400 with no code included - so nothing was written.
+ */
+export function outcomeUnknown(error: unknown): boolean {
+  const status = refusalStatus(error);
+  return status === null || (status >= 500 && refusalCode(error) === null);
+}
+
+/**
  * What a refused bookings call reads as. `action` names the gesture for the status-only
  * sentences ("Enregistrer", "Supprimer"), as `describeApiRefusal` words them.
  */

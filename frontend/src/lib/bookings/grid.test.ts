@@ -5,8 +5,10 @@ import {
   bookingUnitLimit,
   formatTimeRange,
   freeRunFrom,
+  gridOpeningDate,
   gridRows,
   planning,
+  slotsReadRange,
   unitDay,
   windowRefusal,
 } from './grid';
@@ -172,5 +174,66 @@ describe('planning', () => {
     );
     expect(rows[0].units.map((u) => localTime(u.startMs, PARIS))).toEqual(['10:00']);
     expect(rows[1].units).toEqual([]);
+  });
+});
+
+describe('a night window still running after midnight (Saturday 00:15, Paris)', () => {
+  // Friday 2026-11-06 22:00 to Saturday 02:00 in Paris (UTC+1): one window, stamped Friday by the
+  // server, in steps of 30 min. The member opens the page on Saturday at 00:15.
+  const friday = '2026-11-06';
+  const saturday = '2026-11-07';
+  const windowStart = at('2026-11-06T21:00:00Z');
+  const night: SlotUnit[] = Array.from({ length: 8 }, (_, i) => ({
+    date: friday,
+    startMs: windowStart + i * 30 * 60_000,
+    endMs: windowStart + (i + 1) * 30 * 60_000,
+    state: 'free' as const,
+  }));
+  const saturdayMorning = {
+    date: saturday,
+    startMs: at('2026-11-07T09:00:00Z'),
+    endMs: at('2026-11-07T09:30:00Z'),
+    state: 'free' as const,
+  };
+  /** The server's `spaceSlots(from, to)`: a unit is kept when its WINDOW's date is in the range. */
+  const serverRead = ({ from, to }: { from: string; to: string }): ResourceSlots[] => [
+    {
+      resourceId: 'room',
+      units: [...night, saturdayMorning].filter((u) => from <= u.date && u.date <= to),
+    },
+  ];
+  const now = at('2026-11-06T23:15:00Z'); // Saturday 00:15 in Paris
+  const none = { opensAt: null, minNoticeMinutes: null, horizonDays: null };
+  const halfPastMidnight = at('2026-11-06T23:30:00Z');
+
+  it('reads from the day before, so the 00:30 unit is in hand', () => {
+    expect(slotsReadRange(saturday, 14)).toEqual({ from: friday, to: '2026-11-20' });
+    const read = serverRead(slotsReadRange(saturday, 7));
+    expect(read[0].units.some((u) => u.startMs === halfPastMidnight)).toBe(true);
+    // The read that started on Saturday lost it.
+    const old = serverRead({ from: saturday, to: '2026-11-13' });
+    expect(old[0].units.some((u) => u.startMs === halfPastMidnight)).toBe(false);
+  });
+
+  it("opens the grid on Friday's window, whose rest of the night is drawn as the next day", () => {
+    const read = serverRead(slotsReadRange(saturday, 7));
+    const opening = gridOpeningDate(read, saturday, now);
+    expect(opening).toBe(friday);
+    const rows = gridRows(['room'], read, opening, PARIS);
+    expect(rows.find((r) => r.startMs === halfPastMidnight)).toMatchObject({
+      label: '00:30 - 01:00',
+      nextDay: true,
+    });
+  });
+
+  it('lists the 00:30 unit first in the planning, the 00:00 one having started', () => {
+    const read = serverRead(slotsReadRange(saturday, 14));
+    const [room] = planning(none, ['room'], read, now, 2);
+    expect(room.units.map((u) => localTime(u.startMs, PARIS))).toEqual(['00:30', '01:00']);
+  });
+
+  it('opens on today once the night window has ended', () => {
+    const read = serverRead(slotsReadRange(saturday, 7));
+    expect(gridOpeningDate(read, saturday, at('2026-11-07T01:00:00Z'))).toBe(saturday);
   });
 });
