@@ -753,7 +753,18 @@ A blob the media service refuses to delete keeps its row, which is retried next 
   - `exportLabels.test.ts` checks every word the server requires.
   - `spaceSettings.test.ts` checks that the settings bar never sends the poster.
 
-**Seen at 390, 1280 and 200 % text: owed by WP-B7.**
+**WP-B7, 2026-10-18.**
+- **The live API was run against the LOCAL estate** (nginx, migration 091 applied twice over the synchronized schema) and every row answered as specified:
+  - refusals: `file-question`, `file-type` on a text file named `.pdf`, `file-not-yours` (another's file, and one file cited twice), `not-manager` to a booker downloading or exporting, `export-labels`;
+  - the organiser's slot carried `fileNames`, and the booker's carried no answers;
+  - the download was byte-identical, with `Content-Disposition`;
+  - the export returned an `.xlsx`;
+  - the poster was set, read back and removed;
+  - deleting the space left its files unsent (`bookingId` NULL) for the purge.
+- **Screens, in Chrome with an override, at 390, at 1280 and at 200 % text.** This covered the editor (poster field, FILE question, Data section with the export), the booking sheet with a FILE question, and the detail with a file answer. Two defects were found and fixed:
+  - the question editor said a FILE question's file is read by "the form's managers, see Advanced settings" (`FormQuestionsSection` now takes `fileHint`);
+  - a long file name broke letter by letter at 200 % text (the whole row is now the download, the name cut, the full name its title).
+- **NOT SEEN**: a real poster picked, encrypted and decrypted on screen, and a real file picked on a phone - both need a signed-in device.
 
 **OWED BEFORE THE FIRST RELEASE: the privacy policy (`routes/legal/privacy`) says nothing about
 bookings yet**, while C17 is its register row - the two are changed together. Not written in WP-B6:

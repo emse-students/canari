@@ -41,7 +41,11 @@ export class BookingPosterMedia {
         `[BOOKINGS] poster of space=${space.id.slice(0, 8)} NOT classified '${cls}' - it keeps the class it was uploaded with`
       );
     } else {
-      this.logger.log(`[BOOKINGS] poster of space=${space.id.slice(0, 8)} kept as '${cls}'`);
+      // `changed` 0 is normal for a personal space (uploaded `archive` already); for an entity's it
+      // means the media service holds no such object, which the count makes visible.
+      this.logger.log(
+        `[BOOKINGS] poster of space=${space.id.slice(0, 8)} kept as '${cls}' changed=${changed}`
+      );
     }
   }
 
@@ -54,7 +58,9 @@ export class BookingPosterMedia {
         `[BOOKINGS] ${mediaIds.length} poster(s) NOT released (${why}) - the media service keeps them: ${mediaIds.join(',')}`
       );
     } else {
-      this.logger.log(`[BOOKINGS] ${mediaIds.length} poster(s) released (${why})`);
+      this.logger.log(
+        `[BOOKINGS] ${mediaIds.length} poster(s) released (${why}) changed=${changed}`
+      );
     }
   }
 }

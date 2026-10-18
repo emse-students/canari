@@ -157,22 +157,26 @@
           {#each answers as answer, i (i)}
             <div>
               <dt class="text-text-muted text-xs font-semibold">{answer.label}</dt>
-              <dd class="text-text-main flex items-center gap-2 whitespace-pre-line">
-                <span class="min-w-0 flex-1 break-words">{answer.text}</span>
-                {#if answer.fileId}
-                  {@const fileId = answer.fileId}
+              {#if answer.fileId}
+                {@const fileId = answer.fileId}
+                <!-- The whole row is the download: a long file name is cut, never broken letter by
+                     letter at 200 % text, and the full name is its title. -->
+                <dd>
                   <button
                     type="button"
                     disabled={downloading !== null}
                     onclick={() => download(fileId, answer.text)}
-                    class="ui-icon-button text-text-muted hover:text-text-main shrink-0 rounded-lg disabled:opacity-50"
-                    aria-label={m.form_answer_file_download()}
-                    title={m.form_answer_file_download()}
+                    class="border-cn-border text-text-main hover:border-cn-yellow/40 flex w-full min-w-0 items-center gap-2 rounded-lg border px-2 py-1.5 text-left transition-colors disabled:opacity-50"
+                    title={answer.text}
+                    aria-label={`${m.form_answer_file_download()} - ${answer.text}`}
                   >
-                    <Download size={16} />
+                    <Download size={16} class="text-text-muted shrink-0" />
+                    <span class="min-w-0 flex-1 truncate">{answer.text}</span>
                   </button>
-                {/if}
-              </dd>
+                </dd>
+              {:else}
+                <dd class="text-text-main whitespace-pre-line">{answer.text}</dd>
+              {/if}
             </div>
           {/each}
         </dl>

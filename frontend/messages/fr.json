@@ -3717,6 +3717,7 @@
       }
     }
   ],
+  "bookings_builder_file_hint": "La personne enverra un fichier : PDF, JPEG, PNG ou WebP, 8 Mo au plus. Il est lisible par les gestionnaires de l'espace et supprimé automatiquement (voir Données).",
   "bookings_field_poster": "Affiche",
   "bookings_poster_hint": "JPEG, PNG ou WebP. Chiffrée sur cet appareil comme l'image d'une publication, et enregistrée dès qu'elle est choisie.",
   "bookings_poster_choose": "Choisir une affiche",

@@ -3717,6 +3717,7 @@
       }
     }
   ],
+  "bookings_builder_file_hint": "The person will send a file: PDF, JPEG, PNG or WebP, 8 MB at most. It is readable by the space managers and deleted automatically (see Data).",
   "bookings_field_poster": "Poster",
   "bookings_poster_hint": "JPEG, PNG or WebP. Encrypted on this device like a post's image, and saved as soon as it is picked.",
   "bookings_poster_choose": "Choose a poster",

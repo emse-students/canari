@@ -369,7 +369,13 @@
   </div>
 </FormSection>
 
-<FormQuestionsSection bind:items={draft.items} requiresPayment={false} {tiers} {formations} />
+<FormQuestionsSection
+  bind:items={draft.items}
+  requiresPayment={false}
+  {tiers}
+  {formations}
+  fileHint={m.bookings_builder_file_hint()}
+/>
 
 <FormSection
   title={m.bookings_section_rules()}
