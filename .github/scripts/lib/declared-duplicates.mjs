@@ -193,6 +193,15 @@ export const DECLARED_GROUPS = [
     ],
   },
   {
+    what: "a booking space's booking window (D26), server and screen",
+    compare: 'exact',
+    why: 'one question - "may this range be booked now" - decided by the server on its own clock and drawn by the grid on the device clock, which must not disagree on a rule or its order. No shared TS package between the NestJS service and the SvelteKit app; the file takes plain numbers rather than either side\'s model, which is what lets the copies be identical, and both specs read libs/contracts/booking-window.cases.json.',
+    files: [
+      'apps/social-service/src/bookings/booking-window.ts',
+      'frontend/src/lib/bookings/bookingWindow.ts',
+    ],
+  },
+  {
     what: 'the reading of a submitted form answer, screen and spreadsheet',
     compare: 'exact',
     why: 'one question - "what did this person answer" - asked by the responses table and by the XLSX export an hour later, and those two must not be able to disagree. No shared TS package, and the file declares the minimal question shape itself rather than the model on either side, which is what lets the copies be identical.',

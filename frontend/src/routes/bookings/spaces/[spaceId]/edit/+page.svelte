@@ -8,7 +8,7 @@
   import SpaceEditor from '$lib/components/bookings/organiser/SpaceEditor.svelte';
   import { getManagedSpace, type ManagedSpace } from '$lib/bookings/api';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
-  import { spaceEditorHref } from '$lib/bookings/routes';
+  import { BOOKINGS_HREF, spaceEditorHref } from '$lib/bookings/routes';
   import { getAssociation, type Association, type MembershipTier } from '$lib/associations/api';
   import { editSectionHref } from '$lib/associations/editSections';
   import { cotisationOptionsFor } from '$lib/forms/cotisationSettings';
@@ -32,7 +32,7 @@
   let loading = $state(true);
   let loadError = $state('');
 
-  /** Where this space belongs: its entity's bookings tab; a personal space has none before WP-B5. */
+  /** Where this space belongs: its entity's bookings tab, or the Reservations page for a personal one. */
   const ownerHref = $derived(
     owner
       ? editSectionHref(
@@ -42,14 +42,14 @@
         )
       : null
   );
-  const crumbs = $derived(
-    owner && ownerHref && space
-      ? [
-          { label: owner.name, href: ownerHref },
-          { label: space.name, href: spaceEditorHref(space.id) },
-        ]
-      : undefined
-  );
+  const crumbs = $derived.by(() => {
+    if (!space) return undefined;
+    const here = { label: space.name, href: spaceEditorHref(space.id) };
+    if (space.associationId === null) {
+      return [{ label: m.bookings_page_title(), href: BOOKINGS_HREF }, here];
+    }
+    return owner && ownerHref ? [{ label: owner.name, href: ownerHref }, here] : undefined;
+  });
 
   $effect(() => {
     if (!space) return;
@@ -98,14 +98,14 @@
     }
   }
 
-  /** Back to the entity's bookings tab once the space is gone. */
+  /** Back to the entity's bookings tab once the space is gone, or to Reservations for a personal one. */
   async function leave() {
     if (owner?.type === 'list') {
       await goto(resolve(editSectionHref(owner.slug, 'reservations', '/lists')));
     } else if (owner) {
       await goto(resolve(editSectionHref(owner.slug, 'reservations')));
     } else {
-      await goto(resolve('/'));
+      await goto(resolve(BOOKINGS_HREF));
     }
   }
 </script>

@@ -2,25 +2,28 @@
   import { onMount } from 'svelte';
   import { goto } from '$app/navigation';
   import { resolve } from '$app/paths';
-  import { CalendarClock, Pencil, Plus } from '@lucide/svelte';
-  import type { Association } from '$lib/associations/api';
+  import { CalendarClock, CalendarDays, Pencil, Plus } from '@lucide/svelte';
   import { createSpace, listManagedSpaces, type ManagedSpaceRow } from '$lib/bookings/api';
   import { describeBookingRefusal } from '$lib/bookings/refusals';
-  import { spaceEditorHref } from '$lib/bookings/routes';
+  import { spaceEditorHref, spaceHref } from '$lib/bookings/routes';
   import Input from '$lib/components/ui/Input.svelte';
   import { m } from '$lib/paraglide/messages';
   import { Log } from '$lib/utils/Log';
 
   /**
-   * The bookings tab of an association, a list or an institution (D16, D38): the entity's spaces,
-   * and a new one by its name. Every setting is edited on the space's own page; this tab is drawn
-   * only to a holder of `MANAGE_BOOKINGS`, which is what the server asks of every call here.
+   * The spaces one owner manages, and a new one by its name: the bookings tab of an association, a
+   * list or an institution (D16, D38), drawn only to a holder of `MANAGE_BOOKINGS`, which is what
+   * the server asks of every call here - or, with `associationId` null, the reader's PERSONAL spaces
+   * on the Reservations page (D16: "a personal space is created from the page itself"). Every
+   * setting is edited on the space's own page.
    */
   interface Props {
-    asso: Association;
+    /** The owning entity, or `null` for the reader's personal spaces. */
+    associationId: string | null;
   }
 
-  let { asso }: Props = $props();
+  let { associationId }: Props = $props();
+  const personal = $derived(associationId === null);
 
   let spaces = $state<ManagedSpaceRow[]>([]);
   let loading = $state(true);
@@ -31,11 +34,11 @@
   onMount(load);
 
   async function load() {
-    Log.d('BOOKINGS', `tab load association=${asso.id}`);
+    Log.d('BOOKINGS', `managed spaces load association=${associationId ?? 'personal'}`);
     loading = true;
     error = '';
     try {
-      spaces = await listManagedSpaces(asso.id);
+      spaces = await listManagedSpaces(associationId);
     } catch (e) {
       error = describeBookingRefusal(e, m.common_load_error());
     } finally {
@@ -50,7 +53,7 @@
     creating = true;
     error = '';
     try {
-      const { id } = await createSpace(name, asso.id);
+      const { id } = await createSpace(name, associationId);
       Log.i('BOOKINGS', `space created from the tab id=${id.slice(0, 8)}`);
       await goto(resolve(spaceEditorHref(id)));
     } catch (e) {
@@ -65,9 +68,11 @@
   <div>
     <h2 class="text-text-main flex items-center gap-2 text-lg font-bold tracking-tight">
       <CalendarClock size={20} />
-      {m.bookings_tab_label()}
+      {personal ? m.bookings_personal_title() : m.bookings_tab_label()}
     </h2>
-    <p class="text-text-muted mt-1 text-sm">{m.bookings_tab_subtitle()}</p>
+    <p class="text-text-muted mt-1 text-sm">
+      {personal ? m.bookings_personal_subtitle() : m.bookings_tab_subtitle()}
+    </p>
   </div>
 
   <form class="flex flex-col gap-3 sm:flex-row sm:items-end" onsubmit={create}>
@@ -106,7 +111,9 @@
       ></div>
     </div>
   {:else if spaces.length === 0}
-    <p class="text-text-muted py-6 text-center text-sm">{m.bookings_tab_empty()}</p>
+    <p class="text-text-muted py-6 text-center text-sm">
+      {personal ? m.bookings_personal_empty() : m.bookings_tab_empty()}
+    </p>
   {:else}
     <ul class="space-y-3">
       {#each spaces as space (space.id)}
@@ -122,13 +129,22 @@
                 : m.bookings_discoverability_listed()}
             </p>
           </div>
-          <a
-            href={resolve(spaceEditorHref(space.id))}
-            class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
-          >
-            <Pencil size={12} />
-            {m.bookings_tab_edit_action()}
-          </a>
+          <div class="flex items-center gap-2">
+            <a
+              href={resolve(spaceHref(space.id))}
+              class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
+            >
+              <CalendarDays size={12} />
+              {m.bookings_tab_open_action()}
+            </a>
+            <a
+              href={resolve(spaceEditorHref(space.id))}
+              class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold transition-colors"
+            >
+              <Pencil size={12} />
+              {m.bookings_tab_edit_action()}
+            </a>
+          </div>
         </li>
       {/each}
     </ul>

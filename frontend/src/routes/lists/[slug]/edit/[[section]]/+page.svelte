@@ -219,7 +219,7 @@
       {/if}
 
       {#if editSection === 'reservations' && rights.bookings}
-        <EditBookingsTab asso={list} />
+        <EditBookingsTab associationId={list.id} />
       {/if}
 
       {#if editSection === 'danger' && canArchiveList}
