@@ -76,9 +76,18 @@ function fakeStorage(existing: StoredMessage | null) {
   return { storage, saveMessage };
 }
 
+/** The native side's answers: `take_fcm_cache` hands `entries` over, `ack_fcm_cache` deletes. */
+function taking(entries: unknown[], takenBytes = 128) {
+  invoke.mockImplementation(async (cmd: string) =>
+    cmd === 'take_fcm_cache' ? { entries, takenBytes } : true
+  );
+}
+
+const acks = () => invoke.mock.calls.filter(([cmd]) => cmd === 'ack_fcm_cache');
+
 beforeEach(() => {
   vi.clearAllMocks();
-  invoke.mockResolvedValue([pushEntry()]);
+  taking([pushEntry()]);
 });
 
 describe('consumeFcmCache never downgrades a row it did not write', () => {
@@ -121,7 +130,7 @@ describe('consumeFcmCache never downgrades a row it did not write', () => {
   });
 
   it('draws a system event as a banner only - no row, so no bubble with no subject', async () => {
-    invoke.mockResolvedValue([
+    taking([
       { ...pushEntry(), content: 'a ajouté un membre au groupe', type: 'system', mediaKind: null },
     ]);
     const { storage, saveMessage } = fakeStorage(null);
@@ -146,6 +155,47 @@ describe('consumeFcmCache never downgrades a row it did not write', () => {
  * ABSENT is not EMPTY. A cache file written by an older native build has no such key, and reading
  * that as "DM" would invent a peer out of whoever happened to message first.
  */
+/**
+ * THE CACHE IS DELETED ONLY ONCE IT IS PERSISTED. The read used to delete the file before a single
+ * `saveMessage`, so a process death in between lost the entries - and a quick reply's entry is the
+ * only local record of a message the device sent. The native side now keeps what it handed over
+ * until this acknowledgement, and replays it otherwise.
+ */
+describe('consumeFcmCache acknowledges the take only after writing it', () => {
+  it('acknowledges exactly the bytes it was handed, after the write', async () => {
+    const { storage, saveMessage } = fakeStorage(null);
+    saveMessage.mockImplementation(async () => {
+      expect(acks()).toHaveLength(0);
+    });
+
+    await consumeFcmCache(KEY, storage, SELF);
+
+    expect(saveMessage).toHaveBeenCalledTimes(1);
+    expect(acks()).toEqual([['ack_fcm_cache', { takenBytes: 128 }]]);
+  });
+
+  it('keeps the take on disk when a write failed, so the next boot replays it', async () => {
+    const { storage, saveMessage } = fakeStorage(null);
+    saveMessage.mockRejectedValue(new Error('database closed'));
+
+    await consumeFcmCache(KEY, storage, SELF);
+
+    expect(acks()).toHaveLength(0);
+  });
+
+  it('acknowledges a take that held only unparsable lines, and asks nothing when nothing was taken', async () => {
+    const { storage } = fakeStorage(null);
+    taking([], 40);
+    await consumeFcmCache(KEY, storage, SELF);
+    expect(acks()).toEqual([['ack_fcm_cache', { takenBytes: 40 }]]);
+
+    invoke.mockClear();
+    taking([], 0);
+    await consumeFcmCache(KEY, storage, SELF);
+    expect(acks()).toHaveLength(0);
+  });
+});
+
 describe('placeholderIdentityForPushEntry reads the type the push already carried', () => {
   const entry = (over: Record<string, unknown> = {}) => ({
     groupId: GROUP_ID,

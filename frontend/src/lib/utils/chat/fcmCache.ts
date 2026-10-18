@@ -17,6 +17,12 @@
  * caption straight over the envelope. Nothing could repair it afterwards, because an acknowledged
  * message is deleted from the server queue and is never delivered again - a photo became the words
  * "Photo", for good. The injection therefore asks what it would be replacing.
+ *
+ * **THE FILE IS DELETED ONLY AFTER THE INJECTION.** `take_fcm_cache` moves it aside and
+ * `ack_fcm_cache` deletes it once every entry was written; until 2026-10-18 the read deleted it
+ * first, so a process death before `saveMessage` lost the entries - and a notification quick reply's
+ * entry is the only local record of a message this device sent. An unacknowledged take is handed
+ * over again at the next boot, which the never-downgrade rule above makes harmless.
  */
 
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -212,22 +218,42 @@ export async function consumeFcmCache(
 ): Promise<FcmCacheInjection> {
   if (!isTauriRuntime()) return NOTHING;
 
-  // Declared without initializer: catch always returns, so entries is definitely
-  // assigned before use - TypeScript flow analysis confirms this.
-  let entries: FcmCacheEntry[];
+  // Declared without initializer: catch always returns, so it is definitely assigned before use.
+  let take: { entries: FcmCacheEntry[]; takenBytes: number };
+  let invoke: typeof import('@tauri-apps/api/core').invoke;
   try {
-    const { invoke } = await import('@tauri-apps/api/core');
-    entries = await invoke<FcmCacheEntry[]>('read_and_clear_fcm_cache');
+    ({ invoke } = await import('@tauri-apps/api/core'));
+    take = await invoke<{ entries: FcmCacheEntry[]; takenBytes: number }>('take_fcm_cache');
   } catch (e) {
     appendLog(`[FCM_CACHE] Cache read failed: ${String(e)}`);
     return NOTHING;
   }
+  const entries = take.entries;
+  /**
+   * Deletes what was taken - called once every entry has been written or deliberately skipped,
+   * never before. An entry whose write FAILED keeps the whole take on disk for the next boot: a
+   * replay is harmless, a deletion of a message nothing persisted is not.
+   */
+  const acknowledge = async (): Promise<void> => {
+    if (take.takenBytes === 0) return;
+    try {
+      const deleted = await invoke<boolean>('ack_fcm_cache', { takenBytes: take.takenBytes });
+      appendLog(`[FCM_CACHE] acknowledged ${take.takenBytes} bytes, deleted=${deleted}`);
+    } catch (e) {
+      // The next boot hands the same entries over again, which the injection makes harmless.
+      appendLog(`[FCM_CACHE] acknowledge failed, the next take replays it: ${String(e)}`);
+    }
+  };
 
-  if (!entries.length) return NOTHING;
+  if (!entries.length) {
+    await acknowledge();
+    return NOTHING;
+  }
 
   appendLog(`[FCM_CACHE] ${entries.length} message(s) to pre-inject from the FCM cache`);
 
   const injected: StoredMessage[] = [];
+  let failed = 0;
   const placeholders = new Map<string, PushPlaceholder>();
   for (const entry of entries) {
     if (!entry.messageId || !entry.groupId || !entry.senderId) {
@@ -301,10 +327,18 @@ export async function consumeFcmCache(
         `[FCM_CACHE] ✓ id=${entry.messageId.slice(0, 8)} group=${entry.groupId.slice(0, 8)} type=${entry.type}`
       );
     } catch (e) {
+      failed++;
       appendLog(`[FCM_CACHE] Injection failed id=${entry.messageId.slice(0, 8)}: ${String(e)}`);
     }
   }
 
   appendLog(`[FCM_CACHE] Injection done: ${injected.length}/${entries.length} message(s) injected`);
+  if (failed === 0) {
+    await acknowledge();
+  } else {
+    appendLog(
+      `[FCM_CACHE] ${failed} write(s) failed: the take is NOT acknowledged, the next boot replays it`
+    );
+  }
   return { messages: injected, placeholders };
 }

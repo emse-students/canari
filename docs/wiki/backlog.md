@@ -1005,8 +1005,8 @@ measurement, the root cause and the two refuted causes (not to be re-opened) are
 
 Open: (1) the web overlap - the pull should not queue a row already queued for the device (a
 membership test in the same module), after measuring the RATE (`notableCount` was 91 on one record);
-(2) one on-device NOTIF-10 re-read of the generic-banner ledger (#1550); (3) `read_and_clear_fcm_cache`
-clears before the JS has persisted - read, persist, THEN clear. The analysis, who consumes the
+(2) one on-device NOTIF-10 re-read of the generic-banner ledger (#1550); (3) BUILT in a draft pull
+request (`take_fcm_cache` + `ack_fcm_cache`: read, persist, THEN clear). The analysis, who consumes the
 generation and the withdrawn 2026-09-08 fix are on
 [mobile](frontend/mobile.md#one-row-arriving-through-the-push-the-pull-and-the-socket-measured-2026-09-08-to-2026-10-06).
 

@@ -39,13 +39,13 @@ class NotificationService: UNNotificationServiceExtension {
   private static let maxPreviewLength = 200
 
   /// FCM message cache file: the app pre-injects these entries at boot via
-  /// `read_and_clear_fcm_cache`, so a message decrypted while the app was killed shows up
+  /// `take_fcm_cache`, so a message decrypted while the app was killed shows up
   /// without waiting for the full MLS sync. Android twin:
   /// `CanariFirebaseMessagingService.writeFcmCache`.
   ///
   /// Written into the **App Group container**, not the extension's own Application Support:
   /// an app extension has its own data container, so the `app_data_dir` path the Android
-  /// service and `read_and_clear_fcm_cache` share resolves, inside this process, to a
+  /// service and `take_fcm_cache` share resolves, inside this process, to a
   /// directory the app can never read. The App Group is the only storage the two processes
   /// have in common - it is already where `mls.bin` is read from. `CanariDrainAppGroupFcmCache`
   /// moves the entries into the app's own file on the next activation.
@@ -726,7 +726,7 @@ class NotificationService: UNNotificationServiceExtension {
 
   /// Writes a decrypted message entry to `fcm_message_cache.ndjson` in the host app's
   /// App Group container, bounded to `maxFcmCacheEntries`. The app drains it into its own
-  /// `app_data_dir` copy on the next activation, and `read_and_clear_fcm_cache` pre-injects
+  /// `app_data_dir` copy on the next activation, and `take_fcm_cache` pre-injects
   /// it at boot. Android twin: `CanariFirebaseMessagingService.writeFcmCache`.
   private func writeFcmCache(
     groupId: String, senderId: String, senderName: String, groupName: String, isGroup: Bool?,

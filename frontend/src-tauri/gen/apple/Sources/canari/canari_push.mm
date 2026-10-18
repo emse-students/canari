@@ -1003,7 +1003,7 @@ static void CanariWriteSentMessageToCache(NSString *groupId, NSString *selfUserI
 
 /**
  * Moves the entries the Notification Service Extension wrote into the App Group container over
- * to the app's own `fcm_message_cache.ndjson`, which is the only file `read_and_clear_fcm_cache`
+ * to the app's own `fcm_message_cache.ndjson`, which is the only file `take_fcm_cache`
  * looks at. An app extension has its own data container, so this hop is what makes a push
  * decrypted while the app was killed visible to the app at all.
  */

@@ -207,12 +207,166 @@ fn take_ndjson_handoff(
     entries
 }
 
-/// Reads {app_data_dir}/fcm_message_cache.ndjson, clears the file and returns the entries.
-/// Called at boot right after login to pre-inject messages already decrypted when the FCM push
-/// arrived - avoids waiting for the full MLS sync (~10s).
+/// The file the native push paths write (Android `appendFcmCacheEntry`, iOS `canari_push.mm`).
+const FCM_CACHE_FILE: &str = "fcm_message_cache.ndjson";
+/// What [`take_fcm_cache_in`] moved aside, kept until the frontend has persisted it ([`ack_fcm_cache_in`]).
+const FCM_CACHE_TAKEN_FILE: &str = "fcm_message_cache.taken.ndjson";
+
+/// What [`take_fcm_cache_in`] hands over: the entries, and the size of the taken file they were
+/// read from, which [`ack_fcm_cache_in`] needs to delete exactly that and nothing merged in later.
+#[derive(serde::Serialize, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub(crate) struct FcmCacheTake {
+    entries: Vec<serde_json::Value>,
+    taken_bytes: u64,
+}
+
+impl FcmCacheTake {
+    fn nothing() -> Self {
+        FcmCacheTake {
+            entries: vec![],
+            taken_bytes: 0,
+        }
+    }
+}
+
+/// TAKES the push cache WITHOUT deleting it: the native file is moved aside
+/// (`fcm_message_cache.taken.ndjson`) and read, and it is deleted only by [`ack_fcm_cache_in`],
+/// once the frontend has written every entry to its own database.
+///
+/// WHY TWO STEPS. This used to delete the file before answering, so a process death between that
+/// delete and the frontend's `saveMessage` lost the entries for good - and for a notification quick
+/// reply the cache is the ONLY local record of a message this device sent
+/// (`CanariNotificationActionReceiver.handleReply`). Now a taken file still present at the next take
+/// is a previous take's, unacknowledged: its entries are handed over again, first. Replaying one is
+/// harmless - `consumeFcmCache` never downgrades a row and its writes are puts by id.
+///
+/// The native writers keep writing the live path meanwhile: the rename is atomic, so a line lands
+/// either in what was taken or in the next live file, never nowhere.
+pub(crate) fn take_fcm_cache_in(dir: &std::path::Path) -> FcmCacheTake {
+    let live = dir.join(FCM_CACHE_FILE);
+    let taken = dir.join(FCM_CACHE_TAKEN_FILE);
+    if taken.exists() {
+        log::warn!(
+            "[FCM_CACHE] a taken cache was never acknowledged (a process death before the frontend \
+             persisted it, or a take still in flight); its entries are handed over again"
+        );
+        match std::fs::read(&live) {
+            Ok(bytes) => {
+                use std::io::Write;
+                let appended = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open(&taken)
+                    .and_then(|mut f| f.write_all(&bytes));
+                match appended {
+                    // Removed only once its lines are in the taken file: a death in between hands
+                    // them over twice, which is harmless, never zero times.
+                    Ok(()) => {
+                        if let Err(e) = std::fs::remove_file(&live) {
+                            log::warn!("[FCM_CACHE] live cache delete after the merge failed: {e}");
+                        }
+                    }
+                    Err(e) => log::warn!("[FCM_CACHE] merge into the taken cache failed: {e}"),
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => log::warn!("[FCM_CACHE] live cache read failed: {e}"),
+        }
+    } else {
+        match std::fs::rename(&live, &taken) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return FcmCacheTake::nothing(),
+            Err(e) => {
+                log::warn!("[FCM_CACHE] could not move the cache aside: {e}");
+                return FcmCacheTake::nothing();
+            }
+        }
+    }
+    let bytes = match std::fs::read(&taken) {
+        Ok(b) => b,
+        Err(e) => {
+            log::warn!("[FCM_CACHE] taken cache read failed: {e}");
+            return FcmCacheTake::nothing();
+        }
+    };
+    let entries: Vec<serde_json::Value> = String::from_utf8_lossy(&bytes)
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .filter_map(|l| serde_json::from_str(l).ok())
+        .collect();
+    log::info!(
+        "[FCM_CACHE] {} entry/entries taken ({} bytes), deleted only once acknowledged",
+        entries.len(),
+        bytes.len()
+    );
+    FcmCacheTake {
+        entries,
+        taken_bytes: bytes.len() as u64,
+    }
+}
+
+/// Deletes the taken cache once the frontend has persisted what [`take_fcm_cache_in`] handed it -
+/// but only while the file is still exactly that size. A larger file means a later take merged newer
+/// lines into it that its caller may not have persisted yet: it is left for the next take, which
+/// hands everything over again (harmless), rather than deleted with lines nobody wrote.
+///
+/// Returns whether the file was deleted.
+pub(crate) fn ack_fcm_cache_in(dir: &std::path::Path, taken_bytes: u64) -> bool {
+    let taken = dir.join(FCM_CACHE_TAKEN_FILE);
+    match std::fs::metadata(&taken) {
+        Ok(m) if m.len() == taken_bytes => match std::fs::remove_file(&taken) {
+            Ok(()) => {
+                log::info!(
+                    "[FCM_CACHE] taken cache acknowledged and deleted ({taken_bytes} bytes)"
+                );
+                true
+            }
+            Err(e) => {
+                log::warn!("[FCM_CACHE] taken cache delete failed: {e}");
+                false
+            }
+        },
+        Ok(m) => {
+            log::info!(
+                "[FCM_CACHE] taken cache kept: {} bytes, this ack covers {taken_bytes} - a later take \
+                 merged newer lines, and the next take hands them over",
+                m.len()
+            );
+            false
+        }
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => {
+            log::warn!("[FCM_CACHE] taken cache stat failed: {e}");
+            false
+        }
+    }
+}
+
+/// [`take_fcm_cache_in`] on the app's data directory. Called at boot right after login to
+/// pre-inject messages already decrypted when the FCM push arrived - avoids waiting for the full
+/// MLS sync (~10s).
 #[tauri::command]
-pub(crate) fn read_and_clear_fcm_cache(app: tauri::AppHandle) -> Vec<serde_json::Value> {
-    take_ndjson_handoff(&app, "fcm_message_cache.ndjson", "FCM_CACHE")
+pub(crate) fn take_fcm_cache(app: tauri::AppHandle) -> FcmCacheTake {
+    match app.path().app_data_dir() {
+        Ok(dir) => take_fcm_cache_in(&dir),
+        Err(e) => {
+            log::warn!("[FCM_CACHE] app_data_dir() failed: {e}");
+            FcmCacheTake::nothing()
+        }
+    }
+}
+
+/// [`ack_fcm_cache_in`] on the app's data directory, called by `consumeFcmCache` once every entry
+/// it was handed has been written.
+#[tauri::command]
+pub(crate) fn ack_fcm_cache(app: tauri::AppHandle, taken_bytes: u64) -> bool {
+    match app.path().app_data_dir() {
+        Ok(dir) => ack_fcm_cache_in(&dir, taken_bytes),
+        Err(e) => {
+            log::warn!("[FCM_CACHE] app_data_dir() failed: {e}");
+            false
+        }
+    }
 }
 
 /// Reads {app_data_dir}/read_watermarks.ndjson, clears the file and returns the entries.
@@ -1058,11 +1212,13 @@ pub(crate) fn load_push_context(app: tauri::AppHandle) -> Option<serde_json::Val
 
 /// The per-install files that hold ONE account's data in the clear and die with that account when it
 /// is DELETED: unsent `AppMessage` protos (`store_outbox_mirror`), messages decrypted by a push
-/// (`read_and_clear_fcm_cache`), the read marks and sent ids the background side handed over. Not
-/// `mls.bin`, `graine_seeds.json` or the push secret - kept by this command on purpose.
-const ACCOUNT_PUSH_FILES: [&str; 4] = [
+/// (`take_fcm_cache`, and what a take has moved aside until it is acknowledged), the read marks and
+/// sent ids the background side handed over. Not `mls.bin`, `graine_seeds.json` or the push secret -
+/// kept by this command on purpose.
+const ACCOUNT_PUSH_FILES: [&str; 5] = [
     "outbox_pending.ndjson",
-    "fcm_message_cache.ndjson",
+    FCM_CACHE_FILE,
+    FCM_CACHE_TAKEN_FILE,
     "read_watermarks.ndjson",
     "outbox_sent.ndjson",
 ];
@@ -1548,7 +1704,7 @@ mod delete_user_push_files_tests {
             "own",
             Some(r#"{"userId":"a.b@x.fr","deviceId":"d","pushToken":"t"}"#),
         );
-        assert_eq!(remove_user_push_files(&dir, "a.b@x.fr").unwrap(), 5);
+        assert_eq!(remove_user_push_files(&dir, "a.b@x.fr").unwrap(), 6);
         for f in ACCOUNT_PUSH_FILES {
             assert!(!dir.join(f).exists(), "{f}");
         }
@@ -1596,5 +1752,89 @@ mod delete_user_push_files_tests {
         assert!(remove_user_push_files(&dir, "../x").is_err());
         assert!(untouched(&dir));
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+#[cfg(test)]
+mod fcm_cache_take_tests {
+    use super::{
+        ack_fcm_cache_in, take_fcm_cache_in, FcmCacheTake, FCM_CACHE_FILE, FCM_CACHE_TAKEN_FILE,
+    };
+
+    fn dir(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!("fcm-take-{name}-{}", std::process::id()));
+        std::fs::remove_dir_all(&d).ok();
+        std::fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn ids(take: &FcmCacheTake) -> Vec<String> {
+        take.entries
+            .iter()
+            .map(|e| e["messageId"].as_str().unwrap().to_string())
+            .collect()
+    }
+
+    fn push(d: &std::path::Path, id: &str) {
+        std::fs::write(
+            d.join(FCM_CACHE_FILE),
+            format!("{{\"messageId\":\"{id}\"}}\n"),
+        )
+        .unwrap();
+    }
+
+    /// The defect: the cache was deleted before the frontend persisted it, so a process death in
+    /// between lost it. A take that is never acknowledged must be handed over again.
+    #[test]
+    fn an_unacknowledged_take_is_handed_over_again() {
+        let d = dir("replay");
+        push(&d, "a");
+        assert_eq!(ids(&take_fcm_cache_in(&d)), vec!["a"]);
+        // The process dies here, with no ack. A push arrives before the next boot.
+        push(&d, "b");
+        let second = take_fcm_cache_in(&d);
+        assert_eq!(ids(&second), vec!["a", "b"]);
+        assert!(!d.join(FCM_CACHE_FILE).exists());
+        assert!(ack_fcm_cache_in(&d, second.taken_bytes));
+        assert!(!d.join(FCM_CACHE_TAKEN_FILE).exists());
+        assert!(take_fcm_cache_in(&d).entries.is_empty());
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// An ack deletes only what its take read: lines a later take merged in afterwards stay.
+    #[test]
+    fn an_ack_never_deletes_lines_its_take_did_not_hand_over() {
+        let d = dir("concurrent");
+        push(&d, "a");
+        let first = take_fcm_cache_in(&d);
+        push(&d, "b");
+        let second = take_fcm_cache_in(&d);
+        assert!(!ack_fcm_cache_in(&d, first.taken_bytes));
+        assert!(d.join(FCM_CACHE_TAKEN_FILE).exists());
+        assert!(ack_fcm_cache_in(&d, second.taken_bytes));
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn nothing_to_take_is_empty_and_an_ack_of_nothing_deletes_nothing() {
+        let d = dir("empty");
+        let t = take_fcm_cache_in(&d);
+        assert!(t.entries.is_empty());
+        assert_eq!(t.taken_bytes, 0);
+        assert!(!ack_fcm_cache_in(&d, 0));
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    /// A line that will not parse costs only itself, as it did before.
+    #[test]
+    fn an_unparsable_line_costs_only_itself() {
+        let d = dir("garbage");
+        std::fs::write(
+            d.join(FCM_CACHE_FILE),
+            "not json\n\n{\"messageId\":\"a\"}\n",
+        )
+        .unwrap();
+        assert_eq!(ids(&take_fcm_cache_in(&d)), vec!["a"]);
+        std::fs::remove_dir_all(&d).ok();
     }
 }

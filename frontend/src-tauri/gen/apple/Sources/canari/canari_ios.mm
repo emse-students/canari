@@ -541,7 +541,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariPushCancelMessageNotifications();
   // Pick up whatever the NSE decrypted while we were killed or backgrounded. It writes into the
   // App Group because an extension cannot reach the app's data container; this is the hop that
-  // puts those entries where read_and_clear_fcm_cache will find them, and it must happen before
+  // puts those entries where take_fcm_cache will find them, and it must happen before
   // the frontend asks for the cache at login.
   CanariDrainAppGroupFcmCache();
   // Refresh the App Group mirror so the NSE decrypts against the state as of the app's last
@@ -697,7 +697,7 @@ void canari_ios_bootstrap(void) {
               }];
   CanariProcessPendingPushSecret();
   CanariCheckKeystoreHealth();
-  // Cold start: drain before the WebView exists, so the very first read_and_clear_fcm_cache of
+  // Cold start: drain before the WebView exists, so the very first take_fcm_cache of
   // this launch already sees the pushes handled while the app was killed.
   CanariDrainAppGroupFcmCache();
   // Start the keyboard media bridge (WP-XP-6). The WKWebView is not yet created at this point
