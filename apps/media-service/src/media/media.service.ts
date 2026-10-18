@@ -92,6 +92,8 @@ const PENDING_REEL_TTL_MS = resolvePendingReelTtlMs(process.env.MEDIA_PENDING_RE
  */
 const PURGE_MAX_PER_RUN = 500;
 const DAY_MS = 24 * 60 * 60 * 1000;
+/** How old an upload may be and still be claimed as a booking space's poster (`claimPosters`). */
+export const POSTER_CLAIM_WINDOW_MS = DAY_MS;
 /** Purged metadata entries (tombstones) are removed from the index after this delay. */
 const META_TOMBSTONE_MAX_AGE_MS = 90 * 24 * 60 * 60 * 1000;
 const DEFAULT_SWEEP_MS = 60 * 60 * 1000;
@@ -959,6 +961,62 @@ export class MediaService {
     if (refused.length > 0) {
       this.logger.warn(
         `Reel claim by ${ownerId}: ${refused.length} object(s) refused (${pastWindow} past their pending window, ${refused.length - pastWindow} unknown, purged, public or not theirs)`
+      );
+    }
+    return { claimed, refused };
+  }
+
+  /**
+   * Claims a booking space's POSTER for the member setting it (social-service, WP-B6): sets
+   * `retentionClass` (`archive` for a personal space, `association` for an entity's) on an object
+   * ONLY when it is that member's own FRESH, UNATTACHED upload.
+   *
+   * Ids are not secrets, and what a space does with its poster later is destructive or protective -
+   * removing it releases the object to the idle sweep, an entity's keeps it past its uploader's
+   * erasure. So the claim is the reels' rule (`claimReels`), tightened to "a new upload":
+   * - the entry's recorded uploader is `ownerId` (no `ownerId` recorded: refused, never on trust);
+   * - it is still in the class a poster is uploaded with (`archive`) - an object some other surface
+   *   already classified (an association document, a reel, a form file, a chat photo) is refused;
+   * - it was uploaded less than {@link POSTER_CLAIM_WINDOW_MS} ago, so a member cannot take one of
+   *   their OWN older post images as a poster and then lose it to the sweep when the poster goes;
+   * - not purged, not a public asset.
+   *
+   * @returns the ids claimed and the ids refused.
+   */
+  async claimPosters(
+    mediaIds: string[],
+    ownerId: string,
+    retentionClass: 'archive' | 'association',
+    nowMs = Date.now()
+  ): Promise<{ claimed: string[]; refused: string[] }> {
+    const claimed: string[] = [];
+    const refused: string[] = [];
+    let changed = false;
+    for (const mediaId of new Set(mediaIds)) {
+      const entry = UUID_REGEX.test(mediaId) ? this.meta.items[mediaId] : undefined;
+      if (
+        !entry ||
+        entry.purgedAt ||
+        this.isPublicAssetEntry(entry) ||
+        isServerReadOnly(entry) ||
+        !entry.ownerId ||
+        entry.ownerId !== ownerId ||
+        entry.retentionClass !== 'archive' ||
+        nowMs - entry.createdAt > POSTER_CLAIM_WINDOW_MS
+      ) {
+        refused.push(mediaId);
+        continue;
+      }
+      if (entry.retentionClass !== retentionClass) {
+        entry.retentionClass = retentionClass;
+        changed = true;
+      }
+      claimed.push(mediaId);
+    }
+    if (changed) await this.persistMetadata();
+    if (refused.length > 0) {
+      this.logger.warn(
+        `Poster claim by ${ownerId}: ${refused.length} object(s) refused (unknown, purged, public, not theirs, already classified or older than ${POSTER_CLAIM_WINDOW_MS} ms)`
       );
     }
     return { claimed, refused };

@@ -29,6 +29,13 @@ import type { BookingSpace } from './entities/booking-space.entity';
 import type { BookingFileState } from './booking-views';
 
 /**
+ * How many unsent uploads one account may hold across EVERY space at once - three spaces' worth of
+ * {@link FORM_FILE_MAX_PENDING}, so an ordinary member never meets it, and the store's exposure to
+ * one account is bounded whatever the number of spaces it may book (review of #2045).
+ */
+export const BOOKING_FILE_MAX_PENDING_PER_ACCOUNT = 3 * FORM_FILE_MAX_PENDING;
+
+/**
  * THE FILE QUESTION OF A BOOKING (D7, D22, WP-B6) - the forms' file question, for a space.
  *
  * ONE STORAGE FOR BOTH MODULES. The bytes are the media service's class `form-file`: plaintext,
@@ -36,7 +43,8 @@ import type { BookingFileState } from './booking-views';
  * the internal secret. `FormFilesService` stores them, fetches them and deletes them; this service
  * owns the bookings half - its table (`booking_files`, migration 092), the ownership rule at booking
  * time, and the organiser's download. Every limit is the forms' own constant (8 MiB, PDF/JPEG/PNG/
- * WebP read from the bytes, one day to send an upload, ten unsent uploads per member and space).
+ * WebP read from the bytes, one day to send an upload, ten unsent uploads per member and space),
+ * plus one of its own: thirty unsent uploads per member across spaces.
  *
  * The answer stores the file's id, as a form answer does. Retention counts from the END OF THE
  * SLOT (D41), `retentionDays` of the space - `booking-retention.scheduler.ts`.
@@ -93,8 +101,9 @@ export class BookingFilesService {
     const fileName = cleanFileName(file.originalname, contentType, fileId);
     try {
       await this.files.manager.transaction(async (tx) => {
+        // Per ACCOUNT, since the account-wide cap counts across spaces.
         await tx.query(`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, [
-          `booking_files:${space.id}:${uploaderId}`,
+          `booking_files:${uploaderId}`,
         ]);
         await this.assertPendingRoom(tx, space.id, uploaderId);
         await tx.insert(BookingFile, {
@@ -134,23 +143,35 @@ export class BookingFilesService {
     return { fileId, fileName, sizeBytes, contentType };
   }
 
-  /** Refuses (429 `files-pending`) a member already holding the cap of unsent uploads on a space. */
+  /**
+   * Refuses (429) a member already holding the cap of unsent uploads: {@link FORM_FILE_MAX_PENDING}
+   * on this space (`files-pending`), or {@link BOOKING_FILE_MAX_PENDING_PER_ACCOUNT} across every
+   * space (`files-pending-account`) - the per-space cap alone let one account fill the store by
+   * spreading its uploads over every space it may book (review of #2045).
+   */
   private async assertPendingRoom(
     db: Pick<EntityManager, 'query'>,
     spaceId: string,
     uploaderId: string
   ): Promise<void> {
-    const [{ pending }] = (await db.query(
-      `SELECT count(*)::int AS pending FROM booking_files
-        WHERE "spaceId" = $1 AND "uploaderId" = $2 AND "bookingId" IS NULL
+    const [{ here, total }] = (await db.query(
+      `SELECT count(*) FILTER (WHERE "spaceId" = $1)::int AS here, count(*)::int AS total
+         FROM booking_files
+        WHERE "uploaderId" = $2 AND "bookingId" IS NULL
           AND "purgedAt" IS NULL AND "createdAt" > NOW() - make_interval(hours => 24 * $3::int)`,
       [spaceId, uploaderId, FORM_FILE_UPLOAD_WINDOW_DAYS]
-    )) as Array<{ pending: number }>;
-    if (pending >= FORM_FILE_MAX_PENDING) {
+    )) as Array<{ here: number; total: number }>;
+    if (here >= FORM_FILE_MAX_PENDING) {
       this.logger.warn(
-        `[BOOKING_FILES] upload refused: user=${uploaderId.slice(0, 8)} holds ${pending} unsent files on space=${spaceId.slice(0, 8)}`
+        `[BOOKING_FILES] upload refused: user=${uploaderId.slice(0, 8)} holds ${here} unsent files on space=${spaceId.slice(0, 8)}`
       );
       throw new HttpException({ code: 'files-pending' }, HttpStatus.TOO_MANY_REQUESTS);
+    }
+    if (total >= BOOKING_FILE_MAX_PENDING_PER_ACCOUNT) {
+      this.logger.warn(
+        `[BOOKING_FILES] upload refused: user=${uploaderId.slice(0, 8)} holds ${total} unsent files across spaces`
+      );
+      throw new HttpException({ code: 'files-pending-account' }, HttpStatus.TOO_MANY_REQUESTS);
     }
   }
 

@@ -32,6 +32,7 @@ export const ORGANISER_REFUSAL_CODES = [
   'too-many-resources',
   'association-not-found',
   'opens-at',
+  'poster-not-yours',
 ] as const;
 
 export type OrganiserRefusalCode = (typeof ORGANISER_REFUSAL_CODES)[number];
@@ -71,6 +72,7 @@ export const BOOKER_REFUSAL_CODES = [
   'file-too-large',
   'file-type',
   'files-pending',
+  'files-pending-account',
   'file-not-yours',
   'file-answer',
   'file-not-found',
@@ -118,6 +120,8 @@ function sentenceFor(code: string, count: number): string | null {
       return m.bookings_refusal_association_not_found();
     case 'opens-at':
       return m.bookings_refusal_opens_at();
+    case 'poster-not-yours':
+      return m.bookings_refusal_poster_not_yours();
     default:
       return bookerSentenceFor(code, count);
   }
@@ -198,6 +202,8 @@ function fileSentenceFor(code: string): string | null {
       return m.form_file_error_type();
     case 'files-pending':
       return m.bookings_refusal_files_pending();
+    case 'files-pending-account':
+      return m.bookings_refusal_files_pending_account();
     // A file id this booking may not cite (not the uploader's, another question's, over a day old)
     // or an answer that is not a file id: either way the file has to be picked again.
     case 'file-not-yours':

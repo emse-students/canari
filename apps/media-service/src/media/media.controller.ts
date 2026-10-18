@@ -637,6 +637,29 @@ export class MediaController {
   }
 
   // ---------------------------------------------------------------------------
+  // POST /media/internal/poster-claim - a booking space's poster, claimed for its uploader
+  // ---------------------------------------------------------------------------
+  /**
+   * Sole consumer: social-service's `BookingPosterMedia.claim`, before a space stores a poster. It
+   * PROVES the object is the member's own fresh upload; the rule is {@link MediaService.claimPosters}.
+   */
+  @Post('internal/poster-claim')
+  async claimPosters(
+    @Body() body: { mediaIds?: unknown; ownerId?: unknown; retentionClass?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ claimed: string[]; refused: string[] }> {
+    assertInternalSecret(internalSecret);
+    const ids = this.boundedIds(body?.mediaIds, 'mediaIds');
+    if (typeof body?.ownerId !== 'string' || body.ownerId.length === 0) {
+      throw new BadRequestException('ownerId must be a non-empty string');
+    }
+    if (body.retentionClass !== 'archive' && body.retentionClass !== 'association') {
+      throw new BadRequestException("retentionClass must be 'archive' or 'association'");
+    }
+    return this.mediaService.claimPosters(ids, body.ownerId, body.retentionClass);
+  }
+
+  // ---------------------------------------------------------------------------
   // POST /media/internal/reel-purge - delete the blobs of expired or deleted reels
   // ---------------------------------------------------------------------------
   /**

@@ -216,7 +216,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
       slots,
       associations,
       { listCotisationTiers: async () => [] } as unknown as UserTagService,
-      { keep: async () => {}, release: async () => {} } as unknown as BookingPosterMedia
+      { claim: async () => {}, releaseUncited: async () => {} } as unknown as BookingPosterMedia
     );
   });
 

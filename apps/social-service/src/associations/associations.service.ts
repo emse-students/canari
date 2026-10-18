@@ -18,6 +18,7 @@ import FormData from 'form-data';
 import { AxiosError } from 'axios';
 import { mediaUrl } from '../internal/service-urls';
 import { applyMediaRetentionClass } from '../internal/media-retention-class';
+import { releaseUncitedPosters } from '../bookings/booking-poster-media';
 import type { SpaceSelection } from './directory-query';
 import {
   AGENDA_SELECTION_FORBIDDEN,
@@ -573,17 +574,14 @@ export class AssociationsService {
       await manager.delete(AssociationMember, { associationId: id });
       await manager.delete(Association, id);
     });
-    if (posters.length) {
-      const released = await applyMediaRetentionClass(
-        this.httpService,
-        this.logger,
-        posters.map((p) => p.id),
-        'ephemeral'
-      );
-      this.logger.log(
-        `[ASSO] DELETE ${id}: ${posters.length} booking poster(s) ${released === null ? `NOT released - the media service keeps them: ${posters.map((p) => p.id).join(',')}` : 'released'}`
-      );
-    }
+    // Released only where no surviving space cites them, the one release rule of every poster.
+    await releaseUncitedPosters(
+      this.httpService,
+      (sql, params) => this.assoRepo.manager.query(sql, params),
+      this.logger,
+      posters.map((p) => p.id),
+      `association ${id} was deleted`
+    );
     await this.invalidatePostListCaches();
     return { ok: true };
   }

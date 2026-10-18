@@ -1067,6 +1067,8 @@ export class BookingsService {
   /**
    * One booking's file, for its ORGANISER - the only reader a booking's answers have (D9: answers
    * and files are never another booker's; the holder's answers are the organiser's to read).
+   * ORGANISER means the space's own managers: a global admin's override does NOT open a file (D22,
+   * register C17 "organiser alone", review of #2045) - a CV is not the platform's to read.
    */
   async downloadFile(bookingId: string, fileId: string, actor: Actor) {
     this.logger.debug(`[BOOKINGS] downloadFile booking=${bookingId.slice(0, 8)}`);
@@ -1074,7 +1076,10 @@ export class BookingsService {
     // Who before what: a stranger learns `not-manager`, never whether the booking exists.
     const resource = booking ? await this.resources.findOneBy({ id: booking.resourceId }) : null;
     const space = resource ? await this.spaces.findOneBy({ id: resource.spaceId }) : null;
-    if (!space || !(await this.mayManage(space, actor))) {
+    if (!space || !(await this.mayManage(space, { ...actor, isGlobalAdmin: false }))) {
+      if (actor.isGlobalAdmin) {
+        this.logger.log(`[BOOKINGS] downloadFile refused to a global admin outside the organisers`);
+      }
       throw new ForbiddenException({ code: 'not-manager' });
     }
     return this.bookingFiles.download(bookingId, fileId);

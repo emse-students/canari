@@ -236,6 +236,8 @@ export class BookingsController {
       'Content-Disposition': contentDisposition(`${name}.xlsx`, 'export'),
       'Content-Length': buffer.byteLength,
       'Cache-Control': 'no-store, private',
+      // A workbook is never rendered as anything else (review of #2045).
+      'X-Content-Type-Options': 'nosniff',
     });
     res.send(Buffer.from(buffer));
   }

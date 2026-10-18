@@ -16,17 +16,19 @@ import { readFileSync, readdirSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { HttpException } from '@nestjs/common';
-import { DataSource } from 'typeorm';
+import { DataSource, type EntityManager } from 'typeorm';
 import { Client } from 'pg';
 import * as ExcelJS from 'exceljs';
 import { BOOKING_ENTITIES } from './bookings.module';
 import { BookingsService, type Actor } from './bookings.service';
 import { BookingSlotsService } from './booking-slots.service';
 import { BookingSpacesService } from './booking-spaces.service';
-import { BookingFilesService } from './booking-files.service';
+import { BOOKING_FILE_MAX_PENDING_PER_ACCOUNT, BookingFilesService } from './booking-files.service';
 import { BookingRetentionScheduler } from './booking-retention.scheduler';
-import type { BookingPosterMedia } from './booking-poster-media';
-import { BookingSpace, type SpacePoster } from './entities/booking-space.entity';
+import { HttpService } from '@nestjs/axios';
+import { of } from 'rxjs';
+import { BookingPosterMedia } from './booking-poster-media';
+import { BookingSpace } from './entities/booking-space.entity';
 import { BookingResource } from './entities/booking-resource.entity';
 import { BookingAvailabilityRule } from './entities/booking-availability-rule.entity';
 import { BookingAvailabilityException } from './entities/booking-availability-exception.entity';
@@ -41,6 +43,7 @@ import { AssociationPermissionFlag } from '../associations/entities/association-
 import type { UserTagService } from '../users/user-tag.service';
 import {
   FileBlobGoneError,
+  FORM_FILE_MAX_PENDING,
   type FileBlobOutcome,
   type FormFilesService,
 } from '../forms/form-files.service';
@@ -104,13 +107,21 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
   let service: BookingsService;
   let organiser: BookingSpacesService;
   let retention: BookingRetentionScheduler;
+  let files: BookingFilesService;
   const grants = new Set<string>();
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
 
   /** The media service: object id -> its owner and bytes. Deletion only on the owner's name. */
   const media = new Map<string, { owner: string; bytes: Buffer }>();
-  /** What the poster lifetime was asked: `keep:<class>:<id>` and `release:<id>`. */
+  /** What the media service was asked of a poster: `claim:<class>:<id>` and `<class>:<id>`. */
   const posterCalls: string[] = [];
+  /**
+   * Holds the media service's delete until the test opens it: the purge is then IN its delete, with
+   * whatever it holds held - how a race is staged without a clock.
+   */
+  let purgeGate: { fileId: string; entered: () => void; open: Promise<void> } | null = null;
+  /** The media service's images: owner, retention class, still inside the claim window. */
+  const images = new Map<string, { owner: string; cls: string; fresh: boolean }>();
 
   beforeAll(async () => {
     admin = new Client({ connectionString: URL });
@@ -159,6 +170,10 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
         return object.bytes;
       },
       purgeBlobs: async (items: Array<{ mediaId: string; ownerId: string }>) => {
+        if (purgeGate && items.some((i) => i.mediaId === purgeGate!.fileId)) {
+          purgeGate.entered();
+          await purgeGate.open;
+        }
         const out: Record<string, FileBlobOutcome> = {};
         for (const { mediaId, ownerId } of items) {
           const object = media.get(mediaId);
@@ -172,18 +187,39 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
         return out;
       },
     } as unknown as FormFilesService;
-    const posterMedia = {
-      keep: async (space: { associationId: string | null; poster: SpacePoster | null }) => {
-        if (space.poster) {
-          posterCalls.push(
-            `keep:${space.associationId ? 'association' : 'archive'}:${space.poster.mediaId}`
-          );
+    // The REAL poster lifetime, over a media service that answers as `claimPosters` and
+    // `setRetentionClass` do: a claim succeeds only on the caller's own fresh `archive` upload.
+    const mediaHttp = {
+      post: (
+        url: string,
+        body: { mediaIds: string[]; ownerId?: string; retentionClass: string }
+      ) => {
+        if (url.endsWith('media/internal/poster-claim')) {
+          const claimed: string[] = [];
+          const refused: string[] = [];
+          for (const id of body.mediaIds) {
+            const object = images.get(id);
+            if (object?.owner === body.ownerId && object.cls === 'archive' && object.fresh) {
+              object.cls = body.retentionClass;
+              claimed.push(id);
+            } else refused.push(id);
+          }
+          posterCalls.push(...claimed.map((id) => `claim:${body.retentionClass}:${id}`));
+          return of({ data: { claimed, refused } });
         }
+        let changed = 0;
+        for (const id of body.mediaIds) {
+          const object = images.get(id);
+          if (object && object.cls !== body.retentionClass) {
+            object.cls = body.retentionClass;
+            changed++;
+          }
+          posterCalls.push(`${body.retentionClass}:${id}`);
+        }
+        return of({ data: { changed } });
       },
-      release: async (ids: string[]) => {
-        posterCalls.push(...ids.map((id) => `release:${id}`));
-      },
-    } as unknown as BookingPosterMedia;
+    } as unknown as HttpService;
+    const posterMedia = new BookingPosterMedia(mediaHttp, ds.getRepository(BookingSpace));
 
     const repo = <T extends object>(e: new () => T) => ds.getRepository(e);
     const slots = new BookingSlotsService(
@@ -194,7 +230,7 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       repo(BookingBlock),
       repo(Booking)
     );
-    const files = new BookingFilesService(repo(BookingFile), formFiles);
+    files = new BookingFilesService(repo(BookingFile), formFiles);
     service = new BookingsService(
       repo(BookingSpace),
       repo(BookingResource),
@@ -315,6 +351,32 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       ]);
     });
 
+    it('caps unsent uploads per account across spaces, not only per space (review of #2045)', async () => {
+      const spread = 'c'.repeat(64);
+      await q(`INSERT INTO users (id, "firstName", "lastName") VALUES ($1, 'Spread', 'X')`, [
+        spread,
+      ]);
+      const spaces = [];
+      for (let i = 0; i < BOOKING_FILE_MAX_PENDING_PER_ACCOUNT / FORM_FILE_MAX_PENDING + 1; i++) {
+        spaces.push((await setup()).space);
+      }
+      const [last] = spaces.splice(-1);
+      for (const space of spaces) {
+        for (let i = 0; i < FORM_FILE_MAX_PENDING; i++) {
+          await service.uploadFile(space.id, 'cv', pdf(), as(spread));
+        }
+        expect(await refusal(service.uploadFile(space.id, 'cv', pdf(), as(spread)))).toEqual({
+          code: 'files-pending',
+        });
+      }
+      const before = media.size;
+      expect(await refusal(service.uploadFile(last.id, 'cv', pdf(), as(spread)))).toEqual({
+        code: 'files-pending-account',
+      });
+      // Refused before the bytes travel: nothing reached the store.
+      expect(media.size).toBe(before);
+    });
+
     it('refuses an upload to someone the audience does not admit', async () => {
       const { space } = await setup({ audience: { promo: { values: [2099] } } });
       expect(await refusal(service.uploadFile(space.id, 'cv', pdf(), as(ALICE)))).toEqual({
@@ -400,6 +462,12 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       expect(await refusal(service.downloadFile(randomUUID(), up.fileId, as(STRANGER)))).toEqual({
         code: 'not-manager',
       });
+      // Nor a global admin outside the organisers: a CV is not the platform's to read (D22, C17).
+      expect(
+        await refusal(
+          service.downloadFile(id, up.fileId, { userId: STRANGER, isGlobalAdmin: true })
+        )
+      ).toEqual({ code: 'not-manager' });
       // A file of another booking is never served under this one.
       const other2 = await service.uploadFile(space.id, 'cv', pdf(), as(BOB));
       const { id: bobsBooking } = await bookWith(
@@ -489,6 +557,75 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
       expect(await ds.getRepository(BookingFile).findOneBy({ id: up.fileId })).toBeNull();
     });
 
+    /**
+     * A booking and the purge on ONE unsent file (review of #2045). `attach` judges the upload
+     * window with its transaction's `NOW()`, so a booking that began inside the window may commit
+     * after the purge judged the file unsent. Staged here with a second connection holding the
+     * booking's transaction open, and the media service's delete held open by `purgeGate`.
+     */
+    const raceClient = async () => {
+      const client = new Client({ connectionString: URL, options: `-c search_path=${schema}` });
+      await client.connect();
+      return client;
+    };
+    const managerOf = (client: Client) =>
+      ({
+        query: async (sql: string, params: unknown[]) => (await client.query(sql, params)).rows,
+      }) as unknown as EntityManager;
+    const optionalCv = async () => {
+      const { space, resourceId } = await setup({
+        items: [{ id: 'cv', label: 'CV', type: 'file' }],
+      });
+      const { id: bookingId } = await bookWith(space.id, resourceId, {});
+      const up = await service.uploadFile(space.id, 'cv', pdf(), as(ALICE));
+      return { space, bookingId, fileId: up.fileId };
+    };
+
+    it('a booking already citing an unsent file holds it: the purge skips it, the file stays cited', async () => {
+      const { space, bookingId, fileId } = await optionalCv();
+      const booking = await raceClient();
+      try {
+        await booking.query('BEGIN');
+        await files.attach(managerOf(booking), bookingId, space.id, ALICE, [
+          { itemId: 'cv', fileId },
+        ]);
+        // The purge judges after the window; the booking's transaction is still open.
+        await retention.purgeOnce(new Date((await dbNow()).getTime() + 2 * DAY_MS));
+        await booking.query('COMMIT');
+      } finally {
+        await booking.end();
+      }
+      expect(media.has(fileId)).toBe(true);
+      const row = await ds.getRepository(BookingFile).findOneByOrFail({ id: fileId });
+      expect([row.bookingId, row.purgedAt]).toEqual([bookingId, null]);
+    });
+
+    it('a booking reaching an unsent file the purge holds is refused: nothing cites a deleted blob', async () => {
+      const { space, bookingId, fileId } = await optionalCv();
+      let entered!: () => void;
+      const inDelete = new Promise<void>((resolve) => (entered = resolve));
+      let open!: () => void;
+      purgeGate = { fileId, entered, open: new Promise<void>((resolve) => (open = resolve)) };
+      const booking = await raceClient();
+      try {
+        const run = retention.purgeOnce(new Date((await dbNow()).getTime() + 2 * DAY_MS));
+        await inDelete;
+        await booking.query('BEGIN');
+        const attaching = refusal(
+          files.attach(managerOf(booking), bookingId, space.id, ALICE, [{ itemId: 'cv', fileId }])
+        );
+        open();
+        await run;
+        expect(await attaching).toEqual({ code: 'file-not-yours', itemId: 'cv' });
+        await booking.query('ROLLBACK');
+      } finally {
+        purgeGate = null;
+        await booking.end();
+      }
+      expect(media.has(fileId)).toBe(false);
+      expect(await ds.getRepository(BookingFile).findOneBy({ id: fileId })).toBeNull();
+    });
+
     it("a deleted space's files become orphans and go at the purge (D27)", async () => {
       const { space, resourceId } = await setup();
       const up = await service.uploadFile(space.id, 'cv', pdf(), as(ALICE));
@@ -563,20 +700,27 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
   });
 
   describe('the poster (D35)', () => {
-    const poster = (mediaId = randomUUID()) => ({
-      type: 'image' as const,
-      mediaId,
-      key: 'ab'.repeat(32),
-      iv: 'cd'.repeat(12),
-      mimeType: 'image/jpeg',
-      size: 1234,
-      width: 800,
-      height: 600,
-    });
+    /** A poster citing a fresh `archive` image uploaded by `owner`. */
+    const poster = (owner: string, mediaId = randomUUID()) => {
+      images.set(mediaId, { owner, cls: 'archive', fresh: true });
+      return {
+        type: 'image' as const,
+        mediaId,
+        key: 'ab'.repeat(32),
+        iv: 'cd'.repeat(12),
+        mimeType: 'image/jpeg',
+        size: 1234,
+        width: 800,
+        height: 600,
+      };
+    };
+    const code = async (p: Promise<unknown>) => (await refusal(p)).code;
+    const posterOfRow = async (id: string) =>
+      (await ds.getRepository(BookingSpace).findOneByOrFail({ id })).poster;
 
-    it("keeps an entity space's poster as the entity's, releases the one replaced and a deleted space's", async () => {
+    it("claims an entity space's poster as the entity's, releases the one replaced and a deleted space's", async () => {
       const { space } = await setup();
-      const first = poster();
+      const first = poster(ORGA);
       posterCalls.length = 0;
       await organiser.update(
         space.id,
@@ -584,33 +728,74 @@ maybe('bookings files, retention, poster and export against PostgreSQL (WP-B6)',
         as(ORGA),
         NOW
       );
-      const stored = (await ds.getRepository(BookingSpace).findOneByOrFail({ id: space.id }))
-        .poster;
-      expect(stored).toEqual(first);
-      expect(posterCalls).toEqual([`keep:association:${first.mediaId}`]);
+      expect(await posterOfRow(space.id)).toEqual(first);
+      expect(posterCalls).toEqual([`claim:association:${first.mediaId}`]);
 
-      const second = poster();
+      const second = poster(ORGA);
       await organiser.update(space.id, { poster: second }, as(ORGA), NOW);
       expect(posterCalls.slice(1)).toEqual([
-        `keep:association:${second.mediaId}`,
-        `release:${first.mediaId}`,
+        `claim:association:${second.mediaId}`,
+        `ephemeral:${first.mediaId}`,
       ]);
-      // A save that does not touch the poster asks nothing of the media service.
+      // A save that does not touch the poster - or re-sends the same one - asks nothing.
       await organiser.update(space.id, { name: 'Renamed' }, as(ORGA), NOW);
+      await organiser.update(space.id, { poster: second }, as(ORGA), NOW);
       expect(posterCalls).toHaveLength(3);
 
       expect((await service.getSpace(space.id, as(ALICE))).poster).toEqual(second);
       await organiser.remove(space.id, as(ORGA), NOW);
-      expect(posterCalls.slice(3)).toEqual([`release:${second.mediaId}`]);
+      expect(posterCalls.slice(3)).toEqual([`ephemeral:${second.mediaId}`]);
     });
 
-    it("keeps a person's poster as theirs (archive), and removing it releases it", async () => {
-      const { id } = await organiser.create({ name: 'Psy', poster: poster() } as never, as(ALICE));
-      const row = await ds.getRepository(BookingSpace).findOneByOrFail({ id });
-      expect(posterCalls[posterCalls.length - 1]).toBe(`keep:archive:${row.poster!.mediaId}`);
+    it("claims a person's poster as theirs (archive), and removing it releases it", async () => {
+      const mine = poster(ALICE);
+      const { id } = await organiser.create({ name: 'Psy', poster: mine } as never, as(ALICE));
+      expect(posterCalls[posterCalls.length - 1]).toBe(`claim:archive:${mine.mediaId}`);
       await organiser.update(id, { poster: null }, as(ALICE), NOW);
-      expect(posterCalls[posterCalls.length - 1]).toBe(`release:${row.poster!.mediaId}`);
-      expect((await ds.getRepository(BookingSpace).findOneByOrFail({ id })).poster).toBeNull();
+      expect(posterCalls[posterCalls.length - 1]).toBe(`ephemeral:${mine.mediaId}`);
+      expect(await posterOfRow(id)).toBeNull();
+    });
+
+    it("refuses another member's image, so removing it cannot hand it to the sweep (review of #2045)", async () => {
+      const { space } = await setup();
+      const bobs = poster(BOB);
+      await expect(code(organiser.update(space.id, { poster: bobs }, as(ORGA), NOW))).resolves.toBe(
+        'poster-not-yours'
+      );
+      await expect(
+        code(organiser.create({ name: 'Mine', poster: bobs } as never, as(ALICE)))
+      ).resolves.toBe('poster-not-yours');
+      expect(await posterOfRow(space.id)).toBeNull();
+      // Neither `association` (it would outlive Bob's erasure) nor `ephemeral` (the sweep).
+      expect(images.get(bobs.mediaId)!.cls).toBe('archive');
+    });
+
+    it('refuses an image already classified elsewhere, or no longer a fresh upload', async () => {
+      const { space } = await setup();
+      const asDocument = poster(ORGA);
+      images.get(asDocument.mediaId)!.cls = 'association';
+      const old = poster(ORGA);
+      images.get(old.mediaId)!.fresh = false;
+      for (const p of [asDocument, old]) {
+        await expect(code(organiser.update(space.id, { poster: p }, as(ORGA), NOW))).resolves.toBe(
+          'poster-not-yours'
+        );
+      }
+      expect(images.get(asDocument.mediaId)!.cls).toBe('association');
+      expect(images.get(old.mediaId)!.cls).toBe('archive');
+    });
+
+    it('never releases a poster another space still cites', async () => {
+      const shared = poster(ALICE);
+      const a = await organiser.create({ name: 'A', poster: shared } as never, as(ALICE));
+      // The same fresh upload cited by a second personal space of the same member.
+      const b = await organiser.create({ name: 'B', poster: shared } as never, as(ALICE));
+      posterCalls.length = 0;
+      await organiser.update(a.id, { poster: null }, as(ALICE), NOW);
+      expect(posterCalls).toEqual([]);
+      expect(images.get(shared.mediaId)!.cls).toBe('archive');
+      await organiser.remove(b.id, as(ALICE), NOW);
+      expect(posterCalls).toEqual([`ephemeral:${shared.mediaId}`]);
     });
   });
 

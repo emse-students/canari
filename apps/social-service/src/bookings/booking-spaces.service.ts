@@ -294,6 +294,9 @@ export class BookingSpacesService {
     const space = this.spaces.create({ ...owner, slotMode: 'step', stepMinutes: 30, maxSteps: 4 });
     this.applySettings(space, dto);
     await this.assertSettingsValid(space);
+    // The poster is claimed BEFORE the row cites it: a refused claim refuses the creation.
+    const claimed = space.poster?.mediaId ?? null;
+    if (claimed) await this.posterMedia.claim(claimed, actor.userId, associationId);
     try {
       const saved = await this.spaces.manager.transaction(async (m) => {
         if (associationId === null) {
@@ -310,9 +313,10 @@ export class BookingSpacesService {
         return m.save(BookingSpace, space);
       });
       this.logger.log(`[BOOKINGS] space created id=${saved.id.slice(0, 8)}`);
-      await this.posterMedia.keep(saved);
       return { id: saved.id };
     } catch (err) {
+      // No row cites the claimed poster: it goes back to the idle sweep rather than staying kept.
+      if (claimed) await this.posterMedia.releaseUncited([claimed], 'its space was not created');
       if (isForeignKeyViolation(err)) {
         this.logger.warn(`[BOOKINGS] create refused: association ${associationId} does not exist`);
         throw new NotFoundException({ code: 'association-not-found' });
@@ -324,17 +328,51 @@ export class BookingSpacesService {
   /**
    * Changes settings (D35). A change of zone, mode, step or step ceiling is a change of what is
    * bookable, so it is checked against every resource's coming bookings first (D29), under the
-   * space lock. A new poster is kept at the media service and the one it replaces released, both
-   * once the change is committed (`BookingPosterMedia`).
+   * space lock. A new poster is CLAIMED at the media service before the row cites it, and the one
+   * it replaces released once the change is committed, if no other space cites it
+   * (`BookingPosterMedia`).
    */
   async update(spaceId: string, dto: SpaceSettingsDto, actor: Actor, nowMs: number) {
     this.logger.debug(`[BOOKINGS] update space=${spaceId}`);
-    await this.managedSpace(spaceId, actor);
-    const { space, oldPoster } = await this.spaces.manager.transaction(async (m) => {
+    const current = await this.managedSpace(spaceId, actor);
+    const incoming = posterOf(dto.poster)?.mediaId ?? null;
+    const claimed = incoming && incoming !== (current.poster?.mediaId ?? null) ? incoming : null;
+    if (claimed) await this.posterMedia.claim(claimed, actor.userId, current.associationId);
+    let committed = false;
+    try {
+      const out = await this.updateLocked(spaceId, dto, claimed, nowMs);
+      committed = true;
+      const newPoster = out.space.poster?.mediaId ?? null;
+      if (out.oldPoster && newPoster !== out.oldPoster) {
+        await this.posterMedia.releaseUncited([out.oldPoster], 'replaced or removed');
+      }
+      return { ok: true };
+    } finally {
+      if (claimed && !committed) {
+        await this.posterMedia.releaseUncited([claimed], 'its update was refused');
+      }
+    }
+  }
+
+  /** The update's transaction, under the space lock; `claimed` is the one new poster it may cite. */
+  private updateLocked(
+    spaceId: string,
+    dto: SpaceSettingsDto,
+    claimed: string | null,
+    nowMs: number
+  ) {
+    return this.spaces.manager.transaction(async (m) => {
       const space = await this.lockSpace(m, spaceId);
       const oldPoster = space.poster?.mediaId ?? null;
       const before: SlotConfig = { ...space };
       this.applySettings(space, dto);
+      const newPoster = space.poster?.mediaId ?? null;
+      // Another update changed the poster between the read and the lock: what was claimed is no
+      // longer the change this request makes, so it is not stored unclaimed.
+      if (newPoster !== null && newPoster !== oldPoster && newPoster !== claimed) {
+        this.logger.warn(`[BOOKINGS] update refused: the poster changed under space=${spaceId}`);
+        throw new ConflictException({ code: 'try-again' });
+      }
       await this.assertSettingsValid(space);
       if (SHAPE_KEYS.some((k) => before[k] !== space[k])) {
         const resources = await m.find(BookingResource, { where: { spaceId } });
@@ -350,12 +388,6 @@ export class BookingSpacesService {
       this.logger.log(`[BOOKINGS] space updated id=${spaceId.slice(0, 8)}`);
       return { space, oldPoster };
     });
-    const newPoster = space.poster?.mediaId ?? null;
-    if (newPoster !== oldPoster) {
-      await this.posterMedia.keep(space);
-      if (oldPoster) await this.posterMedia.release([oldPoster], 'replaced or removed');
-    }
-    return { ok: true };
   }
 
   /**
@@ -382,7 +414,7 @@ export class BookingSpacesService {
     );
     // Its files (D7) are now orphans (`booking_files."bookingId"` set NULL): the retention purge
     // takes them at its next run.
-    if (poster) await this.posterMedia.release([poster], 'its space was deleted');
+    if (poster) await this.posterMedia.releaseUncited([poster], 'its space was deleted');
     return { ok: true };
   }
 

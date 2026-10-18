@@ -45,7 +45,8 @@ export interface BookingRetentionReport {
  *    `purgeExpiredFiles`, with the slot's end as its start.
  * 2. UNSENT uploads, older than the one-day upload window - and the files of a booking that is gone
  *    (its space deleted, D27, or past the maximum age), whose foreign key set them back to unsent.
- *    Nothing cites them: the blob goes, then the row.
+ *    Nothing cites them: the blob goes, then the row - under a row lock a booking cannot race
+ *    (`purgeUnsent`).
  * 3. The ANSWERS, the same `retentionDays` after the slot's end (D18: "purged with the file, one
  *    rule to explain"): `answers` NULL, `answersPurgedAt` set. The booking row stays (D15).
  * 4. THE MAXIMUM AGE (D19): every booking and every block that ENDED more than {@link BOOKING_MAX_AGE}
@@ -129,26 +130,8 @@ export class BookingRetentionScheduler {
       TAG
     );
 
-    // 2. Uploads nothing cites, past the upload window.
-    await runFileRetentionPass(
-      report.unsent,
-      report,
-      now,
-      (excluded) =>
-        q(
-          `SELECT id, "uploaderId", "createdAt" AS start, $3::int AS days
-             FROM booking_files
-            WHERE "purgedAt" IS NULL AND "bookingId" IS NULL
-              AND "createdAt" <= $4::timestamptz - make_interval(hours => 24 * $3::int)
-              AND id <> ALL($1::uuid[])
-            ORDER BY "createdAt" ASC
-            LIMIT $2`,
-          [excluded, BATCH, FORM_FILE_UPLOAD_WINDOW_DAYS, now]
-        ),
-      { deleteBlobs, markGone: (id) => this.deleteUnsentRow(id) },
-      this.logger,
-      TAG
-    );
+    // 2. Uploads nothing cites, past the upload window - claimed under a row lock (below).
+    await this.purgeUnsent(report, now);
 
     // 3. The answers, the same N days after the slot's end (D18).
     const answers = (await q(
@@ -234,11 +217,72 @@ export class BookingRetentionScheduler {
     );
   }
 
-  /** An unsent upload's blob is gone: nothing cites the row, so it goes too. */
-  private async deleteUnsentRow(id: string): Promise<void> {
-    await this.files.query(
-      `DELETE FROM booking_files WHERE id = $1 AND "bookingId" IS NULL AND "purgedAt" IS NULL`,
-      [id]
-    );
+  /**
+   * Pass 2, THE ONE A BOOKING CAN RACE: an upload judged unsent here may be in the middle of being
+   * cited - a booking's transaction that began inside the file's one-day window (`attach` reads the
+   * window with its own `NOW()`, the transaction's start) and commits after this pass read the row.
+   * Read without a lock, the blob went and the booking kept citing it with `purgedAt` NULL (review of
+   * #2045). So the batch is CLAIMED: selected `FOR UPDATE SKIP LOCKED` and held, in one transaction,
+   * across the blob delete and the row's own delete.
+   * - A row a booking is citing (its `UPDATE` holds the lock) is skipped: it is cited once that
+   *   booking commits, or back here next run if it rolls back.
+   * - A booking reaching a row this pass holds waits, then finds it gone: `file-not-yours`, and its
+   *   transaction rolls back with nothing cited.
+   * A crash between the blob delete and the commit leaves the row, and the next run reads the blob
+   * `absent` and finishes it. The predicate is the lock's own `WHERE`, re-read under the lock.
+   */
+  private async purgeUnsent(report: BookingRetentionReport, now: Date): Promise<void> {
+    const excluded: string[] = [];
+    for (;;) {
+      const batch = await this.files.manager.transaction(async (tx) => {
+        const rows = (await tx.query(
+          `SELECT id, "uploaderId" FROM booking_files
+            WHERE "purgedAt" IS NULL AND "bookingId" IS NULL
+              AND "createdAt" <= $4::timestamptz - make_interval(hours => 24 * $3::int)
+              AND id <> ALL($1::uuid[])
+            ORDER BY "createdAt" ASC
+            LIMIT $2
+            FOR UPDATE SKIP LOCKED`,
+          [excluded, BATCH, FORM_FILE_UPLOAD_WINDOW_DAYS, now]
+        )) as Array<{ id: string; uploaderId: string }>;
+        if (rows.length === 0) return null;
+        report.unsent.due += rows.length;
+        let outcomes: Record<string, FileBlobOutcome>;
+        try {
+          outcomes = await this.formFiles.purgeBlobs(
+            rows.map((r) => ({ mediaId: r.id, ownerId: r.uploaderId }))
+          );
+        } catch (e) {
+          this.logger.warn(
+            `${TAG} ${rows.length} unsent file(s) kept for the next run, the media service did not answer: ${e instanceof Error ? e.message : String(e)}`
+          );
+          return { gone: [] as string[], kept: rows.map((r) => r.id) };
+        }
+        const gone: string[] = [];
+        const kept: string[] = [];
+        for (const { id, uploaderId } of rows) {
+          // An id the media service did not answer for is NOT a success: the blob may be there.
+          const outcome = outcomes[id] ?? 'failed';
+          report.blobs[outcome] += 1;
+          if (outcome === 'deleted' || outcome === 'absent') {
+            gone.push(id);
+          } else {
+            kept.push(id);
+            this.logger.warn(
+              `${TAG} unsent file=${id} ${outcome === 'refused' ? `refused by the media service (not a form file of ${uploaderId})` : 'could not be deleted'} - kept`
+            );
+          }
+        }
+        if (gone.length > 0) {
+          await tx.query(`DELETE FROM booking_files WHERE id = ANY($1::uuid[])`, [gone]);
+        }
+        return { gone, kept };
+      });
+      if (batch === null) return;
+      report.unsent.gone += batch.gone.length;
+      report.kept += batch.kept.length;
+      excluded.push(...batch.kept);
+      for (const id of batch.gone) this.logger.log(`${TAG} unsent file=${id} deleted, row gone`);
+    }
   }
 }

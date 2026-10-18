@@ -14,12 +14,16 @@ jest.mock('../forms/retire-forms', () => ({
  * paid form of a deleted institution stayed alive and was shown as "Personnel", because
  * `forms.associationId` carries no foreign key and `remove` never touched the table.
  */
-function makeService(posters: { id: string }[] = []) {
+function makeService(posters: { id: string }[] = [], stillCited: { id: string }[] = []) {
   const manager = { delete: jest.fn(() => Promise.resolve({ affected: 1 })) };
   const assoRepo = {
     manager: {
       transaction: jest.fn((work: (m: typeof manager) => unknown) => work(manager)),
-      query: jest.fn(() => Promise.resolve(posters)),
+      // The first read lists the association's posters; the second, after the commit, which of
+      // them a surviving space still cites.
+      query: jest.fn((sql: string) =>
+        Promise.resolve(sql.includes('ANY($1)') ? stillCited : posters)
+      ),
     },
   };
   const count = jest.fn(() => Promise.resolve(2));
@@ -86,6 +90,21 @@ describe('AssociationsService.remove - its booking spaces go, and their posters 
       { mediaIds: ['poster-1', 'poster-2'], retentionClass: 'ephemeral' },
       expect.anything(),
     ]);
+  });
+
+  it('keeps a poster another space still cites (review of #2045)', async () => {
+    const { service, httpService } = makeService(
+      [{ id: 'poster-1' }, { id: 'poster-2' }],
+      [{ id: 'poster-2' }]
+    );
+
+    await service.remove('asso-1', 'admin-1');
+
+    expect(httpService.post).toHaveBeenCalledTimes(1);
+    expect((httpService.post.mock.calls[0] as unknown[])[1]).toEqual({
+      mediaIds: ['poster-1'],
+      retentionClass: 'ephemeral',
+    });
   });
 
   it('asks the media service nothing when no space had a poster', async () => {
