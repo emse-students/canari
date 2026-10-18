@@ -53,10 +53,13 @@ describe('AuthController restore routes', () => {
     available: boolean;
     isLiveSessionOf: jest.Mock;
     registrationOptions: jest.Mock;
+    registeredKeyOf: jest.Mock;
     register: jest.Mock;
     assertionOptions: jest.Mock;
-    authenticate: jest.Mock;
+    verifyAssertion: jest.Mock;
+    consume: jest.Mock;
   };
+  let errorLog: jest.SpyInstance;
   let sessions: { create: jest.Mock; revoke: jest.Mock };
   let erasure: { erasureState: jest.Mock; confirmAfterSignIn: jest.Mock };
   let platform: { getConfig: jest.Mock; isAccessBlockedByMaintenance: jest.Mock };
@@ -67,10 +70,12 @@ describe('AuthController restore routes', () => {
     jest.spyOn(Logger.prototype, 'log').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     jest.spyOn(Logger.prototype, 'debug').mockImplementation(() => undefined);
+    errorLog = jest.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
   });
 
   beforeEach(() => {
     order.length = 0;
+    errorLog.mockClear();
     process.env.JWT_SECRET = JWT_SECRET;
     process.env.NODE_ENV = 'test';
     process.env.ALLOW_INSECURE_COOKIES = 'false';
@@ -78,11 +83,27 @@ describe('AuthController restore routes', () => {
       available: true,
       isLiveSessionOf: jest.fn().mockResolvedValue(true),
       registrationOptions: jest.fn().mockResolvedValue({ challenge: 'c' }),
-      register: jest.fn().mockResolvedValue({ status: 'registered', credentialId: 'cred' }),
+      registeredKeyOf: jest.fn().mockResolvedValue(null),
+      register: jest
+        .fn()
+        .mockResolvedValue({ status: 'registered', credentialId: 'cred', replaced: null }),
       assertionOptions: jest.fn().mockResolvedValue({ challenge: 'c' }),
-      authenticate: jest.fn().mockImplementation(async () => {
-        order.push('consume');
-        return { status: 'ok', userId: 'user-1', credentialId: 'cred', sessionId: 'sid-old' };
+      verifyAssertion: jest.fn().mockImplementation(async () => {
+        order.push('verify');
+        return {
+          status: 'verified',
+          assertion: {
+            userId: 'user-1',
+            credentialId: 'cred',
+            sessionId: 'sid-old',
+            challenge: {},
+          },
+        };
+      }),
+      // The service's `consume` revokes the old session in the same transaction as the key.
+      consume: jest.fn().mockImplementation(async () => {
+        order.push('consume+revoke-old');
+        return { status: 'consumed' };
       }),
     };
     sessions = {
@@ -116,9 +137,19 @@ describe('AuthController restore routes', () => {
     const fromApp = () =>
       makeReq({ bearer: access('user-1'), origin: ANDROID, refresh: refresh('user-1', 'sid-1') });
 
-    it('issues options for the calling session when the Android app asks', async () => {
-      await controller.restoreRegistrationOptions(fromApp());
-      expect(restore.isLiveSessionOf).toHaveBeenCalledWith('user-1', 'sid-1', expect.any(Date));
+    it('issues options for the calling session, with the key it holds now', async () => {
+      restore.registeredKeyOf.mockResolvedValue('held');
+      await expect(controller.restoreRegistrationOptions(fromApp())).resolves.toEqual({
+        options: { challenge: 'c' },
+        registeredCredentialId: 'held',
+      });
+      // The refresh id is passed down: only the session's CURRENT credential may register a key.
+      expect(restore.isLiveSessionOf).toHaveBeenCalledWith(
+        'user-1',
+        'sid-1',
+        expect.any(Date),
+        'jti-1'
+      );
       expect(restore.registrationOptions).toHaveBeenCalledWith('sid-1', expect.any(Date));
     });
 
@@ -153,14 +184,51 @@ describe('AuthController restore routes', () => {
     it('stores the key with what the phone did with its backup', async () => {
       await expect(
         controller.restoreRegistration(fromApp(), { response: { id: 'x' }, cloudBackup: false })
-      ).resolves.toEqual({ registered: true });
+      ).resolves.toEqual({ registered: true, credentialId: 'cred' });
       expect(restore.register).toHaveBeenCalledWith(
         'user-1',
         'sid-1',
+        'jti-1',
         { id: 'x' },
         false,
         expect.any(Date)
       );
+      expect(errorLog).not.toHaveBeenCalled();
+    });
+
+    it('accuses the eviction of a key this install did not register, and not of its own', async () => {
+      restore.register.mockResolvedValue({
+        status: 'registered',
+        credentialId: 'cred',
+        replaced: 'mine',
+      });
+      await controller.restoreRegistration(fromApp(), {
+        response: {},
+        cloudBackup: true,
+        previousCredentialId: 'mine',
+      });
+      expect(errorLog).not.toHaveBeenCalled();
+
+      restore.register.mockResolvedValue({
+        status: 'registered',
+        credentialId: 'cred',
+        replaced: 'planted',
+      });
+      await controller.restoreRegistration(fromApp(), {
+        response: {},
+        cloudBackup: true,
+        previousCredentialId: 'mine',
+      });
+      expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('FOREIGN KEY EVICTED'));
+    });
+
+    it('refuses a refresh credential that carries no refresh id', async () => {
+      const noJti = jwt.sign({ sub: 'user-1', type: 'refresh', sid: 'sid-1' }, JWT_SECRET);
+      const req = makeReq({ bearer: access('user-1'), origin: ANDROID, refresh: noJti });
+      await expect(controller.restoreRegistrationOptions(req)).rejects.toBeInstanceOf(
+        NotFoundException
+      );
+      expect(restore.registrationOptions).not.toHaveBeenCalled();
     });
 
     it('answers a key held by another session with its own code', async () => {
@@ -172,50 +240,77 @@ describe('AuthController restore routes', () => {
   });
 
   describe('assertion', () => {
-    it('mints the new phone a session, THEN revokes the old one - a transfer', async () => {
+    it('verifies, consumes the key WITH the old session, THEN mints - a transfer', async () => {
       const out = makeRes();
       const answer = await controller.restoreAssertion(makeReq({ origin: ANDROID }), out.res, {
         response: { id: 'cred' },
       });
-      expect(order).toEqual(['consume', 'mint', 'revoke-old']);
-      expect(sessions.revoke).toHaveBeenCalledWith('sid-old');
+      expect(order).toEqual(['verify', 'consume+revoke-old', 'mint']);
+      expect(sessions.revoke).not.toHaveBeenCalled();
       expect(answer.user.id).toBe('user-1');
       expect(jwt.verify(answer.access_token, JWT_SECRET)).toMatchObject({ sub: 'user-1' });
       // Android keeps the cookie on an HTTPS estate, exactly as after a MiConnect sign-in.
       expect(out.cookies['canari_refresh']).toBeDefined();
     });
 
-    it('answers an unknown key with RESTORE_KEY_UNKNOWN and touches no session', async () => {
-      restore.authenticate.mockResolvedValue({ status: 'unknown' });
+    it('answers an unknown key with RESTORE_KEY_UNKNOWN and consumes nothing', async () => {
+      restore.verifyAssertion.mockResolvedValue({ status: 'unknown' });
       await expect(
         controller.restoreAssertion(makeReq(), makeRes().res, { response: {} })
       ).rejects.toMatchObject({ status: 401, response: { code: 'RESTORE_KEY_UNKNOWN' } });
+      expect(restore.consume).not.toHaveBeenCalled();
       expect(sessions.create).not.toHaveBeenCalled();
-      expect(sessions.revoke).not.toHaveBeenCalled();
     });
 
     it('answers a key that did not verify with RESTORE_ASSERTION_INVALID', async () => {
-      restore.authenticate.mockResolvedValue({ status: 'invalid', reason: 'replay' });
+      restore.verifyAssertion.mockResolvedValue({ status: 'invalid', reason: 'bad signature' });
       await expect(
         controller.restoreAssertion(makeReq(), makeRes().res, { response: {} })
       ).rejects.toMatchObject({ response: { code: 'RESTORE_ASSERTION_INVALID' } });
+      expect(restore.consume).not.toHaveBeenCalled();
     });
 
-    it('refuses during an erasure exactly as a MiConnect sign-in does, and keeps the old session', async () => {
+    it('answers a replay or a key consumed concurrently at the consume step, and mints nothing', async () => {
+      restore.consume.mockResolvedValue({ status: 'invalid', reason: 'replay' });
+      await expect(
+        controller.restoreAssertion(makeReq(), makeRes().res, { response: {} })
+      ).rejects.toMatchObject({ response: { code: 'RESTORE_ASSERTION_INVALID' } });
+      restore.consume.mockResolvedValue({ status: 'unknown' });
+      await expect(
+        controller.restoreAssertion(makeReq(), makeRes().res, { response: {} })
+      ).rejects.toMatchObject({ response: { code: 'RESTORE_KEY_UNKNOWN' } });
+      expect(sessions.create).not.toHaveBeenCalled();
+    });
+
+    it('refuses during an erasure BEFORE consuming: the key and the old session survive', async () => {
       erasure.erasureState.mockResolvedValue('pending');
       await expect(
         controller.restoreAssertion(makeReq(), makeRes().res, { response: {} })
       ).rejects.toMatchObject({ response: { code: 'ACCOUNT_ERASURE_PENDING' } });
+      expect(restore.consume).not.toHaveBeenCalled();
       expect(sessions.create).not.toHaveBeenCalled();
-      expect(sessions.revoke).not.toHaveBeenCalled();
     });
 
-    it('refuses during maintenance, and keeps the old session', async () => {
+    it('refuses during maintenance BEFORE consuming, so the restore can be retried', async () => {
       platform.isAccessBlockedByMaintenance.mockReturnValue(true);
       await expect(
         controller.restoreAssertion(makeReq(), makeRes().res, { response: {} })
       ).rejects.toMatchObject({ response: { code: 'MAINTENANCE' } });
-      expect(sessions.revoke).not.toHaveBeenCalled();
+      expect(restore.consume).not.toHaveBeenCalled();
+    });
+
+    it('a mint that fails after the consume leaves NO session and sends no cookie, never two', async () => {
+      sessions.create.mockRejectedValue(new Error('database down'));
+      const out = makeRes();
+      await expect(
+        controller.restoreAssertion(makeReq(), out.res, { response: {} })
+      ).rejects.toThrow('database down');
+      // The old session went with the key, in the service's transaction; nothing new exists.
+      expect(order).toEqual(['verify', 'consume+revoke-old']);
+      expect(out.cookies['canari_refresh']).toBeUndefined();
+      expect(errorLog).toHaveBeenCalledWith(
+        expect.stringContaining('the new session could not be minted')
+      );
     });
   });
 

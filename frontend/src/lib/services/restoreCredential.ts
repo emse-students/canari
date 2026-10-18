@@ -1,8 +1,8 @@
 /**
  * ACCOUNT RESTORE ON A NEW ANDROID PHONE - the two flows of WP-RESTORE-1 (docs/wiki/account-restore.md).
  *
- * - {@link registerRestoreKeyIfDue}: a signed-in session registers ONE restore key, which Android
- *   keeps in the phone's Google backup.
+ * - {@link ensureRestoreKey}: a signed-in session holds ONE restore key, registered by this install,
+ *   which Android keeps in the phone's Google backup.
  * - {@link attemptRestore}: on the first start of a fresh install, `/login` asks the platform for a
  *   restored key; the server answers a verified one by MOVING the session that registered it here
  *   (the old phone is signed out - a restore is a transfer, never an extra session).
@@ -24,9 +24,9 @@ import {
   createRestoreKey,
   getRestoreKey,
   hasAttemptedRestore,
-  isRestoreKeyRegistered,
   markRestoreAttempted,
-  markRestoreKeyRegistered,
+  registeredRestoreKeyId,
+  rememberRegisteredRestoreKey,
   restoreKeySupported,
 } from '$lib/services/restoreKey';
 
@@ -79,24 +79,24 @@ export class RestoreRegistrationRefusedError extends Error {
 }
 
 /**
- * Registers this session's restore key, unless it already has one. Android only; called after a
- * login that reached the server (`loginImpl`, `promoteOfflineSession`), fire-and-forget.
+ * Makes sure the CURRENT session holds the restore key THIS INSTALL registered - and registers one
+ * when it does not. Android only; called at EVERY start that reaches the server (`loginImpl`,
+ * `promoteOfflineSession`), fire-and-forget.
  *
- * Throws on any failure (the caller logs it): the marker is then left unset, so the next start
- * tries again. A registration is idempotent server-side - one key per session, a second replaces
- * the first.
+ * EVERY START, NOT ONCE: the server answers the options with the id of the key the session holds,
+ * and anything but the id this install registered is replaced. A key planted by somebody who held
+ * this session's credentials for a while is therefore evicted at the owner's next start - and
+ * accused, here and on the server (docs/wiki/account-restore.md, threat model). The ordinary start
+ * costs one request and no platform call.
+ *
+ * Throws on any failure (the caller logs it); the next start tries again.
  */
-export async function registerRestoreKeyIfDue(userId: string): Promise<void> {
+export async function ensureRestoreKey(userId: string): Promise<void> {
   if (!restoreKeySupported()) return;
   if (!userId) {
     rwarn('register skipped: no signed-in user id');
     return;
   }
-  if (isRestoreKeyRegistered(userId)) {
-    console.debug('[RESTORE] register skipped: this session already has its key');
-    return;
-  }
-  rlog('register: asking for options');
   // `credentials: 'include'` keeps the call on the WebView's own fetch, so it carries the cookie
   // AND the app's `Origin`, which is what the server admits a registration from.
   const optionsRes = await apiFetch(restoreUrl('registration/options'), {
@@ -106,7 +106,23 @@ export async function registerRestoreKeyIfDue(userId: string): Promise<void> {
   });
   if (!optionsRes.ok)
     throw new RestoreRegistrationRefusedError(await readRestoreRefusal(optionsRes));
-  const options: unknown = await optionsRes.json();
+  const { options, registeredCredentialId } = (await optionsRes.json()) as {
+    options: unknown;
+    registeredCredentialId: string | null;
+  };
+  const mine = registeredRestoreKeyId(userId);
+  if (registeredCredentialId !== null && registeredCredentialId === mine) {
+    console.debug('[RESTORE] this session holds the key this install registered');
+    return;
+  }
+  if (registeredCredentialId !== null) {
+    // The session holds a key this install did not register (or no longer remembers registering):
+    // somebody else may have put it there with this session's credentials. Replaced just below.
+    console.error(
+      `[RESTORE] this session holds a key this install did not register (${registeredCredentialId.slice(0, 8)}) - replacing it`
+    );
+  }
+  rlog("register: creating this install's key");
 
   const created = await createRestoreKey(options);
   if (!created.cloudBackup) {
@@ -121,10 +137,12 @@ export async function registerRestoreKeyIfDue(userId: string): Promise<void> {
     body: JSON.stringify({
       response: JSON.parse(created.responseJson) as unknown,
       cloudBackup: created.cloudBackup,
+      previousCredentialId: mine,
     }),
   });
   if (!res.ok) throw new RestoreRegistrationRefusedError(await readRestoreRefusal(res));
-  markRestoreKeyRegistered(userId);
+  const { credentialId } = (await res.json()) as { credentialId: string };
+  rememberRegisteredRestoreKey(userId, credentialId);
   rlog(`register✓ (cloudBackup=${created.cloudBackup})`);
 }
 

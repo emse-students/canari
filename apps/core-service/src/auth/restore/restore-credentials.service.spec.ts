@@ -21,6 +21,8 @@ const LATER = new Date(T0.getTime() + 60_000);
 const USER = 'user-1';
 const SID = '11111111-1111-4111-8111-111111111111';
 const OTHER_SID = '22222222-2222-4222-8222-222222222222';
+/** The CURRENT refresh id of a session in this file; a rotation moves it on. */
+const JTI = 'jti-current';
 
 const b64u = (b: Uint8Array | Buffer) => Buffer.from(b).toString('base64url');
 const sha256 = (b: Uint8Array | Buffer | string) => createHash('sha256').update(b).digest();
@@ -122,11 +124,20 @@ class SoftAuthenticator {
 function makeStore() {
   const credentials = new Map<string, RestoreCredential>();
   const spent = new Map<string, Date>();
-  const sessions = new Map<string, { id: string; userId: string; expiresAt: Date }>();
+  const sessions = new Map<
+    string,
+    { id: string; userId: string; expiresAt: Date; tokenId?: string }
+  >();
+
+  /** A credential found by its id, or by the session holding it. */
+  const findCredential = (where: { id?: string; sessionId?: string }) => {
+    if (where.id !== undefined) return credentials.get(where.id) ?? null;
+    return [...credentials.values()].find((r) => r.sessionId === where.sessionId) ?? null;
+  };
 
   const manager = {
-    findOne: async (_e: unknown, opts: { where: { id: string } }) =>
-      credentials.get(opts.where.id) ?? null,
+    findOne: async (_e: unknown, opts: { where: { id?: string; sessionId?: string } }) =>
+      findCredential(opts.where),
     delete: async (_e: unknown, where: { sessionId: string }) => {
       for (const [id, row] of credentials)
         if (row.sessionId === where.sessionId) credentials.delete(id);
@@ -148,13 +159,18 @@ function makeStore() {
         credentials.delete(row.id);
         return [{ sessionId: row.sessionId }];
       }
+      if (sql.startsWith('DELETE FROM auth_sessions')) {
+        sessions.delete(params[0] as string);
+        return [];
+      }
       throw new Error(`unexpected SQL in the fake: ${sql}`);
     },
   };
 
   const service = new RestoreCredentialsService(
     {
-      findOne: async (opts: { where: { id: string } }) => credentials.get(opts.where.id) ?? null,
+      findOne: async (opts: { where: { id?: string; sessionId?: string } }) =>
+        findCredential(opts.where),
     } as never,
     { delete: async () => ({ affected: 0 }) } as never,
     {
@@ -166,6 +182,23 @@ function makeStore() {
     { transaction: async (cb: (m: typeof manager) => unknown) => cb(manager) } as never
   );
   return { service, credentials, spent, sessions };
+}
+
+/** A whole restore as the controller runs it: verify, then consume. */
+async function restore(
+  service: RestoreCredentialsService,
+  response: unknown,
+  now: Date
+): Promise<{ status: string; reason?: string; userId?: string; sessionId?: string }> {
+  const verified = await service.verifyAssertion(response as never, now);
+  if (verified.status !== 'verified') return verified;
+  const consumed = await service.consume(verified.assertion);
+  if (consumed.status !== 'consumed') return consumed;
+  return {
+    status: 'ok',
+    userId: verified.assertion.userId,
+    sessionId: verified.assertion.sessionId,
+  };
 }
 
 /** The challenge a phone would echo: the options' challenge, as base64url. */
@@ -197,17 +230,23 @@ describe('RestoreCredentialsService', () => {
       id: SID,
       userId: USER,
       expiresAt: new Date(T0.getTime() + 86_400_000),
+      tokenId: JTI,
     });
     const phone = new SoftAuthenticator();
     const options = await store.service.registrationOptions(SID, T0);
     const result = await store.service.register(
       USER,
       SID,
+      JTI,
       phone.register(challengeOf(options), { up: opts.up }) as never,
       true,
       T0
     );
-    expect(result).toEqual({ status: 'registered', credentialId: b64u(phone.credentialId) });
+    expect(result).toEqual({
+      status: 'registered',
+      credentialId: b64u(phone.credentialId),
+      replaced: null,
+    });
     return { ...store, phone };
   }
 
@@ -237,41 +276,48 @@ describe('RestoreCredentialsService', () => {
         cloudBackup: true,
       });
       const request = await service.assertionOptions(LATER);
-      const result = await service.authenticate(
-        phone.assert(request.challenge, { up }) as never,
-        LATER
-      );
-      expect(result).toEqual({
-        status: 'ok',
-        userId: USER,
-        credentialId: b64u(phone.credentialId),
-        sessionId: SID,
-      });
+      const result = await restore(service, phone.assert(request.challenge, { up }), LATER);
+      expect(result).toEqual({ status: 'ok', userId: USER, sessionId: SID });
     }
   );
 
-  it('CONSUMES the key: a second restore with it is answered as an unknown key', async () => {
-    const { service, credentials, phone } = await registered();
+  it('CONSUMES the key AND revokes its session in one transaction: never one session more', async () => {
+    const { service, credentials, sessions, phone } = await registered();
     const first = await service.assertionOptions(LATER);
-    expect((await service.authenticate(phone.assert(first.challenge) as never, LATER)).status).toBe(
-      'ok'
-    );
+    expect((await restore(service, phone.assert(first.challenge), LATER)).status).toBe('ok');
     expect(credentials.size).toBe(0);
+    expect(sessions.has(SID)).toBe(false);
     const second = await service.assertionOptions(LATER);
-    expect(await service.authenticate(phone.assert(second.challenge) as never, LATER)).toEqual({
+    expect(await restore(service, phone.assert(second.challenge), LATER)).toEqual({
       status: 'unknown',
     });
   });
 
+  it('writes NOTHING on verification alone, so a refusal before consume keeps the key', async () => {
+    const { service, credentials, sessions, spent, phone } = await registered();
+    const request = await service.assertionOptions(LATER);
+    const verified = await service.verifyAssertion(phone.assert(request.challenge) as never, LATER);
+    expect(verified.status).toBe('verified');
+    expect(credentials.size).toBe(1);
+    expect(sessions.has(SID)).toBe(true);
+    expect(spent.size).toBe(0);
+  });
+
   it('refuses a replayed assertion even when its key exists again (the spent nonce)', async () => {
-    const { service, phone } = await registered();
+    const { service, sessions, phone } = await registered();
     const request = await service.assertionOptions(LATER);
     const assertion = phone.assert(request.challenge);
-    expect((await service.authenticate(assertion as never, LATER)).status).toBe('ok');
-    // The same key registered again for the same session (a replayed registration).
+    expect((await restore(service, assertion, LATER)).status).toBe('ok');
+    // The same key registered again under a live session (a replayed registration).
+    sessions.set(SID, {
+      id: SID,
+      userId: USER,
+      expiresAt: new Date(LATER.getTime() + 1),
+      tokenId: JTI,
+    });
     const options = await service.registrationOptions(SID, LATER);
-    await service.register(USER, SID, phone.register(options.challenge) as never, true, LATER);
-    expect(await service.authenticate(assertion as never, LATER)).toEqual({
+    await service.register(USER, SID, JTI, phone.register(options.challenge) as never, true, LATER);
+    expect(await restore(service, assertion, LATER)).toEqual({
       status: 'invalid',
       reason: 'replay',
     });
@@ -280,7 +326,7 @@ describe('RestoreCredentialsService', () => {
   it('refuses an assertion signed for another origin (a phishing page, an unsigned build)', async () => {
     const { service, phone } = await registered();
     const request = await service.assertionOptions(LATER);
-    const result = await service.authenticate(
+    const result = await service.verifyAssertion(
       phone.assert(request.challenge, { origin: 'https://evil.example' }) as never,
       LATER
     );
@@ -290,7 +336,7 @@ describe('RestoreCredentialsService', () => {
   it('refuses an assertion for another RP id', async () => {
     const { service, phone } = await registered();
     const request = await service.assertionOptions(LATER);
-    const result = await service.authenticate(
+    const result = await service.verifyAssertion(
       phone.assert(request.challenge, { rpId: 'dev.canari-emse.fr' }) as never,
       LATER
     );
@@ -301,12 +347,12 @@ describe('RestoreCredentialsService', () => {
     const { service, phone } = await registered();
     const stale = await service.assertionOptions(T0);
     const after = new Date(T0.getTime() + RESTORE_CHALLENGE_TTL_MS);
-    expect((await service.authenticate(phone.assert(stale.challenge) as never, after)).status).toBe(
-      'invalid'
-    );
+    expect(
+      (await service.verifyAssertion(phone.assert(stale.challenge) as never, after)).status
+    ).toBe('invalid');
     const wrongPurpose = await service.registrationOptions(SID, LATER);
     expect(
-      (await service.authenticate(phone.assert(wrongPurpose.challenge) as never, LATER)).status
+      (await service.verifyAssertion(phone.assert(wrongPurpose.challenge) as never, LATER)).status
     ).toBe('invalid');
   });
 
@@ -314,7 +360,7 @@ describe('RestoreCredentialsService', () => {
     const { service, sessions, phone } = await registered();
     sessions.set(SID, { id: SID, userId: USER, expiresAt: LATER });
     const request = await service.assertionOptions(LATER);
-    expect(await service.authenticate(phone.assert(request.challenge) as never, LATER)).toEqual({
+    expect(await service.verifyAssertion(phone.assert(request.challenge) as never, LATER)).toEqual({
       status: 'unknown',
     });
   });
@@ -324,15 +370,16 @@ describe('RestoreCredentialsService', () => {
     const phone = new SoftAuthenticator();
     const options = await service.registrationOptions(SID, T0);
     expect(
-      await service.register(USER, SID, phone.register(options.challenge) as never, true, T0)
+      await service.register(USER, SID, JTI, phone.register(options.challenge) as never, true, T0)
     ).toEqual({
       status: 'no-session',
     });
-    sessions.set(SID, { id: SID, userId: USER, expiresAt: LATER });
-    sessions.set(OTHER_SID, { id: OTHER_SID, userId: USER, expiresAt: LATER });
+    sessions.set(SID, { id: SID, userId: USER, expiresAt: LATER, tokenId: JTI });
+    sessions.set(OTHER_SID, { id: OTHER_SID, userId: USER, expiresAt: LATER, tokenId: JTI });
     const result = await service.register(
       USER,
       OTHER_SID,
+      JTI,
       phone.register(options.challenge) as never,
       true,
       T0
@@ -342,21 +389,55 @@ describe('RestoreCredentialsService', () => {
 
   it('never re-binds a key id already held by another session', async () => {
     const { service, sessions, credentials, phone } = await registered();
-    sessions.set(OTHER_SID, { id: OTHER_SID, userId: USER, expiresAt: LATER });
+    sessions.set(OTHER_SID, { id: OTHER_SID, userId: USER, expiresAt: LATER, tokenId: JTI });
     const options = await service.registrationOptions(OTHER_SID, T0);
     expect(
-      await service.register(USER, OTHER_SID, phone.register(options.challenge) as never, false, T0)
+      await service.register(
+        USER,
+        OTHER_SID,
+        JTI,
+        phone.register(options.challenge) as never,
+        false,
+        T0
+      )
     ).toEqual({ status: 'taken' });
     expect(credentials.get(b64u(phone.credentialId))?.sessionId).toBe(SID);
   });
 
-  it("replaces the session's previous key on re-registration", async () => {
-    const { service, credentials } = await registered();
+  it("replaces the session's previous key on re-registration, and names the key it replaced", async () => {
+    const { service, credentials, phone } = await registered();
+    expect(await service.registeredKeyOf(SID)).toBe(b64u(phone.credentialId));
     const newPhone = new SoftAuthenticator();
     const options = await service.registrationOptions(SID, T0);
-    await service.register(USER, SID, newPhone.register(options.challenge) as never, false, T0);
+    expect(
+      await service.register(
+        USER,
+        SID,
+        JTI,
+        newPhone.register(options.challenge) as never,
+        false,
+        T0
+      )
+    ).toEqual({
+      status: 'registered',
+      credentialId: b64u(newPhone.credentialId),
+      replaced: b64u(phone.credentialId),
+    });
     expect([...credentials.keys()]).toEqual([b64u(newPhone.credentialId)]);
     expect(credentials.get(b64u(newPhone.credentialId))?.cloudBackup).toBe(false);
+  });
+
+  it('refuses a registration with a refresh credential the rotation has moved past (a stale, stolen copy)', async () => {
+    const { service, sessions, credentials, phone } = await registered();
+    // The owner's client refreshed: the session's current id is no longer the one a thief copied.
+    sessions.set(SID, { ...sessions.get(SID)!, tokenId: 'jti-after-rotation' });
+    const thief = new SoftAuthenticator();
+    const options = await service.registrationOptions(SID, T0);
+    expect(
+      await service.register(USER, SID, JTI, thief.register(options.challenge) as never, true, T0)
+    ).toEqual({ status: 'no-session' });
+    expect([...credentials.keys()]).toEqual([b64u(phone.credentialId)]);
+    expect(await service.isLiveSessionOf(USER, SID, T0, 'jti-after-rotation')).toBe(true);
   });
 
   it('is unavailable, and issues nothing, with no fingerprint configured', async () => {

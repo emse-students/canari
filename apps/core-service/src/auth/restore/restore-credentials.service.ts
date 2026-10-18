@@ -32,25 +32,43 @@ const RP_NAME = 'Canari';
  * controller turns each into a different status and the client into a different action.
  */
 export type RegisterResult =
-  | { status: 'registered'; credentialId: string }
-  /** The calling session is gone, expired, or not the caller's. */
+  /** Stored. `replaced` is the id of the session's previous key when it had a different one. */
+  | { status: 'registered'; credentialId: string; replaced: string | null }
+  /**
+   * The calling session is gone, expired, not the caller's, or the refresh credential presented is
+   * not its CURRENT one (a stale, possibly stolen, credential never registers a key).
+   */
   | { status: 'no-session' }
   /** The credential id is already another session's key: never re-bound (it is client-chosen). */
   | { status: 'taken' }
   /** The response did not verify (challenge, origin, RP id, signature, format). */
   | { status: 'invalid'; reason: string };
 
-/** Outcome of {@link RestoreCredentialsService.authenticate}. */
-export type AuthenticateResult =
-  /**
-   * Verified and CONSUMED: the key's row is gone. `sessionId` is the session it was bound to, which
-   * the caller revokes once the new phone's session exists - a restore is a transfer.
-   */
-  | { status: 'ok'; userId: string; credentialId: string; sessionId: string }
+/** Outcome of {@link RestoreCredentialsService.verifyAssertion}: a verdict, and NOTHING written. */
+export type VerifyAssertionResult =
+  /** The signature verified. Nothing is consumed yet: the caller's refusals keep the key. */
+  | { status: 'verified'; assertion: VerifiedAssertion }
   /** No key with that id, or the session it is bound to is gone or expired. */
   | { status: 'unknown' }
-  /** The assertion did not verify, or its challenge was already spent (a replay). */
+  /** The assertion did not verify. */
   | { status: 'invalid'; reason: string };
+
+/** A verified assertion, as {@link RestoreCredentialsService.consume} takes it. */
+export interface VerifiedAssertion {
+  userId: string;
+  credentialId: string;
+  sessionId: string;
+  challenge: CheckedChallenge;
+}
+
+/** Outcome of {@link RestoreCredentialsService.consume}. */
+export type ConsumeResult =
+  /** The key and the session it was bound to are gone, in one transaction. */
+  | { status: 'consumed' }
+  /** Another assertion consumed the key first. */
+  | { status: 'unknown' }
+  /** The challenge was already spent: a replay. */
+  | { status: 'invalid'; reason: 'replay' };
 
 /** The shortest prefix of a credential id that identifies it in a log line. */
 function shortId(id: string | undefined): string {
@@ -126,13 +144,35 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
   /**
    * Whether `sessionId` is a LIVE session of `userId` - the same three conditions a refresh checks
    * (exists, belongs to the caller, not past `expiresAt`), because a key is worth no more than it.
+   *
+   * With `tokenId`, also that it is the session's CURRENT refresh id. A registration demands it: a
+   * refresh credential the rotation has moved past is one somebody else may hold, and accepting it
+   * would let a thief plant a key without ever rotating - so the fork detection never fires.
    */
-  async isLiveSessionOf(userId: string, sessionId: string, now: Date): Promise<boolean> {
+  async isLiveSessionOf(
+    userId: string,
+    sessionId: string,
+    now: Date,
+    tokenId?: string
+  ): Promise<boolean> {
     const row = await this.sessions.findOne({
       where: { id: sessionId, userId },
-      select: { id: true, expiresAt: true },
+      select: { id: true, expiresAt: true, tokenId: true },
     });
-    return !!row && row.expiresAt.getTime() > now.getTime();
+    if (!row || row.expiresAt.getTime() <= now.getTime()) return false;
+    if (tokenId !== undefined && row.tokenId !== tokenId) {
+      this.logger.warn(
+        `[RESTORE] sid=${sessionId} presented a refresh credential that is not its current one`
+      );
+      return false;
+    }
+    return true;
+  }
+
+  /** The credential id of the key `sessionId` holds now, or null. Read at every app start. */
+  async registeredKeyOf(sessionId: string): Promise<string | null> {
+    const row = await this.credentials.findOne({ where: { sessionId }, select: { id: true } });
+    return row?.id ?? null;
   }
 
   /** Creation options for a restore key of THIS session (the challenge is bound to it). */
@@ -169,12 +209,13 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
   async register(
     userId: string,
     sessionId: string,
+    tokenId: string,
     response: RegistrationResponseJSON,
     cloudBackup: boolean,
     now: Date
   ): Promise<RegisterResult> {
     const { rpId, origins } = this.requireConfig();
-    if (!(await this.isLiveSessionOf(userId, sessionId, now))) {
+    if (!(await this.isLiveSessionOf(userId, sessionId, now, tokenId))) {
       this.logger.warn(`[RESTORE] registration refused: no live session sid=${sessionId}`);
       return { status: 'no-session' };
     }
@@ -203,12 +244,16 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
     // One transaction: the session's previous key goes and this one takes its place. A credential id
     // is CHOSEN BY THE CLIENT under `attestation: none`, so an id already bound to ANOTHER session is
     // refused rather than re-bound - re-binding would let one session take over another's key.
-    const taken = await this.dataSource.transaction(async (manager) => {
+    const stored = await this.dataSource.transaction(async (manager) => {
       const existing = await manager.findOne(RestoreCredential, {
         where: { id: credential.id },
         select: { id: true, sessionId: true },
       });
-      if (existing && existing.sessionId !== sessionId) return true;
+      if (existing && existing.sessionId !== sessionId) return 'taken' as const;
+      const previous = await manager.findOne(RestoreCredential, {
+        where: { sessionId },
+        select: { id: true },
+      });
       await manager.delete(RestoreCredential, { sessionId });
       await manager.insert(RestoreCredential, {
         id: credential.id,
@@ -219,18 +264,18 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
         cloudBackup,
         createdAt: now,
       });
-      return false;
+      return { replaced: previous && previous.id !== credential.id ? previous.id : null };
     });
-    if (taken) {
+    if (stored === 'taken') {
       this.logger.warn(
         `[RESTORE] registration refused sid=${sessionId}: key id=${shortId(credential.id)} is another session's`
       );
       return { status: 'taken' };
     }
     this.logger.log(
-      `[RESTORE] key registered user=${userId} sid=${sessionId} id=${shortId(credential.id)} cloudBackup=${cloudBackup}`
+      `[RESTORE] key registered user=${userId} sid=${sessionId} id=${shortId(credential.id)} cloudBackup=${cloudBackup} replaced=${shortId(stored.replaced ?? undefined)}`
     );
-    return { status: 'registered', credentialId: credential.id };
+    return { status: 'registered', credentialId: credential.id, replaced: stored.replaced };
   }
 
   /** Request options for an anonymous restore. Writes nothing: the challenge carries its own proof. */
@@ -247,10 +292,17 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
   }
 
   /**
-   * Verifies a restore assertion. On success the challenge is SPENT (a second presentation of the
-   * same assertion is a replay) and the account is returned for the caller to sign in.
+   * Verifies a restore assertion and WRITES NOTHING: the caller first applies the refusals a
+   * sign-in owes (erasure, maintenance), which must leave the key usable, then calls
+   * {@link consume}.
+   *
+   * `unknown` is answered before the signature is checked, so it tells a caller whether a credential
+   * id exists. Harmless: an id is 16+ random bytes chosen by the platform, never listed anywhere.
    */
-  async authenticate(response: AuthenticationResponseJSON, now: Date): Promise<AuthenticateResult> {
+  async verifyAssertion(
+    response: AuthenticationResponseJSON,
+    now: Date
+  ): Promise<VerifyAssertionResult> {
     const { rpId, origins } = this.requireConfig();
     const id = typeof response?.id === 'string' ? response.id : '';
     const row = id ? await this.credentials.findOne({ where: { id } }) : null;
@@ -296,22 +348,43 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
       return { status: 'invalid', reason: 'not verified' };
     }
 
-    // SINGLE USE, TWICE OVER, settled by the database in ONE transaction: the challenge's nonce is
-    // recorded (a second presentation of the same assertion finds it), and the key itself is
-    // consumed (`DELETE ... RETURNING`: of two concurrent assertions with different challenges,
-    // exactly one deletes the row). Only a verified signature reaches this write.
+    return {
+      status: 'verified',
+      assertion: {
+        userId: row.userId,
+        credentialId: row.id,
+        sessionId: row.sessionId,
+        challenge: spentChallenge,
+      },
+    };
+  }
+
+  /**
+   * Consumes a verified assertion: the challenge is SPENT, the key is DELETED and the session it was
+   * bound to is REVOKED, in ONE transaction - so a restore can never leave the account with one more
+   * session than before (the new phone's is minted only after this commits).
+   *
+   * SINGLE USE, TWICE OVER, settled by the database: the challenge's nonce is recorded (a second
+   * presentation of the same assertion finds it), and the key is consumed by `DELETE ... RETURNING`
+   * (of two concurrent assertions with different challenges, exactly one deletes the row).
+   */
+  async consume(assertion: VerifiedAssertion): Promise<ConsumeResult> {
+    const id = assertion.credentialId;
     const outcome = await this.dataSource.transaction(async (manager) => {
       const inserted: unknown[] = await manager.query(
         `INSERT INTO restore_challenges_spent (nonce, "expiresAt") VALUES ($1, $2)
          ON CONFLICT (nonce) DO NOTHING RETURNING nonce`,
-        [spentChallenge.nonce, spentChallenge.expiresAt]
+        [assertion.challenge.nonce, assertion.challenge.expiresAt]
       );
       if (inserted.length === 0) return 'replay' as const;
       const consumed: { sessionId: string }[] = await manager.query(
         `DELETE FROM restore_credentials WHERE id = $1 RETURNING "sessionId"`,
-        [row.id]
+        [id]
       );
       if (consumed.length === 0) return 'gone' as const;
+      // The old phone's session, revoked with the key: `AuthSessionsService.revoke` is this same
+      // single DELETE, written here so it commits or rolls back with the consumption.
+      await manager.query(`DELETE FROM auth_sessions WHERE id = $1`, [consumed[0].sessionId]);
       return consumed[0];
     });
     if (outcome === 'replay') {
@@ -321,14 +394,14 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
       return { status: 'invalid', reason: 'replay' };
     }
     if (outcome === 'gone') {
-      // Another assertion consumed the key between the read and this write.
+      // Another assertion consumed the key between the verification and this write.
       this.logger.warn(`[RESTORE] assertion refused id=${shortId(id)}: key consumed concurrently`);
       return { status: 'unknown' };
     }
     this.logger.log(
-      `[RESTORE] key verified and consumed user=${row.userId} id=${shortId(id)} sid=${outcome.sessionId}`
+      `[RESTORE] key consumed and its session revoked user=${assertion.userId} id=${shortId(id)} sid=${outcome.sessionId}`
     );
-    return { status: 'ok', userId: row.userId, credentialId: row.id, sessionId: outcome.sessionId };
+    return { status: 'consumed' };
   }
 
   /** The challenge, when it verifies for this purpose and binding now; null otherwise (logged). */

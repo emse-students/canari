@@ -17,8 +17,11 @@ import {
   Res,
   ServiceUnavailableException,
   UnauthorizedException,
+  UseGuards,
 } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
+import { ClientIpThrottlerGuard } from '../common/guards/client-ip-throttler.guard';
 import * as jwt from 'jsonwebtoken';
 import { createHmac } from 'crypto';
 import { parseProfileClaims, type MiconnectClaims } from '../users/miconnect-profile';
@@ -82,6 +85,12 @@ interface RestoreRegistrationDto {
   response?: unknown;
   /** What the phone did: true when the key went to the Google backup, false on the second path. */
   cloudBackup?: unknown;
+  /**
+   * The id of the key THIS INSTALL registered last for this session, or null. A key the session
+   * holds under any other id was not registered by this install, and replacing it is logged as the
+   * eviction of a foreign key (docs/wiki/account-restore.md, threat model).
+   */
+  previousCredentialId?: unknown;
 }
 
 /** Body of `POST /auth/restore/assertion`. */
@@ -123,6 +132,26 @@ const ANDROID_APP_ORIGINS: readonly string[] = [
 function restoreRefusal(code: string, message: string): { code: string; message: string } {
   return { code, message };
 }
+
+/** No key with that id, or its session is gone - the client clears its key. */
+function restoreKeyUnknown(): UnauthorizedException {
+  return new UnauthorizedException(
+    restoreRefusal('RESTORE_KEY_UNKNOWN', 'This restore key is not valid any more')
+  );
+}
+
+/** A key this server registered did not verify, or its challenge was spent (a replay). */
+function restoreAssertionInvalid(): UnauthorizedException {
+  return new UnauthorizedException(
+    restoreRefusal('RESTORE_ASSERTION_INVALID', 'The restore key did not verify')
+  );
+}
+
+/**
+ * Requests per minute per visitor address on each restore route. A real phone makes one or two per
+ * start; the bound is for the two anonymous routes, which anyone can call.
+ */
+const RESTORE_LIMIT_PER_MINUTE = 10;
 
 const REFRESH_COOKIE = 'canari_refresh';
 const REFRESH_MAX_AGE = SESSION_TTL_SECONDS; // 7 days in seconds - the cookie and the row must agree
@@ -328,6 +357,25 @@ export class AuthController {
     // cookie is still read - and this is the whole of the shim, recorded with its removal condition
     // in `docs/wiki/legacy-compatibility.md`.
     return cookie;
+  }
+
+  /**
+   * The `sid` AND `jti` of the presented refresh credential, if one is present, parsable and carries
+   * both. Never throws. The `jti` says WHICH rotation of the session it is; only a caller that must
+   * hold the current one (a restore-key registration) reads it.
+   */
+  private currentRefreshCredential(req: Request): { sid: string; jti: string } | null {
+    const cookie = this.presentedRefreshToken(req);
+    if (!cookie) return null;
+    try {
+      const payload = jwt.verify(cookie, this.jwtSecret, {
+        algorithms: ['HS256'],
+      }) as RefreshClaims;
+      if (payload.type !== 'refresh' || !payload.sid || !payload.jti) return null;
+      return { sid: payload.sid, jti: payload.jti };
+    } catch {
+      return null;
+    }
   }
 
   /** Reads the `sid` of the presented refresh credential, if one is present and parsable. Never throws. */
@@ -744,13 +792,16 @@ export class AuthController {
   }
 
   /**
-   * The caller's user and LIVE session, for the two registration routes - identified exactly as
-   * `PUT sessions/current/device` identifies it, and refused unless the request comes from the
-   * Android app (see {@link ANDROID_APP_ORIGINS}).
+   * The caller's user and LIVE session, for the two registration routes - identified as
+   * `PUT sessions/current/device` identifies it, refused unless the request comes from the Android
+   * app (see {@link ANDROID_APP_ORIGINS}), AND refused unless the refresh credential presented is the
+   * session's CURRENT one. That last condition is what stops a thief holding a stale copy of the
+   * credential from planting a key without rotating it - the rotation's fork detection would never
+   * see them (docs/wiki/account-restore.md, threat model).
    */
   private async restoreRegistrationCaller(
     req: Request
-  ): Promise<{ userId: string; sessionId: string }> {
+  ): Promise<{ userId: string; sessionId: string; tokenId: string }> {
     const { userId } = this.requireAccessToken(req);
     const origin = req.get('origin') ?? '';
     if (!ANDROID_APP_ORIGINS.includes(origin)) {
@@ -761,52 +812,82 @@ export class AuthController {
         restoreRefusal('RESTORE_ORIGIN_REFUSED', 'Restore keys are registered by the Android app')
       );
     }
-    const sessionId = this.currentSessionId(req);
+    const presented = this.currentRefreshCredential(req);
     if (
-      !sessionId ||
-      !(await this.restoreCredentials.isLiveSessionOf(userId, sessionId, new Date()))
+      !presented ||
+      !(await this.restoreCredentials.isLiveSessionOf(
+        userId,
+        presented.sid,
+        new Date(),
+        presented.jti
+      ))
     ) {
-      this.logger.warn(`[RESTORE] registration refused user=${userId}: no live session`);
+      this.logger.warn(
+        `[RESTORE] registration refused user=${userId}: no live session, or not its current credential`
+      );
       throw new NotFoundException(restoreRefusal('RESTORE_NO_SESSION', 'No live session'));
     }
-    return { userId, sessionId };
+    return { userId, sessionId: presented.sid, tokenId: presented.jti };
   }
 
-  /** Creation options for the restore key of the calling session. */
+  /**
+   * Creation options for the restore key of the calling session, and the id of the key it holds
+   * now. The client asks at EVERY start and re-registers unless that id is the one it registered
+   * itself, so a key planted by anybody else is evicted at the owner's next start.
+   */
   @Post('restore/registration/options')
   @HttpCode(200)
-  async restoreRegistrationOptions(@Req() req: Request): Promise<unknown> {
+  @UseGuards(ClientIpThrottlerGuard)
+  @Throttle({ default: { limit: RESTORE_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  async restoreRegistrationOptions(
+    @Req() req: Request
+  ): Promise<{ options: unknown; registeredCredentialId: string | null }> {
     this.requireRestoreAvailable();
     const { sessionId } = await this.restoreRegistrationCaller(req);
-    return this.restoreCredentials.registrationOptions(sessionId, new Date());
+    return {
+      options: await this.restoreCredentials.registrationOptions(sessionId, new Date()),
+      registeredCredentialId: await this.restoreCredentials.registeredKeyOf(sessionId),
+    };
   }
 
   /** Verifies and stores the restore key of the calling session (replacing its previous one). */
   @Post('restore/registration')
   @HttpCode(200)
+  @UseGuards(ClientIpThrottlerGuard)
+  @Throttle({ default: { limit: RESTORE_LIMIT_PER_MINUTE, ttl: 60_000 } })
   async restoreRegistration(
     @Req() req: Request,
     @Body() body: RestoreRegistrationDto
-  ): Promise<{ registered: true }> {
+  ): Promise<{ registered: true; credentialId: string }> {
     this.requireRestoreAvailable();
-    const { userId, sessionId } = await this.restoreRegistrationCaller(req);
+    const { userId, sessionId, tokenId } = await this.restoreRegistrationCaller(req);
+    const previous = body?.previousCredentialId;
     if (
       !body?.response ||
       typeof body.response !== 'object' ||
-      typeof body.cloudBackup !== 'boolean'
+      typeof body.cloudBackup !== 'boolean' ||
+      (previous !== undefined && previous !== null && typeof previous !== 'string')
     ) {
       throw new BadRequestException('response and cloudBackup are required');
     }
     const result = await this.restoreCredentials.register(
       userId,
       sessionId,
+      tokenId,
       body.response as RegistrationResponseJSON,
       body.cloudBackup,
       new Date()
     );
     switch (result.status) {
       case 'registered':
-        return { registered: true };
+        if (result.replaced !== null && result.replaced !== (previous ?? null)) {
+          // The session held a key this install never registered: somebody else, holding this
+          // session's credentials at some point, put it there. It is gone now - and accused.
+          this.logger.error(
+            `[RESTORE] FOREIGN KEY EVICTED user=${userId} sid=${sessionId}: the session held key ${result.replaced.slice(0, 8)}, which this install did not register`
+          );
+        }
+        return { registered: true, credentialId: result.credentialId };
       case 'no-session':
         throw new NotFoundException(restoreRefusal('RESTORE_NO_SESSION', 'No live session'));
       case 'taken':
@@ -823,20 +904,30 @@ export class AuthController {
   /** Request options for an anonymous restore. Writes nothing. */
   @Post('restore/assertion/options')
   @HttpCode(200)
+  @UseGuards(ClientIpThrottlerGuard)
+  @Throttle({ default: { limit: RESTORE_LIMIT_PER_MINUTE, ttl: 60_000 } })
   async restoreAssertionOptions(): Promise<unknown> {
     this.requireRestoreAvailable();
     return this.restoreCredentials.assertionOptions(new Date());
   }
 
   /**
-   * Signs the new phone in from a restore key, then ends the session the key was bound to.
+   * Signs the new phone in from a restore key, ending the session the key was bound to.
    *
-   * THE ORDER IS THE TRANSFER: the key is consumed when it verifies (the service), the new session
-   * is minted through the SAME {@link issueSession} as a MiConnect sign-in, and only then is the old
-   * session revoked - so a failure to mint leaves the old phone signed in and costs only the key.
+   * THE ORDER IS THE TRANSFER, and it never leaves the account with a session more than before:
+   * 1. the signature is verified, writing nothing;
+   * 2. the refusals a MiConnect sign-in owes (erasure, maintenance) - a refusal keeps the key, so a
+   *    restore met by maintenance can be retried;
+   * 3. the key, the challenge AND the old session go in ONE transaction (the service's `consume`);
+   * 4. the new session is minted through the SAME {@link issueSession} as a MiConnect sign-in.
+   * A failure at 4 leaves NO session (the old phone is signed out, the new one signs in through
+   * MiConnect) - the failure mode the transfer can afford, where the reverse (revoking after the
+   * mint) could leave two.
    */
   @Post('restore/assertion')
   @HttpCode(200)
+  @UseGuards(ClientIpThrottlerGuard)
+  @Throttle({ default: { limit: RESTORE_LIMIT_PER_MINUTE, ttl: 60_000 } })
   async restoreAssertion(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,
@@ -846,31 +937,39 @@ export class AuthController {
     if (!body?.response || typeof body.response !== 'object') {
       throw new BadRequestException('response is required');
     }
-    const result = await this.restoreCredentials.authenticate(
+    const verified = await this.restoreCredentials.verifyAssertion(
       body.response as AuthenticationResponseJSON,
       new Date()
     );
-    if (result.status === 'unknown') {
-      throw new UnauthorizedException(
-        restoreRefusal('RESTORE_KEY_UNKNOWN', 'This restore key is not valid any more')
-      );
-    }
-    if (result.status === 'invalid') {
-      throw new UnauthorizedException(
-        restoreRefusal('RESTORE_ASSERTION_INVALID', 'The restore key did not verify')
-      );
-    }
+    if (verified.status === 'unknown') throw restoreKeyUnknown();
+    if (verified.status === 'invalid') throw restoreAssertionInvalid();
+    const { assertion } = verified;
 
-    this.refuseDuringErasure(result.userId, await this.accountErasure.erasureState(result.userId));
-    const user = await this.usersService.findOne(result.userId);
-    await this.refuseDuringMaintenance(user);
-    const issued = await this.issueSession(user, req, res);
-
-    await this.authSessions.revoke(result.sessionId);
-    this.logger.log(
-      `[RESTORE] session moved to a restored phone user=${user.id} from sid=${result.sessionId}`
+    this.refuseDuringErasure(
+      assertion.userId,
+      await this.accountErasure.erasureState(assertion.userId)
     );
-    return issued;
+    const user = await this.usersService.findOne(assertion.userId);
+    await this.refuseDuringMaintenance(user);
+
+    const consumed = await this.restoreCredentials.consume(assertion);
+    if (consumed.status === 'unknown') throw restoreKeyUnknown();
+    if (consumed.status === 'invalid') throw restoreAssertionInvalid();
+
+    try {
+      const issued = await this.issueSession(user, req, res);
+      this.logger.log(
+        `[RESTORE] session moved to a restored phone user=${user.id} from sid=${assertion.sessionId}`
+      );
+      return issued;
+    } catch (e) {
+      // The old session is already gone with the key: the account now holds NO session from this
+      // transfer, never two. The user signs in through MiConnect on the new phone.
+      this.logger.error(
+        `[RESTORE] the new session could not be minted user=${user.id} after the old sid=${assertion.sessionId} was revoked: ${e instanceof Error ? e.message : String(e)}`
+      );
+      throw e;
+    }
   }
 
   // ─── Session management ────────────────────────────────────────────────────

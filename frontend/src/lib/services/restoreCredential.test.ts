@@ -13,12 +13,12 @@ vi.mock('$lib/services/authSessions', () => ({
   sessionScopedHeaders: async (base: Record<string, string> = {}) => base,
 }));
 
-import { attemptRestore, registerRestoreKeyIfDue } from './restoreCredential';
+import { attemptRestore, ensureRestoreKey } from './restoreCredential';
 import {
   RESTORE_ATTEMPTED_KEY,
   RESTORE_REGISTERED_PREFIX,
   forgetRestoreKeyRegistrations,
-  markRestoreKeyRegistered,
+  rememberRegisteredRestoreKey,
 } from './restoreKey';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { m } from '$lib/paraglide/messages';
@@ -77,14 +77,18 @@ function platform(answers: { create?: unknown; get?: unknown; getThrows?: unknow
 const cleared = () =>
   invoke.mock.calls.some(([cmd]) => cmd === 'plugin:restore|clear_restore_credential');
 
-describe('registerRestoreKeyIfDue', () => {
-  it('registers once: options, the platform key, then the server - and marks the session', async () => {
+describe('ensureRestoreKey', () => {
+  /** The options answer: the WebAuthn options and the key the session holds now. */
+  const options = (registeredCredentialId: string | null) =>
+    json({ options: { challenge: 'c' }, registeredCredentialId });
+
+  it('registers when the session holds no key: options, the platform key, the server - and remembers the id', async () => {
     platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true } });
     apiFetch
-      .mockResolvedValueOnce(json({ challenge: 'c' }))
-      .mockResolvedValueOnce(json({ registered: true }));
+      .mockResolvedValueOnce(options(null))
+      .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
 
-    await registerRestoreKeyIfDue('user-1');
+    await ensureRestoreKey('user-1');
 
     expect(apiFetch.mock.calls[0][0]).toBe(
       'https://core.test/api/auth/restore/registration/options'
@@ -97,26 +101,52 @@ describe('registerRestoreKeyIfDue', () => {
     expect(JSON.parse(apiFetch.mock.calls[1][1].body)).toEqual({
       response: { id: 'k' },
       cloudBackup: true,
+      previousCredentialId: null,
     });
-    expect(localStorage.getItem(RESTORE_REGISTERED_PREFIX + 'user-1')).not.toBeNull();
+    expect(localStorage.getItem(RESTORE_REGISTERED_PREFIX + 'user-1')).toBe('k');
+  });
 
-    await registerRestoreKeyIfDue('user-1');
-    expect(apiFetch).toHaveBeenCalledTimes(2);
+  it('asks at EVERY start, and stops there when the session holds the key this install registered', async () => {
+    rememberRegisteredRestoreKey('user-1', 'k');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    apiFetch.mockResolvedValueOnce(options('k'));
+    await ensureRestoreKey('user-1');
+    expect(apiFetch).toHaveBeenCalledTimes(1);
+    expect(invoke).not.toHaveBeenCalled();
+    expect(error).not.toHaveBeenCalled();
+  });
+
+  it('accuses and REPLACES a key this install did not register (planted with the session)', async () => {
+    rememberRegisteredRestoreKey('user-1', 'mine');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    platform({ create: { responseJson: '{"id":"fresh"}', cloudBackup: true } });
+    apiFetch
+      .mockResolvedValueOnce(options('planted-key'))
+      .mockResolvedValueOnce(json({ registered: true, credentialId: 'fresh' }));
+
+    await ensureRestoreKey('user-1');
+
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('did not register'));
+    // The server is told which key this install believes it replaces, so it can accuse the other.
+    expect(JSON.parse(apiFetch.mock.calls[1][1].body).previousCredentialId).toBe('mine');
+    expect(localStorage.getItem(RESTORE_REGISTERED_PREFIX + 'user-1')).toBe('fresh');
   });
 
   it('carries the second path (no cloud backup) to the server as it happened', async () => {
     platform({ create: { responseJson: '{}', cloudBackup: false } });
-    apiFetch.mockResolvedValueOnce(json({})).mockResolvedValueOnce(json({ registered: true }));
-    await registerRestoreKeyIfDue('user-1');
+    apiFetch
+      .mockResolvedValueOnce(options(null))
+      .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
+    await ensureRestoreKey('user-1');
     expect(JSON.parse(apiFetch.mock.calls[1][1].body).cloudBackup).toBe(false);
   });
 
   it('leaves the marker unset on a refusal, so the next start tries again', async () => {
     platform({ create: { responseJson: '{}', cloudBackup: true } });
     apiFetch
-      .mockResolvedValueOnce(json({}))
+      .mockResolvedValueOnce(options(null))
       .mockResolvedValueOnce(json({ code: 'RESTORE_KEY_TAKEN', message: 'x' }, 403));
-    await expect(registerRestoreKeyIfDue('user-1')).rejects.toMatchObject({
+    await expect(ensureRestoreKey('user-1')).rejects.toMatchObject({
       refusal: { status: 403, code: 'RESTORE_KEY_TAKEN' },
     });
     expect(localStorage.getItem(RESTORE_REGISTERED_PREFIX + 'user-1')).toBeNull();
@@ -124,14 +154,14 @@ describe('registerRestoreKeyIfDue', () => {
 
   it('does nothing off Android', async () => {
     android = false;
-    await registerRestoreKeyIfDue('user-1');
+    await ensureRestoreKey('user-1');
     expect(apiFetch).not.toHaveBeenCalled();
     expect(invoke).not.toHaveBeenCalled();
   });
 
   it('a new session drops the marker of the previous one', () => {
-    markRestoreKeyRegistered('user-1');
-    markRestoreKeyRegistered('user-2');
+    rememberRegisteredRestoreKey('user-1', 'a');
+    rememberRegisteredRestoreKey('user-2', 'b');
     localStorage.setItem('unrelated', 'kept');
     forgetRestoreKeyRegistrations();
     expect(localStorage.getItem(RESTORE_REGISTERED_PREFIX + 'user-1')).toBeNull();

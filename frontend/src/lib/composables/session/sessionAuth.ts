@@ -50,7 +50,7 @@ import {
 } from '$lib/stores/auth';
 import { IdentitySplitError, isIdentitySplit } from '$lib/stores/tokenIdentity.svelte';
 import { bindCurrentSessionDevice } from '$lib/services/authSessions';
-import { registerRestoreKeyIfDue } from '$lib/services/restoreCredential';
+import { ensureRestoreKey } from '$lib/services/restoreCredential';
 import {
   clearRestoreKey,
   forgetRestoreKeyRegistrations,
@@ -1195,7 +1195,7 @@ export async function loginImpl(
       // The restore key of this session (WP-RESTORE-1, Android only), for the same reason and on the
       // same terms: fire-and-forget, a failure is logged and the next start tries again. Skipped
       // offline: promoteOfflineSession runs it once a token exists.
-      void registerRestoreKeyIfDue(ctx.getUserId()).catch((e) =>
+      void ensureRestoreKey(ctx.getUserId()).catch((e) =>
         cb.log(`[WARN] Restore key registration failed: ${String(e)}`)
       );
     }

@@ -15,7 +15,7 @@ import { restoreCommand } from '$lib/services/restoreCommands';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /**
- * Per account: "the session of this login already registered its key" - built by
+ * Per account: the id of the key this install registered for the current session - built by
  * `ACCOUNT_KEY.restoreKeyRegistered`, so an account deletion sweeps it. A key is per SESSION, so
  * every session mint drops it ({@link forgetRestoreKeyRegistrations}); this is the prefix that does.
  */
@@ -65,14 +65,17 @@ function writeStorage(key: string, value: string | null): void {
   }
 }
 
-/** Whether the current session of `userId` already registered its restore key. */
-export function isRestoreKeyRegistered(userId: string): boolean {
-  return readStorage(ACCOUNT_KEY.restoreKeyRegistered(userId)) !== null;
+/**
+ * The id of the restore key this install registered for the current session of `userId`, or null.
+ * Compared at every start with the id the server says the session holds.
+ */
+export function registeredRestoreKeyId(userId: string): string | null {
+  return readStorage(ACCOUNT_KEY.restoreKeyRegistered(userId));
 }
 
-/** Records that the current session of `userId` registered its restore key. */
-export function markRestoreKeyRegistered(userId: string): void {
-  writeStorage(ACCOUNT_KEY.restoreKeyRegistered(userId), '1');
+/** Records the id of the restore key this install just registered for `userId`'s session. */
+export function rememberRegisteredRestoreKey(userId: string, credentialId: string): void {
+  writeStorage(ACCOUNT_KEY.restoreKeyRegistered(userId), credentialId);
 }
 
 /**

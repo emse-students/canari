@@ -42,10 +42,13 @@ adds one.** This is the design's one invariant, and every rule below follows fro
   everywhere else", the one-session-per-device purge (`bindDevice`), the 7-day idle expiry swept
   hourly, and account erasure. A key whose session row exists but is past `expiresAt` is refused
   before the sweep reaches it, exactly as a refresh is.
-- **A restore is single-use and a TRANSFER.** The key's row is deleted in the same transaction that
-  spends the challenge (`DELETE ... RETURNING`, so two concurrent assertions cannot both win), the
-  new phone gets a new session, and THEN the old session is revoked. The account holds as many
-  sessions after a restore as before it. The new phone registers its own key at its first start.
+- **A restore is single-use and a TRANSFER.** ONE transaction spends the challenge, deletes the
+  key's row (`DELETE ... RETURNING`, so two concurrent assertions cannot both win) AND deletes the
+  old session; only then is the new phone's session minted. The account never holds one session
+  more than before: a mint that fails after that commit leaves NO session (logged at `error`, the
+  new phone signs in through MiConnect, the old one at its next refresh) - never two, which a
+  revocation run after the mint could not promise. The new phone registers its own key at its
+  first start.
 - **So the old phone is signed out by a restore.** Its next refresh meets a missing row and takes
   the ordinary session-expired path. A transfer is the case Play describes (setting up a new phone
   from the old one), and the old phone signing out is the visible trace of it - the same trace a
@@ -65,7 +68,28 @@ narrowings: **a registration is accepted only from the Android app's own origin*
 (`http(s)://tauri.localhost`), so an XSS on the web - which holds an access token and can ride the
 cookie - cannot register one (a browser cannot forge `Origin`; a stolen credential replayed from a
 script can, and is the residual case above); and every restored session appears in "Connexions
-actives" like any other.
+actives" like any other. **`tauri.localhost` is ALSO the origin of Tauri's Windows desktop app**
+(WebView2 serves the app from `http://tauri.localhost`), so the gate is "a Canari app", not "the
+Android app": a desktop session can register a key too. It buys that session nothing it did not
+already hold, by the invariant above, and the platform half (Credential Manager) exists only on
+Android, so the desktop client never asks.
+
+**A planted key does not outlive its planter's access (security review, 2026-10-18).** A thief who
+copied the refresh credential once could otherwise register a software key and keep it after the
+owner's next refresh rotated that credential away - the key would still move the session to the
+thief later. Two rules close it:
+
+- **A registration needs the session's CURRENT refresh credential**: the refresh JWT's `jti` must
+  equal the row's `tokenId` (`isLiveSessionOf(..., tokenId)`), the value `rotate` moves at every
+  refresh. A copy the rotation has moved past is answered `404 RESTORE_NO_SESSION` and logged at
+  `warn`.
+- **The owner's client re-checks at EVERY start and replaces a key it did not register.** The
+  options answer carries `registeredCredentialId`, the key the session holds; the client compares
+  it with the id it stored when it registered, and anything else is accused at `error` and
+  replaced. The registration names `previousCredentialId` (what the client believes it replaces);
+  the server logs `[RESTORE] FOREIGN KEY EVICTED` at `error` when the key it actually replaced is
+  another. So a key planted between two of the owner's starts lives until the next one, and leaves
+  a line on both ends.
 
 **The cost of that invariant, stated plainly.** A phone that is lost, broken or simply unused for
 more than 7 days has an expired session, so its key is gone and the new phone signs in through
@@ -106,19 +130,23 @@ the single-use challenge, and the transfer.
 
 ## The server - `core-service`, `/api/auth/restore/*`
 
-Library: `@simplewebauthn/server` (CommonJS build, no native code). No Redis, no throttler exists in
-core-service, so the design adds no state an anonymous caller can grow (below).
+Library: `@simplewebauthn/server` (CommonJS build, no native code). The design adds no state an
+anonymous caller can grow (below), and the four routes are throttled per visitor all the same:
+`@nestjs/throttler`, 10 requests a minute on each route, counted on the `X-Real-IP` nginx writes
+(`ClientIpThrottlerGuard`, the shape chat-delivery and social-service already use), never on the
+nginx container every request arrives from.
 
 | Method, path | Auth | Does |
 | --- | --- | --- |
-| `POST /api/auth/restore/registration/options` | Bearer + refresh credential (cookie or `X-Canari-Refresh`), AND `Origin` one of the Android app's (`http(s)://tauri.localhost`) | Creation options for THIS session: challenge, RP id, a random `user.id`, ES256/RS256, `attestation: none`, `residentKey: required`, `userVerification: discouraged` |
-| `POST /api/auth/restore/registration` | same | Verifies the registration response; stores THE key of this session (one per session, a re-registration replaces it; a credential id already held by ANOTHER session is refused, never re-bound) |
+| `POST /api/auth/restore/registration/options` | Bearer + refresh credential (cookie or `X-Canari-Refresh`), AND `Origin` one of the Android app's (`http(s)://tauri.localhost`) | `{ options, registeredCredentialId }`: creation options for THIS session (challenge, RP id, a random `user.id`, ES256/RS256, `attestation: none`, `residentKey: required`, `userVerification: discouraged`) and the id of the key the session holds now, or null |
+| `POST /api/auth/restore/registration` | same | Verifies the registration response; stores THE key of this session (one per session, a re-registration replaces it; a credential id already held by ANOTHER session is refused, never re-bound); answers `{ registered: true, credentialId }` and accuses a replaced key that is not the body's `previousCredentialId` |
 | `POST /api/auth/restore/assertion/options` | none | Request options: a challenge, the RP id, `userVerification: discouraged`, no `allowCredentials` (the platform chooses) |
-| `POST /api/auth/restore/assertion` | none | Verifies the assertion against the stored public key, checks the bound session is live, consumes the key, mints the new phone's session through the callback's own minting, then revokes the old session |
+| `POST /api/auth/restore/assertion` | none | Verifies the assertion against the stored public key and the bound session's life (writes nothing); refuses an erasure or a maintenance window HERE, so the key survives a refusal and can be retried; then consumes the key, the challenge and the old session in one transaction; then mints the new phone's session through the callback's own minting |
 
 **The session is identified the way `PUT sessions/current/device` identifies it**: the access
 token names the user, the refresh credential names the row, and the row must exist, belong to that
-user and be unexpired.
+user, be unexpired - and, for these routes, still carry the refresh credential's `jti` as its
+current one (the planted-key rule above).
 
 **Challenges are STATELESS until they are spent, so an anonymous caller writes nothing.** A
 challenge is `nonce(16) || expiry(8) || HMAC-SHA256(key, purpose || binding || nonce || expiry)`,
@@ -150,6 +178,11 @@ drift, and the erasure race is exactly the part that must not.
 
 Every refusal is logged server-side at `warn` with the code and the first 8 characters of the
 credential id; a success at `log` with the user and the new session id.
+
+**`UNKNOWN` versus `INVALID` tells an anonymous caller whether a credential id exists**, because the
+id is looked up before the signature is checked. That is harmless and kept: an id is 16+ random
+bytes nobody can enumerate, knowing one exists signs nothing in, and the distinction is what lets
+the client clear a dead key without accusing a defect.
 
 **Configuration - one fact, already a GitHub secret, newly delivered to core-service.** The expected origins are
 `android:apk-key-hash:<base64url(SHA-256 of the signing certificate)>` for each fingerprint in
@@ -207,11 +240,13 @@ imports nothing of the auth store, so `auth.ts` can clear the key and drop the m
 `restoreCredential.ts` holds the two flows and imports the auth store. The command names are pinned
 against the Rust and Kotlin sources by `restoreCommands.test.ts`.
 
-- **Register** - in `loginImpl` beside `bindCurrentSessionDevice`, once per app start while online,
-  unless the marker `canari_restore_registered:<userId>` says this login already has a key. So an
-  existing user gets a key at the first start of the new version, without signing in again.
-  Fire-and-forget, every failure logged; a failure leaves the marker unset and the next start tries
-  again. **A key is per SESSION and the marker is per account, so the marker is dropped at every
+- **Register** (`ensureRestoreKey`) - in `loginImpl` beside `bindCurrentSessionDevice`, at EVERY
+  app start while online. It asks the options, which name the key the session holds; when that is
+  the id this install stored under `canari_restore_registered:<userId>`, it stops there (one request,
+  no platform call). Otherwise it registers - and when the session held ANOTHER key, it accuses it
+  at `error` first (the planted-key rule above). So an existing user gets a key at the first start
+  of the new version, without signing in again. Fire-and-forget, every failure logged; a failure
+  leaves the marker unset and the next start tries again. **A key is per SESSION and the marker is per account, so the marker is dropped at every
   session MINT** (`adoptSignedInSession`: every MiConnect callback and every restore), never only on
   the sign-out paths - one of which (`loginImpl`'s session-expired branch with no callback wired)
   forgets the user without `clearAuth`. A restored phone therefore registers its own key at its
@@ -285,8 +320,11 @@ touched, and [legacy-compatibility](legacy-compatibility.md) gains no entry.
 | --- | --- |
 | Challenge format, expiry, purpose and binding separation, single use | `restore-challenge.spec.ts` (injected clock, no wall clock) |
 | Registration and assertion verification, origin pinning, RP id, unknown key, dead session, replay, minting through `issueSession` | `restore-credentials.service.spec.ts`, `restore.controller.spec.ts`, with a software authenticator in the test (real ES256 signatures) |
+| A stale refresh credential cannot register; a replaced key that is not the client's is accused | `restore-credentials.service.spec.ts` (rotation moves `tokenId`), `restore.controller.spec.ts` (`FOREIGN KEY EVICTED`) |
+| The old session goes in the consume transaction; erasure and maintenance refuse BEFORE it; a failed mint leaves no session and no cookie | `restore-credentials.service.spec.ts`, `restore.controller.spec.ts` (call order and the mint-failure case) |
+| The four routes are throttled per visitor | `client-ip-throttler.guard.spec.ts` (the tracker, and the guard on each route) |
 | The cascade and the erasure statement | `erasure-policy.spec.ts`; the cascade by the migration text, and by `account-erasure.integration.spec.ts` where a database is reachable |
-| Client attempt / register / clear decisions, the once-per-install marker, the refusal codes | `restoreCredential.test.ts` |
+| Client attempt / register / clear decisions, the every-start check and the foreign-key replacement, the once-per-install marker, the refusal codes | `restoreCredential.test.ts` |
 | The JS command names, the ACL, the permission set, the Kotlin method names and argument name | `restoreCommands.test.ts`, which reads the Rust and Kotlin sources |
 | The wire shapes the Kotlin side resolves | `cargo test` in `tauri-plugin-restore` (serde, both directions) |
 | The env delivery of `ANDROID_APP_LINK_SHA256` to core-service | `deploy-env.test.sh`, `compose-wiring.test.sh` |
