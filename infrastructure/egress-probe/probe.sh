@@ -39,7 +39,13 @@ MAX_SAMPLES=43200
 
 # The container that made one of the two stalled calls. Probing from inside it is what adds the
 # Docker resolver and the bridge to the path.
-CONTAINER='infrastructure-chat-delivery-service-1'
+# Resolved by its compose service label, never by name: a rolling release names each replica
+# `-1`, `-2`, `-3`... and a hardcoded suffix drifts with every deploy.
+CONTAINER=$(docker ps --filter 'label=com.docker.compose.service=chat-delivery-service' --format '{{.Names}}' | head -n 1)
+if [ -z "${CONTAINER}" ]; then
+	echo "probe: no running chat-delivery-service container" >&2
+	exit 1
+fi
 
 # 10 s, deliberately longer than the application's 4 s OUTBOUND_BUDGET_MS: a sample that gave up at
 # the application's budget could not tell "slow" from "dead", and both matter here.

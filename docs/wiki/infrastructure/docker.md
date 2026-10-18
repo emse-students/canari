@@ -14,8 +14,8 @@ development is the file under `local/`.
 | File | Purpose | Host ports |
 |---|---|---|
 | `local/docker-compose.yml` | **Local development and CI.** Builds from source, plain HTTP, and the only place `ALLOW_INSECURE_COOKIES=true` belongs | yes, all of them |
-| `docker-compose.prod.yml` | **Production**, compose project `infrastructure` | only the frontend (`8080`) and Garage tooling |
-| `docker-compose.dev.yml` | **`dev.canari-emse.fr`**, compose project `canari-dev`, on the SAME host as production - see [dev-environment](dev-environment.md) | only the frontend (`3080`) and Garage tooling |
+| `docker-compose.prod.yml` | **Production**, compose project `infrastructure` | only the `edge` (`FRONTEND_HOST_PORT`, so the frontend can run two replicas during a release - [cicd](../cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)) and Garage tooling |
+| `docker-compose.dev.yml` | **`dev.canari-emse.fr`**, compose project `canari-dev`, on the SAME host as production - see [dev-environment](dev-environment.md) | only the `edge` (`3080`) and Garage tooling |
 
 ## Service graph
 

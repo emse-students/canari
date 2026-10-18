@@ -334,6 +334,8 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/deploy-env.test.sh
 	@bash .github/scripts/tests/deploy-migrations.test.sh
 	@bash .github/scripts/tests/deploy-registry-retry.test.sh
+	@bash .github/scripts/tests/deploy-replace.test.sh
+	@bash .github/scripts/tests/deploy-rolling.test.sh
 	@bash .github/scripts/tests/dependency-ceiling.test.sh
 	@bash .github/scripts/tests/mls-forward-compat.test.sh
 	@bun .github/scripts/tests/changes-outputs.test.mjs

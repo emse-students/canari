@@ -3,6 +3,7 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import * as bodyParser from 'body-parser';
 import { buildAllowedOrigins, corsOptions } from './cors-origins';
+import { drainOnSigterm } from './drain-on-sigterm';
 
 /**
  * THIS SERVICE CONNECTS NO KAFKA TRANSPORT, AND NEITHER DOES ANY OTHER - THERE IS NO BROKER.
@@ -40,6 +41,8 @@ async function bootstrap() {
 
   app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
   await app.listen(process.env.PORT || 3010);
+  // A release retires this replica with SIGTERM once its successor is healthy; see the module.
+  drainOnSigterm(app.getHttpServer());
 }
 
 void bootstrap().catch((err) => {

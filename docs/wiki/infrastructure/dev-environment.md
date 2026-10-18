@@ -80,7 +80,7 @@ first version of this file carried were unnecessary. Exactly two bindings differ
 
 | | production | dev | why it is published at all |
 |---|---|---|---|
-| `frontend` | `8080`, on all interfaces | `3080`, loopback only | the cloudflared tunnel reaches Nginx through the host |
+| `edge` (the frontend's until 2026-10-17, [cicd](../cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)) | `FRONTEND_HOST_PORT`, loopback only | `3080`, loopback only | the host nginx (and dev's tunnel relay) reaches Nginx through the host |
 | `garage` API / admin | `19010` / `19011`, loopback only | `19100` / `19101`, loopback only | tooling (`garage` CLI) attaches from the host |
 
 Two details the compose files do not say plainly. Production's frontend port is `8080` on the BOX but
