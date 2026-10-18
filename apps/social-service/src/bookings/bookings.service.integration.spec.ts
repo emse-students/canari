@@ -41,6 +41,7 @@ import type { PricingFactsService } from '../pricing/pricing-facts.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import type { UserTagService } from '../users/user-tag.service';
 import { BookingSpacesService } from './booking-spaces.service';
+import { bookingCalendarPath } from './booking-calendar';
 import { BookingSpacesController } from './booking-spaces.controller';
 import { MAX_PERSONAL_SPACES, MAX_RESOURCES_PER_SPACE } from './dto/space.dto';
 
@@ -111,7 +112,7 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
     });
     await ds.initialize();
     // The tables of other owners the API reads, in the shape it reads them.
-    await q(`CREATE TABLE associations (id uuid PRIMARY KEY)`);
+    await q(`CREATE TABLE associations (id uuid PRIMARY KEY, name varchar)`);
     await q(`CREATE TABLE users (id varchar PRIMARY KEY, "firstName" varchar, "lastName" varchar)`);
     await q(
       `CREATE TABLE user_blocks ("blockerId" varchar NOT NULL, "blockedId" varchar NOT NULL)`
@@ -840,6 +841,147 @@ maybe('BookingsService against PostgreSQL (WP-B3)', () => {
           })
         )
       ).toEqual({ code: 'participant-blocked' });
+    });
+  });
+
+  describe("the booker's page and the calendar link (WP-B5)", () => {
+    const KEY = 'k'.repeat(48);
+    let previousKey: string | undefined;
+    beforeAll(() => {
+      previousKey = process.env.AGENDA_SIGNING_KEY;
+      process.env.AGENDA_SIGNING_KEY = KEY;
+    });
+    afterAll(() => {
+      if (previousKey === undefined) delete process.env.AGENDA_SIGNING_KEY;
+      else process.env.AGENDA_SIGNING_KEY = previousKey;
+    });
+
+    /** The ids of `listedSpaces` among `mine`, in the order they were answered. */
+    const listedAmong = async (viewer: string, mine: string[]) =>
+      (await service.listedSpaces(as(viewer))).map((s) => s.id).filter((id) => mine.includes(id));
+
+    it('lists the listed spaces whose audience admits the reader, never a link-only one', async () => {
+      const open = await setup({ name: '0000 open' });
+      const promo = await setup({ name: '0001 promo', audience: { promo: { values: [2024] } } });
+      const link = await setup({ name: '0002 link', discoverability: 'link' });
+      await q(`UPDATE associations SET name = 'BDA' WHERE id = $1`, [open.space.associationId]);
+      facts.set(BOB, { promo: 2024, formation: null, cotisationTiers: [], answers: {} });
+      const mine = [open.space.id, promo.space.id, link.space.id];
+
+      expect(await listedAmong(ALICE, mine)).toEqual([open.space.id]);
+      expect(await listedAmong(BOB, mine)).toEqual([open.space.id, promo.space.id]);
+      // The organiser of all three sees what is listed, the audience aside - and still no link.
+      expect(await listedAmong(ORGA, mine)).toEqual([open.space.id, promo.space.id]);
+
+      const row = (await service.listedSpaces(as(ALICE))).find((s) => s.id === open.space.id);
+      expect(row).toEqual(
+        expect.objectContaining({ associationName: 'BDA', resourceCount: 1, timeZone: 'UTC' })
+      );
+      expect(row).not.toHaveProperty('privateInfo');
+    });
+
+    it("hands the calendar link to the booking's people alone, never for a cancelled one", async () => {
+      const { space, resourceIds } = await setup();
+      const { id } = await book(space.id, resourceIds[0], '10:00', '10:30', ALICE, {
+        participantIds: [BOB],
+      });
+      const { path } = await service.calendarLink(id, as(ALICE));
+      expect(path).toMatch(new RegExp(`^/api/bookings/${id}/calendar\\.ics\\?sig=[\\w%-]+$`));
+      await expect(service.calendarLink(id, as(BOB))).resolves.toEqual({ path });
+      await expect(service.calendarLink(id, as(ORGA))).resolves.toEqual({ path });
+      for (const stranger of [STRANGER, CAROL]) {
+        expect(await refusal(service.calendarLink(id, as(stranger)))).toEqual({
+          code: 'not-yours',
+        });
+      }
+      // An id that names nothing reads exactly like someone else's booking.
+      expect(await refusal(service.calendarLink(randomUUID(), as(ALICE)))).toEqual({
+        code: 'not-yours',
+      });
+      await service.withdraw(id, as(BOB), NOW);
+      expect(await refusal(service.calendarLink(id, as(BOB)))).toEqual({ code: 'not-yours' });
+      await service.cancel(id, as(ALICE), NOW);
+      expect(await refusal(service.calendarLink(id, as(ALICE)))).toEqual({
+        code: 'already-cancelled',
+      });
+    });
+
+    it('serves the .ics on its signature alone, with no answer, private text or name', async () => {
+      const items = [{ id: 'cv', label: 'Remarque', required: false, type: 'short_text' }];
+      const { space, resourceIds } = await setup({ items: items as never });
+      const { id } = await service.book(
+        space.id,
+        {
+          resourceId: resourceIds[0],
+          startsAt: on('10:00'),
+          endsAt: on('10:30'),
+          answers: { cv: 'answer-secret' },
+        },
+        as(ALICE),
+        NOW
+      );
+      const sig = (path: string) => decodeURIComponent(path.split('sig=')[1]);
+      const { path } = await service.calendarLink(id, as(ALICE));
+
+      const ics = await service.calendarIcs(id, sig(path));
+      expect(ics).toContain('SUMMARY:Salle de musique - Salle 0');
+      expect(ics).toContain('DTSTART:20261102T100000Z');
+      expect(ics).toContain('DTEND:20261102T103000Z');
+      expect(ics).toContain(`/bookings/spaces/${space.id}`);
+      for (const secret of ['answer-secret', 'code 1234', 'cle 0', 'Alice']) {
+        expect(ics).not.toContain(secret);
+      }
+
+      // Another booking's signature, none, a forged one: refused before anything is read.
+      const other = await book(space.id, resourceIds[0], '11:00', '11:30', BOB, {});
+      const otherSig = sig((await service.calendarLink(other.id, as(BOB))).path);
+      for (const bad of [otherSig, undefined, 'forged']) {
+        expect(await refusal(service.calendarIcs(id, bad))).toEqual({
+          code: 'calendar-signature',
+        });
+      }
+      // A valid signature for an id that names nothing learns only that.
+      const ghost = randomUUID();
+      expect(await refusal(service.calendarIcs(ghost, sig(bookingCalendarPath(ghost))))).toEqual({
+        code: 'booking-not-found',
+      });
+
+      // Rotating the key ends every saved link.
+      process.env.AGENDA_SIGNING_KEY = `${KEY}-rotated`;
+      try {
+        expect(await refusal(service.calendarIcs(id, sig(path)))).toEqual({
+          code: 'calendar-signature',
+        });
+      } finally {
+        process.env.AGENDA_SIGNING_KEY = KEY;
+      }
+
+      // A cancelled booking's link answers 410: a stale import cannot write it back.
+      await service.cancel(id, as(ALICE), NOW);
+      expect(await refusal(service.calendarIcs(id, sig(path)))).toEqual({
+        code: 'booking-cancelled',
+      });
+    });
+
+    it('sends a block id only to whoever may lift it', async () => {
+      const { space, resourceIds } = await setup();
+      const r = resourceIds[0];
+      await ds.getRepository(BookingResource).update(r, { linkedUserId: DAN });
+      const { id: blockId } = await service.addBlock(
+        r,
+        { startsAt: on('09:00'), endsAt: on('10:00'), reason: 'travaux', reasonVisible: true },
+        as(ORGA),
+        NOW
+      );
+      const blockedUnit = async (viewer: string) =>
+        (await service.spaceSlots(space.id, '2026-11-02', '2026-11-02', as(viewer)))[0].units.find(
+          (u) => u.state === 'blocked'
+        )!;
+      expect((await blockedUnit(ORGA)).blockId).toBe(blockId);
+      expect((await blockedUnit(DAN)).blockId).toBe(blockId);
+      const seen = await blockedUnit(ALICE);
+      expect(seen).not.toHaveProperty('blockId');
+      expect(seen.blockReason).toBe('travaux');
     });
   });
 

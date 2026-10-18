@@ -78,6 +78,10 @@ const PUBLIC_BY_INTENT = [
     why: 'subscribed by an external calendar client, which cannot carry a session at all',
   },
   {
+    route: 'GET /bookings/:bookingId/calendar.ics',
+    why: 'one booking opened by a calendar app, which carries no session; authorised by the HMAC the booking\'s own people were handed (booking-calendar.ts), and it never carries answers, private texts or names',
+  },
+  {
     route: 'GET /forms/:id/calendar-link',
     why: 'one agenda entry for a form, read by the public association page; never the form contents',
   },

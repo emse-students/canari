@@ -1,6 +1,6 @@
 # Bookings (reservation of rooms and slots) - the chantier, decisions as taken
 
-**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) merged as #2002; WP-B4's organiser API (#2006) and its screens are draft pull requests, the screens stacked on the API; WP-B5 (the booker's screens) next. **Owed by WP-B6, carried from WP-B4: the space poster (D35: column by migration, purge) and the bookings FILE question.** Decisions are written here the day the
+**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) merged as #2002; WP-B4's organiser API (#2006) and its screens are draft pull requests, the screens stacked on the API; WP-B5's API (the listed spaces, a booking's signed `.ics`, block ids) is a draft stacked on #2006, its screens next. **Owed by WP-B6, carried from WP-B4: the space poster (D35: column by migration, purge) and the bookings FILE question.** Decisions are written here the day the
 user takes them; the work packages are written last, once every question is closed. Pointer in
 [backlog](backlog.md) to be added when the plan is complete.
 
@@ -478,3 +478,44 @@ and step, a resource with history (cancelled included) never deleted and one nev
 must exist, a space deleted with everything, duplicate question ids, a zoneless opening, an entity
 that does not exist, both caps, and a forged body (`id`, `ownerId`, `associationId`, `spaceId`)
 sent through the real HTTP layer with no ValidationPipe, changing none of them.
+
+## WP-B5 as built - the booker's API (2026-10-18)
+
+What the booker's screens need and WP-B3 did not serve. Three additions, no migration.
+
+| Route | Who | Refusal codes |
+|---|---|---|
+| `GET spaces` | anyone signed in: every LISTED space (D31) whose audience (D6) admits them, or that they manage, by name, at most 200 - with its entity's name and its resource count; never a private text | - |
+| `GET :id/calendar-link` | the booking's PEOPLE (holder, participant still in, the account linked to its resource) and its organiser: `{ path }` of its signed `.ics` | `not-yours` (also for an id that names nothing), then `already-cancelled` |
+| `GET :id/calendar.ics?sig=` | NO SESSION - a calendar app; authorised by `sig` alone | `calendar-signature` (checked before anything is read), `booking-not-found`, 410 `booking-cancelled` |
+
+And in `GET spaces/:id/slots`, a blocked unit carries `blockId` for whoever may LIFT it - the
+organiser, and the account linked to the resource (the server still lets that account lift only
+the blocks it created). Nobody else is sent it.
+
+- **A LINK-ONLY SPACE IS NEVER LISTED, WHOEVER ASKS** - its organiser included: it is reached by
+  its link or QR code (the psychologist case). The audience is judged per space with that space's
+  own association's facts, as `assertMayUse` judges a read, so a listed space always opens.
+- **THE `.ics` IS SIGNED, LIKE THE AGENDA SUBSCRIPTION** (`booking-calendar.ts`). A calendar app
+  sends no identity, so the route asks WHAT is asked: `sig` is an HMAC of `booking-ics|v1|<id>`
+  under `AGENDA_SIGNING_KEY` - the agenda's key, through one `signWithAgendaKey`, the prefix keeping
+  the two kinds of link from ever reading as each other. No new secret, nothing to deploy.
+  Rotating the key ends every saved link of both kinds at once: that is the revocation, and the app
+  fetches a fresh link the next time someone taps "Add to my calendar". An unset key is a 503
+  (fails closed), never an unsigned link.
+- **WHAT THE FILE CARRIES: the space's and the resource's names, the start, the end, a link back
+  to the space. NEVER the answers, the private texts (D32) or anyone's name** - a link can be
+  forwarded, and on an 'occupied' space (D9) names are not the link-holder's to read. A cancelled
+  booking answers 410, so a stale import cannot write it back.
+- **The route is declared public by intent** in `.github/scripts/tests/auth-request-coverage.test.mjs`
+  (its own controller, `BookingCalendarController`, without the session guard); it sits behind the
+  same `/api/bookings` location, whose `auth_request` identifies and refuses nobody.
+
+**Proof.** `booking-calendar.spec.ts` (only that booking's signature, never an agenda signature,
+dead after a rotation, no key no link, nothing but the place and the range). In
+`bookings.service.integration.spec.ts`, "the booker's page and the calendar link (WP-B5)": the
+listing per audience, manager and link-only; the link to the holder, a participant and the
+organiser, refused to strangers, to a withdrawn participant and for a cancelled booking; the file
+without the answer, the private texts or the holder's name, refused for another booking's
+signature, a forged or missing one and after a rotation, 410 once cancelled; a block id to the
+organiser and the linked account, not to a booker.

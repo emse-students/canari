@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
+  GoneException,
   Injectable,
   Logger,
   NotFoundException,
@@ -23,6 +24,11 @@ import { BookingSlotsService, type SlotView } from './booking-slots.service';
 import { availabilityWindows, checkRangeShape, datesAround, type Range } from './slots';
 import { checkBookingWindow, checkQuotas, participantMayWithdraw } from './booking-rules';
 import { bookingView, privateInfoFor, relationTo, type BookingView } from './booking-views';
+import {
+  bookingCalendarPath,
+  bookingCalendarSignatureMatches,
+  bookingIcs,
+} from './booking-calendar';
 import type { CreateBlockDto, CreateBookingDto } from './dto/booking.dto';
 
 /** Who is asking: the account nginx authenticated, and whether it is a global admin. */
@@ -36,6 +42,11 @@ export type SlotForViewer = Omit<SlotView, 'bookingId' | 'blockId'> & {
   booking?: BookingView;
   /** The block's reason, when the organiser made it visible (or to the organiser). */
   blockReason?: string | null;
+  /**
+   * The block's id, sent only to whoever may LIFT it: the organiser, and the account linked to the
+   * resource (which the server still lets lift only the blocks it created). Nobody else needs it.
+   */
+  blockId?: string;
 };
 
 /**
@@ -61,6 +72,8 @@ export async function mayManageSpace(
 
 const DAY_MS = 86_400_000;
 
+/** `listedSpaces` answers at most this many spaces, by name. */
+export const LISTED_SPACES_LIMIT = 200;
 /** `mine` answers at most this many bookings, newest first. */
 export const MINE_LIMIT = 200;
 /** One page of the organiser's list (`spaceBookings`). */
@@ -252,6 +265,9 @@ export class BookingsService {
               endMs,
               state: 'blocked',
               blockReason: k && (canManage || k.reasonVisible) ? k.reason : null,
+              ...(canManage || linkedOf.get(r.resourceId) === actor.userId
+                ? { blockId: u.blockId }
+                : {}),
             },
           ];
         }
@@ -309,6 +325,112 @@ export class BookingsService {
           privateInfo: privateInfoFor(relation, b.cancelledAt !== null, space, resource),
         },
       ];
+    });
+  }
+
+  /**
+   * The spaces a member may book from the Reservations page (D16, D31): every LISTED space whose
+   * audience (D6) admits them - or that they manage - by name, at most {@link LISTED_SPACES_LIMIT}.
+   * A 'link' space is never listed, whoever asks: it is reached by its link or QR code alone. The
+   * audience is judged here, per space, with the space's own association's facts - exactly as
+   * `assertMayUse` judges a read, so a listed space always opens.
+   */
+  async listedSpaces(actor: Actor) {
+    this.logger.debug(`[BOOKINGS] listedSpaces user=${actor.userId.slice(0, 8)}`);
+    const rows = await this.spaces.find({
+      where: { discoverability: 'listed' },
+      order: { name: 'ASC', id: 'ASC' },
+    });
+    const open: BookingSpace[] = [];
+    for (const space of rows) {
+      if (open.length >= LISTED_SPACES_LIMIT) break;
+      const canManage = await this.mayManage(space, actor);
+      if (
+        canManage ||
+        !space.audience ||
+        matchesCondition(space.audience, await this.factsFor(space, actor.userId))
+      ) {
+        open.push(space);
+      }
+    }
+    if (open.length === 0) return [];
+    const ids = open.map((s) => s.id);
+    const associationIds = [
+      ...new Set(open.flatMap((s) => (s.associationId ? [s.associationId] : []))),
+    ];
+    const [counts, names]: [{ spaceId: string; n: number }[], { id: string; name: string }[]] =
+      await Promise.all([
+        this.resources.manager.query(
+          `SELECT "spaceId", count(*)::int AS n FROM booking_resources WHERE "spaceId" = ANY($1) GROUP BY "spaceId"`,
+          [ids]
+        ),
+        associationIds.length
+          ? this.spaces.manager.query(`SELECT id, name FROM associations WHERE id = ANY($1)`, [
+              associationIds,
+            ])
+          : Promise.resolve([]),
+      ]);
+    const countOf = new Map(counts.map((c) => [c.spaceId, c.n]));
+    const nameOf = new Map(names.map((a) => [a.id, a.name]));
+    return open.map((s) => ({
+      id: s.id,
+      name: s.name,
+      description: s.description,
+      associationId: s.associationId,
+      associationName: s.associationId ? (nameOf.get(s.associationId) ?? null) : null,
+      timeZone: s.timeZone,
+      resourceCount: countOf.get(s.id) ?? 0,
+    }));
+  }
+
+  /**
+   * The signed `.ics` link of one booking (D13), for its PEOPLE and its organiser only - the same
+   * relation that reads its names (`relationTo`). Who is judged before the state, as in `cancel`:
+   * a stranger learns `not-yours` and nothing else. A cancelled booking has no link.
+   */
+  async calendarLink(bookingId: string, actor: Actor) {
+    this.logger.debug(`[BOOKINGS] calendarLink booking=${bookingId}`);
+    const booking = await this.bookings.findOneBy({ id: bookingId });
+    if (!booking) throw new ForbiddenException({ code: 'not-yours' });
+    const resource = await this.resources.findOneByOrFail({ id: booking.resourceId });
+    const space = await this.loadSpace(resource.spaceId);
+    const people = await this.participants.findBy({ bookingId });
+    const relation = relationTo(
+      booking,
+      people,
+      actor.userId,
+      await this.mayManage(space, actor),
+      resource.linkedUserId
+    );
+    if (relation === 'other') throw new ForbiddenException({ code: 'not-yours' });
+    if (booking.cancelledAt) throw new ConflictException({ code: 'already-cancelled' });
+    return { path: bookingCalendarPath(bookingId) };
+  }
+
+  /**
+   * The `.ics` a calendar app fetches with NO identity (`booking-calendar.ts`). The signature is
+   * checked BEFORE anything is read, so a wrong one learns nothing - not even whether the booking
+   * exists. A cancelled booking is 410: a stale link cannot write it back into an agenda.
+   */
+  async calendarIcs(bookingId: string, sig: string | undefined): Promise<string> {
+    this.logger.debug(`[BOOKINGS] calendarIcs booking=${bookingId}`);
+    if (!bookingCalendarSignatureMatches(bookingId, sig)) {
+      this.logger.warn(`[BOOKINGS] calendarIcs: a signature was refused`);
+      throw new ForbiddenException({ code: 'calendar-signature' });
+    }
+    const booking = await this.bookings.findOneBy({ id: bookingId });
+    if (!booking) throw new NotFoundException({ code: 'booking-not-found' });
+    if (booking.cancelledAt) throw new GoneException({ code: 'booking-cancelled' });
+    const resource = await this.resources.findOneByOrFail({ id: booking.resourceId });
+    const space = await this.loadSpace(resource.spaceId);
+    return bookingIcs({
+      bookingId,
+      spaceId: space.id,
+      spaceName: space.name,
+      resourceName: resource.name,
+      startsAt: booking.startsAt,
+      endsAt: booking.endsAt,
+      frontendBaseUrl: process.env.FRONTEND_URL || 'http://localhost',
     });
   }
 
