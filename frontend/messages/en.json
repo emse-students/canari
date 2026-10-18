@@ -3219,6 +3219,7 @@
   "auth_pin_change_interrupted": "The PIN change was interrupted. The app restarts: enter your old PIN and then the new one to finish it - nothing has been lost.",
   "auth_pin_change_not_applied": "The PIN was changed for your account, but this device could not switch to it yet - nothing was lost. At your next unlock, enter the old PIN and then the new one.",
   "auth_pin_change_superseded": "Another tab changed the PIN at the same moment, so this change did not start. This tab restarts: unlock with the PIN now on your account.",
+  "auth_pin_change_follower_tab": "Another Canari tab is the active one for this account: change the PIN from that tab, or click \"Take over\" in this tab and try again. Nothing was changed.",
   "auth_no_local_state_recover": "No local state to recover on this device.",
   "auth_login_failed_after_recovery": "Login failed after recovery.",
   "auth_device_key_stale_reenter_pin": "Your saved device key is no longer valid. Enter your PIN to regenerate it.",

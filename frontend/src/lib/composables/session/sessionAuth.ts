@@ -18,6 +18,7 @@ import {
   KeyChangeSupersededError,
   LocalStateUnopenableError,
   performPinChange,
+  thisTabMayChangeDeviceKey,
   type PinProgressCallback,
 } from '$lib/utils/chat/pinChange';
 import { endIntoKeyRecovery, joinDeviceKeyLock } from '$lib/db/deviceKeyGate';
@@ -2126,6 +2127,10 @@ export async function changePinImpl(
 ): Promise<void> {
   const userId = ctx.getUserId();
   if (!userId.trim()) throw new LocalizedError(m.auth_no_user_signed_in());
+  // BEFORE THE SERVER IS ASKED ANYTHING: a follower tab cannot re-seal the MLS state (see
+  // thisTabMayChangeDeviceKey), and a verifier rotated for a change that cannot finish here costs
+  // the user a recovery.
+  if (!thisTabMayChangeDeviceKey(log)) throw new LocalizedError(m.auth_pin_change_follower_tab());
   log('[PIN_CHANGE] Starting PIN change...');
   onProgress?.({ percent: 2, stage: 'verify' });
 
