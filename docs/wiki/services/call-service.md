@@ -122,7 +122,11 @@ peer connection** - nothing in this mode touches webrtc-rs, TURN or a port - and
   signalling once connected, and production's host nginx closes a proxied socket after 60 s without
   a read from upstream (realtime-media-feasibility section 9, 4a).
 - **Pinned by** `src/p2p.rs` tests and `tests/p2p_signalling.rs`, which runs the real binary over
-  real WebSockets with real room tokens.
+  real WebSockets with real room tokens. Each test starts the binary on `PORT=0` and reads the port
+  it BOUND from its `Call service listening on <addr>` line (logged after `bind`, so it is also the
+  readiness event). Picking a free port in the test and releasing it for the child to bind later
+  let parallel tests collide: a readiness probe answered for another test's service, and a socket
+  was reset under it (1 run in 30 failed that way, 0 in 90 since, 2026-10-18).
 
 ## Room lifecycle
 
