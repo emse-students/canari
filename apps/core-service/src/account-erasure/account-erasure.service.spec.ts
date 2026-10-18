@@ -286,45 +286,53 @@ describe('AccountErasureService', () => {
       return { service, request };
     }
 
-    it('erases again a restored account the journal erased, and a pending one, but never a newer account under the same id', async () => {
+    it('erases again a restored account the journal erased or owes, but never a newer account under the same id', async () => {
       const { service, request } = makeReplay(
-        ['erased-before', 'came-back', 'never-erased'],
-        ['erased-before']
+        ['erased-before', 'came-back', 'never-erased', 'owed-at-restore'],
+        ['erased-before', 'owed-at-restore']
       );
       const result = await service.replayAfterRestore({
         completed: [
           { digest: subjectDigest('erased-before'), requestedAt },
           { digest: subjectDigest('came-back'), requestedAt },
         ],
-        pending: ['owed-at-restore'],
+        pending: [{ subjectId: 'owed-at-restore', requestedAt }],
       });
 
-      expect(request.mock.calls.map(([s]) => s)).toEqual(['owed-at-restore', 'erased-before']);
+      expect(request.mock.calls.map(([s]) => s)).toEqual(['erased-before', 'owed-at-restore']);
       expect(result).toEqual({ candidates: 3, replayed: 2, keptNewer: 1 });
     });
 
     it('stops at the first failed request, so the restore cannot report itself complete', async () => {
-      const { service, request } = makeReplay([], []);
+      const { service, request } = makeReplay(['a', 'b'], ['a', 'b']);
       request.mockRejectedValueOnce(new Error('database down'));
       await expect(
-        service.replayAfterRestore({ completed: [], pending: ['a', 'b'] })
+        service.replayAfterRestore({
+          completed: [],
+          pending: [
+            { subjectId: 'a', requestedAt },
+            { subjectId: 'b', requestedAt },
+          ],
+        })
       ).rejects.toThrow('database down');
       expect(request).toHaveBeenCalledTimes(1);
     });
 
-    it('exports one digest per completed subject with its LATEST request, and every pending subject', async () => {
+    it('exports every completed digest and every pending subject, each with its LATEST request', async () => {
       const query = jest.fn(async (sql: string): Promise<unknown> =>
         sql.includes('"completedAt" IS NOT NULL')
           ? [{ digest: subjectDigest('x'), requestedAt: new Date(requestedAt) }]
-          : [{ subjectId: 'owed' }]
+          : [{ subjectId: 'owed', requestedAt: new Date(requestedAt) }]
       );
       const service = new AccountErasureService({ query } as unknown as DataSource);
       await expect(service.exportJournal()).resolves.toEqual({
         completed: [{ digest: subjectDigest('x'), requestedAt }],
-        pending: ['owed'],
+        pending: [{ subjectId: 'owed', requestedAt }],
       });
-      expect(query.mock.calls[0][0]).toContain('max("requestedAt")');
-      expect(query.mock.calls[0][0]).toContain('GROUP BY "subjectId"');
+      for (const [sql] of query.mock.calls) {
+        expect(sql).toContain('max("requestedAt")');
+        expect(sql).toContain('GROUP BY "subjectId"');
+      }
     });
   });
 });

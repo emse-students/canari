@@ -113,19 +113,25 @@ describe('erasure policy', () => {
   describe('the replay a restore owes', () => {
     const at = '2026-10-16T12:00:00.000Z';
 
-    it('names a restored account by its digest, and a pending subject outright, each once', () => {
+    const later = '2026-10-17T12:00:00.000Z';
+
+    it('names a restored account by its digest or outright, once, with its LATEST request', () => {
       const journal = {
         completed: [
           { digest: subjectDigest('erased'), requestedAt: at },
-          { digest: subjectDigest('half-done'), requestedAt: at },
+          { digest: subjectDigest('erased-then-owed'), requestedAt: at },
           { digest: subjectDigest('never-restored'), requestedAt: at },
         ],
-        pending: ['half-done', 'pending-only'],
+        pending: [
+          { subjectId: 'erased-then-owed', requestedAt: later },
+          { subjectId: 'owed', requestedAt: at },
+          { subjectId: 'owed-not-restored', requestedAt: at },
+        ],
       };
-      expect(replayCandidates(journal, ['erased', 'kept', 'half-done'])).toEqual([
-        { subjectId: 'half-done', requestedBefore: null },
-        { subjectId: 'pending-only', requestedBefore: null },
+      expect(replayCandidates(journal, ['erased', 'kept', 'erased-then-owed', 'owed'])).toEqual([
         { subjectId: 'erased', requestedBefore: at },
+        { subjectId: 'erased-then-owed', requestedBefore: later },
+        { subjectId: 'owed', requestedBefore: at },
       ]);
     });
 
@@ -134,7 +140,10 @@ describe('erasure policy', () => {
     });
 
     it('refuses a body it cannot replay whole, rather than replaying part of it', () => {
-      const good = { completed: [{ digest: subjectDigest('x'), requestedAt: at }], pending: ['y'] };
+      const good = {
+        completed: [{ digest: subjectDigest('x'), requestedAt: at }],
+        pending: [{ subjectId: 'y', requestedAt: at }],
+      };
       expect(parseErasureJournal(good)).toBe(good);
       for (const bad of [
         null,
@@ -142,8 +151,10 @@ describe('erasure policy', () => {
         { completed: [], pending: 'y' },
         { completed: [{ digest: 'x', requestedAt: at }], pending: [] },
         { completed: [{ digest: subjectDigest('x'), requestedAt: 'not a time' }], pending: [] },
-        { completed: [], pending: [subjectDigest('y')] },
-        { completed: [], pending: [''] },
+        { completed: [], pending: ['y'] },
+        { completed: [], pending: [{ subjectId: subjectDigest('y'), requestedAt: at }] },
+        { completed: [], pending: [{ subjectId: '', requestedAt: at }] },
+        { completed: [], pending: [{ subjectId: 'y' }] },
       ]) {
         expect(() => parseErasureJournal(bad)).toThrow(MalformedErasureJournalError);
       }

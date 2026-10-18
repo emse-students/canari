@@ -107,24 +107,44 @@ tar xzf "$ARCHIVE" -C "$STAGE"
 # la base (core-service, restore-replay.js export), puis rendu au core-service une fois la
 # base restauree (replay), qui efface a nouveau chaque compte qu il nomme - sauf le NOUVEAU
 # compte d une personne revenue apres son effacement (docs/wiki/account-erasure.md#a-restore-replays-the-erasures).
-# Un export qui echoue ARRETE la restauration avant toute ecriture : sans lui, ces effacements
-# seraient perdus pour toujours.
+#  - Un export qui echoue ARRETE la restauration avant toute ecriture.
+#  - L entree publique (`frontend`) est arretee de l export au rejeu : un effacement demande
+#    dans cette fenetre atterrirait dans la base ecrasee, et dans aucun des deux journaux.
+#  - MIGRATION vers un nouveau serveur : le journal courant est celui de l ANCIEN. L y lire
+#    (meme commande `export`) et le passer ici par ERASURE_JOURNAL_FROM=<fichier>.
+#  - Le fichier reste tant que le rejeu n a pas reussi, et sa presence REFUSE une nouvelle
+#    restauration : un second export, lu dans la base deja restauree, l ecraserait par un
+#    journal qui ne connait plus ces effacements.
 REPLAY_CLI=(exec -T core-service bun dist/account-erasure/restore-replay.js)
 ERASURE_JOURNAL="$BACKUP_DIR/erasure-journal-avant-restauration.json"
+REPLAY_HINT="${DC[*]} ${REPLAY_CLI[*]} replay < $ERASURE_JOURNAL && rm $ERASURE_JOURNAL && ${DC[*]} start frontend"
 if [ -f "$STAGE/postgres_auth_db.sql.gz" ]; then
-  log "Lecture du journal d effacements courant (avant d ecraser la base)…"
-  ( umask 077; "${DC[@]}" "${REPLAY_CLI[@]}" export > "$ERASURE_JOURNAL" ) \
-    || fail "journal d effacements illisible (core-service demarre ?) - rien n a ete restaure"
+  [ ! -e "$ERASURE_JOURNAL" ] || fail "un rejeu d effacements est INACHEVE ($ERASURE_JOURNAL).
+  Le terminer d abord, rien n a ete restaure cette fois :
+    $REPLAY_HINT"
+  log "Arret de l entree publique jusqu au rejeu des effacements…"
+  "${DC[@]}" stop frontend
+  if [ -n "${ERASURE_JOURNAL_FROM:-}" ]; then
+    log "Journal d effacements fourni : $ERASURE_JOURNAL_FROM"
+    ( umask 077; cp "$ERASURE_JOURNAL_FROM" "$ERASURE_JOURNAL" ) \
+      || { "${DC[@]}" start frontend; fail "journal fourni illisible : $ERASURE_JOURNAL_FROM - rien n a ete restaure"; }
+  else
+    log "Lecture du journal d effacements courant (avant d ecraser la base)…"
+    ( umask 077; "${DC[@]}" "${REPLAY_CLI[@]}" export > "$ERASURE_JOURNAL" ) \
+      || { rm -f "$ERASURE_JOURNAL"; "${DC[@]}" start frontend
+           fail "journal d effacements illisible (core-service demarre ?) - rien n a ete restaure"; }
+  fi
   log "Restauration PostgreSQL auth_db…"
   gunzip -c "$STAGE/postgres_auth_db.sql.gz" \
     | "${DC[@]}" exec -T postgres psql -U "$POSTGRES_USER" -d auth_db -v ON_ERROR_STOP=0
   log "Rejeu des effacements que l archive precede…"
   "${DC[@]}" "${REPLAY_CLI[@]}" replay < "$ERASURE_JOURNAL" \
-    || fail "rejeu des effacements en echec : des comptes effaces sont REVENUS. Le journal est
-  garde dans $ERASURE_JOURNAL ; relancer :
-    ${DC[*]} ${REPLAY_CLI[*]} replay < $ERASURE_JOURNAL"
+    || fail "rejeu des effacements en echec : des comptes effaces sont REVENUS, et l entree
+  publique reste ARRETEE. Le journal est garde ; relancer :
+    $REPLAY_HINT"
   # Il nomme des comptes en attente d effacement : il ne survit pas a un rejeu reussi.
   rm -f "$ERASURE_JOURNAL"
+  "${DC[@]}" start frontend
 fi
 
 # MONGODB : rien a restaurer. Le service a ete supprime le 2026-08-18 et les
