@@ -139,6 +139,24 @@ the payload at all — the cheapest way not to leak a field is not to select it.
 | `GET /api/public/posts/:id/preview-image` | the decrypted first image — `max-age=3600`, **ThrottlerGuard** |
 | `GET /api/public/posts?limit=` | ids + `updatedAt` for the sitemap, capped at 500 |
 
+**The card's text is cut to what the unfurler shows, between words (2026-10-18).** The title was
+the post's first 70 characters plus ` - Canari` (79), the description 200 (199 with the ellipsis):
+opengraph.xyz reported both on a real post, and Facebook/Messenger cut them again, mid-word, at
+roughly 60 and 125. `POST_CARD_TITLE_MAX` (60, the WHOLE `og:title`, so the budget subtracts
+`DOCUMENT_TITLE_SUFFIX`) and `POST_CARD_DESCRIPTION_MAX` (125) in `serverSeo.ts` decide where the
+card stops, and `truncateForMeta` steps back to the last space, dropping a dangling `,`/`:`.
+`serverSeo.test.ts` and `text.test.ts` hold both.
+
+**An intermittent Messenger failure is not the HTML (measured 2026-10-18).** The access log shows
+the same `/posts/<id>` answering `facebookexternalhit` 18 244 bytes on some hits and ~6 850 on
+others, within seconds. Those are ONE document: `$body_bytes_sent` is the size AFTER `gzip`, which
+applies to `text/html` whenever the request offers it, and with `proxy_buffering off` every upstream
+read is a gzip flush, so the compressed size moves by tens of bytes per request. Reproduced against
+the built server behind the production gzip settings: 16 768 bytes identity on every hit, 6 198 to
+6 292 gzipped. The `@app_shell` fallback is the other shape - a constant size both ways (23 364 /
+7 145 locally), and LARGER than the SSR page uncompressed, because the prerendered shell inlines the
+`modulepreload` list the SSR answer sends as a header.
+
 ### The image an unfurler can actually fetch
 
 A post's photos are encrypted at rest: each `posts.images` entry carries `mediaId`, `key` and `iv`,
