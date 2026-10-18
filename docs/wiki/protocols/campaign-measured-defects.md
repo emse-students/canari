@@ -341,4 +341,4 @@ reloaded and whether the socket paused. The switch also changes how a background
   resolver, a Kotlin and a Swift reader), no network on the push path. The channel path could take the
   first mentioned name from the server, bounded against the 4 KB APNs budget (`push-payload.ts`). A miss
   keeps today's word. **Decided 2026-10-18 and built: the mirror, never the server** - see
-  [mobile](../frontend/mobile.md#a-mention-names-its-person-from-the-phones-own-copy-wp-mention-name-2026-10-18).
+  [mobile](../frontend/mobile.md#a-mention-names-its-author-from-the-phones-own-copy-wp-mention-name-2026-10-18).

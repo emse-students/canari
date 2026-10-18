@@ -996,9 +996,19 @@ class NotificationService: UNNotificationServiceExtension {
     // same format is spelled by the social-service alert title, the Kotlin service and
     // `canari_push.mm`; `channelPushFields.test.ts` holds the four together.
     content.title = workspaceName.isEmpty ? "#\(channelName)" : "\(workspaceName) - #\(channelName)"
+    // The phone's names, read at most once for this banner: the author line and the tokens share it.
+    let nameBook = Self.mentionNameBook(myUserId: ctx?.userId)
     content.body =
-      body.map { Self.renderMentions($0, myUserId: ctx?.userId, locale: ctx?.locale) }
+      body.map {
+        Self.renderMentions($0, myUserId: ctx?.userId, locale: ctx?.locale, nameBook: nameBook)
+      }
       ?? Self.localizedFormat("notif.channel.message", channelName, locale: ctx?.locale)
+    // A salon banner names no author (its title is the salon), so a mention of this reader says WHO
+    // in the subtitle - the Android twin puts the same line above the body (WP-MENTION-NAME).
+    if mentionsMe {
+      content.subtitle = Self.mentionAuthorLine(
+        senderId: senderId, nameBook: nameBook, locale: ctx?.locale)
+    }
     content.threadIdentifier = "channel_\(channelId)"
     content.userInfo["deepLink"] = "fr.emse.canari://chat/channel_\(channelId)"
     // Same elevation the MLS path gives a mention (applyMessageContent): break through Focus.
@@ -1098,14 +1108,19 @@ class NotificationService: UNNotificationServiceExtension {
   /// The names come from the phone's own copy, never from the push or the network
   /// (WP-MENTION-NAME, 2026-10-18): `display_names.json` in the App Group, which the app writes with
   /// every name it has resolved (`store_display_names`). Android twin: `renderMentions`.
-  private static func renderMentions(_ text: String, myUserId: String?, locale: String?) -> String {
+  ///
+  /// `nameBook` is the banner's one read of those names, shared with `mentionAuthorLine` on the
+  /// salon path; nil reads them here, at most once, and only for a token naming somebody else.
+  private static func renderMentions(
+    _ text: String, myUserId: String?, locale: String?,
+    nameBook: (() -> [String: Any]?)? = nil
+  ) -> String {
     guard text.contains("@["),
       let regex = try? NSRegularExpression(pattern: "@\\[([0-9a-fA-F]{64})\\]")
     else { return text }
     let me = myUserId?.lowercased()
     let ns = text as NSString
-    var names: [String: Any]?
-    var namesRead = false
+    let book = nameBook ?? mentionNameBook(myUserId: me)
     var named = 0
     var unknown = 0
     var out = ""
@@ -1116,12 +1131,7 @@ class NotificationService: UNNotificationServiceExtension {
       if me != nil && id == me {
         out += "@" + localized("notif.mention.you", locale: locale)
       } else {
-        // Read once per body, and only when a token names somebody else.
-        if !namesRead {
-          names = loadMentionNames(myUserId: me)
-          namesRead = true
-        }
-        if let name = names?[id] as? String, !name.isEmpty {
+        if let name = book()?[id] as? String, !name.isEmpty {
           named += 1
           out += "@" + name
         } else {
@@ -1136,6 +1146,37 @@ class NotificationService: UNNotificationServiceExtension {
       NSLog("[CanariNSE] [MENTION_NAME] named=\(named) unknown=\(unknown)")
     }
     return out.replacingOccurrences(of: "[ \\t]{2,}", with: " ", options: .regularExpression)
+  }
+
+  /// The phone's names for one banner: `display_names.json` read on the first call only, so the
+  /// author line and the tokens of one banner cost one file read, and a banner needing neither none.
+  private static func mentionNameBook(myUserId: String?) -> () -> [String: Any]? {
+    var names: [String: Any]?
+    var read = false
+    return {
+      if !read {
+        names = loadMentionNames(myUserId: myUserId?.lowercased())
+        read = true
+      }
+      return names
+    }
+  }
+
+  /// "Alice mentioned you" for a salon banner that mentions this reader (WP-MENTION-NAME,
+  /// 2026-10-18): the AUTHOR, named from the phone's own copy of names under the same owner rule as
+  /// the tokens, and "Someone" when the phone has never named them. Never from the push, which
+  /// carries only `senderId`. Salon only: an MLS banner already names its sender. Android twin:
+  /// `mentionAuthorLine`.
+  private static func mentionAuthorLine(
+    senderId: String, nameBook: () -> [String: Any]?, locale: String?
+  ) -> String {
+    let id = senderId.lowercased()
+    let name = id.isEmpty ? nil : (nameBook()?[id] as? String).flatMap { $0.isEmpty ? nil : $0 }
+    NSLog("[CanariNSE] [MENTION_NAME] author named=\(name != nil)")
+    // The placeholder opens the sentence in both languages, so the word is capitalised there.
+    let someone = localized("notif.mention.someone", locale: locale)
+    let who = name ?? (someone.prefix(1).uppercased() + someone.dropFirst())
+    return localizedFormat("notif.social.mention.title", who, locale: locale)
   }
 
   /// The `names` map of `display_names.json` in the App Group, or nil when it cannot be used:

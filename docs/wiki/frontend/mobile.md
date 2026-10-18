@@ -1949,14 +1949,25 @@ peer's ARCHIVE being merged into an empty store, which `batchAddMessages` counte
 caller now says which it is (`MessageBatchOrigin`, required). Two mechanisms because the two paths
 know different things - only the native side ever saw the push.
 
-#### A mention names its person from the phone's own copy (WP-MENTION-NAME, 2026-10-18)
+#### A mention names its author from the phone's own copy (WP-MENTION-NAME, 2026-10-18)
 
-A decrypted body carries `@[<64 hex>]`; every native composer renders it (Android
-`renderMentions`, the NSE's `renderMentions`, `CanariRenderMentions`). This device's own id is
-"you"; **anybody else is named from `display_names.json`**, and an id the phone has never named
-stays the word "someone". The name never rides the push and is never fetched on the push path
-(user decision, 2026-10-18): the server would have to read who is mentioned, and Google or Apple
-would carry it.
+The decision names the AUTHOR: "Alice vous a mentionné", "Quelqu'un" when the phone has never named
+them. The name never rides the push and is never fetched on the push path (user decision,
+2026-10-18): the server would have to send it, and Google or Apple would carry it.
+
+- **Where the author was missing: the salon banner only.** Its title is `<Communaute> - #<salon>`
+  and its push carries `senderId` alone, so a mention of the reader named nobody. On a mention of
+  this reader (`mentioned=true`), the author line is a line above the body on Android
+  (`mentionAuthorLine`) and the subtitle on iOS (the NSE's `mentionAuthorLine`,
+  `CanariMentionAuthorLine`), from the existing `notif_social_mention_title` /
+  `notif.social.mention.title` sentence - no new string. An MLS (DM or group) banner is unchanged:
+  its push has always carried `senderName`, which is the title or the subtitle.
+- **The mentioned person, inside the text, comes from the same file**: a body carries
+  `@[<64 hex>]`, rendered by every native composer (Android `renderMentions`, the NSE's
+  `renderMentions`, `CanariRenderMentions`). This device's own id is "you", anybody else is named
+  from `display_names.json`, and an id the phone has never named stays "someone". Kept because it
+  costs nothing beyond the author: one lazy "name book" per banner feeds both, so one file read at
+  most.
 
 - **Writer**: the WebView. `displayName.ts` notes every name it RESOLVES (a seeded name, or a
   fetched profile that carries one - never the unknown-user label) in `nameMirror.ts`, which hands
@@ -1971,8 +1982,10 @@ would carry it.
   deletion (`delete_user_push_files`) removes it only when its owner is the deleted account, in
   the data directory and the App Group. The factory wipe takes it with every other top-level file.
 - **Pinned** by `nameMirror.test.ts` (the hide trigger, the owner, the one file name across four
-  toolchains) and `nativeStrings.test.ts`; Swift and ObjC are verified by compiling only. **Owed**:
-  one look on each phone ([backlog](../backlog.md)).
+  toolchains), `nativeStrings.test.ts` (the author line on the salon path of all three composers,
+  the MLS path left alone, the sentence in every table) and `initialsFallback.test.ts`; nothing
+  here runs Kotlin, Swift or ObjC. **Owed**: one look on each phone - a salon mention by somebody
+  the app has shown, then by somebody it never has ([backlog](../backlog.md)).
 
 #### The language a notification speaks
 

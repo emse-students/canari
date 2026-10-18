@@ -4702,8 +4702,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // The app addresses channels as `channel_<uuid>`; use it for the deep link + stable notif id.
         val conversationId = "channel_$channelId"
 
-        // Read once: the only id this device can name in a mention token is its own.
+        // Read once: this device's own id is "you" in a mention token.
         val myUserId = MlsContextLoader.loadPushContext(this)?.userId
+        // The phone's names, read at most once for this banner: the author line and the tokens share it.
+        val nameBook = lazy { loadMentionNames(myUserId?.lowercase()) }
         // Set only where the banner's body IS the decrypted text: every other branch below posts the
         // generic line, on which "Marquer comme lu" would move a receipt for an unseen message.
         var showsMessage = false
@@ -4723,7 +4725,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     val text = json.optString("text").takeIf { it.isNotEmpty() }
                     if (text != null) {
                         showsMessage = true
-                        renderMentions(text, myUserId, res).take(200)
+                        renderMentions(text, myUserId, res, nameBook).take(200)
                     } else {
                         buildChannelFallbackText(res, channelName)
                     }
@@ -4764,6 +4766,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             buildChannelFallbackText(res, channelName)
         }
 
+        // A salon banner names no author (its "sender" is the salon's title), so a mention of this
+        // reader says WHO above the line - the iOS twin is the banner's subtitle (WP-MENTION-NAME).
+        val shownBody = if (mentionsMe) "${mentionAuthorLine(senderId, nameBook, res)}\n$body" else body
         val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
         val largeIcon    = avatarBitmap ?: generateInitialsBitmap(channelName)
         val title = buildChannelPushTitle(workspaceName, channelName)
@@ -4774,7 +4779,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // human sender to name anyway - the server sends only `senderId`, for the avatar.
             senderName = title,
             groupName  = "",
-            body       = body,
+            body       = shownBody,
             largeIcon  = largeIcon,
             groupId    = conversationId,
             channel    = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
@@ -4984,12 +4989,19 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * @param text the decrypted message body, possibly carrying tokens
      * @param myUserId this device's user id, or null when the push context could not be read
      * @param res the (locale-aware) context the strings are read from
+     * @param nameBook the phone's names, read once per BANNER: the salon path shares it with
+     *   [mentionAuthorLine], so naming the author and the tokens costs one file read
      */
-    private fun renderMentions(text: String, myUserId: String?, res: Context): String {
+    private fun renderMentions(
+        text: String,
+        myUserId: String?,
+        res: Context,
+        nameBook: Lazy<JSONObject?> = lazy { loadMentionNames(myUserId?.lowercase()) },
+    ): String {
         if (!text.contains("@[")) return text
         val me = myUserId?.lowercase()
-        // Read once per body, and only when a token names somebody else.
-        val names by lazy { loadMentionNames(me) }
+        // Read only when a token names somebody else.
+        val names by nameBook
         var named = 0
         var unknown = 0
         val rendered = MENTION_TOKEN.replace(text) { m ->
@@ -5004,6 +5016,25 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         }.replace(Regex("[ \t]{2,}"), " ")
         if (named + unknown > 0) Log.d(TAG, "[MENTION_NAME] named=$named unknown=$unknown")
         return rendered
+    }
+
+    /**
+     * "Alice vous a mentionné" for a salon banner that mentions this reader (WP-MENTION-NAME,
+     * 2026-10-18): the AUTHOR, named from the phone's own copy of names - the same
+     * `display_names.json`, under the same owner rule, as the tokens - and "Quelqu'un" when the phone
+     * has never named them. Never from the push: a salon push carries only `senderId`, and the
+     * decision is that no name rides it.
+     *
+     * Salon only. An MLS (DM or group) banner already names its sender in the title or the line.
+     */
+    private fun mentionAuthorLine(senderId: String, nameBook: Lazy<JSONObject?>, res: Context): String {
+        val name = senderId.lowercase().takeIf { it.isNotEmpty() }
+            ?.let { nameBook.value?.optString(it) }
+            ?.takeIf { it.isNotBlank() }
+        Log.d(TAG, "[MENTION_NAME] author named=${name != null}")
+        // The placeholder opens the sentence in both languages, so the word is capitalised there.
+        val who = name ?: res.getString(R.string.notif_mention_someone).replaceFirstChar { it.titlecase() }
+        return res.getString(R.string.notif_social_mention_title, who)
     }
 
     /**
