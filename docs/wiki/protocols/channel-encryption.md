@@ -1459,7 +1459,7 @@ member excluded from a private salon received, on their own authenticated socket
 | Event | What it carries |
 |---|---|
 | `channel.message.created` | `ciphertext`, `nonce`, `senderSessionId`, `messageIndex` - inline |
-| `channel.typing` | who is writing there, live |
+| `channel.typing` | who is writing there, live (never sent back to the typist) |
 | `channel.pin`, `channel.message.deleted` | what is pinned, what was removed |
 | `channel.poll.vote` | the tally |
 | `channel.updated`, `channel.member.joined` | the salon's NAME, and who was added to it |
