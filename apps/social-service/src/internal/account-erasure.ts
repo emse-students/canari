@@ -77,6 +77,13 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // The client ids its DELETED salon messages left (migration 090): what keeps a repeated send from
   // posting a removed message again. An erased account repeats no send, so they go with it.
   'channel_message_client_tombstones.authorId': { action: 'delete' },
+  // The outbox entry of a salon row (migration 093): its mentions are ids of OTHER accounts, but it
+  // lives only until the broadcast and the push are handed off (seconds, or the next boot after a
+  // crash), and it cascades with its message - an erased author's messages are deleted below.
+  'channel_message_fanout.payload': {
+    action: 'kept',
+    reason: 'a transient outbox entry, deleted at hand-off and with its message',
+  },
   'channel_members.userId': {
     action: 'code',
     by: 'ChannelService.removeAccountFromWorkspaces (governance repair before each removal)',
