@@ -79,6 +79,28 @@ and [`mls-graine-state-machine.md`](mls-graine-state-machine.md) — the same la
 
    **A refused GroupInfo read ENDS the ladder; it does not descend it.** "Or the device is not an authorized member" used to be in the sentence above, and it was a defect: the endpoint is gated on a `dm_group_members` row, so its **403 is the roster answering** that we hold no membership — which no retry and no peer can change. It now arrives as `NotAGroupMemberError`, thrown by `fetchGroupInfo`, propagated by `externalJoin`, and terminates the recovery through the same seam as a server-side tombstone (`stopRecovering`: cancel, `clearGroupNotReady`, retire the conversation). Until then it was flattened to `null`, read as *no base published yet*, and fell to the fallback — so a group we had LEFT was chased once a minute for as long as it existed, one 403 and one broadcast per pass, contained only by the `RECOVERY_TIMEOUT_MS` throttle. Any OTHER failure (a 5xx, a transport error) says nothing about membership and must still descend to the fallback, or a bad deploy retires live conversations.
 
+   **RUNG 1 DOES NOT RUN WHILE THE MISSING EPOCHS ARE STILL IN THE SERVER QUEUE (2026-10-17).** Rung 1
+   replays COMMITS only, never the application frames between them. When this device refused a
+   group's earlier frames `absent-conversation` (no conversation row yet), those frames - commits AND
+   messages - are still queued on the server, in order; a replay jumps the group past them and every
+   message of the jumped epochs then arrives as a `past epoch application frame`. Measured on a
+   Pixel 6a, prod 1.2.7, 2026-10-14: a group joined in the background by the push service had no row
+   at cold start, 150 frames were refused twice, a live frame at epoch 18 reached the healer at epoch
+   1, and 47 messages were lost. So a LIVE frame (it carries a queue id, so it comes back) is left
+   unacknowledged as `behind-refused-backlog` while `refusedBacklogIsQueued(groupId)` says so, and
+   `notifyConversationAvailable` asks for the backlog; the pull hands the frame back as `pull`, which
+   this hold never applies to. The mark is discharged by a pull that listed the WHOLE mailbox and
+   whose rows the queue has HANDLED, for the refusals marked before that pull STARTED
+   (`dischargeRefusedBacklog` in `unackedFrames.ts`) - not by the first pulled frame (a 500-row page
+   can stop mid-backlog) and not by the end of the listing (a live frame queued ahead of the listed
+   rows would then meet the healer first).
+
+   The row itself is written by every path that can make it appear, and each one announces it: the
+   redelivered Welcome of a held group with no row (`writeRowForHeldGroup` - from storage when
+   storage holds one the restore has not seeded yet, so its watermarks are not overwritten), the
+   push-cache merge on resume (`mergeFcmMessagesAndAnnounce`), and discovery. The restore's prune
+   keeps a row written after it read the store, which that read could not have returned.
+
 5. **Stale / kick flows** — Server metadata (`DeviceGroupMembership`, whose enum is exactly `pending` | `active` - `welcome_sent`, `welcome_received` and `stale` were retired by `001_device_group_status_enum.sql` and this page named them for a year afterwards) must match MLS reality. After remove commits, the client calls **`POST /api/mls/kick-stale-device`** (single device; used by `kickStaleDevice()` in MLS services) or **`POST /api/mls/kick-stale-user`** (all devices of a user).
 
 6. **Last resort** — Full resync / re-login / clearing local MLS state is outside normal operation; prefer fixing the specific gap (queue item, epoch, membership row) first.

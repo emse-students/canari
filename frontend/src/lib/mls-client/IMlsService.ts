@@ -1000,6 +1000,10 @@ export interface IMlsService {
    * conversations this device already knew about; one created while the device was away appears
    * later, from discovery, when that one-shot trigger is long past. A frame that arrived in between
    * is left in the server queue with nothing scheduled to collect it.
+   *
+   * Every path that creates a row calls it: discovery, the redelivered Welcome of a group held with
+   * no row, the push-cache merge on resume - and the gap healer, which leaves a live frame
+   * `behind-refused-backlog` and asks for the backlog it waits behind.
    */
   notifyConversationAvailable(groupId: string): void;
 

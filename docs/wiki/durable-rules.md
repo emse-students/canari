@@ -472,6 +472,13 @@ Deep links, system events, rosters and the channel/DM asymmetry are on those two
   boot restore - a one-shot that had already fired, and that cannot by construction produce a
   conversation the local store has never held. A global trigger for a per-group condition is a
   trigger that is wrong exactly when the condition is new. [chat](frontend/modules/chat.md)
+- **A REPAIR THAT REBUILDS PART OF A SEQUENCE MUST FIRST ASK WHETHER THE WHOLE SEQUENCE IS ALREADY ON
+  ITS WAY.** Rung 1 replays the commits of a gap and none of the messages between them, which is
+  right when those messages are gone and destructive when this device REFUSED them a second earlier
+  and they are still queued: 47 of 150 lost on a Pixel 6a (prod 1.2.7, 2026-10-14). The device knew -
+  it had written `absent-conversation` against the group. And "the map holds no row" is not "this
+  device has no row" before the restore has seeded it: ask storage before writing one.
+  [ladder](protocols/mls-recovery-ladder.md)
 - **MAKING ONE THING WAIT ON ANOTHER INHERITS ITS TERMINATION PROPERTIES, INCLUDING THE ONES
   NOBODY HAD TO THINK ABOUT.** `ackMessagesWithRetry` bounded how many times it gives up - four
   attempts - and bounded nothing about how long ONE attempt may take: its `fetch` carried no

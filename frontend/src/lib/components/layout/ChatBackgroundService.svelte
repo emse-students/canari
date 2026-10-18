@@ -123,7 +123,7 @@
   import { drainNativePendingCallAccept } from '$lib/stores/pendingCallAccept';
   import { warnIfSiblingDeviceInCall } from '$lib/utils/callPresence';
   import { CALLS_ENABLED } from '$lib/features';
-  import { mergeFcmMessagesIntoConversations } from '$lib/utils/chat/fcmMemoryMerge';
+  import { mergeFcmMessagesAndAnnounce } from '$lib/utils/chat/fcmMemoryMerge';
   import { subscribeTabMessageUpdates } from '$lib/mls-client/tabMessageSync';
   import { flushActiveMlsStateEncrypted } from '$lib/mls-client/mlsStatePersisterRegistry';
   import { insertMessageOrdered } from '$lib/utils/chat/messageOrder';
@@ -1378,12 +1378,14 @@
       }));
       if (injected.messages.length === 0) return;
       // The placeholders are what let a FIRST message from a new correspondent appear without a
-      // restart - see `mergeFcmMessagesIntoConversations`.
-      mergeFcmMessagesIntoConversations(
+      // restart - see `mergeFcmMessagesIntoConversations`. Each row it creates is ANNOUNCED, since
+      // frames refused for lack of that row wait on it and nothing else is scheduled on a resume.
+      mergeFcmMessagesAndAnnounce(
         injected.messages,
         globalConvs.conversations,
         selfId,
-        injected.placeholders
+        injected.placeholders,
+        (groupId) => globalSession.ensureMls().notifyConversationAvailable(groupId)
       );
     } finally {
       globalConvs.endConversationSource();
