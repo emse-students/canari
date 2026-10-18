@@ -965,13 +965,17 @@ has the before/after table).
   engine fault (memory pressure on a ~19 MB state) and a failed tag with the same `OperationError`, and
   `altered` makes `init` rotate the device identity even under `noFreshStart` - irreversibly. So the
   web opener throws `MlsStateUnreadableNowError` (blob size, error name, whether the key derivation
-  succeeded), and `loadAndInitWasm` asks `mls-core`'s deterministic reader for the verdict: its
-  `STATE_ALTERED` is a failed tag and only then is the state `altered`; if it OPENS the bytes the
-  engine fault is proven, and its client is freed, never installed (a witness, not a second load
-  path). Anything else stays `unreadable_now`: `WebMlsService.loadStateWithKey` reads the state up to
+  succeeded), and `loadAndInitWasm` asks `mls-core`'s deterministic reader for the verdict: any code
+  it answers about the bytes (`STATE_ALTERED`, `STATE_KEY_MISMATCH`, `STATE_UNDECRYPTABLE`,
+  `IDENTITY_MISMATCH`) travels on as itself, so `altered` is only ever its proof and the old-PIN
+  recovery stays reachable; if it OPENS the bytes the engine fault is proven, its client is freed,
+  never installed (a witness, not a second load path), and a re-read of the same bytes does not
+  rebuild it; an untyped witness failure (a trap) drops the memoised WASM instance. Anything else stays `unreadable_now`: `WebMlsService.loadStateWithKey` reads the state up to
   `MLS_STATE_UNREADABLE_NOW_READS` (3) times, then `init` throws `SavedStateUnopenedError('unreadable_now')`
   with or without `noFreshStart` - nothing rotated or written, the login says "could not be read
   right now" (`local_state_unreadable_now`, in no recovery predicate), the next start reads again.
+  The PIN recovery says the same (`LocalStateUnreadableNowError` in `pinChange.ts`), never the
+  "damaged, reset" sentence of `LocalStateUnopenableError`.
   Pinned by `WebMlsService.unreadableNow.test.ts`, `mlsWasmLoader.test.ts` and, on the REAL WASM,
   `mlsStateSeal.realWasm.test.ts`.
 - **The seal runs on the calling thread, not the encrypt worker**: WebCrypto already runs the cipher

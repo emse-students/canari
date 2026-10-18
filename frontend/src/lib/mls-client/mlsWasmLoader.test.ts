@@ -166,6 +166,40 @@ describe('loadAndInitWasm', () => {
       expect(WasmMlsClient).toHaveBeenCalledTimes(1);
     });
 
+    it('does not rebuild a witness for bytes mls-core already opened (a re-read)', async () => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+      const blob = await sealMlsStateBlobV2(plain, KEY_B64);
+      WasmMlsClient.mockImplementationOnce(function Witness(this: { free: () => void }) {
+        this.free = vi.fn();
+      });
+      const decrypt = vi.spyOn(crypto.subtle, 'decrypt');
+      decrypt
+        .mockRejectedValueOnce(new DOMException('engine', 'OperationError'))
+        .mockRejectedValueOnce(new DOMException('engine', 'OperationError'));
+      await loadAndInitWasm('u', 'd', blob, KEY_B64, true).catch(() => {});
+      const again = await loadAndInitWasm('u', 'd', blob, KEY_B64, true).catch((e: unknown) => e);
+      expect(again).toBeInstanceOf(MlsStateUnreadableNowError);
+      expect((again as MlsStateUnreadableNowError).deterministicReader).toBe('opened');
+      expect(WasmMlsClient).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ['STATE_KEY_MISMATCH: header names another key', /^STATE_KEY_MISMATCH: /],
+      ['IDENTITY_MISMATCH: the state belongs to another device', /^IDENTITY_MISMATCH: /],
+      ['STATE_UNDECRYPTABLE: stub', /^STATE_UNDECRYPTABLE: /],
+    ])('passes the deterministic verdict through (%s), never unreadable now', async (msg, code) => {
+      vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
+      const blob = await sealMlsStateBlobV2(plain, KEY_B64);
+      WasmMlsClient.mockImplementationOnce(function VerdictReader() {
+        throw new Error(msg);
+      });
+      const decrypt = vi.spyOn(crypto.subtle, 'decrypt');
+      decrypt.mockRejectedValueOnce(new DOMException('engine', 'OperationError'));
+      const error = await loadAndInitWasm('u', 'd', blob, KEY_B64, true).catch((e: unknown) => e);
+      expect(error).not.toBeInstanceOf(MlsStateUnreadableNowError);
+      expect(String((error as Error).message)).toMatch(code);
+    });
+
     it('keeps a refusal mls-core cannot judge (out of memory) as unreadable now', async () => {
       vi.spyOn(globalThis, 'fetch').mockResolvedValue(wasmMagicResponse());
       const blob = await sealMlsStateBlobV2(plain, KEY_B64);
@@ -180,6 +214,10 @@ describe('loadAndInitWasm', () => {
       expect((error as MlsStateUnreadableNowError).deterministicReader).toMatch(
         /^failed: RangeError/
       );
+      // A trap may leave the memoised instance unusable: the next load instantiates afresh.
+      const fetches = vi.mocked(globalThis.fetch).mock.calls.length;
+      await loadAndInitWasm('u', 'd', undefined, undefined, false);
+      expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(fetches + 1);
     });
   });
 
