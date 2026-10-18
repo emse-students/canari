@@ -7,7 +7,7 @@
     "start:dev": "nest start --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "build": "nest build",
-    "test": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --passWithNoTests",
+    "test": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js",
     "test:boot": "node --experimental-vm-modules --disable-warning=ExperimentalWarning node_modules/jest/bin/jest.js --config ./jest-boot.json --runInBand",
     "smoke": "bun scripts/smoke-test.mjs",
     "lint": "oxlint -c ../../.oxlintrc.nest.json .",

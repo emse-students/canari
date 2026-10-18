@@ -80,6 +80,7 @@ jobs:
       rust-matrix: ${{ steps.matrix.outputs.rust }}
       ts-matrix: ${{ steps.matrix.outputs.ts }}
       run-frontend: ${{ steps.matrix.outputs.frontend }}
+      run-frontend-build: ${{ steps.matrix.outputs.frontend_build }}
       run-harness: ${{ steps.matrix.outputs.harness }}
       run-android: ${{ steps.matrix.outputs.android }}
       run-mls-compat: ${{ steps.matrix.outputs.mls_compat }}
@@ -111,6 +112,7 @@ jobs:
             echo "rust=$ALL_RUST"    >> "$GITHUB_OUTPUT"
             echo "ts=$ALL_TS"        >> "$GITHUB_OUTPUT"
             echo "frontend=true"     >> "$GITHUB_OUTPUT"
+            echo "frontend_build=true" >> "$GITHUB_OUTPUT"
             echo "harness=true"      >> "$GITHUB_OUTPUT"
             echo "android=true"      >> "$GITHUB_OUTPUT"
             echo "mls_compat=true"   >> "$GITHUB_OUTPUT"
@@ -284,10 +286,21 @@ jobs:
              has '^frontend/svelte\.config' || \
              has '^frontend/vite\.config' || has '^frontend/vitest\.config' || \
              has '^frontend/tsconfig' || has '^frontend/\.oxlintrc' || has '^oxfmt\.json' || has '^\.oxlintrc' || has '^rust-toolchain\.toml' || has '^scripts/install-oxvelte\.sh' || \
-             has '^frontend/mls-wasm/' || has '^frontend/mls-core/' || has '^libs/proto/' || has '^libs/contracts/'; then
+             has '^frontend/mls-wasm/' || has '^frontend/mls-core/' || has '^libs/proto/' || has '^libs/contracts/' ||              has '^infrastructure/local/Dockerfile.frontend$'; then
             echo "frontend=true" >> "$GITHUB_OUTPUT"
           else
             echo "frontend=false" >> "$GITHUB_OUTPUT"
+          fi
+
+          # The PRODUCTION BUILD runs on a pull request only when what it consumes changed: the
+          # dependency set (`package.json`, `bun.lock`, `patches/`), the build configuration
+          # (`svelte.config`, `vite.config`, so the adapters too) and the image that serves the
+          # output. An `adapter-node` bump broke the main-only build AFTER its pull request had
+          # passed every gate here, because nothing ran the build before the merge.
+          if has '^frontend/package.json' || has '^frontend/bun.lock' || has '^frontend/patches/' ||              has '^frontend/svelte.config' || has '^frontend/vite.config' ||              has '^infrastructure/local/Dockerfile.frontend$'; then
+            echo "frontend_build=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "frontend_build=false" >> "$GITHUB_OUTPUT"
           fi
 
           # -- Android unit tests --
@@ -638,8 +651,8 @@ jobs:
   # semantics against another major proves those semantics on a server production does not run.
   # Bump it WITH the compose files, never alone (`ci-passed-gate.test.mjs` compares them).
   #
-  # A SKIP IS A FAILURE HERE. `--passWithNoTests` (the `test` script's) and the gate itself both
-  # turn "ran nothing" into a pass, so the last step reads jest's own report and refuses unless
+  # A SKIP IS A FAILURE HERE. the gate itself
+  # turns "ran nothing" into a pass (the `test` scripts lost `--passWithNoTests` in WP-T2), so the last step reads jest's own report and refuses unless
   # every `*.integration.spec.ts` on disk ran and not one test in them was skipped.
   test-social-integration:
     name: Social-service integration specs (PostgreSQL)
@@ -920,23 +933,25 @@ jobs:
           name: frontend-coverage
           path: frontend/coverage/
 
-      # THE PRODUCTION FRONTEND IS BUILT ONCE ON `main`, NOT ON EVERY PULL REQUEST (#1476, #1498).
+      # THE PRODUCTION FRONTEND IS BUILT ON `main`, AND ON A PULL REQUEST THAT TOUCHES WHAT THE BUILD
+      # CONSUMES (dependencies, build config, the serving image: `frontend_build` in `changes`), NOT
+      # ON EVERY PULL REQUEST (#1476, #1498).
       # Nothing above builds it, so a build-only defect - a bundle naming no commit, two build ids
       # in one output - was invisible to every pull request and to main's CI and surfaced at the
       # release tag. `bun run build` already chains the bundle-consistency, platform-service and
       # emoji checks; the assertion script adds what only the artefact shows (the stamp names THIS
-      # commit, the wasm and protobuf module are in). Pull requests skip it to keep their cost.
+      # commit, the wasm and protobuf module are in). Any other pull request skips it to keep its cost.
       # The release does NOT reuse this build: each estate bakes its own VITE_* origins in at build
       # time (`build.yml`), which this one has none of.
-      - name: Build the production frontend (main only)
-        if: github.event_name == 'push'
+      - name: Build the production frontend
+        if: github.event_name == 'push' || needs.changes.outputs.run-frontend-build == 'true'
         working-directory: frontend
         env:
           BUILD_WEB: '1'
         run: bun run build
 
-      - name: Assert what the build carries (main only)
-        if: github.event_name == 'push'
+      - name: Assert what the build carries
+        if: github.event_name == 'push' || needs.changes.outputs.run-frontend-build == 'true'
         run: bun .github/scripts/assert-frontend-build.mjs frontend "${{ github.sha }}"
 
   # =================================================================================================
