@@ -1,5 +1,6 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { deliveryUrl } from '$lib/utils/apiUrl';
+import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 
 /** Shareable invite links for MLS group chats (server only queues a pending add; members do the crypto). */
 
@@ -22,14 +23,14 @@ export async function createGroupInvite(
       body: JSON.stringify(opts ?? {}),
     }
   );
-  if (!res.ok) throw new Error(`Invite link creation failed (${res.status})`);
+  if (!res.ok) throw await refusalFromResponse(res, 'Invite link creation failed');
   return res.json() as Promise<{ token: string }>;
 }
 
 /** Previews a group invite (group name) before joining. */
 export async function getGroupInvitePreview(token: string): Promise<GroupInvitePreview> {
   const res = await apiFetch(`${deliveryUrl()}/api/mls/group-invites/${encodeURIComponent(token)}`);
-  if (!res.ok) throw new Error(`Invite not found (${res.status})`);
+  if (!res.ok) throw await refusalFromResponse(res, 'Invite lookup failed');
   return res.json() as Promise<GroupInvitePreview>;
 }
 
@@ -44,15 +45,6 @@ export async function acceptGroupInvite(
     `${deliveryUrl()}/api/mls/group-invites/${encodeURIComponent(token)}/accept`,
     { method: 'POST' }
   );
-  if (!res.ok) {
-    let msg = `Impossible de rejoindre (${res.status})`;
-    try {
-      const body = (await res.json()) as { message?: string };
-      if (body?.message) msg = body.message;
-    } catch {
-      /* keep default */
-    }
-    throw new Error(msg);
-  }
+  if (!res.ok) throw await refusalFromResponse(res, 'Group invite accept refused');
   return res.json() as Promise<{ groupId: string; alreadyMember: boolean }>;
 }

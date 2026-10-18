@@ -30,7 +30,7 @@ every pull request and `CI passed` was green for the reason that they had not ru
 was written, the migration 082 spec turned out to have failed on EVERY run since its merge (#1913).
 The job runs them in band against production's PostgreSQL, pinned by the digest the compose files
 carry, and its last step FAILS unless jest ran as many suites as there are files on disk and skipped
-none: `--passWithNoTests` and the gate itself would otherwise turn "ran nothing" back into a pass.
+none: a jest run that selects nothing is no longer a pass (the `test` scripts lost `--passWithNoTests` in WP-T2), but a gate that selects by name still needs its own count of what ran.
 **ONE spec is excluded from it, by name in both steps: `internal/account-erasure.integration.spec.ts`**,
 which copies every social table out of `public` and so needs the schema `synchronize` builds; it runs
 in `boot-nest-apps` right after the boot built that schema (2026-10-17, found by rebasing on the
@@ -428,6 +428,43 @@ mentioned. Everything about the estate itself is on
 not part of `all`), behind the same gate. Nothing copies production's data into dev since 2026-10-16
 ([dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16)).
 
+### The smoke sign-in (WP-SMOKE-LOGIN, decided 2026-10-18)
+
+`serve-dev.yml` runs `.github/scripts/smoke-login.mjs` right after the wasm check and BEFORE
+`dev-deployed` moves, so a refused sign-in leaves the marker where it was and gate 4 refuses the stable
+(a stable ships the pre-release that served dev). It walks what a browser walks: MiConnect's flow
+executor (`/api/v3/flows/executor/<slug>/`), the authorization code, `POST /api/auth/oidc/callback`,
+then `GET /api/auth/verify` with the minted token (the auth_request that guards every route). It
+needs no browser and no PIN: it proves the identity and token path, not the MLS vault.
+
+**Dev only, by construction (user, 2026-10-18).** The step lives in `serve-dev.yml` and reads
+`DEV_SMOKE_*` secrets of the `development` environment. No production credential exists in GitHub, and
+`serve-prod.yml` never signs in. Production's sign-in stays covered by the wasm check, the stable's
+gates and the dev run having passed on the same code.
+
+**Absent secrets are a named, loud skip, never a pass.** Neither set: exit 0 with a
+`::warning title=Smoke sign-in SKIPPED` and a run-summary block saying NO sign-in was tried. Only one
+of the pair set: exit 1 (a half-created pair must not read as "not configured"). A refusal exits 1 with
+the stage it died at (`ak-stage-password`, `oidc-callback`, `verify`...) and the reason, never the
+password; the summary says the marker was not moved.
+
+**What the USER must create** (nothing here can; the script was exercised only against local fakes in
+`.github/scripts/tests/smoke-login.test.mjs`, never against the live MiConnect):
+
+| Name | Kind | Where | What |
+| --- | --- | --- | --- |
+| `DEV_SMOKE_USERNAME` | secret | `development` environment | the login of a DEDICATED MiConnect account used by nothing else |
+| `DEV_SMOKE_PASSWORD` | secret | `development` environment | its password; it must be able to pass the flow with NO second factor (the campaign's service-account path has none, [cross-client-campaign](cross-client-campaign.md)) |
+| `DEV_SMOKE_FLOW_SLUG` | variable, optional | repository or `development` | the slug of that no-MFA flow, when the authorize endpoint does not lead to it by default |
+
+The account must exist in MiConnect and be allowed on the Canari application; it creates its own row on
+dev at first sign-in, and holds no admin right. It reuses `DEV_AUTHENTIK_URL` and
+`DEV_AUTHENTIK_CLIENT_ID`, which dev already has. **First run**: the log prints the stage sequence
+(`ak-stage-identification > ak-stage-password > xak-flow-redirect` is the expected one); a different
+component named in the failure is the flow asking for a stage the account cannot answer. Because the
+flow's exact shape (a CSRF header, a consent stage) was not observable from here, the first real run
+is the check of this script - read it before trusting a green.
+
 ### The store arms (`ios.yml`, `android.yml`)
 
 Called by `release.yml` with the sha, the version and the release kind, so the Play track
@@ -583,8 +620,7 @@ measurement, as a refusal instead of a report.
 runs `tools/cross-client-harness/deployed-wasm-check.mjs https://dev.canari-emse.fr` BEFORE its
 `Record the deployed commit` step, so a dev estate serving a wasm that can panic (the 2026-09-06
 class: every login refused as a wrong PIN, every status code 200) never moves the marker, and gate 4
-refuses the stable. It is not a login; the sign-in smoke test stays a user decision
-([backlog](backlog.md#the-delivery-chain-review---opened-by-the-2026-09-06-outage)).
+refuses the stable. It is not a login; the sign-in is the next step ([the smoke sign-in](#the-smoke-sign-in-wp-smoke-login-decided-2026-10-18)).
 `release-chain.test.sh` pins the order; `archive/deployed-wasm-selftest.mjs` pins the three exit codes.
 
 **A PULL REQUEST THAT MERGES BETWEEN THE PRE-RELEASE AND THE STABLE COSTS ONE MORE PRE-RELEASE, AND
@@ -614,7 +650,7 @@ Gate 4 costs one extra pre-release in a real emergency, which deploys dev in min
 **THE ADMIN BYPASS SHORTENS NOTHING, AND THAT IS THE DOCUMENTED PRICE (decided 2026-10-06, the
 cheaper of the two options the 2026-09-06 outage left).** `gh pr merge --admin` skips the ruleset's
 `CI passed` on the PULL REQUEST; gate 3 then refuses the release until `CI passed` has run on the
-merged commit - main's own CI, ~8 minutes after the merge, the same suite the bypass avoided. So the
+merged commit - main's own CI, 14-22 minutes after the merge (measured 2026-10-18), the same suite the bypass avoided. So the
 sequence in an emergency is: admin-merge, `gh run list --branch main` until CI is green, publish the
 pre-release (or `gh run rerun` a refused one - it needs no new tag, and rescues only this gate), then
 the stable. Gate 3's refusal says so in its own words (`release-preflight.sh`, pinned by
@@ -854,6 +890,15 @@ ghcr.io/emse-students/canari/<service>:<tag>
 **The two moving tags never cross**, and that is what lets one registry feed two estates from two
 different commits. Production is deployed by the release's `v<version>`; dev by its moving `dev`
 (a rollback of dev is not a goal).
+
+## Hosted runners are pinned to `ubuntu-24.04`, never `ubuntu-latest` (2026-10-18)
+
+GitHub moves `ubuntu-latest` to Ubuntu 26 on 2026-10-19. Every hosted job now says `runs-on: ubuntu-24.04`,
+the image the runs used the day before (a `main` run's "Set up job" log reads `Ubuntu 24.04.5 LTS`), so the
+pin changes nothing today. Self-hosted labels are untouched. **Revisit on or after 2026-11-18**: move to
+`ubuntu-26.04` deliberately, as ONE pull request whose CI is the trial run, never as a side effect of a
+floating label. `tools/ecosystem-shape` does not assert the hosted label (only the self-hosted one), so
+no assertion needed adapting.
 
 ## Self-hosted runner
 
@@ -1847,7 +1892,7 @@ npm is gone (`node --run test` replaced the one `npm test` in `ci.yml` and the o
 ## Notable CI gotchas
 
 - **A CONFLICTING PR PRODUCES NO `pull_request` RUN, AND THE CHECKS LIST STILL LOOKS BUSY.** The `pull_request` event is computed against the MERGE ref; with a conflict GitHub cannot build one, so `CI` is never queued - not red, not skipped, simply never created. `arm-auto-merge` is `pull_request_target`, evaluates against the base, and runs anyway, so one green row sits there while nothing tests the code. PR #525 waited twice and survived a close/reopen before the state was actually asked for. `gh run list` returning nothing is an ANSWER: read `gh pr view <n> --json mergeable,mergeStateStatus` (`CONFLICTING` / `DIRTY`), then rebase on a freshly fetched `main` and `git push --force-with-lease`.
-- **`CHANGELOG.md`'s `## [Unreleased]` heading WAS an anchor every fix wrote to, so two PRs opened the same day conflicted by construction** - #837 and #838 did exactly that (2026-09-18). The first answer, `CHANGELOG.md merge=union` in `.gitattributes`, was verified with `git merge-file --union` and **never worked where it mattered: GitHub ignores `.gitattributes` merge drivers when it computes mergeability and squash-merges a PR.** Measured 2026-09-24 on #1067: `git merge-tree origin/main HEAD` merged clean locally while GitHub reported `CONFLICTING`. The anchor is gone instead: each PR adds its entry as a file in `changelog.d/`, the stable bump folds them under `## [X.Y.Z]` and deletes them ([changelog.d/README.md](../../changelog.d/README.md)), and `docsMergeArtefacts.test.ts` fails a PR that writes under `[Unreleased]`. **A merge behaviour verified with local git is verified for local git** - the platform that performs the merge is the one to measure.
+- **`CHANGELOG.md`'s `## [Unreleased]` heading WAS an anchor every fix wrote to, so two PRs opened the same day conflicted by construction** - #837 and #838 did exactly that (2026-09-18). The first answer, `CHANGELOG.md merge=union` in `.gitattributes`, was verified with `git merge-file --union` and **never worked where it mattered: GitHub ignores `.gitattributes` merge drivers when it computes mergeability and squash-merges a PR.** Measured 2026-09-24 on #1067: `git merge-tree origin/main HEAD` merged clean locally while GitHub reported `CONFLICTING`. The anchor is gone instead: each PR adds its entry as a file in `changelog.d/`, the stable bump folds them under `## [X.Y.Z]` and deletes them ([changelog.d/README.md](../../changelog.d/README.md)), and `.github/scripts/tests/docs-merge-artefacts.test.mjs` fails a PR that writes under `[Unreleased]`. **A merge behaviour verified with local git is verified for local git** - the platform that performs the merge is the one to measure.
 - **A Tauri plugin's JS package and its Rust crate must agree on major.minor, and only a RELEASE used to discover when they did not.** The CLI refuses to build (`tauri-plugin-log (v2.8.0) : @tauri-apps/plugin-log (v2.9.0)`), but nothing else in this pipeline compiles the Tauri app, so an ordinary `bun install` that re-resolves the JS half lands green and kills the next tag - it took out Android Release and AppImage Release on v0.14.6, while iOS Release passed because its path never runs the check. `frontend/scripts/check-tauri-plugin-versions.mjs` (step `Guard the Tauri JS/Rust version parity` in `code-analysis.yml`) now compares the two committed files on every run. Fix the Rust side with `cd frontend/src-tauri && cargo update -p <crate>`.
 - **Recorded flake, not reproduced:** `chat-delivery-service` failed one test in one of five local runs on 2026-08-31; if it recurs, capture the suite name first and do not widen the dependency ceiling to feel safe.
 - iOS `altool` can exit 0 while output says `UPLOAD FAILED` — the workflow greps for failure markers in the transcript.

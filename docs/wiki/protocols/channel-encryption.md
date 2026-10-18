@@ -2264,7 +2264,7 @@ know*, which is a different sentence from *no*.
 | --- | --- |
 | `messaging.service.ts` | reads the two `distribution*` columns it was already fetching the row for |
 | `push-payload.ts` | sends `isKeyDistribution`, or OMITS the key when the row could not be read |
-| Kotlin `onMessageReceived` | `silent && !CALLS_ENABLED && isKeyDistribution != true` still returns; a key-material frame goes on |
+| Kotlin `onMessageReceived` | `silent && isKeyDistribution != true` still returns; a key-material frame goes on (the guard read the calls switch too until 2026-10-18 - [calls](../frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)) |
 | `background.rs` | passes a non-renderable answer through with a `reason` TOKEN instead of collapsing it to one refusal |
 | `proto_fields.rs` | reads fields 10 (one seed) and 12 (a BUNDLE, as a list) and attaches `{channelId, sessionId, seedB64, createdAt}` |
 | Kotlin `decryptProto` | switches on the same token, into `PushDecrypt.KeyMaterial` |

@@ -1220,6 +1220,10 @@ drains its own entries oldest first. Rules that came with it:
 - **`MAX_CONCURRENT_SENDS = 3`** frames on the wire across lanes (a slot is handed to the next waiter,
   never freed and re-raced): enough that one stalled lane freezes only itself, few enough that a
   50 kbit/s uplink is not cut into slivers that each miss their deadline.
+- **An attachment's UPLOAD runs outside the lane and holds no send slot** (WP-OFF-9, 2026-10-18): the
+  lane starts it and moves on, so a text written after a big file is not held by it; only the media
+  message's small MLS send takes the lane once the upload ended. Display order stays `sentAt`; the
+  rules and the order semantics are in [offline-and-weak-network 13.8](../offline-and-weak-network.md#138-wp-off-9-built-the-upload-runs-outside-the-lane-2026-10-18).
 - The send POST is under a `write` deadline ([offline-and-weak-network](../offline-and-weak-network.md#11-wp-off-5-shipped-a-deadline-a-slow-state-and-lanes)),
   so a stalled lane ends as `DeliveryUnreachableError` and takes the ordinary backoff.
 
@@ -1318,24 +1322,27 @@ fix is sender-side - the import path declares `voiceNote: false`, or the flag be
 not built. Do not delete the name rule as a heuristic: it is what keeps pre-2026-09-17 recordings
 out of the tab.
 
-**A push does not read the field.** A voice note on a locked phone is still announced as an audio
-file: the sentence is chosen in the Rust push scanner (`mobile/proto_fields.rs`,
-`extract_full_message_info`, from the `MediaKind` varint), not in Kotlin, and field 11 sits unread
-beside it. The same file writes SIXTEEN user-visible sentences as French literals, whatever the
-app's language:
+**A push reads the field, and words its sentences in the app's language (WP-PUSH-I18N, built
+2026-10-18, not shipped).** The Rust push scanner (`mobile/proto_fields.rs`,
+`extract_full_message_info`) decides WHAT a decrypted message is and reads `voice_note` (field 11)
+beside the `MediaKind`: a declared recording is announced `Message vocal` / `Voice message`, an
+undeclared audio (an import, or a recording from before 2026-09-17) `Fichier audio` / `Audio file`.
+Every sentence it composes - the system events, `a réagi {emoji}`, the four media placeholders, the
+poll line, the two call lines and the `événement de groupe ({event})` trap - is written ONCE, in both
+languages, in `mobile/push_text.rs` (`PushText::render`): a closed enum whose exhaustive `match`
+refuses to compile a sentence written in one language only, and a test that writes out all of them.
+The text somebody TYPED passes through untouched.
 
-| builder | sentences |
-| --- | ---: |
-| `format_system_event_text` - renamed (2 forms), image changed, member added (2 forms), removed, left, deleted, invitation | **9** |
-| the reaction arm - `a réagi {emoji}` | **1** |
-| the media arm - `Photo`, `Vidéo`, `Audio`, `Pièce jointe` | **4** |
-| the call arm - `Appel vidéo entrant`, `Appel entrant` | **2** |
-
-Its fallback arm prints `événement de groupe ({event})`, a raw protocol name; the silence list beside
-it is what keeps that a trap rather than live noise. The text is what the FCM cache persists as a
-message body, so emitting a KIND for the native side to word (which `appLocaleContext` already
-localises on Android) changes what that cache stores - which is why it is a design, not a
-translation chore.
+**The language comes down with the call, it is not looked up.** Each native caller passes the
+`locale` it already read from `push_context.json` (the mirror `set_push_context_locale` writes) to
+`nativeDecryptMessageWithKey`, `nativeDecryptMessageWithCommitsWithKey` and `nativeOpenGrainePush`
+on Android, and to their three `canari_native_*` twins on iOS (the NSE and `canari_push.mm`).
+`PushLanguage::from_tag` reads `en`/`en-*` as English and everything else - the empty tag of a device
+that never mirrored its choice included - as French, the base locale. Android's own tables fall back
+to the OS locale in that one case, so the two may disagree on a device that has never opened a build
+that mirrors the locale; a device that has, cannot. Why Rust and not a KIND worded natively: the text
+is what the FCM cache persists as a message body, and one implementation keeps Android and iOS from
+diverging ([mobile](../mobile.md#the-language-a-notification-speaks)).
 
 ### A system event is executed, never displayed
 
@@ -3689,6 +3696,38 @@ the two loads in the other order, which is why it "healed".
 ## Profile fetches that failed on a device, and the denominator that is owed (2026-08-16)
 
 The symptom was seen twice on 2026-08-16, on both platforms: nine of ten sidebar rows carrying "Utilisateur inconnu" for twenty seconds. The log line that makes it countable did not exist then; since 2026-08-19 every warn in `displayName.ts` ends `(failed/attempted lookups failed this session, X%)`, counting only lookups that reached the network. Do not assume it is the same fault as the avatar endpoint, and do not assume it is not. The number is read from a device or browser console during a campaign run: there is no client telemetry, and server-side is not an option (`GET /api/users/:id` is not request-logged, and a client that never reached the network would not appear anyway). **Then decide about `FAILURE_BACKOFF_MS`**: a high rate says the two-minute suppression does real work against a refusing server; a rate near zero says it is a clock hiding a name for two minutes over a blip the reconnection listener already handles.
+
+### A muted salon and a membership notice raise no badge (2026-10-18)
+
+WP-SALON-UNREAD, decided by the user 2026-10-18. Two rows the badge counted that its owner never
+wanted to read:
+
+- **The "X joined" notice.** It is an encrypted row, so the server could not tell it from a message
+  and counted it until the salon was opened (the 2026-10-11 fix only made it coverable). The one
+  writer (`inviteMemberToChannel`) now sends it `silent`, the flag the server already skips in
+  `listUnreadCounts`; as a side effect it no longer rings phones either. `listMessages` returns the
+  silent rows of a salon with NO body at all, so a salon holding only notices still shows them, and
+  on a SHORT page (fewer bodies than asked - the end of the history) it drops the lower bound on the
+  silent rows and keeps only the cursor: the join notice written before a salon's first body is in
+  no later page, since none is ever asked for below a short one.
+  **Notices written before this stay counted until the salon is opened**, which the read mark now
+  reaches - no data repair. **An inviter on an older client keeps sending ordinary (non-silent)
+  notices**, which stay counted the same way until `minClientVersion` reaches this build.
+- **A muted salon.** `notifLevels[channel] = 'none'` is left out of the SQL, and the answer gains
+  `muted: string[]` (raw channel ids) so the client's LIVE tally stays quiet for them too
+  (`isSalonMuted`, read by both arrival paths in `useMessaging`; `reconcileSalonUnread` sets a muted
+  salon to 0). The settings panel updates the set at once (`noteSalonNotificationLevel`); a badge
+  already on screen when the member mutes falls at the next count. That local choice is stamped on
+  the same tick counter as `openedAtTick`, so an answer asked BEFORE it and landing after cannot
+  undo it. **Unmuting brings back what arrived while muted**: the server counts against the read
+  mark, which muting never moved, so those messages re-enter the badge at the next count - a mute
+  silences, it does not read. **`mentions` still counts**: the
+  row is encrypted, the server cannot tell which rows mention the member. An older server sends no
+  `muted`, and nothing is muted then.
+
+Tests: `channel-unread-counts.spec.ts`, `channel.service.spec.ts`, `salonUnread.test.ts`,
+`useChannelWorkspaces.svelte.test.ts`. **Owed on a device:** mute a salon, post into it from another
+account, read the community rail dot and the tab title; add a member and read the other member's badge.
 
 ### A salon read mark reaches its membership notices (2026-10-11)
 

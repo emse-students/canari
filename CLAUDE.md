@@ -131,7 +131,7 @@ gh release create v0.16.2 --generate-notes                        # -> productio
 
 **The five gates, and there is no bypass input** (`.github/scripts/release-preflight.sh`): the
 version parses; the commit is on `main` AND `main` still points at it; `CI passed` is green ON that
-commit - **main's OWN CI takes ~8 min after a merge, so a release cut in the minute after one is
+commit - **main's OWN CI takes 14-22 min (17-20 typical, measured 2026-10-18) after a merge, so a release cut in the minute after one is
 REFUSED with `CI passed never ran on <sha>`; wait for `gh run list --branch main`, then `gh run
 rerun`, which needs no new tag** (2026-09-07). **A RERUN RESCUES THAT GATE ONLY** - it re-reads the
 SAME tag, so a release `main` has moved past stays REFUSED and needs a NEW tag at the current head

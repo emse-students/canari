@@ -64,7 +64,12 @@ import {
   type PricingView,
 } from '../pricing/price-matrix';
 import { criteriaContextFor, parseAudienceCondition, parsePriceMatrix } from '../pricing/validate';
-import { normaliseCondition, visibleItemIds } from './visibility';
+import {
+  normaliseCondition,
+  profileHiddenItemIds,
+  visibleItemIds,
+  type ConditionalItem,
+} from './visibility';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import { mapCorePaymentError } from '../common/core-payment-error';
@@ -857,14 +862,7 @@ export class FormsService {
       !noCombinationAvailable;
     // Only the PROFILE half is resolved here. An answer condition stays for the page to evaluate as
     // the person types, which it already did for `dependsOn` - so no predicate is duplicated there.
-    const hiddenItemIds = (form.items ?? [])
-      .filter((item: any) => {
-        const condition = normaliseCondition(item);
-        if (!condition) return false;
-        const { answer: _answer, ...profileOnly } = condition;
-        return Object.keys(profileOnly).length > 0 && !matchesCondition(profileOnly, facts);
-      })
-      .map((item: any) => item.id);
+    const hiddenItemIds = profileHiddenItemIds((form.items ?? []) as ConditionalItem[], facts);
 
     if (form.allowMultipleSubmissions)
       return { hasSubmitted: false, formFull, pricing, hiddenItemIds, maySubmit };

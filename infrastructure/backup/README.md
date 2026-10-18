@@ -259,6 +259,16 @@ Ou depuis une archive locale precise :
 > La restauration est **destructive** : elle ecrase les donnees actuelles.
 > Elle exige le drapeau `--yes`.
 
+> **Le core-service doit tourner** : avant d ecraser la base, `restore.sh` lui fait
+> lire le journal d effacements courant, puis le lui rend une fois la base restauree
+> pour effacer a nouveau les comptes que l archive precede (sans quoi elle les
+> ressusciterait). Un export impossible arrete tout avant la moindre ecriture, et
+> l entree publique (`frontend`) reste arretee de l export au rejeu.
+> **Migration** : le journal courant est celui de l ANCIEN serveur. L y exporter
+> (`docker compose -f infrastructure/docker-compose.prod.yml exec -T core-service bun dist/account-erasure/restore-replay.js export > journal.json`),
+> le copier, puis lancer `ERASURE_JOURNAL_FROM=journal.json ./infrastructure/backup/restore.sh ...`
+> ([account-erasure](../../docs/wiki/account-erasure.md#a-restore-replays-the-erasures)).
+
 ## LE CORRECTIF ETAIT DANS LE DEPOT ET LA BOITE NE L AVAIT JAMAIS EU - 2026-09-24
 
 Mesure sur la machine de production le jour ou Authentik a demenage vers l hote

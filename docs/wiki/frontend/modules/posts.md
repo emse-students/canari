@@ -1703,3 +1703,37 @@ in place, and the version-change release), `postCardSync.test.ts` and
 row read before a reaction or a vote answered, or landing while it is out, does not erase it; a
 failed reaction rolls back its field only, to the row adopted meanwhile). `feedStore.test.ts` calls
 the real `saveStoredFeed` for the two write races.
+
+## A post with two forms took the whole feed down: asked and answered are two records (2026-10-18)
+
+**Production, client 1.2.9.** `/posts?feed=followed` showed the layout's error boundary
+(*"Une erreur est survenue sur cette page."*) on `each_key_duplicate`. The feed list was not the
+duplicate: its rows come from one `SELECT` over `posts` with a `LEFT JOIN` on the association's
+primary key, which cannot return a post twice, and the reader's console held exactly one
+`GET /api/posts`. The duplicate was INSIDE one card. A post carried two forms, and the console showed
+each form's `GET /api/forms/<id>` and its `/check` issued TWICE, the crash landing right after the
+last answer.
+
+**The mechanism.** `PostCard`'s effect skipped a form only once its answer was IN `formInfos`, and
+appended each answer to that array. The effect read the array it wrote, so the FIRST form's answer
+re-ran it while the second was still in flight - the second was asked again and appended twice. A new
+copy of the post handed to the card (the server's page replacing the painted one) did the same to
+both. Two entries with one id reached `PostForms`' `{#each formInfos as fi (fi.id)}`.
+
+**The fix** (`$lib/posts/attachedForms.svelte.ts`): whether a form has been ASKED is a record of its
+own, non-reactive, so recording an ask re-runs nothing; the answers are held in a map KEYED BY FORM;
+what is drawn is DERIVED from the post's own list of forms, so its order is the post's and it cannot
+name a form twice. A post whose `forms` names one form twice is a server defect, logged as a warning
+with the post id and drawn once. `attachedForms.svelte.test.ts` reproduces the interleaving with
+hand-settled promises (the old algorithm drew `B, A, A`).
+
+**One card can no longer take the feed with it.** Every card on `/posts` (feed and search) sits in its
+own `<svelte:boundary>`: a card that throws is replaced by a one-line notice with a retry, and the
+console line names the post - `[POSTS] card <id> failed to draw` - which the layout's line could not,
+since a production Svelte error carries only its code. That boundary is a containment, not the fix;
+the line it writes is an error and must be explained when it appears.
+
+**Not changed, noted:** every feed arm orders by `pinned DESC, "publishedAt" DESC` with no unique
+tie-breaker, so two posts sharing a `publishedAt` may swap across an `OFFSET` page boundary. The next
+page's merge (`loadMorePosts`) already drops an id it holds, so this can skip a post, never duplicate
+one.

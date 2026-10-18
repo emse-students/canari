@@ -857,6 +857,98 @@ describe('ChannelService security hardening', () => {
     expect(page.find((m) => m.id === 'r1')?.silent).toBe(true);
   });
 
+  // A membership notice is sent silent (it must not count as unread nor ring a phone), so a salon
+  // holding nothing else would otherwise open on an empty history.
+  it('listMessages returns the silent rows of a salon that has no body at all', async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    const notice = {
+      id: 'n1',
+      channelId: 'ch1',
+      authorId: 'u1',
+      content: 'c',
+      createdAt: new Date(100),
+      silent: true,
+      metadata: {},
+    };
+    messageRepo.find.mockImplementation(async (opts: any) =>
+      opts.where.silent === true ? [notice] : []
+    );
+
+    const page = await service.listMessages('ch1', 'u1', 50);
+
+    expect(page.map((m) => m.id)).toEqual(['n1']);
+  });
+
+  // A join notice is written BEFORE the salon's first body (the member joins, then speaks). The
+  // silent rows used to be fetched only from the oldest body down, so on a salon shorter than one
+  // page that notice was in no page at all: no later page is ever asked for below a short one.
+  describe('listMessages on a salon shorter than one page (notice, then body, then the page)', () => {
+    const row = (id: string, ms: number, silent: boolean) => ({
+      id,
+      channelId: 'ch1',
+      authorId: 'u1',
+      content: 'c',
+      createdAt: new Date(ms),
+      silent,
+      metadata: {},
+    });
+    // Evaluates the TypeORM operators the service builds, so the fixture is filtered the way
+    // PostgreSQL would filter it rather than by what each test pre-decides to return.
+    const matches = (op: any, d: Date): boolean => {
+      if (op === undefined) return true;
+      switch (op.type) {
+        case 'lessThan':
+          return d.getTime() < op.value.getTime();
+        case 'moreThanOrEqual':
+          return d.getTime() >= op.value.getTime();
+        case 'and':
+          return (op.value as any[]).every((o) => matches(o, d));
+        default:
+          throw new Error(`unexpected operator ${op.type}`);
+      }
+    };
+    const serve = (rows: ReturnType<typeof row>[]) => async (opts: any) =>
+      rows
+        .filter((r) => r.silent === opts.where.silent && matches(opts.where.createdAt, r.createdAt))
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .slice(0, opts.take ?? Infinity);
+
+    it('returns the notice older than the first body', async () => {
+      const { service, channelRepo, memberRepo, messageRepo } = makeService();
+      arrangePollAccess(channelRepo, memberRepo);
+      messageRepo.find.mockImplementation(serve([row('join', 100, true), row('m1', 200, false)]));
+
+      const page = await service.listMessages('ch1', 'u1', 50);
+
+      expect(page.map((m) => m.id)).toEqual(['m1', 'join']);
+    });
+
+    it('still bounds the silent rows by the cursor on a short page', async () => {
+      const { service, channelRepo, memberRepo, messageRepo } = makeService();
+      arrangePollAccess(channelRepo, memberRepo);
+      messageRepo.find.mockImplementation(
+        serve([row('join', 100, true), row('m1', 200, false), row('late', 400, true)])
+      );
+
+      const page = await service.listMessages('ch1', 'u1', 50, new Date(300).toISOString());
+
+      expect(page.map((m) => m.id)).toEqual(['m1', 'join']);
+    });
+
+    it('keeps the lower bound on a FULL page, whose older silent rows belong to the next one', async () => {
+      const { service, channelRepo, memberRepo, messageRepo } = makeService();
+      arrangePollAccess(channelRepo, memberRepo);
+      messageRepo.find.mockImplementation(
+        serve([row('join', 100, true), row('m1', 200, false), row('m2', 300, false)])
+      );
+
+      const page = await service.listMessages('ch1', 'u1', 2);
+
+      expect(page.map((m) => m.id)).toEqual(['m2', 'm1']);
+    });
+  });
+
   it('rejects listMessages for a private channel when the user is neither admin nor allow-listed', async () => {
     const { service, channelRepo, memberRepo, roleRepo } = makeService();
     channelRepo.findOne.mockResolvedValue({

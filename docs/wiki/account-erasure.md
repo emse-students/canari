@@ -138,15 +138,19 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
   coming participations withdrawn; its answers are purged; every id in the frozen history becomes
   `[deleted]`, and the NAME SNAPSHOTS are KEPT (decision D15), bounded by the one-year maximum age
   (D19) - [bookings-chantier](bookings-chantier.md#a-deleted-account-2026-10-16-review-of-1963).
+- **Lives** (`LIVES_ERASURE_STATEMENTS`): a live it broadcast is ENDED (`erased`) and its broadcaster
+  becomes `[deleted]` in one statement, and the live sweep deletes its segments and its row within
+  30 seconds (no replay, L3); a removed-viewer row naming it, and its `live_starts` rows, are deleted - [lives](services/lives.md#a-deleted-account).
 - **Legacy cotisations**: a row the account claimed is DELETED. The claim had already turned it into
   a `user_tags` row (deleted above); what was left is the name it was matched on.
 
 ## What is NOT covered, and why
 
 - **Backups keep everything for their retention (14 days)**, then rotate out. An erasure cannot
-  reach into a backup; restoring one would resurrect erased accounts, and the restore procedure owes
-  a replay of the completed erasures (their subjects are digests, so the replay must be by digest
-  match, which is not built - see [backlog](backlog.md)).
+  reach into a backup; restoring one REPLAYS the erasures the archive predates
+  ([below](#a-restore-replays-the-erasures)). What no replay can reach: an erasure made after the
+  last archive on a server lost WITH its database - its journal is gone with it. A server that is
+  only being LEFT still has it: export it there and hand it over (`ERASURE_JOURNAL_FROM`).
 - **A queued commit or Welcome keeps its `senderId`** in chat-delivery: it is the recipient's protocol
   state, read when it is delivered (push suppression, routing), and rewriting it was not shown safe.
   It leaves the queue when delivered.
@@ -174,6 +178,53 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
 - **The MiConnect (authentik) identity is not deleted**: it is the school's identity provider, not
   Canari's data. Signing in after the erasure creates a new, empty Canari account.
 - **Logs** keep the first eight characters of the subject on the erasure lines, for their retention.
+
+## A restore replays the erasures
+
+Restoring an archive brings back every account erased after it was taken, and the restored journal
+predates those erasures, so nothing in the restored database remembers them. `restore.sh` therefore
+reads the CURRENT journal first and hands it back once the restored database is live:
+
+```
+restore.sh
+  core-service: bun dist/account-erasure/restore-replay.js export  -> GET  /api/internal/account-erasure/journal
+  psql < postgres_auth_db.sql                                         (the archive replaces the database)
+  core-service: bun dist/account-erasure/restore-replay.js replay  -> POST /api/internal/account-erasure/replay
+```
+
+**The export** (`exportJournal`) is one entry per completed subject (its digest) and one per pending
+subject (named outright by its row), each with the LATEST time an erasure of it was requested. It is
+written to a `0600` file beside the backups and deleted once the replay succeeded; an export that
+fails stops the restore BEFORE anything is overwritten, because the file is then the only record of
+those erasures. Three things guard that file:
+
+- **the public entry (`frontend`) is stopped from the export to the end of the replay** - a
+  `DELETE /users/me` in that window would land in the database being overwritten and in neither
+  journal, while the person was told their account is gone;
+- **an existing file REFUSES a new restore**: it is an unfinished replay, and a second export, read
+  from the already-restored database, would overwrite it with a journal that no longer knows those
+  erasures;
+- **a migration hands the OLD server's journal over** (`ERASURE_JOURNAL_FROM=<file>`, exported there
+  with the same command): on the new server the "current" journal is an empty database's.
+
+**The replay** (`replayAfterRestore`) hashes every restored `users.id` with `subjectDigest` (the one
+implementation) to find the completed subjects, matches the pending ones by id, and calls
+`requestErasure` for each - the same transaction and the same jobs as a person's own request, so the
+account is deactivated at once. **ONLY a row created BEFORE that request is erased** (an allowlist,
+not a denylist). A person may come back once every job completed, and `users.id` is the OIDC subject,
+so a row created after the request is their NEW account, under the same id; erasing it would delete
+an account nobody asked to erase. It is logged as `replay keeps user=... it is a new account`. The
+test holds for a pending subject too, because the replay printed on a failure may be re-run hours
+later, after a replayed erasure completed and the person came back. `users."createdAt"` is a NOT NULL
+`timestamp` written by `CURRENT_TIMESTAMP` on core's own connection and compared on that same
+connection, so both sides read the one session zone (UTC in the images).
+
+Why `users.id` is the whole match: every service's tables live in `auth_db`, which one archive
+restores at one instant. An account erased BEFORE that instant is in the restored journal itself
+(pending rows are re-run by the worker, completed ones are done); one erased after it still had its
+`users` row at that instant. Both calls are idempotent, so a restore run twice with the same export
+adds nothing. Tested against a real PostgreSQL in `account-erasure.integration.spec.ts` (an erased
+account restored, a returner's new account kept, a pending one replayed, a second run inert).
 
 ## Ordering, failure classes and operating it
 

@@ -65,6 +65,18 @@ export class PricingFactsService {
   }
 
   /**
+   * The cotisation half of the facts for MANY associations at once, for a list judged per
+   * association (`UserTagService.heldCotisationTiersByAssociation`): what `build` reads one
+   * association at a time.
+   */
+  cotisationTiersByAssociation(
+    userId: string,
+    associationIds: readonly string[]
+  ): Promise<Map<string, (string | null)[]>> {
+    return this.userTagService.heldCotisationTiersByAssociation(userId, associationIds);
+  }
+
+  /**
    * The identity-provider half of the facts, on its own.
    *
    * Split out for a LIST: the boutique prices many products, of many associations, for one person.
