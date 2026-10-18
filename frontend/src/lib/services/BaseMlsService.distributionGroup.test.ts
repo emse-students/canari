@@ -431,6 +431,24 @@ describe('routing a frame that arrived on the group', () => {
     expect(ctx.distributionFrameHandler).toHaveBeenCalledWith(
       expect.objectContaining({ sender: 'peer', senderDeviceId: 'peer-phone' })
     );
+    // CHECKED, not only carried (section 24): the device goes to the decrypt's sender check with
+    // the user, so a sibling device naming another is a refused frame - as on the live path.
+    expect(ctx.processIncomingMessage).toHaveBeenCalledWith('g-1', expect.any(Uint8Array), {
+      userId: 'peer',
+      deviceId: 'peer-phone',
+      path: 'distribution',
+    });
+  });
+
+  it('checks the user alone when the envelope names no device', async () => {
+    const ctx = registered();
+
+    await route(ctx, 'g-1', 'peer', new Uint8Array([1]));
+
+    expect(ctx.processIncomingMessage).toHaveBeenCalledWith('g-1', expect.any(Uint8Array), {
+      userId: 'peer',
+      path: 'distribution',
+    });
   });
 
   it('counts a frame lost for good, by cause, for the seed requests that follow to print', async () => {

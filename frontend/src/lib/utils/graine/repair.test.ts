@@ -401,10 +401,14 @@ describe('a history ask answered "I hold nothing" (section 24)', () => {
   beforeEach(() => localStorage.clear());
   afterEach(() => localStorage.clear());
 
-  /** The request id and named devices of the history ask sent `n`-th. */
+  /** The request id, addressee and named devices of the history ask sent `n`-th. */
   function sentAsk(n = 0) {
     const request = decodeAppMessage(sendMessage.mock.calls[n][1])?.graineRequest;
-    return { requestId: String(request?.requestId), devices: request?.answererDeviceIds ?? [] };
+    return {
+      requestId: String(request?.requestId),
+      answerer: String(request?.answererUserId),
+      devices: request?.answererDeviceIds ?? [],
+    };
   }
 
   /** A fresh start: everything in memory goes, what is durable stays. */
@@ -412,35 +416,92 @@ describe('a history ask answered "I hold nothing" (section 24)', () => {
     resetGraineRepairState();
   }
 
-  it('is FINAL for its roster: the next start does not ask again', async () => {
+  /** Answers the `n`-th ask "I hold nothing" from every device it named, then lets the walk run. */
+  async function answerNothing(n: number) {
+    const { requestId, answerer, devices } = sentAsk(n);
+    for (const device of devices) noteHistoryHeldNothing('ws-1', answerer, requestId, device);
+    await settle();
+  }
+
+  it('one member saying "nothing" asks the NEXT member - it is not the roster speaking', async () => {
     await requestCommunityHistory('ws-1');
-    const { requestId } = sentAsk();
-    noteHistoryHeldNothing('ws-1', 'Bob', requestId, 'web-bob');
+    expect(sentAsk(0).answerer).toBe('bob');
+
+    await answerNothing(0);
+
+    // Only bob was asked; carol may hold the past, and used to be silenced by bob's answer.
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sentAsk(1).answerer).toBe('carol');
+  });
+
+  it('a later start skips the member who answered and asks the one who did not', async () => {
+    await requestCommunityHistory('ws-1');
+    await answerNothing(0);
 
     restart();
     await requestCommunityHistory('ws-1');
 
-    // The Mi 9T asked again at every launch while this answer was a silence (2026-10-15).
-    expect(sendMessage).toHaveBeenCalledTimes(1);
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(sentAsk(2).answerer).toBe('carol');
   });
 
-  it('asks again once the roster moves, because the answer was about that roster', async () => {
+  it('is FINAL once every eligible member said it: the next start reads nothing, asks nothing', async () => {
     await requestCommunityHistory('ws-1');
-    noteHistoryHeldNothing('ws-1', 'bob', sentAsk().requestId, 'web-bob');
+    await answerNothing(0);
+    await answerNothing(1);
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+
+    restart();
+    listWorkspaceMembers.mockClear();
+    await requestCommunityHistory('ws-1');
+
+    // The Mi 9T asked again at every launch while this answer was a silence (2026-10-15).
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(listWorkspaceMembers).not.toHaveBeenCalled();
+  });
+
+  it('a member offline and never asked keeps the ask open, and is asked when it comes online', async () => {
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'bob', online: true, onlineDevices: ['web-bob'] },
+      { userId: 'alice', online: true, onlineDevices: ['device-1'] },
+      { userId: 'carol', online: false, onlineDevices: [] },
+    ]);
+    await requestCommunityHistory('ws-1');
+    await answerNothing(0);
+    expect(sendMessage).toHaveBeenCalledTimes(1);
+
+    listWorkspaceMembers.mockResolvedValue([
+      { userId: 'bob', online: true, onlineDevices: ['web-bob'] },
+      { userId: 'alice', online: true, onlineDevices: ['device-1'] },
+      { userId: 'carol', online: true, onlineDevices: ['web-carol'] },
+    ]);
+    comesOnline('carol');
+    await settle();
+
+    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sentAsk(1).answerer).toBe('carol');
+  });
+
+  it('asks from the lowest member again once the roster moves, because the answers were about that roster', async () => {
+    await requestCommunityHistory('ws-1');
+    await answerNothing(0);
+    await answerNothing(1);
 
     restart();
     distributionEpoch = 8;
     await requestCommunityHistory('ws-1');
 
-    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(sentAsk(2).answerer).toBe('bob');
   });
 
-  it('without the answer, a fresh start still asks - an unanswered ask is not a final one', async () => {
+  it('without the answer, a fresh start still asks the same member - an unanswered ask is not a final one', async () => {
     await requestCommunityHistory('ws-1');
     restart();
     await requestCommunityHistory('ws-1');
 
     expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sentAsk(1).answerer).toBe('bob');
   });
 
   it('ignores an answer to another request, from a member not asked, or from a device not named', async () => {
@@ -449,55 +510,60 @@ describe('a history ask answered "I hold nothing" (section 24)', () => {
     noteHistoryHeldNothing('ws-1', 'bob', 'another-request', 'web-bob');
     noteHistoryHeldNothing('ws-1', 'carol', requestId, 'web-carol');
     noteHistoryHeldNothing('ws-1', 'bob', requestId, 'bob-phone');
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
 
     restart();
     await requestCommunityHistory('ws-1');
 
     expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sentAsk(1).answerer).toBe('bob');
   });
 
-  it('is final only once EVERY named device has said it - a silent sibling may hold the past', async () => {
+  it('records a member only once EVERY named device has said it - a silent sibling may hold the past', async () => {
     listWorkspaceMembers.mockResolvedValue([
       { userId: 'bob', online: true, onlineDevices: ['web-bob', 'bob-phone'] },
       { userId: 'alice', online: true, onlineDevices: ['device-1'] },
+      { userId: 'carol', online: true, onlineDevices: ['web-carol'] },
     ]);
-    treeLeaves = ['bob:web-bob', 'bob:bob-phone', 'alice:device-1'];
+    treeLeaves = ['bob:web-bob', 'bob:bob-phone', 'alice:device-1', 'carol:web-carol'];
     await requestCommunityHistory('ws-1');
     const { requestId, devices } = sentAsk();
     expect([...devices].sort()).toEqual(['bob-phone', 'web-bob']);
 
     noteHistoryHeldNothing('ws-1', 'bob', requestId, 'web-bob');
-    restart();
-    await requestCommunityHistory('ws-1');
-    expect(sendMessage).toHaveBeenCalledTimes(2);
+    await settle();
+    expect(sendMessage).toHaveBeenCalledTimes(1);
 
-    const second = sentAsk(1).requestId;
-    noteHistoryHeldNothing('ws-1', 'bob', second, 'web-bob');
-    noteHistoryHeldNothing('ws-1', 'bob', second, 'bob-phone');
-    restart();
-    await requestCommunityHistory('ws-1');
+    noteHistoryHeldNothing('ws-1', 'bob', requestId, 'bob-phone');
+    await settle();
     expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sentAsk(1).answerer).toBe('carol');
   });
 
   it('after a RE-JOIN asks again whatever was answered - the skipped epochs are gone', async () => {
     await requestCommunityHistory('ws-1');
-    noteHistoryHeldNothing('ws-1', 'bob', sentAsk().requestId, 'web-bob');
+    await answerNothing(0);
+    await answerNothing(1);
 
     restart();
     await requestCommunityHistory('ws-1', { evenIfSeedsHeld: true });
 
-    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(sentAsk(2).answerer).toBe('bob');
   });
 
-  it('forgets the answer when the community leaves this device', async () => {
+  it('forgets the answers when the community leaves this device', async () => {
     await requestCommunityHistory('ws-1');
-    noteHistoryHeldNothing('ws-1', 'bob', sentAsk().requestId, 'web-bob');
+    await answerNothing(0);
+    await answerNothing(1);
 
     forgetWorkspaceRepairState('ws-1', []);
     restart();
     await requestCommunityHistory('ws-1');
 
-    expect(sendMessage).toHaveBeenCalledTimes(2);
+    expect(sendMessage).toHaveBeenCalledTimes(3);
+    expect(sentAsk(2).answerer).toBe('bob');
   });
 });
 

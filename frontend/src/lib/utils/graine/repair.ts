@@ -16,7 +16,9 @@ import { deviceIdOfLeaf, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { describeKeyGroupFrameLosses } from '$lib/mls-client/keyGroupFrameLosses';
 import {
   forgetHistoryHeldNothing,
-  historyHeldNothingAt,
+  historyHeldNothingBy,
+  historyHeldNothingFinalAt,
+  markHistoryHeldNothingFinal,
   recordHistoryHeldNothing,
 } from './historyAnswered';
 
@@ -161,10 +163,11 @@ const historyParked = new Map<string, () => void>();
  * Per community, the history request in flight: what an explicit "I hold nothing" must match before
  * it is recorded as the answer (section 24).
  *
- * `pending` is the devices the request named that have not yet said "I hold nothing". The answer is
- * FINAL only once every one of them has: a device of the answerer that holds the past may simply be
- * slower, and a durable "nothing" recorded on the first device's word would silence the ask for the
- * whole epoch while the history sat on its sibling. A named device that never answers leaves the
+ * `pending` is the devices the request named that have not yet said "I hold nothing". The member is
+ * recorded only once every one of them has: a device of the answerer that holds the past may simply
+ * be slower, and a durable "nothing" recorded on the first device's word would skip that member for
+ * the whole epoch while the history sat on its sibling. Each device's word is its own: the envelope
+ * device is checked against the MLS credential on the distribution path. A named device that never answers leaves the
  * request open, which costs one ask at the next start - what every launch cost before. `null` when
  * the request named no device (a roster with no per-device presence): any device of the member
  * answers for it, as section 23 reads a decline then.
@@ -908,16 +911,21 @@ export async function requestCommunityHistory(
   // is on it.
   const epoch = distributionEpochFor(mlsService, scope);
   if (epoch !== null && historyUnanswerableAt.get(workspaceId) === epoch) return;
-  // ASKED AND ANSWERED, durably (section 24): the member asked at this very roster said it holds
-  // nothing of the community. Asking again would put the same question to the same people - which
-  // is what every launch did while that answer was a silence.
-  if (epoch !== null && historyHeldNothingAt(userId, workspaceId, groupId, epoch)) {
+  // ASKED AND ANSWERED, durably (section 24): EVERY member of this very roster was asked in turn and
+  // said it holds nothing of the community. Asking again would put the same question to the same
+  // people - which is what every launch did while that answer was a silence. Short of final, the
+  // members who answered are skipped by the election below and the next one is asked.
+  const version = epoch === null ? null : { groupId, epoch };
+  if (version && historyHeldNothingFinalAt(userId, workspaceId, version)) {
     console.debug(
-      `[GRAINE] the history of community ${workspaceId.slice(0, 8)} is not asked: it was answered ` +
-        `"I hold nothing" at distribution epoch ${epoch}, and the group is still there`
+      `[GRAINE] the history of community ${workspaceId.slice(0, 8)} is not asked: every member was ` +
+        `answered "I hold nothing" at distribution epoch ${epoch}, and the group is still there`
     );
     return;
   }
+  const heldNothing = version
+    ? historyHeldNothingBy(userId, workspaceId, version)
+    : new Set<string>();
 
   const label = `community ${workspaceId.slice(0, 8)}`;
   const read = electionRoster(
@@ -944,11 +952,18 @@ export async function requestCommunityHistory(
   // 2026-10-15), its only other device offline: eight roster reads and eight sealed sends a launch,
   // into the void. `answering === null` is a server that did not say (older than 1.2.5) and keeps
   // the old reading - our devices treated as reachable.
-  const other = lowestOtherMember(roster, userId, undefined, online);
-  const ownOnGroup = other === null && (await ownDevicesOnTheGroup(scope));
+  //
+  // AND NEVER A MEMBER WHO ALREADY ANSWERED "I HOLD NOTHING" AT THIS ROSTER (section 24): the next
+  // one is asked instead, and that member's answer is recorded beside it. One member's "nothing"
+  // says nothing about the others - which is why the record is keyed on the answerer.
+  const other = lowestOtherMember(roster, userId, heldNothing, online);
+  const ownOnGroup =
+    other === null && !heldNothing.has(userId) && (await ownDevicesOnTheGroup(scope));
   const ownOnline = answering === null || answeringDevicesOf(userId, answering).length > 0;
   const answerer = other ?? (ownOnGroup && ownOnline ? userId : null);
-  const offline = [...roster].filter((id) => id !== userId && !online.has(id)).sort();
+  const offline = [...roster]
+    .filter((id) => id !== userId && !online.has(id) && !heldNothing.has(id))
+    .sort();
   if (!answerer && offline.length > 0) {
     parkHistoryUntilOnline(workspaceId, offline);
     return;
@@ -964,6 +979,19 @@ export async function requestCommunityHistory(
     console.info(
       `[GRAINE] the history of community ${workspaceId.slice(0, 8)} is not asked: no other member, ` +
         `and none of our other devices on its key group is online to receive the request`
+    );
+    return;
+  }
+  if (!answerer && version && heldNothing.size > 0) {
+    // FINAL FOR THIS ROSTER: every member who could hold the past - each other member, and our own
+    // other devices when they are on the group - was asked in turn at this epoch and said it holds
+    // nothing. Durable, so the next start skips even the roster read; the roster cannot change
+    // without moving the epoch, which is what asks again.
+    markHistoryHeldNothingFinal(userId, workspaceId, version);
+    historyUnanswerableAt.set(workspaceId, version.epoch);
+    console.info(
+      `[GRAINE] the history of community ${workspaceId.slice(0, 8)} is final at distribution epoch ` +
+        `${version.epoch}: all ${heldNothing.size} member(s) asked hold nothing - asked again when the roster moves`
     );
     return;
   }
@@ -1054,16 +1082,22 @@ function parkHistoryUntilOnline(workspaceId: string, offline: string[]): void {
 /**
  * A device asked for the history of `workspaceId` has answered "I hold nothing" (section 24).
  *
- * **The request becomes FINAL for its roster** once every device it named has said so: recorded
- * durably against the key group and the epoch it was sealed at ({@link recordHistoryHeldNothing}),
- * so no later start asks again until the roster moves. Bound to the request in flight exactly as a
- * session decline is ({@link noteSeedUnavailable}): the id, the member it was addressed to, and a
- * device it named. Anything else - a superseded ask, a member never asked, a device not named - is
- * ignored at debug, because it answers a question nobody is waiting on.
+ * **The MEMBER asked is recorded** once every device the request named has said so: durably,
+ * against the key group and the epoch the request was sealed at ({@link recordHistoryHeldNothing}),
+ * and the NEXT eligible member is asked at once - the election skips every member recorded at this
+ * roster. The ask is final only when no eligible member is left unrecorded
+ * ({@link requestCommunityHistory}); one member's "nothing" never silences the others. Bound to the
+ * request in flight exactly as a session decline is ({@link noteSeedUnavailable}): the id, the member
+ * it was addressed to, and a device it named. Anything else - a superseded ask, a member never asked,
+ * a device not named - is ignored at debug, because it answers a question nobody is waiting on.
+ *
+ * The device is not a self-assertion: the distribution path checks the envelope's device against
+ * the MLS credential that sealed the frame (`openDistributionFrame`), so a sibling device cannot
+ * answer for another.
  *
  * @param answerer Who answered, any case.
  * @param requestId The request the bundle echoes.
- * @param answererDevice The device the bundle came from, from its envelope.
+ * @param answererDevice The device the bundle came from, verified against its MLS credential.
  */
 export function noteHistoryHeldNothing(
   workspaceId: string,
@@ -1114,14 +1148,25 @@ export function noteHistoryHeldNothing(
     return;
   }
   const { userId } = requireGraineRuntime('cannot record a history answer');
-  recordHistoryHeldNothing(userId, workspaceId, {
-    groupId: inFlight.groupId,
-    epoch: inFlight.epoch,
-  });
-  console.info(
-    `[GRAINE] ${answerer} holds nothing of community ${workspaceId.slice(0, 8)} - the history ask is ` +
-      `answered for distribution epoch ${inFlight.epoch}, and asked again only once the roster moves`
+  recordHistoryHeldNothing(
+    userId,
+    workspaceId,
+    { groupId: inFlight.groupId, epoch: inFlight.epoch },
+    inFlight.answerer
   );
+  console.info(
+    `[GRAINE] ${answerer} holds nothing of community ${workspaceId.slice(0, 8)} at distribution epoch ` +
+      `${inFlight.epoch} - recorded, asking the next member`
+  );
+  // THE NEXT MEMBER, NOW: the election skips every member recorded at this roster, so this walks the
+  // roster one answerer at a time and ends - each pass records one more member, or finds none left
+  // and records the ask final, or parks on the offline ones. Bounded by the roster, not by a clock.
+  historyAsked.delete(workspaceId);
+  void requestCommunityHistory(workspaceId).catch((e: unknown) => {
+    console.warn(
+      `[GRAINE] the history of community ${workspaceId.slice(0, 8)} could not be asked of the next member: ${String(e)}`
+    );
+  });
 }
 
 /**
