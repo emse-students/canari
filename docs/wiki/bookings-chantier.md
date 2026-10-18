@@ -1,6 +1,6 @@
 # Bookings (reservation of rooms and slots) - the chantier, decisions as taken
 
-**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) merged as #2002; WP-B4's organiser API merged as #2006; its screens (#2019), WP-B5's API (#2029) and WP-B5's screens (#2035, stacked on #2019) are draft pull requests. WP-B6 (file answers, the poster, the purge, the export) is draft #2045, stacked on #2035; WP-B7 (live checks) is what is left. Decisions are written here the day the
+**Status: BUILDING (opened 2026-10-15).** WP-B0 (#1904) and WP-F merged; WP-B1 merged as #1963 (2026-10-17); WP-B2 merged as #1993 (2026-10-17); WP-B3 (the API) merged as #2002; WP-B4's organiser API merged as #2006; its screens (#2019), WP-B5 (#2029, #2035) and WP-B6 (#2045) are merged; WP-B7 (device readings, the French guide, rig rows) is what is left. Decisions are written here the day the
 user takes them; the work packages are written last, once every question is closed. Pointer in
 [backlog](backlog.md) to be added when the plan is complete.
 
@@ -772,32 +772,15 @@ A blob the media service refuses to delete keeps its row, which is retried next 
   - a long file name broke letter by letter at 200 % text (the whole row is now the download, the name cut, the full name its title).
 - **NOT SEEN**: a real poster picked, encrypted and decrypted on screen, and a real file picked on a phone - both need a signed-in device.
 
-**OWED BEFORE THE FIRST RELEASE: the privacy policy (`routes/legal/privacy`) says nothing about
-bookings yet**, while C17 is its register row - the two are changed together. The paragraph below
-is a PROPOSAL, not published: `routes/legal/privacy` is untouched until the lead approves it.
+**The privacy policy** (`routes/legal/privacy`) carries bookings since #2072, written against the
+code, and register row C17 says the same: answers are read by the organiser AND a global admin
+(`mayManage`, D30; the export likewise), the FILE by the organiser alone, a booking's rows go one
+year after the slot, answers and files N days after it (an unsent upload after one day), an erased
+account's coming bookings are cancelled and its ids tombstoned. The first draft proposed here said
+"answers readable by the organisers only", which the code contradicted; the published text names
+the platform administrators. **What the code bounds and neither text states**: 20 personal spaces
+per account, 60 resources per space, 10 unsent files per space and 30 per account.
 
-### PROPOSAL - the privacy-policy paragraph on bookings (French, awaiting approval)
-
-> **Réservations.** Lorsque vous réservez un créneau (une salle, un objet, un rendez-vous), Canari
-> enregistre la réservation : la ressource, le début et la fin, votre identifiant et le nom affiché
-> au moment de la réservation, les participants que vous ajoutez, et vos réponses aux questions de
-> l'espace. Ces réponses, y compris les fichiers que vous joignez (PDF ou image, 8 Mo au plus), ne
-> sont lisibles que par les organisateurs de l'espace ; les fichiers sont conservés en clair sur nos
-> serveurs, sans chiffrement de bout en bout, pour qu'ils puissent les lire. Les autres personnes
-> ne voient votre nom que si l'espace l'affiche, sinon seulement « occupé ». L'affiche d'un espace
-> est chiffrée sur l'appareil de l'organisateur, comme l'image d'une publication.
->
-> **Durées de conservation.** Les réponses et les fichiers sont supprimés automatiquement N jours
-> après la fin du créneau (N est choisi par l'organisateur, entre 1 et 30 jours, 7 par défaut, et
-> indiqué sous chaque question « fichier ») ; un fichier envoyé sans réservation est supprimé après
-> un jour ; la réservation elle-même est supprimée un an après la fin de son créneau. Un organisateur
-> peut exporter les réservations de son espace dans un tableur ; un fichier n'y figure que par un
-> mot, jamais par son contenu.
->
-> **Suppression de votre compte.** Vos réservations à venir sont annulées, vos réponses et vos
-> fichiers sont supprimés, et votre identifiant est effacé des réservations passées, qui gardent le
-> nom affiché jusqu'à leur suppression à un an. Vos espaces personnels sont supprimés avec tout ce
-> qu'ils contiennent, y compris les réservations à venir d'autres personnes, qui n'en sont pas
-> prévenues. L'affiche d'un espace d'association est conservée : elle appartient à l'association.
->
-> Base légale : exécution du service (art. 6.1.b RGPD). Registre : traitement C17.
+**Left after WP-B6** (2026-10-18): the device readings of WP-B7 (a real poster and a real file on a
+phone, both phones, a two-client run on one slot), the French user guide, and the bookings rows of
+the cross-client rig (nothing there asserts the module yet).
