@@ -81,15 +81,27 @@ thief later. Two rules close it:
 
 - **A registration needs the session's CURRENT refresh credential**: the refresh JWT's `jti` must
   equal the row's `tokenId` (`isLiveSessionOf(..., tokenId)`), the value `rotate` moves at every
-  refresh. A copy the rotation has moved past is answered `404 RESTORE_NO_SESSION` and logged at
-  `warn`.
+  refresh - or be the one the last rotation replaced, inside the SAME 60 s grace window a refresh
+  grants (`isPreviousTokenInGrace`, one predicate for both). The grace token is accepted because a
+  start runs its refresh and this registration side by side, and a refresh already hands that
+  token's holder the current one: the window grants nothing the refresh does not. A copy the
+  rotation has moved past is answered `404 RESTORE_NO_SESSION` and logged at `warn`.
 - **The owner's client re-checks at EVERY start and replaces a key it did not register.** The
-  options answer carries `registeredCredentialId`, the key the session holds; the client compares
-  it with the id it stored when it registered, and anything else is accused at `error` and
-  replaced. The registration names `previousCredentialId` (what the client believes it replaces);
-  the server logs `[RESTORE] FOREIGN KEY EVICTED` at `error` when the key it actually replaced is
-  another. So a key planted between two of the owner's starts lives until the next one, and leaves
-  a line on both ends.
+  options answer carries `registeredCredentialId`, the key the session holds. The client keeps a
+  record of TWO ids: `held`, the key the platform holds (written the instant Credential Manager
+  answers a create, before the server is told - Credential Manager has no read short of a signed
+  assertion), and `registered`, the key the server last confirmed. The server's key equal to
+  `held` is this install's, a registration whose answer was lost included - recorded, never
+  accused. Equal to `registered` but not `held`, it is this install's previous key (a create whose
+  registration was then refused) - replaced with a `warn`. Anything else is accused at `error` and
+  replaced. The registration names `previousCredentialId` (= `registered`); the server logs
+  `[RESTORE] FOREIGN KEY EVICTED` at `error` when the key it actually replaced is another. So a key
+  planted between two of the owner's starts lives until the next one, and leaves a line on both
+  ends - and an honest divergence leaves no false accusation.
+- **One registration at a time.** `ensureRestoreKey` is single-flight on the client, and two
+  registrations racing for one session anyway (two installs of one session cannot exist; two
+  requests can) meet the unique session constraint: the second is a typed `409
+  RESTORE_REGISTRATION_CONFLICT`, never a 500, and the next start re-checks.
 
 **The cost of that invariant, stated plainly.** A phone that is lost, broken or simply unused for
 more than 7 days has an expired session, so its key is gone and the new phone signs in through
@@ -131,10 +143,17 @@ the single-use challenge, and the transfer.
 ## The server - `core-service`, `/api/auth/restore/*`
 
 Library: `@simplewebauthn/server` (CommonJS build, no native code). The design adds no state an
-anonymous caller can grow (below), and the four routes are throttled per visitor all the same:
-`@nestjs/throttler`, 10 requests a minute on each route, counted on the `X-Real-IP` nginx writes
-(`ClientIpThrottlerGuard`, the shape chat-delivery and social-service already use), never on the
-nginx container every request arrives from.
+anonymous caller can grow (below), and the four routes are throttled all the same
+(`@nestjs/throttler`), each by the bucket that fits its caller:
+
+- **The two registration routes, 10 a minute per ACCOUNT** (`AccountThrottlerGuard`, keyed on the
+  subject of a VERIFIED access token, so nobody picks another account's bucket). Every Android start
+  calls them, and a campus behind one NAT address would otherwise share one bucket.
+- **The two anonymous routes, 120 a minute per visitor ADDRESS** (`ClientIpThrottlerGuard`, the
+  `X-Real-IP` nginx writes - the shape chat-delivery and social-service already use - never the
+  nginx container every request arrives from). The ceiling is sized for a burst of fresh installs
+  behind one campus address, and the client reads a 429 as "cannot answer now", never as a verdict
+  (below), so a throttle never turns restore off on an install.
 
 | Method, path | Auth | Does |
 | --- | --- | --- |
@@ -174,6 +193,8 @@ drift, and the erasure race is exactly the part that must not.
 | 401 `RESTORE_KEY_UNKNOWN` | no key with that id, or its session is gone or expired | clears the local key, shows the ordinary sign-in |
 | 401 `RESTORE_ASSERTION_INVALID` | signature, origin, RP id, challenge or replay refused | logs at `error` (a key we registered failed to verify: a defect), shows the ordinary sign-in |
 | 503 `RESTORE_UNAVAILABLE` | this estate has no signing fingerprint configured | logs, shows the ordinary sign-in, keeps the key |
+| 429, 408 | throttled, or too slow to answer | as `RESTORE_UNAVAILABLE`: the attempt stays un-recorded and the next start asks again |
+| 409 `RESTORE_REGISTRATION_CONFLICT` (registration) | another registration for this session committed first | the start's registration fails, logged; the next start re-checks |
 | 403 `ACCOUNT_ERASURE_*`, 503 `MAINTENANCE` | as for a MiConnect sign-in | the same sentences as a MiConnect sign-in |
 
 Every refusal is logged server-side at `warn` with the code and the first 8 characters of the
@@ -240,11 +261,12 @@ imports nothing of the auth store, so `auth.ts` can clear the key and drop the m
 `restoreCredential.ts` holds the two flows and imports the auth store. The command names are pinned
 against the Rust and Kotlin sources by `restoreCommands.test.ts`.
 
-- **Register** (`ensureRestoreKey`) - in `loginImpl` beside `bindCurrentSessionDevice`, at EVERY
-  app start while online. It asks the options, which name the key the session holds; when that is
-  the id this install stored under `canari_restore_registered:<userId>`, it stops there (one request,
-  no platform call). Otherwise it registers - and when the session held ANOTHER key, it accuses it
-  at `error` first (the planted-key rule above). So an existing user gets a key at the first start
+- **Register** (`ensureRestoreKey`, single-flight) - in `loginImpl` beside
+  `bindCurrentSessionDevice`, at EVERY app start while online. It asks the options, which name the
+  key the session holds, and compares it with the `{ held, registered }` record this install keeps
+  under `canari_restore_registered:<userId>`; when the server holds the platform's key it stops
+  there (one request, no platform call). Otherwise it registers, after the reading the planted-key
+  rule above describes (accused at `error` only when the key is nobody's here). So an existing user gets a key at the first start
   of the new version, without signing in again. Fire-and-forget, every failure logged; a failure
   leaves the marker unset and the next start tries again. **A key is per SESSION and the marker is per account, so the marker is dropped at every
   session MINT** (`adoptSignedInSession`: every MiConnect callback and every restore), never only on
@@ -258,8 +280,8 @@ against the Rust and Kotlin sources by `restoreCommands.test.ts`.
   sign-out never reached the server (the residual above) from signing its owner straight back in
   on the same phone. localStorage is not in the Android backup, so a restored phone starts without
   the marker. The marker is written only on an ANSWER: no key on this phone, a server verdict on the
-  key, a platform failure. A transport failure, `RESTORE_UNAVAILABLE`, `MAINTENANCE` and any 5xx
-  leave it unset - none of them is a verdict on the key. While it runs the sign-in button says
+  key, a platform failure. A transport failure, `RESTORE_UNAVAILABLE`, `MAINTENANCE`, a 408, a 429
+  and any 5xx leave it unset - none of them is a verdict on the key. While it runs the sign-in button says
   `auth_restore_in_progress`. On success the response is adopted by the SAME code that adopts the
   MiConnect callback's (`adoptSignedInSession`, extracted from `handleOidcCallbackUnderway`, counted
   as a sign-in in flight), then the app goes where a sign-in from `/login` goes.
@@ -320,11 +342,11 @@ touched, and [legacy-compatibility](legacy-compatibility.md) gains no entry.
 | --- | --- |
 | Challenge format, expiry, purpose and binding separation, single use | `restore-challenge.spec.ts` (injected clock, no wall clock) |
 | Registration and assertion verification, origin pinning, RP id, unknown key, dead session, replay, minting through `issueSession` | `restore-credentials.service.spec.ts`, `restore.controller.spec.ts`, with a software authenticator in the test (real ES256 signatures) |
-| A stale refresh credential cannot register; a replaced key that is not the client's is accused | `restore-credentials.service.spec.ts` (rotation moves `tokenId`), `restore.controller.spec.ts` (`FOREIGN KEY EVICTED`) |
+| A stale refresh credential cannot register, the grace-window one can; a replaced key that is not the client's is accused; a racing registration is a typed 409 | `restore-credentials.service.spec.ts` (rotation moves `tokenId`, the grace window, the unique violation), `restore.controller.spec.ts` (`FOREIGN KEY EVICTED`, `RESTORE_REGISTRATION_CONFLICT`) |
 | The old session goes in the consume transaction; erasure and maintenance refuse BEFORE it; a failed mint leaves no session and no cookie | `restore-credentials.service.spec.ts`, `restore.controller.spec.ts` (call order and the mint-failure case) |
-| The four routes are throttled per visitor | `client-ip-throttler.guard.spec.ts` (the tracker, and the guard on each route) |
+| The registration routes are throttled per account, the anonymous ones per address | `client-ip-throttler.guard.spec.ts` (both trackers, a forged token never picks a bucket, the guard on each route) |
 | The cascade and the erasure statement | `erasure-policy.spec.ts`; the cascade by the migration text, and by `account-erasure.integration.spec.ts` where a database is reachable |
-| Client attempt / register / clear decisions, the every-start check and the foreign-key replacement, the once-per-install marker, the refusal codes | `restoreCredential.test.ts` |
+| Client attempt / register / clear decisions, the every-start check, the foreign-key replacement, a lost answer recognised, single-flight, a 429 never recording the attempt, the refusal codes | `restoreCredential.test.ts` |
 | The JS command names, the ACL, the permission set, the Kotlin method names and argument name | `restoreCommands.test.ts`, which reads the Rust and Kotlin sources |
 | The wire shapes the Kotlin side resolves | `cargo test` in `tauri-plugin-restore` (serde, both directions) |
 | The env delivery of `ANDROID_APP_LINK_SHA256` to core-service | `deploy-env.test.sh`, `compose-wiring.test.sh` |

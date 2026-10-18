@@ -105,7 +105,7 @@ there, so the guard would refuse every request. The refresh cookie rides along t
 | PUT | `/api/auth/sessions/current/device` | Bearer (+ cookie) | Bind the calling session to an MLS device, destroying any other session claiming it |
 | DELETE | `/api/auth/sessions` | Bearer (+ cookie) | Revoke every session except the current one |
 | DELETE | `/api/auth/sessions/:id` | Bearer | Revoke one of the caller's sessions (scoped to the caller) |
-| POST | `/api/auth/restore/registration/options` | Bearer + the CURRENT refresh credential, app `Origin`; 10/min per visitor | WebAuthn creation options for the calling session's restore key, and the id of the key it holds ([account-restore](../account-restore.md)) |
+| POST | `/api/auth/restore/registration/options` | Bearer + the CURRENT refresh credential, app `Origin`; 10/min per account | WebAuthn creation options for the calling session's restore key, and the id of the key it holds ([account-restore](../account-restore.md)) |
 | POST | `/api/auth/restore/registration` | same | Verify and store THE restore key of the calling session |
 | POST | `/api/auth/restore/assertion/options` | none | A stateless HMAC challenge for a restore |
 | POST | `/api/auth/restore/assertion` | none | Verify a restore key, then consume it WITH the old session in one transaction, then mint the new phone's session (a transfer) |

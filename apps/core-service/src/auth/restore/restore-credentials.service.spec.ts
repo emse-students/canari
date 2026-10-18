@@ -6,6 +6,8 @@ import { isoCBOR } from '@simplewebauthn/server/helpers';
 import { RestoreCredentialsService } from './restore-credentials.service';
 import { RESTORE_CHALLENGE_TTL_MS } from './restore-challenge';
 import { RestoreCredential } from './restore-credential.entity';
+import { QueryFailedError } from 'typeorm';
+import { ROTATION_GRACE_SECONDS } from '../auth-sessions.service';
 
 /**
  * The server half of WP-RESTORE-1 against a SOFTWARE AUTHENTICATOR: real P-256 keys, real CBOR,
@@ -126,7 +128,14 @@ function makeStore() {
   const spent = new Map<string, Date>();
   const sessions = new Map<
     string,
-    { id: string; userId: string; expiresAt: Date; tokenId?: string }
+    {
+      id: string;
+      userId: string;
+      expiresAt: Date;
+      tokenId?: string;
+      previousTokenId?: string | null;
+      rotatedAt?: Date | null;
+    }
   >();
 
   /** A credential found by its id, or by the session holding it. */
@@ -143,7 +152,16 @@ function makeStore() {
         if (row.sessionId === where.sessionId) credentials.delete(id);
     },
     insert: async (_e: unknown, row: RestoreCredential) => {
-      if (credentials.has(row.id)) throw new Error('duplicate key');
+      // The two unique constraints, as PostgreSQL reports them (23505).
+      if (
+        credentials.has(row.id) ||
+        [...credentials.values()].some((r) => r.sessionId === row.sessionId)
+      )
+        throw new QueryFailedError(
+          'INSERT',
+          [],
+          Object.assign(new Error('duplicate key'), { code: '23505' })
+        );
       credentials.set(row.id, row);
     },
     query: async (sql: string, params: unknown[]) => {
@@ -181,7 +199,7 @@ function makeStore() {
     } as never,
     { transaction: async (cb: (m: typeof manager) => unknown) => cb(manager) } as never
   );
-  return { service, credentials, spent, sessions };
+  return { service, credentials, spent, sessions, manager };
 }
 
 /** A whole restore as the controller runs it: verify, then consume. */
@@ -438,6 +456,41 @@ describe('RestoreCredentialsService', () => {
     ).toEqual({ status: 'no-session' });
     expect([...credentials.keys()]).toEqual([b64u(phone.credentialId)]);
     expect(await service.isLiveSessionOf(USER, SID, T0, 'jti-after-rotation')).toBe(true);
+  });
+
+  it('accepts the refresh id the last rotation replaced inside the grace window, as a refresh does', async () => {
+    const { service, sessions } = await registered();
+    const rotatedAt = new Date(T0.getTime() - 1_000);
+    sessions.set(SID, {
+      ...sessions.get(SID)!,
+      tokenId: 'jti-after-rotation',
+      previousTokenId: JTI,
+      rotatedAt,
+    });
+    expect(await service.isLiveSessionOf(USER, SID, T0, JTI)).toBe(true);
+    const past = new Date(rotatedAt.getTime() + (ROTATION_GRACE_SECONDS + 1) * 1000);
+    expect(await service.isLiveSessionOf(USER, SID, past, JTI)).toBe(false);
+  });
+
+  it('answers two registrations racing for one session with a typed conflict, never a 500', async () => {
+    const { service, credentials, manager, phone } = await registered();
+    // The racing registration commits between this one's delete and its insert.
+    const racer = new SoftAuthenticator();
+    const realDelete = manager.delete;
+    manager.delete = async (e, where) => {
+      await realDelete(e, where);
+      credentials.set(b64u(racer.credentialId), {
+        ...credentials.get(b64u(phone.credentialId))!,
+        id: b64u(racer.credentialId),
+        sessionId: SID,
+      } as RestoreCredential);
+    };
+    const late = new SoftAuthenticator();
+    const options = await service.registrationOptions(SID, T0);
+    expect(
+      await service.register(USER, SID, JTI, late.register(options.challenge) as never, true, T0)
+    ).toEqual({ status: 'conflict' });
+    expect([...credentials.keys()]).toEqual([b64u(racer.credentialId)]);
   });
 
   it('is unavailable, and issues nothing, with no fingerprint configured', async () => {

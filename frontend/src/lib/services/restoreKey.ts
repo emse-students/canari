@@ -15,7 +15,7 @@ import { restoreCommand } from '$lib/services/restoreCommands';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /**
- * Per account: the id of the key this install registered for the current session - built by
+ * Per account: the {@link RestoreKeyRecord} of the current session - built by
  * `ACCOUNT_KEY.restoreKeyRegistered`, so an account deletion sweeps it. A key is per SESSION, so
  * every session mint drops it ({@link forgetRestoreKeyRegistrations}); this is the prefix that does.
  */
@@ -66,16 +66,40 @@ function writeStorage(key: string, value: string | null): void {
 }
 
 /**
- * The id of the restore key this install registered for the current session of `userId`, or null.
- * Compared at every start with the id the server says the session holds.
+ * What this install knows of the restore key of `userId`'s current session, kept apart because the
+ * two can differ for a moment and each difference means something else:
+ * - `held`: the key the PLATFORM holds - written the instant Credential Manager answers a create,
+ *   BEFORE the server is told, since a create replaces the app's one key whatever happens next.
+ *   Credential Manager has no read short of a signed assertion, so this record is how the install
+ *   knows which key it holds.
+ * - `registered`: the key the SERVER last confirmed for this session to this install.
+ * A server key equal to `held` is this install's (a lost answer included); equal to `registered`
+ * but not `held`, it is this install's previous key; anything else, nobody here put it there.
  */
-export function registeredRestoreKeyId(userId: string): string | null {
-  return readStorage(ACCOUNT_KEY.restoreKeyRegistered(userId));
+export interface RestoreKeyRecord {
+  held: string | null;
+  registered: string | null;
 }
 
-/** Records the id of the restore key this install just registered for `userId`'s session. */
-export function rememberRegisteredRestoreKey(userId: string, credentialId: string): void {
-  writeStorage(ACCOUNT_KEY.restoreKeyRegistered(userId), credentialId);
+/** Reads the {@link RestoreKeyRecord} of `userId`; an absent or unreadable one knows nothing. */
+export function restoreKeyRecord(userId: string): RestoreKeyRecord {
+  const raw = readStorage(ACCOUNT_KEY.restoreKeyRegistered(userId));
+  if (raw === null) return { held: null, registered: null };
+  try {
+    const parsed = JSON.parse(raw) as Partial<RestoreKeyRecord>;
+    return {
+      held: typeof parsed.held === 'string' ? parsed.held : null,
+      registered: typeof parsed.registered === 'string' ? parsed.registered : null,
+    };
+  } catch (e) {
+    rwarn(`restore key record unreadable, treated as empty: ${String(e)}`);
+    return { held: null, registered: null };
+  }
+}
+
+/** Writes the {@link RestoreKeyRecord} of `userId`. */
+export function writeRestoreKeyRecord(userId: string, record: RestoreKeyRecord): void {
+  writeStorage(ACCOUNT_KEY.restoreKeyRegistered(userId), JSON.stringify(record));
 }
 
 /**

@@ -3,6 +3,7 @@ import {
   Body,
   Controller,
   Delete,
+  ConflictException,
   ForbiddenException,
   Get,
   Head,
@@ -21,6 +22,7 @@ import {
 } from '@nestjs/common';
 import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
+import { AccountThrottlerGuard } from '../common/guards/account-throttler.guard';
 import { ClientIpThrottlerGuard } from '../common/guards/client-ip-throttler.guard';
 import * as jwt from 'jsonwebtoken';
 import { createHmac } from 'crypto';
@@ -148,10 +150,19 @@ function restoreAssertionInvalid(): UnauthorizedException {
 }
 
 /**
- * Requests per minute per visitor address on each restore route. A real phone makes one or two per
- * start; the bound is for the two anonymous routes, which anyone can call.
+ * Requests per minute per ACCOUNT on each restore-key registration route. Every Android start calls
+ * the options route once (and the registration once more when a key is due), so ten a minute is a
+ * bound no honest account meets.
  */
-const RESTORE_LIMIT_PER_MINUTE = 10;
+const RESTORE_REGISTER_LIMIT_PER_MINUTE = 10;
+
+/**
+ * Requests per minute per visitor ADDRESS on each anonymous restore route. A campus sits behind one
+ * NAT address, so the ceiling is sized for a burst of fresh installs behind it, not for one phone;
+ * the client reads a 429 as "the server cannot answer now" and asks again at the next start, never
+ * as a verdict on its key.
+ */
+const RESTORE_ANONYMOUS_LIMIT_PER_MINUTE = 120;
 
 const REFRESH_COOKIE = 'canari_refresh';
 const REFRESH_MAX_AGE = SESSION_TTL_SECONDS; // 7 days in seconds - the cookie and the row must agree
@@ -837,8 +848,8 @@ export class AuthController {
    */
   @Post('restore/registration/options')
   @HttpCode(200)
-  @UseGuards(ClientIpThrottlerGuard)
-  @Throttle({ default: { limit: RESTORE_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  @UseGuards(AccountThrottlerGuard)
+  @Throttle({ default: { limit: RESTORE_REGISTER_LIMIT_PER_MINUTE, ttl: 60_000 } })
   async restoreRegistrationOptions(
     @Req() req: Request
   ): Promise<{ options: unknown; registeredCredentialId: string | null }> {
@@ -853,8 +864,8 @@ export class AuthController {
   /** Verifies and stores the restore key of the calling session (replacing its previous one). */
   @Post('restore/registration')
   @HttpCode(200)
-  @UseGuards(ClientIpThrottlerGuard)
-  @Throttle({ default: { limit: RESTORE_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  @UseGuards(AccountThrottlerGuard)
+  @Throttle({ default: { limit: RESTORE_REGISTER_LIMIT_PER_MINUTE, ttl: 60_000 } })
   async restoreRegistration(
     @Req() req: Request,
     @Body() body: RestoreRegistrationDto
@@ -894,6 +905,13 @@ export class AuthController {
         throw new ForbiddenException(
           restoreRefusal('RESTORE_KEY_TAKEN', 'This key belongs to another session')
         );
+      case 'conflict':
+        throw new ConflictException(
+          restoreRefusal(
+            'RESTORE_REGISTRATION_CONFLICT',
+            'Another registration for this session committed first'
+          )
+        );
       case 'invalid':
         throw new BadRequestException(
           restoreRefusal('RESTORE_REGISTRATION_INVALID', 'The restore key did not verify')
@@ -905,7 +923,7 @@ export class AuthController {
   @Post('restore/assertion/options')
   @HttpCode(200)
   @UseGuards(ClientIpThrottlerGuard)
-  @Throttle({ default: { limit: RESTORE_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  @Throttle({ default: { limit: RESTORE_ANONYMOUS_LIMIT_PER_MINUTE, ttl: 60_000 } })
   async restoreAssertionOptions(): Promise<unknown> {
     this.requireRestoreAvailable();
     return this.restoreCredentials.assertionOptions(new Date());
@@ -927,7 +945,7 @@ export class AuthController {
   @Post('restore/assertion')
   @HttpCode(200)
   @UseGuards(ClientIpThrottlerGuard)
-  @Throttle({ default: { limit: RESTORE_LIMIT_PER_MINUTE, ttl: 60_000 } })
+  @Throttle({ default: { limit: RESTORE_ANONYMOUS_LIMIT_PER_MINUTE, ttl: 60_000 } })
   async restoreAssertion(
     @Req() req: Request,
     @Res({ passthrough: true }) res: Response,

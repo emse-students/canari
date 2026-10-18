@@ -222,6 +222,16 @@ describe('AuthController restore routes', () => {
       expect(errorLog).toHaveBeenCalledWith(expect.stringContaining('FOREIGN KEY EVICTED'));
     });
 
+    it('answers a registration that lost a race for its session with a typed 409', async () => {
+      restore.register.mockResolvedValue({ status: 'conflict' });
+      await expect(
+        controller.restoreRegistration(fromApp(), { response: {}, cloudBackup: true })
+      ).rejects.toMatchObject({
+        status: 409,
+        response: { code: 'RESTORE_REGISTRATION_CONFLICT' },
+      });
+    });
+
     it('refuses a refresh credential that carries no refresh id', async () => {
       const noJti = jwt.sign({ sub: 'user-1', type: 'refresh', sid: 'sid-1' }, JWT_SECRET);
       const req = makeReq({ bearer: access('user-1'), origin: ANDROID, refresh: noJti });

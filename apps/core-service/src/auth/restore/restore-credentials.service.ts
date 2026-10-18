@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnModuleDestroy, OnModuleInit } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { DataSource, LessThan, Repository } from 'typeorm';
+import { DataSource, LessThan, QueryFailedError, Repository } from 'typeorm';
 import { randomBytes } from 'node:crypto';
 import {
   generateAuthenticationOptions,
@@ -13,7 +13,7 @@ import {
   type RegistrationResponseJSON,
 } from '@simplewebauthn/server';
 import { AuthSession } from '../entities/auth-session.entity';
-import { SWEEP_INTERVAL_MS } from '../auth-sessions.service';
+import { isPreviousTokenInGrace, SWEEP_INTERVAL_MS } from '../auth-sessions.service';
 import { RestoreChallengeSpent, RestoreCredential } from './restore-credential.entity';
 import {
   checkRestoreChallenge,
@@ -41,6 +41,11 @@ export type RegisterResult =
   | { status: 'no-session' }
   /** The credential id is already another session's key: never re-bound (it is client-chosen). */
   | { status: 'taken' }
+  /**
+   * Another registration for this session committed between this one's read and its write (two
+   * starts racing): the unique session constraint refused the second. Nothing was changed by it.
+   */
+  | { status: 'conflict' }
   /** The response did not verify (challenge, origin, RP id, signature, format). */
   | { status: 'invalid'; reason: string };
 
@@ -73,6 +78,14 @@ export type ConsumeResult =
 /** The shortest prefix of a credential id that identifies it in a log line. */
 function shortId(id: string | undefined): string {
   return (id ?? '').slice(0, 8) || 'none';
+}
+
+/** Whether `e` is PostgreSQL's unique-violation (23505) - two registrations racing for one session. */
+function isUniqueViolation(e: unknown): boolean {
+  return (
+    e instanceof QueryFailedError &&
+    (e.driverError as { code?: string } | undefined)?.code === '23505'
+  );
 }
 
 function errorText(e: unknown): string {
@@ -145,9 +158,13 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
    * Whether `sessionId` is a LIVE session of `userId` - the same three conditions a refresh checks
    * (exists, belongs to the caller, not past `expiresAt`), because a key is worth no more than it.
    *
-   * With `tokenId`, also that it is the session's CURRENT refresh id. A registration demands it: a
-   * refresh credential the rotation has moved past is one somebody else may hold, and accepting it
-   * would let a thief plant a key without ever rotating - so the fork detection never fires.
+   * With `tokenId`, also that it is the session's CURRENT refresh id - or the one its last rotation
+   * replaced, inside the SAME grace window a refresh grants ({@link isPreviousTokenInGrace}). A
+   * registration demands it: a refresh credential the rotation has moved past is one somebody else
+   * may hold, and accepting it would let a thief plant a key without ever rotating - so the fork
+   * detection never fires. The grace token is accepted because a start runs its refresh and this
+   * registration side by side, and a refresh already hands that token's holder the current one: the
+   * window grants nothing the refresh does not.
    */
   async isLiveSessionOf(
     userId: string,
@@ -157,10 +174,14 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
   ): Promise<boolean> {
     const row = await this.sessions.findOne({
       where: { id: sessionId, userId },
-      select: { id: true, expiresAt: true, tokenId: true },
+      select: { id: true, expiresAt: true, tokenId: true, previousTokenId: true, rotatedAt: true },
     });
     if (!row || row.expiresAt.getTime() <= now.getTime()) return false;
-    if (tokenId !== undefined && row.tokenId !== tokenId) {
+    if (
+      tokenId !== undefined &&
+      row.tokenId !== tokenId &&
+      !isPreviousTokenInGrace(row, tokenId, now)
+    ) {
       this.logger.warn(
         `[RESTORE] sid=${sessionId} presented a refresh credential that is not its current one`
       );
@@ -241,31 +262,13 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
       return { status: 'invalid', reason: 'not verified' };
     }
     const { credential } = verification.registrationInfo;
-    // One transaction: the session's previous key goes and this one takes its place. A credential id
-    // is CHOSEN BY THE CLIENT under `attestation: none`, so an id already bound to ANOTHER session is
-    // refused rather than re-bound - re-binding would let one session take over another's key.
-    const stored = await this.dataSource.transaction(async (manager) => {
-      const existing = await manager.findOne(RestoreCredential, {
-        where: { id: credential.id },
-        select: { id: true, sessionId: true },
-      });
-      if (existing && existing.sessionId !== sessionId) return 'taken' as const;
-      const previous = await manager.findOne(RestoreCredential, {
-        where: { sessionId },
-        select: { id: true },
-      });
-      await manager.delete(RestoreCredential, { sessionId });
-      await manager.insert(RestoreCredential, {
-        id: credential.id,
-        userId,
-        sessionId,
-        publicKey: Buffer.from(credential.publicKey),
-        counter: String(credential.counter),
-        cloudBackup,
-        createdAt: now,
-      });
-      return { replaced: previous && previous.id !== credential.id ? previous.id : null };
-    });
+    const stored = await this.storeKey(userId, sessionId, credential, cloudBackup, now);
+    if (stored === 'conflict') {
+      this.logger.warn(
+        `[RESTORE] registration refused sid=${sessionId}: another registration for this session committed first`
+      );
+      return { status: 'conflict' };
+    }
     if (stored === 'taken') {
       this.logger.warn(
         `[RESTORE] registration refused sid=${sessionId}: key id=${shortId(credential.id)} is another session's`
@@ -276,6 +279,49 @@ export class RestoreCredentialsService implements OnModuleInit, OnModuleDestroy 
       `[RESTORE] key registered user=${userId} sid=${sessionId} id=${shortId(credential.id)} cloudBackup=${cloudBackup} replaced=${shortId(stored.replaced ?? undefined)}`
     );
     return { status: 'registered', credentialId: credential.id, replaced: stored.replaced };
+  }
+
+  /**
+   * One transaction: the session's previous key goes and this one takes its place. A credential id
+   * is CHOSEN BY THE CLIENT under `attestation: none`, so an id already bound to ANOTHER session is
+   * refused rather than re-bound - re-binding would let one session take over another's key. Two
+   * registrations racing for one session meet the unique constraint: the second is a typed
+   * `conflict`, never a 500.
+   */
+  private async storeKey(
+    userId: string,
+    sessionId: string,
+    credential: { id: string; publicKey: Uint8Array; counter: number },
+    cloudBackup: boolean,
+    now: Date
+  ): Promise<'taken' | 'conflict' | { replaced: string | null }> {
+    try {
+      return await this.dataSource.transaction(async (manager) => {
+        const existing = await manager.findOne(RestoreCredential, {
+          where: { id: credential.id },
+          select: { id: true, sessionId: true },
+        });
+        if (existing && existing.sessionId !== sessionId) return 'taken' as const;
+        const previous = await manager.findOne(RestoreCredential, {
+          where: { sessionId },
+          select: { id: true },
+        });
+        await manager.delete(RestoreCredential, { sessionId });
+        await manager.insert(RestoreCredential, {
+          id: credential.id,
+          userId,
+          sessionId,
+          publicKey: Buffer.from(credential.publicKey),
+          counter: String(credential.counter),
+          cloudBackup,
+          createdAt: now,
+        });
+        return { replaced: previous && previous.id !== credential.id ? previous.id : null };
+      });
+    } catch (e) {
+      if (isUniqueViolation(e)) return 'conflict';
+      throw e;
+    }
   }
 
   /** Request options for an anonymous restore. Writes nothing: the challenge carries its own proof. */

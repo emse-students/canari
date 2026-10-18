@@ -25,9 +25,9 @@ import {
   getRestoreKey,
   hasAttemptedRestore,
   markRestoreAttempted,
-  registeredRestoreKeyId,
-  rememberRegisteredRestoreKey,
+  restoreKeyRecord,
   restoreKeySupported,
+  writeRestoreKeyRecord,
 } from '$lib/services/restoreKey';
 
 const rlog = (msg: string) => console.log('[RESTORE] ' + msg);
@@ -78,20 +78,37 @@ export class RestoreRegistrationRefusedError extends Error {
   }
 }
 
+/** The run of {@link ensureRestoreKey} in progress, if any: two starts never register twice. */
+let ensureInFlight: Promise<void> | null = null;
+
 /**
- * Makes sure the CURRENT session holds the restore key THIS INSTALL registered - and registers one
- * when it does not. Android only; called at EVERY start that reaches the server (`loginImpl`,
- * `promoteOfflineSession`), fire-and-forget.
+ * Makes sure the CURRENT session holds the restore key THIS INSTALL's platform holds - and
+ * registers one when it does not. Android only; called at EVERY start that reaches the server
+ * (`loginImpl`, `promoteOfflineSession`), fire-and-forget, and SINGLE-FLIGHT: a call made while one
+ * runs joins it, so two starts cannot race for the session's one key.
  *
  * EVERY START, NOT ONCE: the server answers the options with the id of the key the session holds,
- * and anything but the id this install registered is replaced. A key planted by somebody who held
- * this session's credentials for a while is therefore evicted at the owner's next start - and
- * accused, here and on the server (docs/wiki/account-restore.md, threat model). The ordinary start
- * costs one request and no platform call.
+ * compared with the {@link RestoreKeyRecord} - the key the platform holds, and the one the server
+ * last confirmed. A key planted by somebody who held this session's credentials for a while is
+ * evicted at the owner's next start - and accused, here and on the server
+ * (docs/wiki/account-restore.md, threat model). A registration whose answer was lost is RECOGNISED
+ * (the server holds the platform's key) and never accused. The ordinary start costs one request and
+ * no platform call.
  *
  * Throws on any failure (the caller logs it); the next start tries again.
  */
-export async function ensureRestoreKey(userId: string): Promise<void> {
+export function ensureRestoreKey(userId: string): Promise<void> {
+  if (ensureInFlight) {
+    console.debug('[RESTORE] ensure joined: a run is already in progress');
+    return ensureInFlight;
+  }
+  ensureInFlight = ensureRestoreKeyOnce(userId).finally(() => {
+    ensureInFlight = null;
+  });
+  return ensureInFlight;
+}
+
+async function ensureRestoreKeyOnce(userId: string): Promise<void> {
   if (!restoreKeySupported()) return;
   if (!userId) {
     rwarn('register skipped: no signed-in user id');
@@ -106,25 +123,40 @@ export async function ensureRestoreKey(userId: string): Promise<void> {
   });
   if (!optionsRes.ok)
     throw new RestoreRegistrationRefusedError(await readRestoreRefusal(optionsRes));
-  const { options, registeredCredentialId } = (await optionsRes.json()) as {
+  const { options, registeredCredentialId: onServer } = (await optionsRes.json()) as {
     options: unknown;
     registeredCredentialId: string | null;
   };
-  const mine = registeredRestoreKeyId(userId);
-  if (registeredCredentialId !== null && registeredCredentialId === mine) {
-    console.debug('[RESTORE] this session holds the key this install registered');
+  const record = restoreKeyRecord(userId);
+  if (onServer !== null && onServer === record.held) {
+    if (record.registered !== onServer) {
+      // The last registration committed and its answer never arrived: the server and the platform
+      // agree, which is all that matters. Recorded, not repeated.
+      rlog('the last registration committed without its answer - recorded');
+      writeRestoreKeyRecord(userId, { held: onServer, registered: onServer });
+    } else {
+      console.debug('[RESTORE] this session holds the key this phone holds');
+    }
     return;
   }
-  if (registeredCredentialId !== null) {
-    // The session holds a key this install did not register (or no longer remembers registering):
-    // somebody else may have put it there with this session's credentials. Replaced just below.
+  if (onServer !== null && onServer !== record.registered) {
+    // Neither the key the platform holds nor one this install ever had confirmed: somebody else put
+    // it there with this session's credentials. Replaced just below.
     console.error(
-      `[RESTORE] this session holds a key this install did not register (${registeredCredentialId.slice(0, 8)}) - replacing it`
+      `[RESTORE] this session holds a key this install did not register (${onServer.slice(0, 8)}) - replacing it`
     );
+  } else if (onServer !== null) {
+    // This install's previous key, which the platform no longer holds (a create whose registration
+    // was then refused): the two diverged, and this start brings them back together.
+    rwarn('the session holds a key this phone no longer holds - replacing it');
   }
   rlog("register: creating this install's key");
 
   const created = await createRestoreKey(options);
+  const response = JSON.parse(created.responseJson) as { id?: unknown };
+  if (typeof response.id !== 'string') throw new Error('the platform answered a key with no id');
+  // Recorded BEFORE the server is told: the platform now holds this key whatever the server says.
+  writeRestoreKeyRecord(userId, { held: response.id, registered: record.registered });
   if (!created.cloudBackup) {
     // The Kotlin side has logged the cause at error; this line says what it costs the user.
     rwarn('register: the key is NOT in the cloud backup - a lost phone will not restore');
@@ -135,14 +167,14 @@ export async function ensureRestoreKey(userId: string): Promise<void> {
     credentials: 'include',
     headers: await sessionScopedHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify({
-      response: JSON.parse(created.responseJson) as unknown,
+      response,
       cloudBackup: created.cloudBackup,
-      previousCredentialId: mine,
+      previousCredentialId: record.registered,
     }),
   });
   if (!res.ok) throw new RestoreRegistrationRefusedError(await readRestoreRefusal(res));
   const { credentialId } = (await res.json()) as { credentialId: string };
-  rememberRegisteredRestoreKey(userId, credentialId);
+  writeRestoreKeyRecord(userId, { held: credentialId, registered: credentialId });
   rlog(`register✓ (cloudBackup=${created.cloudBackup})`);
 }
 
@@ -161,12 +193,16 @@ export type RestoreAttempt =
 
 /**
  * The server's refusals that are NOT a verdict on this install's key: the estate cannot answer
- * (not configured, maintenance, a 5xx). The attempt is left un-recorded, so a later visit asks again.
+ * (not configured, maintenance, a 5xx), or cannot answer NOW (408, and 429 - the anonymous routes
+ * are throttled per address, and a campus shares one). The attempt is left un-recorded, so a later
+ * visit asks again: a throttle must never turn restore off for good on an install.
  */
 function isServerStateRefusal(refusal: RestoreRefusal): boolean {
   return (
     refusal.code === 'RESTORE_UNAVAILABLE' ||
     refusal.code === 'MAINTENANCE' ||
+    refusal.status === 408 ||
+    refusal.status === 429 ||
     refusal.status >= 500
   );
 }

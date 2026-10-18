@@ -18,7 +18,8 @@ import {
   RESTORE_ATTEMPTED_KEY,
   RESTORE_REGISTERED_PREFIX,
   forgetRestoreKeyRegistrations,
-  rememberRegisteredRestoreKey,
+  restoreKeyRecord,
+  writeRestoreKeyRecord,
 } from './restoreKey';
 import { TransportFailureError } from '$lib/utils/transportFailure';
 import { m } from '$lib/paraglide/messages';
@@ -81,8 +82,10 @@ describe('ensureRestoreKey', () => {
   /** The options answer: the WebAuthn options and the key the session holds now. */
   const options = (registeredCredentialId: string | null) =>
     json({ options: { challenge: 'c' }, registeredCredentialId });
+  const record = (held: string | null, registered: string | null) =>
+    writeRestoreKeyRecord('user-1', { held, registered });
 
-  it('registers when the session holds no key: options, the platform key, the server - and remembers the id', async () => {
+  it('registers when the session holds no key: options, the platform key, the server - and records it', async () => {
     platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true } });
     apiFetch
       .mockResolvedValueOnce(options(null))
@@ -103,11 +106,11 @@ describe('ensureRestoreKey', () => {
       cloudBackup: true,
       previousCredentialId: null,
     });
-    expect(localStorage.getItem(RESTORE_REGISTERED_PREFIX + 'user-1')).toBe('k');
+    expect(restoreKeyRecord('user-1')).toEqual({ held: 'k', registered: 'k' });
   });
 
-  it('asks at EVERY start, and stops there when the session holds the key this install registered', async () => {
-    rememberRegisteredRestoreKey('user-1', 'k');
+  it('asks at EVERY start, and stops there when the session holds the key the phone holds', async () => {
+    record('k', 'k');
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     apiFetch.mockResolvedValueOnce(options('k'));
     await ensureRestoreKey('user-1');
@@ -117,7 +120,7 @@ describe('ensureRestoreKey', () => {
   });
 
   it('accuses and REPLACES a key this install did not register (planted with the session)', async () => {
-    rememberRegisteredRestoreKey('user-1', 'mine');
+    record('mine', 'mine');
     const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
     platform({ create: { responseJson: '{"id":"fresh"}', cloudBackup: true } });
     apiFetch
@@ -129,11 +132,54 @@ describe('ensureRestoreKey', () => {
     expect(error).toHaveBeenCalledWith(expect.stringContaining('did not register'));
     // The server is told which key this install believes it replaces, so it can accuse the other.
     expect(JSON.parse(apiFetch.mock.calls[1][1].body).previousCredentialId).toBe('mine');
-    expect(localStorage.getItem(RESTORE_REGISTERED_PREFIX + 'user-1')).toBe('fresh');
+    expect(restoreKeyRecord('user-1')).toEqual({ held: 'fresh', registered: 'fresh' });
+  });
+
+  it('RECOGNISES a registration that committed without its answer: no accusation, no new key', async () => {
+    // Created 'k2' and sent it; the answer was lost, so 'k1' is still the confirmed one.
+    record('k2', 'k1');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    apiFetch.mockResolvedValueOnce(options('k2'));
+    await ensureRestoreKey('user-1');
+    expect(error).not.toHaveBeenCalled();
+    expect(invoke).not.toHaveBeenCalled();
+    expect(restoreKeyRecord('user-1')).toEqual({ held: 'k2', registered: 'k2' });
+  });
+
+  it('records the platform key BEFORE the server answers, so a lost answer is recognised next start', async () => {
+    record('k1', 'k1');
+    platform({ create: { responseJson: '{"id":"k2"}', cloudBackup: true } });
+    apiFetch.mockResolvedValueOnce(options(null)).mockRejectedValueOnce(new TypeError('lost'));
+    await expect(ensureRestoreKey('user-1')).rejects.toThrow('lost');
+    expect(restoreKeyRecord('user-1')).toEqual({ held: 'k2', registered: 'k1' });
+  });
+
+  it('replaces, without accusing, the previous key of this install the phone no longer holds', async () => {
+    // A create ('k2') whose registration was refused: the server still holds 'k1'.
+    record('k2', 'k1');
+    const error = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    platform({ create: { responseJson: '{"id":"k3"}', cloudBackup: true } });
+    apiFetch
+      .mockResolvedValueOnce(options('k1'))
+      .mockResolvedValueOnce(json({ registered: true, credentialId: 'k3' }));
+    await ensureRestoreKey('user-1');
+    expect(error).not.toHaveBeenCalled();
+    expect(JSON.parse(apiFetch.mock.calls[1][1].body).previousCredentialId).toBe('k1');
+    expect(restoreKeyRecord('user-1')).toEqual({ held: 'k3', registered: 'k3' });
+  });
+
+  it('is SINGLE-FLIGHT: two starts at once make one run', async () => {
+    platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true } });
+    apiFetch
+      .mockResolvedValueOnce(options(null))
+      .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
+    await Promise.all([ensureRestoreKey('user-1'), ensureRestoreKey('user-1')]);
+    expect(apiFetch).toHaveBeenCalledTimes(2);
+    expect(invoke).toHaveBeenCalledTimes(1);
   });
 
   it('carries the second path (no cloud backup) to the server as it happened', async () => {
-    platform({ create: { responseJson: '{}', cloudBackup: false } });
+    platform({ create: { responseJson: '{"id":"k"}', cloudBackup: false } });
     apiFetch
       .mockResolvedValueOnce(options(null))
       .mockResolvedValueOnce(json({ registered: true, credentialId: 'k' }));
@@ -141,15 +187,15 @@ describe('ensureRestoreKey', () => {
     expect(JSON.parse(apiFetch.mock.calls[1][1].body).cloudBackup).toBe(false);
   });
 
-  it('leaves the marker unset on a refusal, so the next start tries again', async () => {
-    platform({ create: { responseJson: '{}', cloudBackup: true } });
+  it('leaves the session unconfirmed on a refusal, so the next start tries again', async () => {
+    platform({ create: { responseJson: '{"id":"k"}', cloudBackup: true } });
     apiFetch
       .mockResolvedValueOnce(options(null))
       .mockResolvedValueOnce(json({ code: 'RESTORE_KEY_TAKEN', message: 'x' }, 403));
     await expect(ensureRestoreKey('user-1')).rejects.toMatchObject({
       refusal: { status: 403, code: 'RESTORE_KEY_TAKEN' },
     });
-    expect(localStorage.getItem(RESTORE_REGISTERED_PREFIX + 'user-1')).toBeNull();
+    expect(restoreKeyRecord('user-1').registered).toBeNull();
   });
 
   it('does nothing off Android', async () => {
@@ -159,9 +205,9 @@ describe('ensureRestoreKey', () => {
     expect(invoke).not.toHaveBeenCalled();
   });
 
-  it('a new session drops the marker of the previous one', () => {
-    rememberRegisteredRestoreKey('user-1', 'a');
-    rememberRegisteredRestoreKey('user-2', 'b');
+  it('a new session drops the record of the previous one', () => {
+    writeRestoreKeyRecord('user-1', { held: 'a', registered: 'a' });
+    writeRestoreKeyRecord('user-2', { held: 'b', registered: 'b' });
     localStorage.setItem('unrelated', 'kept');
     forgetRestoreKeyRegistrations();
     expect(localStorage.getItem(RESTORE_REGISTERED_PREFIX + 'user-1')).toBeNull();
@@ -230,6 +276,23 @@ describe('attemptRestore', () => {
     expect(localStorage.getItem(RESTORE_ATTEMPTED_KEY)).toBeNull();
     expect(invoke).not.toHaveBeenCalled();
   });
+
+  it.each([429, 408])(
+    'leaves the attempt un-recorded on a %i: a throttle never turns restore off for good',
+    async (status) => {
+      fetchMock.mockResolvedValueOnce(json({ message: 'slow down' }, status));
+      await attemptRestore();
+      expect(localStorage.getItem(RESTORE_ATTEMPTED_KEY)).toBeNull();
+
+      platform({ get: { absent: false, responseJson: '{"id":"k"}' } });
+      fetchMock
+        .mockResolvedValueOnce(json({ challenge: 'c' }))
+        .mockResolvedValueOnce(json({ message: 'slow down' }, status));
+      await attemptRestore();
+      expect(localStorage.getItem(RESTORE_ATTEMPTED_KEY)).toBeNull();
+      expect(cleared()).toBe(false);
+    }
+  );
 
   it('shows the MiConnect sign-in sentence for an erasure in progress', async () => {
     platform({ get: { absent: false, responseJson: '{}' } });
