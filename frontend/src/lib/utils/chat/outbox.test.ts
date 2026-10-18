@@ -38,6 +38,7 @@ import {
   createOutbox,
   buildOutboxProto,
   MAX_CONCURRENT_SENDS,
+  MAX_CONCURRENT_UPLOADS,
   MAX_UNEXPECTED_ATTEMPTS,
   enqueueOutboxMessage,
   isOutboxEntryQueued,
@@ -3737,5 +3738,269 @@ describe('outbox uploads run OUTSIDE the lane - a text written after a big file 
     expect(sentIds(mls)).toEqual(['file']);
     expect(storage._map.has('file')).toBe(false);
     second.dispose();
+  });
+
+  /** Several transfers, each settled by hand, in the order `uploadMedia` was called. */
+  function deferredUploads() {
+    const calls: Array<{
+      fileName?: string;
+      signal?: AbortSignal;
+      release: (ref: Ref) => void;
+      fail: (e: unknown) => void;
+    }> = [];
+    const uploadMedia = vi.fn(
+      (media: { fileName?: string }, transport?: Transport) =>
+        new Promise<Ref>((resolve, reject) => {
+          calls.push({
+            fileName: media.fileName,
+            signal: transport?.signal,
+            release: resolve,
+            fail: reject,
+          });
+          transport?.signal?.addEventListener('abort', () =>
+            reject(new UploadAbortedError(transport.signal?.reason))
+          );
+        })
+    );
+    return { uploadMedia, calls };
+  }
+
+  function smallMedia(id: string, conversationId: string, sentAt = 100): OutboxEntry {
+    const e = bigMedia(id, sentAt);
+    return {
+      ...e,
+      conversationId,
+      media: { ...e.media!, size: 3, fileName: `${id}.pdf`, fileBytes: new Uint8Array([1, 2, 3]) },
+    };
+  }
+
+  it('an MLS send that fails AFTER the upload takes the ladder: a later flush does not re-post it', async () => {
+    const storage = makeStorage();
+    const up = deferredUpload();
+    let refuse = true;
+    const mls = makeMls({
+      send: async () => {
+        if (refuse) throw new Error('503 from the delivery service');
+      },
+    });
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: mls,
+        storage,
+        uploadMedia: up.uploadMedia,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.enqueue(smallMedia('file', 'g1'));
+    await vi.waitFor(() => expect(up.uploadMedia).toHaveBeenCalledTimes(1));
+    up.release(REF);
+    await vi.waitFor(() => expect(mls.sendMessage).toHaveBeenCalledTimes(1));
+    await outboxIdle();
+    expect((storage._map.get('file') as OutboxEntry).nextAttemptAt).toBeGreaterThan(Date.now());
+
+    // Every later wake-up (an enqueue, a visibility change, another upload ending) is a flush.
+    refuse = false;
+    await outbox.flush();
+    await outbox.flush();
+
+    expect(mls.sendMessage).toHaveBeenCalledTimes(1);
+    expect(up.uploadMedia).toHaveBeenCalledTimes(1);
+    outbox.dispose();
+  });
+
+  it('a text held on a 5xx behind a running upload is retried on its own ladder, not after the upload', async () => {
+    vi.useFakeTimers({
+      toFake: ['setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'Date'],
+    });
+    try {
+      const storage = makeStorage();
+      const up = deferredUpload();
+      let textAttempts = 0;
+      const mls = makeMls({
+        send: async (...args: unknown[]) => {
+          if (args[2] === 'text' && ++textAttempts === 1)
+            throw new Error('503 from the delivery service');
+        },
+      });
+      const outbox = createOutbox(
+        makeDeps({
+          mlsService: mls,
+          storage,
+          uploadMedia: up.uploadMedia,
+          isGroupHealthy: () => true,
+        })
+      );
+
+      await outbox.enqueue(smallMedia('file', 'g1', 100));
+      await outbox.enqueue(textEntry('text', 'g1', 200));
+      await outboxIdle();
+      expect(up.uploadMedia).toHaveBeenCalledTimes(1);
+      expect(textAttempts).toBe(1);
+
+      // The ladder's first step (2 s), with the upload still on the wire.
+      await vi.advanceTimersByTimeAsync(2_000);
+      await outboxIdle();
+
+      expect(textAttempts).toBe(2);
+      expect(storage._map.has('text')).toBe(false);
+      expect(storage._map.has('file')).toBe(true);
+      outbox.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it(`a third attachment waits for one of ${MAX_CONCURRENT_UPLOADS} upload slots, and a cancel reaches it at once`, async () => {
+    const storage = makeStorage();
+    const up = deferredUploads();
+    const log = vi.fn();
+    const mls = makeMls();
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: mls,
+        storage,
+        log,
+        uploadMedia: up.uploadMedia,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.enqueue(smallMedia('a', 'g1'));
+    await outbox.enqueue(smallMedia('b', 'g2'));
+    await outbox.enqueue(smallMedia('c', 'g3'));
+    await outboxIdle();
+    expect(up.calls.map((c) => c.fileName)).toEqual(['a.pdf', 'b.pdf']);
+
+    expect(await outbox.cancelPending('c')).toBe(true);
+    await outboxIdle();
+    // Settled now, not when an unrelated transfer frees a slot.
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('upload cancelled'));
+    expect(uploadViewOf('c')).toBeUndefined();
+
+    up.calls[0].release(REF);
+    up.calls[1].release(REF);
+    await vi.waitFor(() => expect(sentIds(mls).sort()).toEqual(['a', 'b']));
+    expect(up.uploadMedia).toHaveBeenCalledTimes(2);
+    outbox.dispose();
+  });
+
+  it('a retry on an attachment still waiting for a slot keeps its place: nothing to restart', async () => {
+    const storage = makeStorage();
+    const up = deferredUploads();
+    const log = vi.fn();
+    const mls = makeMls();
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: mls,
+        storage,
+        log,
+        uploadMedia: up.uploadMedia,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.enqueue(smallMedia('a', 'g1'));
+    await outbox.enqueue(smallMedia('b', 'g2'));
+    await outbox.enqueue(smallMedia('c', 'g3'));
+    await outboxIdle();
+    outbox.retryUpload('c');
+    up.calls[0].release(REF);
+    await vi.waitFor(() => expect(up.calls.map((c) => c.fileName)).toContain('c.pdf'));
+
+    expect(log).not.toHaveBeenCalledWith(expect.stringContaining('upload restarted on request'));
+    expect(up.calls.find((c) => c.fileName === 'c.pdf')!.signal?.aborted).toBe(false);
+    up.calls[1].release(REF);
+    up.calls[2].release(REF);
+    await vi.waitFor(() => expect(sentIds(mls).sort()).toEqual(['a', 'b', 'c']));
+    outbox.dispose();
+  });
+
+  it('a dispose during a decoupled upload aborts it, ends the flush and sends nothing', async () => {
+    const storage = makeStorage([smallMedia('file', 'g1')]);
+    const up = deferredUpload();
+    const mls = makeMls();
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: mls,
+        storage,
+        uploadMedia: up.uploadMedia,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    const flushing = outbox.flush();
+    await vi.waitFor(() => expect(up.uploadMedia).toHaveBeenCalledTimes(1));
+    outbox.dispose();
+    await flushing;
+
+    expect(up.signal()?.aborted).toBe(true);
+    expect(mls.sendMessage).not.toHaveBeenCalled();
+    expect(storage._map.has('file')).toBe(true);
+  });
+
+  it('a refusal the task brings back is classified in the lane: the entry ends, the text behind it already went', async () => {
+    const storage = makeStorage();
+    const up = deferredUploads();
+    const addMessageToChat = vi.fn().mockResolvedValue(undefined);
+    const mls = makeMls();
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: mls,
+        storage,
+        addMessageToChat,
+        uploadMedia: up.uploadMedia,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.enqueue(smallMedia('file', 'g1', 100));
+    await outbox.enqueue(textEntry('text', 'g1', 200));
+    await vi.waitFor(() => expect(sentIds(mls)).toEqual(['text']));
+    up.calls[0].fail(new MediaUploadError(413, 'too large'));
+    await vi.waitFor(() => expect(storage._map.has('file')).toBe(false));
+
+    expect(sentIds(mls)).toEqual(['text']);
+    expect(addMessageToChat).toHaveBeenCalledWith('system', expect.any(String), 'g1', {
+      isSystem: true,
+    });
+    outbox.dispose();
+  });
+
+  it('a withdrawal landing while the ref is written leaves no task behind and sends nothing', async () => {
+    const storage = makeStorage();
+    let writeRef!: () => void;
+    const realUpdate = storage.updateOutboxEntry;
+    storage.updateOutboxEntry = vi.fn(async (id: string, patch: Partial<OutboxEntry>) => {
+      if (patch.media?.uploadedRef) await new Promise<void>((r) => (writeRef = r));
+      return realUpdate(id, patch);
+    });
+    const up = deferredUpload();
+    const log = vi.fn();
+    const mls = makeMls();
+    const outbox = createOutbox(
+      makeDeps({
+        mlsService: mls,
+        storage,
+        log,
+        uploadMedia: up.uploadMedia,
+        isGroupHealthy: () => true,
+      })
+    );
+
+    await outbox.enqueue(smallMedia('file', 'g1'));
+    await vi.waitFor(() => expect(up.uploadMedia).toHaveBeenCalledTimes(1));
+    up.release(REF);
+    await vi.waitFor(() => expect(writeRef).toBeDefined());
+    expect(await outbox.cancelPending('file')).toBe(true);
+    writeRef();
+    await outbox.flush();
+    await vi.waitFor(() =>
+      expect(log).toHaveBeenCalledWith(
+        expect.stringContaining('upload ended after its message was withdrawn')
+      )
+    );
+    expect(mls.sendMessage).not.toHaveBeenCalled();
+    outbox.dispose();
   });
 });

@@ -335,6 +335,12 @@ interface UploadTask {
   conversationId: string;
   /** `null` while the transfer runs. */
   settled: SettledUpload | null;
+  /**
+   * The upload ended and its message's send has not been tried yet: that ONE attempt is due at once,
+   * whatever backoff the upload attempts left on the row. Cleared when it is tried, so a send that
+   * then fails takes the ladder like any message (review of #2061).
+   */
+  sendDue: boolean;
 }
 
 /**
@@ -451,6 +457,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   const uploadOwed = new Set<string>();
   let activeUploads = 0;
   const uploadWaiters: Array<() => void> = [];
+  /** Attachments queued for an upload slot, not yet on the wire: a retry has nothing to restart. */
+  const slotWaiting = new Set<string>();
   /** The wake-up of a lane that waits for its conversation's uploads to end (deferred, no clock). */
   const laneWake = new Map<string, () => void>();
   let disposed = false;
@@ -776,9 +784,36 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   }
 
   /** Runs `fn` while holding one of {@link MAX_CONCURRENT_UPLOADS} slots, handed on like a send slot. */
-  async function withUploadSlot<T>(fn: () => Promise<T>): Promise<T> {
+  async function withUploadSlot<T>(
+    id: string,
+    signal: AbortSignal,
+    fn: () => Promise<T>
+  ): Promise<T> {
     if (activeUploads < MAX_CONCURRENT_UPLOADS) activeUploads++;
-    else await new Promise<void>((resolve) => uploadWaiters.push(resolve));
+    else {
+      // A CANCEL REACHES A TRANSFER STILL WAITING FOR ITS SLOT AT ONCE: the waiter leaves the queue
+      // and the task settles now, not when an unrelated upload frees a slot (review of #2061).
+      slotWaiting.add(id);
+      log(`[OUTBOX] ${id.slice(0, 8)}… waits for an upload slot (${MAX_CONCURRENT_UPLOADS} busy)`);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const waiter = (): void => {
+            signal.removeEventListener('abort', onAbort);
+            resolve();
+          };
+          const onAbort = (): void => {
+            const at = uploadWaiters.indexOf(waiter);
+            if (at !== -1) uploadWaiters.splice(at, 1);
+            reject(new UploadAbortedError(signal.reason));
+          };
+          if (signal.aborted) return onAbort();
+          signal.addEventListener('abort', onAbort, { once: true });
+          uploadWaiters.push(waiter);
+        });
+      } finally {
+        slotWaiting.delete(id);
+      }
+    }
     try {
       return await fn();
     } finally {
@@ -812,7 +847,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * outcome settled here: the row is already gone, so no lane pass will ever meet the entry again.
    */
   function startUpload(entry: OutboxEntry, media: NonNullable<OutboxEntry['media']>): void {
-    const task: UploadTask = { conversationId: entry.conversationId, settled: null };
+    const task: UploadTask = {
+      conversationId: entry.conversationId,
+      settled: null,
+      sendDue: false,
+    };
     uploadTasks.set(entry.id, task);
     const control = new AbortController();
     uploads.set(entry.id, control);
@@ -820,7 +859,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     log(
       `[OUTBOX] ${entry.id.slice(0, 8)}… upload started outside the lane of ${entry.conversationId.slice(0, 8)}…`
     );
-    void withUploadSlot(() => uploadAttachment(entry, control))
+    void withUploadSlot(entry.id, control.signal, () => uploadAttachment(entry, control))
       .then(
         // The payload WITHOUT its bytes: nothing keeps a 13 MB file alive once it has left.
         (ref): SettledUpload => ({
@@ -831,16 +870,26 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       )
       .then((settled) => {
         task.settled = settled;
+        task.sendDue = settled.ok;
+        // Uploaded: from now on its MLS send keeps lane order like any message's.
+        if (settled.ok) uploadOwed.delete(entry.id);
         if (disposed) return;
-        if (
+        const abortedByCancel =
           !settled.ok &&
           settled.error instanceof UploadAbortedError &&
-          settled.error.reason === 'cancel'
-        ) {
+          settled.error.reason === 'cancel';
+        // WITHDRAWN, whether the abort reached the transfer or the withdrawal landed after the body
+        // left (during the ref write, with nothing left to abort): the row is gone, no lane pass will
+        // meet it again, so the task forgets itself here or never (review of #2061).
+        if (abortedByCancel || cancelled.has(entry.id)) {
           uploadTasks.delete(entry.id);
           uploadOwed.delete(entry.id);
           clearUpload(entry.id);
-          log(`[OUTBOX] ${entry.id.slice(0, 8)}… upload cancelled - the transfer was aborted`);
+          log(
+            abortedByCancel
+              ? `[OUTBOX] ${entry.id.slice(0, 8)}… upload cancelled - the transfer was aborted`
+              : `[OUTBOX] ${entry.id.slice(0, 8)}… upload ended after its message was withdrawn - nothing will be sent`
+          );
         } else {
           log(
             `[OUTBOX] ${entry.id.slice(0, 8)}… upload ${settled.ok ? 'ended' : 'failed'} - its lane is woken to ${settled.ok ? 'send the message' : 'classify the failure'}`
@@ -1189,6 +1238,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // mark is dropped by `pruneCancelled`, once the row is gone and no lane runs.
     if (cancelled.has(entry.id)) {
       clearUpload(entry.id);
+      // An ended upload of a withdrawn message has nothing left to do; a running one forgets itself.
+      if (uploadTasks.get(entry.id)?.settled) uploadTasks.delete(entry.id);
       log(
         `[OUTBOX] ${entry.id.slice(0, 8)}… cancelled before it was sent - dropped, not delivered`
       );
@@ -1222,7 +1273,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     parked.delete(entry.id);
     // AN UPLOAD THAT JUST ENDED makes its message due at once: the backoff on the row belonged to the
     // upload attempts before it, never to a send that has not been tried.
-    const uploadEnded = task?.settled?.ok === true;
+    // ONCE: the first attempt consumes it, so a send that fails after the upload keeps its backoff.
+    const uploadEnded = task?.settled?.ok === true && task.sendDue;
     if (!resumed && !uploadEnded && entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) {
       log(
         `[OUTBOX] ${entry.id.slice(0, 8)}… skipped, backing off for ${entry.nextAttemptAt - Date.now()}ms (attempt ${entry.attempts})`
@@ -1230,6 +1282,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // Backing off on its UPLOAD, an attachment holds only what depends on it (WP-OFF-9).
       return entry.kind === 'media' && uploadOwed.has(entry.id) ? 'uploading' : 'skip';
     }
+    if (task) task.sendDue = false;
 
     // The MLS outbox is for DMs/groups only. A channel entry (server-authoritative, no MLS group)
     // can only have leaked in through a bug: it would loop forever on requestReAdd 500s. Drop it so
@@ -1842,6 +1895,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // Chain another pass if a send unblocked dependents, or a concurrent enqueue arrived.
       if (anySent || laneRerun.has(conversationId)) continue;
       if (disposed || !hasRunningUpload(conversationId)) return;
+      // THE BACKOFF IS ARMED BEFORE THE WAIT: `runFlush` arms it only once every lane it started has
+      // returned, and this one may wait minutes for a file - a text held behind it on a 5xx would wait
+      // for the whole upload (review of #2061). The ladder's own timer is the event: it raises a flush,
+      // which finds this lane claimed and wakes it.
+      scheduleBackoff(await readQueue('backoff before an upload wait'));
+      if (disposed) return;
+      if (laneRerun.has(conversationId)) continue;
+      if (!hasRunningUpload(conversationId)) return;
       // AN UPLOAD OF THIS CONVERSATION IS STILL ON THE WIRE: the lane stays claimed and waits for an
       // EVENT - the upload ending, or a flush raised meanwhile (an enqueue) - never a clock. The wait
       // holds no send slot, so other conversations and this one's next text are not held by it.
@@ -2049,6 +2110,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       parked.delete(messageId);
       // A 403-parked entry used to ignore this button for the controller's whole life.
       forbiddenParked.delete(messageId);
+      // Still waiting for an upload slot: nothing has left, so there is nothing to restart, and
+      // aborting would only send it to the back of the queue (review of #2061).
+      if (slotWaiting.has(messageId)) {
+        log(
+          `[OUTBOX] ${messageId.slice(0, 8)}… retry: not started yet, it keeps its place in line`
+        );
+        return;
+      }
       const running = uploads.get(messageId);
       if (running) running.abort('retry');
       else runFlush();
