@@ -77,9 +77,11 @@ function fakeStorage(existing: StoredMessage | null) {
 }
 
 /** The native side's answers: `take_fcm_cache` hands `entries` over, `ack_fcm_cache` deletes. */
-function taking(entries: unknown[], takenBytes = 128) {
+const FILES = [{ name: 'fcm_message_cache.taken.0.ndjson', bytes: 128 }];
+
+function taking(entries: unknown[], files = FILES) {
   invoke.mockImplementation(async (cmd: string) =>
-    cmd === 'take_fcm_cache' ? { entries, takenBytes } : true
+    cmd === 'take_fcm_cache' ? { entries, files } : files.length
   );
 }
 
@@ -162,7 +164,7 @@ describe('consumeFcmCache never downgrades a row it did not write', () => {
  * until this acknowledgement, and replays it otherwise.
  */
 describe('consumeFcmCache acknowledges the take only after writing it', () => {
-  it('acknowledges exactly the bytes it was handed, after the write', async () => {
+  it('acknowledges exactly the files it was handed, after the write', async () => {
     const { storage, saveMessage } = fakeStorage(null);
     saveMessage.mockImplementation(async () => {
       expect(acks()).toHaveLength(0);
@@ -171,26 +173,30 @@ describe('consumeFcmCache acknowledges the take only after writing it', () => {
     await consumeFcmCache(KEY, storage, SELF);
 
     expect(saveMessage).toHaveBeenCalledTimes(1);
-    expect(acks()).toEqual([['ack_fcm_cache', { takenBytes: 128 }]]);
+    expect(acks()).toEqual([['ack_fcm_cache', { files: FILES }]]);
   });
 
-  it('keeps the take on disk when a write failed, so the next boot replays it', async () => {
-    const { storage, saveMessage } = fakeStorage(null);
-    saveMessage.mockRejectedValue(new Error('database closed'));
+  it('runs one take at a time: a second caller takes only after the first acknowledged', async () => {
+    const order: string[] = [];
+    invoke.mockImplementation(async (cmd: string) => {
+      order.push(cmd);
+      return cmd === 'take_fcm_cache' ? { entries: [pushEntry()], files: FILES } : 1;
+    });
+    const { storage } = fakeStorage(null);
 
-    await consumeFcmCache(KEY, storage, SELF);
+    await Promise.all([consumeFcmCache(KEY, storage, SELF), consumeFcmCache(KEY, storage, SELF)]);
 
-    expect(acks()).toHaveLength(0);
+    expect(order).toEqual(['take_fcm_cache', 'ack_fcm_cache', 'take_fcm_cache', 'ack_fcm_cache']);
   });
 
   it('acknowledges a take that held only unparsable lines, and asks nothing when nothing was taken', async () => {
     const { storage } = fakeStorage(null);
-    taking([], 40);
+    taking([]);
     await consumeFcmCache(KEY, storage, SELF);
-    expect(acks()).toEqual([['ack_fcm_cache', { takenBytes: 40 }]]);
+    expect(acks()).toEqual([['ack_fcm_cache', { files: FILES }]]);
 
     invoke.mockClear();
-    taking([], 0);
+    taking([], []);
     await consumeFcmCache(KEY, storage, SELF);
     expect(acks()).toHaveLength(0);
   });

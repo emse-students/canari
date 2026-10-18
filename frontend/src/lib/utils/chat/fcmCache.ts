@@ -19,10 +19,10 @@
  * "Photo", for good. The injection therefore asks what it would be replacing.
  *
  * **THE FILE IS DELETED ONLY AFTER THE INJECTION.** `take_fcm_cache` moves it aside and
- * `ack_fcm_cache` deletes it once every entry was written; until 2026-10-18 the read deleted it
+ * `ack_fcm_cache` deletes it once the injection has run; until 2026-10-18 the read deleted it
  * first, so a process death before `saveMessage` lost the entries - and a notification quick reply's
- * entry is the only local record of a message this device sent. An unacknowledged take is handed
- * over again at the next boot, which the never-downgrade rule above makes harmless.
+ * entry is the only local record of a message this device sent. A take a dead process never
+ * acknowledged is handed over again, which the never-downgrade rule above makes harmless.
  */
 
 import type { IStorage, StoredMessage } from '$lib/db';
@@ -203,15 +203,40 @@ export type PushPlaceholderIdentity = Omit<ConversationIdentity, 'displayName'> 
 /** One placeholder row, as both stores must see it. */
 export type PushPlaceholder = PushPlaceholderIdentity & { updatedAt: number };
 
+/** One file the native side moved aside for a take: its name, and its size when read. */
+interface TakenFile {
+  name: string;
+  bytes: number;
+}
+
 /** Nothing read, nothing written - the shape every early return owes. */
 const NOTHING: FcmCacheInjection = { messages: [], placeholders: new Map() };
+
+/** The take in flight, so a second caller runs after it rather than beside it. */
+let inFlight: Promise<unknown> = Promise.resolve();
 
 /**
  * Reads the native FCM cache (Tauri only) and injects the messages into local storage.
  * Returns what was written - see {@link FcmCacheInjection} for why the placeholders travel too.
  * No-op on web/desktop (no native cache available).
+ *
+ * ONE TAKE AT A TIME. Two callers run it (the login pass and the background poll); serialized, a
+ * taken file the native side still holds at the start of a take can only be one a dead process
+ * never acknowledged, which is what the native side logs it as.
  */
-export async function consumeFcmCache(
+export function consumeFcmCache(
+  deviceKeyB64: string,
+  storage: IStorage,
+  userId: string
+): Promise<FcmCacheInjection> {
+  const run = inFlight.then(() => consumeFcmCacheOnce(deviceKeyB64, storage, userId));
+  // A failed take must not wedge every later one; its own caller still sees the rejection.
+  inFlight = run.catch(() => undefined);
+  return run;
+}
+
+/** One take, its injection and its acknowledgement - see {@link consumeFcmCache}. */
+async function consumeFcmCacheOnce(
   deviceKeyB64: string,
   storage: IStorage,
   userId: string
@@ -219,26 +244,27 @@ export async function consumeFcmCache(
   if (!isTauriRuntime()) return NOTHING;
 
   // Declared without initializer: catch always returns, so it is definitely assigned before use.
-  let take: { entries: FcmCacheEntry[]; takenBytes: number };
+  let take: { entries: FcmCacheEntry[]; files: TakenFile[] };
   let invoke: typeof import('@tauri-apps/api/core').invoke;
   try {
     ({ invoke } = await import('@tauri-apps/api/core'));
-    take = await invoke<{ entries: FcmCacheEntry[]; takenBytes: number }>('take_fcm_cache');
+    take = await invoke<{ entries: FcmCacheEntry[]; files: TakenFile[] }>('take_fcm_cache');
   } catch (e) {
     appendLog(`[FCM_CACHE] Cache read failed: ${String(e)}`);
     return NOTHING;
   }
   const entries = take.entries;
   /**
-   * Deletes what was taken - called once every entry has been written or deliberately skipped,
-   * never before. An entry whose write FAILED keeps the whole take on disk for the next boot: a
-   * replay is harmless, a deletion of a message nothing persisted is not.
+   * Deletes what was taken - called once the injection has run, never before. What it closes is a
+   * process death between the take and the writes; an entry whose write FAILED is logged and not
+   * retried, as before, because replaying a take every poll would re-inject everything else in it
+   * each time (a message deleted since, a conversation left since).
    */
   const acknowledge = async (): Promise<void> => {
-    if (take.takenBytes === 0) return;
+    if (take.files.length === 0) return;
     try {
-      const deleted = await invoke<boolean>('ack_fcm_cache', { takenBytes: take.takenBytes });
-      appendLog(`[FCM_CACHE] acknowledged ${take.takenBytes} bytes, deleted=${deleted}`);
+      const deleted = await invoke<number>('ack_fcm_cache', { files: take.files });
+      appendLog(`[FCM_CACHE] acknowledged: ${deleted}/${take.files.length} taken file(s) deleted`);
     } catch (e) {
       // The next boot hands the same entries over again, which the injection makes harmless.
       appendLog(`[FCM_CACHE] acknowledge failed, the next take replays it: ${String(e)}`);
@@ -333,12 +359,11 @@ export async function consumeFcmCache(
   }
 
   appendLog(`[FCM_CACHE] Injection done: ${injected.length}/${entries.length} message(s) injected`);
-  if (failed === 0) {
-    await acknowledge();
-  } else {
+  if (failed > 0) {
     appendLog(
-      `[FCM_CACHE] ${failed} write(s) failed: the take is NOT acknowledged, the next boot replays it`
+      `[FCM_CACHE] ${failed} write(s) FAILED - those previews are lost, see the lines above`
     );
   }
+  await acknowledge();
   return { messages: injected, placeholders };
 }
