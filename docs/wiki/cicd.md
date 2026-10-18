@@ -6,8 +6,8 @@ Canari uses GitHub Actions for continuous integration and deployment. The pipeli
 
 ### Package 1: opening a pull request (`ci.yml`)
 
-**THE PIPELINE IS TWO PACKAGES, ONE PER HUMAN GESTURE** (user, 2026-09-03: *"Je veux une suite
-d'evenements et d'etapes"*). This file is everything that happens when a pull request is opened;
+**THE PIPELINE IS TWO PACKAGES, ONE PER HUMAN GESTURE** (user, 2026-09-03: _"Je veux une suite
+d'evenements et d'etapes"_). This file is everything that happens when a pull request is opened;
 `release.yml` is everything that happens when a release is published. There is no third file,
 because a merge deploys nothing.
 
@@ -15,13 +15,13 @@ because a merge deploys nothing.
 `pull_request` event and never referring to each other, so the sequence a human wants to read was
 split in half. The order, which the file's own header states:
 
-| # | job | what |
-|---|---|---|
-| 1 | `changes` | reads the modified paths and decides which of the jobs below run at all |
-| 2 | the test jobs | Rust, the four NestJS apps' real AppModule, TS, social-service's integration specs on a real PostgreSQL, frontend, the two self-test suites - in parallel, each behind its own path filter |
-| 2b | `dependency-ceiling` | ONLY on a Dependabot pull request: does a gate HERE exist that would see this update fail? A human's pull request carries no `updated-dependencies` block to decide on, so it skips |
-| 3 | `ci-passed` | aggregates them. `success` AND `skipped` both pass. The ONE check the ruleset requires |
-| 4 | `arm-auto-merge` | in **parallel** with 1-3, not after |
+| #   | job                  | what                                                                                                                                                                                       |
+| --- | -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 1   | `changes`            | reads the modified paths and decides which of the jobs below run at all                                                                                                                    |
+| 2   | the test jobs        | Rust, the four NestJS apps' real AppModule, TS, social-service's integration specs on a real PostgreSQL, frontend, the two self-test suites - in parallel, each behind its own path filter |
+| 2b  | `dependency-ceiling` | ONLY on a Dependabot pull request: does a gate HERE exist that would see this update fail? A human's pull request carries no `updated-dependencies` block to decide on, so it skips        |
+| 3   | `ci-passed`          | aggregates them. `success` AND `skipped` both pass. The ONE check the ruleset requires                                                                                                     |
+| 4   | `arm-auto-merge`     | in **parallel** with 1-3, not after                                                                                                                                                        |
 
 **SOCIAL-SERVICE'S `*.integration.spec.ts` RUN IN CI SINCE 2026-10-15** (`test-social-integration`,
 a job in this file, not a fifth visible workflow). Each spec is gated on `SOCIAL_IT_DATABASE_URL`
@@ -47,8 +47,8 @@ on its OWN reading of "green" is a second opinion about which jobs matter. Measu
 for the ten minutes its suite took, and merged the moment `CI passed` concluded.
 
 **THE CEILING IS A CHECK SINCE 2026-09-03, AND THAT IS ONE HALF OF ONE MECHANISM FOR EVERY PULL
-REQUEST** (user: *"le auto-merge et les CI doivent considerer toutes les PR, les miennes ou
-dependabot"*). It was asked only inside `dependabot-auto-merge.yml` - a SECOND merge mechanism
+REQUEST** (user: _"le auto-merge et les CI doivent considerer toutes les PR, les miennes ou
+dependabot"_). It was asked only inside `dependabot-auto-merge.yml` - a SECOND merge mechanism
 beside GitHub's own auto-merge, so a Dependabot pull request and a human's took different routes to
 `main`. **#309 is the case**: `postgres 15-alpine -> 18-alpine`, fully GREEN, correctly refused,
 open for days.
@@ -71,11 +71,11 @@ and then `CI passed -> FAILURE`.
 
 **SO THE SWEEP ARMS AND NO LONGER MERGES**, and three things went with the merge:
 
-| Gone | Why it existed | Why it is gone |
-|---|---|---|
-| ~200 lines counting check-runs | to decide "is it green" | a SECOND OPINION about which jobs matter. `CI passed` is the ruleset's answer and is now the only one |
-| `gh workflow run ci.yml` | a `GITHUB_TOKEN` merge raises no `push`, so the merged combination was never tested | the App-token arming makes the merge raise it, exactly as for a human's pull request |
-| the ceiling, and its comment | to refuse what CI cannot judge | it is a binding CHECK now, and the annotation carries the same text the comment did |
+| Gone                           | Why it existed                                                                      | Why it is gone                                                                                        |
+| ------------------------------ | ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| ~200 lines counting check-runs | to decide "is it green"                                                             | a SECOND OPINION about which jobs matter. `CI passed` is the ruleset's answer and is now the only one |
+| `gh workflow run ci.yml`       | a `GITHUB_TOKEN` merge raises no `push`, so the merged combination was never tested | the App-token arming makes the merge raise it, exactly as for a human's pull request                  |
+| the ceiling, and its comment   | to refuse what CI cannot judge                                                      | it is a binding CHECK now, and the annotation carries the same text the comment did                   |
 
 **THE IDENTITY IS THE ONLY SILENT-WHEN-WRONG PART.** Auto-merge merges as whoever ARMED it, so a
 `GITHUB_TOKEN` arming would raise no `push`, leave `main` without a `CI passed` check, and make
@@ -119,13 +119,13 @@ token would refuse every later release, from a file that has nothing to do with 
 
 Runs on every pull request to `main`, and again on every push to `main`:
 
-| Job | What it checks |
-|---|---|
-| **Rust tests** | `cargo test` across all crates (`chat-gateway`, `call-service`, `mls-core`) |
-| **TypeScript tests** | for each of the four NestJS services: `lint`, `format:check`, `typecheck`, `build`, `test` |
-| **Frontend tests** | `vitest` in `frontend/` |
-| **Frontend lint** | `oxlint` + `oxvelte` + `oxfmt --check` + `svelte-check` (0 errors required) |
-| **Build** | the generated sources first - [`.github/actions/build-mls-wasm`](../../.github/actions/build-mls-wasm/action.yml) then `bun run proto:gen` - then `bun run build` |
+| Job                  | What it checks                                                                                                                                                    |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Rust tests**       | `cargo test` across all crates (`chat-gateway`, `call-service`, `mls-core`)                                                                                       |
+| **TypeScript tests** | for each of the four NestJS services: `lint`, `format:check`, `typecheck`, `build`, `test`                                                                        |
+| **Frontend tests**   | `vitest` in `frontend/`                                                                                                                                           |
+| **Frontend lint**    | `oxlint` + `oxvelte` + `oxfmt --check` + `svelte-check` (0 errors required)                                                                                       |
+| **Build**            | the generated sources first - [`.github/actions/build-mls-wasm`](../../.github/actions/build-mls-wasm/action.yml) then `bun run proto:gen` - then `bun run build` |
 
 **THE HARNESS SELF-TESTS ARE TRIGGERED BY THE APP'S MESSAGE FILE TOO, AND FOR TWELVE DAYS THEY WERE
 NOT.** `changes` said the rig "reads its own sources and nothing else", so `tools/cross-client-harness/`
@@ -173,8 +173,8 @@ repository and never about production, which is still serving the last release.
 ### Build and deploy an estate (`build.yml`, `serve-dev.yml`, `serve-prod.yml`)
 
 **IT HAS NO TRIGGER AT ALL: it is `workflow_call` only, and `release.yml` is its one caller**
-(user, 2026-09-02: *"Le deploiement (production, android, ios...) se fait au bump. Pas au push sur
-main."*). A push to `main` deploys nothing, and there is no `workflow_dispatch` either - a dispatch
+(user, 2026-09-02: _"Le deploiement (production, android, ios...) se fait au bump. Pas au push sur
+main."_). A push to `main` deploys nothing, and there is no `workflow_dispatch` either - a dispatch
 would simply be a second door. Retrying a half-failed deploy is "Re-run failed jobs" on the release
 run that already exists.
 
@@ -188,10 +188,10 @@ told, as three inputs - `sha`, `version`, `prerelease` - resolved ONCE by the ca
 job. Until 2026-09-03 it read `frontend/package.json` back off a checkout and decided for itself,
 which is how three chains came to each re-derive the same fact:
 
-| The release | What is deployed | Image tag it moves |
-| --- | --- | --- |
-| `v0.15.0-alpha.1` (pre-release) | `dev.canari-emse.fr`, plus the Play *internal* track and TestFlight | `:dev` |
-| `v0.15.0` (stable) | production, deployed BY `:v0.15.0` | `:latest` |
+| The release                     | What is deployed                                                    | Image tag it moves |
+| ------------------------------- | ------------------------------------------------------------------- | ------------------ |
+| `v0.15.0-alpha.1` (pre-release) | `dev.canari-emse.fr`, plus the Play _internal_ track and TestFlight | `:dev`             |
+| `v0.15.0` (stable)              | production, deployed BY `:v0.15.0`                                  | `:latest`          |
 
 1. `enumerate-services` names all eight services (no diff: every service is built every release)
 2. Builds the frontend against that estate's `VITE_*` set, then every image → GHCR, each tagged `v<version>`
@@ -207,8 +207,8 @@ read out of the manifest here is worth keeping, because it explains what NOT to 
 `github.event.release.prerelease` does not exist in a `workflow_run` context - the event was the
 bump run's completion, not the release - and `workflow_run.head_branch` carried the tag for a
 release-triggered bump but said `main` when the bump was dispatched by hand, which would silently
-have sent an alpha to production. So the manifest was the only honest source available *to a
-workflow woken by another workflow*. Now that all three arms are CALLED, the honest source is the
+have sent an alpha to production. So the manifest was the only honest source available _to a
+workflow woken by another workflow_. Now that all three arms are CALLED, the honest source is the
 caller: `release_kind()` in `.github/scripts/lib/release-preconditions.sh` answers stable-or-
 prerelease once, off the version being released, and the same answer reaches the estate, the Play
 track and the App Store channel. A hyphen in a semver version IS the definition, and there is now
@@ -229,9 +229,10 @@ A rollback does not revert a migration the newer release applied: read it before
 
 **`prod-deployed` is gone, and its replacement answers a different question.** That tag was the
 change detector's INPUT; the detector reads releases now, so the tag survives only as `prod-released`
+
 - the record of which commit production is serving, written by the deploy that made it true. The
-user took that deletion knowing its cost: **after an emergency push straight to `main`, nothing says
-which commit production is running** until the next release.
+  user took that deletion knowing its cost: **after an emergency push straight to `main`, nothing says
+  which commit production is running** until the next release.
 
 #### A deploy replaces nothing a member is talking to
 
@@ -259,11 +260,11 @@ in `depends_on` order):
 `infrastructure/lib/replace-modes.py` refuses the compose file BEFORE anything changes when a
 declaration cannot hold:
 
-| Mode | Meaning | Services | What it requires |
-| --- | --- | --- | --- |
-| `overlap` | two replicas at once, as above | gateway, chat-delivery, core, social, frontend-ssr, frontend | no host port, no volume, a healthcheck with `start_interval` |
-| `exclusive` | recreated in place - a short gap remains | media-service (its metadata index is one JSON file on `media_meta`), call-service (rooms in memory) | - |
-| `pinned` | a third-party image, never changed by a release | postgres, redis, garage, adminer, `edge` | not an image this repository builds |
+| Mode        | Meaning                                         | Services                                                                                            | What it requires                                             |
+| ----------- | ----------------------------------------------- | --------------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `overlap`   | two replicas at once, as above                  | gateway, chat-delivery, core, social, frontend-ssr, frontend                                        | no host port, no volume, a healthcheck with `start_interval` |
+| `exclusive` | recreated in place - a short gap remains        | media-service (its metadata index is one JSON file on `media_meta`), call-service (rooms in memory) | -                                                            |
+| `pinned`    | a third-party image, never changed by a release | postgres, redis, garage, adminer, `edge`                                                            | not an image this repository builds                          |
 
 **THE HOST PORT MOVED TO A CONTAINER THAT NEVER CHANGES.** Two replicas cannot both bind
 `127.0.0.1:8081`, so the frontend lost its port and a new `edge` service holds it: a pinned nginx in
@@ -328,7 +329,7 @@ One release, one commit, and the marker is a measurement instead of an assumptio
 check out `main` by name, which was a smaller version of the same defect: a merge landing between
 the two runs would ship a store bundle built from a different tree than production, and because
 those workflows recorded no marker there was nothing anywhere to contradict. The fix was the one the
-backlog said it needed - *deciding where the release's SHA is resolved ONCE for all three chains* -
+backlog said it needed - _deciding where the release's SHA is resolved ONCE for all three chains_ -
 and the answer is `bump.outputs.sha`. `release-chain.test.sh` asserts that no arm checks out
 `ref: main` and that all three receive that output, because this is a wiring property and wiring is
 what a file can be read for.
@@ -349,13 +350,13 @@ thing the dev estate did with the commit it was handed was claim to have deploye
 `[build, android, ios]`, so it waits behind the iOS build; measured on the last five releases, the
 gap between the bump resolving the commit and the box resolving `main` again is:
 
-| release | bump ends | box resets | gap |
-| --- | --- | --- | --- |
-| `v0.16.6` (production) | 19:45:12 | 20:07:45 | **22 min 33 s** |
-| `v0.16.6-alpha.7` (dev) | 19:29:05 | 19:35:13 | 6 min 08 s |
-| `v0.16.6-alpha.6` (dev) | 14:14:57 | 14:21:45 | 6 min 48 s |
-| `v0.16.6-alpha.5` (dev) | 01:19:09 | 01:24:34 | 5 min 25 s |
-| `v0.16.6-alpha.4` (dev) | 12:45:11 | 12:50:47 | 5 min 36 s |
+| release                 | bump ends | box resets | gap             |
+| ----------------------- | --------- | ---------- | --------------- |
+| `v0.16.6` (production)  | 19:45:12  | 20:07:45   | **22 min 33 s** |
+| `v0.16.6-alpha.7` (dev) | 19:29:05  | 19:35:13   | 6 min 08 s      |
+| `v0.16.6-alpha.6` (dev) | 14:14:57  | 14:21:45   | 6 min 48 s      |
+| `v0.16.6-alpha.5` (dev) | 01:19:09  | 01:24:34   | 5 min 25 s      |
+| `v0.16.6-alpha.4` (dev) | 12:45:11  | 12:50:47   | 5 min 36 s      |
 
 Auto-merge lands pull requests unattended throughout. Both boxes now reset to `inputs.sha`; the
 released commit is always an ancestor of `main` because the ruleset forbids a force-push, so
@@ -369,10 +370,10 @@ which correctly excludes `scheduled.yml`'s dev refresh - and asserts of each tha
 
 #### The dev estate is the PRE-RELEASE target, and the promotion is gone
 
-| The release | Jobs that run |
-| --- | --- |
+| The release | Jobs that run                                                                                    |
+| ----------- | ------------------------------------------------------------------------------------------------ |
 | pre-release | `release-kind`, `detect-changed-services`, `build-frontend`, `build-docker-images`, `deploy-dev` |
-| stable | the same four, then `deploy-to-server` |
+| stable      | the same four, then `deploy-to-server`                                                           |
 
 **`build-frontend-dev`, `build-frontend-images-dev` and `promote-dev-to-main` were deleted on
 2026-09-03.** The first two were a near-identical copy of the frontend build, kept only because one
@@ -448,32 +449,44 @@ of the pair set: exit 1 (a half-created pair must not read as "not configured").
 the stage it died at (`ak-stage-password`, `oidc-callback`, `verify`...) and the reason, never the
 password; the summary says the marker was not moved.
 
-**What the USER must create** (nothing here can; the script was exercised only against local fakes in
-`.github/scripts/tests/smoke-login.test.mjs`, never against the live MiConnect):
+**What it needs** - both secrets exist since 2026-10-18 (a dedicated external account with no
+admin right; it creates its own row on dev at first sign-in):
 
-| Name | Kind | Where | What |
-| --- | --- | --- | --- |
-| `DEV_SMOKE_USERNAME` | secret | `development` environment | the login of a DEDICATED MiConnect account used by nothing else |
+| Name                 | Kind   | Where                     | What                                                                                                                                                                   |
+| -------------------- | ------ | ------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `DEV_SMOKE_USERNAME` | secret | `development` environment | the login of a DEDICATED MiConnect account used by nothing else                                                                                                        |
 | `DEV_SMOKE_PASSWORD` | secret | `development` environment | its password; it must be able to pass the flow with NO second factor (the campaign's service-account path has none, [cross-client-campaign](cross-client-campaign.md)) |
-| `DEV_SMOKE_FLOW_SLUG` | variable, optional | repository or `development` | the slug of that no-MFA flow, when the authorize endpoint does not lead to it by default |
 
-The account must exist in MiConnect and be allowed on the Canari application; it creates its own row on
-dev at first sign-in, and holds no admin right. It reuses `DEV_AUTHENTIK_URL` and
-`DEV_AUTHENTIK_CLIENT_ID`, which dev already has. **First run**: the log prints the stage sequence
-(`ak-stage-identification > ak-stage-password > xak-flow-redirect` is the expected one); a different
-component named in the failure is the flow asking for a stage the account cannot answer. Because the
-flow's exact shape (a CSRF header, a consent stage) was not observable from here, the first real run
-is the check of this script - read it before trusting a green.
+It reuses `DEV_AUTHENTIK_URL` and `DEV_AUTHENTIK_CLIENT_ID`, which dev already has. The flow is NOT a
+variable: `serve-dev.yml` passes `SMOKE_FLOW_SLUG: password-login`, because MiConnect's default flow
+(`miconnect-auth`) is CAS-only - it identifies a password account and then DENIES it
+(`ak-stage-access-denied`).
+
+**The real shape (authentik 2026.8, first live run 2026-10-18)** - the first version was written
+against fakes and died on it with `flow executor answered HTTP 302`:
+
+- the walk starts on `/if/flow/password-login/?next=<authorize URL, ENCODED>` and hands the executor
+  that page's whole query string as `?query=`, as the flow interface does. **`next` raw loses
+  everything after its first `&`**: the flow then ends on an authorize URL holding only `client_id`;
+- an ACCEPTED stage answer is a **`302` back to the executor's own URL** (follow it with the jar), a
+  REFUSED one a `200` challenge carrying `response_errors`;
+- the stages are `ak-stage-identification > ak-stage-password > xak-flow-redirect`, the redirect
+  pointing at the authorize URL, which then `302`s to `/auth/callback?code=...` on the session cookie.
+  No consent stage and no CSRF header were needed.
+
+The fake in `.github/scripts/tests/smoke-login.test.mjs` copies that shape, the CAS-only denial
+included. A different component named in a failure is the flow asking for a stage the account cannot
+answer.
 
 ### The store arms (`ios.yml`, `android.yml`)
 
 Called by `release.yml` with the sha, the version and the release kind, so the Play track
 and the App Store channel cannot disagree about what is being released:
 
-| Workflow | Output | Stable | Pre-release |
-|---|---|---|---|
-| `android.yml` | `.aab` for Google Play | `production` track | `internal` track |
-| `ios.yml` | `.ipa` via `altool`, then the App Store version created, the build attached and the whole thing **submitted for review** | App Store review | TestFlight |
+| Workflow      | Output                                                                                                                   | Stable             | Pre-release      |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------ | ------------------ | ---------------- |
+| `android.yml` | `.aab` for Google Play                                                                                                   | `production` track | `internal` track |
+| `ios.yml`     | `.ipa` via `altool`, then the App Store version created, the build attached and the whole thing **submitted for review** | App Store review   | TestFlight       |
 
 **iOS USED TO STOP AT TESTFLIGHT, AND THAT WAS THE LAST ASYMMETRY BETWEEN THE TWO STORES.**
 `altool --upload-app` hands Apple the binary and returns - exactly right for a pre-release, and one
@@ -494,8 +507,8 @@ unanswerable.
 
 #### The Linux desktop build is SUSPENDED, not lost (2026-09-03)
 
-`appimage-release.yml` was deleted on the owner's decision - *"il n'y a actuellement aucune
-perspective de ce cote la"*. It worked: it built and attached a `.AppImage` to every release, and it
+`appimage-release.yml` was deleted on the owner's decision - _"il n'y a actuellement aucune
+perspective de ce cote la"_. It worked: it built and attached a `.AppImage` to every release, and it
 carried the same baked-origin assertion the store bundles do. Nothing was broken about it; there is
 simply no audience for a Linux desktop client right now, and a release workflow nobody wants costs
 about ninety seconds and ninety megabytes on every tag.
@@ -516,7 +529,7 @@ nothing else was adjusted to make its absence work - so restoring the file resto
 than deleted, because a published release is a record.
 
 **One runtime fact survives the removal and must not be tidied away with it.** On
-`tauri://localhost` - iOS, macOS *and* a Linux desktop build - WKWebView drops the refresh cookie,
+`tauri://localhost` - iOS, macOS _and_ a Linux desktop build - WKWebView drops the refresh cookie,
 which is why the client carries it in `X-Canari-Refresh` instead. That is a property of the engine,
 not of a workflow, and it stays true for anyone who builds the desktop target locally
 ([sessions](sessions.md#the-credential-a-client-carries-itself)).
@@ -529,7 +542,7 @@ difference is the backend the bundle is built against, and nothing else.
 
 **PLAY ACCEPTS TWO TRACKS NOW BECAUSE EACH ALPHA CARRIES ITS OWN `versionCode`.** One upload per job
 is still the rule - Google rejects re-uploading the same `versionCode` to a second track in one job,
-confirmed on v0.9.21 (*"Version code 9021 has already been used"*) - and what changed is that
+confirmed on v0.9.21 (_"Version code 9021 has already been used"_) - and what changed is that
 `bump-app-version.sh` bands the pre-release counter into the code, so an alpha and its stable are
 different numbers. See the version-bump section for the band.
 
@@ -558,10 +571,10 @@ duplicate the chain - the exact "a decision taken more than once" defect this re
 add a THIRD level of reusable-workflow permission plumbing, which is what killed this chain's first
 run. So the paths are told apart by the EVENT TYPE:
 
-| event | estate | Play | App Store |
-|---|---|---|---|
-| `prereleased` | `dev.canari-emse.fr` | `internal` | TestFlight |
-| `released` | `canari-emse.fr` | `production` | submitted for **review** |
+| event         | estate               | Play         | App Store                |
+| ------------- | -------------------- | ------------ | ------------------------ |
+| `prereleased` | `dev.canari-emse.fr` | `internal`   | TestFlight               |
+| `released`    | `canari-emse.fr`     | `production` | submitted for **review** |
 
 **AND THAT CLOSED A DEFECT NOTHING COULD SEE.** `published`, the old trigger, fires for BOTH kinds,
 so the "Set as a pre-release" checkbox was invisible and the version string was the only statement
@@ -578,7 +591,7 @@ and the same inputs to all three.
 **AND INSIDE EACH ARM, THE STORE COMES BEFORE THE GITHUB RELEASE ASSET** - which is not cosmetic
 ordering, it is what `v0.16.0` cost. Both arms attached their bundle to the GitHub release BEFORE
 publishing to the store. On the stable that attachment was refused (`Resource not accessible by
-integration`, pointing at *update-a-release*, with `Contents: write` granted and PRINTED by the
+integration`, pointing at _update-a-release_, with `Contents: write` granted and PRINTED by the
 runner), and `Upload to TestFlight` plus the App Store submission were both `skipped` behind it:
 production and Google Play received 0.16.0 and **Apple received nothing**, the run complaining only
 about the convenience. The Android arm had the identical ordering and merely happened to succeed.
@@ -601,16 +614,16 @@ asserted nowhere.
 `.github/scripts/release-preflight.sh` runs before the bump, so a refusal refuses the deployment,
 both store uploads and the version bump itself:
 
-| # | Question | Why a refusal rather than a report |
-|---|---|---|
-| 1 | Is the version a version? | a typo must not reach a store band computation |
-| 2 | Is the released commit on `main`? | everything downstream reads the trunk |
-| 3 | Did `CI passed` conclude **success** on THAT commit? | "if the tests are green" was written nowhere at all, and an ABSENT check is not a passing one |
-| 4 | Has the dev estate already served it? (stable only) | **production cannot be ahead of dev** |
-| 5 | Do the App Store release notes name THIS version? | Apple refuses a submission without them, and refusing at the END of a release costs the whole release |
+| #   | Question                                             | Why a refusal rather than a report                                                                    |
+| --- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| 1   | Is the version a version?                            | a typo must not reach a store band computation                                                        |
+| 2   | Is the released commit on `main`?                    | everything downstream reads the trunk                                                                 |
+| 3   | Did `CI passed` conclude **success** on THAT commit? | "if the tests are green" was written nowhere at all, and an ABSENT check is not a passing one         |
+| 4   | Has the dev estate already served it? (stable only)  | **production cannot be ahead of dev**                                                                 |
+| 5   | Do the App Store release notes name THIS version?    | Apple refuses a submission without them, and refusing at the END of a release costs the whole release |
 
-**Gate 4 is why this file exists** (user, 2026-09-03: *"Je ne veux pas un detecteur de retard, je ne
-veux pas que ca soit possible"*). It compares the released commit against the `dev-deployed` marker
+**Gate 4 is why this file exists** (user, 2026-09-03: _"Je ne veux pas un detecteur de retard, je ne
+veux pas que ca soit possible"_). It compares the released commit against the `dev-deployed` marker
 the dev deploy writes: `identical` or dev `ahead` both mean the code went through dev, and dev
 `behind` is a refusal naming how many commits are missing and telling the reader to publish a
 pre-release at that commit first. A detector was written first and deleted unshipped - the same
@@ -630,10 +643,10 @@ at **that bump commit** (`serve-dev` is handed `needs.bump.outputs.sha`, not the
 unrelated pull request merged, moving `main` one commit further. Neither commit could carry the
 stable:
 
-| Tag the stable at | Refused by | Because |
-| --- | --- | --- |
-| the commit dev served (`2e42ddac`) | **gate 2** | `main` no longer points at it |
-| `main`'s new head | **gate 4** | dev is `behind` by the merged commit, so production would be ahead of dev |
+| Tag the stable at                  | Refused by | Because                                                                   |
+| ---------------------------------- | ---------- | ------------------------------------------------------------------------- |
+| the commit dev served (`2e42ddac`) | **gate 2** | `main` no longer points at it                                             |
+| `main`'s new head                  | **gate 4** | dev is `behind` by the merged commit, so production would be ahead of dev |
 
 CLAUDE.md's one-line warning names gate 2, which is the first of those two; the second is the one you
 actually meet if you follow the instinct to tag the newest commit. **The fix is neither a bypass nor
@@ -710,7 +723,7 @@ other way round** - see below. Until 2026-09-04 those were two files, `dependabo
 and `auto-merge.yml`; `release-chain.test.sh` asserts neither has come back. The token is minted per run and expires in an hour, which is why an App beats a
 long-lived PAT here: there is no secret to rotate before it silently expires.
 
-**One side effect, and why it is harmless HERE.** A push made with an App token *does* raise a
+**One side effect, and why it is harmless HERE.** A push made with an App token _does_ raise a
 `push` event, where a `GITHUB_TOKEN` push does not — `arm-auto-merge.yml` documents that
 asymmetry and depends on it. The consequence is that `ci.yml` runs once on the bump commit, which is
 useful rather than costly. **It does not double a deploy, only because the three deploy libraries have no trigger at all** - it is
@@ -730,7 +743,6 @@ diff, printed `No version changes` and exited 0 without ever reaching the push. 
 proved the rest of the chain, but it made publishing a release a two-step manual dance. The App
 token is the fix; bump-before-tag stays available as the emergency path if the App is ever
 uninstalled.
-
 
 #### The bump promotes the release notes, and that is the one modification nothing was making (2026-09-03)
 
@@ -772,11 +784,11 @@ the drift was live. That is stated inside the section rather than corrected, bec
 **ONE ARGUMENT BECOMES THREE DIFFERENT STRINGS**, and conflating any two of them breaks a store
 upload rather than a build. `scripts/bump-app-version.sh` is the only place that decides:
 
-| Value | Example | Where it goes | Why |
-|---|---|---|---|
-| the full version | `0.15.0-alpha.1` | every `package.json`, `Cargo.toml`, `Cargo.lock` | all accept a semver pre-release, and `frontend/package.json` is what the client identifies itself by (`VITE_APP_VERSION`, so `minClientVersion` compares against it) |
-| the numeric core | `0.15.0` | `tauri.conf.json`, `CFBundleShortVersionString`, `MARKETING_VERSION` | Apple requires the short version to be numeric; a suffix there is an App Store validation failure |
-| the band | `1500001` | `bundle.android.versionCode`, `CFBundleVersion`, `CURRENT_PROJECT_VERSION` | one integer identifies a build on both stores, and every alpha needs its own |
+| Value            | Example          | Where it goes                                                              | Why                                                                                                                                                                  |
+| ---------------- | ---------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| the full version | `0.15.0-alpha.1` | every `package.json`, `Cargo.toml`, `Cargo.lock`                           | all accept a semver pre-release, and `frontend/package.json` is what the client identifies itself by (`VITE_APP_VERSION`, so `minClientVersion` compares against it) |
+| the numeric core | `0.15.0`         | `tauri.conf.json`, `CFBundleShortVersionString`, `MARKETING_VERSION`       | Apple requires the short version to be numeric; a suffix there is an App Store validation failure                                                                    |
+| the band         | `1500001`        | `bundle.android.versionCode`, `CFBundleVersion`, `CURRENT_PROJECT_VERSION` | one integer identifies a build on both stores, and every alpha needs its own                                                                                         |
 
 **THE BAND IS `(major*1e6 + minor*1e3 + patch) * 100 + rank`, `rank` = N for `-alpha.N` and 99 for a
 stable.** 99 and not 0: rank 0 would put `0.15.0` BELOW every alpha of `0.15.0`, and a store refuses
@@ -805,7 +817,7 @@ asserts the ordering directly (31 assertions).
 
 A stable used to be built on the commit its tag named and pushed to `main`, so it was REFUSED the
 moment anything merged after that commit - each merge during a release cost a new tag. Now (user:
-*"une release n'opere que sur le tag de la derniere pre-release"*):
+_"une release n'opere que sur le tag de la derniere pre-release"_):
 
 - **Resolve.** `release.yml`'s preflight picks the highest `vX.Y.Z-label` tag of the stable's own
   version (`latest_prerelease_tag`, version order) and resolves THAT commit once; no such tag is an
@@ -827,7 +839,6 @@ moment anything merged after that commit - each merge during a release cost a ne
 ## GitHub Secrets
 
 See [`infrastructure/MIGRATION.md`](../../infrastructure/MIGRATION.md) (section 3) for the full secrets inventory.
-
 
 **A credential is real in THREE places, not two.** The CD regenerates `infrastructure/.env` from the
 repo secrets, so a value set over SSH lasts until the next deploy. It must therefore be a GitHub
@@ -851,10 +862,10 @@ changing — but nothing schedules it either, which is why it is written down he
 
 `serve-prod.yml` makes this safe by refusing every failure mode it can see:
 
-| Step | What it does |
-|---|---|
-| l.498 | Fails the deploy outright when `JWT_SECRET` is absent — no accidental default |
-| l.538 | Upserts it into `infrastructure/.env` on the server |
+| Step      | What it does                                                                                                            |
+| --------- | ----------------------------------------------------------------------------------------------------------------------- |
+| l.498     | Fails the deploy outright when `JWT_SECRET` is absent — no accidental default                                           |
+| l.538     | Upserts it into `infrastructure/.env` on the server                                                                     |
 | l.863-869 | Re-reads the value **from inside the running core-service container** and compares its sha256 against the GitHub secret |
 
 That last check is what makes a rotation believable: a deploy where the new secret did not actually
@@ -865,7 +876,7 @@ the old key.
 none should be added: the grace period is paid for with a second step that is invisible and
 therefore never taken (Le Cercle's production is the standing proof — its old secret still signed
 sessions months after the rotation "happened"), and it is exactly backwards for the case you
-actually rotate in, a leak, where the old key must die *now*. Canari signs in through Authentik, so
+actually rotate in, a leak, where the old key must die _now_. Canari signs in through Authentik, so
 the cost of the hard cut is one mostly transparent SSO redirect.
 
 **A rotation is not the everyday revocation lever.** Signing one device out, or ending one stolen
@@ -880,12 +891,12 @@ All service images are published to GitHub Container Registry:
 ghcr.io/emse-students/canari/<service>:<tag>
 ```
 
-| Tag | Meaning | Moved by |
-|---|---|---|
-| `latest` | the newest stable's images (informational: production deploys by `v<version>`) | a STABLE release |
-| `dev` | what the dev estate is deploying | a PRE-RELEASE |
-| `<sha>` | the immutable one - this exact commit | every release |
-| `v0.15.0` / `v0.15.0-alpha.1` | the release that produced it; **what production deploys** | every release |
+| Tag                           | Meaning                                                                        | Moved by         |
+| ----------------------------- | ------------------------------------------------------------------------------ | ---------------- |
+| `latest`                      | the newest stable's images (informational: production deploys by `v<version>`) | a STABLE release |
+| `dev`                         | what the dev estate is deploying                                               | a PRE-RELEASE    |
+| `<sha>`                       | the immutable one - this exact commit                                          | every release    |
+| `v0.15.0` / `v0.15.0-alpha.1` | the release that produced it; **what production deploys**                      | every release    |
 
 **The two moving tags never cross**, and that is what lets one registry feed two estates from two
 different commits. Production is deployed by the release's `v<version>`; dev by its moving `dev`
@@ -905,14 +916,14 @@ is on
 only thing that deploys, and its deploy job runs on the machine it deploys to. Nothing deploys
 across the network.**
 
-| Repository | Forge | Runner | Scope | Machine |
-| --- | --- | --- | --- | --- |
-| **Canari** | GitHub | `canari` | ORG, group `canari`, selected to this repository | the target (**registered 2026-09-24, stopped and disabled until the estates move**) |
-| **Portail-etu** | GitHub | `portail-etu` | ORG, group `portail-etu`, selected to that repository | the target |
-| **Le Cercle** | `gitlab.emse.fr` | `cercle-portail` | project, tag `cercle-portail` | the target, **registered PAUSED** |
-| **MiConnect** | none | - | - | the target, deployed by hand: no pipeline has ever touched it |
-| **Sky** | GitHub | `sky` | REPOSITORY | the old VM |
-| **MiGallery** | GitHub | `MiGallery` | REPOSITORY | the old VM |
+| Repository      | Forge            | Runner           | Scope                                                 | Machine                                                                             |
+| --------------- | ---------------- | ---------------- | ----------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| **Canari**      | GitHub           | `canari`         | ORG, group `canari`, selected to this repository      | the target (**registered 2026-09-24, stopped and disabled until the estates move**) |
+| **Portail-etu** | GitHub           | `portail-etu`    | ORG, group `portail-etu`, selected to that repository | the target                                                                          |
+| **Le Cercle**   | `gitlab.emse.fr` | `cercle-portail` | project, tag `cercle-portail`                         | the target, **registered PAUSED**                                                   |
+| **MiConnect**   | none             | -                | -                                                     | the target, deployed by hand: no pipeline has ever touched it                       |
+| **Sky**         | GitHub           | `sky`            | REPOSITORY                                            | the old VM                                                                          |
+| **MiGallery**   | GitHub           | `MiGallery`      | REPOSITORY                                            | the old VM                                                                          |
 
 **Two runners on one machine are kept apart by the GROUP, never by the label.** Every runner here
 carries the same default `self-hosted,Linux,X64`, so a label decides nothing; `visibility=selected`
@@ -930,8 +941,8 @@ estates being altered at once for a gain that waits perfectly well. Until then, 
 listing is a complete map of who may execute code on the target and an incomplete one of the
 estate, which is the one thing to remember when reading it.
 
-**ONE ACCOUNT, DELIBERATELY, AND THE HALF-MEASURE WAS REFUSED** (user, 2026-09-24: *"Soit on
-separe tout, soit on rassemble tout."*). Both GitHub runners on the target run as one
+**ONE ACCOUNT, DELIBERATELY, AND THE HALF-MEASURE WAS REFUSED** (user, 2026-09-24: _"Soit on
+separe tout, soit on rassemble tout."_). Both GitHub runners on the target run as one
 service account, and its group is `docker`, which is root-equivalent. So the group decides WHERE a job
 lands and not what it may touch once there. The account detail is kept privately.
 
@@ -1014,14 +1025,14 @@ is. A stable goes all the way on both stores. **Nothing here is reached by a pus
 
 ### The web goes last, and only if both stores took the same version
 
-Since 2026-09-04 (user: *"j'aimerais que toutes les versions soient toujours alignees [...] on
-pourrait faire en sorte que le deploiement sur les stores et sur le web soit coordonne ?"*).
+Since 2026-09-04 (user: _"j'aimerais que toutes les versions soient toujours alignees [...] on
+pourrait faire en sorte que le deploiement sur les stores et sur le web soit coordonne ?"_).
 
 **What "aligned" can and cannot mean.** Store AVAILABILITY is never simultaneous - Apple reviews in
 days, Play rolls out over hours - so no gate can make three destinations live at the same instant,
 and one claiming to would be lying. What IS enforceable is the useful half: **the web never serves
 a version a store refused.** A build that fails to sign, an `.aab` Play rejects, an App Store
-submission answered with a 500 - each now leaves `production` *skipped* and production serving the
+submission answered with a 500 - each now leaves `production` _skipped_ and production serving the
 previous release, instead of a web estate a version ahead of every phone.
 
 **Why the two estates are separate calls.** A called workflow cannot depend on a job of its caller,
@@ -1041,8 +1052,8 @@ again. The permissions became exact as a side effect - the single `deploy` job h
 UNION of what both halves needed, so the build jobs ran with a token that could move release
 markers and the estate jobs with one that could push images.
 
-**And the release kind is asked ONCE** (user, 2026-09-07: *"faire la dichotomie plus tot dans
-l'arborescence"*). `preflight` resolved it, and it was then carried DOWN as `prerelease` and
+**And the release kind is asked ONCE** (user, 2026-09-07: _"faire la dichotomie plus tot dans
+l'arborescence"_). `preflight` resolved it, and it was then carried DOWN as `prerelease` and
 re-tested in eight places, each callee re-deriving the same fork for itself. It becomes an estate
 NAME at the fork - `dev` or `production` - and below that point nothing asks again: neither estate
 workflow mentions a pre-release at all, and `build.yml` is simply told which estate it is building
@@ -1084,7 +1095,7 @@ a companion object, a plugin command missing from its ACL: none of these are vis
 build (`:app:compileUniversalReleaseKotlin`) is the first real Kotlin compile — a debug build does
 not exercise it.
 
-### A green run is not proof that *your* file compiled
+### A green run is not proof that _your_ file compiled
 
 The iOS `project.pbxproj` is hand-maintained (there is no xcodegen here), so a source file that is
 in the repository but absent from the target's build phase is **skipped, not failed**. The run is
@@ -1180,7 +1191,6 @@ generic `*.lock` line: last matching pattern wins, and for two releases a `*.loc
 file silently overrode the `!apps/*/Cargo.lock` written above it. `frontend/src-tauri/Cargo.lock`
 survived only because a tracked file ignores `.gitignore` entirely.
 
-
 **A generated file the repo COMMITS needs both halves or neither** - the bump must patch it, and
 `.gitignore` must really keep it. Worse than either half is a generated file **the formatter also
 owns**: the Tauri plugin ACL outputs (`plugins/*/permissions/{autogenerated,schemas}/`) were written
@@ -1215,15 +1225,15 @@ reason: a `pull_request` run from Dependabot gets no secrets, so the arming job 
 the base repository's context, with its secrets, for every pull request - so one file now covers the
 whole population. What went with the sweep, and what did not:
 
-| The sweep did | Now |
-| --- | --- |
-| Armed Dependabot's pull requests | `arm-auto-merge.yml`, for everybody, on `pull_request_target` |
-| Refused updates this repository has no gate for | `dependency-ceiling`, a job of `ci.yml` feeding `ci-passed` |
-| Asked Dependabot to rebase a branch whose gates had moved | **Nothing, and nothing did before** - see below |
-| Failed hourly while any branch was stuck, mailing the owner every time | Gone with the cron |
+| The sweep did                                                          | Now                                                           |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------- |
+| Armed Dependabot's pull requests                                       | `arm-auto-merge.yml`, for everybody, on `pull_request_target` |
+| Refused updates this repository has no gate for                        | `dependency-ceiling`, a job of `ci.yml` feeding `ci-passed`   |
+| Asked Dependabot to rebase a branch whose gates had moved              | **Nothing, and nothing did before** - see below               |
+| Failed hourly while any branch was stuck, mailing the owner every time | Gone with the cron                                            |
 
 **The rebuild half never worked, which is why deleting it loses nothing that ran.**
-`@dependabot recreate` and `@dependabot rebase` authorise by PUSH ACCESS, and an App *installation*
+`@dependabot recreate` and `@dependabot rebase` authorise by PUSH ACCESS, and an App _installation_
 is not an account with push access: `Contents: write` is not the same permission. Measured refused
 ten times out of ten, on eight pull requests, with two identities (`github-actions[bot]` and the
 `canari-auto-merge` App). The underlying question - can a pull request that was green against an
@@ -1234,15 +1244,15 @@ the release, which is the only place it changes anything.
 
 **Nobody is assigned to any of it.** `.github/CODEOWNERS` requested a review from two humans on every
 pull request in a repository whose written model is that no approval is required (user, 2026-08-31:
-*"Je prefere blinder de test et faire les choses automatiquement qu'avoir une review humaine qui
-n'arrive jamais"*). It was deleted on 2026-09-04 with the sweep, for the same reason: a notification
+_"Je prefere blinder de test et faire les choses automatiquement qu'avoir une review humaine qui
+n'arrive jamais"_). It was deleted on 2026-09-04 with the sweep, for the same reason: a notification
 about a decision nobody makes.
 
 ### Every update merges onto `main`, and what protects production is that a merge does not deploy
 
 For one day (2026-09-02) all six blocks of `dependabot.yml` carried `target-branch: "dev"`, asked by
-the user (*"Est-ce qu'on pourrait dire a Dependabot de push sur la branche dev au lieu de la prod
-?"*). The user cancelled the two-branch model the following day; the lines are gone and updates
+the user (_"Est-ce qu'on pourrait dire a Dependabot de push sur la branche dev au lieu de la prod
+?"_). The user cancelled the two-branch model the following day; the lines are gone and updates
 merge onto `main` again.
 
 **The danger they answered has MOVED, not gone.** Every gate in this repository answers a question
@@ -1328,7 +1338,7 @@ file rather than an argument about cargo.** `links` is what makes cargo export a
 the two keys `tauri-build` needs - `android_path` and `ios_path`. Without `links` cargo does not
 propagate them at all, so `tauri-build` never learns where the plugin's Kotlin lives.
 `frontend/src-tauri/gen/android/tauri.settings.gradle` is that propagation's OUTPUT and says so in
-its first line (*"THIS IS AN AUTOGENERATED FILE"*):
+its first line (_"THIS IS AN AUTOGENERATED FILE"_):
 
 ```
 include ':tauri-plugin-customtabs'
@@ -1341,7 +1351,7 @@ never compiles into the app, and `open_custom_tab` fails at runtime on a phone *
 still builds green** - the exact class three iOS defects already came from. So the option is closed
 for the whole local-plugin family, not for one crate. **Undeclaring the two directories** is the
 other refusal: honest bookkeeping, no risk, and it makes the artefact that ships to phones
-permanently unmanaged, which is what *"un projet qui peut vivre tout seul"* is against.
+permanently unmanaged, which is what _"un projet qui peut vivre tout seul"_ is against.
 
 **So both stay declared and are updated deliberately, behind two named mechanisms**, because
 "somebody remembers" is not one. `dependabot-cargo-reach.test.sh` (in `make test-ci-scripts`) derives
@@ -1356,8 +1366,8 @@ why the report is an issue and not a red run, and the four ways an empty answer 
 **A ceiling on an automatic merge is a statement about your tests, never about the version number.**
 The first ceiling written here refused every major and every `0.x` minor, and the measurement that
 condemned it is that 33 pull requests were open and it refused 28 - a queue nobody drains is worse
-than the merge it prevented (user, 2026-08-31: *"Je prefere blinder de test et faire les choses
-automatiquement qu'avoir une review humaine qui n'arrive jamais"*).
+than the merge it prevented (user, 2026-08-31: _"Je prefere blinder de test et faire les choses
+automatiquement qu'avoir une review humaine qui n'arrive jamais"_).
 
 `base64` 0.22 -> 0.23 and `axum` 0.7 -> 0.8 break by **not compiling**, which is exactly what the
 suite sees. What a suite cannot see has no relation to semver: a dependency that **writes a format
@@ -1365,9 +1375,9 @@ something else must still read** changes behaviour while compiling perfectly. So
 list of dependencies whose failure mode is unobservable here, and **every entry names the test that
 retires it**:
 
-| Family | Why the suite is blind to it | The test that retires it |
-|---|---|---|
-| `aes-gcm` | it opens a channel push sealed by ANOTHER member's device, so both directions are cross-version, and `src-tauri` freezes neither | a channel-push fixture |
+| Family                                                    | Why the suite is blind to it                                                                                                                            | The test that retires it                                                                                                   |
+| --------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `aes-gcm`                                                 | it opens a channel push sealed by ANOTHER member's device, so both directions are cross-version, and `src-tauri` freezes neither                        | a channel-push fixture                                                                                                     |
 | `postgres`, `redis`, `garage` - **a major crossing only** | a datastore major is refused by the data ALREADY ON DISK, and every gate here creates its cluster from an EMPTY volume - the one case that always works | starting the new major against a data directory written by the old one, and proving the documented upgrade path carries it |
 
 **Six families have already LEFT this table, which is what a refusal is for** - it names a missing
@@ -1450,7 +1460,7 @@ job's `sparse-checkout` for exactly that reason - the two move together).
 
 **And the arm is no wider than the hazard, which took a second draft to get right.** Refusing the
 whole NAME was the obvious reaction to the outage, and it is the opposite mistake: an on-disk format
-is stable *within* a major, so `redis 8.8-alpine -> 8.10-alpine` cannot meet the failure mode, and
+is stable _within_ a major, so `redis 8.8-alpine -> 8.10-alpine` cannot meet the failure mode, and
 two open pull requests (#306, #308) would have been frozen by it - turning "silently moving" into
 "silently ageing", which is precisely what these digest pins were given a Dependabot ecosystem to
 prevent. So the discriminator is the major **production runs**, read out of the compose file rather
@@ -1506,12 +1516,12 @@ auto-merged on that green.
 
 So each row states WHICH question its gap answers, and only one of the four answers lifts anything:
 
-| `evidence` | What it demonstrates | Lifts |
-| --- | --- | --- |
-| `none` | There is no gap; dev runs production's major. | nothing |
-| `fresh_cluster` | The new major serves a cluster it created from empty. This is what every gate here already proves, and it is the one case that always works. | nothing |
-| `logical_restore` | The new major serves this application's schema and data loaded into it - a dump and restore, or since 2026-10-16 dev's schema-only restore plus the fictional seed. Worth having - it catches a schema or query the new major rejects - but the cluster is still one the new major built. **This is what the dev environment produces on its own.** | nothing |
-| `in_place_upgrade` | The new major serves production's OWN data directory, carried across by the documented upgrade path, with the mount layout the new image expects. | the refusal named in `lifts` |
+| `evidence`         | What it demonstrates                                                                                                                                                                                                                                                                                                                                | Lifts                        |
+| ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------- |
+| `none`             | There is no gap; dev runs production's major.                                                                                                                                                                                                                                                                                                       | nothing                      |
+| `fresh_cluster`    | The new major serves a cluster it created from empty. This is what every gate here already proves, and it is the one case that always works.                                                                                                                                                                                                        | nothing                      |
+| `logical_restore`  | The new major serves this application's schema and data loaded into it - a dump and restore, or since 2026-10-16 dev's schema-only restore plus the fictional seed. Worth having - it catches a schema or query the new major rejects - but the cluster is still one the new major built. **This is what the dev environment produces on its own.** | nothing                      |
+| `in_place_upgrade` | The new major serves production's OWN data directory, carried across by the documented upgrade path, with the mount layout the new image expects.                                                                                                                                                                                                   | the refusal named in `lifts` |
 
 It fails closed on every other input, proved against fixtures: the wrong evidence value, an
 `in_place_upgrade` with an empty `proof`, a missing gap file, a different major, and a sibling image
@@ -1550,14 +1560,14 @@ before any release.
 can be the same on every platform, and in the GitHub console at the version bump). Until that day it
 reached exactly ONE of the three:
 
-| Destination | Before | Now |
-| --- | --- | --- |
-| App Store | `whatsNew` on every version localization, then the version is submitted for review | unchanged |
-| Google Play | **nothing at all** | `whatsnew-fr-FR` and `whatsnew-en-US`, via `whatsNewDirectory` |
-| GitHub release | whatever a human typed, or nothing | the same notes, in a marker-delimited block |
+| Destination    | Before                                                                             | Now                                                            |
+| -------------- | ---------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| App Store      | `whatsNew` on every version localization, then the version is submitted for review | unchanged                                                      |
+| Google Play    | **nothing at all**                                                                 | `whatsnew-fr-FR` and `whatsnew-en-US`, via `whatsNewDirectory` |
+| GitHub release | whatever a human typed, or nothing                                                 | the same notes, in a marker-delimited block                    |
 
-**PLAY'S SILENCE IS THE FINDING, AND IT IS THE ASYMMETRY THAT HID IT.** A *wrong* what's-new is
-refused by the API; a *missing* one is not - the field simply keeps whatever it held. So every
+**PLAY'S SILENCE IS THE FINDING, AND IT IS THE ASYMMETRY THAT HID IT.** A _wrong_ what's-new is
+refused by the API; a _missing_ one is not - the field simply keeps whatever it held. So every
 release told iOS users what had changed and left Android users with the previous text, and no gate,
 log line or review would ever have said so. It was found by asking what read `store/whats-new.txt`:
 `submit.mjs`, and nothing else.
@@ -1620,9 +1630,9 @@ requests:
 
 1. **The re-triggered `pull_request` run is created as `action_required`**, parked until a human
    clicks Approve. A push authored by Dependabot is not. Twenty runs were sitting there.
-2. **Dependabot then refuses the branch permanently**: *"Looks like this PR has been edited by
-   someone other than Dependabot. That means Dependabot can't rebase it - sorry!"*
-3. The branch was no longer *stale* either - `update-branch` had made its base current `main` - so it
+2. **Dependabot then refuses the branch permanently**: _"Looks like this PR has been edited by
+   someone other than Dependabot. That means Dependabot can't rebase it - sorry!"_
+3. The branch was no longer _stale_ either - `update-branch` had made its base current `main` - so it
    passed straight through to a merge decision reading checks that would never complete.
 
 **The step written to drain the queue was the one filling it.** Nothing in this repository writes to
@@ -1646,9 +1656,9 @@ lists: a grouped pull request carries several, and an update Dependabot could no
 `.github/scripts/lib/declared-duplicates.mjs` holds ONE list, read by two self-tests asking
 opposite questions.
 
-| Gate | Question | Fails when |
-| --- | --- | --- |
-| `declared-duplicates.test.mjs` | do the copies we DECIDED on still agree? | a group drifts - three of four agreeing is the failure it names |
+| Gate                             | Question                                   | Fails when                                                                |
+| -------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------- |
+| `declared-duplicates.test.mjs`   | do the copies we DECIDED on still agree?   | a group drifts - three of four agreeing is the failure it names           |
 | `undeclared-duplicates.test.mjs` | is this duplicate one somebody decided on? | a function body is identical across two files and appears in neither list |
 
 The second was written on 2026-09-16 because the first is blind to the dangerous half: a copy
@@ -1698,11 +1708,11 @@ nobody was waiting on.
 `.github/scripts/audit-dependencies.sh` is the only place that runs `bun audit`, and it answers with
 three exit codes rather than two:
 
-| Exit | What it means | Who decides what it costs |
-| --- | --- | --- |
-| `0` | the registry answered and the tree is clean | - |
-| `1` | the registry answered and named an advisory | always a failure |
-| `2` | the registry never answered, after three attempts | **the caller** |
+| Exit | What it means                                     | Who decides what it costs |
+| ---- | ------------------------------------------------- | ------------------------- |
+| `0`  | the registry answered and the tree is clean       | -                         |
+| `1`  | the registry answered and named an advisory       | always a failure          |
+| `2`  | the registry never answered, after three attempts | **the caller**            |
 
 **A `2` is not a verdict about the tree**, so what it costs is passed in as
 `registry_outage_is_failure`, an input on `code-analysis.yml`:
@@ -1735,49 +1745,49 @@ sensibly blocked by one, and putting it there would wall every merge on a fact a
 **It answers the four causes of an empty list separately**, which is the whole of its design: a 200
 with no alerts is health; a 403 means the token may not read alerts and NOTHING looked; a 404 means
 the feature is disabled or the slug is wrong; no response is a transport failure. The last three
-fail by name. The same rule as the `2` above, in a different place: *a refusal is not a clean
-report.*
+fail by name. The same rule as the `2` above, in a different place: _a refusal is not a clean
+report._
 
 **The unknown case fails CLOSED, and that stopped being hypothetical within the hour.** Only a
 narrow list of recognised transport failures is classified as silence; anything else is a finding.
 **The wording differs by bun version** - the same npm 503, the same evening, in two repositories:
 
-| bun | the line |
-| --- | --- |
+| bun   | the line                                                                         |
+| ----- | -------------------------------------------------------------------------------- |
 | 1.4.0 | `error: POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - 503` |
-| 1.3.8 | `error: audit request failed (status 503)` |
+| 1.3.8 | `error: audit request failed (status 503)`                                       |
 
 The portal met the second with a classifier that knew only the first, and it did exactly what it
 should: reported a finding, went red, and was fixed. Both shapes are now asserted, so a repository's
-bun version stops being able to decide the verdict. *A classifier that fails open on its own blind
-spot stops auditing and reports success for ever.* `audit-dependencies.test.sh` asserts that direction explicitly, alongside
+bun version stops being able to decide the verdict. _A classifier that fails open on its own blind
+spot stops auditing and reports success for ever._ `audit-dependencies.test.sh` asserts that direction explicitly, alongside
 both sides of the distinction, the policy flip, and the fact that the `--ignore=` flags the one
 suppressed advisory rests on still reach the tool.
 
 **AND THE RATE IS MEASURED, because the rule says a fallback's name is not believed until it is -
 AND THE FIRST MEASUREMENT WAS WRONG, in the way this repository's rules name explicitly.** It
-counted `grep -c` over a log fetched per run and reported *six 503s in fifty requests, no exhausted
-budget*. Two of those runs had returned **no log at all**, and a count over an empty string is
+counted `grep -c` over a log fetched per run and reported _six 503s in fifty requests, no exhausted
+budget_. Two of those runs had returned **no log at all**, and a count over an empty string is
 zero: an absence of data read as a verdict. The re-measurement checks every log's size and its step
 marker first, and reports `UNREADABLE` rather than clean - the guard is the finding, not the
 numbers.
 
 Twelve readable `ci.yml` runs on 2026-09-04, five trees each, sixty tree-audits:
 
-| run | 503s | exhausted | which tree |
-| --- | --- | --- | --- |
-| 33857687014 | 2 | 0 | `chat-delivery-service`, `media-service` |
-| 33854391020 | 6 | 0 | `core-service`, `media-service`, `frontend` |
-| 33851910609 | 3 | 0 | `media-service`, `social-service`, `frontend` |
-| 33850722894 | 4 | **2** | `chat-delivery-service`, `media-service` |
-| 33849668875 | 4 | **2** | `core-service`, `social-service` |
-| 33847721971 | 5 | **1** | `media-service`, `social-service` |
-| 33836519287 | 0 | 0 | - |
-| 33835252690 | 1 | 0 | `core-service` |
-| 33833975381 | 1 | 0 | `core-service` |
-| 33832780239 | 0 | 0 | - |
-| 33831909478 | 0 | 0 | - |
-| 33831223145 | 0 | 0 | - |
+| run         | 503s | exhausted | which tree                                    |
+| ----------- | ---- | --------- | --------------------------------------------- |
+| 33857687014 | 2    | 0         | `chat-delivery-service`, `media-service`      |
+| 33854391020 | 6    | 0         | `core-service`, `media-service`, `frontend`   |
+| 33851910609 | 3    | 0         | `media-service`, `social-service`, `frontend` |
+| 33850722894 | 4    | **2**     | `chat-delivery-service`, `media-service`      |
+| 33849668875 | 4    | **2**     | `core-service`, `social-service`              |
+| 33847721971 | 5    | **1**     | `media-service`, `social-service`             |
+| 33836519287 | 0    | 0         | -                                             |
+| 33835252690 | 1    | 0         | `core-service`                                |
+| 33833975381 | 1    | 0         | `core-service`                                |
+| 33832780239 | 0    | 0         | -                                             |
+| 33831909478 | 0    | 0         | -                                             |
+| 33831223145 | 0    | 0         | -                                             |
 
 **Twenty-six 503s in sixty requests - 43% - and FIVE exhausted attempt budgets, which is five trees
 that went unaudited and were tolerated.** Two further runs were unreadable and are excluded rather
@@ -1785,8 +1795,8 @@ than scored.
 
 **THE RATE IS NOT STATIONARY, and that is the part a single number hides.** Read the table
 bottom-up: the older six runs score 0, 0, 0, 0, 1, 1 and the newer six score 2, 6, 3, 4, 4, 5. The
-endpoint degraded across one day. *A predicate that named the last incident is not the predicate
-that names the next one* applies to rates as much as to queries: any threshold set on the bottom
+endpoint degraded across one day. _A predicate that named the last incident is not the predicate
+that names the next one_ applies to rates as much as to queries: any threshold set on the bottom
 half of this table is already false at the top.
 
 **WHAT THE DISTRIBUTION RULES OUT.** Not this pipeline's own request rate - the 503 lands on the
@@ -1814,8 +1824,8 @@ without making it red. The block above `dependency-audit` in `ci.yml` is the onl
 then 40s, so three attempts span a minute plus `bun audit`'s own timeout. Three consecutive 503s are
 therefore not three independent draws; they are one npm blip lasting minutes. That is what the
 `0.16.2-alpha.1` bump commit met - three attempts, three 503s, exit 2, correct. The pass went red
-anyway, because the CALLER could not read the answer, and that defect is above. *The classifier's
-rate says the design is right; only its reader was wrong.*
+anyway, because the CALLER could not read the answer, and that defect is above. _The classifier's
+rate says the design is right; only its reader was wrong._
 
 ### A Tauri plugin bump is two halves, and the crate half can be a runtime bump (2026-10-08)
 
