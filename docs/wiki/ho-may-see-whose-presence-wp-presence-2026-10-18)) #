@@ -1,0 +1,1 @@
+| GET | `/api/presence` | yes | Online presence of the asked users the caller shares a conversation or a community with ([audience](services/chat-gateway.md

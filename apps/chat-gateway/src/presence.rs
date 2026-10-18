@@ -1,7 +1,8 @@
 // HTTP handlers for the presence endpoints.
 //
 // These are plain Axum handlers with no dependency on the WebSocket
-// lifecycle; they only need `AppState` to read from Redis and the
+// lifecycle; they only need `AppState` to read from Redis, the presence
+// audience (`audience.rs`) and the
 // in-memory `connected_users` map.
 
 use axum::{
@@ -9,6 +10,7 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json},
 };
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use crate::state::AppState;
@@ -24,101 +26,171 @@ pub struct PresenceQuery {
 
 // ── GET /api/presence ─────────────────────────────────────────────────────
 
-/// Whether nginx identified the caller - the presence of a non-empty `X-User-Id`.
+/// The most user ids one `GET /api/presence` may ask about. The URL itself bounds an honest
+/// client well below this (a few hundred uuids fill nginx's header buffer); the bound exists so
+/// the audience question sent to the services is bounded by THIS service, not by a proxy setting.
+pub const MAX_PRESENCE_USERS: usize = 1000;
+
+/// The caller nginx identified - a non-empty `X-User-Id`, trimmed and lowercased (the spelling
+/// every Nest guard stores ids under) - or `None` for an anonymous caller.
 ///
 /// nginx sets this header after the auth sub-request and it must never be accepted from an
 /// untrusted client; that is the same contract `x-global-admin` is read under just below, and the
 /// same one `NginxAuthGuard` enforces on the Nest services. A blank value is treated as absent:
 /// `auth_request_set` yields an empty string when the sub-request set no such header, so "" is
 /// exactly what an anonymous caller arrives with.
-fn is_authenticated(headers: &HeaderMap) -> bool {
+fn caller_id(headers: &HeaderMap) -> Option<String> {
     headers
         .get("x-user-id")
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| !v.trim().is_empty())
+        .map(|v| v.trim().to_lowercase())
+        .filter(|v| !v.is_empty())
 }
 
-/// Return a JSON map of `{ userId -> bool }` indicating which users have at least
-/// one active device presence key in Redis.
+/// The ids a `users=` query names: trimmed, blanks dropped, duplicates collapsed, order kept.
+fn requested_ids(users: &str) -> Vec<String> {
+    let mut seen = HashSet::new();
+    users
+        .split(',')
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+        .filter(|id| seen.insert(id.to_string()))
+        .map(str::to_string)
+        .collect()
+}
+
+/// A 503 with a JSON body. Never a 401/403: a client may only sign out on those, and "the gateway
+/// could not answer" is not "you are not allowed".
+fn unavailable(reason: &str) -> axum::response::Response {
+    (
+        StatusCode::SERVICE_UNAVAILABLE,
+        Json(serde_json::json!({ "error": reason })),
+    )
+        .into_response()
+}
+
+/// Return a JSON map of `{ userId -> bool }` - whether each user has at least one active device
+/// presence key in Redis - **for the asked users the caller may see, and for no one else.**
 ///
-/// REQUIRES AN AUTHENTICATED CALLER, and until 2026-09-10 it required nothing at all.
+/// WHO MAY SEE WHOSE PRESENCE (WP-PRESENCE, decided by the user 2026-10-18): the caller
+/// themself, and anyone who shares a live conversation or a community with the caller.
+/// [`PresenceAudience::visible_to`](crate::audience::PresenceAudience::visible_to) asks the two
+/// services that own those tables. Until then any signed-in user could ask about any user id.
 ///
-/// The edge config puts `/api/presence` behind `auth_request /internal/auth/verify`, which is
-/// exactly what an access check looks like - but `/api/auth/verify` answers 200 for a logged-OUT
-/// caller too, carrying `x-logged-in: false` so signed-out pages can render, and nginx treats any
-/// 2xx as permission granted. That sub-request says WHO you are, never WHETHER you may pass.
-/// Measured that day against the local copy of production, with no session of any kind:
+/// AN ID THE CALLER MAY NOT SEE IS ABSENT FROM THE MAP - neither `true` nor `false`, and never a
+/// 401/403, which a client reads as "sign out". An old client (floors 1.2.7 / 1.0.3) merges the
+/// map into its own, so an absent key simply never turns its dot on: it degrades quietly. A new
+/// client reads absence as "not visible" and drops the id from its map.
 ///
-/// ```text
-/// GET /api/presence?users=<a real user id>   ->  200  {"<that id>":false}
-/// ```
-///
-/// So whether a named person is online was readable by anybody who could name them.
-/// `get_admin_presence` below had carried its header check since it was written; this one simply
-/// never got one. **A gate is only a gate if it can say no.**
-///
-/// WHAT THIS DELIBERATELY DOES NOT DECIDE: whether an authenticated user may ask about an
-/// arbitrary user id, rather than only people they share a conversation with. That is a real
-/// question and a larger one - the gateway does not know who shares what - and answering it here
-/// would be scope this defect does not license. It is filed in the backlog.
+/// THE OTHER ANSWERS: 401 for an anonymous caller (measured 2026-09-10: until then
+/// `auth_request` let a logged-OUT caller through, because `/api/auth/verify` answers 200 to
+/// signed-out pages too, and anybody could read whether a named person was online); 400 for more
+/// than [`MAX_PRESENCE_USERS`] ids; 503 when the audience or Redis cannot be read, because an
+/// empty map there would read as "nobody is visible" when nobody was asked.
 ///
 /// Uses `SCAN` with a `user:online:{userId}:*` pattern rather than `KEYS` to
-/// avoid blocking Redis on large keyspaces.
+/// avoid blocking Redis on large keyspaces - and only for the ids the caller may see, so a crafted
+/// id never reaches a SCAN pattern unless a service has matched it to a real membership.
 pub async fn get_presence(
     headers: HeaderMap,
     Query(query): Query<PresenceQuery>,
     State(state): State<Arc<AppState>>,
 ) -> impl IntoResponse {
-    use std::collections::HashMap;
-
-    if !is_authenticated(&headers) {
+    let Some(viewer) = caller_id(&headers) else {
         return (
             StatusCode::UNAUTHORIZED,
             Json(serde_json::json!({"error": "Unauthorized"})),
         )
             .into_response();
+    };
+
+    let asked = requested_ids(&query.users);
+    if asked.len() > MAX_PRESENCE_USERS {
+        tracing::warn!(
+            "[presence] {} asked about {} users (max {}) - refused",
+            viewer,
+            asked.len(),
+            MAX_PRESENCE_USERS
+        );
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": "Too many users" })),
+        )
+            .into_response();
     }
 
-    let mut presence = HashMap::new();
-    let users_list: Vec<&str> = query.users.split(',').collect();
+    let lowered: Vec<String> = asked.iter().map(|id| id.to_lowercase()).collect();
+    let visible = match state.presence_audience.visible_to(&viewer, &lowered).await {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                "[presence] audience unavailable for {} ({} asked) - answering 503: {}",
+                viewer,
+                asked.len(),
+                e
+            );
+            return unavailable("Presence audience unavailable");
+        }
+    };
+    let readable: Vec<&String> = asked
+        .iter()
+        .filter(|id| visible.contains(&id.to_lowercase()))
+        .collect();
+    tracing::debug!(
+        "[presence] {} asked {} users, {} visible",
+        viewer,
+        asked.len(),
+        readable.len()
+    );
 
-    if let Ok(mut con) = state.redis_client.get_multiplexed_async_connection().await {
-        for user in users_list {
-            if user.trim().is_empty() {
-                continue;
-            }
-            let pattern = format!("user:online:{}:*", user);
-            // Use SCAN with COUNT hint instead of KEYS to avoid blocking Redis.
-            let mut cursor: u64 = 0;
-            let mut found = false;
-            loop {
-                match redis::cmd("SCAN")
-                    .arg(cursor)
-                    .arg("MATCH")
-                    .arg(&pattern)
-                    .arg("COUNT")
-                    .arg(100u64)
-                    .query_async::<(u64, Vec<String>)>(&mut con)
-                    .await
-                {
-                    Ok((next_cursor, keys)) => {
-                        if !keys.is_empty() {
-                            found = true;
-                            break;
-                        }
-                        cursor = next_cursor;
-                        if cursor == 0 {
-                            break; // full scan complete, nothing found
-                        }
-                    }
-                    Err(e) => {
-                        tracing::warn!("[presence] SCAN failed for {}: {}", user, e);
+    let mut presence: HashMap<String, bool> = HashMap::new();
+    if readable.is_empty() {
+        return (StatusCode::OK, Json(presence)).into_response();
+    }
+
+    let mut con = match state.redis_client.get_multiplexed_async_connection().await {
+        Ok(con) => con,
+        Err(e) => {
+            tracing::warn!(
+                "[presence] Redis unavailable for {} - answering 503: {}",
+                viewer,
+                e
+            );
+            return unavailable("Presence store unavailable");
+        }
+    };
+    for user in readable {
+        let pattern = format!("user:online:{}:*", user);
+        // Use SCAN with COUNT hint instead of KEYS to avoid blocking Redis.
+        let mut cursor: u64 = 0;
+        let mut found = false;
+        loop {
+            match redis::cmd("SCAN")
+                .arg(cursor)
+                .arg("MATCH")
+                .arg(&pattern)
+                .arg("COUNT")
+                .arg(100u64)
+                .query_async::<(u64, Vec<String>)>(&mut con)
+                .await
+            {
+                Ok((next_cursor, keys)) => {
+                    if !keys.is_empty() {
+                        found = true;
                         break;
                     }
+                    cursor = next_cursor;
+                    if cursor == 0 {
+                        break; // full scan complete, nothing found
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("[presence] SCAN failed for {} - answering 503: {}", user, e);
+                    return unavailable("Presence store unavailable");
                 }
             }
-            presence.insert(user.to_string(), found);
         }
+        presence.insert(user.clone(), found);
     }
 
     (StatusCode::OK, Json(presence)).into_response()
@@ -253,58 +325,133 @@ pub async fn get_admin_presence(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::audience::PresenceAudience;
+    use crate::audience::tests_support::{FakeServices, spawn_fake_services};
     use axum::Router;
     use axum::body::Body;
     use axum::http::Request;
     use axum::routing::get;
     use tower::ServiceExt;
 
-    /// The REAL handler behind the REAL route, not a re-implementation of it.
+    const SECRET: &str = "internal-secret-for-tests";
+
+    /// The REAL handler behind the REAL route, not a re-implementation of it, with the audience
+    /// asked of a fake chat-delivery and social-service listening on loopback.
     ///
-    /// This is deliberate. A sibling suite in this repository was found on the same day to be
-    /// testing a hand-written copy of the logic it was meant to watch, which cannot fail when the
-    /// real code changes. Redis is never reached here: the refusal returns before any connection
-    /// is attempted, and `redis::Client::open` does not connect on construction, so an authorised
-    /// request simply finds no keys. That difference is the whole assertion.
-    fn app() -> Router {
+    /// Redis is unreachable on purpose (`redis::Client::open` does not connect on construction).
+    /// That makes the status itself the observation: a caller refused before Redis is a 401/400,
+    /// an asked set with NOBODY visible is a 200 `{}` that never needed Redis, and a set with
+    /// someone visible got past the audience and reached Redis - which, being down, is a 503.
+    async fn app(services: FakeServices) -> (Router, FakeServices) {
+        let base = spawn_fake_services(services.clone()).await;
         let client = redis::Client::open("redis://127.0.0.1:1/").expect("client construction");
-        let state = Arc::new(AppState::new(client, "test-secret".to_string()));
-        Router::new()
+        let audience = PresenceAudience::new(base.clone(), base, SECRET.to_string());
+        let state = Arc::new(AppState::new(client, "test-secret".to_string(), audience));
+        let router = Router::new()
             .route("/api/presence", get(get_presence))
-            .with_state(state)
+            .with_state(state);
+        (router, services)
     }
 
-    async fn status_for(header: Option<&str>) -> StatusCode {
-        let mut builder = Request::builder().uri("/api/presence?users=someone");
-        if let Some(value) = header {
+    async fn ask(
+        services: FakeServices,
+        users: &str,
+        viewer: Option<&str>,
+    ) -> (StatusCode, String) {
+        let (router, _) = app(services).await;
+        let mut builder = Request::builder().uri(format!("/api/presence?users={users}"));
+        if let Some(value) = viewer {
             builder = builder.header("x-user-id", value);
         }
-        app()
+        let response = router
             .oneshot(builder.body(Body::empty()).unwrap())
             .await
-            .unwrap()
-            .status()
+            .unwrap();
+        let status = response.status();
+        let bytes = axum::body::to_bytes(response.into_body(), 1 << 16)
+            .await
+            .unwrap();
+        (status, String::from_utf8(bytes.to_vec()).unwrap())
+    }
+
+    fn sharing(conversations: &[&str], communities: &[&str]) -> FakeServices {
+        FakeServices::new(SECRET, conversations, communities)
     }
 
     #[tokio::test]
     async fn anonymous_caller_is_refused() {
-        // The measured defect: 200 with a real answer, to a request carrying no identity at all.
-        assert_eq!(status_for(None).await, StatusCode::UNAUTHORIZED);
+        // The measured defect of 2026-09-10: 200 with a real answer, to a request carrying no
+        // identity at all.
+        let (status, _) = ask(sharing(&["bob"], &[]), "bob", None).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
     async fn blank_identity_is_refused() {
         // `auth_request_set` yields "" when the sub-request set no such header, so an empty
         // string is exactly what an anonymous caller arrives with - not a hypothetical.
-        assert_eq!(status_for(Some("")).await, StatusCode::UNAUTHORIZED);
-        assert_eq!(status_for(Some("   ")).await, StatusCode::UNAUTHORIZED);
+        assert_eq!(
+            ask(sharing(&[], &[]), "bob", Some("")).await.0,
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            ask(sharing(&[], &[]), "bob", Some("   ")).await.0,
+            StatusCode::UNAUTHORIZED
+        );
     }
 
     #[tokio::test]
-    async fn identified_caller_is_served() {
-        // Redis is unreachable here, so the answer is an empty map - the point is that the
-        // request got PAST the gate rather than what it found.
-        assert_eq!(status_for(Some("a-real-user")).await, StatusCode::OK);
+    async fn a_stranger_is_absent_from_the_answer_and_never_a_refusal() {
+        // WP-PRESENCE: someone the caller shares nothing with is not reported at all - not
+        // `false`, and above all not a 401/403, which a client reads as "sign out".
+        let (status, body) = ask(sharing(&["bob"], &["carol"]), "mallory", Some("alice")).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body, "{}");
+    }
+
+    #[tokio::test]
+    async fn someone_sharing_a_conversation_gets_past_the_audience() {
+        // Reaches Redis, which is down here: the 503 is the proof the gate let them through.
+        let (status, _) = ask(sharing(&["bob"], &[]), "bob,mallory", Some("alice")).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn someone_sharing_a_community_gets_past_the_audience() {
+        let (status, _) = ask(sharing(&[], &["carol"]), "carol", Some("alice")).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn the_caller_always_sees_themself_without_asking_anybody() {
+        let services = sharing(&[], &[]);
+        let (status, _) = ask(services.clone(), "Alice", Some("alice")).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE); // past the gate, into Redis
+        assert_eq!(services.hits(), 0);
+    }
+
+    #[tokio::test]
+    async fn an_audience_that_cannot_be_read_is_a_503_never_a_403() {
+        // A service refusing the GATEWAY (wrong secret) must not reach the client as a refusal of
+        // the CLIENT: only a 401/403 may sign a user out.
+        let services = FakeServices::new("another-secret", &["bob"], &[]);
+        let (status, body) = ask(services, "bob", Some("alice")).await;
+        assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(body.contains("Presence audience unavailable"), "{body}");
+    }
+
+    #[tokio::test]
+    async fn too_many_ids_are_refused_before_anybody_is_asked() {
+        let services = sharing(&[], &[]);
+        let users: Vec<String> = (0..=MAX_PRESENCE_USERS).map(|i| format!("u{i}")).collect();
+        let (status, _) = ask(services.clone(), &users.join(","), Some("alice")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(services.hits(), 0);
+    }
+
+    #[test]
+    fn requested_ids_trims_drops_blanks_and_collapses_duplicates() {
+        assert_eq!(requested_ids(" bob,,carol , bob,"), vec!["bob", "carol"]);
     }
 
     #[tokio::test]
@@ -312,7 +459,8 @@ mod tests {
         // The neighbouring handler has always checked; this pins that the change above did not
         // disturb it, and that the two refusals stay distinguishable (403 there, 401 here).
         let client = redis::Client::open("redis://127.0.0.1:1/").expect("client construction");
-        let state = Arc::new(AppState::new(client, "test-secret".to_string()));
+        let audience = PresenceAudience::new(String::new(), String::new(), String::new());
+        let state = Arc::new(AppState::new(client, "test-secret".to_string(), audience));
         let app = Router::new()
             .route("/api/admin/presence", get(get_admin_presence))
             .with_state(state);

@@ -162,6 +162,10 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       REDIS_URL: redis://redis:6379
       DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
+      # The presence audience (WP-PRESENCE): who shares a conversation or a community with whom is
+      # asked of chat-delivery and social-service over this network. Unset, every presence read is a 503.
+      SOCIAL_SERVICE_URL: http://social-service:3014
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       # THE CORS ALLOWLIST, AND THE ONLY SERVICE THAT READS IT. It was a `"*"` LITERAL here until
       # 2026-08-30, which beat anything in `.env` - so the list CD had been writing since the iOS
       # incident reached nothing, and this gateway answered every origin on earth. It is not `:-`

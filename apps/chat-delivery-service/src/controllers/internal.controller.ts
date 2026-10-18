@@ -10,10 +10,11 @@ import {
   BadRequestException,
   ForbiddenException,
   Inject,
+  HttpCode,
   Logger,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { In, MoreThanOrEqual, Repository } from 'typeorm';
+import { In, IsNull, MoreThanOrEqual, Repository } from 'typeorm';
 import * as crypto from 'crypto';
 import Redis from 'ioredis';
 import { PushToken } from '../entities/push-token.entity';
@@ -36,6 +37,7 @@ import { sanitizeIdentityValue } from '../utils/sanitize';
 import { tombstoneGroups, totalGroupOwnedRows } from '../utils/group-purge';
 import { MessagingService } from '../services/messaging.service';
 import { RETENTION_WINDOW_MS } from '../retention.constants';
+import { parsePresenceAudienceBody } from '../utils/presence-audience';
 
 /**
  * Internal-only endpoints - called by other services via Docker-internal networking.
@@ -195,6 +197,56 @@ export class InternalController {
     });
     this.logger.log(`[INTERNAL_MLS_DEVICES] user=${userId.slice(0, 8)} count=${count}`);
     return { count };
+  }
+
+  /**
+   * Which of `userIds` share at least one live conversation (DM or group) with `viewerId` - half of
+   * the presence audience the gateway enforces on `GET /api/presence` (WP-PRESENCE, decided by the
+   * user 2026-10-18). The other half, the communities, is social-service's
+   * `POST /internal/presence/shared-communities`; each service answers about the tables it owns.
+   *
+   * `dm_group_members` is the authority (a row per person per conversation, hard-deleted on leave),
+   * so a key-distribution group - which has no such row - can never widen the audience. A tombstoned
+   * conversation (`deletedAt` set) no longer counts: its members stopped sharing it.
+   *
+   * Answers the SUBSET, lowercased like every stored id. The viewer is never in it: "may I see
+   * myself" is the gateway's decision, not a membership question.
+   */
+  @Post('presence/shared-conversations')
+  @HttpCode(200)
+  async presenceSharedConversations(
+    @Headers('x-internal-secret') headerSecret: string,
+    @Body() body: { viewerId?: unknown; userIds?: unknown }
+  ): Promise<{ userIds: string[] }> {
+    this.assertInternalSecret(headerSecret);
+    const { viewerId, userIds } = parsePresenceAudienceBody(body);
+    const targets = userIds.filter((id) => id !== viewerId);
+    if (targets.length === 0) return { userIds: [] };
+
+    const viewerRows = await this.groupMemberRepo.find({
+      where: { userId: viewerId },
+      select: { groupId: true },
+    });
+    const viewerGroupIds = [...new Set(viewerRows.map((r) => r.groupId))];
+    if (viewerGroupIds.length === 0) {
+      this.logger.debug(`[PRESENCE_AUDIENCE] viewer=${viewerId.slice(0, 8)} has no conversation`);
+      return { userIds: [] };
+    }
+    const liveGroups = await this.groupRepo.find({
+      where: { id: In(viewerGroupIds), deletedAt: IsNull() },
+      select: { id: true },
+    });
+    if (liveGroups.length === 0) return { userIds: [] };
+    const shared = await this.groupMemberRepo.find({
+      where: { groupId: In(liveGroups.map((g) => g.id)), userId: In(targets) },
+      select: { userId: true },
+    });
+    const visible = new Set(shared.map((r) => r.userId));
+    const answer = targets.filter((id) => visible.has(id));
+    this.logger.debug(
+      `[PRESENCE_AUDIENCE] viewer=${viewerId.slice(0, 8)} asked=${targets.length} shared=${answer.length}`
+    );
+    return { userIds: answer };
   }
 
   /**
