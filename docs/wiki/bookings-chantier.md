@@ -75,6 +75,7 @@ see who else booked.
 | D40 | File on a public form (E3) | **Refused in v1, to reopen later** (user): the upload needs a session token and an anonymous file write is the biggest abuse surface of the chantier. Refused at save time with a clear sentence, as `assertPublicConfigValid` does for price and audience. A "public form" is `forms.isPublic`, answered at `/f/:id` with no account; its payment half is PARKED, not forbidden in principle: it needs WP-LYDIA-1 (Lydia live in production) plus a guest payment route and a fulfilment with no `userId`. The user wants a PAID PUBLIC form (ticketing for an outside event): it is its OWN chantier, [public-paid-forms-chantier](public-paid-forms-chantier.md), planned in parallel. Bookings do not depend on it (D6 needs an account). |
 
 | D42 | Deleting a RESOURCE (review of #2006, Master's decision, the user having delegated it) | **Refused while the resource has ANY booking - past, coming or cancelled** (`resource-has-bookings`). A booking is history, and D15 freezes history while its space exists; D27 lets only the deletion of the whole SPACE erase it. A resource that is no longer offered is CLOSED instead (its availability emptied, or a closure). A resource nobody ever booked may be deleted. (Numbered D42: D36 was already the holder-edits decision.) |
+| D43 | A PERSONAL space in the listing (review of #2029, Master's decision) | **A personal space is NEVER listed to anyone but its owner**, whatever its discoverability: it is reached by its link or QR code. No decision lets a member publish free text (a space's name and description) on a page the whole school reads, and v1 has no report button (D21). A space of an ARCHIVED association is not listed either. |
 | D41 | File retention in forms (WP-F) | **The SAME rule as D8 and D23, one mechanism with two starting points**: a file is purged N days after the EVENT (default 7, adjustable 1 to 30 by the manager), the event being the slot's end for a booking and the DATE OF THE ANSWER for a form. The answer row stays; the file goes. The user pointed out this was already decided: a duplicate question was asked and is recorded here so nobody asks it a third time. |
 
 **Master's notes (2026-10-15):** no open pull request touches forms (open: #1896, #1897, #1898, #1884), so WP-F has no known conflict; rebase on `main` before each batch; **check the next free migration number on `main` when opening each pull request**, as other pull requests may take one.
@@ -528,3 +529,68 @@ space's zone), `refusals.test.ts`, `stranded.test.ts`, `wallTime.test.ts` (both 
 `unsavedChanges.test.ts`, `editSections.test.ts`, `DateTimeField.svelte.test.ts`; on the server,
 `bookings.controller.spec.ts` (the `ids` filter's shape) and the integration case "narrows the
 organiser list to the bookings a D29 refusal named".
+
+## WP-B5 as built - the booker's API (2026-10-18)
+
+What the booker's screens need and WP-B3 did not serve. Three additions, no migration.
+
+| Route | Who | Refusal codes |
+|---|---|---|
+| `GET spaces` | anyone signed in: every LISTED association space (D31) of a live association whose audience (D6) admits them, or that they manage, and their OWN listed personal spaces (D43), by name, at most 200 (the limit is in SQL) - with its entity's name and its resource count; never a private text | - |
+| `GET :id/calendar-link` | the booking's PEOPLE (holder, participant still in, the account linked to its resource) and its organiser: `{ path }` of a `.ics` signed FOR THEM | `not-yours` (also for an id that names nothing, and for a global admin who is not of the booking), then `already-cancelled` |
+| `GET :id/calendar.ics?u=&sig=` | NO SESSION - a calendar app; authorised by `sig` over the booking AND the recipient `u` | 400 for a malformed id, `calendar-signature` (checked before anything is read), `booking-not-found`, `calendar-revoked`, 410 `booking-cancelled` |
+
+`GET spaces/:id` now names `hiddenItemIds`: the questions the reader's PROFILE hides (promo,
+formation, cotisation), decided by `profileHiddenItemIds` in `forms/visibility.ts` - the one rule
+a form's page and a space's share. The screen evaluates the answer half as the booker types, so it
+never asks a question the server would drop.
+
+And in `GET spaces/:id/slots`, a blocked unit carries `blockId` for whoever may LIFT it - the
+organiser, and the account linked to the resource (the server still lets that account lift only
+the blocks it created). Nobody else is sent it.
+
+- **A LINK-ONLY SPACE IS NEVER LISTED, WHOEVER ASKS** - its organiser included: it is reached by
+  its link or QR code (the psychologist case). **A PERSONAL space is listed to its owner alone
+  (D43), and an ARCHIVED association's to nobody.** The audience is judged per space with that
+  space's own association's facts, as `assertMayUse` judges a read, so a listed space always opens.
+- **THE LISTING COSTS A FIXED NUMBER OF QUERIES, NOT ONE PER SPACE**: the rows (limit in SQL), the
+  manage rights in one `mayActOnAny`, the cotisations of every association in one
+  `cotisationTiersByAssociation`, and the profile (core-service) ONCE, only when some audience needs
+  it. **If core-service fails, the page stays**: only the spaces whose audience needs the profile
+  are left out, with an error logged - a 503 would hide spaces that need nothing from it, and
+  listing one would open onto a refusal.
+- **THE `.ics` IS SIGNED FOR ONE RECIPIENT** (`booking-calendar.ts`). A calendar app sends no
+  identity, so the link carries it: `sig` is an HMAC of `booking-ics|v1|<id>|<recipient>` under
+  `AGENDA_SIGNING_KEY` - the agenda's key, through one `signWithAgendaKey`, the prefix keeping the
+  two kinds of link from ever reading as each other, in both directions (tested). No new secret,
+  nothing to deploy. The comparison is constant-time and comes before any read.
+- **REVOCATION IS PER PERSON, AT EVERY FETCH**: after the signature, the route checks that the
+  recipient's account still exists and is still OF the booking (the same `isOfBooking` that issued
+  the link). A withdrawn participant, an account unlinked from the resource, an organiser whose
+  right was taken away, an ERASED account (its `users` row is gone) - each gets `calendar-revoked`,
+  and an erased account's past bookings stop being fetchable. **Rotating the key is the last
+  resort**: it ends every saved link of both kinds at once, and the app fetches a fresh one the
+  next time someone taps "Add to my calendar". An unset key is a 503 (fails closed), never an
+  unsigned link; so is an unset `FRONTEND_URL` (`common/frontend-url.ts`, no default).
+- **WHAT THE FILE CARRIES: the names of the place - the space's and the resource's, which may be a
+  PERSON's (D10, a resource can be someone) - the start, the end, a link back to the space. NEVER
+  the answers, the private texts (D32), the holder's or the participants' names** - a link can be
+  forwarded, and on an 'occupied' space (D9) names are not the link-holder's to read. A cancelled
+  booking answers 410, so a stale import cannot write it back. The link back is
+  `/bookings/spaces/:id`, a screen WP-B5's screens (#2035) add.
+- **The route is declared public by intent** in `.github/scripts/tests/auth-request-coverage.test.mjs`
+  (its own controller, `BookingCalendarController`, without the session guard); it sits behind the
+  same `/api/bookings` location, whose `auth_request` identifies and refuses nobody.
+
+**Proof.** `booking-calendar.spec.ts` (only that booking and that recipient, never an agenda
+signature and never read as one, dead after a rotation, no key no link, nothing but the place and
+the range). `booking-calendar.controller.spec.ts` at the HTTP layer: `text/calendar`,
+`Cache-Control: private, no-store`, a malformed id a 400 before the service is called. In
+`bookings.service.integration.spec.ts`, "the booker's page and the calendar link (WP-B5)": the
+listing per audience, manager and link-only, a personal space to its owner alone, an archived
+association's to nobody, the page kept when core-service fails; a distinct link per person,
+refused to strangers (a global admin included), to a withdrawn participant and for a cancelled
+booking; the file without the answer, the private texts or the holder's name, refused for another
+booking's or another recipient's signature, a forged or missing one and after a rotation, 410 once
+cancelled; revoked when its recipient withdraws, is unlinked, loses the right or is erased; a block
+id to the organiser and the linked account, not to a booker.

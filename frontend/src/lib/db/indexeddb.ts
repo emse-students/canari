@@ -38,6 +38,7 @@ import {
   mergeOutboxEntry,
   OutboxPayloadUnreadableError,
   outboxClearColumns,
+  OUTBOX_CLEAR_PATCH_KEYS,
 } from './outboxCodec';
 import {
   byNewestSession,
@@ -1093,7 +1094,7 @@ export class IndexedDbStorage implements IStorage {
         req.onsuccess = () => {
           const row = req.result;
           if (!row) return;
-          for (const k of ['status', 'attempts', 'lastAttemptAt', 'nextAttemptAt'] as const) {
+          for (const k of OUTBOX_CLEAR_PATCH_KEYS) {
             if (patch[k] !== undefined) row[k] = patch[k];
           }
           store.put(row);

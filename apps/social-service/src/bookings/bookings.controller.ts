@@ -54,6 +54,22 @@ export class BookingsController {
     return this.service.mine(actorOf(userId, ga));
   }
 
+  /** The listed spaces the actor may book (D16, D31): the Reservations page. */
+  @Get('spaces')
+  listed(@Headers('x-user-id') userId: string, @Headers('x-global-admin') ga?: string) {
+    return this.service.listedSpaces(actorOf(userId, ga));
+  }
+
+  /** The signed `.ics` path of one booking (D13), for its people and its organiser. */
+  @Get(':bookingId/calendar-link')
+  calendarLink(
+    @Param('bookingId', ParseUUIDPipe) bookingId: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') ga?: string
+  ) {
+    return this.service.calendarLink(bookingId, actorOf(userId, ga));
+  }
+
   /** A space and its resources, as a booker reads them. */
   @Get('spaces/:spaceId')
   space(

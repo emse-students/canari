@@ -61,7 +61,20 @@ function fakeSql() {
     async execute(sql: string, params: any[] = []) {
       executed.push({ sql, params });
       if (sql.includes('INSERT OR REPLACE INTO outbox')) {
-        const [id, conv, sent, kind, status, attempts, last, next, created, iv, cipher] = params;
+        const [
+          id,
+          conv,
+          sent,
+          kind,
+          status,
+          attempts,
+          last,
+          next,
+          serverErrors,
+          created,
+          iv,
+          cipher,
+        ] = params;
         rows.set(id, {
           id,
           conversation_id: conv,
@@ -71,6 +84,7 @@ function fakeSql() {
           attempts,
           last_attempt_at: last,
           next_attempt_at: next,
+          server_errors: serverErrors,
           created_at: created,
           iv,
           cipher_text: cipher,
