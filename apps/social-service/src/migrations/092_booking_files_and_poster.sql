@@ -1,4 +1,4 @@
--- Migration 091: a booking's FILE answers, and a space's POSTER (WP-B6 of
+-- Migration 092: a booking's FILE answers, and a space's POSTER (WP-B6 of
 -- docs/wiki/bookings-chantier.md, decisions D7, D8, D18, D22, D35, D41).
 --
 -- 1. `booking_spaces.poster`: the space's poster, a media reference (`mediaId`, `key`, `iv`,

@@ -10,7 +10,7 @@ import {
 import { Booking } from './booking.entity';
 
 /**
- * A file uploaded for a FILE question of a booking space (migration 091, WP-B6) - the forms'
+ * A file uploaded for a FILE question of a booking space (migration 092, WP-B6) - the forms'
  * `FormFile` for a booking: the answer carries only this row's id.
  *
  * THE STATE IS THE ROW: `bookingId` null means "uploaded, not yet sent" (attachable for a day, then

@@ -34,7 +34,7 @@ import type { BookingFileState } from './booking-views';
  * ONE STORAGE FOR BOTH MODULES. The bytes are the media service's class `form-file`: plaintext,
  * because the organiser must open the CV (D22), and served by no route but the internal one, behind
  * the internal secret. `FormFilesService` stores them, fetches them and deletes them; this service
- * owns the bookings half - its table (`booking_files`, migration 091), the ownership rule at booking
+ * owns the bookings half - its table (`booking_files`, migration 092), the ownership rule at booking
  * time, and the organiser's download. Every limit is the forms' own constant (8 MiB, PDF/JPEG/PNG/
  * WebP read from the bytes, one day to send an upload, ten unsent uploads per member and space).
  *

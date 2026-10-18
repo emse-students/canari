@@ -162,7 +162,7 @@ export class BookingSpace {
   retentionDays: number;
 
   /**
-   * The poster (D35, migration 091): a media reference ENCRYPTED BY THE CLIENT, its key in this
+   * The poster (D35, migration 092): a media reference ENCRYPTED BY THE CLIENT, its key in this
    * row, as a post's image - the media service holds ciphertext only. NULL: none.
    */
   @Column('jsonb', { nullable: true })

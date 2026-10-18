@@ -2,7 +2,7 @@
  * WP-B6 AGAINST A REAL POSTGRESQL: a booking's FILE answers, the retention purge, the platform
  * maximum age, the poster's lifetime and the XLSX export (docs/wiki/bookings-chantier.md).
  *
- * The services run on a real connection with every bookings migration applied (091 included) to a
+ * The services run on a real connection with every bookings migration applied (092 included) to a
  * throwaway schema. The MEDIA SERVICE is the one fake: an in-memory store that answers as
  * `FormFilesService` does (store, fetch, delete on the owner's name), so what is under test is what
  * the bookings side does with it - who may attach, read and delete what, and what the rows say.

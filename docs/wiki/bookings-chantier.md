@@ -467,7 +467,7 @@ screens come in a pull request of their own; this half is what they write throug
   half of WP-F's storage and purge and lifted the refusal ([WP-B6 as built](#wp-b6-as-built---file-answers-the-poster-the-purge-the-export-2026-10-18)).
 - **Times** are stored `HH:MM:SS`, `24:00` included; a window crossing midnight is two lines (WP-B2).
 - **The poster (D35) was SCHEDULED IN WP-B6, not dropped** (Master, 2026-10-17), and WP-B6 built
-  it: migration 091 adds the column, the General section the field.
+  it: migration 092 adds the column, the General section the field.
 - **Nothing new to erase**: no column was added. The linked account was already covered by
   `BOOKINGS_ERASURE_STATEMENTS` (WP-B1).
 
@@ -666,7 +666,7 @@ code worded), the dashboard's row order.
 
 ## WP-B6 as built - file answers, the poster, the purge, the export (2026-10-18)
 
-Draft #2045, stacked on #2035. Migration **091** (`091_booking_files_and_poster.sql`) adds two things, and is idempotent: it is applied twice in its spec, and its catalogue check is scoped to the schema.
+Draft #2045, stacked on #2035. Migration **092** (`092_booking_files_and_poster.sql`; renumbered from 091, which the lives server #2044 took) adds two things, and is idempotent: it is applied twice in its spec, and its catalogue check is scoped to the schema.
 - `booking_files`: what a FILE answer's id names.
 - `booking_spaces.poster`: the poster.
 
@@ -754,7 +754,7 @@ A blob the media service refuses to delete keeps its row, which is retried next 
   - `spaceSettings.test.ts` checks that the settings bar never sends the poster.
 
 **WP-B7, 2026-10-18.**
-- **The live API was run against the LOCAL estate** (nginx, migration 091 applied twice over the synchronized schema) and every row answered as specified:
+- **The live API was run against the LOCAL estate** (nginx, migration 092 applied twice over the synchronized schema) and every row answered as specified:
   - refusals: `file-question`, `file-type` on a text file named `.pdf`, `file-not-yours` (another's file, and one file cited twice), `not-manager` to a booker downloading or exporting, `export-labels`;
   - the organiser's slot carried `fileNames`, and the booker's carried no answers;
   - the download was byte-identical, with `Content-Disposition`;
@@ -767,5 +767,31 @@ A blob the media service refuses to delete keeps its row, which is retried next 
 - **NOT SEEN**: a real poster picked, encrypted and decrypted on screen, and a real file picked on a phone - both need a signed-in device.
 
 **OWED BEFORE THE FIRST RELEASE: the privacy policy (`routes/legal/privacy`) says nothing about
-bookings yet**, while C17 is its register row - the two are changed together. Not written in WP-B6:
-it is a public legal text, for the user to read before it ships.
+bookings yet**, while C17 is its register row - the two are changed together. The paragraph below
+is a PROPOSAL, not published: `routes/legal/privacy` is untouched until the lead approves it.
+
+### PROPOSAL - the privacy-policy paragraph on bookings (French, awaiting approval)
+
+> **Réservations.** Lorsque vous réservez un créneau (une salle, un objet, un rendez-vous), Canari
+> enregistre la réservation : la ressource, le début et la fin, votre identifiant et le nom affiché
+> au moment de la réservation, les participants que vous ajoutez, et vos réponses aux questions de
+> l'espace. Ces réponses, y compris les fichiers que vous joignez (PDF ou image, 8 Mo au plus), ne
+> sont lisibles que par les organisateurs de l'espace ; les fichiers sont conservés en clair sur nos
+> serveurs, sans chiffrement de bout en bout, pour qu'ils puissent les lire. Les autres personnes
+> ne voient votre nom que si l'espace l'affiche, sinon seulement « occupé ». L'affiche d'un espace
+> est chiffrée sur l'appareil de l'organisateur, comme l'image d'une publication.
+>
+> **Durées de conservation.** Les réponses et les fichiers sont supprimés automatiquement N jours
+> après la fin du créneau (N est choisi par l'organisateur, entre 1 et 30 jours, 7 par défaut, et
+> indiqué sous chaque question « fichier ») ; un fichier envoyé sans réservation est supprimé après
+> un jour ; la réservation elle-même est supprimée un an après la fin de son créneau. Un organisateur
+> peut exporter les réservations de son espace dans un tableur ; un fichier n'y figure que par un
+> mot, jamais par son contenu.
+>
+> **Suppression de votre compte.** Vos réservations à venir sont annulées, vos réponses et vos
+> fichiers sont supprimés, et votre identifiant est effacé des réservations passées, qui gardent le
+> nom affiché jusqu'à leur suppression à un an. Vos espaces personnels sont supprimés avec tout ce
+> qu'ils contiennent, y compris les réservations à venir d'autres personnes, qui n'en sont pas
+> prévenues. L'affiche d'un espace d'association est conservée : elle appartient à l'association.
+>
+> Base légale : exécution du service (art. 6.1.b RGPD). Registre : traitement C17.

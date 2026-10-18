@@ -47,7 +47,7 @@ describe('bookings entities against migrations 087 onwards', () => {
     const relations = storage.relations.filter((r) => targets.has(r.target));
     expect(relations.length).toBe(8);
     // The one exception: a deleted booking's FILE becomes an orphan the purge takes, blob first
-    // (migration 091) - a cascade would drop the only record of a blob that still exists.
+    // (migration 092) - a cascade would drop the only record of a blob that still exists.
     expect(
       relations.filter((r) => r.options.onDelete !== 'CASCADE').map((r) => r.options.onDelete)
     ).toEqual(['SET NULL']);
