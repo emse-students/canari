@@ -1,0 +1,176 @@
+<script lang="ts">
+  import { untrack } from 'svelte';
+  import { Save, Trash2 } from '@lucide/svelte';
+  import { deleteResource, updateResource, type ManagedResource } from '$lib/bookings/api';
+  import { describeBookingRefusal } from '$lib/bookings/refusals';
+  import Input from '$lib/components/ui/Input.svelte';
+  import Textarea from '$lib/components/ui/Textarea.svelte';
+  import UserAutocomplete from '$lib/components/shared/UserAutocomplete.svelte';
+  import { CONTROL_HINT_CLASS, CONTROL_LABEL_CLASS } from '$lib/components/ui/controlClasses';
+  import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { m } from '$lib/paraglide/messages';
+  import { Log } from '$lib/utils/Log';
+  import AvailabilityEditor from './AvailabilityEditor.svelte';
+
+  /**
+   * One resource (D10, D32): its name, its public and its after-booking text, the account linked
+   * to it, and its availability. Its fields and its availability save separately - they are two
+   * calls, and a refusal of one (D29) must not lose what was typed in the other.
+   */
+  interface Props {
+    resource: ManagedResource;
+    stepMinutes: number | null;
+    onChanged: (resource: ManagedResource) => void;
+    onDeleted: (resourceId: string) => void;
+  }
+
+  let { resource, stepMinutes, onChanged, onDeleted }: Props = $props();
+
+  // The editor's own copy: the parent keys this component by the resource id.
+  let name = $state(untrack(() => resource.name));
+  let description = $state(untrack(() => resource.description ?? ''));
+  let privateInfo = $state(untrack(() => resource.privateInfo ?? ''));
+  let linkedUserId = $state(untrack(() => resource.linkedUserId ?? ''));
+  let saving = $state(false);
+  let deleting = $state(false);
+  let saved = $state(false);
+  let error = $state('');
+
+  const fieldId = (f: string) => `resource-${resource.id}-${f}`;
+
+  async function save() {
+    if (!name.trim() || saving) return;
+    saving = true;
+    saved = false;
+    error = '';
+    const fields = {
+      name: name.trim(),
+      description: description.trim() || null,
+      privateInfo: privateInfo.trim() || null,
+      linkedUserId: linkedUserId || null,
+    };
+    Log.d('BOOKINGS', `resource save id=${resource.id} linked=${fields.linkedUserId !== null}`);
+    try {
+      await updateResource(resource.id, fields);
+      saved = true;
+      onChanged({ ...resource, ...fields });
+    } catch (e) {
+      error = describeBookingRefusal(e, m.bookings_resource_save());
+    } finally {
+      saving = false;
+    }
+  }
+
+  async function remove() {
+    const confirmed = await showConfirm(
+      m.bookings_resource_delete_confirm({ name: resource.name }),
+      {
+        danger: true,
+        confirmLabel: m.common_delete_button(),
+      }
+    );
+    if (!confirmed) return;
+    deleting = true;
+    error = '';
+    try {
+      await deleteResource(resource.id);
+      Log.i('BOOKINGS', `resource deleted id=${resource.id.slice(0, 8)}`);
+      onDeleted(resource.id);
+    } catch (e) {
+      error = describeBookingRefusal(e, m.common_delete_button());
+    } finally {
+      deleting = false;
+    }
+  }
+</script>
+
+<article class="border-cn-border space-y-4 rounded-2xl border p-3 sm:p-4">
+  <div class="flex items-start gap-2">
+    <div class="min-w-0 flex-1">
+      <Input
+        id={fieldId('name')}
+        label={m.bookings_resource_name()}
+        bind:value={name}
+        maxlength={120}
+        error={name.trim() ? undefined : m.bookings_problem_required()}
+        oninput={() => (saved = false)}
+      />
+    </div>
+    <button
+      type="button"
+      class="ui-icon-button text-text-muted hover:text-red-err mt-7 shrink-0 rounded-full"
+      aria-label={m.bookings_resource_delete_aria({ name: resource.name })}
+      disabled={deleting}
+      onclick={remove}
+    >
+      <Trash2 size={18} />
+    </button>
+  </div>
+
+  <Textarea
+    id={fieldId('description')}
+    label={m.bookings_field_description()}
+    bind:value={description}
+    rows={2}
+    maxlength={2000}
+    oninput={() => (saved = false)}
+  />
+  <div>
+    <Textarea
+      id={fieldId('private')}
+      label={m.bookings_field_private_info()}
+      bind:value={privateInfo}
+      rows={2}
+      maxlength={2000}
+      oninput={() => (saved = false)}
+    />
+    <p class={CONTROL_HINT_CLASS}>{m.bookings_field_private_info_hint()}</p>
+  </div>
+  <div>
+    <label class={CONTROL_LABEL_CLASS} for={fieldId('linked')}>{m.bookings_resource_linked()}</label
+    >
+    <UserAutocomplete
+      inputId={fieldId('linked')}
+      value={linkedUserId}
+      onValueChange={(v) => {
+        linkedUserId = v;
+        saved = false;
+      }}
+    />
+    <p class={CONTROL_HINT_CLASS}>{m.bookings_resource_linked_hint()}</p>
+  </div>
+
+  {#if error}
+    <p
+      class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-3 py-2.5 text-sm"
+      role="alert"
+    >
+      {error}
+    </p>
+  {/if}
+
+  <div class="flex flex-wrap items-center justify-end gap-3">
+    {#if saved}
+      <p class="text-green-ok text-sm" role="status">{m.bookings_resource_saved()}</p>
+    {/if}
+    <button
+      type="button"
+      onclick={save}
+      disabled={!name.trim() || saving}
+      class="border-cn-border text-text-main hover:border-cn-yellow/40 inline-flex items-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      <Save size={16} />
+      {saving ? m.form_saving_label() : m.bookings_resource_save()}
+    </button>
+  </div>
+
+  <div class="border-cn-border/60 border-t pt-4">
+    <AvailabilityEditor
+      resourceId={resource.id}
+      lines={resource.lines}
+      exceptions={resource.exceptions}
+      {stepMinutes}
+      onSaved={(lines, exceptions) => onChanged({ ...resource, lines, exceptions })}
+    />
+  </div>
+</article>

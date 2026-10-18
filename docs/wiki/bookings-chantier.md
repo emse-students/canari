@@ -478,3 +478,35 @@ and step, a resource with history (cancelled included) never deleted and one nev
 must exist, a space deleted with everything, duplicate question ids, a zoneless opening, an entity
 that does not exist, both caps, and a forged body (`id`, `ownerId`, `associationId`, `spaceId`)
 sent through the real HTTP layer with no ValidationPipe, changing none of them.
+
+## WP-B4 as built - the organiser's screens (2026-10-18)
+
+| Where | What |
+|---|---|
+| `associations/editSections.ts` | a `reservations` section, opened on `MANAGE_BOOKINGS` alone (D30), for associations, institutions AND lists (`LIST_EDIT_SECTIONS`, D38) |
+| `components/bookings/organiser/EditBookingsTab.svelte` | the entity's tab: its spaces (`GET managed`), a new one by its name, which opens its editor |
+| `routes/bookings/spaces/[spaceId]/edit` | loads the space and its entity (name, tiers, formations); the editing is `SpaceEditor.svelte` |
+| `SpaceEditor.svelte` | D35's five sections: General; Resources and availability; Who and how (the forms' audience switch and editor, then the questions); Booking rules and Data, collapsed, the first with a badge counting what is set |
+| `ResourceEditor.svelte`, `AvailabilityEditor.svelte` | per resource: its fields and linked account, then its availability - each SAVED ON ITS OWN, because each is its own call and a D29 refusal of one must not lose what was typed in the other |
+| `lib/bookings/api.ts` | the typed client; a refusal is a `BookingsApiError` carrying `bookingIds` |
+| `lib/bookings/refusals.ts` | every organiser code to its sentence, then the status, then the generic line - never the server's message |
+| `lib/bookings/spaceSettings.ts` | the editor's text draft to the API and back, the DTO's bounds per field, the badge's count |
+| `lib/bookings/availability.ts` | the ranges as the organiser thinks of them to the stored lines and back (see WP-B2), the times offered, the 24/7 warning |
+
+- **A range crossing midnight is ONE range on screen** ("Friday 22:00 to 02:00", marked "ends the
+  next day") and two stored lines; reading folds the pair back once, never a whole day.
+- **THE 24/7 WARNING IS SHOWN** when whole days (00:00-24:00) follow each other, naming them: no
+  booking can cross the midnight between two whole days (WP-B2's rule).
+- **Every choice is drawn by the app** ([durable-rules](durable-rules.md)): times are a `Select` on
+  the space's saved step (15 min for fixed slots), keeping an off-step value; a date is
+  `DateTimeField`, which gained `dateOnly` (value `YYYY-MM-DD`, no time columns).
+- **The file question is not offered** (`FormQuestionsSection` `withoutTypes`), and the screen
+  says it comes later: the server refuses it until WP-B6.
+- **Large text**: `FormSection`'s header wraps at 200 % text (the badge and the chevron left the
+  card before - forms' sections too).
+
+**Seen** at 390 and 1280 and at 200 % text on a local build, on a fixture space (a temporary
+signed-out preview route, not committed): no horizontal scroll, the night range folded, the 24/7
+warning, the date sheet. Not yet seen against a running API - the first organiser to use it on dev
+is that reading. **Proof**: `availability.test.ts`, `spaceSettings.test.ts`, `refusals.test.ts`,
+`editSections.test.ts`, `DateTimeField.svelte.test.ts`.
