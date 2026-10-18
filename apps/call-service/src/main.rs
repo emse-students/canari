@@ -733,7 +733,9 @@ async fn main() -> anyhow::Result<()> {
     let port = std::env::var("PORT").unwrap_or_else(|_| "3004".to_string());
     let addr = format!("0.0.0.0:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    info!("Call service listening on {}", addr);
+    // The BOUND address, not the requested one: with `PORT=0` the kernel picks the port, and this
+    // line is how `tests/p2p_signalling.rs` learns it - a port no other test can have taken.
+    info!("Call service listening on {}", listener.local_addr()?);
     axum::serve(listener, app).await?;
 
     Ok(())
@@ -903,7 +905,7 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
     }
 
     if let (Some(room_id), RoomMode::P2p) = (session.room_id.clone(), session.mode) {
-        p2p_leave(&state, &room_id, &peer_id).await;
+        p2p_leave(&state, &room_id, &peer_id);
     } else if let Some(room_id) = session.room_id.clone() {
         let remove_room = if let Some(room) = state.rooms.get(&room_id) {
             // Close the PeerConnection rather than only dropping it: webrtc-rs holds the ICE
@@ -986,19 +988,21 @@ async fn handle_signal(
                     room_id,
                     mode.as_str()
                 );
-                let _ = notify_tx
-                    .send(SignalMessage::Refused {
+                p2p_send(
+                    &notify_tx,
+                    SignalMessage::Refused {
                         reason: "mode-mismatch".to_string(),
-                    })
-                    .await;
+                    },
+                    &room_id,
+                    peer_id,
+                );
                 return;
             }
 
             if mode == RoomMode::P2p {
                 p2p_join(
                     state, user_id, peer_id, &group_id, session, room_id, notify_tx,
-                )
-                .await;
+                );
                 return;
             }
 
@@ -1529,7 +1533,7 @@ fn authorize_join(
 /// The decision is taken inside the map's entry guard, so a concurrent last-peer-leaves cannot
 /// remove the room between our lookup and our seat (see [`p2p_leave`], which removes under the
 /// same shard lock).
-async fn p2p_join(
+fn p2p_join(
     state: &Arc<AppState>,
     user_id: &str,
     peer_id: &str,
@@ -1561,11 +1565,14 @@ async fn p2p_join(
                 "[call] {} refused from p2p room {}: two other users already hold it",
                 peer_id, room_id
             );
-            let _ = notify_tx
-                .send(SignalMessage::Refused {
+            p2p_send(
+                &notify_tx,
+                SignalMessage::Refused {
                     reason: "room-full".to_string(),
-                })
-                .await;
+                },
+                &room_id,
+                peer_id,
+            );
             return;
         }
         JoinOutcome::OtherGroup => {
@@ -1575,11 +1582,14 @@ async fn p2p_join(
                 "[auth] {} refused from p2p room {}: its token names group {}, the room holds another",
                 peer_id, room_id, group_id
             );
-            let _ = notify_tx
-                .send(SignalMessage::Refused {
+            p2p_send(
+                &notify_tx,
+                SignalMessage::Refused {
                     reason: "group-mismatch".to_string(),
-                })
-                .await;
+                },
+                &room_id,
+                peer_id,
+            );
             return;
         }
         JoinOutcome::Waiting { evicted } => (None, evicted),
@@ -1601,24 +1611,17 @@ async fn p2p_join(
             "[multi-device] p2p room {}: {} replaced by {}",
             room_id, gone.peer_id, peer_id
         );
-        if let Err(e) = gone.tx.send(SignalMessage::PeerLeft).await {
-            warn!(
-                "[multi-device] could not tell replaced peer {} it left: {}",
-                gone.peer_id, e
-            );
-        }
+        p2p_send(&gone.tx, SignalMessage::PeerLeft, &room_id, &gone.peer_id);
     }
 
-    if let Err(e) = notify_tx
-        .send(SignalMessage::Joined {
+    if !p2p_send(
+        &notify_tx,
+        SignalMessage::Joined {
             room_id: room_id.clone(),
-        })
-        .await
-    {
-        error!(
-            "[call] joined ack NOT sent room={} peer={}: {}",
-            room_id, peer_id, e
-        );
+        },
+        &room_id,
+        peer_id,
+    ) {
         return;
     }
 
@@ -1636,16 +1639,44 @@ async fn p2p_join(
         (&initiator.tx, true, initiator.peer_id.as_str()),
         (&notify_tx, false, peer_id),
     ] {
-        if let Err(e) = tx
-            .send(SignalMessage::PeerReady {
+        // Delivered directly rather than through `p2p_send`: a lost PeerReady is one event, and it
+        // gets ONE line, at error, because this call can then never negotiate.
+        if let Err(reason) = p2p::deliver(
+            tx,
+            SignalMessage::PeerReady {
                 initiator: is_initiator,
-            })
-            .await
-        {
+            },
+        ) {
             error!(
-                "[call] peer-ready NOT sent room={} peer={}: {} - this call cannot negotiate",
-                room_id, who, e
+                "[call] p2p peer-ready DROPPED room={} to={}: {} - this call cannot negotiate",
+                room_id,
+                who,
+                reason.as_str()
             );
+        }
+    }
+}
+
+/// Sends one server-originated p2p frame through [`p2p::deliver`] - never awaiting a queue - and
+/// names a drop. Returns whether the frame was queued.
+fn p2p_send(
+    tx: &mpsc::Sender<SignalMessage>,
+    frame: SignalMessage,
+    room_id: &str,
+    to: &str,
+) -> bool {
+    let kind = frame.kind();
+    match p2p::deliver(tx, frame) {
+        Ok(()) => true,
+        Err(reason) => {
+            warn!(
+                "[call] p2p {} DROPPED room={} to={}: {}",
+                kind,
+                room_id,
+                to,
+                reason.as_str()
+            );
+            false
         }
     }
 }
@@ -1693,7 +1724,7 @@ async fn p2p_relay(
         return;
     };
     let name = frame.kind();
-    match p2p::deliver(&partner, frame) {
+    match p2p::deliver(&partner.tx, frame) {
         Ok(()) => {
             if let Some(ledger) = &session.ledger {
                 count_relayed(kind, ledger, &partner.ledger);
@@ -1726,7 +1757,7 @@ async fn p2p_relay(
 /// Removes a peer from its peer-to-peer room when its socket ends, tells the party left behind,
 /// and drops the room once it is empty - atomically, under the map's shard lock, so a join racing
 /// the last leave either lands before the removal or creates a fresh room after it.
-async fn p2p_leave(state: &Arc<AppState>, room_id: &str, peer_id: &str) {
+fn p2p_leave(state: &Arc<AppState>, room_id: &str, peer_id: &str) {
     let mut remaining: Option<P2pPeer> = None;
     let removed = state.p2p_rooms.remove_if(room_id, |_, room| {
         remaining = room.leave(peer_id);
@@ -1736,12 +1767,9 @@ async fn p2p_leave(state: &Arc<AppState>, room_id: &str, peer_id: &str) {
         info!("[call] p2p room {} removed - no peers remaining", room_id);
     }
     if let Some(other) = remaining {
-        if let Err(e) = other.tx.send(SignalMessage::PeerLeft).await {
-            warn!(
-                "[call] could not tell {} that {} left room {}: {}",
-                other.peer_id, peer_id, room_id, e
-            );
-        }
+        // Through `deliver`: this runs on the LEAVING peer's task, which must not hang on a
+        // partner that stopped reading.
+        p2p_send(&other.tx, SignalMessage::PeerLeft, room_id, &other.peer_id);
     }
 }
 

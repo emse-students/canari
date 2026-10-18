@@ -5,6 +5,7 @@
   import { page } from '$app/state';
   import { goto } from '$app/navigation';
   import { getGroupInvitePreview, acceptGroupInvite } from '$lib/mls/groupInvites';
+  import { describeApiRefusal, refusalStatus } from '$lib/utils/apiRefusal';
   import { currentUserId } from '$lib/stores/user';
   import { Users, LoaderCircle, CircleAlert, Check } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
@@ -45,7 +46,13 @@
       joined = true;
     } catch (e) {
       Log.d('group invite accept failed', e);
-      error = m.group_join_error_fallback();
+      // Worded from the TYPE the throw carries (status), never from the server's sentence: a gone
+      // invite is not a refused one, and a full retry limit is neither.
+      const status = refusalStatus(e);
+      error =
+        status === 404
+          ? m.invite_not_found()
+          : (describeApiRefusal(status, m.group_join_action()) ?? m.group_join_error_fallback());
       joining = false;
     }
   }

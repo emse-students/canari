@@ -19,6 +19,14 @@ import { deliveryUrl } from '$lib/utils/apiUrl';
 /** The current ticket, or `''` before the first one lands. Reactive on purpose - see above. */
 let ticket = $state('');
 
+/**
+ * The GIF relay's ticket (`mls/gifs/media`), minted by the same call. Its value changes once a DAY,
+ * not every five minutes, and that is its whole point: it is part of every relayed GIF's URL, so a
+ * ticket that changed with the preview one would give each GIF a new URL - a new download - every
+ * five minutes. Assigning the same string again does not re-render anything.
+ */
+let gifTicket = $state('');
+
 /** When the current ticket stops being minted for, as an epoch ms. */
 let expiresAt = 0;
 
@@ -31,6 +39,11 @@ const REFRESH_MARGIN_MS = 30_000;
 /** The ticket to put on a proxied image URL, or `''` when none has been obtained yet. */
 export function previewTicket(): string {
   return ticket;
+}
+
+/** The ticket to put on a relayed GIF URL, or `''` when none has been obtained yet. Reactive. */
+export function gifMediaTicket(): string {
+  return gifTicket;
 }
 
 /**
@@ -48,10 +61,23 @@ export async function ensurePreviewTicket(): Promise<void> {
     try {
       const res = await apiFetch(`${deliveryUrl()}/api/mls/link-preview/ticket`);
       if (!res.ok) return;
-      const data = (await res.json()) as { ticket?: string; expiresInMs?: number };
+      const data = (await res.json()) as {
+        ticket?: string;
+        expiresInMs?: number;
+        gifTicket?: string;
+      };
       if (typeof data.ticket !== 'string' || data.ticket.length === 0) return;
       ticket = data.ticket;
       expiresAt = Date.now() + (data.expiresInMs ?? 0);
+      if (typeof data.gifTicket === 'string' && data.gifTicket.length > 0) {
+        gifTicket = data.gifTicket;
+      } else {
+        // A server older than the GIF relay: GIFs stay unrelayed (`gifMediaProxy` answers '') until
+        // it is deployed, which is a deploy-order fact and worth one line, not a silent blank.
+        console.warn(
+          '[previewTicket] the ticket answer carries no gifTicket - GIFs cannot be relayed'
+        );
+      }
     } catch {
       // Offline, or no session - both leave the previous ticket in place and cost only an image.
     } finally {

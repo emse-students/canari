@@ -33,7 +33,8 @@ import type { GraineHistoryVisibility } from '$lib/crypto/graineConstants';
 import { buildConversationRow } from '$lib/utils/chat/conversations';
 import { currentUserId } from '$lib/stores/userState.svelte';
 import { getSavedUserId } from '$lib/stores/user';
-import { applyChannelEdit } from '$lib/utils/chat/channelEdit';
+import { applyChannelEdit, revertChannelEdit } from '$lib/utils/chat/channelEdit';
+import { deliverSalonWrite, nothingLeftTheDevice } from '$lib/utils/chat/salonOwed';
 import { applyChannelReactionFrame, getChannelReactions } from '$lib/stores/reactionStore.svelte';
 import {
   activeReactions,
@@ -2004,15 +2005,19 @@ export function useChannelWorkspaces() {
   }
 
   /**
-   * Edits the caller's OWN text message in a salon: sealed as a silent encrypted row, then applied
-   * locally with the SAME instant.
+   * Edits the caller's OWN text message in a salon: applied locally at once, then sealed as a silent
+   * encrypted row carrying the SAME instant (WP-OFF-4).
    *
    * Nothing here asks the server anything, because it cannot answer: a salon row is an opaque blob
    * (Graine), so the server does not know the frame is an edit or whose message it names. The
    * ownership check is made here for the menu's sake and AGAIN by every reader on arrival
-   * (`applyChannelEdit`), the one that counts since this side can be bypassed. The local write
-   * waits for the send, unlike a reaction: a text the peers never received would otherwise stay on
-   * this screen as if shared.
+   * (`applyChannelEdit`), the one that counts since this side can be bypassed.
+   *
+   * OPTIMISTIC, AND TAKEN BACK ONLY WHEN NOTHING WAS LEFT. An edit made offline is owed to the
+   * reconnect (`deliverSalonWrite`) and stays on screen meanwhile; its repeat carries the same row id,
+   * which the server answers with the row it holds. It is reverted only when nothing of it left the
+   * device (`nothingLeftTheDevice`) - a text the peers will never receive must not stay on this screen
+   * as if shared - and never over a later edit.
    */
   async function editChannelMessage(
     channelConversationId: string,
@@ -2033,22 +2038,44 @@ export function useChannelWorkspaces() {
       return;
     }
     const editedAt = Date.now();
-    try {
-      await sendChannelEdit(channelConversationId, messageId, text, editedAt);
-    } catch (error) {
-      ctx.log(toUiActionError(m.channel_action_message_edit(), error));
-      return;
-    }
-    // Re-read: the send awaited, and a live message may have changed the list meanwhile.
-    const latest = ctx.conversations.get(channelConversationId);
-    if (!latest) return;
     const { messages, applied } = applyChannelEdit(
-      latest.messages,
+      convo.messages,
       { targetMessageId: messageId, senderId: userId, newContent: text, editedAt },
       ctx.log
     );
-    if (applied) ctx.conversations.set(channelConversationId, { ...latest, messages });
-    ctx.invalidateChannelHistoryCache?.(channelConversationId);
+    if (!applied) {
+      ctx.log(`[CHANNEL] edit of ${messageId.slice(0, 8)} not sent - it changes nothing here`);
+      return;
+    }
+    ctx.conversations.set(channelConversationId, { ...convo, messages });
+    const rowId = crypto.randomUUID();
+    await deliverSalonWrite(
+      `edit:${messageId}`,
+      () => sendChannelEdit(channelConversationId, messageId, text, editedAt, rowId),
+      (outcome) => {
+        if (outcome.kind === 'owed') {
+          ctx.log(`[CHANNEL] edit of ${messageId.slice(0, 8)} kept on screen, sent on reconnect`);
+          return;
+        }
+        ctx.invalidateChannelHistoryCache?.(channelConversationId);
+        if (outcome.kind === 'sent') return;
+        if (nothingLeftTheDevice(outcome.error)) {
+          const latest = ctx.conversations.get(channelConversationId);
+          const undone = latest
+            ? revertChannelEdit(latest.messages, target, { newContent: text, editedAt })
+            : null;
+          if (latest && undone?.reverted) {
+            ctx.conversations.set(channelConversationId, { ...latest, messages: undone.messages });
+          }
+          ctx.log(
+            `[CHANNEL] edit of ${messageId.slice(0, 8)} not sent, ${undone?.reverted ? 'taken back' : 'already superseded - left as is'}`
+          );
+        } else {
+          ctx.log(`[CHANNEL] edit of ${messageId.slice(0, 8)} outcome unknown, kept on screen`);
+        }
+        ctx.log(toUiActionError(m.channel_action_message_edit(), outcome.error));
+      }
+    );
   }
 
   /**
@@ -2061,13 +2088,14 @@ export function useChannelWorkspaces() {
    * The local merge comes FIRST and with the same `at` the frame carries, so the pill flips at
    * once and this device's own row, when it comes back, merges to exactly the same state.
    *
-   * **ROLLED BACK ONLY WHEN NOTHING WAS SENT** (2026-10-06): a transport failure
-   * (`isTransportFailure`: no answer came back) or a seal this device cannot make
-   * ({@link GraineSealUnavailableError}) means no frame left, so the pill that stayed drawn after
-   * the toast was a claim about a reaction nobody else will ever see. The undo is the inverse frame
-   * at a LATER `at`, applied locally and never sent. Any other failure may have reached peers
-   * (a 5xx is an answer we did not read), and unflipping there would disagree with the frame they
-   * hold - so it stays, as before.
+   * **OWED WHILE OFFLINE, ROLLED BACK ONLY WHEN NOTHING WAS SENT** (2026-10-06, WP-OFF-4): a reaction
+   * made offline keeps its pill and goes on the reconnect, under the same row id and `at`
+   * (`deliverSalonWrite`); a later toggle of the same emoji owes the later frame instead. When nothing
+   * of it left the device (`nothingLeftTheDevice`: a refusal below 500, a seal this device cannot
+   * make), the pill is a claim about a reaction nobody else will ever see, so it is undone - the
+   * inverse frame at a LATER `at`, applied locally and never sent. A 5xx or no answer with the link
+   * up may have reached peers, and unflipping there would disagree for good with the frame they hold
+   * - so it stays.
    */
   async function toggleChannelReaction(
     channelConversationId: string,
@@ -2094,40 +2122,63 @@ export function useChannelWorkspaces() {
 
     const at = Date.now();
     applyChannelReactionFrame(messageId, userId, emoji, at, standing);
-    try {
-      await sendChannelReaction(channelConversationId, messageId, emoji, at, standing);
+    const rowId = crypto.randomUUID();
+    await deliverSalonWrite(
+      `reaction:${messageId}:${emoji}`,
+      () => sendChannelReaction(channelConversationId, messageId, emoji, at, standing, rowId),
+      (outcome) => {
+        if (outcome.kind === 'owed') {
+          ctx.log(`[CHANNEL] reaction on ${messageId.slice(0, 8)} kept, sent on reconnect`);
+          return;
+        }
+        if (outcome.kind === 'sent') {
+          void notifyReactionAuthor(channelConversationId, messageId, emoji, standing, userId, ctx);
+          return;
+        }
+        if (nothingLeftTheDevice(outcome.error)) {
+          const undone = applyChannelReactionFrame(
+            messageId,
+            userId,
+            emoji,
+            Math.max(Date.now(), at + 1),
+            !standing
+          );
+          ctx.log(`[CHANNEL] reaction not sent, local pill rolled back: ${undone}`);
+        } else {
+          ctx.log(`[CHANNEL] reaction outcome unknown, local pill kept: the server may hold it`);
+        }
+        ctx.log(toUiActionError(m.channel_action_message_react(), outcome.error));
+      }
+    );
+  }
 
-      // NOTIFY THE AUTHOR, AND NOBODY ELSE. The reaction itself is sent silent - a heart must not
-      // ring every phone in the community - so this targeted push is the only notification there
-      // is. It concerns the person reacted to, and telling a whole channel about each one is
-      // exactly the noise a busy community cannot afford. Nothing of the message crosses; the
-      // author's own devices hold it already (see `notifyReaction`).
-      const author = ctx.conversations
-        .get(channelConversationId)
-        ?.messages.find((msg) => msg.id === messageId)?.senderId;
-      if (!standing && author && author !== userId) {
-        const getName = await resolveDisplayNames([userId]);
-        void notifyReaction({
-          groupId: channelConversationId,
-          targetSenderId: author,
-          emoji,
-          messageId,
-          actorName: getName(userId),
-        }).catch(() => {});
-      }
-    } catch (error) {
-      if (isTransportFailure(error) || error instanceof GraineSealUnavailableError) {
-        const undone = applyChannelReactionFrame(
-          messageId,
-          userId,
-          emoji,
-          Math.max(Date.now(), at + 1),
-          !standing
-        );
-        ctx.log(`[CHANNEL] reaction not sent, local pill rolled back: ${undone}`);
-      }
-      ctx.log(toUiActionError(m.channel_action_message_react(), error));
-    }
+  /**
+   * NOTIFIES THE AUTHOR, AND NOBODY ELSE, of a reaction placed on their message. The reaction itself
+   * is sent silent - a heart must not ring every phone in the community - so this targeted push is
+   * the only notification there is. It concerns the person reacted to, and telling a whole channel
+   * about each one is exactly the noise a busy community cannot afford. Nothing of the message
+   * crosses; the author's own devices hold it already (see `notifyReaction`).
+   */
+  async function notifyReactionAuthor(
+    channelConversationId: string,
+    messageId: string,
+    emoji: string,
+    removed: boolean,
+    userId: string,
+    ctx: ChannelWorkspaceContext
+  ): Promise<void> {
+    const author = ctx.conversations
+      .get(channelConversationId)
+      ?.messages.find((msg) => msg.id === messageId)?.senderId;
+    if (removed || !author || author === userId) return;
+    const getName = await resolveDisplayNames([userId]);
+    void notifyReaction({
+      groupId: channelConversationId,
+      targetSenderId: author,
+      emoji,
+      messageId,
+      actorName: getName(userId),
+    }).catch(() => {});
   }
 
   /** Applies a `channel.message.deleted` broadcast (the author or a moderator removed a message). */

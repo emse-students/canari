@@ -84,7 +84,7 @@ REST: those rows need a count, then a migration.
 | `GET /history` bare array | replacement shipped, then floored | NO (never shipped) | none | - | unchanged |
 | `LEGACY_PERMISSION_MAPPING` (`channel-role.entity.ts`; no entry here) | no `channel_roles` row holds an old key | not a version question | `channel_roles.permissions` | 1 map + 1 hook | owed: count |
 | Form `dependsOn`/`dependsValue` (`forms/visibility.ts`; no entry here) | no stored form uses the pair | not a version question | `forms.items` | reader branch | owed: count |
-| State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | NOT done here: a writer flip, not a removal - its own MLS PR with an adversarial review ([backlog](backlog.md)) |
+| State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | FLIPPED in its own MLS PR (PK1, 2026-10-17, unshipped until a tag carries it); the LEGACY reader stays for blobs not yet rewritten ([backlog](backlog.md)) |
 | `MLS_STATE_SEAL_V2_WRITER_ENABLED` | a stable with the reader served the web AND floor >= it | YES (`v1.2.7`) | it CHANGES device data at rest | 1 line, then the encrypt worker | NOT done here, same reason |
 | The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closes when the user sets 1.2.7 |
 | Group removal hold (#1878) | floor >= the release carrying it | NO (`1.2.9`) | - | - | waits |
@@ -131,6 +131,20 @@ earlier reaches the floor clients as a wrong sentence and a dead link, which no 
 3. Add the type to `KNOWN_NOTIFICATION_TYPES` and the `notificationHref` switch (`notificationTarget.ts`), and give `NotificationRow` its glyph, colour and Paraglide sentence; the tests walk every known type through both.
 4. Native tables (`composeServerNotification`, NSE, `canari_push.mm`) get its `contentKey`.
 **Removal condition:** none; this is a floor requirement, not a shim.
+
+### No date yet - the profile batch answered without `deleted`, by a server older than 2026-10-18
+
+**Site:** `flushProfileBatch` in `frontend/src/lib/stores/user.ts` (`legacyAnswer`).
+**Shim (2026-10-18):** `GET /api/users/batch` answers `{ users, deleted }` since #2022, and a client
+reading that shape meets an OLDER server whenever the two are not in step - a rolling deploy, a
+rollback, a store build live before production deploys. That server sends no `deleted` and answers
+an unknown id by its absence, so an answer with the field MISSING is read the old way: absence is
+`UserProfileFetchError(404)`, cached, rendered as the unknown-user label, one `console.debug` per
+chunk. Without it every absent id counted as a contract breach (`console.error`, 502, never cached)
+and `displayName.ts` warned, backed off 120 s and asked again.
+**Removal condition:** every estate's core-service sends `deleted` (dev and production both deployed
+past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
+field becomes the breach. A server version, not a client floor.
 
 ### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 

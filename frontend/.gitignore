@@ -13,3 +13,4 @@ vite.config.ts.timestamp-*
 package-lock.json
 yarn.lock
 pnpm-lock.yaml
+/.paraglide-test

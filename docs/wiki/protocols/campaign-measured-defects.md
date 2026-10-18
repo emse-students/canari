@@ -301,10 +301,11 @@ oracle); the alternative is a local expiry, the clock this project refuses to ma
 
 Read off the Pixel 6a: 45 `GET /api/presence` in seven minutes, one every ten seconds
 (`createPausableInterval(checkPresenceNow, 10_000)` in `presenceStore.ts`, still so on 2026-10-04), on a
-client already holding a live WebSocket. The `pong` WARN half is fixed (`isHeartbeatFrame`). A push needs
-a DESIGN DECISION first: who may watch whose presence, the question `get_presence` in
-`apps/chat-gateway/src/presence.rs` already names (today any authenticated caller may ask about any user
-id). Then it is a gateway subscription plus a client listener replacing the interval.
+client already holding a live WebSocket. The `pong` WARN half is fixed (`isHeartbeatFrame`). The design
+decision a push needed was taken on 2026-10-18 (presence is visible only to people sharing a conversation
+or a community) and the server read ENFORCES it ([chat-gateway](../services/chat-gateway.md#who-may-see-whose-presence-wp-presence-2026-10-18)).
+The push itself is still to build: the gateway emits no presence transition today, and that page says
+what replacing the interval takes.
 
 ## The Android background/resume sequence (2026-09)
 

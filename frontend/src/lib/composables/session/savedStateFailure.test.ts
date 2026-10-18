@@ -1,0 +1,53 @@
+// Break the app-wide import cycle (auth store -> composables -> mlsService -> subclasses ->
+// BaseMlsService) that otherwise loads the concrete services before BaseMlsService is defined.
+vi.mock('$lib/services/WebMlsService', () => ({ WebMlsService: class {} }));
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn() }));
+vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }));
+vi.mock('@tauri-apps/plugin-websocket', () => ({ default: { connect: vi.fn() } }));
+
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { SavedStateOfAnotherAccountError, SavedStateUnopenedError } from '$lib/mls-client';
+import { m } from '$lib/paraglide/messages';
+import { savedStateFailure } from './sessionAuth';
+import { isRecoverableWithOldPin, provesOtherAccountState } from './loginErrors';
+
+/**
+ * THE LOGIN READS WHY A SAVED STATE DID NOT OPEN FROM A TYPE, AND SAYS ONLY WHAT THE CAUSE EARNED.
+ *
+ * Until 2026-10-17 it compared `reason.message` against one shared marker, so every cause - a PIN
+ * changed elsewhere, a damaged state, another account's - wore the same sentence, which offered both
+ * remedies and named neither (`serverProse.test.ts` held the site on its allowlist for it).
+ */
+describe('savedStateFailure', () => {
+  it("names another account's state, and the gate then withholds the reset", () => {
+    const failure = savedStateFailure(new SavedStateOfAnotherAccountError(new Error('x')));
+    expect(failure.code).toBe('device_holds_other_account');
+    expect(failure.message).toBe(m.auth_vault_other_account_device());
+    expect(provesOtherAccountState(failure.code)).toBe(true);
+    expect(isRecoverableWithOldPin(failure.code)).toBe(false);
+  });
+
+  it('states a PIN changed elsewhere as the fact a fingerprint makes it, and offers the old PIN', () => {
+    const failure = savedStateFailure(new SavedStateUnopenedError('rotated', new Error('x')));
+    expect(failure.code).toBe('local_state_sealed_under_old_pin');
+    expect(failure.message).toBe(m.auth_local_state_old_pin());
+    expect(isRecoverableWithOldPin(failure.code)).toBe(true);
+  });
+
+  it('keeps the observation, both remedies named, for a legacy blob or an untyped failure', () => {
+    for (const reason of ['undecryptable', 'unknown'] as const) {
+      const failure = savedStateFailure(new SavedStateUnopenedError(reason, new Error('x')));
+      expect(failure.code, reason).toBe('local_state_unopenable');
+      expect(failure.message, reason).toBe(m.auth_local_state_unopenable());
+    }
+  });
+
+  it('is what the login throws for both types, read by `instanceof` and never by the message', () => {
+    const auth = readFileSync(join(import.meta.dirname, 'sessionAuth.ts'), 'utf8');
+    expect(auth).toMatch(
+      /reason instanceof SavedStateUnopenedError \|\|\s+reason instanceof SavedStateOfAnotherAccountError\s+\) \{\s+throw savedStateFailure\(reason\);/
+    );
+    expect(auth).not.toContain('MLS_LOCAL_STATE_UNDECRYPTABLE');
+  });
+});

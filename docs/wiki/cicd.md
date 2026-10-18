@@ -195,7 +195,7 @@ which is how three chains came to each re-derive the same fact:
 
 1. `enumerate-services` names all eight services (no diff: every service is built every release)
 2. Builds the frontend against that estate's `VITE_*` set, then every image → GHCR, each tagged `v<version>`
-3. Self-hosted runner: sync `.env`, `docker compose pull` + `up -d` - production by `--tag v<version>`, so re-running an old release's deploy is a ROLLBACK
+3. Self-hosted runner: sync `.env`, `docker compose pull`, then every service replaced one at a time by `infrastructure/lib/rolling.sh` ([below](#a-deploy-replaces-nothing-a-member-is-talking-to)) - production by `--tag v<version>`, so re-running an old release's deploy is a ROLLBACK
 4. Database migrations, then health checks
 5. MiConnect's blueprints: a pre-release DRY-RUNS them against the production MiConnect, and a
    stable APPLIES them before `prod-released` moves. The same runner lives on MiConnect's host, so
@@ -233,6 +233,78 @@ change detector's INPUT; the detector reads releases now, so the tag survives on
 user took that deletion knowing its cost: **after an emergency push straight to `main`, nothing says
 which commit production is running** until the next release.
 
+#### A deploy replaces nothing a member is talking to
+
+**The defect (backlog P1, 2026-10-09):** a tab or app open across a production deploy got `502` for
+the 1-2 minutes it took, and a send in that window showed "Échec de l'envoi". Two causes, both read
+from the code: ONE `docker compose up -d` recreated every service whose image changed - and every
+image changes every release - each one stopped BEFORE its successor started; and every service ran
+as PID 1 with no `SIGTERM` handler, so each stop waited out the 10 s timeout and then killed whatever
+was in flight. Nothing in the four visible workflows changed: the whole fix is inside the deploy
+library's script, `infrastructure/deploy/deploy-environment.sh`.
+
+**How a release replaces a service now** (`infrastructure/lib/rolling.sh`, one service at a time,
+in `depends_on` order):
+
+1. `up -d --no-deps --no-recreate --scale <svc>=2` starts the NEW replica beside the old one.
+2. Wait for its healthcheck (`start_interval: 2s`, so a ready replica is seen in seconds, not at the
+   next 30 s tick). An unhealthy replica is removed and the deploy STOPS - the old one never stopped
+   serving (measured: 0 failed requests across a refused release).
+3. Wait out the Docker DNS lifetime nginx caches (`ROLLING_RESOLVER_TTL_SECONDS`, 2 s, plus one), so
+   every proxy has seen the new address.
+4. `docker stop` the old replica: its `SIGTERM` handler closes the listener, answers what is in
+   flight, exits (`drain-on-sigterm.ts` in the four NestJS services, `serve_until` in the gateway).
+
+**Every service declares how it may be replaced**, as the label `canari.deploy.replace`, and
+`infrastructure/lib/replace-modes.py` refuses the compose file BEFORE anything changes when a
+declaration cannot hold:
+
+| Mode | Meaning | Services | What it requires |
+| --- | --- | --- | --- |
+| `overlap` | two replicas at once, as above | gateway, chat-delivery, core, social, frontend-ssr, frontend | no host port, no volume, a healthcheck with `start_interval` |
+| `exclusive` | recreated in place - a short gap remains | media-service (its metadata index is one JSON file on `media_meta`), call-service (rooms in memory) | - |
+| `pinned` | a third-party image, never changed by a release | postgres, redis, garage, adminer, `edge` | not an image this repository builds |
+
+**THE HOST PORT MOVED TO A CONTAINER THAT NEVER CHANGES.** Two replicas cannot both bind
+`127.0.0.1:8081`, so the frontend lost its port and a new `edge` service holds it: a pinned nginx in
+`stream` (L4) mode whose configuration is `infrastructure/edge/nginx.conf`, mounted as a DIRECTORY
+(a file mount keeps the inode `git reset --hard` replaces) and reloaded in place after each deploy. It
+resolves `frontend` through Docker's DNS at 2 s and fails a refused connect over to the next address.
+The frontend's own nginx does the same for the services behind it: `resolver valid=2s`,
+`proxy_connect_timeout 2s`, `proxy_next_upstream error timeout`. A refused connect is retried even for
+a POST, because nothing was sent. **These three numbers must agree with `rolling.sh`**, and
+`deploy-replace.test.sh` fails when they do not.
+
+**The proof is a test that sends throughout** (`.github/scripts/tests/deploy-rolling.test.sh`, a
+fixture estate of the same shape): ~1500 POSTs at concurrency 12 across a release, ALL `200`, on
+compose 5.5 and on 2.26.1 (the host's version); the same release done the old way, as its control,
+shows hundreds of failures. A minute-boundary cron firing in both replicas was the one harmful shared-state
+race found: the form reminder now claims its row with a conditional `UPDATE`
+(`forms-reminder.scheduler.spec.ts` fails without it).
+
+**What is NOT zero, said rather than hidden:**
+
+- A request can stall up to ~2 s when a proxy still holds the retired replica's address and the
+  connect times out instead of being refused (measured max 2.2 s).
+- A WebSocket on the retired gateway or frontend is closed, and the client reconnects - a drop, not
+  an error the member sees.
+- media-service and call-service are `exclusive`: their few seconds of gap remain
+  ([backlog](backlog.md)).
+- A Node-to-Node call landing in a peer's drain window can still be refused (not observed).
+- **The transition deploy** - the first one carrying this - moves the port from the frontend to the
+  edge: about one second with nothing on `8081`. And compose 2.26 hashes a service with `depends_on`
+  differently with and without `--no-deps`, so the deploy ALWAYS uses `--no-deps`; a manual `up -d`
+  with dependencies on the host makes the NEXT deploy recreate `edge` and `adminer` once.
+- **The first deploy carrying this costs more than that second.** The new `canari.deploy.replace`
+  labels change the compose definition of `postgres`, `redis`, `garage` and `adminer`, so that deploy
+  recreates them STOP-FIRST under live traffic (`redis` has no `start_interval`: `wait_healthy` can
+  wait ~30 s). And the OLD frontend still runs `resolver valid=10s` while rolling.sh waits 3 s, so it
+  can answer `502` for up to ~7 s per replaced service. Reasoned from how compose hashes a
+  definition, not run. **The "no 502" reading is taken on the SECOND pre-release**; the first proves
+  only that the edge took the port.
+- The `*/5` Le Cercle webhook retry (`retryDueWebhookDeliveries`) does not claim its rows, so both
+  replicas can retry in the overlap. Harmless: Le Cercle inserts with `ON CONFLICT(payment_intent_id)`,
+  so no member is credited twice; only a counter update and a `[CERCLE]` line are doubled.
 
 #### Every job checks out the SHA `release-kind` resolved, because `main` is a moving reference (2026-09-03)
 

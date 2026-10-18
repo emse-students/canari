@@ -31,6 +31,8 @@ import {
   nativeStorageLoginImpl,
   biometricLoginImpl,
   resetDeviceAsFreshImpl,
+  wipeDeletedAccountImpl,
+  releaseDeletedAccountImpl,
   recoverPinImpl,
   changePinImpl,
 } from './session/sessionAuth';
@@ -501,6 +503,11 @@ export function useChatSession() {
       userIdToReset: string,
       cb: import('./session/sessionTypes').ChatSessionCallbacks
     ) => resetDeviceAsFreshImpl(ctx, userIdToReset, cb),
+    /** Removes a deleted account's local database and vault slot only (after `clearAuth`); `ranHere` = its stores ran in this realm. */
+    wipeDeletedAccount: (userId: string, ranHere: boolean, log: (msg: string) => void) =>
+      wipeDeletedAccountImpl(ctx, log, userId, ranHere),
+    /** Another tab deleted this account: stop writing and close its stores (after `clearAuth`). */
+    releaseDeletedAccount: (userId: string) => releaseDeletedAccountImpl(ctx, userId),
     /**
      * Changes the account PIN: rotates the server-side verifier, then re-derives this device's
      * key and re-encrypts the MLS state and local messages under it.

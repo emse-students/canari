@@ -18,7 +18,7 @@ import { BookingsService, SPACE_BOOKINGS_PAGE, type Actor } from './bookings.ser
 import { CreateBlockDto, CreateBookingDto } from './dto/booking.dto';
 
 /** The caller nginx authenticated. */
-const actorOf = (userId: string, globalAdmin: string | undefined): Actor => ({
+export const actorOf = (userId: string, globalAdmin: string | undefined): Actor => ({
   userId: userId.trim().toLowerCase(),
   isGlobalAdmin: globalAdmin === 'true',
 });

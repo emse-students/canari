@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="16/10/2026"
+  updated="18/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -89,7 +89,9 @@
         <dd>
           Les messages de salon sont chiffrés de bout en bout ; le nom des communautés et des
           salons, leurs membres et les accusés de lecture affichés dans un salon sont connus du
-          serveur.
+          serveur. Quand un message de salon est supprimé, le serveur garde son auteur et son
+          identifiant aléatoire pendant 30 jours, pour ne pas le republier si l'application renvoie
+          un envoi interrompu.
         </dd>
       </div>
       <div>
@@ -114,6 +116,15 @@
           Pour chaque appareil : un identifiant, son nom et son système, la version de
           l'application, ses clés publiques de chiffrement et le jeton de notification attribué par
           Google (FCM) ou Apple (APNs), avec la langue de l'appareil.
+        </dd>
+      </div>
+      <div>
+        <dt>Présence en ligne</dt>
+        <dd>
+          Tant qu'un de vos appareils est connecté, le serveur note qu'il est en ligne. En dehors
+          des administrateurs de la plateforme, seules les personnes avec qui vous partagez une
+          conversation ou une communauté voient si vous êtes en ligne. Un blocage ne masque pas
+          cette information.
         </dd>
       </div>
       <div>
@@ -280,9 +291,15 @@
       <li>
         <p class="legal-block-title">KLIPY - recherche de GIF</p>
         <p>
-          Quand vous cherchez un GIF, votre recherche est envoyée à KLIPY avec un identifiant
-          aléatoire créé sur votre appareil, sans lien avec votre compte, et les images sont
-          chargées depuis ses serveurs : KLIPY voit donc l'adresse IP de votre appareil.
+          Quand vous cherchez un GIF, votre recherche passe par notre serveur, qui l'envoie à KLIPY
+          sans aucune donnée vous identifiant. Les GIF de KLIPY eux-mêmes - dans le sélecteur, dans
+          les conversations et dans les commentaires - sont aussi chargés par notre serveur : KLIPY
+          voit la recherche et l'adresse de notre serveur, jamais votre adresse IP ni votre compte.
+          L'adresse complète d'un GIF ainsi relayé figure dans les journaux techniques de notre
+          serveur web et de Cloudflare. Un GIF venant d'un autre site (lien collé) est chargé
+          directement depuis ce site par votre appareil. Une version de l'application antérieure à
+          celle qui contient ce relais charge encore les GIF directement chez KLIPY, avec l'adresse
+          IP de votre appareil, jusqu'à sa mise à jour.
         </p>
       </li>
       <li>
@@ -347,6 +364,10 @@
             <td>7 jours sans utilisation</td>
           </tr>
           <tr>
+            <td>Présence en ligne</td>
+            <td>Effacée à la déconnexion de l'appareil, 90 secondes au plus après</td>
+          </tr>
+          <tr>
             <td>Messages privés en attente de remise (chiffrés)</td>
             <td>Supprimés dès la remise à l'appareil, 90 jours au plus</td>
           </tr>
@@ -357,6 +378,13 @@
           <tr>
             <td>Messages de salon (chiffrés)</td>
             <td>365 jours, sauf messages épinglés ; ou jusqu'à leur suppression</td>
+          </tr>
+          <tr>
+            <td>Trace d'un message de salon supprimé (auteur, identifiant aléatoire)</td>
+            <td>
+              30 jours après la suppression du message ; avant, avec le salon ou le compte de
+              l'auteur
+            </td>
           </tr>
           <tr>
             <td>Fichiers envoyés dans une conversation (chiffrés)</td>
@@ -489,11 +517,11 @@
           <tr>
             <td>Identifiant aléatoire <code>klipy_cid</code></td>
             <td>
-              Transmis à KLIPY avec les recherches de GIF, qui s'en sert pour ses propres
-              statistiques (section 4). Il n'est pas nécessaire au service et sera supprimé quand
-              les recherches passeront par notre serveur, ce qui est en cours
+              Créé par les versions de l'application antérieures à octobre 2026, qui l'envoyaient à
+              KLIPY avec les recherches de GIF (section 4). La version actuelle ne l'utilise plus et
+              l'efface au démarrage
             </td>
-            <td>Jusqu'à son effacement</td>
+            <td>Jusqu'au premier démarrage d'une version à jour</td>
           </tr>
           <tr>
             <td>Journal de l'application</td>
@@ -588,14 +616,13 @@
       <p class="legal-callout-title">Supprimer votre compte</p>
       <p>
         Depuis l'application : <strong>Paramètres > Supprimer mon compte</strong>. La suppression
-        est immédiate : profil, publications, adhésions, appareils, jetons de notification et
-        messages en attente sont effacés. Vos messages dans les salons et vos achats sont conservés
-        sous une forme détachée de votre compte (auteur « supprimé »), pour ne pas trouer les
-        conversations des autres membres ni la comptabilité des associations. Certaines données ne
-        sont pas encore atteintes par cette suppression, notamment vos réponses aux formulaires, vos
-        commentaires et réactions sur les publications d'autres membres et l'historique des
-        modifications de votre profil : leur intégration est en cours, et vous pouvez en demander
-        l'effacement par e-mail dès maintenant.
+        est immédiate : profil, publications, adhésions, appareils, jetons de notification, messages
+        en attente et messages de salon (avec leurs réactions et épingles) sont effacés. Vos achats
+        sont conservés sous une forme détachée de votre compte (auteur « supprimé »), pour ne pas
+        trouer la comptabilité des associations. Certaines données ne sont pas encore atteintes par
+        cette suppression, notamment vos réponses aux formulaires, vos commentaires et réactions sur
+        les publications d'autres membres et l'historique des modifications de votre profil : leur
+        intégration est en cours, et vous pouvez en demander l'effacement par e-mail dès maintenant.
       </p>
       <p class="legal-fineprint">
         Les données supprimées subsistent dans les sauvegardes pendant la durée indiquée en section

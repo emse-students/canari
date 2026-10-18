@@ -105,6 +105,19 @@ const broken = [];
 for (const file of files) {
   const text = readFileSync(file, 'utf-8');
   const where = relative(ROOT, file).split(sep).join('/');
+  // A link CUT OFF before its `)` is invisible to the match below, which needs the closing paren -
+  // so a row truncated mid-link (`([audience](../services/chat-gateway.md` at the end of a table
+  // line, 2026-10-18) passed this gate and rendered as raw text. A link target cannot hold a space
+  // or a newline, so `](` followed by target characters up to the END of the line is always a cut.
+  // Fenced code is skipped: a snippet may quote half a link on purpose.
+  let fenced = false;
+  for (const [index, line] of text.split('\n').entries()) {
+    if (/^\s*(```|~~~)/.test(line)) fenced = !fenced;
+    if (fenced) continue;
+    if (/\]\([^)\s]*$/.test(line.trimEnd())) {
+      broken.push(`${where}:${index + 1} -> a link with no closing ")" (cut off mid-link)`);
+    }
+  }
   for (const [, link] of text.matchAll(/\]\(([^)\s]+)\)/g)) {
     // A scheme (`https:`, `mailto:`), a protocol-relative host or a bare fragment is somebody
     // else's to resolve. Everything left is a path into this repository.

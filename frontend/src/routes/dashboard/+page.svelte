@@ -101,15 +101,7 @@
             {group.label}
           </h2>
         {/if}
-        {#if group.sections}
-          <!-- Associations, Lists, Institutions: a small sub-heading over each non-empty one. -->
-          {#each group.sections as sub (sub.key)}
-            <h3 class="text-text-muted px-1 pt-1 text-xs font-semibold">{sub.label}</h3>
-            <SectionHub rows={sub.rows} label={sub.label} />
-          {/each}
-        {:else}
-          <SectionHub rows={group.rows} label={group.label} />
-        {/if}
+        <SectionHub rows={group.rows} label={group.label} />
       </section>
     {/each}
   </div>

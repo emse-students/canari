@@ -18,6 +18,8 @@ import {
   retrySalonSend,
   discardSalonSend,
   takeBackSalonSend,
+  resumeUnsentSalonSends,
+  forgetSalonSendsOfEndedSession,
   type SendMessageDeps,
   addReaction,
   removeReaction,
@@ -26,6 +28,8 @@ import {
   setMessagePinned,
 } from '$lib/utils/chat/messaging';
 import { applySalonEchoChange } from '$lib/utils/chat/salonEcho';
+import type { UnsentSalonText } from '$lib/utils/chat/salonUnsent';
+import { resetOwedSalonWrites } from '$lib/utils/chat/salonOwed';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
 import { applyPin, isMessagePinned } from '$lib/stores/pinStore.svelte';
 import {
@@ -207,6 +211,9 @@ export function useMessaging() {
     log(
       `[MEDIA] signed out: staging of ${staged} and replies of ${replies} conversation(s) forgotten`
     );
+    // Salon writes owed to a reconnect were the leaving account's: none may go out under the next.
+    resetOwedSalonWrites();
+    forgetSalonSendsOfEndedSession();
   }
 
   /** Replaces the staged files of `conversationKey`; an empty list removes its entry. */
@@ -651,6 +658,26 @@ export function useMessaging() {
     // A retry may wait for its salon to load: the banner goes to the conversation still on screen.
     if (ctx.selectedContact === key) ctx.setSendError(refusal);
     else ctx.log(`[SEND] retry refusal not shown: the conversation changed (${refusal})`);
+  }
+
+  /**
+   * Sends again the salon messages a past page life left unanswered (WP-OFF-3): every salon's when
+   * `conversationKey` is null (the session is up), one salon's when it was just opened. Each echo is
+   * drawn in its own conversation, looked up when its salon is sendable. Returns the texts written
+   * before the ledger kept enough to rebuild them, for the caller to hand back to the composer.
+   */
+  function resumeUnsentSends(
+    ctx: MessagingContext,
+    conversationKey: string | null
+  ): Promise<UnsentSalonText[]> {
+    return resumeUnsentSalonSends(
+      ctx.userId,
+      (key) => {
+        const convo = ctx.conversations.get(key);
+        return convo ? makeSendDeps(ctx, convo) : null;
+      },
+      conversationKey
+    );
   }
 
   /** Drops a failed salon message the member gave up on: its registration and its row. */
@@ -2185,6 +2212,7 @@ export function useMessaging() {
     retrySend,
     discardSend,
     takeBackSend,
+    resumeUnsentSends,
     forwardMessage,
     /** Validates and enqueues files (with image compression) for the next send. */
     handleFilesSelected,

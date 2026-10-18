@@ -1,5 +1,6 @@
 import { apiFetch } from '$lib/utils/apiFetch';
 import { socialUrl } from '$lib/utils/apiUrl';
+import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 import type { MinesweeperConfig, MinesweeperMove } from './game';
 
 export interface MinesweeperChallengeResponse {
@@ -78,7 +79,7 @@ export async function startMinesweeperChallenge(): Promise<MinesweeperChallengeR
   const res = await apiFetch(`${minesweeperBase()}/challenges`, { method: 'POST' });
   if (res.status === 403) throw new MinesweeperBannedError();
   if (!res.ok) {
-    throw new Error(`Failed to start challenge (${res.status})`);
+    throw await refusalFromResponse(res, 'Failed to start challenge');
   }
   return res.json();
 }
@@ -99,8 +100,7 @@ export async function submitMinesweeperChallenge(
     }),
   });
   if (!res.ok) {
-    const body = await res.text();
-    throw new Error(body || `Submit failed (${res.status})`);
+    throw await refusalFromResponse(res, 'Submit failed');
   }
   return res.json();
 }
@@ -109,7 +109,7 @@ export async function submitMinesweeperChallenge(
 export async function fetchMinesweeperLeaderboard(limit = 25): Promise<LeaderboardEntry[]> {
   const res = await apiFetch(`${minesweeperBase()}/leaderboard?limit=${limit}`);
   if (!res.ok) {
-    throw new Error(`Failed to load leaderboard (${res.status})`);
+    throw await refusalFromResponse(res, 'Failed to load leaderboard');
   }
   const data = (await res.json()) as { entries: LeaderboardEntry[] };
   return data.entries ?? [];
@@ -119,7 +119,7 @@ export async function fetchMinesweeperLeaderboard(limit = 25): Promise<Leaderboa
 export async function fetchMinesweeperMe(): Promise<MinesweeperStanding> {
   const res = await apiFetch(`${minesweeperBase()}/me`);
   if (!res.ok) {
-    throw new Error(`Failed to load minesweeper standing (${res.status})`);
+    throw await refusalFromResponse(res, 'Failed to load minesweeper standing');
   }
   return res.json();
 }
@@ -128,7 +128,7 @@ export async function fetchMinesweeperMe(): Promise<MinesweeperStanding> {
 export async function fetchMinesweeperUserStanding(userId: string): Promise<MinesweeperStanding> {
   const res = await apiFetch(`${minesweeperBase()}/users/${encodeURIComponent(userId)}`);
   if (!res.ok) {
-    throw new Error(`Failed to load minesweeper standing (${res.status})`);
+    throw await refusalFromResponse(res, 'Failed to load minesweeper standing');
   }
   return res.json();
 }
@@ -140,7 +140,7 @@ export async function removeMinesweeperScore(scoreId: string): Promise<void> {
   const res = await apiFetch(`${minesweeperBase()}/scores/${encodeURIComponent(scoreId)}`, {
     method: 'DELETE',
   });
-  if (!res.ok) throw new Error(`Failed to remove the score (${res.status})`);
+  if (!res.ok) throw await refusalFromResponse(res, 'Failed to remove the score');
 }
 
 /** Bans a user from the ranked game. Their scores are hidden, not deleted. */
@@ -149,7 +149,7 @@ export async function banMinesweeperUser(userId: string, reason?: string): Promi
     method: 'POST',
     body: JSON.stringify({ userId, ...(reason ? { reason } : {}) }),
   });
-  if (!res.ok) throw new Error(`Failed to ban the user (${res.status})`);
+  if (!res.ok) throw await refusalFromResponse(res, 'Failed to ban the user');
 }
 
 /** Lifts a ban: the player's scores and rank come back as they were. */
@@ -157,13 +157,13 @@ export async function unbanMinesweeperUser(userId: string): Promise<void> {
   const res = await apiFetch(`${minesweeperBase()}/bans/${encodeURIComponent(userId)}`, {
     method: 'DELETE',
   });
-  if (!res.ok) throw new Error(`Failed to lift the ban (${res.status})`);
+  if (!res.ok) throw await refusalFromResponse(res, 'Failed to lift the ban');
 }
 
 /** Everyone currently banned from the ranked game. */
 export async function fetchMinesweeperBans(): Promise<MinesweeperBan[]> {
   const res = await apiFetch(`${minesweeperBase()}/bans`);
-  if (!res.ok) throw new Error(`Failed to load the bans (${res.status})`);
+  if (!res.ok) throw await refusalFromResponse(res, 'Failed to load the bans');
   const data = (await res.json()) as { bans: MinesweeperBan[] };
   return data.bans ?? [];
 }

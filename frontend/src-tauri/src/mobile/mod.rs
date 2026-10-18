@@ -28,6 +28,9 @@ pub mod navigation;
 #[cfg(any(target_os = "android", target_os = "ios", test))]
 pub mod proto_fields;
 
+#[cfg(any(target_os = "android", target_os = "ios", test))]
+pub mod push_text;
+
 // The cross-version gate for `aes-gcm`, and the only module here that is TEST-ONLY: it asserts
 // against committed bytes rather than shipping anything. It lives inside the crate rather than
 // under `tests/` because `mod mobile` exists only under `cfg(test)` on a host build, so an

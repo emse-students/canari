@@ -18,6 +18,7 @@
  */
 const OUR_NATIVE = [
   /^mls[.]bin$/,
+  /^mls[.]owner$/,
   /^mls_pending[.]db/,
   /^canari_.*[.]db/,
   /^graine_seeds[.]json$/,

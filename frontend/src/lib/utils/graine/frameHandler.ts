@@ -15,7 +15,7 @@ import {
 } from './runtime';
 import { historyFloorsFor } from './historyBoundary';
 import { mirrorGraineSeed } from './graineMirror';
-import { forgetAskedSession, noteSeedUnavailable } from './repair';
+import { forgetAskedSession, noteHistoryHeldNothing, noteSeedUnavailable } from './repair';
 import { seedFromWire, storedV2From, storedV2Of, toWireSeed, type IncomingSeed } from './wireSeed';
 import { checkSeedEndorsement, type EndorsementSource } from './endorsement';
 
@@ -380,7 +380,15 @@ async function answerSeedRequest(
   // know it. Everything else answers, INCLUDING an empty hand - "I hold none of these" is the fact
   // that sends the requester to the next member, and withholding it strands the session for good.
   if (!gathered) return;
-  if (gathered.seeds.length === 0 && gathered.missing.length === 0) return;
+  // A HISTORY ask answered with an empty hand SAYS SO (section 24): silence there was the one answer
+  // the requester could not record, so it asked again at every launch. Additive - a requester that
+  // predates the field reads an empty bundle and does nothing with it. Only when the store holds NO
+  // ROW of the community (`gatherCommunityHistory`): rows that would not decrypt are not "nothing",
+  // and stay the silence they were. A SESSIONS ask never reaches this with an empty hand and nothing
+  // declined unless every seed was withheld, which stays silent for the reason `gatherNamedSessions`
+  // gives.
+  const holdsNothing = gathered.holdsNothing === true && gathered.seeds.length === 0;
+  if (!holdsNothing && gathered.seeds.length === 0 && gathered.missing.length === 0) return;
 
   const bundle = encodeAppMessage(
     mkGraineBundle({
@@ -391,6 +399,7 @@ async function answerSeedRequest(
       // Stated rather than left to be inferred from a short list: "this is all there is" and "this
       // is all I could send" are different facts, and only one of them means ask again.
       truncated: gathered.truncated,
+      ...(holdsNothing ? { holdsNothing: true } : {}),
     })
   );
   const seeds = gathered.seeds;
@@ -422,7 +431,8 @@ async function answerSeedRequest(
   await mlsService.sendMessage(frame.groupId, bundle, undefined, addressedKeyMaterial(requester));
   console.info(
     `[GRAINE] answered ${requester} with ${seeds.length} seed(s)` +
-      (gathered.missing.length > 0 ? `, declining ${gathered.missing.length}` : '')
+      (gathered.missing.length > 0 ? `, declining ${gathered.missing.length}` : '') +
+      (holdsNothing ? ' - holds nothing of the community' : '')
   );
 }
 
@@ -432,6 +442,11 @@ interface GatheredSeeds {
   /** Sessions the request named that this device does not hold. Travels, rather than being logged. */
   missing: string[];
   truncated: boolean;
+  /**
+   * HISTORY only: the store holds no row of the community at all, decryptable or not - the one
+   * fact an answer of "I hold nothing" may claim (section 24).
+   */
+  holdsNothing?: boolean;
 }
 
 /**
@@ -558,8 +573,29 @@ async function gatherCommunityHistory(
   console.info(
     `[GRAINE] sending ${seeds.length} of ${held.length} held seed(s) as history to ${frame.sender}`
   );
+  // "I HOLD NOTHING" IS A CLAIM ABOUT THE STORE, NOT ABOUT THIS KEY (section 24). The read above skips
+  // a row it cannot decrypt - a PIN change re-sealing, a backup row sealed under another key - and
+  // an empty list from it would put a durable "nothing" at the requester while the past sits here.
+  // So the claim is made from the ROW count, read after the seeds so a row landing in between can
+  // only withhold the claim, never make it. Rows present and none opened answer as before: silence.
+  let holdsNothing = false;
+  if (held.length === 0) {
+    const rows = await storage.countGraineSessionsForWorkspace(frame.workspaceId);
+    holdsNothing = rows === 0;
+    if (!holdsNothing) {
+      console.warn(
+        `[GRAINE] not answering ${frame.sender}'s history ask in community ${frame.workspaceId.slice(0, 8)}: ` +
+          `${rows} seed row(s) held and none opens with this device's key - not "I hold nothing"`
+      );
+    }
+  }
   // A history request names no session, so there is nothing it could have named and missed.
-  return { seeds, missing: [], truncated: held.length > GRAINE_HISTORY_BUNDLE_MAX_SEEDS };
+  return {
+    seeds,
+    missing: [],
+    truncated: held.length > GRAINE_HISTORY_BUNDLE_MAX_SEEDS,
+    holdsNothing,
+  };
 }
 
 /** Stores the seeds of an answer and tells the UI which salons just became readable. */
@@ -622,6 +658,24 @@ async function absorbSeedBundle(
     console.warn(
       `[GRAINE] ${frame.sender} sent a TRUNCATED bundle for community ${frame.workspaceId.slice(0, 8)} - some seeds are still missing`
     );
+  }
+
+  // "I HOLD NOTHING" ANSWERS A HISTORY ASK (section 24), and is believed only as the empty hand it
+  // claims to be: a bundle that says it and carries seeds contradicts itself, so the flag is
+  // dropped out loud and the seeds above were absorbed like any others.
+  if (bundle.holdsNothing) {
+    if ((bundle.seeds ?? []).length > 0) {
+      console.warn(
+        `[GRAINE] ${frame.sender} sent a bundle saying it holds nothing WITH ${(bundle.seeds ?? []).length} seed(s) in community ${frame.workspaceId.slice(0, 8)} - the claim is ignored`
+      );
+    } else {
+      noteHistoryHeldNothing(
+        frame.workspaceId,
+        frame.sender,
+        String(bundle.requestId ?? ''),
+        frame.senderDeviceId ?? ''
+      );
+    }
   }
 
   // What the answerer turned out not to hold. Each one re-elects the next member of the roster, so

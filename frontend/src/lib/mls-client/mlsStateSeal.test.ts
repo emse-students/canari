@@ -153,9 +153,36 @@ describe('sealMlsStateBlobV2', () => {
     for (const at of [16, 40, blob.length - 1]) {
       const altered = blob.slice();
       altered[at] ^= 1;
-      await expect(openMlsStateBlobV2(altered, DEVICE_KEY_B64)).rejects.toThrow(
-        /^STATE_UNDECRYPTABLE: /
-      );
+      // The header names the key in hand, so a failed tag is ALTERATION - never an old-PIN case.
+      await expect(openMlsStateBlobV2(altered, DEVICE_KEY_B64)).rejects.toThrow(/^STATE_ALTERED: /);
+    }
+  });
+
+  it('calls ONLY an OperationError altered: any other decrypt rejection leaves untyped', async () => {
+    // `STATE_ALTERED` rotates the device identity, so a rejection that is not WebCrypto's
+    // tag-check answer must not wear it - the classifier then answers `unknown` and destroys nothing.
+    const blob = await sealMlsStateBlobV2(plain, DEVICE_KEY_B64);
+    const decrypt = vi.spyOn(crypto.subtle, 'decrypt');
+    try {
+      decrypt.mockRejectedValueOnce(new DOMException('tag mismatch', 'OperationError'));
+      await expect(openMlsStateBlobV2(blob, DEVICE_KEY_B64)).rejects.toThrow(/^STATE_ALTERED: /);
+      for (const other of [
+        new DOMException('key not usable for decrypt', 'InvalidAccessError'),
+        new TypeError('engine fault'),
+      ]) {
+        decrypt.mockRejectedValueOnce(other);
+        const error = await openMlsStateBlobV2(blob, DEVICE_KEY_B64).then(
+          () => null,
+          (e: unknown) => e
+        );
+        expect(error).toBeInstanceOf(Error);
+        expect(String(error)).not.toMatch(
+          /STATE_(ALTERED|KEY_MISMATCH|UNDECRYPTABLE)|IDENTITY_MISMATCH/
+        );
+        expect((error as Error).cause).toBe(other);
+      }
+    } finally {
+      decrypt.mockRestore();
     }
   });
 

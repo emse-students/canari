@@ -1314,6 +1314,17 @@ export class IndexedDbStorage implements IStorage {
     return this.decodeGraineRows(rows, deviceKeyB64);
   }
 
+  /** A community's session rows, decryptable or not. See {@link IStorage.countGraineSessionsForWorkspace}. */
+  async countGraineSessionsForWorkspace(workspaceId: string): Promise<number> {
+    const db = this.ensureDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction('graine', 'readonly');
+      const req = tx.objectStore('graine').index('byWorkspace').count(workspaceId);
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
   async deleteGraineSessionsForWorkspace(workspaceId: string): Promise<number> {
     const db = this.ensureDb();
     return new Promise((resolve, reject) => {

@@ -5,6 +5,7 @@ import { AppController } from './app.controller';
 import { HealthController } from './controllers/health.controller';
 import { SecurityController } from './controllers/security.controller';
 import { GifSearchController } from './controllers/gif-search.controller';
+import { GifMediaController } from './controllers/gif-media.controller';
 import { GroupsController } from './controllers/groups.controller';
 import { MembersController } from './controllers/members.controller';
 import { DevicesController } from './controllers/devices.controller';
@@ -124,6 +125,7 @@ class RedisShutdown implements OnModuleDestroy {
     HealthController,
     SecurityController,
     GifSearchController,
+    GifMediaController,
     GroupsController,
     MembersController,
     DevicesController,

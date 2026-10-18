@@ -69,6 +69,23 @@ export async function getStorage(userId: string): Promise<IStorage> {
   return opening;
 }
 
+/**
+ * Closes and forgets `userId`'s cached open store, WITHOUT opening one when none is cached.
+ *
+ * `getStorage` would open the database just to close it. A deletion of that account's local data
+ * needs the handle gone so the file (SQLite) or the delete (IndexedDB) cannot be blocked by it.
+ * Returns whether a store was open.
+ */
+export async function closeCachedStore(userId: string): Promise<boolean> {
+  const cached = openStores.get(userId);
+  if (!cached) return false;
+  openStores.delete(userId);
+  const store = await cached.catch(() => null);
+  if (!store) return false;
+  await store.close();
+  return true;
+}
+
 /** Open a fresh store for the runtime in use. Callers go through {@link getStorage}. */
 async function openStore(userId: string): Promise<IStorage> {
   if (isTauriRuntime()) {
