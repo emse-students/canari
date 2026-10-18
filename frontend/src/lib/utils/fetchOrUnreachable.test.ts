@@ -82,4 +82,18 @@ describe('fetchOrUnreachable', () => {
 
     expect(warn).not.toHaveBeenCalled();
   });
+
+  it('passes a request ITS CALLER aborted through as it came, with no transport line', async () => {
+    // A sign-out cancelling the login in flight: nobody failed to reach anything.
+    const warn = warned();
+    const aborted = new DOMException('aborted', 'AbortError');
+    vi.stubGlobal('fetch', vi.fn().mockRejectedValue(aborted));
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      fetchOrUnreachable('https://x/api', { signal: controller.signal }, UNREACHABLE)
+    ).rejects.toBe(aborted);
+    expect(warn).not.toHaveBeenCalled();
+  });
 });

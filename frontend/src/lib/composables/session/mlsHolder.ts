@@ -19,8 +19,12 @@ import type { IMlsService } from '$lib/mls-client';
 export interface MlsHolder {
   /** The current client, created on first use. */
   ensure(): IMlsService;
-  /** Destroys the current client now (a failed login, a revoked device). */
-  reset(): void;
+  /**
+   * Destroys the current client now (a failed login, a revoked device). With `only`, does so only
+   * when `only` IS the current client: a login stopped by a sign-out releases the client it built,
+   * never one the next sign-in has built since the sign-out retired it.
+   */
+  reset(only?: IMlsService): void;
   /**
    * Lets go of the current client now and destroys it once `finalWrite` settles. `finalWrite` must
    * never reject: it is the teardown's flush, which reports its own failure.
@@ -43,7 +47,8 @@ export function createMlsHolder(create: () => IMlsService): MlsHolder {
       if (!current) current = create();
       return current;
     },
-    reset() {
+    reset(only) {
+      if (only && current !== only) return;
       current?.destroy?.();
       current = null;
     },
