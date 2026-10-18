@@ -6,6 +6,7 @@ import {
   SendForbiddenError,
   SenderNotActiveError,
   SendServerError,
+  parseRetryAfterMs,
 } from './mlsDeliveryApi';
 import { classifyOutgoingSendError } from './mlsSendError';
 import { refusalStatus } from '$lib/utils/apiRefusal';
@@ -100,6 +101,28 @@ describe('postApplicationMessage on a 5xx or another status', () => {
     expect(edge).toBeInstanceOf(SendServerError);
     expect((edge as SendServerError).origin).toBe('edge');
     expect(classifyOutgoingSendError(edge)).toBe('unknown');
+  });
+
+  it('carries the Retry-After of a 5xx, in ms', async () => {
+    const failure = await api(
+      new Response('{}', {
+        status: 503,
+        headers: { 'content-type': 'application/json', 'retry-after': '120' },
+      })
+    )
+      .postApplicationMessage('g1', 'AAAA')
+      .catch((e: unknown) => e);
+
+    expect((failure as SendServerError).retryAfterMs).toBe(120_000);
+  });
+
+  it('reads Retry-After as seconds or an HTTP date against a given now, else null', () => {
+    const now = Date.parse('Sun, 18 Oct 2026 12:00:00 GMT');
+    expect(parseRetryAfterMs('30', now)).toBe(30_000);
+    expect(parseRetryAfterMs('Sun, 18 Oct 2026 12:02:00 GMT', now)).toBe(120_000);
+    expect(parseRetryAfterMs('Sun, 18 Oct 2026 11:00:00 GMT', now)).toBe(0);
+    expect(parseRetryAfterMs('soon', now)).toBeNull();
+    expect(parseRetryAfterMs(null, now)).toBeNull();
   });
 
   it('carries any other refusal status as a field, and it is not a SendServerError', async () => {

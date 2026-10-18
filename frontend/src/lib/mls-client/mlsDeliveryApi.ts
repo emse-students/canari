@@ -357,11 +357,25 @@ export class SendServerError extends ApiRefusalError {
   constructor(
     readonly groupId: string,
     status: number,
-    readonly origin: ResponseOrigin
+    readonly origin: ResponseOrigin,
+    /** The answer's `Retry-After`, in ms, or null when it sent none the client can read. */
+    readonly retryAfterMs: number | null = null
   ) {
     super(status, null, `Message send answered ${status} (${origin}) for group ${groupId}`);
     this.name = 'SendServerError';
   }
+}
+
+/**
+ * A `Retry-After` header in ms: delta-seconds, or an HTTP date read against `now`. `null` when
+ * absent or unreadable - never a default, the caller keeps its own schedule. A date in the past is 0.
+ */
+export function parseRetryAfterMs(header: string | null, now: number): number | null {
+  if (header === null) return null;
+  const value = header.trim();
+  if (/^[0-9]+$/.test(value)) return Number(value) * 1000;
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? null : Math.max(0, at - now);
 }
 
 /**
@@ -1423,7 +1437,14 @@ export class MlsDeliveryApi {
       if (res.status === 410) {
         throw new GroupDeletedError(groupId);
       }
-      if (res.status >= 500) throw new SendServerError(groupId, res.status, responseOrigin(res));
+      if (res.status >= 500) {
+        throw new SendServerError(
+          groupId,
+          res.status,
+          responseOrigin(res),
+          parseRetryAfterMs(res.headers.get('retry-after'), Date.now())
+        );
+      }
       // ANY OTHER REFUSAL carries its status as a type too: an answer, which the outbox reads as
       // breaking a run of 5xx - a sentence could not be read back.
       throw new ApiRefusalError(res.status, null, `Message send HTTP error: ${res.status}`);

@@ -59,3 +59,17 @@ export function legacyBlobPurgeStatement(columns: readonly string[]): string | n
 
   return `DELETE FROM messages WHERE ${conditions.join(' OR ')}`;
 }
+
+/**
+ * The v13 -> v14 step: the outbox row gains `server_errors`, its run of CONSECUTIVE 5xx answers
+ * (`MAX_CONSECUTIVE_SERVER_ERRORS` in `outbox.ts`). `DEFAULT 0`, so every row already queued reads
+ * as a fresh run. Returns `null` when the column is there - a fresh database, or a rerun - so the
+ * step is a no-op twice.
+ *
+ * @param columns Column names of the `outbox` table, from `PRAGMA table_info(outbox)`.
+ */
+export function outboxServerErrorsStatement(columns: readonly string[]): string | null {
+  return columns.includes('server_errors')
+    ? null
+    : 'ALTER TABLE outbox ADD COLUMN server_errors INTEGER DEFAULT 0';
+}

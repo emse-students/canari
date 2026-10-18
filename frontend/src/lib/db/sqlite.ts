@@ -50,7 +50,12 @@ import {
   toEncryptedGraineRow,
 } from './graineCodec';
 import { fromBase64, toBase64 } from '$lib/utils/hex';
-import { SCHEMA_VERSION, isFreshDatabase, legacyBlobPurgeStatement } from './sqliteMigrations';
+import {
+  SCHEMA_VERSION,
+  isFreshDatabase,
+  legacyBlobPurgeStatement,
+  outboxServerErrorsStatement,
+} from './sqliteMigrations';
 import { fromMessagePayload, mergeStoredMessage, toMessagePayload } from './messagePayload';
 import {
   MESSAGE_ROWS_PER_STATEMENT,
@@ -434,9 +439,8 @@ export class SqliteStorage implements IStorage {
       // server keeps failing reaches its terminal state across reloads. Additive and 0 on arrival:
       // a queued row starts a fresh run, which costs at most N more attempts.
       const cols: any[] = await this.db.select('PRAGMA table_info(outbox)');
-      if (!cols.some((c) => c.name === 'server_errors')) {
-        await this.db.execute('ALTER TABLE outbox ADD COLUMN server_errors INTEGER DEFAULT 0');
-      }
+      const add = outboxServerErrorsStatement(cols.map((c) => String(c.name)));
+      if (add) await this.db.execute(add);
       // Stamped at 14, NOT at SCHEMA_VERSION, for the reason spelled out in the v6 branch.
       await this.db.execute('PRAGMA user_version = 14');
     }

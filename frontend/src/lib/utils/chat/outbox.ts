@@ -68,6 +68,7 @@ import {
   requestLeaderOutboxFlush,
   publishOutboxEntrySent,
   publishOutboxEntryCancelled,
+  publishOutboxEntryFailed,
   subscribeTabOutboxEvents,
 } from '$lib/mls-client/tabMessageSync';
 
@@ -89,13 +90,36 @@ export const MAX_UNEXPECTED_ATTEMPTS = 8;
 
 /**
  * CONSECUTIVE 5xx answers after which a text (or reply) is parked as FAILED, with a Retry, instead of
- * climbing the ladder for ever (user, 2026-10-18). On the ladder (2, 5, 15, 30 s) that is about a
- * minute of a server answering errors. Counted in the durable row (`OutboxEntry.serverErrors`), so a
+ * climbing the ladder for ever (user, 2026-10-18). Each counted 5xx is held at least
+ * {@link SERVER_ERROR_HOLD_MS}, so that is at least four minutes of a server answering errors. Counted in the durable row (`OutboxEntry.serverErrors`), so a
  * reload keeps the run; any other ANSWER, a success or the member's retry resets it, and a transport
  * failure - nobody answered - neither counts nor resets. Attachments and controls (reactions, edits,
  * deletes, pins, read marks) are not bounded by it.
  */
 export const MAX_CONSECUTIVE_SERVER_ERRORS = 5;
+
+/**
+ * The SHORTEST hold after a counted 5xx: the ladder's top step. On the plain ladder five 5xx land at
+ * about 0, 2, 7, 22 and 52 s, so a deploy whose container restarts for a minute (the edge answers 502
+ * meanwhile) failed every text sent during it. Held here, five in a row span at least four minutes.
+ */
+export const SERVER_ERROR_HOLD_MS = 60_000;
+
+/** The longest a server's `Retry-After` may hold a text: a header is not a reason to wait for ever. */
+export const MAX_RETRY_AFTER_MS = 10 * 60_000;
+
+/**
+ * The hold after the `attempts`-th attempt failed with a COUNTED 5xx: the ladder's own step, raised
+ * to {@link SERVER_ERROR_HOLD_MS}, and to the server's `Retry-After` when it sent one (capped at
+ * {@link MAX_RETRY_AFTER_MS}). Still a ladder step - the entry's own clock - never a deadline.
+ */
+export function serverErrorHoldMs(attempts: number, retryAfterMs: number | null): number {
+  return Math.max(
+    backoffFor(attempts),
+    SERVER_ERROR_HOLD_MS,
+    Math.min(retryAfterMs ?? 0, MAX_RETRY_AFTER_MS)
+  );
+}
 
 /** The kinds {@link MAX_CONSECUTIVE_SERVER_ERRORS} applies to: a message the member typed. */
 function boundedOnServerErrors(entry: OutboxEntry): boolean {
@@ -672,7 +696,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return;
     }
     if (getIsTabLeader()) return;
+    if (event.type === 'outbox_entry_failed') {
+      log(
+        `[OUTBOX] ${event.messageId.slice(0, 8)}… failed on 5xx in the leader tab - shown failed here`
+      );
+      showServerFailure(event.messageId, event.serverErrors);
+      return;
+    }
     patchStatus(event.messageId, 'sent');
+    // A text this tab showed failed (and then retried elsewhere) keeps no `failed` view once sent.
+    clearUpload(event.messageId);
     if (event.content) updateMessageContent(event.messageId, event.content);
   });
 
@@ -1196,6 +1229,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       quiet?: boolean;
       /** The run of consecutive 5xx to record with the backoff (the 5xx arm only). */
       serverErrors?: number;
+      /** The hold, when it is not the plain ladder's (`serverErrorHoldMs`, the 5xx arm only). */
+      delayMs?: number;
     } = {}
   ): Promise<FlushOutcome> {
     if (opts.transport) transportHeld.add(entry.id);
@@ -1222,7 +1257,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           status: 'pending',
           attempts,
           lastAttemptAt: Date.now(),
-          nextAttemptAt: Date.now() + backoffFor(attempts),
+          nextAttemptAt: Date.now() + (opts.delayMs ?? backoffFor(attempts)),
           ...(opts.serverErrors !== undefined ? { serverErrors: opts.serverErrors } : {}),
         },
         deviceKey()
@@ -1266,12 +1301,43 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       console.error(line);
       log(line);
     }
+    const first = !serverFailed.has(entry.id);
     serverFailed.add(entry.id);
     transportHeld.delete(entry.id);
-    patchStatus(entry.id, 'error');
-    // The view is how the bubble knows a Retry exists for it (`retryUpload` is the one handler).
-    patchUpload(entry.id, { phase: 'failed', attempt: entry.serverErrors ?? 0 });
+    showServerFailure(entry.id, entry.serverErrors ?? 0);
+    // A follower tab draws the same bubble: it never flushes, so it would not know until a reload.
+    if (first) publishOutboxEntryFailed(entry.id, entry.serverErrors ?? 0);
     return 'parked';
+  }
+
+  /**
+   * Draws a text failed on 5xx: status `error`, and the `failed` view that is how the bubble knows a
+   * Retry exists for it (`retryUpload` is the one handler). ONE place for the three tabs' paths.
+   */
+  function showServerFailure(messageId: string, serverErrors: number): void {
+    patchStatus(messageId, 'error');
+    patchUpload(messageId, { phase: 'failed', attempt: serverErrors });
+  }
+
+  /**
+   * The member's Retry of a text failed on 5xx, decided on the STORED row - not on this tab's
+   * memory, which in a follower never saw the failure. The count AND the clock go back to zero
+   * BEFORE the flush is raised, so whichever tab drains reads a text that is due and not failed.
+   */
+  async function resetServerFailure(messageId: string): Promise<void> {
+    if (!storage) return;
+    const stored = (await readQueue('retry')).find((e) => e.id === messageId);
+    if (!stored || !isServerFailureTerminal(stored)) return;
+    log(
+      `[OUTBOX] ${messageId.slice(0, 8)}… failed text: retry asked, the 5xx count (${stored.serverErrors}) is reset`
+    );
+    clearUpload(messageId);
+    patchStatus(messageId, 'pending');
+    await storage
+      .updateOutboxEntry(messageId, { serverErrors: 0, nextAttemptAt: 0 }, deviceKey())
+      .catch((err: unknown) =>
+        log(`[OUTBOX] ${messageId.slice(0, 8)}… 5xx count reset not persisted: ${String(err)}`)
+      );
   }
 
   /** Writes a new consecutive-5xx count without touching the backoff. Logged when lost. */
@@ -1823,11 +1889,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         );
       }
       const held = entry;
+      const delayMs = serverErrorHoldMs(held.attempts + 1, e.retryAfterMs);
       return holdForRetry(
         held,
         (attempts) =>
-          `[OUTBOX] ${held.id.slice(0, 8)}… server error ${e.status} (${e.origin}), ${count}/${MAX_CONSECUTIVE_SERVER_ERRORS} in a row (attempt ${attempts})`,
-        { serverErrors: count }
+          `[OUTBOX] ${held.id.slice(0, 8)}… server error ${e.status} (${e.origin}), ${count}/${MAX_CONSECUTIVE_SERVER_ERRORS} in a row (attempt ${attempts}), next in ${delayMs} ms${e.retryAfterMs !== null ? ` (Retry-After ${e.retryAfterMs} ms)` : ''}`,
+        { serverErrors: count, delayMs }
       );
     }
     // Keep pending, back off. The message is never lost - that is true of both arms that reach
@@ -2072,6 +2139,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const queued = (snapshot ?? (await readQueue('cancel'))).find((e) => e.id === messageId);
     if (!queued) return { withdrawn: false, rowDeleted: false };
     const onWireAtStart = inFlight.has(messageId);
+    // A 5xx IS NOT PROOF THAT NOTHING WAS STORED: a gateway may answer 502 after the delivery service
+    // queued the frame. So a text that was ever answered 5xx in this run is withdrawn here AND
+    // answered "maybe sent", and the delete also goes out as an event (peers that have it drop it).
+    const maybeStored = (queued.serverErrors ?? 0) > 0;
 
     // Three things, and the order between them does not matter because none can undo another:
     // the durable row (every future flush), this tab's snapshot (a flush already walking), and
@@ -2115,6 +2186,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
             ' will have it, so the delete has to travel as an event'
         );
       }
+      return { withdrawn: false, rowDeleted };
+    }
+    if (maybeStored) {
+      log(
+        `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn after ${queued.serverErrors} 5xx answer(s) - a gateway may have stored it, so the delete travels as an event too`
+      );
       return { withdrawn: false, rowDeleted };
     }
     // A body already on the wire is stopped too, not only forgotten. AFTER the check above: the
@@ -2255,18 +2332,14 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       parked.delete(messageId);
       // A 403-parked entry used to ignore this button for the controller's whole life.
       forbiddenParked.delete(messageId);
-      // A TEXT FAILED ON 5xx: the retry starts a new run, DURABLY - written before the flush, so a
-      // reload (or the leader tab) does not find the old count and park it again.
-      if (serverFailed.has(messageId)) {
-        log(`[OUTBOX] ${messageId.slice(0, 8)}… failed text: retry asked, the 5xx count is reset`);
-        clearUpload(messageId);
-        patchStatus(messageId, 'pending');
-        void writeServerErrors(messageId, 0).then(() => runFlush());
+      const running = uploads.get(messageId);
+      if (running) {
+        running.abort('retry');
         return;
       }
-      const running = uploads.get(messageId);
-      if (running) running.abort('retry');
-      else runFlush();
+      // A TEXT FAILED ON 5xx starts a new run, DURABLY and read from the ROW (a follower tab holds
+      // none of the leader's memory): written before the flush, so no tab parks it again.
+      void resetServerFailure(messageId).then(() => runFlush());
     },
 
     async applyPendingStatuses(): Promise<void> {
@@ -2276,8 +2349,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         const found = findMessage(entry.id);
         // A text failed on 5xx stays FAILED across a reload: its durable count says so.
         if (found && isServerFailureTerminal(entry)) {
-          patchStatus(entry.id, 'error');
-          patchUpload(entry.id, { phase: 'failed', attempt: entry.serverErrors ?? 0 });
+          showServerFailure(entry.id, entry.serverErrors ?? 0);
           continue;
         }
         // Only (re)apply 'pending'; do not clobber a live 'sending' transition.
