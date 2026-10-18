@@ -594,3 +594,47 @@ booking; the file without the answer, the private texts or the holder's name, re
 booking's or another recipient's signature, a forged or missing one and after a rotation, 410 once
 cancelled; revoked when its recipient withdraws, is unlinked, loses the right or is erased; a block
 id to the organiser and the linked account, not to a booker.
+## WP-B5 as built - the booker's screens (2026-10-18)
+
+| Where | What |
+|---|---|
+| `routes/bookings` | **Reservations** (D16): my coming bookings first (soonest first), the past, cancelled and left ones folded below, the listed spaces (a `SectionHub`), then my PERSONAL spaces, created here (`EditBookingsTab` with `associationId` null - the same panel as an entity's tab) |
+| `routes/bookings/spaces/[spaceId]` | the booker's page of a space: grid or planning, the three sheets, the link and the QR code (`QrCodeModal`), a pencil to the editor for whoever manages it |
+| `components/bookings/booker/SpaceGrid.svelte` | the grid of ONE date (D14): resources as columns, units as rows; every cell a button named with its whole reading; the table scrolls inside its own box, never the page |
+| `SpacePlanning.svelte` | per resource, its next six units bookable NOW over the next 14 days; a resource with none says so |
+| `BookingSheet.svelte` | the range (a slot whole, or 1..`maxSteps` steps from the one tapped), the participants (`UserAutocomplete`, up to `maxPeople`), the questions (`FormQuestion`, `visibleItems` with the server's `hiddenItemIds`), and - for an organiser - "book for someone" (D20) |
+| `BlockSheet.svelte` | "Indisponible" from the unit tapped over any run of free units, a reason, shown or not (D20) |
+| `UnitDetailSheet.svelte` | a taken unit: names as D9 allows, private texts to the booking's people (D32), answers to the organiser, cancel / leave / "Add to my calendar"; a block's reason and lifting it |
+| `MyBookingCard.svelte` | one of my bookings on Reservations: where, when (the space's zone), my part, the private texts while live, the same three gestures |
+| `lib/bookings/grid.ts` | pure: the space's wall clock through `Intl`, the grid rows, the free run a booking or a block may cover, the planning, and `windowRefusal` - the server's `checkBookingWindow`, same order, same codes |
+| `lib/bookings/bookingActions.ts` | cancel, leave and lift: ONE implementation each (ask, call, say), shared by both pages; the calendar event of a booking |
+| `lib/bookings/refusals.ts` | every booker code (`BOOKER_REFUSAL_CODES`) to its sentence, beside the organiser's |
+
+- **THE DEFAULT VIEW FOLLOWS THE WIDTH** as the agenda's (`SCHEDULE_AGENDA_QUERY`): the planning
+  on a phone, the grid wider - until the reader picks one, then theirs holds.
+- **TIMES ARE THE SPACE'S** (D25), read with `Intl` in its zone; when the device's clock reads
+  differently, the page names the zone.
+- **A unit the booking window refuses is drawn "Non réservable"** and opens only for whoever may
+  block it. The mirror spares a request; the server still decides every booking.
+- **A refusal that means the grid is stale** (`slot-taken`, `blocked`, `space-changed`) closes the
+  sheet and re-reads the grid and my bookings, so the reader sees why.
+- **The holder's gestures come from `GET mine`**: a unit's view says `mine` but not holder or
+  participant, so the page indexes my own bookings by id - which also carries the private texts.
+- **THE KNOWN COSTS ARE SAID ON SCREEN, NOT HIDDEN**: no notification (D13, on both pages and in
+  the organiser's cancel confirmation); people added directly, no acceptance (D34); a booking is
+  never edited, cancel and book again (D36); a personal space's coming bookings vanish with its
+  owner's account (WP-B1's erasure).
+- **Navigation (D37)**: a `bookings` place in `places.ts` (the desktop sidebar, which now draws
+  `PLACE_ICONS` rather than its own copy), a row in the dashboard's Explorer group, no bottom tab.
+  `/bookings` is private for search (`PRIVATE_PREFIXES`), an in-app route, and an app link on iOS
+  and Android (`MOBILE_UNIVERSAL_LINK_PATHS`, `tauri.conf.json`, `AndroidManifest.xml`), so a
+  shared link or a scanned QR code opens the app.
+- **A personal space's editor** now leads back to Reservations (its crumbs, and after deletion).
+
+**Seen** at 390 and 1280 and at 200 % text on a local build, on a fixture space (a temporary
+signed-out preview route, not committed): no page scroll sideways (the grid's third column
+scrolls in its box), the booking sheet with steps, people and questions, the detail with answers.
+Not yet seen against a running API, nor on a phone - WP-B7's readings. **Proof**: `grid.test.ts`
+(the zone across the daylight-saving change, the window in the server's order, the grid of one
+date, the free run, the planning), `refusals.test.ts` (every booker code worded), the dashboard's
+row order.

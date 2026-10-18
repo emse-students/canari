@@ -229,6 +229,7 @@
                 <data android:path="/notifications" />
                 <data android:path="/calendar" />
                 <data android:path="/shop" />
+                <data android:path="/bookings" />
                 <data android:path="/" />
                 
                 <data android:pathPrefix="/posts/" />
@@ -242,6 +243,7 @@
                 <data android:pathPrefix="/notifications/" />
                 <data android:pathPrefix="/calendar/" />
                 <data android:pathPrefix="/shop/" />
+                <data android:pathPrefix="/bookings/" />
                 
             </intent-filter>
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->

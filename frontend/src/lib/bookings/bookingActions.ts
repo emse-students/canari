@@ -1,0 +1,87 @@
+/**
+ * THE BOOKER'S THREE DESTRUCTIVE GESTURES, ONE IMPLEMENTATION EACH (WP-B5): cancel a booking, leave
+ * one, lift a block. The page of a space and the Reservations page both offer them; each asks first,
+ * calls, and says the outcome - a refusal worded from its CODE (`describeBookingRefusal`).
+ */
+import type { AgendaExportEvent } from '$lib/calendar/agendaExport';
+import { m } from '$lib/paraglide/messages';
+import { showConfirm } from '$lib/stores/confirm.svelte';
+import { showToast } from '$lib/stores/toast.svelte';
+import { socialUrl } from '$lib/utils/apiUrl';
+import { Log } from '$lib/utils/Log';
+import { cancelBooking, removeBlock, withdrawBooking } from './api';
+import { describeBookingRefusal } from './refusals';
+
+/** Asks, then runs `act`; `true` once it is done, `false` when declined or refused (said). */
+async function confirmed(
+  what: string,
+  question: string,
+  confirmLabel: string,
+  act: () => Promise<unknown>,
+  done: string
+): Promise<boolean> {
+  if (!(await showConfirm(question, { danger: true, confirmLabel }))) return false;
+  try {
+    await act();
+    Log.i('BOOKINGS', `${what} done`);
+    showToast(done, 'info');
+    return true;
+  } catch (e) {
+    showToast(describeBookingRefusal(e, confirmLabel), 'error');
+    return false;
+  }
+}
+
+/**
+ * The holder or the organiser cancels a coming booking (D5). `byOrganiser` says the cost D13
+ * names: the holder is not told, they find out by coming back.
+ */
+export function cancelWithConfirm(bookingId: string, byOrganiser: boolean): Promise<boolean> {
+  return confirmed(
+    'cancel',
+    byOrganiser ? m.bookings_cancel_confirm_organiser() : m.bookings_cancel_confirm(),
+    m.bookings_cancel_action(),
+    () => cancelBooking(bookingId),
+    m.bookings_cancel_done()
+  );
+}
+
+/** A participant leaves a booking, which stays the holder's (D4, D5). */
+export function withdrawWithConfirm(bookingId: string): Promise<boolean> {
+  return confirmed(
+    'withdraw',
+    m.bookings_withdraw_confirm(),
+    m.bookings_withdraw_action(),
+    () => withdrawBooking(bookingId),
+    m.bookings_withdraw_done()
+  );
+}
+
+/** Lifts an "Indisponible" that has not ended (D20). */
+export function liftBlockWithConfirm(blockId: string): Promise<boolean> {
+  return confirmed(
+    'removeBlock',
+    m.bookings_block_lift_confirm(),
+    m.bookings_block_lift_action(),
+    () => removeBlock(blockId),
+    m.bookings_block_lift_done()
+  );
+}
+
+/**
+ * A booking as "Add to my calendar" reads it (D13). `icsPath` is the signed path the API gives
+ * (`calendarLink`); the hosted file is what a phone hands to its calendar app.
+ */
+export function bookingCalendarEvent(
+  booking: { id: string; startsAt: string; endsAt: string },
+  title: string,
+  icsPath: string | null
+): AgendaExportEvent {
+  return {
+    id: `booking-${booking.id}`,
+    title,
+    startsAt: booking.startsAt,
+    endsAt: booking.endsAt,
+    ...(icsPath ? { icsUrl: `${socialUrl()}${icsPath}` } : {}),
+  };
+}

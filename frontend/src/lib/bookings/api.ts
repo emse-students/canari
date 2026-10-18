@@ -1,8 +1,8 @@
 /**
- * THE ORGANISER'S SIDE OF THE BOOKINGS API (WP-B4), typed.
+ * THE BOOKINGS API, typed: the organiser's side (WP-B4) and the booker's (WP-B5).
  *
- * Routes and refusal codes are `apps/social-service/src/bookings/booking-spaces.controller.ts`,
- * described in docs/wiki/bookings-chantier.md, "WP-B4 as built". Every refusal is classified at the
+ * Routes and refusal codes are `apps/social-service/src/bookings/booking-spaces.controller.ts` and
+ * `bookings.controller.ts`, described in docs/wiki/bookings-chantier.md, "WP-B3/B4/B5 as built". Every refusal is classified at the
  * throw as a {@link BookingsApiError}: its status, its stable `code`, and - for D29's refusals - the
  * bookings that stand in the way. A screen words it with `describeBookingRefusal`, never from the
  * server's message.
@@ -170,7 +170,7 @@ export function updateResource(resourceId: string, fields: ResourceFields): Prom
   );
 }
 
-/** Refused while the resource has coming bookings (`bookings-inside-change`). */
+/** Refused while the resource has ANY booking, past or cancelled included (D42, `resource-has-bookings`). */
 export function deleteResource(resourceId: string): Promise<unknown> {
   return call('deleteResource', `/resources/${encodeURIComponent(resourceId)}`, {
     method: 'DELETE',
@@ -220,4 +220,161 @@ export function setAvailability(
     `/resources/${encodeURIComponent(resourceId)}/availability`,
     json('PUT', { lines, exceptions })
   );
+}
+
+// -- The booker's side (WP-B5) ---------------------------------------------------------------------
+
+/** One row of `GET bookings/spaces`: a listed space the reader may book (D16, D31). */
+export interface ListedSpace {
+  id: string;
+  name: string;
+  description: string | null;
+  associationId: string | null;
+  associationName: string | null;
+  timeZone: string;
+  resourceCount: number;
+}
+
+/** A resource as a booker reads it: no private text (D32). */
+export interface BookerResource {
+  id: string;
+  name: string;
+  description: string | null;
+  /** The reader is the account linked to it (D10): they may mark it unavailable. */
+  linkedToMe: boolean;
+}
+
+/** `GET bookings/spaces/:id`: a space as a booker reads it. */
+export interface BookerSpace {
+  id: string;
+  name: string;
+  description: string | null;
+  associationId: string | null;
+  timeZone: string;
+  slotMode: SlotMode;
+  stepMinutes: number | null;
+  maxSteps: number | null;
+  nameVisibility: NameVisibility;
+  items: FormItem[];
+  /** The questions the reader's PROFILE hides; the answer half of a condition is the screen's. */
+  hiddenItemIds: string[];
+  opensAt: string | null;
+  minNoticeMinutes: number | null;
+  horizonDays: number | null;
+  participantWithdrawMinMinutes: number;
+  maxPeople: number | null;
+  /** The reader manages the space: they book on behalf, block, cancel any coming booking. */
+  canManage: boolean;
+  resources: BookerResource[];
+}
+
+interface UnitRange {
+  /** The local date (space zone) of the window the unit belongs to. */
+  date: string;
+  startMs: number;
+  endMs: number;
+}
+
+/** One bookable unit of a resource and what it is now (D14). */
+export type SlotUnit = UnitRange &
+  (
+    | { state: 'free' }
+    | { state: 'booked'; booking: BookingView }
+    | {
+        state: 'blocked';
+        /** The reason, when the organiser made it visible (or to the organiser). */
+        blockReason?: string | null;
+        /** Sent only to whoever may lift the block. */
+        blockId?: string;
+      }
+  );
+
+/** A resource's units over the dates asked. */
+export interface ResourceSlots {
+  resourceId: string;
+  units: SlotUnit[];
+}
+
+/** One row of `GET bookings/mine`. */
+export interface MyBooking extends BookingView {
+  /** A participant who left it; still listed, marked. */
+  withdrawn: boolean;
+  holder: boolean;
+  /** A booking of a resource linked to the reader (D10). */
+  linked: boolean;
+  space: { id: string; name: string; timeZone: string };
+  resource: { id: string; name: string };
+  /** The "after booking" texts (D32): only for a live booking the reader is one of the people of. */
+  privateInfo: { spacePrivateInfo: string | null; resourcePrivateInfo: string | null } | null;
+}
+
+/** What a booking request carries (D4, D7, D20); instants are ISO with their zone. */
+export interface BookingRequest {
+  resourceId: string;
+  startsAt: string;
+  endsAt: string;
+  participantIds?: string[];
+  answers?: Record<string, unknown>;
+  /** Booking ON BEHALF of this account: the organiser only. */
+  holderId?: string;
+}
+
+/** "Indisponible" over a range of a resource (D10, D20). */
+export interface BlockRequest {
+  startsAt: string;
+  endsAt: string;
+  reason?: string;
+  reasonVisible?: boolean;
+}
+
+/** The listed spaces the reader may book, by name. */
+export function listSpaces(): Promise<ListedSpace[]> {
+  return call('listSpaces', '/spaces');
+}
+
+export function getSpace(spaceId: string): Promise<BookerSpace> {
+  return call('getSpace', `/spaces/${encodeURIComponent(spaceId)}`);
+}
+
+/** The units over local dates `from`..`to` (`YYYY-MM-DD`, both included, at most 62 days). */
+export function getSlots(spaceId: string, from: string, to: string): Promise<ResourceSlots[]> {
+  const query = `?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`;
+  return call('getSlots', `/spaces/${encodeURIComponent(spaceId)}/slots${query}`);
+}
+
+export function book(spaceId: string, request: BookingRequest): Promise<{ id: string }> {
+  return call('book', `/spaces/${encodeURIComponent(spaceId)}/bookings`, json('POST', request));
+}
+
+/** A participant leaves a coming booking, until the space's delay (D5). */
+export function withdrawBooking(bookingId: string): Promise<unknown> {
+  return call('withdrawBooking', `/${encodeURIComponent(bookingId)}/withdraw`, {
+    method: 'POST',
+  });
+}
+
+/** The reader's bookings, newest first: as holder, as participant, and of a linked resource. */
+export function myBookings(): Promise<MyBooking[]> {
+  return call('myBookings', '/mine');
+}
+
+export function addBlock(resourceId: string, request: BlockRequest): Promise<{ id: string }> {
+  return call(
+    'addBlock',
+    `/resources/${encodeURIComponent(resourceId)}/blocks`,
+    json('POST', request)
+  );
+}
+
+/** Lifts a block that has not ended. */
+export function removeBlock(blockId: string): Promise<unknown> {
+  return call('removeBlock', `/blocks/${encodeURIComponent(blockId)}`, { method: 'DELETE' });
+}
+
+/**
+ * The signed `.ics` path of one booking (D13), `/api/bookings/<id>/calendar.ics?u=<reader>&sig=...`, signed for the reader, on the
+ * social service's origin. A calendar app fetches it with no identity.
+ */
+export function calendarLink(bookingId: string): Promise<{ path: string }> {
+  return call('calendarLink', `/${encodeURIComponent(bookingId)}/calendar-link`);
 }

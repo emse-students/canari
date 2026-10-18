@@ -1,5 +1,6 @@
 /**
- * THE SENTENCE AN ORGANISER READS FOR A REFUSED BOOKINGS CALL (WP-B4).
+ * THE SENTENCE A READER SEES FOR A REFUSED BOOKINGS CALL: the organiser's (WP-B4) and the booker's
+ * (WP-B5).
  *
  * Chosen from the refusal's CODE, which the server types at the throw (docs/wiki/bookings-chantier.md,
  * "WP-B4 as built"), then from its status, then a generic line - never from the server's message,
@@ -34,6 +35,40 @@ export const ORGANISER_REFUSAL_CODES = [
 ] as const;
 
 export type OrganiserRefusalCode = (typeof ORGANISER_REFUSAL_CODES)[number];
+
+/** Every code the booker's routes answer (WP-B3), each with its sentence. */
+export const BOOKER_REFUSAL_CODES = [
+  'audience',
+  'slot-range',
+  'range',
+  'answer-required',
+  'holder-is-participant',
+  'space-changed',
+  'too-many-people',
+  'outside-availability',
+  'misaligned',
+  'too-many-steps',
+  'not-open-yet',
+  'started',
+  'notice',
+  'beyond-horizon',
+  'blocked',
+  'participant-blocked',
+  'active-bookings',
+  'minutes-per-period',
+  'slot-taken',
+  'try-again',
+  'booking-not-found',
+  'not-yours',
+  'already-cancelled',
+  'history-frozen',
+  'not-a-participant',
+  'withdrawal-delay',
+  'bookings-inside-block',
+  'block-not-found',
+] as const;
+
+export type BookerRefusalCode = (typeof BOOKER_REFUSAL_CODES)[number];
 
 function sentenceFor(code: string, count: number): string | null {
   switch (code) {
@@ -75,12 +110,73 @@ function sentenceFor(code: string, count: number): string | null {
     case 'opens-at':
       return m.bookings_refusal_opens_at();
     default:
+      return bookerSentenceFor(code, count);
+  }
+}
+
+function bookerSentenceFor(code: string, count: number): string | null {
+  switch (code) {
+    case 'audience':
+      return m.bookings_refusal_audience();
+    case 'slot-range':
+      return m.bookings_refusal_slot_range();
+    case 'range':
+    case 'outside-availability':
+    case 'misaligned':
+      return m.bookings_refusal_not_offered();
+    case 'answer-required':
+      return m.bookings_refusal_answer_required();
+    case 'holder-is-participant':
+      return m.bookings_refusal_holder_is_participant();
+    case 'space-changed':
+      return m.bookings_refusal_space_changed();
+    case 'too-many-people':
+      return m.bookings_refusal_too_many_people();
+    case 'too-many-steps':
+      return m.bookings_refusal_too_many_steps();
+    case 'not-open-yet':
+      return m.bookings_refusal_not_open_yet();
+    case 'started':
+      return m.bookings_refusal_started();
+    case 'notice':
+      return m.bookings_refusal_notice();
+    case 'beyond-horizon':
+      return m.bookings_refusal_beyond_horizon();
+    case 'blocked':
+      return m.bookings_refusal_blocked();
+    case 'participant-blocked':
+      return m.bookings_refusal_participant_blocked();
+    case 'active-bookings':
+      return m.bookings_refusal_active_bookings();
+    case 'minutes-per-period':
+      return m.bookings_refusal_minutes_per_period();
+    case 'slot-taken':
+      return m.bookings_refusal_slot_taken();
+    case 'try-again':
+      return m.bookings_refusal_try_again();
+    case 'booking-not-found':
+      return m.bookings_refusal_booking_not_found();
+    case 'not-yours':
+      return m.bookings_refusal_not_yours();
+    case 'already-cancelled':
+      return m.bookings_refusal_already_cancelled();
+    case 'history-frozen':
+      return m.bookings_refusal_history_frozen();
+    case 'not-a-participant':
+      return m.bookings_refusal_not_a_participant();
+    case 'withdrawal-delay':
+      return m.bookings_refusal_withdrawal_delay();
+    case 'bookings-inside-block':
+      return m.bookings_refusal_inside_block({ count });
+    case 'block-not-found':
+      return m.bookings_refusal_block_not_found();
+    default:
       return null;
   }
 }
 
 /**
- * What a refused organiser call reads as. `action` names the gesture for the status-only
+ * What a refused bookings call reads as. `action` names the gesture for the status-only
  * sentences ("Enregistrer", "Supprimer"), as `describeApiRefusal` words them.
  */
 export function describeBookingRefusal(error: unknown, action: string): string {

@@ -1,0 +1,124 @@
+<script lang="ts">
+  import Modal from '$lib/components/shared/Modal.svelte';
+  import Input from '$lib/components/ui/Input.svelte';
+  import Select from '$lib/components/ui/Select.svelte';
+  import Toggle from '$lib/components/ui/Toggle.svelte';
+  import {
+    addBlock,
+    type BookerResource,
+    type BookerSpace,
+    type SlotUnit,
+  } from '$lib/bookings/api';
+  import { formatDay, formatTimeRange } from '$lib/bookings/grid';
+  import { describeBookingRefusal } from '$lib/bookings/refusals';
+  import { m } from '$lib/paraglide/messages';
+  import { showToast } from '$lib/stores/toast.svelte';
+  import { Log } from '$lib/utils/Log';
+
+  /**
+   * "INDISPONIBLE" OVER A RANGE OF ONE RESOURCE (D10, D20): the organiser, or the account linked to
+   * the resource. `run` is the free units from the one tapped; the reader picks how far the block
+   * goes. Blocking a free range is immediate (D29); a range holding a coming booking is refused by
+   * the server, which names how many stand in the way.
+   */
+  interface Props {
+    space: BookerSpace;
+    resource: BookerResource;
+    run: SlotUnit[];
+    onClose: (changed: boolean) => void;
+  }
+
+  let { space, resource, run, onClose }: Props = $props();
+
+  let count = $state(1);
+  let reason = $state('');
+  let reasonVisible = $state(false);
+  let submitting = $state(false);
+  let error = $state('');
+
+  const first = $derived(run[0]);
+  const last = $derived(run[Math.min(count, run.length) - 1]);
+  const lengthOptions = $derived(
+    run.map((unit, i) => ({
+      value: String(i + 1),
+      label: formatTimeRange(run[0].startMs, unit.endMs, space.timeZone),
+    }))
+  );
+
+  async function submit() {
+    if (submitting) return;
+    submitting = true;
+    error = '';
+    try {
+      const text = reason.trim();
+      await addBlock(resource.id, {
+        startsAt: new Date(first.startMs).toISOString(),
+        endsAt: new Date(last.endMs).toISOString(),
+        ...(text ? { reason: text, reasonVisible } : {}),
+      });
+      Log.i('BOOKINGS', `block added resource=${resource.id.slice(0, 8)}`);
+      showToast(m.bookings_block_done(), 'info');
+      onClose(true);
+    } catch (e) {
+      error = describeBookingRefusal(e, m.bookings_block_action());
+    } finally {
+      submitting = false;
+    }
+  }
+</script>
+
+<Modal open title={m.bookings_block_title()} topAnchored footerEdge onClose={() => onClose(false)}>
+  <div class="space-y-5">
+    <div>
+      <p class="text-text-main text-base font-bold">{resource.name}</p>
+      <p class="text-text-muted text-sm first-letter:uppercase">
+        {formatDay(first.date)}, {formatTimeRange(first.startMs, last.endMs, space.timeZone)}
+      </p>
+    </div>
+
+    {#if run.length > 1}
+      <Select
+        label={m.bookings_block_length_label()}
+        value={String(count)}
+        options={lengthOptions}
+        onValueChange={(v) => (count = Number(v))}
+      />
+    {/if}
+
+    <Input
+      id="booking-block-reason"
+      label={m.bookings_block_reason_label()}
+      placeholder={m.bookings_block_reason_placeholder()}
+      bind:value={reason}
+      maxlength={500}
+    />
+    <Toggle
+      bind:checked={reasonVisible}
+      disabled={!reason.trim()}
+      label={m.bookings_block_reason_visible_label()}
+      hint={m.bookings_block_reason_visible_hint()}
+    />
+
+    {#if error}
+      <p
+        class="border-red-err/30 bg-red-err/10 text-red-err rounded-xl border px-4 py-3 text-sm"
+        role="alert"
+      >
+        {error}
+      </p>
+    {/if}
+  </div>
+
+  {#snippet footer()}
+    <div class="flex justify-end">
+      <button
+        type="button"
+        disabled={submitting}
+        onclick={submit}
+        class="bg-cn-yellow text-cn-ink hover:bg-cn-yellow-hover rounded-xl px-4 py-2.5 text-sm font-bold transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+      >
+        {m.bookings_block_action()}
+      </button>
+    </div>
+  {/snippet}
+</Modal>

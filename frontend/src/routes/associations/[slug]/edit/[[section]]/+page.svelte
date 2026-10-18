@@ -433,7 +433,7 @@
       {/if}
 
       {#if editSection === 'reservations' && rights.bookings && asso}
-        <EditBookingsTab {asso} />
+        <EditBookingsTab associationId={asso.id} />
       {/if}
 
       {#if editSection === 'partnerships' && canManagePartnerships && asso}
