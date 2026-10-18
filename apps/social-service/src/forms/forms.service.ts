@@ -63,11 +63,7 @@ import {
   type PriceMatrix,
   type PricingView,
 } from '../pricing/price-matrix';
-import {
-  parseAudienceCondition,
-  parsePriceMatrix,
-  type CriteriaContext,
-} from '../pricing/validate';
+import { criteriaContextFor, parseAudienceCondition, parsePriceMatrix } from '../pricing/validate';
 import { normaliseCondition, visibleItemIds } from './visibility';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
@@ -254,15 +250,7 @@ export class FormsService {
     // something asks for one. A plain paid form still pays for no catalogue lookup and still works
     // on an association that has no cotisation at all.
     const tiers = assocId ? await this.userTagService.listCotisationTiers(assocId) : [];
-    const ctx: CriteriaContext = {
-      tierKeys: tiers.map((t) => t.variantKey),
-      questions: new Map(
-        (input.items ?? []).map((item: any) => [
-          item.id,
-          new Set<string>((item.options ?? []).map((o: any) => o.id).filter(Boolean)),
-        ])
-      ),
-    };
+    const ctx = criteriaContextFor(tiers, input.items ?? []);
 
     // Validated even when nothing is granted: a grid and a submit condition are not cotisation
     // settings, and refusing them only when a cotisation is involved would let an incomplete grid
