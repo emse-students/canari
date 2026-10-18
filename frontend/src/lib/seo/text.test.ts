@@ -20,4 +20,18 @@ describe('truncateForMeta', () => {
     const out = truncateForMeta('a'.repeat(50), 20);
     expect(out).toBe(`${'a'.repeat(19)}…`);
   });
+
+  it('never splits an emoji: a hard cut lands between code points, not inside a surrogate pair', () => {
+    // 19 characters are kept; the 19th is an emoji, which a UTF-16 unit cut at 19 would have halved.
+    const text = `${'a'.repeat(18)}\u{1F600}${'b'.repeat(30)}`;
+    const out = truncateForMeta(text, 20);
+    expect(out).toBe(`${'a'.repeat(18)}\u{1F600}…`);
+    expect(out.isWellFormed()).toBe(true);
+    // A run of emoji with no spaces keeps every emoji whole, whatever the budget.
+    for (const max of [5, 6, 7, 10]) {
+      const run = truncateForMeta('\u{1F389}'.repeat(40), max);
+      expect(run.isWellFormed()).toBe(true);
+      expect(Array.from(run)).toHaveLength(max);
+    }
+  });
 });
