@@ -1325,7 +1325,7 @@ export function useMessaging() {
     // JSON-quoted: a `"` in a member's text closes a hand-written quote, and the in-app log's
     // redaction then keeps the words after it as ordinary log words (appLogRedact, 2026-10-14).
     ctx.log(
-      `[SEND] handleSendChat: contact=${JSON.stringify(ctx.selectedContact)} text=${JSON.stringify(text.slice(0, 40))} files=${filesToSend.length}`
+      `[SEND] handleSendChat: contact=${JSON.stringify(ctx.selectedContact)} chars=${text.length} files=${filesToSend.length}`
     );
 
     if (!text && filesToSend.length === 0) {
