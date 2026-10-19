@@ -121,6 +121,7 @@ jobs:
           # canari-only:begin
           PR: ${{ github.event.pull_request.number }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           # canari-only:end
         run: |
           set -euo pipefail
@@ -152,10 +153,15 @@ jobs:
           #      top. Who committed them is NOT what is relied on: an address is not an identity and
           #      the App's commits are unsigned. The CONTENT is what is checked, against #<n>;
           #   4. every file is a `Cargo.toml` or a `Cargo.lock`; the manifest lines are exactly
-          #      Dependabot's; every `source =` a lock gains is crates.io; no lock moves or adds a
-          #      crate of the Tauri runtime (`tauri`, `tauri-*`, `wry`, `tao`);
+          #      Dependabot's; every `source` key a lock gains (any spacing, bare or quoted key) has
+          #      the crates.io value, git or sparse index; no lock moves or adds a crate of the
+          #      Tauri runtime (`tauri`, `tauri-*`, `wry`, `tao`; the `name` key read with any spacing);
           #   5. `CI passed` - not read here: auto-merge hands that to GitHub, as for everybody, and
           #      `dependency-ceiling` refuses a breaking or Tauri-runtime update on this branch there.
+          # TIED TO ONE COMMIT: the event's head SHA must be the head the commit list ends on (the
+          # file list is read BEFORE it, so both describe that head), and the arming is made HERE
+          # with `--match-head-commit`, so GitHub refuses it if the head moved after the reads. The
+          # shared step below arms without that binding, so this path never hands it `armable=true`.
           # A REFUSAL DISARMS, AND SO DOES AN UNREADABLE ANSWER: a `synchronize` run that cannot
           # evaluate the new head must not leave the arming made for the old one standing. The
           # disarm is best effort and loud; the run then goes red. Threat model: docs/wiki/cicd.md.
@@ -191,14 +197,19 @@ jobs:
               refuse_app "the App's branch is not a lockfile refresh"
             fi
             ORIG="${BASH_REMATCH[1]}"
+            if ! [[ "$HEAD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              refuse_app "the event carries no head commit id"
+            fi
             dir="$(mktemp -d)"
             commits='[.[] | {sha, a: .author.login, e: .commit.author.email, c: .committer.login, v: .commit.verification.verified, m: .commit.message}]'
             files='[.[] | {f: .filename, p: (if (.filename | test("(^|/)Cargo\\.(toml|lock)$")) then .patch else null end)}]'
             gh api "repos/$REPO/pulls/$ORIG" --jq '{u: .user.login, r: .head.ref}' > "$dir/orig.json"
             gh api "repos/$REPO/pulls/$ORIG/commits?per_page=100" --jq "$commits" > "$dir/orig-commits.json"
-            gh api "repos/$REPO/pulls/$PR/commits?per_page=100" --jq "$commits" > "$dir/commits.json"
             gh api "repos/$REPO/pulls/$ORIG/files?per_page=100" --jq "$files" > "$dir/orig-files.json"
+            # Files BEFORE commits: if the commit list still ends on the event's head, the file list
+            # read before it described that head too.
             gh api "repos/$REPO/pulls/$PR/files?per_page=100" --jq "$files" > "$dir/files.json"
+            gh api "repos/$REPO/pulls/$PR/commits?per_page=100" --jq "$commits" > "$dir/commits.json"
             # Every commit's own patch, so a carried commit is compared by CONTENT with the one it
             # claims to carry. Bounded, because each is one call.
             for which in orig-commits commits; do
@@ -214,7 +225,7 @@ jobs:
                 gh api "repos/$REPO/commits/$sha" --jq '[.files[] | {f: .filename, p: .patch}]' >> "$dir/$which-patches.json"
               done < <(jq -r '.[].sha' "$dir/$which.json")
             done
-            verdict="$(jq -nr \
+            verdict="$(jq -nr --arg head "$HEAD_SHA" \
               --slurpfile orig "$dir/orig.json" --slurpfile oc "$dir/orig-commits.json" --slurpfile mc "$dir/commits.json" \
               --slurpfile of "$dir/orig-files.json" --slurpfile mf "$dir/files.json" \
               --slurpfile op "$dir/orig-commits-patches.json" --slurpfile mp "$dir/commits-patches.json" '
@@ -226,21 +237,27 @@ jobs:
               def unreadable: any(.[]; .p == null);
               def manifests: [.[] | select(.f | test("(^|/)Cargo\\.toml$"))];
               def locks: [.[] | select(.f | test("(^|/)Cargo\\.lock$"))];
-              def crates_io: . == "+source = \"registry+https://github.com/rust-lang/crates.io-index\""
-                or . == "+source = \"sparse+https://index.crates.io/\"";
-              def foreign_source: [.[] | changed[] | select(startswith("+source ="))] | any(crates_io | not);
+              # A TOML key is read with ANY spacing and bare or quoted (`source=`, ` source = `,
+              # `"source" =`): a check keyed on the spelling Cargo writes is one a hand-written lock
+              # walks past. (No apostrophe in this program: it is one single-quoted shell word.)
+              def key($k): "^[ +-]\\s*[\"\\x27]?" + $k + "[\"\\x27]?\\s*=";
+              def value: capture("=\\s*(?<v>.*?)\\s*$").v;
+              def crates_io: . == "\"registry+https://github.com/rust-lang/crates.io-index\""
+                or . == "\"sparse+https://index.crates.io/\"";
+              def foreign_source: [.[] | changed[] | select(startswith("+") and test(key("source")))] | any(value | crates_io | not);
               def runtime: test("^(tauri|tauri-.+|wry|tao)$");
               def runtime_moved: any(.[]; reduce ((.p // "") | split("\n")[]) as $l ({n: null, hit: false};
                 if ($l | startswith("@@")) then .n = null
-                elif ($l | test("^[ +-]name = \"")) then .n = ($l | capture("name = \"(?<x>[^\"]+)\"").x)
+                elif ($l | test(key("name"))) then .n = ($l | value | gsub("^[\"\\x27]|[\"\\x27]$"; ""))
                   | (if ($l | startswith("+")) and (.n | runtime) then .hit = true else . end)
-                elif ($l | test("^[+-]version = ")) and (.n != null) and (.n | runtime) then .hit = true
+                elif ($l | test(key("version"))) and ($l | test("^[+-]")) and (.n != null) and (.n | runtime) then .hit = true
                 else . end) | .hit);
               $orig[0] as $o | $oc[0] as $oc | $mc[0] as $mc | $of[0] as $of | $mf[0] as $mf |
               ($oc | length) as $n |
               if ($o.u != "dependabot[bot]") or ($o.r | startswith("dependabot/cargo/") | not) then "its original is not a Dependabot cargo pull request"
               elif ($mf | length) == 0 or ($mf | length) >= 100 or ($of | length) >= 100 then "a file list is empty or longer than one page"
               elif ($oc | all(signed_dependabot) | not) then "a commit of the original does not have the shape of a signed Dependabot commit"
+              elif ($mc[-1].sha != $head) then "its head moved since this event (the run for the new head decides)"
               elif ($mc | length) != $n + 1 or ($op | length) != $n or ($mp | length) != $n + 1 then "it is not the original commits plus one"
               elif ([$mc[:-1][] | .m] != [$oc[] | .m]) then "its carried commits do not carry the original messages"
               elif any($op[], $mp[:-1][]; unreadable) then "a carried commit has a patch the API will not show"
@@ -256,9 +273,22 @@ jobs:
               refuse_app "$verdict"
             fi
             trap - ERR
-            echo "#$PR completes Dependabot's #$ORIG and changes nothing else - armable."
-            echo "armable=true" >> "$GITHUB_OUTPUT"
-            exit 0
+            echo "#$PR completes Dependabot's #$ORIG and changes nothing else - arming it on $HEAD_SHA only."
+            # The shared step below would arm without the head binding; this path arms itself.
+            echo "armable=false" >> "$GITHUB_OUTPUT"
+            if gh pr merge "$PR" --auto --squash --match-head-commit "$HEAD_SHA" --repo "$REPO"; then
+              echo "Auto-merge armed on $HEAD_SHA. GitHub will squash-merge #$PR when CI passed goes green."
+              exit 0
+            fi
+            # Already armed is the ordinary `synchronize` case; a head that moved is refused by GitHub
+            # and the run for the new head decides. Anything else is loud.
+            armed_now="$(gh pr view "$PR" --repo "$REPO" --json autoMergeRequest --jq '.autoMergeRequest != null')" || armed_now=unknown
+            if [ "$armed_now" = 'true' ]; then
+              echo "Auto-merge was already armed on #$PR, and this run's evaluation of $HEAD_SHA holds."
+              exit 0
+            fi
+            echo "::error::#$PR: could not arm auto-merge on $HEAD_SHA (the head moved, or the App lacks Pull requests write)."
+            exit 1
           fi
           # canari-only:end
 

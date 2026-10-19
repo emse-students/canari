@@ -163,8 +163,14 @@ stale_state() {
 
 # runtime_packages <Cargo.lock>: `name version` of every Tauri-runtime package, sorted - the unit the
 # refresh is compared on before and after.
+# A key is read with ANY spacing and bare or quoted (`name="x"`, ` "name" = 'x'`): a check keyed on
+# the spelling Cargo writes is one a hand-written lock walks past.
 runtime_packages() {
-  awk '/^name = /{n=$3; gsub(/"/,"",n)} /^version = /{v=$3; gsub(/"/,"",v); if(n!=""){print n, v; n=""}}' "$1" |
+  awk '
+    function val(s) { sub(/^[^=]*=[[:space:]]*/, "", s); gsub(/["\047[:space:]]/, "", s); return s }
+    /^[[:space:]]*["\047]?name["\047]?[[:space:]]*=/ { n = val($0) }
+    /^[[:space:]]*["\047]?version["\047]?[[:space:]]*=/ { v = val($0); if (n != "") { print n, v; n = "" } }
+  ' "$1" |
     while read -r name version; do
       if ceiling_is_tauri_runtime_crate "$name"; then printf '%s %s\n' "$name" "$version"; fi
     done | sort
@@ -173,13 +179,16 @@ runtime_packages() {
 # The ONLY sources a lockfile line this job writes may name: crates.io, by git index or sparse
 # index. A lock cannot name a source its manifests do not, and the manifests are Dependabot's - so a
 # `git+` or any other registry here means the input was not what it claimed, and nothing is pushed.
-readonly CRATES_IO_SOURCES='source = "registry+https://github.com/rust-lang/crates.io-index"
-source = "sparse+https://index.crates.io/"'
+readonly CRATES_IO_SOURCES='"registry+https://github.com/rust-lang/crates.io-index"
+"sparse+https://index.crates.io/"'
 
-# foreign_lock_sources <worktree>: the added `source =` lines of the uncommitted lock change that
-# name anything other than crates.io. Empty is the only acceptable answer.
+# foreign_lock_sources <worktree>: the VALUES of the `source` keys the uncommitted lock change adds
+# (any spacing, bare or quoted key) that are anything other than crates.io. Empty is the only
+# acceptable answer.
 foreign_lock_sources() {
-  git -C "$1" diff -U0 -- '*Cargo.lock' | sed -n 's/^+\(source = .*\)$/\1/p' | grep -vxF "$CRATES_IO_SOURCES" || true
+  git -C "$1" diff -U0 -- '*Cargo.lock' | grep -v '^+++ ' |
+    sed -nE "s/^\+[[:space:]]*[\"']?source[\"']?[[:space:]]*=[[:space:]]*(.*[^[:space:]])[[:space:]]*\$/\1/p" |
+    grep -vxF "$CRATES_IO_SOURCES" || true
 }
 
 # refuse <number> <reason>: recorded for the issue, and said ONCE on the pull request (marker).

@@ -66,8 +66,16 @@ case "$1" in
     [ "${FAKE_UPDATE_NOOP:-}" = 1 ] && exit 0
     sed -i 's/version = "1.0.0"/version = "1.0.5"/' Cargo.lock
     [ "${FAKE_MOVE_TAURI:-}" = 1 ] && sed -i '/^name = "tauri"$/{n;s/.*/version = "2.99.0"/}' Cargo.lock
-    [ "${FAKE_GIT_SOURCE:-}" = 1 ] && printf '\n[[package]]\nname = "evil"\nversion = "0.1.0"\nsource = "git+https://example.invalid/evil#abc"\n' >>Cargo.lock
-    [ "${FAKE_CRATES_SOURCE:-}" = 1 ] && printf '\n[[package]]\nname = "itoa"\nversion = "1.0.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n' >>Cargo.lock
+    case "${FAKE_GIT_SOURCE:-}" in
+      1) printf '\n[[package]]\nname = "evil"\nversion = "0.1.0"\nsource = "git+https://example.invalid/evil#abc"\n' >>Cargo.lock ;;
+      tight) printf '\n[[package]]\nname = "evil"\nversion = "0.1.0"\nsource="git+https://example.invalid/evil#abc"\n' >>Cargo.lock ;;
+      quoted) printf '\n[[package]]\nname = "evil"\nversion = "0.1.0"\n  "source" = "git+https://example.invalid/evil#abc"\n' >>Cargo.lock ;;
+    esac
+    case "${FAKE_CRATES_SOURCE:-}" in
+      1) printf '\n[[package]]\nname = "itoa"\nversion = "1.0.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n' >>Cargo.lock ;;
+      sparse) printf '\n[[package]]\nname = "itoa"\nversion = "1.0.0"\nsource = "sparse+https://index.crates.io/"\n' >>Cargo.lock ;;
+    esac
+    [ "${FAKE_ADD_RUNTIME_TIGHT:-}" = 1 ] && printf '\n[[package]]\nname="wry"\nversion="0.50.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n' >>Cargo.lock
     exit 0
     ;;
 esac
@@ -519,6 +527,20 @@ if [ "$st" = 0 ] && [ "$(app_prs)" = 1 ]; then
   pass "A35 a refreshed lock naming crates.io is carried"
 else
   fail "A35 a crates.io source was refused (exit $st)" "$out"
+fi
+
+# The second review: a TOML key is a key whatever its spacing or quoting, and the sparse index is
+# crates.io too.
+refusal_case "A36 a git source written source=\"...\" is refused" "not crates.io" FAKE_GIT_SOURCE=tight
+refusal_case "A36b a git source written with a quoted key is refused" "not crates.io" FAKE_GIT_SOURCE=quoted
+refusal_case "A37 a Tauri-runtime crate added as name=\"wry\" is refused" "Tauri runtime" FAKE_ADD_RUNTIME_TIGHT=1
+make_world
+out="$(FAKE_CRATES_SOURCE=sparse run)"
+st=$?
+if [ "$st" = 0 ] && [ "$(app_prs)" = 1 ]; then
+  pass "A38 a refreshed lock naming the SPARSE crates.io index is carried"
+else
+  fail "A38 the sparse crates.io index was refused (exit $st)" "$out"
 fi
 
 # ── A25-A27: the report - written once, updated, closed ───────────────────────────────────────────

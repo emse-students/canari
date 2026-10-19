@@ -142,10 +142,13 @@ run_case() {
   : >"$work/output"
   : >"$work/gh.log"
   out="$(cd "$work" && PATH="$work/bin:$PATH" GITHUB_OUTPUT="$work/output" REPO=o/r PR=5 AUTHOR="$2" HEAD_REF="$3" GH_TOKEN=x \
-    FIX="$work/fix" FAKE_GH_LOG="$work/gh.log" bash "$work/step.sh" 2>&1)"
+    HEAD_SHA="${CASE_HEAD:-$M2}" FIX="$work/fix" FAKE_GH_LOG="$work/gh.log" bash "$work/step.sh" 2>&1)"
   st=$?
 }
-armed() { grep -qx 'armable=true' "$work/output"; }
+# Armed: by the shared step (`armable=true`), or - the App's path - by the step itself, bound to the
+# event's head commit.
+armed() { grep -qx 'armable=true' "$work/output" || grep -q -- '^pr merge 5 --auto' "$work/gh.log"; }
+app_armed_on_head() { grep -qxF "pr merge 5 --auto --squash --match-head-commit $M2 --repo o/r" "$work/gh.log" && ! grep -qx 'armable=true' "$work/output"; }
 not_armed() { # <name>
   if [ "$st" = 0 ] && ! armed; then pass "$1"; else fail "$1 (exit $st)" "$out"; fi
 }
@@ -153,7 +156,7 @@ not_armed() { # <name>
 # ── B1: the one thing that IS armed ───────────────────────────────────────────────────────────────
 fixtures
 run_case false "$APP" "$REF"
-if [ "$st" = 0 ] && armed; then pass "B1 the App's lockfile refresh of a signed Dependabot pull request is armed"; else fail "B1 the well-formed refresh was not armed" "$out"; fi
+if [ "$st" = 0 ] && app_armed_on_head; then pass "B1 the App's lockfile refresh of a signed Dependabot pull request is armed, on the event's head commit only"; else fail "B1 the well-formed refresh was not armed on its head commit" "$out" "$(cat "$work/gh.log")"; fi
 
 # ── B2-B3: the branch ─────────────────────────────────────────────────────────────────────────────
 fixtures
@@ -293,11 +296,58 @@ not_armed "B26 a lockfile diff the API will not show is not armed"
 fixtures
 edit pulls_5_commits_per_page_100 '.[1].commit.author.email = "somebody@else.example"'
 run_case false "$APP" "$REF"
-if [ "$st" = 0 ] && armed; then
+if [ "$st" = 0 ] && app_armed_on_head; then
   pass "B27 the App commit's ADDRESS is not what is relied on: its content is (armed on content alone)"
 else
   fail "B27 the arming depended on an address after all (exit $st)" "$out"
 fi
+
+# ── B28-B31: the second review of #2135 ───────────────────────────────────────────────────────────
+# H2: the evaluation is of ONE head commit. An event whose head is not the one the commit list ends
+# on (the branch moved between the event and the reads) is refused - the run for the new head decides.
+fixtures
+CASE_HEAD="$(printf 'f%.0s' {1..40})" run_case false "$APP" "$REF"
+not_armed "B28 a head commit other than the event's is not armed"
+fixtures
+CASE_HEAD='not-a-sha' run_case false "$APP" "$REF"
+not_armed "B28b an event without a well-formed head commit id is not armed"
+# A commit list longer than this check reads is refused, not truncated.
+fixtures
+# shellcheck disable=SC2016 # `$i` is a jq variable, not a shell one
+edit pulls_5_commits_per_page_100 '[range(19) as $i | .[0] | .sha = ("1" * 39 + ($i | tostring | .[-1:]))] + .'
+run_case false "$APP" "$REF"
+if [ "$st" = 0 ] && ! armed && grep -q 'longer than this check reads' <<<"$out"; then
+  pass "B29 21 commits on the refresh is refused before any per-commit read"
+else
+  fail "B29 21 commits were not refused as too long (exit $st)" "$out"
+fi
+# The sparse index is crates.io too.
+fixtures
+edit pulls_5_files_per_page_100 '.[2].patch += "\n+\n+[[package]]\n+name = \"ryu\"\n+version = \"1.0.0\"\n+source = \"sparse+https://index.crates.io/\""'
+run_case false "$APP" "$REF"
+if [ "$st" = 0 ] && app_armed_on_head; then pass "B30 a lockfile gaining the SPARSE crates.io index is armed"; else fail "B30 the sparse crates.io index was refused (exit $st)" "$out"; fi
+# H1: a TOML key is a key whatever its spacing or quoting.
+for line in '+source=\"git+https://example.invalid/evil#abc\"' '+ source = \"git+https://example.invalid/evil#abc\"' \
+  '+\"source\" = \"git+https://example.invalid/evil#abc\"'; do
+  fixtures
+  edit pulls_5_files_per_page_100 ".[2].patch += \"\\n$line\""
+  run_case false "$APP" "$REF"
+  if [ "$st" = 0 ] && ! armed && grep -q 'not crates.io' <<<"$out"; then
+    pass "B31 a foreign source spelled $line is refused as one"
+  else
+    fail "B31 the foreign source $line was not refused as one (exit $st)" "$out"
+  fi
+done
+for line in '+name=\"tauri\"' '+ name = \"wry\"' "+'name' = 'tao'"; do
+  fixtures
+  edit pulls_5_files_per_page_100 ".[2].patch += \"\\n+[[package]]\\n$line\\n+version = \\\"9.0.0\\\"\""
+  run_case false "$APP" "$REF"
+  if [ "$st" = 0 ] && ! armed && grep -q 'Tauri runtime' <<<"$out"; then
+    pass "B31b a runtime crate spelled $line is refused as one"
+  else
+    fail "B31b the runtime crate $line was not refused as one (exit $st)" "$out"
+  fi
+done
 
 # ── B19: everything that was armed before still is, and nothing else new is ───────────────────────
 fixtures
