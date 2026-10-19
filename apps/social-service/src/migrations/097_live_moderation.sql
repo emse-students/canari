@@ -4,7 +4,8 @@
 -- 1. lives."endReason" accepts 'cut': staff ended the live (`POST /api/lives/:id/cut`).
 -- 2. live_cuts: ONE ROW PER CUT LIVE, the moderation record. It OUTLIVES the live row (deleted at
 --    its end, L3) on purpose: it is what a viewer or the broadcaster polling after the purge is
---    answered `410 LIVE_ENDED` with `endReason: 'cut'` from, the audit trail of the decision (who,
+--    answered `410 LIVE_ENDED` from (with the live's own end reason, 'cut' when the cut ended it),
+--    the audit trail of the decision (who,
 --    when, which reason code), and the count of a broadcaster's earlier cuts a moderator reads. No
 --    strike POLICY reads it yet - that is the user's decision (backlog). "broadcasterId" and
 --    "associationId" repeat the live's, so the rule of a post (`liveVisibleToViewerSql`) can be asked
@@ -37,7 +38,14 @@ CREATE TABLE IF NOT EXISTS live_cuts (
   details text NULL,
   "liveStartedAt" timestamptz NOT NULL,
   "cutAt" timestamptz NOT NULL DEFAULT now(),
-  CONSTRAINT live_cuts_reason CHECK (reason IN ('spam', 'harassment', 'inappropriate', 'other'))
+  -- HOW THE LIVE ENDED, kept so the answer after the purge is the answer before it: 'cut' when this
+  -- cut ended it, else the reason it had already ended with (a cut of an ended live records the
+  -- decision and rewrites nothing). Never 'erased': an erased broadcaster's live is not cut.
+  "liveEndedAt" timestamptz NOT NULL,
+  "liveEndReason" varchar(32) NOT NULL,
+  CONSTRAINT live_cuts_reason CHECK (reason IN ('spam', 'harassment', 'inappropriate', 'other')),
+  CONSTRAINT live_cuts_live_end_reason
+    CHECK ("liveEndReason" IN ('broadcaster', 'dropped', 'max_duration', 'cut'))
 );
 CREATE INDEX IF NOT EXISTS live_cuts_broadcaster_idx ON live_cuts ("broadcasterId", "cutAt");
 CREATE INDEX IF NOT EXISTS live_cuts_cut_at_idx ON live_cuts ("cutAt");

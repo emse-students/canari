@@ -1132,7 +1132,7 @@ maybe('lives against PostgreSQL (migration 091)', () => {
         [silent.id]
       );
       const report = await sweeper.sweepOnce();
-      expect(report).toEqual({ ended: 1, deleted: 1, kept: 0, orphans: 0 });
+      expect(report).toEqual({ ended: 1, deleted: 1, kept: 0, orphans: 0, cutsPruned: 0 });
       expect(store.countFor(silent.id)).toBe(0);
       await expect(lives.get(CAROL, talking.id)).resolves.toBeDefined();
       expect(store.countFor(talking.id)).toBe(1);
@@ -1143,7 +1143,13 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       await q(`UPDATE lives SET "startedAt" = now() - interval '2 minutes' WHERE id = $1`, [
         live.id,
       ]);
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 1, deleted: 1, kept: 0, orphans: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({
+        ended: 1,
+        deleted: 1,
+        kept: 0,
+        orphans: 0,
+        cutsPruned: 0,
+      });
     });
 
     it('ends a live past its hour, from the sweep or from the ingest that finds it', async () => {
@@ -1174,17 +1180,35 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       await lives.removeViewer(ALICE, live.id, BOB);
       store.failPurge = true;
       await lives.end(ALICE, live.id);
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 0, kept: 1, orphans: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({
+        ended: 0,
+        deleted: 0,
+        kept: 1,
+        orphans: 0,
+        cutsPruned: 0,
+      });
       expect(store.countFor(live.id)).toBe(1);
 
       store.failPurge = false;
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 1, kept: 0, orphans: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({
+        ended: 0,
+        deleted: 1,
+        kept: 0,
+        orphans: 0,
+        cutsPruned: 0,
+      });
       expect(store.objects.size).toBe(0);
       for (const table of ['lives', 'live_segments', 'live_removed_viewers']) {
         expect(await q(`SELECT 1 FROM ${table}`)).toEqual([]);
       }
       // And a second run finds nothing to do.
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 0, kept: 0, orphans: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({
+        ended: 0,
+        deleted: 0,
+        kept: 0,
+        orphans: 0,
+        cutsPruned: 0,
+      });
     });
 
     it('keeps the row while the store still lists a segment, even when the call itself answered', async () => {
@@ -1192,12 +1216,24 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       await lives.ingest(ALICE, live.id, 0, segment(0));
       store.refuseDeletes = true;
       await lives.end(ALICE, live.id);
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 0, kept: 1, orphans: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({
+        ended: 0,
+        deleted: 0,
+        kept: 1,
+        orphans: 0,
+        cutsPruned: 0,
+      });
       expect(await q(`SELECT "endReason" FROM lives WHERE id = $1`, [live.id])).toEqual([
         { endReason: 'broadcaster' },
       ]);
       store.refuseDeletes = false;
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 1, kept: 0, orphans: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({
+        ended: 0,
+        deleted: 1,
+        kept: 0,
+        orphans: 0,
+        cutsPruned: 0,
+      });
     });
 
     it('never ends an open live through the purge path, whatever id reaches it', async () => {
@@ -1349,15 +1385,61 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       });
     });
 
-    it('records a cut on a live ENDED BUT NOT PURGED, keeping its reason', async () => {
+    it('a cut of a live ENDED BY ITS BROADCASTER records the decision and rewrites nothing - ONE answer before and after the purge, no notice', async () => {
       store.failPurge = true;
       const live = await start();
-      await lives.end(ALICE, live.id);
+      const ended = await lives.end(ALICE, live.id);
+      const ENDED = {
+        status: HttpStatus.GONE,
+        code: 'LIVE_ENDED',
+        endReason: 'broadcaster',
+        endedAt: ended.endedAt,
+      };
       await expect(lives.cut(MOD, live.id, { reason: 'spam' })).resolves.toMatchObject({
         endReason: 'broadcaster',
         newlyCut: true,
       });
-      expect(await q(`SELECT 1 FROM live_cuts WHERE "liveId" = $1`, [live.id])).toHaveLength(1);
+      expect(
+        await q(`SELECT "liveEndReason", "liveEndedAt" FROM live_cuts WHERE "liveId" = $1`, [
+          live.id,
+        ])
+      ).toEqual([{ liveEndReason: 'broadcaster', liveEndedAt: ended.endedAt }]);
+      // The broadcaster ended it themselves: they are not told moderators stopped it.
+      expect(bell).toEqual([]);
+
+      // BEFORE the purge (the row is kept by the refused purge)...
+      expect(await body(lives.get(BOB, live.id))).toEqual(ENDED);
+      expect(await body(lives.ingest(ALICE, live.id, 1, segment(1)))).toEqual(ENDED);
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ endReason: 'broadcaster' });
+      // ...and AFTER it, from the cut row: the same answer.
+      store.failPurge = false;
+      await sweeper.sweepOnce();
+      expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+      expect(await body(lives.get(BOB, live.id))).toEqual(ENDED);
+      expect(await body(lives.manifest(CAROL, live.id))).toEqual(ENDED);
+      expect(await body(lives.ingest(ALICE, live.id, 1, segment(1)))).toEqual(ENDED);
+      await expect(lives.end(ALICE, live.id)).resolves.toEqual({
+        id: live.id,
+        endedAt: ended.endedAt,
+        endReason: 'broadcaster',
+      });
+      await expect(lives.cut(MOD, live.id, { reason: 'other' })).resolves.toMatchObject({
+        endReason: 'broadcaster',
+        newlyCut: false,
+      });
+    });
+
+    it("a cut that ENDS the live answers cut before and after the purge, with the cut's own time", async () => {
+      store.failPurge = true;
+      const live = await start();
+      const cut = await lives.cut(MOD, live.id, { reason: 'spam' });
+      const before = await body(lives.get(BOB, live.id));
+      store.failPurge = false;
+      await sweeper.sweepOnce();
+      expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+      const after = await body(lives.get(BOB, live.id));
+      expect(after).toEqual(before);
+      expect(after).toEqual({ ...CUT, endedAt: cut.cutAt });
     });
 
     it('refuses a cut with no reason code, an oversized note, or no live: every refusal typed', async () => {
@@ -1429,7 +1511,20 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       await sweeper.sweepOnce();
       expect(await q(`SELECT 1 FROM live_cuts`)).toHaveLength(1);
       await q(`UPDATE live_cuts SET "cutAt" = now() - interval '366 days'`);
-      await sweeper.sweepOnce();
+      await expect(sweeper.sweepOnce()).resolves.toMatchObject({ cutsPruned: 1 });
+      expect(await q(`SELECT 1 FROM live_cuts`)).toEqual([]);
+    });
+
+    it('a throw in the start prune does not skip the cut prune', async () => {
+      const live = await start();
+      await lives.cut(MOD, live.id, { reason: 'spam' });
+      await q(`UPDATE live_cuts SET "cutAt" = now() - interval '366 days'`);
+      const spy = jest.spyOn(lives, 'pruneStarts').mockRejectedValueOnce(new Error('boom'));
+      try {
+        await expect(sweeper.sweepOnce()).resolves.toMatchObject({ cutsPruned: 1 });
+      } finally {
+        spy.mockRestore();
+      }
       expect(await q(`SELECT 1 FROM live_cuts`)).toEqual([]);
     });
 
@@ -1516,7 +1611,13 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       );
       // Idempotent: a second run changes nothing.
       await erase(ALICE);
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 1, kept: 0, orphans: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({
+        ended: 0,
+        deleted: 1,
+        kept: 0,
+        orphans: 0,
+        cutsPruned: 0,
+      });
       expect(store.countFor(own.id)).toBe(0);
       await expect(lives.get(BOB, other.id)).resolves.toBeDefined();
     });
@@ -1537,6 +1638,37 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       );
       // Idempotent.
       await expect(erase(ALICE)).resolves.toEqual({});
+    });
+
+    it("REFUSES TO CUT an erased broadcaster's live: typed, and no cut pools the erased as one offender", async () => {
+      const MOD = '9'.repeat(64);
+      store.failPurge = true;
+      const first = await start(ALICE);
+      const second = await start(CAROL);
+      await erase(ALICE);
+      await erase(CAROL);
+      for (const live of [first, second]) {
+        const refused = await lives.cut(MOD, live.id, { reason: 'spam' }).then(
+          () => null,
+          (e: { getStatus: () => number; getResponse: () => object }) => ({
+            status: e.getStatus(),
+            ...e.getResponse(),
+          })
+        );
+        expect(refused).toMatchObject({
+          status: HttpStatus.GONE,
+          code: 'LIVE_ENDED',
+          endReason: 'erased',
+        });
+      }
+      expect(await q(`SELECT 1 FROM live_cuts`)).toEqual([]);
+      expect(bell).toEqual([]);
+      // Once purged, nothing is left to cut.
+      store.failPurge = false;
+      await sweeper.sweepOnce();
+      expect((await refusal(lives.cut(MOD, first.id, { reason: 'spam' }))).code).toBe(
+        'LIVE_NOT_FOUND'
+      );
     });
   });
 });

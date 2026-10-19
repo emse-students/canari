@@ -101,6 +101,19 @@ export interface LiveEndResult {
 }
 
 /** What a staff cut answers (WP-L8), and its idempotent repeat. */
+/** A `live_cuts` row as the live's own answers read it once the live row may be gone. */
+interface CutRecord {
+  broadcasterId: string;
+  reason: LiveCutReason;
+  cutAt: Date;
+  /** How the live ended - `cut` when the cut ended it, else its earlier end (never `erased`). */
+  liveEndedAt: Date;
+  liveEndReason: Exclude<LiveEndReason, 'erased'>;
+}
+
+/** The {@link CutRecord} columns, ONE list for every read of a cut. */
+const CUT_COLUMNS = `"broadcasterId", reason, "cutAt", "liveEndedAt", "liveEndReason"`;
+
 export interface LiveCutResult {
   liveId: string;
   broadcasterId: string;
@@ -757,8 +770,8 @@ export class LivesService implements OnModuleDestroy {
         // with it, so the screen says why rather than "ended and deleted".
         const cut = await this.cutOf(this.db.manager, liveId);
         if (cut && cut.broadcasterId === broadcasterId) {
-          this.logger.debug(`[LIVE] end of ${liveId} answered with its cut`);
-          return { id: liveId, endedAt: cut.cutAt, endReason: 'cut' };
+          this.logger.debug(`[LIVE] end of ${liveId} answered from its cut (${cut.liveEndReason})`);
+          return { id: liveId, endedAt: cut.liveEndedAt, endReason: cut.liveEndReason };
         }
         throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
       }
@@ -829,15 +842,18 @@ export class LivesService implements OnModuleDestroy {
    * 1. the cut is RECORDED in `live_cuts` (once per live: a repeat answers the first cut);
    * 2. an OPEN live is ENDED with `endReason = 'cut'` - from then on its key and manifest answer
    *    `410 LIVE_ENDED` with `endReason: 'cut'`, its broadcaster's next segment too, and it leaves
-   *    `GET /api/lives`; a live already ended keeps its reason and the cut is still recorded (a
-   *    broadcaster ending their live as the moderator presses does not escape the record);
+   *    `GET /api/lives`; a live already ended KEEPS its reason, before the purge and after it (the
+   *    cut row copies it), and its broadcaster gets no notice - the cut is still recorded, so a
+   *    broadcaster ending their live as the moderator presses does not escape the record;
    * 3. every PENDING report on it is marked `reviewed` by this moderator - the report's own trail.
    *
    * After the commit: the purge (seats released, segments and row deleted - or left to the sweep
    * while a segment is storing, whose confirm then purges), and the broadcaster's in-app notice.
    *
    * 400 `LIVE_CUT_REASON_INVALID` / `LIVE_CUT_DETAILS_INVALID`; 404 `LIVE_NOT_FOUND` for a live with
-   * no row and no cut (absent, or ended and already purged - nothing is left to cut).
+   * no row and no cut (absent, or ended and already purged - nothing is left to cut); 410
+   * `LIVE_ENDED` with `endReason: 'erased'` for a live whose broadcaster's account was erased (no
+   * cut is recorded: the erased all share one id, which would pool them as one offender).
    */
   async cut(
     reviewerId: string,
@@ -873,33 +889,55 @@ export class LivesService implements OnModuleDestroy {
           broadcasterId: earlier.broadcasterId,
           reason: earlier.reason,
           cutAt: earlier.cutAt,
-          endReason: 'cut',
+          endReason: earlier.liveEndReason,
           newlyCut: false,
           priorCuts: await this.countOtherCuts(tx, earlier.broadcasterId, liveId),
         };
       }
+      // AN ERASED BROADCASTER'S LIVE IS NOT CUT: every erased account shares DELETED_ACCOUNT, so a
+      // cut recorded under it would pool every deleted member into ONE repeat offender. The erasure
+      // already ended the live; the answer is the one a viewer gets.
+      if (row.broadcasterId === DELETED_ACCOUNT || row.endReason === 'erased') {
+        this.logger.log(`[LIVE_CUT] ${liveId} refused: its broadcaster's account was erased`);
+        throw liveEnded(row.endedAt, row.endReason ?? 'erased');
+      }
+      // An OPEN live is ended by the cut; an ENDED one keeps its end - the cut records the decision
+      // and rewrites nothing, so the answer before the purge and after it (from `live_cuts`) agree.
+      let liveEndedAt = row.endedAt;
+      let endReason = row.endReason as Exclude<LiveEndReason, 'erased'> | null;
+      if (!liveEndedAt) {
+        const [ended] = (await tx.query(
+          `UPDATE lives SET "endedAt" = now(), "endReason" = 'cut'
+            WHERE id = $1 AND "endedAt" IS NULL
+            RETURNING "endedAt"`,
+          [liveId]
+        )) as [{ endedAt: Date }[], number];
+        liveEndedAt = ended[0].endedAt;
+        endReason = 'cut';
+      }
       // An INSERT ... RETURNING answers its rows alone (an UPDATE answers `[rows, affected]`).
       const inserted: { cutAt: Date }[] = await tx.query(
         `INSERT INTO live_cuts ("liveId", "broadcasterId", "associationId", "reviewerId", reason,
-                                details, "liveStartedAt")
-         VALUES ($1, $2, $3, $4, $5, $6, $7)
+                                details, "liveStartedAt", "liveEndedAt", "liveEndReason")
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          ON CONFLICT ("liveId") DO NOTHING
          RETURNING "cutAt"`,
-        [liveId, row.broadcasterId, row.associationId, reviewerId, reason, details, row.startedAt]
+        [
+          liveId,
+          row.broadcasterId,
+          row.associationId,
+          reviewerId,
+          reason,
+          details,
+          row.startedAt,
+          liveEndedAt,
+          endReason,
+        ]
       );
       const newlyCut = inserted.length > 0;
       const cut = newlyCut
         ? { reason: reason as LiveCutReason, cutAt: inserted[0].cutAt }
         : (await this.cutOf(tx, liveId))!;
-      let endReason: LiveEndReason = row.endReason ?? 'cut';
-      if (!row.endedAt) {
-        await tx.query(
-          `UPDATE lives SET "endedAt" = now(), "endReason" = 'cut'
-            WHERE id = $1 AND "endedAt" IS NULL`,
-          [liveId]
-        );
-        endReason = 'cut';
-      }
       if (newlyCut) {
         // The report's own trail, as a moderator closing it by hand would leave it.
         await tx.query(
@@ -913,7 +951,7 @@ export class LivesService implements OnModuleDestroy {
         broadcasterId: row.broadcasterId,
         reason: cut.reason,
         cutAt: cut.cutAt,
-        endReason,
+        endReason: endReason!,
         newlyCut,
         priorCuts: await this.countOtherCuts(tx, row.broadcasterId, liveId),
       };
@@ -924,7 +962,9 @@ export class LivesService implements OnModuleDestroy {
         `[LIVE_CUT] ${liveId} cut by ${short(reviewerId)} reason=${result.reason} ` +
           `broadcaster=${short(result.broadcasterId)} end=${result.endReason} priorCuts=${result.priorCuts}`
       );
-      await this.notifyCut(result);
+      // The notice says "your live was stopped by moderators": true only when THIS cut ended it. A
+      // broadcaster who had already ended their own live is not told so.
+      if (result.endReason === 'cut') await this.notifyCut(result);
     }
     await this.purgeBestEffort(liveId, 'after a cut');
     return result;
@@ -970,15 +1010,11 @@ export class LivesService implements OnModuleDestroy {
   }
 
   /** The cut of a live, if staff cut it - read once the live's own row may be gone. */
-  private async cutOf(
-    manager: EntityManager,
-    liveId: string
-  ): Promise<{ broadcasterId: string; reason: LiveCutReason; cutAt: Date } | null> {
-    const rows: { broadcasterId: string; reason: LiveCutReason; cutAt: Date }[] =
-      await manager.query(
-        `SELECT "broadcasterId", reason, "cutAt" FROM live_cuts WHERE "liveId" = $1`,
-        [liveId]
-      );
+  private async cutOf(manager: EntityManager, liveId: string): Promise<CutRecord | null> {
+    const rows: CutRecord[] = await manager.query(
+      `SELECT ${CUT_COLUMNS} FROM live_cuts WHERE "liveId" = $1`,
+      [liveId]
+    );
     return rows[0] ?? null;
   }
 
@@ -994,8 +1030,8 @@ export class LivesService implements OnModuleDestroy {
     callerId: string,
     as: 'broadcaster' | 'viewer'
   ): Promise<void> {
-    const rows: { broadcasterId: string; cutAt: Date; visible: boolean }[] = await manager.query(
-      `SELECT "broadcasterId", "cutAt", ${liveVisibleToViewerSql('live_cuts', '$2')} AS visible
+    const rows: (CutRecord & { visible: boolean })[] = await manager.query(
+      `SELECT ${CUT_COLUMNS}, ${liveVisibleToViewerSql('live_cuts', '$2')} AS visible
          FROM live_cuts WHERE "liveId" = $1`,
       [liveId, callerId]
     );
@@ -1005,17 +1041,17 @@ export class LivesService implements OnModuleDestroy {
     if (as === 'broadcaster' ? !own : !own && cut.visible !== true) return;
     if (!own && (await isBlockedBetween(manager, callerId, cut.broadcasterId))) return;
     this.logger.debug(`[LIVE] ${liveId} answered as cut to ${short(callerId)}`);
-    throw liveEnded(cut.cutAt, 'cut');
+    throw liveEnded(cut.liveEndedAt, cut.liveEndReason);
   }
 
   /** Deletes the cuts older than {@link LIVE_CUT_RETENTION_MS} - the record's whole lifetime. */
   async pruneCuts(): Promise<number> {
     const [, affected] = (await this.db.query(
-      `DELETE FROM live_cuts WHERE "cutAt" + $1::float8 * interval '1 millisecond' <= now()`,
+      // The column alone on its side, so `live_cuts_cut_at_idx` serves the predicate.
+      `DELETE FROM live_cuts WHERE "cutAt" <= now() - $1::float8 * interval '1 millisecond'`,
       [LIVE_CUT_RETENTION_MS]
     )) as [unknown, number];
-    if (affected > 0)
-      this.logger.debug(`[LIVE_GC] ${affected} cut(s) past their retention deleted`);
+    if (affected > 0) this.logger.log(`[LIVE_GC] ${affected} cut(s) past their retention deleted`);
     return affected;
   }
 

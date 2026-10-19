@@ -42,6 +42,14 @@ cut automatically (today never: a person cuts); (4) the store answers that only 
 - the response-time commitment, the filtering statement, the terms' lives paragraph
 ([store-ugc-answers](store-ugc-answers.md)).
 
+**P3, found by the review of the server half: a seat taken AFTER an end's release outlives the end
+by up to its 30 s lease.** A viewer whose key read began before an end (a cut, the broadcaster's end,
+a drop, the hour, an erasure - every kind) committed can take a seat after the purge's
+`releaseLive` freed them; that seat counts against the host's cap until its lease lapses (its next
+poll is a `410` that renews nothing). Harmless to privacy, it is a clock deciding a count: the fix is
+for the seat take to be refused by the live's ended state, not left to the lease
+([lives](services/lives.md#the-cut)).
+
 ## Orphan media rows: source fixed, one reading owed (2026-10-10)
 
 P3. A `mediaId: ''` placeholder with no outbox entry (Mi 9T, alpha.3) is closed at the source and on screen ([media-frame 7](frontend/media-frame.md#7-an-orphan-media-row-and-a-card-with-no-bubble)): `enqueue` and `enqueueOutboxMessage` now REJECT (`OutboxEnqueueError`) with no storage, no controller or a failed durable write, `handleSendChat` withdraws the placeholder before re-staging, and the bubble asks the durable queue (`isOutboxEntryQueued`). OWED: (a) BUILT (draft PR, WP-CONTROL-NOTICE, [media-frame 7](frontend/media-frame.md#7-an-orphan-media-row-and-a-card-with-no-bubble)): a refused reaction/edit/pin/delete wears a mention with "Retry" and a refused delete is no longer tombstoned; owed one look on a phone; (b) the row already stored on the Mi 9T is only cleared by its Delete; (c) a reading of the dark card on the phone.

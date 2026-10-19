@@ -15,6 +15,8 @@ export interface LiveSweepReport {
   kept: number;
   /** Segment folders with no live row behind them, emptied by the orphan reaper. */
   orphans: number;
+  /** Staff cuts past `LIVE_CUT_RETENTION_MS`, deleted from `live_cuts`. */
+  cutsPruned: number;
 }
 
 /**
@@ -68,7 +70,7 @@ export class LiveRetentionScheduler {
 
   /** The whole run, separated so a test can call it without a scheduler. */
   async sweepOnce(): Promise<LiveSweepReport> {
-    const report: LiveSweepReport = { ended: 0, deleted: 0, kept: 0, orphans: 0 };
+    const report: LiveSweepReport = { ended: 0, deleted: 0, kept: 0, orphans: 0, cutsPruned: 0 };
     report.ended = (await this.lives.endDue()).length;
 
     const kept: string[] = [];
@@ -101,12 +103,22 @@ export class LiveRetentionScheduler {
     } catch (e) {
       this.logger.warn(`[LIVE_GC] orphan reaper skipped this run: ${String(e)}`);
     }
-    await this.lives.pruneStarts();
-    await this.lives.pruneCuts();
+    // Each prune in its own `try`, for the same reason: a throw in one must not skip the other, nor
+    // cost the report.
+    try {
+      await this.lives.pruneStarts();
+    } catch (e) {
+      this.logger.warn(`[LIVE_GC] start prune skipped this run: ${String(e)}`);
+    }
+    try {
+      report.cutsPruned = await this.lives.pruneCuts();
+    } catch (e) {
+      this.logger.warn(`[LIVE_GC] cut prune skipped this run: ${String(e)}`);
+    }
 
-    if (report.ended + report.deleted + report.kept + report.orphans > 0) {
+    if (report.ended + report.deleted + report.kept + report.orphans + report.cutsPruned > 0) {
       this.logger.log(
-        `[LIVE_GC] ended=${report.ended} deleted=${report.deleted} kept=${report.kept} orphans=${report.orphans}`
+        `[LIVE_GC] ended=${report.ended} deleted=${report.deleted} kept=${report.kept} orphans=${report.orphans} cutsPruned=${report.cutsPruned}`
       );
     }
     return report;

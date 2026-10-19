@@ -269,8 +269,11 @@ export class ModerationService {
       reason: string;
       cutAt: Date;
       liveStartedAt: Date;
+      liveEndedAt: Date;
+      liveEndReason: string;
     }[] = await this.reportRepo.manager.query(
-      `SELECT "liveId"::text, "broadcasterId", "associationId", reason, "cutAt", "liveStartedAt"
+      `SELECT "liveId"::text, "broadcasterId", "associationId", reason, "cutAt", "liveStartedAt",
+              "liveEndedAt", "liveEndReason"
          FROM live_cuts WHERE "liveId" = ANY($1::uuid[])`,
       [ids]
     );
@@ -305,8 +308,8 @@ export class ModerationService {
         broadcasterName: broadcasterId ? (nameOf.get(broadcasterId) ?? null) : null,
         associationId: live?.associationId ?? cut?.associationId ?? null,
         startedAt: live?.startedAt ?? cut?.liveStartedAt ?? null,
-        endedAt: live?.endedAt ?? cut?.cutAt ?? null,
-        endReason: live?.endReason ?? (cut ? 'cut' : null),
+        endedAt: live?.endedAt ?? cut?.liveEndedAt ?? null,
+        endReason: live?.endReason ?? cut?.liveEndReason ?? null,
         cutReason: cut?.reason ?? null,
         broadcasterCuts: broadcasterId ? (cutsOf.get(broadcasterId) ?? 0) : 0,
       });

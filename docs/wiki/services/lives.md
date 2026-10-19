@@ -411,7 +411,10 @@ other end, and any purge that failed, is finished by `LiveRetentionScheduler` (e
    reservation in flight - so a folder with no row was written after its purge, by a store that
    outlived its own timeout. The listing is read BEFORE the rows, so a live started in between is not
    in it. Reported as `orphans=` on the `[LIVE_GC]` line, each one a `warn`;
-4. the `live_starts` rows older than the hour are deleted, and the `live_cuts` rows past `LIVE_CUT_RETENTION_MS`.
+4. the `live_starts` rows older than the hour are deleted, and the `live_cuts` rows past
+   `LIVE_CUT_RETENTION_MS` (`"cutAt" <= now() - retention`, so `live_cuts_cut_at_idx` serves it),
+   reported as `cutsPruned=` on the `[LIVE_GC]` line. Each prune in its own `try`, so a throw in one
+   skips neither the other nor the report.
 
 Observed by `[LIVE]` / `[LIVE_GC]` lines, and the storage panel's `liveSegmentCount` /
 `liveSegmentBytes` (media-service `getStorageStats`): segments are outside the media metadata index
@@ -446,9 +449,14 @@ so PostgreSQL orders a cut against them rather than anything reconciling them af
 
 1. **recorded** in `live_cuts` (migration 097), once per live - a repeat answers the first cut with
    `newlyCut: false`;
-2. an OPEN live is **ended** with `endReason = 'cut'`. A live already ended keeps its reason and the
-   cut is still recorded: a broadcaster ending their live as the moderator presses does not escape
-   the record;
+2. an OPEN live is **ended** with `endReason = 'cut'`. A live already ended (by its broadcaster, a
+   drop, the hour) KEEPS its reason and the cut is still recorded: a broadcaster ending their live as
+   the moderator presses does not escape the record, but the cut rewrites nothing - the cut row
+   copies the live's end (`liveEndedAt`, `liveEndReason`), so the `410` after the purge is the `410`
+   before it - and the broadcaster gets no "stopped by moderators" notice: they ended it themselves;
+   **an ERASED broadcaster's live is never cut** (`410 LIVE_ENDED` `endReason: 'erased'`, nothing
+   recorded): every erased account shares `DELETED_ACCOUNT`, so a cut recorded under it would pool
+   every deleted member into ONE repeat offender;
 3. every PENDING report on it is marked `reviewed` by that moderator - the reports' own trail. There
    is no separate moderation audit log in this repository (the posts path has none either), so
    `content_reports.reviewedBy`/`reviewedAt` and `live_cuts.reviewerId`/`cutAt` ARE the trail.
@@ -461,7 +469,8 @@ content" warn either). The broadcaster's own screen learns it at once from the `
 segment gets.
 
 **Why `live_cuts` outlives the live row.** The row is deleted at the end (L3), within milliseconds of
-a cut. The cut row is then what answers `410 LIVE_ENDED` with `endReason: 'cut'`:
+a cut. The cut row is then what answers `410 LIVE_ENDED` with the live's own end (`endReason:
+'cut'` when the cut ended it, at the cut's time):
 
 - to a VIEWER: `assertMayWatch` finds no live row, asks `live_cuts` with the same rule of a post (the
   cut keeps the live's `broadcasterId` and `associationId`, so `liveVisibleToViewerSql` reads it as
@@ -475,7 +484,8 @@ answers at once, the purge waits for the reservation, the segment then gets `410
 outlives the purge; a cut, a segment and a viewer join fired together - whichever ran first, every
 refusal is `410 cut` and nothing is served after it. A viewer whose key read began before the cut
 committed may take a seat AFTER the purge freed them: that seat lasts at most its 30 s lease (its
-next poll is a `410` that renews nothing).
+next poll is a `410` that renews nothing). The same holds for every kind of end, not only a cut -
+filed in [backlog](../backlog.md#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-and-four-decisions-are-owed-2026-10-19).
 
 **Repeat offenders: RECORDED, NO POLICY.** No strike or ban mechanism exists for posts (only the
 manual mute), so none is invented here: `live_cuts` keeps who, when and why, `priorCuts` (on the
