@@ -84,6 +84,8 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       REDIS_URL: redis://redis:6379
       DELIVERY_SERVICE_URL: http://chat-delivery-service:3010
+      SOCIAL_SERVICE_URL: http://social-service:3014
+      INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
       ALLOW_ORIGIN: "*"
     depends_on:
       redis:
@@ -234,6 +236,9 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
+      # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
+      # exactly `true`. ON on this local estate; render-env.sh renders `true` on dev, `false` on prod.
+      LIVE_ENABLED: ${LIVE_ENABLED:-true}
       GARAGE_ENDPOINT: ${GARAGE_ENDPOINT:-garage}
       GARAGE_PORT: "${GARAGE_PORT:-3900}"
       GARAGE_USE_SSL: "${GARAGE_USE_SSL:-false}"
@@ -354,6 +359,9 @@ services:
       PAYMENT_SERVICE_URL: http://core-service:3012
       JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
       MEDIA_SERVICE_URL: http://media-service:3011
+      # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
+      # exactly `true`. ON on this local estate; render-env.sh renders `true` on dev, `false` on prod.
+      LIVE_ENABLED: ${LIVE_ENABLED:-true}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-dev-internal-secret-change-me}
       AGENDA_SIGNING_KEY: ${AGENDA_SIGNING_KEY:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-9855dfafdadcbdcfc69bcd1fffc447f9b53536428ef767fd164297ffe49cc4cf}

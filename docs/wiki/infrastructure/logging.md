@@ -94,6 +94,19 @@ adminer's `php -S` access lines, postgres connection logs when `log_connections`
 today are container-network addresses, not clients; the ceiling below covers every container
 regardless.
 
+### The access log diagnostic fields (2026-10-18)
+
+Five fields trail the `canari_redacted` line, added to explain an intermittent Messenger preview
+failure the log could not: `rt=` total request time, `urt=` the upstream's response time, `ust=` the
+upstream's status (`-` when nginx answered from disk), `ce=` the `Content-Encoding` of THIS response
+(`gzip` or `-`), and `deg=` the `X-Canari-Degraded` header (`1` when the SSR served a degraded head,
+`ssr-unavailable` when nginx fell back to the app shell). They are durations, statuses and one header
+value: no address, cookie or query is added, so the 90-day ceiling and the privacy policy are
+unchanged. `access-log-redaction.test.mjs` asserts the five are present and that no cookie or
+authorization variable ever enters the format. Reading them: a crawler hit with `deg=1` is the SSR's
+own admission; `urt` near 1.5 s with `deg=-` is a slow enrichment that still answered; `ust=502` with
+`deg=ssr-unavailable` is the container down.
+
 **A SIZE CAP IS NOT AN AGE CAP.** `max-size: 10m` / `max-file: "3"` bounds the bytes, so the oldest
 line held is the one written 30 MB ago. A busy container rolls that over in minutes
 ([backlog](../backlog.md), the 2026-10-12 decision row); a quiet one - postgres, redis, garage, the

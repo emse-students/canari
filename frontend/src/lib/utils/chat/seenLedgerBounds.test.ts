@@ -14,7 +14,12 @@ import {
   MAX_LEDGERS_PER_USER,
   MAX_ROW_KEYS_PER_LEDGER,
 } from './seenLedgerBounds';
-import { markHistoryFrameConsumed, resetSeenCipherCacheForTests } from './history';
+import {
+  commitPendingHistoryMarks,
+  markHistoryFrameConsumed,
+  resetSeenCipherCacheForTests,
+  snapshotPendingHistoryMarks,
+} from './history';
 
 const USER = 'user-bounds';
 const key = (group: string) => `history_seen_cipher:${USER}:${group}`;
@@ -22,7 +27,8 @@ const persisted = (group: string): string[] | null => {
   const raw = localStorage.getItem(key(group));
   return raw === null ? null : JSON.parse(raw);
 };
-const flush = () => Promise.resolve().then(() => undefined);
+/** A checkpoint whose write lands at once - the only thing that makes a mark durable. */
+const checkpoint = () => commitPendingHistoryMarks(snapshotPendingHistoryMarks(USER));
 
 const fp = (n: number) => `${n.toString(36)}:${(n * 7919).toString(36)}`;
 const row = (n: number) => `${1786655250000 + n}-0`;
@@ -68,10 +74,10 @@ describe('per-namespace caps', () => {
     expect(bounded.slice(0, 2)).toEqual([fp(3), row(3)]);
   });
 
-  it('writes the bounded ledger durably', async () => {
+  it('writes the bounded ledger durably', () => {
     for (let i = 0; i < MAX_FINGERPRINTS_PER_LEDGER + 2; i++)
       markHistoryFrameConsumed(USER, 'g', fp(i));
-    await flush();
+    checkpoint();
     const stored = persisted('g') ?? [];
     expect(stored).toHaveLength(MAX_FINGERPRINTS_PER_LEDGER);
     expect(stored[0]).toBe(fp(2));
@@ -79,17 +85,17 @@ describe('per-namespace caps', () => {
 });
 
 describe('ledgers per user', () => {
-  it('drops the least recently WRITTEN ledger once the cap is passed, and only it', async () => {
+  it('drops the least recently WRITTEN ledger once the cap is passed, and only it', () => {
     for (let g = 0; g < MAX_LEDGERS_PER_USER; g++) {
       markHistoryFrameConsumed(USER, `g${g}`, fp(g));
-      await flush();
+      checkpoint();
     }
     expect(persisted('g0')).not.toBeNull();
     // Rewriting g0 makes it the most recent, so g1 becomes the oldest.
     markHistoryFrameConsumed(USER, 'g0', fp(9999));
-    await flush();
+    checkpoint();
     markHistoryFrameConsumed(USER, 'overflow', fp(1));
-    await flush();
+    checkpoint();
     expect(persisted('g1')).toBeNull();
     expect(persisted('g0')).not.toBeNull();
     expect(persisted('g2')).not.toBeNull();
@@ -100,12 +106,12 @@ describe('ledgers per user', () => {
     expect(ledgers).toHaveLength(MAX_LEDGERS_PER_USER);
   });
 
-  it('adopts ledgers written before the index existed', async () => {
+  it('adopts ledgers written before the index existed', () => {
     for (let g = 0; g < MAX_LEDGERS_PER_USER; g++) {
       localStorage.setItem(key(`old${g}`), JSON.stringify([fp(g)]));
     }
     markHistoryFrameConsumed(USER, 'fresh', fp(1));
-    await flush();
+    checkpoint();
     expect(persisted('fresh')).not.toBeNull();
     const ledgers = Object.keys(localStorage).filter((k) =>
       k.startsWith(`history_seen_cipher:${USER}:`)
@@ -113,11 +119,11 @@ describe('ledgers per user', () => {
     expect(ledgers).toHaveLength(MAX_LEDGERS_PER_USER);
   });
 
-  it("never counts another user's ledgers", async () => {
+  it("never counts another user's ledgers", () => {
     localStorage.setItem('history_seen_cipher:someone-else:g', JSON.stringify([fp(1)]));
     for (let g = 0; g < MAX_LEDGERS_PER_USER + 1; g++) {
       markHistoryFrameConsumed(USER, `g${g}`, fp(g));
-      await flush();
+      checkpoint();
     }
     expect(localStorage.getItem('history_seen_cipher:someone-else:g')).not.toBeNull();
   });

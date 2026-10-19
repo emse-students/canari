@@ -131,7 +131,7 @@ gh release create v0.16.2 --generate-notes                        # -> productio
 
 **The five gates, and there is no bypass input** (`.github/scripts/release-preflight.sh`): the
 version parses; the commit is on `main` AND `main` still points at it; `CI passed` is green ON that
-commit - **main's OWN CI takes ~8 min after a merge, so a release cut in the minute after one is
+commit - **main's OWN CI takes 14-22 min (17-20 typical, measured 2026-10-18) after a merge, so a release cut in the minute after one is
 REFUSED with `CI passed never ran on <sha>`; wait for `gh run list --branch main`, then `gh run
 rerun`, which needs no new tag** (2026-09-07). **A RERUN RESCUES THAT GATE ONLY** - it re-reads the
 SAME tag, so a release `main` has moved past stays REFUSED and needs a NEW tag at the current head
@@ -232,7 +232,7 @@ Order = priority; detail lives where the link says, and WHERE THINGS LIVE says w
 4b. **CANAREELS IN CHATS, RC-0 TO RC-11: RC-1 (reader) AND RC-2 (server) SHIPPED IN `v1.2.2`, THE WRITER WAITS FOR RC-5 (resumable upload) AND RC-7 (native push) BEFORE ANY STABLE (user, 2026-10-14); NO NATIVE CAMERA ANYWHERE: the in-app CanaReel camera, the gallery picker stays (user, 2026-10-11; draft #1859)** ([reels-in-chat](docs/wiki/frontend/modules/reels-in-chat.md#7-the-work-packages-in-order), [backlog](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-11)).
 5. **P1 - A MEMBER WHO COMES BACK TO A COMMUNITY NEVER GETS ITS PAST: EVERY SEED REQUEST GOES TO AN OFFLINE MEMBER** (prod, 2026-09-24) - the election now reads presence and waits for a member to come online; **shipped in `v0.18.26` (2026-09-27), owed ONE reading on the returner's devices** ([backlog](docs/wiki/backlog.md)).
 6. **THE BOARD IS [cross-client-testing](docs/wiki/cross-client-testing.md) AND `bun rows.mjs`
-   SETTLES IT - NO COUNT HERE; run it.** PIN's four rows change a PIN or restart a browser, hence
+   SETTLES IT - NO COUNT HERE; run it.** **THE TEST TOOLING IS REFORMED NOW, NOT AFTER THE CAMPAIGN (user, 2026-10-18: "un nombre de test aberrant") - [WP-TEST-TOOLING-REFORM](docs/wiki/backlog.md#decided-by-the-user-on-2026-10-18---every-design-question-answered).** PIN's four rows change a PIN or restart a browser, hence
    last; HEAL-NEW's rung redesign is open on a clean pass ([backlog](docs/wiki/backlog.md)).
 7. **P2 - THE UNDATED LAST-RESORT KEY PACKAGES ARE A CLIENT VERSION (`< 0.18.10`) AND CLOSE ON THEIR
    DRAIN (~20/day, 2026-09-22)**; the 1024-bundle web pool is closed and both client repairs are
@@ -263,7 +263,7 @@ Order = priority; detail lives where the link says, and WHERE THINGS LIVE says w
 17. **A MEMBER COULD NOT PUBLISH: THE STAGE WAS `poll`, FOUND IN THE EDGE LOG ALONE** - the publish
     path is unbroken for the third time, and the poll composer it named was REBUILT: one row per option, an identity on each (an edit used to ERASE EVERY VOTE), a cap the SERVER applies.
     **ONE OBSERVATION OWED** - the reporting member is on an old client ([backlog](docs/wiki/backlog.md), [posts](docs/wiki/frontend/modules/posts.md#one-row-per-option-an-identity-on-each-and-a-cap-the-server-applies-2026-09-23)).
-18. **CALLING IS HELD OFF - `CALLS_ENABLED = false`** (user, 2026-09-01); FIVE switches move in ONE commit at revival ([calls](docs/wiki/frontend/modules/calls.md)). Prod HAS TURN, never used.
+18. **CALLING IS HELD OFF IN PRODUCTION (`CALLS_COMPILED = false`); LOT 1 - in-app 1:1 AUDIO, PEER TO PEER, DEV BUILDS ONLY - is built (2026-10-17, #1997; the dev TURN secrets exist), owed a pre-release deploy, then Tier A on the Mi 9T and the iPhone; FOUR items block `CALLS_COMPILED`** ([backlog](docs/wiki/backlog.md)) ([calls lot 1](docs/wiki/frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only)). The native ring's FIVE switches still move in ONE commit. Prod HAS TURN, never used.
 19. **ONE NAMED STARTING POINT FOR EVERY PHASE, STEP AND STEP GROUP** (user, 2026-08-25). Contract and audit in [backlog](docs/wiki/backlog.md).
 20. **P2 - A NEW DEVICE'S COMMUNITY JOIN REACHES THE COMMIT GATE BEFORE ITS KEYPACKAGE (cause read from prod 2026-10-09; the Welcome-livelock and twelve-messages items closed the same day, by evidence)** - a DRAFT pull request waits for the user's review of the join path ([backlog](docs/wiki/backlog.md)).
 22. **`dev.canari-emse.fr` IS THE PRE-RELEASE TARGET** ([dev-environment](docs/wiki/infrastructure/dev-environment.md), the only copy). An

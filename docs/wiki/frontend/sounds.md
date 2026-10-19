@@ -64,14 +64,21 @@ the listening prototype the user chose from, and live in ONE file,
   `canari_*_v2` with the bundled file. Users lose any per-channel setting they had on the old ids.
   The group summary stays silent (`setOnlyAlertOnce` + `GROUP_ALERT_CHILDREN`). Pinned by
   `notificationChannels.test.ts` and `soundPalette.test.ts`.
-- **iOS: not done.** A banner's sound is chosen by the APNs payload's `sound` field (set by the push
-  server) and the file must be bundled in BOTH the app and the NSE targets, which means editing the
-  Xcode project and the delivery service together. The Xcode project is the hand-maintained
-  `project.pbxproj` (not `project.yml`), which is why it is not built from a workstation.
-  Recorded in [backlog](../backlog.md).
+- **iOS (2026-10-17): the same three files, NOT copied.** The hand-maintained `project.pbxproj` has
+  a `NotificationSounds` group pointing at the Android `res/raw`, and each file is in the Resources
+  phase of BOTH the app and the extension - so the drift test above covers the iPhone too. The
+  banner's sound is a FILE NAME: the APNs `sound` the delivery service writes
+  (`IOS_NOTIFICATION_SOUND`, choice per push in [chat-delivery](../services/chat-delivery.md)), the
+  local notifications `canari_push.mm` posts (message, mention, reaction), and the "mention" trill
+  the extension sets after decrypting, the one fact the server cannot see. A name a build does not
+  bundle plays the default, silently, so `iosNotificationSounds.test.ts` holds the four spellings
+  and the two Resources phases together. A post, a comment, a form keep the default, as their
+  Android channels do.
 
 **Owed:** a listen on the Mi 9T and the Pixel (channels, after upgrade: the old entries gone, the new
-ones sounding) and on a browser (the in-app trills against the prototype).
+ones sounding) and on a browser (the in-app trills against the prototype); on the iPhone 12, a DM, a
+mention and a reaction each heard as its trill (a TestFlight build carrying the bundle), and the
+bundle read from the archive's `CompileC`/`CpResource` log lines.
 
 ## The tone output, in detail
 

@@ -28,6 +28,8 @@ Most `/api` locations carry `auth_request /internal/auth/verify`, which calls `c
 | `/api/media/*` | `media-service:3011` | yes | Encrypted blob storage (Garage) |
 | `/api/posts/*` | `social-service:3014` | yes | News feed |
 | `/api/forms/*` | `social-service:3014` | yes | Forms with payments |
+| `/api/bookings/*` | `social-service:3014` | yes | Bookings of rooms and slots |
+| `/api/lives/*` | `social-service:3014` | yes | Live broadcasts, 404 unless `LIVE_ENABLED` ([lives](../services/lives.md)). `client_max_body_size 5m` (a segment is at most 4 MiB), and the ONE `limit_req` zone of this file, `lives_ingest`: 2 r/s burst 20 per client address on `PUT` only (viewers polling from one campus address share it), answering 429. nginx's own 413 and 429 go to `@api_error_413` / `@api_error_429` with the WebView CORS headers, like its 5xx (`api-error-cors.test.mjs`) |
 | `/api/associations/*` | `social-service:3014` | yes | Clubs (Stripe Connect) |
 | `/api/channels/*` | `social-service:3014` | yes | Workspaces and channels |
 | `/api/auth/*` | `core-service:3012` | no | OIDC login, refresh, logout |
@@ -137,6 +139,7 @@ s-maxage=60` since 2026-09-17, because a purge can reach Cloudflare and can neve
 disk. Why those terms, what purges the zone and what `dev` gets instead are on
 [cloudflare-edge](cloudflare-edge.md#the-shell-is-cached-at-the-edge-and-nowhere-else-and-the-deploy-says-when-it-expired);
 the assertions that keep them honest are in `.github/scripts/tests/static-headers.test.mjs`.
+**Except a degraded page (2026-10-18):** when frontend-ssr's enrichment got no answer it sends `X-Canari-Degraded`, and `$ssr_cache_control` turns the header into `no-store` - nothing may cache the generic card. A response that declares its own `public, max-age=N` (the sitemap, 1 h) keeps it: the first map `$ssr_cache_control_declared` passes it through, only a page declaring nothing gets the 60 s default ([seo](../frontend/seo.md#a-shared-post-and-the-ten-days-it-previewed-as-nothing)).
 
 Two things the first deployment got wrong, both worth keeping in mind for any future upstream:
 
@@ -308,13 +311,14 @@ name.
 
 ### An `<img src>` cannot carry a Bearer, and that is a design constraint, not an exemption
 
-Three routes are reached by the browser itself rather than by application code -
-`GET /api/users/:id/avatar`, `GET /api/media/public/:id`, `GET /api/mls/link-preview/image` - so no
-`Authorization` header exists to check, and on `tauri://localhost` no cookie either. The first two
-serve assets that public pages show anyway. The third served an arbitrary external URL to anybody
-who asked, so it carries a **ticket** instead: an authenticated call to
-`GET /api/mls/link-preview/ticket` mints an HMAC over a five-minute bucket, and the image route
-verifies that. The discriminator is carried to where the decision is made rather than learned by
+Four routes are reached by the browser itself rather than by application code -
+`GET /api/users/:id/avatar`, `GET /api/media/public/:id`, `GET /api/mls/link-preview/image`,
+`GET /api/mls/gifs/media` - so no `Authorization` header exists to check, and on
+`tauri://localhost` no cookie either. The first two serve assets that public pages show anyway. The
+third served an arbitrary external URL to anybody who asked, so it carries a **ticket** instead: an
+authenticated call to `GET /api/mls/link-preview/ticket` mints an HMAC over a five-minute bucket,
+and the image route verifies that. The fourth, the GIF relay, verifies a second KIND minted by the
+same call (`gifTicket`, a day-long bucket, so a GIF keeps one URL in the browser cache). The discriminator is carried to where the decision is made rather than learned by
 failing - `apps/chat-delivery-service/src/utils/previewTicket.ts` and
 `frontend/src/lib/utils/previewTicket.svelte.ts` are the two halves.
 
@@ -329,6 +333,9 @@ $logged_request_uri` that redacts every `token=` query value (`xtoken=` is left 
 `canari_redacted` format that is `main` with `$request` rebuilt from it, and the `access_log` **inside
 the server block** - at http level it would ADD to the base image's `main` and write the raw line
 beside the redacted one (measured). Gate: `.github/scripts/tests/access-log-redaction.test.mjs`.
+The same map drops the whole query of the GIF search (`/api/mls/gifs?query-redacted`, 2026-10-16)
+and of the GIF relay (`/api/mls/gifs/media?query-redacted`, 2026-10-18, its own rule first): a
+search, or which GIF a reader loaded, beside their address is what those routes keep from KLIPY.
 
 **Not covered, and not in this repo:** the host-level nginx on the Portail-etu host
 (`sites-available/canari*.conf`) and the Cloudflare edge log see the same URL; their formats are the

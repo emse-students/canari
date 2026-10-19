@@ -103,6 +103,7 @@ id). `feed` is the current behaviour byte for byte. `conversation` changes exact
 | --- | --- | --- |
 | Composer, EMPTY field | a camera button beside the microphone (Snapchat's place) | disappears when text is typed, as the mic does; the mic keeps its own hold gesture, the camera is a TAP target - two hold gestures side by side is how a slide turns into the wrong one |
 | The composer's "+" menu ([chat](chat.md#one-attachment-menu-and-a-gif-panel-in-the-keyboards-place-2026-10-02)) | an entry "CanaReel" | the discoverable path and the desktop one; same handler |
+| The same "+" menu (phone apps; `addMenuItems`, one list for the web glass menu and the iOS native one) | an entry "CanaReels" (WP-REELS-MENU, 2026-10-18) | NAVIGATES to the camera TAB (`CAMERA_PLACE`), it opens no overlay: the tab is otherwise reached only by a swipe nothing announces. Not in the Android browser's paperclip menu. Owed: count of members who ever opened the camera, afterwards |
 | Camera inside the overlay | exactly the tab's controls | the camera opens on the FRONT lens (`CameraSession.facing` starts at `user`) |
 
 **Tap vs hold inside the overlay.** The shutter is unchanged: a HOLD films a reel. A TAP takes a photo,
@@ -551,7 +552,7 @@ ONLY - nothing in the app can send a reel message yet (no RC-4 camera entry, no 
   not built). **The save button is in the bar next to the volume, for every reel** (D-save), so the feed
   viewer changed too. A reel message is NOT forwardable (the bubble drops the action).
 - **Not built**: the sender, the retention class beyond the RC-2 draft, the resumable upload, push text,
-  salons' moderator purge, the 60 s cap field in `reel-limits`, the chat encoding profile.
+  salons' moderator purge. (The 60 s cap field and the chat encoding profile were built by RC-3, section 11.)
 
 ## 9. Decisions
 
@@ -596,3 +597,12 @@ age sweep from upload through the shared `isDue`, `reel_expired` / `reel_deleted
 `410`, the 500 MB per member per day budget (`429`), the sender's owner-only `DELETE`, stats lines.
 Unit specs only; the real-service bench run is owed. The client type `MediaRetentionClass` accepts
 `'chat-reel'`; nothing sends it until RC-4/RC-5.
+
+## 11. What the chat profile (RC-3) built (2026-10-18)
+
+**Draft pull request. Nothing sends with it yet**: the writer is RC-4, and it waits for RC-5 (resumable upload) and RC-7 (native push) before any stable (user, 2026-10-14).
+
+- **A profile is a row, not a pipeline.** `videoEncodingPlan.ts` gains `VIDEO_PROFILES`: `feed` (720p short side, 2.5 Mb/s, AAC 128 kb/s: C3, what every call without a profile gets, byte-identical to before) and `chat` (540p, 1.2 Mb/s, AAC 96 kb/s: D-size). `prepareVideoForUpload({ profile: 'chat' })` threads it through the plan, the audio route (a copied AAC-LC track dearer than the profile's audio bitrate is re-encoded) and the AAC probe. Container and codecs are unchanged.
+- **The chat cap is the server's.** `GET /api/posts/reel-limits` serves `chatMaxDurationMs` (60 000, `CHAT_REEL_MAX_DURATION_MS`); the client type `ReelLimits.chatMaxDurationMs` is OPTIONAL, so an older server's answer reads as "no chat cap" and no client carries the number. Old clients ignore the extra field.
+- **Pinned** by `videoEncodingPlan.test.ts` (540x960 at 1.2 Mb/s; sizes at 20, 60 and 90 s under `maxBytes`; about 9 MB at 60 s; the feed plan unchanged), `prepareVideoForUpload.test.ts` (audio route against the profile's bitrate) and `reel-rules.spec.ts` (the served field).
+- **OWED, HARDWARE: the RC-0 device table re-run** at the shipped numbers (encode time and real output size of a 60 s in-app take at the `chat` profile, on the Mi 9T and the iPhone 12). The plan's arithmetic is tested; how long the phones take and what the encoder really lands at is not measured.

@@ -56,7 +56,10 @@ All frames are JSON-encoded `SignalMessage`:
 
 | Frame | Direction | Description |
 |---|---|---|
-| `Join { room_id, room_token }` | Client → Server | Join a room. `room_token` is a short-lived HS256 JWT issued by chat-delivery-service (`/api/calls/initiate`) proving group membership. Required when `CALL_ROOM_SECRET` is set. |
+| `Join { room_id, room_token, mode? }` | Client → Server | Join a room. `room_token` is a short-lived HS256 JWT issued by chat-delivery-service (`/api/calls/initiate`) proving group membership; always required (`CALL_ROOM_SECRET` is mandatory at boot). `mode` is `"p2p"` or `"sfu"`; absent means `"sfu"`. |
+| `PeerReady { initiator }` | Server → Client | P2P only: both parties are in the room; `initiator` offers, the other is the polite side. Re-sent to the remaining peer when the other's device is replaced. |
+| `PeerLeft` | Server → Client | P2P only: the other party's socket ended, or THIS device was replaced by a sibling. |
+| `Refused { reason }` | Server → Client | The Join was refused: `room-full` (P2P, two other users hold it), `group-mismatch` (P2P, the token names another group than the seated peer's) or `mode-mismatch` (the room id exists in the other mode). |
 | `Joined { room_id }` | Server → Client | Room join acknowledged; client is now ready to send `Offer`. |
 | `Offer { sdp }` | Server → Client | Renegotiation offer when tracks are added to a room. |
 | `Offer { sdp }` | Client → Server | Initial offer from the joining peer (first peer in room). |
@@ -80,6 +83,54 @@ All frames are JSON-encoded `SignalMessage`:
 9. Server sends Joined { room_id }
 10. Peer sends Offer → Server answers → ICE → media flows
 ```
+
+## Peer-to-peer mode (2026-10-17)
+
+The 1:1 revival's server half (`src/p2p.rs`, wired in `main.rs`). A `mode: "p2p"` room opens **no
+peer connection** - nothing in this mode touches webrtc-rs, TURN or a port - and only forwards
+`Offer` / `Answer` / `IceCandidate` between its two peers, verbatim. Why, and the client half:
+[calls lot 1](../frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only).
+
+- **Seats:** two users at most, one device each. A second device of a seated user REPLACES the
+  first (the replaced one gets `PeerLeft`, its record `sibling-evicted`; the other party gets a new
+  `PeerReady`). A third user gets `Refused { room-full }` and the room is left untouched - the
+  capacity check runs before the eviction.
+- **One group per room:** the room token's `group_id` claim (required since #1997) is stored on
+  each seat, and a `Join` whose token names another group than the seated peer's gets `Refused {
+  group-mismatch }` BEFORE any eviction - not seated, so never paired and never sent a candidate.
+  chat-delivery binds the room id to its group at `initiate` and refuses a `room-token` for another
+  group, so this is the second of two locks: knowing a room id buys nothing.
+- **Nothing in this mode awaits a queue:** every frame - relayed, or the server's own `Joined`,
+  `Refused`, `PeerReady`, `PeerLeft` - goes through `p2p::deliver` (`try_send`), so `p2p_join` and
+  `p2p_leave` are synchronous. Awaiting room in another peer's bounded queue would let a peer that
+  stopped reading freeze this one's socket task; awaiting this task's OWN queue would deadlock it.
+  A full or closed queue drops the frame with a `p2p ... DROPPED` warning (and `ice_out_failed` on
+  the partner's record for a candidate).
+- **Size:** 64 KiB per message AND per frame (`MAX_SIGNAL_MESSAGE_BYTES`, both modes); either over
+  ends the socket. The two caps are tested apart - one oversized frame, and an oversized message
+  sent as small fragments, which only the message cap refuses. The largest legitimate frame is an
+  SDP, a few KiB.
+- **Roles:** arrival order, decided under the room's lock: the first in (the caller) is the
+  initiator. Both ends are told in one `PeerReady` each.
+- **Lifetime:** kept in `AppState.p2p_rooms`, apart from SFU rooms, and **never reaped on a clock**:
+  the socket loop of the last peer removes the room when it ends (`DashMap::remove_if`, the same
+  shard lock a racing `Join` takes). A room id lives in ONE mode; a `Join` in the other mode is
+  `Refused { mode-mismatch }`.
+- **Record:** `[call] session end room= peer= mode=p2p disposition= duration_ms= paired_ms= ...`
+  with the usual counters, where `*_in` counts frames FROM this peer and `*_out` frames relayed TO
+  it. `paired_ms` replaces `connected_ms`, because ICE runs between the clients and this service
+  cannot see it - printing an ICE state would be a column answering a question it never measured.
+  `paired_ms=-` means the other party never came. Plus `[call] p2p paired room= initiator= polite=`
+  and one `[call] p2p offer|answer relayed` line per SDP (none per candidate).
+- **Keepalive (both modes):** the socket loop sends a WebSocket Ping every 25 s. A P2P call sends no
+  signalling once connected, and production's host nginx closes a proxied socket after 60 s without
+  a read from upstream (realtime-media-feasibility section 9, 4a).
+- **Pinned by** `src/p2p.rs` tests and `tests/p2p_signalling.rs`, which runs the real binary over
+  real WebSockets with real room tokens. Each test starts the binary on `PORT=0` and reads the port
+  it BOUND from its `Call service listening on <addr>` line (logged after `bind`, so it is also the
+  readiness event). Picking a free port in the test and releasing it for the child to bind later
+  let parallel tests collide: a readiness probe answered for another test's service, and a socket
+  was reset under it (1 run in 30 failed that way, 0 in 90 since, 2026-10-18).
 
 ## Room lifecycle
 

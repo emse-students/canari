@@ -59,7 +59,7 @@ publish in its name until a flag was ticked by hand.
 Now:
 
 - `AssociationsHeader.svelte` is the heading of the three directories. NAVIGATION is a row of outlined
-  pills under the title (Associations, Listes, Institutions, Agenda global) with the current directory
+  pills under the title (Associations, Listes, Institutions; the global agenda tab was removed 2026-10-18, `/calendar` stays as a route) with the current directory
   filled and `aria-current="page"`; the single PRIMARY action, yellow, sits on the title line and names what
   THAT directory creates (`Créer l'association`, `Créer une liste`, `Créer une institution`). The lists and
   institutions pages lost their "back to Associations" link: the nav carries it.
@@ -129,8 +129,10 @@ Three changes, all of them about not repeating what the page already states (use
 The archived and "Membre" notes stay on both kinds, because they answer something the shelf does
 not; the middot separator belongs to the count, so a list prints the note without one.
 `AssociationTile` is shared by five call sites across `/associations` and `/lists`, which is why
-the count is a CONDITION rather than a deletion, and why `associationTileList.test.ts` reads the
-markup - every one of these was valid markup that rendered without complaint.
+the count is a CONDITION rather than a deletion. `AssociationTile.render.svelte.test.ts` MOUNTS the
+tile for each of these (it read the markup's spelling until WP-T5, 2026-10-18,
+[test-suite-reform](../../test-suite-reform.md)) - every one of them was valid markup that
+rendered without complaint.
 
 ### What the detail header says, and the space a compiler kept eating
 

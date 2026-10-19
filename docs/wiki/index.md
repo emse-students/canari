@@ -38,6 +38,7 @@
 - [media-streaming-upload](services/media-streaming-upload.md) — Design: parts under 8 MiB, bounded-memory upload and download (the host firewall's body limit)
 - [social-service](services/social-service.md) — Posts, channels, associations, forms
 - [reels](services/reels.md) — CanaReels server half: the `reel` post kind, its 30-day deletion, the API contract
+- [lives](services/lives.md) — Live server half (WP-L2, WP-L3): the live row and key, segment ingest, the manifest, deletion at the end; switched off on production
 - [Community rework](services/community-rework.md) — the master plan for the community subsystem: what triggered it, the three axes, and the crypto axis still to do
 - [NestJS framework](services/nestjs-framework.md) — which major each of the four services runs, why they differ, and what an ESM-only framework did to jest
 - [Account erasure](account-erasure.md) — `DELETE /users/me` as a durable, retried, journalled queue; every service's delete set asserted against its schema; what is NOT covered
@@ -135,7 +136,9 @@
 - [CI/CD pipeline](cicd.md) — GitHub Actions: CI on a pull request and again at merge, deployment at the BUMP and never at a push, which estate a release reaches, mobile builds, the self-hosted runner
 - [Device verification runbook](device-verification.md) — The ordered Android + iOS pass: what compiling never proves, and the log line that is the verdict for each check
 - [Device readings, 2026-10](device-readings-2026-10.md) — the Mi 9T and iPhone 12 alpha passes of 2026-10-05 to 10-07: what passed, with the evidence, and the bench traps met
+- [Bench readings for calls and live, 2026-10-18](device-readings-calls-live-2026-10-18.md) - calls BLOCKED (no tag carries lot 1); the WP-L1 live bench on both phones: 720p fMP4 segments for 36-42 min, a growing MSE source with 0 append errors, bitrate, battery and heat
 - [Testing methodology](testing-methodology.md) — How a result earns belief: the harness faults distilled into rules, plus the environment traps that read as application bugs
+- [Test suite reform](test-suite-reform.md) — The whole test estate measured (2026-10-18): where the 16-minute frontend job goes, the gaps found, and the ordered work packages WP-T1..T8
 - [Mechanism audit](mechanism-audit.md) - What every part of the app is covered by, measured across the board, the unit tests and the hand pass - and the five things nothing watches
 - [Cross-client testing](cross-client-testing.md) — The campaign board, state only: every check, its verdict, and the commit it ran on
 - [Cross-client rig findings](cross-client-harness-findings.md) — Open findings about the instrument itself: debris sweep, the starting-point contract, duplicated helpers, the PIN-verifier strand, the two `canari-harness` directories

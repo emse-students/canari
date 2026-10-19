@@ -11,6 +11,8 @@
  */
 
 import { saveUserLocally, clearUserLocally, currentUserId } from '$lib/stores/user';
+import type { AccountLiveness } from '$lib/utils/accountLocalWipe';
+import { forgetDeletedAccountOnSignIn } from '$lib/utils/deletedAccountMarker';
 import { setGlobalAdmin } from '$lib/stores/userState.svelte';
 import { noteSessionAnswered } from '$lib/stores/sessionAnswer.svelte';
 import {
@@ -94,6 +96,33 @@ let _accessToken: string | null = null;
 // each firing a separate /api/auth/refresh request.
 let _pendingRefresh: Promise<string> | null = null;
 /**
+ * Counts the sign-outs this process has STARTED - see {@link clearAuth}. A refresh captures it before
+ * it sends and compares it when the answer arrives: a different value means a sign-out began while it
+ * was in flight, and the answer is about a session being revoked. It is DROPPED - no identity, no
+ * token, no rotation stored, no verdict announced - because applying it re-saved the user the sign-out
+ * had just cleared (`_doRefresh` restores the identity from the token after an Android process kill),
+ * which is "a saved user, nobody logged in": the vault unlock, its 401, and a second sign-out.
+ */
+let _signOutGeneration = 0;
+
+/**
+ * The number of sign-outs this process has started (see `_signOutGeneration`), for work that spans
+ * awaits and must not complete for an account that signed out meanwhile.
+ *
+ * A caller captures it when it starts and compares it after each await: a different value means a
+ * sign-out began in between, whether or not it has finished. The login is the case that named it - a
+ * sign-out during a ~12 s native decrypt found no live session to stop, and the login then set
+ * `isLoggedIn` for a signed-out user (`loginImpl`).
+ */
+export function signOutGeneration(): number {
+  return _signOutGeneration;
+}
+/**
+ * How many {@link clearAuth} calls are running; while any is, a refresh asked for is not sent at all.
+ * A count because sign-outs overlap - see `clearAuth`.
+ */
+let _signOutsUnderway = 0;
+/**
  * The transport failure of the refresh SENT while the browser reported no network: the proof every
  * later caller of the same spell is answered from (see `refresh`). Null when no spell is proven.
  */
@@ -165,6 +194,22 @@ export class SessionExpiredError extends Error {
   constructor() {
     super('Session expired - please log in again');
     this.name = 'SessionExpiredError';
+  }
+}
+
+/**
+ * A refresh refused or dropped because the USER is signing out (see `_signOutGeneration`).
+ *
+ * NOT a {@link SessionExpiredError}, deliberately, and not a subtype of it: that type says "the
+ * server proved the session dead", and its consumers answer with a logout and a redirect - a SECOND
+ * sign-out, the very thing the refusal exists to prevent. Nobody proved anything here: the sign-out
+ * already under way IS the outcome, so a consumer stops the work it was doing, quietly, and does
+ * nothing else - no logout, no redirect, no retry, no error shown.
+ */
+export class SignOutInProgressError extends Error {
+  constructor(stage: string) {
+    super(`refresh ${stage} dropped - a sign-out is in progress`);
+    this.name = 'SignOutInProgressError';
   }
 }
 
@@ -423,6 +468,59 @@ export async function handleOidcCallback(
   code: string,
   state: string
 ): Promise<{ id: string; email: string; displayName: string }> {
+  // Counted while it runs, so `accountLiveness` can say a sign-in is in flight (WP-DEL-LOCAL).
+  const run = handleOidcCallbackUnderway(code, state);
+  _signInsInFlight.add(run);
+  try {
+    return await run;
+  } finally {
+    _signInsInFlight.delete(run);
+  }
+}
+
+/**
+ * The OIDC callbacks under way. A sign-in names its account only when it lands, so until then
+ * nothing may act on "who is signed in here" - the resumed wipe of a deleted account included.
+ */
+const _signInsInFlight = new Set<Promise<unknown>>();
+
+/**
+ * Whether an account is signed in here, and whether one is about to be - for the resume of an
+ * account-deletion wipe (`resumePendingDeletedAccountWipes`), which must never delete what a live
+ * session uses. Each answer is read at the moment it is asked.
+ *
+ * `isLive` IS PROVEN BY A TOKEN, NEVER BY THE SAVED IDENTITY. The saved user (`canari_saved_user`)
+ * is a leftover, not a sign-in: a kill between the pending-wipe marker and `clearAuth()` leaves it
+ * naming the deleted account, and an answer read from it made the next start drop the marker and keep
+ * the data for ever (every offline cold start). Access tokens live in memory only, so one held here
+ * landed IN THIS PROCESS - by an OIDC callback or a refresh - and every resume runs in a process
+ * started after the deletion was confirmed; the server refuses a refresh for a deleted account, so a
+ * token naming it can only come from that subject signing in AGAIN.
+ *
+ * A TOKEN IS ENOUGH ONLY BECAUSE THE TOKENLESS ENTRIES ARE CLOSED ELSEWHERE: a successful callback
+ * drops the marker of a subject the server let back in (`forgetDeletedAccountOnSignIn`, below), so
+ * another tab or a later offline start never resumes a wipe over the new account; and every login -
+ * the offline unlock is the one with no token - refuses an account deleted here before it opens a
+ * store (`isDeletedAccountHere` in `loginImpl`), so no session can re-create what the wipe removes.
+ */
+export const accountLiveness: AccountLiveness = {
+  isLive: (userId) => _accessToken !== null && decodeTokenClaims(_accessToken)?.sub === userId,
+  signInInFlight: () => _pendingRefresh !== null || _signInsInFlight.size > 0,
+  whenSignInSettled: async () => {
+    while (accountLiveness.signInInFlight()) {
+      const pending: Promise<unknown>[] = [..._signInsInFlight];
+      if (_pendingRefresh) pending.push(_pendingRefresh);
+      alog(`deletion wipe waits for ${pending.length} sign-in(s) in flight`);
+      await Promise.allSettled(pending);
+    }
+  },
+};
+
+/** The body of {@link handleOidcCallback}, run while it is counted in `_signInsInFlight`. */
+async function handleOidcCallbackUnderway(
+  code: string,
+  state: string
+): Promise<{ id: string; email: string; displayName: string }> {
   // CSRF state check - enforced on all platforms.
   // On desktop (Tauri) the state is read from the native Store plugin (survives
   // WebKitGTK navigation that clears localStorage). On web, localStorage is used.
@@ -495,6 +593,10 @@ export async function handleOidcCallback(
   };
 
   console.debug('[auth] got access_token, saving user:', data.user?.id);
+  // THE SERVER LET THIS SUBJECT IN, so any erasure of it has completed and this is a new account: a
+  // wipe still owed on this device for the deleted one must never reach it (WP-DEL-LOCAL). First,
+  // before this session's token or identity exists anywhere another tab's resume could miss.
+  forgetDeletedAccountOnSignIn(data.user.id);
   // A NEW SIGN-IN NAMES ITS OWN USER (saved just below), so a split latched for the previous
   // identity is about somebody who is no longer here.
   clearIdentitySplit();
@@ -690,6 +792,13 @@ export async function signOutByChoice(): Promise<void> {
  * joined whatever `fetch` the joiner brought, since the question and its answer are the same.
  */
 export async function refresh(fetchImpl: typeof fetch = fetch): Promise<string> {
+  // A SIGN-OUT IS REVOKING THIS CREDENTIAL RIGHT NOW: the answer is known, and a 200 racing the
+  // revocation would rotate the very session being ended. Nothing is announced - the sign-out IS the
+  // outcome - and the caller gets a type of its own, never a dead-session verdict it would act on.
+  if (_signOutsUnderway > 0) {
+    alog('refresh✗not sent - a sign-out is in progress');
+    throw new SignOutInProgressError('request');
+  }
   // The server already answered this question about this exact cookie. Repeating the request is a
   // round trip whose result is known, and 119 of them is what one iPhone sent in 45 minutes.
   if (_refreshCredentialProvenDead) {
@@ -748,6 +857,14 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
   // WHO WAS SIGNED IN WHEN THIS ASKED: a sign-in completing while the request is in flight changes
   // the local identity under it, and the answer is then about the PREVIOUS credential, not a split.
   const localAtStart = currentUserId();
+  // WHICH SIGN-OUT THIS ASKED AFTER - see `_signOutGeneration`.
+  const signOutsAtStart = _signOutGeneration;
+  /** Drops an answer (or a send) that a sign-out started since has made moot. */
+  const supersededBySignOut = (stage: string): SignOutInProgressError | null => {
+    if (_signOutGeneration === signOutsAtStart) return null;
+    alog(`refresh✗${stage} dropped - a sign-out started while it was in flight`);
+    return new SignOutInProgressError(stage);
+  };
 
   // On a platform whose WebView can refuse the cookie, the credential is ours to carry. An EMPTY
   // store is not proof of no session though: `tauri://` is also the desktop origin, where the
@@ -758,6 +875,9 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
   const carried = bodyTransport ? await readNativeRefreshToken() : null;
   if (bodyTransport)
     alog(`refresh carries=${carried ? 'stored credential' : 'nothing (cookie only)'}`);
+  // The stored credential is read across an await, during which a sign-out may have begun.
+  const droppedBeforeSend = supersededBySignOut('request');
+  if (droppedBeforeSend) throw droppedBeforeSend;
 
   // The refresh is the first call of every cold start, so it is also the app's primary
   // connectivity probe. A transport failure here means "no network"; an HTTP status - any status -
@@ -819,6 +939,11 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
     throw failure;
   }
 
+  // BEFORE ANY STATUS IS READ: a 200 would re-save the identity and store a rotation, a 401 would
+  // latch and announce - each a reaction to a session the user is already ending.
+  const droppedAnswer = supersededBySignOut('answer');
+  if (droppedAnswer) throw droppedAnswer;
+
   if (!res.ok) {
     // Don't call clearAuth() - that would wipe userId from localStorage and revoke
     // the refresh cookie server-side, forcing a full OIDC re-auth even when the
@@ -840,6 +965,9 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
   }
 
   const data = (await res.json()) as { access_token: string; refresh_token?: string };
+  // The body is read across an await too.
+  const droppedBody = supersededBySignOut('answer');
+  if (droppedBody) throw droppedBody;
   // SUPERSEDED BY A SIGN-IN: the local identity changed while this was in flight (handleOidcCallback
   // saved a different user). The response belongs to the old credential - comparing it to the NEW
   // identity would latch a false split and lock out the person who just signed in, and persisting its
@@ -882,6 +1010,10 @@ async function _doRefresh(fetchImpl: typeof fetch): Promise<string> {
   // memory only, so a process death before Chromium's own commit timer would hand the next cold
   // start the superseded value and get the session revoked (WP-ANDROID-SESS-1).
   await flushAndroidCookies('refresh');
+  // AND ACROSS THE TWO WRITES ABOVE: a sign-out begun during them has already dropped the token set
+  // above, and what follows (the credential declared alive, the identity restored) must not undo it.
+  const droppedAfterWrites = supersededBySignOut('answer');
+  if (droppedAfterWrites) throw droppedAfterWrites;
   // The session answered AND rotated, so both the verdict and the latch are void.
   noteRefreshCredentialAlive();
 
@@ -950,6 +1082,44 @@ export function setToken(token: string): void {
  */
 export async function clearAuth(): Promise<void> {
   alog('clear');
+  // FIRST OF ALL, before the handler: every refresh from here to the end of the revocation is moot -
+  // one asked for is not sent, one already in flight drops its answer (`_signOutGeneration`).
+  //
+  // A COUNT, NOT A FLAG. Two sign-outs can overlap (a double tap, a session expiry during the PIN
+  // gate's or the navbar's sign-out), and either may finish first: a flag the first finisher lowered
+  // let a refresh be sent while the other was still revoking - and that refresh captured the CURRENT
+  // generation, so nothing dropped its answer and it re-saved the user. The refusal holds until the
+  // LAST sign-out under way has finished.
+  await clearAuthCounted({ revokeServerSession: true });
+}
+
+/**
+ * Ends THIS TAB's session and forgets its identity, and touches NOTHING shared: no
+ * `POST /api/auth/logout`, no cookie flush, no native refresh credential.
+ *
+ * For a tab told by ANOTHER tab that its account was deleted (`deletedAccountGuards.ts`). The refresh
+ * cookie and the native credential are one per origin, not one per tab: the deleting tab already
+ * revoked its own session, and by the time the notice arrives that cookie may belong to an account
+ * signed in since - a second logout here would end THAT account's session for nothing.
+ */
+export async function clearAuthLocally(): Promise<void> {
+  alog('clear (local only - another tab ended this account)');
+  await clearAuthCounted({ revokeServerSession: false });
+}
+
+/** Counts one sign-out under way around {@link clearAuthUnderway} - see {@link clearAuth}. */
+async function clearAuthCounted(options: { revokeServerSession: boolean }): Promise<void> {
+  _signOutGeneration++;
+  _signOutsUnderway++;
+  try {
+    await clearAuthUnderway(options);
+  } finally {
+    _signOutsUnderway--;
+  }
+}
+
+/** The body of {@link clearAuth}, run while it is counted in `_signOutsUnderway`. */
+async function clearAuthUnderway(options: { revokeServerSession: boolean }): Promise<void> {
   // THE LIVE SESSION ENDS BEFORE ANYTHING IT USES IS GONE - see `setSignOutHandler`. A throw here is
   // a session left running for a signed-out user, so it is accused by name, and the sign-out goes on.
   if (_signOutHandler) {
@@ -961,6 +1131,17 @@ export async function clearAuth(): Promise<void> {
   } else {
     alog('clear with no sign-out handler registered - no live session to end');
   }
+  // THE LOCAL IDENTITY GOES NOW, BEFORE THE FIRST AWAIT - never after the revocation below. The
+  // handler has just set `isLoggedIn` false, and every unlock trigger in the app shell (the user-id
+  // effect, `afterNavigate`) starts the unlock on "a saved user, nobody logged in". Left until the
+  // end, that state held for the whole logout round trip: on the Mi 9T (`1.2.9-alpha.7`, 2026-10-17)
+  // the "Rester connecte" vault logged the user straight back in, its refresh met the logout and came
+  // back 401, and the session-expired path signed out a SECOND time (two `POST /api/auth/logout`,
+  // landing on `/login?returnTo=/dashboard`). With no saved user, no unlock starts and a 401 met
+  // during the sign-out announces nothing (`notifySessionExpired` is gated on a saved user). The one
+  // path that could put the identity BACK - `_doRefresh` restoring it from a token's `sub` - is shut
+  // by `_signOutGeneration` above: no refresh is sent now, and none in flight applies its answer.
+  clearUserLocally();
   _accessToken = null;
   noteSessionAnswered(null);
   clearWsSessionCookie();
@@ -969,6 +1150,10 @@ export async function clearAuth(): Promise<void> {
   clearPersistedPendingAcks();
   // And a PIN salt asked for a keypad this session will never submit.
   forgetPinSaltAhead('signed out', alog);
+  if (!options.revokeServerSession) {
+    alog('clear✓ local only - the shared cookie and credential are left to the tab that owns them');
+    return;
+  }
   // Tell the backend to REVOKE the session row - the cookie is the least of it. The credential has
   // to travel the same way it does on a refresh, or the server cannot name the row to delete and a
   // logout on iOS would clear the local copy while leaving the session alive for seven more days.
@@ -1008,7 +1193,6 @@ export async function clearAuth(): Promise<void> {
   await flushAndroidCookies('logout');
   // And the copy we carry ourselves, which no `Set-Cookie` can clear.
   if (usesBodyRefreshTransport()) await clearNativeRefreshToken();
-  clearUserLocally();
 }
 
 /**

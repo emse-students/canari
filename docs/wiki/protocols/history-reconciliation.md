@@ -1262,10 +1262,15 @@ group, so its marks cannot enter this queue (`flushOne` drops a `channel_` entry
   receiver and the stored watermark of every peer. Not sending the frame at all needs no receiver to
   change.
 
-**Residual, not closed here.** A process death INSIDE the 2 s debounce still loses that window's
-frame. The local mark was persisted, so the next open finds nothing to announce. Closing it needs
-the owed mark written durably at decision time, as `salonReadMarkQueue.ts` does for salons
-([backlog](../backlog.md)).
+**A process death INSIDE the 2 s debounce no longer loses that window's frame (2026-10-17).** The
+local mark was persisted, so the next open found nothing to announce. The mark is now OWED from the
+instant it is decided (`recordDmReadMark`, the DM ledger of `salonReadMarkQueue.ts`), and dropped only
+once the outbox has TAKEN the frame. Every outbox registration drains what is owed
+(`drainOwedDmReadMarksOnOutbox`, subscribed in the root layout through `onOutboxRegistered`), so a
+killed process's mark is queued at the next boot, whatever route it opens on. A conversation that
+left the store before the debounce ended has its owed mark dropped. Test: `outbox.test.ts` ("a DM
+mark owed by a killed process is queued when the next outbox is registered", failing without the
+registration drain).
 
 **What a phone should count** to confirm the gain: `[READ] ... has read up to` lines received, and
 MLS checkpoints, per 3 minutes of a two-person DM exchange, on this build and on the one before it.
@@ -2229,6 +2234,14 @@ FINGERPRINT: one written before its advance is durable tells the next replay to 
 silent real loss, strictly worse than a false accusation. The mark and the advance are one fact and must be
 one write: the mark belongs INSIDE the checkpoint, or "have I already consumed this ciphertext" should be
 answered FROM the MLS state rather than from a parallel ledger that can disagree with it.
+
+**The live half followed on 2026-10-17** (draft PR `perf/pk13-message-storage`): `markHistoryFrameConsumed`
+no longer writes on its own microtask, it registers with the same checkpoint-bound marks as the replay, so
+EVERY fingerprint now becomes durable with the checkpoint holding its advance and never before it. Found
+through cost rather than correctness - a drain awaits between frames, so the microtask re-stringified the
+whole set per frame ([performance-audit](../frontend/performance-audit-2026-10-12.md#findings-5-9-and-10---built-2026-10-17-draft-pr-perfpk13-message-storage)).
+One path still writes `mls.bin` outside `persistCheckpoint` - Tauri's `live-ahead` resume persist - and
+leaves its marks for the next checkpoint: the survivable direction, a re-accusation if killed in between.
 
 **Still unmeasured**: which path spends the generations - live delivery, the queue drain, or the archive
 replay's own successful pages. A console tailer cannot answer it (the row destroys the CDP target it would

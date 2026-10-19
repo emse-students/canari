@@ -14,7 +14,8 @@ export interface AppPlace {
     | 'bell'
     | 'calendar'
     | 'shopping-bag'
-    | 'clipboard-list';
+    | 'clipboard-list'
+    | 'calendar-clock';
   href: string;
   /** Whether this place appears in the mobile bottom navigation bar. */
   mobileNav: boolean;
@@ -70,6 +71,14 @@ export const APP_PLACES: AppPlace[] = [
     description: () => m.nav_forms_desc(),
     icon: 'clipboard-list',
     href: '/forms',
+    mobileNav: false,
+  },
+  {
+    id: 'bookings',
+    label: () => m.nav_bookings_label(),
+    description: () => m.nav_bookings_desc(),
+    icon: 'calendar-clock',
+    href: '/bookings',
     mobileNav: false,
   },
   {

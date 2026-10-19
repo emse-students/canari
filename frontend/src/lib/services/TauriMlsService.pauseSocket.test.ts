@@ -4,6 +4,7 @@ vi.mock('@tauri-apps/plugin-http', () => ({ fetch: vi.fn() }));
 vi.mock('@tauri-apps/plugin-websocket', () => ({ default: { connect: vi.fn() } }));
 
 import { TauriMlsService } from './TauriMlsService';
+import { flushMacrotask } from '../../test/flush';
 
 /**
  * A socket the OS closed under a backgrounding app delivers no `Close`, but its `send` rejects and
@@ -16,7 +17,7 @@ interface Internals {
   pauseSocket(): void;
 }
 
-const flush = () => new Promise((r) => setTimeout(r, 0));
+const flush = () => flushMacrotask();
 
 describe('TauriMlsService.pauseSocket', () => {
   it('releases a socket whose disconnect frame was accepted', async () => {

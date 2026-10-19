@@ -1,4 +1,4 @@
-import { Logger } from '@nestjs/common';
+import { ForbiddenException, Logger } from '@nestjs/common';
 import { Repository } from 'typeorm';
 import { ChannelService } from './channel.service';
 import { Workspace } from './entities/workspace.entity';
@@ -136,7 +136,7 @@ describe('ChannelService.setRoleBasePermission - one key at a time', () => {
     );
     jest.spyOn(service['logger'], 'log').mockImplementation(() => undefined);
     jest.spyOn(service['logger'], 'warn').mockImplementation(() => undefined);
-    return { service, redis, stored, em };
+    return { service, redis, stored, em, roleRepo };
   }
 
   beforeEach(() => {
@@ -272,6 +272,16 @@ describe('ChannelService.setRoleBasePermission - one key at a time', () => {
     await expect(
       service.setRoleBasePermission(ROLE, ADMIN, 'channel.access', true)
     ).rejects.toThrow(/Invalid permission/);
+    expect(em.findOne).not.toHaveBeenCalled();
+  });
+
+  /** An actor without `role.manage` is refused before the key is read, and nothing is locked. */
+  it('refuses an actor without MANAGE_ROLES and writes nothing', async () => {
+    const { service, em, roleRepo } = makeService();
+    roleRepo.find.mockResolvedValue([{ permissions: [CHANNEL_PERMISSIONS.INVITE_MEMBERS] }]);
+    await expect(
+      service.setRoleBasePermission(ROLE, ADMIN, CHANNEL_PERMISSIONS.MANAGE_MESSAGES, false)
+    ).rejects.toBeInstanceOf(ForbiddenException);
     expect(em.findOne).not.toHaveBeenCalled();
   });
 });

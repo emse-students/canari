@@ -77,16 +77,20 @@ describe('refusalStatus and refusalCode', () => {
   it('reads the status a call refusal carries, and no code', () => {
     // `CallInitiateError` passes `null`: the initiate route answers a status and a body, so a code
     // slot would be a discriminator nothing ever sets.
-    expect(refusalStatus(new CallInitiateError(404, 'calls/initiate failed (404)'))).toBe(404);
-    expect(refusalCode(new CallInitiateError(404, 'calls/initiate failed (404)'))).toBeNull();
+    expect(
+      refusalStatus(new CallInitiateError('initiate', 404, 'calls/initiate failed (404)'))
+    ).toBe(404);
+    expect(
+      refusalCode(new CallInitiateError('initiate', 404, 'calls/initiate failed (404)'))
+    ).toBeNull();
   });
 
   it('keeps each subclass distinguishable by name', () => {
     expect(new ChannelApiError(500, null, 'x').name).toBe('ChannelApiError');
-    expect(new CallInitiateError(500, 'x').name).toBe('CallInitiateError');
+    expect(new CallInitiateError('initiate', 500, 'x').name).toBe('CallInitiateError');
     expect(new MediaUploadError(500, 'x').name).toBe('MediaUploadError');
     expect(new ChannelApiError(500, null, 'x')).toBeInstanceOf(ApiRefusalError);
-    expect(new CallInitiateError(500, 'x')).toBeInstanceOf(ApiRefusalError);
+    expect(new CallInitiateError('initiate', 500, 'x')).toBeInstanceOf(ApiRefusalError);
     expect(new MediaUploadError(500, 'x')).toBeInstanceOf(ApiRefusalError);
   });
 

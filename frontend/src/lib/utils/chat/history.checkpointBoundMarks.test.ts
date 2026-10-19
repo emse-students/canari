@@ -131,17 +131,19 @@ describe('marks the replay has made but not committed', () => {
     expect(durable()).toContain(frameFingerprint(later));
   });
 
-  it('never takes back a mark the live path made durable while the checkpoint wrote', async () => {
-    // The live path flushes the same shared set on its own microtask. A frame read live between the
-    // snapshot and the commit is ALREADY durable when the commit lands; writing the older snapshot
-    // verbatim over it would erase that mark and re-accuse a frame this device displayed.
+  it('never takes back a mark a LATER checkpoint made durable while this one wrote', async () => {
+    // Checkpoints are not all serialised (the watchdog and the registry call `persistCheckpoint`
+    // directly), so a second one can start AND land between this one's snapshot and its commit.
+    // A frame read live in between is then ALREADY durable when the late commit lands; writing the
+    // older snapshot verbatim over it would erase that mark and re-accuse a frame this device read.
     await replayOnePage({ ok: true, plaintext: null });
     const snapshot = snapshotPendingHistoryMarks(USER);
 
     const live = new Uint8Array([0xaa, 0xbb, 0xcc]);
     markHistoryFrameConsumed(USER, GROUP, frameFingerprint(live));
-    await flush();
+    checkpoint(); // the later checkpoint, start to finish
     expect(durable()).toContain(frameFingerprint(live)); // the premise: the live mark is durable
+    // Marked again after it, so the late commit below takes its merge path, not the clean one.
     await replayOnePage(
       { ok: true, plaintext: null },
       { ...row, id: '1786655250948-0', content: toBase64(new Uint8Array([1, 2])), timestamp: '1' }

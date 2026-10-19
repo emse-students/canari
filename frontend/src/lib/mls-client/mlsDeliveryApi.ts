@@ -7,8 +7,10 @@ import type { DatedKeyPackage } from './keyPackages';
 import type { DeviceKeyPackageAnswer, DeviceSignatureKeys } from './deviceKeyPackage';
 import { toBase64, fromBase64 } from '$lib/utils/hex';
 import { trackedFetch } from '$lib/utils/trackedFetch';
+import { sanitizeForLog } from '$lib/utils/logSanitize';
 import { isTransportFailure, TransportFailureError } from '$lib/utils/transportFailure';
-import { ApiRefusalError, responseOrigin } from '$lib/utils/apiRefusal';
+import { ApiRefusalError, responseOrigin, type ResponseOrigin } from '$lib/utils/apiRefusal';
+import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 
 export type MlsDeliveryFetch = typeof fetch;
 
@@ -343,6 +345,40 @@ export class SendForbiddenError extends ApiRefusalError {
 }
 
 /**
+ * The delivery service - or a proxy in front of it - ANSWERED an application frame with a 5xx.
+ *
+ * Typed at the throw so the outbox counts it by TYPE, never by the sentence: N of them in a row park
+ * a text as failed (`MAX_CONSECUTIVE_SERVER_ERRORS` in `outbox.ts`, user 2026-10-18), while a
+ * transport failure ({@link DeliveryUnreachableError}: nobody answered) never counts. A 5xx IS an
+ * answer, whoever wrote it; `origin` says who, for the log line that has to tell a broken gateway
+ * from a relay in front of it.
+ */
+export class SendServerError extends ApiRefusalError {
+  constructor(
+    readonly groupId: string,
+    status: number,
+    readonly origin: ResponseOrigin,
+    /** The answer's `Retry-After`, in ms, or null when it sent none the client can read. */
+    readonly retryAfterMs: number | null = null
+  ) {
+    super(status, null, `Message send answered ${status} (${origin}) for group ${groupId}`);
+    this.name = 'SendServerError';
+  }
+}
+
+/**
+ * A `Retry-After` header in ms: delta-seconds, or an HTTP date read against `now`. `null` when
+ * absent or unreadable - never a default, the caller keeps its own schedule. A date in the past is 0.
+ */
+export function parseRetryAfterMs(header: string | null, now: number): number | null {
+  if (header === null) return null;
+  const value = header.trim();
+  if (/^[0-9]+$/.test(value)) return Number(value) * 1000;
+  const at = Date.parse(value);
+  return Number.isNaN(at) ? null : Math.max(0, at - now);
+}
+
+/**
  * A send was answered 403 by something IN FRONT of the gateway (the host's CrowdSec WAF 'Ban' page
  * is HTML): a verdict on the network path, none on the caller. NOT an {@link ApiRefusalError} on
  * purpose, so no reader mistakes it for an identity refusal and parks the entry; the outbox retries
@@ -442,6 +478,8 @@ export class MlsDeliveryApi {
 
   private readonly getToken: () => Promise<string>;
   private readonly f: MlsDeliveryFetch;
+  /** Key-package 404 reasons this build did not know and has already warned about (once each). */
+  private readonly unknownKeyPackageReasonsWarned = new Set<string>();
 
   constructor(opts: MlsDeliveryApiOptions) {
     this.historyUrl = opts.historyUrl;
@@ -731,18 +769,32 @@ export class MlsDeliveryApi {
     }
 
     if (res.status === 404) {
-      // The reason is the server's, classified where it is known. A server older than the field
-      // sends none, and `unspecified` keeps the reading that cannot be wrong: the caller then
-      // behaves exactly as it did before the field existed.
-      const reason = await res
+      // The reason is the server's, classified where it is known, and every delivery service since
+      // 2026-09-16 sends one. A 404 WITHOUT one is therefore not the delivery service answering (a
+      // proxy, a missing route): it establishes nothing about the device, so it is `unanswered`,
+      // and the caller logs its `detail` (once per sweep). A reason this build does not know IS an
+      // answer - a newer server refusing for a cause added after this build - so it is
+      // `unrecognized`, which retires nothing (`refusalRetiresInvitation`). It is warned about ONCE
+      // per reason for this client's life: every sweep meets it again, and the state change is
+      // what a reader needs, not the heartbeat.
+      const raw = await res
         .json()
-        .then((b: { reason?: unknown }) =>
-          b?.reason === 'revoked' || b?.reason === 'unregistered' || b?.reason === 'expired'
-            ? b.reason
-            : ('unspecified' as const)
-        )
-        .catch(() => 'unspecified' as const);
-      return { kind: 'none', reason };
+        .then((b: { reason?: unknown }) => b?.reason)
+        .catch(() => undefined);
+      if (typeof raw !== 'string' || raw.length === 0) {
+        return { kind: 'unanswered', detail: 'a 404 with no reason in it' };
+      }
+      if (raw === 'revoked' || raw === 'unregistered' || raw === 'expired') {
+        return { kind: 'none', reason: raw };
+      }
+      const shown = sanitizeForLog(raw.slice(0, 40));
+      if (!this.unknownKeyPackageReasonsWarned.has(shown)) {
+        this.unknownKeyPackageReasonsWarned.add(shown);
+        console.warn(
+          `[MLS] key-package 404 names a reason this build does not know: ${shown} - nothing is retired on it`
+        );
+      }
+      return { kind: 'none', reason: 'unrecognized' };
     }
 
     if (!res.ok) {
@@ -789,27 +841,33 @@ export class MlsDeliveryApi {
       deviceAppVersion?: string;
     }>
   > {
-    const res = await this.f(`${this.historyUrl}/api/mls/devices/${userId}`, {
-      headers: await this.auth(),
-    });
-    if (!res.ok) throw new Error(`fetchUserDevices failed: ${res.status}`);
-    // Raw device rows as returned by the server (untyped JSON). Optional metadata fields
-    // are re-validated with `typeof` below before being kept.
-    const devices = (await res.json()) as Array<{
-      keyPackage: string;
-      deviceId: string;
-      deviceName?: string;
-      deviceOs?: string;
-      deviceAppVersion?: string;
-    }>;
+    // SIMULTANEOUS ASKERS SHARE ONE REQUEST (WP-W4): a boot asked for the account's own device list
+    // three times - the pending-invitation sweep, the welcome-request answer and the group
+    // reconcile each sent theirs. The entry lives as long as the request, so no answer is served
+    // older than the request a caller joined (see {@link joinInFlight}).
+    return this.joinInFlight(`${userId}:devices`, async () => {
+      const res = await this.f(`${this.historyUrl}/api/mls/devices/${userId}`, {
+        headers: await this.auth(),
+      });
+      if (!res.ok) throw new Error(`fetchUserDevices failed: ${res.status}`);
+      // Raw device rows as returned by the server (untyped JSON). Optional metadata fields
+      // are re-validated with `typeof` below before being kept.
+      const devices = (await res.json()) as Array<{
+        keyPackage: string;
+        deviceId: string;
+        deviceName?: string;
+        deviceOs?: string;
+        deviceAppVersion?: string;
+      }>;
 
-    return devices.map((d) => ({
-      keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
-      deviceId: d.deviceId,
-      deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
-      deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
-      deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
-    }));
+      return devices.map((d) => ({
+        keyPackage: this.decodeKeyPackageBase64(d.keyPackage),
+        deviceId: d.deviceId,
+        deviceName: typeof d.deviceName === 'string' ? d.deviceName : undefined,
+        deviceOs: typeof d.deviceOs === 'string' ? d.deviceOs : undefined,
+        deviceAppVersion: typeof d.deviceAppVersion === 'string' ? d.deviceAppVersion : undefined,
+      }));
+    });
   }
 
   /**
@@ -887,7 +945,7 @@ export class MlsDeliveryApi {
             throw new DeviceLimitReachedError(typeof body.max === 'number' ? body.max : null);
           }
         }
-        throw new Error(`Failed to publish KeyPackage: ${response.status} ${response.statusText}`);
+        throw await refusalFromResponse(response, 'Failed to publish KeyPackage');
       }
     });
   }
@@ -895,12 +953,10 @@ export class MlsDeliveryApi {
   /**
    * Uploads a batch of one-time prekeys (OTKP) to replenish the server-side prekey pool.
    *
-   * **EACH ROW CARRIES ITS OWN EXPIRY, AND THE SHAPE IS A UNION FOR ONE RELEASE.** The server
-   * cannot parse an MLS KeyPackage, so until 2026-09-16 it stored an opaque string and could not
-   * tell an elapsed package from a fresh one - it served expired ones, and a join built on one
-   * fails with `LifetimeError(Expired)` for ever. Clients older than this change still send a bare
-   * base64 string, so `keyPackages` accepts either that or `{ keyPackage, notAfter }`; the removal
-   * date is on `docs/wiki/legacy-compatibility.md`.
+   * **EACH ROW CARRIES ITS OWN EXPIRY, `{ keyPackage, notAfter }`, THE ONLY SHAPE THE SERVER
+   * ACCEPTS.** The server cannot parse an MLS KeyPackage, so until 2026-09-16 it stored an opaque
+   * string and could not tell an elapsed package from a fresh one - it served expired ones, and a
+   * join built on one fails with `LifetimeError(Expired)` for ever.
    */
   async publishKeyPackages(packages: DatedKeyPackage[]): Promise<void> {
     const keyPackages = packages.map((kp) => ({
@@ -919,9 +975,7 @@ export class MlsDeliveryApi {
         }),
       });
       if (!response.ok) {
-        throw new Error(
-          `Failed to publish key packages: ${response.status} ${response.statusText}`
-        );
+        throw await refusalFromResponse(response, 'Failed to publish key packages');
       }
     });
   }
@@ -946,7 +1000,7 @@ export class MlsDeliveryApi {
       }
     );
     if (!response.ok) {
-      throw new Error(`Failed to update device metadata: ${response.status}`);
+      throw await refusalFromResponse(response, 'Failed to update device metadata');
     }
     return await response.json();
   }
@@ -1051,7 +1105,7 @@ export class MlsDeliveryApi {
       }),
     });
     if (!res.ok) {
-      throw new Error(`Commit submission HTTP error: ${res.status}`);
+      throw await refusalFromResponse(res, 'Commit submission HTTP error');
     }
     return res.json();
   }
@@ -1079,7 +1133,7 @@ export class MlsDeliveryApi {
       { headers: await this.auth() }
     );
     if (!res.ok) {
-      throw new Error(`Commit replay HTTP error: ${res.status}`);
+      throw await refusalFromResponse(res, 'Commit replay HTTP error');
     }
     return res.json();
   }
@@ -1389,7 +1443,17 @@ export class MlsDeliveryApi {
       if (res.status === 410) {
         throw new GroupDeletedError(groupId);
       }
-      throw new Error(`Message send HTTP error: ${res.status}`);
+      if (res.status >= 500) {
+        throw new SendServerError(
+          groupId,
+          res.status,
+          responseOrigin(res),
+          parseRetryAfterMs(res.headers.get('retry-after'), Date.now())
+        );
+      }
+      // ANY OTHER REFUSAL carries its status as a type too: an answer, which the outbox reads as
+      // breaking a run of 5xx - a sentence could not be read back.
+      throw new ApiRefusalError(res.status, null, `Message send HTTP error: ${res.status}`);
     }
     // The server's receive time for this frame - the `createdAt` every recipient's copy carries, and
     // the only server time the SENDER's own copy can ever get (it never receives its frame back). A
@@ -1735,13 +1799,17 @@ export class MlsDeliveryApi {
 
   /** Returns all groups `userId` belongs to, including soft-deleted tombstones (`deletedAt`). */
   async getUserGroups(userId: string): Promise<UserGroupRow[]> {
-    const res = await this.f(`${this.historyUrl}/api/mls/users/${userId}/groups`, {
-      headers: await this.auth(),
+    // ONE REQUEST FOR SIMULTANEOUS ASKERS (WP-W4): the boot reads this list from the conversation
+    // load, the sweep and the reconcile, three requests for one answer.
+    return this.joinInFlight(`${userId}:user-groups`, async () => {
+      const res = await this.f(`${this.historyUrl}/api/mls/users/${userId}/groups`, {
+        headers: await this.auth(),
+      });
+      if (!res.ok) {
+        throw new Error(`getUserGroups failed: ${res.status}`);
+      }
+      return (await res.json()) as UserGroupRow[];
     });
-    if (!res.ok) {
-      throw new Error(`getUserGroups failed: ${res.status}`);
-    }
-    return await res.json();
   }
 
   /**

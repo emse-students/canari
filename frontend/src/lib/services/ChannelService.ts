@@ -282,6 +282,12 @@ import { Log } from '$lib/utils/Log';
  * it - `readErrorDetail` in `useChannelWorkspaces` - are unchanged. The `code` half is the same
  * contract `DEVICE_REVOKED` uses on the delivery service.
  */
+/**
+ * The 410 code a salon send gets when it repeats a message deleted since its first send landed
+ * (social-service migration 090's tombstone): nothing is left to send or to offer again.
+ */
+export const CHANNEL_MESSAGE_DELETED = 'CHANNEL_MESSAGE_DELETED';
+
 export class ChannelApiError extends ApiRefusalError {
   constructor(status: number, code: string | null, message: string) {
     super(status, code, message);
@@ -712,10 +718,15 @@ export class ChannelService {
     return res.json();
   }
 
+  /**
+   * POSTs one sealed salon row. Since migration 090 the answer carries back the `clientMessageId` it
+   * was posted under, which is how a client learns a repeat is answered with the stored row
+   * (`salonRepeatProof.ts`).
+   */
   async sendMessage(
     channelId: string,
     dto: SendChannelMessageDto
-  ): Promise<{ id?: string; createdAt?: unknown }> {
+  ): Promise<{ id?: string; createdAt?: unknown; clientMessageId?: string | null }> {
     const cid = this.normalizeChannelId(channelId);
     const res = await this.fetchWithAuth(`${this.baseUrl}/api/channels/${cid}/messages`, {
       method: 'POST',
@@ -736,10 +747,19 @@ export class ChannelService {
         method: 'POST',
         body: JSON.stringify({ typing: isTyping }),
       });
-    } catch {
-      // Non-critical - ignore.
+      this.typingFailing = false;
+    } catch (e) {
+      // Non-critical, but never silent: ONE line per failing streak, not per keystroke - a dead
+      // network would otherwise print on every throttled signal. The next success re-arms it.
+      if (!this.typingFailing) {
+        this.typingFailing = true;
+        Log.i('TYPING', `channel typing signal not delivered (further failures not logged): ${e}`);
+      }
     }
   }
+
+  /** True while the typing POST is failing, so a streak logs once ({@link sendTyping}). */
+  private typingFailing = false;
 
   /** Returns the caller's push notification level for a channel (`all` when never set). */
   async getNotificationLevel(channelId: string): Promise<ChannelNotificationLevel> {
@@ -1044,7 +1064,7 @@ export class ChannelService {
    * Grants or revokes ONE permission on a role, and returns the role's whole list as the server
    * holds it AFTERWARDS.
    *
-   * SENT AS THE DELTA IT IS. `setRolePermissions` below sends the list this browser computed, so two
+   * SENT AS THE DELTA IT IS. The whole-list PUT it replaced sent the list this browser computed, so two
    * administrators toggling two different cells of one role at the same moment lose one of the two
    * edits - measured on production by COMM-20 on 2026-08-20. The answer is authoritative and must be
    * applied as such: it already carries anything somebody else changed in the meantime.
@@ -1063,25 +1083,6 @@ export class ChannelService {
       {
         method: 'PATCH',
         body: JSON.stringify({ key, granted }),
-      }
-    );
-    await this.handleError(res);
-    return res.json();
-  }
-
-  async setRolePermissions(
-    roleId: string,
-    permissions: string[]
-  ): Promise<{
-    roleId: string;
-    roleName: string;
-    permissions: string[];
-  }> {
-    const res = await this.fetchWithAuth(
-      `${this.baseUrl}/api/channels/roles/${encodeURIComponent(roleId)}/permissions`,
-      {
-        method: 'PUT',
-        body: JSON.stringify({ permissions }),
       }
     );
     await this.handleError(res);

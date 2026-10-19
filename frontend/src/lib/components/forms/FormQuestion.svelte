@@ -5,14 +5,14 @@
   import type { PickerOption } from '$lib/components/ui/picker';
   import { Ban, Paperclip, Upload, X } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
-  import { uploadFormAnswerFile } from '$lib/forms/api';
+  import { uploadFormAnswerFile, type UploadedAnswerFile } from '$lib/forms/api';
   import {
     FILE_RETENTION_DEFAULT_DAYS,
     FORM_FILE_ACCEPT,
     pickedFileProblem,
   } from '$lib/forms/fileQuestion';
   import { refusalStatus } from '$lib/utils/apiRefusal';
-  import { UploadAbortedError } from '$lib/utils/uploadXhr';
+  import { UploadAbortedError, type XhrUploadOptions } from '$lib/utils/uploadXhr';
   import { Log } from '$lib/utils/Log';
 
   /**
@@ -43,6 +43,19 @@
     fileRetentionDays?: number;
     /** Told whenever a FILE question starts or stops uploading, so the page can hold the send. */
     onUploadingChange?: (uploading: boolean) => void;
+    /**
+     * Where a FILE question's file goes. Defaults to this form's upload; a booking space passes its
+     * own (`uploadBookingAnswerFile`), the card being the same.
+     */
+    uploadFile?: (
+      itemId: string,
+      file: File,
+      transport: XhrUploadOptions
+    ) => Promise<UploadedAnswerFile>;
+    /** The line under a FILE picker: who reads the file and when it goes. Defaults to the form's. */
+    fileHint?: string;
+    /** What a 429 (too many files uploaded and not sent) reads as. Defaults to the form's. */
+    fileTooManyError?: string;
   }
 
   let {
@@ -56,6 +69,9 @@
     optionClosed = () => false,
     fileRetentionDays = FILE_RETENTION_DEFAULT_DAYS,
     onUploadingChange,
+    uploadFile = (itemId, file, transport) => uploadFormAnswerFile(formId, itemId, file, transport),
+    fileHint,
+    fileTooManyError,
   }: Props = $props();
 
   /**
@@ -99,7 +115,7 @@
     const current = { controller: new AbortController(), percent: null as number | null };
     upload = current;
     try {
-      const uploaded = await uploadFormAnswerFile(formId, item.id, file, {
+      const uploaded = await uploadFile(item.id, file, {
         signal: current.controller.signal,
         onProgress: ({ loaded, total }) => {
           // Only the upload still in flight may move the bar; a cancelled one's late event may not.
@@ -122,7 +138,7 @@
         status === 413
           ? m.form_file_error_size()
           : status === 429
-            ? m.form_file_error_too_many()
+            ? (fileTooManyError ?? m.form_file_error_too_many())
             : m.form_file_error_generic();
     } finally {
       if (upload?.controller === current.controller) upload = null;
@@ -398,7 +414,9 @@
           {m.form_file_cancel()}
         </button>
       {/if}
-      <p class="text-text-muted text-xs">{m.form_file_hint_fill({ days: fileRetentionDays })}</p>
+      <p class="text-text-muted text-xs">
+        {fileHint ?? m.form_file_hint_fill({ days: fileRetentionDays })}
+      </p>
       {#if fileError}
         <p class="text-red-err text-xs font-medium" role="alert">{fileError}</p>
       {/if}

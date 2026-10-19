@@ -114,6 +114,18 @@ describe('a pending invitation acts on WHICH answer it got', () => {
     expect(lines).not.toContain('deregistered');
   });
 
+  /**
+   * Retiring is destructive, so it is an allowlist: a reason this build cannot judge (one a newer
+   * server added) KEEPS the invitation, and the next sweep asks again.
+   */
+  it('keeps it on an `unrecognized` refusal, and says the next sweep retries', async () => {
+    const { mlsService, lines } = await sweep({ kind: 'none', reason: 'unrecognized' });
+
+    expect(mlsService.deleteDeviceMembership).not.toHaveBeenCalled();
+    expect(lines).toContain('unrecognized');
+    expect(lines).toContain('invitation kept, next sweep retries');
+  });
+
   it.each(['revoked', 'unregistered'] as const)(
     'retires it on `%s` and promises nothing about a return',
     async (reason) => {
@@ -124,14 +136,6 @@ describe('a pending invitation acts on WHICH answer it got', () => {
       expect(lines).not.toContain('returns by itself');
     }
   );
-
-  /** A server older than the reason field. The reading that cannot be wrong is the old one. */
-  it('retires it on an unexplained 404, exactly as it did before the reason existed', async () => {
-    const { mlsService, lines } = await sweep({ kind: 'none', reason: 'unspecified' });
-
-    expect(mlsService.deleteDeviceMembership).toHaveBeenCalledWith('peer', 'peer-dev', 'g1');
-    expect(lines).toContain('unspecified');
-  });
 
   it('adds the device when there IS a package, which is the whole point of the fallback', async () => {
     const { mlsService, lines } = await sweep({

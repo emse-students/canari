@@ -40,17 +40,20 @@ export class TransportFailureError extends TypeError {
 }
 
 /**
- * True when `error` is the ABSENCE of an answer rather than an answer: a `fetch` transport failure
- * (a `TypeError`, which includes {@link TransportFailureError} and every class extending it) or a
- * deadline that expired before the response head ({@link RequestDeadlineError}).
+ * True when `error` is the ABSENCE of an answer rather than an answer: a {@link TransportFailureError}
+ * (and every class extending it: `DeliveryUnreachableError`, `UploadNetworkError`) or a deadline that
+ * expired before the response head ({@link RequestDeadlineError}).
  *
- * Decided by TYPE ONLY. It used to also match `/network|failed to fetch|.../` against the message,
- * which is the branching-on-a-sentence the classification at the throw exists to replace - and it
- * still missed the one shape that mattered, because a string has no message to match.
+ * Decided by TYPE ONLY, and by the NARROW type. A bare `TypeError` is NOT a transport failure: a
+ * programming error (`cannot read properties of undefined`) is one too, and a `try` around a request
+ * would read it as "no answer" and retry or hold it for ever. The browser's own `fetch` rejection is
+ * typed at the place it is raised ({@link conformNativeFetch}, {@link conformPluginFetch},
+ * `trackedFetch`), so a `fetch` that bypasses all three would reject with a bare `TypeError` this
+ * predicate no longer reads. It used to match `/network|failed to fetch|.../` against the message,
+ * then any `TypeError`; both read a sentence or a base class instead of a decision made at the throw.
  */
 export function isTransportFailure(error: unknown): boolean {
-  if (error instanceof RequestDeadlineError) return true;
-  return error instanceof TypeError;
+  return error instanceof TransportFailureError || error instanceof RequestDeadlineError;
 }
 
 /** Whether a `fetch` call was aborted by the caller's own signal (on `init` or on a `Request`). */
@@ -59,6 +62,37 @@ function abortedSignal(input: RequestInfo | URL, init?: RequestInit): AbortSigna
     init?.signal ??
     (typeof Request !== 'undefined' && input instanceof Request ? input.signal : null);
   return signal?.aborted ? signal : null;
+}
+
+/**
+ * The WebView's / browser's own `fetch`, with its transport rejection typed at the throw.
+ *
+ * The contract gives a transport failure exactly one shape, a bare `TypeError` (`Failed to fetch`,
+ * `Load failed`), indistinguishable from a programming `TypeError`. It becomes a
+ * {@link TransportFailureError} here so {@link isTransportFailure} can ask for THAT type. An aborted
+ * request keeps the signal's own reason, and every other rejection passes through untouched.
+ *
+ * Installed as `window.fetch` on the web and as the native branch of `createRoutedFetch` on Tauri, so
+ * every bare `fetch(...)` in the app is covered by this one wrapper. One limit: the engine also throws
+ * a `TypeError` for a deterministic refusal (an invalid URL, a forbidden header value), typed as a
+ * transport failure too - the raw sentence in `cause` names it in the log. A BODY read that loses the
+ * link still rejects `res.json()` with the engine's bare `TypeError`, which is NOT read as transport.
+ */
+export function conformNativeFetch(native: typeof fetch): typeof fetch {
+  return (async (input: RequestInfo | URL, init?: RequestInit) => {
+    try {
+      return await native(input, init);
+    } catch (raw) {
+      if (
+        raw instanceof TypeError &&
+        !(raw instanceof TransportFailureError) &&
+        !abortedSignal(input, init)
+      ) {
+        throw new TransportFailureError(raw);
+      }
+      throw raw;
+    }
+  }) as typeof fetch;
 }
 
 /**
@@ -94,7 +128,7 @@ export function conformPluginFetch(plugin: typeof fetch): typeof fetch {
           ? aborted.reason
           : new DOMException('The operation was aborted.', 'AbortError');
       }
-      if (raw instanceof TypeError) throw raw;
+      if (raw instanceof TransportFailureError) throw raw;
       // Not logged here: nothing is swallowed, and the caller's own failure line carries the raw
       // sentence through `cause` - one line per failure, not two.
       throw new TransportFailureError(raw);

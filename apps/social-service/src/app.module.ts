@@ -14,8 +14,11 @@ import { ModerationModule } from './moderation/moderation.module';
 import { InternalModule } from './internal/internal.module';
 import { PublicModule } from './public/public.module';
 import { RedisModule } from './common/redis';
+import { createDataSource } from './common/synchronize-prerequisites';
 import { MinesweeperModule } from './minesweeper/minesweeper.module';
 import { CoorganisationModule } from './coorganisation/coorganisation.module';
+import { BookingsModule } from './bookings/bookings.module';
+import { LivesModule } from './lives/lives.module';
 import { HealthController } from './health.controller';
 
 /** Root NestJS module - wires up TypeORM, config, Redis, and all social feature modules. */
@@ -42,6 +45,9 @@ import { HealthController } from './health.controller';
         autoLoadEntities: true,
         synchronize: process.env.NODE_ENV !== 'production',
       }),
+      // Creates the extensions an entity's DDL needs before `synchronize` runs (btree_gist for
+      // the bookings exclusion); production, unsynchronised, gets them from migration 087.
+      dataSourceFactory: (options) => createDataSource(options!),
     }),
     ChannelsModule,
     PostsModule,
@@ -56,6 +62,10 @@ import { HealthController } from './health.controller';
     MinesweeperModule,
     // Event co-organisation by proposal (D39): registers the `coorganise` kind and the event port.
     CoorganisationModule,
+    // Bookings of rooms and slots (docs/wiki/bookings-chantier.md); WP-B1: the data model only.
+    BookingsModule,
+    // Lives (docs/wiki/services/lives.md), every route behind LIVE_ENABLED: WP-L2 and WP-L3.
+    LivesModule,
   ],
   controllers: [HealthController],
 })

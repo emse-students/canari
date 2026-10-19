@@ -830,11 +830,11 @@ byte-identical). Front: `fileQuestion.test.ts` (empty type, HEIC), `FormQuestion
 migration 085 to a throwaway schema and drives the real service and scheduler - a claim past the
 window, by another uploader, of a purged row, from another form, two submissions racing for one
 file (exactly one wins), `attachedAt` on a reused submission, twelve parallel uploads (exactly ten
-kept), the purge run twice and a lowered retention. **IT NEVER RUNS IN CI** - no workflow sets
-`SOCIAL_IT_DATABASE_URL`, so CI reports it skipped - and it is the ONLY test guarding the
-`GREATEST(...)` on `attachedAt`, the advisory lock and the claim SQL as Postgres executes it. Run it
-by hand before merging any change to `form-files.service.ts`, `form-file-retention.scheduler.ts` or
-migration 085:
+kept), the purge run twice and a lowered retention. It is the ONLY test guarding the `GREATEST(...)`
+on `attachedAt`, the advisory lock and the claim SQL as Postgres executes it, and **it runs in CI on
+every pull request touching social-service** (`test-social-integration`, against production's
+PostgreSQL, failing on any skipped test - [cicd](../../cicd.md#package-1-opening-a-pull-request-ciyml)).
+Locally:
 
 ```sh
 docker run -d --rm --name formfiles-pg -e POSTGRES_PASSWORD=it -p 55432:5432 postgres:18-alpine
@@ -892,7 +892,8 @@ Found while scoping it, so it is not re-derived (the paid half itself waits for 
 - **One removal path**, `retireForms(manager, { formId } | { associationId })` in `apps/social-service/src/forms/retire-forms.ts`: a correlated `EXISTS` on `submissions` decides per form - archive (`deletedAt = now()`) when it holds any, hard delete when it holds none. `FormsService.delete` and the association delete (inside its one transaction) both call it; a bare `remove` or `manager.delete(Form, ...)` would now be refused by the key.
 - **Respondents and lists never see an archived form**: `list` (admin, owned, association scan), `get`, `getPublic`, `submit` (member and guest), `hasSubmission` and `subscribeReminder` filter `deletedAt IS NULL` and answer 404 / no right to submit.
 - **Staff still do**: `assertFormManager` and `getSubmissions` do not filter, so an archived form's submissions stay readable by id (owner, global admin, MANAGE_FORMS of the association). An archived form keeps its `associationId`; deleting the association archives rather than detaches it, and it appears in no list, so it cannot show as "Personnel".
-- **The migration refuses to run while orphans exist**: it RAISES with their count, so it cannot deploy before the data is cleaned ([backlog](../../backlog.md#p3---submissionsformid-names-a-form-nothing-keeps-and-29-rows-point-at-deleted-ones)). It is idempotent (`IF NOT EXISTS`, a `pg_constraint` check).
+- **The migration refuses to run while orphans exist**: it RAISES with their count, so it cannot deploy before the data is cleaned. The 29 orphans were backed up and deleted on both estates on 2026-10-11, and the migration shipped in `v1.2.4` (first on dev in `v1.2.4-alpha.1`). It is idempotent (`IF NOT EXISTS`, a `pg_constraint` check).
+- **Still owed (carried over when the backlog entry was closed, 2026-10-18)**: an integration run of migration 081 on a real database (none was reachable when it was written), and the purchase-history name of a paid submission of an archived form (the form row still exists, so it is nameable; not exercised).
 
 
 ## An online payment holds its seat for 30 minutes, and a late one is decided from the row (2026-10-15)

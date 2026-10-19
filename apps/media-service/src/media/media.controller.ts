@@ -19,6 +19,10 @@
  *   POST /media/internal/form-file - store a form answer's file, plaintext, class form-file
  *   POST /media/internal/form-file-purge - delete form files, per uploader (X-Internal-Secret)
  *   GET  /media/internal/form-file/:id - read a form file, and nothing else (X-Internal-Secret)
+ *   POST /media/internal/live/:liveId/:name - store one sealed live segment (X-Internal-Secret)
+ *   POST /media/internal/live-purge - delete every segment of an ended live (X-Internal-Secret)
+ *   GET  /media/live/:liveId/:name - one sealed live segment, by the name its manifest gave (JWT)
+ *   (the three live routes answer 404 unless LIVE_ENABLED=true - docs/wiki/services/lives.md)
  *
  * A `form-file` object is served by `GET /media/internal/form-file/:id` ONLY: `GET /media/:id` and
  * `GET /media/internal/:id` (the push media proxy's) answer 404 for it - neither has a per-object
@@ -66,6 +70,7 @@ import {
   boundedSharp,
   FORM_FILE_MAX_BYTES,
   isRetentionClass,
+  POSTER_CLASSES,
   SERVER_READ_ONLY_CLASS,
   type FormFilePurgeOutcome,
   type MediaStorageStats,
@@ -73,6 +78,12 @@ import {
   type RetentionClass,
 } from './media.service';
 import { UploadSessionService } from './upload-session.service';
+import {
+  LIVE_SEGMENT_MAX_BYTES,
+  LiveSegmentsService,
+  isLiveEnabled,
+  type LivePurgeResult,
+} from './live-segments.service';
 import { assertInternalSecret } from './internal-secret.util';
 import { requireUploadedFile, uploadedFileBuffer, uploadedFileMime } from './uploaded-file';
 
@@ -107,11 +118,17 @@ const RETENTION_CLASS_MAX_IDS = 500;
  * An unrecognised value is ignored rather than refused (an old client sends none, and failing an
  * upload over it would break posting; an unclassified object is KEPT). `form-file` is REFUSED: it is
  * the plaintext class only social-service may create (`POST internal/form-file`), and a client naming
- * it would mint an object nobody tracks, kept for ever and readable by nobody.
+ * it would mint an object nobody tracks, kept for ever and readable by nobody. A CLAIMED poster's
+ * class (`poster`, `poster-association`) is refused too: only `internal/poster-claim` sets it, on
+ * a `poster-pending` upload, and a client minting `poster-association` would keep its object past
+ * its own erasure, bound to no space.
  */
 export function clientRetentionClass(value: unknown): RetentionClass | undefined {
-  if (value === SERVER_READ_ONLY_CLASS) {
-    throw new BadRequestException(`class '${SERVER_READ_ONLY_CLASS}' is not a client upload class`);
+  if (
+    value === SERVER_READ_ONLY_CLASS ||
+    (typeof value === 'string' && POSTER_CLASSES.has(value))
+  ) {
+    throw new BadRequestException(`class '${String(value)}' is not a client upload class`);
   }
   return isRetentionClass(value) ? value : undefined;
 }
@@ -122,8 +139,17 @@ export class MediaController {
 
   constructor(
     private readonly mediaService: MediaService,
-    private readonly uploadSessions: UploadSessionService
+    private readonly uploadSessions: UploadSessionService,
+    private readonly liveSegments: LiveSegmentsService
   ) {}
+
+  /** 404 on every live route while `LIVE_ENABLED` is off - what a route that does not exist answers. */
+  private assertLiveEnabled(): void {
+    if (!isLiveEnabled()) {
+      this.logger.debug('[LIVE] a live route was called while LIVE_ENABLED is off - 404');
+      throw new NotFoundException();
+    }
+  }
 
   // ---------------------------------------------------------------------------
   // Auth helper - validates the shared HS256 JWT (same secret as chat-gateway)
@@ -537,10 +563,14 @@ export class MediaController {
     // the size) are known: applying either to an existing id would make that object sweepable by
     // age - a claimed reel's blob deleted under its live post.
     // `form-file` likewise: only `internal/form-file` creates one, with its uploader.
+    // The poster classes likewise: `poster-pending` at upload, the claimed ones by
+    // `internal/poster-claim` with an owner and a space.
     if (
       retentionClass === 'chat-reel' ||
       retentionClass === 'reel-pending' ||
-      retentionClass === SERVER_READ_ONLY_CLASS
+      retentionClass === SERVER_READ_ONLY_CLASS ||
+      retentionClass === 'poster-pending' ||
+      POSTER_CLASSES.has(retentionClass)
     ) {
       throw new BadRequestException(
         `class '${retentionClass}' is set by the upload that creates the object`
@@ -615,6 +645,58 @@ export class MediaController {
       throw new BadRequestException('ownerId must be a non-empty string');
     }
     return this.mediaService.claimReels(ids, body.ownerId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/poster-claim - a booking space's poster, claimed for its uploader
+  // ---------------------------------------------------------------------------
+  /**
+   * Sole consumer: social-service's `BookingPosterMedia.claim`, before a space stores a poster. It
+   * PROVES the object is the member's own fresh upload; the rule is {@link MediaService.claimPosters}.
+   */
+  @Post('internal/poster-claim')
+  async claimPosters(
+    @Body()
+    body: { mediaIds?: unknown; ownerId?: unknown; spaceId?: unknown; retentionClass?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ claimed: string[]; refused: string[] }> {
+    assertInternalSecret(internalSecret);
+    const ids = this.boundedIds(body?.mediaIds, 'mediaIds');
+    if (typeof body?.ownerId !== 'string' || body.ownerId.length === 0) {
+      throw new BadRequestException('ownerId must be a non-empty string');
+    }
+    if (typeof body.spaceId !== 'string' || body.spaceId.length === 0) {
+      throw new BadRequestException('spaceId must be a non-empty string');
+    }
+    if (body.retentionClass !== 'poster' && body.retentionClass !== 'poster-association') {
+      throw new BadRequestException("retentionClass must be 'poster' or 'poster-association'");
+    }
+    return this.mediaService.claimPosters(ids, body.ownerId, body.spaceId, body.retentionClass);
+  }
+
+  /**
+   * Releases claimed posters to the idle sweep. Sole consumer: social-service's
+   * `releaseUncitedPosters`; the class allowlist is {@link MediaService.releasePosters}.
+   */
+  @Post('internal/poster-release')
+  async releasePosters(
+    @Body() body: { mediaIds?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ released: string[]; refused: string[] }> {
+    assertInternalSecret(internalSecret);
+    return this.mediaService.releasePosters(this.boundedIds(body?.mediaIds, 'mediaIds'));
+  }
+
+  /**
+   * Every claimed poster and its space. Sole consumer: social-service's poster reconciliation
+   * (`BookingPosterMedia.reconcileOnce`).
+   */
+  @Get('internal/poster-list')
+  listPosters(@Headers('x-internal-secret') internalSecret: string | undefined): {
+    posters: Array<{ mediaId: string; spaceId: string | null }>;
+  } {
+    assertInternalSecret(internalSecret);
+    return { posters: this.mediaService.listPosters() };
   }
 
   // ---------------------------------------------------------------------------
@@ -715,6 +797,74 @@ export class MediaController {
       return { mediaId, ownerId };
     });
     return { results: await this.mediaService.purgeFormFiles(items) };
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/live/:liveId/:name - one sealed live segment, from social-service
+  // ---------------------------------------------------------------------------
+  /**
+   * Stores one sealed segment of a live under `live/<liveId>/<name>`. Sole consumer: social-service's
+   * segment ingest (`PUT /api/lives/:id/segments/:index`), which authenticated the broadcaster,
+   * holds the live's row, chose the random `name` and bounded the body before calling. The bound is
+   * applied here again, as the store's own refusal. See {@link LiveSegmentsService}.
+   */
+  @Post('internal/live/:liveId/:name')
+  @UseInterceptors(
+    FileInterceptor('file', {
+      limits: { fileSize: LIVE_SEGMENT_MAX_BYTES + 1 },
+      storage: undefined,
+    })
+  )
+  async storeLiveSegment(
+    @Param('liveId') liveId: string,
+    @Param('name') name: string,
+    @UploadedFile() file: unknown,
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ ok: true }> {
+    this.assertLiveEnabled();
+    assertInternalSecret(internalSecret);
+    const data = requireUploadedFile(file).buffer;
+    if (data.length === 0 || data.length > LIVE_SEGMENT_MAX_BYTES) {
+      throw new PayloadTooLargeException(`a live segment is 1 to ${LIVE_SEGMENT_MAX_BYTES} bytes`);
+    }
+    await this.liveSegments.store(liveId, name, data);
+    return { ok: true };
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/live-purge - every segment of an ended live
+  // ---------------------------------------------------------------------------
+  /**
+   * Deletes every object under one live's prefix and answers the deletes, the refusals and a
+   * RE-LISTING (`remaining`). Sole consumer: social-service, at a live's end and in its live sweep,
+   * which deletes its row only when the answer proves the prefix empty. Runs whatever the switch
+   * says: a live started while it was on is still deleted after it is turned off.
+   */
+  @Post('internal/live-purge')
+  async purgeLive(
+    @Body() body: { liveId?: unknown },
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<LivePurgeResult> {
+    assertInternalSecret(internalSecret);
+    if (typeof body?.liveId !== 'string') throw new BadRequestException('liveId must be a string');
+    return this.liveSegments.purge(body.liveId);
+  }
+
+  // ---------------------------------------------------------------------------
+  // POST /media/internal/live-list - the live ids that have segments in the store
+  // ---------------------------------------------------------------------------
+  /**
+   * One id per `live/<liveId>/` folder. Sole consumer: social-service's orphan reaper, which purges
+   * a folder only when no live row is behind it (a store that outlived its timeout and landed after
+   * its live's purge). Runs whatever the switch says, as the purge does.
+   */
+  @Post('internal/live-list')
+  @HttpCode(200)
+  async listLives(
+    @Headers('x-internal-secret') internalSecret: string | undefined
+  ): Promise<{ liveIds: string[] }> {
+    assertInternalSecret(internalSecret);
+    return { liveIds: await this.liveSegments.listLives() };
   }
 
   /** A string array bounded like every internal batch, ids that are not strings dropped. */
@@ -822,6 +972,44 @@ export class MediaController {
       ids.filter((id): id is string => typeof id === 'string')
     );
     return { refreshed };
+  }
+
+  // ---------------------------------------------------------------------------
+  // GET /media/live/:liveId/:name - one sealed live segment
+  // ---------------------------------------------------------------------------
+  /**
+   * One sealed segment of a live, to a signed-in member, by the random name its manifest listed.
+   * The bytes are ciphertext under the live's key; WHO may read the key and the names is decided by
+   * social-service (a removed viewer is refused both), and this route only proves an account.
+   *
+   * WHY NO PER-VIEWER CHECK HERE, deliberately (docs/wiki/services/lives.md, "Reading a segment"):
+   * a live is the whole network's (L2), so "a member" IS the audience and the JWT proves it. The one
+   * account a check here could still refuse - a viewer removed, or blocked, AFTER reading the key -
+   * can only ask for names it already learned from a manifest, i.e. segments it was allowed to
+   * fetch and decrypt then; a NEW name is learned only from the manifest, which social-service
+   * refuses it. Asking social-service on every segment fetch (one every few seconds per viewer)
+   * would buy nothing more and put a cross-service call on the hottest path, which WP-L4 moves to
+   * nginx's cache anyway. The tokens carry no audience claim to narrow them by (one HS256 token
+   * for every service). Two path segments, so it never collides with the catch-all `@Get(':id')`.
+   */
+  @Get('live/:liveId/:name')
+  async downloadLiveSegment(
+    @Param('liveId') liveId: string,
+    @Param('name') name: string,
+    @Req() req: Request,
+    @Res() res: Response
+  ): Promise<void> {
+    this.assertLiveEnabled();
+    this.verifyToken(req);
+    const { stream, size } = await this.liveSegments.read(liveId, name);
+    res.setHeader('Content-Type', 'application/octet-stream');
+    res.setHeader('Content-Length', size);
+    res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, private');
+    stream.on('error', (err) => {
+      this.logger.warn(`[LIVE] segment ${liveId}/${name} stream failed: ${String(err)}`);
+      res.destroy(err);
+    });
+    stream.pipe(res);
   }
 
   // ---------------------------------------------------------------------------  // GET /media/:id

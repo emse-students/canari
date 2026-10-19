@@ -14,6 +14,14 @@ import { distributionEpochFor, GraineDistributionUnavailableError } from './seed
 import { isInEpochGap } from '$lib/utils/chat/epochGapRegistry';
 import { deviceIdOfLeaf, userIdOfLeaf } from '$lib/mls-client/leafIdentity';
 import { describeKeyGroupFrameLosses } from '$lib/mls-client/keyGroupFrameLosses';
+import {
+  forgetHistoryHeldNothing,
+  answeredDevice,
+  historyHeldNothingDevices,
+  historyHeldNothingFinalAt,
+  markHistoryHeldNothingFinal,
+  recordHistoryHeldNothing,
+} from './historyAnswered';
 
 /**
  * Asking for a seed this device does not hold (WP-33).
@@ -151,6 +159,40 @@ const parked = new Map<string, { sessions: Map<string, string[]>; cancel: () => 
 
 /** Communities whose history request waits for a member to come online, with that waiter's cancel. */
 const historyParked = new Map<string, () => void>();
+
+/**
+ * Per community, the history request in flight: what an explicit "I hold nothing" must match before
+ * it is recorded as the answer (section 24).
+ *
+ * The answer is recorded PER DEVICE ({@link recordHistoryHeldNothing}), and a member counts as
+ * answered only once every device of theirs on the key group's TREE has said it - presence names the
+ * devices online now, and a laptop offline when the phone answered may hold the past. So:
+ *
+ * - `pending` is the devices the request named that have not answered yet; once it is empty the
+ *   walk moves on (the member's offline devices stay unrecorded, and are asked when presence says
+ *   they are online). `null` when the request named no device (a roster with no per-device
+ *   presence): every device of the member answers, and only `unanswered` can say when all have.
+ * - `unanswered` is the member's tree devices not yet recorded; once it is empty the member is
+ *   answered. `null` when the tree could not be read: then nothing proves a member answered, so
+ *   nothing moves the walk and the ask stays open - one ask at the next start, the cost before.
+ *
+ * The device an answer names is SELF-ASSERTED on the distribution path (`senderDeviceId`: the user is
+ * checked against the MLS credential, the device is not - backlog, "the distribution path's device
+ * check"). What bounds a wrong one: only a device the request named, or on the tree when it named
+ * none, is counted, and each once.
+ */
+const historyRequest = new Map<
+  string,
+  {
+    requestId: string;
+    answerer: string;
+    pending: Set<string> | null;
+    unanswered: Set<string> | null;
+    groupId: string;
+    /** The distribution epoch the request was sealed at, `null` when the group was not ridable. */
+    epoch: number | null;
+  }
+>();
 
 /**
  * The key group each asked session went out on, and the epoch it was sealed at.
@@ -335,6 +377,19 @@ async function answeringDevicesOn(
   onlineDevices: Map<string, string[]> | null,
   label: string
 ): Promise<Map<string, string[]> | null> {
+  return answeringDevicesIn(
+    onlineDevices ? await treeDevicesOn(groupId) : null,
+    onlineDevices,
+    label
+  );
+}
+
+/** {@link answeringDevicesOn} over a tree already read ({@link treeDevicesOn}). */
+function answeringDevicesIn(
+  tree: TreeDevices | null,
+  onlineDevices: Map<string, string[]> | null,
+  label: string
+): Map<string, string[]> | null {
   if (!onlineDevices) {
     console.warn(
       `[GRAINE] the roster of ${label} came back without per-device presence - naming no answering ` +
@@ -342,24 +397,55 @@ async function answeringDevicesOn(
     );
     return null;
   }
-  const { mlsService } = requireGraineRuntime('cannot name an answering device');
+  if (!tree) {
+    console.warn(`[GRAINE] no tree of ${label}'s key group - naming no answering device`);
+    return null;
+  }
+  const answering = new Map<string, string[]>();
+  for (const [userId, devices] of onlineDevices) {
+    const usable = devices.filter((d) => tree.get(userId)?.has(d) === true).sort();
+    if (usable.length > 0) answering.set(userId, usable);
+  }
+  return answering;
+}
+
+/**
+ * Per member (lower-cased), the device ids of theirs that are leaves of a key group. A member with a
+ * leaf that names no device has an EMPTY set; a member with no leaf at all has no entry.
+ */
+type TreeDevices = Map<string, Set<string>>;
+
+/**
+ * Every device of every member on `groupId`'s MLS tree as this device holds it, THIS device
+ * excluded - the authority on who can read the group, and so on who can still hold its past
+ * whatever presence says. `null` when the tree cannot be read (a group this device does not hold),
+ * said at warn.
+ */
+async function treeDevicesOn(groupId: string): Promise<TreeDevices | null> {
+  const { mlsService } = requireGraineRuntime('cannot read a key group tree');
   let leaves: string[];
   try {
     leaves = await mlsService.getGroupMemberIdentities(groupId);
   } catch (e) {
     console.warn(
-      `[GRAINE] cannot read the tree of key group ${groupId.slice(0, 8)}... (${String(e)}) - naming no answering device`
+      `[GRAINE] cannot read the tree of key group ${groupId.slice(0, 8)}... (${String(e)})`
     );
     return null;
   }
   const me = mlsService.getDeviceId();
-  const inTree = new Set(leaves.map((leaf) => `${userIdOfLeaf(leaf)}:${deviceIdOfLeaf(leaf)}`));
-  const answering = new Map<string, string[]>();
-  for (const [userId, devices] of onlineDevices) {
-    const usable = devices.filter((d) => d !== me && inTree.has(`${userId}:${d}`)).sort();
-    if (usable.length > 0) answering.set(userId, usable);
+  const tree: TreeDevices = new Map();
+  for (const leaf of leaves) {
+    const device = deviceIdOfLeaf(leaf);
+    if (device === me) continue;
+    const user = userIdOfLeaf(leaf);
+    const devices = tree.get(user) ?? new Set<string>();
+    // A leaf naming no device still puts its member ON the tree - with no device that could ever
+    // answer, so never `exhausted` - and keeps them from reading as a member with no leaf at all
+    // (`heldNothingView`'s `leafless`), which is a claim that they hold nothing of the group.
+    if (device !== '') devices.add(device);
+    tree.set(user, devices);
   }
-  return answering;
+  return tree;
 }
 
 /**
@@ -394,6 +480,57 @@ const MAX_NAMED_ANSWERERS = 16;
  */
 function answeringDevicesOf(answerer: string, answering: Map<string, string[]> | null): string[] {
   return (answering?.get(answerer.toLowerCase()) ?? []).slice(0, MAX_NAMED_ANSWERERS);
+}
+
+/**
+ * The "I hold nothing" record read against the key group's tree and presence (section 24): which
+ * members a history ask may skip, and whether every device that could hold the past has answered.
+ *
+ * - `exhausted(id)`: every device of `id` on the TREE answered. `false` when the tree is unknown or
+ *   holds no device of theirs - nothing is proven answered from a fact this device does not have.
+ * - `leafless(id)`: the tree is KNOWN and holds no leaf of `id` at all - a roster member who never
+ *   signed in, or whose devices never joined the key group. Such a member can hold nothing sealed to
+ *   this group, so they are skipped, never waited on, and count as answered for the final check.
+ *   An unknown tree proves nothing about them either way: `false`, today's reading.
+ * - `spent(id)`: every device of `id` ONLINE answered, and at least one is online. Skipped for now,
+ *   never recorded as answered: its other devices on the tree are offline and may hold the past.
+ */
+function heldNothingView(
+  roster: ReadonlySet<string>,
+  tree: TreeDevices | null,
+  recorded: ReadonlySet<string>,
+  answering: Map<string, string[]> | null
+) {
+  const unansweredOf = (id: string, devices: Iterable<string>) =>
+    [...devices].filter((d) => !recorded.has(answeredDevice(id, d)));
+  const exhausted = (id: string): boolean => {
+    const devices = tree?.get(id);
+    return devices !== undefined && devices.size > 0 && unansweredOf(id, devices).length === 0;
+  };
+  const unansweredOnline = (id: string): string[] =>
+    unansweredOf(id, answering?.get(id.toLowerCase()) ?? []).slice(0, MAX_NAMED_ANSWERERS);
+  const leafless = (id: string): boolean => tree !== null && !tree.has(id);
+  const done = (id: string): boolean => exhausted(id) || leafless(id);
+  const spent = (id: string): boolean =>
+    answering !== null &&
+    (answering.get(id) ?? []).length > 0 &&
+    unansweredOf(id, answering.get(id) ?? []).length === 0;
+  return {
+    exhausted,
+    /** Nothing left to hear from `id` at this tree: every tree device answered, or there is none. */
+    done,
+    unansweredOnline,
+    /** The tree devices of `id` not yet recorded, or `null` when the tree is unknown. */
+    unansweredOnTree: (id: string): Set<string> | null =>
+      tree ? new Set(unansweredOf(id, tree.get(id.toLowerCase()) ?? [])) : null,
+    /** The members the election skips: answered from every device, or from every one online. */
+    skipped: new Set([...roster].filter((id) => done(id) || spent(id))),
+    /** Every other member done, and our own other devices on the tree too, if any. */
+    everyDeviceAnswered: (self: string): boolean =>
+      tree !== null &&
+      [...roster].filter((id) => id !== self).every(done) &&
+      ((tree.get(self)?.size ?? 0) === 0 || exhausted(self)),
+  };
 }
 
 /** How a request's named devices read in a log line. */
@@ -820,6 +957,10 @@ function parkUntilOnline(channelId: string, sessions: Map<string, string[]>): vo
  * on the distribution epoch instead - see {@link historyUnanswerableAt} - so the next ordinary
  * trigger re-asks once the roster has moved, and costs nothing while it has not.
  *
+ * **A FOURTH IS AN ANSWER: "I hold nothing"** (section 24). Unlike the in-memory "asked", it is
+ * durable, keyed on the same roster version, so a community whose answerer holds nothing is asked
+ * ONCE per roster rather than once per launch - see {@link noteHistoryHeldNothing}.
+ *
  * Best-effort by construction: it is called from the join path and must never fail it. Every branch
  * says what it did, because the alternative symptom is a joiner staring at an empty salon.
  */
@@ -832,11 +973,16 @@ export async function requestCommunityHistory(
    */
   { evenIfSeedsHeld = false }: { evenIfSeedsHeld?: boolean } = {}
 ): Promise<void> {
-  if (evenIfSeedsHeld) historyAsked.delete(workspaceId);
-  if (historyAsked.has(workspaceId)) return;
+  if (historyAsked.has(workspaceId) && !evenIfSeedsHeld) return;
   const { storage, deviceKey, userId, mlsService } = requireGraineRuntime(
     'cannot ask for community history'
   );
+  if (evenIfSeedsHeld) {
+    historyAsked.delete(workspaceId);
+    // A RE-JOINED key group skipped epochs it acknowledged unreadable: an earlier "I hold nothing"
+    // is no more evidence about the past than the seeds this device holds (section 24).
+    forgetHistoryHeldNothing(userId, workspaceId);
+  }
 
   // HOLDING SOME SEEDS IS NOT HOLDING THE PAST - a member back in a community holds exactly the
   // seeds sent since the return. That past is not this request's to fetch: every row this device
@@ -870,6 +1016,21 @@ export async function requestCommunityHistory(
   // is on it.
   const epoch = distributionEpochFor(mlsService, scope);
   if (epoch !== null && historyUnanswerableAt.get(workspaceId) === epoch) return;
+  // ASKED AND ANSWERED, durably (section 24): EVERY member of this very roster was asked in turn and
+  // said it holds nothing of the community. Asking again would put the same question to the same
+  // people - which is what every launch did while that answer was a silence. Short of final, the
+  // members who answered are skipped by the election below and the next one is asked.
+  const version = epoch === null ? null : { groupId, epoch };
+  if (version && historyHeldNothingFinalAt(userId, workspaceId, version)) {
+    console.debug(
+      `[GRAINE] the history of community ${workspaceId.slice(0, 8)} is not asked: every member was ` +
+        `answered "I hold nothing" at distribution epoch ${epoch}, and the group is still there`
+    );
+    return;
+  }
+  const recorded = version
+    ? historyHeldNothingDevices(userId, workspaceId, version)
+    : new Set<string>();
 
   const label = `community ${workspaceId.slice(0, 8)}`;
   const read = electionRoster(
@@ -877,8 +1038,10 @@ export async function requestCommunityHistory(
     label
   );
   const { roster } = read;
-  const answering = await answeringDevicesOn(groupId, read.devices, label);
+  const tree = await treeDevicesOn(groupId);
+  const answering = answeringDevicesIn(tree, read.devices, label);
   const online = answering ? reachableThroughDevices(read.online, answering) : read.online;
+  const heldView = heldNothingView(roster, tree, recorded, answering);
   // OUR OWN OTHER DEVICES ARE MEMBERS TOO. A community whose only MEMBER is us is not a community
   // with nobody to ask: the seeds are held by whichever device of ours minted them, and that device
   // is on this very group. Read as "nothing to ask for", this line was the whole of COMM-18's
@@ -896,13 +1059,39 @@ export async function requestCommunityHistory(
   // 2026-10-15), its only other device offline: eight roster reads and eight sealed sends a launch,
   // into the void. `answering === null` is a server that did not say (older than 1.2.5) and keeps
   // the old reading - our devices treated as reachable.
-  const other = lowestOtherMember(roster, userId, undefined, online);
-  const ownOnGroup = other === null && (await ownDevicesOnTheGroup(scope));
-  const ownOnline = answering === null || answeringDevicesOf(userId, answering).length > 0;
+  //
+  // AND NEVER A DEVICE THAT ALREADY ANSWERED "I HOLD NOTHING" AT THIS TREE (section 24): a member is
+  // skipped when every device of theirs on the tree answered (`exhausted`), or when every device of
+  // theirs online did and the rest are offline (`spent`) - and the next member is asked instead. One
+  // member's "nothing" says nothing about the others, and one device's says nothing about its
+  // siblings - which is why the record is keyed on the device.
+  const other = lowestOtherMember(roster, userId, heldView.skipped, online);
+  const ownOnGroup =
+    other === null && !heldView.exhausted(userId) && (await ownDevicesOnTheGroup(scope));
+  const ownOnline = answering === null || heldView.unansweredOnline(userId).length > 0;
   const answerer = other ?? (ownOnGroup && ownOnline ? userId : null);
-  const offline = [...roster].filter((id) => id !== userId && !online.has(id)).sort();
+  const offline = [...roster]
+    .filter((id) => id !== userId && !online.has(id) && !heldView.done(id))
+    .sort();
   if (!answerer && offline.length > 0) {
     parkHistoryUntilOnline(workspaceId, offline);
+    return;
+  }
+  const waitingOnDevice = [...roster].filter(
+    (id) => id !== userId && online.has(id) && !heldView.done(id)
+  );
+  if (!answerer && waitingOnDevice.length > 0) {
+    // Online, but only on devices that already answered "nothing" - their other devices on the tree
+    // are offline and may hold the past. NOT parked on presence: its waiter watches USERS and these
+    // users are online, so it would fire at once; no per-device waiter exists (backlog, "Four things
+    // the offline cold start fix left open"). Filed against the epoch: the next start reads presence
+    // again and asks such a device the moment it is online.
+    if (epoch !== null) historyUnanswerableAt.set(workspaceId, epoch);
+    console.info(
+      `[GRAINE] the history of community ${workspaceId.slice(0, 8)} waits for a device: ` +
+        `${waitingOnDevice.length} member(s) answered "I hold nothing" from every device online, and ` +
+        `each has another device on the key group, offline - asked at the next start`
+    );
     return;
   }
   if (!answerer && ownOnGroup) {
@@ -916,6 +1105,20 @@ export async function requestCommunityHistory(
     console.info(
       `[GRAINE] the history of community ${workspaceId.slice(0, 8)} is not asked: no other member, ` +
         `and none of our other devices on its key group is online to receive the request`
+    );
+    return;
+  }
+  if (!answerer && version && recorded.size > 0 && heldView.everyDeviceAnswered(userId)) {
+    // FINAL FOR THIS TREE: every device that could hold the past - each device of each other member,
+    // and our own other devices - is a leaf of the key group that was asked at this epoch and said it
+    // holds nothing. Read from the TREE, never presence, so a device that was offline throughout is
+    // not final by omission. Durable, so the next start skips even the roster read; the tree cannot
+    // change without moving the epoch, which is what asks again.
+    markHistoryHeldNothingFinal(userId, workspaceId, version);
+    historyUnanswerableAt.set(workspaceId, version.epoch);
+    console.info(
+      `[GRAINE] the history of community ${workspaceId.slice(0, 8)} is final at distribution epoch ` +
+        `${version.epoch}: all ${recorded.size} device(s) on its key group hold nothing - asked again when the tree moves`
     );
     return;
   }
@@ -933,17 +1136,39 @@ export async function requestCommunityHistory(
     return;
   }
 
-  const answererDevices = answeringDevicesOf(answerer, answering);
+  // Only the devices that have not answered yet: one that said "nothing" at this tree would say it
+  // again, and naming it would count for nothing.
+  const answererDevices = heldView.unansweredOnline(answerer);
+  const requestId = crypto.randomUUID();
   const frame = encodeAppMessage(
     mkGraineRequest({
       workspaceId,
       kind: canari.GraineRequestKind.GRAINE_REQUEST_KIND_HISTORY,
       answererUserId: answerer,
       answererDeviceIds: answererDevices,
-      requestId: crypto.randomUUID(),
+      requestId,
     })
   );
-  await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.transport);
+  // RECORDED BEFORE THE SEND, not after it: the answer travels over the socket while the send's
+  // own HTTP answer is still on its way back, so an "I hold nothing" may be handled before the
+  // `await` resumes - and against no request in flight it would be ignored. Replaces any earlier
+  // ask of this community: a late answer to a superseded request answers a question no longer
+  // asked.
+  historyRequest.set(workspaceId, {
+    requestId,
+    answerer: answerer.toLowerCase(),
+    pending: answererDevices.length > 0 ? new Set(answererDevices) : null,
+    unanswered: heldView.unansweredOnTree(answerer),
+    groupId,
+    epoch,
+  });
+  try {
+    await mlsService.sendMessage(groupId, frame, undefined, DELIVERY.transport);
+  } catch (e) {
+    // Nothing went out, so nothing can answer it; the caller says why the ask failed.
+    historyRequest.delete(workspaceId);
+    throw e;
+  }
   historyAsked.add(workspaceId);
   historyParked.get(workspaceId)?.();
   historyParked.delete(workspaceId);
@@ -982,6 +1207,115 @@ function parkHistoryUntilOnline(workspaceId: string, offline: string[]): void {
     );
   });
   historyParked.set(workspaceId, cancel);
+}
+
+/**
+ * A device asked for the history of `workspaceId` has answered "I hold nothing" (section 24).
+ *
+ * **The DEVICE is recorded**, durably, against the key group and the epoch the request was sealed
+ * at ({@link recordHistoryHeldNothing}) - never its member: a member counts as answered only once
+ * every device of theirs on the key group's tree has said it. Once every device the request named
+ * has answered (or, when it named none, every device of the member on the tree), the NEXT member is
+ * asked at once: the election skips a member whose devices online all answered, and the ask is
+ * final only when every device on the tree did ({@link requestCommunityHistory}). Bound to the
+ * request in flight exactly as a session decline is ({@link noteSeedUnavailable}): the id, the member
+ * it was addressed to, and a device it named. Anything else - a superseded ask, a member never asked,
+ * a device not named or already counted - is ignored at debug, because it answers a question nobody
+ * is waiting on.
+ *
+ * @param answerer Who answered, any case - checked against the MLS credential that sealed the frame.
+ * @param requestId The request the bundle echoes.
+ * @param answererDevice The device the delivery envelope names. SELF-ASSERTED on this path: only the
+ *   user is checked against the credential, so it counts only as one device the request named or the
+ *   tree holds, and once (see `historyRequest`).
+ */
+export function noteHistoryHeldNothing(
+  workspaceId: string,
+  answerer: string,
+  requestId: string,
+  answererDevice: string
+): void {
+  const inFlight = historyRequest.get(workspaceId);
+  if (
+    !inFlight ||
+    inFlight.requestId !== requestId ||
+    inFlight.answerer !== answerer.toLowerCase()
+  ) {
+    console.debug(
+      `[GRAINE] ignoring "I hold nothing" for community ${workspaceId.slice(0, 8)} from ${answerer}: ` +
+        `it answers request ${requestId || '(none)'}, not the history ask in flight` +
+        (inFlight ? ` (addressed to ${inFlight.answerer})` : '')
+    );
+    return;
+  }
+  // A DEVICE SPEAKS ONLY FOR ITSELF, and only once: the named devices still to answer when the
+  // request named some, else the member's tree devices not yet recorded, else (no tree) any device.
+  const expected = inFlight.pending ?? inFlight.unanswered;
+  if (answererDevice === '' || (expected !== null && !expected.has(answererDevice))) {
+    console.debug(
+      `[GRAINE] ignoring "I hold nothing" for community ${workspaceId.slice(0, 8)} from ` +
+        `${answerer}:${answererDevice || '(no device)'}: request ${requestId} did not name that ` +
+        `device, it is not on the key group's tree, or it has already answered`
+    );
+    return;
+  }
+  if (inFlight.epoch === null) {
+    // Nothing to key the answer on: the group was not ridable when the request was sealed. Said,
+    // and left to the next start - one ask, the cost before this answer existed.
+    historyRequest.delete(workspaceId);
+    console.info(
+      `[GRAINE] ${answerer}:${answererDevice} holds nothing of community ${workspaceId.slice(0, 8)} - ` +
+        `not recorded, the request was sealed with no distribution epoch to key it on`
+    );
+    return;
+  }
+  const { userId } = requireGraineRuntime('cannot record a history answer');
+  const isNew = recordHistoryHeldNothing(
+    userId,
+    workspaceId,
+    { groupId: inFlight.groupId, epoch: inFlight.epoch },
+    inFlight.answerer,
+    answererDevice
+  );
+  inFlight.pending?.delete(answererDevice);
+  inFlight.unanswered?.delete(answererDevice);
+  if (!isNew) {
+    console.debug(
+      `[GRAINE] ${answerer}:${answererDevice} said again it holds nothing of community ` +
+        `${workspaceId.slice(0, 8)} - already recorded at epoch ${inFlight.epoch}, nothing moves`
+    );
+    return;
+  }
+  const memberDone = inFlight.unanswered !== null && inFlight.unanswered.size === 0;
+  const namedDone = inFlight.pending !== null && inFlight.pending.size === 0;
+  if (!memberDone && !namedDone) {
+    console.info(
+      `[GRAINE] ${answerer}:${answererDevice} holds nothing of community ${workspaceId.slice(0, 8)} - ` +
+        `recorded; ${inFlight.pending?.size ?? inFlight.unanswered?.size ?? 'every other'} device(s) ` +
+        `of ${answerer} still to answer`
+    );
+    return;
+  }
+  historyRequest.delete(workspaceId);
+  console.info(
+    `[GRAINE] ${answerer}:${answererDevice} holds nothing of community ${workspaceId.slice(0, 8)} at ` +
+      `distribution epoch ${inFlight.epoch} - recorded, ` +
+      (memberDone
+        ? `every device of ${answerer} on the key group has answered`
+        : `${inFlight.unanswered?.size ?? 'an unknown number of'} device(s) of ${answerer} on the key group are offline and still unasked`) +
+      ' - asking the next member'
+  );
+  // THE NEXT MEMBER, NOW: the election skips every member whose devices online all answered at this
+  // tree, so this walks the roster one member at a time and ends - each pass records at least one
+  // more device, or finds nobody left to ask and records the ask final (every device on the tree
+  // answered), waits for an offline device, or parks on offline members. Bounded by the tree, not
+  // by a clock.
+  historyAsked.delete(workspaceId);
+  void requestCommunityHistory(workspaceId).catch((e: unknown) => {
+    console.warn(
+      `[GRAINE] the history of community ${workspaceId.slice(0, 8)} could not be asked of the next member: ${String(e)}`
+    );
+  });
 }
 
 /**
@@ -1097,6 +1431,19 @@ export function forgetWorkspaceRepairState(
 ): void {
   historyAsked.delete(workspaceId);
   historyUnanswerableAt.delete(workspaceId);
+  historyRequest.delete(workspaceId);
+  if (isGraineReady()) {
+    forgetHistoryHeldNothing(
+      requireGraineRuntime('cannot forget a history answer').userId,
+      workspaceId
+    );
+  } else {
+    // Left in place: it names this community's key group and epoch, which a re-join replaces, so it
+    // answers nothing then - but a leave with no runtime is worth naming.
+    console.debug(
+      `[GRAINE] the "I hold nothing" record of community ${workspaceId.slice(0, 8)} is kept: no runtime to name its account`
+    );
+  }
   historyParked.get(workspaceId)?.();
   historyParked.delete(workspaceId);
   // A parked channel waiter of this community may still fire; it re-asks only what is still in
@@ -1198,6 +1545,7 @@ export function resetGraineRepairState(): void {
   outstanding.clear();
   historyAsked.clear();
   historyUnanswerableAt.clear();
+  historyRequest.clear();
   for (const { cancel } of parked.values()) cancel();
   parked.clear();
   for (const cancel of historyParked.values()) cancel();

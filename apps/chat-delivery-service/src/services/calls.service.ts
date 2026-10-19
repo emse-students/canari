@@ -5,10 +5,12 @@ import {
   ServiceUnavailableException,
   Inject,
   BadRequestException,
+  GoneException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { In, Repository } from 'typeorm';
-import { GroupMember } from '../entities/group-member.entity';
+import { callsAllowedFor, GroupMember } from '../entities/group-member.entity';
+import { cutUserId } from '../utils/log-repeat';
 import { PushToken } from '../entities/push-token.entity';
 import * as jwt from 'jsonwebtoken';
 import * as crypto from 'crypto';
@@ -17,6 +19,7 @@ import { getApps } from 'firebase-admin/app';
 import { getMessaging } from 'firebase-admin/messaging';
 import { ApnsVoipService } from './apns-voip.service';
 import { resolveUserDisplayName } from '../utils/display-name';
+import { isBlockedBetween } from '../utils/user-blocks';
 
 /** ICE server entry returned to WebRTC clients. */
 export interface IceServerConfig {
@@ -36,7 +39,32 @@ export interface InitiateCallResponse {
   roomId: string;
   /** Short-lived JWT (5 min) proving this user is allowed to join `roomId`. */
   roomToken: string;
+  /**
+   * How long the callee may still answer, in milliseconds. The caller stops ringing after it and
+   * relays it in the MLS invite, so both ends ring for the window THIS server enforces.
+   */
+  ringTimeoutMs: number;
 }
+
+/**
+ * What `initiate` records about a room, read back by `room-token`. It is the only link between a
+ * room id and the conversation it was opened in: without it, any member of ANY group could obtain
+ * a valid token for a room id they had learnt, signed for their own group.
+ */
+interface CallRoomBinding {
+  groupId: string;
+  /** The user who opened the room: the only one who may open its ring window. */
+  callerId: string;
+}
+
+/*
+ * The ring window lives in its OWN key, `call:room:<id>:answer_by`: epoch ms on THIS server's clock
+ * after which no callee is issued a token. Absent until the caller's `POST /calls/ring`, so the
+ * window starts when the ringing does, not when the caller began preparing (ICE servers, a first
+ * microphone prompt, key derivation, the signalling join all come in between). A key of its own is
+ * what makes "opens once" ATOMIC: one `SET NX`, no read-then-write a concurrent ring could race,
+ * and the binding is never rewritten, so its TTL is never restarted.
+ */
 
 /** Stored in Redis while a user device is actively in a call. */
 export interface UserCallPresence {
@@ -60,8 +88,28 @@ const TURN_USAGE_TTL_SEC = 45 * 24 * 60 * 60;
 /** Hard cap on counted call duration so a stale presence record can't inflate the estimate. */
 const MAX_COUNTED_CALL_SEC = 4 * 60 * 60;
 
+/**
+ * THE ring window: how long a callee may answer. The single source - the caller's timer, the
+ * callee's timer (via the MLS invite) and the `room-token` refusal all read this one value.
+ */
+export const CALL_RING_TIMEOUT_SEC = 60;
+
+/**
+ * How long a room's binding to its group lives: the ring window plus the longest call this
+ * service counts. Past it the room id names nothing and `room-token` answers 410.
+ */
+const CALL_ROOM_BINDING_TTL_SEC = CALL_RING_TIMEOUT_SEC + MAX_COUNTED_CALL_SEC;
+
 function userCallPresenceKey(userId: string): string {
   return `call:user_active:${userId}`;
+}
+
+function callRoomKey(roomId: string): string {
+  return `call:room:${roomId}`;
+}
+
+function callAnswerByKey(roomId: string): string {
+  return `call:room:${roomId}:answer_by`;
 }
 
 /** Monthly bucket (e.g. `turn:usage:2026-06`) accumulating estimated relayed megabytes. */
@@ -73,6 +121,15 @@ function monthlyTurnUsageKey(now: Date = new Date()): string {
  * Mints short-lived TURN credentials via Cloudflare Calls.
  * Returns HTTP 503 when Cloudflare credentials are not configured.
  */
+/** What `prepareRing` hands the background fan-out. */
+interface RingPlan {
+  callerId: string;
+  groupId: string;
+  callId: string;
+  hasVideo: boolean;
+  calleeIds: string[];
+}
+
 @Injectable()
 export class CallsService {
   private readonly logger = new Logger(CallsService.name);
@@ -107,6 +164,9 @@ export class CallsService {
       throw new ForbiddenException('Not a member of this group');
     }
 
+    const others = await this.otherMemberIds(groupId, userId);
+    await this.refuseIfBlocked(userId, others, `initiate group=${groupId}`);
+
     const roomSecret = process.env.CALL_ROOM_SECRET?.trim();
     if (!roomSecret) {
       this.logger.error('[calls] CALL_ROOM_SECRET is not set - cannot issue room tokens');
@@ -119,15 +179,29 @@ export class CallsService {
       algorithm: 'HS256',
     });
 
+    // Written BEFORE the room id leaves this server, so no callee can ever ask about a room this
+    // binding does not yet name.
+    // The window is NOT opened here: see `callAnswerByKey` and `ringGroup`.
+    await this.redis.set(
+      callRoomKey(roomId),
+      JSON.stringify({ groupId, callerId: userId } satisfies CallRoomBinding),
+      'EX',
+      CALL_ROOM_BINDING_TTL_SEC
+    );
+
     // At `log` rather than `debug`: this is the invite half of the call record, and a record
     // that survives only while debug logging is on is a record that is not there when needed.
     this.logger.log(`[call] invite room=${roomId} user=${userId} group=${groupId}`);
-    return { roomId, roomToken };
+    return { roomId, roomToken, ringTimeoutMs: CALL_RING_TIMEOUT_SEC * 1000 };
   }
 
   /**
    * Issues a room access token for an existing room ID (used by call recipients).
-   * Verifies group membership before signing the token.
+   *
+   * Three refusals, each an answer: not a member (403); a room `initiate` never bound to THIS
+   * group (403 - knowing a room id must not buy a token signed for another conversation); and a
+   * room whose ring window closed or whose binding expired (410 - the caller has stopped
+   * ringing, so there is nobody to answer).
    */
   async requestRoomToken(
     userId: string,
@@ -150,6 +224,37 @@ export class CallsService {
       throw new ServiceUnavailableException('Call room tokens are not configured on this server');
     }
 
+    const binding = await this.readRoomBinding(roomId);
+    if (!binding) {
+      this.logger.warn(`[call] join-token REFUSED room=${roomId} user=${userId}: no such room`);
+      throw new GoneException('This call is over');
+    }
+    if (binding.groupId !== groupId) {
+      this.logger.warn(
+        `[call] join-token REFUSED room=${roomId} user=${userId}: asked for group=${groupId}, the room is bound to another`
+      );
+      throw new ForbiddenException('This call does not belong to this conversation');
+    }
+    // A block set WHILE the call rang: `initiate` refused every block that already stood, so this
+    // is the only one left, and it is answered before a token lets the two be connected.
+    await this.refuseIfBlocked(userId, [binding.callerId], `join-token room=${roomId}`);
+    const answerByRaw = await this.redis.get(callAnswerByKey(roomId));
+    const answerBy = answerByRaw === null ? null : Number(answerByRaw);
+    if (answerBy === null || !Number.isFinite(answerBy)) {
+      // The caller never reached `ring` (the client rings BEFORE its invite leaves, so no callee
+      // can normally see this), or the value is not a number - a defect of this service.
+      this.logger.warn(
+        `[call] join-token REFUSED room=${roomId} user=${userId}: the ring window never opened (${answerByRaw ?? 'absent'})`
+      );
+      throw new GoneException('This call is over');
+    }
+    if (Date.now() > answerBy) {
+      this.logger.log(
+        `[call] join-token REFUSED room=${roomId} user=${userId}: the ring window closed`
+      );
+      throw new GoneException('This call is over');
+    }
+
     const roomToken = jwt.sign({ room_id: roomId, sub: userId, group_id: groupId }, roomSecret, {
       expiresIn: '5m',
       algorithm: 'HS256',
@@ -159,6 +264,77 @@ export class CallsService {
     // with the SFU's own record it separates "never answered" from "answered and never arrived".
     this.logger.log(`[call] join-token room=${roomId} user=${userId} group=${groupId}`);
     return { roomToken };
+  }
+
+  /**
+   * Opens the room's ring window - ONCE, from the room's caller. `SET NX` is the whole of "once":
+   * two concurrent rings cannot both write, and a retry cannot extend the window. The window key
+   * expires with the binding (its remaining PTTL), never later. Throws the same answers as
+   * `room-token` for a room that is not this caller's to ring.
+   */
+  private async openRingWindow(callerId: string, groupId: string, roomId: string): Promise<void> {
+    const binding = await this.readRoomBinding(roomId);
+    if (!binding) {
+      this.logger.warn(`[ring] REFUSED call=${roomId} caller=${callerId}: no such room`);
+      throw new GoneException('This call is over');
+    }
+    if (binding.groupId !== groupId || binding.callerId !== callerId) {
+      this.logger.warn(
+        `[ring] REFUSED call=${roomId} caller=${callerId} group=${groupId}: not this caller's room`
+      );
+      throw new ForbiddenException('This call does not belong to this caller');
+    }
+    const remainingMs = await this.redis.pttl(callRoomKey(roomId));
+    if (remainingMs <= 0) {
+      // Expired between the read and now (or has no TTL, which `initiate` never writes).
+      this.logger.warn(
+        `[ring] REFUSED call=${roomId} caller=${callerId}: the room expired (pttl=${remainingMs})`
+      );
+      throw new GoneException('This call is over');
+    }
+    const opened = await this.redis.set(
+      callAnswerByKey(roomId),
+      String(Date.now() + CALL_RING_TIMEOUT_SEC * 1000),
+      'PX',
+      remainingMs,
+      'NX'
+    );
+    if (opened !== 'OK') {
+      this.logger.warn(`[ring] call=${roomId} rung again - the first window stands`);
+    }
+  }
+
+  /**
+   * The binding `initiate` wrote for `roomId`, or `null` when there is none (expired or never) or
+   * it is not a binding this version can trust. Validated, never cast: a value is evidence only of
+   * the shape it was written in.
+   */
+  private async readRoomBinding(roomId: string): Promise<CallRoomBinding | null> {
+    const raw = await this.redis.get(callRoomKey(roomId));
+    if (!raw) return null;
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      // Only `initiate` writes this key, so an unparseable value is a defect here, named as one.
+      this.logger.error(`[call] room binding for ${roomId} is unreadable: ${String(e)}`);
+      return null;
+    }
+    const value = parsed as Partial<CallRoomBinding> | null;
+    if (typeof value?.groupId === 'string' && typeof value.callerId === 'string') {
+      return { groupId: value.groupId, callerId: value.callerId };
+    }
+    if (typeof value?.groupId === 'string') {
+      // The lot 1 shape (#1997, no `callerId`): a room opened by the build before this one. Nobody
+      // may ring it, so it is refused like an expired room. The gap is ONE deploy wide and dev
+      // only (calls are off in production), and closes on its own when those bindings expire.
+      this.logger.warn(
+        `[call] room binding for ${roomId} predates the ring window (no callerId) - refused`
+      );
+      return null;
+    }
+    this.logger.error(`[call] room binding for ${roomId} has no usable shape - refused`);
+    return null;
   }
 
   /**
@@ -380,23 +556,58 @@ export class CallsService {
     groupId: string,
     callId: string,
     hasVideo: boolean
-  ): Promise<{ rang: number }> {
+  ): Promise<void> {
+    const plan = await this.prepareRing(callerId, groupId, callId, hasVideo);
+    if (!plan) return;
+    // The caller is answered BEFORE the fan-out, and with a body that says nothing about it: how
+    // long the pushes take, and how many went out, would otherwise tell the caller whether a callee
+    // refused calls (the refused path skips every push). A failure is logged, never thrown at a
+    // caller who has already been answered.
+    void this.fanOutRing(plan).catch((e: unknown) =>
+      this.logger.error(`[ring] call=${callId} group=${groupId} fan-out failed`, e as Error)
+    );
+  }
+
+  /**
+   * The part of a ring the caller must wait for: it may refuse (not a member, a block), and it
+   * opens the answer window. Resolves null when there is nobody to ring.
+   */
+  private async prepareRing(
+    callerId: string,
+    groupId: string,
+    callId: string,
+    hasVideo: boolean
+  ): Promise<RingPlan | null> {
     this.logger.debug(`[ring] ringGroup caller=${callerId} group=${groupId} call=${callId}`);
     await this.assertMembership(callerId, groupId, 'ring');
+    const calleeIds = await this.otherMemberIds(groupId, callerId);
+    // Re-checked here and not only at `initiate`: between the two the caller's client waits on the
+    // first microphone prompt with no limit, so a block set meanwhile must still stop the ring. A
+    // refused ring already ends the call on the client. Before the window opens, so a refused call
+    // leaves no answer window behind.
+    await this.refuseIfBlocked(callerId, calleeIds, `ring call=${callId}`);
+    // BEFORE the fan-out: the window must not depend on how long FCM and APNs take to answer.
+    await this.openRingWindow(callerId, groupId, callId);
 
-    const members = await this.groupMemberRepo.find({
-      where: { groupId },
-      select: { userId: true },
-    });
-    const calleeIds = [...new Set(members.map((m) => m.userId))].filter((id) => id !== callerId);
     if (calleeIds.length === 0) {
       this.logger.warn(`[ring] call=${callId} group=${groupId} has no other member to ring`);
+      return null;
+    }
+    return { callerId, groupId, callId, hasVideo, calleeIds };
+  }
+
+  /** The push fan-out of a ring; resolves with how many devices were handed the ring. */
+  private async fanOutRing(plan: RingPlan): Promise<{ rang: number }> {
+    const { callerId, groupId, callId, hasVideo, calleeIds } = plan;
+    const ringable = await this.membersWhoTakeCalls(groupId, callId, calleeIds);
+    if (ringable.length === 0) {
+      this.logger.log(`[ring] call=${callId} group=${groupId} rang=0 - nobody may be rung`);
       return { rang: 0 };
     }
 
     const callerName = await resolveUserDisplayName(this.groupMemberRepo.manager, callerId);
     const groupName = await this.resolveGroupName(groupId);
-    const tokens = await this.pushTokenRepo.find({ where: { userId: In(calleeIds) } });
+    const tokens = await this.pushTokenRepo.find({ where: { userId: In(ringable) } });
     // Checked once per fan-out rather than once per device: without Firebase every FCM ring is
     // skipped, and `rang=0/N` on its own reads as "nobody was reachable" when the truth is that
     // this server never asked anyone. iOS VoIP goes straight to APNs and is unaffected.
@@ -495,6 +706,67 @@ export class CallsService {
     if (getApps().length > 0) return true;
     this.logger.error(`[${scope}] Firebase Admin is not initialised - no device can be reached`);
     return false;
+  }
+
+  /** Every OTHER user holding a membership row in `groupId` (rows are per device, so deduped). */
+  private async otherMemberIds(groupId: string, userId: string): Promise<string[]> {
+    const members = await this.groupMemberRepo.find({
+      where: { groupId },
+      select: { userId: true },
+    });
+    return [...new Set(members.map((m) => m.userId))].filter((id) => id !== userId);
+  }
+
+  /**
+   * A CALL IS NEVER PLACED ACROSS A BLOCK, in either direction (WP-C7, the guideline 1.2 shot of the
+   * App Review video: calling somebody who blocked you must not ring). A block leaves an existing
+   * conversation readable (`docs/wiki/moderation-and-blocking.md`), but a ring is a new intrusion
+   * on a person who asked for none, so it is refused here - where every call starts - rather than
+   * filtered at the fan-out: refused at `initiate`, the caller never sends the MLS invite either,
+   * so no device rings, in-app or native. The answer is the same `USER_BLOCKED` code the other
+   * block refusals carry, and the same neutral sentence: never who blocked whom.
+   *
+   * Calls are 1:1 today, so ANY block between the two members refuses. A group call (WP-C11) must
+   * decide whether one block refuses the call or only drops that member.
+   */
+  private async refuseIfBlocked(userId: string, others: string[], scope: string): Promise<void> {
+    for (const other of others) {
+      if (await isBlockedBetween(this.groupMemberRepo.manager, userId, other)) {
+        this.logger.log(`[call] ${scope} REFUSED user=${userId}: a block stands between the two`);
+        throw new ForbiddenException({
+          code: 'USER_BLOCKED',
+          message: 'This call cannot be placed.',
+        });
+      }
+    }
+  }
+
+  /**
+   * The callees this conversation may RING: each member's call permission (`callsAllowed`, resolved
+   * against `notifLevel` by {@link callsAllowedFor}). A member who refused calls here is not pushed
+   * at all - no CallStyle, no CallKit, whatever build the phone runs - and the caller is not told
+   * why (the call simply goes unanswered, like any other). Read with the ring, never cached, so a
+   * choice made a second ago already holds. A read that fails throws: the ring request fails and
+   * the caller's call ends as `call_setup_failed`, rather than ringing somebody who may have said no.
+   */
+  private async membersWhoTakeCalls(
+    groupId: string,
+    callId: string,
+    calleeIds: string[]
+  ): Promise<string[]> {
+    const rows = await this.groupMemberRepo.find({
+      where: { groupId, userId: In(calleeIds) },
+      select: { userId: true, notifLevel: true, callsAllowed: true },
+    });
+    const withheld = new Set(
+      rows.filter((r) => !callsAllowedFor(r.notifLevel, r.callsAllowed)).map((r) => r.userId)
+    );
+    if (withheld.size > 0) {
+      this.logger.log(
+        `[ring] call=${callId} group=${groupId} withheld from ${withheld.size} member(s) - calls not allowed in this conversation: ${[...withheld].map(cutUserId).join(',')}`
+      );
+    }
+    return calleeIds.filter((id) => !withheld.has(id));
   }
 
   /** Membership guard shared by the ring endpoints. */

@@ -52,12 +52,13 @@
     <!-- WP-XP-4: push-token re-registration + outbox drain at boot -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <!-- WP-XP-5 declared USE_FULL_SCREEN_INTENT here for the locked-screen CallStyle ring. It is
-         GONE while calls are held off (frontend/src/lib/features.ts, CALLS_ENABLED): Play grants
+         GONE while calls are held off (frontend/src/lib/features.ts, CALLS_COMPILED): Play grants
          that permission only to apps whose core function is calling or alarms, and declaring it for
          a surface no user can reach is the Play analogue of the `voip` background mode App Review
          refused on 2026-08-31. The tag is deleted rather than commented out on purpose - a commented
          tag still satisfies a `toContain` guardrail, which is how a removal turns into a false
-         green. Restore it in the same commit that flips CALLS_ENABLED. -->
+         green. Restore it in the same commit that flips CALLS_COMPILED
+         (callsCompiled.test.ts asserts the two agree). -->
     <!-- AndroidTV support -->
     <uses-feature android:name="android.software.leanback" android:required="false" />
 
@@ -111,15 +112,6 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="fr.emse.canari" />
                 <data android:host="signed-out" />
-            </intent-filter>
-            <intent-filter >
-                <action android:name="android.intent.action.VIEW" />
-                <!-- ChromeOS ARC++ uses a different action for deep links -->
-                <action android:name="org.chromium.arc.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="fr.emse.canari" />
-                <data android:host="stripe" />
             </intent-filter>
             <intent-filter >
                 <action android:name="android.intent.action.VIEW" />
@@ -237,6 +229,7 @@
                 <data android:path="/notifications" />
                 <data android:path="/calendar" />
                 <data android:path="/shop" />
+                <data android:path="/bookings" />
                 <data android:path="/" />
                 
                 <data android:pathPrefix="/posts/" />
@@ -250,6 +243,7 @@
                 <data android:pathPrefix="/notifications/" />
                 <data android:pathPrefix="/calendar/" />
                 <data android:pathPrefix="/shop/" />
+                <data android:pathPrefix="/bookings/" />
                 
             </intent-filter>
             <!-- DEEP LINK PLUGIN. AUTO-GENERATED. DO NOT REMOVE. -->

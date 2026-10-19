@@ -4,6 +4,7 @@ const api = vi.hoisted(() => ({
   fetchNotificationPreferences: vi.fn(),
   saveDisabledCategories: vi.fn(),
   saveGroupNotificationLevel: vi.fn(),
+  saveGroupCallsAllowed: vi.fn(),
 }));
 vi.mock('$lib/notifications/preferencesApi', () => api);
 
@@ -14,6 +15,7 @@ beforeEach(() => {
   notificationPreferences.reset();
   api.saveDisabledCategories.mockResolvedValue(undefined);
   api.saveGroupNotificationLevel.mockResolvedValue(undefined);
+  api.saveGroupCallsAllowed.mockResolvedValue(undefined);
 });
 
 describe('notificationPreferences', () => {
@@ -26,6 +28,7 @@ describe('notificationPreferences', () => {
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: ['posts', 'forms'],
       groupLevels: {},
+      groupCalls: {},
     });
     expect(await notificationPreferences.load()).toBe(true);
     expect(notificationPreferences.isEnabled('posts')).toBe(false);
@@ -36,6 +39,7 @@ describe('notificationPreferences', () => {
     api.fetchNotificationPreferences.mockResolvedValueOnce({
       disabled: ['posts'],
       groupLevels: {},
+      groupCalls: {},
     });
     await notificationPreferences.load();
     api.fetchNotificationPreferences.mockRejectedValueOnce(new Error('503'));
@@ -82,6 +86,7 @@ describe('notificationPreferences', () => {
       api.fetchNotificationPreferences.mockResolvedValue({
         disabled: [],
         groupLevels: { [g]: 'mentions' },
+        groupCalls: {},
       });
       await notificationPreferences.load();
       expect(notificationPreferences.loaded).toBe(true);
@@ -105,6 +110,50 @@ describe('notificationPreferences', () => {
       await notificationPreferences.setGroupLevel(g, 'none');
       notificationPreferences.reset();
       expect(notificationPreferences.groupLevel(g)).toBe('all');
+    });
+  });
+
+  describe('a private conversation call permission', () => {
+    const g = '0b9f3d7e-1111-4222-8333-444455556666';
+
+    it('rings by default, and follows the level while the account never chose', async () => {
+      expect(notificationPreferences.callsAllowed(g)).toBe(true);
+      await notificationPreferences.setGroupLevel(g, 'mentions');
+      expect(notificationPreferences.callsAllowed(g)).toBe(true);
+      await notificationPreferences.setGroupLevel(g, 'none');
+      expect(notificationPreferences.callsAllowed(g)).toBe(false);
+    });
+
+    it('an explicit choice from the server wins over the level', async () => {
+      api.fetchNotificationPreferences.mockResolvedValue({
+        disabled: [],
+        groupLevels: { [g]: 'none' },
+        groupCalls: { [g]: true },
+      });
+      await notificationPreferences.load();
+      expect(notificationPreferences.callsAllowed(g)).toBe(true);
+    });
+
+    it('moves at once and writes the choice for that conversation', async () => {
+      expect(await notificationPreferences.setGroupCallsAllowed(g, false)).toBe(true);
+      expect(notificationPreferences.callsAllowed(g)).toBe(false);
+      expect(api.saveGroupCallsAllowed).toHaveBeenCalledWith(g, false);
+    });
+
+    it('returns to "never chose" when the server refuses the first choice', async () => {
+      await notificationPreferences.setGroupLevel(g, 'none');
+      api.saveGroupCallsAllowed.mockRejectedValueOnce(new Error('403'));
+      expect(await notificationPreferences.setGroupCallsAllowed(g, true)).toBe(false);
+      expect(notificationPreferences.callsAllowed(g)).toBe(false);
+      // Still following the level: back to `all`, it rings again.
+      await notificationPreferences.setGroupLevel(g, 'all');
+      expect(notificationPreferences.callsAllowed(g)).toBe(true);
+    });
+
+    it('forgets the choices on reset', async () => {
+      await notificationPreferences.setGroupCallsAllowed(g, false);
+      notificationPreferences.reset();
+      expect(notificationPreferences.callsAllowed(g)).toBe(true);
     });
   });
 });

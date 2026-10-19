@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { uploadFailureText } from '$lib/utils/mediaRequestLimits';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import {
     Settings,
@@ -586,7 +587,7 @@
       onUpdateWorkspaceImage?.(targetId, mediaId);
     } catch (e) {
       Log.d('communityAdmin.handleImageFileChange failed', e);
-      imageUploadError = m.chat_community_upload_error();
+      imageUploadError = uploadFailureText(e, m.chat_community_upload_error());
     } finally {
       imageUploading = false;
       input.value = '';

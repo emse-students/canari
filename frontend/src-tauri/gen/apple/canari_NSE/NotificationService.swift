@@ -39,13 +39,13 @@ class NotificationService: UNNotificationServiceExtension {
   private static let maxPreviewLength = 200
 
   /// FCM message cache file: the app pre-injects these entries at boot via
-  /// `read_and_clear_fcm_cache`, so a message decrypted while the app was killed shows up
+  /// `take_fcm_cache`, so a message decrypted while the app was killed shows up
   /// without waiting for the full MLS sync. Android twin:
   /// `CanariFirebaseMessagingService.writeFcmCache`.
   ///
   /// Written into the **App Group container**, not the extension's own Application Support:
   /// an app extension has its own data container, so the `app_data_dir` path the Android
-  /// service and `read_and_clear_fcm_cache` share resolves, inside this process, to a
+  /// service and `take_fcm_cache` share resolves, inside this process, to a
   /// directory the app can never read. The App Group is the only storage the two processes
   /// have in common - it is already where `mls.bin` is read from. `CanariDrainAppGroupFcmCache`
   /// moves the entries into the app's own file on the next activation.
@@ -59,6 +59,12 @@ class NotificationService: UNNotificationServiceExtension {
   /// the appex is a separate bundle.
   private static let kInitialsSize: CGFloat = 192
   private static let kInitialsLetterRatio: CGFloat = 0.4
+
+  /// The palette-A "mention" trill (docs/wiki/frontend/sounds.md), bundled in this target and the
+  /// app. The "message" and "reaction" trills are named by the server in the APNs `sound`; a mention
+  /// is the one the server cannot see. Twin of `kCanariSoundMention` in `canari_push.mm`;
+  /// `iosNotificationSounds.test.ts` holds the names together.
+  private static let mentionSoundFile = "canari_gazouillis_mention.wav"
 
   /// Serializes NSE writes to `fcm_message_cache.ndjson`. The NSE runs in a separate
   /// process from the app, so it does not need to share the app's lock, but its own
@@ -451,12 +457,11 @@ class NotificationService: UNNotificationServiceExtension {
   /// that could not be read, or an account id that could not be loaded, proves no mention - it stays
   /// passive, which is also exactly what iOS shows when this extension never runs at all.
   struct LevelDecision {
-    /// The message names this account: break through Focus.
+    /// The message names this account: break through Focus and ring with the mention trill - which
+    /// also raises a `mentions` frame the server sent soundless.
     let mentionsMe: Bool
     /// The conversation is at `mentions` and the message does not prove a mention: stay passive.
     let quiet: Bool
-    /// The conversation is at `mentions` and the message names this account: ring, as `all` does.
-    let raise: Bool
   }
 
   static func levelDecision(
@@ -465,17 +470,17 @@ class NotificationService: UNNotificationServiceExtension {
     let me = myUserId?.lowercased() ?? ""
     let mentionsMe = !me.isEmpty && (mentioned?.contains(me) ?? false)
     guard level == "mentions" else {
-      return LevelDecision(mentionsMe: mentionsMe, quiet: false, raise: false)
+      return LevelDecision(mentionsMe: mentionsMe, quiet: false)
     }
     if mentionsMe {
       NSLog("[CanariNSE] [NOTIF] group=\(groupId.prefix(8)) level=mentions and it names me - raised")
-      return LevelDecision(mentionsMe: true, quiet: false, raise: true)
+      return LevelDecision(mentionsMe: true, quiet: false)
     }
     let why = mentioned == nil || me.isEmpty
       ? "the message could not be read - a mention is not proven"
       : "the message does not mention this account"
     NSLog("[CanariNSE] [NOTIF] group=\(groupId.prefix(8)) level=mentions - kept passive: \(why)")
-    return LevelDecision(mentionsMe: false, quiet: true, raise: false)
+    return LevelDecision(mentionsMe: false, quiet: true)
   }
 
   /// Runs the decrypt ladder matching Android (WP-PUSH-2):
@@ -630,7 +635,7 @@ class NotificationService: UNNotificationServiceExtension {
           statePtr.bindMemory(to: UInt8.self).baseAddress, state.count,
           ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId,
           senderId,
-          cipherPtr.bindMemory(to: UInt8.self).baseAddress, cipher.count)
+          cipherPtr.bindMemory(to: UInt8.self).baseAddress, cipher.count, ctx.locale)
         else { return nil }
         defer { canari_free_string(raw) }
         return String(cString: raw)
@@ -681,7 +686,7 @@ class NotificationService: UNNotificationServiceExtension {
         guard let raw = canari_native_decrypt_message_with_commits(
           statePtr.bindMemory(to: UInt8.self).baseAddress, state.count,
           ctx.deviceKeyB64, ctx.userId, ctx.deviceId, groupId, senderId, commitsJson,
-          cipherPtr.bindMemory(to: UInt8.self).baseAddress, cipher.count)
+          cipherPtr.bindMemory(to: UInt8.self).baseAddress, cipher.count, ctx.locale)
         else { return nil }
         defer { canari_free_string(raw) }
         return String(cString: raw)
@@ -721,7 +726,7 @@ class NotificationService: UNNotificationServiceExtension {
 
   /// Writes a decrypted message entry to `fcm_message_cache.ndjson` in the host app's
   /// App Group container, bounded to `maxFcmCacheEntries`. The app drains it into its own
-  /// `app_data_dir` copy on the next activation, and `read_and_clear_fcm_cache` pre-injects
+  /// `app_data_dir` copy on the next activation, and `take_fcm_cache` pre-injects
   /// it at boot. Android twin: `CanariFirebaseMessagingService.writeFcmCache`.
   private func writeFcmCache(
     groupId: String, senderId: String, senderName: String, groupName: String, isGroup: Bool?,
@@ -838,14 +843,15 @@ class NotificationService: UNNotificationServiceExtension {
     // preview, and decided once in `levelDecision`.
     if level.mentionsMe {
       content.interruptionLevel = .timeSensitive
+      // The palette-A "mention" trill. Only the extension can choose it: the server cannot read
+      // whether a message names its reader, so it sent the "message" one (or none, see below).
+      content.sound = UNNotificationSound(named: UNNotificationSoundName(Self.mentionSoundFile))
     } else if level.quiet {
       content.interruptionLevel = .passive
       content.sound = nil
     }
-    // The server sent a `mentions` frame soundless; a proven mention rings like any message.
-    if level.raise {
-      content.sound = .default
-    }
+    // A `mentions` frame arrives soundless from the server; a proven mention rings with the trill
+    // set just above, which is also how it is raised (`levelDecision` logs that).
 
     // Attachment priority: a media thumbnail (WP-XP-3) outranks the sender avatar, since iOS shows
     // only the first image attachment as the banner preview. Fall back to the avatar for text/non-image.
@@ -934,6 +940,8 @@ class NotificationService: UNNotificationServiceExtension {
     }
 
     var body: String?
+    // Read once: the app language Rust words its own sentences in, and the id a mention may name.
+    let ctx = loadPushContext()
     let openable = !ciphertext.isEmpty && !nonce.isEmpty && messageIndex != nil
     // THE MIRROR FIRST, THEN THE FRAME THE MESSAGE CARRIES (channel-encryption section 19). The
     // extension has no second chance at a banner - nothing redraws it once `finish()` runs - and a
@@ -955,7 +963,8 @@ class NotificationService: UNNotificationServiceExtension {
     if openable, let index = messageIndex, seedB64 != nil, let dir = Self.appGroupDir() {
       let signature = Self.string(userInfo["signature"]) ?? ""
       if let raw = canari_native_open_graine_push(
-        dir.path, channelId, sessionId, index, senderId, nonce, ciphertext, signature)
+        dir.path, channelId, sessionId, index, senderId, nonce, ciphertext, signature,
+        ctx?.locale ?? "")
       {
         let json = String(cString: raw)
         canari_free_string(raw)
@@ -970,7 +979,6 @@ class NotificationService: UNNotificationServiceExtension {
       NSLog("[CanariNSE] handleChannelMessage: no seed/ciphertext - generic channel=\(channelId)")
     }
 
-    let ctx = loadPushContext()
     // COUNTED, NOT ONLY LOGGED - the Android twin is `reportBlindBanner`. Never `held` here: nothing
     // redraws a banner once `finish()` runs, so a seed absent now is a blind banner for good.
     if seedB64 == nil, let ctx = ctx {

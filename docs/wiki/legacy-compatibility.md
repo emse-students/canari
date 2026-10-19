@@ -71,13 +71,7 @@ REST: those rows need a count, then a migration.
 
 | Shim (entry below) | Condition | Met at floor 1.2.7? | Data at rest | Removal size | Disposition |
 | --- | --- | --- | --- | --- | --- |
-| Whole-list role PUT + `RETIRED_PERMISSIONS` | client floor past the PATCH (2026-08-20) and the key removal (2026-08-19) | YES (`v0.14.1`) | none (migration 044 already stripped the keys) | ~-200 lines, server + one uncalled client method | removed with the floor (server only) |
-| `stripe` checkout return host | floor >= first release with `payment` | YES (`v1.2.4`) | none | ~-40 lines, server + client + `tauri.conf.json` + manifest | removed with the floor |
-| `paymentMethod: 'stripe'` INPUT | floor >= Stripe removal | YES (`v1.2.0`) | - | 1 line | removed with the floor |
 | `paymentMethod: 'stripe'` STORED | rows written before 2026-10-08 | no - data | `purchase_records` and `submissions` | type + 3 client arms, after a migration | owed: count + migration (user) |
-| Carte bare publish body | floor >= fingerprint | YES (`v0.18.28`) | old posters keep a null fingerprint (meaning UNKNOWN, kept) | ~-20 lines, server | removed with the floor (server only); a missing or malformed fingerprint is refused too |
-| Prekeys as bare base64 strings | floor >= `0.18.10` | YES (`v0.18.10`) | undated rows stay covered by their `NULL` arms | ~-10 lines, server | removed with the floor |
-| `/key-package` 404 with no `reason` | every estate past the 2026-09-16 server (not a client floor) | YES (since `v0.18.10` deployed) | none | ~-30 lines, client | removed: a 404 with no reason is `unanswered`, a reason this build does not know is the typed refusal `unrecognized` |
 | Salon push held for a sender with no `seedFrame` | floor >= first release sending `seedFrame` | version YES (`v0.18.28`); proof NO | none | server refusal + Kotlin hold registry, native | NOT removed: nothing has measured that EVERY admitted send carries the frame (the server never stores it), so a required field could refuse an honest send. Owed: a log of frame-less non-silent sends, read for a week, then a native PR |
 | Server `legacyTitle`/`legacyBody` on social/form pushes | clients reading `contentKey` (2026-08-19) | version YES (`v0.14.1`) | none | ~-50 lines server + Kotlin + Swift arms | NOT removed: dropping them leaves an iOS alert EMPTY whenever the NSE does not run, a visible behaviour change, not a removal. Needs a decision and an iPhone reading |
 | Reaction push keeps wire type `social` + a generic `body` (`notify-reaction`; had no entry here) | clients knowing `reaction: 'true'` (2026-08-15) | version YES (`v0.14.0`) | none | server + Kotlin dispatch | NOT removed, same iOS-alert question as the row above |
@@ -90,7 +84,7 @@ REST: those rows need a count, then a migration.
 | `GET /history` bare array | replacement shipped, then floored | NO (never shipped) | none | - | unchanged |
 | `LEGACY_PERMISSION_MAPPING` (`channel-role.entity.ts`; no entry here) | no `channel_roles` row holds an old key | not a version question | `channel_roles.permissions` | 1 map + 1 hook | owed: count |
 | Form `dependsOn`/`dependsValue` (`forms/visibility.ts`; no entry here) | no stored form uses the pair | not a version question | `forms.items` | reader branch | owed: count |
-| State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | NOT done here: a writer flip, not a removal - its own MLS PR with an adversarial review ([backlog](backlog.md)) |
+| State blob v1 header WRITER (`frame_v1`, CORRUPT-1/2) | floor >= the reader (`v0.18.18`) | YES | it CHANGES device data at rest | 1 line + `serverProse.test.ts` | FLIPPED in its own MLS PR (PK1, 2026-10-17, unshipped until a tag carries it); the LEGACY reader stays for blobs not yet rewritten ([backlog](backlog.md)) |
 | `MLS_STATE_SEAL_V2_WRITER_ENABLED` | a stable with the reader served the web AND floor >= it | YES (`v1.2.7`) | it CHANGES device data at rest | 1 line, then the encrypt worker | NOT done here, same reason |
 | The `1.2.1` key-group epoch floor (backlog owed line) | floor >= `1.2.1` | YES | - | - | closes when the user sets 1.2.7 |
 | Group removal hold (#1878) | floor >= the release carrying it | NO (`1.2.9`) | - | - | waits |
@@ -138,27 +132,35 @@ earlier reaches the floor clients as a wrong sentence and a dead link, which no 
 4. Native tables (`composeServerNotification`, NSE, `canari_push.mm`) get its `contentKey`.
 **Removal condition:** none; this is a floor requirement, not a shim.
 
-### No date yet - the `fr.emse.canari://stripe/...` checkout return host, from a build older than 2026-10-09
+### No date yet - the profile batch answered without `deleted`, by a server older than 2026-10-18
 
-**Site:** `isAllowedCheckoutCallbackUrl` in `apps/social-service/src/common/checkout-callback-url.ts` and
-`LEGACY_CHECKOUT_RETURN_HOST` in `frontend/src/lib/utils/checkoutCallbacks.ts`, read by `hooks.client.ts`.
-**Shim:** the checkout return now uses the host `payment` (declared in `tauri.conf.json` and the
-Android manifest, pinned by `deepLinkHostsDeclared.test.ts`). A build older than that registered and
-sends `stripe`, so the server still ACCEPTS it and the client still ROUTES it. Nothing emits it any more.
-**Removal condition:** `minClientVersion` at or above the first release carrying the `payment` host,
-both stores serving it; then the server check, the client constant and the `stripe` entry of
-`tauri.conf.json` and the manifest go together ([stripe-archive](stripe-archive.md)).
+**Site:** `flushProfileBatch` in `frontend/src/lib/stores/user.ts` (`legacyAnswer`).
+**Shim (2026-10-18):** `GET /api/users/batch` answers `{ users, deleted }` since #2022, and a client
+reading that shape meets an OLDER server whenever the two are not in step - a rolling deploy, a
+rollback, a store build live before production deploys. That server sends no `deleted` and answers
+an unknown id by its absence, so an answer with the field MISSING is read the old way: absence is
+`UserProfileFetchError(404)`, cached, rendered as the unknown-user label, one `console.debug` per
+chunk. Without it every absent id counted as a contract breach (`console.error`, 502, never cached)
+and `displayName.ts` warned, backed off 120 s and asked again.
+**Removal condition:** every estate's core-service sends `deleted` (dev and production both deployed
+past #2022, and no rollback below it planned); then the `legacyAnswer` branch goes and a missing
+field becomes the breach. A server version, not a client floor.
 
-### No date yet - a `paymentMethod` of `stripe`, from a client older than the Stripe removal
+### No date yet - a stored `paymentMethod` of `stripe`, written before the Stripe removal
 
-**Site:** `@IsIn(['online', 'stripe', 'cash'])` in `apps/social-service/src/forms/dto/form.dto.ts`, and
-`PurchasePaymentMethod` in `users/entities/purchase-record.entity.ts`.
-**Shim:** the form submission still ACCEPTS `stripe` and means `online`; purchase rows written
-before 2026-10-08 hold `stripe` and are read as `online`. Nothing writes `stripe` any more
-([stripe-archive](stripe-archive.md)).
-**Removal condition:** the input goes when `minClientVersion` is at or above the first release
-carrying the removal, both stores serving it. The stored value is data at rest and goes only with a
-data migration of `purchase_records`.
+**Site:** `PurchasePaymentMethod` in `apps/social-service/src/users/entities/purchase-record.entity.ts`,
+`Submission.paymentMethod` in `apps/social-service/src/forms/entities/submission.entity.ts`, and the
+`'stripe'` arms of the client's `paymentMethod` types and labels (`EditAchatsTab`,
+`EditDelegationTab`, `account/purchases`).
+**Shim:** purchase rows AND form submissions written before 2026-10-08 hold `stripe`, read as
+`online`. Nothing writes `stripe` any more, and since floor 1.2.7 nothing may SEND it either: the
+form input and the `fr.emse.canari://stripe` return host are gone ([stripe-archive](stripe-archive.md)).
+**One known cost of the host's removal:** a checkout STARTED on a build from 1.2.0 to 1.2.3 (Lydia
+already, `stripe` host still) and finished after the phone updated returns to a host the new build
+no longer registers - the payment itself is recorded server-side, only the in-app landing is lost.
+The server's refusal of a `stripe` callback URL is logged (`[CHECKOUT] callback URL REFUSED`).
+**Removal condition:** data at rest, so a data migration of `purchase_records` AND `submissions`
+(`stripe` -> `online`), counted first, and no version: then the type and the client arms go.
 
 ### No date yet - MiConnect's `formation` and `promo` claims, derived from the profile
 
@@ -197,23 +199,6 @@ The v1 WRITER is already gone (G2-5): `sealWithGraine` lives only in the test fi
   count above 0 after the date: then name the salon, as the section below says.
   On the same day, `channel_messages."signature"` becomes `NOT NULL` (a migration), and the DTO's
   `signature?` and the `?? null` in `ChannelService.sendMessage` go with it.
-
-### No date yet - a carte publish body that is the bare document, with no fingerprint
-
-**Site:** `PosterService.readPublishBody` in `apps/social-service/src/associations/poster.service.ts`,
-the branch taken when the body has no `carte` key.
-**Shim:** since 2026-09-28 the carte editor posts `{ carte, fingerprint }`, and the fingerprint is
-what lets it later say the LIVE map is older than what has been saved
-([carte-vie-asso](carte-vie-asso.md#the-editor-can-say-the-live-map-is-older-than-what-is-saved)).
-The app EMBEDS its frontend, so an admin running an older build still posts the bare document;
-refusing it would break publishing for them, for no gain. Such a publish records no fingerprint, and
-the editor then reads the live map's freshness as UNKNOWN - which it shows as nothing at all, never
-as "up to date".
-**Removal condition:** `minClientVersion` at or above the first release carrying the fingerprint,
-i.e. both stores serving it. Then the wrapper becomes required and a bare body is a 400, because at
-that point a body with no fingerprint is a bug rather than an old build.
-**Cost of keeping it:** one `in` check and a debug line. The hazard is silence: a publish from an
-old build leaves a live map nothing can date, and the badge simply never appears for it.
 
 ### No date yet - the salon push HELD for its seed, for a sender that attaches no seed frame
 
@@ -277,55 +262,6 @@ this entry deliberately has no date: a date would be a guess about a platform no
 **Cost of keeping it:** one header read and one cookie read per refresh. The hazard is not cost, it
 is that a client sending neither looks identical to one sending a stale cookie, which is why the
 refusal already logs the cookie names it received.
-
-### 2027-02-20 - the whole-list role-permission PUT
-
-**Site:** `PUT /api/channels/roles/:roleId/permissions` and `ChannelService.setRoleBasePermissions`
-in [`channel.service.ts`](../../apps/social-service/src/channels/channel.service.ts).
-**Shim:** the endpoint replaces a role's permissions wholesale. Since 2026-08-20 every client sends
-`PATCH` with a single `{ key, granted }` instead, because a grid cell IS a delta and sending it as a
-whole list is what made two administrators' compatible edits erase one another (COMM-20, measured on
-production the same day: the loser's grid went on showing a permission the server had dropped AND
-one it had never stored).
-**Why a shim at all:** the fleet is mixed by construction - an APK serves the bundle inside itself
-and no deploy reaches it - so every Android client built before 2026-08-20 still PUTs the whole list
-on any toggle. Removing the route would turn every role edit on those clients into a 404. They keep
-the old behaviour, lost update included, which is what they had.
-**On removal:** delete the `@Put` route, `setRoleBasePermissions`, its `RETIRED_PERMISSIONS` branch
-(whose own entry expires first, above) and the tests that name it. **The date is read, not argued**,
-and nothing currently reads it: the PUT logs `[ROLE] permissions updated` exactly as the PATCH logs
-`[ROLE] granted|revoked`, so **the two are distinguishable in the service log** and a campaign that
-never sees the first line has a fleet that has turned over.
-**Cost of keeping it:** two write paths for one column. They share `assertCanManageRoles` and
-`announceRolePermissions`, so the permission rule and the announcement cannot drift - what differs is
-only how the new list is arrived at, which is the whole point.
-
-### 2026-11-19 - the two permissions the grid drew and nothing enforced
-
-**Site:** `RETIRED_PERMISSIONS` in
-[`permissions.ts`](../../apps/social-service/src/channels/permissions.ts), and the branch that reads
-it in `ChannelService.setRoleBasePermissions`.
-**Shim:** `channel.access` and `channel.send` were deleted on 2026-08-19. They were in the registry
-from the start, drawn as two of the eight rows in the community permission grid, and read by NOTHING
-- neither decided any outcome, because a public salon is visible to every member and a private one
-to the people in it, and writing is decided per salon by `writePolicy`. Migration 044 stripped them
-from `channel_roles.permissions`, and the write path validates against the registry, so they cannot
-come back.
-**Why a shim at all:** the write path validates the WHOLE list and throws `BadRequestException` on
-any unknown key. A client built before the removal still renders eight rows and PUTs all eight on
-any toggle, so without this branch every role edit on such a client would 400 over two keys the
-server itself had put in its grid. They are therefore DROPPED and the rest applied, which is exactly
-what the admin asked for - and anything else unknown still fails the write, because a key the server
-cannot name is a client asking for a capability that does not exist.
-**On removal:** delete `RETIRED_PERMISSIONS`, the branch, its two tests in
-[`role-permissions.spec.ts`](../../apps/social-service/src/channels/role-permissions.spec.ts), and
-this entry. The date is read, not argued: `[ROLE] RETIRED_PERMISSION_SENT` fires at warn on every
-old-client edit, so if the log is silent across a campaign the fleet has turned over. **If it has
-fired, find which client and why before removing the branch** - the guard in the same spec asserts
-no retired name is ever reused as a live one, which is the only way this drop could silently delete
-a real grant.
-**Cost of keeping it:** one array and one filter, and a validation that is not uniform - which is
-the real cost, because "unknown keys are refused" now has an exception a reader must look up.
 
 ### 2026-11-19 - the pre-MLS send path, and the `content` column it is the only writer of
 
@@ -472,52 +408,6 @@ replay, and delete this entry.
 before the change still duplicates once per replay and once per bundle. **Nothing repairs the rows
 already on disk**; see [backlog](backlog.md).
 
-
-### No date yet - a `/key-package` 404 with no `reason` in its body
-
-**Site:** `mlsDeliveryApi.ts`, `fetchDeviceKeyPackage` - the `'unspecified'` arm of the reason parse,
-and the `refusalIsTemporary` call sites that read it.
-**Shim:** since 2026-09-16 the delivery service puts `reason: 'revoked' | 'unregistered' | 'expired'`
-in the body of the 404, because the three are three different facts and the caller acts differently
-on each. A server that predates the field sends none, and `'unspecified'` is what the client calls
-that: it takes the branch the code took before the reason existed - retire the pending membership,
-promise nothing about a return - which is the only reading that cannot be wrong.
-**Replacement:** the field itself. Nothing else is needed.
-**What settles the date, and why there is none yet:** this is a shim against an old SERVER, not an
-old client, so `minClientVersion` says nothing about it. It is dead the moment every estate runs a
-build at or above the one carrying the field, and the two estates are deployed from this repository -
-so the honest condition is "after the next production deploy", not a date. Written here rather than
-left implicit because a `'unspecified'` that quietly becomes unreachable is exactly the branch a
-later reader spends an afternoon on.
-**On removal:** narrow `DeviceKeyPackageRefusal` to the server's three, delete the `'unspecified'`
-arm and its test, and delete this entry.
-**Cost of keeping it:** none beyond one branch. It never fires against a current server, and against
-an old one it preserves behaviour rather than inventing any.
-
----
-
-### 2026-12-16 - one-time prekeys published as a bare base64 string
-
-**Site:** `devices.controller.ts`, the `parsed` map in `registerDevicePrekeys` - the
-`typeof entry === 'object' ? entry : { keyPackage: entry }` line and nothing else.
-**Shim:** a client below 0.18.10 sends `keyPackages: ["base64", ...]`; one at or above it sends
-`[{ keyPackage, notAfter }, ...]`. The old spelling stores a NULL `notAfter`, which every read in
-this service treats as "not known to be expired" rather than "assume the worst" - so an old client's
-pool keeps working exactly as it did, and no device is locked out by a fact nobody has.
-**Replacement:** the expiry lives inside the serialized MLS KeyPackage and only the client's WASM
-crate can parse one. Until 2026-09-16 both tables held an opaque string, the server served elapsed
-packages, and the joiner refused them with `LifetimeError(Expired)` for ever - see
-[mls](protocols/mls-graine-state-machine.md) and migration `024_key_package_not_after.sql`.
-**What settles the date, and it is a measurement rather than a guess:** every batch logs
-`[REGISTER_PREKEYS] ... undated=N`, and N is the count of rows that arrived with no date. The shim
-goes when that count is zero over a week, which the retention of a stale install makes 2026-12-16 at
-the latest; `minClientVersion` reaching 0.18.10 retires it outright and sooner.
-**On removal:** type `keyPackages` as `{ keyPackage: string; notAfter?: string }[]`, delete the
-object/string branch, and delete this entry. The `notAfter IS NULL` arms in the resolver, the count
-and the reclaim STAY - they cover the rows migration 024 could not date, which outlive the shim.
-**Cost of keeping it:** a device on an old client publishes a pool the reclaim can never sweep and
-the resolver can never skip, so it keeps exactly the defect this change closes until it updates.
-That is the same trade the NULL makes everywhere here, and it is why the count above is logged.
 
 ---
 

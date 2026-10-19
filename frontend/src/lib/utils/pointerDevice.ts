@@ -28,14 +28,45 @@ export function isCoarsePointerDevice(): boolean {
   return window.matchMedia(COARSE_POINTER_QUERY).matches;
 }
 
+/** Everyone listening through {@link onCoarsePointerChange}; one entry per subscription. */
+const coarseSubscribers = new Set<{ listener: (coarse: boolean) => void }>();
+
+/** The ONE `change` listener all subscribers share, attached while there is at least one. */
+let coarseWatch: { query: MediaQueryList; handler: (event: MediaQueryListEvent) => void } | null =
+  null;
+
 /**
  * Calls `listener` whenever the primary pointer changes kind - a tablet gaining a mouse, a desktop
  * browser toggling device emulation. Returns a teardown; a no-op one where nothing can be observed.
+ *
+ * ONE `MediaQueryList` LISTENER FOR EVERY SUBSCRIBER. Every message bubble subscribes, and the
+ * thread's render window only grows (`renderWindow.ts`), so a listener per subscription put one on
+ * the query per bubble ever mounted - for an answer that is the same for all of them. The first
+ * subscriber attaches it, the last one to leave detaches it.
  */
 export function onCoarsePointerChange(listener: (coarse: boolean) => void): () => void {
   if (!canQuery()) return () => {};
-  const query = window.matchMedia(COARSE_POINTER_QUERY);
-  const handler = (event: MediaQueryListEvent) => listener(event.matches);
-  query.addEventListener('change', handler);
-  return () => query.removeEventListener('change', handler);
+  const subscription = { listener };
+  coarseSubscribers.add(subscription);
+  if (!coarseWatch) {
+    const query = window.matchMedia(COARSE_POINTER_QUERY);
+    const handler = (event: MediaQueryListEvent) => {
+      for (const { listener: notify } of coarseSubscribers) {
+        // Isolated per subscriber: one throwing component must not leave the others on the old answer.
+        try {
+          notify(event.matches);
+        } catch (err) {
+          console.error('[POINTER] A coarse-pointer subscriber threw on a pointer change:', err);
+        }
+      }
+    };
+    query.addEventListener('change', handler);
+    coarseWatch = { query, handler };
+  }
+  return () => {
+    if (!coarseSubscribers.delete(subscription) || coarseSubscribers.size > 0 || !coarseWatch)
+      return;
+    coarseWatch.query.removeEventListener('change', coarseWatch.handler);
+    coarseWatch = null;
+  };
 }

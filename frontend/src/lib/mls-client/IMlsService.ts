@@ -170,9 +170,10 @@ export type MlsBatchProcessResult =
 export interface MlsInitOptions {
   /**
    * When true, a saved state that fails to decrypt with the given PIN is NOT discarded
-   * via the destructive fresh-start fallback; instead {@link MLS_LOCAL_STATE_UNDECRYPTABLE}
+   * via the destructive fresh-start fallback; instead {@link SavedStateUnopenedError}
    * is thrown so the caller can offer cross-device PIN recovery (decrypt with the old PIN)
-   * before any local history is dropped.
+   * before any local history is dropped. A state no PIN can open (`mismatch`, `altered`) is
+   * rotated regardless: pausing for it would strand the user with nothing to try.
    */
   noFreshStart?: boolean;
   /**
@@ -254,11 +255,47 @@ export class LocalStateNotReadyError extends Error {
 }
 
 /**
- * Thrown by {@link IMlsService.init} when `noFreshStart` is set and the saved local state
- * cannot be decrypted with the supplied PIN - the signal that the account PIN was likely
- * rotated on another device and recovery should be offered.
+ * Thrown by {@link IMlsService.init} when `noFreshStart` is set and the saved local state did not
+ * open under the key in hand for a reason an OLD PIN may still cure. Nothing was written.
+ *
+ * **IT CARRIES ITS CAUSE AS A TYPE, AND THAT IS WHY IT REPLACED A MESSAGE.** It used to be
+ * `new Error('MLS_LOCAL_STATE_UNDECRYPTABLE')`, read back by comparing `reason.message`, and the one
+ * marker collapsed every cause into the same screen. Since step 2 framed every save (2026-10-17),
+ * `rotated` is a FACT - the header names another key, so the old PIN opens it - while `undecryptable`
+ * (a legacy blob, whose bytes say nothing) and `unknown` stay observations, and the login says which.
+ * `mismatch` and `altered` never reach it: no PIN opens either, so `init` rotates the device identity
+ * instead ({@link StateLoadFailure}).
  */
-export const MLS_LOCAL_STATE_UNDECRYPTABLE = 'MLS_LOCAL_STATE_UNDECRYPTABLE';
+export class SavedStateUnopenedError extends Error {
+  readonly reason: Extract<StateLoadFailure, 'rotated' | 'undecryptable' | 'unknown'>;
+
+  constructor(
+    reason: Extract<StateLoadFailure, 'rotated' | 'undecryptable' | 'unknown'>,
+    cause: unknown
+  ) {
+    super(`the saved MLS state did not open under this key (${reason}) - nothing written`, {
+      cause,
+    });
+    this.name = 'SavedStateUnopenedError';
+    this.reason = reason;
+  }
+}
+
+/**
+ * Thrown by {@link IMlsService.init} on a phone whose ONE `mls.bin` is recorded as another
+ * account's (`mls.owner`, written by `initialiser_mls` each time a state OPENS for an account), when
+ * this account's key did not open it. Nothing was rotated, written or offered for deletion: the
+ * gate says another account's messages are here and withholds the reset, which would erase them.
+ *
+ * Only a RECORD naming someone else proves it. No record (an install older than the record, or a
+ * first install) is absence of proof, and the load failure is reported as itself.
+ */
+export class SavedStateOfAnotherAccountError extends Error {
+  constructor(cause: unknown) {
+    super("the saved MLS state is recorded as another account's - nothing written", { cause });
+    this.name = 'SavedStateOfAnotherAccountError';
+  }
+}
 
 /**
  * True when an MLS init failed because biometric mode found no key in the platform keystore - a
@@ -274,15 +311,29 @@ export function isKeystoreKeyUnavailable(error: unknown): boolean {
 
 /**
  * Why a stored MLS state did not load, typed at the one place that reads `mls-core`'s codes:
- * `mismatch` (another device's identity), `rotated` / `undecryptable` (the key does not open it),
- * `keystore_unavailable` (biometric mode found no key) and `unknown` (an untyped failure).
+ * `mismatch` (another device's identity), `rotated` (a framed state whose header names another
+ * key: the old PIN opens it), `altered` (a framed state whose header names THE KEY IN HAND and whose
+ * tag fails: no PIN opens it), `undecryptable` (a legacy state that did not open - either of the two,
+ * and nothing says which), `keystore_unavailable` (biometric mode found no key) and `unknown` (an
+ * untyped failure).
  */
 export type StateLoadFailure =
   | 'mismatch'
   | 'undecryptable'
   | 'rotated'
+  | 'altered'
   | 'keystore_unavailable'
   | 'unknown';
+
+/**
+ * True when NO PIN can ever open the state that failed: it opened and names another device
+ * (`mismatch`), or its header names the key in hand and its tag fails (`altered`). Both platforms'
+ * `init` rotate the device identity for these even under `noFreshStart`, and ONLY for these - every
+ * other cause may be a PIN rotated elsewhere, whose history a rotation would destroy (DE7, CORRUPT-2).
+ */
+export function noPinOpensState(cause: StateLoadFailure): boolean {
+  return cause === 'mismatch' || cause === 'altered';
+}
 
 /** The answer of {@link IMlsService.openLocalStateWithKey}: opened, or refused with its cause. */
 export type LocalStateOpenResult = { opened: true } | { opened: false; cause: StateLoadFailure };
@@ -1000,6 +1051,10 @@ export interface IMlsService {
    * conversations this device already knew about; one created while the device was away appears
    * later, from discovery, when that one-shot trigger is long past. A frame that arrived in between
    * is left in the server queue with nothing scheduled to collect it.
+   *
+   * Every path that creates a row calls it: discovery, the redelivered Welcome of a group held with
+   * no row, the push-cache merge on resume - and the gap healer, which leaves a live frame
+   * `behind-refused-backlog` and asks for the backlog it waits behind.
    */
   notifyConversationAvailable(groupId: string): void;
 

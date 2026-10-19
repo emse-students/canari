@@ -452,11 +452,13 @@ left its old copy on offer to every other account for ever.
   (`auth_vault_unverified`: the saved unlock could not be verified for this account) and the gate is
   the ordinary one.
 
-**What this does NOT fix, and is open** ([backlog](../../backlog.md)): on a phone `mls.bin` is still
-one file per install. The reset is withheld only when the refusal PROVED the file foreign. Once every
-vault is labelled, B has no slot, takes the PIN path, cannot open A's `mls.bin`
-(`local_state_unopenable`) - and that gate still offers the reset, which deletes A's state on B's
-explicit request. Withholding it there needs an owner recorded beside `mls.bin`.
+**The PIN path is covered by an owner record (PK1, 2026-10-17, unshipped)**: on a phone `mls.bin` is
+still one file per install, so once every vault is labelled B takes the PIN path and cannot open A's
+file. `initialiser_mls` now records `mls.owner` beside `mls.bin` whenever a state opens, and a failed
+load whose record names another account is `device_holds_other_account` on the keypad path too
+(`applyPinFailure` -> `noteOtherAccountState`): the reset is withheld. An install whose state
+predates the record is covered only after its owner signs in once on the new build
+([mls-protocol](../../protocols/mls-protocol.md#the-state-blobs-framing---read-first-write-later)).
 
 Tests: `utils/deviceKeyVault.test.ts` (slots, binding, the unlabelled offer),
 `services/TauriMlsService.vaultOwner.test.ts` and `services/WebMlsService.vaultOwner.test.ts` (a
@@ -784,9 +786,18 @@ holds the lock and, if one does, says so on screen (stage `waiting_tabs`,
 `auth_changepin_progress_waiting_tabs`: close that tab or bring it to the front).
 
 Without `navigator.locks` (WebKitGTK; the unit tests) the realm is alone, the reading `tabLeader.ts`
-makes of the same absence. Left open: a change made FROM a follower tab re-seals its own older
-capture, which the version guard refuses - so it now ends in a recovery instead of a silent "Done",
-but it still costs that recovery ([backlog](../../backlog.md)).
+makes of the same absence.
+
+**A change is made from the LEADER tab only** (`thisTabMayChangeDeviceKey` in `pinChange.ts`,
+asked by `changePinImpl` before the server verifier is rotated). A follower re-seals its own live
+client, loaded from an older snapshot than the leader last wrote, so the version guard refuses that
+write and the change ended in a recovery prompt every time. Re-sealing the STORED state instead was
+weighed and rejected: the change makes the leader go stale and reload, the reload frees the leader
+lock, the follower is PROMOTED, and the promotion handler (`useChatSession.svelte.ts`) reloads it in
+the middle of its own change - holding that promotion would be a new cross-tab mechanism. So a
+follower (or a tab whose leadership is still undecided) refuses on the settings screen with
+`auth_pin_change_follower_tab` - change it from the active tab, or take over here first - and
+nothing is asked of the server. Pinned by `pinChange.followerTab.test.ts` (two realms).
 
 **Resumable, because it cannot be atomic.** SQLite through the Tauri plugin has no multi-statement
 transaction (`sqliteBatch.ts`), so a history of thousands of rows cannot be swapped in one step, and
@@ -1341,14 +1352,8 @@ disposed only when no session has registered since; and installing hooks for a N
 the old ones instead of being skipped by a stale "installed" flag. The login's wait above already
 orders this; the guards make it hold without relying on that order.
 
-**OPEN, P2 (pre-existing): a sign-out during a login in progress is not cancelled.** A login can run
-~12 s inside the native decrypt of `mls.bin` (Mi 9T). A sign-out in that window finds no live
-session (`isLoggedIn` is still false), so `endSessionImpl` stops nothing, and the login then
-completes and sets `isLoggedIn` true for a signed-out user (what follows was not measured). The
-clean fix is a sign-out GENERATION that `loginImpl`
-captures at its start and re-reads before `setIsLoggedIn(true)`, tearing down what it set up if a
-sign-out happened; it touches every registration the login makes, so it is its own change
-([backlog](../../backlog.md)).
+**A sign-out during a login in progress stops that login** - see
+[the section below](#a-sign-out-during-a-login-in-progress-completed-the-login---fixed-2026-10-18).
 
 **What a sign-out still keeps, deliberately**: `mls.bin`, the message database and the device-key
 vault ("deconnecter seulement, garder l'etat", see `handlePinSignOut`). So a device signed out with
@@ -1356,6 +1361,167 @@ vault ("deconnecter seulement, garder l'etat", see `handlePinSignOut`). So a dev
 account never sees that slot - [the vault names its account](#the-vault-names-its-account---fixed-2026-10-14)) - the
 vault was never cleared by any live path, `v1.2.6` included. Whether a sign-out should end "Rester
 connecte" is a decision for the user, not a defect of this fix.
+
+### An account deletion wipes THAT account's local database and vault slot (WP-DEL-LOCAL, 2026-10-18)
+
+A sign-out keeps the local state on purpose; a deletion is the one exit after which nobody can open it again. Decided by the user 2026-10-18: never `wipeDeviceToFactory`, which takes other accounts' state too.
+
+- **WHOSE DATA GOES IS THE TOKEN'S ANSWER, NEVER THE PAGE'S.** `deleteMyAccount()` returns the `sub` of the bearer the server ACCEPTED for the `DELETE` (`apiFetch`'s `onAuthorization`, the retry's token after a 401). `decideDeletedAccountWipe(sub, currentUserId())` (`utils/accountLocalWipe.ts`) ALWAYS names the token's subject: `wipe` when it is also the account on screen; `wipe-other-account` (logged at ERROR) when it is not. The case that exists for: this tab shows A, a second tab signed in as B rotated the cookie, the server deletes B - wiping "the account on screen" would destroy A, who still exists, while B is CERTAINLY gone and nothing else would ever name its data again, so B's goes and A's is never touched (and this realm's handles, which are A's, are not closed for it). `no-subject` and `unwipeable-id` wipe nothing, at ERROR.
+- **A DURABLE MARKER, `canari_deleted_account_wipe_pending:v1`** (a list of ids), is written after the 204 and before the first local deletion, cleared only when every step succeeded, and resumed at the next start (`startDeletedAccountGuards` in `+layout.svelte`). It does not close this realm's handles, which would cut another account's live session.
+- **THE RESUME IS SERIALISED AGAINST SIGN-IN, not by running first.** It is not awaited at `onMount`, so a leftover marker for X could otherwise meet X (the same MiConnect subject, a new account) signing back in - and delete `CanariDB_X`, the device id and the vault slot under the NEW live session. So `resumePendingDeletedAccountWipes(accountLiveness)` first waits for any sign-in in flight (`accountLiveness.whenSignInSettled`: a refresh, or an OIDC callback, both counted in `stores/auth.ts`), then asks again BEFORE EVERY DESTRUCTIVE STEP: X signed in AGAIN - **a token that landed in this process names it** - stops the wipe and drops the marker at ERROR - its data is the live account's now; a NEW sign-in in flight stops it and KEEPS the marker for the next start, since whose it is cannot be known yet. What a check cannot close: a sign-in starting during one step's own await (an IndexedDB delete) - a session opening `CanariDB_X` then queues behind the delete and opens an empty database, losing only the deleted account's rows.
+- **"SIGNED IN AGAIN" IS PROVEN BY A TOKEN, NEVER BY THE SAVED USER** (P2-1 of the third review of #2023). The first `accountLiveness.isLive` also answered yes when `canari_saved_user` named X. A kill between the marker and `clearAuth()` leaves it naming X, so the next start - always an offline cold start - dropped the marker and kept the data for ever. Access tokens live in memory only, every resume runs in a process started after the 204, and the server refuses a refresh for a deleted account, so a token naming X can only come from X signing in again.
+- **A TOKEN IS ENOUGH ONLY BECAUSE THE TOKENLESS ENTRIES ARE CLOSED** (fourth review of #2023). A marker can outlive the deletion (a refused case collision keeps it for ever, a delete another tab blocked, a native failure), and narrowing `isLive` to a token removed the protection from two cases: **(A)** the subject comes back as a NEW X after the erasure, then a second tab resumes before its own refresh, or a native cold start opens X offline - no token, `isLive` false, and the resume deletes the new account's `CanariDB_X`, device id, keystore entry and vault slot under a live session; **(B)** the offline unlock of the deleted X races the resume and its session re-creates `CanariDB_X` and per-account keys after the steps ran. Two rules close them, both in `utils/deletedAccountMarker.ts` (the marker's own module, so the auth store and the login read it without loading the store stack): **a successful OIDC callback for X drops X's marker** (`forgetDeletedAccountOnSignIn`, first thing after the response) - `users.id` IS the subject and the server refuses it with `ACCOUNT_ERASURE_PENDING` until the erasure completed, so a callback that succeeds is a new account; and **every login refuses an account deleted here before it opens a store** (`isDeletedAccountHere` at the top of `loginImpl`'s `try`, before the landing preview's `getStorage`, the MLS state lookup and `getToken`), with `LoginFailure('account_deleted', m.auth_account_deleted_here())` shown at the PIN gate: "this account was deleted, sign in online". `isDeletedAccountHere` is the marker OR a LIVE wipe (the one right after the DELETE) started in this process, so an unlock that read its key before that wipe finished is still refused once the marker is gone. **A resumed wipe sets no in-process flag** (fifth review of #2023): resumed from a stale marker in two web tabs, tab A's flag would outlive a sign-in from tab B - whose `forgetDeletedAccountOnSignIn` clears only its own process - and refuse the new account in tab A. The cost, accepted: an offline unlock that read its key before a RESUME finished, and asks after it dropped the marker, is not refused. Two more tokenless readers are closed the same way: the PIN gate asks neither a salt nor a recovery for `account_deleted` (`applyPinFailure`), and the posts page's `ConversationsMiniPanel`, which opens the SAVED user's store with no login, opens nothing for an account `isDeletedAccountHere` names - after a kill before `clearAuth()` the saved user is still the deleted X. The resume also re-reads the marker before every step and stops (`no-longer-owed`) when another tab's callback dropped it. Entries covered: every session goes through `loginImpl` - the saved-user restore (vault on web and Tauri, keystore with or without a prompt), the PIN gate and the PIN recovery, and a follower tab, which reloads and logs in on its own; there is no cross-tab adoption of a session. The online paths need no rule: a refresh for the deleted X is refused (`SessionExpiredError`).
+- **Every other tab is told** (`BroadcastChannel` `canari-account-deleted`, `utils/deletedAccountGuards.ts`): a tab signed in as the deleted account runs **`clearAuthLocally()`** - its identity and token only, **no `POST /api/auth/logout`, no cookie flush, no native credential**: those are one per origin, the deleting tab already revoked its own session, and by the time the notice lands the cookie may belong to an account signed in since, which a second logout would end for nothing. It then waits for its MLS checkpoint, closes its stores and goes to `/login`. A tab signed in as anyone else ignores it. A delete still deferred by such a tab is a reported failure, finished by the resume.
+- `wipeDeletedAccountImpl` (sessionAuth.ts) first awaits `whenMlsRetired()`, so the sign-out's final checkpoint cannot recreate what is deleted. The wipe then closes this account's handles, deletes `CanariDB_<id>`, `CanariDBOutbox_<id>` and `CanariDBMls_<id>` by exact name, and on Tauri asks `delete_user_database` to remove `canari_<id>.db` plus `-wal`/`-shm` **under `app_config_dir()`, the directory `tauri-plugin-sql` 2.4 really opens it in** (`app_data_dir()` is the same directory on Windows and macOS and a different one on Linux, where the first version removed 0 files and said "removed"). When a store was open for the account in this run, finding no file is an ERROR, not success.
+- It also deletes that account's platform-keystore entry (`mls_device_key_<id>_<deviceId>`, biometric enrolment) - the entry only, the per-install "configured" flag stays for the other accounts - and its per-account `localStorage` keys, through ONE list: `ACCOUNT_KEY` in `utils/accountLocalKeys.ts`, which every writer, reader and sweeper of such a key builds it from - send-ratchet ledger, device id, key-change epoch, archived conversations, the history ledgers, the not-ready registry, the feed-store epoch, the device names, the last-active stamp (and its native `session-meta.json` mirror, cleared by its own step), the legacy `mls_autosave_<id>`, the salon read marks, the `canari_graine_history_held_nothing:v1:<id>` record of #2027, and **`canari.salon-unsent.<id>`, the PLAINTEXT of unsent salon messages**. The keystore alias has ONE TypeScript builder, `keystoreAlias()`, used by all six callers (the Rust side spells the same shape in `commands/mls.rs` and `commands/push.rs`). **`accountLocalKeys.guard.test.ts` reads the source and fails** on a listed key's literal spelled outside the list, on an alias built inline, on a storage call whose key is built inline, and on a key-shaped literal interpolating a user id - the review of #2023 found nine keys the first list missed, and nothing at run time can tell a forgotten key from a deliberate one. A keystore entry that survived keeps its device id, so the resume can still name it.
+- **THE PUSH SIDE'S PLAINTEXT GOES TOO, BY OWNER.** `delete_user_push_files` (`commands/push.rs`) removes `outbox_pending.ndjson` (unsent `AppMessage` protos in the clear), `fcm_message_cache.ndjson`, `read_watermarks.ndjson`, `outbox_sent.ndjson` and then `push_context.json` (`userId`, `deviceId`, the bearer `pushToken`) - **only when `push_context.json` names the deleted account**, the one fact that says whose the NDJSON files are. It touches nothing when the context names another account (signed in since), and nothing when it is absent, unparseable or names nobody, logged. The context goes LAST, so a failure keeps the proof for the resume. The read, the check and the removals hold `PUSH_CONTEXT_LOCK`, which every writer of `push_context.json` takes too (`store_push_context`, `store_device_identity`, `set_push_context_locale`): a new sign-in storing its context during the deletion used to be removed on a proof about the previous bytes; it now waits and survives (a sync Tauri command is not serialised by the runtime). `graine_seeds.json`, `mls.bin` and the push secret are not touched.
+- **ON iOS THE APP GROUP CONTAINER GOES ON THE SAME PROOF (2026-10-19).** Two writers put the deleted account's data there and neither ever deletes: `CanariMirrorPushStateToAppGroup` (`canari_push.mm`) copies `push_context.json` at `didBecomeActive` / `willResignActive` and SKIPS a missing source, and the Notification Service Extension writes its decrypted `fcm_message_cache.ndjson` there. So the bearer `pushToken`, `userId` and `deviceId` outlived a deletion at rest, readable by the extension. `delete_user_push_files` now removes every name of the account list (the four NDJSON files and `push_context.json`) from the container too, before the app's own context - a copy that will not go is a failure, so the proof stays for the resume. No container is logged at ERROR and returned, after the app's own files went: the mirror reaches the container through the same entitlement, so nothing was copied into one this call cannot reach. Deletion removes explicitly rather than the mirror deleting a destination whose source is gone, because the extension's cache has no source to mirror and the mirror next runs only when the app leaves the foreground. The mirror cannot copy the context back mid-deletion: the command is synchronous, and on iOS a synchronous command runs on the main thread the mirror runs on (read from wry 0.57 / tauri 2.12, not observed). **Owed on the iPhone 12** ([device-verification](../../device-verification.md)): this branch is `#[cfg(target_os = "ios")]` and nothing on a Windows host or a pull request's CI compiles it.
+- **THE LEGACY PLAINTEXT CONVERSATIONS (`canari_conv_<id>_<contact>`, `migration.ts`) ARE SWEPT ONLY WHERE PROVEN.** `_` is in the id allowlist, so the prefix `canari_conv_a_` also opens account `a_b`'s keys. `legacyConversationKeysIn` takes a key as `<id>`'s only when the rest after the prefix holds no `_`: any account whose id starts with `<id>_` writes a rest that always holds one. A rest with a `_` (a contact name carrying one, or another account's key) is kept, and the wipe logs how many at WARN. The guard's rule 4 also catches a concatenation (`'x_' + userId`, `PREFIX + userId`), the shape that hid this key.
+- **TWO IDS THAT DIFFER ONLY BY CASE SHARE STORAGE, SO THE WIPE REFUSES THEM.** Three keys lower-case the id (archived conversations, salon unsent, salon read marks) and `canari_<id>.db` lives on a case-INSENSITIVE filesystem on Windows and macOS: wiping `Abc` would take `abc`'s unsent texts and database. `caseCollidingAccountIdsIn` reads the id-naming keys back, and when another stored id case-folds to the deleted one the wipe is refused at ERROR, naming the twins, once per start, and stays owed - never a guess at whose rows are whose.
+- **A LOST 204 WIPES NOTHING, AND THAT IS ACCEPTED, NOT DETECTED.** When the server committed the deletion but the answer never arrived, `deleteMyAccount()` throws (a transport failure, or a deadline), the error is shown, no marker is written and the session continues until its next refresh answers 401 - the ordinary expired-session path. Detecting it would mean reading "this account was deleted" out of a 401 that also means "this session expired", a distinction the server does not carry; guessing it from the refusal is the learning-by-failing the rules forbid. The cost: that account's rows stay under its device key, unreadable without its PIN, until the next device reset - and a retry of the deletion (a 401 or 404 then) does not wipe either. Owed only if a server signal ever separates the two.
+- **THE ID GUARANTEE.** The user id is the MiConnect `sub`, a `varchar(255)` copied as it comes: a UUID, a hash, a username or an email. Both sides accept exactly `[A-Za-z0-9_.@-]{1,255}` (`isWipeableAccountId`, `is_wipeable_account_id`) and REFUSE anything else, loudly, rather than normalise it: the stores were created under the raw id, so a normalised one names another file, and an id holding `:` would let the prefix keys `history_*:<id>:` reach another account's.
+- LEFT ALONE, deliberately: every other account's database, slot and keys, the in-app log, the preferences, and `mls.bin` (one file per install that may hold another account's state: [backlog](../../backlog.md), the shared `mls.bin` P3).
+- Tests: `accountLocalWipe.test.ts` (the resume against a sign-in landing before and during it, the case collision, the whole key list), `accountLocalKeys.guard.test.ts`, `auth.deletedAccount.test.ts` (`clearAuthLocally` sends no logout; `accountLiveness`; scenario A - the callback drops the marker and a tokenless resume then wipes nothing; `isDeletedAccountHere` holds after the LIVE wipe finished, and a resumed wipe leaves no flag), `pinFirstSetupRefuted.test.ts` (`account_deleted` asks no salt and no recovery), `ConversationsMiniPanel.deleted.svelte.test.ts`, `offlineUnlock.test.ts` (scenario B - the refusal precedes every store opener and `getToken`), `deletedAccountGuards.test.ts`, `user.deleteMyAccount.test.ts`, `apiFetch.test.ts` (`onAuthorization`), three Rust tests in `commands/storage.rs`, eight in `commands/push.rs` (`delete_user_push_files_tests`, App Group container included, `push_context_lock_tests`). **What only a device proves:** the SQLite file and the keystore entry are really gone on Android and iOS (where `app_config_dir()` was never read on hardware), and a second WebView tab is not a thing a phone has.
+
+### One sign-out sent two logouts, and the vault logged the user back in during it - FIXED 2026-10-17
+
+**Found on the Mi 9T bench of `1.2.9-alpha.7`** ([device-verification](../../device-verification.md),
+evidence `canari-harness/a1-bench/r1017-a129a7/signout.json`). One tap on "Se deconnecter": `[A]
+clear`, `[LOGOUT] MLS client retired`, then **`[PIN] Device key restored from PinVault - auto-login`
+17 ms later**, its `refresh->` racing the logout, `refresh✗401`, `[AUTH] Session expired - logging out
+and redirecting to /login?returnTo=%2Fdashboard`, a second `clear` and a second `POST
+/api/auth/logout`. There was no page reload: the `Initialised in TAURI mode` line is the shell's
+user-id effect calling `initServices` before `startLoginFlow`.
+
+**The cause is an ORDER in `clearAuth`, not the vault.** The sign-out handler sets `isLoggedIn` false
+synchronously, but `clearUserLocally()` ran LAST, after the awaited logout. For the whole round trip
+the shell saw "a saved user, nobody logged in" - exactly what its unlock triggers (the user-id
+`$effect`, `afterNavigate`) start the unlock on - and the vault slot of that user unlocked without a
+person. Its refresh met the revocation, and `notifySessionExpired`, gated on a saved user, announced
+it.
+
+**The fix is the order, so nothing has to be latched or timed.** `clearAuth` drops the local identity
+right after the handler, BEFORE its first `await`. No unlock can start (every trigger needs a saved
+user), and a 401 met during the sign-out announces nothing (`notifySessionExpired` is silent with no
+saved user, as it is during a login).
+
+**One path could put the identity back, and the review found it.** `_doRefresh` restores the user
+from a token's `sub` when none is saved (the Android process-kill branch). Under the old order the
+final `clearUserLocally()` wiped whatever a racing refresh re-saved; with the identity cleared first,
+a refresh answered 200 during the sign-out - one in flight when it began, or one asked for after the
+token was dropped - re-saved the user and the token: the same vault unlock, 401 and second sign-out.
+The "superseded by a sign-in" guard could not see it (it needs a live `_accessToken`, which the
+sign-out had just dropped). **Closed by a sign-out GENERATION, not a clock**: `clearAuth` increments
+`_signOutGeneration` and is counted in `_signOutsUnderway` for its whole run. A refresh asked for
+meanwhile is not sent (`refresh✗not sent - a sign-out is in progress`); one already in flight
+compares the generation it captured before its send, at its answer, after its body and after its two
+writes, and DROPS the answer (`refresh✗answer dropped`) - no identity, no token, no stored rotation,
+no verdict announced.
+
+**The refusal holds until the LAST sign-out under way ends** (second review): sign-outs overlap - a
+double tap, a session expiry during the PIN gate's or the navbar's sign-out - and a single flag that
+the FIRST finisher lowered let a refresh go out while the other was still revoking. That refresh
+captured the current generation, so nothing dropped its answer. Hence a count, not a flag.
+
+**Both refusals throw `SignOutInProgressError`, NOT `SessionExpiredError`** (classified at the throw):
+that type means "the server proved the session dead", and its consumers answer with a logout and a
+redirect - a second sign-out. Every consumer that branches on `SessionExpiredError` was enumerated,
+and the ones that would act on it stop quietly instead: `loginImpl` (its `getToken` catch and its
+outer catch, which would otherwise also have forgotten this account's vault slot),
+`attemptReconnectImpl` and `openGatewayConnection` (no `goto('/login')`, no backoff retry),
+`promoteOfflineSession` (not "network unreachable"), and `toUiActionError` (no error toast).
+`apiFetch` and `fetchUpload` already rethrow a refresh failure as it came.
+Tests: `stores/auth.test.ts`, "the local identity at sign-out" (each fails without the fix it names:
+the order, the generation, the count), and one per consumer, each failing without its branch:
+`offlineUnlock.test.ts` (both `loginImpl` catches), `signOutInProgressReconnect.test.ts`,
+`startGatewayHandshake.test.ts`, `promoteOfflineSession.test.ts`,
+`useChannelWorkspaces.svelte.test.ts`. `stopPushService` reads `currentUserId()` synchronously and
+relies on running from the handler, before the identity goes; a comment there says so.
+
+**The contract, unchanged:** a deliberate sign-out keeps the vault slot (see above), and it never
+unlocks it again by itself. Only a NEW sign-in of the same account reopens it without the PIN.
+**What only a device reading proves**: that one tap sends ONE `POST /api/auth/logout`, logs no
+`[PIN] Device key restored` and no `[AUTH] Session expired` after `[A] signout requested by the
+user`, and lands on `/login` (not `?returnTo=`), on the Mi 9T on the vault path. The ordering is
+proven here; the Svelte effect scheduling on the real WebView is not.
+
+### A sign-out during a login in progress completed the login - FIXED 2026-10-18
+
+**The defect.** A login can run ~12 s inside the native decrypt of `mls.bin` (Mi 9T). A sign-out in
+that window found no live session (`isLoggedIn` still false), so `endSessionImpl` stopped nothing,
+and the login then completed: `isLoggedIn` true for a signed-out user, its gateway socket open (the
+handshake starts beside the state load). A sign-out AFTER `setIsLoggedIn(true)` did end the session,
+but the login kept running past it - its next awaits opened the gateway, installed the history-probe
+sender and started the watchdogs for the account that had left.
+
+**The fix is the sign-out GENERATION, not a flag or a clock.** `stores/auth.ts` exports
+`signOutGeneration()` (the `_signOutGeneration` every `clearAuth` increments first). `loginImpl`
+captures it before its first await and re-reads it right after EVERY await of its main sequence
+(`stopIfSignedOut(stage)`): a sign-out can only run while the login is suspended, so nothing after a
+re-read can act for a signed-out account. The one that closes the defect sits after the final
+`getToken` and before `setIsLoggedIn(true)`, with no await between them. A re-read inside a block
+whose `catch` swallows errors is placed after that block.
+
+**The stop is a TYPE, `LoginStoppedBySignOutError(stage)`** (`loginErrors.ts`), and the outer catch
+treats three shapes as that one outcome: the refresh refused during a sign-out
+(`SignOutInProgressError`), the login's own re-read, and a `SessionExpiredError` met after a sign-out
+began - that sign-out's own revocation, which `onSessionExpired` would have turned into a second
+sign-out. **Any error thrown once a sign-out began is that sign-out's** (review of #2067): an await
+that REJECTS after it never reaches a re-read - the PIN check meeting the revoked session (401), a
+restore reading the store the teardown closed (`TypeError`) - and took the failure path (a PIN
+error over the sign-out, `clearDeviceKey`). The catch reads the generation, by type and code, never
+by message; the one exception is this login's own revocation wipe (`device_revoked`), which signs
+out on purpose. The `getToken` catch hands any failure after a sign-out over the same way. No error
+is shown, no callback runs, the vault slot is kept, and the line names the stage
+(`[INIT] Login stopped - the account signed out during it (after mls-init-and-storage).`). A
+revocation answer read after a sign-out wipes nothing: the next login asks the server again - and
+no wipe may START after a sign-out, because it waits for the MLS retirement that sign-out chained on
+this very login (a re-read sits right before both wipe calls). The session's identity and the
+tab-leader callback are set only after the first re-read.
+
+**Two logins can overlap** - the PIN gate clears `isLoginInProgress` to start a sign-in beside a
+login still decrypting (`handlePinSubmit`) - **so a stopped login releases only what it owns.** A
+sign-out during a login RETIRES the login's client on that login's end (`endSessionImpl`, not-live
+branch: `retireMls(loginInFlightSettled)`): the holder lets go at once, the next sign-in waits on
+`whenMlsRetired` and builds its own client, and the stopped login's client is destroyed once that
+login has paused its socket. The login flag is cleared only by the login that set it last
+(`loginFlowOwner`), so the stopped login's exit never releases the newer one's flow. The cost,
+accepted: a sign-in started during a stopped login's decrypt waits for that decrypt to end.
+
+**That wait is bounded by the SIGN-OUT, not by a clock** (second review of #2067). Its network
+awaits - the refresh, the PIN salt, pin-check, the revocation question - have no deadline of their
+own, so a hung one held the next sign-in, the forgot-PIN reset, `recoverPinImpl` and the deletion
+wipe behind it. The sign-out now ABORTS the login in flight (`loginInFlightAbort`, aborted in
+`endSessionImpl`): the salt and pin-check requests carry its signal, and every network await goes
+through `untilSignedOut(work, stage)`, which rejects at once with `LoginStoppedBySignOutError` -
+the stop path, never a transport failure or a logout. The local MLS decrypt is NOT cancelled: the
+next login opens the same state. A key proven after the sign-out is not installed either. An
+aborted request is not a transport failure: `fetchOrUnreachable` passes an abort its caller asked
+for through as it came, with no `could not be reached` line. **The login's OWN revocation wipe is
+exempt** (third review): its `clearAuth` reaches `endSessionImpl` like any sign-out, and aborting
+the login doing the wipe turned a revoked device on the PIN path into a silent stopped login with a
+false `wipe FAILED` line. `startOwnWipe` withdraws the login from `loginInFlightAbort` first, so its
+outcome stays `device_revoked`.
+
+**A revocation wipe that fails after its own `clearAuth`** (a blocked factory reset) is a sign-out
+of the login's own making with a code other than `device_revoked`, so it lands on the stop path - and
+is accused first, at ERROR (`[SECURITY] The revoked-device wipe FAILED - local data may remain`).
+
+**What a stopped login releases: its socket, then its MLS client** - the same two steps as
+`endSessionImpl`, through the same primitives (`pauseSocket`, the holder). The client is held by
+NAME: `ctx.resetMls(client)` destroys it only while the holder still holds it, because after a
+sign-out of a live session the holder has already retired it, and the next sign-in may have built
+its own since (`MlsHolder.reset(only)`). A handshake still in flight is released when it settles.
+Nothing else needs undoing: before `setIsLoggedIn(true)` the login registers nothing global, and
+after it the sign-out's own `endSessionImpl` has torn the session down.
+
+Tests: `signOutDuringLogin.test.ts` runs the real `loginImpl`, `clearAuth` and `endSessionImpl` with
+the init and the gateway held by deferred promises - a sign-out during the decrypt, and one after
+the session went live, a restore rejecting after the sign-out, a PIN check answered 401 after it,
+a sign-in started beside a stopped login, a hung pin-check the sign-out cancels, and a failed
+revocation wipe (each fails without its fix); `offlineUnlock.test.ts`
+and `landingPreviewOrder.test.ts` pin the catches;
+`mlsHolder.test.ts` the named reset.
 
 **What a sign-out does NOT keep: the saved community list (2026-10-14).** The rail and salon rows
 the last listing drew are saved per account (`canari_workspace_snapshot:v1:<userId>`,

@@ -5,7 +5,11 @@ import { Repository } from 'typeorm';
 import { FormFile } from './entities/form-file.entity';
 import { FormFilesService, FORM_FILE_UPLOAD_WINDOW_DAYS } from './form-files.service';
 import type { FileBlobOutcome } from './form-files.service';
-import { purgeExpiredFiles, type FileRetentionCandidate } from './file-retention-purge';
+import {
+  runFileRetentionPass,
+  type DueFileRow,
+  type FileRetentionDeps,
+} from './file-retention-purge';
 
 /** How many files one query takes. The run loops until nothing is due. */
 const BATCH = 100;
@@ -146,41 +150,15 @@ export class FormFileRetentionScheduler {
     return report;
   }
 
-  /** One predicate, looped until it selects nothing; what is kept is excluded from the next query. */
-  private async pass(
+  /** One predicate, looped until it selects nothing - `runFileRetentionPass`, shared with bookings. */
+  private pass(
     counts: { due: number; gone: number },
     report: FormFilePurgeReport,
     now: Date,
     select: (excluded: string[]) => Promise<DueFileRow[]>,
-    deps: Parameters<typeof purgeExpiredFiles>[2]
+    deps: FileRetentionDeps
   ): Promise<void> {
-    const excluded: string[] = [];
-    for (;;) {
-      const rows = await select(excluded);
-      if (rows.length === 0) return;
-      const candidates: FileRetentionCandidate[] = rows.map((row) => ({
-        fileId: row.id,
-        ownerId: row.uploaderId,
-        start: new Date(row.start),
-        retentionDays: Number(row.days),
-      }));
-      counts.due += candidates.length;
-      const result = await purgeExpiredFiles(candidates, now, deps, this.logger, TAG);
-      counts.gone += result.gone.length;
-      report.kept += result.kept.length;
-      for (const [outcome, n] of Object.entries(result.blobs)) {
-        report.blobs[outcome as FileBlobOutcome] += n;
-      }
-      excluded.push(...result.kept);
-      // A row neither gone nor kept would be selected again for ever; every candidate is one or
-      // the other, and this is the line that says so if that ever stops being true.
-      const settled = new Set([...result.gone, ...result.kept]);
-      const unsettled = candidates.filter((c) => !settled.has(c.fileId));
-      if (unsettled.length > 0) {
-        this.logger.error(`${TAG} ${unsettled.length} file(s) neither gone nor kept - stopping`);
-        return;
-      }
-    }
+    return runFileRetentionPass(counts, report, now, select, deps, this.logger, TAG);
   }
 
   /** PostgreSQL's clock - the one every predicate over `form_files` is written against. */
@@ -212,12 +190,4 @@ export class FormFileRetentionScheduler {
       [id]
     );
   }
-}
-
-/** The columns a due file is read with. */
-interface DueFileRow {
-  id: string;
-  uploaderId: string;
-  start: Date | string;
-  days: number | string;
 }

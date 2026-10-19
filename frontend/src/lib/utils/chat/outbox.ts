@@ -37,7 +37,10 @@ import { isTransportFailure } from '$lib/utils/transportFailure';
 import { installReachabilityProbe } from '$lib/utils/reachabilityProbe';
 import {
   ExclusionsRefusedError,
+  GroupDeletedError,
   SendEdgeRefusedError,
+  SenderNotActiveError,
+  SendServerError,
   type SentFrame,
 } from '$lib/mls-client/mlsDeliveryApi';
 import {
@@ -65,6 +68,7 @@ import {
   requestLeaderOutboxFlush,
   publishOutboxEntrySent,
   publishOutboxEntryCancelled,
+  publishOutboxEntryFailed,
   subscribeTabOutboxEvents,
 } from '$lib/mls-client/tabMessageSync';
 
@@ -83,6 +87,67 @@ const BACKOFF_MS = [2_000, 5_000, 15_000, 30_000, 60_000];
  * that their file is unreadable.
  */
 export const MAX_UNEXPECTED_ATTEMPTS = 8;
+
+/**
+ * CONSECUTIVE 5xx answers after which a text (or reply) is parked as FAILED, with a Retry, instead of
+ * climbing the ladder for ever (user, 2026-10-18). Each counted 5xx is held at least
+ * {@link SERVER_ERROR_HOLD_MS}, so that is at least four minutes of a server answering errors. Counted in the durable row (`OutboxEntry.serverErrors`), so a
+ * reload keeps the run; any other ANSWER, a success or the member's retry resets it, and a transport
+ * failure - nobody answered - neither counts nor resets. Attachments and controls (reactions, edits,
+ * deletes, pins, read marks) are not bounded by it.
+ */
+export const MAX_CONSECUTIVE_SERVER_ERRORS = 5;
+
+/**
+ * The SHORTEST hold after a counted 5xx: the ladder's top step. On the plain ladder five 5xx land at
+ * about 0, 2, 7, 22 and 52 s, so a deploy whose container restarts for a minute (the edge answers 502
+ * meanwhile) failed every text sent during it. Held here, five in a row span at least four minutes.
+ */
+export const SERVER_ERROR_HOLD_MS = 60_000;
+
+/** The longest a server's `Retry-After` may hold a text: a header is not a reason to wait for ever. */
+export const MAX_RETRY_AFTER_MS = 10 * 60_000;
+
+/**
+ * The hold after the `attempts`-th attempt failed with a COUNTED 5xx: the ladder's own step, raised
+ * to {@link SERVER_ERROR_HOLD_MS}, and to the server's `Retry-After` when it sent one (capped at
+ * {@link MAX_RETRY_AFTER_MS}). Still a ladder step - the entry's own clock - never a deadline.
+ */
+export function serverErrorHoldMs(attempts: number, retryAfterMs: number | null): number {
+  return Math.max(
+    backoffFor(attempts),
+    SERVER_ERROR_HOLD_MS,
+    Math.min(retryAfterMs ?? 0, MAX_RETRY_AFTER_MS)
+  );
+}
+
+/** The kinds {@link MAX_CONSECUTIVE_SERVER_ERRORS} applies to: a message the member typed. */
+function boundedOnServerErrors(entry: OutboxEntry): boolean {
+  return entry.kind === 'text' || entry.kind === 'reply';
+}
+
+/**
+ * True when `entry` reached its terminal 5xx state ({@link MAX_CONSECUTIVE_SERVER_ERRORS}) and waits
+ * for the member's retry. Read from the DURABLE count, so every reader - the flusher after a reload,
+ * the status pass, the native mirror - takes the same decision.
+ */
+export function isServerFailureTerminal(entry: OutboxEntry): boolean {
+  return boundedOnServerErrors(entry) && (entry.serverErrors ?? 0) >= MAX_CONSECUTIVE_SERVER_ERRORS;
+}
+
+/**
+ * True when the server (or something in front of it) ANSWERED the attempt, read from the TYPE: a
+ * status-carrying refusal, `sender_not_active`, an edge refusal, a 410. A transport failure and a
+ * local error are not answers.
+ */
+function isSendAnswer(e: unknown): boolean {
+  return (
+    refusalStatus(e) !== null ||
+    e instanceof SenderNotActiveError ||
+    e instanceof SendEdgeRefusedError ||
+    e instanceof GroupDeletedError
+  );
+}
 
 /**
  * The queued attachment cannot be read on THIS device: its row failed to load, or it holds no bytes
@@ -319,8 +384,37 @@ export interface OutboxController {
   dispose: () => void;
 }
 
-/** Result of attempting to flush a single entry. */
-type FlushOutcome = 'sent' | 'retry' | 'error' | 'skip' | 'gone' | 'parked';
+/**
+ * Result of attempting to flush a single entry. `uploading`: an attachment whose UPLOAD is running
+ * or owed (WP-OFF-9) - it holds back only what depends on it, never the rest of its conversation.
+ */
+type FlushOutcome = 'sent' | 'retry' | 'error' | 'skip' | 'gone' | 'parked' | 'uploading';
+
+/** What a finished upload left the flusher: the server ref to send, or the failure to classify. */
+type SettledUpload =
+  | { ok: true; media: NonNullable<OutboxEntry['media']> }
+  | { ok: false; error: unknown };
+
+/** One attachment's transfer, running OUTSIDE its conversation's lane (WP-OFF-9). */
+interface UploadTask {
+  conversationId: string;
+  /** `null` while the transfer runs. */
+  settled: SettledUpload | null;
+  /**
+   * The upload ended and its message's send has not been tried yet: that ONE attempt is due at once,
+   * whatever backoff the upload attempts left on the row. Cleared when it is tried, so a send that
+   * then fails takes the ladder like any message (review of #2061).
+   */
+  sendDue: boolean;
+}
+
+/**
+ * How many attachments may be on the wire at once, across conversations. Separate from
+ * {@link MAX_CONCURRENT_SENDS} since WP-OFF-9: an upload no longer holds a send slot, so a big file
+ * never keeps a text from the wire. Two, not more: on a weak uplink every extra body only makes each
+ * of them finish later.
+ */
+export const MAX_CONCURRENT_UPLOADS = 2;
 
 /**
  * How many conversations may have a frame on the wire at once. Lanes (below) remove head-of-line
@@ -360,6 +454,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * attempted until the previous one SENT (or is gone). An entry that must retry or is backing off
    * holds its successors, which the old loop did not - it attempted the later ones anyway, so a
    * failed message could be overtaken by the next one.
+   *
+   * ONE EXCEPTION, BY DESIGN (WP-OFF-9): an attachment whose UPLOAD runs or is owed does not hold its
+   * successors - only what depends on it. Display order is `sentAt`, so it still sorts at its compose
+   * time on every device; only the wire order changes.
    */
   /**
    * Ids whose last attempt failed for want of an ANSWER (a transport failure or a deadline), as
@@ -402,11 +500,39 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * or a success starts the count again.
    */
   const unexpected = new Map<string, number>();
+  /**
+   * Texts parked on {@link MAX_CONSECUTIVE_SERVER_ERRORS}, so the accusing line is written once per
+   * page life and a retry knows to reset the durable count. NOT the decision: that is the durable
+   * `serverErrors`, so a retry taken in another tab un-parks the entry here too.
+   */
+  const serverFailed = new Set<string>();
   const lanes = new Map<string, Promise<void>>();
   /** Conversations whose running lane must look at the queue once more (an enqueue or wake-up arrived). */
   const laneRerun = new Set<string>();
   let activeSends = 0;
   const sendWaiters: Array<() => void> = [];
+  /**
+   * THE UPLOAD OF AN ATTACHMENT RUNS OUTSIDE ITS LANE (WP-OFF-9). The lane used to await the whole
+   * transfer inside `flushOne`, holding the conversation AND a send slot: a text written behind a
+   * 13 MB file on a weak link waited minutes for it. Now the lane STARTS the transfer and moves on;
+   * only the small MLS send of the media message, once the upload has ended, takes the lane. One task
+   * per entry id (checked and set with no await between them), so a file is never on the wire twice.
+   */
+  const uploadTasks = new Map<string, UploadTask>();
+  /**
+   * Attachments known to still owe their upload. Read at the backoff skip, where the light queue read
+   * cannot say it: an attachment backing off on its UPLOAD does not hold its successors, one backing
+   * off on its MLS send does. In memory: after a reload an unknown entry holds them until it is due
+   * (60 s at most), once.
+   */
+  const uploadOwed = new Set<string>();
+  let activeUploads = 0;
+  const uploadWaiters: Array<() => void> = [];
+  /** Attachments queued for an upload slot, not yet on the wire: a retry has nothing to restart. */
+  const slotWaiting = new Set<string>();
+  /** The wake-up of a lane that waits for its conversation's uploads to end (deferred, no clock). */
+  const laneWake = new Map<string, () => void>();
+  let disposed = false;
   let backoffTimer: ReturnType<typeof setTimeout> | null = null;
 
   /**
@@ -570,7 +696,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       return;
     }
     if (getIsTabLeader()) return;
+    if (event.type === 'outbox_entry_failed') {
+      log(
+        `[OUTBOX] ${event.messageId.slice(0, 8)}… failed on 5xx in the leader tab - shown failed here`
+      );
+      showServerFailure(event.messageId, event.serverErrors);
+      return;
+    }
     patchStatus(event.messageId, 'sent');
+    // A text this tab showed failed (and then retried elsewhere) keeps no `failed` view once sent.
+    clearUpload(event.messageId);
     if (event.content) updateMessageContent(event.messageId, event.content);
   });
 
@@ -728,22 +863,141 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     }
   }
 
-  /**
-   * Uploads the queued media file if needed (idempotent via `uploadedRef`), then builds both the
-   * proto to send and the real media envelope to swap into the optimistic placeholder message.
-   */
-  async function prepareMedia(entry: OutboxEntry): Promise<{ proto: Uint8Array; content: string }> {
-    const media = entry.media;
-    if (!media) throw new Error('media entry without payload');
-    let ref = media.uploadedRef;
-    if (!ref) {
-      if (!deps.uploadMedia) throw new Error('uploadMedia callback not provided');
-      if (!media.fileBytes || media.fileBytes.length === 0) {
-        throw new LocalAttachmentError('the queued attachment holds no bytes to upload');
+  /** Runs `fn` while holding one of {@link MAX_CONCURRENT_UPLOADS} slots, handed on like a send slot. */
+  async function withUploadSlot<T>(
+    id: string,
+    signal: AbortSignal,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    if (activeUploads < MAX_CONCURRENT_UPLOADS) activeUploads++;
+    else {
+      // A CANCEL REACHES A TRANSFER STILL WAITING FOR ITS SLOT AT ONCE: the waiter leaves the queue
+      // and the task settles now, not when an unrelated upload frees a slot (review of #2061).
+      slotWaiting.add(id);
+      log(`[OUTBOX] ${id.slice(0, 8)}… waits for an upload slot (${MAX_CONCURRENT_UPLOADS} busy)`);
+      try {
+        await new Promise<void>((resolve, reject) => {
+          const waiter = (): void => {
+            signal.removeEventListener('abort', onAbort);
+            resolve();
+          };
+          const onAbort = (): void => {
+            const at = uploadWaiters.indexOf(waiter);
+            if (at !== -1) uploadWaiters.splice(at, 1);
+            reject(new UploadAbortedError(signal.reason));
+          };
+          if (signal.aborted) return onAbort();
+          signal.addEventListener('abort', onAbort, { once: true });
+          uploadWaiters.push(waiter);
+        });
+      } finally {
+        slotWaiting.delete(id);
       }
+    }
+    try {
+      return await fn();
+    } finally {
+      const next = uploadWaiters.shift();
+      if (next) next();
+      else activeUploads--;
+    }
+  }
+
+  /** True while an attachment of `conversationId` is on the wire (or waiting for an upload slot). */
+  function hasRunningUpload(conversationId: string): boolean {
+    for (const task of uploadTasks.values()) {
+      if (task.conversationId === conversationId && task.settled === null) return true;
+    }
+    return false;
+  }
+
+  /** Makes the lane of `conversationId` look at its queue again - started by a flush if none runs. */
+  function wakeLane(conversationId: string): void {
+    if (disposed) return;
+    laneRerun.add(conversationId);
+    const wake = laneWake.get(conversationId);
+    if (wake) wake();
+    else if (!lanes.has(conversationId)) void runFlush();
+  }
+
+  /**
+   * Starts the transfer of a queued attachment OUTSIDE its lane and returns at once. When it ends -
+   * whatever the outcome - the lane is woken, and THE LANE classifies the result, so a failure takes
+   * exactly the dispositions it took when the lane awaited the upload itself. A withdrawal is the one
+   * outcome settled here: the row is already gone, so no lane pass will ever meet the entry again.
+   */
+  function startUpload(entry: OutboxEntry, media: NonNullable<OutboxEntry['media']>): void {
+    const task: UploadTask = {
+      conversationId: entry.conversationId,
+      settled: null,
+      sendDue: false,
+    };
+    uploadTasks.set(entry.id, task);
+    const control = new AbortController();
+    uploads.set(entry.id, control);
+    uploadOwed.add(entry.id);
+    log(
+      `[OUTBOX] ${entry.id.slice(0, 8)}… upload started outside the lane of ${entry.conversationId.slice(0, 8)}…`
+    );
+    void withUploadSlot(entry.id, control.signal, () => uploadAttachment(entry, control))
+      .then(
+        // The payload WITHOUT its bytes: nothing keeps a 13 MB file alive once it has left.
+        (ref): SettledUpload => ({
+          ok: true,
+          media: { ...media, uploadedRef: ref, fileBytes: undefined },
+        }),
+        (error: unknown): SettledUpload => ({ ok: false, error })
+      )
+      .then((settled) => {
+        task.settled = settled;
+        task.sendDue = settled.ok;
+        // Uploaded: from now on its MLS send keeps lane order like any message's.
+        if (settled.ok) uploadOwed.delete(entry.id);
+        if (disposed) return;
+        const abortedByCancel =
+          !settled.ok &&
+          settled.error instanceof UploadAbortedError &&
+          settled.error.reason === 'cancel';
+        // WITHDRAWN, whether the abort reached the transfer or the withdrawal landed after the body
+        // left (during the ref write, with nothing left to abort): the row is gone, no lane pass will
+        // meet it again, so the task forgets itself here or never (review of #2061).
+        if (abortedByCancel || cancelled.has(entry.id)) {
+          uploadTasks.delete(entry.id);
+          uploadOwed.delete(entry.id);
+          clearUpload(entry.id);
+          log(
+            abortedByCancel
+              ? `[OUTBOX] ${entry.id.slice(0, 8)}… upload cancelled - the transfer was aborted`
+              : `[OUTBOX] ${entry.id.slice(0, 8)}… upload ended after its message was withdrawn - nothing will be sent`
+          );
+        } else {
+          log(
+            `[OUTBOX] ${entry.id.slice(0, 8)}… upload ${settled.ok ? 'ended' : 'failed'} - its lane is woken to ${settled.ok ? 'send the message' : 'classify the failure'}`
+          );
+        }
+        wakeLane(entry.conversationId);
+      });
+  }
+
+  /**
+   * Uploads a queued attachment and persists its server ref to the row BEFORE returning: a kill
+   * after the upload must never upload the same file again. Runs inside an upload slot.
+   */
+  async function uploadAttachment(
+    entry: OutboxEntry,
+    control: AbortController
+  ): Promise<NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>> {
+    const media = entry.media;
+    let uploaded: MediaRef;
+    let attemptLoaded = 0;
+    let hint: ReturnType<typeof setInterval> | null = null;
+    try {
+      if (!media || !deps.uploadMedia) {
+        throw new LocalAttachmentError('the queued attachment has no payload or no uploader');
+      }
+      // Withdrawn (or retried) while it waited for a slot: nothing left the device.
+      if (control.signal.aborted) throw new UploadAbortedError(control.signal.reason);
       logMlsMetric({ kind: 'outbox_upload_attempt', conversationId: entry.conversationId });
-      const control = new AbortController();
-      uploads.set(entry.id, control);
       patchUpload(entry.id, {
         phase: 'preparing',
         loaded: 0,
@@ -752,70 +1006,77 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       });
       // The hint only: the transport abandons a dead transfer on its own, this says so earlier.
       let lastMoved = Date.now();
-      const hint = setInterval(() => {
+      hint = setInterval(() => {
         if (Date.now() - lastMoved > UPLOAD_STALL_HINT_MS)
           patchUpload(entry.id, { phase: 'stalled' });
       }, 2_000);
-      let uploaded: MediaRef;
-      let attemptLoaded = 0;
-      try {
-        uploaded = await deps.uploadMedia(media, {
-          signal: control.signal,
-          onProgress: ({ loaded, total }) => {
-            lastMoved = Date.now();
-            attemptLoaded = Math.max(attemptLoaded, loaded);
-            patchUpload(entry.id, { phase: 'uploading', loaded, total });
-          },
-        });
-      } catch (e) {
-        // NO ANSWER, read from the TYPE the TRANSPORT threw - `UploadStalledError` (no byte moved)
-        // or `UploadNetworkError` (the connection broke) - never from a message and never from a
-        // bare `TypeError`, which preparation and encryption can throw too. A status is an answer
-        // (`uploadRefusalCause` reads it in the flush), a cancel is the member's act, and an
-        // `UploadAnswerTimeoutError` means the BODY WAS DELIVERED and the server is slow: not this.
-        if (e instanceof UploadStalledError || e instanceof UploadNetworkError) {
-          // AN ATTEMPT THAT MOVED MORE BYTES THAN ANY BEFORE IS PROGRESS, NOT A VERDICT: a slow
-          // link advances a little each time and must never be given up on. Only an attempt that
-          // fails no further than the best so far counts - the signature of a refusal at a fixed
-          // point (a relay's body limit), which is what the count exists to end.
-          const best = bestLoaded.get(entry.id) ?? 0;
-          let count: number;
-          if (attemptLoaded > best + UPLOAD_PROGRESS_MARGIN_BYTES) {
-            bestLoaded.set(entry.id, attemptLoaded);
-            count = 0;
-          } else {
-            count = (noAnswer.get(entry.id) ?? 0) + 1;
-          }
-          noAnswer.set(entry.id, count);
-          if (count >= UPLOAD_NO_ANSWER_ATTEMPTS) throw new UploadGaveUpError(count, e);
+      uploaded = await deps.uploadMedia(media, {
+        signal: control.signal,
+        onProgress: ({ loaded, total }) => {
+          lastMoved = Date.now();
+          attemptLoaded = Math.max(attemptLoaded, loaded);
+          patchUpload(entry.id, { phase: 'uploading', loaded, total });
+        },
+      });
+    } catch (e) {
+      // NO ANSWER, read from the TYPE the TRANSPORT threw - `UploadStalledError` (no byte moved)
+      // or `UploadNetworkError` (the connection broke) - never from a message and never from a
+      // bare `TypeError`, which preparation and encryption can throw too. A status is an answer
+      // (`uploadRefusalCause` reads it in the flush), a cancel is the member's act, and an
+      // `UploadAnswerTimeoutError` means the BODY WAS DELIVERED and the server is slow: not this.
+      if (e instanceof UploadStalledError || e instanceof UploadNetworkError) {
+        // AN ATTEMPT THAT MOVED MORE BYTES THAN ANY BEFORE IS PROGRESS, NOT A VERDICT: a slow
+        // link advances a little each time and must never be given up on. Only an attempt that
+        // fails no further than the best so far counts - the signature of a refusal at a fixed
+        // point (a relay's body limit), which is what the count exists to end.
+        const best = bestLoaded.get(entry.id) ?? 0;
+        let count: number;
+        if (attemptLoaded > best + UPLOAD_PROGRESS_MARGIN_BYTES) {
+          bestLoaded.set(entry.id, attemptLoaded);
+          count = 0;
+        } else {
+          count = (noAnswer.get(entry.id) ?? 0) + 1;
         }
-        throw e;
-      } finally {
-        clearInterval(hint);
-        uploads.delete(entry.id);
+        noAnswer.set(entry.id, count);
+        if (count >= UPLOAD_NO_ANSWER_ATTEMPTS) throw new UploadGaveUpError(count, e);
       }
-      noAnswer.delete(entry.id);
-      bestLoaded.delete(entry.id);
-      unexpected.delete(entry.id);
-      clearUpload(entry.id);
-      ref = {
-        mediaId: uploaded.mediaId,
-        key: uploaded.key,
-        iv: uploaded.iv,
-        ...(uploaded.encoding ? { encoding: uploaded.encoding } : {}),
-      };
-      // Persist the ref + drop the raw bytes BEFORE sending: a crash after upload must not re-upload.
-      await storage
-        ?.updateOutboxEntry(
-          entry.id,
-          { media: { ...media, uploadedRef: ref, fileBytes: undefined } },
-          deviceKey()
-        )
-        // Losing this write means a crash before the send re-uploads the same file.
-        .catch((e) =>
-          log(`[OUTBOX] ${entry.id.slice(0, 8)}… media ref not persisted: ${String(e)}`)
-        );
+      throw e;
+    } finally {
+      if (hint) clearInterval(hint);
+      uploads.delete(entry.id);
     }
+    noAnswer.delete(entry.id);
+    bestLoaded.delete(entry.id);
+    unexpected.delete(entry.id);
+    clearUpload(entry.id);
+    const ref = {
+      mediaId: uploaded.mediaId,
+      key: uploaded.key,
+      iv: uploaded.iv,
+      ...(uploaded.encoding ? { encoding: uploaded.encoding } : {}),
+    };
+    // Persist the ref + drop the raw bytes BEFORE sending: a crash after upload must not re-upload.
+    await storage
+      ?.updateOutboxEntry(
+        entry.id,
+        { media: { ...media, uploadedRef: ref, fileBytes: undefined } },
+        deviceKey()
+      )
+      // Losing this write means a crash before the send re-uploads the same file; the ref is kept
+      // in memory by the task, so THIS page life still sends it without a second upload.
+      .catch((e) => log(`[OUTBOX] ${entry.id.slice(0, 8)}… media ref not persisted: ${String(e)}`));
+    return ref;
+  }
+
+  /**
+   * Builds, from an uploaded attachment's ref, the proto to send and the real media envelope to
+   * swap into the optimistic placeholder message.
+   */
+  function buildMediaMessage(
+    entry: OutboxEntry,
+    media: NonNullable<OutboxEntry['media']>,
+    ref: NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>
+  ): { proto: Uint8Array; content: string } {
     // What the sender declared (a reel message's intent, length and expiry hint): empty for an
     // ordinary attachment, which therefore encodes exactly as before.
     const declaration = {
@@ -892,6 +1153,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     );
     patchStatus(entry.id, 'error');
     clearUpload(entry.id);
+    uploadTasks.delete(entry.id);
+    uploadOwed.delete(entry.id);
     if (entry.kind !== 'control') {
       if (cause === 'too-large' || cause === 'refused') {
         // THE ONE PERMANENT FAILURE THAT IS ABOUT THE OBJECT, NOT THE GROUP: nothing about the
@@ -959,7 +1222,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
   async function holdForRetry(
     entry: OutboxEntry,
     describe: (attempts: number) => string,
-    opts: { transport?: boolean; repair?: boolean; local?: boolean; quiet?: boolean } = {}
+    opts: {
+      transport?: boolean;
+      repair?: boolean;
+      local?: boolean;
+      quiet?: boolean;
+      /** The run of consecutive 5xx to record with the backoff (the 5xx arm only). */
+      serverErrors?: number;
+      /** The hold, when it is not the plain ladder's (`serverErrorHoldMs`, the 5xx arm only). */
+      delayMs?: number;
+    } = {}
   ): Promise<FlushOutcome> {
     if (opts.transport) transportHeld.add(entry.id);
     else transportHeld.delete(entry.id);
@@ -985,7 +1257,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           status: 'pending',
           attempts,
           lastAttemptAt: Date.now(),
-          nextAttemptAt: Date.now() + backoffFor(attempts),
+          nextAttemptAt: Date.now() + (opts.delayMs ?? backoffFor(attempts)),
+          ...(opts.serverErrors !== undefined ? { serverErrors: opts.serverErrors } : {}),
         },
         deviceKey()
       )
@@ -1014,6 +1287,66 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     patchStatus(entry.id, 'pending');
     patchUpload(entry.id, { phase: 'error' });
     return 'parked';
+  }
+
+  /**
+   * Shows a text the server failed {@link MAX_CONSECUTIVE_SERVER_ERRORS} times in a row as FAILED
+   * (`error`, the bubble's Retry), and keeps it - nothing the user wrote is lost. Terminal until the
+   * member retries: the decision is the durable count, so this runs again after a reload, and the
+   * accusing line is written once per page life.
+   */
+  function parkServerFailure(entry: OutboxEntry, cause: string): FlushOutcome {
+    if (!serverFailed.has(entry.id)) {
+      const line = `[OUTBOX] ${entry.id.slice(0, 8)}… ${entry.kind} entry FAILED: ${cause} - parked as failed, Retry offered, entry kept`;
+      console.error(line);
+      log(line);
+    }
+    const first = !serverFailed.has(entry.id);
+    serverFailed.add(entry.id);
+    transportHeld.delete(entry.id);
+    showServerFailure(entry.id, entry.serverErrors ?? 0);
+    // A follower tab draws the same bubble: it never flushes, so it would not know until a reload.
+    if (first) publishOutboxEntryFailed(entry.id, entry.serverErrors ?? 0);
+    return 'parked';
+  }
+
+  /**
+   * Draws a text failed on 5xx: status `error`, and the `failed` view that is how the bubble knows a
+   * Retry exists for it (`retryUpload` is the one handler). ONE place for the three tabs' paths.
+   */
+  function showServerFailure(messageId: string, serverErrors: number): void {
+    patchStatus(messageId, 'error');
+    patchUpload(messageId, { phase: 'failed', attempt: serverErrors });
+  }
+
+  /**
+   * The member's Retry of a text failed on 5xx, decided on the STORED row - not on this tab's
+   * memory, which in a follower never saw the failure. The count AND the clock go back to zero
+   * BEFORE the flush is raised, so whichever tab drains reads a text that is due and not failed.
+   */
+  async function resetServerFailure(messageId: string): Promise<void> {
+    if (!storage) return;
+    const stored = (await readQueue('retry')).find((e) => e.id === messageId);
+    if (!stored || !isServerFailureTerminal(stored)) return;
+    log(
+      `[OUTBOX] ${messageId.slice(0, 8)}… failed text: retry asked, the 5xx count (${stored.serverErrors}) is reset`
+    );
+    clearUpload(messageId);
+    patchStatus(messageId, 'pending');
+    await storage
+      .updateOutboxEntry(messageId, { serverErrors: 0, nextAttemptAt: 0 }, deviceKey())
+      .catch((err: unknown) =>
+        log(`[OUTBOX] ${messageId.slice(0, 8)}… 5xx count reset not persisted: ${String(err)}`)
+      );
+  }
+
+  /** Writes a new consecutive-5xx count without touching the backoff. Logged when lost. */
+  async function writeServerErrors(id: string, count: number): Promise<void> {
+    await storage
+      ?.updateOutboxEntry(id, { serverErrors: count }, deviceKey())
+      .catch((err: unknown) =>
+        log(`[OUTBOX] ${id.slice(0, 8)}… 5xx count ${count} not persisted: ${String(err)}`)
+      );
   }
 
   /**
@@ -1055,6 +1388,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // mark is dropped by `pruneCancelled`, once the row is gone and no lane runs.
     if (cancelled.has(entry.id)) {
       clearUpload(entry.id);
+      // An ended upload of a withdrawn message has nothing left to do; a running one forgets itself.
+      if (uploadTasks.get(entry.id)?.settled) uploadTasks.delete(entry.id);
       log(
         `[OUTBOX] ${entry.id.slice(0, 8)}… cancelled before it was sent - dropped, not delivered`
       );
@@ -1064,22 +1399,55 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // Consumed here, whether or not the backoff was still running, so a stale arming cannot outlive
     // the reconnect it came from.
     if (forbiddenParked.has(entry.id)) return 'skip';
+    // ITS UPLOAD IS ON THE WIRE, OUTSIDE THE LANE (WP-OFF-9): nothing to do until it ends, and
+    // nothing read - not the payload, not the group - on each pass a text enqueued meanwhile causes.
+    const task = uploadTasks.get(entry.id);
+    if (task && task.settled === null) return 'uploading';
+    // ITS UPLOAD FAILED: classified HERE, in the lane, through the very path that classified it when
+    // the lane awaited the transfer - a refusal, a give-up, a transport hold, a retry on request.
+    if (task?.settled && !task.settled.ok) {
+      uploadTasks.delete(entry.id);
+      return uploadPhaseOutcome(
+        await settleFailure(entry, entry.conversationId, task.settled.error)
+      );
+    }
     const resumed = resuming.delete(entry.id);
     // A manual retry (or a reconnect's resume) is a fresh start for the no-answer count.
     if (resumed) {
       noAnswer.delete(entry.id);
       bestLoaded.delete(entry.id);
       unexpected.delete(entry.id);
+      // THE MEMBER'S RETRY of a text failed on 5xx: the retry wrote the count back to 0, and this
+      // snapshot may predate that write. A reconnect's resume never reaches here (not `serverFailed`).
+      if (serverFailed.delete(entry.id)) entry = { ...entry, serverErrors: 0 };
     }
     // PARKED IS NOT BLOCKING: the entry waits for the member, and what was written after it goes.
     if (!resumed && parked.has(entry.id)) return 'parked';
     parked.delete(entry.id);
-    if (!resumed && entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) {
+    // FAILED ON 5xx, read from the DURABLE count: after a reload as well as in this page life.
+    if (!resumed && isServerFailureTerminal(entry)) {
+      return parkServerFailure(
+        entry,
+        `the server answered 5xx on ${entry.serverErrors} attempts in a row`
+      );
+    }
+    // Reset elsewhere (a retry in another tab wrote the count back): it goes again, said once.
+    if (serverFailed.delete(entry.id)) {
+      clearUpload(entry.id);
+      log(`[OUTBOX] ${entry.id.slice(0, 8)}… failed text retried (count reset) - sending again`);
+    }
+    // AN UPLOAD THAT JUST ENDED makes its message due at once: the backoff on the row belonged to the
+    // upload attempts before it, never to a send that has not been tried.
+    // ONCE: the first attempt consumes it, so a send that fails after the upload keeps its backoff.
+    const uploadEnded = task?.settled?.ok === true && task.sendDue;
+    if (!resumed && !uploadEnded && entry.nextAttemptAt && entry.nextAttemptAt > Date.now()) {
       log(
         `[OUTBOX] ${entry.id.slice(0, 8)}… skipped, backing off for ${entry.nextAttemptAt - Date.now()}ms (attempt ${entry.attempts})`
       );
-      return 'skip';
+      // Backing off on its UPLOAD, an attachment holds only what depends on it (WP-OFF-9).
+      return entry.kind === 'media' && uploadOwed.has(entry.id) ? 'uploading' : 'skip';
     }
+    if (task) task.sendDue = false;
 
     // The MLS outbox is for DMs/groups only. A channel entry (server-authoritative, no MLS group)
     // can only have leaked in through a bug: it would loop forever on requestReAdd 500s. Drop it so
@@ -1089,6 +1457,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       await storage?.deleteOutboxEntry(entry.id).catch(() => {});
       return 'error';
     }
+
+    // ITS UPLOAD ENDED IN THIS PAGE LIFE: the task holds the payload, bytes dropped, with the ref to
+    // send - so the row is not read a second time, and a ref whose row write failed is still sent
+    // (that loss costs a second upload only after a kill).
+    if (entry.kind === 'media' && task?.settled?.ok)
+      entry = { ...entry, media: task.settled.media };
 
     // THE PAYLOAD OF AN ATTACHMENT IS READ HERE AND NOWHERE EARLIER: the queue read returns a media
     // entry as its scheduling columns only, because decoding the file is what froze a Pixel 6a once
@@ -1141,6 +1515,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         );
       }
     }
+    if (entry.kind === 'media' && entry.media && !entry.media.uploadedRef) uploadOwed.add(entry.id);
 
     const terminalId = entry.conversationId;
     const sendable = deps.isGroupHealthy(terminalId);
@@ -1158,7 +1533,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     //  - an unsendable group goes to the re-add below, which never reaches the server's refusal: a
     //    deleted group there would be re-added for ever instead of retired;
     //  - a media entry uploads its file before the POST, and a deleted group must not cost that.
-    if (!sendable || entry.kind === 'media') {
+    //    Once uploaded, its POST is the next step and answers the question itself.
+    if (!sendable || (entry.kind === 'media' && !entry.media?.uploadedRef)) {
       const groupMeta = await mlsService.getGroupMeta(terminalId).catch((e: unknown) => {
         log(
           `[OUTBOX] ${entry.id.slice(0, 8)}… group ${terminalId.slice(0, 8)}… unreadable before the send (${String(e).slice(0, 80)}) - the send path decides`
@@ -1216,14 +1592,31 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     patchStatus(entry.id, 'sending');
     logMlsMetric({ kind: 'outbox_flush_attempt', conversationId: terminalId });
 
+    // An attachment that still owes its upload: what fails before the transfer starts is an upload
+    // failure too, and holds back only what depends on it.
+    let uploadPhase = false;
     try {
-      // Media: upload (idempotent) then build proto + the real attachment envelope.
+      // Media: start the upload OUTSIDE the lane, or - once it ended - build proto + envelope.
       let proto: Uint8Array;
       let mediaContent: string | undefined;
       // What an accepted frame makes permanent (a blanked quote); nothing for any other entry.
       let commitQuote: () => Promise<void> = async () => {};
       if (entry.kind === 'media') {
-        const prepared = await prepareMedia(entry);
+        const media = entry.media;
+        if (!media) throw new LocalAttachmentError('the queued attachment has no payload');
+        if (!media.uploadedRef) {
+          uploadPhase = true;
+          if (!deps.uploadMedia) throw new Error('uploadMedia callback not provided');
+          if (!media.fileBytes || media.fileBytes.length === 0) {
+            throw new LocalAttachmentError('the queued attachment holds no bytes to upload');
+          }
+          // CHECK AND CLAIM WITH NO AWAIT BETWEEN THEM (the running-task check at the top is many
+          // awaits back): two passes of one lane must never start two transfers of one file.
+          if (uploadTasks.get(entry.id)?.settled === null) return 'uploading';
+          startUpload(entry, media);
+          return 'uploading';
+        }
+        const prepared = buildMediaMessage(entry, media, media.uploadedRef);
         proto = prepared.proto;
         mediaContent = prepared.content;
         // The upload has completed, so the blob is readable before MLS acknowledges the message.
@@ -1277,6 +1670,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         clearUpload(entry.id);
         transportHeld.delete(entry.id);
         unexpected.delete(entry.id);
+        uploadTasks.delete(entry.id);
+        uploadOwed.delete(entry.id);
         // The tab that composed this may be a follower, whose own echo is still showing `pending`.
         publishOutboxEntrySent(entry.id, mediaContent);
         // A delete that fails leaves a SENT entry in the queue, so the next flush sends it again.
@@ -1299,184 +1694,243 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       log(`[OUTBOX] ${entry.id.slice(0, 8)}… sent in ${terminalId.slice(0, 8)}…`);
       return 'sent';
     } catch (e) {
-      // EVICTED: permanent, and the second place it can be learnt rather than the first. The Remove
-      // commit named this device when it merged, and `retireIfEvicted` acts on it there - so
-      // reaching here means the commit never arrived (a device offline across the whole removal,
-      // then sending before it drains). The fallback is a SIGNAL: it is logged as the miss it is,
-      // and it must never become the path eviction is normally discovered on.
-      // NOT A DEFERRAL, and the retry below is not what lifts it: the server says this device holds
-      // no leaf in the group, which only a Welcome or an external commit changes. The entry STAYS -
-      // the message is never lost, and it goes out intact once the device is a member - but the line
-      // has to accuse, because reaching here means `isGroupActive` answered YES one call earlier and
-      // the two views of this device's membership disagree. That is the Welcome-livelock signature
-      // in `docs/wiki/backlog.md`, and it is the only place a sender can observe it.
-      // ONE READ OF THE DISCRIMINATOR, used by all three branches below. It was classified three
-      // times for the same error, which is three chances for the arms to drift apart on what they
-      // think happened.
-      // A TRANSFER THE MEMBER ENDED ON PURPOSE, read from the TYPE the transport threw. Cancel: the
-      // row is already withdrawn (`cancelPending` deleted it before aborting), so this is only the
-      // flush learning of it. Retry: not a failure at all - the member asked for another attempt
-      // now, so the backoff is skipped and the lane re-runs at once.
-      if (e instanceof UploadAbortedError) {
-        if (e.reason === 'retry') {
-          log(`[OUTBOX] ${entry.id.slice(0, 8)}… upload restarted on request`);
-          resuming.add(entry.id);
-          laneRerun.add(entry.conversationId);
-          return 'retry';
-        }
-        cancelled.delete(entry.id);
-        clearUpload(entry.id);
-        log(`[OUTBOX] ${entry.id.slice(0, 8)}… upload cancelled - the transfer was aborted`);
-        return 'gone';
+      const outcome = await settleFailure(entry, terminalId, e);
+      return uploadPhase ? uploadPhaseOutcome(outcome) : outcome;
+    }
+  }
+
+  /**
+   * An UPLOAD failure that is held for a retry holds back only what depends on the attachment
+   * (WP-OFF-9): nothing of the message has left, so the text written after it may go. Every other
+   * outcome - parked, refused, gone - already says what it is.
+   */
+  function uploadPhaseOutcome(outcome: FlushOutcome): FlushOutcome {
+    return outcome === 'retry' ? 'uploading' : outcome;
+  }
+
+  /**
+   * Classifies a failed attempt of `entry` - its MLS send, or its upload, which the lane receives
+   * from the task that ran it outside the lane - and applies its disposition. ONE PATH FOR BOTH, so
+   * an upload failure ends exactly as it did when the lane awaited the transfer itself.
+   */
+  async function settleFailure(
+    entry: OutboxEntry,
+    terminalId: string,
+    e: unknown
+  ): Promise<FlushOutcome> {
+    // EVICTED: permanent, and the second place it can be learnt rather than the first. The Remove
+    // commit named this device when it merged, and `retireIfEvicted` acts on it there - so
+    // reaching here means the commit never arrived (a device offline across the whole removal,
+    // then sending before it drains). The fallback is a SIGNAL: it is logged as the miss it is,
+    // and it must never become the path eviction is normally discovered on.
+    // NOT A DEFERRAL, and the retry below is not what lifts it: the server says this device holds
+    // no leaf in the group, which only a Welcome or an external commit changes. The entry STAYS -
+    // the message is never lost, and it goes out intact once the device is a member - but the line
+    // has to accuse, because reaching here means `isGroupActive` answered YES one call earlier and
+    // the two views of this device's membership disagree. That is the Welcome-livelock signature
+    // in `docs/wiki/backlog.md`, and it is the only place a sender can observe it.
+    // ONE READ OF THE DISCRIMINATOR, used by all three branches below. It was classified three
+    // times for the same error, which is three chances for the arms to drift apart on what they
+    // think happened.
+    // A TRANSFER THE MEMBER ENDED ON PURPOSE, read from the TYPE the transport threw. Cancel: the
+    // row is already withdrawn (`cancelPending` deleted it before aborting), so this is only the
+    // flush learning of it. Retry: not a failure at all - the member asked for another attempt
+    // now, so the backoff is skipped and the lane re-runs at once.
+    if (e instanceof UploadAbortedError) {
+      if (e.reason === 'retry') {
+        log(`[OUTBOX] ${entry.id.slice(0, 8)}… upload restarted on request`);
+        resuming.add(entry.id);
+        laneRerun.add(entry.conversationId);
+        return 'retry';
       }
-      const kind = classifyOutgoingSendError(e);
-      if (kind === 'sender-not-active') {
-        log(
-          `[OUTBOX] ${entry.id.slice(0, 8)}… REFUSED by the server: this device holds no leaf in ${terminalId.slice(0, 8)}… while the local MLS state says it is a member - the roster and the tree disagree, and only a Welcome or an external commit lifts it`
-        );
-        // AND THE REPAIR IS DRIVEN FROM HERE, because this is the only place that holds the proof.
-        //
-        // Observing the livelock and doing nothing about it is what made it permanent. The entry
-        // stayed, the backoff ladder ran to its 60 s ceiling and re-posted for ever, and every
-        // mechanism that could have repaired the group declined to look at it: the connection sync
-        // and the SYNC_WATCHDOG both skip a group the WASM holds, and the watchdog additionally
-        // called `cancelReAdd` on it every 5 s, so the one bit of recovery bookkeeping that might
-        // have survived was cleared on a cadence. Measured 2026-09-04 with eight messages at
-        // attempt 18-23 against a `pending` roster seat two and a half hours old.
-        //
-        // A RETRY IS NOT A REPAIR, AND THIS FRAME PROVES WHICH IS OWED. The server has just stated
-        // that this device holds no leaf; re-posting the same frame cannot change that, so the
-        // ladder below is only what keeps the MESSAGE (it is never lost, and goes out intact once
-        // the device is a member again). The seam is what makes that "once" arrive. It is throttled
-        // on the shared recovery cooldown, so calling it from a flush that runs every 2 s is safe.
-        await deps
-          .recoverRosterDisagreement(terminalId)
-          .catch((err) =>
-            log(
-              `[OUTBOX] roster repair for ${terminalId.slice(0, 8)}… failed: ${String(err).slice(0, 120)}`
-            )
-          );
-      }
-      // THE SERVER SAYS THE GROUP IS GONE. For a sendable text or control entry this is where a
-      // deletion is learnt at all (no pre-flight is asked, see above); for a media entry it is a
-      // deletion that landed after the pre-flight read the group as alive. The same permanent
-      // disposition either way - one `cause`, so a reader cannot tell the seams apart and does not
-      // have to.
-      if (kind === 'group-deleted') {
-        log(
-          `[OUTBOX] ${entry.id.slice(0, 8)}… send REFUSED: ${terminalId.slice(0, 8)}… is deleted on the server (410 on this frame)`
-        );
-        return failPermanently(entry, terminalId, 'group-deleted');
-      }
-      // AN ANSWER IS NEVER TRANSIENT. A refusal the media service (or the gateway in front of it)
-      // gave to THIS upload is read from the TYPE the throw carried (status and origin, never the
-      // message), and no retry changes it: the ladder used to re-post the same body once a minute for
-      // ever (attempt 806 on a 413, 2026-10-07; a 403 CrowdSec ban page on every 10 MiB+ body,
-      // 2026-10-10, which spun the bubble for ever). It accuses: each is the visible end of an upload
-      // path that shipped something the other side cannot take.
-      const refusal = uploadRefusalCause(e);
-      if (refusal === 'blocked') {
-        log(
-          `[OUTBOX] ${entry.id.slice(0, 8)}… upload BLOCKED by the gateway (${String(e).slice(0, 120)}) - parked for a manual retry, entry kept`
-        );
-        console.error(`[OUTBOX] upload blocked by the gateway: ${String(e).slice(0, 120)}`);
-        parked.add(entry.id);
-        patchStatus(entry.id, 'pending');
-        patchUpload(entry.id, { phase: 'blocked' });
-        return 'parked';
-      }
-      // THE UPLOAD NEVER GOT AN ANSWER, THREE TIMES RUNNING, ONLINE: not a link to wait out but a
-      // path that does not work (a relay refusing early and closing mid-body delivers no status).
-      // Terminal and member-visible - kept, parked, retry and delete offered - never an endless
-      // "sending". It accuses, because it is the visible end of something upstream.
-      if (e instanceof UploadGaveUpError) {
-        const line = `[OUTBOX] ${entry.id.slice(0, 8)}… upload FAILED: no answer on ${e.attempts} attempts in a row (${String(e.cause).slice(0, 120)}) - parked for a manual retry, entry kept`;
-        console.error(line);
-        log(line);
-        parked.add(entry.id);
-        // TERMINAL UNTIL THE MEMBER ACTS: a reconnect resumes every `transportHeld` entry, and the
-        // attempt that gave up was held as a transport failure - leaving it there would restart it
-        // behind a bubble still saying `failed`.
-        transportHeld.delete(entry.id);
-        patchStatus(entry.id, 'pending');
-        patchUpload(entry.id, { phase: 'failed' });
-        return 'parked';
-      }
-      if (refusal) {
-        const detail = `${entry.kind} entry${entry.media ? ` (${entry.media.size} bytes)` : ''}`;
-        const line = `[OUTBOX] ${entry.id.slice(0, 8)}… upload REFUSED (${refusal}: ${String(e).slice(0, 120)}) - ${detail} in ${terminalId.slice(0, 8)}…: no retry can succeed, giving up`;
-        console.error(line);
-        log(line);
-        return failPermanently(entry, terminalId, refusal);
-      }
-      // A 403 IS AN ANSWER ABOUT THE CALLER, read from the TYPE (`SendForbiddenError` is an
-      // `ApiRefusalError`), and re-posting the same frame cannot change who the caller is. The
-      // ladder re-posted six entries 23 times on a bench phone whose token named another account
-      // (2026-10-10). The entry is KEPT - nothing the user wrote is lost, and it goes out after a
-      // sign-in - but it is PARKED for this controller's life (a new sign-in builds a new one), and
-      // the line accuses: the 403 is the visible end of an identity or authorization defect upstream.
-      // A 403 FROM THE EDGE (CrowdSec ban page, not the gateway's JSON) is about the NETWORK PATH,
-      // so it is not parked: a sign-in cannot lift it, the ban expiring does. It climbs the ladder
-      // on the backoff ladder (a reconnect does not lift it, so it is not `transport`), accuses, and tells the user ONCE per conversation.
-      if (e instanceof SendEdgeRefusedError) {
-        const line = `[OUTBOX] ${entry.id.slice(0, 8)}… REFUSED with ${e.status} by the EDGE (not the gateway) in ${terminalId.slice(0, 8)}… - a WAF/proxy block on this network path; retrying on the ladder`;
-        console.error(line);
-        if (edgeNoticed.add(terminalId) && entry.kind !== 'control') {
-          await deps
-            .addMessageToChat?.('system', m.outbox_edge_blocked(), entry.conversationId, {
-              isSystem: true,
-            })
-            .catch((err: unknown) => log(`[OUTBOX] edge notice not posted: ${String(err)}`));
-        }
-        return holdForRetry(
-          entry,
-          (attempts) =>
-            `[OUTBOX] ${entry.id.slice(0, 8)}… held on an edge refusal (attempt ${attempts})`
-        );
-      }
-      if (refusalStatus(e) === 403) {
-        forbiddenParked.add(entry.id);
-        const line = `[OUTBOX] ${entry.id.slice(0, 8)}… REFUSED with 403 in ${terminalId.slice(0, 8)}… - the caller is not allowed to send this; parked, no retry until the next sign-in`;
-        console.error(line);
-        log(line);
-        patchStatus(entry.id, 'pending');
-        return 'skip';
-      }
-      if (kind === 'evicted') {
-        log(
-          `[OUTBOX] ${entry.id.slice(0, 8)}… send REFUSED as evicted, after isGroupActive answered that this device is still a member of ${terminalId.slice(0, 8)}… - the two disagree, and OpenMLS is the one that is right`
-        );
-        return failPermanently(entry, terminalId, 'evicted-late');
-      }
-      // Keep pending, back off. The message is never lost - that is true of both arms that reach
-      // here, and it is the only thing they share.
+      cancelled.delete(entry.id);
+      clearUpload(entry.id);
+      log(`[OUTBOX] ${entry.id.slice(0, 8)}… upload cancelled - the transfer was aborted`);
+      return 'gone';
+    }
+    // ANY OTHER ANSWER BREAKS A RUN OF 5xx, so the count is truly consecutive. A transport failure is
+    // not an answer and leaves it as it is.
+    if (!(e instanceof SendServerError) && isSendAnswer(e) && (entry.serverErrors ?? 0) > 0) {
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… answered ${refusalStatus(e) ?? (e as Error).name} after ${entry.serverErrors} 5xx in a row - the run is reset`
+      );
+      await writeServerErrors(entry.id, 0);
+      entry = { ...entry, serverErrors: 0 };
+    }
+    const kind = classifyOutgoingSendError(e);
+    if (kind === 'sender-not-active') {
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… REFUSED by the server: this device holds no leaf in ${terminalId.slice(0, 8)}… while the local MLS state says it is a member - the roster and the tree disagree, and only a Welcome or an external commit lifts it`
+      );
+      // AND THE REPAIR IS DRIVEN FROM HERE, because this is the only place that holds the proof.
       //
-      // A LINE ITS READER LEARNS TO SKIP HIDES THE NEXT DEFECT, so the two arms do not share a
-      // sentence. `sender-not-active` is not transient by any reading - the server has refused this
-      // device's leaf and will refuse it identically until the repair above lands - and reporting it
-      // as "transient failure (attempt 23)" is what let eight stuck messages read as ordinary
-      // network noise for two and a half hours. What is retried here is the MESSAGE; what is being
-      // waited on is the REPAIR, and the line says which.
-      return countedHold(
+      // Observing the livelock and doing nothing about it is what made it permanent. The entry
+      // stayed, the backoff ladder ran to its 60 s ceiling and re-posted for ever, and every
+      // mechanism that could have repaired the group declined to look at it: the connection sync
+      // and the SYNC_WATCHDOG both skip a group the WASM holds, and the watchdog additionally
+      // called `cancelReAdd` on it every 5 s, so the one bit of recovery bookkeeping that might
+      // have survived was cleared on a cadence. Measured 2026-09-04 with eight messages at
+      // attempt 18-23 against a `pending` roster seat two and a half hours old.
+      //
+      // A RETRY IS NOT A REPAIR, AND THIS FRAME PROVES WHICH IS OWED. The server has just stated
+      // that this device holds no leaf; re-posting the same frame cannot change that, so the
+      // ladder below is only what keeps the MESSAGE (it is never lost, and goes out intact once
+      // the device is a member again). The seam is what makes that "once" arrive. It is throttled
+      // on the shared recovery cooldown, so calling it from a flush that runs every 2 s is safe.
+      await deps
+        .recoverRosterDisagreement(terminalId)
+        .catch((err) =>
+          log(
+            `[OUTBOX] roster repair for ${terminalId.slice(0, 8)}… failed: ${String(err).slice(0, 120)}`
+          )
+        );
+    }
+    // THE SERVER SAYS THE GROUP IS GONE. For a sendable text or control entry this is where a
+    // deletion is learnt at all (no pre-flight is asked, see above); for a media entry it is a
+    // deletion that landed after the pre-flight read the group as alive. The same permanent
+    // disposition either way - one `cause`, so a reader cannot tell the seams apart and does not
+    // have to.
+    if (kind === 'group-deleted') {
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… send REFUSED: ${terminalId.slice(0, 8)}… is deleted on the server (410 on this frame)`
+      );
+      return failPermanently(entry, terminalId, 'group-deleted');
+    }
+    // AN ANSWER IS NEVER TRANSIENT. A refusal the media service (or the gateway in front of it)
+    // gave to THIS upload is read from the TYPE the throw carried (status and origin, never the
+    // message), and no retry changes it: the ladder used to re-post the same body once a minute for
+    // ever (attempt 806 on a 413, 2026-10-07; a 403 CrowdSec ban page on every 10 MiB+ body,
+    // 2026-10-10, which spun the bubble for ever). It accuses: each is the visible end of an upload
+    // path that shipped something the other side cannot take.
+    const refusal = uploadRefusalCause(e);
+    if (refusal === 'blocked') {
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… upload BLOCKED by the gateway (${String(e).slice(0, 120)}) - parked for a manual retry, entry kept`
+      );
+      console.error(`[OUTBOX] upload blocked by the gateway: ${String(e).slice(0, 120)}`);
+      parked.add(entry.id);
+      patchStatus(entry.id, 'pending');
+      patchUpload(entry.id, { phase: 'blocked' });
+      return 'parked';
+    }
+    // THE UPLOAD NEVER GOT AN ANSWER, THREE TIMES RUNNING, ONLINE: not a link to wait out but a
+    // path that does not work (a relay refusing early and closing mid-body delivers no status).
+    // Terminal and member-visible - kept, parked, retry and delete offered - never an endless
+    // "sending". It accuses, because it is the visible end of something upstream.
+    if (e instanceof UploadGaveUpError) {
+      const line = `[OUTBOX] ${entry.id.slice(0, 8)}… upload FAILED: no answer on ${e.attempts} attempts in a row (${String(e.cause).slice(0, 120)}) - parked for a manual retry, entry kept`;
+      console.error(line);
+      log(line);
+      parked.add(entry.id);
+      // TERMINAL UNTIL THE MEMBER ACTS: a reconnect resumes every `transportHeld` entry, and the
+      // attempt that gave up was held as a transport failure - leaving it there would restart it
+      // behind a bubble still saying `failed`.
+      transportHeld.delete(entry.id);
+      patchStatus(entry.id, 'pending');
+      patchUpload(entry.id, { phase: 'failed' });
+      return 'parked';
+    }
+    if (refusal) {
+      const detail = `${entry.kind} entry${entry.media ? ` (${entry.media.size} bytes)` : ''}`;
+      const line = `[OUTBOX] ${entry.id.slice(0, 8)}… upload REFUSED (${refusal}: ${String(e).slice(0, 120)}) - ${detail} in ${terminalId.slice(0, 8)}…: no retry can succeed, giving up`;
+      console.error(line);
+      log(line);
+      return failPermanently(entry, terminalId, refusal);
+    }
+    // A 403 IS AN ANSWER ABOUT THE CALLER, read from the TYPE (`SendForbiddenError` is an
+    // `ApiRefusalError`), and re-posting the same frame cannot change who the caller is. The
+    // ladder re-posted six entries 23 times on a bench phone whose token named another account
+    // (2026-10-10). The entry is KEPT - nothing the user wrote is lost, and it goes out after a
+    // sign-in - but it is PARKED for this controller's life (a new sign-in builds a new one), and
+    // the line accuses: the 403 is the visible end of an identity or authorization defect upstream.
+    // A 403 FROM THE EDGE (CrowdSec ban page, not the gateway's JSON) is about the NETWORK PATH,
+    // so it is not parked: a sign-in cannot lift it, the ban expiring does. It climbs the ladder
+    // on the backoff ladder (a reconnect does not lift it, so it is not `transport`), accuses, and tells the user ONCE per conversation.
+    if (e instanceof SendEdgeRefusedError) {
+      const line = `[OUTBOX] ${entry.id.slice(0, 8)}… REFUSED with ${e.status} by the EDGE (not the gateway) in ${terminalId.slice(0, 8)}… - a WAF/proxy block on this network path; retrying on the ladder`;
+      console.error(line);
+      if (edgeNoticed.add(terminalId) && entry.kind !== 'control') {
+        await deps
+          .addMessageToChat?.('system', m.outbox_edge_blocked(), entry.conversationId, {
+            isSystem: true,
+          })
+          .catch((err: unknown) => log(`[OUTBOX] edge notice not posted: ${String(err)}`));
+      }
+      return holdForRetry(
         entry,
-        e,
         (attempts) =>
-          kind === 'sender-not-active'
-            ? `[OUTBOX] ${entry.id.slice(0, 8)}… held for the roster repair of ${terminalId.slice(0, 8)}… (attempt ${attempts}) - not a transient failure: the server refuses this device's leaf until it is re-admitted`
-            : `[OUTBOX] ${entry.id.slice(0, 8)}… transient failure (attempt ${attempts}): ${String(e).slice(0, 80)}`,
-        // Classified by TYPE: the delivery API raises `DeliveryUnreachableError` for a POST that got
-        // no answer (a deadline expiry included) - a `TransportFailureError`, which the one predicate
-        // reads - never a sentence to match.
-        {
-          transport: kind === 'unknown' && isTransportFailure(e),
-          repair: kind === 'sender-not-active',
-        }
+          `[OUTBOX] ${entry.id.slice(0, 8)}… held on an edge refusal (attempt ${attempts})`
       );
     }
+    if (refusalStatus(e) === 403) {
+      forbiddenParked.add(entry.id);
+      const line = `[OUTBOX] ${entry.id.slice(0, 8)}… REFUSED with 403 in ${terminalId.slice(0, 8)}… - the caller is not allowed to send this; parked, no retry until the next sign-in`;
+      console.error(line);
+      log(line);
+      patchStatus(entry.id, 'pending');
+      return 'skip';
+    }
+    if (kind === 'evicted') {
+      log(
+        `[OUTBOX] ${entry.id.slice(0, 8)}… send REFUSED as evicted, after isGroupActive answered that this device is still a member of ${terminalId.slice(0, 8)}… - the two disagree, and OpenMLS is the one that is right`
+      );
+      return failPermanently(entry, terminalId, 'evicted-late');
+    }
+    // A 5xx ON A TEXT IS COUNTED, read from the TYPE (`SendServerError`, typed at the throw): the
+    // Nth in a row parks it as failed (user, 2026-10-18). The count is written BEFORE the park, so a
+    // reload finds the same terminal state. Media and controls keep the uncounted ladder below.
+    if (e instanceof SendServerError && boundedOnServerErrors(entry)) {
+      const count = (entry.serverErrors ?? 0) + 1;
+      if (count >= MAX_CONSECUTIVE_SERVER_ERRORS) {
+        await writeServerErrors(entry.id, count);
+        return parkServerFailure(
+          { ...entry, serverErrors: count },
+          `the server answered ${e.status} (${e.origin}) in ${terminalId.slice(0, 8)}…, the ${count}th 5xx in a row`
+        );
+      }
+      const held = entry;
+      const delayMs = serverErrorHoldMs(held.attempts + 1, e.retryAfterMs);
+      return holdForRetry(
+        held,
+        (attempts) =>
+          `[OUTBOX] ${held.id.slice(0, 8)}… server error ${e.status} (${e.origin}), ${count}/${MAX_CONSECUTIVE_SERVER_ERRORS} in a row (attempt ${attempts}), next in ${delayMs} ms${e.retryAfterMs !== null ? ` (Retry-After ${e.retryAfterMs} ms)` : ''}`,
+        { serverErrors: count, delayMs }
+      );
+    }
+    // Keep pending, back off. The message is never lost - that is true of both arms that reach
+    // here, and it is the only thing they share.
+    //
+    // A LINE ITS READER LEARNS TO SKIP HIDES THE NEXT DEFECT, so the two arms do not share a
+    // sentence. `sender-not-active` is not transient by any reading - the server has refused this
+    // device's leaf and will refuse it identically until the repair above lands - and reporting it
+    // as "transient failure (attempt 23)" is what let eight stuck messages read as ordinary
+    // network noise for two and a half hours. What is retried here is the MESSAGE; what is being
+    // waited on is the REPAIR, and the line says which.
+    return countedHold(
+      entry,
+      e,
+      (attempts) =>
+        kind === 'sender-not-active'
+          ? `[OUTBOX] ${entry.id.slice(0, 8)}… held for the roster repair of ${terminalId.slice(0, 8)}… (attempt ${attempts}) - not a transient failure: the server refuses this device's leaf until it is re-admitted`
+          : `[OUTBOX] ${entry.id.slice(0, 8)}… transient failure (attempt ${attempts}): ${String(e).slice(0, 80)}`,
+      // Classified by TYPE: the delivery API raises `DeliveryUnreachableError` for a POST that got
+      // no answer (a deadline expiry included) - a `TransportFailureError`, which the one predicate
+      // reads - never a sentence to match.
+      {
+        transport: kind === 'unknown' && isTransportFailure(e),
+        repair: kind === 'sender-not-active',
+      }
+    );
   }
 
   /** Schedule a single backoff re-flush at the earliest pending `nextAttemptAt`. */
   function scheduleBackoff(entries: OutboxEntry[]): void {
+    // A controller disposed (sign-out, a new session) during the queue read that fed this must arm
+    // nothing: the timer would raise a flush on a dead controller.
+    if (disposed) {
+      log('[OUTBOX] backoff not armed - the controller was disposed during the queue read');
+      return;
+    }
     const now = Date.now();
     const next = entries
       .map((e) => e.nextAttemptAt ?? 0)
@@ -1549,6 +2003,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     for (const conversationId of new Set(queued.map((e) => e.conversationId))) {
       if (lanes.has(conversationId)) {
         laneRerun.add(conversationId);
+        // A lane waiting for its uploads must look at what was just queued behind them.
+        laneWake.get(conversationId)?.();
         continue;
       }
       const lane = drainLane(conversationId).finally(() => lanes.delete(conversationId));
@@ -1603,6 +2059,7 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       log(`[OUTBOX] Incoming-queue barrier failed, sending at a possibly stale epoch: ${String(e)}`)
     );
     for (;;) {
+      if (disposed) return;
       laneRerun.delete(conversationId);
       const entries = (await readQueue('flush')).filter((e) => e.conversationId === conversationId);
       if (entries.length === 0) return;
@@ -1621,18 +2078,39 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
           continue;
         }
         const outcome = await withSendSlot(() => flushOne(entry));
-        if (outcome === 'parked') heldBack.add(entry.id);
+        // An attachment whose upload runs or is owed is unsent like a parked one: a reply quoting it
+        // waits, an independent text goes (WP-OFF-9).
+        if (outcome === 'parked' || outcome === 'uploading') heldBack.add(entry.id);
         if (outcome === 'sent') anySent = true;
         // Withdrawn or permanently failed: the entry is out of the queue, so what follows it may go.
         else if (outcome === 'gone' || outcome === 'error') continue;
         // Parked for the member (blocked, failed): waiting on a human, not on the network, so what
         // was written after it must not wait too. Only an entry that RETRIES holds its successors.
         else if (outcome === 'parked') continue;
+        // Uploading: the transfer runs outside the lane; only the media message's own send, once
+        // it ended, takes its turn here. What was written after it goes now (WP-OFF-9).
+        else if (outcome === 'uploading') continue;
         // Retry or backing off: the successors wait, which is what keeps the conversation in order.
         else break;
       }
       // Chain another pass if a send unblocked dependents, or a concurrent enqueue arrived.
-      if (!anySent && !laneRerun.has(conversationId)) return;
+      if (anySent || laneRerun.has(conversationId)) continue;
+      if (disposed || !hasRunningUpload(conversationId)) return;
+      // THE BACKOFF IS ARMED BEFORE THE WAIT: `runFlush` arms it only once every lane it started has
+      // returned, and this one may wait minutes for a file - a text held behind it on a 5xx would wait
+      // for the whole upload (review of #2061). The ladder's own timer is the event: it raises a flush,
+      // which finds this lane claimed and wakes it.
+      scheduleBackoff(await readQueue('backoff before an upload wait'));
+      if (disposed) return;
+      if (laneRerun.has(conversationId)) continue;
+      if (!hasRunningUpload(conversationId)) return;
+      // AN UPLOAD OF THIS CONVERSATION IS STILL ON THE WIRE: the lane stays claimed and waits for an
+      // EVENT - the upload ending, or a flush raised meanwhile (an enqueue) - never a clock. The wait
+      // holds no send slot, so other conversations and this one's next text are not held by it.
+      // Checked and armed with no await between them: a task that settles first set `laneRerun`.
+      log(`[OUTBOX] lane ${conversationId.slice(0, 8)}… waits for its upload(s) to end`);
+      await new Promise<void>((resolve) => laneWake.set(conversationId, resolve));
+      laneWake.delete(conversationId);
     }
   }
 
@@ -1661,15 +2139,24 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     const queued = (snapshot ?? (await readQueue('cancel'))).find((e) => e.id === messageId);
     if (!queued) return { withdrawn: false, rowDeleted: false };
     const onWireAtStart = inFlight.has(messageId);
+    // A 5xx IS NOT PROOF THAT NOTHING WAS STORED: a gateway may answer 502 after the delivery service
+    // queued the frame. So a text that was ever answered 5xx in this run is withdrawn here AND
+    // answered "maybe sent", and the delete also goes out as an event (peers that have it drop it).
+    const maybeStored = (queued.serverErrors ?? 0) > 0;
 
     // Three things, and the order between them does not matter because none can undo another:
     // the durable row (every future flush), this tab's snapshot (a flush already walking), and
     // the other tabs' snapshots (a leader draining on our behalf).
     cancelled.add(messageId);
     parked.delete(messageId);
+    serverFailed.delete(messageId);
     noAnswer.delete(messageId);
     bestLoaded.delete(messageId);
     unexpected.delete(messageId);
+    uploadOwed.delete(messageId);
+    // An upload that already ENDED leaves nothing to abort; one still running is aborted below and
+    // forgets itself when it settles.
+    if (uploadTasks.get(messageId)?.settled) uploadTasks.delete(messageId);
     publishOutboxEntryCancelled(messageId);
     let rowDeleted = true;
     await storage
@@ -1699,6 +2186,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
             ' will have it, so the delete has to travel as an event'
         );
       }
+      return { withdrawn: false, rowDeleted };
+    }
+    if (maybeStored) {
+      log(
+        `[OUTBOX] ${messageId.slice(0, 8)}… withdrawn after ${queued.serverErrors} 5xx answer(s) - a gateway may have stored it, so the delete travels as an event too`
+      );
       return { withdrawn: false, rowDeleted };
     }
     // A body already on the wire is stopped too, not only forgotten. AFTER the check above: the
@@ -1823,6 +2316,16 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     },
 
     retryUpload(messageId: string): void {
+      // Still waiting for an upload slot: nothing has left, so there is nothing to restart, and
+      // aborting would only send it to the back of the queue (review of #2061). Answered BEFORE any
+      // arming: a `resuming` mark left here would outlive this attempt and let a later failure of
+      // it skip its fresh backoff and reset its no-answer count.
+      if (slotWaiting.has(messageId)) {
+        log(
+          `[OUTBOX] ${messageId.slice(0, 8)}… retry: not started yet, it keeps its place in line`
+        );
+        return;
+      }
       // Skip the backoff for this entry (the one `resuming` already exists for) and, when its
       // transfer is on the wire and stalled, abandon it: the flush then restarts it at once.
       resuming.add(messageId);
@@ -1830,8 +2333,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       // A 403-parked entry used to ignore this button for the controller's whole life.
       forbiddenParked.delete(messageId);
       const running = uploads.get(messageId);
-      if (running) running.abort('retry');
-      else runFlush();
+      if (running) {
+        running.abort('retry');
+        return;
+      }
+      // A TEXT FAILED ON 5xx starts a new run, DURABLY and read from the ROW (a follower tab holds
+      // none of the leader's memory): written before the flush, so no tab parks it again.
+      void resetServerFailure(messageId).then(() => runFlush());
     },
 
     async applyPendingStatuses(): Promise<void> {
@@ -1839,6 +2347,11 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       const entries = await readQueue('pending statuses');
       for (const entry of entries) {
         const found = findMessage(entry.id);
+        // A text failed on 5xx stays FAILED across a reload: its durable count says so.
+        if (found && isServerFailureTerminal(entry)) {
+          showServerFailure(entry.id, entry.serverErrors ?? 0);
+          continue;
+        }
         // Only (re)apply 'pending'; do not clobber a live 'sending' transition.
         if (found && found.convo.messages[found.idx].status !== 'sending') {
           patchStatus(entry.id, 'pending');
@@ -1847,8 +2360,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     },
 
     dispose(): void {
+      disposed = true;
       for (const running of uploads.values()) running.abort('cancel');
       uploads.clear();
+      uploadTasks.clear();
+      // A lane waiting for its uploads ends now instead of waiting on a controller that is gone.
+      for (const wake of laneWake.values()) wake();
       clearAllUploads();
       if (backoffTimer) clearTimeout(backoffTimer);
       backoffTimer = null;
@@ -1874,7 +2391,28 @@ export function registerOutbox(deps: OutboxDeps): OutboxController {
   const controller = active;
   sweepOrphanBlobs(deps);
   setUploadRetry((messageId) => controller.retryUpload(messageId));
+  for (const listener of registrationListeners) {
+    try {
+      listener(deps.userId);
+    } catch (e) {
+      console.error('[OUTBOX] a registration listener threw:', e);
+    }
+  }
   return active;
+}
+
+const registrationListeners = new Set<(userId: string) => void>();
+
+/**
+ * Calls `listener` each time a controller is registered, with its user: the event that makes a
+ * write owed to the outbox before it existed (a boot, a sign-in) deliverable. The listener runs after
+ * the controller is active, so an enqueue inside it is taken.
+ *
+ * @returns the unsubscribe.
+ */
+export function onOutboxRegistered(listener: (userId: string) => void): () => void {
+  registrationListeners.add(listener);
+  return () => registrationListeners.delete(listener);
 }
 
 /**

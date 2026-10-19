@@ -16,7 +16,6 @@
     Maximize2,
     PictureInPicture2,
     ShieldCheck,
-    ShieldAlert,
     Speaker,
     Volume2,
   } from '@lucide/svelte';
@@ -24,6 +23,7 @@
   import type { CallState } from '$lib/services/CallService';
   import { m } from '$lib/paraglide/messages';
   import { isMobileTauriRuntime } from '$lib/utils/appVersion';
+  import { CALLS_VIDEO_ENABLED } from '$lib/features';
 
   let {
     callService,
@@ -44,7 +44,6 @@
   let localStreamVal = $state<MediaStream | null>(null);
   let isMuted = $state(false);
   let isVideoOff = $state(false);
-  let e2eActive = $state(true);
   /** Whether audio is routed through the speaker (true) or earpiece (false). Mobile only. */
   let isSpeakerOn = $state(true);
 
@@ -56,7 +55,6 @@
       callService.localStreamStore.subscribe((v) => (localStreamVal = v)),
       callService.isMuted.subscribe((v) => (isMuted = v)),
       callService.isVideoOff.subscribe((v) => (isVideoOff = v)),
-      callService.e2eActive.subscribe((v) => (e2eActive = v)),
     ];
     return () => unsubs.forEach((u) => u());
   });
@@ -392,27 +390,16 @@
 {/snippet}
 
 {#snippet e2eBadge(small: boolean)}
-  {#if e2eActive}
-    <span
-      class="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 font-bold text-emerald-300 {small
-        ? 'text-2xs px-1.5 py-0.5'
-        : 'px-2 py-1 text-xs'}"
-      title={m.call_e2e_encrypted_title()}
-    >
-      <ShieldCheck size={small ? 12 : 14} strokeWidth={2.5} />
-      {#if !small}{m.call_encrypted_label()}{/if}
-    </span>
-  {:else}
-    <span
-      class="inline-flex items-center gap-1 rounded-full bg-amber-500/20 font-bold text-amber-300 {small
-        ? 'text-2xs px-1.5 py-0.5'
-        : 'px-2 py-1 text-xs'}"
-      title={m.call_not_e2e_encrypted_title()}
-    >
-      <ShieldAlert size={small ? 12 : 14} strokeWidth={2.5} />
-      {m.call_not_e2e_encrypted_label()}
-    </span>
-  {/if}
+  <!-- Unconditional: a call that cannot encrypt end to end is refused, never shown degraded. -->
+  <span
+    class="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 font-bold text-emerald-300 {small
+      ? 'text-2xs px-1.5 py-0.5'
+      : 'px-2 py-1 text-xs'}"
+    title={m.call_e2e_encrypted_title()}
+  >
+    <ShieldCheck size={small ? 12 : 14} strokeWidth={2.5} />
+    {#if !small}{m.call_encrypted_label()}{/if}
+  </span>
 {/snippet}
 
 {#if compact}
@@ -530,17 +517,19 @@
           {#if isSpeakerOn}<Speaker size={20} />{:else}<Volume2 size={20} />{/if}
         </button>
       {/if}
-      <button
-        class="rounded-full bg-white/10 p-3 text-white transition-all hover:bg-white/20"
-        onclick={() => {
-          userMinimized = false;
-          void callService.toggleVideo();
-        }}
-        title={m.call_enable_video_label()}
-        aria-label={m.call_enable_camera_label()}
-      >
-        <Video size={20} />
-      </button>
+      {#if CALLS_VIDEO_ENABLED}
+        <button
+          class="rounded-full bg-white/10 p-3 text-white transition-all hover:bg-white/20"
+          onclick={() => {
+            userMinimized = false;
+            void callService.toggleVideo();
+          }}
+          title={m.call_enable_video_label()}
+          aria-label={m.call_enable_camera_label()}
+        >
+          <Video size={20} />
+        </button>
+      {/if}
       <button
         class="rounded-full bg-red-500 p-3 text-white transition-all hover:scale-105 hover:bg-red-400"
         onclick={endCall}
@@ -883,15 +872,17 @@
             {#if isSpeakerOn}<Speaker size={24} />{:else}<Volume2 size={24} />{/if}
           </button>
         {/if}
-        <button
-          class="rounded-full p-4 transition-all {isVideoOff
-            ? 'text-cn-ink bg-white'
-            : 'bg-white/10 text-white hover:bg-white/20'}"
-          onclick={() => void callService.toggleVideo()}
-          aria-label={isVideoOff ? m.call_enable_camera_label() : m.call_disable_camera_label()}
-        >
-          {#if isVideoOff}<VideoOff size={24} />{:else}<Video size={24} />{/if}
-        </button>
+        {#if CALLS_VIDEO_ENABLED}
+          <button
+            class="rounded-full p-4 transition-all {isVideoOff
+              ? 'text-cn-ink bg-white'
+              : 'bg-white/10 text-white hover:bg-white/20'}"
+            onclick={() => void callService.toggleVideo()}
+            aria-label={isVideoOff ? m.call_enable_camera_label() : m.call_disable_camera_label()}
+          >
+            {#if isVideoOff}<VideoOff size={24} />{:else}<Video size={24} />{/if}
+          </button>
+        {/if}
         {#if remoteHasVideo && pipSupported}
           <button
             class="hidden rounded-full bg-white/10 p-4 text-white hover:bg-white/20 sm:block"

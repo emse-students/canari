@@ -31,8 +31,19 @@ export type LoginErrorCode =
    * The old-PIN recovery is still offered for it - it costs nothing, it is not destructive, and it
    * is one of the two real possibilities. What changed is that the name, and the message beside it,
    * no longer claim to know which one this is.
+   *
+   * Since step 2 framed every save (2026-10-17) it is left with what the bytes still cannot say: a
+   * LEGACY state written before the flip and not yet rewritten, and a failure nothing types. A framed
+   * state names its key, and is `local_state_sealed_under_old_pin` or, altered, rotated by `init`.
    */
   | 'local_state_unopenable'
+  /**
+   * PIN accepted, and this device's local MLS state is FRAMED under ANOTHER key: its header's
+   * fingerprint names a key other than the one this PIN derives. That is a fact, not a guess - the
+   * PIN was changed on another device (or reset) and the old one opens it - so the sentence says so,
+   * and offers the old-PIN recovery without the "otherwise damaged" branch the fingerprint ruled out.
+   */
+  | 'local_state_sealed_under_old_pin'
   /** Biometric mode with nothing in the platform keystore yet. */
   | 'keystore_empty'
   /** This device was revoked; local state has been wiped and it must re-register. */
@@ -53,11 +64,18 @@ export type LoginErrorCode =
    */
   | 'vault_not_this_account'
   /**
-   * The same refusal, on a phone, where it is PROVEN that the one `mls.bin` of this install holds
-   * ANOTHER account's state: the vaulted key opened it and its credential named someone else.
-   * The gate that follows must not offer the reset, which would delete that account's state.
+   * On a phone, it is PROVEN that the one `mls.bin` of this install holds ANOTHER account's state:
+   * either a vaulted key opened it and its credential named someone else, or this account's key did
+   * not open it and the record beside it (`mls.owner`) names another account. The gate that follows
+   * must not offer the reset, which would delete that account's state.
    */
   | 'device_holds_other_account'
+  /**
+   * This account was DELETED from this device and has not signed in since (`isDeletedAccountHere`):
+   * its local data is owed a wipe, so no session may open it - offline above all, where no server is
+   * there to refuse it. Only an online sign-in (a new account, once the erasure completed) lifts it.
+   */
+  | 'account_deleted'
   /** Anything else (network, server, unexpected). */
   | 'other';
 
@@ -80,6 +98,22 @@ export class LoginFailure extends LocalizedError {
 }
 
 /**
+ * A login STOPPED because the account signed out while it was running - not a failure.
+ *
+ * Thrown by `loginImpl` when the sign-out generation it captured at its start has moved
+ * (`signOutGeneration`), at the first statement after the await the sign-out happened during. Its
+ * catch releases what the login took (its MLS client, its gateway socket) and does nothing else: no
+ * error under the PIN, no `onSessionExpired` (a second sign-out), no forgotten vault slot - the
+ * sign-out IS the outcome. `stage` names the await it was found after, for the log.
+ */
+export class LoginStoppedBySignOutError extends Error {
+  constructor(readonly stage: string) {
+    super(`login stopped after ${stage} - the account signed out meanwhile`);
+    this.name = 'LoginStoppedBySignOutError';
+  }
+}
+
+/**
  * Reads the failure code off an unknown thrown value, defaulting to `'other'`.
  * Use this instead of matching on `error.message`.
  */
@@ -94,7 +128,7 @@ export function loginErrorCode(error: unknown): LoginErrorCode {
 
 /** True when the "PIN changed on another device" recovery flow can resolve this failure. */
 export function isRecoverableWithOldPin(code: LoginErrorCode): boolean {
-  return code === 'pin_mismatch' || code === 'local_state_unopenable';
+  return code === 'pin_mismatch' || provesLocalStateExists(code);
 }
 
 /**
@@ -114,7 +148,7 @@ export function isRecoverableWithOldPin(code: LoginErrorCode): boolean {
  * keeps the reset off the screen. Measured on W2, 2026-09-21.
  */
 export function provesLocalStateExists(code: LoginErrorCode): boolean {
-  return code === 'local_state_unopenable';
+  return code === 'local_state_unopenable' || code === 'local_state_sealed_under_old_pin';
 }
 
 /**
@@ -135,7 +169,8 @@ export function provesLocalStateExists(code: LoginErrorCode): boolean {
  * being asked to try something: a PIN that does not match, a local state sealed under an older key
  * (the recovery flow exists for exactly this), an empty keystore on a device that has enrolled
  * nothing yet, and a server nobody could reach - a train tunnel is not a defect. A fifth joined them
- * on 2026-10-14: a vault left by another account, refused as it should be.
+ * on 2026-10-14: a vault left by another account, refused as it should be; and a sixth on
+ * 2026-10-18: an account deleted from this device, refused as it should be.
  *
  * `device_revoked` is NOT one of them: local state is WIPED on that path, and an erasure deserves a
  * line that accuses whatever anybody later comes looking for. Neither is `other`, which is where the
@@ -145,9 +180,10 @@ export function provesLocalStateExists(code: LoginErrorCode): boolean {
 export function isExpectedLoginOutcome(code: LoginErrorCode): boolean {
   return (
     code === 'pin_mismatch' ||
-    code === 'local_state_unopenable' ||
+    provesLocalStateExists(code) ||
     code === 'keystore_empty' ||
     code === 'server_unreachable' ||
+    code === 'account_deleted' ||
     isVaultRefusal(code)
   );
 }

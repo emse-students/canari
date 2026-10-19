@@ -80,7 +80,7 @@ first version of this file carried were unnecessary. Exactly two bindings differ
 
 | | production | dev | why it is published at all |
 |---|---|---|---|
-| `frontend` | `8080`, on all interfaces | `3080`, loopback only | the cloudflared tunnel reaches Nginx through the host |
+| `edge` (the frontend's until 2026-10-17, [cicd](../cicd.md#a-deploy-replaces-nothing-a-member-is-talking-to)) | `FRONTEND_HOST_PORT`, loopback only | `3080`, loopback only | the host nginx (and dev's tunnel relay) reaches Nginx through the host |
 | `garage` API / admin | `19010` / `19011`, loopback only | `19100` / `19101`, loopback only | tooling (`garage` CLI) attaches from the host |
 
 Two details the compose files do not say plainly. Production's frontend port is `8080` on the BOX but
@@ -157,7 +157,7 @@ needs no toolchain to load it (`bun tools/dev-seed/seed.ts --write` after an edi
 | --- | --- |
 | 10 people, last name `Fictif`, across formations, promotions and both campuses | communities, salons, DMs - anything under MLS. A community inserted as rows has no key-distribution group and no device holding its state, so nobody could ever read it. Testers create them through the product |
 | the ten spaces, three categories, six associations (`BDE Fictif` as the ICM x Saint-Etienne BDE, three clubs, a list, `Ecole Fictive` addressing everyone), their audiences and memberships (each president holds every flag) | media: a row naming an object the dev bucket does not hold renders as a 404 |
-| follows, 8 posts, 5 calendar events (one `pending`, for the validation flow), `platform_config` with payments `disabled` | push tokens, sessions, key packages, devices: a device signing in creates them |
+| follows, 8 posts, 5 calendar events (one `pending`, for the validation flow), `platform_config` with payments `disabled` and the client floor at `MIN_CLIENT_VERSION` (1.2.7, to follow the production floor: a reset drops the live row back to it) | push tokens, sessions, key packages, devices: a device signing in creates them |
 
 **Fake, checkably.** Last names are the marker, association names say `Fictif`/`Fictive`, every
 address is on `example.invalid` - the TLD RFC 2606 reserves so it can never resolve. User ids are 64

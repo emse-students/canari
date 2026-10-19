@@ -11,9 +11,10 @@
  *   `map` that redacts every `token=` query value;
  * - the server block declares the `access_log` ITSELF: one declared at http level would ADD to the
  *   base image's `main` and leave the unredacted line beside the redacted one;
- * - no location overrides it with another format;
+ * - no location overrides it with another format (`access_log off;` is allowed: it records nothing);
  * - a `/api/mls/gifs` line drops its whole query: the route exists so a search is never tied to the
- *   reader's address, and this line carries the address.
+ *   reader's address, and this line carries the address. The GIF relay (`/api/mls/gifs/media`) keeps
+ *   its own path and drops its query too: it names which GIF the reader loaded.
  *
  * STATIC (CI has no Docker daemon); the behaviour was run against nginx:stable-alpine on 2026-10-06
  * with five request lines, one log line each, the token redacted and `xtoken=` left alone.
@@ -35,7 +36,10 @@ const lines = nginx
   .filter((l) => !l.startsWith('#'));
 
 const logFormats = lines.filter((l) => /^log_format\s/.test(l));
-const accessLogs = lines.filter((l) => /^access_log\s/.test(l));
+// `access_log off;` in a location writes nothing, so it cannot leak a token (the health probe uses
+// it: a line every 30 s per replica would be noise). Any other access_log, a second format, still
+// counts and is refused.
+const accessLogs = lines.filter((l) => /^access_log\s/.test(l) && !/^access_log\s+off\s*;$/.test(l));
 
 if (logFormats.length !== 1) fail(`expected exactly one log_format, found ${logFormats.length}`);
 const format = logFormats[0] ?? '';
@@ -44,6 +48,21 @@ if (/\$request(?![_\w])/.test(format) || /\$request_uri/.test(format)) {
   fail('the log format prints $request or $request_uri raw - the token would be logged');
 }
 if (!/\$logged_request_uri/.test(format)) fail('the log format does not print $logged_request_uri');
+// The diagnostic tail (2026-10-18): what lets one line say why a preview was slow, compressed or
+// degraded. Asserted PRESENT, and the format asserted free of the two request headers that would
+// turn a duration field into a credential leak.
+for (const field of [
+  'rt=$request_time',
+  'urt=$upstream_response_time',
+  'ust=$upstream_status',
+  'ce=$sent_http_content_encoding',
+  'deg=$sent_http_x_canari_degraded',
+]) {
+  if (!format.includes(field)) fail(`the log format lacks the diagnostic field ${field}`);
+}
+if (/\$http_(cookie|authorization)|\$cookie_/.test(format)) {
+  fail('the log format prints a cookie or an authorization header');
+}
 if (formatName === 'main') fail('the format is named `main`, a duplicate of the base image');
 
 const map = lines.join('\n').match(/map \$request_uri \$logged_request_uri \{([\s\S]*?)\n\}/)?.[1];
@@ -76,6 +95,11 @@ else {
       ['/api/mls/gifs?q=chat%20noir&page=2', '/api/mls/gifs?query-redacted'],
       ['/api/mls/gifs?page=1&q=x&token=eyJSECRET', '/api/mls/gifs?query-redacted'],
       ['/api/mls/gifsy?q=keep', '/api/mls/gifsy?q=keep'],
+      // The GIF relay: which GIF, beside the reader's address, is not logged either (2026-10-18).
+      [
+        '/api/mls/gifs/media?url=https%3A%2F%2Fstatic.klipy.com%2Fii%2Fa%2Fb.gif&t=abc',
+        '/api/mls/gifs/media?query-redacted',
+      ],
     ];
     for (const [input, expected] of cases) {
       if (apply(input) !== expected) fail(`${input} logs as ${apply(input)}, expected ${expected}`);
@@ -89,7 +113,7 @@ if (accessLogs.length !== 1) {
   fail(`the access_log does not use the redacting format: ${accessLogs[0]}`);
 }
 const serverAt = lines.findIndex((l) => l === 'server {');
-const accessAt = lines.findIndex((l) => /^access_log\s/.test(l));
+const accessAt = lines.findIndex((l) => /^access_log\s/.test(l) && !/^access_log\s+off\s*;$/.test(l));
 const firstLocation = lines.findIndex((l) => /^location\s/.test(l));
 if (serverAt === -1 || accessAt < serverAt || accessAt > firstLocation) {
   fail('the access_log is not declared in the server block before its locations');

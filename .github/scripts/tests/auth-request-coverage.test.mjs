@@ -78,6 +78,10 @@ const PUBLIC_BY_INTENT = [
     why: 'subscribed by an external calendar client, which cannot carry a session at all',
   },
   {
+    route: 'GET /bookings/:bookingId/calendar.ics',
+    why: 'one booking opened by a calendar app, which carries no session; authorised by an HMAC bound to one of the booking\'s people, re-checked at every fetch (booking-calendar.ts); it carries the names of the place, which may be a person\'s (D10), never answers, private texts or the holder\'s or participants\' names',
+  },
+  {
     route: 'GET /forms/:id/calendar-link',
     why: 'one agenda entry for a form, read by the public association page; never the form contents',
   },
@@ -144,6 +148,9 @@ const IN_BODY_AUTH = [
   // `tauri://localhost`, no cookie - a guard would refuse every mobile reader. It verifies a
   // short-lived ticket an authenticated call minted instead, as its first statement.
   'verifyPreviewTicket',
+  // `GET /mls/gifs/media`, the GIF relay, is an `<img src>` for the same reason, and verifies its own
+  // day-long kind of ticket (`utils/previewTicket.ts`) as its first statement.
+  'verifyGifMediaTicket',
 ];
 
 /**
@@ -283,8 +290,10 @@ function nestRoutes(dir) {
  */
 const RUST_AUTH = [
   // `presence.rs` - nginx's `x-user-id` arrives EMPTY for a caller the auth sub-request did not
-  // recognise, so a blank value is what an anonymous caller looks like.
-  'is_authenticated',
+  // recognise, so a blank value is what an anonymous caller looks like. `caller_id` answers `None`
+  // for it and `get_presence` 401s; it replaced the boolean `is_authenticated` on 2026-10-18, when
+  // the handler needed WHO is asking (the presence audience) and not only whether anybody is.
+  'caller_id',
   // `get_admin_presence` - the same header contract, one claim further along.
   'x-global-admin',
   // Both WebSocket upgrades - the `canari_ws_token` JWT, which nginx never reads and `auth_request`

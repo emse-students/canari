@@ -334,9 +334,13 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/deploy-env.test.sh
 	@bash .github/scripts/tests/deploy-migrations.test.sh
 	@bash .github/scripts/tests/deploy-registry-retry.test.sh
+	@bash .github/scripts/tests/deploy-replace.test.sh
+	@bash .github/scripts/tests/deploy-rolling.test.sh
 	@bash .github/scripts/tests/dependency-ceiling.test.sh
 	@bash .github/scripts/tests/mls-forward-compat.test.sh
 	@bun .github/scripts/tests/changes-outputs.test.mjs
+	@bun .github/scripts/tests/ci-passed-gate.test.mjs
+	@bun .github/scripts/tests/smoke-login.test.mjs
 	@bash .github/scripts/tests/dependabot-cargo-reach.test.sh
 	@bash .github/scripts/tests/cargo-blocked-update-report.test.sh
 	@bash .github/scripts/tests/github-alerts-report.test.sh
@@ -354,6 +358,8 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/host-update-report.test.sh
 	@bash .github/scripts/tests/backup-report.test.sh
 	@bun .github/scripts/tests/no-nul-in-source.test.mjs
+	@bun .github/scripts/tests/docs-merge-artefacts.test.mjs
+	@bun .github/scripts/tests/line-endings.test.mjs
 	@bun .github/scripts/tests/assert-frontend-build.test.mjs
 	@bun .github/scripts/tests/wiki-links.test.mjs
 	@bun .github/scripts/tests/docs-private-guard.test.mjs
@@ -382,6 +388,7 @@ test-ci-scripts: lint-ci-scripts
 	@bash .github/scripts/tests/swift-syntax.test.sh
 	@bun tools/app-store/submit.test.mjs
 	@bun tools/store-divergence/divergence.test.mjs
+	@bun tools/version-report/lib.test.mjs
 	@bun test tools/store-listings
 
 # THE 158 SCRIPTS THAT PRODUCE EVERY CAMPAIGN VERDICT ARE LINTED HERE, and were linted by nothing at
@@ -441,6 +448,7 @@ test-harness:
 	@bun tools/cross-client-harness/archive/exit-selftest.mjs
 	@bun tools/cross-client-harness/archive/verdict-selftest.mjs
 	@bun tools/cross-client-harness/archive/staleness-selftest.mjs
+	@bun tools/cross-client-harness/archive/idpform-selftest.mjs
 	@bun tools/cross-client-harness/archive/lucide-selftest.mjs
 	@bun tools/cross-client-harness/archive/ports-selftest.mjs
 	@bun tools/cross-client-harness/archive/transport-selftest.mjs

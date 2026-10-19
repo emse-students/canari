@@ -216,6 +216,47 @@ static void CanariObserveDocumentScrollRange(void) {
   NSLog(@"[CanariIOS] watching the WebView scroll view's range");
 }
 
+/// One line per settled keyboard change: the scroll view's offset and range as UIKit holds them, beside
+/// the document's scroll and viewport and the composer's top as the PAGE reads them.
+///
+/// A REPORT, NOT A REPAIR. iPhone 12, `v1.2.9-alpha.7`, 2026-10-17: in a DM whose last message is a
+/// tall video, the keyboard's rise left every native glass piece one keyboard overlap (301 pt) above
+/// its web twin - the "+" mid-thread, the header off the top of the screen - while the web layer was
+/// drawn where it belongs. The salon, same keyboard, was right; and a later keyboard change in the same
+/// DM (the emoji keyboard, 301 -> 388) put everything back. The native pieces are placed at the page's
+/// `getBoundingClientRect()` (`nativeGlassPiece.svelte.ts`), so the page's coordinates and the screen
+/// disagreed by exactly the overlap. Three causes fit that and the source cannot choose between them:
+/// the page believes the document scrolled while UIKit's offset is 0 (`scrollY` 301, `offset` 0); the
+/// document kept a range and the offset sits legally inside it (`content` - `bounds` = 301, which the
+/// clamp above never touches); or the page laid the composer out at 186 itself (`composerTop` 186,
+/// both scrolls 0). This line separates the three on the next build, from the bench's syslog alone,
+/// since a store build's WebView cannot be inspected (docs/wiki/device-verification.md).
+static void CanariReportSettledKeyboardGeometry(WKWebView *webView) {
+  UIScrollView *scrollView = webView.scrollView;
+  CGFloat offset = scrollView.contentOffset.y;
+  CGFloat content = scrollView.contentSize.height;
+  CGFloat bounds = CGRectGetHeight(scrollView.bounds);
+  NSString *js =
+      @"(function(){var s=document.scrollingElement,v=window.visualViewport,"
+       "f=document.querySelector('.chat-composer-footer');"
+       "function r(n){return Math.round(n*10)/10}"
+       "return 'scrollY='+r(window.scrollY)+' scrollHeight='+(s?r(s.scrollHeight):'none')+"
+       "' innerHeight='+r(window.innerHeight)+' vvHeight='+(v?r(v.height):'none')+"
+       "' vvOffsetTop='+(v?r(v.offsetTop):'none')+' vvPageTop='+(v?r(v.pageTop):'none')+"
+       "' composerTop='+(f?r(f.getBoundingClientRect().top):'none')})()";
+  [webView evaluateJavaScript:js
+            completionHandler:^(id result, NSError *error) {
+              if (error != nil || ![result isKindOfClass:[NSString class]]) {
+                NSLog(@"[CanariIOS] keyboard settled: native offset=%.1f content=%.1f bounds=%.1f | "
+                      @"page geometry NOT read: %@",
+                      offset, content, bounds, error);
+                return;
+              }
+              NSLog(@"[CanariIOS] keyboard settled: native offset=%.1f content=%.1f bounds=%.1f | page %@",
+                    offset, content, bounds, result);
+            }];
+}
+
 /// Shrinks the WebView to the space the soft keyboard leaves - the iOS peer of Android's
 /// `MainActivity.applyKeyboardInsets`, taken for the same reason and with the same shape.
 ///
@@ -273,6 +314,7 @@ static void CanariApplyKeyboardLayout(NSNotification *note) {
                    completion:^(__unused BOOL finished) {
                      CanariClampDocumentScroll(webView.scrollView);
                      CanariPublishSafeAreaInsets();
+                     CanariReportSettledKeyboardGeometry(webView);
                    }];
 }
 
@@ -541,7 +583,7 @@ static void CanariOnDidBecomeActive(__unused NSNotification *note) {
   CanariPushCancelMessageNotifications();
   // Pick up whatever the NSE decrypted while we were killed or backgrounded. It writes into the
   // App Group because an extension cannot reach the app's data container; this is the hop that
-  // puts those entries where read_and_clear_fcm_cache will find them, and it must happen before
+  // puts those entries where take_fcm_cache will find them, and it must happen before
   // the frontend asks for the cache at login.
   CanariDrainAppGroupFcmCache();
   // Refresh the App Group mirror so the NSE decrypts against the state as of the app's last
@@ -697,7 +739,7 @@ void canari_ios_bootstrap(void) {
               }];
   CanariProcessPendingPushSecret();
   CanariCheckKeystoreHealth();
-  // Cold start: drain before the WebView exists, so the very first read_and_clear_fcm_cache of
+  // Cold start: drain before the WebView exists, so the very first take_fcm_cache of
   // this launch already sees the pushes handled while the app was killed.
   CanariDrainAppGroupFcmCache();
   // Start the keyboard media bridge (WP-XP-6). The WKWebView is not yet created at this point

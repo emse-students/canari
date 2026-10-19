@@ -10,6 +10,7 @@ import {
 import { resolveDisplayNames } from '$lib/utils/users/displayName';
 import { applyReaction, mergeReactions } from '$lib/utils/chat/messageReactions';
 import { editSupersedes } from '$lib/utils/chat/editPrecedence';
+import { clearMessageControlRefusals } from '$lib/utils/chat/controlRefusals.svelte';
 import { purgeConversation, retireConversation } from '$lib/utils/chat/conversations';
 import { dropGroupState } from '$lib/utils/chat/dropGroupState';
 import { recordEviction } from '$lib/utils/chat/eviction';
@@ -776,6 +777,8 @@ export async function handleSystemEvent(
           ...c,
           messages: c.messages.map((m, i) => (i === idx ? deletedMsg : m)),
         });
+        // Deleted by another of the author's devices: a refused act on it has nothing left to retry.
+        clearMessageControlRefusals(deletedMsg.id);
         if (storage) {
           try {
             // The tombstone and the replacement body, nothing else: the edit flags and the read
@@ -785,8 +788,9 @@ export async function handleSystemEvent(
               { isDeleted: true, content: deletedMsg.content },
               deviceKey()
             );
-          } catch {
-            // Non-blocking
+          } catch (e) {
+            // Non-blocking: the tombstone holds in memory, a reload shows the message again.
+            log(`[DELETE] tombstone of ${deletedMsg.id.slice(0, 8)} not persisted: ${String(e)}`);
           }
         }
       }

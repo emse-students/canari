@@ -4,7 +4,11 @@
 **Components**: `src/lib/components/calls/`, `src/lib/composables/useCallSession.svelte.ts`  
 **Service**: `src/lib/services/CallService.ts`
 
-> **THE WHOLE SURFACE IS HELD OFF SINCE 0.14.15 - `CALLS_ENABLED = false`
+> **SINCE 2026-10-17 (LOT 1): IN-APP 1:1 AUDIO IS ON FOR DEV BUILDS ONLY, PEER TO PEER** - see
+> [lot 1](#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only) below. Everything else in this
+> banner still holds for production and for the native ring: `CALLS_COMPILED = false`.
+>
+> **THE WHOLE SURFACE WAS HELD OFF SINCE 0.14.15 - `CALLS_ENABLED = false`
 > (`frontend/src/lib/features.ts`).** Everything below still describes the code exactly, and none of
 > it was deleted; none of it RUNS. The reason is that it never did: the campaign board carries twenty
 > CALL rows and not one has ever been executed, the SFU has never had a peer connection opened
@@ -37,9 +41,9 @@
 > INCLUDED.** The per-conversation level (`dm_group_members.notifLevel`) is applied in
 > `sendFcmForQueued` to whatever frame would draw, and an MLS `call_invite` is one of them: at `none`
 > it arrives silent and will NOT ring; at `mentions` it still rings, because both native handlers
-> branch on `call_invite` BEFORE the level gate is reached. Reviving calls must decide whether a
-> ring obeys the conversation's level and, if not, exempt it where the level is read - the cleartext
-> `POST /api/calls/ring` path is a separate send and is not filtered by the level today.
+> branch on `call_invite` BEFORE the level gate is reached. **DECIDED 2026-10-18: a ring obeys the
+> conversation's own CALL PERMISSION, not the level** - see
+> [the call permission](#the-call-permission---its-own-setting-per-conversation-decided-2026-10-18).
 > ([chat-delivery](../../services/chat-delivery.md#a-conversations-notification-level---the-server-applies-none-the-device-decides-mentions))
 
 > The two platform declarations are the ones a store checks, and each cuts both ways: declared but
@@ -58,6 +62,261 @@
 > 443) are the two it cannot use. No inbound port is needed. The minimal ask to the DSI is ONE
 > outbound rule, and it belongs in the revival commit's preconditions
 > ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md)).
+
+## Lot 1 (2026-10-17) - 1:1 audio, peer to peer, dev builds only
+
+**What it is.** The user's 2026-10-16 decision made concrete: a 1:1 call goes DIRECT between the
+two clients, with Cloudflare TURN as the last resort, and the host carries only signalling over the
+443 it already serves. The host cannot send UDP out (the School border), so the SFU path can never
+connect from production ([realtime-media-feasibility](../../infrastructure/realtime-media-feasibility.md#8-what-works-with-no-port-opened-by-the-dsi-measured-2026-10-16)).
+Nothing in this lot needs the DSI.
+
+**The switches** (`frontend/src/lib/features.ts`, pinned by `features.test.ts`):
+
+| Constant | Value | Holds |
+|---|---|---|
+| `CALLS_COMPILED` | `false` | the store binaries' calling: native ring, `voip`, `USE_FULL_SCREEN_INTENT`. Mirrored by the Kotlin `CALLS_ENABLED`; `callsCompiled.test.ts` asserts all five switches of the table above agree with it ([below](#the-switches-agree-and-a-silent-frame-stays-unread)). The four native switches did NOT move |
+| `CALLS_ENABLED` | `CALLS_COMPILED \|\| deployEnvironment() === 'development'` | the in-app call buttons, `startCall`, `handleCallSignal`, the sibling check |
+| `CALLS_VIDEO_ENABLED` | `false` | the video-call button and both camera toggles; waits for WP-C3 (whole-frame encryption vs H.264) |
+
+`VITE_DEPLOY_ENVIRONMENT=development` is written by `build.yml` for the dev web estate and by
+`android.yml` / `ios.yml` for every pre-release - and those pipelines refuse a pre-release whose
+backend is not `dev.canari-emse.fr`. A production build never sets it. So: **dev web + alpha apps
+call; production web and stable apps do not.** A local workstation build sets nothing either; set
+`VITE_DEPLOY_ENVIRONMENT=development` in `frontend/.env` to call locally (it also raises the banner).
+
+**The flow.** Ring and hangup are unchanged (MLS `call_invite` / `call_answered` / `call_hangup`,
+silent, over the chat socket - so an OPEN app rings; a killed one does not, that is `CALLS_COMPILED`).
+Then, on each side:
+
+0. `POST /api/calls/initiate` binds the new room id to its group in Redis (`call:room:<id>`, TTL =
+   ring window + 4 h call horizon) and returns `ringTimeoutMs`, THE ring window
+   (`CALL_RING_TIMEOUT_SEC = 60`, chat-delivery `calls.service.ts`, the single source). The caller
+   relays it in the invite (`CallMsg.ring_timeout_ms`, a duration, so no device compares clocks).
+   `GET /calls/room-token` refuses a room bound to another group (403), an unknown or expired one
+   (410) and a request outside the window (410) - the deadline is enforced there, on one clock.
+   **The window OPENS at the caller's `POST /calls/ring`** (G1, 2026-10-17), sent and awaited
+   BEFORE the invite: no callee can learn of the call before the server would issue it a token, so
+   an early answer (a quick tap, an auto-accept) can never meet a 410 whose hangup would end a sound
+   call. Nothing the caller does first (ICE servers, a first-time microphone prompt, key
+   derivation, the join) eats into the callee's 60 s. Only the room's caller may open it, once: the
+   deadline is its own key, `call:room:<id>:answer_by`, written with ONE `SET NX` that expires with
+   the binding (never restarting its TTL), so concurrent rings cannot both open it. A refused ring
+   rings nobody (the server opens the window before it fans out): no invite, no missed call, and the
+   caller reads `call_setup_failed`. A call hung up while its ring was in flight is not invited,
+   armed or published, and a second ring-end follows the completed fan-out. What is left: the
+   server's clock starts a little BEFORE the callee's timer (armed on the invite's arrival), by the
+   invite's delivery time - an answer in that last stretch is told `call_over` ("this call is
+   over", a 410 from `room-token` mapped by `describeCallFailure` on the typed step), never a
+   failure. A binding written by the lot 1 build (no `callerId`) is refused as expired, with a
+   warning: a one-deploy gap, dev only.
+1. `GET /api/calls/ice-servers` BEFORE ringing (caller) or joining (callee): a server without TURN
+   credentials answers 503 and the call fails there, not after the callee has answered. A call that
+   fails before its invite (initiate refused, no ICE servers, no microphone) writes NO missed-call
+   message: nobody was rung.
+2. `wss://<origin>/api/call` -> `{ type: 'Join', room_id, room_token, mode: 'p2p' }` -> `Joined`.
+3. When both are in the room the relay sends `PeerReady { initiator }`: the caller (first in) is the
+   initiator and offers; the callee is the POLITE side of perfect negotiation and never opens - it
+   answers. `negotiationneeded` drives every offer, so a later camera-on renegotiates the same way.
+4. `Offer` / `Answer` / `IceCandidate` cross the relay verbatim. `iceTransportPolicy: 'all'`
+   (`CALL_ICE_TRANSPORT_POLICY`): host, then server-reflexive, then the Cloudflare relay. The trade:
+   each party can learn the other's public IP.
+5. On `connected` the client logs `[Call] selected path pair=<local>/<proto>-><remote>/<proto>
+   relayed=yes|no [relay_proto=] [rtt_ms=]` (`utils/callStats.ts`, no address) - the only place
+   that says whether a call was billed.
+6. `PeerLeft` (the other socket is gone, or this device was replaced by a sibling) ends the call;
+   a second `PeerReady` (the other party's device was replaced) rebuilds the peer connection.
+7. **The ring window.** Both sides arm a timer of `ringTimeoutMs`. The caller's, if no `PeerReady`
+   came, ends the call as MISSED (hangup + ring-end `cancelled` + the missed-call line). The callee's
+   only covers a caller that vanished silently: the ring stops and nothing is written. A timer is a
+   timer here by nature; what is DETERMINISTIC is that both read the server's one value, and that a
+   late answer is refused by the server's own deadline, whatever either timer did. An invite with no
+   window (an older dev build) does not ring and is logged.
+
+Calls are offered in **direct** conversations only: the room seats two users, a third is `Refused
+{ reason: 'room-full' }`, and a valid token for the same room id signed for ANOTHER group is
+`Refused { reason: 'group-mismatch' }` before it is seated, so it never sees a candidate. Groups wait
+for the group design (WP-C4/WP-C11).
+
+**E2E is mandatory, never degraded.** No `RTCRtpScriptTransform` -> `CallE2eUnsupportedError`
+before any request, with its own toast (`call_e2e_unsupported`). The legacy `createEncodedStreams`
+path, the `encodedInsertableStreams` flag, `VITE_CALL_E2E_ENCRYPTION` and the "not encrypted" badge
+are gone. **`android.yml` and `ios.yml` used to bake `VITE_CALL_E2E_ENCRYPTION=false` into EVERY app
+build**, so an alpha app would have sent cleartext to a web peer that decrypts - removed. A transform
+that fails to attach ends the call.
+
+**Measured in Chrome 155 (2026-10-17), and it changed the code:** a RECEIVER transform attached in
+`ontrack` never sees a frame - the call connects, packets arrive, every sample is concealed
+silence. Attached to the receiver of the transceiver `addTrack` created, before negotiation, every
+frame decrypts. `initPeerConnection` now does that; `ontrack` attaching late logs a WARN. The same
+session found the worker counting a failed decrypt as `decryptOk` (fixed: `decryptError` only).
+
+**Server half:** [call-service p2p mode](../../services/call-service.md#peer-to-peer-mode-2026-10-17).
+
+**What was verified, and how** (no device, no local estate):
+
+| Claim | Evidence |
+|---|---|
+| The relay pairs, assigns roles, forwards verbatim, refuses a third user, a token for another group and a mode mismatch, announces a leave and a sibling replacement, and closes a socket on a frame over 64 KiB | `apps/call-service/tests/p2p_signalling.rs` (the real binary over real WebSockets) + `src/p2p.rs` unit tests (incl. the relay never waiting on a full partner queue) |
+| A room is bound to its group; a token for it is refused for another group, an unknown room and after the ring window | `apps/chat-delivery-service/src/services/calls.service.spec.ts` |
+| The client speaks that protocol (Join p2p, roles, offers only as initiator, answers as polite, refuses without the transform, rebuilds on replacement), honours the ring window on both sides, and writes no missed call for a call that never rang | `CallService.p2p.test.ts` (fakes of WebSocket, RTCPeerConnection, worker) |
+| Two Chrome 155 contexts connect DIRECT (`host/udp->host/udp`) through the real relay, the REAL `encryption.worker.ts` encrypts and decrypts Opus, and the callee hears the caller's 440 Hz tone (RMS 0.71, peak 445 Hz) | a scratch page mirroring `CallService`'s negotiation, by hand, chrome-devtools MCP; a wrong key yields only `decryptError` and no decoded sample |
+| The signalling socket survives an idle call | the same run: one socket held 3.6 h with only the 25 s keepalive pings (local, no proxy in front) |
+
+**NOT verified - owed:** the real app end to end (no local estate was up); a TURN-relayed call;
+anything on the Mi 9T or the iPhone (Android System WebView's and
+WKWebView's `RTCRtpScriptTransform`, the late-receiver behaviour on WebKit, microphone permission in
+the Tauri WebViews, audio routing); cellular and campus networks; the host nginx's 60 s timeout and
+the Cloudflare tunnel in front of dev (the keepalive is there for them, unmeasured through them).
+
+**The dev TURN secrets EXIST since 2026-10-17** (`DEV_CLOUDFLARE_CALLS_API_TOKEN`,
+`DEV_CLOUDFLARE_TURN_KEY_ID`, GitHub secrets). `serve-dev.yml` and `env-manifest.tsv` read them, and
+`docker-compose.dev.yml` hands them to chat-delivery-service since lot 1 (it did not before - the
+secrets alone would have changed nothing). They reach dev at the next pre-release deploy; until then
+dev answers 503 on `/api/calls/ice-servers` and every call fails at step 1 - by design, not a
+fallback to STUN only.
+
+**Still open from the plan:** the TURN budget estimator (`CALL_RELAY_KBPS_PER_DEVICE`) counts EVERY
+call as relayed; in P2P only `relayed=yes` calls cost, so it over-counts (harmless on dev). (A
+conversation at `none` ringing an OPEN app was closed on 2026-10-18 by the call permission below.)
+
+## The user's decisions of 2026-10-18
+
+Four points of the revival, decided by the user. Each holds for every platform and is not to be
+re-opened.
+
+| # | Decision | Where it lands |
+|---|---|---|
+| (6) | **The caller's name on a silent ring comes from the PHONE'S LOCAL copy** - the same mechanism as the mention-name package (the device's own store of the people it shares conversations with), **never from the notification payload**. A caller the phone does not know shows the neutral "Canari call". | WP-C5 (Android) and WP-C6 (iOS). The ring push today still carries `callerName` / `senderName` / `groupName` (`CallsService.ringGroup`); they leave the payload when the native ring is rebuilt, never restored as a fix for an untitled banner (the SIXTH item above) |
+| (ICE) | **`iceTransportPolicy` stays `'all'`**: direct first, Cloudflare TURN as the fallback. The trade (each party can learn the other's public IP) is accepted and owed to the privacy policy (F4 above). | `CALL_ICE_TRANSPORT_POLICY` in `CallService.ts` - unchanged |
+| (block) | **No call crosses a block, in either direction, also inside a conversation that already exists**: `403 USER_BLOCKED`, a neutral message, never who blocked whom. | BUILT 2026-10-18 (WP-C7): `initiate`, `ring` and `room-token` refuse, and the client does not ring an invite across a block - [below](#the-switches-agree-and-a-silent-frame-stays-unread) |
+| (7) | **Calls get their OWN per-conversation permission**, independent of the notification level (the user, asked whether a ring obeys a conversation at `none`: *"Could we add a 4th profile to allow or not calls?"*). | the section below |
+
+## The call permission - its own setting per conversation (decided 2026-10-18)
+
+**What it is.** Beside the three notification levels (`all` / `mentions` / `none`) a private
+conversation carries a second, independent setting for this account: **calls allowed** or **calls
+not allowed**. Whether a conversation may RING is a different question from how loud its MESSAGES
+are, so it is not a fourth level: a member can keep a busy group at `mentions` and still take its
+calls, or keep a DM at `all` and refuse to be rung by it.
+
+**The default, and why.** Stored as `dm_group_members.callsAllowed` (migration 032), `BOOLEAN NULL`.
+NULL means "never chose", and it resolves against the level: **calls ring unless the conversation is
+at `none`.** An explicit true/false overrides the level both ways. Why this default is the least
+surprising one:
+
+- **A member who set a conversation to `none` asked it to be silent.** A phone ringing in full screen
+  for that conversation is the loudest thing the app can do; nothing in "Aucune" says "except calls".
+  It is also what such a member was already getting: at `none` the invite frame is sent silent.
+- **Everybody else keeps what they expect from a messenger**: a DM at `all` or `mentions` rings.
+- **NULL rather than a stored `true`** keeps the default MOVING with the level: a member who never
+  chose and later mutes the conversation stops being rung, and unmuting rings again. A stored value
+  would freeze whatever the level was the day the column appeared.
+- **Old clients are safe by construction**: they never send or read the field, the column stays NULL
+  for every row they touch, and NULL is the rule above - never "rings where the member refused".
+
+The rule is ONE function on each side - `callsAllowedFor` in
+`apps/chat-delivery-service/src/entities/group-member.entity.ts` and in
+`frontend/src/lib/notifications/callPermission.ts` - each pinned by its own test
+(`notification-preferences.controller.spec.ts`, `notificationPreferences.test.ts`).
+
+**Where it is enforced.**
+
+| Path | Who applies it | What a refused conversation gets |
+|---|---|---|
+| The ring PUSH (`POST /api/calls/ring`: FCM `call_ring`, APNs VoIP) - the only thing that rings a killed or backgrounded phone | **the server**, `CallsService.ringGroup` -> `membersWhoTakeCalls`, read at each ring, never cached | no push at all, whatever build the phone runs; logged `[ring] call=... withheld from N member(s) - calls not allowed in this conversation` (ids cut). The caller is told nothing - the call goes unanswered like any other |
+| The in-app invite (MLS `call_invite` over the chat socket - ciphertext the server cannot read) | **the client**, from its copy in `notificationPreferences` | `CallService.handleCallSignal` does not ring (logged); `handleCallSignalForChat` writes the call as **MISSED at once** (`recordCallMissed`, final - the caller's later hangup leaves it), so the line is in the conversation instead of the ring. One predicate, one timeline writer |
+| A native handler that decrypts a `call_invite` push (Android `CanariFirebaseMessagingService`, iOS) | **owed at revival** (WP-C5 / WP-C6), from the device's local copy - today `CALLS_COMPILED = false` and no native ring runs | - |
+
+**Stored and synced like the level.** On the member's own membership row: per ACCOUNT, every device,
+survives a reinstall, ends with the membership (leaving and account erasure hard-delete the row -
+`GroupMember.userId` is `delete` in `account-erasure-coverage.ts`, so the new column needs no entry
+of its own). Written by `PATCH /api/mls/groups/:groupId/calls` `{ allowed: boolean }` (403 for a
+non-member, 400 for a non-boolean); read in the same `GET /api/mls/notification-preferences` the
+client makes at sign-in, as `groupCalls` (explicit choices only - an absent group never chose). It
+refreshes on the same three occasions as the level
+([chat-delivery](../../services/chat-delivery.md#a-conversations-notification-level---the-server-applies-none-the-device-decides-mentions)),
+and the server reads the column at each ring, so a stale client copy can only mis-draw the in-app
+ring of an OPEN session, never a push. **Named case: a cold start.** An invite replayed before the
+first `load()` answers (or after it failed) finds no preference, so every conversation reads as
+`all`: it rings in-app, and is written as `started` rather than missed, even where the member
+refused. Holding the decision needs a counted wait on the replay path and a rule for a `load()`
+that never answers, so it is left; the push is unaffected. **The endpoint's body is constant
+(`{ ok: true }`) and the fan-out runs after the answer**, so neither the body nor the response time
+tells the caller whether a callee refused (the count stays in the server log). `PATCH .../calls`
+accepts a group conversation id too, though the control is drawn only in a direct one - WP-C11
+(group calls) must decide what a group-wide refusal means before it draws the control there.
+Like the level, it is a member's own setting on their
+membership row, not a new processing purpose, so the register of processing is unchanged.
+
+**The control.** `CallPermissionControl.svelte` (two radios, Paraglide `chat_calls_permission_*`, fr
++ en), drawn under the notification level in `ChatGroupPanel` - **only in a direct conversation of a
+build with calls on** (`CALLS_ENABLED`), the only place a call can be placed today. Nothing is
+checked until the store has answered, the rule `NotificationLevelControl` follows.
+
+**Verified:** unit and component tests (server: the fan-out withholds a refused member and asks for
+no token when nobody may be rung; the controller's read and write; the rule. Client: the store, the
+missed line, the invite not ringing, the control). **Not verified on any device. Owed, on dev:** a
+DM set to "not allowed" on one side - the other side's call goes unanswered, the open app does not
+ring and shows the missed-call line, the server logs `withheld from 1 member(s)`; set back to
+"allowed", it rings; a DM at `none` with no choice made does not ring; the control read once on the
+Mi 9T and on the iPhone.
+
+**OWED BEFORE `CALLS_COMPILED` FLIPS** (the review of #1997, 2026-10-17; none of it blocks a dev-only
+build, all of it blocks production):
+
+- **F4 - say who sees what.** `iceTransportPolicy: 'all'` lets each party learn the other's public
+  IP, and Cloudflare (TURN) becomes a recipient of call metadata and relayed media. Both belong in
+  `docs/wiki/compliance/register-of-processing.md` and on `/legal/privacy` before production calls.
+- **F5 - a key both ends AGREE on, or a failure the user SEES.** Each side derives its key alone
+  (`exportSecret(groupId, 'mls-webrtc-media', callId)`); two devices at different MLS epochs derive
+  different keys and the call "connects" in silence. Owed: an epoch/fingerprint agreement over the
+  signalling channel, or at least a visible "decrypt failing" toast driven by the worker's
+  `decryptError` count.
+- **One key, both directions, no AAD.** The same AES-GCM key encrypts both parties' frames and the
+  frame header is not bound as additional data; a per-direction key (or the sender's leaf index in
+  the IV/AAD) closes the nonce-collision and reflection questions.
+- **The `fp=` log line prints the first 4 BYTES OF THE KEY** (`CallService.setupEncryption`). Log a
+  hash of the key instead (e.g. the first bytes of SHA-256), never key material.
+
+## The switches agree, and a silent frame stays unread
+
+**One test, one fact (2026-10-18).** `frontend/src/lib/mobile/callsCompiled.test.ts` reads
+`CALLS_COMPILED` from `features.ts` and asserts that the four other switches of the table at the top
+of this page AGREE with it - the Kotlin `CALLS_ENABLED`, the ObjC `kCanariCallsEnabled`, the `voip`
+entry of `UIBackgroundModes`, the `USE_FULL_SCREEN_INTENT` tag - and that the microphone purpose
+string (base `Info.plist`, `fr.lproj`, `en.lproj`) names calls exactly when calls are compiled. It
+replaced three tests that each asserted "off" (`iosCallDeclarations.test.ts`, two cases of
+`androidFcmManifest.test.ts`, one of `pushSilentDecrypt.test.ts`): a hard-coded "off" fails the
+revival commit for doing its job, an agreement fails it only when it forgets one of the five. Read
+as text: it proves what is written, never what runs.
+
+**The revival no longer reopens the Android push lane.** The Kotlin silent-frame guard used to be
+`silent && !CALLS_ENABLED && isKeyDistribution != true`: flipping the switch would have decrypted
+EVERY silent frame again - every read receipt, 10.7 s of Argon2 each on a Mi 9T (NOTIF-11) - to find
+the rare silent `call_invite`. Nothing needs that decrypt: every current caller rings through the
+cleartext `call_ring` push, sent and awaited BEFORE the MLS invite (a refused ring ends the call),
+and stops it with `call_ring_end`. The guard is now `silent && isKeyDistribution != true`, identical
+today (the switch is off) and unchanged by the flip; `pushSilentDecrypt.test.ts` fails if it ever
+reads the switch again. The MLS `call_invite` branch below it serves only a NON-silent invite from a
+pre-WP-XP-5 caller.
+
+**A call is never placed across a block (WP-C7).** `initiate` refuses `403 { code: 'USER_BLOCKED' }`
+when a block stands between the caller and the other member, in either direction - before a room is
+bound, so no ring window opens, no invite leaves and nothing rings, in-app or native. `ring`
+refuses it again before the fan-out and before the answer window opens: between `initiate` and
+`ring` the caller waits on the first microphone prompt with no limit, so a block set meanwhile is
+caught there, and a refused ring already ends the call on the client. `room-token` refuses the same
+for a block set while the call rang; the callee asks for the token BEFORE it sends `call_answered`,
+so a refused answer tells nobody it was answered (its siblings stop ringing one round trip later).
+The client reads the code (`CallInitiateError.code`) and says `call_unavailable` ("this call cannot
+be placed"), never who blocked whom ([moderation-and-blocking](../../moderation-and-blocking.md#what-a-block-does-exhaustively)).
+A MODIFIED client that skips `initiate` and `ring` and sends the MLS `call_invite` itself does not
+ring the in-app UI either: `handleCallSignal` asks `isBlockedWith` before it rings, and a failure to
+ask does not ring (logged at error). Pinned by `calls.service.spec.ts`, `callFailure.test.ts`,
+`CallService.callsEnabled.test.ts` and `CallService.p2p.test.ts`. **Any block with any other member
+refuses the WHOLE call** - right for 1:1, which only the client enforces today; WP-C11 must decide it
+for a group ([backlog](../../backlog.md#p1-blocks-calls_compiled-not-dev---four-things-owed-before-production-calls-review-of-1997-2026-10-17)).
 
 ## Responsibilities
 
@@ -182,12 +441,13 @@ Ordering: `call_ring_end` must be processed **before** the foreground guard — 
 
 | Method | Path | Description |
 |---|---|---|
-| POST | `/api/calls/initiate` | Verify membership, return a room token + room ID. **Not LiveKit** - the SFU is the in-repo Rust `call-service`; the token is an HS256 JWT signed with `CALL_ROOM_SECRET`, valid 5 minutes |
-| GET | `/api/calls/room-token` | Get room token for recipient |
+| POST | `/api/calls/initiate` | Verify membership, bind the new room ID to the group (Redis `call:room:<id>`), return a room token + room ID + `ringTimeoutMs`. **Not LiveKit** - the SFU is the in-repo Rust `call-service`; the token is an HS256 JWT signed with `CALL_ROOM_SECRET` (`room_id`, `sub`, `group_id`), valid 5 minutes |
+| GET | `/api/calls/room-token` | Get room token for recipient: 403 for a room bound to another group, 410 for an unknown/expired room or after the ring window |
 | GET | `/api/calls/ice-servers` | Get ICE server configuration (Cloudflare TURN) |
 | POST | `/api/calls/presence` | Report device presence in call |
 | GET | `/api/calls/sibling-status` | Check sibling device call status |
-| POST | `/api/calls/ring` | Fan out incoming-call ring to all group members |
+| POST | `/api/calls/ring` | Fan out incoming-call ring to the group members whose [call permission](#the-call-permission---its-own-setting-per-conversation-decided-2026-10-18) allows it |
+| PATCH | `/api/mls/groups/:groupId/calls` | Set the caller's call permission for one conversation (`{ allowed: boolean }`) |
 | POST | `/api/calls/ring-end` | Stop the ring everywhere |
 
 ## See also

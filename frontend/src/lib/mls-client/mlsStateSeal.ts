@@ -23,7 +23,7 @@
  * every cold start. So on the web, v2 is opened by WebCrypto and the WASM is handed the plain CBOR;
  * every OTHER shape (legacy, v1, an unknown version) still goes to `mls-core` sealed, which stays
  * the one place those are decided. The two v2 readers cannot drift silently: both open the same
- * committed fixture, and both answer the same typed codes (`STATE_KEY_MISMATCH`,
+ * committed fixture, and both answer the same typed codes (`STATE_KEY_MISMATCH`, `STATE_ALTERED`,
  * `STATE_UNDECRYPTABLE`) that `classifyStateLoadFailure` reads.
  *
  * DEPENDENCY-FREE ON PURPOSE: the perf bench serves this exact file to a bare page, so it can
@@ -198,8 +198,10 @@ export function isMlsStateBlobV2(blob: Uint8Array): boolean {
  *
  * Rejects with the SAME codes `mls-core` throws, as an `Error` whose message leads with the code -
  * the contract `classifyStateLoadFailure` reads on both paths: `STATE_KEY_MISMATCH` when the header
- * names another device key (checked BEFORE the cipher, so a rotation is a fact, not a guess), and
- * `STATE_UNDECRYPTABLE` for a stub or a tag that does not verify under the right key (altered).
+ * names another device key (checked BEFORE the cipher, so a rotation is a fact, not a guess),
+ * `STATE_ALTERED` for a tag that does not verify under the key the header names (WebCrypto's
+ * `OperationError`, and nothing else), and `STATE_UNDECRYPTABLE` for a stub too short to carry a
+ * body. Any other decrypt rejection leaves UNTYPED, so the classifier answers `unknown`.
  */
 export async function openMlsStateBlobV2(
   blob: Uint8Array,
@@ -237,8 +239,21 @@ export async function openMlsStateBlobV2(
       )
     );
   } catch (e) {
+    // ONLY `OperationError` is WebCrypto's answer for a tag that does not verify. Any other
+    // rejection (a key unusable for `decrypt`, an engine fault) proves nothing about the bytes, and
+    // `STATE_ALTERED` leads to a destructive identity rotation - so it leaves UNTYPED, and the
+    // classifier answers `unknown`: logged loudly, nothing destroyed. Tested by the NAME on an
+    // `Error` (a DOMException is one) rather than `instanceof DOMException`, which is realm-bound:
+    // under the test DOM WebCrypto throws Node's DOMException, not the global one, and the
+    // `instanceof` test then silently sent the real tag failure to `unknown`.
+    if (e instanceof Error && e.name === 'OperationError') {
+      throw new Error(
+        `STATE_ALTERED: v2 AES-GCM tag did not verify under the right key - the blob was altered: ${String(e)}`
+      );
+    }
     throw new Error(
-      `STATE_UNDECRYPTABLE: v2 AES-GCM tag did not verify under the right key - the blob was altered: ${String(e)}`
+      `v2 AES-GCM decrypt failed with something other than a tag check, so the state is not proven altered: ${String(e)}`,
+      { cause: e }
     );
   }
 }

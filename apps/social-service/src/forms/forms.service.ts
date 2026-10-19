@@ -63,12 +63,13 @@ import {
   type PriceMatrix,
   type PricingView,
 } from '../pricing/price-matrix';
+import { criteriaContextFor, parseAudienceCondition, parsePriceMatrix } from '../pricing/validate';
 import {
-  parseAudienceCondition,
-  parsePriceMatrix,
-  type CriteriaContext,
-} from '../pricing/validate';
-import { normaliseCondition, visibleItemIds } from './visibility';
+  normaliseCondition,
+  profileHiddenItemIds,
+  visibleItemIds,
+  type ConditionalItem,
+} from './visibility';
 import { coreUrl } from '../internal/service-urls';
 import { internalCoreRequestConfig } from '../internal/core-request';
 import { mapCorePaymentError } from '../common/core-payment-error';
@@ -254,15 +255,7 @@ export class FormsService {
     // something asks for one. A plain paid form still pays for no catalogue lookup and still works
     // on an association that has no cotisation at all.
     const tiers = assocId ? await this.userTagService.listCotisationTiers(assocId) : [];
-    const ctx: CriteriaContext = {
-      tierKeys: tiers.map((t) => t.variantKey),
-      questions: new Map(
-        (input.items ?? []).map((item: any) => [
-          item.id,
-          new Set<string>((item.options ?? []).map((o: any) => o.id).filter(Boolean)),
-        ])
-      ),
-    };
+    const ctx = criteriaContextFor(tiers, input.items ?? []);
 
     // Validated even when nothing is granted: a grid and a submit condition are not cotisation
     // settings, and refusing them only when a cotisation is involved would let an incomplete grid
@@ -869,14 +862,7 @@ export class FormsService {
       !noCombinationAvailable;
     // Only the PROFILE half is resolved here. An answer condition stays for the page to evaluate as
     // the person types, which it already did for `dependsOn` - so no predicate is duplicated there.
-    const hiddenItemIds = (form.items ?? [])
-      .filter((item: any) => {
-        const condition = normaliseCondition(item);
-        if (!condition) return false;
-        const { answer: _answer, ...profileOnly } = condition;
-        return Object.keys(profileOnly).length > 0 && !matchesCondition(profileOnly, facts);
-      })
-      .map((item: any) => item.id);
+    const hiddenItemIds = profileHiddenItemIds((form.items ?? []) as ConditionalItem[], facts);
 
     if (form.allowMultipleSubmissions)
       return { hasSubmitted: false, formFull, pricing, hiddenItemIds, maySubmit };

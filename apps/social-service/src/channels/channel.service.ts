@@ -5,6 +5,7 @@ import {
   Logger,
   BadRequestException,
   ConflictException,
+  GoneException,
   HttpException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -41,7 +42,6 @@ import {
   DEFAULT_MODERATOR_PERMISSIONS,
   DEFAULT_MEMBER_PERMISSIONS,
   PIN_REQUIRES_MODERATION,
-  RETIRED_PERMISSIONS,
   roleGrantsChannelManagement,
   roleGrantsModeration,
   writePolicyAllows,
@@ -88,6 +88,27 @@ const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
 
 /** An Ed25519 signature is 64 bytes, which padded base64 spells in exactly 88 characters. */
 const SIGNATURE_BASE64_CHARS = 88;
+
+/**
+ * 410 code: a send repeating a message that was deleted after its first send landed (migration 090's
+ * tombstone). The client forgets the send instead of offering it again.
+ */
+export const CHANNEL_MESSAGE_DELETED = 'CHANNEL_MESSAGE_DELETED';
+
+/**
+ * The transaction-scoped advisory lock on ONE client id (author, salon, client id), as SQL over the
+ * three expressions that spell it - parameters on the send, the row's columns on the delete. Both
+ * writers take it, so a delete can never fall between a send's tombstone check and its insert: the
+ * send checks and inserts under it, the delete writes its tombstone and drops the row under it, and
+ * whichever comes second reads what the first committed. The ONE spelling of the key, so the two
+ * sides cannot hash different strings.
+ */
+export function clientIdLockSql(author: string, channel: string, clientId: string): string {
+  return `pg_advisory_xact_lock(hashtextextended(${author}::text || ':' || ${channel}::uuid::text || ':' || ${clientId}::text, 0))`;
+}
+
+/** A client message id is what `crypto.randomUUID()` mints: a canonical UUID, either case. */
+const CLIENT_MESSAGE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * 400 code: a salon row carrying no Graine v2 signature (channel-encryption section 21.8).
@@ -3195,6 +3216,17 @@ export class ChannelService {
     await this.assertSeedFrame(channel, input);
     this.assertSigned(channel.id, input);
 
+    // A SEND REPEATED AFTER A LOST ANSWER IS ANSWERED WITH THE ROW IT ALREADY MADE (WP-OFF-3). The
+    // client's queue re-posts a message whose first POST got no answer, and only this side knows
+    // whether that POST landed: the id its author minted (and sealed inside the ciphertext) names the
+    // row, so the repeat writes nothing, publishes nothing and pushes nobody. A repeat of a DELETED
+    // message is refused at the insert itself, under the client id's lock (`saveUnderUnusedKey`).
+    const clientMessageId = this.readClientMessageId(channel.id, input);
+    if (clientMessageId) {
+      const stored = await this.findByClientMessageId(channelId, input.senderId, clientMessageId);
+      if (stored) return stored;
+    }
+
     // A poll is just an encrypted message carrying a label-free descriptor: we
     // store its option IDs/deadline server-side (for tallying + auto-pin) while
     // the question and labels stay in the ciphertext. Auto-pinned so it stays
@@ -3221,12 +3253,16 @@ export class ChannelService {
       senderSessionId: input.senderSessionId,
       messageIndex: input.messageIndex,
       signature: input.signature ?? null,
+      clientMessageId,
       silent: input.silent === true,
       metadata: pollMeta ? { poll: pollMeta } : {},
       pinned: autoPin,
     });
 
-    const savedMsg = await this.saveUnderUnusedKey(msg, input);
+    const saved = await this.saveUnderUnusedKey(msg, input);
+    // Two repeats racing: the other one wrote the row, this one is answered with it.
+    if (saved.replayed) return saved.row;
+    const savedMsg = saved.row;
     if (pollMeta) {
       this.logger.log(
         `[POLL] created channel=${channelId} message=${savedMsg.id} options=${pollMeta.optionIds.length} endsAt=${pollMeta.endsAt ?? 'none'}`
@@ -3331,11 +3367,25 @@ export class ChannelService {
   private async saveUnderUnusedKey(
     msg: ChannelMessage,
     input: SendChannelMessageDto
-  ): Promise<ChannelMessage> {
+  ): Promise<{ row: ChannelMessage; replayed: boolean }> {
     try {
-      return await this.messageRepo.save(msg);
+      const row = msg.clientMessageId
+        ? await this.saveUnlessDeleted(msg, msg.clientMessageId)
+        : await this.messageRepo.save(msg);
+      return { row, replayed: false };
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
+      // THE OTHER UNIQUE INDEX (migration 090): a repeat of this message landed between the lookup in
+      // `sendMessage` and this insert. Read from the ROW, never from the constraint's name in the
+      // driver's message: a row under this author's client id IS the answer.
+      if (msg.clientMessageId) {
+        const stored = await this.findByClientMessageId(
+          msg.channelId,
+          msg.authorId,
+          msg.clientMessageId
+        );
+        if (stored) return { row: stored, replayed: true };
+      }
       this.logger.error(
         `[CHANNEL_KEY_REUSED] refused channel=${msg.channelId} sender=${input.senderId.slice(0, 8)} ` +
           `session=${input.senderSessionId.slice(0, 8)} index=${input.messageIndex} - a replay or a key sealed twice`
@@ -3345,6 +3395,93 @@ export class ChannelService {
         message: 'a message under this session and index already exists',
       });
     }
+  }
+
+  /**
+   * The client id a send carries (`messageId`, the UUID its author sealed inside the ciphertext), or
+   * null when it carries none - a silent row, a system notice. Every shipped client mints it with
+   * `crypto.randomUUID()`, so anything that is not a UUID is refused rather than stored: a value the
+   * idempotence key cannot trust would make two different messages one.
+   */
+  private readClientMessageId(channelId: string, input: SendChannelMessageDto): string | null {
+    const { messageId } = input;
+    if (messageId === undefined || messageId === null) return null;
+    if (typeof messageId !== 'string' || !CLIENT_MESSAGE_ID.test(messageId)) {
+      this.logger.warn(
+        `[CHANNEL_SEND] refused channel=${channelId} sender=${input.senderId.slice(0, 8)}: ` +
+          `messageId is not a UUID (${typeof messageId === 'string' ? `${messageId.length}ch` : typeof messageId})`
+      );
+      throw new BadRequestException({
+        code: 'CHANNEL_CLIENT_MESSAGE_ID_INVALID',
+        message: 'messageId is the UUID the client minted for this message',
+      });
+    }
+    return messageId.toLowerCase();
+  }
+
+  /**
+   * The row this author already wrote in this salon under `clientMessageId`, or null. A hit is a
+   * repeated send (its first answer was lost), logged because it is the only trace the repeat leaves.
+   */
+  private async findByClientMessageId(
+    channelId: string,
+    authorId: string,
+    clientMessageId: string
+  ): Promise<ChannelMessage | null> {
+    const stored = await this.messageRepo.findOne({
+      where: { channelId, authorId, clientMessageId },
+    });
+    if (stored) {
+      this.logger.log(
+        `[CHANNEL_SEND] repeat of client message ${clientMessageId.slice(0, 8)} channel=${channelId} ` +
+          `sender=${authorId.slice(0, 8)} answered with its stored row ${stored.id.slice(0, 8)} - nothing written`
+      );
+      // The column is `select: false`, so the read did not bring it: the answer carries it anyway,
+      // because the ECHO is how a client learns this server answers a repeat with its row.
+      stored.clientMessageId = clientMessageId;
+    }
+    return stored ?? null;
+  }
+
+  /**
+   * Inserts a message that carries a client id, unless that id names a message this author's salon
+   * has DELETED (migration 090's tombstone). A delete drops the row, so the lookup in `sendMessage`
+   * finds nothing for a repeat that arrives after it - a first POST whose answer was lost, its app
+   * killed, the message removed by a moderator or by its author on another device - and without this
+   * the repeat would post it again: a moderation removal undone with no one touching anything.
+   *
+   * The check and the insert run in ONE transaction under {@link clientIdLockSql}, which
+   * `deleteChannelMessage` takes too: a check made before the lock could pass, a delete commit, and
+   * the insert re-post the row it just removed.
+   *
+   * @throws GoneException `CHANNEL_MESSAGE_DELETED` (410): the client forgets the send.
+   */
+  private saveUnlessDeleted(msg: ChannelMessage, clientMessageId: string): Promise<ChannelMessage> {
+    return this.messageRepo.manager.transaction(async (tx) => {
+      const params = [msg.authorId, msg.channelId, clientMessageId];
+      await tx.query(`SELECT ${clientIdLockSql('$1', '$2', '$3')}`, params);
+      // A new statement after the lock: READ COMMITTED reads what a delete holding it committed.
+      const tombstones: unknown[] = await tx.query(
+        `SELECT 1 FROM channel_message_client_tombstones
+          WHERE "authorId" = $1 AND "channelId" = $2 AND "clientMessageId" = $3`,
+        params
+      );
+      if (tombstones.length > 0)
+        this.refuseDeletedRepeat(msg.channelId, msg.authorId, clientMessageId);
+      return tx.getRepository(ChannelMessage).save(msg);
+    });
+  }
+
+  /** Logs and refuses a repeat whose client id met its tombstone (see `saveUnlessDeleted`). */
+  private refuseDeletedRepeat(channelId: string, authorId: string, clientMessageId: string): never {
+    this.logger.warn(
+      `[CHANNEL_SEND] repeat of DELETED client message ${clientMessageId.slice(0, 8)} channel=${channelId} ` +
+        `sender=${authorId.slice(0, 8)} refused - the message was removed after its first send landed`
+    );
+    throw new GoneException({
+      code: CHANNEL_MESSAGE_DELETED,
+      message: 'this message was deleted: a repeat of it is not posted again',
+    });
   }
 
   /**
@@ -3723,25 +3860,40 @@ export class ChannelService {
    * that was refused: a mark is also the "Lu par" receipt other people see, and a baseline would
    * claim the member had read what they had not.
    *
-   * @returns `asOf`, the server clock the counts were taken at, and `counts` keyed by channel id,
-   *          absent when the count is zero.
+   * A MUTED SALON COUNTS NOTHING (2026-10-18). `notifLevels[channel] = 'none'` is the member's own
+   * "do not bother me with this salon", and a badge on it contradicted that. `mentions` still counts:
+   * the row is encrypted, so the server cannot tell which rows mention the caller. The muted ids are
+   * returned beside the counts so a client's LIVE tally can stay silent for them too - the server's
+   * zero alone would be re-raised by the next message that arrives while the app is open.
+   *
+   * A MEMBERSHIP NOTICE COUNTS NOTHING because the client now sends it `silent` (the row is opaque
+   * here, so the sender must say so). Notices written before that stay counted until the salon is
+   * opened, which the read mark now reaches.
+   *
+   * @returns `asOf`, the server clock the counts were taken at, `counts` keyed by channel id,
+   *          absent when the count is zero, and `muted`, the readable salons at level `none`.
    */
   async listUnreadCounts(
     userId: string
-  ): Promise<{ asOf: number; counts: Record<string, number> }> {
+  ): Promise<{ asOf: number; counts: Record<string, number>; muted: string[] }> {
     const members = await this.memberRepo.find({ where: { userId } });
-    if (members.length === 0) return { asOf: Date.now(), counts: {} };
+    if (members.length === 0) return { asOf: Date.now(), counts: {}, muted: [] };
     const memberOf = new Map(members.map((m) => [m.workspaceId, m]));
     const channels = await this.channelRepo.find({
       where: { workspaceId: In([...memberOf.keys()]) },
     });
-    const readable = channels
-      .filter((c) => {
-        const member = memberOf.get(c.workspaceId);
-        return !!member && this.canAccessChannel(c, member, userId);
-      })
-      .map((c) => c.id);
-    if (readable.length === 0) return { asOf: Date.now(), counts: {} };
+    const readable = channels.filter((c) => {
+      const member = memberOf.get(c.workspaceId);
+      return !!member && this.canAccessChannel(c, member, userId);
+    });
+    if (readable.length === 0) return { asOf: Date.now(), counts: {}, muted: [] };
+    const muted: string[] = [];
+    const countable: string[] = [];
+    for (const c of readable) {
+      if (memberOf.get(c.workspaceId)?.notifLevels?.[c.id] === 'none') muted.push(c.id);
+      else countable.push(c.id);
+    }
+    if (countable.length === 0) return { asOf: Date.now(), counts: {}, muted };
 
     // asOf is taken HERE, right before the count, not at the top of the method: the client adds
     // every live message newer than it, so each millisecond between the two is a window in which a
@@ -3777,11 +3929,14 @@ export class ChannelService {
              AND floor(extract(epoch from m."createdAt") * 1000) > b.since
         ) u
         WHERE cm."userId" = $1 AND u.n > 0`,
-      [userId, readable, UNREAD_TRACKED_SINCE_MS]
+      [userId, countable, UNREAD_TRACKED_SINCE_MS]
     );
     const counts: Record<string, number> = {};
     for (const r of rows) counts[r.channelId] = Number(r.n);
-    return { asOf, counts };
+    this.logger.debug(
+      `[UNREAD] user=${userId.slice(0, 8)} salons=${countable.length} unread=${Object.keys(counts).length} muted=${muted.length}`
+    );
+    return { asOf, counts, muted };
   }
 
   /**
@@ -4004,7 +4159,11 @@ export class ChannelService {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
-    const audience = await this.channelAudience(channel);
+    // THE SENDER IS NOT TOLD ABOUT THEIR OWN TYPING: the client dropped that frame on arrival (115
+    // frames back for 112 POSTs in one web console, 2026-10-18), so it was transport and a console
+    // line for nothing. The audience is a list of USER ids, so this also spares the sender's other
+    // devices - which have no use for it either, a typing indicator names someone ELSE.
+    const audience = (await this.channelAudience(channel)).filter((id) => id !== userId);
     await this.redis.publishChannelEvent(
       'channel.typing',
       { channelId, userId, state: isTyping ? 'start' : 'stop' },
@@ -4238,7 +4397,52 @@ export class ChannelService {
       throw new ForbiddenException('Missing channel.moderate permission to delete this message');
     }
 
-    await this.messageRepo.delete({ id: messageId, channelId });
+    // ITS CLIENT ID OUTLIVES IT (migration 090): the tombstone and the delete commit together, under
+    // the client id's lock (`clientIdLockSql`) that a send takes around its tombstone check and its
+    // insert - so no instant exists where a repeat of this message finds neither the row nor its
+    // tombstone and posts it again. A row with no client id (older than 090, a system notice) has
+    // nothing a repeat could name: it takes no lock and writes no tombstone.
+    //
+    // THE ROW IS LOCKED FIRST, and that is what keeps a tombstone from outliving an account erasure.
+    // The erasure deletes the author's messages, then its tombstones, in one transaction that takes
+    // no client-id lock. Without the row lock, a delete arriving while that transaction is open read
+    // the still-committed row, wrote its tombstone (invisible to the erasure's statement), then
+    // waited on the erasure's row lock and committed AFTER it - an erased account's id left behind.
+    // `FOR UPDATE` waits for the erasure instead and then finds no row, so the INSERT ... SELECT
+    // below writes nothing; and when the delete locks first, the erasure's DELETE waits for it and
+    // its tombstone statement, a later snapshot, sees and removes the committed tombstone.
+    // LOCK ORDER: the message row, then the client id's advisory lock. A send takes the advisory
+    // lock alone and inserts a NEW row (a duplicate is refused at once, never waited on: the unique
+    // check does not wait on a row lock), and the erasure takes row locks alone - no cycle.
+    const removed = await this.messageRepo.manager.transaction(async (tx) => {
+      const locked: unknown[] = await tx.query(
+        `SELECT 1 FROM channel_messages WHERE id = $1 AND "channelId" = $2 FOR UPDATE`,
+        [messageId, channelId]
+      );
+      if (locked.length === 0) return false;
+      await tx.query(
+        `SELECT ${clientIdLockSql('"authorId"', '"channelId"', '"clientMessageId"')}
+           FROM channel_messages
+          WHERE id = $1 AND "channelId" = $2 AND "clientMessageId" IS NOT NULL`,
+        [messageId, channelId]
+      );
+      await tx.query(
+        `INSERT INTO channel_message_client_tombstones ("authorId", "channelId", "clientMessageId")
+         SELECT "authorId", "channelId", "clientMessageId" FROM channel_messages
+          WHERE id = $1 AND "channelId" = $2 AND "clientMessageId" IS NOT NULL
+         ON CONFLICT DO NOTHING`,
+        [messageId, channelId]
+      );
+      await tx.getRepository(ChannelMessage).delete({ id: messageId, channelId });
+      return true;
+    });
+    if (!removed) {
+      // Read above, gone once its lock was granted: an account erasure or another delete removed it
+      // meanwhile. Nothing was written; the frame below still tells the salon it is gone.
+      this.logger.log(
+        `[CHANNEL] message ${messageId} channel=${channelId} was removed concurrently - no tombstone written`
+      );
+    }
 
     const audience = await this.channelAudience(channel);
     await this.redis.publishChannelEvent(
@@ -4314,16 +4518,43 @@ export class ChannelService {
       take: safeLimit,
     });
     const oldestInPage = bodies[bodies.length - 1]?.createdAt ?? null;
+    // A SHORT PAGE IS THE END OF THE HISTORY: fewer bodies than asked means no older body exists, so
+    // no later page will ever be asked for what lies below the oldest one. A membership notice
+    // written before a salon's first body (the join that precedes the first word) would otherwise
+    // be in no page at all - so the lower bound goes and only the cursor bounds the silent rows.
+    const historyExhausted = bodies.length > 0 && bodies.length < safeLimit;
+    if (historyExhausted) {
+      this.logger.debug(
+        `[HISTORY] channel=${channelId} short page (${bodies.length}/${safeLimit}): silent rows below the oldest body included`
+      );
+    }
+    // NO BODY AT ALL: A salon whose only rows are membership notices (sent silent since 2026-10-18,
+    // so they ring and count nothing) would otherwise show an empty history. Bounded by the page
+    // limit, and by the cursor like everything else.
     const silentRows =
       bodies.length === 0
-        ? []
+        ? await this.messageRepo.find({
+            where: {
+              channelId,
+              silent: true,
+              ...(hasValidCursor ? { createdAt: LessThan(beforeDate) } : {}),
+            },
+            order: { createdAt: 'DESC' },
+            take: safeLimit,
+          })
         : await this.messageRepo.find({
             where: {
               channelId,
               silent: true,
-              createdAt: hasValidCursor
-                ? And(MoreThanOrEqual(oldestInPage), LessThan(beforeDate))
-                : MoreThanOrEqual(oldestInPage),
+              ...(historyExhausted
+                ? hasValidCursor
+                  ? { createdAt: LessThan(beforeDate) }
+                  : {}
+                : {
+                    createdAt: hasValidCursor
+                      ? And(MoreThanOrEqual(oldestInPage), LessThan(beforeDate))
+                      : MoreThanOrEqual(oldestInPage),
+                  }),
             },
             order: { createdAt: 'DESC' },
           });
@@ -4504,7 +4735,8 @@ export class ChannelService {
   /**
    * Grants or revokes ONE permission on a role, applied to the row as it stands.
    *
-   * WHY THIS EXISTS BESIDE THE WHOLE-LIST WRITE. Clicking a cell in the permission grid IS a delta -
+   * WHY IT IS A DELTA AND NOT A WHOLE LIST (the whole-list PUT is gone since `minClientVersion`
+   * 1.2.7). Clicking a cell in the permission grid IS a delta -
    * "grant this one key" - and it was being sent as the role's entire list, computed from whatever
    * the browser happened to be holding. Two administrators toggling two DIFFERENT permissions of one
    * role at the same moment therefore did not race: the second write carried a list built before the
@@ -4565,55 +4797,6 @@ export class ChannelService {
     await this.announceRolePermissions(saved);
 
     return { roleId: saved.id, roleName: saved.name, permissions: saved.permissions };
-  }
-
-  async setRoleBasePermissions(roleId: string, actorUserId: string, permissions: string[]) {
-    const role = await this.roleRepo.findOne({ where: { id: roleId } });
-    if (!role) throw new NotFoundException('Role not found');
-    await this.assertCanManageRoles(role, actorUserId);
-
-    // A KEY THIS SERVER RETIRED IS DROPPED, NOT REFUSED - and it is the only exception.
-    //
-    // `channel.access` and `channel.send` were removed on 2026-08-19 because nothing enforced them.
-    // The fleet is mixed by construction - A1's APK carries its own bundle and no deploy reaches it
-    // - so an old client still renders the eight-row grid and PUTs all eight on any toggle. Refusing
-    // the whole list would turn every role edit on that client into a 400 over two keys the server
-    // itself put in the grid. Accepting them would resurrect them. Dropping them applies exactly
-    // what the admin asked for and nothing else.
-    //
-    // Loud on purpose: this is the only thing that will ever say an old client is still out there,
-    // and the branch goes the day it stops firing (see legacy-compatibility).
-    const retired = permissions.filter((p) => RETIRED_PERMISSIONS.includes(p));
-    if (retired.length > 0) {
-      this.logger.warn(
-        `[ROLE] RETIRED_PERMISSION_SENT role=${roleId} by=${actorUserId.slice(0, 8)} ` +
-          `keys=${retired.join(',')} - a client built before 2026-08-19 is still in the fleet`
-      );
-    }
-    const requested = permissions.filter((p) => !RETIRED_PERMISSIONS.includes(p));
-
-    // Anything else unknown is a real error and still fails the whole update: a permission the
-    // server cannot name is a client asking for a capability that does not exist, and silently
-    // granting the remainder would report success for a request nobody can read back.
-    const validPermissions = Object.values(CHANNEL_PERMISSIONS) as string[];
-    const invalid = requested.filter((p) => !validPermissions.includes(p));
-    if (invalid.length > 0) {
-      throw new BadRequestException(`Invalid permissions: ${invalid.join(', ')}`);
-    }
-
-    role.permissions = requested;
-    await this.roleRepo.save(role);
-
-    this.logger.log(
-      `[ROLE] permissions updated role=${roleId} by=${actorUserId.slice(0, 8)} perms=${requested.length}`
-    );
-    await this.announceRolePermissions(role);
-
-    return {
-      roleId: role.id,
-      roleName: role.name,
-      permissions: role.permissions,
-    };
   }
 }
 

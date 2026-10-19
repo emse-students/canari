@@ -568,7 +568,7 @@ describe('over real HTTP: the controller reads Content-Length and pipes the requ
 
     const r = rig();
     const s = await open(r, 'alice', 3000);
-    const controller = new MediaController({} as never, r.svc);
+    const controller = new MediaController({} as never, r.svc, {} as never);
     const server = http.createServer((req, res) => {
       const index = /parts\/(\d+)/.exec(req.url ?? '')?.[1] ?? '0';
       controller

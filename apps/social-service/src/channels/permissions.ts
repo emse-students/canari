@@ -35,17 +35,6 @@ export const CHANNEL_PERMISSIONS = {
 
 export type ChannelPermission = (typeof CHANNEL_PERMISSIONS)[keyof typeof CHANNEL_PERMISSIONS];
 
-/**
- * Keys this server used to accept and no longer has, kept ONLY so a write can tell them apart from
- * a key that never existed.
- *
- * A client built before 2026-08-19 still renders both in its grid and sends them on every role
- * edit. `setRoleBasePermissions` drops these and refuses anything else unknown, which is the
- * difference between an old client and a wrong one. Delete this list, and that branch, on the date
- * on [legacy-compatibility](../../../../docs/wiki/legacy-compatibility.md).
- */
-export const RETIRED_PERMISSIONS: string[] = ['channel.access', 'channel.send'];
-
 /** Permissions of the Administrator role (priority 100) - every permission. */
 export const DEFAULT_ADMIN_PERMISSIONS: ChannelPermission[] = [
   CHANNEL_PERMISSIONS.MANAGE_CHANNEL,

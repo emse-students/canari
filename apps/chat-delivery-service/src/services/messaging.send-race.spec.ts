@@ -14,6 +14,7 @@ import { PushToken } from '../entities/push-token.entity';
 import { MlsCommitLog } from '../entities/mls-commit-log.entity';
 import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
+import { mlsFrame } from '../testing/mlsFrameFixture';
 
 /**
  * A SEND MAY NOT WRITE ROWS FOR A GROUP THAT STOPPED EXISTING WHILE IT WAS IN FLIGHT.
@@ -42,7 +43,15 @@ describe('MessagingService - a send cannot outlive its group', () => {
   let service: MessagingService;
 
   /** What `dm_groups` holds, by id. A missing key is a group with no row at all. */
-  let groups: Record<string, { id: string; deletedAt: Date | null }>;
+  let groups: Record<
+    string,
+    {
+      id: string;
+      deletedAt: Date | null;
+      activeEpoch?: number;
+      distributionWorkspaceId?: string | null;
+    }
+  >;
   /** Rows written through the TRANSACTIONAL manager - the only legitimate way in. */
   let committed: Partial<QueuedMessage>[];
   /** Rows written through the bare repository, which after the fix must never happen for a group. */
@@ -143,7 +152,7 @@ describe('MessagingService - a send cannot outlive its group', () => {
     // Every roster device has a KeyPackage, so none is skipped as a ghost.
     const keyPackageRepo = {
       ...emptyRepo(),
-      find: jest.fn(async () => [SENDER, PEER]),
+      find: jest.fn(async () => [{ ...SENDER, deviceAppVersion: '1.2.3' }, PEER]),
     };
 
     const module: TestingModule = await Test.createTestingModule({
@@ -260,5 +269,64 @@ describe('MessagingService - a send cannot outlive its group', () => {
     // And the write went through the transaction, not around it.
     expect(committed).toHaveLength(1);
     expect(bareSaved).toEqual([]);
+  });
+
+  // The same locked read names a frame sealed beyond the past-epoch window (backlog, 2026-10-12:
+  // seed requests sealed at 135-138 into a key group at 141). Reported, never refused: the line is
+  // the measurement of which sender builds lag.
+  describe('a frame sealed too far behind its group', () => {
+    const sendAt = (epoch: bigint, extra: { isCommit?: boolean } = {}) =>
+      service.sendMessage(
+        {
+          proto: mlsFrame(extra.isCommit ? 1 : 2, GROUP, epoch),
+          groupId: GROUP,
+          senderId: SENDER.userId,
+          senderDeviceId: SENDER.deviceId,
+          ...extra,
+        },
+        SENDER.userId
+      );
+    const staleLines = () => warnings.filter((w) => w.includes('STALE_EPOCH_FRAME'));
+
+    beforeEach(() => {
+      groups[GROUP] = {
+        id: GROUP,
+        deletedAt: null,
+        activeEpoch: 141,
+        distributionWorkspaceId: 'ws-1',
+      };
+    });
+
+    it('names the sender, its build and the distance, and still queues the frame', async () => {
+      await sendAt(138n);
+
+      const [line] = staleLines();
+      expect(line).toContain(`group=${GROUP} keyGroup=true`);
+      expect(line).toContain('frameEpoch=138 activeEpoch=141 behind=3');
+      expect(line).toContain(`sender=${SENDER.userId}:${SENDER.deviceId} app=1.2.3`);
+      // Contained, not equal: this roster mock answers the pending-admitted read with the same rows.
+      expect(committed.map((r) => r.deviceId)).toContain(PEER.deviceId);
+    });
+
+    it('stays silent for a frame inside the window - two epochs behind still decrypts', async () => {
+      await sendAt(139n);
+      await sendAt(141n);
+
+      expect(staleLines()).toEqual([]);
+    });
+
+    it("stays silent for a commit, whose epoch is its base and is the commit gate's business", async () => {
+      await sendAt(130n, { isCommit: true }).catch(() => undefined);
+
+      expect(staleLines()).toEqual([]);
+    });
+
+    it('reads a conversation group as not a key group', async () => {
+      groups[GROUP] = { id: GROUP, deletedAt: null, activeEpoch: 9, distributionWorkspaceId: null };
+
+      await sendAt(4n);
+
+      expect(staleLines()[0]).toContain('keyGroup=false');
+    });
   });
 });

@@ -13,6 +13,11 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { BaseMlsService } from '$lib/services/BaseMlsService';
+import {
+  noteUnackedFrame,
+  refusedBacklogIsQueued,
+  resetUnackedFrames,
+} from '$lib/mls-client/messagePipeline/unackedFrames';
 
 /** This tab's side of the election, as each case sets it. `undecided` is the default of a test. */
 const tab = vi.hoisted(() => ({ leadership: 'undecided' as 'undecided' | 'leader' | 'follower' }));
@@ -435,5 +440,58 @@ describe('waitForMessageQueueIdle', () => {
     await svc.waitForMessageQueueIdle('a test', null);
 
     expect(pullPendingMessagesJson).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * THE REFUSED BACKLOG IS DISCHARGED BY A PULL THAT LISTED IT AND A QUEUE THAT HANDLED IT. While it
+ * stands, the gap healer holds a live frame instead of replaying commits past the epochs those
+ * frames were sent in - 47 lost that way (Pixel 6a, prod 1.2.7, 2026-10-14). Discharged at the end
+ * of the listing instead, a live frame already queued AHEAD of the listed rows would meet the healer
+ * with its predecessors still behind it.
+ */
+describe('the refused backlog and the pull that redelivers it', () => {
+  let svc: BaseMlsService;
+  let pullPendingMessagesJson: ReturnType<typeof vi.fn>;
+  let waitUntilIdle: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    resetUnackedFrames();
+    svc = makeService();
+    pullPendingMessagesJson = vi.fn().mockResolvedValue(undefined);
+    waitUntilIdle = vi.fn().mockResolvedValue(undefined);
+    poke(svc, {
+      userId: 'user-a',
+      messageCallback: vi.fn().mockResolvedValue(true),
+      messageScheduler: { waitUntilIdle },
+      delivery: { ackMessages: vi.fn().mockResolvedValue(undefined), pullPendingMessagesJson },
+      isWsOpen: () => true,
+    });
+  });
+
+  it('stands until the queue has HANDLED what the pull listed, then falls', async () => {
+    noteUnackedFrame('g-bg', 'absent-conversation');
+    const drained = gate();
+    waitUntilIdle.mockReturnValue(drained.promise);
+
+    const fetching = svc.fetchPendingMessages();
+    await vi.waitFor(() => expect(waitUntilIdle).toHaveBeenCalled());
+    // Listed, not yet handled.
+    expect(refusedBacklogIsQueued('g-bg')).toBe(true);
+
+    drained.open();
+    await fetching;
+    expect(refusedBacklogIsQueued('g-bg')).toBe(false);
+  });
+
+  it('control: a pull that died half-way proves nothing about the pages it did not list', async () => {
+    noteUnackedFrame('g-bg', 'absent-conversation');
+    pullPendingMessagesJson.mockRejectedValue(new Error('server said no'));
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    await svc.fetchPendingMessages();
+
+    expect(refusedBacklogIsQueued('g-bg')).toBe(true);
+    error.mockRestore();
   });
 });

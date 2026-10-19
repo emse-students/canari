@@ -1,19 +1,10 @@
 <script lang="ts">
-  import {
-    MessageCircle,
-    Newspaper,
-    Users,
-    LayoutDashboard,
-    Bell,
-    Calendar,
-    ShoppingBag,
-    ClipboardList,
-    SlidersHorizontal,
-  } from '@lucide/svelte';
+  import { SlidersHorizontal } from '@lucide/svelte';
   import { m } from '$lib/paraglide/messages';
   import { afterNavigate } from '$app/navigation';
   import { preloadRouteOnView } from '$lib/actions/preloadRouteOnView';
   import { APP_PLACES, resolveActivePlaceId } from '$lib/navigation/places';
+  import { PLACE_ICONS } from '$lib/navigation/placeIcons';
   import { globalConvs, globalSession } from '$lib/stores/globalChatSingleton.svelte';
   import { postNotifStore } from '$lib/stores/postNotifStore.svelte';
   import { isChannelConversationId } from '$lib/utils/chat/channelCrypto';
@@ -28,19 +19,8 @@
   let isHovering = false; // Tracks whether the cursor is physically over the sidebar.
   let expandTimer: ReturnType<typeof setTimeout>;
 
-  const ICONS = {
-    'message-circle': MessageCircle,
-    newspaper: Newspaper,
-    users: Users,
-    'layout-dashboard': LayoutDashboard,
-    bell: Bell,
-    calendar: Calendar,
-    'shopping-bag': ShoppingBag,
-    'clipboard-list': ClipboardList,
-  } as const;
-
-  function getIcon(icon: keyof typeof ICONS) {
-    return ICONS[icon];
+  function getIcon(icon: keyof typeof PLACE_ICONS) {
+    return PLACE_ICONS[icon];
   }
 
   const totalUnread = $derived(

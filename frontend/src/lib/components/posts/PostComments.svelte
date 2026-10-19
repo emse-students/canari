@@ -15,6 +15,7 @@
   import { tick, onMount } from 'svelte';
   import { getToken } from '$lib/stores/auth';
   import GifPickerModal from '$lib/components/chat/GifPickerModal.svelte';
+  import { fetchGifFile } from '$lib/utils/gifMediaProxy';
   import type { PostComment, PostMediaRef } from '$lib/posts/api';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import PostImage from './PostImage.svelte';
@@ -30,6 +31,7 @@
   import { reportLineClamp } from '$lib/actions/reportLineClamp';
   import { showToast } from '$lib/stores/toast.svelte';
   import { getUserDisplayNameSync } from '$lib/utils/users/displayName';
+  import { Log } from '$lib/utils/Log';
 
   type SortMode = 'recent' | 'oldest' | 'liked';
 
@@ -77,6 +79,11 @@
      * the reader sees their comment immediately and cannot act on an id that does not exist yet.
      */
     pendingCommentIds?: ReadonlySet<string>;
+    /**
+     * The comment a notification tap opened the post at (`?comment=` on `/posts/[postId]`): scrolled
+     * into view once it is drawn, and marked so the reader sees which one they were told about.
+     */
+    focusCommentId?: string;
   }
 
   let {
@@ -98,7 +105,33 @@
     onLoadAllComments,
     onKeyDown,
     pendingCommentIds,
+    focusCommentId,
   }: Props = $props();
+
+  /** The DOM id of a comment's row, the anchor a notification tap scrolls to. */
+  function commentAnchorId(id: string): string {
+    return `comment-${id}`;
+  }
+
+  /** The focus id already acted on, so a later redraw (a new comment, a like) never scrolls again. */
+  let focusHandled: string | undefined;
+  $effect(() => {
+    const id = focusCommentId;
+    if (!id || focusHandled === id || !showComments) return;
+    if (!comments.some((c) => c.id === id)) {
+      // Deleted since the push, or not in this list: the post is shown, and the log says why the
+      // page did not move.
+      Log.d(`[PostComments] focus comment ${id.slice(0, 8)} not in the thread - post shown at top`);
+      focusHandled = id;
+      return;
+    }
+    focusHandled = id;
+    void tick().then(() => {
+      const el = document.getElementById(commentAnchorId(id));
+      Log.d(`[PostComments] focus comment ${id.slice(0, 8)} found=${el !== null}`);
+      el?.scrollIntoView({ block: 'center' });
+    });
+  });
 
   const mediaService = new MediaService();
   let pendingMedia = $state<PostMediaRef | null>(null);
@@ -163,22 +196,16 @@
   /**
    * In-app GIF picker: fetches the chosen GIF's bytes and stages it as encrypted comment media.
    *
-   * The bytes come from KLIPY's CDN, so this READS a cross-origin host into memory - which the
-   * page's `connect-src` has to name (see the CSP snippet in `Dockerfile.frontend`). It is not
-   * covered by the wide `img-src` that renders the picker's grid: displaying a remote image and
-   * reading its bytes are two different permissions, and only the second one applies here.
+   * The bytes come through Canari's GIF relay (`fetchGifFile`), never from KLIPY's CDN, so KLIPY
+   * does not see the person attaching it.
    */
   async function handleGifSelected(url: string) {
     showGifPicker = false;
     try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const blob = await res.blob();
-      const name = url.split('/').pop()?.split('?')[0] || `gif-${Date.now()}.gif`;
-      await stageMediaFile(new File([blob], name, { type: blob.type || 'image/gif' }));
+      await stageMediaFile(await fetchGifFile(url));
     } catch (err) {
       // The log separates the two causes this shares one message for: a refused connection
-      // (CSP, offline, CDN down) throws a TypeError, a served error throws our `HTTP <status>`.
+      // (offline, relay down) throws a TypeError, a served error throws our `HTTP <status>`.
       console.error('Failed to load GIF', err);
       showToast(m.post_comment_gif_fetch_error());
     }
@@ -350,8 +377,13 @@
   {@const isOwn = comment.userId === currentUserId}
   {@const isEditing = editingCommentId === comment.id}
   {@const isPending = pendingCommentIds?.has(comment.id) ?? false}
+  {@const isFocused = comment.id === focusCommentId}
   <div
-    class="flex items-start gap-2.5 {isReply ? 'mt-2.5' : 'mt-4'} {isPending ? 'opacity-60' : ''}"
+    id={commentAnchorId(comment.id)}
+    data-focused={isFocused || undefined}
+    class="flex scroll-mt-24 items-start gap-2.5 {isReply ? 'mt-2.5' : 'mt-4'} {isPending
+      ? 'opacity-60'
+      : ''}"
   >
     <a
       href="/profile/{encodeURIComponent(comment.userId)}"
@@ -391,8 +423,12 @@
           </button>
         </div>
       {:else}
+        <!-- The comment a notification tap opened the post at carries a ring: the bubble only, so
+             a focused comment does not mark the replies drawn under it. -->
         <div
-          class="w-fit max-w-full rounded-2xl rounded-tl-sm border border-black/5 bg-black/5 px-3.5 py-2.5 shadow-sm dark:border-white/5 dark:bg-white/5"
+          class="w-fit max-w-full rounded-2xl rounded-tl-sm border border-black/5 bg-black/5 px-3.5 py-2.5 shadow-sm dark:border-white/5 dark:bg-white/5 {isFocused
+            ? 'ring-2 ring-amber-500/60'
+            : ''}"
         >
           <a
             href="/profile/{encodeURIComponent(comment.userId)}"

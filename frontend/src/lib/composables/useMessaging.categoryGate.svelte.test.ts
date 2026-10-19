@@ -38,6 +38,7 @@ const { useMessaging } = await import('./useMessaging.svelte');
 const { notificationPreferences } = await import('$lib/stores/notificationPreferences.svelte');
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
+import { flushMacrotask } from '../../test/flush';
 
 const ME = 'me-user-id';
 const PEER = 'peer-user-id';
@@ -92,7 +93,11 @@ describe('a switched-off category raises no local notification', () => {
   });
 
   it('is silent for a conversation when "messages" is off', async () => {
-    api.fetchNotificationPreferences.mockResolvedValue({ disabled: ['messages'], groupLevels: {} });
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: ['messages'],
+      groupLevels: {},
+      groupCalls: {},
+    });
     await notificationPreferences.load();
     const { ctx, sendSystemNotification } = makeContext('conv-1');
     await useMessaging().addMessageToChat(PEER, 'hello', 'conv-1', ctx, { messageId: 'm2' });
@@ -100,7 +105,11 @@ describe('a switched-off category raises no local notification', () => {
   });
 
   it('keeps notifying a salon when only "messages" is off', async () => {
-    api.fetchNotificationPreferences.mockResolvedValue({ disabled: ['messages'], groupLevels: {} });
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: ['messages'],
+      groupLevels: {},
+      groupCalls: {},
+    });
     await notificationPreferences.load();
     const { ctx, sendSystemNotification } = makeContext('channel_abc');
     await useMessaging().addMessageToChat(PEER, 'hello', 'channel_abc', ctx, { messageId: 'm3' });
@@ -108,7 +117,11 @@ describe('a switched-off category raises no local notification', () => {
   });
 
   it('is silent for a salon when "channels" is off', async () => {
-    api.fetchNotificationPreferences.mockResolvedValue({ disabled: ['channels'], groupLevels: {} });
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: ['channels'],
+      groupLevels: {},
+      groupCalls: {},
+    });
     await notificationPreferences.load();
     const { ctx, sendSystemNotification } = makeContext('channel_abc');
     await useMessaging().addMessageToChat(PEER, 'hello', 'channel_abc', ctx, { messageId: 'm4' });
@@ -131,13 +144,14 @@ describe("a private conversation's level gates the notification this client rais
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: [],
       groupLevels: level === 'all' ? {} : { 'conv-1': level },
+      groupCalls: {},
     });
     await notificationPreferences.load();
     const { ctx, sendSystemNotification } = makeContext('conv-1');
     (ctx as { userId: string }).userId = ME64;
     await useMessaging().addMessageToChat(PEER, text, 'conv-1', ctx, { messageId: id });
     // The sender lookup is asynchronous: let it settle before asserting on what was raised.
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
     return sendSystemNotification;
   }
 
@@ -158,6 +172,7 @@ describe("a private conversation's level gates the notification this client rais
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: [],
       groupLevels: { 'conv-1': 'mentions' },
+      groupCalls: {},
     });
     await notificationPreferences.load();
     const { ctx, sendSystemNotification } = makeContext('conv-1');
@@ -181,6 +196,7 @@ describe("a private conversation's level gates the notification this client rais
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: [],
       groupLevels: { 'conv-1': 'mentions' },
+      groupCalls: {},
     });
     await notificationPreferences.load();
     const { ctx, sendSystemNotification } = makeContext('conv-1');
@@ -194,7 +210,7 @@ describe("a private conversation's level gates the notification this client rais
       ctx,
       'arrival'
     );
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
     expect(sendSystemNotification).not.toHaveBeenCalled();
   });
 
@@ -203,6 +219,7 @@ describe("a private conversation's level gates the notification this client rais
     api.fetchNotificationPreferences.mockResolvedValue({
       disabled: [],
       groupLevels: { [GROUP]: 'none' },
+      groupCalls: {},
     });
     await notificationPreferences.load();
     const key = 'me::peer';
@@ -210,7 +227,7 @@ describe("a private conversation's level gates the notification this client rais
     const row = ctx.conversations.get(key)!;
     ctx.conversations.set(key, { ...row, id: GROUP });
     await useMessaging().addMessageToChat(PEER, 'hello', key, ctx, { messageId: 'l6' });
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
     expect(sendSystemNotification).not.toHaveBeenCalled();
   });
 });
@@ -223,7 +240,11 @@ describe("a salon's own level gates the notification this client raises", () => 
     vi.spyOn(console, 'log').mockImplementation(() => {});
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     api.fetchChannelNotificationLevel.mockReset();
-    api.fetchNotificationPreferences.mockResolvedValue({ disabled: [], groupLevels: {} });
+    api.fetchNotificationPreferences.mockResolvedValue({
+      disabled: [],
+      groupLevels: {},
+      groupCalls: {},
+    });
     notificationPreferences.reset();
     hideTheTab();
   });
@@ -241,7 +262,7 @@ describe("a salon's own level gates the notification this client raises", () => 
       messageId: 's1',
     });
     await vi.waitFor(() => expect(api.fetchChannelNotificationLevel).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
     expect(sendSystemNotification).not.toHaveBeenCalled();
   });
 
@@ -255,7 +276,7 @@ describe("a salon's own level gates the notification this client raises", () => 
     const { ctx, sendSystemNotification } = salon('mentions');
     await useMessaging().addMessageToChat(PEER, 'hello', 'channel_abc', ctx, { messageId: 's3' });
     await vi.waitFor(() => expect(api.fetchChannelNotificationLevel).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
     expect(sendSystemNotification).not.toHaveBeenCalled();
     await useMessaging().addMessageToChat(PEER, `hey @[${ME64}]`, 'channel_abc', ctx, {
       messageId: 's4',
@@ -291,7 +312,7 @@ describe("a salon's own level gates the notification this client raises", () => 
       'arrival'
     );
     await vi.waitFor(() => expect(api.fetchChannelNotificationLevel).toHaveBeenCalled());
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
     expect(sendSystemNotification).not.toHaveBeenCalled();
   });
 
@@ -300,9 +321,9 @@ describe("a salon's own level gates the notification this client raises", () => 
     const messaging = useMessaging();
     await messaging.addMessageToChat(PEER, 'one', 'channel_abc', ctx, { messageId: 's5' });
     await messaging.addMessageToChat(PEER, 'two', 'channel_abc', ctx, { messageId: 's6' });
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
     await messaging.addMessageToChat(PEER, 'three', 'channel_abc', ctx, { messageId: 's7' });
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
     expect(api.fetchChannelNotificationLevel).toHaveBeenCalledTimes(1);
   });
 

@@ -29,6 +29,7 @@
   import { publishFailureMessage } from '$lib/posts/publishFailure';
   import { PostCardLedger, servedAt } from '$lib/posts/postCardSync';
   import { getForm, checkSubmission } from '$lib/forms/api';
+  import { attachedFormSources, attachedFormsLoader } from '$lib/posts/attachedForms.svelte';
   import Card from '$lib/components/ui/Card.svelte';
   import PostHeader from './PostHeader.svelte';
   import PostContent from './PostContent.svelte';
@@ -79,6 +80,8 @@
      * the same reason.
      */
     commentsOpen?: boolean;
+    /** The comment a notification tap opened this post at: scrolled to and marked once drawn. */
+    focusCommentId?: string;
   }
 
   let {
@@ -88,6 +91,7 @@
     onRefresh: _onRefresh,
     onDelete,
     commentsOpen = false,
+    focusCommentId,
   }: Props = $props();
 
   // Local mutable copy - updated directly after interactions to avoid a full list reload.
@@ -198,23 +202,13 @@
   let comments = $derived<PostComment[]>(localPost.comments ?? []);
   let topLevelComments = $derived(comments.filter((c) => !c.parentId));
 
-  let formInfos = $state<
-    { id: string; title: string; submitted: boolean; opensAt?: string | null }[]
-  >([]);
-
-  const expectedAttachedFormIds = $derived.by(() => {
-    const ids: string[] = [];
-    if (localPost.forms?.length) {
-      for (const f of localPost.forms) ids.push(f.id);
-    } else if (localPost.attachedFormId) {
-      ids.push(localPost.attachedFormId);
-    }
-    return ids;
+  // Each attached form read once and drawn once, keyed by form (`attachedFormsLoader`).
+  const attachedForms = attachedFormsLoader(() => attachedFormSources(localPost), {
+    getForm,
+    checkSubmission,
   });
-
-  const pendingAttachedFormIds = $derived(
-    expectedAttachedFormIds.filter((id) => !formInfos.some((fi) => fi.id === id))
-  );
+  const formInfos = $derived(attachedForms.infos);
+  const pendingAttachedFormIds = $derived(attachedForms.pending);
   // Auto-clear error messages after 4 seconds.
   $effect(() => {
     if (errorMessage) {
@@ -232,35 +226,6 @@
         actionMessage = '';
       }, 4000);
       return () => clearTimeout(timer);
-    }
-  });
-
-  $effect(() => {
-    const formSources: { id: string; title?: string }[] = [];
-    if (localPost.forms && localPost.forms.length > 0) {
-      for (const f of localPost.forms) formSources.push({ id: f.id, title: f.title });
-    } else if (localPost.attachedFormId) {
-      formSources.push({ id: localPost.attachedFormId });
-    }
-
-    for (const src of formSources) {
-      if (formInfos.find((fi) => fi.id === src.id)) continue;
-      const doCheck = (id: string, title: string, opensAt?: string | null) => {
-        checkSubmission(id)
-          .then(({ hasSubmitted }) => {
-            formInfos = [...formInfos, { id, title, submitted: hasSubmitted, opensAt }];
-          })
-          .catch(() => {
-            formInfos = [...formInfos, { id, title, submitted: false, opensAt }];
-          });
-      };
-      if (src.title) {
-        doCheck(src.id, src.title);
-      } else {
-        getForm(src.id)
-          .then((f) => doCheck(f.id, f.title, f.opensAt))
-          .catch((e) => console.error('Failed to load attached form', e));
-      }
     }
   });
 
@@ -832,6 +797,7 @@
       {pendingCommentIds}
       {currentUserId}
       {authToken}
+      {focusCommentId}
       onToggleComments={() => (showComments = !showComments)}
       onCommentTextChange={async (text) => {
         commentText = text;

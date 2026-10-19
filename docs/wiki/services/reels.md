@@ -15,6 +15,7 @@ under the 50 MB ciphertext cap) and the server stores the bytes.
 
 | Number | Value | Lives in | Clients read it from |
 | --- | --- | --- | --- |
+| Longest reel sent in a chat | 60 000 ms (D-size, 2026-10-09; served as `chatMaxDurationMs`, absent from an older server) | `CHAT_REEL_MAX_DURATION_MS`, same file | `GET /api/posts/reel-limits` |
 | Longest reel | 90 000 ms (C4) | `REEL_MAX_DURATION_MS`, `posts/reel.constants.ts` | `GET /api/posts/reel-limits` |
 | Kept for | 30 days (C6) | `REEL_RETENTION_DAYS`, same file | same route, and every row's `expiresAt` |
 | "About to expire" window | 7 days | `REEL_EXPIRY_WARNING_DAYS`, same file | same route, and `my-reels` |
@@ -29,7 +30,7 @@ says why for the 50 MB), so the camera asks the box before it arms its ring time
 ### `GET /api/posts/reel-limits` (JWT)
 
 ```json
-{ "maxDurationMs": 90000, "retentionDays": 30, "warningWindowDays": 7 }
+{ "maxDurationMs": 90000, "chatMaxDurationMs": 60000, "retentionDays": 30, "warningWindowDays": 7 }
 ```
 
 ### Publishing: `POST /api/posts` with `kind: "reel"`
@@ -206,7 +207,7 @@ read - the same reasoning as the media sweep's own `overdueCount`.
 - **Unit**: the rules, the service paths, the worker (fake store with the media service's
   vocabulary and ownership allowlist), the media service's claim and purge.
 - **Real PostgreSQL**: `reel-retention.integration.spec.ts`, gated on `SOCIAL_IT_DATABASE_URL`
-  (skipped in CI, which has no database): migration 069 applied twice, nothing existing becomes a
+  (run in CI by `test-social-integration` since 2026-10-15): migration 069 applied twice, nothing existing becomes a
   reel, the CHECK refuses a reel stated in pieces, only the due reel is selected and deleted, a
   failed transaction leaves the row AND its notifications, a failing blob keeps only its own reel.
 - **Running local estate**: this branch's media-service and social-service against the estate's

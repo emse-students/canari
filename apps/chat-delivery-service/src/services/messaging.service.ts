@@ -27,7 +27,11 @@ import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { resolveUserDisplayName, resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { activeRevocationWhere } from '../utils/revocation';
-import { mlsFrameEpoch } from '../utils/mls-frame-epoch';
+import {
+  MLS_MAX_PAST_EPOCHS,
+  isBeyondPastEpochWindow,
+  mlsFrameEpoch,
+} from '../utils/mls-frame-epoch';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import {
   exclusionWindows,
@@ -131,6 +135,18 @@ export interface SendMessageResult {
    * undated message cannot be placed against an exclusion window).
    */
   receivedAt: number;
+}
+
+/**
+ * An application frame's clear epoch and who sealed it, carried from the send path to the locked
+ * group read, where it is compared with the group's `activeEpoch` (see `isBeyondPastEpochWindow`).
+ */
+interface SealedFrame {
+  epoch: number;
+  /** `userId:deviceId` as the body declared it. */
+  sender: string;
+  /** The sender device's build from its KeyPackage row, or `unknown` when it has none. */
+  appVersion: string;
 }
 
 export interface ValidateCommitBody {
@@ -419,6 +435,27 @@ export interface AckMessagesBody {
   messageIds: string[];
 }
 
+/** Offline device ids a TRANSPORT_SKIPPED_OFFLINE line names before it says "+N more". */
+const SKIPPED_DEVICES_LOGGED = 5;
+
+/**
+ * The ids a log line names for a list that can hold ~100 entries: the first
+ * {@link SKIPPED_DEVICES_LOGGED}, then `+N more`. The line carries the exact count separately.
+ */
+export function capLoggedDevices(ids: readonly string[]): string[] {
+  if (ids.length <= SKIPPED_DEVICES_LOGGED) return [...ids];
+  return [...ids.slice(0, SKIPPED_DEVICES_LOGGED), `+${ids.length - SKIPPED_DEVICES_LOGGED} more`];
+}
+
+/**
+ * What one fan-out (every recipient of one frame) accumulates so it prints ONE summary instead of
+ * a line per device: `pushed` counts FCM sends accepted, `pushes` holds the in-flight ones.
+ */
+interface FanOutTally {
+  pushed: number;
+  pushes: Promise<unknown>[];
+}
+
 @Injectable()
 export class MessagingService {
   private readonly logger = new Logger(MessagingService.name);
@@ -610,7 +647,8 @@ export class MessagingService {
     traceId: string,
     groupId: string,
     senderId: string,
-    silent = false
+    silent = false,
+    batch?: FanOutTally
   ): Promise<void> {
     if (getApps().length === 0) return;
 
@@ -814,9 +852,15 @@ export class MessagingService {
                 },
               }
         );
-        this.logger.log(
-          `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId} platform=${pt.platform} inlineProto=${!!inlineProto} bytes=${pt.platform === 'ios' ? apnsBytes : dataBytes}`
-        );
+        if (batch) {
+          // ONE LINE PER FAN-OUT, NOT PER DEVICE: a frame queued to ~100 offline seats wrote ~100
+          // of these and rolled the production log over in ~20 minutes. The caller prints the sum.
+          batch.pushed++;
+        } else {
+          this.logger.log(
+            `[PUSH_SEND][${traceId}] FCM sent user=${queued.recipientId} device=${pt.deviceId} platform=${pt.platform} inlineProto=${!!inlineProto} bytes=${pt.platform === 'ios' ? apnsBytes : dataBytes}`
+          );
+        }
       } catch (e) {
         if (this.isTerminalPushTokenError(e)) {
           await this.pushTokenRepo.delete({ id: pt.id });
@@ -941,22 +985,36 @@ export class MessagingService {
       online,
       silent,
       pushable,
-    }: { tag: string; traceId: string; online: boolean; silent: boolean; pushable: boolean }
+      batch,
+    }: {
+      tag: string;
+      traceId: string;
+      online: boolean;
+      silent: boolean;
+      pushable: boolean;
+      batch?: FanOutTally;
+    }
   ): Promise<boolean> {
     const groupId = queued.groupId ?? '';
     const senderId = queued.senderId ?? '';
-    this.logger.log(
-      `[${tag}][${traceId}] recipient=${queued.recipientId}:${queued.deviceId} ` +
-        `online=${online} queuedId=${queued.id}`
-    );
+    // A FAN-OUT PASSES ITS TALLY AND PRINTS ONE SUMMARY; a lone delivery (a Welcome) keeps its two
+    // lines, which name the one device and are what a reader follows by trace id.
+    if (!batch) {
+      this.logger.log(
+        `[${tag}][${traceId}] recipient=${queued.recipientId}:${queued.deviceId} ` +
+          `online=${online} queuedId=${queued.id}`
+      );
+    }
 
     if (!online) {
       // Fire-and-forget: the row is persisted, and blocking on FCM (2-5 s per device) would stall
       // the sender's request. Every swallowed branch logs - that is all a lost push leaves behind.
       if (pushable) {
-        void this.sendFcmForQueued(queued, traceId, groupId, senderId, silent).catch((e) =>
-          this.logger.warn(`[PUSH_SEND][${traceId}] async FCM error queuedId=${queued.id}: ${e}`)
+        const push = this.sendFcmForQueued(queued, traceId, groupId, senderId, silent, batch).catch(
+          (e) =>
+            this.logger.warn(`[PUSH_SEND][${traceId}] async FCM error queuedId=${queued.id}: ${e}`)
         );
+        batch?.pushes.push(push);
       }
       return false;
     }
@@ -981,10 +1039,12 @@ export class MessagingService {
         createdAt: queued.createdAt.toISOString(),
       })
     );
-    this.logger.log(
-      `[${tag}][${traceId}] PUBLISHED recipient=${queued.recipientId}:${queued.deviceId} ` +
-        `queuedId=${queued.id}`
-    );
+    if (!batch) {
+      this.logger.log(
+        `[${tag}][${traceId}] PUBLISHED recipient=${queued.recipientId}:${queued.deviceId} ` +
+          `queuedId=${queued.id}`
+      );
+    }
 
     if (pushable) {
       this.scheduleDeferredPush(queued, traceId, groupId, senderId, silent);
@@ -1028,6 +1088,8 @@ export class MessagingService {
     const receivedAt = new Date();
     /** `userId:deviceId` of the parting devices this commit was queued to - consumed once queued. */
     let partingConsumed: string[] = [];
+    /** An application frame's clear epoch and its author, compared with the group's under the lock. */
+    let sealed: SealedFrame | undefined;
 
     this.logger.log(
       `[SEND][${traceId}] START group=${body.groupId ?? 'none'} sender=${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'} hasProto=${!!body.proto} isWelcome=${!!body.isWelcome} isCommit=${!!body.isCommit}` +
@@ -1158,18 +1220,29 @@ export class MessagingService {
         // storage that nothing will ever collect or read (WP-GHOST-1). Deliberately narrow: an
         // `active` membership whose device merely went quiet still has its KeyPackage for the
         // whole 90-day window, so a legitimately offline device is never dropped.
-        const liveDeviceIds = recipients.length
-          ? new Set(
-              (
-                await this.keyPackageRepo.find({
-                  where: {
-                    deviceId: In([...new Set(recipients.map((m) => m.deviceId))]),
-                  },
-                  select: { userId: true, deviceId: true },
-                })
-              ).map((kp) => `${kp.userId}:${kp.deviceId}`)
-            )
-          : new Set<string>();
+        const recipientKeyPackages = recipients.length
+          ? await this.keyPackageRepo.find({
+              where: {
+                deviceId: In([...new Set(recipients.map((m) => m.deviceId))]),
+              },
+              select: { userId: true, deviceId: true, deviceAppVersion: true },
+            })
+          : [];
+        const liveDeviceIds = new Set(
+          recipientKeyPackages.map((kp) => `${kp.userId}:${kp.deviceId}`)
+        );
+        if (!isHandshake && frameEpoch !== null) {
+          // The sender's own row is in that read whenever its membership is active, which an
+          // application frame needs to get this far - so naming its build costs no query.
+          const senderVersion = recipientKeyPackages.find(
+            (kp) => kp.userId === body.senderId && kp.deviceId === body.senderDeviceId
+          )?.deviceAppVersion;
+          sealed = {
+            epoch: frameEpoch,
+            sender: `${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'}`,
+            appVersion: senderVersion ?? 'unknown',
+          };
+        }
         const members = recipients.filter(
           (m) =>
             !isSender(m) &&
@@ -1390,9 +1463,12 @@ export class MessagingService {
       // a phone's seed request was dropped for one offline recipient while the only device it could
       // have meant was answering pings throughout, and this line could not settle which. The ids are
       // exactly what the presence lookup was keyed on, so they are the evidence it owed.
-      const skipped = ops
+      const skippedAll = ops
         .filter((q) => online.get(`${q.recipientId}:${q.deviceId}`) !== true)
         .map((q) => q.deviceId);
+      // CAPPED: a key group names ~100 offline seats per frame, and the full list was most of the
+      // bytes of this line (18 628 devices in 37 minutes). The count above is always exact.
+      const skipped = capLoggedDevices(skippedAll);
       this.logger.log(
         `[SEND][${traceId}] TRANSPORT_SKIPPED_OFFLINE count=${ops.length - toDeliver.length} ` +
           `group=${body.groupId ?? ''} devices=${skipped.join(',')} ` +
@@ -1402,7 +1478,7 @@ export class MessagingService {
 
     // 1. Persist ALL messages first (survives crashes / timing races)
     if (toDeliver.length > 0) {
-      await this.enqueueForLiveGroup(toDeliver, body.groupId, 'SEND', traceId);
+      await this.enqueueForLiveGroup(toDeliver, body.groupId, 'SEND', traceId, sealed);
       this.logger.log(`[SEND][${traceId}] QUEUED count=${toDeliver.length}`);
       if (partingConsumed.length > 0 && body.groupId) {
         await this.redis
@@ -1422,7 +1498,7 @@ export class MessagingService {
       // and relies on this refusal, so it is owed on the empty roster too. Handshake frames are
       // left alone: their own paths decide what a dead group means for them.
       if (body.proto && body.groupId && !body.isCommit && !body.isWelcome) {
-        await this.enqueueForLiveGroup([], body.groupId, 'SEND', traceId);
+        await this.enqueueForLiveGroup([], body.groupId, 'SEND', traceId, sealed);
       }
       // TWO CAUSES, AND THE SENTENCE USED TO NAME NEITHER. `toDeliver` empties for one of exactly
       // two reasons and they want opposite readings: a group that named no other device has nobody
@@ -1537,6 +1613,7 @@ export class MessagingService {
     // unreachable anyway, because the filter above kept only online recipients. Passing it rather
     // than relying on that keeps the two facts independent.
     const silent = body.isCommit || body.isWelcome ? true : (body.silent ?? false);
+    const tally: FanOutTally = { pushed: 0, pushes: [] };
     for (const queued of toDeliver) {
       // Reuses the presence answer taken above rather than asking Redis a second time. A device
       // that went offline in between is covered the same way it always was: the row survives and
@@ -1547,14 +1624,27 @@ export class MessagingService {
         online: online.get(`${queued.recipientId}:${queued.deviceId}`) === true,
         silent,
         pushable: durable,
+        batch: tally,
       });
       if (delivered) sentCount++;
+    }
+    if (tally.pushes.length > 0) {
+      // The pushes are fire-and-forget (FCM takes 2-5 s per device), so their sum is printed when
+      // the last one settles. Failures and missing tokens already logged themselves per device.
+      const attempted = tally.pushes.length;
+      void Promise.all(tally.pushes).then(() =>
+        this.logger.log(
+          `[PUSH_SEND][${traceId}] FCM sent batch pushed=${tally.pushed} of ${attempted} offline device(s)`
+        )
+      );
     }
 
     // The count REPORTED is the count actually written, not the count considered - a transport frame
     // drops its offline recipients above, and a log that still said `ops.length` would describe rows
     // that do not exist.
-    this.logger.log(`[SEND][${traceId}] DONE queued=${toDeliver.length} realtime=${sentCount}`);
+    this.logger.log(
+      `[SEND][${traceId}] DONE queued=${toDeliver.length} realtime=${sentCount} offline=${tally.pushes.length}`
+    );
 
     return {
       status: 'processed',
@@ -3108,13 +3198,20 @@ export class MessagingService {
     rows: QueuedMessage[],
     groupId: string | undefined,
     tag: string,
-    traceId: string
+    traceId: string,
+    sealed?: SealedFrame
   ): Promise<QueuedMessage[]> {
     if (!groupId) return this.queuedMessageRepo.save(rows);
     return this.queuedMessageRepo.manager.transaction(async (manager) => {
       const [group] = await manager.getRepository(Group).find({
         where: { id: groupId },
-        select: { id: true, deletedAt: true },
+        select: {
+          id: true,
+          deletedAt: true,
+          activeEpoch: true,
+          distributionWorkspaceId: true,
+          distributionChannelId: true,
+        },
         lock: { mode: 'pessimistic_read' },
       });
       if (!group || group.deletedAt) {
@@ -3125,6 +3222,21 @@ export class MessagingService {
             `for ever - nothing queued`
         );
         throw new GoneException({ error: 'group_deleted', groupId });
+      }
+      // A FRAME SEALED BEYOND THE PAST-EPOCH WINDOW IS REPORTED, NOT REFUSED (backlog, 2026-10-12:
+      // seed requests sealed at 135-138 reached a key group at 141). Read under the same lock as the
+      // write, so the epoch compared is the one these rows are queued against. Refusing would change
+      // what every shipped client sees on a send, and which builds lag is not yet measured - this
+      // line is that measurement: the sender's device and build, and how far behind it sealed.
+      if (sealed && isBeyondPastEpochWindow(sealed.epoch, group.activeEpoch)) {
+        const keyGroup = !!(group.distributionWorkspaceId || group.distributionChannelId);
+        this.logger.warn(
+          `[${tag}][${traceId}] STALE_EPOCH_FRAME group=${groupId} keyGroup=${keyGroup} ` +
+            `frameEpoch=${sealed.epoch} activeEpoch=${group.activeEpoch} ` +
+            `behind=${group.activeEpoch - sealed.epoch} sender=${sealed.sender} ` +
+            `app=${sealed.appVersion} rows=${rows.length} - sealed more than ` +
+            `${MLS_MAX_PAST_EPOCHS} epochs behind the group, so no member at the current epoch can open it`
+        );
       }
       // An empty batch is a liveness check alone (an emptied roster, see `sendMessage`).
       if (rows.length === 0) return [];

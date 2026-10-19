@@ -8,7 +8,8 @@
  * `synchronize` - the way production's were - so the migration meets the shape it will meet there.
  * Only the notifications are recorded rather than sent.
  *
- * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files:
+ * GATED ON `SOCIAL_IT_DATABASE_URL`, like the other integration files; CI's
+ * `test-social-integration` sets it. Locally:
  *
  *   SOCIAL_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- coorganisation.integration
  *

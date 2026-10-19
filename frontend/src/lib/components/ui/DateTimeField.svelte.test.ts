@@ -3,7 +3,8 @@
  *
  * Pinned: a day and a time picked reach the caller as `YYYY-MM-DDTHH:mm`; closing without
  * validating changes nothing (cancelling the native dialog did not either); "Effacer" empties an
- * optional date; Escape closes the field without reaching a modal listening on the window.
+ * optional date; Escape closes the field without reaching a modal listening on the window; a
+ * date-only field offers no time and answers `YYYY-MM-DD`.
  */
 import { it, expect, afterEach, afterAll, vi } from 'vitest';
 import { flushSync, mount, unmount, tick } from 'svelte';
@@ -102,4 +103,17 @@ it('empties an optional date on "Effacer"', async () => {
   buttonByText('Effacer').click();
 
   expect(onValueChange).toHaveBeenCalledWith('');
+});
+
+it('a date-only field offers no time and hands back `YYYY-MM-DD`', async () => {
+  const { trigger, onValueChange } = mountField({ value: '2026-12-24', dateOnly: true });
+  await open(trigger);
+
+  expect(document.querySelector('[role="group"][aria-label]')).toBeNull();
+  buttonByText('31', document.querySelector('.grid')!).click();
+  flushSync();
+  buttonByText('Valider').click();
+  flushSync();
+
+  expect(onValueChange).toHaveBeenCalledWith('2026-12-31');
 });

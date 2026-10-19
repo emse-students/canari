@@ -140,6 +140,24 @@ describe('openGatewayConnection handed a handshake already in flight', () => {
     await expect(openGatewayConnection(deps, started)).rejects.toThrow('session expired');
   });
 
+  it('re-throws a sign-out in progress without logging a gateway failure', async () => {
+    // Not a backoff case either (a reconnect into a session being ended), and not an error: the
+    // user chose it, so neither the log nor the console accuses anything.
+    const stopped = new Error('refresh request dropped - a sign-out is in progress');
+    stopped.name = 'SignOutInProgressError';
+    getTokenMock.mockRejectedValue(stopped);
+    const connect = vi.fn();
+    const { deps, setIsWsConnected } = makeDeps(connect);
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    consoleError.mockClear();
+
+    await expect(openGatewayConnection(deps)).rejects.toBe(stopped);
+
+    expect(connect).not.toHaveBeenCalled();
+    expect(setIsWsConnected).toHaveBeenCalledWith(false);
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
   it('opens one itself when handed nothing, which is what the reconnect path does', async () => {
     const connect = vi.fn().mockResolvedValue(undefined);
     const { deps } = makeDeps(connect);

@@ -29,6 +29,7 @@ await import('./useMessaging.svelte');
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
 import type { PrepareVideoOptions } from '$lib/video/prepareVideoForUpload';
+import { flushMacrotask } from '../../test/flush';
 
 const CONVO = 'conversation-key';
 const SERVER_MAX_BYTES = 50 * 1024 * 1024;
@@ -166,7 +167,7 @@ describe('a video picked in the chat', () => {
     const order: string[] = [];
     prepareMock.mockImplementation(async (file: File) => {
       order.push(`start ${file.name}`);
-      await new Promise((r) => setTimeout(r, 5));
+      await flushMacrotask();
       order.push(`end ${file.name}`);
       return { file, width: 2, height: 2, durationSeconds: 1, sourceBytes: 1, outputBytes: 1 };
     });

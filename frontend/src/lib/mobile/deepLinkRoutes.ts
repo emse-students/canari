@@ -1,6 +1,12 @@
 import { MOBILE_APP_PROTOCOL } from './appSiteAssociation';
 
 /**
+ * The query parameter naming the comment a post link opens at - written by the server into a
+ * comment push (`socialDeepLink` in social-service) and read by the post page.
+ */
+export const POST_COMMENT_PARAM = 'comment';
+
+/**
  * The app route behind a `fr.emse.canari://<host>[/<id>]` link that opens a PAGE - the table a
  * notification tap lands through, kept apart from the hook that listens so it can be tested.
  *
@@ -9,15 +15,20 @@ import { MOBILE_APP_PROTOCOL } from './appSiteAssociation';
  * `admin-agenda`. `posts` is what a payload naming nothing falls back to on the server, and it has
  * no id; the two agenda hosts mirror `notificationHref` (the in-app bell).
  *
- * Returns null for a host this table does not own (chat, callback, stripe and open have their own
+ * Returns null for a host this table does not own (chat, callback, payment and open have their own
  * handling) or for a host that needs an id and has none, so the caller can log instead of guessing.
  */
 export function appRouteForDeepLink(u: URL): string | null {
   if (u.protocol !== MOBILE_APP_PROTOCOL) return null;
   const id = decodeURIComponent(u.pathname.replace(/^\//, ''));
   switch (u.host) {
-    case 'post':
-      return id ? `/posts/${encodeURIComponent(id)}` : null;
+    case 'post': {
+      if (!id) return null;
+      // A comment, reply or mention push names the comment: the post page scrolls to it.
+      const comment = u.searchParams.get(POST_COMMENT_PARAM);
+      const route = `/posts/${encodeURIComponent(id)}`;
+      return comment ? `${route}?${POST_COMMENT_PARAM}=${encodeURIComponent(comment)}` : route;
+    }
     case 'form':
       return id ? `/forms/${encodeURIComponent(id)}` : null;
     case 'posts':

@@ -13,9 +13,8 @@
  *  - the directory and the anonymous agenda selection are NOT widened;
  *  - a revocation takes effect on the next read.
  *
- * GATED ON `SOCIAL_IT_DATABASE_URL`, like `reader-spaces.integration.spec.ts` and for its reason: CI
- * provides no database here, so the file reports as skipped rather than passing. Run it against any
- * throwaway PostgreSQL:
+ * GATED ON `SOCIAL_IT_DATABASE_URL`, like `reel-retention.integration.spec.ts` and for its reason;
+ * CI's `test-social-integration` sets it. Locally, against any throwaway PostgreSQL:
  *
  *   SOCIAL_IT_DATABASE_URL=postgres://user:pass@localhost:5432/scratch bun run test -- read-grants.integration
  *

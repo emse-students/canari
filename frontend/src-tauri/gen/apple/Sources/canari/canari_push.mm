@@ -760,7 +760,8 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProto(CanariPushContext *c
   char *jsonPtr = canari_native_decrypt_message(
       (const unsigned char *)stateBytes.bytes, stateBytes.length, ctx.deviceKeyB64.UTF8String,
       ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String,
-      senderId.UTF8String, (const unsigned char *)cipher.bytes, cipher.length);
+      senderId.UTF8String, (const unsigned char *)cipher.bytes, cipher.length,
+      (ctx.locale ?: @"").UTF8String);
   if (jsonPtr == nil) {
     return nil;
   }
@@ -824,7 +825,7 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProtoWithCommits(
       (const unsigned char *)stateBytes.bytes, stateBytes.length, ctx.deviceKeyB64.UTF8String,
       ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String, senderId.UTF8String,
       commitsJson.UTF8String,
-      (const unsigned char *)cipher.bytes, cipher.length);
+      (const unsigned char *)cipher.bytes, cipher.length, (ctx.locale ?: @"").UTF8String);
   if (jsonPtr == nil) {
     return nil;
   }
@@ -1003,7 +1004,7 @@ static void CanariWriteSentMessageToCache(NSString *groupId, NSString *selfUserI
 
 /**
  * Moves the entries the Notification Service Extension wrote into the App Group container over
- * to the app's own `fcm_message_cache.ndjson`, which is the only file `read_and_clear_fcm_cache`
+ * to the app's own `fcm_message_cache.ndjson`, which is the only file `take_fcm_cache`
  * looks at. An app extension has its own data container, so this hop is what makes a push
  * decrypted while the app was killed visible to the app at all.
  */
@@ -1111,15 +1112,26 @@ static void CanariUpdateAppBadge(void) {
       }];
 }
 
+// The palette-A trills (docs/wiki/frontend/sounds.md), bundled in the app from the Android raw
+// files the renderer writes. The same three names are spelled by `push-payload.ts` (the APNs
+// `sound`) and the extension; `iosNotificationSounds.test.ts` holds the four together.
+static NSString *const kCanariSoundMessage = @"canari_gazouillis_message.wav";
+static NSString *const kCanariSoundMention = @"canari_gazouillis_mention.wav";
+static NSString *const kCanariSoundReaction = @"canari_gazouillis_reaction.wav";
+
 /// `sentAt` is the SENDER's instant for the message this notification is about, in ms, and it is
 /// stamped into `userInfo` so the quick actions can acknowledge the conversation without looking
 /// anything up - see `CanariSendReadWatermark`. 0 means unknown, which those actions read as "say
 /// nothing" rather than substituting a clock.
+///
+/// `soundFile` names one of the bundled palette-A files; nil is the system default, which is what a
+/// post, a form and the pending-sync notice keep (Android files those on silent-or-default channels).
 static void CanariShowLocalNotification(NSString *title, NSString *body, NSString *deepLink,
                                       NSString *threadId, int notifId,
                                       NSString *_Nullable attachmentPath,
                                       NSString *_Nullable groupId, BOOL timeSensitive,
-                                      NSString *_Nullable subtitle, long long sentAt) {
+                                      NSString *_Nullable subtitle, long long sentAt,
+                                      NSString *_Nullable soundFile) {
   // WP-XP-7: per-conversation notifications use the groupId as thread, not the flat
   // "canari_messages" thread. Suppress the foreground guard ONLY for the old flat thread;
   // per-conversation notifications should still post (they might be from a conversation
@@ -1131,7 +1143,8 @@ static void CanariShowLocalNotification(NSString *title, NSString *body, NSStrin
   UNMutableNotificationContent *content = [[UNMutableNotificationContent alloc] init];
   content.title = title.length > 0 ? title : @"Canari";
   content.body = body ?: @"";
-  content.sound = [UNNotificationSound defaultSound];
+  content.sound = soundFile.length > 0 ? [UNNotificationSound soundNamed:soundFile]
+                                       : [UNNotificationSound defaultSound];
   content.threadIdentifier = threadId;
   // Inside a group conversation, surface who spoke as a subtitle (WP-XP-7). NSE twin is
   // in NotificationService.swift applyMessageContent.
@@ -1284,9 +1297,16 @@ void CanariRefreshNotificationCategories(void) {
  * The `threadIdentifier` IS the conversation on both paths (`groupId`, or `channel_<id>` for a
  * community channel), so it is what the removal is keyed on. The stable id is still dropped from
  * the PENDING queue, where it is the only thing that can be scheduled under it.
+ *
+ * `done` runs once the removal has been issued (or at once for an empty id). A caller that holds a
+ * background wake - the silent-frame hook - must not hand its completion back before then, or iOS
+ * may suspend the process with the removal still queued.
  */
-static void CanariCancelConversationNotification(NSString *groupId) {
+static void CanariCancelConversationNotification(NSString *groupId, void (^_Nullable done)(void)) {
   if (groupId.length == 0) {
+    if (done != nil) {
+      done();
+    }
     return;
   }
   UNUserNotificationCenter *center = [UNUserNotificationCenter currentNotificationCenter];
@@ -1309,6 +1329,9 @@ static void CanariCancelConversationNotification(NSString *groupId) {
     // The badge counts what REMAINS, computed from the array in hand rather than by re-reading a
     // centre whose removal has no completion handler to wait on.
     CanariSetBadgeCount(CanariCountUnreadConversations(notifications, [NSSet setWithArray:ids]));
+    if (done != nil) {
+      done();
+    }
   }];
 }
 
@@ -2044,7 +2067,7 @@ static void CanariHandleQuickReplyAction(NSString *groupId, NSString *text, long
     // Delivered: record it locally BEFORE clearing the notification, so the one visible trace of
     // the reply is never dropped before the durable one exists.
     CanariWriteSentMessageToCache(groupId, ctx.userId, messageId, text, sentAt);
-    CanariCancelConversationNotification(groupId);
+    CanariCancelConversationNotification(groupId, nil);
     // ANSWERING A CONVERSATION IS READING IT (product decision, 2026-08-31). Only on the delivered
     // branch: a reply still sitting in the outbox has not been seen by anyone, and announcing a
     // read state for it would state something no peer can yet corroborate.
@@ -2070,7 +2093,7 @@ static void CanariHandleMarkReadAction(NSString *groupId, long long sentAt) {
   if (groupId.length == 0) {
     return;
   }
-  CanariCancelConversationNotification(groupId);
+  CanariCancelConversationNotification(groupId, nil);
   CanariSendReadWatermark(groupId, sentAt);
 }
 
@@ -2085,7 +2108,7 @@ static long long CanariNotifiedSentAt(NSDictionary *userInfo) {
 static void CanariShowPendingSyncNotification(void) {
   NSString *body = CanariLocalized(@"notif.outbox.pending");
   CanariShowLocalNotification(@"Canari", body, @"fr.emse.canari://chat", @"canari_messages",
-                              kPendingSyncNotifId, nil, nil, NO, nil, 0);
+                              kPendingSyncNotifId, nil, nil, NO, nil, 0, nil);
   NSLog(@"[CanariPush] showPendingSyncNotification");
 }
 
@@ -2524,7 +2547,8 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   // Rendered for DISPLAY only, after the mention-of-me scan above has read the raw tokens.
   NSString *shown = CanariRenderMentions(body, ctx != nil ? ctx.userId : nil);
   CanariShowLocalNotification(title, shown, deepLink, threadId, notifId, attachmentPath,
-                              groupId, mentionsMe, subtitle, decrypted != nil ? decrypted.sentAt : 0);
+                              groupId, mentionsMe, subtitle, decrypted != nil ? decrypted.sentAt : 0,
+                              mentionsMe ? kCanariSoundMention : kCanariSoundMessage);
 }
 
 static void CanariRefreshTokenOnBackend(CanariPushContext *ctx, NSString *secret, NSString *token) {
@@ -2558,9 +2582,9 @@ static void CanariRefreshTokenOnBackend(CanariPushContext *ctx, NSString *secret
 // `read_and_clear_pending_call_accept` Tauri command) and the CallKit session is closed as soon as
 // the app becomes active - the in-app call UI takes over from there.
 
-/// Mirrors CALLS_ENABLED in frontend/src/lib/features.ts, which holds the whole calling surface
-/// off until it has been run on hardware (rung 15 CALL / CALL-13). It is duplicated rather than
-/// read from JS because this code runs BEFORE the webview exists - a PushKit registry is installed
+/// Mirrors CALLS_COMPILED in frontend/src/lib/features.ts (callsCompiled.test.ts asserts it),
+/// which holds calling as the store binaries carry it off until it has been run on hardware
+/// (rung 15 CALL / CALL-13). It is duplicated rather than read from JS because this code runs BEFORE the webview exists - a PushKit registry is installed
 /// at process start, and there is nothing to ask. The two must be flipped in the same commit,
 /// together with the `voip` UIBackgroundModes entry that Info.plist no longer carries: without that
 /// entry PKPushRegistry can never obtain a token, so installing it here would be a permanent
@@ -2892,29 +2916,17 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
   NSNumber *isGroup = [data[@"isGroup"] isKindOfClass:[NSString class]]
                           ? @([data[@"isGroup"] isEqualToString:@"true"])
                           : nil;
-  BOOL silent = [data[@"silent"] isEqualToString:@"true"];
+  // NO SILENT FRAME REACHES HERE: every one is sent `content-available` and handled by
+  // `CanariHandleBackgroundFrame`, which never decrypts - an MLS load and the state lock to read a
+  // frame whose only use is a dismissal was the cost the durable rule on silent frames forbids.
 
   dispatch_async(dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
     CanariDecryptedMessage *decrypted = CanariTryDecrypt(queuedMessageId, groupId, senderId, inlineProto);
     int raceAttempt = 0;
-    while (!silent && decrypted == nil && queuedMessageId.length > 0 &&
-           raceAttempt < kWelcomeRaceRetries) {
+    while (decrypted == nil && queuedMessageId.length > 0 && raceAttempt < kWelcomeRaceRetries) {
       raceAttempt++;
       usleep(kWelcomeRaceRetryDelayUs);
       decrypted = CanariTryDecrypt(queuedMessageId, groupId, senderId, inlineProto);
-    }
-
-    if (silent) {
-      CanariPushContext *ctx = CanariLoadPushContext();
-      if (groupId.length > 0 && senderId.length > 0 && ctx != nil &&
-          [senderId caseInsensitiveCompare:ctx.userId] == NSOrderedSame) {
-        dispatch_async(dispatch_get_main_queue(), ^{
-          CanariCancelConversationNotification(groupId);
-        });
-      } else {
-        NSLog(@"[CanariPush] silent message - no notification");
-      }
-      return;
     }
 
     // Epoch gap: the direct decrypt failed. A frequent cause on a never-opened device is that a
@@ -3064,12 +3076,15 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
       NSString *signature =
           [data[@"signature"] isKindOfClass:[NSString class]] ? data[@"signature"] : @"";
       NSString *dir = CanariTauriDataDir();
+      // The app language Rust words its own sentences in; "" when none was mirrored.
+      NSString *locale = CanariLoadPushContext().locale ?: @"";
       char *jsonPtr =
           dir == nil ? nil
                      : canari_native_open_graine_push(
                            dir.UTF8String, channelId.UTF8String, sessionId.UTF8String,
                            (uint32_t)[messageIndexStr intValue], senderId.UTF8String,
-                           nonce.UTF8String, ciphertext.UTF8String, signature.UTF8String);
+                           nonce.UTF8String, ciphertext.UTF8String, signature.UTF8String,
+                           locale.UTF8String);
       if (jsonPtr != nil) {
         NSString *jsonStr = [NSString stringWithUTF8String:jsonPtr];
         canari_free_string(jsonPtr);
@@ -3120,6 +3135,12 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
   });
 }
 
+/**
+ * Handles an ALERT frame's data while the app process runs: `willPresentNotification` (foreground)
+ * and a tap. A silent frame never comes here - `CanariHandleBackgroundFrame` owns those - so the
+ * `welcome_request_pending`, `isWelcome` and `process_queue` branches below, which only a silent
+ * frame carries, are reached by nothing on iOS today (docs/wiki/backlog.md).
+ */
 static void CanariHandleFcmData(NSDictionary *data) {
   if (data.count == 0) {
     return;
@@ -3129,17 +3150,7 @@ static void CanariHandleFcmData(NSDictionary *data) {
   NSLog(@"[CanariPush] onMessage type=%@ action=%@ groupId=%@", msgType, data[@"action"],
         data[@"groupId"]);
 
-  // Incoming-call ring signals (WP-XP-5), handled BEFORE the foreground guard: a ring-end must
-  // clear an active CallKit session even when the app is foreground (the VoIP push reports
-  // CallKit regardless of app state, per Apple's contract).
-  if ([msgType isEqualToString:@"call_ring_end"]) {
-    NSString *callId = [data[@"callId"] isKindOfClass:[NSString class]] ? data[@"callId"] : @"";
-    NSString *reason = [data[@"reason"] isKindOfClass:[NSString class]] ? data[@"reason"] : @"";
-    CanariEndCallKitCall(callId, [reason isEqualToString:@"answered"]
-                                     ? CXCallEndedReasonAnsweredElsewhere
-                                     : CXCallEndedReasonRemoteEnded);
-    return;
-  }
+  // `call_ring_end` is a background frame (calls.service), so `CanariHandleBackgroundFrame` owns it.
   // `call_ring` normally arrives as an APNs VoIP push (PushKit path); a legacy-registered device
   // (no voipToken yet) receives it via FCM instead. Foreground rings in-app via WS -> skip.
   if ([msgType isEqualToString:@"call_ring"]) {
@@ -3240,7 +3251,8 @@ static void CanariHandleFcmData(NSDictionary *data) {
     NSString *deepLink = [NSString stringWithFormat:@"fr.emse.canari://chat/%@", groupId];
     NSLog(@"[CanariPush] reaction group=%@ actor=%@", groupId, actorId);
     CanariShowLocalNotification(actorName, CanariReactionBody(emoji), deepLink, groupId,
-                                CanariStableNotifId(groupId), attachmentPath, nil, NO, nil, 0);
+                                CanariStableNotifId(groupId), attachmentPath, nil, NO, nil, 0,
+                                kCanariSoundReaction);
     return;
   }
 
@@ -3261,7 +3273,7 @@ static void CanariHandleFcmData(NSDictionary *data) {
       deepLink = [NSString stringWithFormat:@"fr.emse.canari://form/%@", formId];
     }
     NSString *thread = [msgType isEqualToString:@"form_reminder"] ? @"canari_forms" : @"canari_social";
-    CanariShowLocalNotification(title, body, deepLink, thread, 0, nil, nil, NO, nil, 0);
+    CanariShowLocalNotification(title, body, deepLink, thread, 0, nil, nil, NO, nil, 0, nil);
     return;
   }
 
@@ -3274,21 +3286,7 @@ static void CanariHandleFcmData(NSDictionary *data) {
     return;
   }
 
-  // Channel read on another of my devices: clear this device's notification for that channel
-  // (cross-device read-state sync, channel counterpart of the MLS silent-receipt path). The reading
-  // device is foreground and already returned above; only background sibling devices reach here.
-  if ([msgType isEqualToString:@"channel_read"]) {
-    NSString *channelId =
-        [data[@"channelId"] isKindOfClass:[NSString class]] ? data[@"channelId"] : @"";
-    if (channelId.length > 0) {
-      NSString *conversationId = [NSString stringWithFormat:@"channel_%@", channelId];
-      NSLog(@"[CanariPush] type=channel_read - clearing notification channel=%@", channelId);
-      dispatch_async(dispatch_get_main_queue(), ^{
-        CanariCancelConversationNotification(conversationId);
-      });
-    }
-    return;
-  }
+  // `channel_read` is a background frame: `CanariHandleBackgroundFrame` clears it.
 
   if ([data[@"action"] isEqualToString:@"process_queue"]) {
     NSLog(@"[CanariPush] action=process_queue - cleanup pending db");
@@ -3370,52 +3368,263 @@ static void CanariPushProcessRemoteNotificationUserInfo(NSDictionary *userInfo) 
   CanariHandleFcmData(data);
 }
 
-typedef void (^CanariRemoteNotifCompletion)(UIBackgroundFetchResult);
-static CanariRemoteNotifCompletion (*CanariOrigDidReceiveRemoteNotification)(
-    id, SEL, UIApplication *, NSDictionary *, CanariRemoteNotifCompletion);
+// --- Silent (`content-available`) frames, handed to us by hand ---------------------------------
+//
+// WHY THIS IS ADDED RATHER THAN SWIZZLED. A silent frame reaches an app only through
+// `application:didReceiveRemoteNotification:fetchCompletionHandler:`. wry's delegate does not
+// implement it and Firebase's proxy, which would have, found no delegate at configure time (the APNs
+// token hook below has the measurement). The old hook only REPLACED an existing method, so it was
+// never installed: `remote notification hook NOT installed` on every launch of the iPhone 12 bench
+// (2026-10-14/15), and no `channel_read` dismissal ever ran on iOS. `class_replaceMethod` ADDS the
+// method when absent and chains to it when a later wry starts implementing it - the token hook's
+// technique, for the same reason.
+//
+// WHAT IT CHANGES: Canari code now RUNS on every silent frame iOS hands the process, foreground,
+// backgrounded, or launched in the background for it (the `remote-notification` background mode was
+// already declared, so whether iOS wakes the process is not what this decides - what runs is).
+// So what such a frame may DO is an allowlist (`CanariHandleBackgroundFrame`), never "whatever
+// `CanariHandleFcmData` does": that function also joins groups and answers Welcome requests, MLS
+// writes no iPhone has ever run in the background, and the Android twin of that join is the
+// conversation-row defect still open in docs/wiki/backlog.md.
 
-static void CanariSwizzledDidReceiveRemoteNotification(
-    id self, SEL _cmd, UIApplication *application, NSDictionary *userInfo,
-    CanariRemoteNotifCompletion completionHandler) {
-  CanariPushProcessRemoteNotificationUserInfo(userInfo);
-  if (CanariOrigDidReceiveRemoteNotification != nil) {
-    CanariOrigDidReceiveRemoteNotification(self, _cmd, application, userInfo, completionHandler);
-  } else if (completionHandler != nil) {
-    completionHandler(UIBackgroundFetchResultNoData);
-  }
+typedef void (^CanariRemoteNotifCompletion)(UIBackgroundFetchResult);
+static void (*CanariOrigDidReceiveRemoteNotification)(id, SEL, UIApplication *, NSDictionary *,
+                                                      CanariRemoteNotifCompletion) = NULL;
+
+/**
+ * Whether an APNs payload is a SILENT frame: `content-available` and nothing to draw.
+ *
+ * Decided on the payload's own `aps`, which the server builds per kind (`buildApnsRequest`,
+ * `buildInternalApnsRequest`): a silent frame is `{content-available: 1}` and nothing else, an alert
+ * is `{mutable-content: 1, alert: ...}` and never `content-available`. An alert belongs to the
+ * extension (killed or background) and `willPresentNotification` (foreground), so handling one here
+ * too would draw it twice.
+ */
+static BOOL CanariIsSilentFrame(NSDictionary *userInfo) {
+  NSDictionary *aps = [userInfo[@"aps"] isKindOfClass:[NSDictionary class]] ? userInfo[@"aps"] : nil;
+  id available = aps[@"content-available"];
+  BOOL wakes = [available respondsToSelector:@selector(intValue)] && [available intValue] == 1;
+  return wakes && aps[@"alert"] == nil;
 }
 
-/** Hooks wry's UIApplicationDelegate for silent `content-available` background frames. */
-static void CanariInstallRemoteNotificationHook(void) {
+/**
+ * WHAT A SILENT FRAME MAY DO WHEN IT WAKES THIS PROCESS - AN ALLOWLIST OF KINDS, each a dismissal.
+ *
+ * - `channel_read`: a salon was read on another of my devices - clear its notification here.
+ * - an MLS `message` frame (never a Welcome) whose sender is ME: my own read receipt or own-device
+ *   copy from another device - clear that conversation's notification. Decided on the cleartext
+ *   `senderId`, so no frame is decrypted to learn it carries nothing.
+ * - `call_ring_end`: end a CallKit ring (a no-op while calls are held off).
+ *
+ * Every other kind is NOT acted on and says so: a Welcome, a `welcome_request_pending`, a peer's
+ * read receipt, a commit. The two Welcome kinds would be the first background MLS write on iOS and
+ * wait for the background-join row fix ("A group joined in the background has no conversation row",
+ * docs/wiki/backlog.md); the rest carry nothing to show.
+ *
+ * `done` is called exactly once, after the work it waits for has been issued.
+ */
+static void CanariHandleBackgroundFrame(NSDictionary *data, void (^done)(UIBackgroundFetchResult)) {
+  NSString *msgType = [data[@"type"] isKindOfClass:[NSString class]] ? data[@"type"] : @"";
+  NSString *groupId = [data[@"groupId"] isKindOfClass:[NSString class]] ? data[@"groupId"] : @"";
+  NSLog(@"[CanariPush] onMessage background frame type=%@ groupId=%@", msgType, groupId);
+
+  if ([msgType isEqualToString:@"channel_read"]) {
+    NSString *channelId =
+        [data[@"channelId"] isKindOfClass:[NSString class]] ? data[@"channelId"] : @"";
+    if (channelId.length == 0) {
+      NSLog(@"[CanariPush] channel_read without channelId - nothing to clear");
+      done(UIBackgroundFetchResultNoData);
+      return;
+    }
+    NSString *conversationId = [NSString stringWithFormat:@"channel_%@", channelId];
+    NSLog(@"[CanariPush] type=channel_read - clearing notification channel=%@", channelId);
+    dispatch_async(dispatch_get_main_queue(), ^{
+      CanariCancelConversationNotification(conversationId, ^{
+        done(UIBackgroundFetchResultNewData);
+      });
+    });
+    return;
+  }
+
+  if ([msgType isEqualToString:@"call_ring_end"]) {
+    NSString *callId = [data[@"callId"] isKindOfClass:[NSString class]] ? data[@"callId"] : @"";
+    NSString *reason = [data[@"reason"] isKindOfClass:[NSString class]] ? data[@"reason"] : @"";
+    CanariEndCallKitCall(callId, [reason isEqualToString:@"answered"]
+                                     ? CXCallEndedReasonAnsweredElsewhere
+                                     : CXCallEndedReasonRemoteEnded);
+    done(UIBackgroundFetchResultNoData);
+    return;
+  }
+
+  BOOL isWelcome = [data[@"isWelcome"] isEqualToString:@"true"];
+  if ([msgType isEqualToString:@"message"] && !isWelcome) {
+    NSString *senderId = [data[@"senderId"] isKindOfClass:[NSString class]] ? data[@"senderId"] : @"";
+    CanariPushContext *ctx = CanariLoadPushContext();
+    if (ctx == nil) {
+      NSLog(@"[CanariPush] silent message: push_context.json absent - cannot tell my own frame");
+      done(UIBackgroundFetchResultNoData);
+      return;
+    }
+    if (groupId.length > 0 && senderId.length > 0 &&
+        [senderId caseInsensitiveCompare:ctx.userId] == NSOrderedSame) {
+      dispatch_async(dispatch_get_main_queue(), ^{
+        CanariCancelConversationNotification(groupId, ^{
+          done(UIBackgroundFetchResultNewData);
+        });
+      });
+      return;
+    }
+    NSLog(@"[CanariPush] silent message from a peer - nothing to dismiss");
+    done(UIBackgroundFetchResultNoData);
+    return;
+  }
+
+  NSLog(@"[CanariPush] background frame type=%@ isWelcome=%d NOT acted on - outside the "
+        @"background allowlist (canari_push.mm, CanariHandleBackgroundFrame)",
+        msgType, isWelcome);
+  done(UIBackgroundFetchResultNoData);
+}
+
+/**
+ * The delegate method iOS calls for a remote notification while the app runs or is woken for one.
+ *
+ * The completion handler is called ONCE, when both our work and any chained implementation are done:
+ * calling it early lets iOS suspend the process with a removal still queued, and never calling it
+ * makes iOS throttle every later wake.
+ */
+static void CanariSwizzledDidReceiveRemoteNotification(id self, SEL _cmd, UIApplication *application,
+                                                       NSDictionary *userInfo,
+                                                       CanariRemoteNotifCompletion completionHandler) {
+  dispatch_group_t group = dispatch_group_create();
+  // Written on the main queue only: every `done` below hops there before touching it.
+  __block UIBackgroundFetchResult result = UIBackgroundFetchResultNoData;
+  void (^merge)(UIBackgroundFetchResult) = ^(UIBackgroundFetchResult r) {
+    dispatch_async(dispatch_get_main_queue(), ^{
+      if (r == UIBackgroundFetchResultNewData ||
+          (r == UIBackgroundFetchResultFailed && result == UIBackgroundFetchResultNoData)) {
+        result = r;
+      }
+      dispatch_group_leave(group);
+    });
+  };
+
+  dispatch_group_enter(group);
+  NSDictionary *data = CanariFcmDataFromUserInfo(userInfo);
+  if (!CanariIsSilentFrame(userInfo)) {
+    // An alert: the extension drew it, or `willPresentNotification` handles it in the foreground.
+    NSLog(@"[CanariPush] remote notification is an alert - left to the extension / willPresent");
+    merge(UIBackgroundFetchResultNoData);
+  } else if (data == nil) {
+    NSLog(@"[CanariPush] silent frame with no data fields - nothing to do");
+    merge(UIBackgroundFetchResultNoData);
+  } else {
+#if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
+    [[FIRMessaging messaging] appDidReceiveMessage:userInfo];
+#endif
+    CanariHandleBackgroundFrame(data, merge);
+  }
+
+  if (CanariOrigDidReceiveRemoteNotification != NULL) {
+    dispatch_group_enter(group);
+    CanariOrigDidReceiveRemoteNotification(self, _cmd, application, userInfo, merge);
+  }
+  dispatch_group_notify(group, dispatch_get_main_queue(), ^{
+    if (completionHandler != nil) {
+      completionHandler(result);
+    }
+  });
+}
+
+/**
+ * Adds (or chains) the silent-frame method on wry's delegate class. Call once launch has completed,
+ * the first moment `sharedApplication.delegate` exists.
+ *
+ * Returns whether the delegate class was found, so the caller re-assigns the delegate only when a
+ * method was actually added.
+ */
+static BOOL CanariInstallRemoteNotificationHook(void) {
   static dispatch_once_t once;
+  static BOOL installed = NO;
   dispatch_once(&once, ^{
     id<UIApplicationDelegate> delegate = [UIApplication sharedApplication].delegate;
     if (delegate == nil) {
-      NSLog(@"[CanariPush] remote notification hook: app delegate absent");
+      NSLog(@"[CanariPush] remote notification hook: app delegate absent - silent frames reach no "
+            @"native code");
       return;
     }
     Class delegateClass = [delegate class];
-    SEL sel = @selector(application:didReceiveRemoteNotification:fetchCompletionHandler:);
-    Method method = class_getInstanceMethod(delegateClass, sel);
-    if (method == nil) {
-      // NOT INSTALLED, ON EVERY LAUNCH: wry's delegate does not implement the selector, and the
-      // Firebase proxy that would have added one found no delegate (see the APNs token hook). So a
-      // `content-available` frame reaches no Canari native code, in the background OR the foreground
-      // (willPresentNotification fires for alerts only).
-      // Adding the method (class_replaceMethod, as the token hook does) changes what iOS wakes the
-      // app for, and is its own change owing a device reading (docs/wiki/backlog.md).
-      NSLog(@"[CanariPush] remote notification hook NOT installed: %@ has no "
-            @"didReceiveRemoteNotification:fetchCompletionHandler: - no native code handles a silent "
-            @"frame, background or foreground",
-            delegateClass);
-      return;
-    }
     CanariOrigDidReceiveRemoteNotification =
-        (CanariRemoteNotifCompletion (*)(id, SEL, UIApplication *, NSDictionary *,
-                                         CanariRemoteNotifCompletion))method_getImplementation(method);
-    method_setImplementation(method, (IMP)CanariSwizzledDidReceiveRemoteNotification);
-    NSLog(@"[CanariPush] remote notification hook installed on %@", delegateClass);
+        (void (*)(id, SEL, UIApplication *, NSDictionary *, CanariRemoteNotifCompletion))
+            class_replaceMethod(
+                delegateClass,
+                @selector(application:didReceiveRemoteNotification:fetchCompletionHandler:),
+                (IMP)CanariSwizzledDidReceiveRemoteNotification, "v@:@@@?");
+    installed = YES;
+    NSLog(@"[CanariPush] remote notification hook installed on %@ (chained=%d)", delegateClass,
+          CanariOrigDidReceiveRemoteNotification != NULL);
   });
+  return installed;
+}
+
+/**
+ * Sets the application's delegate to itself again, so UIKit re-reads which optional methods it
+ * implements.
+ *
+ * UIKit records the delegate's optional-method answers when the delegate is SET; a method added
+ * afterwards can go unseen. Firebase's own App Delegate Proxy does exactly this after it swizzles
+ * (`GULAppDelegateSwizzler reassignAppDelegate`) - the proxy this file replaces by hand.
+ *
+ * THE DELEGATE IS THEN OWNED HERE, FOR THE LIFE OF THE PROCESS. `UIApplication.delegate` is
+ * documented as not retaining. That the delegate `UIApplicationMain` created is kept by
+ * UIApplication itself, and that a `setDelegate:` gives that ownership up, is BELIEVED, not read:
+ * UIKit's source is closed, and Firebase keeping its own strong copy (`gOriginalAppDelegate`, set
+ * on the line after its re-assignment) is the evidence. What WAS read (`pymobiledevice3 crash
+ * pull`, iPhone 12, v1.3.0-alpha.2): `-[UIResponder _enumerateKeyboardShortcutsInChainWithOptions:
+ * usingBlock:]` sent `_keyboardShortcutMenuLeaves` to a `_UISceneCloudKitShareMetadataBSActionHandler`
+ * - a freed responder whose memory UIKit had reused - so the responder chain, whose last link
+ * after UIApplication is this delegate, held a dead object. That the dead link IS the delegate is
+ * the hypothesis this copy tests; the becoming-active log below says which object UIKit holds
+ * (docs/wiki/backlog.md, P1 of 2026-10-19).
+ */
+static id<UIApplicationDelegate> g_appDelegateKeptAlive = nil;
+
+static void CanariReassignAppDelegate(void) {
+  UIApplication *app = [UIApplication sharedApplication];
+  id<UIApplicationDelegate> delegate = app.delegate;
+  if (delegate == nil) {
+    NSLog(@"[CanariPush] app delegate absent - nothing to re-assign");
+    return;
+  }
+  g_appDelegateKeptAlive = delegate;
+  app.delegate = nil;
+  app.delegate = delegate;
+  NSLog(@"[CanariPush] app delegate re-assigned so UIKit reads the added methods (kept alive: %@)",
+        [g_appDelegateKeptAlive class]);
+}
+
+/**
+ * Logs, each time the app becomes active, which object UIKit holds as the application's delegate
+ * compared with the one `CanariReassignAppDelegate` keeps alive.
+ *
+ * Diagnostic for the P1 of 2026-10-19: `same` on every activation, with no abort on an
+ * accessibility read, is the reading that confirms the kept-alive fix; `nil` or `different` says the
+ * re-assignment left UIKit pointing somewhere else. In that last case `class` names whatever lives
+ * at the address UIKit holds: a UIKit-internal class there means a reused allocation, the very
+ * signature the alpha.2 crash report carried.
+ */
+static void CanariLogAppDelegateIdentity(void) {
+  id<UIApplicationDelegate> current = [UIApplication sharedApplication].delegate;
+  if (current == nil) {
+    NSLog(@"[CanariPush] became active: app delegate is nil (kept alive: %@)",
+          g_appDelegateKeptAlive == nil ? @"none" : NSStringFromClass([g_appDelegateKeptAlive class]));
+  } else if (current == g_appDelegateKeptAlive) {
+    NSLog(@"[CanariPush] became active: app delegate is the kept-alive one (%@)",
+          NSStringFromClass([current class]));
+  } else {
+    NSLog(@"[CanariPush] became active: app delegate %@ differs from the kept-alive one (%@)",
+          NSStringFromClass([current class]),
+          g_appDelegateKeptAlive == nil ? @"none" : NSStringFromClass([g_appDelegateKeptAlive class]));
+  }
 }
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
@@ -3656,10 +3865,22 @@ void CanariPushSetup(void) {
                   object:nil
                    queue:[NSOperationQueue mainQueue]
               usingBlock:^(__unused NSNotification *note) {
-                CanariInstallRemoteNotificationHook();
+                BOOL added = CanariInstallRemoteNotificationHook();
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
                 CanariInstallApnsTokenHook();
 #endif
+                // AFTER every method is added, once: a background launch for a silent frame
+                // delivers it right after this notification, so UIKit must already see the method.
+                if (added) {
+                  CanariReassignAppDelegate();
+                }
+              }];
+  [[NSNotificationCenter defaultCenter]
+      addObserverForName:UIApplicationDidBecomeActiveNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                CanariLogAppDelegateIdentity();
               }];
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)

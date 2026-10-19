@@ -5,6 +5,7 @@
 vi.mock('$lib/paraglide/messages', () => ({
   m: {
     user_unknown_label: () => 'Utilisateur inconnu',
+    user_deleted_label: () => 'Compte supprimé',
   },
 }));
 
@@ -23,6 +24,8 @@ vi.mock('$lib/stores/user', async () => {
     fetchUserProfile: vi.fn(),
     UserProfileFetchError: actual.UserProfileFetchError,
     isAbsentUserError: actual.isAbsentUserError,
+    isDeletedAccountError: actual.isDeletedAccountError,
+    DeletedAccountError: actual.DeletedAccountError,
   };
 });
 
@@ -35,6 +38,7 @@ import {
   notificationSenderName,
 } from './displayName';
 import * as userStore from '$lib/stores/user';
+import { flushMacrotask } from '../../../test/flush';
 
 // Convenience: the mocked label
 const UNKNOWN_LABEL = 'Utilisateur inconnu';
@@ -454,6 +458,20 @@ describe('formatProfileDisplayName (indirect)', () => {
     expect(mod.displayNameLookupStats()).toEqual({ attempted: 1, failed: 0, failureRate: 0 });
   });
 
+  it('answers the deleted-account label, never a name, when the server names the account deleted', async () => {
+    vi.resetModules();
+    const userModule = await import('$lib/stores/user');
+    const mod = await import('./displayName');
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.mocked(userModule.fetchUserProfile).mockClear();
+    vi.mocked(userModule.fetchUserProfile).mockRejectedValue(new userModule.DeletedAccountError());
+
+    expect(await mod.resolveUserDisplayName('usr_erased')).toBe('Compte supprimé');
+    expect(await mod.resolveUserDisplayName('usr_erased')).toBe('Compte supprimé');
+    expect(vi.mocked(userModule.fetchUserProfile)).toHaveBeenCalledTimes(1);
+  });
+
   it('does not re-ask for an absent user when connectivity returns', async () => {
     // `failedAt` is cleared on reconnect, because a failure recorded while the network was down is
     // evidence about the network. An absent account is evidence about the account, so a reconnect
@@ -474,7 +492,7 @@ describe('formatProfileDisplayName (indirect)', () => {
 
     connectivityModule.connectivity.notifyServerUnreachable();
     connectivityModule.connectivity.notifyServerReachable();
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
 
     expect(await mod.resolveUserDisplayName('usr_deleted_2')).toBe(UNKNOWN_LABEL);
     expect(vi.mocked(userModule.fetchUserProfile)).toHaveBeenCalledTimes(1);

@@ -74,6 +74,16 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // member's device - a row with no session asks peers for a seed nobody can send.
   'channel_messages.authorId': { action: 'delete' },
   'channel_messages.senderSessionId': { action: 'delete', via: 'authorId' },
+  // The client ids its DELETED salon messages left (migration 090): what keeps a repeated send from
+  // posting a removed message again. An erased account repeats no send, so they go with it.
+  'channel_message_client_tombstones.authorId': { action: 'delete' },
+  // The outbox entry of a salon row (migration 093): its mentions are ids of OTHER accounts, but it
+  // lives only until the broadcast and the push are handed off (seconds, or the next boot after a
+  // crash), and it cascades with its message - an erased author's messages are deleted below.
+  'channel_message_fanout.payload': {
+    action: 'kept',
+    reason: 'a transient outbox entry, deleted at hand-off and with its message',
+  },
   'channel_members.userId': {
     action: 'code',
     by: 'ChannelService.removeAccountFromWorkspaces (governance repair before each removal)',
@@ -155,6 +165,44 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
     via: 'claimedByUserId',
   },
 
+  // -- Bookings ({@link BOOKINGS_ERASURE_STATEMENTS}, docs/wiki/bookings-chantier.md) ------------
+  // A PERSONAL space goes with everything under it (D27); an association's keeps living and only
+  // its creator id is anonymised. The history stays frozen (D15) under the tombstone.
+  'booking_spaces.ownerId': { action: 'anonymise' },
+  'booking_spaces.audience': NO_ACCOUNT('the audience condition (tags, promos) of a space'),
+  'booking_spaces.items': NO_ACCOUNT('the questions of a space'),
+  // The link grants a view of the resource's bookings; it is not history, so it is cut (NULL).
+  'booking_resources.linkedUserId': { action: 'anonymise' },
+  'booking_blocks.createdById': { action: 'anonymise' },
+  'bookings.holderId': { action: 'anonymise' },
+  'bookings.bookedById': { action: 'anonymise' },
+  'bookings.cancelledById': { action: 'anonymise' },
+  // Its answers are its own data and nothing needs them once it is gone: purged now (D18 early).
+  'bookings.answers': { action: 'anonymise', via: 'holderId' },
+  'bookings.holderName': {
+    action: 'kept',
+    reason:
+      'D15: a deleted account leaves the name it had in a frozen booking; the one-year maximum age (D19) bounds it',
+  },
+  'booking_participants.userId': { action: 'anonymise' },
+  'booking_participants.userName': {
+    action: 'kept',
+    reason:
+      'D15: a deleted account leaves the name it had in a frozen booking; the one-year maximum age (D19) bounds it',
+  },
+  // A file answer (D7, WP-B6) is its uploader's, as a form's: the row goes, the media service's
+  // part deletes the blob (class `form-file`), and the answer reads "file deleted".
+  'booking_files.uploaderId': { action: 'delete' },
+  'booking_files.fileName': { action: 'delete', via: 'uploaderId' },
+  'booking_spaces.poster': NO_ACCOUNT("the encrypted media reference of a space's poster"),
+
+  // -- Lives ({@link LIVES_ERASURE_STATEMENTS}, docs/wiki/services/lives.md) ---------------------
+  // A live is its broadcaster's content and has no replay (L3): the erasure ENDS it and anonymises
+  // it in one statement, and the live sweep then deletes its segments and its row.
+  'lives.broadcasterId': { action: 'anonymise' },
+  'live_removed_viewers.viewerId': { action: 'delete' },
+  'live_starts.broadcasterId': { action: 'delete' },
+
   // -- Not an account reference, despite the name ----------------------------------------------
   'associations.contactEmail': {
     action: 'kept',
@@ -172,6 +220,113 @@ export interface ErasureStatement {
   label: string;
   sql: string;
 }
+
+/**
+ * The bookings part of the erasure (docs/wiki/bookings-chantier.md, "A deleted account"), in order:
+ * what reads the account as HOLDER (cancel, withdraw, purge) runs before its ids are tombstoned,
+ * and the rows are taken in the booking path's own lock order - SPACES, then RESOURCES, then
+ * bookings - so an erasure racing a booking on a resource the account is linked to waits or is
+ * waited for, and never deadlocks (a booking holds the space and resource locks while it inserts,
+ * and the insert waits on the booking row this erasure cancels).
+ *
+ * - A PERSONAL space it owns is deleted, and the foreign keys cascade everything under it (D27) -
+ *   other people's coming bookings there included: nobody else can manage that space.
+ * - A COMING live booking it holds is cancelled by the tombstone, which frees the slot; a coming
+ *   participation is withdrawn. A deleted account will not come.
+ * - The answers of every booking it held are purged now rather than N days after the slot (D18).
+ * - The frozen history (D15) keeps its rows: every id becomes {@link DELETED_ACCOUNT} - which
+ *   migration 087's partial unique index on `booking_participants` names - and the name snapshots
+ *   stay, bounded by the one-year maximum age (D19). A linked resource is unlinked.
+ *
+ * Exported apart so `bookings.integration.spec.ts` runs exactly these against the schema 087 builds.
+ */
+export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
+  {
+    label: 'bookings_personal_spaces',
+    sql: `DELETE FROM booking_spaces WHERE "associationId" IS NULL AND "ownerId" = $1`,
+  },
+  {
+    label: 'bookings_space_owner',
+    sql: `UPDATE booking_spaces SET "ownerId" = $2 WHERE "ownerId" = $1`,
+  },
+  {
+    label: 'bookings_linked_resource',
+    sql: `UPDATE booking_resources SET "linkedUserId" = NULL WHERE "linkedUserId" = $1`,
+  },
+  {
+    label: 'bookings_coming_cancelled',
+    sql: `UPDATE bookings SET "cancelledAt" = now(), "cancelledById" = $2
+           WHERE "holderId" = $1 AND "cancelledAt" IS NULL AND "startsAt" > now()`,
+  },
+  {
+    label: 'bookings_coming_withdrawn',
+    sql: `UPDATE booking_participants p SET "withdrawnAt" = now()
+            FROM bookings b
+           WHERE b.id = p."bookingId" AND p."userId" = $1 AND p."withdrawnAt" IS NULL
+             AND b."cancelledAt" IS NULL AND b."startsAt" > now()`,
+  },
+  {
+    label: 'bookings_answers',
+    sql: `UPDATE bookings SET answers = NULL, "answersPurgedAt" = now()
+           WHERE "holderId" = $1 AND answers IS NOT NULL`,
+  },
+  { label: 'bookings_holder', sql: `UPDATE bookings SET "holderId" = $2 WHERE "holderId" = $1` },
+  {
+    label: 'bookings_booked_by',
+    sql: `UPDATE bookings SET "bookedById" = $2 WHERE "bookedById" = $1`,
+  },
+  {
+    label: 'bookings_cancelled_by',
+    sql: `UPDATE bookings SET "cancelledById" = $2 WHERE "cancelledById" = $1`,
+  },
+  {
+    label: 'bookings_participants',
+    sql: `UPDATE booking_participants SET "userId" = $2 WHERE "userId" = $1`,
+  },
+  {
+    label: 'bookings_blocks',
+    sql: `UPDATE booking_blocks SET "createdById" = $2 WHERE "createdById" = $1`,
+  },
+  // Last, after the bookings: the booking path writes these rows after its booking (lock order).
+  // The media service's part of the erasure deletes the blobs (class `form-file`, owned by the
+  // uploader); the answer keeps the id, which now reads "file deleted" (`splitAnswerFiles`).
+  {
+    label: 'bookings_files',
+    sql: `DELETE FROM booking_files WHERE "uploaderId" = $1`,
+  },
+];
+
+/**
+ * The lives part of the erasure (docs/wiki/services/lives.md, "A deleted account").
+ *
+ * - A live the account broadcast is ENDED (reason `erased`, unless it had already ended) and its
+ *   broadcaster becomes {@link DELETED_ACCOUNT}, in ONE statement: an open live never carries the
+ *   tombstone, and the partial unique index (one OPEN live per broadcaster) never sees two. The live
+ *   sweep deletes the segments and then the row within one run; nothing of it is served meanwhile,
+ *   because every read of an ended live is a 410.
+ * - The account's place on another live's removed-viewer list is deleted.
+ * - Its `live_starts` rows (the rolling hour `LIVE_STARTS_PER_HOUR` counts) are deleted.
+ *
+ * Exported apart so `lives.integration.spec.ts` runs exactly these against the schema 091 builds.
+ */
+export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
+  {
+    label: 'lives_broadcaster',
+    sql: `UPDATE lives
+             SET "broadcasterId" = $2,
+                 "endReason" = COALESCE("endReason", 'erased'),
+                 "endedAt" = COALESCE("endedAt", now())
+           WHERE "broadcasterId" = $1`,
+  },
+  {
+    label: 'live_removed_viewers',
+    sql: `DELETE FROM live_removed_viewers WHERE "viewerId" = $1`,
+  },
+  {
+    label: 'live_starts',
+    sql: `DELETE FROM live_starts WHERE "broadcasterId" = $1`,
+  },
+];
 
 /**
  * Every statement, in the order they must run inside ONE transaction. Order matters where a row
@@ -228,6 +383,10 @@ export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   // Its salon messages, reactions and pins included. The pinned ones are read back
   // ({@link ERASED_PINS_SQL}) BEFORE this runs, so the salons can be told their pin is gone.
   { label: 'channel_messages', sql: `DELETE FROM channel_messages WHERE "authorId" = $1` },
+  {
+    label: 'channel_message_client_tombstones',
+    sql: `DELETE FROM channel_message_client_tombstones WHERE "authorId" = $1`,
+  },
   // Its vote on somebody else's salon poll.
   {
     label: 'channel_poll_votes',
@@ -237,6 +396,10 @@ export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
            WHERE jsonb_typeof(metadata #> '{poll,votesByUser}') = 'object'
              AND (metadata #> '{poll,votesByUser}') ? $1`,
   },
+  // Its bookings: a personal space deleted, the coming ones cancelled, the history tombstoned.
+  ...BOOKINGS_ERASURE_STATEMENTS,
+  // Its lives: ended and anonymised, for the live sweep to delete; its removals by others, deleted.
+  ...LIVES_ERASURE_STATEMENTS,
 
   // Anonymised
   {
@@ -592,6 +755,23 @@ export async function keptPostMediaIds(db: ErasureDb, userId: string): Promise<s
 }
 
 /**
+ * Runs `statements` in order on `db` (the caller's transaction) and returns the rows each one
+ * changed, by label, leaving out the ones that changed nothing - the log line's `rows=`.
+ */
+export async function runErasureStatements(
+  db: ErasureDb,
+  statements: readonly ErasureStatement[],
+  userId: string
+): Promise<Record<string, number>> {
+  const counts: Record<string, number> = {};
+  for (const statement of statements) {
+    const affected = await db.write(statement.sql, erasureParams(statement, userId));
+    if (affected > 0) counts[statement.label] = affected;
+  }
+  return counts;
+}
+
+/**
  * Every row-level part of the social erasure, to be run inside ONE transaction by the caller: the
  * statements, then the scrub of other people's posts. Idempotent. The ONE implementation, run by
  * the internal route and by the integration spec against a real database.
@@ -599,11 +779,7 @@ export async function keptPostMediaIds(db: ErasureDb, userId: string): Promise<s
 export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<SocialErasureResult> {
   const pinsRemoved = await db.read<{ id: string; channelId: string }>(ERASED_PINS_SQL, [userId]);
 
-  const counts: Record<string, number> = {};
-  for (const statement of ERASURE_STATEMENTS) {
-    const affected = await db.write(statement.sql, erasureParams(statement, userId));
-    if (affected > 0) counts[statement.label] = affected;
-  }
+  const counts = await runErasureStatements(db, ERASURE_STATEMENTS, userId);
 
   // Comments, likes and poll votes need the structure, so the candidates are read and locked.
   let postsScrubbed = 0;

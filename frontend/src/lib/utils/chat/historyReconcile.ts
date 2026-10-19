@@ -1,6 +1,7 @@
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import { appendLog } from '$lib/utils/sessionLog';
 import { forgetOwedPulls, owedPullsIn, resetOwedPulls } from '$lib/utils/chat/historyOverheardPull';
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /**
  * When a device asks whether it holds the same history as its peers, and how it stops asking.
@@ -217,8 +218,7 @@ export function setHistoryProbeSender(fn: HistoryProbeSender | null): void {
  */
 const SERVER_RETENTION_MS = 90 * 24 * 60 * 60 * 1000;
 
-const lastConnectedKey = (userId: string, deviceId: string) =>
-  `history_last_connected:${userId}:${deviceId}`;
+const lastConnectedKey = ACCOUNT_KEY.lastConnected;
 
 function readLastConnected(userId: string, deviceId: string): number | null {
   try {
@@ -326,7 +326,7 @@ export function resetConnectionRecord(userId: string, deviceId: string): void {
  */
 const HISTORY_AUDIT_GENERATION = 1;
 
-const auditKey = (userId: string, deviceId: string) => `history_audit:${userId}:${deviceId}`;
+const auditKey = ACCOUNT_KEY.historyAudit;
 
 /** What a device remembers of the audit: which round it ran, and which groups it really asked. */
 type AuditRecord = { generation: number; groupIds: string[] };

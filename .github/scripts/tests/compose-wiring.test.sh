@@ -379,6 +379,17 @@ assert_forwards() {
       printf '  ok    %s forwards every key production does\n' "$svc"
     fi
   done
+
+  # An exemption is a claim that the key is NOT forwarded here. Once someone wires
+  # it, the claim is false and the line silently exempts nothing - until the key
+  # is removed again and the check that should catch it has been told not to
+  # look. So an exempted key that IS forwarded fails, and the fix is to delete
+  # the exemption.
+  for entry in $absent_keys; do
+    if printf '%s\n' "$target_pairs" | grep -qx "${entry%%:*} ${entry#*:}"; then
+      fail "$entry is exempted as absent from $target but is forwarded there - delete the stale exemption"
+    fi
+  done
 }
 
 # Services production declares that the local estate deliberately does not run.
@@ -422,8 +433,11 @@ DEV_ABSENT_BY_DESIGN="adminer"
 #   SKY_API_*           Sky is a separate estate holding one API key.
 #   EXTERNAL_API_KEY    the credential external consumers present to production.
 #   TURN_*, CLOUDFLARE_CALLS_*, CLOUDFLARE_TURN_*
-#                       calling is held off (`CALLS_ENABLED = false`); prod has
-#                       the TURN credentials and has never used them.
+#                       the legacy coturn trio, and call-service's own Cloudflare
+#                       keys (its SFU path cannot run there). chat-delivery-service
+#                       is NOT exempt from the Cloudflare pair since calls lot 1
+#                       (2026-10-17): it mints the TURN credentials of dev's 1:1
+#                       calls, rendered from the DEV_CLOUDFLARE_* secrets.
 #   APNS_VOIP_*         a VoIP push certificate for that same held-off feature,
 #                       and no iOS client points at dev.
 #   MICONNECT_EDITOR_TOKEN
@@ -440,8 +454,7 @@ DEV_ABSENT_KEYS="
   call-service:CLOUDFLARE_CALLS_API_TOKEN call-service:CLOUDFLARE_TURN_KEY_ID
   call-service:CLOUDFLARE_TURN_TTL_SECONDS
   chat-delivery-service:TURN_URL chat-delivery-service:TURN_USERNAME
-  chat-delivery-service:TURN_CREDENTIAL chat-delivery-service:CLOUDFLARE_CALLS_API_TOKEN
-  chat-delivery-service:CLOUDFLARE_TURN_KEY_ID
+  chat-delivery-service:TURN_CREDENTIAL
   chat-delivery-service:APNS_VOIP_KEY_ID chat-delivery-service:APNS_VOIP_KEY_P8
   chat-delivery-service:APNS_VOIP_SANDBOX chat-delivery-service:APNS_VOIP_TEAM_ID
   chat-delivery-service:APNS_VOIP_TOPIC

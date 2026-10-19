@@ -7,25 +7,31 @@ use crate::state::MlsManager;
 impl MlsManager {
     // --- F. CHIFFREMENT / DÉCHIFFREMENT (Helper) ---
 
-    /// Encrypts a plain CBOR MLS snapshot with a pre-derived 32-byte key (ChaCha20-Poly1305 direct, no Argon2id).
-    /// Wire format: `[nonce (12) || ciphertext]` — no salt prefix.
+    /// Seals a plain CBOR MLS snapshot with a pre-derived 32-byte key (ChaCha20-Poly1305 direct, no
+    /// Argon2id) and frames it: `[MAGIC || 1 || key fingerprint (8)] [nonce (12) || ciphertext]`
+    /// ([`crate::state_blob::frame_v1`]).
+    ///
+    /// **THE ONE NATIVE AND WASM WRITER OF A STATE BLOB, AND IT FRAMES SINCE 2026-10-17 (step 2).**
+    /// The reader shipped first in `v0.18.18` and `minClientVersion` (1.0.3) is past it, so every
+    /// admitted build reads what this writes. The header is what lets a load that fails say WHY: a
+    /// fingerprint naming another key is a PIN rotated elsewhere, one naming the key in hand over a tag
+    /// that fails is alteration. **Downgrade: a build older than `v0.18.18` reads this as a nonce and
+    /// reports the state unopenable - do not roll a client back past it.**
     pub fn encrypt_state_blob_with_key(
         plain_state: &[u8],
         key: &[u8; 32],
     ) -> Result<Vec<u8>, MlsError> {
-        security::encrypt_blob(key, plain_state)
-            .map_err(|s| MlsError::OpenMls(format!("encrypt_state_blob_with_key: {}", s)))
+        let sealed = security::encrypt_blob(key, plain_state)
+            .map_err(|s| MlsError::OpenMls(format!("encrypt_state_blob_with_key: {}", s)))?;
+        Ok(crate::state_blob::frame_v1(key, &sealed))
     }
 
-    /// Save the MLS state encrypted with a pre-derived 32-byte key (no Argon2id needed).
-    ///
-    /// Wire format: `[nonce (12) || ciphertext]`. No salt prefix.
-    /// Used by background push handlers (Android JNI / iOS FFI) that hold the raw device
-    /// key from `push_context.json` instead of the user's PIN.
+    /// Serialises this state and seals it through [`Self::encrypt_state_blob_with_key`], so every
+    /// save carries the same framed shape. Used by the foreground commands and by the background push
+    /// handlers (Android JNI / iOS FFI) that hold the raw device key from `push_context.json`.
     pub fn save_encrypted_with_key(&self, key: &[u8; 32]) -> Result<Vec<u8>, MlsError> {
         let plain_state = self.save_state()?;
-        security::encrypt_blob(key, &plain_state)
-            .map_err(|s| MlsError::OpenMls(format!("save_encrypted_with_key: {}", s)))
+        Self::encrypt_state_blob_with_key(&plain_state, key)
     }
 
     // --- Keystore-aware loading ---
@@ -149,14 +155,19 @@ impl MlsManager {
             let plain = match crate::state_blob::parse(&blob)? {
                 crate::state_blob::Framed::Legacy(body) => crate::security::decrypt_blob(key, body)
                     .map_err(|s| MlsError::StateUndecryptable(s.to_string()))?,
-                // Dormant until step 2 writes a v1 header - see `state_blob`'s module docs.
+                // What `encrypt_state_blob_with_key` writes. A tag that fails HERE has already passed
+                // the fingerprint, so the key is the one that sealed it and the bytes were altered.
                 crate::state_blob::Framed::V1 {
                     key_fingerprint,
                     sealed,
                 } => {
                     require_this_key(key_fingerprint)?;
-                    crate::security::decrypt_blob(key, sealed)
-                        .map_err(|s| MlsError::StateUndecryptable(s.to_string()))?
+                    crate::security::decrypt_blob(key, sealed).map_err(|s| {
+                        MlsError::StateAltered(format!(
+                            "v1 tag did not verify under the key its header names - the blob was \
+                             altered: {s}"
+                        ))
+                    })?
                 }
                 // Written by the web client's WebCrypto seal only; read here on every target
                 // because a `.canari` backup carries it to a phone.

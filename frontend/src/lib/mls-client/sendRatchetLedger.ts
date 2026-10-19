@@ -29,6 +29,7 @@
  *
  * @see docs/wiki/protocols/mls-desync-prevention.md section 8
  */
+import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
 
 /**
  * Upper bound on a single burn, matching `maximum_forward_distance` in
@@ -46,7 +47,7 @@ interface SendRatchetLedger {
 
 /** One key per user: two accounts in one browser profile must never share a ratchet count. */
 function ledgerKey(userId: string): string {
-  return `mls_send_ledger_${userId}`;
+  return ACCOUNT_KEY.sendRatchetLedger(userId);
 }
 
 /**

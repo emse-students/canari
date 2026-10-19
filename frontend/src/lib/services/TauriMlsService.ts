@@ -7,7 +7,9 @@ import NativeWebSocket, { type Message as WsMessage } from '@tauri-apps/plugin-w
 import {
   logMlsMetric,
   detectRuntimeDeviceOs,
-  MLS_LOCAL_STATE_UNDECRYPTABLE,
+  SavedStateUnopenedError,
+  SavedStateOfAnotherAccountError,
+  noPinOpensState,
   VaultOwnerUnprovenError,
   LocalStateNotReadyError,
   type MlsInitOptions,
@@ -31,6 +33,7 @@ import { keystoreUnlockPrompt } from './biometric';
 import { keystoreCommand } from './keystoreCommands';
 import { onAppForegroundChange } from '$lib/utils/appForeground';
 import { conformPluginFetch } from '$lib/utils/transportFailure';
+import { ACCOUNT_KEY, keystoreAlias } from '$lib/utils/accountLocalKeys';
 
 /** Native batch result for key package generation plus immediate `mls.bin` persistence. */
 /**
@@ -404,7 +407,6 @@ export class TauriMlsService extends BaseMlsService {
   ): Promise<void> {
     if (isChannelEventFrame(msgType)) {
       if (this.onChannelEvent) {
-        console.log(`[WS RCV] Triggering onChannelEvent for ${msgType}`);
         this.onChannelEvent({ type: msgType, data: parsed.data });
       } else {
         console.warn(`[WS RCV] Received channel event but no onChannelEvent registered.`);
@@ -690,6 +692,21 @@ export class TauriMlsService extends BaseMlsService {
       // If state == null and error → real crash (no state to blame) → rethrow.
       let cause = this.classifyStateLoadFailure(e);
 
+      // `mls.bin` IS ONE FILE PER INSTALL, AND A RECORD BESIDE IT SAYS WHOSE IT IS. When that record
+      // names another account, this account's key was never going to open it - and every branch
+      // below either writes (the re-seal, the rotation) or hands the gate a reset that deletes it. So
+      // it is refused first, whatever the cause, and NOTHING is written. Only a record naming someone
+      // else proves it: no record is absence of proof (`mls_state_owner`).
+      if (savedStateExists) {
+        const owner = await this.savedStateOwner();
+        if (owner !== null && owner !== userId) {
+          console.warn(
+            `[MLS] The saved state is recorded as another account's (${cause}) - nothing rotated, nothing written; the gate withholds the reset`
+          );
+          throw new SavedStateOfAnotherAccountError(e);
+        }
+      }
+
       // A KEY OF UNPROVEN OWNER IS REFUSED BEFORE ANY RECOVERY CAN RUN, because every recovery below
       // writes: the legacy re-seal persists `mls.bin`, and a rotation replaces it. `mls.bin` is one
       // file per install, so with the unlabelled vault of the account that signed in before, a
@@ -734,22 +751,31 @@ export class TauriMlsService extends BaseMlsService {
       if (migrated) {
         // State recovered in place: keep the device identity and fall through to the normal
         // post-init steps.
-      } else if ((cause === 'mismatch' || savedStateExists) && !isKeystoreEmpty) {
-        // ANYTHING BUT A MISMATCH IS WORTH PAUSING FOR, and the test is written that way round
-        // deliberately. A `mismatch` decrypted fine and no PIN can repair it, so honouring
-        // noFreshStart there would strand the user with nothing to try. Everything else - a state
-        // that would not open, or a failure this classifier has never been taught about - is a
-        // reason to STOP rather than to rotate an identity and lose what the blob still holds.
-        // Written as `=== 'sealed'` it excluded `unknown` by accident, which is the same defect as
-        // the classifier's old default arm seen from the other side.
-        if (opts?.noFreshStart && cause !== 'mismatch') {
-          throw new Error(MLS_LOCAL_STATE_UNDECRYPTABLE, { cause: e });
+      } else if ((noPinOpensState(cause) || savedStateExists) && !isKeystoreEmpty) {
+        // ANYTHING NO PIN CAN OPEN IS ROTATED, EVERYTHING ELSE IS WORTH PAUSING FOR, and the test
+        // is written that way round deliberately. A `mismatch` decrypted fine and names another
+        // device; an `altered` state's header names THIS key and its tag fails (DE7, CORRUPT-2) -
+        // honouring noFreshStart for either strands the user on a gate asking for a PIN that cannot
+        // exist. Everything else - a PIN rotated elsewhere, a legacy blob that says nothing, a
+        // failure this classifier has never been taught about - is a reason to STOP rather than to
+        // rotate an identity and lose what the blob still holds. Never widened past the fingerprint:
+        // a rotation on every failed decrypt destroys the history of every real PIN rotation.
+        if (opts?.noFreshStart && !noPinOpensState(cause)) {
+          throw new SavedStateUnopenedError(
+            cause === 'rotated' || cause === 'undecryptable' ? cause : 'unknown',
+            e
+          );
+        }
+        if (cause === 'altered') {
+          console.error(
+            `[MLS] The saved state was ALTERED under the key its header names - no PIN opens it; rotating the device identity: ${String(e).slice(0, 200)}`
+          );
         }
         await this.rotateDeviceIdentity(
           deviceKeyB64,
           cause === 'mismatch'
             ? 'credential mismatch - stale state'
-            : `loaded state unusable (corruption?): ${String(e).slice(0, 200)}`
+            : `loaded state unusable (${cause}): ${String(e).slice(0, 200)}`
         );
       } else {
         throw e;
@@ -1010,6 +1036,18 @@ export class TauriMlsService extends BaseMlsService {
     return keyB64;
   }
 
+  /**
+   * The account `mls.bin` was last opened for, `null` when none is recorded (`mls_state_owner`).
+   *
+   * Asked only once a load has FAILED, so a sign-in that opens its state pays nothing for it. The
+   * command never rejects for a missing or unreadable record (it answers `null` and logs natively);
+   * a rejection here is the bridge itself failing, and it propagates - read as "no owner", it would
+   * hand the gate a reset that may delete another account's state.
+   */
+  private async savedStateOwner(): Promise<string | null> {
+    return (await invoke<string | null>('mls_state_owner')) ?? null;
+  }
+
   /** Native decrypt + client init for a given device key/state; throws on wrong key (no fresh-start). */
   protected async loadStateWithKey(
     deviceKeyB64: string,
@@ -1085,7 +1123,7 @@ export class TauriMlsService extends BaseMlsService {
     } catch (e) {
       console.error('[MLS][Tauri] Keystore refused the new device key - deleting its entry:', e);
       await invoke(keystoreCommand('deleteKeyBytes'), {
-        payload: { alias: `mls_device_key_${this.userId}_${this.deviceId}` },
+        payload: { alias: keystoreAlias(this.userId, this.deviceId) },
       }).catch((d) =>
         console.error('[MLS][Tauri] Deleting the keystore entry after a refusal failed too:', d)
       );
@@ -1402,7 +1440,7 @@ export class TauriMlsService extends BaseMlsService {
   async publishKeyPackage(keyPackage: DatedKeyPackage): Promise<void> {
     const base64 = toBase64(keyPackage.bytes);
     const storedName =
-      localStorage.getItem(`device-name:${this.userId}:${this.deviceId}`) || undefined;
+      localStorage.getItem(ACCOUNT_KEY.deviceName(this.userId, this.deviceId)) || undefined;
     const deviceAppVersion = getClientAppVersion();
     await this.delivery.registerDeviceKeyPackage({
       keyPackageBase64: base64,

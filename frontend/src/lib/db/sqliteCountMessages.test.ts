@@ -30,3 +30,21 @@ describe('SqliteStorage.countMessages', () => {
     expect(await storageAnswering([]).storage.countMessages('g')).toBe(0);
   });
 });
+
+/**
+ * `countGraineSessionsForWorkspace` is what a history answer reads before claiming "I hold nothing"
+ * (channel-encryption section 24): the ROWS, from the clear column, with no key - so a row the device
+ * key cannot open still counts.
+ */
+describe('SqliteStorage.countGraineSessionsForWorkspace', () => {
+  it('asks one COUNT on the clear community column, decrypting nothing', async () => {
+    const { storage, select, execute } = storageAnswering([{ n: '2' }]);
+
+    expect(await storage.countGraineSessionsForWorkspace('ws-1')).toBe(2);
+    const [sql, params] = select.mock.calls[0];
+    expect(sql).toMatch(/^SELECT COUNT\(\*\) AS n FROM graine WHERE workspace_id = \$1$/);
+    expect(params).toEqual(['ws-1']);
+    expect(execute).not.toHaveBeenCalled();
+    expect(await storageAnswering([]).storage.countGraineSessionsForWorkspace('ws-1')).toBe(0);
+  });
+});

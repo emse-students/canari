@@ -38,8 +38,19 @@ interface HubRowBase {
 /** A row's glyph: a Lucide component. */
 export type HubIcon = import('svelte').Component<{ size?: number }>;
 
-/** What leads a row: a glyph, or - for the reader's own identity row - their avatar. Never both. */
-type HubRowLead = { icon: HubIcon; avatarUserId?: never } | { avatarUserId: string; icon?: never };
+/** An organisation's logo as a row's lead; the row's `icon` is what draws when it has none. */
+export interface HubLogo {
+  name: string;
+  logoUrl: string | null;
+}
+
+/**
+ * What leads a row: a glyph (an organisation row may carry its `logo`, drawn instead of the glyph
+ * when it has a logo URL), or - for the reader's own identity row - their avatar. Never both.
+ */
+type HubRowLead =
+  | { icon: HubIcon; logo?: HubLogo; avatarUserId?: never }
+  | { avatarUserId: string; icon?: never; logo?: never };
 
 /**
  * One row of a hub: a section the reader can go INTO (`href`, a real link), or - for the one

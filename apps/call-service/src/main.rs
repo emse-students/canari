@@ -37,8 +37,46 @@ use webrtc::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 use webrtc::track::track_local::{TrackLocal, TrackLocalWriter};
 use webrtc::track::track_remote::TrackRemote;
 
+mod p2p;
+
+use p2p::{count_relayed, JoinOutcome, P2pPeer, P2pRoom, RelayedKind};
+
 type RoomId = String;
 type PeerId = String;
+
+/// How a room carries a call, chosen by the client in `Join` and fixed when the room is created.
+///
+/// `Sfu` is the original design: this service terminates every peer connection and forwards the
+/// media. `P2p` (2026-10-17, the 1:1 revival) opens no peer connection here at all and only relays
+/// the two browsers' handshake to each other - see [`p2p`]. An absent field reads as `Sfu`, so a
+/// client that predates the field keeps the behaviour it was built against.
+#[derive(Serialize, Deserialize, Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+enum RoomMode {
+    #[default]
+    Sfu,
+    P2p,
+}
+
+impl RoomMode {
+    fn as_str(self) -> &'static str {
+        match self {
+            RoomMode::Sfu => "sfu",
+            RoomMode::P2p => "p2p",
+        }
+    }
+}
+
+/// How often the socket loop pings an idle client. The host nginx in front of production closes a
+/// proxied socket after 60 s without a read from upstream (no `proxy_read_timeout` is set there,
+/// realtime-media-feasibility section 9, 4a), and a peer-to-peer call sends NO signalling once ICE
+/// has connected - so without this, every 1:1 call would lose its socket a minute in.
+const KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(25);
+
+/// The largest signalling frame accepted. The biggest legitimate one is an SDP offer, a few KiB
+/// for audio and well under 16 KiB with video; the library default (64 MiB) would let one socket
+/// make the server buffer, parse and - in peer-to-peer mode - forward a frame of that size.
+const MAX_SIGNAL_MESSAGE_BYTES: usize = 64 * 1024;
 
 /// JWT payload (`sub` = user id).
 #[derive(Serialize, Deserialize)]
@@ -54,6 +92,10 @@ struct RoomClaims {
     room_id: String,
     /// User ID of the token holder.
     sub: String,
+    /// The conversation the room was opened in. chat-delivery-service binds the room to it at
+    /// `initiate` and signs only that value, so a peer-to-peer room seats two holders of the SAME
+    /// group and nobody else (see [`p2p::P2pRoom::join`]).
+    group_id: String,
     exp: usize,
 }
 
@@ -69,6 +111,10 @@ struct AuthParams {
 
 struct AppState {
     rooms: DashMap<RoomId, Arc<Room>>,
+    /// Peer-to-peer rooms. Separate from `rooms` because they hold no peer connection, and so are
+    /// never reaped on a clock: each one is removed by the socket loop of its last peer, the
+    /// moment that socket ends, so its lifetime is exactly the lifetime of its sockets.
+    p2p_rooms: DashMap<RoomId, Arc<P2pRoom>>,
     jwt_secret: String,
     /// Secret shared with chat-delivery-service to sign and verify room access tokens.
     call_room_secret: String,
@@ -100,6 +146,8 @@ struct PeerContext {
 struct PeerSession {
     room_id: Option<RoomId>,
     ledger: Option<Arc<CallLedger>>,
+    /// The mode of the room joined; meaningful only once `room_id` is set.
+    mode: RoomMode,
 }
 
 /// Why a peer's SFU session ended.
@@ -175,10 +223,15 @@ struct CallLedger {
     /// two services' logs join on this value and on nothing else.
     room_id: RoomId,
     peer_id: PeerId,
+    /// Which design carried this session. In `P2p` the server never sees ICE, so the record
+    /// reports `paired_ms` (when the other party arrived) instead of `connected_ms` - printing an
+    /// ICE figure this service cannot measure would be a column answering a question it was not
+    /// written for.
+    mode: RoomMode,
     /// When `Join` was accepted.
     joined: std::time::Instant,
-    /// First moment ICE reported a usable pair. `None` means media never flowed, which is the
-    /// one fact a duration alone can never carry.
+    /// SFU: first moment ICE reported a usable pair. P2P: first moment the room held both
+    /// parties. `None` means media never flowed (SFU) or nobody ever came (P2P).
     connected: std::sync::Mutex<Option<std::time::Instant>>,
     /// Last ICE connection state seen, so the record says how negotiation ended.
     ice_state: std::sync::Mutex<Option<String>>,
@@ -211,10 +264,11 @@ struct CallLedger {
 }
 
 impl CallLedger {
-    fn new(room_id: RoomId, peer_id: PeerId) -> Self {
+    fn new(room_id: RoomId, peer_id: PeerId, mode: RoomMode) -> Self {
         Self {
             room_id,
             peer_id,
+            mode,
             joined: std::time::Instant::now(),
             connected: std::sync::Mutex::new(None),
             ice_state: std::sync::Mutex::new(None),
@@ -318,6 +372,21 @@ impl CallLedger {
     /// The one line the campaign greps for. `connected_ms=-` is not a missing value: it is the
     /// statement that media never flowed, and it is the field to read first.
     fn summary(&self) -> String {
+        if self.mode == RoomMode::P2p {
+            // `paired_ms=-` is the statement that the other party never arrived. Whether media
+            // then flowed is the clients' to say: ICE ran between them, not through here.
+            return format!(
+                "[call] session end room={} peer={} mode=p2p disposition={} duration_ms={} paired_ms={} {}",
+                self.room_id,
+                self.peer_id,
+                self.disposition().map(Disposition::as_str).unwrap_or("unknown"),
+                self.session_ms(),
+                self.connected_ms()
+                    .map(|ms| ms.to_string())
+                    .unwrap_or_else(|| "-".to_string()),
+                self.counters(),
+            );
+        }
         format!(
             "[call] session end room={} peer={} disposition={} duration_ms={} connected_ms={} ice_state={} {}",
             self.room_id,
@@ -499,10 +568,27 @@ enum SignalMessage {
     Join {
         room_id: String,
         room_token: Option<String>,
+        /// `"p2p"` for a peer-to-peer room; absent means `"sfu"` (see [`RoomMode`]).
+        #[serde(default)]
+        mode: RoomMode,
     },
     /// Sent when the peer is registered and ready to receive Offer/Answer signaling.
     Joined {
         room_id: String,
+    },
+    /// P2P only, server -> client: the room now holds both parties. `initiator` makes the offer
+    /// and is the impolite side; the other answers and yields on a collision. Sent again to the
+    /// remaining peer when the other party's device is replaced, so it renegotiates from scratch.
+    PeerReady {
+        initiator: bool,
+    },
+    /// P2P only, server -> client: the other party's socket is gone (or this device was replaced
+    /// by another of the same user). The call this socket was signalling is over.
+    PeerLeft,
+    /// P2P only, server -> client: the `Join` was refused, and why, so the client fails at once
+    /// with a reason instead of waiting out its Join timeout.
+    Refused {
+        reason: String,
     },
     Offer {
         sdp: String,
@@ -525,6 +611,9 @@ impl SignalMessage {
             SignalMessage::Offer { .. } => "offer",
             SignalMessage::Answer { .. } => "answer",
             SignalMessage::IceCandidate { .. } => "ice",
+            SignalMessage::PeerReady { .. } => "peer-ready",
+            SignalMessage::PeerLeft => "peer-left",
+            SignalMessage::Refused { .. } => "refused",
         }
     }
 }
@@ -628,6 +717,7 @@ async fn main() -> anyhow::Result<()> {
 
     let state = Arc::new(AppState {
         rooms: DashMap::new(),
+        p2p_rooms: DashMap::new(),
         jwt_secret,
         call_room_secret,
     });
@@ -643,7 +733,9 @@ async fn main() -> anyhow::Result<()> {
     let port = std::env::var("PORT").unwrap_or_else(|_| "3004".to_string());
     let addr = format!("0.0.0.0:{}", port);
     let listener = tokio::net::TcpListener::bind(&addr).await?;
-    info!("Call service listening on {}", addr);
+    // The BOUND address, not the requested one: with `PORT=0` the kernel picks the port, and this
+    // line is how `tests/p2p_signalling.rs` learns it - a port no other test can have taken.
+    info!("Call service listening on {}", listener.local_addr()?);
     axum::serve(listener, app).await?;
 
     Ok(())
@@ -699,7 +791,9 @@ async fn ws_handler(
         Ok(token_data) => {
             let user_id = token_data.claims.sub;
             info!("Authenticated WebSocket upgrade for user {}", user_id);
-            ws.on_upgrade(move |socket| handle_socket(socket, state, user_id))
+            ws.max_message_size(MAX_SIGNAL_MESSAGE_BYTES)
+                .max_frame_size(MAX_SIGNAL_MESSAGE_BYTES)
+                .on_upgrade(move |socket| handle_socket(socket, state, user_id))
         }
         Err(e) => {
             error!("JWT validation failed: {}", e);
@@ -713,7 +807,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
     let mut session = PeerSession {
         room_id: None,
         ledger: None,
+        mode: RoomMode::Sfu,
     };
+    // `interval` fires at once on its first tick; skip it so the first ping goes out one period in.
+    let mut keepalive =
+        tokio::time::interval_at(tokio::time::Instant::now() + KEEPALIVE, KEEPALIVE);
 
     let (tx, mut rx) = mpsc::channel::<SignalMessage>(100);
 
@@ -778,6 +876,14 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
                     _ => {}
                 }
             }
+            _ = keepalive.tick() => {
+                // A Ping frame, answered by the browser's own Pong; nothing in the page sees it.
+                if let Err(e) = writer_socket.send(Message::Ping(Default::default())).await {
+                    warn!("[call] {} keepalive ping failed: {}", peer_id, e);
+                    end_session(&session, Disposition::SendFailed);
+                    break;
+                }
+            }
             Some(msg) = rx.recv() => {
                 // A frame we cannot serialise is dropped and named, never panicked on: this is
                 // the writer for every outbound signal and it must not take the call down.
@@ -798,7 +904,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
         }
     }
 
-    if let Some(room_id) = session.room_id.clone() {
+    if let (Some(room_id), RoomMode::P2p) = (session.room_id.clone(), session.mode) {
+        p2p_leave(&state, &room_id, &peer_id);
+    } else if let Some(room_id) = session.room_id.clone() {
         let remove_room = if let Some(room) = state.rooms.get(&room_id) {
             // Close the PeerConnection rather than only dropping it: webrtc-rs holds the ICE
             // agent and its TURN allocation until told to let go, and a relay allocation left
@@ -849,44 +957,13 @@ async fn handle_signal(
         SignalMessage::Join {
             room_id,
             room_token,
+            mode,
         } => {
-            // Validate room access token when CALL_ROOM_SECRET is configured.
-            if !state.call_room_secret.is_empty() {
-                let token = match room_token {
-                    Some(ref t) => t.as_str(),
-                    None => {
-                        warn!(
-                            "[auth] Peer {} attempted Join without room_token - rejected",
-                            peer_id
-                        );
-                        return;
-                    }
-                };
-                let key = DecodingKey::from_secret(state.call_room_secret.as_bytes());
-                let validation = Validation::new(Algorithm::HS256);
-                match decode::<RoomClaims>(token, &key, &validation) {
-                    Ok(data) => {
-                        if data.claims.room_id != room_id {
-                            warn!(
-                                "[auth] Peer {} room_id mismatch: token={} requested={}",
-                                peer_id, data.claims.room_id, room_id
-                            );
-                            return;
-                        }
-                        if data.claims.sub != user_id {
-                            warn!(
-                                "[auth] Peer {} user_id mismatch: token={} ws={}",
-                                peer_id, data.claims.sub, user_id
-                            );
-                            return;
-                        }
-                    }
-                    Err(e) => {
-                        warn!("[auth] Peer {} invalid room_token: {}", peer_id, e);
-                        return;
-                    }
-                }
-            }
+            let Some(group_id) =
+                authorize_join(state, user_id, peer_id, &room_id, room_token.as_deref())
+            else {
+                return;
+            };
 
             // Reject if peer is already in a room - prevents multi-room joins.
             if let Some(existing) = &session.room_id {
@@ -897,11 +974,47 @@ async fn handle_signal(
                 return;
             }
 
+            // A room id belongs to ONE mode for its whole life. Both maps are keyed by the same
+            // server-issued UUID, so a mismatch is a client bug, refused and named rather than
+            // silently splitting one call across two designs.
+            let other_mode_holds_it = match mode {
+                RoomMode::P2p => state.rooms.contains_key(&room_id),
+                RoomMode::Sfu => state.p2p_rooms.contains_key(&room_id),
+            };
+            if other_mode_holds_it {
+                warn!(
+                    "[call] {} asked for room {} as {} but it exists in the other mode - refused",
+                    peer_id,
+                    room_id,
+                    mode.as_str()
+                );
+                p2p_send(
+                    &notify_tx,
+                    SignalMessage::Refused {
+                        reason: "mode-mismatch".to_string(),
+                    },
+                    &room_id,
+                    peer_id,
+                );
+                return;
+            }
+
+            if mode == RoomMode::P2p {
+                p2p_join(
+                    state, user_id, peer_id, &group_id, session, room_id, notify_tx,
+                );
+                return;
+            }
+
             info!("[call] session start room={} peer={}", room_id, peer_id);
             session.room_id = Some(room_id.clone());
             // The room id is also chat-delivery-service's `callId`, so this ledger and the ring
             // fan-out's `[ring] call=...` lines join on it. Nothing else links the two services.
-            let ledger = Arc::new(CallLedger::new(room_id.clone(), peer_id.clone()));
+            let ledger = Arc::new(CallLedger::new(
+                room_id.clone(),
+                peer_id.clone(),
+                RoomMode::Sfu,
+            ));
             session.ledger = Some(ledger.clone());
 
             let room = state
@@ -1202,6 +1315,36 @@ async fn handle_signal(
                 );
             }
         }
+        SignalMessage::Offer { sdp } if session.mode == RoomMode::P2p => {
+            p2p_relay(
+                state,
+                session,
+                peer_id,
+                RelayedKind::Offer,
+                SignalMessage::Offer { sdp },
+            )
+            .await;
+        }
+        SignalMessage::Answer { sdp } if session.mode == RoomMode::P2p => {
+            p2p_relay(
+                state,
+                session,
+                peer_id,
+                RelayedKind::Answer,
+                SignalMessage::Answer { sdp },
+            )
+            .await;
+        }
+        SignalMessage::IceCandidate { candidate } if session.mode == RoomMode::P2p => {
+            p2p_relay(
+                state,
+                session,
+                peer_id,
+                RelayedKind::Ice,
+                SignalMessage::IceCandidate { candidate },
+            )
+            .await;
+        }
         SignalMessage::Offer { sdp } => {
             let Some((room_id, room)) = resolve_room(state, session, peer_id, "offer") else {
                 return;
@@ -1326,9 +1469,307 @@ async fn handle_signal(
                 }
             }
         }
-        SignalMessage::Joined { .. } => {
-            // Server → client only; ignore if echoed by mistake.
+        SignalMessage::Joined { .. }
+        | SignalMessage::PeerReady { .. }
+        | SignalMessage::PeerLeft
+        | SignalMessage::Refused { .. } => {
+            // Server -> client only. A client sending one is confused, and the line says which.
+            warn!(
+                "[call] {} sent server-only frame {} - dropped",
+                peer_id,
+                signal.kind()
+            );
         }
+    }
+}
+
+/// Checks a `Join`'s room token: signed by chat-delivery-service with `CALL_ROOM_SECRET`, for THIS
+/// room and THIS user. Every refusal is named, because a refused Join is otherwise a client waiting
+/// out its timeout with nothing anywhere saying why.
+///
+/// Returns the token's `group_id` when the token is good: the group is what a peer-to-peer room
+/// compares between its two seats.
+fn authorize_join(
+    state: &Arc<AppState>,
+    user_id: &str,
+    peer_id: &str,
+    room_id: &str,
+    room_token: Option<&str>,
+) -> Option<String> {
+    let Some(token) = room_token else {
+        warn!(
+            "[auth] Peer {} attempted Join without room_token - rejected",
+            peer_id
+        );
+        return None;
+    };
+    let key = DecodingKey::from_secret(state.call_room_secret.as_bytes());
+    let validation = Validation::new(Algorithm::HS256);
+    match decode::<RoomClaims>(token, &key, &validation) {
+        Ok(data) if data.claims.room_id != room_id => {
+            warn!(
+                "[auth] Peer {} room_id mismatch: token={} requested={}",
+                peer_id, data.claims.room_id, room_id
+            );
+            None
+        }
+        Ok(data) if data.claims.sub != user_id => {
+            warn!(
+                "[auth] Peer {} user_id mismatch: token={} ws={}",
+                peer_id, data.claims.sub, user_id
+            );
+            None
+        }
+        Ok(data) => Some(data.claims.group_id),
+        Err(e) => {
+            warn!("[auth] Peer {} invalid room_token: {}", peer_id, e);
+            None
+        }
+    }
+}
+
+/// Seats a peer in a peer-to-peer room and tells each party what to do next.
+///
+/// The decision is taken inside the map's entry guard, so a concurrent last-peer-leaves cannot
+/// remove the room between our lookup and our seat (see [`p2p_leave`], which removes under the
+/// same shard lock).
+fn p2p_join(
+    state: &Arc<AppState>,
+    user_id: &str,
+    peer_id: &str,
+    group_id: &str,
+    session: &mut PeerSession,
+    room_id: RoomId,
+    notify_tx: mpsc::Sender<SignalMessage>,
+) {
+    let ledger = Arc::new(CallLedger::new(
+        room_id.clone(),
+        peer_id.to_string(),
+        RoomMode::P2p,
+    ));
+    let me = P2pPeer {
+        peer_id: peer_id.to_string(),
+        user_id: user_id.to_string(),
+        group_id: group_id.to_string(),
+        tx: notify_tx.clone(),
+        ledger: ledger.clone(),
+    };
+    let outcome = {
+        let room = state.p2p_rooms.entry(room_id.clone()).or_default();
+        room.value().join(me)
+    };
+
+    let (initiator, evicted) = match outcome {
+        JoinOutcome::Full => {
+            warn!(
+                "[call] {} refused from p2p room {}: two other users already hold it",
+                peer_id, room_id
+            );
+            p2p_send(
+                &notify_tx,
+                SignalMessage::Refused {
+                    reason: "room-full".to_string(),
+                },
+                &room_id,
+                peer_id,
+            );
+            return;
+        }
+        JoinOutcome::OtherGroup => {
+            // A valid token for THIS room id but another conversation: someone who learnt the id
+            // and holds a token minted elsewhere. Seated, it would receive the call's candidates.
+            warn!(
+                "[auth] {} refused from p2p room {}: its token names group {}, the room holds another",
+                peer_id, room_id, group_id
+            );
+            p2p_send(
+                &notify_tx,
+                SignalMessage::Refused {
+                    reason: "group-mismatch".to_string(),
+                },
+                &room_id,
+                peer_id,
+            );
+            return;
+        }
+        JoinOutcome::Waiting { evicted } => (None, evicted),
+        JoinOutcome::Paired { initiator, evicted } => (Some(initiator), evicted),
+    };
+
+    info!(
+        "[call] session start room={} peer={} mode=p2p",
+        room_id, peer_id
+    );
+    session.room_id = Some(room_id.clone());
+    session.mode = RoomMode::P2p;
+    session.ledger = Some(ledger.clone());
+
+    for gone in evicted {
+        // The FIRST cause wins on its record; its socket's later Close must not overwrite it.
+        gone.ledger.end(Disposition::SiblingEvicted);
+        info!(
+            "[multi-device] p2p room {}: {} replaced by {}",
+            room_id, gone.peer_id, peer_id
+        );
+        p2p_send(&gone.tx, SignalMessage::PeerLeft, &room_id, &gone.peer_id);
+    }
+
+    if !p2p_send(
+        &notify_tx,
+        SignalMessage::Joined {
+            room_id: room_id.clone(),
+        },
+        &room_id,
+        peer_id,
+    ) {
+        return;
+    }
+
+    let Some(initiator) = initiator else {
+        return;
+    };
+    // Both records mark the pairing: `paired_ms` on each is measured from its own Join.
+    initiator.ledger.mark_connected();
+    ledger.mark_connected();
+    info!(
+        "[call] p2p paired room={} initiator={} polite={}",
+        room_id, initiator.peer_id, peer_id
+    );
+    for (tx, is_initiator, who) in [
+        (&initiator.tx, true, initiator.peer_id.as_str()),
+        (&notify_tx, false, peer_id),
+    ] {
+        // Delivered directly rather than through `p2p_send`: a lost PeerReady is one event, and it
+        // gets ONE line, at error, because this call can then never negotiate.
+        if let Err(reason) = p2p::deliver(
+            tx,
+            SignalMessage::PeerReady {
+                initiator: is_initiator,
+            },
+        ) {
+            error!(
+                "[call] p2p peer-ready DROPPED room={} to={}: {} - this call cannot negotiate",
+                room_id,
+                who,
+                reason.as_str()
+            );
+        }
+    }
+}
+
+/// Sends one server-originated p2p frame through [`p2p::deliver`] - never awaiting a queue - and
+/// names a drop. Returns whether the frame was queued.
+fn p2p_send(
+    tx: &mpsc::Sender<SignalMessage>,
+    frame: SignalMessage,
+    room_id: &str,
+    to: &str,
+) -> bool {
+    let kind = frame.kind();
+    match p2p::deliver(tx, frame) {
+        Ok(()) => true,
+        Err(reason) => {
+            warn!(
+                "[call] p2p {} DROPPED room={} to={}: {}",
+                kind,
+                room_id,
+                to,
+                reason.as_str()
+            );
+            false
+        }
+    }
+}
+
+/// Forwards one handshake frame to the other party of a peer-to-peer room.
+async fn p2p_relay(
+    state: &Arc<AppState>,
+    session: &PeerSession,
+    peer_id: &str,
+    kind: RelayedKind,
+    frame: SignalMessage,
+) {
+    let Some(room_id) = session.room_id.as_ref() else {
+        warn!(
+            "[call] {} sent {} before Join completed - dropped",
+            peer_id,
+            frame.kind()
+        );
+        return;
+    };
+    let Some(room) = state.p2p_rooms.get(room_id).map(|r| r.value().clone()) else {
+        warn!(
+            "[call] {} sent {} for p2p room {}, which no longer exists - dropped",
+            peer_id,
+            frame.kind(),
+            room_id
+        );
+        return;
+    };
+    let Some(partner) = room.partner_of(peer_id) else {
+        // Two benign cases, kept apart: an evicted device still trickling (already explained by
+        // its record), and a peer alone in the room - which the client should never produce,
+        // since it offers only on `PeerReady`.
+        if room.contains(peer_id) {
+            if let Some(ledger) = &session.ledger {
+                bump(&ledger.ice_in_failed);
+            }
+            warn!(
+                "[call] {} sent {} in p2p room {} with nobody to receive it - dropped",
+                peer_id,
+                frame.kind(),
+                room_id
+            );
+        }
+        return;
+    };
+    let name = frame.kind();
+    match p2p::deliver(&partner.tx, frame) {
+        Ok(()) => {
+            if let Some(ledger) = &session.ledger {
+                count_relayed(kind, ledger, &partner.ledger);
+            }
+            if kind != RelayedKind::Ice {
+                info!(
+                    "[call] p2p {} relayed room={} from={} to={}",
+                    name, room_id, peer_id, partner.peer_id
+                );
+            }
+        }
+        Err(e) => {
+            // Counted only for ICE, the one kind that column was written for; a dropped offer or
+            // answer is rarer and fatal to the negotiation, and this line carries it.
+            if kind == RelayedKind::Ice {
+                bump(&partner.ledger.ice_out_failed);
+            }
+            warn!(
+                "[call] p2p {} DROPPED room={} from={} to={}: {}",
+                name,
+                room_id,
+                peer_id,
+                partner.peer_id,
+                e.as_str()
+            );
+        }
+    }
+}
+
+/// Removes a peer from its peer-to-peer room when its socket ends, tells the party left behind,
+/// and drops the room once it is empty - atomically, under the map's shard lock, so a join racing
+/// the last leave either lands before the removal or creates a fresh room after it.
+fn p2p_leave(state: &Arc<AppState>, room_id: &str, peer_id: &str) {
+    let mut remaining: Option<P2pPeer> = None;
+    let removed = state.p2p_rooms.remove_if(room_id, |_, room| {
+        remaining = room.leave(peer_id);
+        room.is_empty()
+    });
+    if removed.is_some() {
+        info!("[call] p2p room {} removed - no peers remaining", room_id);
+    }
+    if let Some(other) = remaining {
+        // Through `deliver`: this runs on the LEAVING peer's task, which must not hang on a
+        // partner that stopped reading.
+        p2p_send(&other.tx, SignalMessage::PeerLeft, room_id, &other.peer_id);
     }
 }
 
@@ -1853,7 +2294,11 @@ mod tests {
     }
 
     fn ledger() -> CallLedger {
-        CallLedger::new("room-1".to_string(), "user-1:dev-a".to_string())
+        CallLedger::new(
+            "room-1".to_string(),
+            "user-1:dev-a".to_string(),
+            RoomMode::Sfu,
+        )
     }
 
     /// The campaign greps these tokens out of the service log; they are a contract, not a
@@ -1984,5 +2429,48 @@ mod tests {
         l.set_ice_state("Checking");
         l.set_ice_state("Failed");
         assert!(l.summary().contains("ice_state=Failed"));
+    }
+
+    /// In P2P the server never sees ICE, so the record must not print an ICE figure it cannot
+    /// measure: it says `mode=p2p` and `paired_ms`, and `paired_ms=-` means nobody ever came.
+    #[test]
+    fn a_p2p_record_reports_pairing_and_no_ice_state() {
+        let l = CallLedger::new("room-1".into(), "user-1:dev-a".into(), RoomMode::P2p);
+        l.end(Disposition::ClientClose);
+        let s = l.summary();
+        assert!(s.contains("mode=p2p"), "{}", s);
+        assert!(s.contains("paired_ms=-"), "{}", s);
+        assert!(!s.contains("connected_ms"), "{}", s);
+        assert!(!s.contains("ice_state"), "{}", s);
+        l.mark_connected();
+        assert!(!l.summary().contains("paired_ms=-"));
+    }
+
+    /// The wire spelling the client sends; an absent field is the original SFU design.
+    #[test]
+    fn join_reads_its_mode_and_defaults_to_sfu() {
+        let p2p: SignalMessage =
+            serde_json::from_str(r#"{"type":"Join","room_id":"r","room_token":"t","mode":"p2p"}"#)
+                .unwrap();
+        assert!(matches!(
+            p2p,
+            SignalMessage::Join {
+                mode: RoomMode::P2p,
+                ..
+            }
+        ));
+        let legacy: SignalMessage =
+            serde_json::from_str(r#"{"type":"Join","room_id":"r","room_token":"t"}"#).unwrap();
+        assert!(matches!(
+            legacy,
+            SignalMessage::Join {
+                mode: RoomMode::Sfu,
+                ..
+            }
+        ));
+        assert_eq!(
+            serde_json::to_string(&SignalMessage::PeerLeft).unwrap(),
+            r#"{"type":"PeerLeft"}"#
+        );
     }
 }

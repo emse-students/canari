@@ -207,6 +207,7 @@ export class PostInteractionsService {
           await this.push.notifyContent(post.authorId, commentContent(actorName, pushPreview), {
             type: 'social',
             postId,
+            commentId: comment.id,
           });
         } catch (e) {
           this.logger.warn(
@@ -232,6 +233,7 @@ export class PostInteractionsService {
             await this.push.notifyContent(parent.userId, replyContent(actorName, pushPreview), {
               type: 'social',
               postId,
+              commentId: comment.id,
             });
           } catch (e) {
             this.logger.warn(
@@ -260,6 +262,7 @@ export class PostInteractionsService {
             await this.push.notifyContent(recipientId, mentionContent(actorName, pushPreview), {
               type: 'social',
               postId,
+              commentId: comment.id,
             });
           } catch (e) {
             this.logger.warn(

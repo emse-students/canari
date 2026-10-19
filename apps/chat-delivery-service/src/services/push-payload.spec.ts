@@ -11,6 +11,7 @@ import {
   apnsFallbackBody,
   LONGEST_FALLBACK_LOCALE,
   FCM_DATA_LIMIT,
+  IOS_NOTIFICATION_SOUND,
   PushMessageInput,
 } from './push-payload';
 
@@ -229,9 +230,9 @@ describe('a conversation set to mentions - the device decides, the server only s
     expect(aps['mutable-content']).toBe(1);
   });
 
-  it('rings an ordinary visible frame as before', () => {
+  it('rings an ordinary visible frame with the palette-A message trill', () => {
     const aps = buildApnsRequest(baseInput, buildPushDataFields(baseInput)).payload.aps;
-    expect(aps.sound).toBe('default');
+    expect(aps.sound).toBe(IOS_NOTIFICATION_SOUND.message);
     expect(aps['interruption-level']).toBeUndefined();
   });
 
@@ -383,6 +384,25 @@ describe('buildInternalApnsRequest', () => {
       postId: 'p1',
     });
     expect(thread(comment)).toBe('canari_social');
+  });
+
+  it('names the palette-A trill Android files the same push under, and the default elsewhere', () => {
+    const sound = (data: Record<string, string>) =>
+      (buildInternalApnsRequest('t', 'b', data).payload.aps as Record<string, unknown>).sound;
+    // A salon message: mention when the server computed it names this recipient (canari_mentions_v2).
+    expect(sound({ type: 'channel', channelId: 'c1', mentioned: 'true' })).toBe(
+      IOS_NOTIFICATION_SOUND.mention
+    );
+    expect(sound({ type: 'channel', channelId: 'c1', mentioned: 'false' })).toBe(
+      IOS_NOTIFICATION_SOUND.message
+    );
+    // A reaction to one of my messages (canari_reactions_v2).
+    expect(sound({ type: 'social', reaction: 'true', groupId: 'g1' })).toBe(
+      IOS_NOTIFICATION_SOUND.reaction
+    );
+    // Posts, comments and forms ride canari_social / canari_forms, which play the default.
+    expect(sound({ type: 'social', contentKey: 'social_comment', postId: 'p1' })).toBe('default');
+    expect(sound({ type: 'form_reminder', formId: 'f1' })).toBe('default');
   });
 });
 

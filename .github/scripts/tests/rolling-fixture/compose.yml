@@ -1,0 +1,61 @@
+# A three-service estate for deploy-rolling.test.sh, wired as production is: the EDGE (the real
+# infrastructure/edge/nginx.conf, the real image) holds the host port, a FRONTEND nginx proxies to an
+# API, and both of those are images "this repository builds" (prefix `rolltest/`) declared overlap.
+name: canari-rolltest
+
+services:
+  api:
+    labels:
+      canari.deploy.replace: overlap
+    image: rolltest/api:${TAG:?TAG is required}
+    environment:
+      VERSION: ${TAG}
+    expose:
+      - "3000"
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 1s
+
+  frontend:
+    labels:
+      canari.deploy.replace: overlap
+    image: rolltest/frontend:${TAG:?TAG is required}
+    expose:
+      - "80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/nginx-health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 1s
+    depends_on:
+      api:
+        condition: service_started
+
+  edge:
+    labels:
+      canari.deploy.replace: pinned
+    image: nginx:1.30.6-alpine@sha256:970364228b1e4f932abc22d321932816782cca8a20b85a77552a7cfe9acfb3b5
+    command: ["nginx", "-c", "/etc/nginx/edge/nginx.conf", "-g", "daemon off;"]
+    volumes:
+      - ${EDGE_DIR:?EDGE_DIR is required}:/etc/nginx/edge:ro
+    ports:
+      - "127.0.0.1:${ROLLTEST_PORT:?ROLLTEST_PORT is required}:80"
+    # Production's healthcheck, required identical by deploy-replace.test.sh: without it the first
+    # deploy believed a `running` edge that was not yet listening, and the test's first POST met
+    # Docker's port proxy resetting it (3 runs in 62, 2026-10-18).
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /var/run/nginx.pid && grep -q ' 00000000:0050 00000000:0000 0A ' /proc/net/tcp"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 1s
+    depends_on:
+      frontend:
+        condition: service_started

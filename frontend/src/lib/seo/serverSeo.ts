@@ -2,7 +2,7 @@ import {
   CORE_URL,
   DELIVERY_URL,
   SOCIAL_URL,
-  fetchJson,
+  fetchJsonOrThrow,
   internalHeaders,
 } from '$lib/seo/internalApi';
 import {
@@ -17,8 +17,14 @@ import {
 import { m } from '$lib/paraglide/messages';
 import { CAMPUSES } from '$lib/profile/miconnectProfile';
 import { wordingFor, type AssociationKind } from '$lib/associations/kindWording';
-import { ASSOCIATION_EDIT_PATH, mergeSeo, resolveSeoForPath } from '$lib/seo/resolve';
+import {
+  ASSOCIATION_EDIT_PATH,
+  DOCUMENT_TITLE_SUFFIX,
+  mergeSeo,
+  resolveSeoForPath,
+} from '$lib/seo/resolve';
 import { isStaticPageRoute, normalizePath } from '$lib/seo/staticRoutes';
+import { UpstreamUnavailableError } from '$lib/seo/upstream';
 import { SITE, siteOrigin } from '$lib/seo/site';
 import { markdownToPlainText, truncateForMeta } from '$lib/seo/text';
 import type { SeoMeta } from '$lib/seo/types';
@@ -87,6 +93,24 @@ function publicMediaUrl(pathOrUrl: string | null | undefined): string | undefine
   return `${siteOrigin()}${value.startsWith('/') ? value : `/${value}`}`;
 }
 
+/**
+ * The lengths a shared post's card is cut to, measured against what the unfurlers display.
+ *
+ * Facebook and Messenger truncate a title past ~60 characters and a description past ~125, so the
+ * old 70 + " - Canari" (79) and 200 were cut a second time, by the unfurler, mid-word - which is
+ * what opengraph.xyz reported on a real post (2026-10-18). Cutting here, between words, decides
+ * where the card stops instead of leaving it to each consumer.
+ */
+const POST_CARD_TITLE_MAX = 60;
+const POST_CARD_DESCRIPTION_MAX = 125;
+
+/**
+ * What `/api/public/posts/:id/preview-image` always returns. The numbers are social-service's
+ * (`POST_CARD_WIDTH`, `POST_CARD_HEIGHT`, `POST_CARD_CONTENT_TYPE` in `post-card-image.ts`): this
+ * is a different deployable, so they are stated here once more and must move together.
+ */
+export const POST_CARD_IMAGE = { width: 1200, height: 630, type: 'image/jpeg' } as const;
+
 interface PostPreviewPayload {
   markdown?: string;
   createdAt?: string;
@@ -112,7 +136,7 @@ interface PostPreviewPayload {
  * with this call and none is needed: the endpoint is public because what it returns is.
  */
 async function postSeo(postId: string, path: string): Promise<Partial<SeoMeta> | null> {
-  const post = await fetchJson<PostPreviewPayload>(
+  const post = await fetchJsonOrThrow<PostPreviewPayload>(
     `${SOCIAL_URL()}/api/public/posts/${encodeURIComponent(postId)}/preview`
   );
   if (!post) return null;
@@ -121,28 +145,32 @@ async function postSeo(postId: string, path: string): Promise<Partial<SeoMeta> |
   const author = post.association?.name?.trim() || null;
 
   // The title is the post's opening words, and the association's name when it has none - a photo
-  // post used to title itself "Publication", which is the word the whole feed shares.
+  // post used to title itself "Publication", which is the word the whole feed shares. Its budget
+  // is the WHOLE `og:title`, the site suffix included: the card shows that string, not this one.
   const title = plain
-    ? truncateForMeta(plain, 70)
+    ? truncateForMeta(plain, POST_CARD_TITLE_MAX - DOCUMENT_TITLE_SUFFIX.length)
     : author
       ? m.seo_post_title_from({ association: author })
       : SITE.name;
   // An author line in front of the description is the only place the card says WHO posted without
   // spending the title on it.
   const description = plain
-    ? truncateForMeta(author ? m.seo_post_byline({ author, text: plain }) : plain, 200)
+    ? truncateForMeta(
+        author ? m.seo_post_byline({ author, text: plain }) : plain,
+        POST_CARD_DESCRIPTION_MAX
+      )
     : author
       ? m.seo_post_description_fallback({ association: author })
       : `${SITE.name}.`;
 
-  // THE POST'S OWN PHOTO FIRST, AND THE LOGO ONLY WHEN THERE IS NONE. The logo was the only thing
-  // this ever offered, so an album of twelve photos unfurled as a 200px crest - which is the half
-  // of a card that decides whether anybody clicks. The bytes are served by the same service, on
-  // their own URL, because an unfurler fetches `og:image` as a second request.
+  // ONE CARD PER POST, SERVED BY THE SAME SERVICE AND ALWAYS 1200x630 JPEG: the post's own photo
+  // cropped to fit, else the association's logo on a plain brand background (post-card-image.ts in
+  // social-service). The head used to offer the raw photo or the raw 512x512 logo, the logo with no
+  // dimensions declared - the shape Messenger most often drops - so the numbers below are now a fact
+  // of every post rather than of some. The URL is stable (no query), so an unfurler's cache and the
+  // edge's both hold.
   const hasOwnImage = !!post.image;
-  const image = hasOwnImage
-    ? `${siteOrigin()}/api/public/posts/${encodeURIComponent(postId)}/preview-image`
-    : publicMediaUrl(post.association?.logoUrl);
+  const image = `${siteOrigin()}/api/public/posts/${encodeURIComponent(postId)}/preview-image`;
   const imageAlt = hasOwnImage
     ? author
       ? m.seo_post_image_alt({ association: author })
@@ -158,10 +186,9 @@ async function postSeo(postId: string, path: string): Promise<Partial<SeoMeta> |
     ogType: 'article',
     image,
     imageAlt,
-    // Declared only for the post's own photo: those numbers are stored beside it. A logo's are
-    // nobody's here - see `renderSeoTags`.
-    imageWidth: post.image?.width ?? undefined,
-    imageHeight: post.image?.height ?? undefined,
+    imageWidth: POST_CARD_IMAGE.width,
+    imageHeight: POST_CARD_IMAGE.height,
+    imageType: POST_CARD_IMAGE.type,
     publishedAt: post.createdAt,
     authorName: author ?? undefined,
     jsonLd: [
@@ -191,7 +218,7 @@ interface FormPayload {
 }
 
 async function formSeo(formId: string): Promise<Partial<SeoMeta> | null> {
-  const form = await fetchJson<FormPayload>(
+  const form = await fetchJsonOrThrow<FormPayload>(
     `${SOCIAL_URL()}/api/forms/${encodeURIComponent(formId)}`
   );
   if (!form?.title?.trim()) return null;
@@ -216,7 +243,7 @@ interface AssociationPayload {
 
 async function associationSeo(slug: string, path: string): Promise<Partial<SeoMeta> | null> {
   // The safe projection, not `/api/associations/slug/:slug`: this one is designed to be public.
-  const asso = await fetchJson<AssociationPayload>(
+  const asso = await fetchJsonOrThrow<AssociationPayload>(
     `${SOCIAL_URL()}/api/public/associations/slug/${encodeURIComponent(slug)}`
   );
   if (!asso?.name) return null;
@@ -273,7 +300,7 @@ async function associationSeo(slug: string, path: string): Promise<Partial<SeoMe
  * so the two can no longer disagree. An unknown slug keeps the path's own title.
  */
 async function associationEditSeo(slug: string): Promise<Partial<SeoMeta> | null> {
-  const asso = await fetchJson<{ type?: AssociationKind }>(
+  const asso = await fetchJsonOrThrow<{ type?: AssociationKind }>(
     `${SOCIAL_URL()}/api/public/associations/slug/${encodeURIComponent(slug)}`
   );
   if (!asso?.type || !(asso.type in KIND_TYPES)) return null;
@@ -293,7 +320,7 @@ interface ProfilePayload {
 }
 
 async function profileSeo(userId: string): Promise<Partial<SeoMeta> | null> {
-  const user = await fetchJson<ProfilePayload>(
+  const user = await fetchJsonOrThrow<ProfilePayload>(
     `${CORE_URL()}/api/internal/users/${encodeURIComponent(userId)}/public-profile`,
     internalHeaders()
   );
@@ -316,7 +343,7 @@ interface WorkspaceInvitePayload {
 }
 
 async function communityInviteSeo(token: string): Promise<Partial<SeoMeta> | null> {
-  const invite = await fetchJson<WorkspaceInvitePayload>(
+  const invite = await fetchJsonOrThrow<WorkspaceInvitePayload>(
     `${SOCIAL_URL()}/api/internal/channel-invites/${encodeURIComponent(token)}`,
     internalHeaders()
   );
@@ -348,7 +375,7 @@ interface GroupInvitePayload {
  * public way community images are.
  */
 async function groupInviteSeo(token: string): Promise<Partial<SeoMeta> | null> {
-  const invite = await fetchJson<GroupInvitePayload>(
+  const invite = await fetchJsonOrThrow<GroupInvitePayload>(
     `${DELIVERY_URL()}/api/internal/group-invites/${encodeURIComponent(token)}`,
     internalHeaders()
   );
@@ -414,7 +441,7 @@ async function agendaJsonLd(): Promise<JsonLdNode[] | null> {
   const headers = internalHeaders();
   const perCampus = await Promise.all(
     CAMPUSES.map((campus) =>
-      fetchJson<CalendarEventPayload[]>(
+      fetchJsonOrThrow<CalendarEventPayload[]>(
         `${SOCIAL_URL()}/api/associations/calendar/feed?from=${from.toISOString()}&to=${to.toISOString()}&campus=${campus}`,
         headers
       )
@@ -470,10 +497,30 @@ async function staticPageJsonLd(path: string): Promise<JsonLdNode[] | null> {
   return null;
 }
 
-/** Resolves the metadata for a pathname, enriching it from the services when one applies. */
-export async function resolveServerSeo(pathname: string): Promise<SeoMeta> {
+/** What {@link resolveServerSeo} answers: the head, and whether it is the degraded one. */
+export interface ServerSeoResult {
+  meta: SeoMeta;
+  /**
+   * True when an enrichment got NO ANSWER (the service was unreachable, out of budget or failing)
+   * and `meta` is the generic head. Such a page must be served `no-store`: a refusal is an answer
+   * and may be remembered, an absence of one is not, and a crawler or a shared cache that keeps it
+   * pins the generic card to a post whose real one was a second away.
+   */
+  degraded: boolean;
+}
+
+/**
+ * Resolves the metadata for a pathname, enriching it from the services when one applies.
+ *
+ * A REFUSAL (the service answered 4xx: no such post, not shareable) yields the generic head and is
+ * cached like any answer. A TRANSPORT FAILURE of the enrichment (see {@link UpstreamUnavailableError})
+ * yields the same generic head, flagged `degraded`, and is NEVER cached here: the 60 s cache is what
+ * kept a one-off timeout of the 1.5 s budget alive for a minute of every unfurler's retries -
+ * the intermittent Messenger preview failure of 2026-10-18.
+ */
+export async function resolveServerSeo(pathname: string): Promise<ServerSeoResult> {
   const cached = cacheGet(pathname);
-  if (cached) return cached;
+  if (cached) return { meta: cached, degraded: false };
 
   const base = resolveSeoForPath(pathname);
 
@@ -484,12 +531,31 @@ export async function resolveServerSeo(pathname: string): Promise<SeoMeta> {
     for (const [pattern, enrich] of ENRICHERS) {
       const match = pathname.match(pattern);
       if (!match) continue;
-      const enriched = await enrich(decodeURIComponent(match[1]), pathname);
-      return cachePut(pathname, enriched ? mergeSeo(base, enriched) : base);
+      try {
+        const enriched = await enrich(decodeURIComponent(match[1]), pathname);
+        return {
+          meta: cachePut(pathname, enriched ? mergeSeo(base, enriched) : base),
+          degraded: false,
+        };
+      } catch (err) {
+        if (!(err instanceof UpstreamUnavailableError)) throw err;
+        // Accuses, and names the path: the rate of these lines against the rate of requests is the
+        // measure of how often a card is served without its content.
+        console.warn(`[SEO] DEGRADED head for ${pathname}, enrichment unavailable: ${err.message}`);
+        return { meta: base, degraded: true };
+      }
     }
   }
 
   // Structured data is pointless on a page that asks not to be indexed.
-  const jsonLd = base.noindex ? null : await staticPageJsonLd(normalizePath(pathname));
-  return cachePut(pathname, jsonLd ? { ...base, jsonLd } : base);
+  try {
+    const jsonLd = base.noindex ? null : await staticPageJsonLd(normalizePath(pathname));
+    return { meta: cachePut(pathname, jsonLd ? { ...base, jsonLd } : base), degraded: false };
+  } catch (err) {
+    if (!(err instanceof UpstreamUnavailableError)) throw err;
+    // The agenda's structured data is the one static-page enrichment: a timeout of its feed is the
+    // same absence of an answer, and must not be cached as an agenda without events.
+    console.warn(`[SEO] DEGRADED head for ${pathname}, enrichment unavailable: ${err.message}`);
+    return { meta: base, degraded: true };
+  }
 }

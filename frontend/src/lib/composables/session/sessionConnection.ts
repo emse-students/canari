@@ -24,6 +24,7 @@ import type { SessionContext, ChatSessionCallbacks } from './sessionTypes';
 import { makeRecoveryDeps, processDeviceInvitationsLocally } from './sessionAuth';
 import { startSyncWatchdogImpl } from './sessionWatchdogs';
 import { IdentitySplitError } from '$lib/stores/tokenIdentity.svelte';
+import { SignOutInProgressError } from '$lib/stores/auth';
 
 /** Connection watchdog duration - same value as RECOVERY_TIMEOUT_MS. */
 const CONNECTION_WATCHDOG_MS = RECOVERY_TIMEOUT_MS;
@@ -185,6 +186,12 @@ export async function attemptReconnectImpl(
     const verdicts = await syncConnectionAfterWsOpen(connectionDeps);
     runGroupDiscoveryImpl(ctx, cb, ctx.ensureMls(), 'reconnect', verdicts);
   } catch (err) {
+    // THE USER IS SIGNING OUT: the reconnect stops, with no retry and no `/login` of its own - the
+    // sign-out owns the navigation, and its teardown is already ending this session.
+    if (err instanceof SignOutInProgressError) {
+      cb.log('[WS] Reconnect stopped - a sign-out is in progress.');
+      return;
+    }
     if (err instanceof Error && err.name === 'SessionExpiredError') {
       ctx.setIsLoggedIn(false);
       cb.log('[AUTH] Session expired - redirecting to /login.');

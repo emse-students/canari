@@ -35,7 +35,7 @@ describe('PostInteractionsService.addComment notifications', () => {
       push as unknown as PushService,
       {} as PostMediaRetentionService
     );
-    return { service, created };
+    return { service, created, push, notifications };
   }
 
   /** The notification block is fire-and-forget: let its microtasks finish. */
@@ -67,5 +67,30 @@ describe('PostInteractionsService.addComment notifications', () => {
     await service.addComment('p1', { userId: 'author', text: 'hello' });
     await flush();
     expect(created).toEqual([]);
+  });
+
+  it('names the new comment in every push it sends, so a tap can open the post AT it', async () => {
+    // The post author (comment), the parent's author (reply) and a mentioned reader (mention).
+    const { service, push, notifications } = makeService({
+      id: 'p1',
+      authorId: 'author',
+      associationId: null,
+      comments: [{ id: 'parent', userId: 'parent-author', parentId: null }],
+    });
+    notifications.resolveMentionedUserIds.mockReturnValue(['mentioned']);
+    const result = await service.addComment('p1', {
+      userId: 'reader',
+      text: 'hello',
+      parentId: 'parent',
+    });
+    await flush();
+    const commentId = (result as { comment: { id: string } }).comment.id;
+    const sent = push.notifyContent.mock.calls as unknown as Array<
+      [string, unknown, Record<string, string>]
+    >;
+    expect(sent.map(([to]) => to).sort()).toEqual(['author', 'mentioned', 'parent-author']);
+    for (const [, , data] of sent) {
+      expect(data).toEqual({ type: 'social', postId: 'p1', commentId });
+    }
   });
 });

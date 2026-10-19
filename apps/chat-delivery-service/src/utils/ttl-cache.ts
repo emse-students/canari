@@ -20,13 +20,23 @@ export class TtlCache<V> {
    * the least recently used one. A Map is the whole LRU: no second structure to
    * keep consistent with it.
    */
-  private readonly entries = new Map<string, { value: V; expiresAt: number }>();
+  private readonly entries = new Map<string, { value: V; expiresAt: number; weight: number }>();
+
+  /** The summed weight of the retained entries, expired ones included until they are dropped. */
+  private totalWeight = 0;
 
   /**
    * @param maxEntries - hard ceiling on retained entries; the least recently
    *   used one is dropped when a write would exceed it.
+   * @param budget - an optional second ceiling, on the summed WEIGHT of the entries (the GIF
+   *   relay's bytes: 500 entries of a 12 MiB GIF is not a bound on memory). `weigh` says what one
+   *   value costs; least recently used entries go until the sum fits, and a value heavier than the
+   *   whole budget is not stored at all.
    */
-  constructor(private readonly maxEntries: number) {}
+  constructor(
+    private readonly maxEntries: number,
+    private readonly budget?: { maxWeight: number; weigh: (value: V) => number }
+  ) {}
 
   /** The cached value, or undefined when absent or expired (an expired entry is dropped). */
   get(key: string): V | undefined {
@@ -34,7 +44,7 @@ export class TtlCache<V> {
     if (!entry) return undefined;
 
     if (entry.expiresAt <= Date.now()) {
-      this.entries.delete(key);
+      this.remove(key);
       return undefined;
     }
 
@@ -44,18 +54,28 @@ export class TtlCache<V> {
     return entry.value;
   }
 
-  /** Stores `value` for `ttlMs`, evicting the least recently used entry if full. */
-  set(key: string, value: V, ttlMs: number): void {
+  /**
+   * Stores `value` for `ttlMs`, evicting the least recently used entries until both ceilings hold.
+   * Returns whether it was stored: only a value heavier than the whole weight budget is not.
+   */
+  set(key: string, value: V, ttlMs: number): boolean {
+    const weight = this.budget ? this.budget.weigh(value) : 0;
     // Delete first so an overwrite counts as a fresh insertion rather than
     // keeping the key at its old, possibly oldest, position.
-    this.entries.delete(key);
-    this.entries.set(key, { value, expiresAt: Date.now() + ttlMs });
+    this.remove(key);
+    if (this.budget && weight > this.budget.maxWeight) return false;
+    this.entries.set(key, { value, expiresAt: Date.now() + ttlMs, weight });
+    this.totalWeight += weight;
 
-    while (this.entries.size > this.maxEntries) {
+    while (
+      this.entries.size > this.maxEntries ||
+      (this.budget !== undefined && this.totalWeight > this.budget.maxWeight)
+    ) {
       const oldest = this.entries.keys().next();
       if (oldest.done) break;
-      this.entries.delete(oldest.value);
+      this.remove(oldest.value);
     }
+    return true;
   }
 
   /** Number of retained entries, expired ones included. Exposed for tests and logs. */
@@ -63,8 +83,22 @@ export class TtlCache<V> {
     return this.entries.size;
   }
 
+  /** Summed weight of the retained entries (0 without a budget). Exposed for tests and logs. */
+  get weight(): number {
+    return this.totalWeight;
+  }
+
   /** Drops everything. Only used by tests - nothing in the service invalidates by hand. */
   clear(): void {
     this.entries.clear();
+    this.totalWeight = 0;
+  }
+
+  /** Drops one entry and its weight - the one place the two are kept in step. */
+  private remove(key: string): void {
+    const entry = this.entries.get(key);
+    if (!entry) return;
+    this.entries.delete(key);
+    this.totalWeight -= entry.weight;
   }
 }
