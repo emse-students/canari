@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Conversation } from '$lib/types';
+import { flushSalonReadMarks, recordSalonReadMark } from './salonReadMarkQueue';
 import {
   beginUnreadReconcile,
   clearSalonUnreadLocally,
@@ -343,13 +344,14 @@ describe('reconcileSalonUnreadFromServer - one request in flight', () => {
   function ask(
     map: Map<string, Conversation>,
     fetchCounts: () => Promise<unknown>,
-    settleOwedMarks?: () => Promise<number>
+    settleOwedMarks?: () => Promise<number>,
+    reason = 'test'
   ) {
     return reconcileSalonUnreadFromServer({
       conversations: map,
       selectedId: null,
       userId: ME,
-      reason: 'test',
+      reason,
       log: () => {},
       fetchCounts,
       settleOwedMarks,
@@ -395,8 +397,16 @@ describe('reconcileSalonUnreadFromServer - one request in flight', () => {
       calls++;
       throw new Error('offline');
     };
-    await Promise.all([ask(map, failing), ask(map, failing)]);
+    await Promise.all([
+      ask(map, failing, undefined, 'first'),
+      ask(map, failing, undefined, 'second'),
+    ]);
     expect(calls).toBe(1);
+    // Each caller reports its own failure exactly once, under its own reason.
+    expect(warn.mock.calls.map((c) => String(c[0]))).toEqual([
+      expect.stringContaining('first: counts not refreshed'),
+      expect.stringContaining('second: counts not refreshed'),
+    ]);
     await ask(map, async () => {
       calls++;
       return { asOf: 1, counts: {} };
@@ -419,5 +429,70 @@ describe('reconcileSalonUnreadFromServer - one request in flight', () => {
     });
     await slow;
     expect(calls).toBe(2);
+  });
+
+  it('does NOT join a request sent before another caller delivered a mark (R0 on the wire, A flushed it, B owes nothing)', async () => {
+    localStorage.clear();
+    const map = new Map([[SALON, convo()]]);
+    const key = SALON.replace('channel_', '');
+    let serverHoldsMark = false;
+    const requests: boolean[] = [];
+    let releaseR0: () => void = () => {};
+    const r0Gate = new Promise<void>((resolve) => (releaseR0 = resolve));
+    let r0Started: () => void = () => {};
+    const r0OnTheWire = new Promise<void>((resolve) => (r0Started = resolve));
+    // The server counts against the marks it holds AT THE TIME OF THE REQUEST.
+    const counted = () => {
+      const held = serverHoldsMark;
+      requests.push(held);
+      return { asOf: 1, counts: { [key]: held ? 0 : 3 } };
+    };
+    const r0 = ask(
+      map,
+      async () => {
+        r0Started();
+        const answer = counted();
+        await r0Gate;
+        return answer;
+      },
+      async () => 0,
+      'R0'
+    );
+    await r0OnTheWire;
+    // A owes a mark: the REAL flush delivers it, but A's settle has not RETURNED yet (its caller is
+    // still waiting), so R0 is still the entry on the wire when B arrives.
+    recordSalonReadMark(ME, key, 500);
+    let aDelivered: () => void = () => {};
+    const aFlushed = new Promise<void>((resolve) => (aDelivered = resolve));
+    let aReturn: () => void = () => {};
+    const aMayReturn = new Promise<void>((resolve) => (aReturn = resolve));
+    const a = ask(
+      map,
+      async () => counted(),
+      async () => {
+        const n = await flushSalonReadMarks(ME, async () => {
+          serverHoldsMark = true;
+        });
+        aDelivered();
+        await aMayReturn;
+        return n;
+      },
+      'A'
+    );
+    await aFlushed;
+    // B owes nothing (A already delivered it) and R0 predates the mark: B must ask for itself.
+    await ask(
+      map,
+      async () => counted(),
+      () => flushSalonReadMarks(ME, async () => {}),
+      'B'
+    );
+    aReturn();
+    await a;
+    releaseR0();
+    await r0;
+    // R0, A, B: B asked for itself and its request was counted AFTER the mark reached the server.
+    expect(requests).toEqual([false, true, true]);
+    localStorage.clear();
   });
 });

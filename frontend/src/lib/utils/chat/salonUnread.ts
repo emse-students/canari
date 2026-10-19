@@ -22,6 +22,7 @@
  * to be wrong.
  */
 import type { Conversation } from '$lib/types';
+import { salonMarksDeliveredCount } from '$lib/utils/chat/salonReadMarkQueue';
 import { Log } from '$lib/utils/Log';
 import {
   countUnreadForUser,
@@ -195,7 +196,11 @@ export function reconcileSalonUnread(
  * answer asked under an ended session is never handed to the next one. The entry lives exactly as
  * long as the request - no clock; a failure rejects every joiner and is not remembered.
  */
-let countsInFlight: { generation: number; promise: Promise<unknown> } | null = null;
+let countsInFlight: {
+  generation: number;
+  deliveredAtStart: number;
+  promise: Promise<unknown>;
+} | null = null;
 
 function countsRequest(
   fetchCounts: () => Promise<unknown>,
@@ -203,11 +208,25 @@ function countsRequest(
   mayJoin: boolean,
   opts: { reason: string; log: (message: string) => void }
 ): Promise<unknown> {
-  if (mayJoin && countsInFlight && countsInFlight.generation === startedIn) {
+  // A request on the wire may be joined only if no salon mark reached the server after it was sent -
+  // whoever delivered it (another caller's flush may still be running). A mark still owed at this
+  // caller's own flush was resent by it, so a joiner owing nothing saw every earlier mark delivered
+  // and the counter is the only thing left to compare. Otherwise the answer predates a mark and
+  // would re-raise the badge that mark cleared.
+  if (
+    mayJoin &&
+    countsInFlight &&
+    countsInFlight.generation === startedIn &&
+    countsInFlight.deliveredAtStart === salonMarksDeliveredCount()
+  ) {
     opts.log(`[UNREAD] ${opts.reason}: joined the counts request already in flight`);
     return countsInFlight.promise;
   }
-  const entry = { generation: startedIn, promise: Promise.resolve().then(fetchCounts) };
+  const entry = {
+    generation: startedIn,
+    deliveredAtStart: salonMarksDeliveredCount(),
+    promise: Promise.resolve().then(fetchCounts),
+  };
   countsInFlight = entry;
   const release = () => {
     if (countsInFlight === entry) countsInFlight = null;
