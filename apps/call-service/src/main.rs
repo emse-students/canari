@@ -71,7 +71,41 @@ impl RoomMode {
 /// proxied socket after 60 s without a read from upstream (no `proxy_read_timeout` is set there,
 /// realtime-media-feasibility section 9, 4a), and a peer-to-peer call sends NO signalling once ICE
 /// has connected - so without this, every 1:1 call would lose its socket a minute in.
-const KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(25);
+///
+/// IT IS ALSO THE LIVENESS PROOF (CALL-WIFI, 2026-10-19). A phone whose Wi-Fi goes off leaves a
+/// HALF-OPEN socket: the server's ping write lands in the kernel buffer and "succeeds" for minutes,
+/// so a write error never came and the seat was never marked away. Measured on the bench: the
+/// partner's ICE restart offer was relayed into that dead socket, and after a 90 s outage the
+/// partner sat on "Reconnexion..." until its own hang-up. Now the peer must ANSWER: a socket that
+/// let [`MISSED_PONGS_LIMIT`] pings go by without sending a single frame (a browser answers every
+/// Ping with a Pong, from its network stack, even in a backgrounded page) is ended as
+/// `keepalive-lost`, which keeps a p2p seat for a resume like any network failure. Overridden by
+/// `CALL_KEEPALIVE_MS` (the tests' only use).
+const DEFAULT_KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(10);
+
+/// Pings in a row a socket may leave unanswered before it is held dead: one can cross a slow
+/// moment, two in a row is a peer that is gone. A COUNT of ticks, so detection takes at most
+/// `(MISSED_PONGS_LIMIT + 1) x keepalive` (30 s by default) after the peer's last frame.
+const MISSED_PONGS_LIMIT: u32 = 2;
+
+/// Reads the keepalive period from `CALL_KEEPALIVE_MS`; absent or not a positive number of
+/// milliseconds, the default stands (a bad value is logged).
+fn keepalive_from(raw: Option<String>) -> std::time::Duration {
+    match raw.as_deref().map(str::trim) {
+        None | Some("") => DEFAULT_KEEPALIVE,
+        Some(v) => match v.parse::<u64>() {
+            Ok(ms) if ms > 0 => std::time::Duration::from_millis(ms),
+            _ => {
+                error!(
+                    "CALL_KEEPALIVE_MS={:?} is not a positive number of milliseconds - using the default {} s",
+                    v,
+                    DEFAULT_KEEPALIVE.as_secs()
+                );
+                DEFAULT_KEEPALIVE
+            }
+        },
+    }
+}
 
 /// The largest signalling frame accepted. The biggest legitimate one is an SDP offer, a few KiB
 /// for audio and well under 16 KiB with video; the library default (64 MiB) would let one socket
@@ -159,6 +193,8 @@ struct AppState {
     call_room_secret: String,
     /// How long an away p2p seat waits for its device - see [`DEFAULT_P2P_SEAT_GRACE`].
     p2p_seat_grace: std::time::Duration,
+    /// Ping period, and the unit of the liveness proof - see [`DEFAULT_KEEPALIVE`].
+    keepalive: std::time::Duration,
 }
 
 struct Room {
@@ -215,6 +251,8 @@ enum Disposition {
     RoomReaped,
     /// P2P: the same device took its seat back on a new socket before this one was seen to die.
     Resumed,
+    /// The peer answered none of the last keepalive pings: a half-open socket, the network gone.
+    KeepaliveLost,
 }
 
 impl Disposition {
@@ -229,6 +267,7 @@ impl Disposition {
             Disposition::SiblingEvicted => "sibling-evicted",
             Disposition::RoomReaped => "room-reaped",
             Disposition::Resumed => "resumed",
+            Disposition::KeepaliveLost => "keepalive-lost",
         }
     }
 
@@ -247,7 +286,10 @@ impl Disposition {
     fn keeps_p2p_seat(self) -> bool {
         matches!(
             self,
-            Disposition::TransportError | Disposition::StreamEnded | Disposition::SendFailed
+            Disposition::TransportError
+                | Disposition::StreamEnded
+                | Disposition::SendFailed
+                | Disposition::KeepaliveLost
         )
     }
 }
@@ -802,6 +844,7 @@ async fn main() -> anyhow::Result<()> {
         jwt_secret,
         call_room_secret,
         p2p_seat_grace: seat_grace_from(std::env::var("CALL_P2P_SEAT_GRACE_SEC").ok()),
+        keepalive: keepalive_from(std::env::var("CALL_KEEPALIVE_MS").ok()),
     });
 
     // Background task: evict rooms idle for more than 30 minutes.
@@ -892,8 +935,10 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
         mode: RoomMode::Sfu,
     };
     // `interval` fires at once on its first tick; skip it so the first ping goes out one period in.
-    let mut keepalive =
-        tokio::time::interval_at(tokio::time::Instant::now() + KEEPALIVE, KEEPALIVE);
+    let period = state.keepalive;
+    let mut keepalive = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+    // Pings sent since the peer's last frame of ANY kind (a Pong, a signal, its own Ping).
+    let mut unanswered_pings: u32 = 0;
 
     let (tx, mut rx) = mpsc::channel::<SignalMessage>(100);
 
@@ -908,6 +953,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
     loop {
         tokio::select! {
             msg = writer_socket.recv() => {
+                if matches!(msg, Some(Ok(_))) {
+                    unanswered_pings = 0;
+                }
                 match msg {
                     Some(Ok(Message::Text(text))) => {
                         // Rate limiting: reset window every second, reject if over 50 msg/s.
@@ -959,6 +1007,15 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
                 }
             }
             _ = keepalive.tick() => {
+                if unanswered_pings >= MISSED_PONGS_LIMIT {
+                    warn!(
+                        "[call] {} answered none of {} keepalive pings - held dead (half-open socket)",
+                        peer_id, unanswered_pings
+                    );
+                    end_session(&session, Disposition::KeepaliveLost);
+                    break;
+                }
+                unanswered_pings += 1;
                 // A Ping frame, answered by the browser's own Pong; nothing in the page sees it.
                 if let Err(e) = writer_socket.send(Message::Ping(Default::default())).await {
                     warn!("[call] {} keepalive ping failed: {}", peer_id, e);
@@ -2699,6 +2756,7 @@ mod tests {
         assert_eq!(Disposition::SiblingEvicted.as_str(), "sibling-evicted");
         assert_eq!(Disposition::RoomReaped.as_str(), "room-reaped");
         assert_eq!(Disposition::Resumed.as_str(), "resumed");
+        assert_eq!(Disposition::KeepaliveLost.as_str(), "keepalive-lost");
     }
 
     /// Only the network failing keeps a p2p seat for a resume: a Close frame is a hangup and a
@@ -2709,6 +2767,7 @@ mod tests {
             Disposition::TransportError,
             Disposition::StreamEnded,
             Disposition::SendFailed,
+            Disposition::KeepaliveLost,
         ] {
             assert!(d.keeps_p2p_seat(), "{} must keep the seat", d.as_str());
         }
@@ -2721,6 +2780,18 @@ mod tests {
         ] {
             assert!(!d.keeps_p2p_seat(), "{} must free the seat", d.as_str());
         }
+    }
+
+    /// The keepalive period is read from the environment; zero or not a number keeps the default.
+    #[test]
+    fn the_keepalive_defaults_and_refuses_a_bad_value() {
+        assert_eq!(keepalive_from(None), DEFAULT_KEEPALIVE);
+        assert_eq!(
+            keepalive_from(Some("150".into())),
+            std::time::Duration::from_millis(150)
+        );
+        assert_eq!(keepalive_from(Some("0".into())), DEFAULT_KEEPALIVE);
+        assert_eq!(keepalive_from(Some("10s".into())), DEFAULT_KEEPALIVE);
     }
 
     /// The grace is read from the environment; a value that is not a number is refused and the
@@ -2750,6 +2821,7 @@ mod tests {
             Disposition::RateLimited,
             Disposition::SendFailed,
             Disposition::RoomReaped,
+            Disposition::KeepaliveLost,
         ] {
             assert!(!d.is_expected(), "{} must accuse", d.as_str());
         }

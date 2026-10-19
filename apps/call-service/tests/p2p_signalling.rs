@@ -69,10 +69,20 @@ async fn start() -> Service {
 /// [`start`], with `CALL_P2P_SEAT_GRACE_SEC` set when `grace_secs` is given. A grace of 0 makes the
 /// expiry of an away seat an EVENT that follows its `PeerAway` at once - no wait in any test.
 async fn start_with_grace(grace_secs: Option<u64>) -> Service {
+    start_with(grace_secs, None).await
+}
+
+/// [`start_with_grace`], plus `CALL_KEEPALIVE_MS` when `keepalive_ms` is given: a short period
+/// makes a silent peer's detection an event that follows within a few ticks.
+async fn start_with(grace_secs: Option<u64>, keepalive_ms: Option<u64>) -> Service {
     let mut command = Command::new(env!("CARGO_BIN_EXE_call-service"));
     match grace_secs {
         Some(secs) => command.env("CALL_P2P_SEAT_GRACE_SEC", secs.to_string()),
         None => command.env_remove("CALL_P2P_SEAT_GRACE_SEC"),
+    };
+    match keepalive_ms {
+        Some(ms) => command.env("CALL_KEEPALIVE_MS", ms.to_string()),
+        None => command.env_remove("CALL_KEEPALIVE_MS"),
     };
     let mut child = command
         .env("PORT", "0")
@@ -592,4 +602,40 @@ async fn a_resume_over_a_live_socket_closes_the_old_one() {
     let offer = json!({ "type": "Offer", "sdp": "{\"type\":\"offer\",\"sdp\":\"v=0 again\"}" });
     send(&mut bob, offer.clone()).await;
     assert_eq!(recv(&mut alice).await, offer);
+}
+
+/// The bench's 14 s and 90 s failures (2026-10-19): a phone losing Wi-Fi leaves a HALF-OPEN socket
+/// that never errors, so the seat was never marked away and the partner never learnt anything. Now
+/// a peer that answers no keepalive ping is held dead: the partner gets `PeerAway`, and - grace 0
+/// here - `PeerLeft` right after, so a ghost call ends on the partner too.
+#[tokio::test]
+async fn a_silent_half_open_peer_is_held_dead_and_the_partner_is_told() {
+    let svc = start_with(Some(0), Some(100)).await;
+    let room = "room-half-open";
+    // Bob's socket stays OPEN but is never read again, so it answers no Ping: the shape of a phone
+    // whose radio went off with the TCP connection still established on the server's side.
+    let (mut alice, _, _bob_silent, _) = paired(&svc, room).await;
+
+    assert_eq!(recv(&mut alice).await, json!({ "type": "PeerAway" }));
+    assert_eq!(recv(&mut alice).await, json!({ "type": "PeerLeft" }));
+}
+
+/// The same silent peer, with a grace: it comes back on a new socket and resumes its seat.
+#[tokio::test]
+async fn a_peer_held_dead_by_the_keepalive_can_still_resume() {
+    let svc = start_with(None, Some(100)).await;
+    let room = "room-half-open-resume";
+    let (mut alice, _, _bob_silent, bob_resume) = paired(&svc, room).await;
+    assert_eq!(recv(&mut alice).await, json!({ "type": "PeerAway" }));
+
+    let mut bob = join_with(&svc, "bob", room, &bob_resume).await;
+    joined(&mut bob, room).await;
+    assert_eq!(
+        recv(&mut bob).await,
+        json!({ "type": "PeerReady", "initiator": false, "resumed": true })
+    );
+    assert_eq!(
+        recv(&mut alice).await,
+        json!({ "type": "PeerReady", "initiator": true, "resumed": true })
+    );
 }
