@@ -725,12 +725,15 @@ export class ProposalsService {
    * `UPDATE` - the proposal. Each other writer of these rows takes them in the same order:
    *
    * - a moderation hide and a post delete lock the post, then delete its pending proposals;
-   * - the account erasure scrubs posts BEFORE it touches a proposal (`ERASURE_PROPOSAL_STATEMENTS`);
+   * - the account erasure locks its associations `FOR NO KEY UPDATE` first (compatible with the
+   *   `KEY SHARE` here; `ERASURE_ASSOCIATION_LOCK_SQL`) and scrubs posts BEFORE it touches a
+   *   proposal (`ERASURE_PROPOSAL_STATEMENTS`);
    * - an association delete (`AssociationsService.remove`) takes the association `FOR UPDATE` as
    *   its FIRST statement, before its events (whose delete takes their co-organisation proposals by
-   *   migration 074's trigger) and before the row's own cascade into its posts and proposals: the
-   *   `KEY SHARE` here waits on it holding nothing, or holds it and makes the delete wait holding
-   *   nothing. Locking it last was a `40P01` against a co-organisation decision.
+   *   migration 074's trigger) and before the row's own cascade into its proposals (never its
+   *   posts: `posts."associationId"` has no foreign key): the `KEY SHARE` here waits on it holding
+   *   nothing, or holds it and makes the delete wait holding nothing. Locking it last was a `40P01`
+   *   against a co-organisation decision.
    *
    * A `KEY SHARE` blocks a delete or a KEY change of the association, never another edit of it. A
    * key is the primary key AND every unique column: a write of `slug` (unique) waits behind an

@@ -6,6 +6,8 @@ import {
 } from './account-erasure';
 import { InternalController } from './internal.controller';
 import {
+  ERASED_PINS_SQL,
+  ERASURE_ASSOCIATION_LOCK_SQL,
   ERASURE_PROPOSAL_STATEMENTS,
   ERASURE_ROW_STATEMENTS,
   ERASURE_STATEMENTS,
@@ -222,6 +224,18 @@ describe('InternalController.deleteUserData', () => {
     expect(firstProposalWrite).toBeGreaterThan(lastPostLock);
     // No statement of the head names the proposals table.
     expect(ERASURE_ROW_STATEMENTS.filter((s) => /\bproposals\b/.test(s.sql))).toEqual([]);
+  });
+
+  it('locks its associations before any other statement of the transaction (the remove order)', async () => {
+    const { controller, queries } = make();
+    await controller.deleteUserData('erased', SECRET);
+    const lock = queries.indexOf(ERASURE_ASSOCIATION_LOCK_SQL);
+    expect(lock).toBeGreaterThan(-1);
+    expect(lock).toBeLessThan(queries.indexOf(ERASED_PINS_SQL));
+    expect(lock).toBeLessThan(
+      queries.findIndex((q) => ERASURE_STATEMENTS.some((s) => s.sql === q))
+    );
+    expect(ERASURE_ASSOCIATION_LOCK_SQL).toMatch(/ORDER BY a\.id\s+FOR NO KEY UPDATE OF a$/);
   });
 
   it('voids with the decidedBy the proposals service writes', () => {

@@ -143,10 +143,14 @@ nothing. It caught two defects the unit specs could not: `association_role_histo
 - **Lives** (`LIVES_ERASURE_STATEMENTS`): a live it broadcast is ENDED (`erased`) and its broadcaster
   becomes `[deleted]` in one statement, and the live sweep deletes its segments and its row within
   30 seconds (no replay, L3); a removed-viewer row naming it, and its `live_starts` rows, are deleted - [lives](services/lives.md#a-deleted-account).
+- **Associations, FIRST** (`ERASURE_ASSOCIATION_LOCK_SQL`, before any write): every association one of
+  its writes reaches is locked `FOR NO KEY UPDATE`, in id order. An association delete locks its
+  association first and the erasure used to reach it last, so they deadlocked (`40P01`) -
+  [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built).
 - **Proposals and republications, LAST** (`ERASURE_PROPOSAL_STATEMENTS`, after the scrub of other
   people's posts): an acceptance locks the post before the proposal, so an erasure that took a
   proposal before a post it had reacted to deadlocked against it. A pending request to an author it
-  asked (D38b) is voided (`[voided]`, the author's bell row deleted), the rest anonymised -
+  asked (D38b) is voided (`[voided]`; its bell row, whose actor is the asker, goes with the account's notifications), the rest anonymised -
   [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built).
 - **Legacy cotisations**: a row the account claimed is DELETED. The claim had already turned it into
   a `user_tags` row (deleted above); what was left is the name it was matched on.

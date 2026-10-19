@@ -319,6 +319,10 @@ The consent flow is built (migration 096). Left out on purpose, each a decision 
 
 [profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)
 
+## P3 - Two association deletes that co-organise each other's events can deadlock (found 2026-10-19, review of #2116, not fixed)
+
+`AssociationsService.remove(A)` locks A, then deletes A's events. Migration 074's trigger takes their co-owner rows and `coorganise` proposals, and these can name B. The row delete of A then cascades into the co-owner rows and proposals where A co-organises B's events. `remove(B)` does the same in mirror, so each delete can hold a row the other's cascade needs: `40P01`, one delete aborted and retried by hand. This is older than #2116. It needs two staff deleting two linked associations at the same moment. The likely fix is for `remove` to lock, in id order, every association its events' co-organisation reaches before deleting anything. [profiles-and-access](profiles-and-access.md)
+
 ## P3 - Bookings: a refused block names only a count (review of #2035, 2026-10-18, not built)
 
 A `bookings-inside-block` refusal is worded with its count and the ids are only logged; the organiser could get the bookings listed as a D29 refusal lists them (`StrandedBookings.svelte`). (The P2 half - a block over a block - is built: `block-overlap`.) [bookings](bookings-chantier.md#wp-b5-as-built---the-bookers-screens-2026-10-18)

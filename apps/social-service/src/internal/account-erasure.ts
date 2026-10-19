@@ -569,6 +569,56 @@ export const ERASURE_PROPOSAL_STATEMENTS: readonly ErasureStatement[] = [
   { label: 'proposals_to_user', sql: `DELETE FROM proposals WHERE "toUserId" = $1` },
 ];
 
+/**
+ * THE ERASURE'S FIRST STATEMENT: every association whose rows it will write, locked in id order.
+ *
+ * An association delete (`AssociationsService.remove`) takes its association `FOR UPDATE` FIRST,
+ * then deletes what hangs off it: its events, its forms, its members, then the row's cascade (role
+ * history, push mutes, proposals, republications, booking spaces and everything under them). The
+ * erasure writes those same rows, and used to reach the association only at
+ * `UPDATE associations SET "createdBy"`. So an erasure holding the account's member row of X, and a
+ * delete of X holding X and its events, waited on each other (`40P01`, reproduced on PostgreSQL 18).
+ * Taking every such association first puts the two in one order: whichever comes second waits
+ * holding nothing. The set is EVERY association one of the erasure's writes reaches through a row
+ * the delete removes - a missing source reopens the cycle for the rows it would have named.
+ * Posts are not a source: `posts."associationId"` has no foreign key, so the delete never writes one.
+ *
+ * `FOR NO KEY UPDATE`: it conflicts with the delete's `FOR UPDATE` (the edge that matters), it is the
+ * lock `UPDATE associations SET "createdBy"` takes later anyway (no upgrade), and it does NOT
+ * conflict with a proposal decision's `KEY SHARE`, so a decision is not serialised behind an
+ * erasure. Ordered by id, so two erasures sharing associations take them in one order too.
+ */
+export const ERASURE_ASSOCIATION_LOCK_SQL = `SELECT a.id FROM associations a
+  WHERE a.id::text IN (
+    SELECT id::text FROM associations WHERE "createdBy" = $1
+    UNION SELECT "associationId"::text FROM association_members WHERE "userId" = $1
+    UNION SELECT association_id::text FROM association_role_history WHERE user_id = $1
+    UNION SELECT "associationId"::text FROM association_push_mutes WHERE "userId" = $1
+    UNION SELECT "associationId"::text FROM association_calendar_events
+           WHERE "createdBy" = $1 OR "validatedBy" = $1 OR "rejectedBy" = $1
+    UNION SELECT "associationId"::text FROM forms WHERE "ownerId" = $1
+    UNION SELECT "fromAssociationId"::text FROM proposals
+           WHERE "proposedBy" = $1 OR "decidedBy" = $1 OR "toUserId" = $1
+    UNION SELECT "toAssociationId"::text FROM proposals WHERE "proposedBy" = $1 OR "decidedBy" = $1
+    UNION SELECT "associationId"::text FROM post_republications WHERE "republishedBy" = $1
+    UNION SELECT "associationId"::text FROM booking_spaces WHERE "ownerId" = $1
+    UNION SELECT s."associationId"::text FROM booking_resources r
+            JOIN booking_spaces s ON s.id = r."spaceId" WHERE r."linkedUserId" = $1
+    UNION SELECT s."associationId"::text FROM bookings b
+            JOIN booking_resources r ON r.id = b."resourceId" JOIN booking_spaces s ON s.id = r."spaceId"
+           WHERE b."holderId" = $1 OR b."bookedById" = $1 OR b."cancelledById" = $1
+    UNION SELECT s."associationId"::text FROM booking_participants p
+            JOIN bookings b ON b.id = p."bookingId" JOIN booking_resources r ON r.id = b."resourceId"
+            JOIN booking_spaces s ON s.id = r."spaceId" WHERE p."userId" = $1
+    UNION SELECT s."associationId"::text FROM booking_blocks k
+            JOIN booking_resources r ON r.id = k."resourceId" JOIN booking_spaces s ON s.id = r."spaceId"
+           WHERE k."createdById" = $1
+    UNION SELECT s."associationId"::text FROM booking_files f
+            JOIN booking_spaces s ON s.id = f."spaceId" WHERE f."uploaderId" = $1
+  )
+  ORDER BY a.id
+  FOR NO KEY UPDATE OF a`;
+
 /** Every statement, in the order {@link eraseSocialRows} runs them around the scrub. */
 export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   ...ERASURE_ROW_STATEMENTS,
@@ -814,9 +864,13 @@ export async function runErasureStatements(
  * the internal route and by the integration spec against a real database.
  */
 export async function eraseSocialRows(db: ErasureDb, userId: string): Promise<SocialErasureResult> {
+  // Before anything else: the associations, in the order an association delete takes them.
+  const locked = await db.read<{ id: string }>(ERASURE_ASSOCIATION_LOCK_SQL, [userId]);
   const pinsRemoved = await db.read<{ id: string; channelId: string }>(ERASED_PINS_SQL, [userId]);
 
   const counts = await runErasureStatements(db, ERASURE_ROW_STATEMENTS, userId);
+  // In the log line's `rows=`: how many associations the erasure held while it ran.
+  if (locked.length > 0) counts.associations_locked = locked.length;
 
   // Comments, likes and poll votes need the structure, so the candidates are read and locked.
   let postsScrubbed = 0;

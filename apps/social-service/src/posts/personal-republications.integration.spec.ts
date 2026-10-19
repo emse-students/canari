@@ -852,10 +852,9 @@ maybe('personal republication by consent against PostgreSQL (migration 096)', ()
         );
         await lockWaiters(1);
         await erase.startTransaction();
-        const absent = (sql: string) => {
-          const table = /(?:FROM|UPDATE)\s+([a-z_]+)/.exec(sql)?.[1];
-          return !!table && !present.has(table);
-        };
+        // Skipped when ANY table it names is missing: the association lock reads a dozen.
+        const absent = (sql: string) =>
+          [...sql.matchAll(/(?:FROM|JOIN|UPDATE)\s+([a-z_]+)/g)].some(([, t]) => !present.has(t));
         const db: ErasureDb = {
           write: async (sql, params) =>
             absent(sql) ? 0 : ((await erase.query(sql, params)) as [unknown, number])[1],

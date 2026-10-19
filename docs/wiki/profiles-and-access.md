@@ -1011,8 +1011,8 @@ the republication kinds; `coorganise` has none, so its next lock is the proposal
 | a decision or an ask (`lockInOrder`) | `FOR KEY SHARE`, from and to | the post `FOR UPDATE` (none for `coorganise`) | the conditional `UPDATE` |
 | a moderation hide, a post delete | - | the post | its pending proposals (096's trigger for a delete) |
 | a republication withdrawal (`unrepublish`) | - | the post | - |
-| the account erasure | - | the posts it scrubs | LAST (`ERASURE_PROPOSAL_STATEMENTS`) |
-| an association delete (`AssociationsService.remove`) | `FOR UPDATE`, its FIRST statement | its events (074's trigger), then the row's cascade into posts | through those, and the cascade |
+| the account erasure | `FOR NO KEY UPDATE`, its FIRST statement, every association its writes reach, ordered by id (`ERASURE_ASSOCIATION_LOCK_SQL`) | the posts it scrubs | LAST (`ERASURE_PROPOSAL_STATEMENTS`) |
+| an association delete (`AssociationsService.remove`) | `FOR UPDATE`, its FIRST statement | its events (074's trigger), forms, members, then the row's cascade (never posts: `posts."associationId"` has no foreign key) | through the trigger and the cascade |
 
 - The erasure anonymised `proposedBy` first, then locked the posts the account had reacted to,
   until a fix. Two connections reproduced `deadlock detected` against an acceptance, and the erasure
@@ -1022,15 +1022,28 @@ the republication kinds; `coorganise` has none, so its next lock is the proposal
   co-organisation decision's `KEY SHARE` while that decision waited on the proposal. Reproduced as
   `40P01` on PostgreSQL 18. It must be `FOR UPDATE`: `FOR NO KEY UPDATE` does not conflict with
   `KEY SHARE`.
+- The erasure reached the association only at `UPDATE associations SET "createdBy"`, near its end
+  (2026-10-19, review of the fix above). For an account that created an association and belonged
+  to it, the erasure held the member row while the delete held the association and its events; each
+  then waited on the other (`40P01`, PostgreSQL 18). The erasure now locks first every association
+  one of its writes reaches through a row the delete removes: created, member, role history, push
+  mutes, events it created, validated or rejected, forms it owns, proposals and republications, and
+  the booking spaces under its bookings, participations, blocks, files and linked resources. A
+  missing source reopens the cycle for its rows. `FOR NO KEY UPDATE` conflicts with the delete's
+  `FOR UPDATE`, is the lock the `createdBy` update takes anyway, and does not block a decision's
+  `KEY SHARE`. Id order keeps two erasures apart too.
+- Two deletes of associations that co-organise each other's events can still deadlock. This is
+  older than both fixes and is a P3 in [backlog](backlog.md).
 - A `KEY SHARE` blocks a delete or a KEY change of the association, never another edit. The key is
   the primary key AND every unique column, so a write of `slug` (unique) waits behind an in-flight
   decision, as a delete does.
 
-Four integration cases hold the contested row from a second connection and prove the order: a hide,
+Five integration cases hold the contested row from a second connection and prove the order: a hide,
 an association delete against an acceptance (the delete holds the association), an erasure racing
-an acceptance (both complete), and a co-organisation decision against `AssociationsService.remove`
-(the delete waits holding nothing, and both complete;
-`coorganisation.integration.spec.ts`).
+an acceptance (both complete), and two in `coorganisation.integration.spec.ts` against the real
+`AssociationsService.remove`. One is a co-organisation decision, the other an erasure of the
+association's creator and member. In both the delete waits holding nothing, and both sides complete.
+Each fails with its lock removed.
 
 **The counts.** The inbox's "readers who would see it first" is computed by the very query
 acceptance notifies with (`newlyReachedByPersonalRepublicationSql`, with the post's
