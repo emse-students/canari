@@ -77,11 +77,16 @@ case "$1 ${2:-}" in
     [ -f "$FIX/$key.json" ] || { echo "HTTP 404 $2" >&2; exit 1; }
     serve "$FIX/$key.json"
     ;;
-  "pr view") serve "$FIX/armed.json" ;;
+  "pr view") [ "${FAKE_VIEW_FAIL:-}" = 1 ] && { echo "HTTP 502" >&2; exit 1; }; serve "$FIX/armed.json" ;;
   "pr merge") ;;
 esac
 SH
 chmod +x "$work/bin/gh"
+# The runner's jq writes LF. A Windows jq writes CRLF, and the step would read every commit id as
+# `<sha>\r` - a test-host artefact, so the shim gives the step the runner's line endings.
+real_jq="$(command -v jq)"
+printf '#!/usr/bin/env bash\nset -o pipefail\n"%s" "$@" | tr -d '"'"'\\r'"'"'\n' "$real_jq" >"$work/bin/jq"
+chmod +x "$work/bin/jq"
 
 DEP_EMAIL='49699333+dependabot[bot]@users.noreply.github.com'
 APP='canari-auto-merge[bot]'
@@ -89,11 +94,22 @@ REF='deps/lock-refresh/cargo/dependabot-12'
 MSG=$'chore(deps): bump serde\n\n---\nupdated-dependencies:\n- dependency-name: serde\n  dependency-version: 1.0.5\n...\n'
 
 # A commit as the API answers it: login (or null), address, committer login, signature verdict.
-commit() { # <author login|null> <address> <committer login> <verified> <message>
-  jq -n --arg a "$1" --arg e "$2" --arg c "$3" --argjson v "$4" --arg m "$5" \
-    '{author: (if $a == "null" then null else {login: $a} end), committer: {login: $c},
+commit() { # <sha> <author login|null> <address> <committer login> <verified> <message>
+  jq -n --arg s "$1" --arg a "$2" --arg e "$3" --arg c "$4" --argjson v "$5" --arg m "$6" \
+    '{sha: $s, author: (if $a == "null" then null else {login: $a} end), committer: {login: $c},
       commit: {message: $m, author: {email: $e}, verification: {verified: $v}}}'
 }
+
+O1="$(printf 'a%.0s' {1..40})"
+M1="$(printf 'b%.0s' {1..40})"
+M2="$(printf 'c%.0s' {1..40})"
+CRATES='source = \"registry+https://github.com/rust-lang/crates.io-index\"'
+# Dependabot's manifest change, as one commit carries it and as a cherry-pick onto a newer main
+# carries it (other line numbers, other context, the same changed lines).
+TOML_ORIG='@@ -3,2 +3,2 @@\n [dependencies]\n-serde = \"1.0.0\"\n+serde = \"1.0.5\"'
+TOML_PICK='@@ -7,3 +7,3 @@\n [dependencies]\n-serde = \"1.0.0\"\n+serde = \"1.0.5\"\n tokio = \"1\"'
+LOCK_WASM="@@ -10,3 +10,3 @@\n name = \\\"serde\\\"\n-version = \\\"1.0.0\\\"\n+version = \\\"1.0.5\\\"\n $CRATES"
+LOCK_TAURI="@@ -10,3 +10,7 @@\n name = \\\"serde\\\"\n-version = \\\"1.0.0\\\"\n+version = \\\"1.0.5\\\"\n $CRATES\n+\n+[[package]]\n+name = \\\"itoa\\\"\n+version = \\\"1.0.0\\\"\n+$CRATES"
 
 # fixtures: the well-formed case, which each case below then breaks in exactly one place.
 fixtures() {
@@ -101,17 +117,19 @@ fixtures() {
   mkdir -p "$work/fix"
   F="$work/fix"
   echo '{"user": {"login": "dependabot[bot]"}, "head": {"ref": "dependabot/cargo/frontend/mls-core/serde-1.0.5"}}' >"$F/pulls_12.json"
-  commit 'dependabot[bot]' "$DEP_EMAIL" web-flow true "$MSG" | jq -s . >"$F/pulls_12_commits_per_page_100.json"
+  commit "$O1" 'dependabot[bot]' "$DEP_EMAIL" web-flow true "$MSG" | jq -s . >"$F/pulls_12_commits_per_page_100.json"
   {
-    commit 'dependabot[bot]' "$DEP_EMAIL" "$APP" false "$MSG"
-    commit "$APP" '323531864+canari-auto-merge[bot]@users.noreply.github.com' "$APP" false 'chore(deps): refresh the committed lockfiles for #12'
+    commit "$M1" 'dependabot[bot]' "$DEP_EMAIL" "$APP" false "$MSG"
+    commit "$M2" "$APP" '323531864+canari-auto-merge[bot]@users.noreply.github.com' "$APP" false 'chore(deps): refresh the committed lockfiles for #12'
   } | jq -s . >"$F/pulls_5_commits_per_page_100.json"
-  jq -n '[{filename: "frontend/mls-core/Cargo.toml", patch: "@@ -3,2 +3,2 @@\n [dependencies]\n-serde = \"1.0.0\"\n+serde = \"1.0.5\""}]' \
-    >"$F/pulls_12_files_per_page_100.json"
-  # The same manifest change at another line, with other context - a cherry-pick onto a newer main.
-  jq -n '[{filename: "frontend/mls-core/Cargo.toml", patch: "@@ -7,3 +7,3 @@\n [dependencies]\n-serde = \"1.0.0\"\n+serde = \"1.0.5\"\n tokio = \"1\""},
-          {filename: "frontend/mls-wasm/Cargo.lock", patch: "@@ -1 +1 @@\n-version = \"1.0.0\"\n+version = \"1.0.5\""},
-          {filename: "frontend/src-tauri/Cargo.lock"}]' >"$F/pulls_5_files_per_page_100.json"
+  echo "{\"files\": [{\"filename\": \"frontend/mls-core/Cargo.toml\", \"patch\": \"$TOML_ORIG\"}]}" >"$F/commits_$O1.json"
+  echo "{\"files\": [{\"filename\": \"frontend/mls-core/Cargo.toml\", \"patch\": \"$TOML_PICK\"}]}" >"$F/commits_$M1.json"
+  echo "{\"files\": [{\"filename\": \"frontend/mls-wasm/Cargo.lock\", \"patch\": \"$LOCK_WASM\"}, {\"filename\": \"frontend/src-tauri/Cargo.lock\", \"patch\": \"$LOCK_TAURI\"}]}" >"$F/commits_$M2.json"
+  echo "[{\"filename\": \"frontend/mls-core/Cargo.toml\", \"patch\": \"$TOML_ORIG\"}]" >"$F/pulls_12_files_per_page_100.json"
+  echo "[{\"filename\": \"frontend/mls-core/Cargo.toml\", \"patch\": \"$TOML_PICK\"},
+         {\"filename\": \"frontend/mls-wasm/Cargo.lock\", \"patch\": \"$LOCK_WASM\"},
+         {\"filename\": \"frontend/src-tauri/Cargo.lock\", \"patch\": \"$LOCK_TAURI\"}]" >"$F/pulls_5_files_per_page_100.json"
+  for j in "$F"/*.json; do jq -e . "$j" >/dev/null || echo "FIXTURE BROKEN: $j"; done
   echo '{"autoMergeRequest": null}' >"$F/armed.json"
 }
 edit() { # <fixture> <jq filter> - break the well-formed case in one place
@@ -170,13 +188,15 @@ edit pulls_12_commits_per_page_100 '.[0].committer.login = "someone"'
 run_case false "$APP" "$REF"
 not_armed "B7 an original commit committed by someone other than web-flow is not armed"
 fixtures
-edit pulls_12_commits_per_page_100 '. += [{author: {login: "github-actions[bot]"}, committer: {login: "web-flow"}, commit: {message: "Merge branch main", author: {email: "41898282+github-actions[bot]@users.noreply.github.com"}, verification: {verified: true}}}]'
+edit pulls_12_commits_per_page_100 '. += [{sha: ("e" * 40), author: {login: "github-actions[bot]"}, committer: {login: "web-flow"}, commit: {message: "Merge branch main", author: {email: "41898282+github-actions[bot]@users.noreply.github.com"}, verification: {verified: true}}}]'
+echo '{"files": []}' >"$work/fix/commits_$(printf 'e%.0s' {1..40}).json"
 run_case false "$APP" "$REF"
 not_armed "B8 the real #296 shape - a signed github-actions merge commit on the original - is not armed"
 
 # ── B9-B12: this pull request must be the original's commits plus the App's one ───────────────────
 fixtures
-edit pulls_5_commits_per_page_100 '. += [{author: {login: "a-person"}, committer: {login: "a-person"}, commit: {message: "tweak", author: {email: "p@x"}, verification: {verified: false}}}]'
+edit pulls_5_commits_per_page_100 '. += [{sha: ("d" * 40), author: {login: "a-person"}, committer: {login: "a-person"}, commit: {message: "tweak", author: {email: "p@x"}, verification: {verified: false}}}]'
+echo '{"files": []}' >"$work/fix/commits_$(printf 'd%.0s' {1..40}).json"
 run_case false "$APP" "$REF"
 not_armed "B9 a person's commit pushed onto the refresh is not armed"
 fixtures
@@ -224,6 +244,59 @@ if [ "$st" = 0 ] && ! armed && grep -q '^pr merge 5 --disable-auto' "$work/gh.lo
   pass "B18 an ARMED refresh that no longer satisfies the allowlist is DISARMED"
 else
   fail "B18 an armed refresh that fails the allowlist kept its arming (exit $st)" "$out" "$(cat "$work/gh.log")"
+fi
+
+# ── B21-B27: the review of #2135 ──────────────────────────────────────────────────────────────────
+# F2: an answer that cannot be read on a `synchronize` must not leave the old arming standing.
+fixtures
+echo '{"autoMergeRequest": {"mergeMethod": "SQUASH"}}' >"$work/fix/armed.json"
+FAKE_API_FAIL=1 run_case false "$APP" "$REF"
+if [ "$st" != 0 ] && ! armed && grep -q '^pr merge 5 --disable-auto' "$work/gh.log"; then
+  pass "B21 an unreadable API answer DISARMS (best effort) and fails the run"
+else
+  fail "B21 an unreadable answer left the arming standing (exit $st)" "$out" "$(cat "$work/gh.log")"
+fi
+fixtures
+edit pulls_5_files_per_page_100 '. += [{filename: "frontend/src/app.ts"}]'
+FAKE_VIEW_FAIL=1 run_case false "$APP" "$REF"
+if ! armed && grep -q '^pr merge 5 --disable-auto' "$work/gh.log"; then
+  pass "B22 a refusal whose arming state cannot be read disarms anyway"
+else
+  fail "B22 a refusal with an unreadable arming state did not disarm (exit $st)" "$out" "$(cat "$work/gh.log")"
+fi
+
+# F3: a carried commit is compared by PATCH with the original, not by message.
+fixtures
+jq '.files[0].patch = "@@ -7,3 +7,3 @@\n-serde = \"1.0.0\"\n+serde = \"1.0.9\""' "$work/fix/commits_$M1.json" >"$work/fix/tmp" && mv "$work/fix/tmp" "$work/fix/commits_$M1.json"
+run_case false "$APP" "$REF"
+not_armed "B23 a carried commit with the original's MESSAGE but another patch is not armed"
+fixtures
+edit pulls_5_files_per_page_100 '.[2].patch += "\n+source = \"git+https://example.invalid/evil#abc\""'
+run_case false "$APP" "$REF"
+not_armed "B24 a lockfile gaining a git source is not armed"
+fixtures
+edit pulls_5_files_per_page_100 '.[2].patch += "\n+source = \"registry+https://example.invalid/index\""'
+run_case false "$APP" "$REF"
+not_armed "B24b a lockfile gaining another registry is not armed"
+fixtures
+edit pulls_5_files_per_page_100 '.[1].patch = "@@ -40,3 +40,3 @@\n name = \"tauri\"\n-version = \"2.11.1\"\n+version = \"2.99.0\""'
+run_case false "$APP" "$REF"
+not_armed "B25 a lockfile moving tauri is not armed"
+fixtures
+edit pulls_5_files_per_page_100 '.[2].patch += "\n+[[package]]\n+name = \"wry\"\n+version = \"0.50.0\""'
+run_case false "$APP" "$REF"
+not_armed "B25b a lockfile adding wry is not armed"
+fixtures
+edit pulls_5_files_per_page_100 'del(.[2].patch)'
+run_case false "$APP" "$REF"
+not_armed "B26 a lockfile diff the API will not show is not armed"
+fixtures
+edit pulls_5_commits_per_page_100 '.[1].commit.author.email = "somebody@else.example"'
+run_case false "$APP" "$REF"
+if [ "$st" = 0 ] && armed; then
+  pass "B27 the App commit's ADDRESS is not what is relied on: its content is (armed on content alone)"
+else
+  fail "B27 the arming depended on an address after all (exit $st)" "$out"
 fi
 
 # ── B19: everything that was armed before still is, and nothing else new is ───────────────────────

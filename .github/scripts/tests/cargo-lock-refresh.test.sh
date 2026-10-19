@@ -66,6 +66,8 @@ case "$1" in
     [ "${FAKE_UPDATE_NOOP:-}" = 1 ] && exit 0
     sed -i 's/version = "1.0.0"/version = "1.0.5"/' Cargo.lock
     [ "${FAKE_MOVE_TAURI:-}" = 1 ] && sed -i '/^name = "tauri"$/{n;s/.*/version = "2.99.0"/}' Cargo.lock
+    [ "${FAKE_GIT_SOURCE:-}" = 1 ] && printf '\n[[package]]\nname = "evil"\nversion = "0.1.0"\nsource = "git+https://example.invalid/evil#abc"\n' >>Cargo.lock
+    [ "${FAKE_CRATES_SOURCE:-}" = 1 ] && printf '\n[[package]]\nname = "itoa"\nversion = "1.0.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n' >>Cargo.lock
     exit 0
     ;;
 esac
@@ -103,10 +105,15 @@ login_of() { # GitHub resolves a login from a noreply address, and from nothing 
 }
 case "$c1 $c2" in
   "pr list")
+    # The shape `gh` answers with: a bot author is `app/<slug>`, a fork pull request is
+    # cross-repository, and `createdAt` orders them (derived from the number, which only grows).
+    view='{number, state, headRefName, isCrossRepository: (.cross // false),
+           createdAt: ("2026-10-19T" + ((100000 + .number) | tostring)),
+           author: {login: (if (.author | endswith("[bot]")) then "app/" + (.author | rtrimstr("[bot]")) else .author end)}}'
     if [ -n "${o[--head]:-}" ]; then
-      jq --arg h "${o[--head]}" '[.[] | select(.headRefName == $h) | {number, state, headRefName}]' "$S/prs.json" | out
+      jq --arg h "${o[--head]}" "[.[] | select(.headRefName == \$h) | $view]" "$S/prs.json" | out
     else
-      jq '[.[] | select(.state == "OPEN" and .author == "dependabot[bot]") | {number, headRefName}]' "$S/prs.json" | out
+      jq "[.[] | select(.state == \"OPEN\" and .author == \"dependabot[bot]\") | $view]" "$S/prs.json" | out
     fi
     ;;
   "pr view")
@@ -440,6 +447,78 @@ if [ "$st" = 0 ] && [ "$title" = 'chore(deps): bump $(touch PWNED2) `touch PWNED
   pass "A24 a hostile title travels as one literal argument and executes nothing"
 else
   fail "A24 the hostile title was interpreted (exit $st, title '$title')" "$out"
+fi
+
+# ── A30-A35: the review of #2135 - the branch NAME is not ours alone, and a lock names crates.io ──
+add_pr() { # <json object> - another pull request in the fake's state
+  jq --argjson p "$1" '. += [$p]' "$work/state/prs.json" >"$work/state/tmp" && mv "$work/state/tmp" "$work/state/prs.json"
+}
+
+# F1: a FORK pull request named like the refresh must neither close Dependabot's nor suppress it.
+make_world
+add_pr '{"number": 66, "headRefName": "deps/lock-refresh/cargo/dependabot-12", "state": "OPEN", "author": "mallory", "cross": true, "title": "x", "comments": []}'
+out="$(run)"
+st=$?
+if [ "$st" = 0 ] && [ "$(app_prs)" = 1 ] && [ "$(pr_state 66)" = OPEN ] &&
+  jq -e '.[] | select(.number == 12) | (.state == "CLOSED") and (.comments[-1].body | contains("#90")) and (.comments[-1].body | contains("#66") | not)' "$work/state/prs.json" >/dev/null &&
+  jq -e '[.[] | select(.state == "OPEN") | .body | contains("66")] | any' "$work/state/issues.json" >/dev/null; then
+  pass "A30 a fork pull request on the reserved name is ignored and reported; the original points at the App's own"
+else
+  fail "A30 a fork pull request on the reserved name decided something (exit $st)" "$out" "$(jq -c . "$work/state/prs.json")"
+fi
+make_world
+add_pr '{"number": 66, "headRefName": "deps/lock-refresh/cargo/dependabot-12", "state": "CLOSED", "author": "mallory", "cross": true, "title": "x", "comments": []}'
+out="$(run)"
+st=$?
+if [ "$st" = 0 ] && [ "$(app_prs)" = 1 ] && [ "$(pr_state 12)" = CLOSED ]; then
+  pass "A31 a CLOSED fork pull request on the reserved name does not suppress the refresh"
+else
+  fail "A31 a closed fork pull request suppressed the refresh (exit $st)" "$out"
+fi
+
+# F6: the App's pull request is picked deterministically - the newest - never `.[0]`.
+make_world
+add_pr '{"number": 70, "headRefName": "deps/lock-refresh/cargo/dependabot-12", "state": "CLOSED", "author": "canari-auto-merge[bot]", "title": "x", "comments": []}'
+add_pr '{"number": 71, "headRefName": "deps/lock-refresh/cargo/dependabot-12", "state": "OPEN", "author": "canari-auto-merge[bot]", "title": "x", "comments": []}'
+out="$(run)"
+st=$?
+if [ "$st" = 0 ] && ! branch_pushed && [ "$(pr_state 12)" = CLOSED ] &&
+  jq -e '.[] | select(.number == 12) | .comments[-1].body | contains("#71")' "$work/state/prs.json" >/dev/null; then
+  pass "A32 of two App pull requests on the name, the NEWEST decides"
+else
+  fail "A32 the App pull request was not picked by recency (exit $st)" "$out"
+fi
+
+# F6: a branch of that name that somebody else wrote is never overwritten.
+make_world
+(
+  cd "$work/clone" || exit 1
+  git checkout -q -b squat origin/main
+  echo x >squat.txt
+  git add squat.txt
+  git -c user.name=mallory -c user.email=m@x commit -q -m squat
+  git push -q origin "HEAD:refs/heads/$BRANCH"
+  git checkout -q main
+)
+squat="$(on_branch rev-parse "refs/heads/$BRANCH")"
+out="$(run)"
+st=$?
+if [ "$st" = 0 ] && [ "$(on_branch rev-parse "refs/heads/$BRANCH")" = "$squat" ] && [ "$(app_prs)" = 0 ] &&
+  [ "$(pr_state 12)" = OPEN ] && [ "$(open_issues)" = 1 ]; then
+  pass "A33 a branch of the reserved name the App did not write is left alone, and reported"
+else
+  fail "A33 somebody else's branch was overwritten or the refusal not reported (exit $st)" "$out"
+fi
+
+# F3: a refreshed lock that names anything but crates.io is never pushed; crates.io itself is fine.
+refusal_case "A34 a refreshed lock naming a git source is refused before the push" "not crates.io" FAKE_GIT_SOURCE=1
+make_world
+out="$(FAKE_CRATES_SOURCE=1 run)"
+st=$?
+if [ "$st" = 0 ] && [ "$(app_prs)" = 1 ]; then
+  pass "A35 a refreshed lock naming crates.io is carried"
+else
+  fail "A35 a crates.io source was refused (exit $st)" "$out"
 fi
 
 # ── A25-A27: the report - written once, updated, closed ───────────────────────────────────────────

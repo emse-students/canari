@@ -160,13 +160,24 @@ ceiling_parse_updates() {
 #
 # THE CEILING ITSELF DOES NOT REFUSE ON THIS - a major that breaks the tree stops it compiling, and
 # the suite sees that. It is the UNATTENDED SECOND ACTOR, `cargo-lock-refresh.sh`, that refuses a
-# breaking update, because it writes lockfiles on a bump no person asked for; see that script.
+# breaking update, because it writes lockfiles on a bump no person asked for; see that script. And
+# `dependency-ceiling.sh` refuses it again on a `deps/lock-refresh/` branch, so the refusal binds
+# the pull request that gets ARMED, not only the job that opened it.
 ceiling_update_is_breaking() { # <update-type> <proposed-version>
   case "${1:-}" in
     patch) case "${2:-}" in 0.0.*) return 0 ;; esac ;;
     minor) case "${2:-}" in 0.*) return 0 ;; esac ;;
     *) return 0 ;;
   esac
+  return 1
+}
+
+# Is this crate part of the Tauri RUNTIME? Exit 0 when it is. A runtime bump changes what runs on a
+# phone, which no gate here exercises; it is a native work package owed a device reading, so the
+# UNATTENDED lockfile refresh never carries one - refused by `cargo-lock-refresh.sh` before it opens
+# anything, and again by `dependency-ceiling.sh` on a `deps/lock-refresh/` branch.
+ceiling_is_tauri_runtime_crate() { # <crate name>
+  case "${1:-}" in tauri | tauri-* | wry | tao) return 0 ;; esac
   return 1
 }
 

@@ -133,6 +133,20 @@ while IFS='|' read -r name type version; do
   # applies to an IMAGE and not to a client library that happens to share the name.
   gate="$(gate_for_dependency "$name" "$version" "$ecosystem")"
 
+  # THE LOCKFILE REFRESH'S OWN REFUSALS, BOUND HERE TOO (WP-RUST-LOCK-AUTOMERGE). A `deps/lock-refresh/`
+  # pull request is opened and ARMED with no person in the loop, so what `cargo-lock-refresh.sh`
+  # refuses before opening it - a Tauri-runtime crate, a breaking update - is refused again by the
+  # check `CI passed` requires, rather than trusted to the job that opened the branch.
+  case "$HEAD_REF" in
+    deps/lock-refresh/*)
+      if [ -z "$gate" ] && ceiling_is_tauri_runtime_crate "$name"; then
+        gate="nothing: a crate of the Tauri runtime is a native work package owed a device reading, and the unattended lockfile refresh never carries one. A person takes this update."
+      elif [ -z "$gate" ] && ceiling_update_is_breaking "$type" "$version"; then
+        gate="nothing: a breaking update (type \`${type:-unclassified}\`) is never carried by the unattended lockfile refresh. A person takes this update."
+      fi
+      ;;
+  esac
+
   if [ -n "$gate" ]; then
     refused=$((refused + 1))
     echo "::error title=No gate would see this fail::$name -> $version ($(update_kind "$type" "$version")): $gate"

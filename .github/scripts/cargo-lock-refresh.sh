@@ -13,9 +13,14 @@
 # arming half, and it re-checks every property below over the API before it arms anything.
 #
 # WHAT IT DOES, per open Dependabot cargo pull request <n>:
-#   1. verifies, over the API, that EVERY commit is a real Dependabot commit - author login
-#      `dependabot[bot]` with Dependabot's noreply address, committer `web-flow`, and a signature
-#      GitHub itself verified - and that those are exactly the commits git would cherry-pick;
+#   1. verifies, over the API, the shape of EVERY commit: author login `dependabot[bot]` with
+#      Dependabot's noreply address, committer `web-flow`, and a signature GitHub verified - and that
+#      those are exactly the commits git would cherry-pick. WHAT THAT PROVES, AND WHAT IT DOES NOT:
+#      `web-flow` + verified proves GITHUB created the commit (Dependabot, the web UI or the API) -
+#      not that Dependabot did, because a writer can create a signed commit through the API naming
+#      any author. The Dependabot evidence is that the pull request's AUTHOR is `dependabot[bot]`,
+#      which nobody can set. So the precondition of this whole mechanism is that WRITE ACCESS IS
+#      ALREADY TRUSTED - a writer can open and arm a pull request of their own anyway;
 #   2. verifies every changed file is a `Cargo.toml` or a `Cargo.lock`;
 #   3. reads the `updated-dependencies` trailers (one parser, `lib/ceiling.sh`) and refuses what an
 #      unattended actor must not move (below);
@@ -37,7 +42,15 @@
 #   - a trailer whose name or version is not a plain crate name and semver (hostile input);
 #   - a `cargo update` that fails, or a lock still failing `cargo metadata --locked` afterwards;
 #   - commits that do not cherry-pick onto `main`;
-#   - a refresh pull request a PERSON closed unmerged (their answer, kept visible).
+#   - a refresh pull request a PERSON closed unmerged (their answer, kept visible);
+#   - a lockfile line naming a source other than crates.io;
+#   - a branch of that name that exists with no pull request of ours and a tip the App did not write.
+#
+# THE BRANCH NAME IS NOT OURS ALONE. A fork can open a pull request whose head is called
+# `deps/lock-refresh/cargo/dependabot-<n>`, so durable state is read only from pull requests that
+# live in THIS repository AND were opened by the App - newest first; anything else on that name is
+# ignored and reported, never taken as "already refreshed" (which would close Dependabot's pull
+# request on a stranger's say-so).
 #
 # HOW IT REPORTS, by meaning, the same split as `cargo-blocked-update-report.sh`: a REFUSAL is work
 # for a person, so it goes into ONE issue (exact title, updated, closed when none stands) and ONE
@@ -70,9 +83,10 @@ REPO="${REPO:-${GITHUB_REPOSITORY:-}}"
 CONFIG="$REPO_ROOT/.github/dependabot.yml"
 BASE_REF="${BASE_REF:-origin/main}"
 
-# What a Dependabot commit IS, read off the real ones (#296, 2026-08-31): author login and address,
-# and the committer GitHub stamps on a commit it signs itself. A name is not an identity - anybody
-# can write `dependabot[bot]` into `user.name` - so all four are required, and the signature verdict.
+# The shape of a Dependabot commit, read off the real ones (#296, 2026-08-31): author login and
+# address, and the committer GitHub stamps on a commit it creates and signs itself. A name is not an
+# identity - anybody can write `dependabot[bot]` into `user.name` - so all four are required. They
+# prove "made through GitHub, naming Dependabot"; see the header for what that does not prove.
 readonly DEPENDABOT_LOGIN='dependabot[bot]'
 readonly DEPENDABOT_EMAIL='49699333+dependabot[bot]@users.noreply.github.com'
 readonly SIGNING_COMMITTER='web-flow'
@@ -90,6 +104,7 @@ source "${CEILING_LIB:-$HERE/lib/ceiling.sh}"
 
 failures=0
 refusals=''
+notices=''
 workdirs=()
 
 die() {
@@ -105,6 +120,12 @@ log() { printf '%s\n' "$*"; }
 [ -n "${REPORT_TOKEN:-}" ] || die "REPORT_TOKEN is unset, so a refusal could not be reported - and an unreported refusal is found by hand, a day late."
 command -v "$CARGO" >/dev/null 2>&1 || die "\`$CARGO\` is not on PATH, so nothing was checked. An unrun check is not a clean one."
 command -v jq >/dev/null 2>&1 || die "jq is not on PATH, so no API answer can be read."
+# The App's slug, from its bot name: `gh` names a bot author `app/<slug>`, and that is the one author
+# whose pull requests on the refresh branch count as ours.
+APP_SLUG="${COMMIT_NAME%\[bot\]}"
+if ! [[ "$APP_SLUG" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || [ "$COMMIT_NAME" != "${APP_SLUG}[bot]" ]; then
+  die "COMMIT_NAME must be the App's bot name, \`<slug>[bot]\`."
+fi
 
 # shellcheck disable=SC2329 # invoked by the EXIT trap
 cleanup() {
@@ -144,12 +165,21 @@ stale_state() {
 # refresh is compared on before and after.
 runtime_packages() {
   awk '/^name = /{n=$3; gsub(/"/,"",n)} /^version = /{v=$3; gsub(/"/,"",v); if(n!=""){print n, v; n=""}}' "$1" |
-    awk '$1 == "tauri" || $1 ~ /^tauri-/ || $1 == "wry" || $1 == "tao"' | sort
+    while read -r name version; do
+      if ceiling_is_tauri_runtime_crate "$name"; then printf '%s %s\n' "$name" "$version"; fi
+    done | sort
 }
 
-is_runtime_crate() {
-  case "$1" in tauri | tauri-* | wry | tao) return 0 ;; esac
-  return 1
+# The ONLY sources a lockfile line this job writes may name: crates.io, by git index or sparse
+# index. A lock cannot name a source its manifests do not, and the manifests are Dependabot's - so a
+# `git+` or any other registry here means the input was not what it claimed, and nothing is pushed.
+readonly CRATES_IO_SOURCES='source = "registry+https://github.com/rust-lang/crates.io-index"
+source = "sparse+https://index.crates.io/"'
+
+# foreign_lock_sources <worktree>: the added `source =` lines of the uncommitted lock change that
+# name anything other than crates.io. Empty is the only acceptable answer.
+foreign_lock_sources() {
+  git -C "$1" diff -U0 -- '*Cargo.lock' | sed -n 's/^+\(source = .*\)$/\1/p' | grep -vxF "$CRATES_IO_SOURCES" || true
 }
 
 # refuse <number> <reason>: recorded for the issue, and said ONCE on the pull request (marker).
@@ -179,8 +209,8 @@ It stays open for a person, and it is listed in the issue \"${REPORT_TITLE}\". T
 
 # --- the candidates: numbers only, so nothing else from the listing travels -----------------------
 if ! candidates="$("$GH" pr list --repo "$REPO" --state open --author 'app/dependabot' --limit 100 \
-  --json number,headRefName \
-  --jq '.[] | select(.headRefName | startswith("dependabot/cargo/")) | .number' 2>&1)"; then
+  --json number,headRefName,isCrossRepository \
+  --jq '.[] | select(.isCrossRepository == false and (.headRefName | startswith("dependabot/cargo/"))) | .number' 2>&1)"; then
   printf '%s\n' "$candidates" | tail -5
   die "could not list the open pull requests. A refusal is not an answer: without it this run cannot tell 'none' from 'unreadable'."
 fi
@@ -189,12 +219,27 @@ refresh_one() {
   local n="$1"
   local branch="$BRANCH_PREFIX$n"
 
-  # 0. DURABLE STATE FIRST: a refresh pull request that exists, in any state, decides everything.
-  local existing
-  if ! existing="$("$GH" pr list --repo "$REPO" --head "$branch" --state all --json number,state \
-    --jq '.[0] | select(. != null) | "\(.number) \(.state)"' 2>&1)"; then
-    log "could not read the pull requests of $branch: $existing"
+  # 0. DURABLE STATE FIRST: a refresh pull request OF OURS that exists, in any state, decides
+  # everything. Ours = in this repository AND opened by the App; the newest wins. `--head` matches a
+  # branch NAME, which a fork can borrow, so every other pull request on it is ignored and reported.
+  local on_branch existing foreign
+  if ! on_branch="$("$GH" pr list --repo "$REPO" --head "$branch" --state all --limit 100 \
+    --json number,state,isCrossRepository,author,createdAt 2>&1)"; then
+    log "could not read the pull requests of $branch: $on_branch"
     return 1
+  fi
+  if ! existing="$(jq -r --arg app "app/$APP_SLUG" \
+    '[.[] | select(.isCrossRepository == false and .author.login == $app)] | sort_by(.createdAt) | last
+     | select(. != null) | "\(.number) \(.state)"' <<<"$on_branch")" ||
+    ! foreign="$(jq -r --arg app "app/$APP_SLUG" \
+      '[.[] | select(.isCrossRepository != false or .author.login != $app) | .number] | map(tostring) | join(" ")' <<<"$on_branch")"; then
+    log "the pull requests of $branch could not be read as JSON"
+    return 1
+  fi
+  if [ -n "$foreign" ]; then
+    [[ "$foreign" =~ ^[0-9\ ]+$ ]] || foreign='(unreadable numbers)'
+    notices="${notices}- pull request(s) ${foreign} use the reserved branch name of #${n}'s refresh but were not opened by the App in this repository; IGNORED, and nothing about #${n} was decided from them.
+"
   fi
   if [ -n "$existing" ]; then
     local en="${existing%% *}" es="${existing##* }"
@@ -280,7 +325,7 @@ refresh_one() {
       refuse "$n" "a trailer names a dependency or a version that is not a crate name and a full semver version, so nothing here passes it to cargo."
       return 0
     fi
-    if is_runtime_crate "$name"; then
+    if ceiling_is_tauri_runtime_crate "$name"; then
       refuse "$n" "\`$name\` is a crate of the Tauri runtime. A runtime bump is a native work package owed a device reading, never an unattended merge."
       return 0
     fi
@@ -385,6 +430,13 @@ refresh_one() {
     log "#$n: the refresh touched something that is not a Cargo.lock: $(tr '\n' ' ' <<<"$changed")"
     return 1
   fi
+  # Every source a refreshed lock names is crates.io - asserted on the diff, before anything leaves.
+  local foreign_sources
+  foreign_sources="$(foreign_lock_sources "$wt")"
+  if [ -n "$foreign_sources" ]; then
+    refuse "$n" "the refreshed lockfiles would name a source that is not crates.io; nothing was pushed."
+    return 0
+  fi
   git -C "$wt" add -A || return 1
   GIT_AUTHOR_NAME="$COMMIT_NAME" GIT_AUTHOR_EMAIL="$COMMIT_EMAIL" \
     GIT_COMMITTER_NAME="$COMMIT_NAME" GIT_COMMITTER_EMAIL="$COMMIT_EMAIL" \
@@ -392,10 +444,20 @@ refresh_one() {
     -m "chore(deps): refresh the committed lockfiles for #$n" \
     -m "Dependabot's pull request is incomplete by construction: mls-wasm and src-tauri commit their own lock and consume mls-core by path. Written by cargo-lock-refresh.sh." || return 1
 
-  # 9. Push. A branch left by a run that died before its pull request is overwritten - with a lease
-  # on the SHA read here, so a branch somebody else moved in between is refused, not clobbered.
-  local remote_sha
-  remote_sha="$(git -C "$REPO_ROOT" ls-remote origin "refs/heads/$branch" | cut -f1)"
+  # 9. Push. No pull request of ours exists (step 0), so a branch of this name is either the debris
+  # of a run that died before opening one - its tip authored by the App - or SOMEBODY ELSE'S. Only
+  # the first is overwritten, with a lease on the SHA read here so a branch moved in between is
+  # refused rather than clobbered; the second is reported and left alone.
+  local remote_sha tip_author
+  remote_sha="$(git -C "$REPO_ROOT" ls-remote origin "refs/heads/$branch" | cut -f1)" || return 1
+  if [ -n "$remote_sha" ]; then
+    git -C "$REPO_ROOT" fetch --quiet origin "+refs/heads/$branch:refs/lock-refresh/tip-$n" || return 1
+    tip_author="$(git -C "$REPO_ROOT" log -1 --format='%an <%ae>' "refs/lock-refresh/tip-$n")" || return 1
+    if [ "$tip_author" != "$COMMIT_NAME <$COMMIT_EMAIL>" ]; then
+      refuse "$n" "a branch \`$branch\` already exists with no pull request of the App's, and its tip was not written by the App; nothing overwrites it. A person deletes it, or takes the update."
+      return 0
+    fi
+  fi
   git -C "$wt" push --quiet --force-with-lease="refs/heads/$branch:$remote_sha" origin "HEAD:refs/heads/$branch" || return 1
 
   # 10. The pull request, as the App. The title is Dependabot's, reduced to printable characters and
@@ -450,7 +512,7 @@ if [ -n "$issue" ] && ! [[ "$issue" =~ ^[0-9]+$ ]]; then
   die "the issue list answered something that is not a number: $issue"
 fi
 
-if [ -z "$refusals" ]; then
+if [ -z "$refusals" ] && [ -z "$notices" ]; then
   if [ -n "$issue" ] && [ "$failures" -eq 0 ]; then
     report issue close "$issue" --repo "$REPO" --comment "No Dependabot cargo pull request is refused any more; closing. Written by \`cargo-lock-refresh.sh\`, which opens a new issue when one is." >/dev/null ||
       die "nothing is refused but issue #$issue could not be closed."
@@ -461,7 +523,10 @@ if [ -z "$refusals" ]; then
 else
   body="These Dependabot cargo pull requests could not be completed by the lockfile refresh, and each waits for a person. Every line says why; the reasons are the refusals listed in \`.github/scripts/cargo-lock-refresh.sh\`.
 
-${refusals}
+${refusals}${notices:+
+**On the reserved branch names:**
+
+${notices}}
 <sub>Written by \`.github/scripts/cargo-lock-refresh.sh\` on the daily \`Scheduled\` run. This issue is UPDATED rather than duplicated, and closed once no refusal stands. The mechanism: \`docs/wiki/cicd.md\`.</sub>"
   if [ -n "$issue" ]; then
     report issue edit "$issue" --repo "$REPO" --body "$body" >/dev/null ||
