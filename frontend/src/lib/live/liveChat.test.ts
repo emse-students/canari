@@ -21,6 +21,7 @@ import {
 import { LiveRefusalError } from './api';
 import { LiveChatOpenError } from './liveChatCrypto';
 import { TransportFailureError } from '$lib/utils/transportFailure';
+import { flushMacrotask } from '../../test/flush';
 import type { LiveChatBlock, LiveChatMessageWire, LiveManifest, LiveReactionKind } from './types';
 
 const LIVE = '0b6f3a2e-9c1d-4e5f-8a7b-1c2d3e4f5a6b';
@@ -102,8 +103,9 @@ beforeEach(() => {
     seal: vi.fn(async (_k, _l, _c, _a, text: string) => `S:${text}`),
     open: vi.fn(async (_k, _l, _c, _a, sealed: string) => {
       if (!sealed.startsWith('S:')) throw new LiveChatOpenError('unauthentic', sealed.length);
-      // A slow open for one text, to prove the order does not follow the open's speed.
-      if (sealed === 'S:slow') await new Promise((r) => setTimeout(r, 5));
+      // A slow open for one text - it yields a whole macrotask, which every other open does not -
+      // to prove the order does not follow the open's speed. A queue position, never a duration.
+      if (sealed === 'S:slow') await flushMacrotask();
       return sealed.slice(2);
     }),
     newId: () => `00000000-0000-4000-8000-${String(++ids).padStart(12, '0')}`,
