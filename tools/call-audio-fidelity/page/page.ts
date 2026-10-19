@@ -85,7 +85,17 @@ async function keyWorker(): Promise<Worker> {
   w.addEventListener('message', (e: MessageEvent<{ type: string; detail?: string }>) => {
     const t = e.data?.type;
     if (t === 'impair') impairCounts = e.data as unknown as typeof impairCounts;
-    else if (['decryptError', 'keyError', 'warn', 'opusInvalid', 'doubleEncrypted'].includes(t)) {
+    else if (
+      [
+        'decryptError',
+        'keyError',
+        'warn',
+        'opusInvalid',
+        'doubleEncrypted',
+        'transformer',
+        'senderAudioShape',
+      ].includes(t)
+    ) {
       note(`worker ${JSON.stringify(e.data)}`);
     }
   });

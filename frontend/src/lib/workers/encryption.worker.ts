@@ -26,6 +26,22 @@ const opusInvalid = { sender: 0, receiver: 0 };
 let doubleEncrypted = 0;
 /** Frames whose `getMetadata()` threw (see `frameMetadata`). */
 let metadataFailures = 0;
+/** Every transformer this worker was handed is numbered, and counted per side (`onrtctransform`). */
+let transformerSeq = 0;
+const transformersPerSide: Record<string, number> = {};
+/**
+ * The IVs of the last frames this worker ENCRYPTED, as hex. A sender input that STARTS with one of
+ * them is a frame this worker already encrypted, handed back for a second pass: exact, and no
+ * decrypt (the IV is 12 random bytes, so a real Opus payload never matches by chance).
+ */
+const recentIvs: string[] = [];
+const recentIvSet = new Set<string>();
+const RECENT_IVS = 64;
+/** RTP timestamps remembered per sender transformer, to see one frame handed over twice. */
+const RECENT_TS = 64;
+/** The sender audio shape is posted after this many frames, then every `SHAPE_EVERY` IF anomalous. */
+const SHAPE_FIRST = 50;
+const SHAPE_EVERY = 1500;
 /** `onrtctransform` is the standard handler (Firefox 117+); typed explicitly for workers. */
 type RtcTransformWorkerScope = typeof self & {
   onrtctransform: ((event: Event) => void) | null;
@@ -62,6 +78,14 @@ workerScope.onrtctransform = (event: Event) => {
   if (side !== 'sender' && side !== 'receiver') {
     self.postMessage({ type: 'warn', detail: `unknown transform side: ${String(side)}` });
   }
+  // The app attaches ONE transformer per sender and ONE per receiver: the per-side count, posted
+  // with the first frame's codec, makes a second audio sender transformer (a double attach) visible.
+  const id = ++transformerSeq;
+  const sideKey = String(side);
+  transformersPerSide[sideKey] = (transformersPerSide[sideKey] ?? 0) + 1;
+  const sideCount = transformersPerSide[sideKey];
+  let firstFrameSeen = false;
+  const shape = newSenderShape(id);
 
   const transform = new TransformStream({
     transform: async (frame, controller) => {
@@ -74,8 +98,29 @@ workerScope.onrtctransform = (event: Event) => {
       }
       try {
         const mediaKind = frameTypeLabel(frame);
+        // Read once per frame and shared: each read of a throwing `getMetadata` is a log line.
+        const meta =
+          !firstFrameSeen || (side === 'sender' && mediaKind === 'audio')
+            ? frameMetadata(frame)
+            : undefined;
+        if (!firstFrameSeen && meta) {
+          firstFrameSeen = true;
+          self.postMessage({
+            type: 'transformer',
+            id,
+            side: sideKey,
+            count: sideCount,
+            mediaKind,
+            mimeType: meta.mimeType ?? '?',
+            payloadType: meta.payloadType ?? -1,
+          });
+        }
         if (side === 'sender') {
-          if (mediaKind === 'audio') checkOpus(frame, new Uint8Array(frame.data), 'sender');
+          if (mediaKind === 'audio') {
+            const payload = new Uint8Array(frame.data);
+            const valid = checkOpus(frame, payload, 'sender', meta);
+            recordSenderShape(shape, payload, valid, meta?.rtpTimestamp);
+          }
           await encryptFrame(frame, controller);
           encrypted[mediaKind]++;
           if (encrypted[mediaKind] === 1 || encrypted[mediaKind] % 300 === 0) {
@@ -141,12 +186,13 @@ function isVideoKeyframe(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): bo
 function checkOpus(
   frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame,
   payload: Uint8Array,
-  side: 'sender' | 'receiver'
+  side: 'sender' | 'receiver',
+  knownMeta?: FrameMeta
 ): boolean {
   // An EMPTY payload is the encoder saying "nothing this frame" (DTX), not a packet: measured in
   // Chrome 155 with usedtx=1, which hands the transform 0-byte frames in every pause.
   if (payload.byteLength === 0) return true;
-  const meta = frameMetadata(frame);
+  const meta = knownMeta ?? frameMetadata(frame);
   if (meta.mimeType?.toLowerCase() !== 'audio/opus') return true;
   if (isValidOpusPacket(payload)) return true;
   const count = ++opusInvalid[side];
@@ -185,17 +231,21 @@ async function probeDoubleEncryption(clear: Uint8Array): Promise<void> {
   }
 }
 
+/** The fields of an encoded frame's metadata the worker reads. */
+interface FrameMeta {
+  mimeType?: string;
+  payloadType?: number;
+  rtpTimestamp?: number;
+}
+
 /**
  * The frame's metadata, or an empty object on an engine without `getMetadata` or one whose
  * `getMetadata` throws. The witness must never cost a frame: a throw here propagated to the
  * transform's catch, which dropped a sender frame before encryption and, on the receiver, sat
  * inside the decrypt `try` and was reported as an AES failure. So it is caught and logged here.
  */
-function frameMetadata(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): {
-  mimeType?: string;
-  payloadType?: number;
-} {
-  const f = frame as { getMetadata?: () => { mimeType?: string; payloadType?: number } };
+function frameMetadata(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): FrameMeta {
+  const f = frame as { getMetadata?: () => FrameMeta };
   if (typeof f.getMetadata !== 'function') return {};
   try {
     return f.getMetadata() ?? {};
@@ -211,11 +261,111 @@ function frameMetadata(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): {
   }
 }
 
+/** Hex of the first `ivLength` bytes - an IV's identity in `recentIvs`. */
+function ivKey(bytes: Uint8Array): string {
+  let s = '';
+  for (let i = 0; i < ivLength; i++) s += bytes[i].toString(16).padStart(2, '0');
+  return s;
+}
+
+/** Remembers an IV this worker just produced (the last `RECENT_IVS` of them). */
+function rememberIv(iv: Uint8Array): void {
+  const k = ivKey(iv);
+  recentIvs.push(k);
+  recentIvSet.add(k);
+  if (recentIvs.length > RECENT_IVS) recentIvSet.delete(recentIvs.shift()!);
+}
+
+/** Running shape of one sender audio transformer's input - lengths and Opus TOC classes only. */
+interface SenderShape {
+  id: number;
+  frames: number;
+  /** Payloads named `audio/opus` that break RFC 6716 R1-R7 (`checkOpus`). */
+  notOpus: number;
+  /** Frames whose RTP timestamp this transformer had already seen: one frame handed over twice. */
+  repeatedTs: number;
+  /** Frames starting with an IV this worker produced: its own output, handed back (double pass). */
+  ownIv: number;
+  recentTs: number[];
+  lenMin: number;
+  lenMax: number;
+  lenSum: number;
+  /** Count per TOC class `config << 2 | code` (RFC 6716 section 3.1): mode, bandwidth, frame size. */
+  tocClasses: Map<number, number>;
+}
+
+function newSenderShape(id: number): SenderShape {
+  return {
+    id,
+    frames: 0,
+    notOpus: 0,
+    repeatedTs: 0,
+    ownIv: 0,
+    recentTs: [],
+    lenMin: Number.POSITIVE_INFINITY,
+    lenMax: 0,
+    lenSum: 0,
+    tocClasses: new Map(),
+  };
+}
+
+/**
+ * Records one sender audio input. Posts a summary after `SHAPE_FIRST` frames, then every
+ * `SHAPE_EVERY` ONLY when an anomaly counter is non-zero, so a clean call logs it once. The TOC
+ * byte is the codec's framing (mode, bandwidth, frame size), never the voice; no payload byte
+ * leaves the worker. A witness, never a filter: the frame is encrypted and sent as it came.
+ */
+function recordSenderShape(
+  shape: SenderShape,
+  payload: Uint8Array,
+  validOpus: boolean,
+  ts: number | undefined
+): void {
+  shape.frames++;
+  if (!validOpus) shape.notOpus++;
+  const len = payload.byteLength;
+  shape.lenMin = Math.min(shape.lenMin, len);
+  shape.lenMax = Math.max(shape.lenMax, len);
+  shape.lenSum += len;
+  if (len > 0) {
+    const cls = ((payload[0] >> 3) << 2) | (payload[0] & 0x3);
+    shape.tocClasses.set(cls, (shape.tocClasses.get(cls) ?? 0) + 1);
+  }
+  if (len > ivLength && recentIvSet.has(ivKey(payload))) shape.ownIv++;
+  if (typeof ts === 'number') {
+    if (shape.recentTs.includes(ts)) shape.repeatedTs++;
+    shape.recentTs.push(ts);
+    if (shape.recentTs.length > RECENT_TS) shape.recentTs.shift();
+  }
+  const anomalous = shape.notOpus + shape.repeatedTs + shape.ownIv > 0;
+  const due = shape.frames === SHAPE_FIRST || (anomalous && shape.frames % SHAPE_EVERY === 0);
+  if (!due) return;
+  let top = -1;
+  let topCount = 0;
+  for (const [cls, n] of shape.tocClasses) {
+    if (n > topCount) [top, topCount] = [cls, n];
+  }
+  self.postMessage({
+    type: 'senderAudioShape',
+    id: shape.id,
+    frames: shape.frames,
+    notOpus: shape.notOpus,
+    repeatedTs: shape.repeatedTs,
+    ownIv: shape.ownIv,
+    lenMin: shape.lenMin,
+    lenMax: shape.lenMax,
+    lenAvg: Math.round(shape.lenSum / shape.frames),
+    tocClass: top < 0 ? 'none' : `config${top >> 2}/code${top & 0x3}`,
+    tocShare: Math.round((100 * topCount) / shape.frames),
+  });
+}
+
 async function encryptFrame(
   frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame,
   controller: TransformStreamDefaultController
 ) {
   const iv = crypto.getRandomValues(new Uint8Array(ivLength));
+  rememberIv(iv);
   const ciphertext = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, callKey!, frame.data);
 
   const packed = new Uint8Array(iv.byteLength + ciphertext.byteLength);

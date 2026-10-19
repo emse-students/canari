@@ -67,3 +67,62 @@ export function describeSelectedPair(stats: RTCStatsReport): string {
   }
   return parts.join(' ');
 }
+
+/** The subset of an audio `outbound-rtp` / `inbound-rtp` / `codec` stats entry the codec line reads. */
+type RtpCodecEntry = {
+  type: string;
+  id: string;
+  kind?: string;
+  mediaType?: string;
+  codecId?: string;
+  mimeType?: string;
+  payloadType?: number;
+  channels?: number;
+  sdpFmtpLine?: string;
+};
+
+/**
+ * Describes the audio codec each direction ACTUALLY uses, as the engine reports it on its
+ * `outbound-rtp` / `inbound-rtp` entries: `audio send=audio/opus pt=111 ch=2 [fmtp] recv=...`.
+ *
+ * WHY (2026-10-19): an iPhone's call audio reached two different receivers as noise while every
+ * Chromium pair was clean, and "which codec did WebKit really send" was a question no log
+ * answered. The SDP says what was OFFERED; this is what the RTP streams were bound to.
+ *
+ * @param stats The report from `RTCPeerConnection.getStats()`.
+ * @returns The line; a direction with no stream yet reads `none`, one with no codec entry `?`.
+ */
+export function describeAudioCodecs(stats: RTCStatsReport): string {
+  const entries = new Map<string, RtpCodecEntry>();
+  stats.forEach((value: RtpCodecEntry) => entries.set(value.id, value));
+  const describe = (type: 'outbound-rtp' | 'inbound-rtp'): string => {
+    const rtp = [...entries.values()].find(
+      (e) => e.type === type && (e.kind ?? e.mediaType) === 'audio'
+    );
+    if (!rtp) return 'none';
+    const codec = rtp.codecId ? entries.get(rtp.codecId) : undefined;
+    if (!codec) return '?';
+    const fmtp = codec.sdpFmtpLine ? ` [${codec.sdpFmtpLine}]` : '';
+    return `${codec.mimeType ?? '?'} pt=${codec.payloadType ?? '?'} ch=${codec.channels ?? '?'}${fmtp}`;
+  };
+  return `audio send=${describe('outbound-rtp')} recv=${describe('inbound-rtp')}`;
+}
+
+/**
+ * The audio codecs of an SDP in the order its first `m=audio` line lists them, as
+ * `opus/111,red/63,...` - the preference the other side's answer picks from. `none` when the SDP
+ * has no audio section. Carries codec names only, never an address.
+ */
+export function audioCodecOrder(sdp: string | undefined): string {
+  if (!sdp) return 'none';
+  const lines = sdp.split(/\r?\n/);
+  const start = lines.findIndex((l) => l.startsWith('m=audio '));
+  if (start < 0) return 'none';
+  const pts = lines[start].split(' ').slice(3);
+  const names = new Map<string, string>();
+  for (let i = start + 1; i < lines.length && !lines[i].startsWith('m='); i++) {
+    const m = /^a=rtpmap:(\d+) ([^/\s]+)/.exec(lines[i]);
+    if (m) names.set(m[1], m[2].toLowerCase());
+  }
+  return pts.map((pt) => `${names.get(pt) ?? '?'}/${pt}`).join(',');
+}

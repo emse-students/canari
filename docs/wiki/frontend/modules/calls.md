@@ -481,6 +481,55 @@ reading did. A decisive check that needs no new build: call each phone from desk
 `dev.canari-emse.fr` (the rig's engine). The phone that plays noise from a desktop caller, or makes
 a desktop play noise, is the one at fault.
 
+### The iPhone's sender, read from the code (2026-10-19)
+
+The desktop-vs-phone reading (device-readings, 2026-10-19) put the noise on the iPhone's SENDER:
+desktop Chrome and the Mi 9T both hear it as noise (58-68 % concealed, no loss), every Chromium
+pair is clean. The receivers logged no `E2E decrypt failed`, so the iPhone's frames AUTHENTICATE
+under the call key and still decode as garbage: what the iPhone encrypted was not one Opus packet.
+Read against the app and WebKit's source (`RTCRtpScriptTransform`, `RTCEncodedStreamProducer`,
+`LibWebRTCRtp{Sender,}TransformBackend`, `RTCEncodedFrame`), ranked:
+
+| #   | Hypothesis                                                             | For                                                                                                                                                                              | Against                                                                                                                                                                                                                                                                                 |
+| --- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| H1  | Each frame passes the sender transform TWICE (double encryption)       | The only rig fault whose frames authenticate AND decode as noise: 53 % concealed, full scale, ~half `Decode error`. Engine-independent of codec.                                 | No path found: the app attaches one sender transform per `addTrack` (`if (sender.transform) return`); WebKit registers its backend as the frame transformer once (`m_isRegistered`), has ONE input-callback slot and replaces a previous transform's backend (`takeBackend`), not adds. |
+| H2  | WebKit hands the sender transform something other than one Opus packet | WebKit-only, both initiators. `RTCEncodedFrame.data` copies the libwebrtc payload with no prefix, so it would sit in WebKit's libwebrtc audio path, which this repo cannot read. | WebKit's own tests run Opus through audio script transforms; no WebKit bug names it.                                                                                                                                                                                                    |
+| H3  | WebKit negotiates and sends a non-Opus codec (RED, CN, G.722, PCMU)    | Safari's offer order was never logged.                                                                                                                                           | The answer picks a codec both sides decode, and a RED/PCMU payload decrypted intact decodes cleanly (rig row "RED first"); a codec mismatch is silence or clean audio, never noise.                                                                                                     |
+| H4  | `configureCallAudioSenders`' `maxBitrate` on WebKit                    | It runs after every remote description.                                                                                                                                          | A bitrate cap changes the encoder's target, never the packet's validity; WebKit refuses a malformed `setParameters` rather than applying it.                                                                                                                                            |
+| H5  | The iPhone sends some frames bypassing the transform (clear Opus)      | -                                                                                                                                                                                | A receiver drops a frame that does not authenticate (`E2E decrypt failed`, silence), it never decodes it: noise needs bytes that authenticate.                                                                                                                                          |
+
+**The cause is NOT known, and nothing here changes what is sent.** No code path for H1 was found,
+and the iPhone classes close by hardware, never by a fix against a suspected bug nobody has seen;
+so the change is DIAGNOSTICS ONLY, built so the next iPhone call separates the hypotheses from the
+app log alone. The worker forwards every frame as before; the rig row "the sender encrypts twice"
+stays a FAULT row, and shows the receiver's `decrypt TWICE` witness firing.
+
+**The diagnostic** (no payload byte leaves the worker; a clean call adds three lines per device):
+
+- `[Call] E2E sender transformer #N (K sender in this worker): first frame audio mime= pt=` - ONE
+  line per transformer. One sender per track: a second audio `sender` count in one call is a
+  double attach, and `mime`/`pt` is the codec WebKit feeds the transform (H3).
+- `[Call] E2E sender audio #N: F frame(s), not-opus= repeated-ts= own-iv= len=min..max avg= toc=configC/codeK (P%)`
+  once after 50 frames, then every 1500 frames (~30 s) ONLY while an anomaly counter is non-zero,
+  as `ERROR`. `own-iv` counts inputs that START with one of the last 64 IVs this worker produced:
+  its own output handed back, a double pass (H1), exact and with no decrypt. `repeated-ts` counts
+  RTP timestamps the same transformer already saw (one frame handed over twice). `not-opus` is H2
+  (on an engine that names `audio/opus`), and `len`/`toc` say what the input looks like.
+- `[Call] audio send=<mime> pt= ch= [fmtp] recv=... | local m=audio <order> | remote m=audio <order>`
+  3 s after `connected` - the codec each direction is BOUND to, and both SDPs' offer order (H3).
+
+**What the next iPhone call must show** (a dev pre-release, the iPhone calling or called by desktop
+Chrome, the iPhone's log read live):
+
+| iPhone log                                                     | Desktop hears | Means                                                                          |
+| -------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------------ |
+| `own-iv` > 0, or two `sender transformer` lines for audio      | noise         | H1: each frame passes the transform twice; the transformer lines name which    |
+| `not-opus` > 0, `own-iv=0`                                     | noise         | H2: WebKit hands the transform non-Opus; `len`/`toc` say what                  |
+| `repeated-ts` > 0, `own-iv=0`                                  | noise         | WebKit hands the same frame over twice (two plaintext copies)                  |
+| all zero, `mime=audio/opus`, `audio send=audio/opus`            | noise         | the bytes go wrong AFTER the worker (WebKit's packetiser): not ours to see     |
+| `mime`/`audio send=` not Opus                                  | noise         | H3: the codec WebKit actually sends                                           |
+| all zero                                                       | clean         | not reproduced on that build: read again before anything else                  |
+
 **TURN / server.** Every row runs `host/udp` on loopback; nothing here exercises TURN. The phone
 reading's `TURN CreatePermission error response` (403 and 600, CALL-TURN) is a dev TURN credential
 or binding question and stays listed there; no production setting was read or changed.
