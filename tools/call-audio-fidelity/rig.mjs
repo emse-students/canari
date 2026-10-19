@@ -13,7 +13,7 @@
  *   bun tools/call-audio-fidelity/rig.mjs --seconds 40 --out <dir> --keep
  *   bun tools/call-audio-fidelity/rig.mjs --reanalyze <dir>  # re-score a run's recordings, no browser
  */
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
@@ -37,6 +37,33 @@ const REANALYZE = opt('reanalyze', '');
 function say(msg) {
   console.log(`[rig] ${msg}`);
 }
+
+/** Every Chrome this run started and has not closed yet: what an interrupt must take down. */
+const live = new Set();
+
+/**
+ * Ctrl-C or a kill must not leave two headless Chromes holding a fake microphone and a profile:
+ * each live tree is killed SYNCHRONOUSLY (the process is about to exit) and its profile removed.
+ */
+function onSignal(signal) {
+  say(`${signal}: killing ${live.size} Chrome(s) and removing their profiles`);
+  for (const side of live) {
+    if (process.platform === 'win32') {
+      spawnSync('taskkill', ['/PID', String(side.proc.pid), '/T', '/F'], { stdio: 'ignore' });
+    } else {
+      side.proc.kill('SIGKILL');
+    }
+    if (KEEP) continue;
+    try {
+      rmSync(side.profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 250 });
+    } catch (e) {
+      say(`WARN profile ${side.profile} not removed (${e.code}) - delete it by hand`);
+    }
+  }
+  process.exit(130);
+}
+process.on('SIGINT', onSignal);
+process.on('SIGTERM', onSignal);
 
 /** Builds the page and the worker from the app's sources into `www/`. */
 async function buildPage(www) {
@@ -153,22 +180,31 @@ async function launch(name, wav, url, row) {
     { stdio: 'ignore' }
   );
   const exited = new Promise((res) => proc.once('exit', res));
-  const portFile = join(profile, 'DevToolsActivePort');
-  const port = await until(
-    () => existsSync(portFile) && readFileSync(portFile, 'utf8').split('\n')[0],
-    `${name} DevTools port`
-  );
-  const targets = await until(async () => {
-    const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-    return list.find((t) => t.type === 'page');
-  }, `${name} page target`);
-  const cdp = await Cdp.open(targets.webSocketDebuggerUrl);
-  await cdp.send('Page.navigate', { url });
-  await until(
-    async () => (await cdp.eval('document.title').catch(() => '')) === 'rig-ready',
-    `${name} page`
-  );
-  return { name, proc, exited, port, cdp, profile };
+  const side = { name, proc, exited, port: 0, cdp: null, profile };
+  live.add(side);
+  try {
+    const portFile = join(profile, 'DevToolsActivePort');
+    side.port = await until(
+      () => existsSync(portFile) && readFileSync(portFile, 'utf8').split('\n')[0],
+      `${name} DevTools port`
+    );
+    const targets = await until(async () => {
+      const list = await (await fetch(`http://127.0.0.1:${side.port}/json/list`)).json();
+      return list.find((t) => t.type === 'page');
+    }, `${name} page target`);
+    side.cdp = await Cdp.open(targets.webSocketDebuggerUrl);
+    await side.cdp.send('Page.navigate', { url });
+    await until(
+      async () => (await side.cdp.eval('document.title').catch(() => '')) === 'rig-ready',
+      `${name} page`
+    );
+    return side;
+  } catch (e) {
+    // A Chrome that never became usable is still a running Chrome: take it down before the throw.
+    say(`WARN ${name}: launch failed (${String(e)}), killing the tree`);
+    await close(side);
+    throw e;
+  }
 }
 
 /** Kills the whole process tree: on Windows, killing the browser process leaves its children. */
@@ -181,7 +217,9 @@ function killTree(side) {
 }
 
 async function close(side) {
+  live.delete(side);
   try {
+    if (!side.port) throw new Error('no DevTools port yet');
     const v = await (await fetch(`http://127.0.0.1:${side.port}/json/version`)).json();
     const b = await Cdp.open(v.webSocketDebuggerUrl);
     void b.send('Browser.close').catch(() => {});
@@ -208,7 +246,11 @@ async function close(side) {
   }
 }
 
-/** Byte-exact comparison of one direction: every frame the receiver decoded vs what was encoded. */
+/**
+ * One direction's frame identity check: each frame the receiver decrypted is looked up, by its
+ * 32-bit FNV-1a hash and length (`page/impair.worker.ts`), among the frames the sender encoded. A
+ * membership test, not a full byte compare: a corrupted frame escapes only on a hash collision.
+ */
 function bitExact(sent, received) {
   if (!sent || !received) return null;
   const set = new Set(sent);
@@ -256,14 +298,17 @@ async function runRow(row, wavs, url) {
   // `measure: 'down'` measures the CALLEE's audio heard by the caller (the reference plays on the
   // callee's microphone); the default measures the caller heard by the callee.
   const down = row.measure === 'down';
-  const caller = await launch('caller', down ? wavs.silence : wavs.caller, url, row.name);
-  const callee = await launch(
-    'callee',
-    down ? wavs.caller : row.farTalk ? wavs.far : wavs.silence,
-    url,
-    row.name
-  );
+  // Both launches sit inside the try: a callee that fails to start must not strand the caller.
+  let caller = null;
+  let callee = null;
   try {
+    caller = await launch('caller', down ? wavs.silence : wavs.caller, url, row.name);
+    callee = await launch(
+      'callee',
+      down ? wavs.caller : row.farTalk ? wavs.far : wavs.silence,
+      url,
+      row.name
+    );
     const setupCaller = await caller.cdp.eval(`rig.setup(${JSON.stringify(row.caller)})`);
     await callee.cdp.eval(`rig.setup(${JSON.stringify(row.callee)})`);
     const offer = await caller.cdp.eval('rig.offer()');
@@ -315,8 +360,8 @@ async function runRow(row, wavs, url) {
     );
     return result;
   } finally {
-    await close(caller);
-    await close(callee);
+    if (caller) await close(caller);
+    if (callee) await close(callee);
   }
 }
 

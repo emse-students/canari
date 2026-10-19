@@ -137,7 +137,14 @@ export const THRESHOLDS = {
   maxConcealedPctClean: 1,
   /** Samples at full scale on a clean network (under loss, Opus concealment can overshoot). */
   maxClippedClean: 0,
+  /** The app worker's own witness lines (`opusInvalid`, `doubleEncrypted`) in either page's log. */
+  maxWitnessLines: 0,
 };
+
+/** Log lines in which the app's E2E worker named a non-Opus payload or a double encryption. */
+export function witnessLines(r) {
+  return (r.log ?? []).filter((l) => /"type":"(opusInvalid|doubleEncrypted)"/.test(l)).length;
+}
 
 /**
  * Applies the thresholds to one result. Rows with injected loss skip the clean-network checks.
@@ -150,6 +157,7 @@ export function verdict(r) {
   const checks = [
     ['match', r.metrics.matchCoef >= (lossy ? THRESHOLDS.minMatchLossy : THRESHOLDS.minMatch)],
     ['corrupted-frames', corrupted <= THRESHOLDS.maxCorruptedFrames],
+    ['witness', witnessLines(r) <= THRESHOLDS.maxWitnessLines],
     ['lsd', sp.lsdDb <= THRESHOLDS.maxSpeechLsdDb],
     ['hf-tilt', sp.hfLossDb >= THRESHOLDS.minSpeechHfTiltDb],
     ['bandwidth', r.metrics.bandwidthHz >= THRESHOLDS.minBandwidthHz],

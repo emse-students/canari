@@ -24,6 +24,8 @@ let droppedNoKey = 0;
 const opusInvalid = { sender: 0, receiver: 0 };
 /** Receiver payloads that decrypted TWICE with the call key: the sender encrypted them twice. */
 let doubleEncrypted = 0;
+/** Frames whose `getMetadata()` threw (see `frameMetadata`). */
+let metadataFailures = 0;
 /** `onrtctransform` is the standard handler (Firefox 117+); typed explicitly for workers. */
 type RtcTransformWorkerScope = typeof self & {
   onrtctransform: ((event: Event) => void) | null;
@@ -130,8 +132,10 @@ function isVideoKeyframe(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): bo
  * sender BEFORE it is encrypted, on the receiver AFTER it is decrypted. The payload is forwarded
  * unchanged - this is a witness, not a filter: the decoder rejects such a frame itself and NetEq
  * conceals it, and what was missing until 2026-10-19 was knowing WHICH side handed it over (a Mi 9T
- * hearing an iPhone logged NetEq decode errors on 30 % of packets with no way to say). A frame whose
- * metadata names another codec (RED, CN) is not an Opus packet by design and is not checked.
+ * hearing an iPhone logged NetEq decode errors on 30 % of packets with no way to say). Only a frame
+ * whose metadata NAMES `audio/opus` is checked: a RED or CN frame is not an Opus packet by design,
+ * and an engine that omits `mimeType` (WebKit may) gives no way to tell one from the other, so it
+ * is never accused - that side's witness is silent rather than wrong.
  * Returns whether the payload is a valid Opus packet (or was not checked).
  */
 function checkOpus(
@@ -143,7 +147,7 @@ function checkOpus(
   // Chrome 155 with usedtx=1, which hands the transform 0-byte frames in every pause.
   if (payload.byteLength === 0) return true;
   const meta = frameMetadata(frame);
-  if (meta.mimeType && meta.mimeType.toLowerCase() !== 'audio/opus') return true;
+  if (meta.mimeType?.toLowerCase() !== 'audio/opus') return true;
   if (isValidOpusPacket(payload)) return true;
   const count = ++opusInvalid[side];
   if (count <= 3 || count % 100 === 0) {
@@ -181,13 +185,30 @@ async function probeDoubleEncryption(clear: Uint8Array): Promise<void> {
   }
 }
 
-/** The frame's metadata, or an empty object on an engine without `getMetadata`. */
+/**
+ * The frame's metadata, or an empty object on an engine without `getMetadata` or one whose
+ * `getMetadata` throws. The witness must never cost a frame: a throw here propagated to the
+ * transform's catch, which dropped a sender frame before encryption and, on the receiver, sat
+ * inside the decrypt `try` and was reported as an AES failure. So it is caught and logged here.
+ */
 function frameMetadata(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): {
   mimeType?: string;
   payloadType?: number;
 } {
   const f = frame as { getMetadata?: () => { mimeType?: string; payloadType?: number } };
-  return typeof f.getMetadata === 'function' ? (f.getMetadata() ?? {}) : {};
+  if (typeof f.getMetadata !== 'function') return {};
+  try {
+    return f.getMetadata() ?? {};
+  } catch (e) {
+    metadataFailures++;
+    if (metadataFailures <= 3 || metadataFailures % 100 === 0) {
+      self.postMessage({
+        type: 'warn',
+        detail: `frame getMetadata threw (${metadataFailures} so far): ${String(e)}`,
+      });
+    }
+    return {};
+  }
 }
 
 async function encryptFrame(

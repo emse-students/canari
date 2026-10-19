@@ -6,11 +6,16 @@
  */
 import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
+type Metadata = { payloadType?: number; mimeType?: string };
+const OPUS_METADATA = (): Metadata => ({ payloadType: 111, mimeType: 'audio/opus' });
+/** What every frame's `getMetadata` answers; a test swaps it and `afterEach` restores it. */
+let metadata: () => Metadata = OPUS_METADATA;
+
 /** Named like the engine's class: the worker reads the kind from the constructor's name. */
 class RTCEncodedAudioFrame {
   constructor(public data: ArrayBuffer) {}
   getMetadata() {
-    return { payloadType: 111, mimeType: 'audio/opus' };
+    return metadata();
   }
 }
 
@@ -36,6 +41,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   posted.length = 0;
+  metadata = OPUS_METADATA;
 });
 
 async function encrypt(
@@ -120,5 +126,50 @@ describe('encryption.worker - the Opus witness', () => {
       expect.objectContaining({ type: 'opusInvalid', side: 'receiver' })
     );
     expect(posted).toContainEqual(expect.objectContaining({ type: 'doubleEncrypted', count: 1 }));
+  });
+
+  it('accuses no frame whose metadata does not NAME Opus - a RED frame on an engine without mimeType', async () => {
+    // WebKit may omit mimeType; a RED (or CN) frame is not an Opus packet by design.
+    metadata = () => ({ payloadType: 63 });
+    const sent = await run('sender', [notOpus()]);
+    await run('receiver', sent);
+    expect(posted.filter((m) => m.type === 'opusInvalid')).toEqual([]);
+  });
+});
+
+describe('encryption.worker - a getMetadata that throws costs no frame', () => {
+  const throwing = () => {
+    throw new Error('engine says no');
+  };
+
+  it('SENDER: the frame is still encrypted and sent, and the throw is logged', async () => {
+    metadata = throwing;
+    const plain = opus();
+    const sent = await run('sender', [plain]);
+    expect(sent).toHaveLength(1);
+    // Encrypted: IV + ciphertext + 16-byte tag, so never the plaintext itself.
+    expect(sent[0].byteLength).toBe(12 + plain.byteLength + 16);
+    metadata = OPUS_METADATA;
+    expect(await run('receiver', sent)).toEqual([plain]);
+    expect(posted).toContainEqual(
+      expect.objectContaining({
+        type: 'warn',
+        detail: expect.stringContaining('getMetadata threw'),
+      })
+    );
+  });
+
+  it('RECEIVER: the frame is still decrypted and forwarded, and AES is not blamed', async () => {
+    const plain = opus();
+    const cipher = await encrypt(plain);
+    metadata = throwing;
+    expect(await run('receiver', [cipher])).toEqual([plain]);
+    expect(posted.some((m) => m.type === 'decryptError')).toBe(false);
+    expect(posted).toContainEqual(
+      expect.objectContaining({
+        type: 'warn',
+        detail: expect.stringContaining('getMetadata threw'),
+      })
+    );
   });
 });

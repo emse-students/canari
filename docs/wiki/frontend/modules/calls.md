@@ -146,9 +146,10 @@ build**, so an alpha app would have sent cleartext to a web peer that decrypts -
 that fails to attach ends the call.
 
 **Measured in Chrome 155 (2026-10-17), and it changed the code:** a RECEIVER transform attached in
-`ontrack` never sees a frame - the call connects, packets arrive, every sample is concealed
-silence. Attached to the receiver of the transceiver `addTrack` created, before negotiation, every
-frame decrypts. `initPeerConnection` now does that; `ontrack` attaching late logs a WARN. The same
+`ontrack` to a receiver that was ALREADY running never saw a frame - the call connects, packets
+arrive, every sample is concealed silence. Attached to the receiver of the transceiver `addTrack`
+created, before negotiation, every frame decrypts. (Narrowed 2026-10-19: attached in `ontrack` for
+a transceiver a RENEGOTIATION created, it decrypts every frame - [measured below](#audio-quality-measured-2026-10-19).) `initPeerConnection` now does that; `ontrack` attaching late logs a WARN. The same
 session found the worker counting a failed decrypt as `decryptOk` (fixed: `decryptError` only).
 
 **Server half:** [call-service p2p mode](../../services/call-service.md#peer-to-peer-mode-2026-10-17).
@@ -333,7 +334,8 @@ the iPhone's 50 packets a second), 62 % of samples concealed, `audioLevel` 1.000
 headless Chrome 155 processes, each with a fake microphone playing a known 12 s reference (sweep,
 speech-like, tones, noise), call each other through the app's IMPORTED capture constraints, sender
 parameters and E2E worker, in `CallService`'s order. The receiver records the decoded audio at
-48 kHz; every decrypted payload is compared byte for byte with what the other side encoded;
+48 kHz; every decrypted payload is looked up, by a 32-bit FNV-1a hash and its length, among the
+payloads the other side encoded (a membership check, not a full byte compare);
 `getStats()` every second. `bun tools/call-audio-fidelity/rig.mjs` (about 45 s a row; run nothing
 heavy beside it), `--reanalyze <dir>` re-scores saved recordings, `bun test tools/call-audio-fidelity`
 self-tests the metrics (in `make test-ci-scripts`).
@@ -360,7 +362,7 @@ blocks with the reference; LSD on the speech segment):
 **What it says.**
 
 1. **The app's own path does not corrupt audio.** Chrome to Chrome, both directions, every role,
-   clean or lossy, with RED or DTX: every decrypted payload is byte-identical to an encoded one and
+   clean or lossy, with RED or DTX: every decrypted payload's hash matches an encoded one and
    the output correlates 0.94-0.98 with the reference. The E2E transform costs nothing measurable
    (app vs no-E2E: same LSD, same concealment under loss).
 2. **The phones' symptom has ONE signature in the rig: bytes that are not Opus reaching the
@@ -381,9 +383,10 @@ blocks with the reference; LSD on the speech segment):
 6. **DTX and E2E.** With `usedtx=1` Chrome hands the sender transform 0-byte frames in every pause;
    the worker encrypts them into 28-byte packets, so DTX would save nothing under E2E. The app does
    not negotiate DTX.
-7. **The lot 1 note above is narrower than it reads.** A receiver transform attached in `ontrack`
-   for a transceiver a RENEGOTIATION created decrypts every frame in Chrome 155 (row "new m-line");
-   the silence measured on 2026-10-17 was a transform attached late to a receiver already running.
+7. **The lot 1 note above was narrower than it read** (corrected there). A receiver transform
+   attached in `ontrack` for a transceiver a RENEGOTIATION created decrypts every frame in Chrome
+   155 (row "new m-line"); the silence measured on 2026-10-17 was a transform attached late to a
+   receiver already running.
 
 **The change (draft PR).** The worker checks every plaintext audio payload against RFC 6716 R1-R7
 (`utils/opusPacket.ts`): on the sender BEFORE it encrypts, on the receiver AFTER it decrypts, and on
@@ -397,8 +400,11 @@ anyway). `CallService` logs:
   the other side's check, or arrives undecrypted;
 - `[Call] ERROR E2E receiver: audio frames decrypt TWICE` - the other device encrypts twice.
 
-Empty frames (DTX) are exempt. In the rig the clean rows log none of it and the double-encryption
-fault logs both sender and receiver lines from the first frame. Pinned by
+Empty frames (DTX) are exempt, and so is any frame whose metadata does not NAME `audio/opus` (a RED
+or CN frame is not an Opus packet; an engine that omits `mimeType` gives no way to tell). A
+`getMetadata()` that throws is logged as a worker `warn` and costs no frame. The rig ASSERTS the
+silence: `verdict()` fails any row whose log carries an `opusInvalid` or `doubleEncrypted` line,
+and the double-encryption fault logs both sender and receiver lines from the first frame. Pinned by
 `encryption.worker.test.ts` and `opusPacket.test.ts`.
 
 **Owed on the phones (the next reading separates the hypotheses from the app log alone):**
@@ -410,6 +416,11 @@ fault logs both sender and receiver lines from the first frame. Pinned by
 | Mi 9T                                  | no `E2E decrypting audio` at all, or `WARN late E2E receiver transform`   | its receiver is not decrypting: ciphertext reaches its decoder                        |
 | Mi 9T                                  | `ERROR E2E receiver: audio frames decrypt TWICE`                          | the iPhone encrypts each frame twice                                                  |
 | both                                   | the other direction (Mi 9T heard on the iPhone)                           | not read on 2026-10-19 (store build not inspectable)                                  |
+
+**The witness may be blind on the iPhone.** It accuses only a frame whose metadata names
+`audio/opus`; if WebKit's `RTCEncodedAudioFrame.getMetadata()` omits `mimeType`, the iPhone logs no
+`ERROR E2E sender` line whatever it sends, so an ABSENT sender line there proves nothing. The Mi 9T
+receiver (Chromium) carries `mimeType` and is the side to read.
 
 The in-app log was batched during that reading (LOG-1); read the lines from the console live, as the
 reading did. A decisive check that needs no new build: call each phone from desktop Chrome on

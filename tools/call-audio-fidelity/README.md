@@ -43,16 +43,17 @@ The first whole loop after 8 s is located by circular cross-correlation, then fo
 block (50 ms, +/-30 ms around the previous block, median-smoothed) because NetEq's time-stretching
 moves the lag during a call.
 
-| Metric               | Reads                                                                                                                                                 |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `match`              | median normalised correlation of the blocks with the reference: ~1 = the reference came out; < 0.1 = unrelated noise or silence                       |
-| frames bit-exact     | every DECRYPTED payload compared byte for byte with the payloads the other side ENCODED (`page/impair.worker.ts` taps both, across the two processes) |
-| speech SNR / LSD     | waveform SNR and log-spectral distance on the speech segment, after a least-squares gain                                                              |
-| HF tilt              | energy above 4 kHz relative to below, dB (an AGC moving everything is not a lost band)                                                                |
-| bandwidth            | highest sweep frequency within 10 dB of its 300-3000 Hz level                                                                                         |
-| dropouts             | runs >= 20 ms where speech was sent and the output sits 30 dB below it                                                                                |
-| concealed %, stretch | `concealedSamples`, `inserted/removedSamplesFor...` over `totalSamplesReceived`                                                                       |
-| floor                | level in the digital silences between segments, dBFS                                                                                                  |
+| Metric               | Reads                                                                                                                                                                                                                            |
+| -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `match`              | median normalised correlation of the blocks with the reference: ~1 = the reference came out; < 0.1 = unrelated noise or silence                                                                                                  |
+| frames bit-exact     | every DECRYPTED payload looked up, by a 32-bit FNV-1a hash and its length, among the payloads the other side ENCODED (`page/impair.worker.ts` taps both, across the two processes) - a membership check, not a full byte compare |
+| speech SNR / LSD     | waveform SNR and log-spectral distance on the speech segment, after a least-squares gain                                                                                                                                         |
+| HF tilt              | energy above 4 kHz relative to below, dB (an AGC moving everything is not a lost band)                                                                                                                                           |
+| bandwidth            | highest sweep frequency within 10 dB of its 300-3000 Hz level                                                                                                                                                                    |
+| dropouts             | runs >= 20 ms where speech was sent and the output sits 30 dB below it                                                                                                                                                           |
+| concealed %, stretch | `concealedSamples`, `inserted/removedSamplesFor...` over `totalSamplesReceived`                                                                                                                                                  |
+| floor                | level in the digital silences between segments, dBFS                                                                                                                                                                             |
+| witness              | lines in which the app's worker named a non-Opus payload or a double encryption (`opusInvalid`, `doubleEncrypted`); any one fails the row (`matrix.test.mjs`)                                                                    |
 
 ## The matrix (`matrix.mjs`)
 
