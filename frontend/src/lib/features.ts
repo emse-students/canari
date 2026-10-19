@@ -64,8 +64,8 @@ export const CALLS_ENABLED = CALLS_COMPILED || deployEnvironment() === 'developm
 export const CALLS_VIDEO_ENABLED = false;
 
 /**
- * Watching a live: the LIVE card at the top of the feed and the full-screen live viewer
- * (`components/live/`, `lib/live/`). The broadcaster's half is not built yet.
+ * Lives, client side - ONE switch for both halves: watching (the LIVE card at the top of the feed,
+ * the full-screen viewer) and broadcasting (`components/live/`, `lib/live/`).
  *
  * **ON FOR A DEV BUILD ONLY (WP-L5, 2026-10-19)**, by the same test as {@link CALLS_ENABLED}: a build
  * made for `dev.canari-emse.fr` carries `VITE_DEPLOY_ENVIRONMENT=development`, a production build

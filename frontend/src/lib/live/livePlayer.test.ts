@@ -310,6 +310,16 @@ describe('the join', () => {
     expect(deps.leaveSeat).toHaveBeenCalledWith(LIVE);
   });
 
+  it('a segment with a box no reader can frame stops the viewer on playback', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    // A size-0 box ("to the end of the file") cannot be framed in a live stream.
+    deps.openSegment = vi.fn(async () => concat(box('ftyp', 4), new Uint8Array(8)));
+    await joined(2);
+    expect(states.at(-1)).toEqual({ kind: 'unavailable', reason: 'playback' });
+    expect(errors).toHaveBeenCalledWith(expect.stringContaining('not framable'));
+    errors.mockRestore();
+  });
+
   it('never takes a seat on an engine with no MediaSource', async () => {
     deps.mediaSource = () => null;
     makePlayer().start();
@@ -643,5 +653,51 @@ describe('closing', () => {
       expect.anything()
     );
     errors.mockRestore();
+  });
+
+  /** A segment download that never answers on its own, and rejects as `fetch` does on an abort. */
+  function hangingSegments() {
+    const signals: (AbortSignal | undefined)[] = [];
+    deps.fetchSegment = vi.fn(
+      (_id: string, _name: string, signal?: AbortSignal) =>
+        new Promise<ArrayBuffer>((_resolve, reject) => {
+          signals.push(signal);
+          signal?.addEventListener('abort', () =>
+            reject(new DOMException('aborted', 'AbortError'))
+          );
+        })
+    );
+    return signals;
+  }
+
+  it('a close aborts the segment download in flight, and reports nothing', async () => {
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const signals = hangingSegments();
+    live.push(2);
+    const p = makePlayer();
+    p.start();
+    await flush();
+    expect(signals).toHaveLength(1);
+    expect(signals[0]?.aborted).toBe(false);
+    p.stop();
+    await flush();
+    expect(signals[0]?.aborted).toBe(true);
+    expect(errors).not.toHaveBeenCalled();
+    expect(timers).toHaveLength(0);
+    errors.mockRestore();
+  });
+
+  it('a retry aborts the old run download; the new run fetches with a fresh signal', async () => {
+    const signals = hangingSegments();
+    live.push(2);
+    const p = makePlayer();
+    p.start();
+    await flush();
+    p.retry();
+    await flush();
+    expect(signals).toHaveLength(2);
+    expect(signals[0]?.aborted).toBe(true);
+    expect(signals[1]?.aborted).toBe(false);
+    expect(states.at(-1)?.kind).toBe('connecting');
   });
 });

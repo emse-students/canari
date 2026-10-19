@@ -279,9 +279,16 @@ export function liveSegmentUrl(liveId: string, name: string): string {
  * there. Still through `trackedFetch`, so it has a deadline and feeds the connectivity reading.
  * A `429` is nginx's per-address bound (`rate-limited`): retry the SAME segment after a backoff, one
  * fetch in flight per player. A `404` is `not-found` (purged, or never stored).
+ *
+ * `signal` cancels the download (head AND body): a viewer that closes or restarts aborts its run's
+ * fetches, so none keeps a connection beside the next run's under nginx's per-address bound.
  */
-export async function fetchLiveSegment(liveId: string, name: string): Promise<ArrayBuffer> {
-  const res = await trackedFetch(fetch, liveSegmentUrl(liveId, name), { method: 'GET' });
+export async function fetchLiveSegment(
+  liveId: string,
+  name: string,
+  signal?: AbortSignal
+): Promise<ArrayBuffer> {
+  const res = await trackedFetch(fetch, liveSegmentUrl(liveId, name), { method: 'GET', signal });
   if (!res.ok) throw await liveRefusal(res, `Live segment ${name}`, true);
   return res.arrayBuffer();
 }

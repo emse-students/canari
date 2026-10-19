@@ -247,10 +247,10 @@ broadcaster, chat and reactions (WP-L6), moderation (WP-L8).
 | --- | --- |
 | `lib/live/livePlayer.ts` | The MSE player and its state machine; everything outside it (API, seal, media source, timer) injected, so it is tested with fake MSE objects and a manual clock |
 | `lib/live/liveViewerState.ts` | The states, and `liveFailureOutcome`: the ONE decision from a failure to a screen |
-| `lib/live/fmp4.ts` | `initSegmentEnd`: where `ftyp` + `moov` stop in a recorder chunk |
+| `lib/live/fmp4Segments.ts` | The ONE fMP4 box reader of the live: `initSegmentEnd` (where a segment's `ftyp` + `moov` stop) and `Fmp4ParseError` (a box it cannot frame: "Live indisponible", `playback`) |
 | `lib/live/openLives.ts` | The card's list (the reader's own live left out), `formatLiveElapsed` |
 | `lib/live/liveCrypto.ts` | Not this package's: the seal of [format v1](#the-segment-seal-format-v1) (draft PR #2111, which this one is stacked on); the viewer calls `openLiveSegment` and skips a segment on `LiveSegmentOpenError` |
-| `components/live/` | `LiveFeedCard`, `LiveViewer`, `LiveBroadcaster` (picture and name, a member or an association), `LiveBadge` |
+| `components/live/` | `LiveFeedCard`, `LiveViewer`, `LiveIdentity` (who is on air: picture and name, a member or an association), `LiveBadge` |
 
 **The card.** At the top of the feed, under the tab row, whatever the tab; hidden during a search and
 when nothing is on air. It asks `GET /api/lives` when the FEED asks for its first page - the tab load
@@ -306,7 +306,7 @@ it needs no timer and never compares the device's clock with the server's.
 
 **The seat** goes back by `DELETE /api/lives/:id/seat` when the viewer closes and on `pagehide` (best
 effort: the 30 s lease is the bound); a key that arrives after a close gives its seat straight back;
-a page restored from the back-forward cache starts again. **Sound** is the app's one answer
+a page restored from the back-forward cache starts again. **A close or a retry aborts the run's segment downloads** (`fetchLiveSegment`'s `signal`), so no fetch keeps a connection beside the next run's under nginx's per-address `limit_conn`. **Sound** is the app's one answer
 (`videoSound`, `followVideoSound`): muted at every start; a `play()` refused with sound is retried
 muted; the toggle unmutes with a tap.
 
@@ -314,7 +314,7 @@ muted; the toggle unmutes with a tap.
 or an unopenable segment at `error`; segments SUMMARISED (one line per 30 played and at the stop),
 never one line each; the key and segment bytes never.
 
-**Verified by tests only** (`livePlayer.test.ts`, `liveViewerState.test.ts`, `fmp4.test.ts`,
+**Verified by tests only** (`livePlayer.test.ts`, `liveViewerState.test.ts`, `fmp4Segments.test.ts`,
 `openLives.test.ts`, `LiveFeedCard.svelte.test.ts`, `LiveViewer.svelte.test.ts`). **Owed on hardware**:
 check Y of [device-verification](../../device-verification.md#y-watching-a-live---owed-on-both-phones-mi-9t-iphone-12),
 which needs a broadcaster sealing format v1 (the broadcaster screen is not built). **Known gaps:** `ManagedMediaSource`'s `endstreaming` hint is ignored

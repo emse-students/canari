@@ -19,7 +19,7 @@
   import { focusTrap } from '$lib/actions/focusTrap.svelte';
   import { LoaderCircle, Radio, Volume2, VolumeX, X } from '@lucide/svelte';
   import LiveBadge from './LiveBadge.svelte';
-  import LiveBroadcaster from './LiveBroadcaster.svelte';
+  import LiveIdentity from './LiveIdentity.svelte';
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import { followVideoSound } from '$lib/actions/playWhileVisible';
@@ -209,7 +209,7 @@
         <X size={24} strokeWidth={2.5} />
       </button>
       <span class="min-w-0 flex-1 text-sm">
-        <LiveBroadcaster {live} size="sm" onName={(n) => (name = n)} />
+        <LiveIdentity {live} size="sm" onName={(n) => (name = n)} />
       </span>
       <LiveBadge />
       {#if elapsedMs !== null}

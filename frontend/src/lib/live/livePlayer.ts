@@ -36,7 +36,7 @@ import {
   isLiveRefusal,
 } from './api';
 import { LiveSegmentOpenError, openLiveSegment } from './liveCrypto';
-import { initSegmentEnd } from './fmp4';
+import { Fmp4ParseError, initSegmentEnd } from './fmp4Segments';
 import {
   LIVE_BROADCASTER_QUIET_MS,
   LIVE_MANIFEST_POLL_MS,
@@ -190,6 +190,11 @@ export class LivePlayer {
   /** Bumped by every start and stop: a continuation of an older run sees it changed and returns. */
   private generation = 0;
   private cancelTimer: (() => void) | null = null;
+  /**
+   * Cancels the run's segment downloads. A closed or restarted viewer must not leave a fetch
+   * running beside the new run's: nginx bounds segment connections per address (`limit_conn`).
+   */
+  private downloads: AbortController | null = null;
   private detach: (() => void) | null = null;
 
   private keyHex: string | null = null;
@@ -239,6 +244,7 @@ export class LivePlayer {
     console.debug(`[LIVE] viewer start ${this.liveId}`);
     this.teardownMedia();
     const gen = ++this.generation;
+    this.downloads = new AbortController();
     this.resetRun();
     this.running = true;
     // Said even when it already was: the screen leaves a final state for this one.
@@ -343,12 +349,21 @@ export class LivePlayer {
   }
 
   private teardownMedia(): void {
+    this.abortDownloads();
     this.cancelTimer?.();
     this.cancelTimer = null;
     this.detach?.();
     this.detach = null;
     this.source = null;
     this.buffer = null;
+  }
+
+  /** Cancels every segment download of the run that is ending; its rejection is then ignored. */
+  private abortDownloads(): void {
+    if (!this.downloads) return;
+    console.debug(`[LIVE] viewer ${this.liveId}: segment downloads of the ending run cancelled`);
+    this.downloads.abort();
+    this.downloads = null;
   }
 
   private giveBackSeat(): void {
@@ -391,6 +406,7 @@ export class LivePlayer {
     this.generation++;
     this.running = false;
     this.summarise(final.kind);
+    this.abortDownloads();
     this.cancelTimer?.();
     this.cancelTimer = null;
     // A refused seat (`full`) was never held, and an ended live freed every seat on the server.
@@ -546,7 +562,7 @@ export class LivePlayer {
   ): Promise<Uint8Array<ArrayBuffer> | null> {
     let sealed: ArrayBuffer;
     try {
-      sealed = await this.deps.fetchSegment(this.liveId, s.name);
+      sealed = await this.deps.fetchSegment(this.liveId, s.name, this.downloads?.signal);
     } catch (e) {
       if (!isLiveRefusal(e, 'not-found') || required) throw e;
       console.warn(`[LIVE] viewer ${this.liveId}: segment ${s.index} is gone - skipped`);
@@ -582,7 +598,18 @@ export class LivePlayer {
     if (!this.alive(gen)) return;
     this.last = Math.max(this.last, s.index);
     if (!media) return;
-    const end = initSegmentEnd(media);
+    let end: number;
+    try {
+      end = initSegmentEnd(media);
+    } catch (e) {
+      if (!(e instanceof Fmp4ParseError)) throw e;
+      // The seal opened, so these bytes are the broadcaster's own: its recorder wrote a box no
+      // engine can frame, and every later segment of that recorder will be the same.
+      console.error(
+        `[LIVE] viewer ${this.liveId}: segment ${s.index} is not framable (${e.message})`
+      );
+      throw new StopOn({ kind: 'unavailable', reason: 'playback' });
+    }
     if (end > 0) {
       const init = media.subarray(0, end);
       if (!this.lastInit || !sameBytes(init, this.lastInit)) {

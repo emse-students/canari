@@ -9,7 +9,7 @@
    */
   import { Radio } from '@lucide/svelte';
   import LiveBadge from './LiveBadge.svelte';
-  import LiveBroadcaster from './LiveBroadcaster.svelte';
+  import LiveIdentity from './LiveIdentity.svelte';
   import { loadOpenLivesForFeed } from '$lib/live/openLives';
   import type { LiveListItem } from '$lib/live/types';
   import { m } from '$lib/paraglide/messages';
@@ -66,7 +66,7 @@
             data-live-open={live.id}
           >
             <span class="min-w-0 flex-1">
-              <LiveBroadcaster {live} size="sm" onName={(n) => (names[live.id] = n)} />
+              <LiveIdentity {live} size="sm" onName={(n) => (names[live.id] = n)} />
             </span>
             <LiveBadge />
           </button>
