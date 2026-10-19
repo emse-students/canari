@@ -14,6 +14,10 @@ interface TransformEventLike {
 let callKey: CryptoKey | null = null;
 const ivLength = 12;
 let decryptFailures = 0;
+/** Receiver frames too short to carry an IV, dropped before any decrypt (see `decryptFrame`). */
+let tooShort = 0;
+/** How many of the too-short frames were EMPTY (carry nothing; counted, not named). */
+let tooShortEmpty = 0;
 // Per-kind counters so the logs unambiguously show whether *video* (not just audio)
 // frames flow through the E2E transform - critical for diagnosing black remote video.
 const encrypted = { audio: 0, video: 0 };
@@ -29,6 +33,11 @@ let metadataFailures = 0;
 /** Every transformer this worker was handed is numbered, and counted per side (`onrtctransform`). */
 let transformerSeq = 0;
 const transformersPerSide: Record<string, number> = {};
+/**
+ * Every frame the engine handed a transform, per side, counted BEFORE anything can drop or throw:
+ * the one number that says whether the transform is in the media path at all (`report`).
+ */
+const framesIn: Record<string, number> = {};
 /**
  * The IVs of the last frames this worker ENCRYPTED, as hex. A sender input that STARTS with one of
  * them is a frame this worker already encrypted, handed back for a second pass: exact, and no
@@ -52,6 +61,10 @@ const workerScope = self as RtcTransformWorkerScope;
 /** Receives the AES-GCM key material from the main thread (raw bytes, not CryptoKey). */
 self.onmessage = async (event: MessageEvent<{ type: string; payload?: ArrayBuffer }>) => {
   if (event.origin && event.origin !== self.location.origin) return;
+  if (event.data?.type === 'report') {
+    self.postMessage(workerReport((event.data as { tag?: string }).tag ?? ''));
+    return;
+  }
   if (event.data?.type === 'setKey') {
     const raw = event.data.payload;
     if (!raw || raw.byteLength !== 32) {
@@ -89,6 +102,7 @@ workerScope.onrtctransform = (event: Event) => {
 
   const transform = new TransformStream({
     transform: async (frame, controller) => {
+      framesIn[sideKey] = (framesIn[sideKey] ?? 0) + 1;
       if (!callKey) {
         droppedNoKey++;
         if (droppedNoKey <= 3 || droppedNoKey % 200 === 0) {
@@ -153,6 +167,30 @@ workerScope.onrtctransform = (event: Event) => {
     .pipeThrough(transform)
     .pipeTo(transformEvent.transformer.writable);
 };
+
+/**
+ * What this worker has seen since it started, answered on request (`{ type: 'report' }`). WHY
+ * (2026-10-19): a Mi 9T logged NO worker line in five calls - no first-frame `encrypting`, no
+ * `decrypting` - and nothing could say whether the messages were lost or no frame ever reached
+ * the transform. A report the main thread ASKS for separates the three: no answer (the bridge),
+ * zero transformers (the engine never handed the worker one), zero frames (handed, never fed).
+ */
+function workerReport(tag: string) {
+  return {
+    type: 'report',
+    tag,
+    transformers: { ...transformersPerSide },
+    framesIn: { ...framesIn },
+    encrypted: { ...encrypted },
+    decrypted: { ...decrypted },
+    decryptFailures,
+    tooShort,
+    tooShortEmpty,
+    droppedNoKey,
+    opusInvalid: { ...opusInvalid },
+    doubleEncrypted,
+  };
+}
 
 function frameTypeLabel(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): 'audio' | 'video' {
   return frame.constructor.name.includes('Video') ? 'video' : 'audio';
@@ -382,7 +420,25 @@ async function decryptFrame(
   controller: TransformStreamDefaultController
 ): Promise<boolean> {
   const data = new Uint8Array(frame.data);
-  if (data.byteLength < ivLength) return false;
+  if (data.byteLength < ivLength) {
+    // Cannot be one of ours (every encrypted frame is IV + tag, 28 bytes at least): dropped, and
+    // COUNTED - this branch was silent until 2026-10-19. An EMPTY frame carries nothing (Chrome
+    // hands the receiver a few per call, measured 18-39 in the rig): it is counted in the report
+    // only. A NON-empty one is something else on the wire and is named.
+    tooShort++;
+    if (data.byteLength === 0) {
+      tooShortEmpty++;
+      return false;
+    }
+    const nonEmpty = tooShort - tooShortEmpty;
+    if (nonEmpty <= 3 || nonEmpty % 100 === 0) {
+      self.postMessage({
+        type: 'warn',
+        detail: `receiver frame of ${data.byteLength} byte(s) dropped: shorter than an IV (${nonEmpty} so far)`,
+      });
+    }
+    return false;
+  }
 
   const iv = data.slice(0, ivLength);
   const ciphertext = data.slice(ivLength);

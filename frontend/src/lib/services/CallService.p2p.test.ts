@@ -82,7 +82,13 @@ vi.mock('$lib/utils/apiFetch', () => ({
   }),
 }));
 
-/** The E2E worker: answers `setKey` with `keyReady`, as the real one does. */
+/** How the fake E2E worker answers a `report` request; `null` = it never answers. */
+const workerAnswers = {
+  report: { sender: 250, receiver: 251 } as { sender: number; receiver: number } | null,
+  terminated: 0,
+};
+
+/** The E2E worker: answers `setKey` with `keyReady` and `report` with counters, as the real one does. */
 vi.mock('../workers/encryption.worker?worker', () => ({
   default: class {
     onmessage: ((e: MessageEvent) => void) | null = null;
@@ -93,7 +99,29 @@ vi.mock('../workers/encryption.worker?worker', () => ({
     removeEventListener(_: string, l: (e: MessageEvent) => void) {
       this.listeners = this.listeners.filter((x) => x !== l);
     }
-    postMessage(msg: { type: string }) {
+    postMessage(msg: { type: string; tag?: string }) {
+      if (msg.type === 'report') {
+        const frames = workerAnswers.report;
+        if (!frames) return;
+        queueMicrotask(() => {
+          const data = {
+            type: 'report',
+            tag: msg.tag,
+            transformers: { sender: 1, receiver: 1 },
+            framesIn: { ...frames },
+            encrypted: { audio: frames.sender, video: 0 },
+            decrypted: { audio: frames.receiver, video: 0 },
+            decryptFailures: 0,
+            tooShort: 0,
+            tooShortEmpty: 0,
+            droppedNoKey: 0,
+            opusInvalid: { sender: 0, receiver: 0 },
+            doubleEncrypted: 0,
+          };
+          for (const l of this.listeners.slice()) l({ data } as MessageEvent);
+        });
+        return;
+      }
       if (msg.type !== 'setKey') return;
       queueMicrotask(() => {
         const e = { data: { type: 'keyReady' } } as MessageEvent;
@@ -102,7 +130,9 @@ vi.mock('../workers/encryption.worker?worker', () => ({
         for (const l of this.listeners.slice()) l(e);
       });
     }
-    terminate() {}
+    terminate() {
+      workerAnswers.terminated++;
+    }
   },
 }));
 
@@ -227,6 +257,8 @@ beforeEach(() => {
   server.ringStatus = 200;
   server.roomTokenStatus = 200;
   server.ringHold = null;
+  workerAnswers.report = { sender: 250, receiver: 251 };
+  workerAnswers.terminated = 0;
   order.length = 0;
   FakeSocket.instances = [];
   FakePeerConnection.instances = [];
@@ -425,6 +457,91 @@ describe('what the call UI reads: the connected moment', () => {
     service.endCall();
     expect(get(service.callState)).toBe('ended');
     expect(get(service.endedAt)).not.toBeNull();
+  });
+});
+
+describe('the E2E worker report (2026-10-19)', () => {
+  // An engine whose sender and receiver define `transform` natively, as Chromium and WebKit do.
+  class WithTransform {
+    get transform() {
+      return null;
+    }
+  }
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    vi.stubGlobal('RTCRtpSender', WithTransform);
+    vi.stubGlobal('RTCRtpReceiver', WithTransform);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function connectedCall() {
+    const service = new CallService(fakeMls);
+    const ws = await callerJoined(service);
+    ws.deliver({ type: 'PeerReady', initiator: true });
+    await settle();
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    FakePeerConnection.instances[0].setConnection('connected');
+    const lines = () => vi.mocked(appendLog).mock.calls.map(([l]) => String(l));
+    return { service, pc: FakePeerConnection.instances[0], lines };
+  }
+
+  it('logs ONE report 5 s after connected and one at the end, then stops the worker', async () => {
+    const { service, pc, lines } = await connectedCall();
+    await vi.advanceTimersByTimeAsync(5_000);
+    // A recovery does not schedule a second one.
+    pc.setConnection('disconnected');
+    pc.setConnection('connected');
+    await vi.advanceTimersByTimeAsync(10_000);
+    const reports = () => lines().filter((l) => l.includes('E2E worker report'));
+    expect(reports()).toHaveLength(1);
+    expect(reports()[0]).toContain('(5 s after connected)');
+    expect(reports()[0]).toContain('frames in sender=250 receiver=251');
+    expect(reports()[0]).not.toContain('ERROR');
+
+    service.endCall();
+    // The call summary stays 1.5 s; the cleanup after it asks the worker, THEN stops it.
+    await vi.advanceTimersByTimeAsync(1_499);
+    expect(workerAnswers.terminated).toBe(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(reports()).toHaveLength(2);
+    expect(reports()[1]).toContain('(call end)');
+    expect(workerAnswers.terminated).toBe(1);
+  });
+
+  it('accuses the bridge when the worker never answers, and still stops it', async () => {
+    workerAnswers.report = null;
+    const { service, lines } = await connectedCall();
+    await vi.advanceTimersByTimeAsync(5_000 + 1_500);
+    expect(lines()).toContain(
+      '[Call] ERROR E2E worker report (5 s after connected): the worker did not answer in 1500 ms - its messages do not reach this thread'
+    );
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(1_500 + 1_500);
+    expect(workerAnswers.terminated).toBe(1);
+  });
+
+  it('names a receiver transform that was never fed a frame', async () => {
+    workerAnswers.report = { sender: 250, receiver: 0 };
+    const { lines } = await connectedCall();
+    await vi.advanceTimersByTimeAsync(5_000);
+    const line = lines().find((l) => l.includes('E2E worker report'));
+    expect(line?.startsWith('[Call] ERROR E2E worker report')).toBe(true);
+    expect(line).toContain('no frame reached the RECEIVER transform');
+  });
+
+  it('owes no report for a call that never connected', async () => {
+    const service = new CallService(fakeMls);
+    await callerJoined(service);
+    const { appendLog } = await import('$lib/utils/sessionLog');
+    vi.mocked(appendLog).mockClear();
+    service.endCall();
+    await vi.advanceTimersByTimeAsync(4_000);
+    expect(vi.mocked(appendLog).mock.calls.some(([l]) => String(l).includes('worker report'))).toBe(
+      false
+    );
   });
 });
 

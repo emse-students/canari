@@ -30,6 +30,11 @@ import { CALLS_ENABLED } from '$lib/features';
 import { isBlockedWith, refusalCodeOf } from '$lib/users/blocks';
 import { notificationPreferences } from '$lib/stores/notificationPreferences.svelte';
 import { audioCodecOrder, describeAudioCodecs, describeSelectedPair } from '$lib/utils/callStats';
+import {
+  describeE2eReport,
+  readE2eEngineFacts,
+  type E2eWorkerReport,
+} from '$lib/utils/callE2eReport';
 
 export type CallState = 'idle' | 'calling' | 'incoming' | 'incall' | 'ended';
 
@@ -160,6 +165,8 @@ export class CallService {
   private localStream: MediaStream | null = null;
   private encryptionWorker: Worker | null = null;
   private workerKeyReady: Promise<void> | null = null;
+  /** The one E2E worker report of a call, 5 s after its first `connected` (`logE2eReport`). */
+  private e2eReportTimer: number | null = null;
   /** All remote tracks merged for 1:1 display (audio + video in one MediaStream). */
   private mergedRemoteStream: MediaStream | null = null;
   private callKeyBytes: Uint8Array | null = null;
@@ -578,6 +585,12 @@ export class CallService {
   }
 
   private cleanup() {
+    // Read before the reset below: only a call that connected owes a final worker report.
+    const wasConnected = get(this.connectedAt) !== null;
+    if (this.e2eReportTimer !== null) {
+      window.clearTimeout(this.e2eReportTimer);
+      this.e2eReportTimer = null;
+    }
     this.clearRingTimer();
     this.clearResumeTimer();
     this.inviteSent = false;
@@ -624,9 +637,13 @@ export class CallService {
       this.signaledWs = null;
     }
     if (this.encryptionWorker) {
-      this.encryptionWorker.terminate();
+      const worker = this.encryptionWorker;
       this.encryptionWorker = null;
       this.workerKeyReady = null;
+      // The counters die with the worker, so the final report is asked BEFORE it goes.
+      if (wasConnected)
+        void this.logE2eReport('call end', worker).finally(() => worker.terminate());
+      else worker.terminate();
     }
 
     this.remoteStream.set(null);
@@ -1435,6 +1452,15 @@ export class CallService {
         // The RTP streams bind their codec on the first packet, after `connected`: read once
         // the media has had time to flow (a diagnostic read, nothing waits on it).
         setTimeout(() => this.logAudioCodecs(pc), CallService.CODEC_READ_DELAY_MS);
+        // ONE report per call, at the first connect (a reconnect does not re-arm it): frames
+        // per transform side, read from the worker itself, plus the one at the end (`cleanup`).
+        if (this.e2eReportTimer === null && this.encryptionWorker) {
+          const worker = this.encryptionWorker;
+          this.e2eReportTimer = window.setTimeout(
+            () => void this.logE2eReport('5 s after connected', worker),
+            CallService.E2E_REPORT_DELAY_MS
+          );
+        }
       }
       if (state === 'disconnected') {
         // 'disconnected' is often transient (WebRTC may recover); log but do not tear down.
@@ -1495,6 +1521,38 @@ export class CallService {
       }
       await configureCallAudioSenders(pc, this.callHasVideo);
     }
+  }
+
+  /** How long after `connected` the E2E worker is asked for its report (see `logE2eReport`). */
+  private static readonly E2E_REPORT_DELAY_MS = 5_000;
+  /** How long the worker has to answer a report request before the bridge itself is accused. */
+  private static readonly E2E_REPORT_ANSWER_MS = 1_500;
+
+  /**
+   * Asks the E2E worker for its counters and logs them as ONE line (`describeE2eReport`). WHY
+   * (2026-10-19): the Mi 9T logged no worker line in five calls, which could mean a lost message
+   * bridge, a transform never handed to the worker, or a transform never fed a frame. Asked, not
+   * waited for: no answer within `E2E_REPORT_ANSWER_MS` accuses the bridge in its own line.
+   */
+  private logE2eReport(tag: string, worker: Worker): Promise<void> {
+    return new Promise<void>((resolve) => {
+      const onAnswer = (event: MessageEvent<{ type?: string; tag?: string }>) => {
+        if (event.data?.type !== 'report' || event.data.tag !== tag) return;
+        window.clearTimeout(timer);
+        worker.removeEventListener('message', onAnswer);
+        appendLog(describeE2eReport(event.data as E2eWorkerReport, readE2eEngineFacts()));
+        resolve();
+      };
+      const timer = window.setTimeout(() => {
+        worker.removeEventListener('message', onAnswer);
+        appendLog(
+          `[Call] ERROR E2E worker report (${tag}): the worker did not answer in ${CallService.E2E_REPORT_ANSWER_MS} ms - its messages do not reach this thread`
+        );
+        resolve();
+      }, CallService.E2E_REPORT_ANSWER_MS);
+      worker.addEventListener('message', onAnswer);
+      worker.postMessage({ type: 'report', tag });
+    });
   }
 
   /** How long after `connected` the negotiated audio codecs are read (see `logAudioCodecs`). */

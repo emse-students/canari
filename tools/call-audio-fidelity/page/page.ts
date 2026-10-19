@@ -342,8 +342,17 @@ async function finish() {
     await recorder.ctx.close();
   }
   let tap: { sent: string[]; received: string[] } | null = null;
+  let report: Record<string, unknown> | null = null;
   if (worker) {
     const w = worker;
+    // The app worker's OWN report, asked exactly as CallService asks it: frames per side.
+    report = await new Promise((resolve) => {
+      w.addEventListener('message', (e: MessageEvent<{ type: string }>) => {
+        if (e.data?.type === 'report') resolve(e.data as unknown as Record<string, unknown>);
+      });
+      w.postMessage({ type: 'report', tag: 'rig' });
+    });
+    note(`worker report ${JSON.stringify(report)}`);
     tap = await new Promise((resolve) => {
       w.addEventListener('message', (e: MessageEvent<{ type: string }>) => {
         if (e.data?.type === 'tap')
@@ -354,7 +363,12 @@ async function finish() {
   }
   pc.close();
   worker?.terminate();
-  return { b64, sampleRate, stats: statsLog, senderParams, log, tap };
+  const engine = {
+    ua: navigator.userAgent,
+    senderAttr: !!Object.getOwnPropertyDescriptor(RTCRtpSender.prototype, 'transform'),
+    receiverAttr: !!Object.getOwnPropertyDescriptor(RTCRtpReceiver.prototype, 'transform'),
+  };
+  return { b64, sampleRate, stats: statsLog, senderParams, log, tap, report, engine };
 }
 
 Object.assign(window, {

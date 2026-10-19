@@ -348,6 +348,14 @@ async function runRow(row, wavs, url) {
         measured: bitExact(tx.tap?.sent, rx.tap?.received),
         reverse: bitExact(rx.tap?.sent, tx.tap?.received),
       },
+      // The app worker's own report: frames the engine handed each transform. An E2E row whose
+      // sender or receiver transform saw NO frame is media flowing AROUND the worker.
+      transformPath: {
+        e2e: !!row.caller.e2e && !!row.callee.e2e,
+        senderFrames: tx.report?.framesIn?.sender ?? 0,
+        receiverFrames: rx.report?.framesIn?.receiver ?? 0,
+      },
+      engine: rx.engine,
       txTargetBitrate: txStats.out_targetBitrate,
       ...summarise(rx.stats),
       metrics,
@@ -421,7 +429,7 @@ async function main() {
       }
       results.push(r);
       say(
-        `  ${r.row}: speech SNR ${r.metrics.segments.speech.snrDb.toFixed(1)} dB, LSD ${r.metrics.segments.speech.lsdDb.toFixed(2)} dB, bw ${r.metrics.bandwidthHz} Hz, ${verdictText(r.verdict)}`
+        `  ${r.row} [${/Chrome\/[\d.]+/.exec(r.engine?.ua ?? '')?.[0] ?? '?'}, transform frames tx=${r.transformPath.senderFrames} rx=${r.transformPath.receiverFrames}]: speech SNR ${r.metrics.segments.speech.snrDb.toFixed(1)} dB, LSD ${r.metrics.segments.speech.lsdDb.toFixed(2)} dB, bw ${r.metrics.bandwidthHz} Hz, ${verdictText(r.verdict)}`
       );
     }
   } finally {

@@ -147,6 +147,17 @@ export function witnessLines(r) {
 }
 
 /**
+ * On an E2E row, both transforms must have been handed frames by the engine (the worker's own
+ * `report`): an engine can accept `sender.transform = x` and still route the media around it.
+ * A row without E2E, or a result saved before the report existed, is not judged by it.
+ */
+export function transformInPath(r) {
+  const t = r.transformPath;
+  if (!t?.e2e) return true;
+  return t.senderFrames > 0 && t.receiverFrames > 0;
+}
+
+/**
  * Applies the thresholds to one result. Rows with injected loss skip the clean-network checks.
  * A FAULT row must FAIL: one that passes means the rig cannot see that fault any more.
  */
@@ -158,6 +169,7 @@ export function verdict(r) {
     ['match', r.metrics.matchCoef >= (lossy ? THRESHOLDS.minMatchLossy : THRESHOLDS.minMatch)],
     ['corrupted-frames', corrupted <= THRESHOLDS.maxCorruptedFrames],
     ['witness', witnessLines(r) <= THRESHOLDS.maxWitnessLines],
+    ['transform-in-path', transformInPath(r)],
     ['lsd', sp.lsdDb <= THRESHOLDS.maxSpeechLsdDb],
     ['hf-tilt', sp.hfLossDb >= THRESHOLDS.minSpeechHfTiltDb],
     ['bandwidth', r.metrics.bandwidthHz >= THRESHOLDS.minBandwidthHz],
