@@ -58,6 +58,9 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // part of the erasure deletes the blob (class `form-file`, owned by the uploader).
   'form_files.uploaderId': { action: 'delete' },
   'form_files.fileName': { action: 'delete', via: 'uploaderId' },
+  // A republication request addressed to the account (D38b): it is about the account's own post,
+  // which goes with it, so the request goes too.
+  'proposals.toUserId': { action: 'delete' },
   'post_notifications.recipientId': { action: 'delete' },
   'post_notifications.actorId': { action: 'delete' },
   'post_notifications.actorName': { action: 'delete', via: 'actorId' },
@@ -342,6 +345,10 @@ export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   },
   // Own content and standing
   { label: 'posts', sql: `DELETE FROM posts WHERE "authorId" = $1` },
+  // The republication requests addressed to the account (D38b). Its personal posts are deleted just
+  // above and migration 096's trigger takes their requests along; this names the column itself, so
+  // a request whose post outlived that (none can, by the trigger) is still not left addressed to it.
+  { label: 'proposals_to_user', sql: `DELETE FROM proposals WHERE "toUserId" = $1` },
   { label: 'association_members', sql: `DELETE FROM association_members WHERE "userId" = $1` },
   { label: 'role_history', sql: `DELETE FROM association_role_history WHERE user_id = $1` },
   {

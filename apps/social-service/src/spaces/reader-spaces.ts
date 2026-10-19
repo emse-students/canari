@@ -217,9 +217,11 @@ function sharesSpaceWithAuthorSql(author: string, user: string): string {
  *   reader's spaces), OR sees an association that republished it. A post has no rules of its own
  *   any more (D38, user 2026-10-04): what widens its audience is a republication, never the author.
  *   The promo and contributor FILTERS of D38 are not built yet, so nothing narrows either branch;
- * - a personal post (anonymous included): the user shares at least one space with its AUTHOR.
- *   NO read grant ever reaches this branch (WP7): a grant is spliced into the association branch
- *   alone, so a named reader sees what an ENTITY published and never what a student wrote.
+ * - a personal post (anonymous included): the user shares at least one space with its AUTHOR, OR
+ *   sees an association that republished it - which exists only because the author ACCEPTED that
+ *   association's request (D38b). NO read grant ever reaches this branch (WP7), the republication
+ *   disjunct included (it is spliced without `readGrants`): a named reader sees what an ENTITY
+ *   published and never what a student wrote.
  *
  * MONOTONE IN REPUBLICATIONS, and `NEWLY_REACHED_BY_REPUBLICATION_SQL` relies on it: adding one
  * only ever adds a disjunct, so who sees a post after is who saw it before plus who the republisher
@@ -232,7 +234,9 @@ export function postVisibleToUserSql(
 ): string {
   const adminClause = opts.adminSeesAll ? `${isAdminSql(user)}\n    OR ` : '';
   return `(${adminClause}${post}."authorId" = ${user}.id
-    OR (${post}."associationId" IS NULL AND ${sharesSpaceWithAuthorSql(`${post}."authorId"`, user)})
+    OR (${post}."associationId" IS NULL AND (
+      ${sharesSpaceWithAuthorSql(`${post}."authorId"`, user)}
+      OR ${republicationReachesUserSql(post, user)}))
     OR (${post}."associationId" IS NOT NULL AND (
       ${associationVisibleToUserSql(`${post}."associationId"`, user, { readGrants: opts.readGrants })}
       OR ${republicationReachesUserSql(post, user, { readGrants: opts.readGrants })})))`;
@@ -249,6 +253,28 @@ export const NEWLY_REACHED_BY_REPUBLICATION_SQL = `SELECT nr_user.id FROM users 
   WHERE nr_user.id <> nr_post."authorId"
     AND ${associationVisibleToUserSql('$2::uuid', 'nr_user')}
     AND NOT ${postVisibleToUserSql('nr_post', 'nr_user')}`;
+
+/**
+ * `NEWLY_REACHED_BY_REPUBLICATION_SQL` for a PERSONAL post (D38b), with two more terms:
+ * - never a reader on either side of a block with the author: the feed hides a blocked author's
+ *   posts, so telling them would be a notification about a post they are never shown;
+ * - BEFORE the first announce (`announced` false), never one of the author's FOLLOWERS: a personal
+ *   post is announced to its author's followers who see it (`announceRecipientsSql(true)`), and
+ *   once the republication commits they see it, so the sweep tells them - and telling them here
+ *   too would tell them twice. After the announce, the sweep is spent and everyone newly reached is
+ *   told here.
+ */
+export function newlyReachedByPersonalRepublicationSql(announced: boolean): string {
+  const followers = announced
+    ? ''
+    : `
+    AND NOT EXISTS (SELECT 1 FROM user_follows nr_follow
+      WHERE nr_follow."followedUserId" = nr_post."authorId" AND nr_follow."followerUserId" = nr_user.id)`;
+  return `${NEWLY_REACHED_BY_REPUBLICATION_SQL}
+    AND NOT EXISTS (SELECT 1 FROM user_blocks nr_block
+      WHERE (nr_block."blockerId" = nr_user.id AND nr_block."blockedId" = nr_post."authorId")
+         OR (nr_block."blockerId" = nr_post."authorId" AND nr_block."blockedId" = nr_user.id))${followers}`;
+}
 
 /**
  * Post row `post` is visible to the viewer whose id is the placeholder `viewer` (`$5`, or a TypeORM

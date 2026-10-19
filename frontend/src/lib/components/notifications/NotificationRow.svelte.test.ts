@@ -175,6 +175,22 @@ describe('NotificationRow sentence', () => {
     expect(row.textContent).not.toContain('a commenté');
     expect(row.querySelector('[aria-label^="Logo de"]')).not.toBeNull();
   });
+
+  // D38b: an association ASKS the author (its logo); the author ANSWERS the proposer (a person).
+  it('says an association asks to relay YOUR post, and how the author answered', () => {
+    const asked = renderRow({
+      ...postRow('repost_personal_requested'),
+      associationId: 'asso-1',
+    });
+    expect(asked.textContent).toContain('demande à relayer votre publication');
+    expect(asked.querySelector('[aria-label^="Logo de"]')).not.toBeNull();
+    const accepted = renderRow({ ...postRow('repost_personal_accepted'), associationId: 'asso-1' });
+    expect(accepted.textContent).toContain('a accepté votre demande');
+    expect(accepted.querySelector('[aria-label^="Logo de"]')).toBeNull();
+    const refused = renderRow(postRow('repost_personal_refused'));
+    expect(refused.textContent).toContain('a refusé votre demande');
+    expect(refused.textContent).not.toContain('a commenté');
+  });
 });
 
 describe('NotificationRow with a type this build does not know', () => {

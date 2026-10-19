@@ -9,8 +9,12 @@
  */
 import { socialRequest } from '$lib/posts/api';
 
-/** The kinds the server knows. A new kind is added here AND in the backend's `PROPOSAL_KINDS`. */
-export type ProposalKind = 'repost' | 'coorganise';
+/**
+ * The kinds the server knows. A new kind is added here AND in the backend's `PROPOSAL_KINDS`.
+ * `repost-personal` (D38b) is the one addressed to a PERSON - the author of a personal post, who
+ * alone decides it from `/notifications/requests`; an association sees it only as something it SENT.
+ */
+export type ProposalKind = 'repost' | 'coorganise' | 'repost-personal';
 
 export type ProposalStatus = 'pending' | 'accepted' | 'refused' | 'withdrawn';
 
@@ -38,14 +42,37 @@ export interface CoorganiseSubject {
   associationName: string | null;
 }
 
+/** A personal post an association asked its author to let it carry (D38b). */
+export interface PersonalRepostSubject {
+  preview: string;
+  createdAt: string;
+}
+
+/** A person beside a proposal: the author asked, or the member who asked. `name` null when unknown. */
+export interface ProposalPerson {
+  id: string;
+  name: string | null;
+}
+
 interface ProposalBase {
   id: string;
   status: ProposalStatus;
-  /** What is proposed - a post id for `repost`, an event id for `coorganise`. */
+  /** What is proposed - a post id for `repost` and `repost-personal`, an event id for `coorganise`. */
   subjectId: string;
   from: ProposalAssociation;
-  to: ProposalAssociation;
   createdAt: string;
+}
+
+/** Addressed to an association, whose holders of the kind's flag decide. */
+interface AssociationAddressed extends ProposalBase {
+  to: ProposalAssociation;
+  toUser: null;
+}
+
+/** Addressed to a person (D38b), who alone decides. */
+interface PersonAddressed extends ProposalBase {
+  to: null;
+  toUser: ProposalPerson | null;
 }
 
 /**
@@ -53,8 +80,37 @@ interface ProposalBase {
  * (a deleted post).
  */
 export type Proposal =
-  | (ProposalBase & { kind: 'repost'; subject: RepostSubject | null })
-  | (ProposalBase & { kind: 'coorganise'; subject: CoorganiseSubject | null });
+  | (AssociationAddressed & { kind: 'repost'; subject: RepostSubject | null })
+  | (AssociationAddressed & { kind: 'coorganise'; subject: CoorganiseSubject | null })
+  | (PersonAddressed & { kind: 'repost-personal'; subject: PersonalRepostSubject | null });
+
+/**
+ * One request in the AUTHOR's inbox (D38b): who asks, in which association's name, about which post,
+ * and how many readers accepting would newly reach - so the answer is an informed one.
+ */
+export interface RepublicationRequest {
+  id: string;
+  kind: 'repost-personal';
+  status: ProposalStatus;
+  /** The post asked about. */
+  subjectId: string;
+  /** The association that would carry the post. */
+  from: ProposalAssociation;
+  /** The member who asked; null once their account is erased. */
+  proposedBy: ProposalPerson | null;
+  /** Null when the post is gone. */
+  details: (PersonalRepostSubject & { newlyReached: number }) | null;
+  createdAt: string;
+}
+
+/** The requests waiting on the signed-in author, oldest first. */
+export async function listMyRepublicationRequests(): Promise<{
+  incoming: RepublicationRequest[];
+}> {
+  return socialRequest<{ incoming: RepublicationRequest[] }>(
+    '/api/posts/me/republication-requests'
+  );
+}
 
 /** An association's pending proposals: what it was sent, and what it sent and still waits on. */
 export interface ProposalQueue {

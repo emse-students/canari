@@ -97,6 +97,12 @@
         },
         {
           "scheme": [
+            "fr.emse.canari"
+          ],
+          "host": "republication-requests"
+        },
+        {
+          "scheme": [
             "https"
           ],
           "host": "canari-emse.fr",

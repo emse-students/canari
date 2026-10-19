@@ -30,6 +30,7 @@ export type PushContentKey =
   | 'social_followed_post'
   | 'social_association_repost'
   | 'social_repost_proposed'
+  | 'social_repost_personal_requested'
   | 'social_coorganise_proposed'
   | 'social_live_started'
   | 'form_opening_soon'
@@ -522,6 +523,25 @@ export function repostProposedContent(
     arg: preview,
     legacyTitle: `${associationName} propose de relayer une publication`,
     legacyBody: preview || 'Publication à relayer',
+  };
+}
+
+/**
+ * An association asks the recipient - the AUTHOR - to let it republish their personal post (D38b).
+ * `actorName` is the ASKING association; `arg` the post's opening.
+ */
+export function repostPersonalRequestedContent(
+  associationName: string,
+  preview: string,
+  icon?: PushIcon
+): PushContent {
+  return {
+    key: 'social_repost_personal_requested',
+    icon,
+    actorName: associationName,
+    arg: preview,
+    legacyTitle: `${associationName} demande à relayer votre publication`,
+    legacyBody: preview || 'Demande de republication',
   };
 }
 

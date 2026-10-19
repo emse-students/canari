@@ -511,6 +511,8 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     // Republication (D38): the republishing, then the proposing, association names the title.
     @"social_association_repost" : @"association_repost",
     @"social_repost_proposed" : @"repost_proposed",
+    // D38b: an association asks the AUTHOR to republish their personal post.
+    @"social_repost_personal_requested" : @"repost_personal_requested",
     // Co-organisation (D39): the organising association names the title, the event is the body.
     @"social_coorganise_proposed" : @"coorganise_proposed",
     // A live started (WP-L7): the broadcaster - a person or an association - names the title, and

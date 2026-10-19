@@ -40,6 +40,14 @@ describe('socialDeepLink - the payload contract of a tap', () => {
     expect(socialDeepLink({ liveId: 'a/b?x=1' })).toBe('fr.emse.canari://live/a%2Fb%3Fx%3D1');
   });
 
+  it("a republication request opens the author's requests page, never a path the payload names", () => {
+    expect(socialDeepLink({ type: 'social', target: 'republication-requests' })).toBe(
+      'fr.emse.canari://republication-requests'
+    );
+    // Only the closed value is a target: anything else is ignored, never concatenated.
+    expect(socialDeepLink({ type: 'social', target: 'chat/x' })).toBe('fr.emse.canari://posts');
+  });
+
   it('a payload naming nothing opens the posts list', () => {
     expect(socialDeepLink({ type: 'social' })).toBe('fr.emse.canari://posts');
   });

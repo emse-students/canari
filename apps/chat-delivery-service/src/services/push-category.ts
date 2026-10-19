@@ -50,6 +50,8 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   // repost proposal is a post matter, and a co-organisation proposal is an agenda one.
   social_association_repost: 'posts',
   social_repost_proposed: 'posts',
+  // D38b: an association asks an author to republish their personal post - a post matter.
+  social_repost_personal_requested: 'posts',
   social_coorganise_proposed: 'events',
   // A live started by a member or an association the reader follows (WP-L7): a publication of the
   // people the reader follows, so the switch that silences their posts silences their lives too.

@@ -47,6 +47,7 @@ import {
   type PostAccessIntent,
 } from '../spaces/reader-spaces';
 import {
+  PERSONAL_REPUBLISHING_ASSOCIATION_TYPES,
   REPUBLISHING_ASSOCIATION_TYPES,
   dropRepublicationsOf,
   republishersOf,
@@ -78,7 +79,33 @@ interface PostViewerContext {
    * post is absent. Unused for a global admin, who sees every post by its id.
    */
   grantFreeIds: Set<string>;
+  /**
+   * D38b: the associations the reader may ask an author IN THE NAME OF - `POST_AS_ASSO` HELD (a
+   * global admin included: the tier grants nothing here), of the kind that may ask, not archived.
+   */
+  personalRepublishAsIds: Set<string>;
+  /**
+   * D38b: ids, among the batch, of the personal posts the server would let this reader ask about -
+   * `PersonalRepublicationsService.resolveRecipient`'s own refusals, read in ONE query.
+   */
+  requestablePersonalIds: Set<string>;
+  /** D38b: per post, the standing requests of the reader's associations (any status but withdrawn). */
+  personalRequests: Map<string, StandingPersonalRequest[]>;
 }
+
+/** A request one of the reader's associations made for a personal post and that still stands (D38b). */
+interface StandingPersonalRequest {
+  associationId: string;
+  /** Named on the card ("Demande envoyee au nom de X"). */
+  associationName: string;
+  proposalId: string;
+  status: 'pending' | 'accepted' | 'refused';
+}
+
+/** What the card is told of one: the accepted ones are already in `republishedBy`. */
+type PersonalRepublicationRequestState = StandingPersonalRequest & {
+  status: 'pending' | 'refused';
+};
 
 /**
  * What one reader may do with one post, decided by the server and rendered as-is by the client.
@@ -105,9 +132,22 @@ interface PostCapabilities {
   canProposeRepublication: boolean;
   /**
    * The republishers (ids among `republishedBy`) whose republication this reader may withdraw - an
-   * association removes its OWN (D38), so these are the ones the reader may publish as.
+   * association removes its OWN (D38), so these are the ones the reader may publish as; and the
+   * AUTHOR of a personal post removes ANY republication of it (D38b).
    */
   canUnrepublishAs: string[];
+  /**
+   * "Republier au nom d'une association" (D38b): a personal, non-anonymous post by somebody else,
+   * seen without a grant, no block either way with its author, and at least one association of the
+   * reader's (`POST_AS_ASSO` held, of the kind that may ask) neither carrying it nor having asked.
+   */
+  canRequestRepublication: boolean;
+  /**
+   * The requests the reader's associations made for this personal post that still stand and are
+   * not yet a republication (D38b): `pending` draws "Demande envoyee" and its withdrawal, `refused`
+   * removes that association from the choices. Empty on any other post.
+   */
+  republicationRequests: PersonalRepublicationRequestState[];
   /**
    * The poll options may be voted: the reader sees the post by a right other than a read grant
    * (a grant opens read, react and comment, never a vote - `assertVisible` 'VOTE').
@@ -213,6 +253,9 @@ export class PostsService {
     managedAssociationIds: new Set(),
     republishAsIds: new Set(),
     grantFreeIds: new Set(),
+    personalRepublishAsIds: new Set(),
+    requestablePersonalIds: new Set(),
+    personalRequests: new Map(),
   };
 
   /**
@@ -220,7 +263,9 @@ export class PostsService {
    * length, and none at all for a reader whose answer is already known.
    *
    * A global administrator short-circuits both - `viewerCapabilities` grants them every control
-   * before it looks at either field.
+   * before it looks at either field. The D38b fields are the exception, read for an administrator
+   * too: asking an author is a right the administrator tier does not grant, so they need their own
+   * memberships like anybody else.
    */
   private async viewerContext(
     rows: { id?: string; associationId?: string | null }[],
@@ -228,7 +273,16 @@ export class PostsService {
     isGlobalAdmin: boolean
   ): Promise<PostViewerContext> {
     if (!viewerId) return PostsService.EMPTY_VIEWER;
+    const postIds = rows.map((row) => row.id).filter((id): id is string => !!id);
+    const personalIds = rows
+      .filter((row) => row.id && !row.associationId)
+      .map((row) => row.id as string);
     if (isGlobalAdmin) {
+      // Read only when the page holds a personal post: nothing else of an administrator's needs it.
+      const memberships =
+        personalIds.length > 0
+          ? await this.republishAsOf(viewerId)
+          : { all: new Set<string>(), personal: new Set<string>() };
       return {
         viewerId,
         isGlobalAdmin: true,
@@ -236,29 +290,28 @@ export class PostsService {
         managedAssociationIds: new Set(),
         republishAsIds: new Set(),
         grantFreeIds: new Set(),
+        ...(await this.personalRequestContext(personalIds, viewerId, memberships.personal)),
       };
     }
     const associationIds = rows.map((row) => row.associationId).filter((id): id is string => !!id);
-    const [managedAssociationIds, isModerator, republishAsIds, grantFreeIds] = await Promise.all([
+    const [managedAssociationIds, isModerator, memberships, grantFreeIds] = await Promise.all([
       this.associationsService.mayActOnAny(
         viewerId,
         associationIds,
         AssociationPermissionFlag.POST_AS_ASSO
       ),
       this.associationsService.isContentModerator(viewerId),
-      this.republishAsIdsOf(viewerId),
-      this.grantFreeVisibleIds(
-        rows.map((row) => row.id).filter((id): id is string => !!id),
-        viewerId
-      ),
+      this.republishAsOf(viewerId),
+      this.grantFreeVisibleIds(postIds, viewerId),
     ]);
     return {
       viewerId,
       isGlobalAdmin: false,
       isModerator,
       managedAssociationIds,
-      republishAsIds,
+      republishAsIds: memberships.all,
       grantFreeIds,
+      ...(await this.personalRequestContext(personalIds, viewerId, memberships.personal)),
     };
   }
 
@@ -279,34 +332,125 @@ export class PostsService {
 
   /**
    * The associations `viewerId` could republish a post AS: membership rows holding `POST_AS_ASSO`,
-   * of a type that republishes. Membership alone is exact here because `POST_AS_ASSO` is in
-   * `SUPER_ADMIN_EXCLUDED_FLAGS` - no BDE tier borrows another association's voice.
+   * of a type that republishes (`all`, D38), and among them those that may ASK an author (D38b:
+   * `personal` - the narrower kind allowlist, not archived). Membership alone is exact here because
+   * `POST_AS_ASSO` is in `SUPER_ADMIN_EXCLUDED_FLAGS` - no BDE tier borrows another association's
+   * voice. ONE query for both.
    */
-  private async republishAsIdsOf(viewerId: string): Promise<Set<string>> {
+  private async republishAsOf(
+    viewerId: string
+  ): Promise<{ all: Set<string>; personal: Set<string> }> {
     const rows: unknown = await this.postRepo.manager.query(
-      `SELECT am."associationId" FROM association_members am
+      `SELECT am."associationId", a.type, COALESCE(a.archived, false) AS archived
+         FROM association_members am
          JOIN associations a ON a.id = am."associationId"
         WHERE am."userId" = $1 AND (am.permissions & $2) <> 0 AND a.type = ANY($3::text[])`,
       [viewerId, AssociationPermissionFlag.POST_AS_ASSO, REPUBLISHING_ASSOCIATION_TYPES]
     );
-    return new Set(
-      Array.isArray(rows) ? rows.map((r: { associationId: string }) => r.associationId) : []
-    );
+    const list = Array.isArray(rows)
+      ? (rows as { associationId: string; type?: string; archived?: boolean }[])
+      : [];
+    return {
+      all: new Set(list.map((r) => r.associationId)),
+      personal: new Set(
+        list
+          .filter(
+            (r) =>
+              !!r.type && PERSONAL_REPUBLISHING_ASSOCIATION_TYPES.includes(r.type) && !r.archived
+          )
+          .map((r) => r.associationId)
+      ),
+    };
   }
 
   /**
-   * Stamps `republishedBy` (D38: "Republie par X, Y") onto each association post of a page, in
-   * ONE query, BEFORE the rows are shaped - `canRepublish` reads it to leave out the associations
-   * that already did.
+   * D38b, for a page: which personal posts the reader may ask about, and what their associations
+   * already asked. Two queries, and none for a reader who speaks for no association that may ask or
+   * a page with no personal post.
+   *
+   * The requestable set is `PersonalRepublicationsService.resolveRecipient`'s refusals as ONE
+   * predicate - not withheld, personal, not anonymous, not the reader's, seen without a grant and
+   * without the administrator's by-id reach, no block either way - so the menu entry is offered
+   * exactly when the request would be accepted (the caps aside, which only a write can count).
+   */
+  private async personalRequestContext(
+    personalIds: string[],
+    viewerId: string,
+    personalRepublishAsIds: Set<string>
+  ): Promise<
+    Pick<
+      PostViewerContext,
+      'personalRepublishAsIds' | 'requestablePersonalIds' | 'personalRequests'
+    >
+  > {
+    const none = {
+      personalRepublishAsIds,
+      requestablePersonalIds: new Set<string>(),
+      personalRequests: new Map<string, StandingPersonalRequest[]>(),
+    };
+    if (personalIds.length === 0 || personalRepublishAsIds.size === 0) return none;
+    const [requestable, standing]: unknown[] = await Promise.all([
+      this.postRepo.manager.query(
+        `SELECT posts.id AS "requestableId" FROM posts
+          WHERE posts.id = ANY($1::uuid[]) AND posts."associationId" IS NULL
+            AND NOT COALESCE(posts.anonymous, false) AND posts."authorId" <> $2
+            AND NOT posts."hiddenByModeration"
+            AND (posts."scheduledAt" IS NULL OR posts."scheduledAt" <= now())
+            AND ${postVisibleToViewerSql('posts', '$2', { adminSeesAll: false, readGrants: false })}
+            AND NOT EXISTS (SELECT 1 FROM user_blocks req_block
+              WHERE (req_block."blockerId" = $2 AND req_block."blockedId" = posts."authorId")
+                 OR (req_block."blockerId" = posts."authorId" AND req_block."blockedId" = $2))`,
+        [personalIds, viewerId]
+      ),
+      this.postRepo.manager.query(
+        `SELECT p."subjectId", p."fromAssociationId", p.id, p.status, a.name AS "associationName"
+           FROM proposals p JOIN associations a ON a.id = p."fromAssociationId"
+          WHERE p.kind = 'repost-personal' AND p.status <> 'withdrawn'
+            AND p."subjectId" = ANY($1::uuid[]) AND p."fromAssociationId" = ANY($2::uuid[])`,
+        [personalIds, [...personalRepublishAsIds]]
+      ),
+    ]);
+    const requestablePersonalIds = new Set(
+      Array.isArray(requestable)
+        ? (requestable as { requestableId: string }[]).map((r) => r.requestableId)
+        : []
+    );
+    const personalRequests = new Map<string, StandingPersonalRequest[]>();
+    const standingRows = Array.isArray(standing)
+      ? (standing as {
+          subjectId: string;
+          fromAssociationId: string;
+          associationName: string;
+          id: string;
+          status: StandingPersonalRequest['status'];
+        }[])
+      : [];
+    for (const row of standingRows) {
+      const list = personalRequests.get(row.subjectId) ?? [];
+      list.push({
+        associationId: row.fromAssociationId,
+        associationName: row.associationName,
+        proposalId: row.id,
+        status: row.status,
+      });
+      personalRequests.set(row.subjectId, list);
+    }
+    return { personalRepublishAsIds, requestablePersonalIds, personalRequests };
+  }
+
+  /**
+   * Stamps `republishedBy` ("Republie par X, Y") onto each post of a page, in ONE query, BEFORE the
+   * rows are shaped - `canRepublish` reads it to leave out the associations that already did. A
+   * PERSONAL post is stamped too since D38b: its author may have let associations carry it.
    */
   private async attachRepublishers(
     rows: { id: string; associationId?: string | null; republishedBy?: Republisher[] }[]
   ): Promise<void> {
-    const ids = rows.filter((r) => r.associationId).map((r) => r.id);
-    const byPost = await republishersOf(this.postRepo.manager, ids);
-    for (const row of rows) {
-      if (row.associationId) row.republishedBy = byPost.get(row.id) ?? [];
-    }
+    const byPost = await republishersOf(
+      this.postRepo.manager,
+      rows.map((r) => r.id)
+    );
+    for (const row of rows) row.republishedBy = byPost.get(row.id) ?? [];
   }
 
   /**
@@ -366,14 +510,47 @@ export class PostsService {
       canRepublish: this.viewerMayRepublish(post, viewer),
       canProposeRepublication:
         !!viewer.viewerId && !!post.associationId && (viewer.isGlobalAdmin || isPublisher),
-      canUnrepublishAs: viewer.viewerId
-        ? (post.republishedBy ?? [])
-            .map((r) => r.id)
-            .filter((id) => viewer.isGlobalAdmin || viewer.republishAsIds.has(id))
-        : [],
+      canUnrepublishAs: this.viewerMayUnrepublishAs(post, viewer),
       canVote:
         !!viewer.viewerId && (viewer.isGlobalAdmin || this.viewerSeesWithoutGrant(post, viewer)),
+      canRequestRepublication: this.viewerMayRequestRepublication(post, viewer),
+      republicationRequests: post.id
+        ? (viewer.personalRequests.get(post.id) ?? []).filter(
+            (r): r is PersonalRepublicationRequestState => r.status !== 'accepted'
+          )
+        : [],
     };
+  }
+
+  /**
+   * `canUnrepublishAs`: an association withdraws its OWN republication (D38) - the ones the reader
+   * publishes as, or all for a global admin - and the AUTHOR of a personal post withdraws any (D38b).
+   */
+  private viewerMayUnrepublishAs(
+    post: {
+      authorId?: string | null;
+      associationId?: string | null;
+      republishedBy?: Republisher[];
+    },
+    viewer: PostViewerContext
+  ): string[] {
+    if (!viewer.viewerId) return [];
+    const ids = (post.republishedBy ?? []).map((r) => r.id);
+    if (!post.associationId && post.authorId === viewer.viewerId) return ids;
+    return ids.filter((id) => viewer.isGlobalAdmin || viewer.republishAsIds.has(id));
+  }
+
+  /** `canRequestRepublication`: see `PostCapabilities` (D38b). */
+  private viewerMayRequestRepublication(
+    post: { id?: string; republishedBy?: Republisher[] },
+    viewer: PostViewerContext
+  ): boolean {
+    if (!viewer.viewerId || !post.id || !viewer.requestablePersonalIds.has(post.id)) return false;
+    const taken = new Set([
+      ...(post.republishedBy ?? []).map((r) => r.id),
+      ...(viewer.personalRequests.get(post.id) ?? []).map((r) => r.associationId),
+    ]);
+    return [...viewer.personalRepublishAsIds].some((id) => !taken.has(id));
   }
 
   /** The post is in the reader's grant-free set: the rule a vote and a republication enforce. */
@@ -381,7 +558,7 @@ export class PostsService {
     return !!post.id && viewer.grantFreeIds.has(post.id);
   }
 
-  /** `canRepublish`: see `PostCapabilities`. A personal post is never republished (D38). */
+  /** `canRepublish`: see `PostCapabilities`. A personal post is never republished AT ONCE (D38b asks its author). */
   private viewerMayRepublish(
     post: { id?: string; associationId?: string | null; republishedBy?: Republisher[] },
     viewer: PostViewerContext

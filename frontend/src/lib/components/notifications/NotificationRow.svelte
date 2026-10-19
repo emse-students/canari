@@ -141,9 +141,25 @@
    * and the body is the event's title.
    */
   const isCoorganiseNotif = $derived(notif.type === 'coorganise_proposed');
+  /**
+   * THE THREE REQUESTS TO AN AUTHOR (D38b), named for the same reason. A request is asked BY an
+   * association, so it draws the association's avatar; its answer is given by the AUTHOR, a person,
+   * whose avatar the two answers draw. The body is the post's opening either way.
+   */
+  const PERSONAL_REPOST_TYPES = [
+    'repost_personal_requested',
+    'repost_personal_accepted',
+    'repost_personal_refused',
+  ] as const;
+  const isPersonalRepostNotif = $derived(
+    (PERSONAL_REPOST_TYPES as readonly string[]).includes(notif.type)
+  );
   /** The actor is an association, whose logo stands in for a person's avatar. */
   const actorIsAssociation = $derived(
-    (notif.type === 'association_post' || isRepostNotif || isCoorganiseNotif) &&
+    (notif.type === 'association_post' ||
+      isRepostNotif ||
+      isCoorganiseNotif ||
+      notif.type === 'repost_personal_requested') &&
       !!notif.associationId
   );
   /**
@@ -184,7 +200,7 @@
                 ? 'bg-amber-500 text-cn-ink'
                 : isEventNotif || isCoorganiseNotif
                   ? 'bg-sky-600 text-white'
-                  : isPostNotif || isRepostNotif
+                  : isPostNotif || isRepostNotif || isPersonalRepostNotif
                     ? 'bg-indigo-500 text-white'
                     : notif.type === 'profile_correction_refused'
                       ? 'bg-red-500 text-white'
@@ -251,7 +267,7 @@
         <UserX size={glyph} strokeWidth={2.75} />
       {:else if isPostNotif}
         <Newspaper size={glyph} strokeWidth={2.75} />
-      {:else if isRepostNotif}
+      {:else if isRepostNotif || isPersonalRepostNotif}
         <Repeat2 size={glyph} strokeWidth={2.75} />
       {:else if isCoorganiseNotif}
         <CalendarPlus size={glyph} strokeWidth={2.75} />
@@ -322,6 +338,13 @@
         {notif.type === 'repost_proposed'
           ? m.notif_repost_proposed_text()
           : m.notif_association_repost_text()}
+        <span class="italic"><EmojiText text={bodyText} /></span>
+      {:else if isPersonalRepostNotif}
+        {notif.type === 'repost_personal_requested'
+          ? m.notif_repost_personal_requested_text()
+          : notif.type === 'repost_personal_accepted'
+            ? m.notif_repost_personal_accepted_text()
+            : m.notif_repost_personal_refused_text()}
         <span class="italic"><EmojiText text={bodyText} /></span>
       {:else if isCoorganiseNotif}
         {m.notif_coorganise_proposed_text()}

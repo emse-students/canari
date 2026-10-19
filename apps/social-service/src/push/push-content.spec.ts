@@ -19,6 +19,7 @@ import {
   followedPostContent,
   associationRepostContent,
   repostProposedContent,
+  repostPersonalRequestedContent,
   coorganiseProposedContent,
   liveStartedContent,
   previewOf,
@@ -57,6 +58,7 @@ describe('push content', () => {
     ['followedPost', followedPostContent('Claire', 'hello')],
     ['associationRepost', associationRepostContent('BDE', 'hello')],
     ['repostProposed', repostProposedContent('BDE', 'hello')],
+    ['repostPersonalRequested', repostPersonalRequestedContent('BDE', 'hello')],
     ['coorganiseProposed', coorganiseProposedContent('BDE', 'Gala')],
     ['liveStarted', liveStartedContent('Claire')],
   ];
@@ -348,6 +350,7 @@ describe('the legacy sentence and the Android resource say the same thing', () =
     ['social_followed_post', followedPostContent(ACTOR, '')],
     ['social_association_repost', associationRepostContent(ACTOR, '')],
     ['social_repost_proposed', repostProposedContent(ACTOR, '')],
+    ['social_repost_personal_requested', repostPersonalRequestedContent(ACTOR, '')],
     ['social_coorganise_proposed', coorganiseProposedContent(ACTOR, '')],
     ['social_live_started', liveStartedContent(ACTOR)],
   ];

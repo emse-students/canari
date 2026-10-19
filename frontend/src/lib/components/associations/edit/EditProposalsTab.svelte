@@ -9,6 +9,9 @@
    * co-organiser - its rights on the event, and its audience on the agenda. A row this tab decides
    * leaves the list on the server's answer; a 409 means someone else decided first, and the queue
    * is re-read. Which rows the caller sees is the server's (each kind has its own flags).
+   *
+   * A request to the AUTHOR of a personal post (D38b, `repost-personal`) appears only among what
+   * this association SENT: the author answers it from `/notifications/requests`, never here.
    */
   import { onMount } from 'svelte';
   import { Inbox } from '@lucide/svelte';
@@ -21,6 +24,7 @@
     type Proposal,
   } from '$lib/proposals/api';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
+  import Avatar from '$lib/components/shared/Avatar.svelte';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
   import { formatEventDateTimeRange } from '$lib/calendar/feedEvents';
   import { refusalStatus } from '$lib/utils/apiRefusal';
@@ -194,15 +198,29 @@
           {#each outgoing as proposal (proposal.id)}
             <li class="border-cn-border space-y-2 rounded-xl border p-4">
               <div class="flex items-center gap-2">
-                <AssociationAvatar
-                  name={proposal.to.name}
-                  logoUrl={proposal.to.logoUrl}
-                  size="sm"
-                  shape="circle"
-                />
-                <span class="text-text-main min-w-0 truncate text-sm font-semibold">
-                  {m.asso_republications_to({ name: proposal.to.name })}
-                </span>
+                {#if proposal.to}
+                  <AssociationAvatar
+                    name={proposal.to.name}
+                    logoUrl={proposal.to.logoUrl}
+                    size="sm"
+                    shape="circle"
+                  />
+                  <span class="text-text-main min-w-0 truncate text-sm font-semibold">
+                    {m.asso_republications_to({ name: proposal.to.name })}
+                  </span>
+                {:else}
+                  <!-- D38b: a request to the AUTHOR of a personal post, who alone answers it. -->
+                  <Avatar
+                    userId={proposal.toUser?.id ?? ''}
+                    size="sm"
+                    fallbackLabel={proposal.toUser?.name ?? ''}
+                  />
+                  <span class="text-text-main min-w-0 truncate text-sm font-semibold">
+                    {m.asso_proposals_to_author({
+                      name: proposal.toUser?.name || m.notif_actor_unknown(),
+                    })}
+                  </span>
+                {/if}
                 <span class="text-text-muted ml-auto shrink-0 text-xs">
                   {formatRelative(proposal.createdAt)}
                 </span>

@@ -3,7 +3,11 @@ import { Repository } from 'typeorm';
 import { AssociationsService } from '../associations/associations.service';
 import { AssociationPermissionFlag } from '../associations/entities/association-member.entity';
 import { Proposal } from './proposal.entity';
-import { ProposalsService, type ProposalKindHandler } from './proposals.service';
+import {
+  ProposalsService,
+  type ProposalKindHandler,
+  type UserProposalKindHandler,
+} from './proposals.service';
 
 /**
  * THE GENERIC STATE MACHINE, against fakes: what it refuses and in which order. The writes
@@ -126,5 +130,92 @@ describe('ProposalsService', () => {
   it('refuses a queue to whoever holds neither flag there', async () => {
     const { service } = makeService({ mayAct: false });
     await expect(service.listPending(TO, 'u1', false)).rejects.toBeInstanceOf(ForbiddenException);
+  });
+});
+
+/**
+ * A KIND WHOSE RECEIVER IS A PERSON (D38b): the person alone decides, no administrator stands in,
+ * and the sender flag must be HELD. The writes are proven against PostgreSQL in
+ * `posts/personal-republications.integration.spec.ts`.
+ */
+describe('ProposalsService, a user-addressed kind', () => {
+  const FROM = 'asso-from';
+
+  function makeService(opts: { mayAct?: boolean } = {}) {
+    const row = {
+      id: 'x2',
+      kind: 'repost-personal',
+      subjectId: 'post-1',
+      fromAssociationId: FROM,
+      toAssociationId: null,
+      toUserId: 'author',
+      status: 'pending',
+      proposedBy: 'officer',
+    };
+    const query = jest.fn((sql: string) => {
+      if (sql.startsWith('UPDATE proposals')) return Promise.resolve([[{ ...row }], 1]);
+      if (sql.startsWith('INSERT INTO proposals')) return Promise.resolve([{ ...row }]);
+      return Promise.resolve([]);
+    });
+    const manager = { query, transaction: jest.fn((fn: (m: unknown) => unknown) => fn(manager)) };
+    const repo = { findOne: jest.fn(() => Promise.resolve({ ...row })), manager };
+    const mayAct = jest.fn(() => Promise.resolve(opts.mayAct ?? true));
+    const fns = {
+      resolveRecipient: jest.fn(() => Promise.resolve('author')),
+      apply: jest.fn(() => Promise.resolve(() => Promise.resolve())),
+      announce: jest.fn((_proposal: unknown) => Promise.resolve()),
+      decided: jest.fn((_proposal: unknown) => Promise.resolve()),
+    };
+    const handler: UserProposalKindHandler = {
+      kind: 'repost-personal',
+      target: 'user',
+      senderFlag: AssociationPermissionFlag.POST_AS_ASSO,
+      resolveRecipient: fns.resolveRecipient,
+      apply: fns.apply,
+      announce: fns.announce,
+      decided: fns.decided,
+      describe: jest.fn(() => Promise.resolve(new Map())),
+      describeRequests: jest.fn(() => Promise.resolve(new Map())),
+    };
+    const service = new ProposalsService(
+      repo as unknown as Repository<Proposal>,
+      { mayAct } as unknown as AssociationsService
+    );
+    service.register(handler);
+    return { service, fns, mayAct };
+  }
+
+  it('asks the HELD sender flag - the administrator tier never stands in', async () => {
+    const { service, mayAct, fns } = makeService();
+    await service.proposeToUser('repost-personal', 'post-1', FROM, 'officer');
+    expect(mayAct).toHaveBeenCalledWith('officer', FROM, AssociationPermissionFlag.POST_AS_ASSO, {
+      isGlobalAdmin: false,
+    });
+    expect(fns.announce).toHaveBeenCalledWith(expect.objectContaining({ toUserId: 'author' }));
+  });
+
+  it('refuses the request without the flag, before the handler is asked anything', async () => {
+    const { service, fns } = makeService({ mayAct: false });
+    await expect(
+      service.proposeToUser('repost-personal', 'post-1', FROM, 'officer')
+    ).rejects.toBeInstanceOf(ForbiddenException);
+    expect(fns.resolveRecipient).not.toHaveBeenCalled();
+  });
+
+  it('is decided by its recipient only - a global admin included is refused', async () => {
+    const { service, fns } = makeService();
+    await expect(service.accept('x2', 'officer', true)).rejects.toBeInstanceOf(ForbiddenException);
+    await expect(service.refuse('x2', 'someone', true)).rejects.toBeInstanceOf(ForbiddenException);
+    expect(fns.apply).not.toHaveBeenCalled();
+    await service.accept('x2', 'author', false);
+    expect(fns.apply).toHaveBeenCalled();
+    expect(fns.decided).toHaveBeenCalled();
+  });
+
+  it('is never reached through the association-addressed route', async () => {
+    const { service } = makeService();
+    await expect(
+      service.propose('repost-personal', 'post-1', 'asso-to', 'officer', false)
+    ).rejects.toBeInstanceOf(BadRequestException);
   });
 });

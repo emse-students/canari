@@ -307,6 +307,18 @@ Reported: "+" then the camera publishes differently from swiping to the camera. 
 
 The window override pins `prefers-color-scheme` to the page's own command, so in the `system` preference the iOS app reads the phone at start only (true since 2026-09-30; made explicit by the camera fix). Following it live needs native to post the screen's trait style to the page. [android-ios-parity](frontend/android-ios-parity.md#the-system-theme-on-ios-is-read-at-start-only)
 
+## P3 - Asking an author to republish their post (D38b): what was not built (2026-10-19)
+
+The consent flow is built (migration 096). Left out on purpose, each a decision for the user:
+
+- A pending request never expires, like a D38 proposal.
+- An author cannot opt out of being asked. The caps (20 per author, 10 per association) and a block are the only brakes.
+- The author sees how many readers would newly see the post, never who they are.
+- A request whose proposer the author blocks AFTERWARDS still waits in the inbox. The author may refuse it.
+- Owed: one reading of the push on the Mi 9T and the iPhone. The native composers (Kotlin, Swift NSE, ObjC) were not compiled here.
+
+[profiles-and-access](profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)
+
 ## P3 - Bookings: a refused block names only a count (review of #2035, 2026-10-18, not built)
 
 A `bookings-inside-block` refusal is worded with its count and the ids are only logged; the organiser could get the bookings listed as a D29 refusal lists them (`StrandedBookings.svelte`). (The P2 half - a block over a block - is built: `block-overlap`.) [bookings](bookings-chantier.md#wp-b5-as-built---the-bookers-screens-2026-10-18)

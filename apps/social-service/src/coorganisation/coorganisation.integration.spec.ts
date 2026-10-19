@@ -146,6 +146,7 @@ maybe('event co-organisation against PostgreSQL (migrations 071-074)', () => {
     await q(migration('072_drop_is_bde.sql'));
     await q(migration('073_republications.sql'));
     await q(migration('078_read_grants.sql'));
+    await q(migration('096_personal_republication_requests.sql'));
     for (const a of [A3, A4]) {
       await q(`DELETE FROM association_audiences WHERE "associationId" = $1`, [a]);
       await q(

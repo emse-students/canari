@@ -59,6 +59,8 @@
     <string name="notif_social_association_repost_body">New post</string>
     <string name="notif_social_repost_proposed_title">%1$s proposes a post to share</string>
     <string name="notif_social_repost_proposed_body">A post to share</string>
+    <string name="notif_social_repost_personal_requested_title">%1$s asks to share your post</string>
+    <string name="notif_social_repost_personal_requested_body">A request to share your post</string>
     <string name="notif_social_coorganise_proposed_title">%1$s proposes to co-organise an event</string>
     <string name="notif_social_coorganise_proposed_body">An event to co-organise</string>
     <string name="notif_social_live_started_title">%1$s is live</string>

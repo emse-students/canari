@@ -16,6 +16,8 @@
     type Poll,
   } from '$lib/posts/api';
   import { Log } from '$lib/utils/Log';
+  import { withdrawProposal } from '$lib/proposals/api';
+  import { pendingRequests } from '$lib/posts/republication';
   import { deletePostAfterConfirm } from '$lib/posts/postDeletion';
   import { createReport, ModerationApiError } from '$lib/moderation/api';
   import type { ReportReason } from '$lib/moderation/reasons';
@@ -581,8 +583,8 @@
     }
   }
 
-  /** Which republication dialog is open (D38), or `null`. */
-  let republishMode = $state<'republish' | 'propose' | null>(null);
+  /** Which republication dialog is open (D38, and D38b's request to an author), or `null`. */
+  let republishMode = $state<'republish' | 'propose' | 'request' | null>(null);
 
   /**
    * Re-reads the post after a republication changed it. The "Republie par" line and the three
@@ -609,6 +611,24 @@
       errorMessage = m.post_republish_error();
     }
   }
+
+  /**
+   * An association cancels the request it sent the author (D38b) while it still waits. A 409 means
+   * the author answered first: the re-read shows that answer.
+   */
+  async function withdrawRequest(proposalId: string) {
+    try {
+      await withdrawProposal(proposalId);
+      actionMessage = m.post_request_withdrawn();
+    } catch (err) {
+      Log.d('PostCard', `withdraw request ${proposalId.slice(0, 8)} failed: ${String(err)}`);
+      errorMessage = m.post_republish_error();
+    }
+    await reloadAfterRepublication();
+  }
+
+  /** The requests of the reader's associations still waiting on the author, for the menu. */
+  const waitingRequests = $derived(pendingRequests(localPost));
 
   /** The republishers this reader may withdraw, named for the menu. */
   const unrepublishAs = $derived(
@@ -739,6 +759,10 @@
         onRepublish={() => (republishMode = 'republish')}
         onProposeRepublication={() => (republishMode = 'propose')}
         onUnrepublish={unrepublish}
+        canRequestRepublication={localPost.canRequestRepublication === true}
+        pendingRequests={waitingRequests}
+        onRequestRepublication={() => (republishMode = 'request')}
+        onWithdrawRequest={withdrawRequest}
       />
     </div>
 

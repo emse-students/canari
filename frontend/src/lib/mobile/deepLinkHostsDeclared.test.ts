@@ -22,6 +22,8 @@ const SERVER_HOSTS = [
   'admin-agenda',
   'proposals',
   'live',
+  // D38b: the author's inbox of republication requests.
+  'republication-requests',
 ];
 
 /** The checkout return. `stripe`, its name in builds below 1.2.4, is retired. */
