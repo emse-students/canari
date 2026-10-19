@@ -1,0 +1,506 @@
+/**
+ * THE BROADCASTER'S STATE MACHINE (WP-L5): the pre-live preview, the live on air, a camera away
+ * (the app in the background, or the lens taken), and the end - with every dependency injected, so
+ * each transition is tested with a fake recorder, camera and server.
+ *
+ * ```
+ * preview --start--> starting --201--> live <--re-acquired-- away
+ *    ^                  |                |  \--hidden / lens lost--^
+ *    +---- refused -----+                |
+ *                                  End / 410 / refusal --> ending? --> ended
+ * ```
+ *
+ * THE CAMERA IS GIVEN BACK WHEN THE APP IS HIDDEN, ON BOTH PLATFORMS - the reel camera's rule. WP-L1
+ * measured two different behaviours if it is kept: the Android WebView ENDS the track ~6 s after
+ * `hidden` and never brings it back, iOS Safari MUTES it and unmutes on return. Releasing on `hidden`
+ * makes both one path - the recorder is stopped (its last chunk still sent), and the return opens the
+ * camera again and starts a NEW recorder on the SAME live: the segment index continues, the media time
+ * is shifted past the gap (`fmp4Segments.ts`), and viewers see the pause. Nothing records twice: a
+ * recorder exists only between an acquisition and its release.
+ *
+ * WHETHER THE LIVE STILL EXISTS IS THE SERVER'S ANSWER, never a client timer. On return the live is
+ * read (`GET /api/lives/:id`): ended (the 60 s window passed, the hour, a moderation cut) is the end
+ * screen; anything else re-acquires, and the uploader's next verdict stays the authority. While on
+ * air, a `410` from the uploader ends the screen the same way.
+ *
+ * A REUSED `LIVE_ALREADY_OPEN` is not resumed: a live started by a previous screen (a crash, a kill)
+ * is ended by the server's absence rule within its window, and the member is told to wait for it.
+ */
+
+import { generateMediaCek } from '$lib/mediaCrypto';
+import type { CameraSession } from '$lib/reels/cameraSession.svelte';
+import { isTransportFailure } from '$lib/utils/transportFailure';
+import {
+  endLive,
+  fetchLive,
+  fetchLiveLimits,
+  isLiveRefusal,
+  LiveRefusalError,
+  LiveSegmentUploader,
+  startLive,
+  type LiveSegmentUploaderOptions,
+} from './api';
+import { sealLiveSegment } from './liveCrypto';
+import { ScreenWakeLock } from './liveDevice';
+import {
+  liveRecordingSupported,
+  startLiveRecorder,
+  type LiveRecorderHandle,
+  type LiveRecorderStarter,
+} from './liveRecorder';
+import { LiveSegmentPipeline } from './liveSegmentPipeline';
+import type { LiveEndResult, LiveLimits, LiveView } from './types';
+
+/** Where the broadcast stands; see the diagram in the module comment. */
+export type LiveBroadcastPhase = 'preview' | 'starting' | 'live' | 'away' | 'ending' | 'ended';
+
+/** Why a start was refused - one sentence each on the pre-live screen. */
+export type LiveStartProblem =
+  | 'muted'
+  | 'already-open'
+  | 'association-forbidden'
+  | 'rate-limited'
+  | 'disabled'
+  | 'offline'
+  | 'unsupported'
+  | 'failed';
+
+/** Why the limits could not be read (the Start button waits for them). */
+export type LiveLimitsProblem = 'disabled' | 'offline' | 'failed';
+
+/** Why the broadcast ended - one sentence each on the end screen. */
+export type LiveEndCause =
+  /** The member pressed End. */
+  | 'broadcaster'
+  /** The server ended it while on air: the hour, or a moderation cut (a `410`). */
+  | 'server'
+  /** The server ended it while the camera was away: past the reconnect window, most often. */
+  | 'server-while-away'
+  /** A refusal the uploader cannot get past, or a recorder that would not start. */
+  | 'failed';
+
+/** Whether the segments are getting through: `retrying` is the quiet "reconnecting" badge. */
+export type LiveUploadHealth = 'ok' | 'retrying';
+
+/** The uploader as the broadcast uses it. */
+export type LiveUploaderLike = Pick<
+  LiveSegmentUploader,
+  'enqueue' | 'nextIndex' | 'backlog' | 'idle' | 'stop'
+>;
+
+/** Everything the broadcast reaches outside itself. */
+export interface LiveBroadcastDeps {
+  fetchLiveLimits: () => Promise<LiveLimits>;
+  startLive: (keyHex: string, associationId?: string) => Promise<LiveView>;
+  fetchLive: (liveId: string) => Promise<LiveView>;
+  endLive: (liveId: string) => Promise<LiveEndResult>;
+  createUploader: (liveId: string, options: LiveSegmentUploaderOptions) => LiveUploaderLike;
+  seal: (
+    keyHex: string,
+    liveId: string,
+    index: number,
+    plain: Uint8Array
+  ) => Promise<Uint8Array<ArrayBuffer>>;
+  generateKeyHex: () => Promise<string>;
+  recordingSupported: () => boolean;
+  startRecorder: LiveRecorderStarter;
+  wakeLock: { hold(): Promise<void>; release(): void };
+  /** A monotonic clock, in ms. */
+  now: () => number;
+  isHidden: () => boolean;
+}
+
+/** The real dependencies. */
+export function defaultLiveBroadcastDeps(): LiveBroadcastDeps {
+  return {
+    fetchLiveLimits,
+    startLive,
+    fetchLive,
+    endLive,
+    createUploader: (liveId, options) => new LiveSegmentUploader(liveId, options),
+    seal: sealLiveSegment,
+    generateKeyHex: async () => (await generateMediaCek()).keyHex,
+    recordingSupported: liveRecordingSupported,
+    startRecorder: startLiveRecorder,
+    wakeLock: new ScreenWakeLock(),
+    now: () => performance.now(),
+    isHidden: () => typeof document !== 'undefined' && document.visibilityState === 'hidden',
+  };
+}
+
+/** A start refusal, read from its type and code - never its message. */
+export function startProblemOf(error: unknown): LiveStartProblem {
+  if (error instanceof LiveRefusalError) {
+    if (error.code === 'LIVE_MUTED') return 'muted';
+    if (error.code === 'LIVE_ALREADY_OPEN') return 'already-open';
+    if (error.code === 'LIVE_ASSOCIATION_FORBIDDEN') return 'association-forbidden';
+    if (error.kind === 'rate-limited') return 'rate-limited';
+    if (error.kind === 'disabled') return 'disabled';
+    return 'failed';
+  }
+  if (isTransportFailure(error)) return 'offline';
+  console.error('[LIVE-BROADCAST] the start threw something untyped', error);
+  return 'failed';
+}
+
+/** A limits failure, read the same way. */
+function limitsProblemOf(error: unknown): LiveLimitsProblem {
+  if (isLiveRefusal(error, 'disabled')) return 'disabled';
+  if (isTransportFailure(error)) return 'offline';
+  return 'failed';
+}
+
+export class LiveBroadcast {
+  phase = $state<LiveBroadcastPhase>('preview');
+  limits = $state.raw<LiveLimits | null>(null);
+  limitsProblem = $state<LiveLimitsProblem | null>(null);
+  startProblem = $state<LiveStartProblem | null>(null);
+  endCause = $state<LiveEndCause | null>(null);
+  health = $state<LiveUploadHealth>('ok');
+  /** Segments sealed and waiting for the server. */
+  backlog = $state(0);
+  liveId = $state<string | null>(null);
+  /** Whether this engine records the live's container at all (read once). */
+  readonly supported: boolean;
+
+  readonly #deps: LiveBroadcastDeps;
+  #keyHex: string | null = null;
+  #uploader: LiveUploaderLike | null = null;
+  #pipeline: LiveSegmentPipeline | null = null;
+  #recorder: LiveRecorderHandle | null = null;
+  /** Removes the listeners on the recorded track; replaced per recorder. */
+  #trackWatch: AbortController | null = null;
+  /** Bumped by every recorder started and every pause: a stale recorder's event is ignored. */
+  #recorderGeneration = 0;
+  /** Bumped by every re-acquisition and every hide: a stale one stops at its next await. */
+  #reacquireGeneration = 0;
+  #startedAt: number | null = null;
+  #firstRecordAt: number | null = null;
+  #disposed = false;
+
+  constructor(
+    readonly camera: CameraSession,
+    readonly associationId: string | null,
+    deps: LiveBroadcastDeps = defaultLiveBroadcastDeps()
+  ) {
+    this.#deps = deps;
+    this.supported = deps.recordingSupported();
+    console.debug(
+      `[LIVE-BROADCAST] screen for ${associationId ? `association ${associationId}` : 'the member'}, recordable ${this.supported}`
+    );
+  }
+
+  /** Milliseconds on air, from a monotonic clock; 0 before the live started. */
+  elapsedMs(): number {
+    return this.#startedAt === null ? 0 : this.#deps.now() - this.#startedAt;
+  }
+
+  /** Reads the server's numbers; the Start button waits for them. */
+  async loadLimits(): Promise<void> {
+    this.limitsProblem = null;
+    try {
+      this.limits = await this.#deps.fetchLiveLimits();
+    } catch (e) {
+      this.limitsProblem = limitsProblemOf(e);
+      console.warn(`[LIVE-BROADCAST] limits not read (${this.limitsProblem})`);
+    }
+  }
+
+  /** Whether Start may be pressed now. */
+  get canStart(): boolean {
+    return (
+      this.phase === 'preview' &&
+      this.supported &&
+      this.limits !== null &&
+      this.camera.phase === 'live' &&
+      this.camera.stream !== null
+    );
+  }
+
+  /** Starts the live on the camera already open. */
+  async start(): Promise<void> {
+    if (!this.canStart) {
+      console.warn(`[LIVE-BROADCAST] start refused locally in ${this.phase}`);
+      if (!this.supported) this.startProblem = 'unsupported';
+      return;
+    }
+    console.log(`[LIVE-BROADCAST] starting`);
+    this.phase = 'starting';
+    this.startProblem = null;
+    let live: LiveView;
+    let keyHex: string;
+    try {
+      keyHex = await this.#deps.generateKeyHex();
+      live = await this.#deps.startLive(keyHex, this.associationId ?? undefined);
+    } catch (e) {
+      if (this.#disposed) return;
+      this.startProblem = startProblemOf(e);
+      this.phase = 'preview';
+      console.warn(`[LIVE-BROADCAST] start refused (${this.startProblem})`);
+      return;
+    }
+    if (this.#disposed) {
+      console.warn(`[LIVE-BROADCAST] ${live.id} started after the screen closed - ending it`);
+      this.#endBestEffort(live.id);
+      return;
+    }
+    this.#keyHex = keyHex;
+    this.liveId = live.id;
+    this.#startedAt = this.#deps.now();
+    this.#uploader = this.#deps.createUploader(live.id, {
+      startIndex: live.nextIndex,
+      onStored: () => {
+        this.health = 'ok';
+        this.backlog = this.#uploader?.backlog ?? 0;
+      },
+      onRetry: () => {
+        if (this.health !== 'retrying') console.warn('[LIVE-BROADCAST] reconnecting');
+        this.health = 'retrying';
+        this.backlog = this.#uploader?.backlog ?? 0;
+      },
+      onStopped: (error) => this.#uploaderStopped(error),
+    });
+    const limits = this.limits!;
+    this.#pipeline = new LiveSegmentPipeline({
+      seal: (index, plain) => this.#deps.seal(this.#keyHex!, live.id, index, plain),
+      nextIndex: () => this.#uploader!.nextIndex,
+      enqueue: (index, sealed) => {
+        this.#uploader!.enqueue(index, sealed);
+        this.backlog = this.#uploader!.backlog;
+      },
+      maxSegmentBytes: limits.segmentMaxBytes,
+      now: this.#deps.now,
+    });
+    this.#goOnAir();
+  }
+
+  /** The app left the screen. */
+  appHidden(): void {
+    console.debug(`[LIVE-BROADCAST] app hidden in ${this.phase}`);
+    ++this.#reacquireGeneration;
+    if (this.phase === 'live') {
+      this.#pauseRecording('the app is in the background');
+      this.phase = 'away';
+    }
+    if (this.phase !== 'ended' && this.phase !== 'ending') this.camera.suspend();
+  }
+
+  /** The app is back on screen. */
+  appVisible(): void {
+    console.debug(`[LIVE-BROADCAST] app visible in ${this.phase}`);
+    if (this.phase === 'preview' || this.phase === 'starting') {
+      this.camera.resume();
+    } else if (this.phase === 'away') {
+      void this.reacquire();
+    }
+  }
+
+  /**
+   * Opens the camera again on the SAME live (the return from the background, or the Retry of a lens
+   * that was taken): the server first, then the camera, then a new recorder.
+   */
+  async reacquire(): Promise<void> {
+    if (this.phase !== 'away' || !this.liveId) return;
+    const attempt = ++this.#reacquireGeneration;
+    const liveId = this.liveId;
+    console.log(`[LIVE-BROADCAST] re-acquiring the camera for ${liveId} (#${attempt})`);
+    try {
+      await this.#deps.fetchLive(liveId);
+    } catch (e) {
+      if (attempt !== this.#reacquireGeneration || this.phase !== 'away') return;
+      if (isLiveRefusal(e, 'ended') || isLiveRefusal(e, 'not-found')) {
+        console.warn(`[LIVE-BROADCAST] ${liveId} ended while the camera was away`);
+        this.#finish('server-while-away', false);
+        return;
+      }
+      // No verdict (offline, a 5xx): the camera comes back, and the uploader's next answer decides.
+      console.warn(
+        '[LIVE-BROADCAST] the live could not be read on return - re-acquiring anyway',
+        e
+      );
+    }
+    if (attempt !== this.#reacquireGeneration || this.phase !== 'away') return;
+    await this.camera.start();
+    if (attempt !== this.#reacquireGeneration || this.phase !== 'away') return;
+    if (this.camera.phase !== 'live' || !this.camera.stream) {
+      // Refused, busy, or the app went away again: the screen shows the camera's own fault and a
+      // Retry, and the live keeps its window.
+      console.warn(`[LIVE-BROADCAST] camera not back (${this.camera.phase}/${this.camera.fault})`);
+      return;
+    }
+    this.#goOnAir();
+  }
+
+  /** The member confirmed End: the last chunk is sent, then the live is ended. */
+  async end(): Promise<void> {
+    if (this.phase !== 'live' && this.phase !== 'away') return;
+    const liveId = this.liveId!;
+    console.log(`[LIVE-BROADCAST] ending ${liveId}`);
+    this.phase = 'ending';
+    ++this.#reacquireGeneration;
+    const recorder = this.#recorder;
+    this.#recorder = null;
+    this.#trackWatch?.abort();
+    await recorder?.stop();
+    await this.#pipeline?.flush();
+    // Every queued segment lands or the server ends the live (410): a verdict, never a timer.
+    await this.#uploader?.idle();
+    this.#release();
+    try {
+      await this.#deps.endLive(liveId);
+    } catch (e) {
+      if (!isLiveRefusal(e, 'ended') && !isLiveRefusal(e, 'not-found')) {
+        console.warn(
+          '[LIVE-BROADCAST] the end was not confirmed - the server ends it by absence',
+          e
+        );
+      }
+    }
+    this.#settle('broadcaster');
+  }
+
+  /** The screen is going away (closed, navigated, the page hidden for good): nothing stays on air. */
+  dispose(): void {
+    if (this.#disposed) return;
+    this.#disposed = true;
+    const open = this.phase === 'live' || this.phase === 'away' || this.phase === 'ending';
+    console.debug(`[LIVE-BROADCAST] dispose in ${this.phase}`);
+    ++this.#reacquireGeneration;
+    void this.#recorder?.stop();
+    this.#recorder = null;
+    this.#release();
+    if (open && this.liveId) this.#endBestEffort(this.liveId);
+  }
+
+  /** Starts recording the camera in hand, or goes `away` when there is none to record. */
+  #goOnAir(): void {
+    const stream = this.camera.stream;
+    if (this.#deps.isHidden() || this.camera.phase !== 'live' || !stream) {
+      console.debug('[LIVE-BROADCAST] no camera to record yet - away until it is back');
+      this.phase = 'away';
+      // Hidden: the return re-acquires. Visible (the camera was given back and reopened during the
+      // start, or is still opening): re-acquire now, since no return is coming to do it.
+      if (!this.#deps.isHidden()) void this.reacquire();
+      return;
+    }
+    const generation = ++this.#recorderGeneration;
+    const first = this.#firstRecordAt === null;
+    const now = this.#deps.now();
+    this.#firstRecordAt ??= now;
+    this.#pipeline!.beginGeneration(first ? 0 : now - this.#firstRecordAt);
+    try {
+      this.#recorder = this.#deps.startRecorder(
+        stream,
+        (chunk) => void this.#pipeline?.push(chunk),
+        (error) => this.#recorderFailed(generation, error)
+      );
+    } catch (e) {
+      console.error('[LIVE-BROADCAST] no recorder on this stream - ending', e);
+      this.#finish('failed', true);
+      return;
+    }
+    this.#watchTrack(stream, generation);
+    this.phase = 'live';
+    this.health = 'ok';
+    void this.#deps.wakeLock.hold();
+    console.log(`[LIVE-BROADCAST] on air (recorder ${generation})`);
+  }
+
+  /** Listens to the recorded lens: an `ended` while visible is a lens taken (another app, a revoke). */
+  #watchTrack(stream: MediaStream, generation: number): void {
+    this.#trackWatch?.abort();
+    const watch = new AbortController();
+    this.#trackWatch = watch;
+    const lens = stream.getVideoTracks()[0];
+    const opts = { signal: watch.signal };
+    lens?.addEventListener?.(
+      'ended',
+      () => {
+        if (generation !== this.#recorderGeneration || this.phase !== 'live') return;
+        console.warn('[LIVE-BROADCAST] the lens ended under the live - away until Retry');
+        this.#pauseRecording('the lens ended');
+        this.phase = 'away';
+      },
+      opts
+    );
+    // iOS mutes a track it pauses; the recorder carries on and the unmute resumes the picture. Read
+    // so a field log says what happened, never acted on: nothing records twice.
+    lens?.addEventListener?.('mute', () => console.warn('[LIVE-BROADCAST] the lens muted'), opts);
+    lens?.addEventListener?.('unmute', () => console.debug('[LIVE-BROADCAST] lens unmuted'), opts);
+  }
+
+  #recorderFailed(generation: number, error: unknown): void {
+    if (generation !== this.#recorderGeneration || this.phase !== 'live') return;
+    console.error('[LIVE-BROADCAST] the recorder failed on air - away until Retry', error);
+    this.#pauseRecording('the recorder failed');
+    this.camera.stop();
+    this.phase = 'away';
+  }
+
+  /** Stops the current recorder (its last chunk still goes out) and forgets it. */
+  #pauseRecording(why: string): void {
+    console.debug(`[LIVE-BROADCAST] recording paused: ${why}`);
+    ++this.#recorderGeneration;
+    this.#trackWatch?.abort();
+    this.#trackWatch = null;
+    void this.#recorder?.stop();
+    this.#recorder = null;
+    this.#deps.wakeLock.release();
+  }
+
+  #uploaderStopped(error: unknown): void {
+    if (this.phase === 'ending' || this.phase === 'ended') return;
+    const ended = isLiveRefusal(error, 'ended') || isLiveRefusal(error, 'not-found');
+    const cause: LiveEndCause = ended
+      ? this.phase === 'away'
+        ? 'server-while-away'
+        : 'server'
+      : 'failed';
+    console.warn(`[LIVE-BROADCAST] the uploader stopped (${cause})`);
+    this.#finish(cause, !ended);
+  }
+
+  /** Ends the screen at once: nothing recorded or sent any more. */
+  #finish(cause: LiveEndCause, endOnServer: boolean): void {
+    ++this.#reacquireGeneration;
+    void this.#recorder?.stop();
+    this.#recorder = null;
+    this.#release();
+    if (endOnServer && this.liveId) this.#endBestEffort(this.liveId);
+    this.#settle(cause);
+  }
+
+  #settle(cause: LiveEndCause): void {
+    const s = this.#pipeline?.stats;
+    console.log(
+      `[LIVE-BROADCAST] ${this.liveId} ended (${cause}) after ${Math.round(this.elapsedMs() / 1000)} s: ` +
+        `${s?.segments ?? 0} segments, ${s?.dropped ?? 0} dropped, ${s?.notOnKeyframe ?? 0} off a keyframe`
+    );
+    this.endCause = cause;
+    this.phase = 'ended';
+  }
+
+  /** Gives back everything held: the queue, the pipeline, the camera, the screen lock. */
+  #release(): void {
+    ++this.#recorderGeneration;
+    this.#trackWatch?.abort();
+    this.#trackWatch = null;
+    this.#pipeline?.close();
+    this.#uploader?.stop();
+    this.camera.stop();
+    this.#deps.wakeLock.release();
+  }
+
+  #endBestEffort(liveId: string): void {
+    this.#deps.endLive(liveId).then(
+      (r) => console.debug(`[LIVE-BROADCAST] ${liveId} ended on leaving (${r.endReason})`),
+      (e: unknown) => {
+        if (isLiveRefusal(e, 'ended') || isLiveRefusal(e, 'not-found')) return;
+        console.warn(
+          `[LIVE-BROADCAST] ${liveId} not ended on leaving - the server ends it by absence`,
+          e
+        );
+      }
+    );
+  }
+}

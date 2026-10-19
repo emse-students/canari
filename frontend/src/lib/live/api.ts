@@ -301,6 +301,11 @@ export interface LiveSegmentUploaderOptions {
   backoffMs?: (attempt: number) => number;
   /** Told each segment the server stored. */
   onStored?: (result: LiveIngestResult) => void;
+  /**
+   * Told each failed send that WILL be retried (the broadcaster's quiet "reconnecting" state): the
+   * index, the attempt that failed (1, 2, ...) and why. The next `onStored` ends that state.
+   */
+  onRetry?: (index: number, attempt: number, error: unknown) => void;
   /** Told the refusal that stopped the queue for good (`ended`, `not-found`, `out-of-order`...). */
   onStopped?: (error: unknown) => void;
 }
@@ -408,6 +413,7 @@ export class LiveSegmentUploader {
           }
           // stop() may have run while this send was in flight: nothing left to wait for.
           if (this.stopped) return;
+          this.options.onRetry?.(head.index, attempt, e);
           const wait = (this.options.backoffMs ?? defaultBackoff)(attempt);
           console.warn(
             `[LIVE] segment ${head.index} of ${this.liveId} not stored (attempt ${attempt}), retry in ${wait} ms`

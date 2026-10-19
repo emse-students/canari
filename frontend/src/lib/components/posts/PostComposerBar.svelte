@@ -8,6 +8,7 @@
     Clock,
     Images,
     Paperclip,
+    Radio,
     ALargeSmall,
     X,
   } from '@lucide/svelte';
@@ -65,6 +66,11 @@
     status?: string;
     /** The primary action(s), drawn at the right of the last row. */
     action: Snippet;
+    /**
+     * Opens the broadcaster's screen (WP-L5). Absent, no "Live" chip is drawn: the composer passes
+     * it only when `LIVE_ENABLED` is on and the chosen identity may broadcast (never anonymous).
+     */
+    onLive?: () => void;
   }
 
   let {
@@ -77,6 +83,7 @@
     scheduledAt = $bindable(''),
     status = '',
     action,
+    onLive,
   }: Props = $props();
 
   let formatting = $state(false);
@@ -198,6 +205,20 @@
           <Camera size={16} strokeWidth={2.25} class="text-sky-600 dark:text-sky-400" />
           {m.post_composer_camera()}
         </button>
+        {#if onLive}
+          <button
+            type="button"
+            class="{chipClass} {idleChip}"
+            data-post-live
+            onclick={() => {
+              Log.d('POST_COMPOSER', 'live screen opened');
+              onLive();
+            }}
+          >
+            <Radio size={16} strokeWidth={2.25} class="text-red-600 dark:text-red-400" />
+            {m.live_composer_chip()}
+          </button>
+        {/if}
         <button
           type="button"
           class="{chipClass} {pollActive ? activeChip : idleChip}"

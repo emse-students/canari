@@ -165,3 +165,14 @@ it('in the iOS app "Photo/video" is the native library: no input WebKit would an
   expect(pickNatively).toHaveBeenCalledWith('library');
   expect(props.onFiles).toHaveBeenCalledWith([photo]);
 });
+
+it('draws the "Live" chip only when the composer offers a live, and a tap opens it', () => {
+  const without = mountBar();
+  expect(without.target.querySelector('[data-post-live]')).toBeNull();
+  const onLive = vi.fn();
+  const { target } = mountBar({ onLive });
+  const chip = target.querySelector<HTMLButtonElement>('[data-post-live]')!;
+  expect(chip.tagName).toBe('BUTTON');
+  chip.click();
+  expect(onLive).toHaveBeenCalledTimes(1);
+});

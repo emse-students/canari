@@ -59,6 +59,8 @@
   import { isVideoPrepareError } from '$lib/video/prepareVideoForUpload';
   import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
   import VideoPreparationProgress from '$lib/components/shared/VideoPreparationProgress.svelte';
+  import LiveOverlay from '$lib/components/live/LiveOverlay.svelte';
+  import { LIVE_ENABLED } from '$lib/features';
 
   /**
    * Full-featured post creation form. Supports:
@@ -150,6 +152,19 @@
 
   const isAnonymousSelected = $derived(selectedAssociationId === ANONYMOUS_POST_IDENTITY);
   const isAssociationSelected = $derived(!!selectedAssociationId && !isAnonymousSelected);
+
+  /**
+   * The broadcaster's screen is open (WP-L5, `LIVE_ENABLED` builds only). A live goes out under the
+   * identity chosen above - the member, or an association they may post as - and never anonymously,
+   * so the chip is not offered while "anonymous" is chosen, nor while the chosen association is not
+   * in the list read (a restored draft's): the live would otherwise go out under the wrong name.
+   */
+  let liveOpen = $state(false);
+  const liveAssociation = $derived(
+    isAssociationSelected
+      ? (postAsAssociations.find((a) => a.id === selectedAssociationId) ?? null)
+      : null
+  );
 
   /** The events a post as an association may link to, "no event" first. */
   const linkableEventOptions = $derived(
@@ -504,6 +519,14 @@
   The error banner is in the FOOTER for the reason its comment in the script gives: a keyboard used
   to cover the one sentence that named the cause.
 -->
+{#if liveOpen}
+  <LiveOverlay
+    associationId={liveAssociation?.id ?? null}
+    associationName={liveAssociation?.name ?? null}
+    onclose={() => (liveOpen = false)}
+  />
+{/if}
+
 <div class="flex min-h-0 flex-1 flex-col">
   <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-4 pb-3 sm:px-6">
     <!-- Who is publishing: the avatar of that identity, and the choice itself drawn as the name. -->
@@ -702,6 +725,9 @@
       onToggleForm={() => (includeForm = !includeForm)}
       bind:scheduledAt
       status={draftSaved ? m.post_create_draft_saved_label() : ''}
+      onLive={LIVE_ENABLED && !isAnonymousSelected && (!isAssociationSelected || liveAssociation)
+        ? () => (liveOpen = true)
+        : undefined}
     >
       {#snippet action()}
         <Button

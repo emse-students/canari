@@ -65,6 +65,14 @@ export const LIVE_PLAYER_TARGET_BUFFER_MS = LIVE_SEGMENT_MS;
 export const LIVE_MANIFEST_POLL_MS = 1_000;
 
 /**
+ * Below this battery level (0..1) the pre-live screen warns, where the engine has the Battery API
+ * (Android's WebView; WebKit has none). The Mi 9T broadcasting drained ~40 %/h WHILE PLUGGED into a
+ * 400 mA port (WP-L1 run A), and ~59 %/h unplugged without the upload (2026-10-18) - so an hour's
+ * live from 60 % is about where a phone runs out.
+ */
+export const LIVE_BATTERY_WARN_LEVEL = 0.6;
+
+/**
  * The planning figure for ONE viewer's egress, in bits per second: the Android broadcaster's
  * measured mean (3.08 Mb/s, the heavier of the two engines; iPhone 2.32 Mb/s). For estimates only -
  * the cap itself is the server's (`viewerCap` in `/limits`).
