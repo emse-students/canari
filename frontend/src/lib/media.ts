@@ -171,6 +171,12 @@ export interface PendingMediaFile {
    * milliseconds. The send turns it into the declaration (`intent`, `durationMs`, `expiresAtMs`).
    */
   reelDurationMs?: number;
+  /**
+   * The file is the chat camera's RAW take, queued at once and prepared by the outbox inside its
+   * upload task (reels-in-chat RC-5) - its length is known only once prepared. Exclusive with
+   * `reelDurationMs`, which a take prepared in the foreground carries.
+   */
+  prepareRaw?: 'chat-reel';
 }
 
 /** Per-context presets - higher quality, less aggressive resize. */
@@ -215,6 +221,12 @@ import {
 } from '$lib/utils/uploadXhr';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 import { fetchWithAnswerDeadline } from '$lib/utils/uploadDeadline';
+import {
+  uploadResumable,
+  type ResumableUploadPort,
+  type ResumableUploadState,
+} from '$lib/utils/resumableUpload';
+import { appendLog } from '$lib/utils/sessionLog';
 
 /** How many times `complete` is asked for ONE uploadId when its answer is lost. */
 const COMPLETE_ATTEMPTS = 3;
@@ -925,6 +937,74 @@ export class MediaService {
       fileName: file.name,
       ...(width && height ? { width, height } : {}),
       ...(segmented ? { encoding: SEGMENTED_MEDIA_ENCODING } : {}),
+    };
+  }
+
+  /**
+   * Encrypt `file` as a `segmented-v1` blob and upload it through a RESUMABLE session
+   * (`/api/media/upload/session`, reels-in-chat RC-5): only the parts the server does not already
+   * hold are sent, so a cut - or a kill, once `resume.persist` has recorded the session - costs at
+   * most one part again. See `uploadResumable` for the protocol and the nonce-reuse guard.
+   *
+   * @param token  Read before EVERY request, so a long upload over a weak link never sends a token
+   *               that expired since it began (`fetchUpload` still renews once on a 401).
+   * @param resume The state a previous attempt recorded, and where to record this one's.
+   */
+  async uploadResumably(
+    file: File,
+    token: () => Promise<string>,
+    dimensions: Partial<ImageDimensions> | undefined,
+    retentionClass: MediaRetentionClass,
+    resume: {
+      state?: ResumableUploadState;
+      persist: (state: ResumableUploadState) => Promise<void>;
+    },
+    transport?: XhrUploadOptions
+  ): Promise<MediaRef> {
+    console.debug(
+      `[media] uploadResumably: ${file.type || 'unknown'}, ${file.size} bytes, ${resume.state?.uploadId ? `resuming ${resume.state.uploadId}` : 'new session'}`
+    );
+    const base = `${this.baseUrl}/api/media/upload/session`;
+    const port: ResumableUploadPort = {
+      request: async (method, path, body, partTransport) =>
+        fetchUpload(
+          `${base}${path}`,
+          (t) => ({
+            method,
+            headers: {
+              Authorization: `Bearer ${t}`,
+              ...(typeof body === 'string' ? { 'Content-Type': 'application/json' } : {}),
+              ...(body instanceof Blob ? { 'Content-Type': 'application/octet-stream' } : {}),
+            },
+            body,
+          }),
+          await token(),
+          partTransport
+        ),
+    };
+    const done = await uploadResumable({
+      plaintext: new Uint8Array(await file.arrayBuffer()),
+      retentionClass,
+      state: resume.state,
+      persist: resume.persist,
+      port,
+      transport,
+      log: appendLog,
+    });
+    const width =
+      dimensions?.width && dimensions.width > 0 ? Math.round(dimensions.width) : undefined;
+    const height =
+      dimensions?.height && dimensions.height > 0 ? Math.round(dimensions.height) : undefined;
+    return {
+      type: file.type.startsWith('video/') ? 'video' : 'file',
+      mediaId: done.mediaId,
+      key: done.keyHex,
+      iv: done.ivHex,
+      mimeType: file.type,
+      size: file.size,
+      fileName: file.name,
+      ...(width && height ? { width, height } : {}),
+      encoding: done.encoding,
     };
   }
 

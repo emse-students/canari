@@ -277,7 +277,9 @@ describe('outboxCodec', () => {
     const decoded = decodeOutboxEntry(outboxClearColumns(e), legacy);
     expect(Array.from(decoded.media!.fileBytes!)).toEqual([1, 2, 3, 250, 255]);
     // The writer keeps the bytes OUT of the payload: only the blob's key is recorded.
-    const written = encodeOutboxSensitive(e, 'a2V5') as { media: Record<string, unknown> };
+    const written = encodeOutboxSensitive(e, { keyB64: 'a2V5' }) as {
+      media: Record<string, unknown>;
+    };
     expect(written.media.fileBytesB64).toBeUndefined();
     expect(written.media.fileBytes).toBeUndefined();
     expect(written.media.blob).toEqual({ keyB64: 'a2V5' });

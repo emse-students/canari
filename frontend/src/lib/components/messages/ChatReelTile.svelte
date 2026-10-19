@@ -12,12 +12,15 @@
    * sender's expiry hint has passed it is a TOMBSTONE: the same box, no blurred ghost of the video,
    * and the age only (no "N days left" chip). The server's 410 remains the truth for an early loss.
    */
-  import { Play, VideoOff } from '@lucide/svelte';
+  import { CircleAlert, Play, Trash2, Video as VideoIcon, VideoOff } from '@lucide/svelte';
   import MediaFrame from '$lib/components/shared/MediaFrame.svelte';
   import type { MediaRef } from '$lib/media';
   import { formatVideoTime } from '$lib/utils/videoPlayback';
   import { timeAgo } from '$lib/utils/time';
   import { m } from '$lib/paraglide/messages';
+  import UploadAction from './UploadAction.svelte';
+  import { uploadCaption } from '$lib/utils/chat/uploadLabel';
+  import type { UploadView } from '$lib/utils/chat/uploadProgress.svelte';
 
   interface Props {
     mediaRef: MediaRef;
@@ -28,9 +31,36 @@
     /** Same widths as the chat's other media: `w-68` under a caption, `w-56` alone. */
     bleed?: boolean;
     onOpen: () => void;
+    /**
+     * THE SENDER'S OWN REEL STILL IN ITS OUTBOX (RC-5): preparing, sending, waiting - drawn with the
+     * same figure, cancel and retry as any attachment's, over the tile's box. A tile with no
+     * `mediaId` has nothing to open, so it never offers the tap.
+     */
+    upload?: UploadView | null;
+    /** The upload was refused for good: says so and offers the delete. */
+    uploadFailed?: boolean;
+    /** No upload advances it and it never got a `mediaId`: says so and offers the delete. */
+    orphan?: boolean;
+    onCancelUpload?: () => void;
+    onRetryUpload?: () => void;
   }
 
-  let { mediaRef, expired, senderName, sentAt, bleed = false, onOpen }: Props = $props();
+  let {
+    mediaRef,
+    expired,
+    senderName,
+    sentAt,
+    bleed = false,
+    onOpen,
+    upload = null,
+    uploadFailed = false,
+    orphan = false,
+    onCancelUpload,
+    onRetryUpload,
+  }: Props = $props();
+
+  /** Not sent yet: the message is the sender's placeholder, and there is no blob to open. */
+  const unsent = $derived(!mediaRef.mediaId);
 
   const age = $derived(timeAgo(sentAt.toISOString()));
   const duration = $derived(
@@ -65,6 +95,40 @@
       <VideoOff size={28} class="opacity-60" />
       <span class="text-sm font-semibold">{m.reel_chat_expired()}</span>
       <span class="text-xs opacity-70">{m.reel_chat_expired_age({ age })}</span>
+    </div>
+  {:else if unsent}
+    <div
+      class="absolute inset-0 flex flex-col items-center justify-center gap-2 p-2 text-center text-white"
+      role={uploadFailed || orphan ? 'alert' : 'status'}
+      data-reel-tile-pending
+    >
+      {#if uploadFailed || orphan}
+        <CircleAlert size={22} class="text-red-500" />
+        <p class="text-2xs leading-tight font-semibold">
+          {uploadFailed ? m.upload_failed_label() : m.media_orphan_label()}
+        </p>
+        {#if onCancelUpload}
+          <button
+            type="button"
+            onclick={(e) => {
+              e.stopPropagation();
+              onCancelUpload();
+            }}
+            aria-label={m.upload_delete_label()}
+            title={m.upload_delete_label()}
+            class="ui-icon-button rounded-xl outline-none hover:bg-current/10 focus-visible:ring-2 focus-visible:ring-current"
+          >
+            <Trash2 size={18} strokeWidth={2.5} />
+          </button>
+        {/if}
+      {:else if upload}
+        <UploadAction view={upload} onCancel={onCancelUpload} onRetry={onRetryUpload} />
+        <p class="text-2xs rounded-full bg-black/50 px-2 py-0.5 leading-tight font-semibold">
+          {uploadCaption(upload, mediaRef.size)}
+        </p>
+      {:else}
+        <VideoIcon size={32} class="animate-pulse opacity-40" />
+      {/if}
     </div>
   {:else}
     <button

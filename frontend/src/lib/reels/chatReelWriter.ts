@@ -40,6 +40,16 @@ export function chatReelDeclaration(durationSeconds: number, nowMs: number): Cha
 }
 
 /**
+ * The declaration of a RAW take queued now (RC-5): the intent and the expiry hint, and no length -
+ * the outbox's preparation measures it and adds `durationMs` before the message is built.
+ */
+export function chatReelPendingDeclaration(
+  nowMs: number
+): Pick<ChatReelDeclaration, 'intent' | 'expiresAtMs'> {
+  return { intent: 'reel-message', expiresAtMs: nowMs + CHAT_REEL_RETENTION_MS };
+}
+
+/**
  * Whether a take from the chat camera may be a video: the switch is on AND the conversation is one
  * this package writes (a DM or a group - never a salon).
  */

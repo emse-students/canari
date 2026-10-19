@@ -3,6 +3,7 @@ import { bumpOutboxQueueVersion } from './outboxActivity.svelte';
 import { DELIVERY, type FrameDelivery } from '$lib/mls-client/frameDelivery';
 import type { IMlsService } from '$lib/mls-client/IMlsService';
 import type { IStorage, OutboxEntry } from '$lib/db';
+import type { OutboxResumableUpload } from '$lib/db/types';
 import { OutboxPayloadUnreadableError } from '$lib/db/outboxCodec';
 import {
   OutboxBlobCorruptError,
@@ -161,6 +162,41 @@ export class LocalAttachmentError extends Error {
 }
 
 /**
+ * The raw take of a queued chat reel could not be PREPARED (reels-in-chat RC-5): the encoder refused
+ * it, or the prepared file could not be stored. Not an answer and not the link: the entry is parked
+ * as failed with the take KEPT, so the member's retry prepares it again and a delete withdraws it.
+ */
+export class OutboxPrepareError extends Error {
+  constructor(why: string, cause?: unknown) {
+    super(why, { cause });
+    this.name = 'OutboxPrepareError';
+  }
+}
+
+/** What a preparation hands back: the bytes to upload, and what the message says about them. */
+export interface PreparedOutboxMedia {
+  bytes: Uint8Array;
+  mimeType: string;
+  fileName?: string;
+  width?: number;
+  height?: number;
+  durationMs?: number;
+}
+
+/**
+ * A row patch that touches the media DESCRIPTION only. The bytes (`fileBytes`) would make the store
+ * re-write the blob, and a `blob` ref held in memory may be older than the one the row names (the
+ * prepared file replaced the raw take) - so both are dropped and the store keeps its own.
+ */
+function mediaDescriptionPatch(
+  media: NonNullable<OutboxEntry['media']>,
+  extra: Partial<NonNullable<OutboxEntry['media']>>
+): Partial<OutboxEntry> {
+  const { fileBytes: _bytes, blob: _blob, ...rest } = media;
+  return { media: { ...rest, ...extra } };
+}
+
+/**
  * A message could NOT be handed to the queue: there is no storage layer, no controller is active, or
  * the durable write failed. Typed and thrown, never swallowed: the caller still holds the file and
  * the optimistic row, and a swallowed one left a `mediaId: ''` placeholder that nothing would ever
@@ -311,11 +347,25 @@ export interface OutboxDeps {
    * load would bring back the conversation whose queue had just been killed by the eviction.
    */
   saveConversation?: (key: string) => Promise<void>;
-  /** Encrypt + upload a queued media file, returning the server media ref (queued-media flush). */
+  /**
+   * Encrypt + upload a queued media file, returning the server media ref (queued-media flush).
+   * `resume.persist` durably records a resumable session's state (`media.upload`) before its first
+   * part leaves, so a relaunch resumes it; an uploader that does not resume never calls it.
+   */
   uploadMedia?: (
     media: NonNullable<OutboxEntry['media']>,
-    transport?: XhrUploadOptions
+    transport?: XhrUploadOptions,
+    resume?: { persist: (state: OutboxResumableUpload) => Promise<void> }
   ) => Promise<MediaRef>;
+  /**
+   * Prepares the RAW take of an entry marked `media.prepare` (a chat reel, RC-5): runs inside the
+   * upload task, holding its upload slot, cancellable through `signal`. Rejects with
+   * `UploadAbortedError` on a cancel, anything else when the take cannot be prepared.
+   */
+  prepareMedia?: (
+    media: NonNullable<OutboxEntry['media']>,
+    opts: { signal: AbortSignal; onProgress: (fraction: number) => void }
+  ) => Promise<PreparedOutboxMedia>;
   /**
    * True when the session is in a state where sending can succeed. Returns false for a session
    * unlocked offline that has no access token yet: the browser can report `online` before the
@@ -375,7 +425,8 @@ export interface OutboxController {
   /**
    * "Try this attachment again NOW" (a bubble's retry): skips its backoff, and abandons a transfer
    * that is on the wire but stalled. The bytes already sent are lost - the media route has no
-   * offset - so a retry restarts the upload at zero.
+   * offset - so a retry restarts the upload at zero; a chat reel's resumable session (RC-5) is the
+   * exception, and sends only the parts the server does not hold.
    */
   retryUpload: (messageId: string) => void;
   /** Mark already-loaded messages whose id is still queued as `pending` (reload / history load). */
@@ -939,12 +990,13 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     log(
       `[OUTBOX] ${entry.id.slice(0, 8)}… upload started outside the lane of ${entry.conversationId.slice(0, 8)}…`
     );
-    void withUploadSlot(entry.id, control.signal, () => uploadAttachment(entry, control))
+    void withUploadSlot(entry.id, control.signal, () => uploadAttachment(entry, media, control))
       .then(
-        // The payload WITHOUT its bytes: nothing keeps a 13 MB file alive once it has left.
-        (ref): SettledUpload => ({
+        // The payload WITHOUT its bytes: nothing keeps a 13 MB file alive once it has left. It is
+        // the payload as UPLOADED - a prepared reel's type, size and dimensions, not the raw take's.
+        ({ ref, media: sent }): SettledUpload => ({
           ok: true,
-          media: { ...media, uploadedRef: ref, fileBytes: undefined },
+          media: { ...sent, uploadedRef: ref, fileBytes: undefined, upload: undefined },
         }),
         (error: unknown): SettledUpload => ({ ok: false, error })
       )
@@ -985,15 +1037,20 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    */
   async function uploadAttachment(
     entry: OutboxEntry,
+    queued: NonNullable<OutboxEntry['media']>,
     control: AbortController
-  ): Promise<NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>> {
-    const media = entry.media;
+  ): Promise<{
+    ref: NonNullable<NonNullable<OutboxEntry['media']>['uploadedRef']>;
+    media: NonNullable<OutboxEntry['media']>;
+  }> {
+    let media = queued;
+    const uploadMedia = deps.uploadMedia;
     let uploaded: MediaRef;
     let attemptLoaded = 0;
     let hint: ReturnType<typeof setInterval> | null = null;
     try {
-      if (!media || !deps.uploadMedia) {
-        throw new LocalAttachmentError('the queued attachment has no payload or no uploader');
+      if (!uploadMedia) {
+        throw new LocalAttachmentError('the queued attachment has no uploader');
       }
       // Withdrawn (or retried) while it waited for a slot: nothing left the device.
       if (control.signal.aborted) throw new UploadAbortedError(control.signal.reason);
@@ -1003,21 +1060,52 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
         loaded: 0,
         total: 0,
         attempt: entry.attempts + 1,
+        prepared: media.prepare ? 0 : undefined,
       });
+      // A RAW TAKE IS PREPARED HERE, in the upload task (RC-5): its slot is held, a cancel reaches
+      // the encoder, and the prepared file REPLACES the take on disk before a byte leaves.
+      if (media.prepare) media = await prepareQueued(entry, media, control.signal);
       // The hint only: the transport abandons a dead transfer on its own, this says so earlier.
+      // Started after the preparation, which moves no byte and is not a stall.
       let lastMoved = Date.now();
       hint = setInterval(() => {
         if (Date.now() - lastMoved > UPLOAD_STALL_HINT_MS)
           patchUpload(entry.id, { phase: 'stalled' });
       }, 2_000);
-      uploaded = await deps.uploadMedia(media, {
-        signal: control.signal,
-        onProgress: ({ loaded, total }) => {
-          lastMoved = Date.now();
-          attemptLoaded = Math.max(attemptLoaded, loaded);
-          patchUpload(entry.id, { phase: 'uploading', loaded, total });
+      const described = media;
+      uploaded = await uploadMedia(
+        media,
+        {
+          signal: control.signal,
+          onProgress: ({ loaded, total }) => {
+            lastMoved = Date.now();
+            attemptLoaded = Math.max(attemptLoaded, loaded);
+            patchUpload(entry.id, { phase: 'uploading', loaded, total });
+          },
         },
-      });
+        {
+          // BEFORE THE FIRST PART LEAVES: a kill from here on resumes the same session.
+          persist: async (state) => {
+            log(
+              `[OUTBOX] ${entry.id.slice(0, 8)}… resumable session ${state.uploadId?.slice(0, 8) ?? '(none)'}… recorded`
+            );
+            if (!storage) return;
+            await storage
+              .updateOutboxEntry(
+                entry.id,
+                mediaDescriptionPatch(described, { upload: state }),
+                deviceKey()
+              )
+              // Not fatal: losing it costs a re-upload after a kill, never a wrong byte (the digest
+              // in the state refuses to resume other bytes).
+              .catch((e) =>
+                log(
+                  `[OUTBOX] ${entry.id.slice(0, 8)}… resumable session NOT recorded (a kill re-uploads): ${String(e)}`
+                )
+              );
+          },
+        }
+      );
     } catch (e) {
       // NO ANSWER, read from the TYPE the TRANSPORT threw - `UploadStalledError` (no byte moved)
       // or `UploadNetworkError` (the connection broke) - never from a message and never from a
@@ -1056,16 +1144,83 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       ...(uploaded.encoding ? { encoding: uploaded.encoding } : {}),
     };
     // Persist the ref + drop the raw bytes BEFORE sending: a crash after upload must not re-upload.
+    // (A resumable reel's session would answer a re-ask from its memo anyway; the ref is what saves
+    // even that round trip.)
     await storage
       ?.updateOutboxEntry(
         entry.id,
-        { media: { ...media, uploadedRef: ref, fileBytes: undefined } },
+        // `fileBytes: undefined` explicitly: a row of the pre-blob format holds its bytes inline,
+        // and the merge would otherwise carry them over.
+        mediaDescriptionPatch(media, { uploadedRef: ref, upload: undefined, fileBytes: undefined }),
         deviceKey()
       )
       // Losing this write means a crash before the send re-uploads the same file; the ref is kept
       // in memory by the task, so THIS page life still sends it without a second upload.
       .catch((e) => log(`[OUTBOX] ${entry.id.slice(0, 8)}… media ref not persisted: ${String(e)}`));
-    return ref;
+    return { ref, media };
+  }
+
+  /**
+   * Prepares a queued RAW take (RC-5) and stores the prepared file in its place, returning the
+   * payload to upload. THE TAKE IS NEVER LOST: the prepared bytes go to the blob slot the committed
+   * row does not name, and only the row's rewrite makes them the entry's - a kill before that
+   * prepares the take again, a kill after it uploads what was prepared.
+   *
+   * Throws `UploadAbortedError` on a cancel or a retry, {@link OutboxPrepareError} when the take
+   * cannot be prepared or the result cannot be stored - the take stays, parked with a retry.
+   */
+  async function prepareQueued(
+    entry: OutboxEntry,
+    raw: NonNullable<OutboxEntry['media']>,
+    signal: AbortSignal
+  ): Promise<NonNullable<OutboxEntry['media']>> {
+    const id = entry.id.slice(0, 8);
+    if (!deps.prepareMedia) throw new OutboxPrepareError('no preparer for a raw take');
+    if (!raw.fileBytes?.length) {
+      throw new LocalAttachmentError('the queued take holds no bytes to prepare');
+    }
+    log(`[OUTBOX] ${id}… preparing its ${raw.prepare} take (${raw.fileBytes.length} raw bytes)`);
+    let prepared: PreparedOutboxMedia;
+    try {
+      prepared = await deps.prepareMedia(raw, {
+        signal,
+        onProgress: (fraction) => patchUpload(entry.id, { phase: 'preparing', prepared: fraction }),
+      });
+    } catch (e) {
+      if (e instanceof UploadAbortedError) throw e;
+      if (signal.aborted) throw new UploadAbortedError(signal.reason);
+      log(`[OUTBOX] ${id}… its take could NOT be prepared: ${String(e).slice(0, 160)}`);
+      throw new OutboxPrepareError('the take could not be prepared', e);
+    }
+    if (signal.aborted) throw new UploadAbortedError(signal.reason);
+    const next: NonNullable<OutboxEntry['media']> = {
+      ...raw,
+      prepare: undefined,
+      upload: undefined,
+      fileBytes: prepared.bytes,
+      mimeType: prepared.mimeType,
+      size: prepared.bytes.length,
+      ...(prepared.fileName ? { fileName: prepared.fileName } : {}),
+      ...(prepared.width ? { width: prepared.width } : {}),
+      ...(prepared.height ? { height: prepared.height } : {}),
+      ...(prepared.durationMs ? { durationMs: prepared.durationMs } : {}),
+    };
+    if (storage) {
+      const { blob: _blob, ...withBytes } = next;
+      try {
+        // The bytes ARE in this patch: the store writes them to the other blob slot, then the row.
+        await storage.updateOutboxEntry(entry.id, { media: withBytes }, deviceKey());
+      } catch (e) {
+        // NEVER UPLOAD BYTES THE ROW DOES NOT NAME: a kill after such an upload would prepare the
+        // take again and send a second file under the same message.
+        log(`[OUTBOX] ${id}… the prepared file could NOT be stored: ${String(e).slice(0, 160)}`);
+        throw new OutboxPrepareError('the prepared file could not be stored', e);
+      }
+    }
+    log(
+      `[OUTBOX] ${id}… take prepared: ${raw.fileBytes.length} -> ${prepared.bytes.length} bytes (${prepared.mimeType}), stored in its place`
+    );
+    return next;
   }
 
   /**
@@ -1238,7 +1393,8 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
     // The count is of CONSECUTIVE local failures: any other kind of hold breaks the run.
     if (!opts.local) unexpected.delete(entry.id);
     patchStatus(entry.id, 'pending');
-    // An attachment still to upload shows that its next attempt is queued (and starts from zero).
+    // An attachment still to upload shows that its next attempt is queued (and starts from zero -
+    // except a chat reel's resumable session, which resumes at the parts the server lacks).
     // `quiet` when the payload was not read, so whether the upload already happened is not known.
     if (!opts.quiet && entry.kind === 'media' && !entry.media?.uploadedRef) {
       // THE LABEL IS THE HOLD'S TYPED REASON, never a guess: only a transport failure accuses the
@@ -1829,6 +1985,12 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
       patchStatus(entry.id, 'pending');
       patchUpload(entry.id, { phase: 'failed' });
       return 'parked';
+    }
+    // THE TAKE COULD NOT BE PREPARED (RC-5): the encoder refused it, or its result could not be
+    // stored. About this device and this file, never the link - so no ladder; the take is KEPT and
+    // the member retries (a new preparation) or deletes.
+    if (e instanceof OutboxPrepareError) {
+      return parkAsError(entry, `${e.message} (${String(e.cause).slice(0, 120)})`);
     }
     if (refusal) {
       const detail = `${entry.kind} entry${entry.media ? ` (${entry.media.size} bytes)` : ''}`;

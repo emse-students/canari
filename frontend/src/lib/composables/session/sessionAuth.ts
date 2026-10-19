@@ -333,23 +333,81 @@ export function makeOutboxDeps(ctx: SessionContext, cb: ChatSessionCallbacks) {
     saveConversation: cb.saveConversation,
     uploadMedia: async (
       media: NonNullable<import('$lib/db').OutboxEntry['media']>,
-      transport?: import('$lib/utils/uploadXhr').XhrUploadOptions
+      transport?: import('$lib/utils/uploadXhr').XhrUploadOptions,
+      resume?: { persist: (state: import('$lib/db/types').OutboxResumableUpload) => Promise<void> }
     ) => {
       const { MediaService } = await import('$lib/media');
-      const token = await getToken();
       const bytes = media.fileBytes ?? new Uint8Array(0);
       const file = new File([bytes.buffer as ArrayBuffer], media.fileName ?? 'file', {
         type: media.mimeType,
       });
+      const retentionClass = uploadClassFor(media);
+      // A CHAT REEL GOES THROUGH A RESUMABLE SESSION (RC-5): a cut or a kill resends only the parts
+      // the server lacks. Everything else keeps the one-shot route it always took.
+      if (retentionClass === 'chat-reel' && resume) {
+        return new MediaService().uploadResumably(
+          file,
+          getToken,
+          { width: media.width, height: media.height },
+          retentionClass,
+          { state: media.upload, persist: resume.persist },
+          transport
+        );
+      }
+      const token = await getToken();
       return new MediaService().encryptAndUpload(
         file,
         token,
         { width: media.width, height: media.height },
-        uploadClassFor(media),
+        retentionClass,
         transport
       );
     },
+    prepareMedia: prepareQueuedChatReel,
   };
+}
+
+/**
+ * Prepares a queued RAW chat-reel take for the outbox (RC-5) with the encoder the composer used for
+ * it before (`prepareVideoForUpload`, the server's plaintext ceiling as its budget). A cancel is
+ * re-thrown as the outbox's `UploadAbortedError`, so it is read as the member's act and never as a
+ * failure of the take.
+ */
+async function prepareQueuedChatReel(
+  media: NonNullable<import('$lib/db').OutboxEntry['media']>,
+  opts: { signal: AbortSignal; onProgress: (fraction: number) => void }
+): Promise<import('$lib/utils/chat/outbox').PreparedOutboxMedia> {
+  const [{ MediaService }, { prepareVideoForUpload, isVideoPrepareError }, { UploadAbortedError }] =
+    await Promise.all([
+      import('$lib/media'),
+      import('$lib/video/prepareVideoForUpload'),
+      import('$lib/utils/uploadXhr'),
+    ]);
+  const raw = media.fileBytes ?? new Uint8Array(0);
+  const source = new File([raw.buffer as ArrayBuffer], media.fileName ?? 'take', {
+    type: media.mimeType,
+  });
+  const limits = await new MediaService().uploadLimits();
+  try {
+    const prepared = await prepareVideoForUpload(source, {
+      maxBytes: limits?.maxPlaintextBytes,
+      signal: opts.signal,
+      onProgress: opts.onProgress,
+    });
+    return {
+      bytes: new Uint8Array(await prepared.file.arrayBuffer()),
+      mimeType: prepared.file.type,
+      fileName: prepared.file.name,
+      width: prepared.width,
+      height: prepared.height,
+      durationMs: Math.max(1, Math.round(prepared.durationSeconds * 1000)),
+    };
+  } catch (e) {
+    if (isVideoPrepareError(e) && e.fault === 'aborted') {
+      throw new UploadAbortedError(opts.signal.reason);
+    }
+    throw e;
+  }
 }
 
 /**
