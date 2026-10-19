@@ -1,0 +1,263 @@
+/**
+ * THE DOUBLE TAP THAT LIKES A POST (`doubleTapLike`, user 2026-10-19), driven with the events an
+ * engine sends: the taps are `click`s (what the engine already called a tap), the drags and second
+ * fingers are pointer events. Timestamps come from `performance.now()`, faked with the timers, so
+ * "too late" is a count of milliseconds and never a wall clock.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { doubleTapLike, type DoubleTapLikeParams } from './doubleTapLike';
+import { GESTURE } from '$lib/utils/viewerGestures';
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'performance', 'Date'] });
+});
+afterEach(() => {
+  vi.useRealTimers();
+  document.body.innerHTML = '';
+  window.getSelection()?.removeAllRanges();
+});
+
+/** A surface with post text, a link, a poll option, a held media opener and a no-tap region. */
+function surface(params: Partial<DoubleTapLikeParams> = {}) {
+  document.body.innerHTML = `
+    <div id="card">
+      <p id="text">Some post text</p>
+      <a id="link" href="/elsewhere">a link</a>
+      <button id="option" type="button">Option A</button>
+      <button id="photo" type="button" data-double-tap-defers><img id="img" alt="" /></button>
+      <div data-no-double-tap><span id="bar">action bar</span></div>
+    </div>`;
+  const node = document.getElementById('card')!;
+  const at = vi.fn();
+  const action = doubleTapLike(node, { onDoubleTap: at, ...params });
+  const el = (id: string) => document.getElementById(id)!;
+  return { node, at, action, el };
+}
+
+/** A click as a tap produces it: a pointer behind it (`detail` 1+), at a point. */
+function tap(target: Element, x = 100, y = 100, detail = 1): MouseEvent {
+  const e = new MouseEvent('click', {
+    bubbles: true,
+    cancelable: true,
+    clientX: x,
+    clientY: y,
+    detail,
+  });
+  target.dispatchEvent(e);
+  return e;
+}
+
+/** happy-dom may not implement `PointerEvent`; a mouse event carrying `pointerId` is equivalent. */
+function pointer(type: string, target: Element, x: number, y: number, pointerId = 1) {
+  const Ctor = (globalThis as Record<string, unknown>).PointerEvent as
+    | typeof PointerEvent
+    | undefined;
+  const e = Ctor
+    ? new Ctor(type, {
+        bubbles: true,
+        clientX: x,
+        clientY: y,
+        pointerId,
+        isPrimary: pointerId === 1,
+      })
+    : new MouseEvent(type, { bubbles: true, clientX: x, clientY: y });
+  if (!Ctor) Object.defineProperty(e, 'pointerId', { value: pointerId });
+  target.dispatchEvent(e);
+}
+
+describe('doubleTapLike', () => {
+  it('two taps inside the window and the slop are ONE double tap, reported where the second landed', () => {
+    const { at, el, node } = surface();
+    vi.spyOn(node, 'getBoundingClientRect').mockReturnValue({
+      left: 10,
+      top: 20,
+    } as DOMRect);
+    tap(el('text'), 100, 100);
+    vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS - 50);
+    tap(el('text'), 105, 104);
+    expect(at).toHaveBeenCalledTimes(1);
+    expect(at).toHaveBeenCalledWith({ x: 95, y: 84 });
+  });
+
+  it('a second tap too late is a new first tap, not a double', () => {
+    const { at, el } = surface();
+    tap(el('text'));
+    vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS + 1);
+    tap(el('text'));
+    expect(at).not.toHaveBeenCalled();
+  });
+
+  it('a second tap too far away is not a double', () => {
+    const { at, el } = surface();
+    tap(el('text'), 0, 0);
+    tap(el('text'), GESTURE.DOUBLE_TAP_SLOP_PX + 1, 0);
+    expect(at).not.toHaveBeenCalled();
+  });
+
+  it('a third quick tap does not like a second time', () => {
+    const { at, el } = surface();
+    tap(el('text'));
+    tap(el('text'));
+    tap(el('text'));
+    expect(at).toHaveBeenCalledTimes(1);
+  });
+
+  it('two taps on a link, a poll option or the action bar are theirs, never a like', () => {
+    const { at, el } = surface();
+    for (const id of ['link', 'option', 'bar']) {
+      tap(el(id));
+      tap(el(id));
+    }
+    expect(at).not.toHaveBeenCalled();
+  });
+
+  it('a tap on a control between two taps on the text ends the sequence', () => {
+    const { at, el } = surface();
+    tap(el('text'));
+    tap(el('option'));
+    tap(el('text'));
+    expect(at).not.toHaveBeenCalled();
+  });
+
+  it('a click with no pointer behind it (keyboard, screen reader) is never counted', () => {
+    const { at, el } = surface();
+    tap(el('text'), 100, 100, 0);
+    tap(el('text'), 100, 100, 0);
+    expect(at).not.toHaveBeenCalled();
+  });
+
+  it('a second finger between the taps ends the sequence', () => {
+    const { at, el } = surface();
+    tap(el('text'));
+    pointer('pointerdown', el('text'), 100, 100, 1);
+    pointer('pointerdown', el('text'), 200, 200, 2);
+    pointer('pointerup', el('text'), 200, 200, 2);
+    pointer('pointerup', el('text'), 100, 100, 1);
+    tap(el('text'));
+    expect(at).not.toHaveBeenCalled();
+  });
+
+  it('a drag between the taps ends the sequence', () => {
+    const { at, el } = surface();
+    tap(el('text'));
+    pointer('pointerdown', el('text'), 100, 100);
+    pointer('pointermove', el('text'), 100, 100 + GESTURE.TAP_SLOP_PX + 1);
+    pointer('pointerup', el('text'), 100, 100 + GESTURE.TAP_SLOP_PX + 1);
+    tap(el('text'));
+    expect(at).not.toHaveBeenCalled();
+  });
+
+  it('a press that stays inside the tap slop does not end the sequence', () => {
+    const { at, el } = surface();
+    pointer('pointerdown', el('text'), 100, 100);
+    pointer('pointermove', el('text'), 103, 102);
+    pointer('pointerup', el('text'), 103, 102);
+    tap(el('text'));
+    pointer('pointerdown', el('text'), 100, 100);
+    pointer('pointerup', el('text'), 100, 100);
+    tap(el('text'));
+    expect(at).toHaveBeenCalledTimes(1);
+  });
+
+  it('the click ending a drag-selection of text is not a tap', () => {
+    const { at, el } = surface();
+    const range = document.createRange();
+    range.selectNodeContents(el('text'));
+    window.getSelection()!.addRange(range);
+    tap(el('text'));
+    tap(el('text'));
+    expect(at).not.toHaveBeenCalled();
+  });
+
+  it('disabled, it counts nothing and holds nothing', () => {
+    const { at, el } = surface({ enabled: false });
+    const opened = vi.fn();
+    el('photo').addEventListener('click', opened);
+    tap(el('img'));
+    expect(opened).toHaveBeenCalledTimes(1);
+    tap(el('text'));
+    tap(el('text'));
+    expect(at).not.toHaveBeenCalled();
+  });
+
+  describe('a media opener (data-double-tap-defers)', () => {
+    it('opens on a single tap once the window has passed, exactly once', () => {
+      const { at, el } = surface();
+      const opened = vi.fn();
+      el('photo').addEventListener('click', opened);
+      tap(el('img'));
+      expect(opened).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS);
+      expect(opened).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS * 4);
+      expect(opened).toHaveBeenCalledTimes(1);
+      expect(at).not.toHaveBeenCalled();
+    });
+
+    it('a double tap on it likes and opens nothing', () => {
+      const { at, el } = surface();
+      const opened = vi.fn();
+      el('photo').addEventListener('click', opened);
+      tap(el('img'));
+      tap(el('img'));
+      vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS * 4);
+      expect(at).toHaveBeenCalledTimes(1);
+      expect(opened).not.toHaveBeenCalled();
+    });
+
+    it('Enter or a screen reader opens it at once', () => {
+      const { el } = surface();
+      const opened = vi.fn();
+      el('photo').addEventListener('click', opened);
+      tap(el('photo'), 0, 0, 0);
+      expect(opened).toHaveBeenCalledTimes(1);
+    });
+
+    it('a drag after the tap drops the held open', () => {
+      const { el } = surface();
+      const opened = vi.fn();
+      el('photo').addEventListener('click', opened);
+      tap(el('img'));
+      pointer('pointerdown', el('text'), 100, 100);
+      pointer('pointercancel', el('text'), 100, 100);
+      vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS * 4);
+      expect(opened).not.toHaveBeenCalled();
+    });
+
+    it('an opener that left the page is not opened', () => {
+      const { el } = surface();
+      const opened = vi.fn();
+      const photo = el('photo');
+      photo.addEventListener('click', opened);
+      tap(el('img'));
+      photo.remove();
+      vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS);
+      expect(opened).not.toHaveBeenCalled();
+    });
+
+    it('destroying the surface drops a held open', () => {
+      const { el, action } = surface();
+      const opened = vi.fn();
+      el('photo').addEventListener('click', opened);
+      tap(el('img'));
+      action.destroy();
+      vi.advanceTimersByTime(GESTURE.DOUBLE_TAP_MS);
+      expect(opened).not.toHaveBeenCalled();
+    });
+  });
+
+  it("a mouse double click does not select the word under it, and leaves a control's alone", () => {
+    const { el } = surface();
+    const second = new MouseEvent('mousedown', { bubbles: true, cancelable: true, detail: 2 });
+    el('text').dispatchEvent(second);
+    expect(second.defaultPrevented).toBe(true);
+
+    const first = new MouseEvent('mousedown', { bubbles: true, cancelable: true, detail: 1 });
+    el('text').dispatchEvent(first);
+    expect(first.defaultPrevented).toBe(false);
+
+    const onLink = new MouseEvent('mousedown', { bubbles: true, cancelable: true, detail: 2 });
+    el('link').dispatchEvent(onLink);
+    expect(onLink.defaultPrevented).toBe(false);
+  });
+});

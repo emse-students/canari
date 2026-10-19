@@ -24,9 +24,11 @@
     authToken?: string;
     /** When true, always show the full markdown (no truncation). */
     fullContent?: boolean;
+    /** The signed-in reader, handed to the reel viewer so a double tap there likes; absent, it cannot. */
+    likerId?: string;
   }
 
-  let { post, authToken = '', fullContent = false }: Props = $props();
+  let { post, authToken = '', fullContent = false, likerId }: Props = $props();
 
   onMount(() => {
     ensureHljsTheme();
@@ -175,7 +177,12 @@
         </div>
       </div>
       {#if reelViewerOpen}
-        <ReelViewer startPost={post} {authToken} onClose={() => (reelViewerOpen = false)} />
+        <ReelViewer
+          startPost={post}
+          {authToken}
+          {likerId}
+          onClose={() => (reelViewerOpen = false)}
+        />
       {/if}
     {:else if postMedia.length === 1}
       {@render singleMedia(postMedia[0])}
@@ -226,6 +233,7 @@
                   class="bg-cn-scrim/60 absolute inset-0 flex items-center justify-center text-white outline-none focus-visible:ring-4 focus-visible:ring-amber-500/50 focus-visible:ring-inset"
                   aria-label={m.post_gallery_more_label({ count: gallery.overflow })}
                   data-gallery-more
+                  data-double-tap-defers
                 >
                   <span class="text-3xl font-bold" aria-hidden="true"
                     >{m.post_gallery_more_count({ count: gallery.overflow })}</span

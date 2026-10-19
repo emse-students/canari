@@ -37,6 +37,9 @@
   import { m } from '$lib/paraglide/messages';
   import ReelFrame from './ReelFrame.svelte';
   import ReelSaveButton from './ReelSaveButton.svelte';
+  import DoubleTapHeart from '$lib/components/posts/DoubleTapHeart.svelte';
+  import { doubleTapLike } from '$lib/actions/doubleTapLike';
+  import type { Point } from '$lib/utils/viewerGestures';
 
   interface Props {
     post: PostEntity;
@@ -45,9 +48,21 @@
     active: boolean;
     /** The reel after the current one: its video is fetched ahead. */
     preload: boolean;
+    /**
+     * A double tap on the reel asks the viewer to like it. True when the reel now carries the
+     * reader's reaction (given now or before), which is when the heart is drawn. Absent - a reel
+     * opened from a conversation, which is not a post - a double tap does nothing.
+     */
+    onLike?: () => boolean;
   }
 
-  let { post, authToken, active, preload }: Props = $props();
+  let { post, authToken, active, preload, onLike }: Props = $props();
+
+  let hearts = $state<DoubleTapHeart | undefined>();
+
+  function likeOnDoubleTap(at: Point) {
+    if (onLike?.()) hearts?.burst(at);
+  }
 
   const video = $derived((post.media ?? post.images ?? [])[0]);
   /** The reel's own shape when the publisher recorded it, else the canonical frame. */
@@ -110,7 +125,17 @@
   <ReelSaveButton reel={post} />
 {/snippet}
 
-<div class="relative h-full w-full overflow-hidden bg-black" data-reel-slide={post.id}>
+<!-- A DOUBLE TAP ON THE REEL LIKES IT (`doubleTapLike`), the letterbox bands included. Nothing is
+     held: the first tap toggles the player's controls at once and the second toggles them back, so
+     the pair leaves them as they were. Not on a control - the player's bar, its play button, the
+     caption's toggle and backdrop, the author link - which acts at once as before. Only the reel on
+     screen listens. -->
+<div
+  class="relative h-full w-full overflow-hidden bg-black"
+  data-reel-slide={post.id}
+  use:doubleTapLike={{ onDoubleTap: likeOnDoubleTap, enabled: active && !!onLike }}
+>
+  <DoubleTapHeart bind:this={hearts} />
   <!-- THE SAME FRAME AS THE CAMERA, THE REVIEW AND THE EDITOR: what is published is what was framed,
        in the reel's own shape (a legacy reel was captured to a screen box, a gallery import has its
        own). The caption is INSIDE the frame, above the player's bar, so the two never overlap. -->

@@ -38,6 +38,15 @@
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
   import { showToast } from '$lib/stores/toast.svelte';
   import { claimTouchMove } from '$lib/utils/touchClaim';
+  import {
+    DOUBLE_TAP_REACTION,
+    publishPostReactions,
+    reactionRefusedLocally,
+    sendPostReaction,
+    toggledReactions,
+    type PostReactions,
+  } from '$lib/posts/postReaction';
+  import { publishFailureMessage } from '$lib/posts/publishFailure';
   import { m } from '$lib/paraglide/messages';
 
   interface Props {
@@ -47,9 +56,14 @@
     onClose: () => void;
     /** The next page of reels: the C7 list (`reels/allReels.ts`) unless the opener has its own. */
     loadPage?: ReelPageLoader;
+    /**
+     * The signed-in reader, whose double tap on a reel likes it. Absent, a double tap does nothing:
+     * a conversation's reel is not a post, and has no reactions to give.
+     */
+    likerId?: string;
   }
 
-  let { startPost, authToken, onClose, loadPage = listAllReels }: Props = $props();
+  let { startPost, authToken, onClose, loadPage = listAllReels, likerId }: Props = $props();
 
   /**
    * Touches on these belong to them: the player's bar seeks, a button is pressed, and an EXPANDED
@@ -110,6 +124,48 @@
     } finally {
       loadingMore = false;
     }
+  }
+
+  /** Replaces the reactions of the loaded reel `postId`, wherever it now sits in the list. */
+  function setReactions(postId: string, reactions: PostReactions) {
+    reels = reels.map((r) => (r.id === postId ? { ...r, reactions } : r));
+  }
+
+  /**
+   * A DOUBLE TAP ON A REEL LIKES IT, AND NEVER UNLIKES IT (user, 2026-10-19) - the card's reaction
+   * path (`posts/postReaction.ts`): the same refusal known before any request, the same request
+   * behind `assertNotMuted`, the same failure sentence, said here as a toast since the viewer has
+   * no card line. A reel the reader already reacted to, with any reaction, gets the heart and no
+   * request. True when the reel now carries the reader's reaction, which is when the heart is drawn.
+   * The server's answer goes to the cards on screen too, so the feed behind shows the like.
+   */
+  function likeReel(post: PostEntity): boolean {
+    const me = likerId;
+    if (!me) return false;
+    const before = post.reactions ?? {};
+    if (before[me]) {
+      console.debug(`[reel-viewer] double tap on ${post.id}: already reacted, heart only`);
+      return true;
+    }
+    if (reactionRefusedLocally()) {
+      console.debug(`[reel-viewer] double tap on ${post.id}: refused, the reader is muted`);
+      showToast(m.post_action_not_allowed(), 'error');
+      return false;
+    }
+    console.debug(`[reel-viewer] double tap on ${post.id}: like`);
+    setReactions(post.id, toggledReactions(before, me, DOUBLE_TAP_REACTION).next);
+    sendPostReaction(post.id, DOUBLE_TAP_REACTION, false).then(
+      (reactions) => {
+        setReactions(post.id, reactions);
+        publishPostReactions(post.id, reactions);
+      },
+      (err: unknown) => {
+        console.warn(`[reel-viewer] the like on ${post.id} was not recorded`, err);
+        setReactions(post.id, before);
+        showToast(publishFailureMessage(err, m.post_reaction_error()), 'error');
+      }
+    );
+    return true;
   }
 
   function reducedMotion(): boolean {
@@ -310,7 +366,13 @@
       >
         {#each mounted as i (reels[i].id)}
           <div class="absolute inset-x-0 h-full" style:top="{i * 100}%">
-            <ReelSlide post={reels[i]} {authToken} active={i === index} preload={i === index + 1} />
+            <ReelSlide
+              post={reels[i]}
+              {authToken}
+              active={i === index}
+              preload={i === index + 1}
+              onLike={likerId ? () => likeReel(reels[i]) : undefined}
+            />
           </div>
         {/each}
       </div>

@@ -1361,6 +1361,90 @@ and every way out; in Chromium on a stand-in thread, light and dark: hovering op
 mouse opens the list, the release leaves it open, the wheel and a click elsewhere close it. **Owed:**
 the hold under a finger on a phone.
 
+## A double tap likes the post, and never unlikes it (2026-10-19)
+
+**Asked by the user on 2026-10-19:** *"J'aimerais qu'on puisse liker un CanaReel en double cliquant
+dessus (et qu'on puisse faire pareil pour tous les posts d'ailleurs)."* One Svelte action,
+`actions/doubleTapLike.ts`, on every post card (`PostCard`, so the feed and `/posts/[id]` alike,
+whatever the post carries) and on the reel on screen in the full-screen viewer (`ReelSlide`, see
+[reels](reels.md#a-double-tap-on-a-reel-likes-it-2026-10-19)). A mouse double click is the same
+gesture.
+
+**What it does - Instagram's rule.**
+
+- A post the reader has NOT reacted to gets "J'aime" (the heart, `DOUBLE_TAP_REACTION` in
+  `posts/postReaction.ts`), through the reaction picker's OWN path: the card's `handleReaction`, so
+  the tally moves on the tap, a mute already known refuses with the same line and sends nothing, the
+  request goes behind `assertNotMuted`, and a failure rolls back with the same sentence. There is no
+  second gate to keep in step: the button has none beyond the mute, and the server's refusal is
+  answered the same way for both.
+- A post the reader has ALREADY reacted to, with ANY reaction, gets the heart drawn again and NO
+  request: a double tap never removes a reaction, and never replaces one the reader chose (a 😂 stays
+  a 😂). The picker remains the one way to change or take back a reaction - and the keyboard's and
+  the screen reader's way to like at all: the gesture adds no tab stop and no name, and a click with
+  no pointer behind it (`detail === 0`: Enter, Space, an assistive activation) is never counted.
+- A signed-out reader, or a card being edited, has no double tap.
+- `DoubleTapHeart` draws the reaction's own picture (Noto's heart, `EmojiText`) where the second tap
+  landed, springs it up and fades it (`.double-tap-heart` in `app.css`, 800 ms), and removes it on
+  `animationend` - never a timer. Under reduced motion it is a still heart fading over 500 ms: the
+  global reduced-motion rule would shorten it to 0.01 ms and remove it before a frame, so the class
+  outranks it on purpose; an opacity change is not motion. One `navigator.vibrate(12)` through
+  `utils/haptics.ts`, when the member has vibrations on - Android only, iOS WebKit has no vibration
+  API and no plugin was added.
+
+**How a double tap is told from a single one.** The taps are the engine's `click`s, read in the
+CAPTURE phase on the card: a click is what the engine already decided was a tap (a press that
+scrolled, panned or pinched makes none), and capture sees it before any child - `VideoPlayer` stops
+its own click's propagation. Two clicks within `GESTURE.DOUBLE_TAP_MS` (250) and
+`GESTURE.DOUBLE_TAP_SLOP_PX` (50) are a double, decided by `isDoubleTap` through
+`createTapDisambiguator` - the arithmetic the media viewer's zoom and the message bubble's heart
+already share, not a third copy. A third quick tap belongs to the same gesture (`quietAfterDouble`).
+
+- **On text, the header, a poll's question, a reel in the viewer: no single tap is held.** The first
+  click goes on to its target at once. On text it does nothing; on a reel it toggles the player's
+  controls, and the second toggles them back - the pair cancels itself, so nothing needs to wait.
+- **On a media that OPENS A VIEWER the single tap IS held**, because no second tap can take back a
+  full-screen viewer: a picture (`PostMedia`'s image button), a feed video and a reel card
+  (`InlineVideo`'s open button), the gallery's "+N" cell carry `data-double-tap-defers`. Their click
+  is stopped in capture and replayed (`element.click()`) once the window has passed with no second
+  tap; a double spends it on the like. **That wait is `createTapDisambiguator`'s one timer and its
+  stated reason: whether a second tap will come is not a fact any event carries before it comes.**
+  If the value were wrong, a slow double tap would open the viewer, or a single tap would open it
+  late - a feel, never a correctness or a traffic question. It is paid on those targets only.
+  Enter or a screen reader opens them at once (`detail === 0`). A drag, a second finger or a
+  `pointercancel` after the tap drops the held open, and an opener the feed removed meanwhile is not
+  replayed. **Reasoned, not measured:** the replayed open now runs ~250 ms after the gesture; Chrome
+  keeps a user activation for seconds, WebKit forwards one through a timer under 1 s, and the viewer
+  starts its player after an asynchronous decrypt anyway - whether a reel still opens WITH SOUND
+  for a member who turned it on is owed on the iPhone.
+- **Never a tap of this gesture:** anything `tapBelongsToInnerControl` names (a link, a mention, a
+  button, a poll option, a field, `role="button"`), anything under `[data-no-double-tap]` - the
+  action bar and the comment section of the card - and the click ending a drag-selection of text
+  (`hasActiveTextSelection`). A tap on any of these also ENDS a sequence, so text-option-text is no
+  like.
+- **A mouse double click does not select the word under it** on the card: its second `mousedown`
+  (`detail === 2`) is prevented, outside controls. A drag still selects, and a long press on a phone
+  still selects (it is never a click).
+- **Every overlay a card opens is portalled out of it** (`FullScreenViewer`, `Modal`, the reel
+  viewer), so a double tap inside a lightbox - its own zoom - never reaches the card.
+
+**What `touch-action` was NOT changed, and why.** A double tap on a phone could also be the engine's
+double-tap ZOOM. The feed and the post page scroll in `.page-scroll-wrap`, whose `touch-action:
+pan-y pinch-zoom` (design-reference sections 28 and 38) already removes it - any value but `auto`
+does - and the reel viewer's frame is `touch-none`. Whether WebKit honours that for a double tap on a
+card is part of the owed reading. Adding `manipulation` to the card would intersect to the same
+`pan-y pinch-zoom` and change nothing, so the #1223 tab-swipe rules are untouched: a double tap has no
+travel, so it never engages the tab swipe, the reel viewer's swipe or the reply swipe.
+
+**Pinned:** `doubleTapLike.test.ts` (window, slop, a third tap, a control's taps, a control between
+two taps, no pointer, a second finger, a drag, a press inside the slop, a selection, a held media
+tap opened once / spent on a double / dropped by a drag / not replayed once removed / dropped on
+teardown, the word-selection guard), `PostCard.doubleTap.svelte.test.ts` (one request when not
+reacted, none when liked or reacted otherwise, the heart's lifetime, a poll option and the action
+bar keep their taps, the mute and failure lines, signed out, a viewer like reaching the card),
+`postReaction.test.ts`, and on the reel side `ReelSlide.doubleTap` and `ReelViewer.like`. **Owed on
+the Mi 9T and the iPhone 12:** [device-verification](../../device-verification.md#dt-a-double-tap-likes-a-post---owed-on-both-phones).
+
 ## Scheduled posts: where they show, and the event picker order (2026-10-06)
 
 A scheduled post is visible to its AUTHOR only, in `ScheduledPostsPanel` above the feed of `/posts`

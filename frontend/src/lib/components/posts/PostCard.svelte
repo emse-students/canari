@@ -2,8 +2,6 @@
   import { publicSectionHref } from '$lib/associations/publicSections';
   import {
     votePoll,
-    addReaction,
-    removeReaction,
     addComment,
     likeComment as likeCommentApi,
     editComment as editCommentApi,
@@ -23,6 +21,16 @@
   import type { ReportReason } from '$lib/moderation/reasons';
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
   import { assertNotMuted, cachedMuteStatus } from '$lib/moderation/muteCheck';
+  import {
+    DOUBLE_TAP_REACTION,
+    onPostReactions,
+    reactionRefusedLocally,
+    sendPostReaction,
+    toggledReactions,
+  } from '$lib/posts/postReaction';
+  import { doubleTapLike } from '$lib/actions/doubleTapLike';
+  import type { Point } from '$lib/utils/viewerGestures';
+  import DoubleTapHeart from './DoubleTapHeart.svelte';
   import { applyPostPollVote, nextPollSelection, pollDeadlinePassed } from '$lib/posts/pollVote';
   import { pollDeadlineClock } from '$lib/posts/pollDeadline.svelte';
   import { SvelteSet } from 'svelte/reactivity';
@@ -300,29 +308,23 @@
     // the tap. The check used to be `await assertNotMuted()` placed FIRST, so the picker stayed
     // open and the tally stayed still until `GET /api/moderation/me/mute-status` answered - once
     // per five-minute window, on a link where that is seconds.
-    if (cachedMuteStatus()?.isMuted) {
+    if (reactionRefusedLocally()) {
       errorMessage = m.post_action_not_allowed();
       return;
     }
 
     // Optimistic update - apply immediately, roll back on error
     const prevReactions = { ...localPost.reactions };
-    const wasReacted = prevReactions[currentUserId] === reactionType;
-    const newReactions = { ...prevReactions };
-    if (wasReacted) delete newReactions[currentUserId];
-    else newReactions[currentUserId] = reactionType;
-    localPost = { ...localPost, reactions: newReactions };
+    const { next, wasReacted } = toggledReactions(prevReactions, currentUserId, reactionType);
+    localPost = { ...localPost, reactions: next };
     showReactionPicker = false;
 
     const token = ledger.begin(['reactions']);
     try {
       // Still never sent to a server certain to refuse it: when nothing is known, this asks -
       // behind a picker that has already closed and a tally that has already moved.
-      await assertNotMuted();
-      const result = wasReacted
-        ? await removeReaction(localPost.id)
-        : await addReaction(localPost.id, reactionType);
-      localPost = { ...localPost, reactions: result.reactions };
+      const reactions = await sendPostReaction(localPost.id, reactionType, wasReacted);
+      localPost = { ...localPost, reactions };
     } catch (err) {
       // NOT ALWAYS MODERATION. `assertNotMuted()` ASKS the server, so a dropped radio used to tell
       // the reader they are restricted by moderation, which is false and is about them.
@@ -335,6 +337,40 @@
       ledger.end(['reactions']);
     }
   }
+
+  let hearts = $state<DoubleTapHeart | undefined>();
+
+  /**
+   * A DOUBLE TAP ON THE CARD LIKES THE POST, AND NEVER UNLIKES IT (user, 2026-10-19; `doubleTapLike`).
+   * It is the reaction picker's own path - `handleReaction` with "J'aime" - so a mute, a refusal and
+   * a lost radio end exactly as a tap on the heart does. A reader who has already reacted, with any
+   * reaction, is shown the heart and nothing is sent: a double tap never replaces a chosen reaction.
+   * The heart is drawn only once the post carries the reader's reaction - a refused tap wrote none.
+   */
+  function likeOnDoubleTap(at: Point) {
+    if (!currentUserId.trim()) return;
+    if (userReaction) {
+      Log.d('PostCard.doubleTap', `${localPost.id}: already reacted, heart only`);
+    } else {
+      Log.d('PostCard.doubleTap', `${localPost.id}: like`);
+      // The synchronous half of `handleReaction` has run when this returns: the tally has moved,
+      // or the refusal is on screen.
+      void handleReaction(DOUBLE_TAP_REACTION);
+    }
+    if ((localPost.reactions ?? {})[currentUserId]) hearts?.burst(at);
+  }
+
+  /**
+   * A like given to this post in the reel viewer (`ReelViewer`), answered by the server: the card
+   * takes it, so closing the viewer shows the heart that was just given.
+   */
+  const postId = $derived(localPost.id);
+  $effect(() =>
+    onPostReactions(postId, (reactions) => {
+      ledger.answered(['reactions']);
+      localPost = { ...localPost, reactions };
+    })
+  );
 
   /** Enters edit mode (shows EditPostForm in place of PostContent). */
   function startEditPost() {
@@ -644,7 +680,18 @@
   }
 </script>
 
-<div class="relative mb-6">
+<!-- A DOUBLE TAP ANYWHERE ON THE POST LIKES IT (`doubleTapLike`): its text, its header's blank
+     space, its picture or video, its poll's question. Not the action bar nor the comments
+     (`data-no-double-tap`), and never a link, button, poll option or field inside it. Off while the
+     post is being edited and for a reader who is not signed in. -->
+<div
+  class="relative mb-6"
+  use:doubleTapLike={{
+    onDoubleTap: likeOnDoubleTap,
+    enabled: !editingPost && currentUserId.trim() !== '',
+  }}
+>
+  <DoubleTapHeart bind:this={hearts} />
   {#if localPost.pinned}
     <PostCornerBadge label={m.post_pinned()}>
       {#snippet icon()}<Pin size={10} strokeWidth={3} />{/snippet}
@@ -732,7 +779,7 @@
         />
       </div>
     {:else}
-      <PostContent post={localPost} {authToken} />
+      <PostContent post={localPost} {authToken} likerId={currentUserId.trim() || undefined} />
     {/if}
 
     <!--
@@ -741,25 +788,27 @@
       spends 44 px on both together. Passing it as a snippet keeps its five props here, where the
       post's reaction state already lives, while `PostActions` decides only where it sits.
     -->
-    <PostActions
-      {userReaction}
-      {showReactionPicker}
-      reactionList={REACTIONS}
-      commentCount={comments.length || undefined}
-      onToggleReactionPicker={() => (showReactionPicker = !showReactionPicker)}
-      onReactionSelect={handleReaction}
-      onCommentClick={() => (showComments = !showComments)}
-    >
-      {#snippet reactionSummary()}
-        <ReactionsDisplay
-          {reactionCounts}
-          reactions={localPost.reactions ?? {}}
-          {userReaction}
-          reactionList={REACTIONS}
-          onReactionClick={handleReaction}
-        />
-      {/snippet}
-    </PostActions>
+    <div data-no-double-tap>
+      <PostActions
+        {userReaction}
+        {showReactionPicker}
+        reactionList={REACTIONS}
+        commentCount={comments.length || undefined}
+        onToggleReactionPicker={() => (showReactionPicker = !showReactionPicker)}
+        onReactionSelect={handleReaction}
+        onCommentClick={() => (showComments = !showComments)}
+      >
+        {#snippet reactionSummary()}
+          <ReactionsDisplay
+            {reactionCounts}
+            reactions={localPost.reactions ?? {}}
+            {userReaction}
+            reactionList={REACTIONS}
+            onReactionClick={handleReaction}
+          />
+        {/snippet}
+      </PostActions>
+    </div>
 
     <!--
       A post poll's deadline is a date its author picked, hours or days out, so comparing it to this
@@ -788,28 +837,30 @@
 
     <PostForms {formInfos} />
 
-    <PostComments
-      {comments}
-      {topLevelComments}
-      {showComments}
-      {commentText}
-      {submittingComment}
-      {pendingCommentIds}
-      {currentUserId}
-      {authToken}
-      {focusCommentId}
-      onToggleComments={() => (showComments = !showComments)}
-      onCommentTextChange={async (text) => {
-        commentText = text;
-      }}
-      onAddComment={handleAddComment}
-      onLikeComment={handleLikeComment}
-      onEditComment={handleEditComment}
-      onDeleteComment={handleDeleteComment}
-      onReport={handleReportComment}
-      onLoadAllComments={loadAllComments}
-      totalCommentCount={(localPost.comments ?? []).length}
-    />
+    <div data-no-double-tap>
+      <PostComments
+        {comments}
+        {topLevelComments}
+        {showComments}
+        {commentText}
+        {submittingComment}
+        {pendingCommentIds}
+        {currentUserId}
+        {authToken}
+        {focusCommentId}
+        onToggleComments={() => (showComments = !showComments)}
+        onCommentTextChange={async (text) => {
+          commentText = text;
+        }}
+        onAddComment={handleAddComment}
+        onLikeComment={handleLikeComment}
+        onEditComment={handleEditComment}
+        onDeleteComment={handleDeleteComment}
+        onReport={handleReportComment}
+        onLoadAllComments={loadAllComments}
+        totalCommentCount={(localPost.comments ?? []).length}
+      />
+    </div>
 
     <!-- Inline card notifications. -->
     <PostFeedback {errorMessage} {actionMessage} />

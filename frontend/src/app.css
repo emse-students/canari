@@ -2271,6 +2271,63 @@ html.keyboard-open .page-scroll-wrap:has(.app-layout) {
   outline-offset: 2px;
 }
 
+/* THE DOUBLE-TAP HEART (`DoubleTapHeart.svelte`): it springs up where the finger landed, holds,
+   and fades - about the time Instagram's takes. Centred on the tap by the translate, sized off the
+   type scale so 2x text grows it too. Its element is removed on `animationend`, so the animation
+   MUST end: `both` keeps the last frame (invisible) until it does. */
+.double-tap-heart {
+  position: absolute;
+  font-size: var(--text-3xl);
+  line-height: 1;
+  filter: drop-shadow(0 0.125rem 0.5rem rgb(0 0 0 / 0.35));
+  animation: doubleTapHeart 800ms cubic-bezier(0.2, 0, 0, 1) both;
+}
+
+@keyframes doubleTapHeart {
+  0% {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.4);
+  }
+  15% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(2.8);
+  }
+  30% {
+    transform: translate(-50%, -50%) scale(2.4);
+  }
+  75% {
+    opacity: 1;
+    transform: translate(-50%, -60%) scale(2.4);
+  }
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -90%) scale(2.2);
+  }
+}
+
+@keyframes doubleTapHeartFade {
+  0%,
+  60% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* Reduced motion: no spring and no rise, a still heart that fades. The global rule below shortens
+   every animation to 0.01ms with `!important`, which would remove the heart before it is ever
+   painted; this selector is more specific and also `!important`, so a fade the reader can see is
+   kept - an opacity change is not motion (WCAG 2.3.3). */
+@media (prefers-reduced-motion: reduce) {
+  .double-tap-heart {
+    transform: translate(-50%, -50%) scale(2.4);
+    animation-name: doubleTapHeartFade !important;
+    animation-duration: 500ms !important;
+    animation-timing-function: linear !important;
+  }
+}
+
 /* ── Accessibility: prefers-reduced-motion ──────────────────────────────────
    Drops every animation/transition for users who asked their OS to reduce
    motion (WCAG 2.3.3). */
