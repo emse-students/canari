@@ -21,15 +21,22 @@ import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
 import { AssociationsService } from '../associations/associations.service';
 import { LiveEnabledGuard } from './live-enabled.guard';
 import { LIVE_SEGMENT_MAX_BYTES, liveLimits } from './live.constants';
-import { LivesService } from './lives.service';
+import { LiveChatService, type LiveChatBlock } from './live-chat.service';
+import { LivesService, type LiveManifest } from './lives.service';
 import { readBoundedBody } from './read-bounded-body';
 
 /** The caller nginx authenticated, as every account id is compared: trimmed, lower case. */
-const callerOf = (userId: string): string => userId.trim().toLowerCase();
+export const callerOf = (userId: string): string => userId.trim().toLowerCase();
 
 /** A segment index or a manifest offset: digits only, so `''`, `-1` and `0x10` are refused. */
 function indexOf(value: string, field: string): number {
   if (!/^[0-9]{1,6}$/.test(value)) throw new BadRequestException({ code: `LIVE_${field}_INVALID` });
+  return Number(value);
+}
+
+/** A chat cursor (WP-L6): a sequence number, digits only, within a `integer` column. */
+function seqOf(value: string, field: string): number {
+  if (!/^[0-9]{1,9}$/.test(value)) throw new BadRequestException({ code: `LIVE_${field}_INVALID` });
   return Number(value);
 }
 
@@ -45,7 +52,8 @@ function indexOf(value: string, field: string): number {
 export class LivesController {
   constructor(
     private readonly lives: LivesService,
-    private readonly associations: AssociationsService
+    private readonly associations: AssociationsService,
+    private readonly chat: LiveChatService
   ) {}
 
   /** The live's numbers, so a client carries no copy of them. Declared before `:id`. */
@@ -105,13 +113,31 @@ export class LivesController {
   async manifest(
     @Param('id', ParseUUIDPipe) id: string,
     @Headers('x-user-id') userId: string,
-    @Query('from') from?: string
-  ) {
-    return this.lives.manifest(
-      callerOf(userId),
+    @Query('from') from?: string,
+    @Query('chat') chat?: string,
+    @Query('messagesAfter') messagesAfter?: string,
+    @Query('reactionsAfter') reactionsAfter?: string
+  ): Promise<LiveManifest & { chat?: LiveChatBlock }> {
+    const caller = callerOf(userId);
+    // The cursors are checked BEFORE the manifest, so a malformed one never costs a seat renewal.
+    const cursors =
+      chat === '1'
+        ? {
+            messagesAfter:
+              messagesAfter === undefined ? undefined : seqOf(messagesAfter, 'MESSAGES_AFTER'),
+            reactionsAfter:
+              reactionsAfter === undefined ? undefined : seqOf(reactionsAfter, 'REACTIONS_AFTER'),
+          }
+        : null;
+    const manifest = await this.lives.manifest(
+      caller,
       id,
       from === undefined ? undefined : indexOf(from, 'FROM')
     );
+    if (!cursors) return manifest;
+    // THE CHAT RIDES THE POLL THE VIEWER ALREADY MAKES (WP-L6, C3): one request a tick, read after
+    // the manifest let this viewer watch.
+    return { ...manifest, chat: await this.chat.read(caller, id, cursors) };
   }
 
   /**

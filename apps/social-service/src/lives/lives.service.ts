@@ -102,7 +102,7 @@ export interface LiveEndResult {
 
 /** What a staff cut answers (WP-L8), and its idempotent repeat. */
 /** A `live_cuts` row as the live's own answers read it once the live row may be gone. */
-interface CutRecord {
+export interface CutRecord {
   broadcasterId: string;
   reason: LiveCutReason;
   cutAt: Date;
@@ -1009,8 +1009,11 @@ export class LivesService implements OnModuleDestroy {
     return n;
   }
 
-  /** The cut of a live, if staff cut it - read once the live's own row may be gone. */
-  private async cutOf(manager: EntityManager, liveId: string): Promise<CutRecord | null> {
+  /**
+   * The cut of a live, if staff cut it - read once the live's own row may be gone. Public for the
+   * chat's hide (`LiveChatService`), which answers a cut-then-purged live as every route does.
+   */
+  async cutOf(manager: EntityManager, liveId: string): Promise<CutRecord | null> {
     const rows: CutRecord[] = await manager.query(
       `SELECT ${CUT_COLUMNS} FROM live_cuts WHERE "liveId" = $1`,
       [liveId]
@@ -1022,9 +1025,10 @@ export class LivesService implements OnModuleDestroy {
    * A live with NO ROW that staff cut: throws its `410 LIVE_ENDED` (`endReason: 'cut'`) to the
    * broadcaster, and to a viewer the live would have been VISIBLE to (the rule of a post, asked of
    * the cut's own copy of the broadcaster and association) with no block between them - so the cut
-   * tells nobody else that the live existed, as the 404 before the end does. Returns otherwise.
+   * tells nobody else that the live existed, as the 404 before the end does. Returns otherwise. Public
+   * for the chat's writes (`LiveChatService`), so a message on a cut-then-purged live answers the same.
    */
-  private async refuseIfCut(
+  async refuseIfCut(
     manager: EntityManager,
     liveId: string,
     callerId: string,
@@ -1208,6 +1212,14 @@ export class LivesService implements OnModuleDestroy {
   }
 
   /**
+   * The watch rule ({@link assertMayWatch}) for a caller outside this service - the live chat's
+   * writes (WP-L6), which are refused exactly as the key is. Throws the same typed refusals.
+   */
+  async mayWatch(viewerId: string, liveId: string): Promise<void> {
+    await this.assertMayWatch(this.db.manager, viewerId, liveId);
+  }
+
+  /**
    * Who may read a live's key and manifest:
    *
    * - absent, NOT VISIBLE to the viewer (the rule of a post by the same broadcaster or association,
@@ -1266,7 +1278,7 @@ export class LivesService implements OnModuleDestroy {
  * screen branches on - `cut` (staff ended it, WP-L8) is told apart from every other end, never by a
  * message. Either field is null only when the server no longer knows (a live deleted mid-store).
  */
-function liveEnded(endedAt: Date | null, endReason: LiveEndReason | null): GoneException {
+export function liveEnded(endedAt: Date | null, endReason: LiveEndReason | null): GoneException {
   return new GoneException({ code: 'LIVE_ENDED', endedAt, endReason });
 }
 

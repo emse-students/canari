@@ -7,6 +7,7 @@ import { LIVE_SEGMENT_MAX_BYTES } from './live.constants';
 import { LivesController } from './lives.controller';
 import type { LivesService } from './lives.service';
 import type { AssociationsService } from '../associations/associations.service';
+import type { LiveChatService } from './live-chat.service';
 import { readBoundedBody } from './read-bounded-body';
 
 /** A request whose body is `chunks`, with `content-length` when given. */
@@ -76,7 +77,8 @@ const MODERATOR = 'm'.repeat(64);
 
 describe('LivesController', () => {
   const ingest = jest.fn().mockResolvedValue({ index: 0 });
-  const manifest = jest.fn().mockResolvedValue({});
+  const manifest = jest.fn().mockResolvedValue({ liveId: 'm' });
+  const read = jest.fn().mockResolvedValue({ messages: [] });
   const cut = jest.fn().mockResolvedValue({ newlyCut: true });
   const rulesStatus = jest.fn().mockResolvedValue({ version: 1 });
   /** The posts' one moderator predicate, faked: only `MODERATOR` holds `MODERATE` in a BDE. */
@@ -86,7 +88,8 @@ describe('LivesController', () => {
   );
   const controller = new LivesController(
     { ingest, manifest, cut, rulesStatus } as unknown as LivesService,
-    { isContentModerator } as unknown as AssociationsService
+    { isContentModerator } as unknown as AssociationsService,
+    { read } as unknown as LiveChatService
   );
   const LIVE = '22222222-2222-4222-8222-222222222222';
 
@@ -145,5 +148,37 @@ describe('LivesController', () => {
   it('answers the caller its first-live rules standing', async () => {
     await controller.rules('A'.repeat(64));
     expect(rulesStatus).toHaveBeenCalledWith('a'.repeat(64));
+  });
+
+  it('adds the chat block ONLY with chat=1, after the manifest let the viewer watch (WP-L6, C3)', async () => {
+    await expect(controller.manifest(LIVE, 'b'.repeat(64))).resolves.toEqual({ liveId: 'm' });
+    expect(read).not.toHaveBeenCalled();
+
+    await expect(controller.manifest(LIVE, 'B'.repeat(64), undefined, '1')).resolves.toEqual({
+      liveId: 'm',
+      chat: { messages: [] },
+    });
+    expect(read).toHaveBeenLastCalledWith('b'.repeat(64), LIVE, {
+      messagesAfter: undefined,
+      reactionsAfter: undefined,
+    });
+    await controller.manifest(LIVE, 'b'.repeat(64), '3', '1', '41', '0');
+    expect(read).toHaveBeenLastCalledWith('b'.repeat(64), LIVE, {
+      messagesAfter: 41,
+      reactionsAfter: 0,
+    });
+  });
+
+  it('refuses a malformed chat cursor BEFORE the manifest renews a seat', async () => {
+    for (const bad of ['', '-1', '1.5', '0x1', '1234567890']) {
+      expect(await statusOf(controller.manifest(LIVE, 'b'.repeat(64), undefined, '1', bad))).toBe(
+        HttpStatus.BAD_REQUEST
+      );
+      expect(
+        await statusOf(controller.manifest(LIVE, 'b'.repeat(64), undefined, '1', '0', bad))
+      ).toBe(HttpStatus.BAD_REQUEST);
+    }
+    expect(manifest).not.toHaveBeenCalled();
+    expect(read).not.toHaveBeenCalled();
   });
 });
