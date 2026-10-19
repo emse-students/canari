@@ -132,6 +132,15 @@ proxy_cache_path /var/cache/nginx/live levels=1:2 keys_zone=live_segments:1m max
 # whole campus may share ONE address: 30 r/s is the whole viewer cap of the host (24 seats, lives.md)\n\
 # fetching a segment a second, with room to spare; the burst absorbs a player catching up.\n\
 limit_req_zone $binary_remote_addr zone=lives_segments:1m rate=30r/s;\n\
+# limit_req counts REQUESTS, not bytes: 30 r/s of 4 MiB segments is ~1 Gb/s from one address. So the\n\
+# BYTES are bounded too, per address, from the plan's own numbers (live.constants.ts): at most 12\n\
+# segment fetches at once (limit_conn below), each sent at 750 000 B/s (limit_rate) - twice the 3 Mb/s\n\
+# a viewer costs, so a 3 s segment arrives in 1.5 s and a seated viewer has a fetch in flight half the\n\
+# time: the whole cap of 24 behind ONE campus address averages 12. 12 x 6 Mb/s = 72 Mb/s, the live\n\
+# share of the host's uplink (90 Mb/s x 0.8) and not more - one address can take the whole live budget,\n\
+# never the link. live-segments-route.test.mjs recomputes the product from the constants. (nginx grants\n\
+# each response one second of head start, so a single short fetch runs a little faster than the rate.)\n\
+limit_conn_zone $binary_remote_addr zone=lives_segments_conn:1m;\n\
 \n\
 # THE CACHE-CONTROL OF AN SSR RESPONSE, decided in two steps.\n\
 # 1. A response that DECLARED its own public max-age keeps it: routes/sitemap.xml/+server.ts is\n\
@@ -696,26 +705,36 @@ server {\n\
     }\n\
     # ONE SEALED LIVE SEGMENT, NO TOKEN, ANSWERED FROM THIS CACHE (WP-L4, docs/wiki/services/lives.md\n\
     # "Serving a segment"). The bytes are ciphertext under the live key, which only social-service hands\n\
-    # out; the names are random uuids learned only from the manifest. A REGEX location so it wins over\n\
-    # the two prefixes above, and so only two lower-case uuids ever reach media-service: anything else\n\
-    # falls to /api/media/public/ and is a 404 there.\n\
+    # out; the names are random uuids learned only from the manifest.\n\
+    # THE WHOLE PREFIX IS OWNED HERE, `^~`: no regex location is tried after it, and nothing under\n\
+    # /api/media/public/live/ can fall into /api/media/public/ (no cache, no limit) - an upper-case id,\n\
+    # a trailing slash or any other spelling of a segment would have reached the store on every request\n\
+    # (review of #2105). Inside, ONE regex: two lower-case uuids and nothing after; everything else is\n\
+    # a 404 HERE. media-service refuses any non-canonical path a second time, for the other locations.\n\
     # - THE UPSTREAM REQUEST IS THE SAME FOR EVERY VIEWER: the key is the path alone (a query string is\n\
     #   neither in the key nor forwarded, so no viewer can bust the cache), and the cookie, the token,\n\
     #   the origin and any range are dropped. A range is answered by this nginx from the cached whole.\n\
     # - `proxy_buffering on` HERE: it is off server-wide, and an unbuffered response is never cached.\n\
     # - Media-service sends no Cache-Control; whatever an upstream sends is ignored for the cache and\n\
     #   hidden from the client, so the header below is the one policy: `private` (no shared cache\n\
-    #   between here and the viewer keeps a segment past the purge of its live), an hour (the longest\n\
-    #   live, L4: a segment is never needed longer) and `immutable` (a name never changes bytes).\n\
+    #   between here and the viewer keeps a segment) and 2 min, the same bound as this cache: a viewer\n\
+    #   reads a segment once, within the manifest window, and the ciphertext of an ended live must not\n\
+    #   sit in a device's HTTP cache for an hour after it (register C16). No `immutable`, likewise.\n\
+    # - THE BYTES ARE BOUNDED PER ADDRESS (limit_conn + limit_rate, sized at the zone above), because\n\
+    #   limit_req counts requests. The viewer cap itself is advisory: it holds for an honest client.\n\
     # - A 404 (absent, or LIVE_ENABLED off) is kept 10 s, so a repeated miss costs one upstream call.\n\
     # - `X-Canari-Cache` says HIT or MISS; the access log shows `urt=- ust=-` on a hit - the proof that a\n\
     #   second viewer never reached media-service.\n\
     # - CORS as the API errors do: the three WebView origins, allowlisted, credentials allowed, so the\n\
     #   app may fetch it either way; the web app is same-origin and needs none.\n\
+    location ^~ /api/media/public/live/ {\n\
     location ~ "^/api/media/public/live/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$" {\n\
     limit_except GET { deny all; }\n\
     limit_req zone=lives_segments burst=60 nodelay;\n\
     limit_req_status 429;\n\
+    limit_conn lives_segments_conn 12;\n\
+    limit_conn_status 429;\n\
+    limit_rate 750000;\n\
     proxy_cache live_segments;\n\
     proxy_cache_key $uri;\n\
     proxy_cache_valid 200 2m;\n\
@@ -746,7 +765,7 @@ server {\n\
     proxy_set_header X-Real-IP $remote_addr;\n\
     proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;\n\
     proxy_set_header X-Forwarded-Proto $http_x_forwarded_proto;\n\
-    add_header Cache-Control "private, max-age=3600, immutable";\n\
+    add_header Cache-Control "private, max-age=120";\n\
     add_header X-Canari-Cache $upstream_cache_status always;\n\
     add_header Access-Control-Allow-Origin $api_error_cors_origin always;\n\
     add_header Access-Control-Allow-Credentials "true" always;\n\
@@ -754,6 +773,9 @@ server {\n\
     include /etc/nginx/snippets/csp.conf;\n\
     add_header X-Content-Type-Options "nosniff" always;\n\
     add_header X-Frame-Options "DENY" always;\n\
+    }\n\
+    include /etc/nginx/snippets/api-error-headers.conf;\n\
+    return 404 "{\\"statusCode\\":404,\\"message\\":\\"not found\\"}";\n\
     }\n\
     location /api/media {\n\
     auth_request /internal/auth/verify;\n\

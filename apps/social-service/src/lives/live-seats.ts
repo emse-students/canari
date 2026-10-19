@@ -36,8 +36,31 @@ return {1, seated + 1}
 /** Gives one seat back. KEYS[1] the seats set; ARGV[1] the member. Reply: 1 if it was held. */
 export const RELEASE_SEAT_LUA = `return redis.call('ZREM', KEYS[1], ARGV[1])`;
 
-/** The seat member of one viewer on one live. */
-export const seatMember = (liveId: string, viewerId: string): string => `${liveId}:${viewerId}`;
+/**
+ * Gives back every seat of ONE live (an ended one). KEYS[1] the seats set; ARGV[1] the member prefix
+ * `<liveId>:`. Reply: how many went. The set is bounded by the cap (a seat is added only when one is
+ * free, and a lapsed one is swept at the next take), so reading it whole is a few dozen members.
+ */
+export const RELEASE_LIVE_SEATS_LUA = `
+local n = 0
+for _, m in ipairs(redis.call('ZRANGE', KEYS[1], 0, -1)) do
+  if string.sub(m, 1, #ARGV[1]) == ARGV[1] then
+    redis.call('ZREM', KEYS[1], m)
+    n = n + 1
+  end
+end
+return n
+`;
+
+/**
+ * The seat member of one viewer on one live. The live id is LOWER-CASED: the take is keyed by the
+ * row's id (PostgreSQL's spelling), while a leave or a removal carries the id as the client spelled
+ * it in the URL, which `ParseUUIDPipe` accepts in upper case - and a release that names another
+ * member frees nothing. ONE SEAT PER ACCOUNT, not per device (lives.md, "The viewer cap"): the
+ * request carries no device id, and an account is what a removal or a block names.
+ */
+export const seatMember = (liveId: string, viewerId: string): string =>
+  `${liveId.toLowerCase()}:${viewerId}`;
 
 /**
  * THE HOST'S VIEWER CAP (WP-L4, docs/wiki/services/lives.md "The viewer cap"): at most
@@ -95,5 +118,22 @@ export class LiveSeats {
       this.logger.error(`[LIVE_SEAT] ${liveId}: the seat release did not answer: ${String(e)}`);
       throw new ServiceUnavailableException({ code: 'LIVE_SEATS_UNAVAILABLE' });
     }
+  }
+
+  /**
+   * Gives back every seat of an ENDED live at once, so the host's cap does not wait a lease for
+   * viewers whose next poll is a 410. Throws on a Redis failure; the caller logs it and lets the
+   * seats lapse.
+   */
+  async releaseLive(liveId: string): Promise<number> {
+    const freed = Number(
+      await this.redis.evalScript(
+        RELEASE_LIVE_SEATS_LUA,
+        [LIVE_SEATS_KEY],
+        [seatMember(liveId, '')]
+      )
+    );
+    this.logger.debug(`[LIVE_SEAT] ${liveId}: ended, ${freed} seat(s) given back`);
+    return freed;
   }
 }

@@ -130,6 +130,9 @@ describe('the live routes of MediaController', () => {
     return { ...b, controller };
   }
   const file = (n: number) => ({ buffer: Buffer.alloc(n, 1), size: n });
+  /** The request of a segment fetch, as Express hands it: only the raw URL is read. */
+  const at = (url: string) => ({ originalUrl: url }) as never;
+  const canonical = (live: string, name: string) => at(`/api/media/public/live/${live}/${name}`);
 
   it('answers 404 on the store and the read while LIVE_ENABLED is not exactly "true"', async () => {
     process.env.INTERNAL_SECRET = 's3cret';
@@ -141,9 +144,11 @@ describe('the live routes of MediaController', () => {
       expect(
         await statusOf(() => controller.storeLiveSegment(LIVE, SEG_A, file(1), 's3cret'))
       ).toBe(HttpStatus.NOT_FOUND);
-      expect(await statusOf(() => controller.downloadLiveSegment(LIVE, SEG_A, {} as never))).toBe(
-        HttpStatus.NOT_FOUND
-      );
+      expect(
+        await statusOf(() =>
+          controller.downloadLiveSegment(LIVE, SEG_A, canonical(LIVE, SEG_A), {} as never)
+        )
+      ).toBe(HttpStatus.NOT_FOUND);
     }
   });
 
@@ -163,16 +168,48 @@ describe('the live routes of MediaController', () => {
       setHeader: (name: string, value: unknown) => void (headers[name] = value),
     });
     const finished = new Promise((resolve) => res.on('finish', resolve));
-    await controller.downloadLiveSegment(LIVE, SEG_A, res as never);
+    await controller.downloadLiveSegment(LIVE, SEG_A, canonical(LIVE, SEG_A), res as never);
     await finished;
     expect(Buffer.concat(chunks).toString()).toBe('sealed');
     expect(headers['Content-Type']).toBe('application/octet-stream');
     expect(headers['Content-Length']).toBe(6);
     // nginx owns the header every client sees; this route states no cache policy of its own.
     expect(headers['Cache-Control']).toBeUndefined();
-    expect(await statusOf(() => controller.downloadLiveSegment(LIVE, SEG_B, res as never))).toBe(
-      HttpStatus.NOT_FOUND
-    );
+    expect(
+      await statusOf(() =>
+        controller.downloadLiveSegment(LIVE, SEG_B, canonical(LIVE, SEG_B), res as never)
+      )
+    ).toBe(HttpStatus.NOT_FOUND);
+  });
+
+  it('answers 404 to every spelling but the canonical one, before the store is asked (review of #2105)', async () => {
+    process.env.LIVE_ENABLED = 'true';
+    const { controller, svc } = rig();
+    await svc.store(LIVE, SEG_A, Buffer.from('sealed'));
+    let asked = 0;
+    const read = svc.read.bind(svc);
+    svc.read = async (...a: Parameters<typeof read>) => {
+      asked += 1;
+      return read(...a);
+    };
+    const UP_LIVE = LIVE.toUpperCase().replace(/^1/, 'A');
+    const upper = '33333333-3333-4333-8333-33333333333A';
+    // Each is what Express 5 would route here (case-insensitive, trailing slash optional) and what
+    // nginx neither caches nor rate-limits.
+    for (const [live, name, url] of [
+      [LIVE, upper, `/api/media/public/live/${LIVE}/${upper}`],
+      [UP_LIVE, SEG_A, `/api/media/public/live/${UP_LIVE}/${SEG_A}`],
+      [LIVE, SEG_A, `/api/media/public/live/${LIVE}/${SEG_A}/`],
+      [LIVE, SEG_A, `/api/media/PUBLIC/live/${LIVE}/${SEG_A}`],
+      [LIVE, SEG_A, `/api/media/public/live/${LIVE}/${SEG_A}?x=1`],
+      [LIVE, SEG_A, `/api/media/public/live/${LIVE}/%33${SEG_A.slice(1)}`],
+      [LIVE, SEG_A, `/api/media/public//live/${LIVE}/${SEG_A}`],
+    ]) {
+      expect(
+        await statusOf(() => controller.downloadLiveSegment(live, name, at(url), {} as never))
+      ).toBe(HttpStatus.NOT_FOUND);
+    }
+    expect(asked).toBe(0);
   });
 
   it('stores only for the internal secret, and only a body within the bound', async () => {

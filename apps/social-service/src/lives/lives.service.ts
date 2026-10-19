@@ -699,6 +699,14 @@ export class LivesService {
       this.logger.warn(`[LIVE_GC] ${liveId} is OPEN: the purge path refuses it`);
       return 'kept';
     }
+    // AN ENDED LIVE SEATS NOBODY: its viewers' next poll is a 410 that renews nothing, so the seats
+    // would lapse within a lease anyway - freed here, on every path that ends a live (they all
+    // purge), so the next live's viewers do not wait for them. Best-effort: a failure is the lease.
+    await this.seats.releaseLive(liveId).catch((e: unknown) => {
+      this.logger.warn(
+        `[LIVE_SEAT] ${liveId}: ended live's seats left to their lease: ${String(e)}`
+      );
+    });
     if (row?.storeInFlight) {
       this.logger.debug(`[LIVE_GC] ${liveId} kept: a segment is still storing`);
       return 'kept';
@@ -762,15 +770,10 @@ export class LivesService {
   }
 
   /**
-   * Who may read a live's key and manifest:
-   *
-   * - absent, or a broadcaster blocked either way: 404 - invisible, as the feed hides them;
-   * - ended: 410 to everybody, the broadcaster included - nothing is served after `endedAt`;
-   * - a viewer the broadcaster removed: 403 `LIVE_VIEWER_REMOVED`.
-   */
-  /**
    * Gives the viewer leaving a live its seat back (`DELETE /api/lives/:id/seat`). No watch check: a
    * viewer may always give back what it holds, even once the live has ended or it was removed.
+   * The seat is the ACCOUNT's (lives.md, "The viewer cap"): one device leaving frees it for an
+   * account watching on two, whose other device takes it again at its next poll.
    */
   async leave(viewerId: string, liveId: string): Promise<void> {
     await this.seats.release(liveId, viewerId);
@@ -787,6 +790,13 @@ export class LivesService {
     await this.seats.take(row.id, viewerId);
   }
 
+  /**
+   * Who may read a live's key and manifest:
+   *
+   * - absent, or a broadcaster blocked either way: 404 - invisible, as the feed hides them;
+   * - ended: 410 to everybody, the broadcaster included - nothing is served after `endedAt`;
+   * - a viewer the broadcaster removed: 403 `LIVE_VIEWER_REMOVED`.
+   */
   private async assertMayWatch(
     manager: EntityManager,
     viewerId: string,

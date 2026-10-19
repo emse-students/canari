@@ -21,6 +21,7 @@ import { LIVE_SEAT_LEASE_MS, LIVE_VIEWER_CAP } from './live.constants';
 import {
   LIVE_SEATS_KEY,
   LiveSeats,
+  RELEASE_LIVE_SEATS_LUA,
   RELEASE_SEAT_LUA,
   TAKE_SEAT_LUA,
   seatMember,
@@ -64,6 +65,20 @@ describe('the viewer cap, as the service types it', () => {
         keys: [LIVE_SEATS_KEY],
         args: [seatMember(LIVE, 'bob'), LIVE_VIEWER_CAP, LIVE_SEAT_LEASE_MS],
       },
+    ]);
+  });
+
+  it('keys a seat by the live id lower-cased, so a leave spelled in upper case frees the take', () => {
+    expect(seatMember('ABCDEF00-0000-4000-8000-000000000000', 'bob')).toBe(
+      'abcdef00-0000-4000-8000-000000000000:bob'
+    );
+  });
+
+  it('frees an ended live with ONE script naming its member prefix', async () => {
+    const { seats, calls } = seatsAnswering(async () => 2);
+    await expect(seats.releaseLive(LIVE)).resolves.toBe(2);
+    expect(calls).toEqual([
+      { script: RELEASE_LIVE_SEATS_LUA, keys: [LIVE_SEATS_KEY], args: [`${LIVE}:`] },
     ]);
   });
 
@@ -141,6 +156,16 @@ maybe('the seat script against a real Redis', () => {
     expect(await redis.eval(RELEASE_SEAT_LUA, 1, key, 'b')).toBe(1);
     expect(await redis.eval(RELEASE_SEAT_LUA, 1, key, 'b')).toBe(0);
     expect(await take('c', 1)).toEqual([1, 1]);
+  });
+
+  it("gives back every seat of ONE live and no other live's", async () => {
+    const OTHER = '22222222-2222-4222-8222-222222222222';
+    await take(seatMember(LIVE, 'a'), 5);
+    await take(seatMember(LIVE, 'b'), 5);
+    await take(seatMember(OTHER, 'a'), 5);
+    expect(await redis.eval(RELEASE_LIVE_SEATS_LUA, 1, key, seatMember(LIVE, ''))).toBe(2);
+    expect(await redis.zrange(key, '0', '-1')).toEqual([seatMember(OTHER, 'a')]);
+    expect(await redis.eval(RELEASE_LIVE_SEATS_LUA, 1, key, seatMember(LIVE, ''))).toBe(0);
   });
 
   it('lets the whole set expire once nobody renews it', async () => {

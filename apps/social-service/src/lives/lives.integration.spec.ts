@@ -28,7 +28,7 @@ import { HttpStatus, ServiceUnavailableException } from '@nestjs/common';
 import { LIVE_ENTITIES } from './lives.module';
 import { LivesService } from './lives.service';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
-import type { LiveSeats } from './live-seats';
+import { seatMember, type LiveSeats } from './live-seats';
 import type { LivePurgeResult, LiveSegmentStore } from './live-segment-store';
 import {
   LIVE_BYTE_BUDGET,
@@ -139,7 +139,7 @@ class MemorySeats {
   readonly held = new Set<string>();
 
   async take(liveId: string, viewerId: string): Promise<void> {
-    const member = `${liveId}:${viewerId}`;
+    const member = seatMember(liveId, viewerId);
     if (!this.held.has(member) && this.held.size >= this.cap) {
       throw new ServiceUnavailableException({ code: 'LIVE_FULL', viewerCap: this.cap });
     }
@@ -147,7 +147,14 @@ class MemorySeats {
   }
 
   async release(liveId: string, viewerId: string): Promise<void> {
-    this.held.delete(`${liveId}:${viewerId}`);
+    this.held.delete(seatMember(liveId, viewerId));
+  }
+
+  async releaseLive(liveId: string): Promise<number> {
+    const prefix = seatMember(liveId, '');
+    const gone = [...this.held].filter((m) => m.startsWith(prefix));
+    for (const m of gone) this.held.delete(m);
+    return gone.length;
   }
 }
 
@@ -341,8 +348,8 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       expect((await refusal(lives.manifest(CAROL, live.id))).code).toBe('LIVE_FULL');
       // The broadcaster takes no seat, however full the host is.
       await expect(lives.manifest(ALICE, live.id)).resolves.toMatchObject({ liveId: live.id });
-      // A viewer leaving gives its seat to the next one in.
-      await lives.leave(BOB, live.id);
+      // A viewer leaving gives its seat to the next one in - whatever case its URL spelled the id in.
+      await lives.leave(BOB, live.id.toUpperCase());
       await expect(lives.get(CAROL, live.id)).resolves.toMatchObject({ id: live.id });
     });
 
@@ -360,7 +367,8 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       // is left, so a "full" would win if it were asked first.
       store.failPurge = true;
       await lives.end(ALICE, live.id);
-      seats.held.clear();
+      // The end frees the live's seats at once, even with the purge refused (CAROL's, here).
+      expect(seats.held.size).toBe(0);
       seats.cap = 0;
       expect((await refusal(lives.manifest(CAROL, live.id))).code).toBe('LIVE_ENDED');
     });

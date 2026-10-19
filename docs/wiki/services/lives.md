@@ -77,9 +77,9 @@ a same request is one a cache answers.
 
 | Where | What it does |
 | --- | --- |
-| media-service `GET /media/public/live/:liveId/:name` | streams the object `live/<liveId>/<name>` from Garage; no token, `LIVE_ENABLED` checked, no Cache-Control of its own. Replaces the JWT route `GET /media/live/...` of WP-L3, which no client ever called |
+| media-service `GET /media/public/live/:liveId/:name` | streams the object `live/<liveId>/<name>` from Garage; no token, `LIVE_ENABLED` checked, no Cache-Control of its own. **Answers the CANONICAL path only** (`LiveSegmentsService.isCanonicalSegmentPath`: both uuids lower case, the raw path exactly `/api/media/public/live/<liveId>/<name>`, no trailing slash, no query, no percent-encoding) and 404s anything else before the store is asked - Express 5 matches any case and a trailing slash, and `/api/media/PUBLIC/live/...` reaches the route through the authenticated `/api/media` location. Replaces the JWT route `GET /media/live/...` of WP-L3, which no client ever called |
 | nginx `proxy_cache_path ... keys_zone=live_segments` | http level: 512 MB, `inactive=2m`, written in place (`use_temp_path=off`) |
-| nginx `location ~ "^/api/media/public/live/<uuid>/<uuid>$"` | a REGEX location (it wins over the `/api/media/public/` and `/api/media` prefixes), so only two lower-case uuids reach media-service; anything else falls to `/api/media/public/` and is a 404 there |
+| nginx `location ^~ /api/media/public/live/` | **owns the whole prefix**: `^~` stops the regex search, so nothing under it can fall into `/api/media/public/` (no cache, no limit) or the `~* \.mjs$` location. Inside, ONE nested regex `"^/api/media/public/live/<uuid>/<uuid>$"` (lower case) is the cached location below; everything else under the prefix is a JSON `404` from the guard itself, before any upstream |
 
 **The rules of that location, each one a line whose loss turns the cache off silently**
 (`.github/scripts/tests/live-segments-route.test.mjs` asserts every one):
@@ -96,11 +96,12 @@ a same request is one a cache answers.
 - `proxy_cache_valid 200 2m` / `404 10s`: a segment outlives the purge of its live in this cache for at
   most two minutes; a miss (absent, or the switch off) costs one upstream call per 10 s per URL.
 - Upstream `Cache-Control`, `Expires`, `Set-Cookie`, `Vary` are ignored for the cache and hidden from
-  the client; the ONE policy the client sees is **`private, max-age=3600, immutable`**: `immutable`
-  because a name never changes bytes, an hour because no segment is needed longer than the longest
-  live (L4), and **`private` so no shared cache between here and the viewer (the host proxy, a CDN on
-  a legacy name) keeps a segment past the purge** - Q10's "everything is gone after the sweep" holds
-  for every cache we do not control.
+  the client; the ONE policy the client sees is **`private, max-age=120`**: **`private` so no shared
+  cache between here and the viewer (the host proxy, a CDN on a legacy name) keeps a segment**, and
+  two minutes - this cache's own bound - so the viewer's HTTP cache does not keep the ciphertext of a
+  live for an hour after it ended (register C16, C19). A player reads a segment once, inside the
+  manifest window, so nothing longer is needed. Until the review of #2105 it was `max-age=3600,
+  immutable`: `immutable` is true of the bytes, but it told the device to keep them.
 - CORS as nginx's own API errors: the three WebView origins (`$api_error_cors_origin`),
   credentials allowed, `Vary: Origin`; the web app is same-origin. The CSP and the two security
   headers are restated (`add_header` replaces the inherited set). The app's CSP already allows it:
@@ -108,6 +109,16 @@ a same request is one a cache answers.
 - `limit_except GET` (HEAD included), and `lives_segments`: 30 r/s burst 60 per client address,
   answering the JSON `@api_error_429`. 30 r/s is the whole cap below fetching a segment a second
   from ONE campus address.
+- **The BYTES per address, because `limit_req` counts requests** (30 r/s of 4 MiB segments is ~1 Gb/s
+  from one address): `limit_conn lives_segments_conn 12` and `limit_rate 750000` (bytes/s, so 6 Mb/s
+  per fetch, twice a viewer's 3 Mb/s: a 3 s segment arrives in 1.5 s and a player can catch up). A
+  seated viewer then has a fetch in flight half the time, so the whole cap of 24 behind ONE campus
+  address averages 12 at once; **12 x 6 Mb/s = 72 Mb/s, exactly the live share of the uplink
+  (`LIVE_HOST_EGRESS_BPS` x `LIVE_EGRESS_SHARE`)** - one address can take the whole live budget, never
+  the link. The 13th concurrent fetch is a JSON 429. `live-segments-route.test.mjs` recomputes
+  `limit_conn` x `limit_rate` <= cap x viewer bitrate, and `limit_rate` >= 2 x the bitrate, from
+  `live.constants.ts`. nginx grants each response one second of head start, so a single short fetch
+  runs a little above the rate (3 MB in ~3 s instead of 4); a long one converges on it.
 - `X-Canari-Cache: HIT|MISS` on every answer, and the access log shows `urt=- ust=-` on a hit.
 
 **Read on a running container, 2026-10-19** (the image built from this Dockerfile, a stub nginx
@@ -118,6 +129,21 @@ its query; 20 concurrent fetches of a fresh 3 MB segment - 20 x `200`, ONE upstr
 `/live/x` - 404 without the cache; `POST` - 403; a foreign `Origin` - no `Access-Control-Allow-Origin`;
 the stub's `Set-Cookie`, `Cache-Control: no-store` and its own CORS header never reached the client.
 **Not read: against the real media-service and Garage, through the host proxy, on a phone.**
+
+**Re-read after the review of #2105, 2026-10-19, same rig** (the final image, a 3 MB stub segment):
+the canonical path `200` `MISS` then `HIT`, `Cache-Control: private, max-age=120`; `?x=1` and
+`//` (normalised) `HIT`; an upper-case live id, an upper-case name, a trailing slash, `/<name>/x`,
+`/live/x` and `/live/` - a JSON `404` from the `^~` guard, none of them in the upstream's log;
+`POST` `403`; 30 parallel fetches from one address - 12 x `200` at ~750 000 B/s each, 18 x the JSON
+`429`; **ONE upstream request for all of it.** Before the fix the same spellings reached
+`/api/media/public/`, and the test's location simulator reproduces that on the old config (every
+probe answered by `location /api/media/public/` or `~* \.mjs$`).
+
+**The gate RUNS nginx's location selection, it does not grep for the fix.**
+`live-segments-route.test.mjs` parses the `server` block into its location tree and applies
+`ngx_http_core_find_location`'s order (exact, longest prefix, `^~` stops the regexes, nested
+locations before the level's regexes, regexes in file order) to a set of spellings: the canonical
+path must land in the cached location, every other one under the prefix in the `^~` guard.
 
 **What the cache saves, and what it does not.** It saves media-service, Garage and the database
 (which the segment route never touched anyway): one store read per segment per two minutes, whatever
@@ -155,8 +181,18 @@ all, and nobody has measured that path.
   (`live-seats.spec.ts`, gated on `SOCIAL_IT_REDIS_URL`).
 - The seat is taken AFTER the watch rule, so a blocked, removed or ended answer is never masked as
   "full"; the broadcaster takes none.
-- **Given back by a proof first**: `DELETE /api/lives/:id/seat` when the viewer leaves, and the
-  broadcaster's removal of a viewer frees that viewer's seat at once. **The 30 s lease is only the
+- **Given back by a proof first**: `DELETE /api/lives/:id/seat` when the viewer leaves, the
+  broadcaster's removal of a viewer frees that viewer's seat at once, and **an ended live frees all
+  of its seats** (`releaseLive`, one Lua script over the set, called by `purgeEnded` - which every
+  path that ends a live goes through: the broadcaster's end, the sweep, an ingest that met the end).
+  The member's live id is LOWER-CASED (`seatMember`): the take is keyed by the row's id, while a
+  leave or a removal carries the id as the URL spelled it, which `ParseUUIDPipe` accepts in upper
+  case - and a release naming another member would free nothing.
+- **A seat is per ACCOUNT, not per device - a choice.** The request carries no device id, and an
+  account is what a removal or a block names. So one device leaving (`DELETE .../seat`) frees the
+  seat of an account watching on two; the other device takes it again at its next manifest poll, or
+  is told `LIVE_FULL` if somebody took it meanwhile. Two devices of one account cost two copies of
+  the uplink for one seat, which the cap does not count. **The 30 s lease is only the
   bound on a viewer that could not say it left** (a crash, a lost network). If it were wrong too
   short, a watching viewer would lose its seat - so it is ten polls long; too long, a departed
   viewer would hold a seat that long, which costs a refusal and never a byte. The set itself expires
@@ -168,6 +204,28 @@ all, and nobody has measured that path.
 | --- | --- | --- |
 | `503 { code: 'LIVE_FULL', viewerCap }` | every seat is held | "live complet", and may retry later; `viewerCap` is the number to name |
 | `503 { code: 'LIVE_SEATS_UNAVAILABLE' }` | Redis did not answer (an `error` line) | a failure to retry - **never** "complet": Redis down refuses rather than seats everybody, because an uncounted audience is the overrun the cap prevents |
+
+**THE CAP HOLDS FOR AN HONEST CLIENT ONLY.** A seat is taken by the key read and the manifest poll;
+the segment fetch is unauthenticated and checks no seat (that is what lets nginx cache it). So a
+client that kept a live's key and polls nothing can go on fetching segment names it already learned,
+and a second account can share a manifest with a client that has no seat. **What protects the
+CONTENT is the key and the manifest**, both behind the watch rule; **what protects the UPLINK from a
+dishonest client is nginx's per-address bound above** (12 fetches x 6 Mb/s), not the seat count.
+
+**For the client (WP-L5), three things this server half decides:**
+
+- **Fetch a segment with a plain `fetch` and no custom header.** The location allows `GET`/`HEAD`
+  only, so a CORS PREFLIGHT (`OPTIONS`, which any custom header or a non-simple content type
+  triggers from a WebView origin) is answered `403` and the fetch fails as a CORS error. A
+  credentialed fetch is allowed (the three WebView origins, `Allow-Credentials: true`) but not
+  needed.
+- **`LIVE_FULL` is a `503`**, and a 503 is what intermediaries and HTTP stacks may retry on their
+  own. The client must read the CODE, show "live complet", and back off - never treat the status
+  alone as a transient failure to hammer.
+- **A Redis outage stops playback for EVERY viewer**: the key read and every manifest poll answer
+  `503 LIVE_SEATS_UNAVAILABLE` within a second (social-service's Redis `commandTimeout`), so open lives freeze
+  until Redis answers. That is the deliberate fail-closed cost of the cap (an uncounted audience is
+  the overrun it prevents), not a defect to route around.
 
 **The connection budget, and why nothing is raised.** The host proxy is the DSI's: about 1 500
 concurrent connections across EVERY site on the host (`worker_connections 768`, two per proxied
@@ -328,7 +386,8 @@ and is still deleted.
   rather than in the app WebViews, and the 0.8 share is a planning choice. **Dev and production count
   their seats apart** (each estate has its own Redis) while sharing the link; dev's audience is the
   testers, so it is accepted, not solved. A seat is per ACCOUNT per live: two devices of one account
-  on one live cost two copies and one seat.
+  on one live cost two copies and one seat (the choice, above). **The cap is advisory against a
+  client that does not poll** (above): the per-address nginx bound is what holds then.
 - **Whether CrowdSec on the host reads a campus audience as a crawl** (above): a DSI question.
 - **A store that outlives its own timeout** is no longer left behind: while the live lasts it is
   under the live's prefix and the end's purge takes it; one that lands after the purge is a folder

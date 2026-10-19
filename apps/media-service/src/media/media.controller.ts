@@ -991,14 +991,26 @@ export class MediaController {
    * Cache-Control is NOT set here: the nginx location in front owns the header every client sees
    * (and ignores any upstream one for its own cache), so the policy is stated once.
    * Four path segments, so it collides neither with `public/:id` nor with the catch-all `:id`.
+   *
+   * ONLY THE CANONICAL PATH IS ANSWERED, everything else is a 404 before the store is asked
+   * ({@link LiveSegmentsService.isCanonicalSegmentPath}): Express 5 would match an upper-case id, a
+   * trailing slash or `/api/media/PUBLIC/...`, and every such spelling is an address nginx neither
+   * caches nor rate-limits - a way to reach the store once per request (the review of #2105).
    */
   @Get('public/live/:liveId/:name')
   async downloadLiveSegment(
     @Param('liveId') liveId: string,
     @Param('name') name: string,
+    @Req() req: Request,
     @Res() res: Response
   ): Promise<void> {
     this.assertLiveEnabled();
+    if (!LiveSegmentsService.isCanonicalSegmentPath(req.originalUrl, liveId, name)) {
+      this.logger.warn(
+        `[LIVE] segment refused: not the canonical path (${req.originalUrl.slice(0, 200)})`
+      );
+      throw new NotFoundException('Live segment not found');
+    }
     const { stream, size } = await this.liveSegments.read(liveId, name);
     this.logger.debug(`[LIVE] segment ${liveId}/${name} served to the edge cache (${size} B)`);
     res.setHeader('Content-Type', 'application/octet-stream');
