@@ -50,6 +50,7 @@ import {
 import { checkSafeBrowsing } from '../utils/safe-browsing';
 import { TtlCache } from '../utils/ttl-cache';
 import { activeRevocationWhere } from '../utils/revocation';
+import { RefusalCode, refusalBody } from '../utils/refusal-codes';
 
 /** A preview we managed to build, or the fact that we could not. */
 type CachedPreview = { ok: true; payload: LinkPreviewPayload } | { ok: false; message: string };
@@ -307,14 +308,18 @@ export class SecurityController {
       where: { userId: safeUserId },
     });
     if (!doc || typeof doc.verifier !== 'string') {
-      throw new BadRequestException('no PIN registered for this user');
+      throw new BadRequestException(
+        refusalBody(RefusalCode.PIN_NOT_SET, 'no PIN registered for this user')
+      );
     }
 
     const stored = Buffer.from(doc.verifier, 'hex');
     const incoming = Buffer.from(oldVerifier, 'hex');
     const matches = stored.length === incoming.length && crypto.timingSafeEqual(stored, incoming);
     if (!matches) {
-      throw new ForbiddenException('current PIN is incorrect');
+      throw new ForbiddenException(
+        refusalBody(RefusalCode.PIN_INCORRECT, 'current PIN is incorrect')
+      );
     }
 
     // A COMPARE-AND-SWAP, NOT A READ THEN A SAVE. Two devices (or two tabs) changing the PIN at once
@@ -330,7 +335,9 @@ export class SecurityController {
       this.logger.warn(
         `[PIN_CHANGE] verifier for ${safeUserId} changed between the check and the write - refused`
       );
-      throw new ForbiddenException('current PIN is incorrect');
+      throw new ForbiddenException(
+        refusalBody(RefusalCode.PIN_INCORRECT, 'current PIN is incorrect')
+      );
     }
     this.logger.log(`[PIN_CHANGE] verifier rotated for ${safeUserId}`);
 

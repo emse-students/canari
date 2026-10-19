@@ -20,6 +20,7 @@ import { getMessaging } from 'firebase-admin/messaging';
 import { ApnsVoipService } from './apns-voip.service';
 import { resolveUserDisplayName } from '../utils/display-name';
 import { isBlockedBetween } from '../utils/user-blocks';
+import { RefusalCode } from '../utils/refusal-codes';
 
 /** ICE server entry returned to WebRTC clients. */
 export interface IceServerConfig {
@@ -734,7 +735,7 @@ export class CallsService {
       if (await isBlockedBetween(this.groupMemberRepo.manager, userId, other)) {
         this.logger.log(`[call] ${scope} REFUSED user=${userId}: a block stands between the two`);
         throw new ForbiddenException({
-          code: 'USER_BLOCKED',
+          code: RefusalCode.USER_BLOCKED,
           message: 'This call cannot be placed.',
         });
       }

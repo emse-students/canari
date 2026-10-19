@@ -1290,8 +1290,12 @@ and `mlsDeliveryApi.ts` (key package publish, device update, commit submit and r
 `refusalFromResponse`'s `ApiRefusalError`; the join page and the minesweeper submit word it from the status.
 **Done 2026-10-18 (later):** the remaining plain status sites of `mlsDeliveryApi.ts` (device list, GroupInfo,
 rename, image, members, user groups, dismiss, device memberships, kick) throw `refusalFromResponse`'s `ApiRefusalError`.
-**Still owed:** the server codes themselves (a stable
-name per refusal a user can act on; model: `DEVICE_REVOKED`, `PARTNERSHIP_NO_CODES_LEFT`). The
+**Done 2026-10-19:** the delivery and core services carry one stable code per refusal a member can act on,
+worded on the client by `describeRefusalCode` ([table](services/chat-delivery.md#refusal-codes---one-stable-name-per-refusal-a-member-can-act-on-2026-10-19)).
+Wired to a screen so far: group invite join and link, PIN change, blocked list, directory. Worded but
+waiting for a caller that types the refusal: `NOT_A_MEMBER` on notification settings, `USER_BLOCKED` on
+add-member, `ADMIN_SELF_DEMOTE` (no admin screen calls it).
+**Still owed:** the social-service refusals not yet coded. The
 `sessionAuth.ts` site closed with step 2 of the damaged-MLS-state P1 (PK1): the init throws typed errors,
 and `serverProse.test.ts`'s allowlist is empty.
 

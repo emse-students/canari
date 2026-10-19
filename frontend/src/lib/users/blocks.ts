@@ -1,6 +1,7 @@
 import { apiFetch, type ApiFetchOptions } from '$lib/utils/apiFetch';
 import { coreUrl } from '$lib/utils/apiUrl';
 import { Log } from '$lib/utils/Log';
+import { refusalFromResponse } from '$lib/utils/apiRefusalError';
 
 /** One person the signed-in user has blocked. */
 export interface BlockedUser {
@@ -35,8 +36,7 @@ export function refusalCodeOf(body: string): string | null {
 async function request<T>(path: string, init: ApiFetchOptions = {}): Promise<T> {
   const res = await apiFetch(`${coreUrl()}${path}`, init);
   if (!res.ok) {
-    const details = await res.text().catch(() => '');
-    throw new Error(`blocks ${res.status}: ${details || res.statusText}`);
+    throw await refusalFromResponse(res, 'blocks request refused');
   }
   return (await res.json()) as T;
 }
