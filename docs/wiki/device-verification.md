@@ -1260,6 +1260,14 @@ account, the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[
 7. **Back / the edge swipe** from the publish step returns to the take, a second one asks to discard
    it, a third closes the camera onto the composer (iPhone: the native tab bar and chrome stay hidden
    while the camera is up).
+8. **Back DURING the upload** (a 60 s take on a throttled network, on the tab AND from "+"): nothing
+   happens, the back arrow is greyed, `Back refused: the publish is past its upload` in the log, and
+   ONE reel appears. The screen reader (VoiceOver / TalkBack) reads the 30-day notice first when the
+   step opens from "+".
+9. **A poll (or a schedule) switched on in the new post, then the camera, HOLD**: "Ajouter" attaches
+   the video to that post; no publish step. "Garder comme post" after editing the caption and
+   choosing "Anonyme" in the step: the composer shows the edited text and "Anonyme"; publishing it
+   lands on the "Tout" feed.
 
 ## The iPhone 12 owed-readings inventory (2026-10-11)
 

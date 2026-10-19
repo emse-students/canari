@@ -81,6 +81,8 @@
     composerIdentity?: string;
     /** A reel filmed from the composer was published (`post`), as `identity`. */
     onpublished?: (identity: string) => void;
+    /** "Garder comme post" from the composer: the step's caption and identity, as they stand. */
+    onkept?: (caption: string, identity: string) => void;
   }
 
   let {
@@ -93,6 +95,7 @@
     composerCaption = '',
     composerIdentity = '',
     onpublished,
+    onkept,
   }: Props = $props();
 
   /** The opener for each way of asking the microphone (`DestinationRules.microphone`). */
@@ -640,7 +643,10 @@
           ? {
               caption: composerCaption,
               identity: composerIdentity,
-              onkeep: () => handBack(clip.blob, clip.poster),
+              onkeep: (caption, identity) => {
+                onkept?.(caption, identity);
+                handBack(clip.blob, clip.poster);
+              },
               onpublished: publishedFromComposer,
             }
           : undefined}

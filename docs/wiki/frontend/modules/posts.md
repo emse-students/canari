@@ -108,7 +108,9 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   the POST class, never as a reel. **A VIDEO filmed there is a CanaReel since 2026-10-19** (user:
   one camera, one behaviour): it goes to the reel publish step with the composer's text as caption,
   that step says it is deleted after 30 days, and "Garder comme post" hands it back here as an
-  ordinary attachment. A video picked from the gallery stays a post, and the post EDITOR's camera
+  ordinary attachment, with the caption and identity as edited there. A new post with a schedule, a
+  poll, a form or a linked event keeps the old outcome (a reel carries none of them): its camera
+  attaches the video. A video picked from the gallery stays a post, and the post EDITOR's camera
   (`destination="post-edit"`) attaches videos too - an existing post never becomes a reel
   ([reels](reels.md#the-two-ways-into-the-camera-publish-the-same-thing-2026-10-19)). The
   sound-removal button and the gallery shortcut of the reel flow are not offered there. **The post camera asks the lens and the microphone as TWO requests**

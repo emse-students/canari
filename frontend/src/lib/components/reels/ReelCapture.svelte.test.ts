@@ -707,6 +707,36 @@ describe('one camera, one behaviour (user, 2026-10-19): a video filmed from the 
     return { deps, sheet, target };
   }
 
+  it.each(['feed', 'post'] as const)(
+    'a Back during the upload cannot lead to a SECOND publish of the same take (%s)',
+    async (destination) => {
+      const deps = publishDeps();
+      deps.upload = vi.fn(() => new Promise<never>(() => {}));
+      const { target, hold } = await render({
+        publishDeps: deps,
+        destination,
+        oncapture: vi.fn(),
+        onclose: vi.fn(),
+      });
+      await hold();
+      target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
+      await settle();
+      target.querySelector<HTMLButtonElement>('[data-reel-publish-submit]')!.click();
+      await settle();
+
+      // Back, as the system or the edge swipe sends it to the top entry: the sheet's.
+      vi.mocked(pushHistoryOverlay).mock.calls.at(-1)![0]('back');
+      await settle();
+
+      // Still the publish step, its "Publier" disabled: no review to press "Suivant" on again.
+      expect(target.querySelector('[data-reel-review]')).toBeNull();
+      expect(target.querySelector<HTMLButtonElement>('[data-reel-publish-submit]')!.disabled).toBe(
+        true
+      );
+      expect(deps.upload).toHaveBeenCalledTimes(1);
+    }
+  );
+
   it('the same filmed video creates the same post from the tab and from the composer: kind reel, its duration', async () => {
     const tab = await filmAndPublish({});
     unmount(mounted.pop()!);

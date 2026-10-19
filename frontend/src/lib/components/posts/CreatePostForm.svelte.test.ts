@@ -10,6 +10,7 @@ import CreatePostForm from './CreatePostForm.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 import { m } from '$lib/paraglide/messages';
 import {
+  ANONYMOUS_POST_IDENTITY,
   forgetPostComposerMedia,
   heldPostComposerMedia,
   holdPostComposerMedia,
@@ -19,7 +20,12 @@ import {
 } from '$lib/posts/postComposerDraft';
 import { cameraOverlayStub } from '../reels/cameraOverlayStub.test-helper';
 
+vi.mock('$lib/moderation/muteCheck', () => ({ assertNotMuted: () => Promise.resolve() }));
 vi.mock('$lib/forms/api', () => ({ getForms: () => Promise.resolve([]) }));
+vi.mock('$lib/associations/api', async (orig) => ({
+  ...(await orig<typeof import('$lib/associations/api')>()),
+  listLinkableValidatedCalendarEvents: () => Promise.resolve([]),
+}));
 vi.mock('$lib/posts/postIdentity', async (orig) => ({
   ...(await orig<typeof import('$lib/posts/postIdentity')>()),
   listPostAsAssociations: () => Promise.resolve([]),
@@ -174,5 +180,99 @@ describe('CreatePostForm - a video filmed with its camera is a CanaReel (one cam
     expect(onPostCreated).toHaveBeenCalledTimes(1);
     // The text became the reel's caption: the next open must not offer it again.
     expect(loadPostComposerDraft()).toBeNull();
+  });
+
+  /** Opens the composer on `draft`, then its camera (the stub records what it was handed). */
+  async function openCamera(draft = emptyPostComposerDraft('text')) {
+    savePostComposerDraft(draft);
+    const opened = await open();
+    await tick();
+    opened.target.querySelector<HTMLButtonElement>('button[data-post-camera]')!.click();
+    flushSync();
+    return opened;
+  }
+
+  it.each([
+    ['a poll', { includePoll: true, pollQuestion: 'Q?' }],
+    ['a schedule', { scheduledAt: '2030-01-01T10:00' }],
+    ['a form', { includeForm: true, selectedFormId: 'form-1' }],
+  ])(
+    'with %s set, the camera attaches its video to the post as before (`post-edit`)',
+    async (_, set) => {
+      await openCamera({ ...emptyPostComposerDraft('text'), ...set });
+      expect(cameraOverlayStub.last?.destination).toBe('post-edit');
+    }
+  );
+
+  it("the composer's identity is the camera's: an association chosen here is the reel's start", async () => {
+    await openCamera({ ...emptyPostComposerDraft('text'), selectedAssociationId: 'asso-1' });
+    expect(cameraOverlayStub.last?.composerIdentity).toBe('asso-1');
+  });
+
+  it('an ANONYMOUS reel lands in the personal feed, never in the associations one', async () => {
+    const { onPostCreated } = await openCamera({
+      ...emptyPostComposerDraft('text'),
+      selectedAssociationId: ANONYMOUS_POST_IDENTITY,
+    });
+    document.querySelector<HTMLButtonElement>('[data-camera-overlay-stub-publish]')!.click();
+    flushSync();
+    expect(onPostCreated).toHaveBeenCalledWith('all');
+  });
+
+  it('the media already attached stay as the draft after the reel is published', async () => {
+    const { target } = await openCamera();
+    // The camera stub is up; close it by publishing after a photo was picked first.
+    unmount(mounted.pop()!);
+    const second = await open();
+    pick(second.target, new File(['x'], 'IMG_1.png', { type: 'image/png' }));
+    second.target.querySelector<HTMLButtonElement>('button[data-post-camera]')!.click();
+    flushSync();
+    document.querySelector<HTMLButtonElement>('[data-camera-overlay-stub-publish]')!.click();
+    flushSync();
+    expect(heldPostComposerMedia()).toHaveLength(1);
+    expect(target.isConnected).toBe(true);
+  });
+
+  it('"Garder comme post" brings back the caption edited in the reel step, and its identity', async () => {
+    const { target } = await openCamera();
+    cameraOverlayStub.keepWith = {
+      caption: 'edited in the step',
+      identity: ANONYMOUS_POST_IDENTITY,
+    };
+    try {
+      document.querySelector<HTMLButtonElement>('[data-camera-overlay-stub-keep]')!.click();
+      flushSync();
+      await tick();
+    } finally {
+      cameraOverlayStub.keepWith = null;
+    }
+    expect(target.querySelector('[contenteditable]')!.textContent).toBe('edited in the step');
+    expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(1);
+    expect(target.textContent).toContain(m.post_create_anonymous_label());
+  });
+
+  it('"Garder comme post" with the caption untouched leaves the text as it was', async () => {
+    const { target } = await openCamera(emptyPostComposerDraft('my own text'));
+    document.querySelector<HTMLButtonElement>('[data-camera-overlay-stub-keep]')!.click();
+    flushSync();
+    await tick();
+    expect(target.querySelector('[contenteditable]')!.textContent).toBe('my own text');
+  });
+});
+
+describe('CreatePostForm - where a post lands', () => {
+  it('an ANONYMOUS post lands in the personal feed, never in the associations one', async () => {
+    savePostComposerDraft({
+      ...emptyPostComposerDraft('said anonymously'),
+      selectedAssociationId: ANONYMOUS_POST_IDENTITY,
+    });
+    const { target, onPostCreated } = await open();
+    await tick();
+    const publish = [...target.querySelectorAll<HTMLButtonElement>('button')].find(
+      (b) => b.textContent?.trim() === m.post_create_publish_button_label()
+    )!;
+    publish.click();
+    for (let i = 0; i < 6; i++) await tick();
+    expect(onPostCreated).toHaveBeenCalledWith('all');
   });
 });

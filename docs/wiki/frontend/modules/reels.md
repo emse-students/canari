@@ -337,7 +337,32 @@ web page cannot remove.
 | Gallery / sound removal | yes / yes | no (the composer has "Photo/vidéo", whose video stays a POST) / no | no / no |
 
 One table decides it (`destinationRules` + `handsBackTake` in `reels/reelCapture.ts`): a photo and
-a video of the same destination may part ways. Pinned by `ReelCapture.svelte.test.ts` (the same
+a video of the same destination may part ways.
+
+**What the adversarial review of #2124 settled (2026-10-19):**
+
+- **A new post the member set a schedule, a poll, a form or a linked event on keeps the OLD
+  outcome**: the composer passes no `reel` (`composerAllowsReel`, `posts/postComposerDraft.ts`),
+  the camera is `post-edit`, and its video is attached to that post - a reel carries none of them
+  (the server's `assertCreateKindShape` refuses each), the post can. Silent on purpose: the outcome
+  is the one the member always had.
+- **"Garder comme post" carries the step's edits back**: the caption REPLACES the composer's text
+  when it differs from it (it started as that text, so an untouched caption changes nothing), and
+  the identity chosen in the step becomes the post's.
+- **A publish past its upload keeps the step** (both paths, the tab's included): a Back during
+  `mediaUpload`/`createPost` used to return to the take while the upload went on, and "Suivant",
+  "Publier" published the take a SECOND time. Now that Back is refused and the entry given back,
+  the back arrow is disabled, and "Publier" stays disabled until the publish ends; leaving the
+  screen (`navigation`) still closes it and takes the take along. `bindHistoryOverlay` now tells its
+  close WHY it runs, which is what lets the step tell the two apart.
+- **An ANONYMOUS post or reel lands in `all`**, never `associations` (`isAssociationIdentity`,
+  `posts/postIdentity.ts`; `!!identity` counted anonymity as an association), for the composer's
+  ordinary publish too.
+- **The deletion notice is a `role="note"` in the warning token (`amber-warn`) and takes the focus
+  when the step opens**, so a screen reader meets it before "Publier"; on the tab the focus goes to
+  the step's title.
+
+Pinned by `ReelCapture.svelte.test.ts` (the same
 filmed video creates `kind:'reel'` with its duration from the tab and from the composer; the photo
 and the editor still hand back; "Garder comme post" hands the video back with its poster),
 `ReelPublishSheet.svelte.test.ts` (the notice, the caption, no navigation from the composer),

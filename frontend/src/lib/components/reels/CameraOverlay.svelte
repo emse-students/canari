@@ -62,6 +62,8 @@
     composerIdentity?: string;
     /** A reel filmed from the new-post composer was published (`post`). */
     onpublished?: (identity: string) => void;
+    /** "Garder comme post": the publish step's caption and identity, back to the composer. */
+    onkept?: (caption: string, identity: string) => void;
   }
 
   let {
@@ -72,6 +74,7 @@
     composerCaption,
     composerIdentity,
     onpublished,
+    onkept,
   }: Props = $props();
 
   /**
@@ -133,5 +136,6 @@
     {composerCaption}
     {composerIdentity}
     {onpublished}
+    {onkept}
   />
 </div>

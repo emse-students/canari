@@ -48,8 +48,11 @@
     caption: string;
     /** The composer's "who is publishing" choice, the picker's start. */
     identity: string;
-    /** "Garder comme post": the video goes back to the composer as an attachment. */
-    onkeep: () => void;
+    /**
+     * "Garder comme post": the video goes back to the composer as an attachment, with the caption
+     * and identity as the step holds them NOW - an edit made here is the member's, not lost.
+     */
+    onkeep: (caption: string, identity: string) => void;
     /** The reel was published, as `identity`: the composer closes behind it. */
     onpublished: (identity: string) => void;
   }
@@ -76,15 +79,34 @@
   let errorMessage = $state('');
   /** The preview's first frame is decoded: Canari's poster gives way to it. */
   let previewReady = $state(false);
+  /** Where the focus goes when the step opens: the deletion notice first, else the title. */
+  let notice = $state<HTMLElement | null>(null);
+  let heading = $state<HTMLElement | null>(null);
   const preparation = new VideoPreparationState();
+
+  /** The upload has begun: the reel is being created and nothing can take it back. */
+  const uploading = $derived(publishing && (stage === 'mediaUpload' || stage === 'createPost'));
 
   const overlay = bindHistoryOverlay(
     () => true,
-    () => {
+    (reason) => {
+      /*
+       * A PUBLISH PAST ITS UPLOAD KEEPS THE SHEET (review of #2124). Closing it used to hand the take
+       * back to its review while the upload went on, and "Suivant" then "Publier" published the same
+       * take a SECOND time. So a Back here is refused and the entry given back: the sheet - whose
+       * `publishing` disables "Publier" - stays up until the publish ends. Nothing else can unmount
+       * it from under a publish except leaving the screen, which takes the take with it.
+       */
+      if (uploading && reason === 'back') {
+        console.debug(`[reel-publish] Back refused: the publish is past its upload (${stage})`);
+        overlay.clearRef();
+        overlay.syncOpen();
+        return;
+      }
       // Only a publish that has not reached the upload has anything to cancel. Cancelling after it
       // (the landing on the feed closes this sheet too) logged "cancelled by the member" for a reel
       // that had just been published (REEL-2 on the Mi 9T, 2026-10-02).
-      const cancellable = publishing && stage !== 'mediaUpload' && stage !== 'createPost';
+      const cancellable = publishing && !uploading;
       console.debug(
         `[reel-publish] the sheet was dismissed${cancellable ? ', publish cancelled' : ''}`
       );
@@ -103,6 +125,9 @@
 
   onMount(() => {
     overlay.syncOpen();
+    // THE FOCUS MOVES INTO THE STEP, so a screen reader starts here - from the composer, on the
+    // notice that the reel is deleted, before anything can be published.
+    (notice ?? heading)?.focus();
     void (async () => {
       try {
         associations = await listPostAsAssociations();
@@ -189,17 +214,23 @@
       class="ui-icon-button"
       aria-label={m.reels_publish_back()}
       title={m.reels_publish_back()}
+      disabled={uploading}
       onclick={() => overlay.dismissFromUi()}
     >
       <ChevronLeft size={24} strokeWidth={2.5} />
     </button>
-    <h1 class="text-base font-bold">{m.reels_publish_title()}</h1>
+    <h1 bind:this={heading} tabindex="-1" class="text-base font-bold outline-none">
+      {m.reels_publish_title()}
+    </h1>
   </header>
 
   <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-4 pb-3">
     {#if composer}
       <p
-        class="mb-4 flex items-start gap-2 rounded-lg bg-amber-500/15 px-3 py-2.5 text-sm font-semibold text-amber-700 dark:text-amber-400"
+        bind:this={notice}
+        role="note"
+        tabindex="-1"
+        class="bg-amber-warn/10 text-amber-warn mb-4 flex items-start gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold outline-none"
         data-reel-publish-composer-notice
       >
         <Clock size={16} strokeWidth={2.5} class="mt-0.5 shrink-0" />
@@ -290,7 +321,7 @@
           disabled={publishing}
           onclick={() => {
             console.debug('[reel-publish] kept as a post: the video goes back to the composer');
-            composer.onkeep();
+            composer.onkeep(caption, identity);
           }}
           data-reel-keep-as-post
         >

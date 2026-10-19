@@ -46,7 +46,9 @@
    * media. A VIDEO filmed there from a NEW post (`reel` set) is a CanaReel, as from the tab (user,
    * 2026-10-19: one camera, one behaviour): the reel publish step takes it, says it is deleted after
    * 30 days, and can hand it back here as an ordinary post. The post EDITOR passes no `reel`, so its
-   * camera attaches videos too: an existing post is never turned into a reel. A mouse has no camera
+   * camera attaches videos too: an existing post is never turned into a reel - and neither is a new
+   * post asking for what a reel cannot carry (a schedule, a poll, a form, a linked event: the
+   * composer then passes no `reel` either). A mouse has no camera
    * chip: `pointer-fine:hidden`.
    *
    * IN THE iOS APP "Photo/video" OPENS THE NATIVE PHOTO LIBRARY, as the chat's "Phototheque" does
@@ -80,7 +82,13 @@
      * from this text and identity, and `onpublished` closes the composer behind it. Absent (the post
      * editor), every take is attached.
      */
-    reel?: { caption: string; identity: string; onpublished: (identity: string) => void };
+    reel?: {
+      caption: string;
+      identity: string;
+      onpublished: (identity: string) => void;
+      /** "Garder comme post": the publish step's caption and identity, as the member left them. */
+      onkept: (caption: string, identity: string) => void;
+    };
   }
 
   let {
@@ -172,6 +180,7 @@
     composerCaption={reel?.caption}
     composerIdentity={reel?.identity}
     onpublished={reel?.onpublished}
+    onkept={reel?.onkept}
   />
 {/if}
 
