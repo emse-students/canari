@@ -760,7 +760,8 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProto(CanariPushContext *c
   char *jsonPtr = canari_native_decrypt_message(
       (const unsigned char *)stateBytes.bytes, stateBytes.length, ctx.deviceKeyB64.UTF8String,
       ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String,
-      senderId.UTF8String, (const unsigned char *)cipher.bytes, cipher.length);
+      senderId.UTF8String, (const unsigned char *)cipher.bytes, cipher.length,
+      (ctx.locale ?: @"").UTF8String);
   if (jsonPtr == nil) {
     return nil;
   }
@@ -824,7 +825,7 @@ static CanariDecryptedMessage *_Nullable CanariDecryptProtoWithCommits(
       (const unsigned char *)stateBytes.bytes, stateBytes.length, ctx.deviceKeyB64.UTF8String,
       ctx.userId.UTF8String, ctx.deviceId.UTF8String, groupId.UTF8String, senderId.UTF8String,
       commitsJson.UTF8String,
-      (const unsigned char *)cipher.bytes, cipher.length);
+      (const unsigned char *)cipher.bytes, cipher.length, (ctx.locale ?: @"").UTF8String);
   if (jsonPtr == nil) {
     return nil;
   }
@@ -1003,7 +1004,7 @@ static void CanariWriteSentMessageToCache(NSString *groupId, NSString *selfUserI
 
 /**
  * Moves the entries the Notification Service Extension wrote into the App Group container over
- * to the app's own `fcm_message_cache.ndjson`, which is the only file `read_and_clear_fcm_cache`
+ * to the app's own `fcm_message_cache.ndjson`, which is the only file `take_fcm_cache`
  * looks at. An app extension has its own data container, so this hop is what makes a push
  * decrypted while the app was killed visible to the app at all.
  */
@@ -2674,9 +2675,9 @@ static void CanariRefreshTokenOnBackend(CanariPushContext *ctx, NSString *secret
 // `read_and_clear_pending_call_accept` Tauri command) and the CallKit session is closed as soon as
 // the app becomes active - the in-app call UI takes over from there.
 
-/// Mirrors CALLS_ENABLED in frontend/src/lib/features.ts, which holds the whole calling surface
-/// off until it has been run on hardware (rung 15 CALL / CALL-13). It is duplicated rather than
-/// read from JS because this code runs BEFORE the webview exists - a PushKit registry is installed
+/// Mirrors CALLS_COMPILED in frontend/src/lib/features.ts (callsCompiled.test.ts asserts it),
+/// which holds calling as the store binaries carry it off until it has been run on hardware
+/// (rung 15 CALL / CALL-13). It is duplicated rather than read from JS because this code runs BEFORE the webview exists - a PushKit registry is installed
 /// at process start, and there is nothing to ask. The two must be flipped in the same commit,
 /// together with the `voip` UIBackgroundModes entry that Info.plist no longer carries: without that
 /// entry PKPushRegistry can never obtain a token, so installing it here would be a permanent
@@ -3168,12 +3169,15 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
       NSString *signature =
           [data[@"signature"] isKindOfClass:[NSString class]] ? data[@"signature"] : @"";
       NSString *dir = CanariTauriDataDir();
+      // The app language Rust words its own sentences in; "" when none was mirrored.
+      NSString *locale = CanariLoadPushContext().locale ?: @"";
       char *jsonPtr =
           dir == nil ? nil
                      : canari_native_open_graine_push(
                            dir.UTF8String, channelId.UTF8String, sessionId.UTF8String,
                            (uint32_t)[messageIndexStr intValue], senderId.UTF8String,
-                           nonce.UTF8String, ciphertext.UTF8String, signature.UTF8String);
+                           nonce.UTF8String, ciphertext.UTF8String, signature.UTF8String,
+                           locale.UTF8String);
       if (jsonPtr != nil) {
         NSString *jsonStr = [NSString stringWithUTF8String:jsonPtr];
         canari_free_string(jsonPtr);
@@ -3661,18 +3665,59 @@ static BOOL CanariInstallRemoteNotificationHook(void) {
  *
  * UIKit records the delegate's optional-method answers when the delegate is SET; a method added
  * afterwards can go unseen. Firebase's own App Delegate Proxy does exactly this after it swizzles
- * (`GULAppDelegateSwizzler reassignAppDelegate`) - the proxy this file replaces by hand. The strong
- * local keeps the delegate alive across the nil assignment.
+ * (`GULAppDelegateSwizzler reassignAppDelegate`) - the proxy this file replaces by hand.
+ *
+ * THE DELEGATE IS THEN OWNED HERE, FOR THE LIFE OF THE PROCESS. `UIApplication.delegate` is
+ * documented as not retaining. That the delegate `UIApplicationMain` created is kept by
+ * UIApplication itself, and that a `setDelegate:` gives that ownership up, is BELIEVED, not read:
+ * UIKit's source is closed, and Firebase keeping its own strong copy (`gOriginalAppDelegate`, set
+ * on the line after its re-assignment) is the evidence. What WAS read (`pymobiledevice3 crash
+ * pull`, iPhone 12, v1.3.0-alpha.2): `-[UIResponder _enumerateKeyboardShortcutsInChainWithOptions:
+ * usingBlock:]` sent `_keyboardShortcutMenuLeaves` to a `_UISceneCloudKitShareMetadataBSActionHandler`
+ * - a freed responder whose memory UIKit had reused - so the responder chain, whose last link
+ * after UIApplication is this delegate, held a dead object. That the dead link IS the delegate is
+ * the hypothesis this copy tests; the becoming-active log below says which object UIKit holds
+ * (docs/wiki/backlog.md, P1 of 2026-10-19).
  */
+static id<UIApplicationDelegate> g_appDelegateKeptAlive = nil;
+
 static void CanariReassignAppDelegate(void) {
   UIApplication *app = [UIApplication sharedApplication];
   id<UIApplicationDelegate> delegate = app.delegate;
   if (delegate == nil) {
+    NSLog(@"[CanariPush] app delegate absent - nothing to re-assign");
     return;
   }
+  g_appDelegateKeptAlive = delegate;
   app.delegate = nil;
   app.delegate = delegate;
-  NSLog(@"[CanariPush] app delegate re-assigned so UIKit reads the added methods");
+  NSLog(@"[CanariPush] app delegate re-assigned so UIKit reads the added methods (kept alive: %@)",
+        [g_appDelegateKeptAlive class]);
+}
+
+/**
+ * Logs, each time the app becomes active, which object UIKit holds as the application's delegate
+ * compared with the one `CanariReassignAppDelegate` keeps alive.
+ *
+ * Diagnostic for the P1 of 2026-10-19: `same` on every activation, with no abort on an
+ * accessibility read, is the reading that confirms the kept-alive fix; `nil` or `different` says the
+ * re-assignment left UIKit pointing somewhere else. In that last case `class` names whatever lives
+ * at the address UIKit holds: a UIKit-internal class there means a reused allocation, the very
+ * signature the alpha.2 crash report carried.
+ */
+static void CanariLogAppDelegateIdentity(void) {
+  id<UIApplicationDelegate> current = [UIApplication sharedApplication].delegate;
+  if (current == nil) {
+    NSLog(@"[CanariPush] became active: app delegate is nil (kept alive: %@)",
+          g_appDelegateKeptAlive == nil ? @"none" : NSStringFromClass([g_appDelegateKeptAlive class]));
+  } else if (current == g_appDelegateKeptAlive) {
+    NSLog(@"[CanariPush] became active: app delegate is the kept-alive one (%@)",
+          NSStringFromClass([current class]));
+  } else {
+    NSLog(@"[CanariPush] became active: app delegate %@ differs from the kept-alive one (%@)",
+          NSStringFromClass([current class]),
+          g_appDelegateKeptAlive == nil ? @"none" : NSStringFromClass([g_appDelegateKeptAlive class]));
+  }
 }
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)
@@ -3922,6 +3967,13 @@ void CanariPushSetup(void) {
                 if (added) {
                   CanariReassignAppDelegate();
                 }
+              }];
+  [[NSNotificationCenter defaultCenter]
+      addObserverForName:UIApplicationDidBecomeActiveNotification
+                  object:nil
+                   queue:[NSOperationQueue mainQueue]
+              usingBlock:^(__unused NSNotification *note) {
+                CanariLogAppDelegateIdentity();
               }];
 
 #if __has_include(<FirebaseMessaging/FirebaseMessaging.h>)

@@ -2,7 +2,7 @@
  * THE DASHBOARD: THE APP'S ONE HUB, ITS GROUPS, ITS ROWS AND WHO SEES EACH.
  *
  * On a phone the dashboard is the fourth tab and the ONLY way to Agenda, Associations, Boutique,
- * Formulaires and Administration (they are `mobileNav: false` in `places.ts`): it is the app's
+ * Formulaires, Reservations and Administration (they are `mobileNav: false` in `places.ts`): it is the app's
  * menu. It was a launcher of tiles, buttons calling `goto` and a theme toggle; it is now one
  * `SectionHub` per group, rows as real links, the same shape on a phone and on a desktop
  * (docs/wiki/frontend/section-navigation.md, UI-1 of the 2026-10-16 UI redesign audit).
@@ -20,6 +20,7 @@ import {
   Bell,
   BookUser,
   Building2,
+  CalendarClock,
   CalendarDays,
   ClipboardList,
   FolderOpen,
@@ -166,6 +167,15 @@ const ENTRIES: readonly DashboardEntry[] = [
     label: () => m.nav_forms_label(),
     summary: () => m.nav_forms_desc(),
     icon: ClipboardList,
+  },
+  {
+    // D37: the phone reaches Reservations from here, no bottom tab displaced.
+    key: 'bookings',
+    group: 'explore',
+    target: '/bookings',
+    label: () => m.nav_bookings_label(),
+    summary: () => m.nav_bookings_desc(),
+    icon: CalendarClock,
   },
   {
     key: 'notifications',

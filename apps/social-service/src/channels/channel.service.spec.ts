@@ -559,19 +559,25 @@ describe('ChannelService security hardening', () => {
     const { service, channelRepo, memberRepo, messageRepo, redis } = makeService();
     arrangePollAccess(channelRepo, memberRepo);
     messageRepo.findOne.mockResolvedValue({ id: 'm1', channelId: 'ch1', authorId: 'u1' });
+    // The row lock finds the row.
+    messageRepo.query.mockResolvedValueOnce([{}]);
 
     await service.deleteChannelMessage('ch1', 'm1', 'u1');
 
     expect(messageRepo.delete).toHaveBeenCalledWith({ id: 'm1', channelId: 'ch1' });
-    // In ONE transaction (migration 090): the client id's lock - the one a send takes around its
+    // In ONE transaction (migration 090): the ROW's lock first (what an account erasure's delete
+    // waits on, or makes this wait on), then the client id's lock - the one a send takes around its
     // tombstone check and its insert - then the tombstone, then the row.
     expect(messageRepo.manager.transaction).toHaveBeenCalledTimes(1);
-    const [[lockSql, lockParams], [sql, params]] = messageRepo.query.mock.calls;
+    const [[rowSql, rowParams], [lockSql, lockParams], [sql, params]] =
+      messageRepo.query.mock.calls;
+    expect(rowSql).toContain('FOR UPDATE');
+    expect(rowParams).toEqual(['m1', 'ch1']);
     expect(lockSql).toContain(clientIdLockSql('"authorId"', '"channelId"', '"clientMessageId"'));
     expect(lockParams).toEqual(['m1', 'ch1']);
     expect(sql).toContain('INSERT INTO channel_message_client_tombstones');
     expect(params).toEqual(['m1', 'ch1']);
-    expect(messageRepo.query.mock.invocationCallOrder[1]).toBeLessThan(
+    expect(messageRepo.query.mock.invocationCallOrder[2]).toBeLessThan(
       messageRepo.delete.mock.invocationCallOrder[0]
     );
     expect(redis.publishChannelEvent).toHaveBeenCalledWith(
@@ -606,10 +612,29 @@ describe('ChannelService security hardening', () => {
       channelId: 'ch1',
       authorId: 'someone-else',
     });
+    messageRepo.query.mockResolvedValueOnce([{}]);
 
     await service.deleteChannelMessage('ch1', 'm1', 'u1');
 
     expect(messageRepo.delete).toHaveBeenCalledWith({ id: 'm1', channelId: 'ch1' });
+  });
+
+  it('deleteChannelMessage writes NO tombstone for a row removed while it waited (an erasure)', async () => {
+    const { service, channelRepo, memberRepo, messageRepo, redis } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    messageRepo.findOne.mockResolvedValue({ id: 'm1', channelId: 'ch1', authorId: 'u1' });
+    // Read before the transaction, gone once its row lock was granted.
+    messageRepo.query.mockResolvedValueOnce([]);
+
+    await service.deleteChannelMessage('ch1', 'm1', 'u1');
+
+    expect(messageRepo.query).toHaveBeenCalledTimes(1);
+    expect(messageRepo.delete).not.toHaveBeenCalled();
+    expect(redis.publishChannelEvent).toHaveBeenCalledWith(
+      'channel.message.deleted',
+      expect.objectContaining({ messageId: 'm1' }),
+      expect.any(Array)
+    );
   });
 
   it("setMessagePinned rejects a plain member pinning someone else's message", async () => {
@@ -830,6 +855,98 @@ describe('ChannelService security hardening', () => {
     // that shows less history the more people react to it, with nothing saying so.
     expect(page.map((m) => m.id)).toEqual(['m2', 'r1', 'm1']);
     expect(page.find((m) => m.id === 'r1')?.silent).toBe(true);
+  });
+
+  // A membership notice is sent silent (it must not count as unread nor ring a phone), so a salon
+  // holding nothing else would otherwise open on an empty history.
+  it('listMessages returns the silent rows of a salon that has no body at all', async () => {
+    const { service, channelRepo, memberRepo, messageRepo } = makeService();
+    arrangePollAccess(channelRepo, memberRepo);
+    const notice = {
+      id: 'n1',
+      channelId: 'ch1',
+      authorId: 'u1',
+      content: 'c',
+      createdAt: new Date(100),
+      silent: true,
+      metadata: {},
+    };
+    messageRepo.find.mockImplementation(async (opts: any) =>
+      opts.where.silent === true ? [notice] : []
+    );
+
+    const page = await service.listMessages('ch1', 'u1', 50);
+
+    expect(page.map((m) => m.id)).toEqual(['n1']);
+  });
+
+  // A join notice is written BEFORE the salon's first body (the member joins, then speaks). The
+  // silent rows used to be fetched only from the oldest body down, so on a salon shorter than one
+  // page that notice was in no page at all: no later page is ever asked for below a short one.
+  describe('listMessages on a salon shorter than one page (notice, then body, then the page)', () => {
+    const row = (id: string, ms: number, silent: boolean) => ({
+      id,
+      channelId: 'ch1',
+      authorId: 'u1',
+      content: 'c',
+      createdAt: new Date(ms),
+      silent,
+      metadata: {},
+    });
+    // Evaluates the TypeORM operators the service builds, so the fixture is filtered the way
+    // PostgreSQL would filter it rather than by what each test pre-decides to return.
+    const matches = (op: any, d: Date): boolean => {
+      if (op === undefined) return true;
+      switch (op.type) {
+        case 'lessThan':
+          return d.getTime() < op.value.getTime();
+        case 'moreThanOrEqual':
+          return d.getTime() >= op.value.getTime();
+        case 'and':
+          return (op.value as any[]).every((o) => matches(o, d));
+        default:
+          throw new Error(`unexpected operator ${op.type}`);
+      }
+    };
+    const serve = (rows: ReturnType<typeof row>[]) => async (opts: any) =>
+      rows
+        .filter((r) => r.silent === opts.where.silent && matches(opts.where.createdAt, r.createdAt))
+        .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
+        .slice(0, opts.take ?? Infinity);
+
+    it('returns the notice older than the first body', async () => {
+      const { service, channelRepo, memberRepo, messageRepo } = makeService();
+      arrangePollAccess(channelRepo, memberRepo);
+      messageRepo.find.mockImplementation(serve([row('join', 100, true), row('m1', 200, false)]));
+
+      const page = await service.listMessages('ch1', 'u1', 50);
+
+      expect(page.map((m) => m.id)).toEqual(['m1', 'join']);
+    });
+
+    it('still bounds the silent rows by the cursor on a short page', async () => {
+      const { service, channelRepo, memberRepo, messageRepo } = makeService();
+      arrangePollAccess(channelRepo, memberRepo);
+      messageRepo.find.mockImplementation(
+        serve([row('join', 100, true), row('m1', 200, false), row('late', 400, true)])
+      );
+
+      const page = await service.listMessages('ch1', 'u1', 50, new Date(300).toISOString());
+
+      expect(page.map((m) => m.id)).toEqual(['m1', 'join']);
+    });
+
+    it('keeps the lower bound on a FULL page, whose older silent rows belong to the next one', async () => {
+      const { service, channelRepo, memberRepo, messageRepo } = makeService();
+      arrangePollAccess(channelRepo, memberRepo);
+      messageRepo.find.mockImplementation(
+        serve([row('join', 100, true), row('m1', 200, false), row('m2', 300, false)])
+      );
+
+      const page = await service.listMessages('ch1', 'u1', 2);
+
+      expect(page.map((m) => m.id)).toEqual(['m2', 'm1']);
+    });
   });
 
   it('rejects listMessages for a private channel when the user is neither admin nor allow-listed', async () => {

@@ -1027,7 +1027,12 @@ Now (`canari_push.mm`):
 - **`class_replaceMethod` ADDS the method**, chaining to any later wry implementation - the APNs
   token hook's technique. The application's delegate is then re-assigned once
   (`CanariReassignAppDelegate`), because UIKit records which optional methods a delegate implements
-  when it is SET; Firebase's own proxy does the same after it swizzles.
+  when it is SET; Firebase's own proxy does the same after it swizzles. **And, like Firebase, it then
+  keeps the delegate in a static strong reference**: `UIApplication.delegate` does not retain, and
+  without that copy `v1.3.0-alpha.1`/`-alpha.2` aborted whenever the accessibility tree was read and
+  never received the APNs token (P1 of 2026-10-19 in [backlog](../backlog.md): a dead responder in
+  the chain is read from `pymobiledevice3 crash pull`; that it is the delegate is inferred, and a
+  becoming-active log line settles it).
 - **Only a silent frame is acted on** (`CanariIsSilentFrame`: `content-available: 1` and no
   `alert`); an alert stays the extension's (killed, background) and `willPresentNotification`'s
   (foreground), or it would be drawn twice.
@@ -1267,6 +1272,55 @@ halves agreeing field by field (`systemComponentsPatch.test.ts`); the Swift comp
 
 **Owed on an iPhone:** the pieces over their CSS twins pixel for pixel, the "+" following the keyboard
 without a lag the eye sees, the picker opening, and VoiceOver reading the four names.
+
+#### The DM whose chrome stands one keyboard too high (2026-10-17)
+
+**OPEN, P2, CAUSE NOT YET MEASURED.** This was found on the iPhone 12 with `v1.2.9-alpha.7`
+([device-verification](../device-verification.md#the-iphone-12-readings-of-v129-alpha7-2026-10-17), 3b).
+The conversation was a DM whose last message is a tall video. The keyboard rose
+(`overlap=301 -> webview height 543`). The web composer was drawn at 487 pt, where it belongs.
+The native "+" was at 186 pt, and the glass header was off the top of the screen. That is EVERY
+native piece shifted up by exactly the overlap. Two control cases came out right:
+
+- the salon, with the same 301 pt keyboard (`16-salon-kbd.png`);
+- the same DM after the keyboard changed while open, to the emoji keyboard (301 -> 388,
+  `11-dmkbd-menu-open.png`, syslog 13:50:58).
+
+So only the rise from CLOSED goes wrong. The clamp (`CanariClampDocumentScroll`) never logged in
+either process, so UIKit's offset was never outside its range.
+
+**The pieces are placed at the page's `getBoundingClientRect()`**, so the page's coordinates and the
+screen disagreed by 301. Three causes fit, and the source cannot choose between them:
+
+1. **WebKit's own state is stale.** The page holds `scrollY` 301 while UIKit's offset is 0, which
+   is the reveal of the focused field against the not-yet-shrunk frame, never handed back to the page.
+2. **The DM's document kept a scroll range.** The offset then sits legally at
+   `contentSize - bounds` = 844 - 543 = 301, where the clamp leaves it alone.
+3. **The page laid the composer out at 186 itself.** Both scrolls are 0, and the
+   `--app-viewport-height` / `--keyboard-layout-inset-bottom` arithmetic is wrong for this one shape.
+
+**One syslog line now separates them.** After every settled keyboard change, `canari_ios.mm`
+(`CanariReportSettledKeyboardGeometry`) logs `keyboard settled: native offset= content= bounds= |
+page scrollY= scrollHeight= innerHeight= vvHeight= vvOffsetTop= vvPageTop= composerTop=`. The
+store build's WebView cannot be inspected, so this line is the measurement. Reading it:
+
+- `offset` 0 with `scrollY` 301 is cause 1;
+- `content - bounds` = 301 with `offset` 301 is cause 2;
+- `composerTop` 186 with both at 0 is cause 3.
+
+No fix is written until the line has named one.
+
+**Not new in 1.2.9, by reading.** Between `v1.2.8` and `v1.2.9-alpha.7`, none of these changed:
+
+- the keyboard layout and the clamp in `canari_ios.mm` (that file changed only for Dynamic Type
+  and the accessory bar);
+- `nativeGlassPiece.svelte.ts`, `ChatHeader.svelte` and the composer's footer CSS;
+- the composer's reveal. `keyboardViewport.svelte.ts` (#1952) returns early for
+  `.chat-composer-footer`, and its new `transitionend` re-reveal is for
+  `[data-keyboard-aware-overlay]` only.
+
+The plugin patch changed only the menu hold (`ButtonComponent.swift`, #1953). The DM's last message
+became the tall video on 2026-10-17, which is why no earlier reading met it.
 
 ### The iPhone follows Dynamic Type (decided by the user 2026-10-14)
 
@@ -2018,6 +2072,11 @@ it from there:
 | Android | `res/values/strings.xml` (French, default) + `res/values-en/strings.xml` | `appLocaleContext(context)` in `AppLocale.kt` |
 | iOS app | `canari_iOS/{fr,en}.lproj/Localizable.strings` | `CanariLocalized()` in `canari_push.mm` |
 | iOS NSE | `canari_NSE/{fr,en}.lproj/Localizable.strings` | `NotificationService.localized()` |
+| Rust push scanner (both platforms) | `mobile/push_text.rs` (`PushText`, fr + en) | `PushLanguage::from_tag(locale)`, the tag each native caller passes down |
+
+The Rust row covers what the scanner composes from a DECRYPTED message - a system event, a reaction,
+a photo or a voice message, a poll, a call (WP-PUSH-I18N, 2026-10-18;
+[chat](modules/chat.md#a-voice-note-declares-itself-because-nothing-downstream-can-tell)).
 
 The appex has its OWN copy because an app extension is a separate bundle and `Bundle.main` there is
 the appex - that duplication is the platform's, not a choice, and it is what Android does not have
@@ -2424,7 +2483,7 @@ Both platforms write decrypted message previews to `fcm_message_cache.ndjson` af
 
 That extra hop is not optional: an app extension has its own data container, so `app_data_dir` resolved inside the NSE is a directory the app can never read. The App Group is the only storage the two processes share — the same reason `mls.bin` is mirrored there. The NSE also writes with `completeFileProtectionUntilFirstUserAuthentication`, because it runs on a locked device where the default protection class cannot be written.
 
-The file is bounded to 50 entries and read at boot by `read_and_clear_fcm_cache` (Rust) so the app can pre-inject messages into the local store before the full MLS sync finishes. Both writers must produce the same JSON fields (`groupId`, `messageId`, `senderId`, `senderName`, `groupName`, `content`, `timestamp`, `type`, plus optional `isGroup`, `replyTo` and `mediaKind`). `fcmCacheFields.test.ts` pins the fields **and** both halves of the iOS path - off macOS it is the only gate on either.
+The file is bounded to 50 entries and taken at boot by `take_fcm_cache` (Rust) so the app can pre-inject messages into the local store before the full MLS sync finishes. The take RENAMES it to a new generation (`fcm_message_cache.taken.<n>.ndjson`, atomic, so a native write lands in it or in the next live file) and `ack_fcm_cache` deletes each named file only once `consumeFcmCache` has run its writes (2026-10-18). A take a dead process never acknowledged is handed over again at the next take, which the injection's never-downgrade rule makes harmless. The ack carries each file's size when read: a file a native write grew after the read is kept for the next take, never deleted unread. Takes are serialized in the frontend (two callers), so a leftover generation means a process death, and is logged as one. A failed per-entry write is logged and NOT replayed: replaying a take every 5 s poll would re-inject what the user deleted since. Account deletion removes every taken generation with the live file. Both writers must produce the same JSON fields (`groupId`, `messageId`, `senderId`, `senderName`, `groupName`, `content`, `timestamp`, `type`, plus optional `isGroup`, `replyTo` and `mediaKind`). `fcmCacheFields.test.ts` pins the fields **and** both halves of the iOS path - off macOS it is the only gate on either.
 
 **`groupName` IS THERE BECAUSE THE CONSUMER BUILDS A CONVERSATION ROW, AND A SENDER IS NOT A CONVERSATION (added 2026-09-15).** `consumeFcmCache` writes a placeholder conversation row alongside the message - it has to, the message has a foreign key to `conversations(id)` - and it labelled that row with `senderName`. For a DM the two coincide, which is why it read as correct for as long as it did; for a group it named the conversation after whoever spoke first. Measured on a two-person group: the sidebar then held two rows carrying the same person's name, the DM and the group, with nothing on either to tell them apart. The push had carried the group's name the whole time (`buildPushDataFields.groupName`, empty for a DM by contract) - the two native writers simply did not copy it across. `placeholderNameForPushEntry` is the one place that decides the label now, and it answers the older-file case too: the cache is a file on disk that survives an app update, so an entry queued before this change carries no `groupName` at all and falls back to what it always did.
 
@@ -3491,7 +3550,7 @@ The open line is in [backlog](../backlog.md#p3---the-pull-and-the-socket-hand-th
 
 **On the phone, the overlap reaches openmls.** NOTIF-7 (backgrounded, push, tap, foreground), 2026-09-08, left six `severe` lines on A1: two frames at one epoch (group 2bd5add9, `msg_epoch=196 group_epoch=196`, generations 7 and 8), each refused with `Ciphertext generation out of bounds` / `SecretReuseError` and `MLS decryption failed at exactly its own epoch, so no redelivery can help`. A same-epoch `SecretReuseError` means the generation was already consumed, so these are duplicates, not losses (the row displayed exactly one message). On the web the same overlap is caught by the queue and files `[QUEUE] delivery ... arrived twice`, a notice; on the phone nothing catches it first, so the same defect costs a `PASS-DIRTY` on the web and severe lines on a handset. Re-measured on `00a86a1a8` (2026-09-23, NOTIF-7b killed): two severe lines instead of six, same shape, 21 ms apart - the count moved, the mechanism did not.
 
-**Who consumes the generation (code read 2026-10-06, after NOTIF-10 went `FAIL` on the Mi 9T twice, `7ab8f1780`).** The push path persists nothing: `background.rs` (`decrypt_push_message_with_key`, "These never persist `mls.bin`") decrypts in memory and discards the manager; only the outbox batch and the Welcome paths call `save_encrypted_with_key`. A push decrypt answering `SecretReuse` was refused because ANOTHER ENGINE persisted that generation first: the JS/WebView engine (socket drain, catch-up pull) or the `MlsBackgroundWorker`. The 2026-09-08 reading, which blamed the Kotlin service writing the state back, was wrong, and the fix it proposed (acknowledge the row at the cache write, or consult the FCM cache by `messageId` + `groupId`) is withdrawn. What survives: the frames ARE the same ids end to end (`queuedMessageId` in `CanariFCM` is `qId` in `[QUEUE]`); `BaseMlsService.deliveries` cannot see a consumer in another layer; and `read_and_clear_fcm_cache` clears BEFORE the JS has persisted anything, so a crash between that clear and `saveMessage` loses the plaintext for good - a window to close on its own (read, persist, THEN clear), never by retrying or suppressing the log line.
+**Who consumes the generation (code read 2026-10-06, after NOTIF-10 went `FAIL` on the Mi 9T twice, `7ab8f1780`).** The push path persists nothing: `background.rs` (`decrypt_push_message_with_key`, "These never persist `mls.bin`") decrypts in memory and discards the manager; only the outbox batch and the Welcome paths call `save_encrypted_with_key`. A push decrypt answering `SecretReuse` was refused because ANOTHER ENGINE persisted that generation first: the JS/WebView engine (socket drain, catch-up pull) or the `MlsBackgroundWorker`. The 2026-09-08 reading, which blamed the Kotlin service writing the state back, was wrong, and the fix it proposed (acknowledge the row at the cache write, or consult the FCM cache by `messageId` + `groupId`) is withdrawn. What survives: the frames ARE the same ids end to end (`queuedMessageId` in `CanariFCM` is `qId` in `[QUEUE]`); `BaseMlsService.deliveries` cannot see a consumer in another layer; and `read_and_clear_fcm_cache` cleared BEFORE the JS had persisted anything, so a crash between that clear and `saveMessage` lost the plaintext for good - closed 2026-10-18 by `take_fcm_cache` + `ack_fcm_cache` (read, persist, THEN clear; see the cache paragraph above).
 
 **The generic banner is a straight line, not a leak.** `RefusedForGood` (`mls-refused-for-good`, kind `SecretReuse`) on a VISIBLE push skips the ladder and the worker (#1394) but falls through `decrypted == null` in `handleMlsFrame` to `buildFallbackText` -> `Fallback notification: Nouveau message de <sender>` -> `showMessageNotification`, suppressed only when `MainActivity.isInForeground` is true at post time. NOTIF-10, 2026-10-05, both runs: four pushes refused `SecretReuse` at one epoch (20, then 26), 0.5-1.4 s apart, four fallback lines, only the last suppressed - three nameless banners posted while the app was not yet foreground. The Mi 9T logcat shows the JS engine's `[QUEUE] Processing` about 1.4 s before the first push refusal and a real banner (`notifyMessageFromWebSocket`) 56 ms BEFORE the push's generic line, which is why the shade showed both.
 

@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { IndexedDbStorage } from '$lib/db/indexeddb';
 import { gateStorage } from '$lib/db/deviceKeyGate';
+import type { OutboxBlobStore } from '$lib/db/outboxBlob';
 import { decryptData } from '$lib/encryption';
 import { toBase64 } from '$lib/utils/hex';
 import type { IMlsService, StateLoadFailure } from '$lib/mls-client';
@@ -22,6 +23,7 @@ import type {
   StoredGraineSession,
   StoredMessage,
 } from '$lib/db';
+import { flushMacrotask } from '../../../test/flush';
 
 const storageForUser = new Map<string, IStorage>();
 vi.mock('$lib/db', async (importOriginal) => ({
@@ -199,7 +201,7 @@ describe('resealDeviceKeyStores', () => {
 
   it('finishes a run killed half way: a row already under the new key is done, not damaged', async () => {
     const { OLD, NEW } = keys();
-    const { raw } = await populated(OLD, 450);
+    const { raw } = await populated(OLD, 5);
     // The kill: the second write batch never lands.
     const real = raw.swapSealedPayloads.bind(raw);
     let calls = 0;
@@ -207,16 +209,16 @@ describe('resealDeviceKeyStores', () => {
       if (++calls === 2) throw new Error('killed');
       return real(store, swaps);
     });
-    await expect(resealDeviceKeyStores(raw, OLD, NEW)).rejects.toThrow('killed');
+    await expect(resealDeviceKeyStores(raw, OLD, NEW, { batchSize: 2 })).rejects.toThrow('killed');
     spy.mockRestore();
     const half = await keysOf(raw, 'messages', { old: OLD, new: NEW });
     expect(half).toContain('old');
     expect(half).toContain('new');
     expect(await keysOf(raw, 'graine', { old: OLD, new: NEW })).toEqual(['old', 'old']);
 
-    const report = await resealDeviceKeyStores(raw, OLD, NEW);
+    const report = await resealDeviceKeyStores(raw, OLD, NEW, { batchSize: 2 });
 
-    expect(report.alreadyNew).toBe(200);
+    expect(report.alreadyNew).toBe(2);
     expect(report.unreadable).toBe(0);
     await everyRowUnder(raw, NEW);
   });
@@ -328,6 +330,16 @@ describe('both PIN paths go through performPinChange', () => {
       expect(fn).not.toMatch(/reencrypt|saveGraineSession|saveMessages|swapSealedPayloads/);
     }
   );
+
+  it('the change asks whether this tab may change the key BEFORE the server rotates the verifier', () => {
+    // A follower's re-seal is refused by the version guard (`pinChange.followerTab.test.ts`): asked
+    // after the server took the new PIN, the refusal would still cost the user a recovery.
+    const fn = body('export async function changePinImpl(');
+    const guard = fn.indexOf('thisTabMayChangeDeviceKey(');
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(fn.indexOf('/api/mls/security/pin-change'));
+    expect(guard).toBeLessThan(fn.indexOf('await performPinChange('));
+  });
 
   it('the recovery hands performPinChange the STORED state, the change does not', () => {
     expect(body('export async function recoverPinImpl(')).toContain('storedMlsState: state');
@@ -574,7 +586,7 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
     await Promise.resolve();
 
     const change = performPinChange(options('u-inflight', fakeMls()), OLD, NEW);
-    await new Promise((r) => setTimeout(r, 20));
+    await flushMacrotask();
     land();
     await Promise.all([inFlight, change]);
 
@@ -686,6 +698,65 @@ describe('performPinChange - the one path of the change AND the recovery', () =>
 
     expect((await s.gated.getOutboxEntry('o1', OLD))?.text).toBe('queued o1');
     expect(await s.gated.getGraineSession('s1', OLD)).toEqual(session('s1'));
+  });
+
+  it('a queued text, reaction and attachment each survive the change, the attachment blob untouched', async () => {
+    // Read the way the flusher reads them (`getOutboxEntry`, with the key the session now holds).
+    // The attachment's bytes live in the blob store, sealed by a key kept INSIDE the row: only the
+    // row is re-sealed, so the blob must be neither rewritten nor lost.
+    const { OLD, NEW } = keys();
+    const s = await populated(OLD);
+    storageForUser.set('u-outbox', s.gated);
+    const reaction: OutboxEntry = {
+      ...queued('r1'),
+      kind: 'control',
+      text: undefined,
+      controlProto: new Uint8Array([8, 1, 18, 2, 0x3a, 0x29]),
+    };
+    const bytes = crypto.getRandomValues(new Uint8Array(4096));
+    const attachment: OutboxEntry = {
+      ...queued('a1'),
+      kind: 'media',
+      text: undefined,
+      media: { kind: 1, mimeType: 'image/png', size: bytes.length, fileBytes: bytes },
+    };
+    await s.raw.saveOutboxEntry(reaction, OLD);
+    await s.raw.saveOutboxEntry(attachment, OLD);
+    const blobs = (s.raw as unknown as { blobs: OutboxBlobStore }).blobs;
+    const blobWrites = vi.spyOn(blobs, 'put');
+    const blobDeletes = vi.spyOn(blobs, 'delete');
+
+    await performPinChange(options('u-outbox', fakeMls()), OLD, NEW);
+
+    expect(blobWrites).not.toHaveBeenCalled();
+    expect(blobDeletes).not.toHaveBeenCalled();
+    expect((await s.raw.getOutboxEntry('o1', NEW))?.text).toBe('queued o1');
+    expect((await s.raw.getOutboxEntry('r1', NEW))?.controlProto).toEqual(reaction.controlProto);
+    const media = (await s.raw.getOutboxEntry('a1', NEW))?.media;
+    expect(media?.fileBytes).toEqual(bytes);
+    await expect(s.raw.getOutboxEntry('a1', OLD)).rejects.toThrow();
+  });
+
+  it('a flush that reads the outbox AFTER its rows moved, before the key is retired, is held', async () => {
+    // The window the gate closes: the outbox rows are already under NEW, the session (and so the
+    // flusher) still holds OLD, and the retired key is not forwarded yet. A read let through here
+    // parks the row as unreadable; the gate holds it until the change retires OLD, then forwards it.
+    const { OLD, NEW } = keys();
+    const s = await populated(OLD);
+    storageForUser.set('u-flush', s.gated);
+    let flush: Promise<OutboxEntry | null> | undefined;
+    const swap = s.raw.swapSealedPayloads.bind(s.raw);
+    vi.spyOn(s.raw, 'swapSealedPayloads').mockImplementation(async (store, swaps) => {
+      const swapped = await swap(store, swaps);
+      // Issued, never awaited here: awaiting it inside the pass would wait on the pass itself.
+      if (store === 'outbox') flush = s.gated.getOutboxEntry('o1', OLD);
+      return swapped;
+    });
+
+    await performPinChange(options('u-flush', fakeMls()), OLD, NEW);
+
+    expect(flush).toBeDefined();
+    expect((await flush!)?.text).toBe('queued o1');
   });
 });
 

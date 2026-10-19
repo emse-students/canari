@@ -77,6 +77,13 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   // The client ids its DELETED salon messages left (migration 090): what keeps a repeated send from
   // posting a removed message again. An erased account repeats no send, so they go with it.
   'channel_message_client_tombstones.authorId': { action: 'delete' },
+  // The outbox entry of a salon row (migration 093): its mentions are ids of OTHER accounts, but it
+  // lives only until the broadcast and the push are handed off (seconds, or the next boot after a
+  // crash), and it cascades with its message - an erased author's messages are deleted below.
+  'channel_message_fanout.payload': {
+    action: 'kept',
+    reason: 'a transient outbox entry, deleted at hand-off and with its message',
+  },
   'channel_members.userId': {
     action: 'code',
     by: 'ChannelService.removeAccountFromWorkspaces (governance repair before each removal)',
@@ -183,6 +190,18 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
     reason:
       'D15: a deleted account leaves the name it had in a frozen booking; the one-year maximum age (D19) bounds it',
   },
+  // A file answer (D7, WP-B6) is its uploader's, as a form's: the row goes, the media service's
+  // part deletes the blob (class `form-file`), and the answer reads "file deleted".
+  'booking_files.uploaderId': { action: 'delete' },
+  'booking_files.fileName': { action: 'delete', via: 'uploaderId' },
+  'booking_spaces.poster': NO_ACCOUNT("the encrypted media reference of a space's poster"),
+
+  // -- Lives ({@link LIVES_ERASURE_STATEMENTS}, docs/wiki/services/lives.md) ---------------------
+  // A live is its broadcaster's content and has no replay (L3): the erasure ENDS it and anonymises
+  // it in one statement, and the live sweep then deletes its segments and its row.
+  'lives.broadcasterId': { action: 'anonymise' },
+  'live_removed_viewers.viewerId': { action: 'delete' },
+  'live_starts.broadcasterId': { action: 'delete' },
 
   // -- Not an account reference, despite the name ----------------------------------------------
   'associations.contactEmail': {
@@ -268,6 +287,45 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
     label: 'bookings_blocks',
     sql: `UPDATE booking_blocks SET "createdById" = $2 WHERE "createdById" = $1`,
   },
+  // Last, after the bookings: the booking path writes these rows after its booking (lock order).
+  // The media service's part of the erasure deletes the blobs (class `form-file`, owned by the
+  // uploader); the answer keeps the id, which now reads "file deleted" (`splitAnswerFiles`).
+  {
+    label: 'bookings_files',
+    sql: `DELETE FROM booking_files WHERE "uploaderId" = $1`,
+  },
+];
+
+/**
+ * The lives part of the erasure (docs/wiki/services/lives.md, "A deleted account").
+ *
+ * - A live the account broadcast is ENDED (reason `erased`, unless it had already ended) and its
+ *   broadcaster becomes {@link DELETED_ACCOUNT}, in ONE statement: an open live never carries the
+ *   tombstone, and the partial unique index (one OPEN live per broadcaster) never sees two. The live
+ *   sweep deletes the segments and then the row within one run; nothing of it is served meanwhile,
+ *   because every read of an ended live is a 410.
+ * - The account's place on another live's removed-viewer list is deleted.
+ * - Its `live_starts` rows (the rolling hour `LIVE_STARTS_PER_HOUR` counts) are deleted.
+ *
+ * Exported apart so `lives.integration.spec.ts` runs exactly these against the schema 091 builds.
+ */
+export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
+  {
+    label: 'lives_broadcaster',
+    sql: `UPDATE lives
+             SET "broadcasterId" = $2,
+                 "endReason" = COALESCE("endReason", 'erased'),
+                 "endedAt" = COALESCE("endedAt", now())
+           WHERE "broadcasterId" = $1`,
+  },
+  {
+    label: 'live_removed_viewers',
+    sql: `DELETE FROM live_removed_viewers WHERE "viewerId" = $1`,
+  },
+  {
+    label: 'live_starts',
+    sql: `DELETE FROM live_starts WHERE "broadcasterId" = $1`,
+  },
 ];
 
 /**
@@ -340,6 +398,8 @@ export const ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   },
   // Its bookings: a personal space deleted, the coming ones cancelled, the history tombstoned.
   ...BOOKINGS_ERASURE_STATEMENTS,
+  // Its lives: ended and anonymised, for the live sweep to delete; its removals by others, deleted.
+  ...LIVES_ERASURE_STATEMENTS,
 
   // Anonymised
   {

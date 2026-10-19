@@ -1007,8 +1007,9 @@ export async function handleWelcomeRequest(params: {
           log(`[WELCOME_REQ] KeyPackage not found after kick for ${requesterDeviceId} - skip`);
           return;
         }
-        // Update the reference for the add below
-        targetDevice.keyPackage = freshDevice.keyPackage;
+        // Update the reference for the add below - on a COPY: the row came out of a read shared by
+        // every simultaneous asker of this device list (WP-W4), so it is never mutated in place.
+        targetDevice = { ...targetDevice, keyPackage: freshDevice.keyPackage };
       } catch (e) {
         // BEHAVIOUR UNCHANGED - the Add is still attempted - but no longer silent. Whatever failed
         // here, the leaf the Add is about to collide with may still be in the tree, so the

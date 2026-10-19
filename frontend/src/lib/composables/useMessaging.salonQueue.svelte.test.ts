@@ -10,6 +10,7 @@
  * asserts the repeat carries the FIRST attempt's client id, which is the whole of that safety.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 import { SvelteMap } from 'svelte/reactivity';
 
 vi.mock('$lib/stores/globalChatSingleton.svelte', () => ({
@@ -43,6 +44,7 @@ import {
   resetSalonRepeatProofForTests,
 } from '$lib/utils/chat/salonRepeatProof';
 import { ChannelApiError } from '$lib/services/ChannelService';
+import { deliverOwedSalonWrites, isSalonWriteOwed } from '$lib/utils/chat/salonOwed';
 
 /** An answer of a server carrying migration 090: it echoes the client id, so a repeat is safe. */
 function proveRepeatsSafe() {
@@ -90,7 +92,7 @@ function posted(call: number) {
 /** The link drops the way `trackedFetch` reports it: the store learns it BEFORE the throw reaches us. */
 function dropTheLink() {
   connectivity.notifyServerUnreachable();
-  return Promise.reject(new TypeError('Failed to fetch'));
+  return Promise.reject(new TransportFailureError(new TypeError('Failed to fetch')));
 }
 
 beforeEach(() => {
@@ -180,7 +182,7 @@ describe('a salon send while offline', () => {
   it('an unconfirmed send (link up) is retried by its author under the same client id', async () => {
     // No answer while the store still reads the link as up: nothing known will change the answer,
     // so it waits for the Retry, which is now safe.
-    sendMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    sendMock.mockRejectedValueOnce(new TransportFailureError(new TypeError('Failed to fetch')));
     const { useMessaging } = await import('./useMessaging.svelte');
     const messaging = useMessaging();
     const ctx = makeContext();
@@ -309,9 +311,12 @@ describe('a repeat nobody asked for waits for the server to prove it safe', () =
     const clientId = rows(ctx)[0].id;
     expect(rows(ctx)[0].status).toBe('unconfirmed');
 
-    // The reconnect alone sends nothing: the old server would post it a second time.
+    // The reconnect alone sends nothing: the old server would post it a second time. Proven by
+    // STATE rather than by waiting a while: the send is not owed to the reconnect, and the
+    // reconnect's delivery (awaited here, so whatever it would send has been sent) finds nothing.
+    expect(isSalonWriteOwed(`send:${clientId}`)).toBe(false);
     connectivity.notifyServerReachable();
-    await new Promise((resolve) => setTimeout(resolve, 5));
+    await deliverOwedSalonWrites();
     expect(sendMock).toHaveBeenCalledTimes(1);
 
     sendMock.mockResolvedValueOnce({ id: 'srv-proven' });
@@ -381,7 +386,7 @@ describe('a resume whose session ends while it waits', () => {
 
 describe('a repeat of a message deleted since it landed', () => {
   it('is forgotten and its row removed, never offered again', async () => {
-    sendMock.mockRejectedValueOnce(new TypeError('Failed to fetch'));
+    sendMock.mockRejectedValueOnce(new TransportFailureError(new TypeError('Failed to fetch')));
     const { useMessaging } = await import('./useMessaging.svelte');
     const messaging = useMessaging();
     const ctx = makeContext();

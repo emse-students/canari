@@ -63,6 +63,28 @@ describe('renderSeoTags', () => {
     expect(withPhoto).toContain('<meta property="og:image:height" content="1365"');
   });
 
+  it('declares og:image:type for the site image and for an enricher that carries one, never a guess', () => {
+    expect(renderSeoTags(base, '/posts/abc')).toContain(
+      '<meta property="og:image:type" content="image/png"'
+    );
+    const card = renderSeoTags(
+      {
+        ...base,
+        image: 'https://canari-emse.fr/api/public/posts/abc/preview-image',
+        imageWidth: 1200,
+        imageHeight: 630,
+        imageType: 'image/jpeg',
+      },
+      '/posts/abc'
+    );
+    expect(card).toContain('<meta property="og:image:type" content="image/jpeg"');
+    const logo = renderSeoTags(
+      { ...base, image: 'https://canari-emse.fr/api/media/public/abc' },
+      '/posts/abc'
+    );
+    expect(logo).not.toContain('og:image:type');
+  });
+
   it('declares neither dimension when an enricher knows only one of the pair', () => {
     // A lone width describes no box. Half a fact is not a smaller fact here.
     const half = renderSeoTags(

@@ -375,6 +375,11 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 
 `/api/bookings/*`: see [bookings-chantier](../bookings-chantier.md#wp-b3-as-built-2026-10-17), the only copy of the routes and their refusal codes.
 
+### Lives
+
+`/api/lives/*` and `GET /api/media/live/:liveId/:name`: see [lives](../services/lives.md), the only
+copy of the routes and their refusal codes. Every one is a 404 unless `LIVE_ENABLED=true`.
+
 ### Associations
 
 | Method | Path | Description |

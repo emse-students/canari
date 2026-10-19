@@ -1,7 +1,12 @@
 import { Logger } from '@nestjs/common';
 import type { DataSource } from 'typeorm';
 import { AccountErasureService } from './account-erasure.service';
-import { CORE_ERASURE_STATEMENTS, ERASURE_TARGETS, describeFailure } from './erasure-policy';
+import {
+  CORE_ERASURE_STATEMENTS,
+  ERASURE_TARGETS,
+  describeFailure,
+  subjectDigest,
+} from './erasure-policy';
 
 jest.mock('axios');
 
@@ -261,5 +266,73 @@ describe('AccountErasureService', () => {
     expect(error).toHaveBeenCalledWith(
       expect.stringContaining('daily report: pending=2 blocked=1 overdue=1')
     );
+  });
+
+  describe('the replay a backup restore owes', () => {
+    const requestedAt = '2026-10-16T12:00:00.000Z';
+
+    /** `older` lists the restored rows created BEFORE their erasure was requested. */
+    function makeReplay(users: string[], older: string[]) {
+      const query = jest.fn(async (sql: string, params?: unknown[]): Promise<unknown> => {
+        if (sql.startsWith('SELECT id FROM users')) return users.map((id) => ({ id }));
+        if (sql.includes('"createdAt" <')) {
+          if (params?.[1] !== requestedAt) throw new Error(`cutoff ${String(params?.[1])}`);
+          return older.includes(params?.[0] as string) ? [{ '?column?': 1 }] : [];
+        }
+        throw new Error(`unexpected query ${sql}`);
+      });
+      const service = new AccountErasureService({ query } as unknown as DataSource);
+      const request = jest.spyOn(service, 'requestErasure').mockResolvedValue(undefined);
+      return { service, request };
+    }
+
+    it('erases again a restored account the journal erased or owes, but never a newer account under the same id', async () => {
+      const { service, request } = makeReplay(
+        ['erased-before', 'came-back', 'never-erased', 'owed-at-restore'],
+        ['erased-before', 'owed-at-restore']
+      );
+      const result = await service.replayAfterRestore({
+        completed: [
+          { digest: subjectDigest('erased-before'), requestedAt },
+          { digest: subjectDigest('came-back'), requestedAt },
+        ],
+        pending: [{ subjectId: 'owed-at-restore', requestedAt }],
+      });
+
+      expect(request.mock.calls.map(([s]) => s)).toEqual(['erased-before', 'owed-at-restore']);
+      expect(result).toEqual({ candidates: 3, replayed: 2, keptNewer: 1 });
+    });
+
+    it('stops at the first failed request, so the restore cannot report itself complete', async () => {
+      const { service, request } = makeReplay(['a', 'b'], ['a', 'b']);
+      request.mockRejectedValueOnce(new Error('database down'));
+      await expect(
+        service.replayAfterRestore({
+          completed: [],
+          pending: [
+            { subjectId: 'a', requestedAt },
+            { subjectId: 'b', requestedAt },
+          ],
+        })
+      ).rejects.toThrow('database down');
+      expect(request).toHaveBeenCalledTimes(1);
+    });
+
+    it('exports every completed digest and every pending subject, each with its LATEST request', async () => {
+      const query = jest.fn(async (sql: string): Promise<unknown> =>
+        sql.includes('"completedAt" IS NOT NULL')
+          ? [{ digest: subjectDigest('x'), requestedAt: new Date(requestedAt) }]
+          : [{ subjectId: 'owed', requestedAt: new Date(requestedAt) }]
+      );
+      const service = new AccountErasureService({ query } as unknown as DataSource);
+      await expect(service.exportJournal()).resolves.toEqual({
+        completed: [{ digest: subjectDigest('x'), requestedAt }],
+        pending: [{ subjectId: 'owed', requestedAt }],
+      });
+      for (const [sql] of query.mock.calls) {
+        expect(sql).toContain('max("requestedAt")');
+        expect(sql).toContain('GROUP BY "subjectId"');
+      }
+    });
   });
 });

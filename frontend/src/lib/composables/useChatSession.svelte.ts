@@ -165,7 +165,7 @@ export function useChatSession() {
 
     // Services
     ensureMls,
-    resetMls: () => mlsHolder.reset(),
+    resetMls: (only) => mlsHolder.reset(only),
     retireMls: (finalWrite) => mlsHolder.retire(finalWrite),
     whenMlsRetired: () => mlsHolder.whenRetired(),
     isMlsRetiring: () => mlsHolder.isRetiring(),

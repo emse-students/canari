@@ -9,10 +9,10 @@
  */
 import type { BookingQuotaPeriod } from './entities/booking-space.entity';
 import type { Range } from './slots';
+import { bookingWindowRefusal, type WindowRefusal } from './booking-window';
 import { isoWeekMonday, localDate } from './zoned-time';
 
 const MINUTE_MS = 60_000;
-const DAY_MS = 86_400_000;
 
 /** The space settings of the booking window (D26), all optional. */
 export interface WindowSettings {
@@ -21,31 +21,27 @@ export interface WindowSettings {
   horizonDays: number | null;
 }
 
-/** Why the booking window refuses a range. */
-export type WindowRefusal = 'not-open-yet' | 'started' | 'notice' | 'beyond-horizon';
+export type { WindowRefusal } from './booking-window';
 
 /**
- * Whether a range may be booked NOW under the space's window:
- * - `not-open-yet`: before the space's opening date;
- * - `started`: the slot has begun (a past slot is history, D15);
- * - `notice`: it starts sooner than `minNoticeMinutes` from now;
- * - `beyond-horizon`: it starts more than `horizonDays` x 24 h from now (elapsed time, so the
- *   horizon slides with the clock and does not jump at local midnight).
+ * Whether a range may be booked NOW under the space's window - `bookingWindowRefusal`, the one
+ * rule the screen shares (`booking-window.ts`, its refusals and their order), on the server's
+ * clock read once per request.
  */
 export function checkBookingWindow(
   settings: WindowSettings,
   range: Range,
   nowMs: number
 ): WindowRefusal | null {
-  if (settings.opensAt && nowMs < settings.opensAt.getTime()) return 'not-open-yet';
-  if (range.startMs <= nowMs) return 'started';
-  if (settings.minNoticeMinutes && range.startMs < nowMs + settings.minNoticeMinutes * MINUTE_MS) {
-    return 'notice';
-  }
-  if (settings.horizonDays && range.startMs > nowMs + settings.horizonDays * DAY_MS) {
-    return 'beyond-horizon';
-  }
-  return null;
+  return bookingWindowRefusal(
+    {
+      opensAtMs: settings.opensAt ? settings.opensAt.getTime() : null,
+      minNoticeMinutes: settings.minNoticeMinutes,
+      horizonDays: settings.horizonDays,
+    },
+    range.startMs,
+    nowMs
+  );
 }
 
 /** The space settings of the two per-person ceilings (D17), none by default. */

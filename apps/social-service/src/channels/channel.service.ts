@@ -3860,25 +3860,40 @@ export class ChannelService {
    * that was refused: a mark is also the "Lu par" receipt other people see, and a baseline would
    * claim the member had read what they had not.
    *
-   * @returns `asOf`, the server clock the counts were taken at, and `counts` keyed by channel id,
-   *          absent when the count is zero.
+   * A MUTED SALON COUNTS NOTHING (2026-10-18). `notifLevels[channel] = 'none'` is the member's own
+   * "do not bother me with this salon", and a badge on it contradicted that. `mentions` still counts:
+   * the row is encrypted, so the server cannot tell which rows mention the caller. The muted ids are
+   * returned beside the counts so a client's LIVE tally can stay silent for them too - the server's
+   * zero alone would be re-raised by the next message that arrives while the app is open.
+   *
+   * A MEMBERSHIP NOTICE COUNTS NOTHING because the client now sends it `silent` (the row is opaque
+   * here, so the sender must say so). Notices written before that stay counted until the salon is
+   * opened, which the read mark now reaches.
+   *
+   * @returns `asOf`, the server clock the counts were taken at, `counts` keyed by channel id,
+   *          absent when the count is zero, and `muted`, the readable salons at level `none`.
    */
   async listUnreadCounts(
     userId: string
-  ): Promise<{ asOf: number; counts: Record<string, number> }> {
+  ): Promise<{ asOf: number; counts: Record<string, number>; muted: string[] }> {
     const members = await this.memberRepo.find({ where: { userId } });
-    if (members.length === 0) return { asOf: Date.now(), counts: {} };
+    if (members.length === 0) return { asOf: Date.now(), counts: {}, muted: [] };
     const memberOf = new Map(members.map((m) => [m.workspaceId, m]));
     const channels = await this.channelRepo.find({
       where: { workspaceId: In([...memberOf.keys()]) },
     });
-    const readable = channels
-      .filter((c) => {
-        const member = memberOf.get(c.workspaceId);
-        return !!member && this.canAccessChannel(c, member, userId);
-      })
-      .map((c) => c.id);
-    if (readable.length === 0) return { asOf: Date.now(), counts: {} };
+    const readable = channels.filter((c) => {
+      const member = memberOf.get(c.workspaceId);
+      return !!member && this.canAccessChannel(c, member, userId);
+    });
+    if (readable.length === 0) return { asOf: Date.now(), counts: {}, muted: [] };
+    const muted: string[] = [];
+    const countable: string[] = [];
+    for (const c of readable) {
+      if (memberOf.get(c.workspaceId)?.notifLevels?.[c.id] === 'none') muted.push(c.id);
+      else countable.push(c.id);
+    }
+    if (countable.length === 0) return { asOf: Date.now(), counts: {}, muted };
 
     // asOf is taken HERE, right before the count, not at the top of the method: the client adds
     // every live message newer than it, so each millisecond between the two is a window in which a
@@ -3914,11 +3929,14 @@ export class ChannelService {
              AND floor(extract(epoch from m."createdAt") * 1000) > b.since
         ) u
         WHERE cm."userId" = $1 AND u.n > 0`,
-      [userId, readable, UNREAD_TRACKED_SINCE_MS]
+      [userId, countable, UNREAD_TRACKED_SINCE_MS]
     );
     const counts: Record<string, number> = {};
     for (const r of rows) counts[r.channelId] = Number(r.n);
-    return { asOf, counts };
+    this.logger.debug(
+      `[UNREAD] user=${userId.slice(0, 8)} salons=${countable.length} unread=${Object.keys(counts).length} muted=${muted.length}`
+    );
+    return { asOf, counts, muted };
   }
 
   /**
@@ -4141,7 +4159,11 @@ export class ChannelService {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
-    const audience = await this.channelAudience(channel);
+    // THE SENDER IS NOT TOLD ABOUT THEIR OWN TYPING: the client dropped that frame on arrival (115
+    // frames back for 112 POSTs in one web console, 2026-10-18), so it was transport and a console
+    // line for nothing. The audience is a list of USER ids, so this also spares the sender's other
+    // devices - which have no use for it either, a typing indicator names someone ELSE.
+    const audience = (await this.channelAudience(channel)).filter((id) => id !== userId);
     await this.redis.publishChannelEvent(
       'channel.typing',
       { channelId, userId, state: isTyping ? 'start' : 'stop' },
@@ -4380,7 +4402,24 @@ export class ChannelService {
     // insert - so no instant exists where a repeat of this message finds neither the row nor its
     // tombstone and posts it again. A row with no client id (older than 090, a system notice) has
     // nothing a repeat could name: it takes no lock and writes no tombstone.
-    await this.messageRepo.manager.transaction(async (tx) => {
+    //
+    // THE ROW IS LOCKED FIRST, and that is what keeps a tombstone from outliving an account erasure.
+    // The erasure deletes the author's messages, then its tombstones, in one transaction that takes
+    // no client-id lock. Without the row lock, a delete arriving while that transaction is open read
+    // the still-committed row, wrote its tombstone (invisible to the erasure's statement), then
+    // waited on the erasure's row lock and committed AFTER it - an erased account's id left behind.
+    // `FOR UPDATE` waits for the erasure instead and then finds no row, so the INSERT ... SELECT
+    // below writes nothing; and when the delete locks first, the erasure's DELETE waits for it and
+    // its tombstone statement, a later snapshot, sees and removes the committed tombstone.
+    // LOCK ORDER: the message row, then the client id's advisory lock. A send takes the advisory
+    // lock alone and inserts a NEW row (a duplicate is refused at once, never waited on: the unique
+    // check does not wait on a row lock), and the erasure takes row locks alone - no cycle.
+    const removed = await this.messageRepo.manager.transaction(async (tx) => {
+      const locked: unknown[] = await tx.query(
+        `SELECT 1 FROM channel_messages WHERE id = $1 AND "channelId" = $2 FOR UPDATE`,
+        [messageId, channelId]
+      );
+      if (locked.length === 0) return false;
       await tx.query(
         `SELECT ${clientIdLockSql('"authorId"', '"channelId"', '"clientMessageId"')}
            FROM channel_messages
@@ -4395,7 +4434,15 @@ export class ChannelService {
         [messageId, channelId]
       );
       await tx.getRepository(ChannelMessage).delete({ id: messageId, channelId });
+      return true;
     });
+    if (!removed) {
+      // Read above, gone once its lock was granted: an account erasure or another delete removed it
+      // meanwhile. Nothing was written; the frame below still tells the salon it is gone.
+      this.logger.log(
+        `[CHANNEL] message ${messageId} channel=${channelId} was removed concurrently - no tombstone written`
+      );
+    }
 
     const audience = await this.channelAudience(channel);
     await this.redis.publishChannelEvent(
@@ -4471,16 +4518,43 @@ export class ChannelService {
       take: safeLimit,
     });
     const oldestInPage = bodies[bodies.length - 1]?.createdAt ?? null;
+    // A SHORT PAGE IS THE END OF THE HISTORY: fewer bodies than asked means no older body exists, so
+    // no later page will ever be asked for what lies below the oldest one. A membership notice
+    // written before a salon's first body (the join that precedes the first word) would otherwise
+    // be in no page at all - so the lower bound goes and only the cursor bounds the silent rows.
+    const historyExhausted = bodies.length > 0 && bodies.length < safeLimit;
+    if (historyExhausted) {
+      this.logger.debug(
+        `[HISTORY] channel=${channelId} short page (${bodies.length}/${safeLimit}): silent rows below the oldest body included`
+      );
+    }
+    // NO BODY AT ALL: A salon whose only rows are membership notices (sent silent since 2026-10-18,
+    // so they ring and count nothing) would otherwise show an empty history. Bounded by the page
+    // limit, and by the cursor like everything else.
     const silentRows =
       bodies.length === 0
-        ? []
+        ? await this.messageRepo.find({
+            where: {
+              channelId,
+              silent: true,
+              ...(hasValidCursor ? { createdAt: LessThan(beforeDate) } : {}),
+            },
+            order: { createdAt: 'DESC' },
+            take: safeLimit,
+          })
         : await this.messageRepo.find({
             where: {
               channelId,
               silent: true,
-              createdAt: hasValidCursor
-                ? And(MoreThanOrEqual(oldestInPage), LessThan(beforeDate))
-                : MoreThanOrEqual(oldestInPage),
+              ...(historyExhausted
+                ? hasValidCursor
+                  ? { createdAt: LessThan(beforeDate) }
+                  : {}
+                : {
+                    createdAt: hasValidCursor
+                      ? And(MoreThanOrEqual(oldestInPage), LessThan(beforeDate))
+                      : MoreThanOrEqual(oldestInPage),
+                  }),
             },
             order: { createdAt: 'DESC' },
           });

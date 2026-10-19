@@ -313,10 +313,15 @@ async function deliverSalonSend(messageId: string, send: SalonSend): Promise<str
     // NO ANSWER WITH THE LINK UP, OR A GATEWAY'S 5xx, IS NOT A REFUSAL. The request may have reached
     // the server (a 502/504 may come from a proxy AFTER the social service stored the row), and no
     // event is known to change the answer, so the row is `unconfirmed` and its Retry - the author's
-    // gesture - repeats it under the same client id, which the server answers with its stored row.
+    // gesture - repeats it under the same client id. A server carrying migration 090 answers that
+    // with its stored row; an older one posts it again, so the log says which one this page knows.
     if (status === null || status >= 500) {
       deps.log(
-        `[SEND] channel send ${messageId.slice(0, 8)}… OUTCOME UNKNOWN (status=${status ?? 'none'}): unconfirmed, its Retry is safe (the server answers a repeat with its row): ${String(error)}`
+        `[SEND] channel send ${messageId.slice(0, 8)}… OUTCOME UNKNOWN (status=${status ?? 'none'}): unconfirmed, its Retry repeats it under the same client id - ${
+          salonRepeatIsSafe()
+            ? 'this server has echoed a client id, so it answers a repeat with its row'
+            : 'NOT proven safe: a server without migration 090 would post it a second time'
+        }: ${String(error)}`
       );
       deps.patchSalonEcho(send.conversationKey, messageId, {
         kind: 'state',
@@ -752,15 +757,20 @@ interface MessageActionDeps {
  * with backoff) as soon as the group is sendable, so control
  * events converge across peers even if the group was momentarily unsendable, or the app reloaded
  * or was killed before the original direct send could go through.
+ *
+ * @returns true when the queue took the event, false when it REFUSED (`OutboxEnqueueError`): the
+ *          caller of a user-visible act (reaction, edit, pin, delete) surfaces that as a mention
+ *          with Retry (`controlRefusals.svelte.ts`); the read watermark has no surface and only logs.
  */
 async function enqueueControlEvent(
   kind: string,
   conversationId: string,
   proto: Uint8Array,
   latestWins?: LatestWins
-): Promise<void> {
+): Promise<boolean> {
   try {
     await queueControlEvent(conversationId, proto, latestWins);
+    return true;
   } catch (e) {
     // A control event is best-effort by nature (it converges on the next one), so a queue that cannot
     // take it must not throw into the reaction/edit/pin/read UI - but it is NEVER silent: the peers
@@ -769,6 +779,7 @@ async function enqueueControlEvent(
     console.error(
       `[OUTBOX] control event "${kind}" not queued, peers will not receive it: ${e.message}`
     );
+    return false;
   }
 }
 
@@ -807,14 +818,16 @@ export async function addReaction(
   emoji: string,
   at: number,
   deps: MessageActionDeps
-): Promise<void> {
+): Promise<boolean> {
   const { userId, conversation, currentUserDisplayName } = deps;
 
-  await enqueueControlEvent(
+  const queued = await enqueueControlEvent(
     'reaction',
     conversation.id,
     encodeAppMessage(mkReaction(messageId, emoji, at))
   );
+  // A refused reaction reaches nobody, so nobody is notified either.
+  if (!queued) return false;
 
   // Notify the message author (fire-and-forget, non-fatal). The message's CONTENT is deliberately
   // not read here - see notifyReaction: the author's own devices hold it already.
@@ -828,6 +841,7 @@ export async function addReaction(
       actorName: currentUserDisplayName ?? userId,
     }).catch(() => {});
   }
+  return true;
 }
 
 /**
@@ -843,8 +857,8 @@ export async function removeReaction(
   emoji: string,
   at: number,
   deps: MessageActionDeps
-): Promise<void> {
-  await enqueueControlEvent(
+): Promise<boolean> {
+  return enqueueControlEvent(
     'reaction_remove',
     deps.conversation.id,
     encodeAppMessage(mkReaction(messageId, emoji, at, true))
@@ -865,8 +879,8 @@ export async function editMessage(
   newContent: string,
   editedAt: number,
   deps: MessageActionDeps
-): Promise<void> {
-  await enqueueControlEvent(
+): Promise<boolean> {
+  return enqueueControlEvent(
     'edit_message',
     deps.conversation.id,
     encodeAppMessage(mkSystem('edit_message', JSON.stringify({ messageId, newContent, editedAt })))
@@ -878,8 +892,10 @@ export async function editMessage(
  *
  * `withdrawn` - the frame never left this device, so no peer has it and none ever will.
  * `broadcast` - the frame is out there and a `delete_message` event is on its way after it.
+ * `refused` - the frame is out there and the queue REFUSED the `delete_message` event, so the peers
+ *             will keep the message: the caller must NOT show it as deleted, and offers Retry.
  */
-export type DeleteOutcome = 'withdrawn' | 'broadcast';
+export type DeleteOutcome = 'withdrawn' | 'broadcast' | 'refused';
 
 /**
  * Deletes a message: by WITHDRAWING it if it has not left this device, otherwise by broadcasting a
@@ -906,12 +922,12 @@ export async function deleteMessage(
   deps: MessageActionDeps
 ): Promise<DeleteOutcome> {
   if (await cancelOutboxMessage(messageId)) return 'withdrawn';
-  await enqueueControlEvent(
+  const queued = await enqueueControlEvent(
     'delete_message',
     deps.conversation.id,
     encodeAppMessage(mkSystem('delete_message', JSON.stringify({ messageId })))
   );
-  return 'broadcast';
+  return queued ? 'broadcast' : 'refused';
 }
 
 /**
@@ -928,8 +944,8 @@ export async function setMessagePinned(
   pinned: boolean,
   at: number,
   deps: MessageActionDeps
-): Promise<void> {
-  await enqueueControlEvent(
+): Promise<boolean> {
+  return enqueueControlEvent(
     pinned ? 'pin' : 'unpin',
     deps.conversation.id,
     encodeAppMessage(mkSystem(pinned ? 'pin' : 'unpin', JSON.stringify({ messageId, at })))

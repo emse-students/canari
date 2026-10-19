@@ -11,6 +11,7 @@ vi.mock('@tauri-apps/plugin-opener', () => ({ openUrl: (...args: unknown[]) => o
 
 import { handleAppLinkClick, openExternal } from './openExternal';
 import { navigateInAppFromHref } from '$lib/utils/appLinkNavigation';
+import { flushMacrotask } from '../../test/flush';
 
 type TauriWindow = Window & { __TAURI_INTERNALS__?: unknown };
 
@@ -87,7 +88,7 @@ describe('handleAppLinkClick', () => {
 
       expect(handleAppLinkClick(event)).toBe(true);
       // handleAppLinkClick fires openExternal without awaiting it (`void openExternal(href)`).
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await flushMacrotask();
 
       expect(confirmUnsafeLinkIfNeeded).toHaveBeenCalledWith('https://example.com/promo');
       expect(openUrl).toHaveBeenCalledWith('https://example.com/promo');
@@ -101,7 +102,7 @@ describe('handleAppLinkClick', () => {
       Object.defineProperty(event, 'target', { value: anchor });
 
       expect(handleAppLinkClick(event)).toBe(true);
-      await new Promise((resolve) => setTimeout(resolve, 0));
+      await flushMacrotask();
 
       expect(confirmUnsafeLinkIfNeeded).toHaveBeenCalledWith('https://evil.example.com/');
       expect(openUrl).not.toHaveBeenCalled();

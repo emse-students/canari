@@ -16,6 +16,20 @@ import { ChannelMessage } from './entities/channel-message.entity';
 export const CHANNEL_MESSAGE_RETENTION_DAYS = 365;
 
 /**
+ * How long a deleted salon message's client-id tombstone is kept (migration 090). The user's
+ * decision of 2026-10-18.
+ *
+ * A tombstone exists for ONE reader: a send repeated after its message was deleted - its first
+ * answer lost, the app killed, the message removed meanwhile - which it refuses (410) instead of
+ * posting the removed message again. Such a repeat comes from a device's unsent ledger
+ * (`salonUnsent.ts`), resent when the app next starts, so it arrives within the days a phone stays
+ * closed. A device closed for longer than this, holding a send its message's delete overtook, would
+ * post it again on its next start: that is the residual the 30 days accept, for a row naming an
+ * author that would otherwise outlive the deleted message for as long as the salon did.
+ */
+export const CHANNEL_MESSAGE_TOMBSTONE_RETENTION_DAYS = 30;
+
+/**
  * Deletes community messages past the retention window.
  *
  * PINNED MESSAGES ARE EXEMPT, and that is not a softening of the window: pinning is somebody
@@ -52,6 +66,45 @@ export class ChannelRetentionScheduler {
     } catch (e) {
       this.logger.warn('[GC] purgeExpiredChannelMessages failed', e);
     }
+  }
+
+  /**
+   * Daily at 03:50, after the message purge. The clock is read HERE, once, and handed down: what
+   * decides a tombstone's age is its own `deletedAt`, written in the transaction of the delete, so
+   * a run repeated, skipped or late deletes exactly the rows past the window at that instant.
+   */
+  @Cron('50 3 * * *')
+  async purgeExpiredClientTombstones(): Promise<void> {
+    try {
+      const deleted = await this.purgeTombstonesOnce(new Date());
+      if (deleted > 0) {
+        this.logger.log(
+          `[GC] channel_message_client_tombstones: ${deleted} deleted (older than ` +
+            `${CHANNEL_MESSAGE_TOMBSTONE_RETENTION_DAYS} days)`
+        );
+      } else {
+        this.logger.debug('[GC] channel_message_client_tombstones: none past the window');
+      }
+    } catch (e) {
+      // ERROR, not a warning: a tombstone kept past its window breaks what the privacy policy says.
+      this.logger.error('[GC] purgeExpiredClientTombstones failed', e);
+    }
+  }
+
+  /**
+   * Deletes the client-id tombstones older than {@link CHANNEL_MESSAGE_TOMBSTONE_RETENTION_DAYS}
+   * at `now`. Idempotent: a second run at the same instant finds nothing. `now` is a parameter so a
+   * test fixes the instant instead of reading a wall clock.
+   *
+   * @returns how many rows went
+   */
+  async purgeTombstonesOnce(now: Date): Promise<number> {
+    const [, rowCount]: [unknown, number] = await this.messageRepo.manager.query(
+      `DELETE FROM channel_message_client_tombstones
+        WHERE "deletedAt" < $1::timestamptz - make_interval(days => $2)`,
+      [now.toISOString(), CHANNEL_MESSAGE_TOMBSTONE_RETENTION_DAYS]
+    );
+    return rowCount ?? 0;
   }
 
   /**

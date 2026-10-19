@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 /**
- * A SILENT PUSH IS NOT DECRYPTED, AND THE TWO SWITCHES THAT DECIDE THAT MUST AGREE.
+ * A SILENT PUSH IS NOT DECRYPTED, WHETHER OR NOT CALLS ARE ON.
  *
  * ## What a silent frame can produce, which is nothing
  *
@@ -17,11 +17,11 @@ import { describe, expect, it } from 'vitest';
  *   paths never persist state, and `decryptProto` discards commits;
  * - no FCM cache entry - the silent return happens before `writeFcmCache`.
  *
- * Two things read a silent frame's plaintext, and neither applies to the frame above. **Call
- * signalling** (`call_invite` rings, `call_control` stops a ring), and the whole calling surface is
- * held off. And **Graine key material**, which is the exception this guard now carries: a seed
- * minted while the app was shut arrives silent and nowhere else, and dropping it left every
- * message of that session showing the generic salon body until the app was next opened.
+ * One thing reads a silent frame's plaintext: **Graine key material**, the exception this guard
+ * carries. A seed minted while the app was shut arrives silent and nowhere else, and dropping it
+ * left every message of that session showing the generic salon body until the app was next opened.
+ * **Call signalling is NOT one of them**: a ring reaches a shut phone as the cleartext `call_ring`
+ * push, sent and awaited BEFORE the MLS invite leaves, and stops with `call_ring_end`.
  *
  * **THE EXCEPTION IS NAMED BY THE SERVER, NOT DISCOVERED BY DECRYPTING.** `isKeyDistribution` is a
  * cleartext field saying the conversation is a key-distribution group, read from the `dm_groups`
@@ -41,65 +41,35 @@ import { describe, expect, it } from 'vitest';
  *
  * ## Why this is a test and not a comment
  *
- * The skip is gated on the Kotlin `CALLS_ENABLED`, which DUPLICATES the TypeScript one: the service
- * handles pushes while no webview exists, so it cannot read the app's constant. A duplicated switch
- * is a switch that gets flipped on one side - and flipping only the TypeScript one would leave a
- * ringing app whose silent call frames are never decrypted, which is a silent half-revival rather
- * than a build error.
+ * Until 2026-10-18 the skip held only while the Kotlin calls switch was off, so the calls revival - flipping the
+ * Kotlin switch with the four others - would have restored the decrypt above behind every read
+ * receipt, to find the rare silent `call_invite` among them, which nothing needs since the cleartext
+ * ring. The guard no longer names the switch, and this test fails if it ever does again.
  *
- * It reads text, so it proves the guard is written and not that it is reached. What it catches is
- * the change that actually happens: the calls revival touching `features.ts` and stopping there.
+ * It reads text, so it proves the guard is written and not that it is reached.
  */
 const here = dirname(fileURLToPath(import.meta.url));
 const SERVICE = resolve(
   here,
   '../../../src-tauri/gen/android/app/src/main/java/fr/emse/canari/CanariFirebaseMessagingService.kt'
 );
-const FEATURES = resolve(here, '../features.ts');
 
 const service = () => readFileSync(SERVICE, 'utf8');
 
-/** `CALLS_ENABLED` as each side spells it, or null when the declaration is gone. */
-function callsEnabledIn(src: string, pattern: RegExp): boolean | null {
-  const m = src.match(pattern);
-  return m ? m[1] === 'true' : null;
-}
-
 describe('a silent push is not decrypted while nothing reads its plaintext', () => {
-  it('the Kotlin CALLS_ENABLED agrees with the TypeScript CALLS_COMPILED', () => {
-    // CALLS_COMPILED, not CALLS_ENABLED, since 2026-10-17: the TypeScript CALLS_ENABLED is now
-    // also on for a DEV build's IN-APP calls, which ring an open app over the chat socket and need
-    // nothing from the push service. What the push service mirrors is the store binaries' calling,
-    // and that is CALLS_COMPILED.
-    const kotlin = callsEnabledIn(service(), /private const val CALLS_ENABLED = (true|false)/);
-    const ts = callsEnabledIn(
-      readFileSync(FEATURES, 'utf8'),
-      /export const CALLS_COMPILED = (true|false)/
-    );
-    expect(kotlin, 'the Kotlin CALLS_ENABLED was renamed or removed').not.toBeNull();
-    expect(ts, 'the TypeScript CALLS_COMPILED was renamed or removed').not.toBeNull();
-    expect(
-      kotlin,
-      'CALLS_ENABLED differs between the app and the push service. The service cannot read the ' +
-        'webview constant - it runs when no webview exists - so the two are duplicated and must be ' +
-        'flipped in the same commit. See the constant in CanariFirebaseMessagingService.kt.'
-    ).toBe(ts);
-  });
-
-  it('exactly one Kotlin declaration of it', () => {
-    // It already existed for the ring; a second one was added by hand on 2026-09-07 and Kotlin
-    // would have refused the file. Cheaper to say so here than to find out in a six-minute build.
-    expect(service().split('private const val CALLS_ENABLED').length - 1).toBe(1);
-  });
-
-  it('the silent frame is skipped, and on the switch rather than on a message shape', () => {
+  it('the silent frame is skipped, and NOT on the calls switch', () => {
     const src = service();
     expect(
       src,
       'the guard that skips a silent push has gone. Without it every message on this device is ' +
         'decrypted twice, and the second decrypt can produce nothing - 10.7 s of Argon2 and an ' +
         '8 MB read on the lane the NEXT message is queued behind.'
-    ).toContain('silent && !CALLS_ENABLED');
+    ).toContain('if (silent && isKeyDistribution != true)');
+    expect(
+      src,
+      'the silent guard reads the calls switch again, so turning calls on decrypts every read ' +
+        'receipt. A ring is the cleartext call_ring push; it needs no silent decrypt.'
+    ).not.toMatch(/silent && !?CALLS_ENABLED/);
   });
 
   it('the ONE exception is the frame the server named, not a shape found by decrypting', () => {
@@ -109,7 +79,7 @@ describe('a silent push is not decrypted while nothing reads its plaintext', () 
       'the key-material exception has gone or is no longer decided on the cleartext field. ' +
         'Reading a silent frame to find out what is in it puts an MLS load and the state lock ' +
         'behind every read receipt, for frames with nothing in them.'
-    ).toContain('if (silent && !CALLS_ENABLED && isKeyDistribution != true)');
+    ).toContain('if (silent && isKeyDistribution != true)');
     // `!= true`, never `== false`: an absent key says the server did not know, which is a
     // different sentence from "no" - and the old behaviour is what an unknown keeps.
     expect(src).not.toMatch(/isKeyDistribution == false/);
@@ -117,7 +87,7 @@ describe('a silent push is not decrypted while nothing reads its plaintext', () 
 
   it('and it is decided BEFORE the decrypt, not after it', () => {
     const src = service();
-    const guard = src.indexOf('if (silent && !CALLS_ENABLED');
+    const guard = src.indexOf('if (silent && isKeyDistribution != true)');
     const decrypt = src.indexOf('var outcome = tryDecrypt(');
     expect(guard).toBeGreaterThan(-1);
     expect(decrypt).toBeGreaterThan(-1);

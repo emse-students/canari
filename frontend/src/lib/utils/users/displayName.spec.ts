@@ -38,6 +38,7 @@ import {
   notificationSenderName,
 } from './displayName';
 import * as userStore from '$lib/stores/user';
+import { flushMacrotask } from '../../../test/flush';
 
 // Convenience: the mocked label
 const UNKNOWN_LABEL = 'Utilisateur inconnu';
@@ -506,7 +507,7 @@ describe('formatProfileDisplayName (indirect)', () => {
 
     connectivityModule.connectivity.notifyServerUnreachable();
     connectivityModule.connectivity.notifyServerReachable();
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
 
     expect(await mod.resolveUserDisplayName('usr_deleted_2')).toBe(UNKNOWN_LABEL);
     expect(vi.mocked(userModule.fetchUserProfile)).toHaveBeenCalledTimes(1);

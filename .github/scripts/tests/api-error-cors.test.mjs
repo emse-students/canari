@@ -12,7 +12,7 @@
  * - the map `$api_error_cors_origin` names EXACTLY the WebView origins the services allow
  *   (`TAURI_WEBVIEW_ORIGINS`, `apps/core-service/src/cors-origins.ts`) - an allowlist that drifts
  *   from the services' is a platform whose errors read as "offline";
- * - the server block sends 500, 502, 503 and 504 to `@api_error_<code>`, each of which includes the
+ * - the server block sends 413, 429, 500, 502, 503 and 504 to `@api_error_<code>`, each of which includes the
  *   header snippet and answers its own code;
  * - the snippet sends the mapped origin, `Vary: Origin` and the three security headers.
  */
@@ -20,7 +20,7 @@ import { readFileSync } from 'node:fs';
 
 const DOCKERFILE = 'infrastructure/local/Dockerfile.frontend';
 const CORS_ORIGINS = 'apps/core-service/src/cors-origins.ts';
-const CODES = ['500', '502', '503', '504'];
+const CODES = ['413', '429', '500', '502', '503', '504'];
 
 const text = readFileSync(DOCKERFILE, 'utf8');
 const failures = [];

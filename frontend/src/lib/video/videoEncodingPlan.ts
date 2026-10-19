@@ -42,6 +42,39 @@ export const VIDEO_KEY_FRAME_INTERVAL = 2;
  */
 export const VIDEO_BUDGET_SHARE = 0.9;
 
+/**
+ * The three numbers that differ between a feed reel and a reel sent in a conversation. The container
+ * and the codecs (H.264 / AAC in a fragmented MP4) are the same for both: C3's "one format" is about
+ * those, so a profile is a row of this table and never a second pipeline.
+ */
+export interface VideoProfile {
+  /** The output's SHORT side in pixels. */
+  maxShortSide: number;
+  /** The video bitrate asked for, in bits per second; a shorter budget lowers it, never raises it. */
+  targetBitrate: number;
+  /** The AAC bitrate an encoded audio track is asked for, in bits per second. */
+  audioBitrate: number;
+}
+
+/**
+ * The profiles, by name. `feed` is C3 (720p, ~2.5 Mb/s: about 28 MB at 90 s) and is what every call
+ * without a profile gets. `chat` is the user's D-size decision of 2026-10-09 for a reel sent in a
+ * conversation: about 540p at 1.2 Mb/s, AAC 96 kb/s - about 9 MB at the 60 s chat cap
+ * (docs/wiki/frontend/modules/reels-in-chat.md). The chat cap itself is the server's
+ * (`reel-limits.chatMaxDurationMs`), never a constant here.
+ */
+export const VIDEO_PROFILES = {
+  feed: {
+    maxShortSide: VIDEO_MAX_SHORT_SIDE,
+    targetBitrate: VIDEO_TARGET_BITRATE,
+    audioBitrate: AUDIO_BITRATE,
+  },
+  chat: { maxShortSide: 540, targetBitrate: 1_200_000, audioBitrate: 96_000 },
+} as const satisfies Record<string, VideoProfile>;
+
+/** A profile's name. */
+export type VideoProfileName = keyof typeof VIDEO_PROFILES;
+
 /** What the encoder is asked for. */
 export interface VideoEncodingPlan {
   /** Output width in pixels, even (H.264 4:2:0 needs even dimensions). */
@@ -84,20 +117,21 @@ function even(n: number): number {
 }
 
 /**
- * The output size: the source's aspect kept, the short side brought down to
- * {@link VIDEO_MAX_SHORT_SIDE} and never scaled UP, both sides even.
+ * The output size: the source's aspect kept, the short side brought down to the profile's and never
+ * scaled UP, both sides even.
  */
 export function outputDimensions(
   displayWidth: number,
-  displayHeight: number
+  displayHeight: number,
+  profile: VideoProfile = VIDEO_PROFILES.feed
 ): { width: number; height: number } {
   const shortSide = Math.min(displayWidth, displayHeight);
-  const scale = shortSide > VIDEO_MAX_SHORT_SIDE ? VIDEO_MAX_SHORT_SIDE / shortSide : 1;
+  const scale = shortSide > profile.maxShortSide ? profile.maxShortSide / shortSide : 1;
   return { width: even(displayWidth * scale), height: even(displayHeight * scale) };
 }
 
 /**
- * The video bitrate that fits `maxBytes` over `durationSeconds`, capped at the C3 target - or
+ * The video bitrate that fits `maxBytes` over `durationSeconds`, capped at the profile's target - or
  * `null` when even the floor would not fit.
  *
  * @param audioBitrate What the output's audio costs in bits per second (`0` with none).
@@ -108,13 +142,14 @@ export function outputDimensions(
 export function budgetedVideoBitrate(
   durationSeconds: number,
   audioBitrate: number,
-  maxBytes: number | undefined
+  maxBytes: number | undefined,
+  profile: VideoProfile = VIDEO_PROFILES.feed
 ): number | null {
-  if (maxBytes === undefined || durationSeconds <= 0) return VIDEO_TARGET_BITRATE;
+  if (maxBytes === undefined || durationSeconds <= 0) return profile.targetBitrate;
   const totalBits = maxBytes * 8 * VIDEO_BUDGET_SHARE;
   const videoBits = totalBits / durationSeconds - audioBitrate;
   if (videoBits < VIDEO_MIN_BITRATE) return null;
-  return Math.floor(Math.min(VIDEO_TARGET_BITRATE, videoBits));
+  return Math.floor(Math.min(profile.targetBitrate, videoBits));
 }
 
 /**
@@ -124,12 +159,18 @@ export function budgetedVideoBitrate(
  */
 export function planVideoEncoding(
   facts: VideoSourceFacts,
-  maxBytes: number | undefined
+  maxBytes: number | undefined,
+  profile: VideoProfile = VIDEO_PROFILES.feed
 ): VideoEncodingPlan | VideoPlanRefusal {
   if (!(facts.displayWidth > 0) || !(facts.displayHeight > 0)) return 'no-dimensions';
-  const videoBitrate = budgetedVideoBitrate(facts.durationSeconds, facts.audioBitrate, maxBytes);
+  const videoBitrate = budgetedVideoBitrate(
+    facts.durationSeconds,
+    facts.audioBitrate,
+    maxBytes,
+    profile
+  );
   if (videoBitrate === null) return 'too-long';
-  const { width, height } = outputDimensions(facts.displayWidth, facts.displayHeight);
+  const { width, height } = outputDimensions(facts.displayWidth, facts.displayHeight, profile);
   // Half a frame of slack: a 30 fps clip measures 30.02 from its timestamps and must not be touched.
   const frameRate = facts.frameRate > VIDEO_MAX_FRAME_RATE + 0.5 ? VIDEO_MAX_FRAME_RATE : undefined;
   return { width, height, videoBitrate, frameRate };

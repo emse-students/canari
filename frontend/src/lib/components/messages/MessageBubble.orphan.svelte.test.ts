@@ -22,6 +22,7 @@ import { serializeEnvelope, mkMediaEnvelope } from '$lib/envelope';
 import type { MediaRef } from '$lib/media';
 import { m } from '$lib/paraglide/messages';
 import { beginOutboxEnqueue } from '$lib/utils/chat/outboxActivity.svelte';
+import { flushMacrotask } from '../../../test/flush';
 
 const mounted: (() => void)[] = [];
 beforeEach(() => queued.mockReset());
@@ -67,7 +68,7 @@ const settle = async () => {
     flushSync();
     await Promise.resolve();
   }
-  await new Promise((r) => setTimeout(r, 0));
+  await flushMacrotask();
   flushSync();
 };
 

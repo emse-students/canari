@@ -101,8 +101,7 @@ describe('the batch', () => {
     const needed = Math.ceil(appLog.FLUSH_CHARS / STORED);
     for (let i = 0; i < needed; i++) appLog.captureConsoleLine('log', [LINE]);
     // No explicit flush: the batch must already be on its way.
-    await new Promise((r) => setTimeout(r, 50));
-    expect(await records()).toHaveLength(1);
+    await vi.waitFor(async () => expect(await records()).toHaveLength(1));
   });
 
   it('stores the REDACTED line, never the raw one', async () => {
@@ -115,6 +114,18 @@ describe('the batch', () => {
     expect(text).not.toContain('1234');
     expect(text).toContain('[LOGIN] failed for [email] pin=[redacted] Error: x');
     expect(redactedValues).toBe(2);
+  });
+
+  it("keeps a DOMException's name and message - the layout's page crash line (v1.3.0-alpha.2)", async () => {
+    const crash = new DOMException('[object Object] could not be cloned.', 'DataCloneError');
+    appLog.captureConsoleLine('error', [
+      '[Layout] page crash on /bookings/spaces/[spaceId]/edit:',
+      crash,
+    ]);
+    const { text } = await appLog.readAppLog();
+    expect(text).toMatch(
+      / E \[Layout\] page crash on \/bookings\/spaces\/\[spaceId\]\/edit: DataCloneError: \[object Object\] could not be cloned\.$/m
+    );
   });
 
   it('renders an object argument as text, under the same redaction', async () => {

@@ -137,7 +137,35 @@ for (const block of locations) {
   // content-hashed chunks that the NEXT image does not contain, so a shell outliving its
   // build is a blank page - recoverable at the edge, where `serve-prod.yml` purges the
   // zone, and not recoverable at all in a browser that was told to keep it.
-  const shared = block.body.match(/add_header\s+Cache-Control\s+"([^"]*s-maxage[^"]*)"/);
+  // The value may be a variable whose map decides it per response (the SSR page: `no-store` when the
+  // SSR marked its head degraded). Its DEFAULT is what a normal response carries, so that is what
+  // the rule below judges; every other arm must be `no-store`, the one value that is always safe.
+  const variable = block.body.match(/add_header\s+Cache-Control\s+\$(\w+)/)?.[1];
+  let sharedValue = block.body.match(/add_header\s+Cache-Control\s+"([^"]*s-maxage[^"]*)"/)?.[1];
+  if (variable) {
+    const mapBody = text.match(new RegExp(`map\\s+\\S+\\s+\\$${variable}\\s*\\{([^}]*)\\}`))?.[1];
+    if (!mapBody) {
+      failures.push(`location ${block.name} sends Cache-Control $${variable} and no map defines it.`);
+    } else {
+      const arms = [...mapBody.matchAll(/(\S+)\s+"([^"]*)"\s*;/g)];
+      sharedValue = arms.find((a) => a[1] === 'default')?.[2];
+      if (sharedValue === undefined) {
+        // The default may chain to another map (`default $other;`): judge THAT map's quoted default,
+        // which is what a response that declares nothing of its own carries.
+        const next = mapBody.match(/default\s+\$(\w+)\s*;/)?.[1];
+        const nextBody = next && text.match(new RegExp(`map\\s+\\S+\\s+\\$${next}\\s*\\{([^}]*)\\}`))?.[1];
+        sharedValue = nextBody?.match(/default\s+"([^"]*)"\s*;/)?.[1];
+      }
+      for (const [, key, value] of arms) {
+        if (key !== 'default' && value !== 'no-store') {
+          failures.push(
+            `map $${variable} offers ${value} for ${key}: only no-store may differ from the default.`
+          );
+        }
+      }
+    }
+  }
+  const shared = sharedValue?.includes('s-maxage') ? [null, sharedValue] : null;
   if (shared && !/(^|[\s,])max-age=0([\s,]|$)/.test(shared[1])) {
     failures.push(
       `location ${block.name} offers a shared cache ${shared[1]} without max-age=0. A purge ` +

@@ -19,8 +19,10 @@ import { sanitizeQueryValue } from '../utils/sanitize';
 import { isNotificationCategory, NOTIFICATION_CATEGORIES } from '../services/push-category';
 import {
   readDisabledCategoriesStrict,
+  readGroupCallPermissionsStrict,
   readGroupNotificationLevelsStrict,
   writeDisabledCategories,
+  writeGroupCallsAllowed,
   writeGroupNotificationLevel,
 } from '../services/notification-preferences';
 import {
@@ -52,13 +54,44 @@ export class NotificationPreferencesController {
    */
   @UseGuards(HeaderAuthGuard)
   @Get('mls/notification-preferences')
-  async get(
-    @Headers('x-user-id') userIdRaw: string
-  ): Promise<{ disabled: string[]; groupLevels: Record<string, GroupNotificationLevel> }> {
+  async get(@Headers('x-user-id') userIdRaw: string): Promise<{
+    disabled: string[];
+    groupLevels: Record<string, GroupNotificationLevel>;
+    groupCalls: Record<string, boolean>;
+  }> {
     const userId = sanitizeQueryValue(userIdRaw, 'userId');
     const disabled = await readDisabledCategoriesStrict(this.prefRepo.manager, userId);
     const groupLevels = await readGroupNotificationLevelsStrict(this.prefRepo.manager, userId);
-    return { disabled: [...disabled], groupLevels };
+    const groupCalls = await readGroupCallPermissionsStrict(this.prefRepo.manager, userId);
+    return { disabled: [...disabled], groupLevels, groupCalls };
+  }
+
+  /**
+   * Records whether calls in ONE conversation may ring the caller (`{ allowed: boolean }`), on their
+   * own membership row - the per-conversation call permission, beside the level. The ring fan-out
+   * reads it (`CallsService.ringGroup`). A non-member is refused rather than told it was saved.
+   */
+  @UseGuards(HeaderAuthGuard)
+  @Patch('mls/groups/:groupId/calls')
+  async setGroupCalls(
+    @Headers('x-user-id') userIdRaw: string,
+    @Param('groupId') groupIdRaw: string,
+    @Body() body: { allowed?: unknown }
+  ): Promise<{ groupId: string; allowed: boolean }> {
+    const userId = sanitizeQueryValue(userIdRaw, 'userId');
+    const groupId = sanitizeQueryValue(groupIdRaw, 'groupId');
+    if (!isGroupUuid(groupId)) throw new BadRequestException('groupId must be a uuid');
+    const allowed = body?.allowed;
+    if (typeof allowed !== 'boolean') throw new BadRequestException('allowed must be a boolean');
+    const written = await writeGroupCallsAllowed(this.prefRepo.manager, groupId, userId, allowed);
+    if (!written) {
+      this.logger.warn(
+        `[NOTIF_PREF] group calls REFUSED group=${groupId} user=${cutUserId(userId)}: not a member`
+      );
+      throw new ForbiddenException('Not a member of this conversation');
+    }
+    this.logger.log(`[NOTIF_PREF] group=${groupId} user=${cutUserId(userId)} calls=${allowed}`);
+    return { groupId, allowed };
   }
 
   /**

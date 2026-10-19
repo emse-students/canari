@@ -340,6 +340,9 @@ services:
       JWT_SECRET: ${JWT_SECRET}
       # Shared secret gating server-to-server DELETE /media/:id (social-service cleanup).
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
+      # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
+      # exactly `true`. render-env.sh computes it per estate - `true` on dev, `false` on production.
+      LIVE_ENABLED: ${LIVE_ENABLED:-false}
       GARAGE_ENDPOINT: ${GARAGE_ENDPOINT:-garage}
       GARAGE_PORT: "${GARAGE_PORT:-3900}"
       GARAGE_USE_SSL: "${GARAGE_USE_SSL:-false}"
@@ -474,6 +477,9 @@ services:
       PAYMENT_SERVICE_URL: http://core-service:3012
       JWT_SECRET: "${JWT_SECRET:?JWT_SECRET is required - see .env.example}"
       MEDIA_SERVICE_URL: http://media-service:3011
+      # THE LIVE SWITCH (docs/wiki/services/lives.md): every live route answers 404 unless this is
+      # exactly `true`. render-env.sh computes it per estate - `true` on dev, `false` on production.
+      LIVE_ENABLED: ${LIVE_ENABLED:-false}
       INTERNAL_SECRET: ${INTERNAL_SECRET:-}
       INTERNAL_SHARED_SECRET: ${INTERNAL_SHARED_SECRET:-}
       SERVICE_ACCOUNT_USER_ID: ${SERVICE_ACCOUNT_USER_ID:-}
@@ -594,6 +600,20 @@ services:
       # project does not own. The default is the shared host's real port, not 80, which belongs to
       # that nginx - see `compute_frontend_host_port` in deploy/render-env.sh.
       - "127.0.0.1:${FRONTEND_HOST_PORT:-8081}:80"
+    # HEALTHY MEANS LISTENING. Without a healthcheck the deploy believed the edge the moment Docker
+    # said `running` - before nginx had opened port 80 - and Docker's port proxy answered that window
+    # with a reset (2026-10-18, docs/wiki/cicd.md#the-edge-is-ready-when-it-listens-not-when-it-runs).
+    # The pid file is written by nginx's master after its listeners are open and its signals set (so
+    # the deploy's `nginx -s reload` has a master to reach); the LISTEN row on :80 is the listener
+    # itself, which a stale pid file from a killed container cannot fake. Nothing is proxied: a probe
+    # THROUGH the relay would open a connection to `frontend` every 30 s and log its failures.
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /var/run/nginx.pid && grep -q ' 00000000:0050 00000000:0000 0A ' /proc/net/tcp"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+      start_interval: 1s
     depends_on:
       frontend:
         condition: service_started

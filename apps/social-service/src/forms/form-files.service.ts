@@ -242,7 +242,7 @@ export class FormFilesService {
     // transaction that writes the row (below).
     await this.assertPendingRoom(this.fileRepo.manager, formId, uploaderId);
 
-    const { mediaId: fileId, sizeBytes } = await this.storeInMedia(file.buffer, uploaderId);
+    const { mediaId: fileId, sizeBytes } = await this.storeBlob(file.buffer, uploaderId);
     const fileName = cleanFileName(file.originalname, contentType, fileId);
     try {
       await this.fileRepo.manager.transaction(async (tx) => {
@@ -419,6 +419,31 @@ export class FormFilesService {
     if (row.purgedAt) throw new GoneException('This file was deleted after its retention period.');
 
     try {
+      return {
+        data: await this.fetchBlob(fileId),
+        contentType: row.contentType,
+        fileName: row.fileName,
+      };
+    } catch (e) {
+      if (e instanceof FileBlobGoneError) {
+        this.logger.warn(
+          `[FORM_FILES] file ${fileId} of form ${formId.slice(0, 8)} is gone from the media service (${e.status}) - marked purged`
+        );
+        await this.fileRepo.update({ id: fileId, purgedAt: IsNull() }, { purgedAt: new Date() });
+        throw new GoneException('This file was deleted.');
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * The bytes of one `form-file` object, from the ONLY route that serves the class - for a caller
+   * that has already decided the reader may have them (a form's manager here, a booking's organiser
+   * in `BookingFilesService`). Throws {@link FileBlobGoneError} when the media service answers that
+   * the blob is gone, so each caller records it on its own row.
+   */
+  async fetchBlob(fileId: string): Promise<Buffer> {
+    try {
       const res = await firstValueFrom(
         this.http.get<ArrayBuffer>(mediaUrl(`media/internal/form-file/${fileId}`), {
           headers: { 'x-internal-secret': process.env.INTERNAL_SECRET ?? '' },
@@ -428,20 +453,10 @@ export class FormFilesService {
           maxContentLength: FORM_FILE_MAX_BYTES,
         })
       );
-      return {
-        data: Buffer.from(res.data),
-        contentType: row.contentType,
-        fileName: row.fileName,
-      };
+      return Buffer.from(res.data);
     } catch (e) {
       const status = (e as { response?: { status?: number } })?.response?.status;
-      if (status === 404 || status === 410) {
-        this.logger.warn(
-          `[FORM_FILES] file ${fileId} of form ${formId.slice(0, 8)} is gone from the media service (${status}) - marked purged`
-        );
-        await this.fileRepo.update({ id: fileId, purgedAt: IsNull() }, { purgedAt: new Date() });
-        throw new GoneException('This file was deleted.');
-      }
+      if (status === 404 || status === 410) throw new FileBlobGoneError(status);
       this.logger.error(`[FORM_FILES] download of ${fileId} failed: ${describeHttpError(e)}`);
       throw e;
     }
@@ -469,9 +484,10 @@ export class FormFilesService {
    * Stores the bytes as a `form-file` for `uploaderId`. The media service re-encodes an image
    * without its metadata (EXIF, GPS), so `sizeBytes` is what it STORED, not what was received.
    * Its 422 - an image that does not decode, declares over 40 Mpx, or cannot be re-encoded within
-   * the cap - is the member's file, answered as a 400.
+   * the cap - is the member's file, answered as a 400. Also the store of a booking's file
+   * (`BookingFilesService`): one class, one route, two modules.
    */
-  private async storeInMedia(
+  async storeBlob(
     data: Buffer,
     uploaderId: string
   ): Promise<{ mediaId: string; sizeBytes: number }> {
@@ -514,3 +530,15 @@ export class FormFilesService {
 
 /** What the media service answers for one form file it was asked to delete. */
 export type FileBlobOutcome = 'deleted' | 'absent' | 'refused' | 'failed';
+
+/**
+ * The media service answered 404 or 410 for a `form-file` object: the blob is gone (a purge, or
+ * its uploader's account deletion). Classified at the throw so a caller marks its row purged on
+ * the TYPE, never on a message.
+ */
+export class FileBlobGoneError extends Error {
+  constructor(readonly status: number) {
+    super(`the media service no longer holds this file (${status})`);
+    this.name = 'FileBlobGoneError';
+  }
+}

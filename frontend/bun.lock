@@ -19,8 +19,8 @@
         "@tauri-apps/api": "^2.12.3",
         "@tauri-apps/plugin-biometric": "^2.4.2",
         "@tauri-apps/plugin-deep-link": "^2.4.10",
-        "@tauri-apps/plugin-dialog": "^2.7.3",
-        "@tauri-apps/plugin-fs": "^2.6.0",
+        "@tauri-apps/plugin-dialog": "^2.8.2",
+        "@tauri-apps/plugin-fs": "^2.7.1",
         "@tauri-apps/plugin-http": "^2.8.2",
         "@tauri-apps/plugin-notification": "^2.4.0",
         "@tauri-apps/plugin-opener": "^2.7.1",
@@ -32,7 +32,7 @@
         "highlight.js": "^11.12.0",
         "jspdf": "^4.2.1",
         "jsqr": "^1.4.0",
-        "mediabunny": "^1.61.3",
+        "mediabunny": "^1.61.4",
         "pdfjs-dist": "^6.4.299",
         "qrcode": "^1.5.4",
         "svelte-dnd-action": "^0.9.80",
@@ -68,8 +68,8 @@
     },
   },
   "patchedDependencies": {
-    "mediabunny@1.61.3": "patches/mediabunny@1.61.3.patch",
     "svelte-dnd-action@0.9.80": "patches/svelte-dnd-action@0.9.80.patch",
+    "mediabunny@1.61.4": "patches/mediabunny@1.61.4.patch",
   },
   "overrides": {
     "brace-expansion": "^5.0.12",
@@ -535,9 +535,9 @@
 
     "@tauri-apps/plugin-deep-link": ["@tauri-apps/plugin-deep-link@2.4.10", "", { "dependencies": { "@tauri-apps/api": "^2.11.0" } }, "sha512-SuXI47ORUzYuwG6c8dluLDrStTvli5bAZDRa2+VuUEzK/9TEa7FZz7UKXBQriL7+CPFXRHQsz5tSocc47tRXQQ=="],
 
-    "@tauri-apps/plugin-dialog": ["@tauri-apps/plugin-dialog@2.7.3", "", { "dependencies": { "@tauri-apps/api": "^2.11.0" } }, "sha512-CRgE+7TP4tvq9MjBU6f04NLTFIqVMLKHk3hAqlhil00ngK9ACTrXPH3oHpKMProxILodd3YjBoKbMwSI4IEcfA=="],
+    "@tauri-apps/plugin-dialog": ["@tauri-apps/plugin-dialog@2.8.2", "", { "dependencies": { "@tauri-apps/api": "^2.12.0" } }, "sha512-LFqp8OTx0bHOwhKRhMMDyRDlo/2IO5XxoOclpf8+yvjAfM2ytVdbB6tk63dBlicsR8pRw38maj/GxrU6cW8mXw=="],
 
-    "@tauri-apps/plugin-fs": ["@tauri-apps/plugin-fs@2.6.0", "", { "dependencies": { "@tauri-apps/api": "^2.12.0" } }, "sha512-MhBAZ4rryd+h9fijd/GWDfArqiAeGI0ZNduV4wuRyUVI6wDZ+oDBY7atqtoXKDwlTUVSvpvmWJAY0ehQd/v6Uw=="],
+    "@tauri-apps/plugin-fs": ["@tauri-apps/plugin-fs@2.7.1", "", { "dependencies": { "@tauri-apps/api": "^2.12.0" } }, "sha512-4TBVjpi/q8PuNzjpkAc2iBGXMTLjOrAyfTiiOL8ORaJCZJRG3tjzmQ4sqs2CMG75FvLyRkOkERfP7AyY4iBNwQ=="],
 
     "@tauri-apps/plugin-http": ["@tauri-apps/plugin-http@2.8.2", "", { "dependencies": { "@tauri-apps/api": "^2.12.0" } }, "sha512-xVHnZdIkPY9+/ejg0ycVpVvJ5yuILFl6IEbE/wQFDsDgZmHTbFg7+vkkvIQeVtydhHrSFzQk3BWzSjWEVAvvUA=="],
 
@@ -835,7 +835,7 @@
 
     "mdurl": ["mdurl@2.1.0", "", {}, "sha512-1+HBaOx0zi/dQWht8rNv9MYf9qqpqL/kxI0hXImU6Y547zM6Sni8BQibt7ifgMcYtQg41ao3Ivd6cnSM86inpg=="],
 
-    "mediabunny": ["mediabunny@1.61.3", "", { "dependencies": { "@types/dom-mediacapture-transform": "^0.1.11", "@types/dom-webcodecs": "0.1.13" } }, "sha512-kUqLKVXQVwHR62GkOJxYosAmXERJbqnXBgJDTtRlxHEYviVkMg/Evhl9XN6kedqS5LP1tV4kFKyzY/V4a4ofow=="],
+    "mediabunny": ["mediabunny@1.61.4", "", { "dependencies": { "@types/dom-mediacapture-transform": "^0.1.11", "@types/dom-webcodecs": "0.1.13" } }, "sha512-gZPBi40ldiZGeU2DJxT/Q3hlNiaxfpwNYTfmi0Maq3SoBJT64+W+ySc0Z7t+2JUGxNbkXnLFrDkSS2OQuweOhA=="],
 
     "minimatch": ["minimatch@5.1.9", "", { "dependencies": { "brace-expansion": "^2.0.1" } }, "sha512-7o1wEA2RyMP7Iu7GNba9vc0RWWGACJOCZBJX2GJWip0ikV+wcOsgVuY9uE8CPiyQhkGFSlhuSkZPavN7u1c2Fw=="],
 

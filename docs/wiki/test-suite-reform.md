@@ -79,7 +79,7 @@ one runtime, not time, and that is why it is last in section 5.
 | Kind | Count | How measured |
 | --- | --- | --- |
 | Test files reading a source file (`readFileSync` / `readdirSync` / `?raw`) | **136** | grep |
-| - of which read app TypeScript / Svelte / CSS ("source-text tests") | 89 files, 2,355 cases, 10.7 s | classified by the extension they open |
+| - of which read app TypeScript / Svelte / CSS ("source-text tests") | 89 files, 2,355 cases, 10.7 s (re-listed after WP-T3: **86 files, 942 cases** - WP-T5) | classified by the extension they open |
 | - of which read Kotlin / Swift / manifests / Rust ("native contract tests") | 35 | same |
 | - of which read docs / CI files | 12 | same |
 | Files that mount a component or touch the DOM | ~209 of 875 | grep `mount(` / `document.` / `querySelector` |
@@ -226,7 +226,7 @@ change failing.
 - **Risk**: low-medium: a test that silently relied on `window` for a fallback. Revalidate: same
   case count, same pass set, and the list of moved files in the PR.
 
-### WP-T5 (M) - Triage the 89 source-text tests
+### WP-T5 (M) - Triage the source-text tests
 
 - **Change**: each file gets one disposition, written in its header: (a) rewrite as a behavioural
   test through a real seam; (b) turn into a lint rule (`oxlint`/`oxvelte`) if it is a pattern ban;
@@ -237,6 +237,75 @@ change failing.
   Swift, manifests) are OUT of scope: no other layer catches them short of a device build.
 - **Risk**: medium (each deletion needs its covering test named). Revalidate per file; for (a), show
   the new test failing on the bug the old one was written for.
+
+**State 2026-10-18 (draft PR `chore/tests-t5-source-text`): ALL 86 FILES READ, TRIAGE DONE.**
+Re-listed on `main` the same day: 90 test files read a file of the tree as text and are not native
+contracts; 4 of them read no frontend source at all (`csp` reads the nginx Dockerfile,
+`categories.contract` the server, `oidcSignOutRegistration` the blueprints, `docsMergeArtefacts` the
+docs - WP-T2's), so **86 files and 942 cases** read app source, after WP-T3 had collapsed the two
+per-file scans (the 2,355 above predates it). Those 942 are the files' cases, not the source reads:
+most of these files are behavioural and read a source for one or two cases.
+
+**The finding: almost every one of them is a KEEP, for one of four reasons none of them hid.** Each
+was read against "could a behavioural test through a real seam prove the same thing", and the answer
+was no wherever the subject is one of these:
+
+- **A whole-tree inventory or pattern ban** (a cross-file question no single module answers and oxlint
+  has no rule for): `backendChoice`, `toastLocalization`, `versionProbeOnUnlockPath`, `accent`,
+  `apiUrl.absolute`, `accountLocalKeys.guard`, `globalChatSingleton.importCycle`,
+  `historyFrameConsumptionSeam`, `historyStateKeyInvalidation`, `conversations.retire`,
+  `buildConversationRow.onePolicy`, `groupSweep`, `fixedPopover`, `GifPickerModal.overlay`,
+  `cardGrid`, `postMarkdownBlocks`, `ModalOverlay`, `sidePanelInset`, `sidePanelWidth`,
+  `serverProse`, `markupSources`, `feedAudience`, `AssociationTile` (the walls half),
+  `associationsHeader`, and the one inventory case inside `outbox` (exactly three sites raise a
+  flush) and `distributionGroup` (three entrances, one per moment). An inventory of CALLERS cannot be
+  replaced by calling the callee.
+- **A wiring statement in `sessionAuth.ts` (2,475 lines) or `ChatBackgroundService.svelte` (2,187)**,
+  whose subject runs only over a live MLS client, store and gateway: `startupOrder`, `offlineUnlock`
+  (all 32 cases), `landingPreviewOrder`, `accountSwitchVault` (its shell half), `signOutEndsLiveSession`,
+  `logoutResetsAccountState`, `historyProbeSender`, `tabLeadership`, `sessionExpiredRelease`,
+  `communityListingTrigger`, `reconnectListingWiring`, `landingArrivalMark`, `pinFirstSetupRefuted`,
+  `PinModal.resetWithheld` (its shell half), `pinSaltAhead`, `salonPageKeptAtBoot`,
+  `useNotifications.webClick/.tapListener/.androidBody`, and the one such case in
+  `savedStateFailure`, `recovery`, `staleBase`, `welcomeRequestQueue`, `pinChange`,
+  `distributionGroup` (the shell passes the real log), `afterNextPaint` (`MainChatPage`'s order),
+  `permissions` (a `$derived` label list inside a component) and `postFeed`. Each says so; the seven
+  mixed files that did not (`savedStateFailure`, `recovery`, `staleBase`, `welcomeRequestQueue`,
+  `afterNextPaint`, `viewport`, `keyboardViewport`) gained the sentence here, as `salonPageKeptAtBoot`
+  and `LoginForm.flat` did in the first pass.
+- **A CSS or token rule happy-dom cannot compute**: `styles/*`, `chatChromeBarsGlass`,
+  `stickyDatePillGlass`, `appContentTop`, `postsPanelOffset`, `messageReplyStack`, `tabTapPath`,
+  `chatTypingBubble`, `LoginForm.flat`, and the `app.css` case of `viewport` and `keyboardViewport`.
+- **A contract across a boundary nothing compiles across**: `wireShapes`, `readAccess` (the server's
+  page size), `oidcRedirectScheme`, `renderHead` (the `app.html` markers `hooks.server.ts` replaces),
+  `partnershipEditorFields` (every API field has a control), `socialApiError` and `apiRefusal` (the
+  helper may grow no slot for server prose), `emojiData` (no CDN). `themeStore` and `textZoom` read
+  `app.html` to EXECUTE its pre-paint script, which is a behavioural test already.
+
+**What was replaced, each shown failing on its defect re-planted:**
+
+| Was | Cases | Now | Cases |
+| --- | --- | --- | --- |
+| `associationTileList.test.ts` (8 spellings of the tile's markup, `$derived(!isList)` among them) | 8 | deleted | 0 |
+| `AssociationTile.test.ts`, "the one tile keeps" (4: an `indexOf` chain over `{:else}`, class regexes) | 10 | the walls half and `CardTile`'s header stay | 6 |
+| - | - | `AssociationTile.render.svelte.test.ts`: MOUNTS the tile; the second logo's URL and the accent are proven to come from their one derivation by a mark only that derivation returns | 11 |
+| `auth.miconnectSignOut`: a slice of `auth.ts` looking for `await leaveSignedOut()` | 1 | the chosen sign-out RUN: logout POST, end-session with the kept id_token, `/login` | 1 |
+
+Planted to prove them: the count drawn on lists, the second theme gated on BOTH halves, the second
+name shown off a list, the second avatar at `lg`, the label falling back to the main name, the second
+logo spelled by hand, the name `truncate`d, the description clamp removed, the count made the role's
+sibling, the accent replaced, and `signOutByChoice` skipping MiConnect - each turned exactly one case
+red. **Totals**: the source-reading population goes from 86 files / 942 cases to **85 / 930**; the
+frontend suite from 8,449 to 8,448 cases (13 source cases out, 12 behavioural in). Nothing was
+deleted without its replacement: no file read here proved something a type or another test already
+did.
+
+**Rejected, and why, so they are not proposed again.** `outbox`, `distributionGroup`, `offlineUnlock`,
+`pinChange` and `savedStateFailure` were the first pass's split candidates; read in full, each source
+case is a caller inventory or a `sessionAuth` wiring statement (above), and a behavioural rewrite
+would need either an app-code refactor (out of scope: WP-T1 to WP-T6 ship no app byte) or a session
+harness that asserts its own mocks. Turning a scan into an `oxlint` rule (disposition b) fits none:
+every scan here is cross-file or reads `app.css`, which oxlint's per-file rules cannot see.
 
 ### WP-T6 (S) - Wall clocks out of the suite
 

@@ -44,6 +44,9 @@ describe('savedStateFailure', () => {
   });
 
   it('is what the login throws for both types, read by `instanceof` and never by the message', () => {
+    // WHY A SOURCE TEST (WP-T5: keep). The throw sits inside `loginImpl`, a flow over a live MLS
+    // init, a vault and a gateway; what the function above returns is driven by the cases above, and
+    // that the login reaches it by TYPE rather than by the retired message marker is one statement.
     const auth = readFileSync(join(import.meta.dirname, 'sessionAuth.ts'), 'utf8');
     expect(auth).toMatch(
       /reason instanceof SavedStateUnopenedError \|\|\s+reason instanceof SavedStateOfAnotherAccountError\s+\) \{\s+throw savedStateFailure\(reason\);/

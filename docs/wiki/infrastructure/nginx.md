@@ -29,6 +29,7 @@ Most `/api` locations carry `auth_request /internal/auth/verify`, which calls `c
 | `/api/posts/*` | `social-service:3014` | yes | News feed |
 | `/api/forms/*` | `social-service:3014` | yes | Forms with payments |
 | `/api/bookings/*` | `social-service:3014` | yes | Bookings of rooms and slots |
+| `/api/lives/*` | `social-service:3014` | yes | Live broadcasts, 404 unless `LIVE_ENABLED` ([lives](../services/lives.md)). `client_max_body_size 5m` (a segment is at most 4 MiB), and the ONE `limit_req` zone of this file, `lives_ingest`: 2 r/s burst 20 per client address on `PUT` only (viewers polling from one campus address share it), answering 429. nginx's own 413 and 429 go to `@api_error_413` / `@api_error_429` with the WebView CORS headers, like its 5xx (`api-error-cors.test.mjs`) |
 | `/api/associations/*` | `social-service:3014` | yes | Clubs (Stripe Connect) |
 | `/api/channels/*` | `social-service:3014` | yes | Workspaces and channels |
 | `/api/auth/*` | `core-service:3012` | no | OIDC login, refresh, logout |
@@ -138,6 +139,7 @@ s-maxage=60` since 2026-09-17, because a purge can reach Cloudflare and can neve
 disk. Why those terms, what purges the zone and what `dev` gets instead are on
 [cloudflare-edge](cloudflare-edge.md#the-shell-is-cached-at-the-edge-and-nowhere-else-and-the-deploy-says-when-it-expired);
 the assertions that keep them honest are in `.github/scripts/tests/static-headers.test.mjs`.
+**Except a degraded page (2026-10-18):** when frontend-ssr's enrichment got no answer it sends `X-Canari-Degraded`, and `$ssr_cache_control` turns the header into `no-store` - nothing may cache the generic card. A response that declares its own `public, max-age=N` (the sitemap, 1 h) keeps it: the first map `$ssr_cache_control_declared` passes it through, only a page declaring nothing gets the 60 s default ([seo](../frontend/seo.md#a-shared-post-and-the-ten-days-it-previewed-as-nothing)).
 
 Two things the first deployment got wrong, both worth keeping in mind for any future upstream:
 

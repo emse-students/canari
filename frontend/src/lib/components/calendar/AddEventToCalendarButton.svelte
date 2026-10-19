@@ -13,7 +13,17 @@
   import Modal from '$lib/components/shared/Modal.svelte';
   import { m } from '$lib/paraglide/messages';
 
-  let { event }: { event: AgendaExportEvent } = $props();
+  interface Props {
+    event: AgendaExportEvent;
+    /**
+     * Asks for the hosted `.ics` URL at the moment it is needed, when the event carries none: a
+     * signed link (a booking's, D13) is fetched on the tap, never for every card on screen.
+     */
+    resolveIcsUrl?: () => Promise<string>;
+  }
+
+  let { event, resolveIcsUrl }: Props = $props();
+  const hasHostedFile = $derived(Boolean(event.icsUrl || resolveIcsUrl));
 
   const os = detectRuntimeDeviceOs('desktop');
   const isAndroid = os === 'android';
@@ -37,13 +47,21 @@
    * Android downloads it for whichever app owns .ics. Our own backend's URL, so no Safe Browsing
    * round trip (`navigateExternal`'s contract); on the web a new tab keeps the SPA alive.
    */
-  async function openHostedIcs(url: string) {
+  async function openHostedIcs() {
     Log.d('AddToCalendar', `opening the hosted .ics of ${event.id} on ${os}`);
+    // A browser opens a tab only inside the tap itself: when the URL must be asked for first, the
+    // tab is opened now and pointed at it once it is known.
+    const pending = !isTauriRuntime() && !event.icsUrl ? window.open('', '_blank') : null;
     try {
+      const url = event.icsUrl ?? (await resolveIcsUrl!());
       if (isTauriRuntime()) await navigateExternal(url);
-      else window.open(url, '_blank', 'noopener,noreferrer');
+      else if (pending) {
+        pending.opener = null;
+        pending.location.href = url;
+      } else window.open(url, '_blank', 'noopener,noreferrer');
     } catch (e) {
-      Log.d('AddToCalendar', `the hosted .ics did not open on ${os}: ${String(e)}`);
+      pending?.close();
+      Log.i('AddToCalendar', `the hosted .ics did not open on ${os}: ${String(e)}`);
       showToast(m.calendar_add_failed(), 'error');
     }
   }
@@ -53,7 +71,7 @@
     if (isIos) {
       // A pending event is not in the feed, so it has no hosted file: the local one is saved to
       // Files, which is all a WebView can do with a blob.
-      if (event.icsUrl) void openHostedIcs(event.icsUrl);
+      if (hasHostedFile) void openHostedIcs();
       else downloadIcs();
     } else {
       showModal = true;
@@ -66,6 +84,7 @@
   onclick={handleClick}
   class="ui-icon-button text-text-muted hover:text-cn-dark hover:bg-cn-bg rounded-lg transition-colors"
   title={m.calendar_add_title()}
+  aria-label={m.calendar_add_title()}
 >
   <CalendarPlus size={16} />
 </button>
@@ -76,7 +95,7 @@
       <button
         type="button"
         onclick={() => {
-          if (isAndroid && event.icsUrl) void openHostedIcs(event.icsUrl);
+          if (isAndroid && hasHostedFile) void openHostedIcs();
           else downloadIcs();
           showModal = false;
         }}

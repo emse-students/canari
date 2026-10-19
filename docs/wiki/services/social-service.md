@@ -101,7 +101,7 @@ its migrations are already recorded, so the query succeeds there whatever the co
   failure costs more than a retry.
 - Tests: `post-media-retention.reels.spec.ts` (both passes failing, only one failing, a healthy schema).
 
-**The same window, for a column every request would read (migration 090, 2026-10-17).** `channel_messages."clientMessageId"` is the salon send's idempotence key: a partial unique index on `(authorId, channelId, clientMessageId)`, and a repeated `POST /api/channels/:id/messages` with the same `messageId` is answered with the stored row - nothing written, published or pushed; two racing repeats are settled by the index, the loser answered with the winner's row. On the entity it is `select: false, update: false`, so no history read and no pin names it before the migration: only the INSERT does, and a send in that window fails whole and stores nothing. A `messageId` that is not a UUID is refused 400 `CHANNEL_CLIENT_MESSAGE_ID_INVALID`. The answer echoes `clientMessageId`, which is how a client learns a repeat is safe. A message delete first writes the id's tombstone (`channel_message_client_tombstones`, cascaded with its salon), and a repeat that meets it is refused 410 `CHANNEL_MESSAGE_DELETED` - so a delete, too, fails whole in the deploy window. Tests: `channel.service.spec.ts`, `channel-message-client-id.integration.spec.ts` (needs `SOCIAL_IT_DATABASE_URL`; the deploy-window case fails without `select: false`). Why: [offline-and-weak-network](../frontend/offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17).
+**The same window, for a column every request would read (migration 090, 2026-10-17).** `channel_messages."clientMessageId"` is the salon send's idempotence key: a partial unique index on `(authorId, channelId, clientMessageId)`, and a repeated `POST /api/channels/:id/messages` with the same `messageId` is answered with the stored row - nothing written, published or pushed; two racing repeats are settled by the index, the loser answered with the winner's row. On the entity it is `select: false, update: false`, so no history read and no pin names it before the migration. **Every INSERT does**: TypeORM lists each insertable column in its INSERT (`DEFAULT` for an absent value), so in the seconds between the services starting and 090 running EVERY salon INSERT fails - a send with or without a client id, an edit, a reaction, a system notice - whole, storing nothing. A `messageId` that is not a UUID is refused 400 `CHANNEL_CLIENT_MESSAGE_ID_INVALID`. The answer echoes `clientMessageId`, which is how a client learns a repeat is safe. A message delete first writes the id's tombstone (`channel_message_client_tombstones`, cascaded with its salon), and a repeat that meets it is refused 410 `CHANNEL_MESSAGE_DELETED` - so a delete, too, fails whole in the deploy window. The delete locks the message ROW before the client id's advisory lock (`deleteChannelMessage`), so a delete racing an account erasure waits for it and writes no tombstone of the erased author. A tombstone is kept **30 days** (decision 2026-10-18): `ChannelRetentionScheduler.purgeExpiredClientTombstones`, daily at 03:50, deletes the ones whose `deletedAt` is older, at the instant it is handed. Tests: `channel.service.spec.ts`, `channel-message-client-id.integration.spec.ts` (needs `SOCIAL_IT_DATABASE_URL`; the deploy-window case fails without `select: false`). Why: [offline-and-weak-network](../frontend/offline-and-weak-network.md#16-wp-off-3-and-wp-off-4-built-a-salon-write-waits-for-the-link-and-a-repeat-is-one-row-2026-10-17).
 
 ## Storage and retention: a channel message costs one row, forever
 
@@ -618,7 +618,8 @@ and with `createdAt` after `GREATEST(the caller's mark, the caller's membership,
 because a mark is also the "Lu par" receipt other people see. `read-mark` accepts an optional `serverAt`
 (the row's own `createdAt`) and stores the later of it and `at`, still bounded by the newest message - the
 author's `sentAt` is earlier than `createdAt`, which left the newest message "unread" for ever. A
-membership notice that is not silent is counted until the salon is opened. The count is one LATERAL
+membership notice is sent silent (2026-10-18) and so is not counted; a salon at level `none` is left out and listed in `muted`
+(see [chat](../frontend/modules/chat.md#a-muted-salon-and-a-membership-notice-raise-no-badge-2026-10-18)). The count is one LATERAL
 per salon bounded by `createdAt >= since`, riding `IDX_channel_messages_channel_created` (migration 079):
 300 ms on 1.5M rows / 300 salons with the old `channelId` index, 6 ms with it (EXPLAIN, `jit=off`). Why the client needs it:
 [chat](../frontend/modules/chat.md#unread-counts-of-salons-the-server-counts-this-device-only-merges-2026-10-08).
@@ -652,6 +653,11 @@ then writes the badge from what remains — computed from the array already in h
 
 Rooms and slots; every route, its rights and its refusal codes are in
 [bookings-chantier](../bookings-chantier.md#wp-b3-as-built-2026-10-17), the only copy.
+
+### Lives (`/api/lives`)
+
+Live broadcasts, behind `LIVE_ENABLED`; every route, its rights and its refusal codes are in
+[lives](lives.md), the only copy.
 
 ### Associations (`/api/associations`)
 
@@ -1129,7 +1135,7 @@ publishes like the other four. The audience always comes from `channelAudience`,
 reaches its roster and a public one the whole community, and the publish always happens AFTER the
 row is saved - the audience is derived from access, so announcing first would address the event to
 everyone except the person it is about.
-| `channel.typing`, `channel.pin`, `channel.poll.vote` | live UI signals |
+| `channel.typing`, `channel.pin`, `channel.poll.vote` | live UI signals; typing goes to the channel audience MINUS the typist (user ids, so their other devices too) |
 
 The chat-gateway subscribers fan out these events to all connected devices of the affected users.
 

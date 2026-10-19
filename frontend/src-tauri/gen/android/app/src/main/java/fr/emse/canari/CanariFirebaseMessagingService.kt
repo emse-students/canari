@@ -160,29 +160,18 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         const val EXTRA_CALL_ID       = "callId"
 
         /**
-         * Mirrors CALLS_ENABLED in frontend/src/lib/features.ts, which holds the whole calling
-         * surface off until it has been run on hardware (rung 15 CALL / CALL-13). Duplicated
+         * Mirrors CALLS_COMPILED in frontend/src/lib/features.ts - calling as the store binaries
+         * carry it, held off until it has been run on hardware (rung 15 CALL / CALL-13). Duplicated
          * rather than read from the webview because this service handles pushes while no webview
          * exists. Flip both in the same commit, and restore USE_FULL_SCREEN_INTENT in
          * AndroidManifest.xml with them - Play gates that permission on the app being a calling
          * app, exactly as App Review gates the iOS `voip` background mode.
+         * `callsCompiled.test.ts` fails if any of the five switches disagrees with features.ts.
          *
-         * IT ALSO DECIDES WHETHER A SILENT PUSH IS DECRYPTED AT ALL, which is a much larger effect
-         * than the ring it was written for. A silent `type=message` frame can produce nothing: it
-         * shows no notification by definition, it writes no `mls.bin` - the read-only push path
-         * says in its own header that it never does, and `decryptProto` discards commits - and it
-         * writes no FCM cache, because the silent return happens first. **The one and only consumer
-         * of its plaintext is call signalling.**
-         *
-         * WHAT DECRYPTING ONE ANYWAY COST, on a Mi 9T with an 8 MB store, 2026-09-07: every message
-         * to this device arrives as TWO frames, the visible one and the other device's read
-         * watermark, and each is 10.7 seconds of Argon2 and an 8 MB read on the single push lane
-         * that every other message queues behind. NOTIF-11 sent three messages six seconds apart;
-         * the third notified 127 seconds after the first, seven seconds after the row's window had
-         * closed. Half that lane was frames that could not produce anything.
-         *
-         * So flipping this back on restores real work, not just a ring - and
-         * `pushSilentDecrypt.test.ts` fails if this and `features.ts` ever disagree.
+         * It gates the native RING and nothing else. It used to decide whether a silent push was
+         * decrypted at all - 10.7 s of Argon2 per frame on a Mi 9T (NOTIF-11, 2026-09-07) - so
+         * turning calls on would have reopened that lane; the silent guard in `handleMlsFrame` no
+         * longer reads it (2026-10-18), and says why.
          */
         private const val CALLS_ENABLED = false
 
@@ -2226,6 +2215,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
     /** Decrypts an MLS message using the pre-derived device key (base64). */
     // `senderId` is the push's own: Rust refuses the frame (`reason=sender-mismatch`) when it is not
     // the sender MLS verified, so a banner never names someone the app would refuse (WP-G2-1b).
+    // `locale` is `PushContext.locale`, the app language: Rust words every sentence it composes
+    // itself (a reaction, a photo, a call...) in it - WP-PUSH-I18N.
     external fun nativeDecryptMessageWithKey(
         stateBytes: ByteArray,
         keyB64: String,
@@ -2233,7 +2224,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         deviceId: String,
         groupId: String,
         senderId: String,
-        ciphertext: ByteArray
+        ciphertext: ByteArray,
+        locale: String
     ): String
 
     /** Key-based variant of [nativeGroupEpoch]. */
@@ -2254,7 +2246,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         groupId: String,
         senderId: String,
         commitsJson: String,
-        ciphertext: ByteArray
+        ciphertext: ByteArray,
+        locale: String
     ): String
 
     /**
@@ -2285,7 +2278,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         senderId: String,
         nonceB64: String,
         ciphertextB64: String,
-        signatureB64: String
+        signatureB64: String,
+        locale: String
     ): String
 
     // Decrypts an end-to-end-encrypted media blob (AES-256-GCM) for a notification thumbnail
@@ -2692,9 +2686,17 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             }
         }
 
-        // ALMOST NOTHING A SILENT FRAME'S PLAINTEXT IS READ FOR IS ENABLED, SO IT IS ALMOST
-        // NEVER READ. The self-read dismissal above runs on the CLEARTEXT fields, and calls
-        // are off - see `CALLS_ENABLED` for the measurement and for what the revival flips.
+        // ALMOST NOTHING A SILENT FRAME'S PLAINTEXT IS READ FOR, SO IT IS ALMOST NEVER READ.
+        // The self-read dismissal above runs on the CLEARTEXT fields.
+        //
+        // CALLS DO NOT REOPEN THIS LANE, AND THE GUARD NO LONGER NAMES THEM (2026-10-18). It used
+        // to skip a silent frame only while the calls switch was off, so the calls revival would have put a decrypt
+        // (10.7 s of Argon2 on a Mi 9T, NOTIF-11) behind EVERY read receipt again, to find the
+        // rare silent `call_invite` among them. A ring does not need it: every current caller
+        // rings through the cleartext `call_ring` push FIRST (POST /api/calls/ring is awaited
+        // before the MLS invite leaves, and a refused ring ends the call), and stops it with
+        // `call_ring_end`. The MLS `call_invite` branch below serves only a NON-silent invite
+        // from a pre-WP-XP-5 caller.
         //
         // THE EXCEPTION IS KEY MATERIAL, AND THE SERVER NAMES IT RATHER THAN THIS DECRYPTING
         // TO FIND OUT. A Graine seed arrives as a silent frame like any other; dropped, the
@@ -2709,9 +2711,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // A `null` - an older server, or a group row it could not read - keeps the old
         // behaviour. That is not a fallback path: it is the third state saying "not told",
         // and the seed is still recovered when the app next runs.
-        if (silent && !CALLS_ENABLED && isKeyDistribution != true) {
+        if (silent && isKeyDistribution != true) {
             if (silentSkipExplained.compareAndSet(false, true)) {
-                Log.d(TAG, "FCM silent -> its plaintext has no consumer while calls are off; not decrypting (said once per process)")
+                Log.d(TAG, "FCM silent -> its plaintext has no consumer; not decrypting (said once per process)")
             }
             return
         }
@@ -3483,6 +3485,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 stateBytes, ctx.userId, ctx.deviceId, groupId, protoB64,
                 senderId = senderId,
                 deviceKeyB64 = ctx.deviceKeyB64,
+                locale = ctx.locale,
             )
         } finally {
             MlsStateLock.LOCK.unlock()
@@ -3793,11 +3796,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         protoB64: String,
         deviceKeyB64: String? = null,
         senderId: String,
+        locale: String,
     ): PushDecrypt {
         return try {
             val cipherBytes = Base64.decode(protoB64, Base64.DEFAULT)
             val keyB64 = deviceKeyB64?.takeIf { it.isNotEmpty() } ?: return PushDecrypt.Refused
-            val jsonStr = nativeDecryptMessageWithKey(stateBytes, keyB64, userId, deviceId, groupId, senderId, cipherBytes)
+            val jsonStr = nativeDecryptMessageWithKey(stateBytes, keyB64, userId, deviceId, groupId, senderId, cipherBytes, locale)
             parseNativeDecrypt(jsonStr, "decryptProto")
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "decryptProto: native library not loaded: ${e.message}")
@@ -3873,6 +3877,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 stateBytes, ctx.userId, ctx.deviceId, groupId, commitsJson, cipherBytes,
                 senderId = senderId,
                 deviceKeyB64 = ctx.deviceKeyB64,
+                locale = ctx.locale,
             )
         }
     }
@@ -3954,10 +3959,11 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         cipherBytes: ByteArray,
         deviceKeyB64: String? = null,
         senderId: String,
+        locale: String,
     ): PushDecrypt {
         return try {
             val keyB64 = deviceKeyB64?.takeIf { it.isNotEmpty() } ?: return PushDecrypt.Refused
-            val jsonStr = nativeDecryptMessageWithCommitsWithKey(stateBytes, keyB64, userId, deviceId, groupId, senderId, commitsJson, cipherBytes)
+            val jsonStr = nativeDecryptMessageWithCommitsWithKey(stateBytes, keyB64, userId, deviceId, groupId, senderId, commitsJson, cipherBytes, locale)
             parseNativeDecrypt(jsonStr, "decryptProtoWithCommits")
         } catch (e: UnsatisfiedLinkError) {
             Log.e(TAG, "decryptProtoWithCommits: native library not loaded: ${e.message}"); PushDecrypt.Refused
@@ -4702,8 +4708,10 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // The app addresses channels as `channel_<uuid>`; use it for the deep link + stable notif id.
         val conversationId = "channel_$channelId"
 
-        // Read once: this device's own id is "you" in a mention token.
-        val myUserId = MlsContextLoader.loadPushContext(this)?.userId
+        // Read once: the only id this device can name in a mention token is its own, and the app
+        // language Rust words its own sentences in (empty when none was mirrored: the base locale).
+        val pushCtx  = MlsContextLoader.loadPushContext(this)
+        val myUserId = pushCtx?.userId
         // The phone's names, read at most once for this banner: the author line and the tokens share it.
         val nameBook = lazy { loadMentionNames(myUserId?.lowercase()) }
         // Set only where the banner's body IS the decrypted text: every other branch below posts the
@@ -4716,6 +4724,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                         MlsContextLoader.tauriDataDir(this).absolutePath,
                         channelId, sessionId, messageIndex, senderId, nonce, ciphertext,
                         data["signature"] ?: "",
+                        pushCtx?.locale ?: "",
                     )
                 )
                 if (json.optBoolean("ok", false)) {

@@ -43,6 +43,7 @@ use std::path::PathBuf;
 use super::background::decrypt_channel_message;
 use super::graine::derive_message_key;
 use super::proto_fields::build_text_app_message;
+use super::push_text::PushLanguage;
 
 /// The generation these fixtures were frozen at. It is in every filename, so a future generation
 /// sits beside this one rather than replacing it.
@@ -129,7 +130,7 @@ fn the_channel_aead_still_opens_what_a_previous_version_sealed() {
     // device still on the old build stops opening on the new one.
     let (nonce, ciphertext) = frozen(CHANNEL_FIXTURE);
 
-    let info = decrypt_channel_message(&CHANNEL_KEY, &nonce, &ciphertext)
+    let info = decrypt_channel_message(&CHANNEL_KEY, &nonce, &ciphertext, PushLanguage::French)
         .expect("a channel push sealed by a previous version no longer opens");
 
     assert_is_the_frozen_message(&info);
@@ -144,7 +145,7 @@ fn the_graine_derivation_still_opens_what_a_previous_version_sealed() {
 
     let key = derive_message_key(&GRAINE_SEED, GRAINE_SESSION, GRAINE_INDEX)
         .expect("the frozen seed no longer derives a key");
-    let info = decrypt_channel_message(&key, &nonce, &ciphertext)
+    let info = decrypt_channel_message(&key, &nonce, &ciphertext, PushLanguage::French)
         .expect("a Graine push sealed by a previous version no longer opens");
 
     assert_is_the_frozen_message(&info);
@@ -197,7 +198,7 @@ fn a_wrong_key_does_not_open_the_frozen_push() {
     wrong[0] ^= 0x01;
 
     assert!(
-        decrypt_channel_message(&wrong, &nonce, &ciphertext).is_none(),
+        decrypt_channel_message(&wrong, &nonce, &ciphertext, PushLanguage::French).is_none(),
         "a one-bit key change still opened the push, so these fixtures assert nothing"
     );
 }
@@ -352,7 +353,10 @@ fn a_graine_v2_push_frozen_at_its_first_release_still_opens() {
         &unhex(GRAINE_V2_SESSION_PUBLIC_KEY),
     )
     .expect("a Graine v2 push sealed by a previous version no longer opens");
-    assert_is_the_frozen_message(&super::proto_fields::extract_full_message_info(&plaintext));
+    assert_is_the_frozen_message(&super::proto_fields::extract_full_message_info(
+        &plaintext,
+        PushLanguage::French,
+    ));
 }
 
 /// Both halves deterministic, so both directions are provable: see
@@ -463,6 +467,7 @@ mod through_the_mirror {
                 ciphertext_b64: &ciphertext,
                 signature_b64: &signature,
             },
+            PushLanguage::French,
         )
     }
 
@@ -538,6 +543,7 @@ mod through_the_mirror {
                 ciphertext_b64: &STANDARD.encode(ciphertext),
                 signature_b64: "",
             },
+            PushLanguage::French,
         );
         assert_is_the_frozen_message(&info);
     }

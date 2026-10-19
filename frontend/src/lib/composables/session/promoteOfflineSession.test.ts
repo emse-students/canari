@@ -13,7 +13,7 @@ const bindCurrentSessionDevice = vi.hoisted(() => vi.fn(async () => {}));
 
 // A promotion loads the account's notification preferences; that read is its own seam.
 vi.mock('$lib/notifications/preferencesApi', () => ({
-  fetchNotificationPreferences: async () => ({ disabled: [], groupLevels: {} }),
+  fetchNotificationPreferences: async () => ({ disabled: [], groupLevels: {}, groupCalls: {} }),
 }));
 
 vi.mock('$lib/stores/auth', async (orig) => ({

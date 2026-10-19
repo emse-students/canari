@@ -1,13 +1,13 @@
-# Live - the plan (R4 / decision C9, not started)
+# Live - the plan (R4 / decision C9; the server half WP-L2/L3 built 2026-10-18, nothing else)
 
-> **Note 2026-10-17:** the user's 2026-10-16 calls decisions - 1:1 calls go peer-to-peer direct with Cloudflare TURN as the fallback - post-date this plan; every "relay-only" and SFU statement below describes the code of 2026-10-15, not the target, and WP-L0 is to be re-read against them.
+> **Note 2026-10-19:** lives now come BEFORE the calls revival ([decisions](#decisions-of-2026-10-19)). **Note 2026-10-17:** the user's 2026-10-16 calls decisions - 1:1 calls go peer-to-peer direct with Cloudflare TURN as the fallback - post-date this plan; every "relay-only" and SFU statement below describes the code of 2026-10-15, not the target, and WP-L0 is to be re-read against them.
 
 A member opens the composer, picks **Live**, and the whole Canari network can watch until the
 broadcast ends - Facebook-style. This page is the PLAN: what the user decided on 2026-10-15, what the
 existing calling bricks really are (read from the code that day), the questions still open for the
 user, and the work packages in order. Nothing of it is built. It is stage R4 of the CanaReels chantier
 ([reels C9](reels.md#the-chantier-the-comparison-the-ten-decisions-the-build-order-user-2026-09-29)),
-and it sits behind the calls revival ([calls](calls.md)).
+and since 2026-10-19 it no longer waits for the calls revival ([calls](calls.md)).
 
 **Convention on this page: a claim not read in this repository's code or measured is marked
 _(unverified)_.** Store policy text, Cloudflare TURN pricing and the host's link speed are among them.
@@ -29,7 +29,7 @@ reached by API, and is unaffected.
 | L4 | What does the first version carry? | **A short live with a small audience** - tens of viewers, 30 to 60 minutes at most - with an **ephemeral live chat and floating reactions**; the chat is **encrypted with the live's key**. The audience size is superseded by L8 (no cap). |
 | L5 | How is a live announced? | **A LIVE card at the top of the feed for everyone**, plus a **push ONLY to the followers** of the member or association broadcasting. |
 | L6 | How is a live moderated? | **The broadcaster hides chat messages and removes viewers; any viewer can report; staff can cut a live remotely.** |
-| L7 | In what order? | **Revive calls first, then live.** The user added that what mostly blocked calls is that **Apple App Review needs a VIDEO recording showing everything works** (still to do), on top of our own tests. |
+| L7 | In what order? | **SUPERSEDED 2026-10-19 by [D1](#decisions-of-2026-10-19): lives come BEFORE the calls revival.** Was: revive calls first, then live. The user added that what mostly blocked calls is that **Apple App Review needs a VIDEO recording showing everything works** (still to do), on top of our own tests. |
 | L8 | Is there a viewer cap? | **No cap** - *"pas de plafond, mais la qualité du live ne sera pas si grande si ? quelle techno utilisent Twitch ou Facebook ?"*. **This CONFLICTS with what exists**: the call path sends one stream per viewer through Cloudflare TURN against a ~950 GB monthly budget ([below](#what-exists-read-from-the-code-on-2026-10-15)), and any other path still leaves through the host's own uplink, which is unknown and shared with the DSI. It is what forces the [architecture choice](#architecture-options-for-an-uncapped-audience), and the honest answer is **a cap set by the host's uplink, to be MEASURED**. |
 | L9 | How many lives at the same time? | **No cap.** |
 | L10 | Who is a follower, for the push? | **The existing relations**: `user_follows` for a member, `association_follows` for an association, minus `association_push_mutes`. |
@@ -121,6 +121,9 @@ Three shapes, compared honestly.
 - **Playback in the WebViews** goes through Media Source Extensions in the segmented reader today
   _(unverified for a live, growing source on iOS WebKit, where MSE availability has differed from
   Chromium)_ - a WP-L1 reading on both phones, before anything else is built.
+  **Read 2026-10-18 in Chrome and Safari** (not yet in the app's WebViews): a MediaRecorder fMP4
+  chunk appends to a growing `MediaSource` / `ManagedMediaSource` for 36-42 min with no error
+  ([bench readings](../../device-readings-calls-live-2026-10-18.md#2-live-wp-l1---capture-into-short-fmp4-segments-and-a-growing-mse-source-30-42-min)).
 
 **Recommendation.**
 
@@ -135,6 +138,19 @@ Three shapes, compared honestly.
   1.5-2.5 Mb/s at 720p (C3 targets 2.5 Mb/s for reels). Adaptive bitrate needs server transcoding,
   which contradicts C3 (*"il faut que la charge serveur soit minimale"*), unless the phone encodes two
   tiers itself, which doubles its uplink and its battery cost. So **one tier in v1**.
+
+## Decisions of 2026-10-19
+
+User calls, taken after the server half (WP-L2, WP-L3) was built. They supersede L7 and change what blocks a stable.
+
+- **D1 - lives come BEFORE the calls revival** (supersedes L7 of 2026-10-15). WP-L0 no longer precedes the lives; calls stay dev-only (`CALLS_COMPILED = false`, [calls](calls.md)).
+- **D2 - bitrate is fixed at launch by the server.** v1 picks 720p or 480p from the TOTAL live load at the moment the live starts, and never changes it mid-live. The server transcodes nothing. Mid-live adaptive bitrate is NOT v1: MediaRecorder cannot reliably change resolution or bitrate without a new init segment.
+- **D3 - any member may start a live in v1, so WP-L8 is a RELEASE BLOCKER.** Moderation (hide message, remove viewer, block, report a live, staff remote cut) and the per-account limits already built must exist before any stable. Apple guideline 1.2 and the Play UGC answers (Q2) precede any store submission.
+- **D4 - a "X est en live" notification**, like "X a publié", is wanted. The server half (WP-L7) is being built; the client LIVE card and the deep link are owed.
+- **D5 - live comments and floating reactions are wanted** (WP-L6: encrypted with the live key, ephemeral).
+- **D6 - moderation works like posts.** A live is reported through the same `content_reports` path as a post ([moderation-and-blocking](../../moderation-and-blocking.md)); where a post's action is "delete the post", a live's is "cut the live" (staff remote cut, WP-L8). The broadcaster's own remove-viewer and message hiding stay. The posts moderation code is REUSED, not duplicated.
+
+**Open question (user, 2026-10-19): "why ask the school IT department for agreement?"** Only raising the SHARED HOST's nginx connection budget (about 1500 across all the host's sites, a host-level setting owned by the school IT department) needs it, under the standing rule of CLAUDE.md. Canari's own edge container is ours. Not needed until an audience would exceed the current budget.
 
 ## Open questions for the user, each with a recommendation
 
@@ -157,23 +173,25 @@ followers (L10), safety and age (L11).
 ## The work packages, in order
 
 Each starts from a named point and ends on a test that would fail without it. The order assumes
-Q1 = C; WP-L0 stays first by the user's decision (L7).
+Q1 = C; since 2026-10-19 WP-L0 no longer precedes the lives ([D1](#decisions-of-2026-10-19)).
 
 | WP | What | Starting point | Done when |
 | --- | --- | --- | --- |
 | **WP-L0** | **Calls revival**: the five switches in one commit, the SIXTH (no names in a silent invite) and the SEVENTH (`none` level vs. a ring) decided, rung 15 CALL + CALL-13 on real hardware, the by-hand relay-path call, then **the screen recording App Review asks for**. | `frontend/src/lib/features.ts` `CALLS_ENABLED` and the switch table in [calls](calls.md) | the board rows `PASS`; the video recorded; a build accepted with calls on |
 | **WP-L1** | **The C feasibility bench, before any product code**: on both phones, record 720p into short fMP4 segments for 30-60 min, seal and upload them, and play a growing source through MSE in the WebView. **And the host's usable uplink**, from the DSI's answer first (Q3), which sets the viewer cap L8 turns into. | `frontend/src/lib/mediaSegmented.ts`, the camera of [reels](reels.md), the segmented reader | latency, phone uplink, battery and heat measured on Mi 9T and iPhone 12, and the host's usable uplink, written here; or a refutation of C |
-| **WP-L2** | **The live row and its key**: a `lives` record (broadcaster, as-association, key, `started_at`, `ended_at`), removed-viewer list, the end as durable state. | social-service posts / reels server ([reels (server)](../../services/reels.md)) | API tests: key served as a post CEK to members; refused to a removed viewer; nothing after `ended_at` |
-| **WP-L3** | **Segment ingest and the manifest**: a growing sealed object or one object per segment, a manifest viewers poll, deletion at `ended_at` plus a sweep (Q10). | the upload session ([media-streaming-upload](../../services/media-streaming-upload.md)) | specs: a segment out of order is refused; the manifest stops at `ended_at`; everything is gone after the sweep |
+| **WP-L2** (**built 2026-10-18, server only, [lives](../../services/lives.md)**) | **The live row and its key**: a `lives` record (broadcaster, as-association, key, `started_at`, `ended_at`), removed-viewer list, the end as durable state. | social-service posts / reels server ([reels (server)](../../services/reels.md)) | API tests: key served as a post CEK to members; refused to a removed viewer; nothing after `ended_at` |
+| **WP-L3** (**built 2026-10-18, server only, [lives](../../services/lives.md)**) | **Segment ingest and the manifest**: a growing sealed object or one object per segment, a manifest viewers poll, deletion at `ended_at` plus a sweep (Q10). | the upload session ([media-streaming-upload](../../services/media-streaming-upload.md)) | specs: a segment out of order is refused; the manifest stops at `ended_at`; everything is gone after the sweep |
 | **WP-L4** | **Segments served by nginx**: an unauthenticated route for sealed live segments answered by Canari's own nginx (cache or static files), never reaching media-service or the database; the per-host viewer cap from WP-L1's uplink figure, refused with a clear "live full" screen. | `infrastructure/local/Dockerfile.frontend` (Canari's nginx), `GET /api/media/public/:id` as the model | a second viewer's fetch is served without a media-service log line; viewer N+1 past the cap is refused |
 | **WP-L5** | **Broadcaster and viewer UI**: composer "Live" entry, broadcast screen, viewer screen, reconnect state (Q5), first-live rules (L11). | the composer ([posts](posts.md)) and camera ([reels](reels.md)) | e2e on two browser contexts; phone readings on Mi 9T and iPhone 12 |
-| **WP-L6** | **Live chat and floating reactions**, encrypted with the live key, ephemeral. | the WS gateway ([chat-gateway](../../services/chat-gateway.md)) | tests: messages unreadable without the key; nothing persisted after `ended_at` |
+| **WP-L6** | **Live comments and floating reactions ARE wanted (user, 2026-10-19, D5)**, encrypted with the live key, ephemeral. | the WS gateway ([chat-gateway](../../services/chat-gateway.md)) | tests: messages unreadable without the key; nothing persisted after `ended_at` |
 | **WP-L7** | **Announcement**: LIVE card at the top of the feed; push to followers (L10). | the feed, `PostNotificationsService` | tests on the follower set incl. mutes; one push per live, never on reconnect |
-| **WP-L8** | **Moderation**: hide message, remove viewer, block, report a live, staff remote cut. | `content_reports`, [moderation-and-blocking](../../moderation-and-blocking.md) | tests: a cut ends the live and the row; a report reaches staff while live |
-| **WP-L9** | **Store review**: UGC answers (Q2), the review video for live, then a pre-release to testers. | [mobile](../mobile.md) submission notes | accepted builds on both stores |
+| **WP-L8** (**RELEASE BLOCKER before any stable, D3; moderation works like posts, D6: reuse the posts code path, no parallel mechanism**) | **Moderation**: hide message, remove viewer, block, report a live through `content_reports` like a post, staff remote cut (the live equivalent of "delete the post"). | `content_reports`, [moderation-and-blocking](../../moderation-and-blocking.md) | tests: a cut ends the live and the row; a report reaches staff while live |
+| **WP-L9** (Q2 answers precede any store submission, D3) | **Store review**: UGC answers (Q2), the review video for live, then a pre-release to testers. | [mobile](../mobile.md) submission notes | accepted builds on both stores |
 | **WP-L10** (only if A is kept) | **Low-latency small-audience mode on the SFU**: a `broadcast` room kind (broadcaster-only publish, receive-only viewers, a cap, a server-side kick), frame E2E keyed by the live key with **no cleartext path**, the SFU bench with 1 then 30 subscribers. | `apps/call-service/src/main.rs` `on_track`, `tests/relay_path.rs`, `CallService.ts` `setupEncryption` | Rust tests: a viewer's track is refused, a kicked peer cannot rejoin; a missing transform refuses to broadcast; TURN GB per live-hour measured |
 
 ## See also
+
+- [lives](../../services/lives.md) - the server half as built (WP-L2, WP-L3), and its switch
 
 - [calls](calls.md) - the switches and why calls are held off
 - [call-service](../../services/call-service.md) - the SFU
