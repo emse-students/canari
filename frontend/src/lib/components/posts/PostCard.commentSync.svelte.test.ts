@@ -7,12 +7,14 @@
  * removal takes only the named comment; the number on the card is `commentCount`, not the twenty
  * rows a feed row carries.
  */
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import PostCard from './PostCard.svelte';
 import type { PostComment, PostEntity } from '$lib/posts/api';
 import { publishPostComments } from '$lib/posts/postCommentThread.svelte';
 import { apiFetch } from '$lib/utils/apiFetch';
+import { m } from '$lib/paraglide/messages';
+import { flushMacrotask } from '../../../test/flush';
 
 vi.mock('$lib/utils/apiFetch', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/utils/apiFetch')>()),
@@ -132,4 +134,93 @@ it('a removal in the sheet takes only the named comment', () => {
   expect(rows(target)).toBe(24);
   expect(target.querySelector('#comment-c3')).toBeNull();
   expect(shownCount(target)).toContain('24');
+});
+
+describe('"load all" on a card that has written comments (through the real ledger)', () => {
+  /** The read of the post itself (`GET /api/posts/p1`): answered when the test says. */
+  function serveRead(): (rows: PostComment[]) => void {
+    let answer!: (rows: PostComment[]) => void;
+    const pending = new Promise<PostComment[]>((resolve) => (answer = resolve));
+    vi.mocked(apiFetch).mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.endsWith('/api/posts/p1') && (init?.method ?? 'GET') === 'GET') {
+        const comments = await pending;
+        return new Response(JSON.stringify({ ...row(comments, 0), commentCount: undefined }), {
+          status: 200,
+        });
+      }
+      return new Promise<Response>(() => {});
+    });
+    return answer;
+  }
+
+  async function loadAll(target: HTMLElement) {
+    const button = [...target.querySelectorAll('button')].find(
+      (b) => b.textContent?.trim() === m.post_load_all_comments_label()
+    )!;
+    button.click();
+    await flushMacrotask();
+    flushSync();
+  }
+
+  async function settleRead() {
+    for (let i = 0; i < 4; i++) await flushMacrotask();
+    flushSync();
+  }
+
+  it('a read issued AFTER a comment write adopts every row and their count', async () => {
+    const answer = serveRead();
+    const target = mountCard(
+      row(
+        Array.from({ length: 25 }, (_, i) => comment(i)),
+        25
+      )
+    );
+    publishPostComments('p1', { kind: 'upsert', comment: comment(40) }, elsewhere);
+    flushSync();
+
+    await loadAll(target);
+    answer(Array.from({ length: 54 }, (_, i) => comment(i)));
+    await settleRead();
+
+    expect(rows(target)).toBe(54);
+    expect(shownCount(target)).toContain('54');
+  });
+
+  it('a deletion answered while the read is out keeps the count WITH the rows', async () => {
+    const answer = serveRead();
+    const target = mountCard(
+      row(
+        Array.from({ length: 25 }, (_, i) => comment(i)),
+        25
+      )
+    );
+
+    await loadAll(target);
+    publishPostComments('p1', { kind: 'remove', ids: ['c3'], count: 1 }, elsewhere);
+    flushSync();
+    answer(Array.from({ length: 25 }, (_, i) => comment(i)));
+    await settleRead();
+
+    expect(rows(target)).toBe(24);
+    expect(shownCount(target)).toContain('24');
+  });
+
+  it('an addition answered while the read is out keeps the count WITH the rows', async () => {
+    const answer = serveRead();
+    const target = mountCard(
+      row(
+        Array.from({ length: 25 }, (_, i) => comment(i)),
+        25
+      )
+    );
+
+    await loadAll(target);
+    publishPostComments('p1', { kind: 'upsert', comment: comment(40) }, elsewhere);
+    flushSync();
+    answer(Array.from({ length: 25 }, (_, i) => comment(i)));
+    await settleRead();
+
+    expect(rows(target)).toBe(26);
+    expect(shownCount(target)).toContain('26');
+  });
 });

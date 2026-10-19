@@ -255,7 +255,10 @@ export class PostCommentThread {
     try {
       const full = await getPost(this.host.read().id);
       // A read of the post itself carries EVERY comment and no `commentCount`: its rows are the total.
-      this.host.adoptThread({ ...full, commentCount: (full.comments ?? []).length });
+      // Written ON the row, never on a copy: a spread drops the read's served stamp (`stampServed`, a
+      // non-enumerable symbol), and an unstamped read is refused by every field a write answered.
+      full.commentCount = (full.comments ?? []).length;
+      this.host.adoptThread(full);
     } catch (err) {
       Log.d('PostCommentThread.loadAll failed - the thread shown is kept', err);
     }

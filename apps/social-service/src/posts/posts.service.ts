@@ -1002,7 +1002,7 @@ export class PostsService {
          ${this.serviceAccountFilterSql(isAdmin, viewer?.viewerUserId)}
          ${this.blockedAuthorSql(bp)}
          AND ${postVisibleToViewerSql('posts', `$${viewerParam}`)}
-       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
+       ORDER BY posts.pinned DESC, posts."publishedAt" DESC, posts.id DESC
        LIMIT $1 OFFSET $2`,
       params
     );
@@ -1517,7 +1517,7 @@ export class PostsService {
          ${this.liveReelFilterSql()}
          ${this.blockedAuthorSql(bp)}
          AND ${postVisibleToViewerSql('posts', `$${blockedIds.length > 0 ? 3 : 2}`)}
-       ORDER BY posts."publishedAt" DESC
+       ORDER BY posts."publishedAt" DESC, posts.id DESC
        LIMIT 1`,
       [eventId, ...(blockedIds.length > 0 ? [blockedIds] : []), viewerId ?? null]
     );

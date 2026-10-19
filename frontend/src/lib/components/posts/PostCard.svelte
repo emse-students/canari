@@ -190,9 +190,11 @@
     userId: () => currentUserId,
     read: () => localPost,
     write: (next) => (localPost = next),
-    begin: () => void ledger.begin(['comments']),
-    end: () => ledger.end(['comments']),
-    answered: () => ledger.answered(['comments']),
+    // The count moves with the rows, so a write declares both: a read issued before it must not
+    // bring back the count of a thread it no longer describes.
+    begin: () => void ledger.begin(['comments', 'commentCount']),
+    end: () => ledger.end(['comments', 'commentCount']),
+    answered: () => ledger.answered(['comments', 'commentCount']),
     holdThread: () => {
       fullThread = true;
       ledger.hold('comments');
@@ -448,7 +450,7 @@
     onPostComments(postId, (change, from) => {
       if (from === thread) return;
       Log.d('PostCard.onPostComments', `${change.kind} from another surface on ${postId}`);
-      ledger.answered(['comments']);
+      ledger.answered(['comments', 'commentCount']);
       localPost = applyCommentChange(localPost, change);
     })
   );

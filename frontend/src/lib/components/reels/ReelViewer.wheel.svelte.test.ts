@@ -215,6 +215,25 @@ describe('with motion on (the page takes a transition to land)', () => {
     expect(playing()).toEqual(['m-c']);
   });
 
+  it('a cancelled track move (transitioncancel) still lands, so nothing stays frozen', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await render();
+    await wheel({ deltaY: 100 });
+    const track = document.querySelector('[data-reel-track]')!;
+    const cancel = new Event('transitioncancel', { bubbles: true });
+    Object.defineProperty(cancel, 'propertyName', { value: 'transform' });
+    track.dispatchEvent(cancel);
+    await settle();
+    expect(playing()).toEqual(['m-b']);
+
+    // The chevron answers again: `settling` was cleared.
+    chevron(m.reels_viewer_next()).click();
+    await settle();
+    await land();
+    expect(playing()).toEqual(['m-c']);
+    warn.mockRestore();
+  });
+
   it('a touchcancel while the wheel page lands neither drops that landing nor jams the wheel', async () => {
     await render();
     await wheel({ deltaY: 100 });

@@ -284,8 +284,17 @@
     offsetY = y;
   }
 
+  /**
+   * The track's move is over: it ENDED, or it was CANCELLED (the track hidden or detached mid-move,
+   * where `transitionend` never comes - and `settling` would freeze touch, keys, wheel and
+   * chevrons until the viewer closed). Either way the landing runs, which puts the page at rest
+   * where the move was going.
+   */
   function onTransitionEnd(e: TransitionEvent) {
     if (e.target !== e.currentTarget || e.propertyName !== 'transform') return;
+    if (e.type === 'transitioncancel') {
+      console.warn('[reel-viewer] the track move was cancelled - landing where it was going');
+    }
     settling = false;
     const next = afterSettle;
     afterSettle = null;
@@ -487,6 +496,7 @@
           ? `transform ${GESTURE.SETTLE_MS}ms cubic-bezier(0.2, 0, 0, 1)`
           : 'none'}
         ontransitionend={onTransitionEnd}
+        ontransitioncancel={onTransitionEnd}
         data-reel-track
       >
         {#each mounted as i (reels[i].id)}

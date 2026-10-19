@@ -234,6 +234,18 @@ describe('reads exclude a reel past its month', () => {
     );
   });
 
+  it('search pages and the event post pick in a TOTAL order: id breaks a publishedAt tie', async () => {
+    const { service, queries } = makeService({});
+    await service.searchPosts('trip', 10, 0, { viewerUserId: 'alice' });
+    expect(queries.find((q) => /ILIKE/.test(q.sql))?.sql).toContain(
+      `ORDER BY posts.pinned DESC, posts."publishedAt" DESC, posts.id DESC`
+    );
+    await service.findPostLinkedToCalendarEvent('ev-1', 'alice', false);
+    expect(queries.find((q) => /"linkedCalendarEventId" = \$1/.test(q.sql))?.sql).toContain(
+      `ORDER BY posts."publishedAt" DESC, posts.id DESC`
+    );
+  });
+
   it('answers 404 for an expired reel by id, even to its own author', async () => {
     const { service } = makeService({
       existing: { id: 'r1', authorId: 'alice', kind: 'reel', expiresAt: new Date(NOW - 1) } as Post,

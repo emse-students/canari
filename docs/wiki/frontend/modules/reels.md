@@ -559,7 +559,9 @@ below; **owed on both phones**
 - **The comment number is the server's total** (`commentCount`, `posts/commentChange.ts`): a list
   row carries only the newest twenty comments, so `comments.length` read "20" for a post of 57 -
   on the rail and on the card's button alike. Every write keeps the total in step, and "load all"
-  (`GET /api/posts/:id`, every comment and no total) sets it to the rows it read.
+  (`GET /api/posts/:id`, every comment and no total) sets it to the rows it read - on the read's
+  own object, so its served stamp survives. On the card, a comment write declares `comments` AND
+  `commentCount` to its ledger: a read issued before the write adopts neither.
 - **Send is the post menu's share** (`posts/sharePost.ts`: copy the public link, toast). Sending a
   post INTO a conversation does not exist; it is an owed decision, not built here.
 - **The comments sheet** (`ReelCommentsSheet`): the POST's own thread - `PostComments` in its
@@ -595,7 +597,9 @@ below; **owed on both phones**
   gesture ended). The chevrons wait for `settling` like the keys and the swipe, a `touchcancel`
   moves nothing unless a drag of the viewer's was under way, and `settle` never drops a pending
   landing: a move started over one runs it first and logs an error (review of #2119: a chevron
-  clicked mid-transition used to drop the wheel's landing and jam the wheel for good). Left to the browser:
+  clicked mid-transition used to drop the wheel's landing and jam the wheel for good). A
+  `transitioncancel` (the track hidden or detached mid-move, where `transitionend` never comes)
+  lands the page like a `transitionend`, so `settling` can never stay set and freeze the viewer. Left to the browser:
   ctrl+wheel (zoom, and a trackpad pinch), a mostly horizontal scroll, the wheel while the comments
   sheet is open or over a child that scrolls (the list, an unfolded caption). The listener is
   non-passive on the viewer only, `preventDefault` runs only on a consumed event, and it goes with
