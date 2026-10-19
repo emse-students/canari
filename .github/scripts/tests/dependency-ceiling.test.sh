@@ -53,7 +53,7 @@ STUB
 chmod +x "$work/gh"
 
 run_ceiling() {
-  GH_FIXTURE="$1" PATH="$work:$PATH" REPO="owner/repo" PR="423" HEAD_SHA="deadbeefdeadbeef" \
+  GH_FIXTURE="$1" PATH="$work:$PATH" REPO="owner/repo" PR="423" HEAD_SHA="deadbeefdeadbeef" HEAD_REF="${CEILING_HEAD_REF:-}" \
     bash "$script" 2>&1
 }
 
@@ -169,6 +169,46 @@ FIXTURE
 # A Docker tag carries NO `update-type` - a major crossing by tag alone is not a semver comparison
 # Dependabot can make - and an empty `()` reads as a field nobody filled in.
 check "names an absent update-type rather than printing nothing" 1 "$work/no-type.json"   "${pg_next}-alpine (unclassified)"
+
+# -- The lockfile refresh's refusals bind the pull request that gets ARMED (WP-RUST-LOCK-AUTOMERGE) --
+# On a `deps/lock-refresh/` branch, a Tauri-runtime crate and a breaking update are refused HERE,
+# not only by the job that opened the branch. The same updates on Dependabot's own branch are not:
+# there the suite decides, as before.
+cat > "$work/tauri.json" <<'FIXTURE'
+chore(deps): bump tauri-plugin-fs
+
+updated-dependencies:
+- dependency-name: tauri-plugin-fs
+  dependency-version: 2.4.1
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+FIXTURE
+cat > "$work/breaking.json" <<'FIXTURE'
+chore(deps): bump serde
+
+updated-dependencies:
+- dependency-name: serde
+  dependency-version: 0.9.0
+  dependency-type: direct:production
+  update-type: version-update:semver-minor
+FIXTURE
+cat > "$work/patch.json" <<'FIXTURE'
+chore(deps): bump serde
+
+updated-dependencies:
+- dependency-name: serde
+  dependency-version: 1.0.5
+  dependency-type: direct:production
+  update-type: version-update:semver-patch
+FIXTURE
+CEILING_HEAD_REF=deps/lock-refresh/cargo/dependabot-12
+export CEILING_HEAD_REF
+check "a refresh branch refuses a Tauri-runtime crate" 1 "$work/tauri.json" "crate of the Tauri runtime"
+check "a refresh branch refuses a breaking update" 1 "$work/breaking.json" "breaking update"
+check "a refresh branch lets a compatible patch through" 0 "$work/patch.json" "serde -> 1.0.5"
+CEILING_HEAD_REF=dependabot/cargo/frontend/mls-core/tauri-plugin-fs-2.4.1
+check "Dependabot's own branch still leaves a runtime patch to the suite" 0 "$work/tauri.json" "tauri-plugin-fs -> 2.4.1"
+unset CEILING_HEAD_REF
 
 if [ "$failures" -ne 0 ]; then
   echo "$failures check(s) failed."

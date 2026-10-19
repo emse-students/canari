@@ -38,7 +38,8 @@ on:
     # Sundays, and TWO jobs read this one. The Actions cache quota is 10 GB and buildkit entries
     # are never evicted; GHCR image versions never expire either.
     - cron: '0 3 * * 0'
-    # Daily. Did the last stable release actually reach both stores?
+    # Daily, and TWO jobs read this one. Did the last stable release actually reach both stores? And
+    # does a Dependabot cargo pull request need its committed lockfiles completed?
     - cron: '0 9 * * *'
     # Mondays. Ask what the cargo directories Dependabot cannot reach are behind on. The dev copy
     # from production read this slot too until 2026-10-16; its successor, `dev-reset`, has no clock.
@@ -51,7 +52,7 @@ on:
         description: 'Which one to run by hand'
         type: choice
         default: all
-        options: [all, hosts, backups, log-retention, analysis, alerts, caches, ghcr-cleanup, dev-reset, stores, cargo-unreachable]
+        options: [all, hosts, backups, log-retention, analysis, alerts, caches, ghcr-cleanup, dev-reset, stores, cargo-unreachable, cargo-lock-refresh]
       dry_run:
         description: 'dev-reset only: report what would happen and change nothing'
         type: boolean
@@ -593,3 +594,79 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: bash .github/scripts/cargo-blocked-update-report.sh
+
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  # A DEPENDABOT CARGO BUMP THAT IS INCOMPLETE BY CONSTRUCTION, COMPLETED (WP-RUST-LOCK-AUTOMERGE)
+  #
+  # `mls-wasm` and `src-tauri` commit their own `Cargo.lock` and consume `mls-core` by path, so
+  # Dependabot's one pull request for an `mls-core` bump leaves both locks stale and fails CI's
+  # `cargo metadata --locked` - the last dependency update that could not merge unattended. THE
+  # USER DECIDED (2026-10-18) that a machine completes it and `CI passed` is the only verdict.
+  #
+  # IT RIDES THE DAILY 09:00 SLOT WITH `stores`. Dependabot opens security updates on any day, not
+  # only on its Monday run, and a run that finds nothing costs one API call. A late or dropped slot
+  # costs a late refresh, never a wrong merge: every decision reads durable state (the pull
+  # requests, the branch), so the next slot or a dispatch picks up exactly where this one stopped.
+  # What arms the new pull request, and the allowlist it must satisfy, is `arm-auto-merge.yml`;
+  # what refuses a dependency nothing here would see fail is `dependency-ceiling` in `ci.yml`,
+  # which reads the refresh branch too. The script header carries what it refuses and why.
+  #
+  # NOT PART OF `all`: that choice re-runs the REPORTS, and this job ACTS (it pushes, opens and
+  # closes pull requests), so it is picked by name, like `dev-reset`.
+  #
+  # TWO TOKENS, EACH FOR ONE THING. The push and the pull requests are the App's, minted with ONLY
+  # `contents: write` and `pull-requests: write` whatever else the App holds: a push made with
+  # `GITHUB_TOKEN` raises no `pull_request` run, so the refresh would sit with no `CI passed` at all
+  # (the anti-recursion rule `arm-auto-merge.yml` documents for the merge itself). The REPORT - an
+  # issue listing every refusal - is `GITHUB_TOKEN`'s, `issues: write` below, so the App needs no
+  # Issues permission. A refusal is work, so it is the issue; a FAILURE (an unreadable API, a cargo
+  # that cannot answer, a refused push) turns this run red, which is what `gh run list` shows.
+  # ═══════════════════════════════════════════════════════════════════════════════════════════════
+  cargo-lock-refresh:
+    name: Complete Dependabot's cargo bump (lockfiles)
+    if: >
+      github.event.schedule == '0 9 * * *' ||
+      (github.event_name == 'workflow_dispatch' && inputs.job == 'cargo-lock-refresh')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    # ONE RUN AT A TIME: two runs reading "no refresh pull request yet" at once would both build
+    # one. The second waits and then finds the first one's pull request - durable state again.
+    concurrency:
+      group: cargo-lock-refresh
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      # The report IS an issue. It is the only thing `GITHUB_TOKEN` writes here.
+      issues: write
+    steps:
+      - name: Mint the App identity that pushes and opens the pull request
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ secrets.AUTOMERGE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.AUTOMERGE_APP_PRIVATE_KEY }}
+          # The token is narrowed to what this job does, whatever the installation grants.
+          permission-contents: write
+          permission-pull-requests: write
+
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          token: ${{ steps.app-token.outputs.token }}
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Complete the pull requests that need it, and report what it refused
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          REPORT_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+          APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: |
+          set -euo pipefail
+          # The commit identity is the App's bot account, so GitHub resolves its commits to
+          # `<slug>[bot]` - the one login `arm-auto-merge.yml` accepts besides Dependabot's.
+          uid="$(gh api "users/${APP_SLUG}%5Bbot%5D" --jq .id)"
+          export COMMIT_NAME="${APP_SLUG}[bot]"
+          export COMMIT_EMAIL="${uid}+${APP_SLUG}[bot]@users.noreply.github.com"
+          bash .github/scripts/cargo-lock-refresh.sh
