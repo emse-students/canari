@@ -849,7 +849,7 @@ export class MlsDeliveryApi {
       const res = await this.f(`${this.historyUrl}/api/mls/devices/${userId}`, {
         headers: await this.auth(),
       });
-      if (!res.ok) throw new Error(`fetchUserDevices failed: ${res.status}`);
+      if (!res.ok) throw await refusalFromResponse(res, 'fetchUserDevices failed');
       // Raw device rows as returned by the server (untyped JSON). Optional metadata fields
       // are re-validated with `typeof` below before being kept.
       const devices = (await res.json()) as Array<{
@@ -1162,7 +1162,7 @@ export class MlsDeliveryApi {
     );
     if (res.status === 403) throw new NotAGroupMemberError(groupId);
     if (!res.ok) {
-      throw new Error(`GroupInfo fetch HTTP error: ${res.status}`);
+      throw await refusalFromResponse(res, 'GroupInfo fetch HTTP error');
     }
     const data = await res.json();
     // The server returns null (no body content) when nothing is stored.
@@ -1199,7 +1199,7 @@ export class MlsDeliveryApi {
       }
     );
     if (!res.ok) {
-      throw new Error(`GroupInfo store HTTP error: ${res.status}`);
+      throw await refusalFromResponse(res, 'GroupInfo store HTTP error');
     }
     const data = await res.json().catch(() => null);
     return { stored: data?.stored === true };
@@ -1613,7 +1613,7 @@ export class MlsDeliveryApi {
       headers: await this.auth({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ name }),
     });
-    if (!res.ok) throw new Error(`Rename failed: ${res.status}`);
+    if (!res.ok) throw await refusalFromResponse(res, 'Rename failed');
   }
 
   /** Sets or clears (mediaId=null) the group's avatar on the server. Throws on non-2xx. */
@@ -1623,7 +1623,7 @@ export class MlsDeliveryApi {
       headers: await this.auth({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ mediaId }),
     });
-    if (!res.ok) throw new Error(`setGroupImage failed: ${res.status}`);
+    if (!res.ok) throw await refusalFromResponse(res, 'setGroupImage failed');
   }
 
   /** Soft-deletes `groupId` on the server. Returns `false` if already absent (404). */
@@ -1663,7 +1663,7 @@ export class MlsDeliveryApi {
       headers: await this.auth(),
     });
     if (res.status === 403) throw new NotAGroupMemberError(groupId);
-    if (!res.ok) throw new Error(`getGroupMembers failed: ${res.status}`);
+    if (!res.ok) throw await refusalFromResponse(res, 'getGroupMembers failed');
     return await res.json();
   }
 
@@ -1679,7 +1679,7 @@ export class MlsDeliveryApi {
       const res = await this.f(`${this.historyUrl}/api/mls/groups/${groupId}/user-members`, {
         headers: await this.auth(),
       });
-      if (!res.ok) throw new Error(`getGroupUserMembers failed: ${res.status}`);
+      if (!res.ok) throw await refusalFromResponse(res, 'getGroupUserMembers failed');
       return await res.json();
     });
   }
@@ -1806,7 +1806,7 @@ export class MlsDeliveryApi {
         headers: await this.auth(),
       });
       if (!res.ok) {
-        throw new Error(`getUserGroups failed: ${res.status}`);
+        throw await refusalFromResponse(res, 'getUserGroups failed');
       }
       return (await res.json()) as UserGroupRow[];
     });
@@ -1915,7 +1915,7 @@ export class MlsDeliveryApi {
         body: JSON.stringify({ groupId }),
       }
     );
-    if (!res.ok) throw new Error(`dismissGroup refused: HTTP ${res.status}`);
+    if (!res.ok) throw await refusalFromResponse(res, 'dismissGroup refused');
   }
 
   /**
@@ -1927,7 +1927,7 @@ export class MlsDeliveryApi {
       `${this.historyUrl}/api/mls/users/${encodeURIComponent(this.userId)}/dismissed-groups/${encodeURIComponent(groupId)}`,
       { method: 'DELETE', headers: await this.auth() }
     );
-    if (!res.ok) throw new Error(`undismissGroup refused: HTTP ${res.status}`);
+    if (!res.ok) throw await refusalFromResponse(res, 'undismissGroup refused');
   }
 
   /**
@@ -2017,7 +2017,7 @@ export class MlsDeliveryApi {
         headers: await this.auth(),
       }
     );
-    if (!res.ok) throw new Error(`device-memberships answered ${res.status}`);
+    if (!res.ok) throw await refusalFromResponse(res, 'device-memberships');
     return await res.json();
   }
 
@@ -2046,7 +2046,7 @@ export class MlsDeliveryApi {
       headers: await this.auth({ 'Content-Type': 'application/json' }),
       body: JSON.stringify({ deviceId, userId, groupId }),
     });
-    if (!res.ok) throw new Error(`kickStaleDevice failed: ${res.status}`);
+    if (!res.ok) throw await refusalFromResponse(res, 'kickStaleDevice failed');
   }
 
   /** Deletes the membership row for a specific device+group pair. Returns `{ affected: 0 }` on error. */

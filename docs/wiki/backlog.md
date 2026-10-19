@@ -1279,8 +1279,9 @@ and every refused call of `forms/api.ts` and every bare-`fetch` upload, export a
 **Done 2026-10-18:** `minesweeper/api.ts`, `mls/groupInvites.ts`, `adminerSession.ts`, `vaultDownload.ts`
 and `mlsDeliveryApi.ts` (key package publish, device update, commit submit and replay) throw
 `refusalFromResponse`'s `ApiRefusalError`; the join page and the minesweeper submit word it from the status.
-**Still owed:** the other plain `new Error('... failed: <status>')` sites of `mlsDeliveryApi.ts` (device list,
-GroupInfo, rename, members, dismiss, kick), then the server codes themselves (a stable
+**Done 2026-10-18 (later):** the remaining plain status sites of `mlsDeliveryApi.ts` (device list, GroupInfo,
+rename, image, members, user groups, dismiss, device memberships, kick) throw `refusalFromResponse`'s `ApiRefusalError`.
+**Still owed:** the server codes themselves (a stable
 name per refusal a user can act on; model: `DEVICE_REVOKED`, `PARTNERSHIP_NO_CODES_LEFT`). The
 `sessionAuth.ts` site closed with step 2 of the damaged-MLS-state P1 (PK1): the init throws typed errors,
 and `serverProse.test.ts`'s allowlist is empty.
