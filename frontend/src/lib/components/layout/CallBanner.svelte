@@ -45,6 +45,17 @@
   });
   const statusText = $derived(callStatusText(call.kind, call.duration));
 
+  // THE BAR IS NEVER UNDER A LAYER (CALL-BAR-COVERED, Mi 9T and iPhone, 2026-10-19): with the
+  // new-post composer or its camera open, the bar sat under that layer and its hang-up could not be
+  // reached. `data-call-bar` lifts the banner column to `--z-call` and pushes every covering
+  // surface's top inset below it (app.css, "A MINIMISED CALL IS ABOVE EVERY LAYER").
+  $effect(() => {
+    const root = document.documentElement;
+    root.toggleAttribute('data-call-bar', visible);
+    if (visible) appendLog('[Call] top bar up - above every covering layer');
+    return () => root.removeAttribute('data-call-bar');
+  });
+
   function expand() {
     appendLog('[Call] banner tapped - back to the full screen');
     callView.expand();
