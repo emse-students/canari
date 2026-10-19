@@ -15,6 +15,7 @@ import { ApiRefusalError } from '$lib/utils/apiRefusal';
 import { pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
 import { capturePosterOf } from '$lib/reels/capturePoster';
 import { m } from '$lib/paraglide/messages';
+import type { PublishReelDeps } from '$lib/reels/publishReel';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { adoptTransitionAnimations } from '../../../test/adoptTransitionAnimations';
 
@@ -25,7 +26,8 @@ const showConfirm = vi.hoisted(() => vi.fn());
 vi.mock('$lib/stores/confirm.svelte', () => ({ showConfirm }));
 const getReelLimits = vi.fn();
 vi.mock('$lib/posts/api', () => ({ getReelLimits: () => getReelLimits() }));
-vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, goto: vi.fn() }));
+const goto = vi.hoisted(() => vi.fn());
+vi.mock('$app/navigation', () => ({ afterNavigate: () => {}, goto }));
 const runtime = vi.hoisted(() => ({ iosApp: false }));
 vi.mock('$lib/utils/appVersion', () => ({
   isIosTauriRuntime: () => runtime.iosApp,
@@ -503,11 +505,15 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
     expect(target.querySelector('[data-reel-sound]')).toBeNull();
   });
 
-  it('a filmed post take carries its first picture as its thumbnail, taken BEFORE the recorder starts (Mi 9T, v1.2.9-alpha.1)', async () => {
+  it('a video filmed in the post EDITOR carries its first picture as its thumbnail, taken BEFORE the recorder starts (Mi 9T, v1.2.9-alpha.1)', async () => {
     const still = new Blob(['first-frame'], { type: 'image/jpeg' });
     framed.thumbnail.mockReturnValue(still);
     const oncapture = vi.fn();
-    const { target, hold } = await render({ destination: 'post', oncapture, onclose: vi.fn() });
+    const { target, hold } = await render({
+      destination: 'post-edit',
+      oncapture,
+      onclose: vi.fn(),
+    });
     await hold();
     target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
     await settle();
@@ -659,5 +665,128 @@ describe('ReelCapture as a composer destination (D-camera, 2026-10-11)', () => {
   it('the feed keeps its gallery shortcut and the publish step', async () => {
     const { target } = await render();
     expect(target.querySelector('[aria-label="' + m.reels_capture_gallery() + '"]')).not.toBeNull();
+  });
+});
+
+describe('one camera, one behaviour (user, 2026-10-19): a video filmed from the new-post composer is a CanaReel', () => {
+  function publishDeps(): PublishReelDeps {
+    return {
+      assertNotMuted: vi.fn(async () => {}),
+      getToken: vi.fn(async () => 'tok'),
+      uploadLimits: vi.fn(async () => ({ maxPlaintextBytes: 1000 })),
+      prepare: vi.fn(async () => ({
+        file: new File([new Uint8Array(4)], 'reel.mp4', { type: 'video/mp4' }),
+        width: 720,
+        height: 1280,
+        durationSeconds: 3,
+        sourceBytes: 8,
+        outputBytes: 4,
+      })),
+      upload: vi.fn(async () => ({
+        type: 'video' as const,
+        mediaId: 'm-1',
+        key: 'k',
+        iv: 'i',
+        mimeType: 'video/mp4',
+        size: 4,
+      })),
+      createPost: vi.fn(async () => ({ id: 'p-1' }) as never),
+    };
+  }
+
+  /** Films one take, presses the review's Next, then the publish step's "Publier". */
+  async function filmAndPublish(extra: Record<string, unknown>) {
+    const deps = publishDeps();
+    const { target, hold } = await render({ publishDeps: deps, ...extra });
+    await hold();
+    target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
+    await settle();
+    const sheet = target.querySelector('[data-reel-publish]');
+    target.querySelector<HTMLButtonElement>('[data-reel-publish-submit]')?.click();
+    await settle();
+    return { deps, sheet, target };
+  }
+
+  it('the same filmed video creates the same post from the tab and from the composer: kind reel, its duration', async () => {
+    const tab = await filmAndPublish({});
+    unmount(mounted.pop()!);
+    const oncapture = vi.fn();
+    const onpublished = vi.fn();
+    const onclose = vi.fn();
+    const composer = await filmAndPublish({
+      destination: 'post',
+      oncapture,
+      onpublished,
+      onclose,
+      composerCaption: 'hello',
+      composerIdentity: '',
+    });
+
+    expect(tab.sheet).not.toBeNull();
+    expect(composer.sheet).not.toBeNull();
+    const created = (d: PublishReelDeps) => vi.mocked(d.createPost).mock.calls[0][0];
+    expect(created(tab.deps)).toMatchObject({ kind: 'reel', durationMs: 3000 });
+    expect(created(composer.deps)).toMatchObject({
+      kind: 'reel',
+      durationMs: 3000,
+      markdown: 'hello',
+    });
+    // The tab lands on the feed; the composer closes behind its reel, never handed a file.
+    expect(goto).toHaveBeenCalledTimes(1);
+    expect(onpublished).toHaveBeenCalledWith('');
+    expect(onclose).toHaveBeenCalledTimes(1);
+    expect(oncapture).not.toHaveBeenCalled();
+  });
+
+  it('from the composer the publish step says the reel is deleted, and "Garder comme post" hands the video back', async () => {
+    const still = new Blob(['first-frame'], { type: 'image/jpeg' });
+    framed.thumbnail.mockReturnValue(still);
+    const oncapture = vi.fn();
+    const onclose = vi.fn();
+    const { target, hold } = await render({
+      destination: 'post',
+      oncapture,
+      onclose,
+      publishDeps: publishDeps(),
+    });
+    await hold();
+    target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
+    await settle();
+    expect(target.querySelector('[data-reel-publish-composer-notice]')).not.toBeNull();
+
+    target.querySelector<HTMLButtonElement>('[data-reel-keep-as-post]')!.click();
+    await settle();
+
+    const file = oncapture.mock.calls[0][0] as File;
+    expect(file.type).toMatch(/^video\//);
+    expect(capturePosterOf(file)).toBe(still);
+    expect(onclose).toHaveBeenCalledTimes(1);
+  });
+
+  it('a PHOTO from the new-post composer is still handed back as a file', async () => {
+    const oncapture = vi.fn();
+    const { target, tap } = await render({ destination: 'post', oncapture, onclose: vi.fn() });
+    await tap();
+    target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
+    await settle();
+    expect((oncapture.mock.calls[0][0] as File).type).toBe('image/jpeg');
+    expect(target.querySelector('[data-reel-publish]')).toBeNull();
+  });
+
+  it('the post EDITOR attaches a filmed video and never opens the reel publish step', async () => {
+    const oncapture = vi.fn();
+    const { target, hold } = await render({
+      destination: 'post-edit',
+      oncapture,
+      onclose: vi.fn(),
+    });
+    await hold();
+    expect(target.querySelector('[data-reel-next]')?.textContent?.trim()).toBe(
+      m.reels_review_add()
+    );
+    target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
+    await settle();
+    expect((oncapture.mock.calls[0][0] as File).type).toMatch(/^video\//);
+    expect(target.querySelector('[data-reel-publish]')).toBeNull();
   });
 });

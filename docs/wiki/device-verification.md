@@ -1237,6 +1237,30 @@ Record per phone: the engine's MSE flavour (`MediaSource` on the Mi 9T, `Managed
 iPhone), any `append failed` or `did not open` line, and whether `endstreaming` from
 `ManagedMediaSource` (ignored in v1) left the iPhone starved.
 
+## CR. The composer's camera films a CanaReel - owed on BOTH phones
+
+**Proves** [one camera, one behaviour](frontend/modules/reels.md#the-two-ways-into-the-camera-publish-the-same-thing-2026-10-19)
+on real hardware: every gate here replaces the camera, the recorder and the server, so whether the
+overlay, the publish step and the composer's modal hand over cleanly (history entries, the native
+chrome on iOS, the keyboard) is read here only. **Precondition:** a pre-release carrying it, a bench
+account, the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[reel-capture]`,
+`[reel-publish]` and `[POST_COMPOSER]` lines.
+
+1. **"+" -> new post**, type a line of text, "Ouvrir la caméra", HOLD the shutter ~3 s. Expect the
+   review, then "Suivant" opens "Nouveau CanaReel" with the amber line "CanaReel : supprimé au bout
+   de 30 jours..." ABOVE the identity, and the text as the caption.
+2. **"Publier"**: the toast "CanaReel publié", the camera AND the composer gone, the feed under it
+   showing the reel as a 9:16 card that opens the reel viewer. Reopen "+": the text is NOT offered
+   again. The server row is `kind='reel'` with `durationMs` (the same as a reel filmed from the tab).
+3. **Again, but "Garder comme post"**: back in the composer with the video attached and the text
+   intact; "Publier" makes an ordinary post (the file's ratio, the media viewer).
+4. **A TAP in the composer's camera** (a photo): "Ajouter" attaches it to the composer, no publish step.
+5. **"Photo/vidéo" -> a gallery video**: attached to the composer, published as a post, never a reel.
+6. **Edit an existing post -> its camera -> HOLD**: "Ajouter" attaches the video; no publish step.
+7. **Back / the edge swipe** from the publish step returns to the take, a second one asks to discard
+   it, a third closes the camera onto the composer (iPhone: the native tab bar and chrome stay hidden
+   while the camera is up).
+
 ## The iPhone 12 owed-readings inventory (2026-10-11)
 
 Every reading the wiki, the backlog, `CLAUDE.md` and the pull requests of 2026-10-09 to 2026-10-11

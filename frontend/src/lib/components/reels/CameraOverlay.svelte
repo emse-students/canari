@@ -57,9 +57,22 @@
     onclose: () => void;
     /** The session, injectable for tests. */
     session?: CameraSession;
+    /** The new-post composer's text and identity, the start of a reel filmed from it (`post`). */
+    composerCaption?: string;
+    composerIdentity?: string;
+    /** A reel filmed from the new-post composer was published (`post`). */
+    onpublished?: (identity: string) => void;
   }
 
-  let { destination, oncapture, onclose, session }: Props = $props();
+  let {
+    destination,
+    oncapture,
+    onclose,
+    session,
+    composerCaption,
+    composerIdentity,
+    onpublished,
+  }: Props = $props();
 
   /**
    * Where the overlay stack holds entries (`isMobileOverlayLayout`) - the one predicate the swipe and
@@ -112,5 +125,13 @@
   aria-label={m.chat_attach_menu_camera()}
   data-camera-overlay={destination}
 >
-  <ReelCapture {session} {destination} {oncapture} {onclose} />
+  <ReelCapture
+    {session}
+    {destination}
+    {oncapture}
+    {onclose}
+    {composerCaption}
+    {composerIdentity}
+    {onpublished}
+  />
 </div>

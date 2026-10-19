@@ -183,7 +183,7 @@ once the swipe back reached `/posts`. On both phones the shutter stayed disabled
 
 ## The capture screen (C4)
 
-The app's own, never the system camera (`components/reels/ReelCapture.svelte` over `CameraScreen`). **It is also the ONLY capture path of the composers (user, 2026-10-11, D-camera)**: `ReelCapture` takes a `destination` - `feed` (this tab: the review leads to the publish step), `post` (photo or video, handed back as a FILE to the post composer, post retention) or `chat` (PHOTOS ONLY, handed back to the chat as an ordinary image message) - and a composer mounts it inside `CameraOverlay`, a full-screen layer over the page, never the `/camera` tab ([reels-in-chat](reels-in-chat.md#1-entering-the-camera-from-a-conversation)). The tab:
+The app's own, never the system camera (`components/reels/ReelCapture.svelte` over `CameraScreen`). **It is also the ONLY capture path of the composers (user, 2026-10-11, D-camera)**: `ReelCapture` takes a `destination` - `feed` (this tab: the review leads to the publish step), `post` (the NEW-post composer: a photo handed back as a FILE, a filmed video a CanaReel since 2026-10-19 - [below](#the-two-ways-into-the-camera-publish-the-same-thing-2026-10-19)), `post-edit` (the post editor: photo or video handed back as a FILE, post retention) or `chat` (PHOTOS ONLY, handed back to the chat as an ordinary image message) - and a composer mounts it inside `CameraOverlay`, a full-screen layer over the page, never the `/camera` tab ([reels-in-chat](reels-in-chat.md#1-entering-the-camera-from-a-conversation)). The tab:
 a full-screen preview, the close and lens controls at the top (switch, and the torch where the lens
 has one), the gallery bottom-left, and the shutter in the middle.
 
@@ -314,34 +314,36 @@ as an ordinary post: the server contract defines a reel as exactly one video wit
 photo must not be disguised as a reel. Video decorations use the same editor and are rendered into a
 local MediaRecorder stream before the existing H.264/AAC preparation path.
 
-## The two ways into the camera, and what each publishes (2026-10-19)
+## The two ways into the camera publish the same thing (2026-10-19)
 
-**User report, relayed 2026-10-19: "+" then the camera does something different from swiping to
-the camera.** It does, and by decision: D-camera (user, 2026-10-11) keeps retention by DESTINATION,
-so ONE camera (`ReelCapture` over `CameraScreen`) feeds two publications. The production post that
-prompted the report (2026-10-19 08:09 UTC: `kind='post'`, one 360x480 video, no `durationMs`) is
-neither of today's paths: 360x480 portrait is the iOS SYSTEM camera's medium quality, reached by the
-`<input capture>` the post composer carried until D-camera (#1859, first stable `v1.2.9`) - so an app
-older than `v1.2.9`, or Safari's file sheet (a web page cannot remove its "take a video"). Inferred
-from the frame size; the publishing session's client version would settle it.
+**User report, relayed 2026-10-19: "+" then the camera did something different from swiping to the
+camera.** It did, by D-camera's retention by DESTINATION: a video filmed from the new-post composer
+was handed back as a file and published as `kind='post'`. **Decided by the user the same day:
+one camera, one behaviour (option B of three - keep it, make it a reel, or ask).** The production
+post behind the report (`kind='post'`, one 360x480 video, no `durationMs`) was neither path: 360x480
+portrait is the iOS SYSTEM camera's medium quality, reached by the `<input capture>` the composer
+carried until D-camera (#1859, first stable `v1.2.9`) - an older app, or Safari's file sheet, which a
+web page cannot remove.
 
-| | Swipe from the feed (`/camera` tab) | "+" -> composer -> "Caméra" chip |
-| --- | --- | --- |
-| Component | `routes/camera` -> `ReelCapture destination="feed"` | `PostComposerBar` -> `CameraOverlay` -> `ReelCapture destination="post"` |
-| Capture | the same: front lens, the preview's crop, 90 s ring from `reel-limits` | the same |
-| Microphone | with the lens: refused = no camera | asked apart: refused = photos only |
-| Gallery tile / sound removal | yes / yes | no (the composer has its own "Photo/vidéo") / no |
-| After the review | "Suivant" -> `ReelPublishSheet`: caption + identity only | the take is handed back as a FILE: text, identity, poll, form, event, schedule, other media |
-| Preparation | `prepareVideoForUpload`, `feed` profile (720p) | the same, through `preparePostMedia` |
-| Upload class | `reel-pending` -> `reel` (30 days) | the post class |
-| `POST /api/posts` | `kind: 'reel'`, `durationMs` | `kind: 'post'`, no duration |
-| In the feed | 9:16 box, opens the reel viewer, listed by `allReels` | the file's ratio, opens the media viewer, not a reel |
-| Lifetime | deleted at 30 days with comments and reactions | kept like any post |
-| A PHOTO | an ordinary post from both | the same |
+| | Swipe from the feed (`/camera` tab) | "+" -> new post -> "Caméra" chip | The post editor's camera |
+| --- | --- | --- | --- |
+| Component | `ReelCapture destination="feed"` | `PostComposerBar reel` -> `CameraOverlay` -> `ReelCapture destination="post"` | `PostComposerBar` (no `reel`) -> `destination="post-edit"` |
+| Capture | front lens, the preview's crop, 90 s ring from `reel-limits` | the same | the same |
+| Microphone | with the lens: refused = no camera | asked apart: refused = photos only | asked apart |
+| A FILMED VIDEO | `ReelPublishSheet` -> `kind:'reel'`, `durationMs`, `reel` class (30 days) | **the same** `ReelPublishSheet`, `kind:'reel'`, `durationMs`; caption = the composer's text, identity = its choice | handed back as a file: an existing post never becomes a reel |
+| What the step adds from the composer | - | an amber notice "CanaReel : supprimé au bout de 30 jours" BEFORE "Publier", and "Garder comme post", which hands the video back to the composer as before | - |
+| After publishing | lands on `/posts` (replace) | the composer's text is spent (the draft is saved without it at once), the composer closes, the feed shows where the reel landed | - |
+| A PHOTO | the publish step, an ordinary post | handed back to the composer, an ordinary post | handed back |
+| Gallery / sound removal | yes / yes | no (the composer has "Photo/vidéo", whose video stays a POST) / no | no / no |
 
-**Whether a video FILMED from the composer should become a CanaReel is the USER's decision,
-not built** - it reverses D-camera's retention by destination and would delete those videos at 30
-days. The options and the recommendation: [backlog](../../backlog.md#decision-for-the-user---a-video-filmed-from-the-post-composer-is-a-post-or-a-canareel-2026-10-19).
+One table decides it (`destinationRules` + `handsBackTake` in `reels/reelCapture.ts`): a photo and
+a video of the same destination may part ways. Pinned by `ReelCapture.svelte.test.ts` (the same
+filmed video creates `kind:'reel'` with its duration from the tab and from the composer; the photo
+and the editor still hand back; "Garder comme post" hands the video back with its poster),
+`ReelPublishSheet.svelte.test.ts` (the notice, the caption, no navigation from the composer),
+`CreatePostForm.svelte.test.ts` (the text is spent and the composer closes) and
+`PostComposerBar.svelte.test.ts` (new post vs editor). On phones:
+[check CR](../../device-verification.md#cr-the-composers-camera-films-a-canareel---owed-on-both-phones).
 
 ## Publishing (R3, on C2 and C3)
 

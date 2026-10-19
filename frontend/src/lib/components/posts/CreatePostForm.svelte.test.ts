@@ -13,7 +13,11 @@ import {
   forgetPostComposerMedia,
   heldPostComposerMedia,
   holdPostComposerMedia,
+  emptyPostComposerDraft,
+  loadPostComposerDraft,
+  savePostComposerDraft,
 } from '$lib/posts/postComposerDraft';
+import { cameraOverlayStub } from '../reels/cameraOverlayStub.test-helper';
 
 vi.mock('$lib/forms/api', () => ({ getForms: () => Promise.resolve([]) }));
 vi.mock('$lib/posts/postIdentity', async (orig) => ({
@@ -25,6 +29,10 @@ vi.mock('$lib/posts/api', async (orig) => ({
   createPost: vi.fn(),
   getReelLimits: () =>
     Promise.resolve({ maxDurationMs: 90_000, retentionDays: 30, warningWindowDays: 7 }),
+}));
+
+vi.mock('$lib/components/reels/CameraOverlay.svelte', async () => ({
+  default: (await import('../reels/CameraOverlayStub.test-helper.svelte')).default,
 }));
 
 // The media strip and the draft banner leave by an outro.
@@ -58,11 +66,12 @@ afterEach(() => {
 async function open() {
   const target = document.createElement('div');
   document.body.appendChild(target);
-  const app = mount(CreatePostForm, { target, props: { onPostCreated: vi.fn() } });
+  const onPostCreated = vi.fn();
+  const app = mount(CreatePostForm, { target, props: { onPostCreated } });
   mounted.push(app);
   flushSync();
   await tick();
-  return { target, app };
+  return { target, app, onPostCreated };
 }
 
 function pick(target: HTMLElement, file: File) {
@@ -142,5 +151,28 @@ describe('CreatePostForm - the strip of picked files', () => {
       pick(target, new File(['x'], name, { type: 'image/png' }));
     }
     expect(target.querySelectorAll('[role="listitem"]')).toHaveLength(12);
+  });
+});
+
+describe('CreatePostForm - a video filmed with its camera is a CanaReel (one camera, one behaviour, 2026-10-19)', () => {
+  it('hands its text to the camera as the caption, and once the reel is published the text is spent and the composer closes', async () => {
+    savePostComposerDraft(emptyPostComposerDraft('a caption written first'));
+    const { target, onPostCreated } = await open();
+    await tick();
+
+    target.querySelector<HTMLButtonElement>('button[data-post-camera]')!.click();
+    flushSync();
+    expect(cameraOverlayStub.last).toEqual({
+      destination: 'post',
+      composerCaption: 'a caption written first',
+      composerIdentity: '',
+    });
+
+    document.querySelector<HTMLButtonElement>('[data-camera-overlay-stub-publish]')!.click();
+    flushSync();
+
+    expect(onPostCreated).toHaveBeenCalledTimes(1);
+    // The text became the reel's caption: the next open must not offer it again.
+    expect(loadPostComposerDraft()).toBeNull();
   });
 });

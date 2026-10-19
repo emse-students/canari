@@ -229,21 +229,28 @@
     savePostComposerDraft(snapshotComposerDraft());
   }
 
+  /** Saves the composer as it is now, or forgets the draft when nothing in it is worth keeping. */
+  function saveOrClearComposerDraft(): boolean {
+    const snap = snapshotComposerDraft();
+    if (isPostComposerDraftWorthKeeping(withoutAbandonedAttachments(snap))) {
+      savePostComposerDraft(snap);
+      return true;
+    }
+    clearPostComposerDraft();
+    return false;
+  }
+
   /** Debounced draft save after any composer field changes. */
   $effect(() => {
     void snapshotComposerDraft();
     if (draftSaveTimer) clearTimeout(draftSaveTimer);
     let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
     draftSaveTimer = setTimeout(() => {
-      const snap = snapshotComposerDraft();
-      if (isPostComposerDraftWorthKeeping(withoutAbandonedAttachments(snap))) {
-        savePostComposerDraft(snap);
+      if (saveOrClearComposerDraft()) {
         draftSaved = true;
         feedbackTimer = setTimeout(() => {
           draftSaved = false;
         }, 1800);
-      } else {
-        clearPostComposerDraft();
       }
     }, 800);
     // Clear both timers on re-run or component destruction.
@@ -252,6 +259,19 @@
       if (feedbackTimer) clearTimeout(feedbackTimer);
     };
   });
+
+  /**
+   * A video filmed with this composer's camera was published as a CanaReel (one camera, one
+   * behaviour, user 2026-10-19). Its caption WAS this text, so the text goes - and the draft is
+   * saved now, not by the debounce the closing composer would cancel, or the next open would bring
+   * back a caption already published. Whatever else was here (media, poll, form) stays as the draft.
+   */
+  function onReelPublished(identity: string) {
+    Log.d('POST_COMPOSER', 'a reel filmed from this composer was published: its text is spent');
+    markdown = '';
+    saveOrClearComposerDraft();
+    onPostCreated(landingFeedFor({ asAssociation: !!identity, scheduled: false }));
+  }
 
   /*
    * THE ERROR BANNER USED TO ERASE ITSELF AFTER 5 SECONDS, AND THAT IS WHY A REPORT ARRIVED WITH
@@ -728,6 +748,11 @@
       onLive={LIVE_ENABLED && !isAnonymousSelected && (!isAssociationSelected || liveAssociation)
         ? () => (liveOpen = true)
         : undefined}
+      reel={{
+        caption: markdown,
+        identity: selectedAssociationId,
+        onpublished: onReelPublished,
+      }}
     >
       {#snippet action()}
         <Button

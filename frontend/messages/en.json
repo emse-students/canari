@@ -3507,6 +3507,8 @@
   "reels_publish_done": "CanaReel published",
   "reels_publish_error": "The CanaReel could not be published. Try again.",
   "reels_publish_expiry_note": "Visible for {days} days, then deleted automatically. You can save it to your gallery before then.",
+  "reels_publish_from_composer_notice": "CanaReel: deleted after {days} days. To keep the video, keep it as a post.",
+  "reels_publish_keep_as_post": "Keep as a post",
   "reels_viewer_label": "CanaReels",
   "reels_viewer_close": "Close CanaReels",
   "reels_viewer_prev": "Previous CanaReel",

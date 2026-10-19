@@ -10,9 +10,9 @@
    * leaving the camera; a Back during the re-encode also stops it. Once the upload has begun nothing
    * is cancelled: the reel is being created, and the feed it lands on is where it appears.
    */
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { fade } from 'svelte/transition';
-  import { ChevronLeft, CircleAlert } from '@lucide/svelte';
+  import { ChevronLeft, CircleAlert, Clock } from '@lucide/svelte';
   import { goto } from '$app/navigation';
   import PostIdentityPicker from '$lib/components/posts/PostIdentityPicker.svelte';
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
@@ -37,6 +37,23 @@
   import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
   import { m } from '$lib/paraglide/messages';
 
+  /**
+   * The step was reached from the new-post composer's camera (user, 2026-10-19: one camera, one
+   * behaviour). A member who opened "new post" may not expect a CanaReel, which is DELETED after its
+   * days - so the step says so before "Publier", starts from what the composer held, and offers the
+   * old outcome: the video handed back to the composer, kept as an ordinary post.
+   */
+  interface ReelPublishFromComposer {
+    /** The composer's text, the caption's start. */
+    caption: string;
+    /** The composer's "who is publishing" choice, the picker's start. */
+    identity: string;
+    /** "Garder comme post": the video goes back to the composer as an attachment. */
+    onkeep: () => void;
+    /** The reel was published, as `identity`: the composer closes behind it. */
+    onpublished: (identity: string) => void;
+  }
+
   interface Props {
     clip: ReelClip;
     limits: ReelLimits;
@@ -44,12 +61,15 @@
     onclose: () => void;
     /** Injectable for tests; the real services otherwise. */
     deps?: PublishReelDeps;
+    /** Set when the take was filmed from the new-post composer; absent on the CanaReels tab. */
+    composer?: ReelPublishFromComposer;
   }
 
-  let { clip, limits, onclose, deps }: Props = $props();
+  let { clip, limits, onclose, deps, composer }: Props = $props();
 
-  let caption = $state('');
-  let identity = $state('');
+  // Read once: the step starts from the composer and is the member's to change from there.
+  let caption = $state(untrack(() => composer?.caption ?? ''));
+  let identity = $state(untrack(() => composer?.identity ?? ''));
   let associations = $state<Association[]>([]);
   let publishing = $state(false);
   let stage = $state<PublishStage | null>(null);
@@ -125,6 +145,11 @@
         );
       }
       showToast(m.reels_publish_done(), 'info');
+      if (composer) {
+        // Over the composer on the feed already: the composer closes, no navigation.
+        composer.onpublished(identity);
+        return;
+      }
       await goto(resolve('/posts'), { replaceState: true });
     } catch (err) {
       const cause = err instanceof ReelPublishError ? err.cause : err;
@@ -172,6 +197,15 @@
   </header>
 
   <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-4 pb-3">
+    {#if composer}
+      <p
+        class="mb-4 flex items-start gap-2 rounded-lg bg-amber-500/15 px-3 py-2.5 text-sm font-semibold text-amber-700 dark:text-amber-400"
+        data-reel-publish-composer-notice
+      >
+        <Clock size={16} strokeWidth={2.5} class="mt-0.5 shrink-0" />
+        <span>{m.reels_publish_from_composer_notice({ days: limits.retentionDays })}</span>
+      </p>
+    {/if}
     <PostIdentityPicker id="reel-identity-select" {associations} bind:value={identity} />
 
     <div class="mt-4 flex gap-3">
@@ -248,6 +282,20 @@
     <div class="flex items-center justify-end gap-3">
       {#if busyLabel}
         <span class="text-text-muted text-sm" aria-live="polite">{busyLabel}</span>
+      {:else if composer}
+        <Button
+          type="button"
+          variant="outline"
+          class="shrink-0 px-4 py-2 text-sm font-semibold"
+          disabled={publishing}
+          onclick={() => {
+            console.debug('[reel-publish] kept as a post: the video goes back to the composer');
+            composer.onkeep();
+          }}
+          data-reel-keep-as-post
+        >
+          {m.reels_publish_keep_as_post()}
+        </Button>
       {/if}
       <Button
         type="button"

@@ -62,7 +62,7 @@ async function settle() {
   flushSync();
 }
 
-async function render(d: PublishReelDeps, onclose = vi.fn()) {
+async function render(d: PublishReelDeps, onclose = vi.fn(), extra: Record<string, unknown> = {}) {
   const target = document.createElement('div');
   document.body.appendChild(target);
   mounted.push(
@@ -73,6 +73,7 @@ async function render(d: PublishReelDeps, onclose = vi.fn()) {
         limits: { maxDurationMs: 90_000, retentionDays: 30, warningWindowDays: 7 },
         onclose,
         deps: d,
+        ...extra,
       },
     })
   );
@@ -204,5 +205,52 @@ describe('ReelPublishSheet', () => {
     video.dispatchEvent(new Event('loadeddata'));
     flushSync();
     expect(box.querySelector('[aria-hidden="true"].bg-linear-to-br')).toBeNull();
+  });
+});
+
+describe('ReelPublishSheet reached from the new-post composer (one camera, one behaviour, 2026-10-19)', () => {
+  function composer() {
+    return { caption: 'from the composer', identity: '', onkeep: vi.fn(), onpublished: vi.fn() };
+  }
+
+  it('says BEFORE publishing that the CanaReel is deleted after its days, and starts from the text', async () => {
+    const c = composer();
+    const { target } = await render(deps(), vi.fn(), { composer: c });
+    const notice = target.querySelector('[data-reel-publish-composer-notice]');
+    expect(notice?.textContent?.trim()).toBe(m.reels_publish_from_composer_notice({ days: 30 }));
+    expect(target.querySelector<HTMLTextAreaElement>('[data-reel-caption]')!.value).toBe(
+      'from the composer'
+    );
+  });
+
+  it('publishes a reel and hands the landing to the composer, with no navigation', async () => {
+    const d = deps();
+    const c = composer();
+    const { submit } = await render(d, vi.fn(), { composer: c });
+    submit().click();
+    await settle();
+    expect(d.createPost).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'reel', markdown: 'from the composer', durationMs: 3000 })
+    );
+    expect(c.onpublished).toHaveBeenCalledWith('');
+    expect(goto).not.toHaveBeenCalled();
+  });
+
+  it('"Garder comme post" hands the video back and publishes nothing', async () => {
+    const d = deps();
+    const c = composer();
+    const { target } = await render(d, vi.fn(), { composer: c });
+    const keep = target.querySelector<HTMLButtonElement>('[data-reel-keep-as-post]')!;
+    expect(keep.textContent?.trim()).toBe(m.reels_publish_keep_as_post());
+    keep.click();
+    await settle();
+    expect(c.onkeep).toHaveBeenCalledTimes(1);
+    expect(d.createPost).not.toHaveBeenCalled();
+  });
+
+  it('on the CanaReels tab there is neither the notice nor the way back to a post', async () => {
+    const { target } = await render(deps());
+    expect(target.querySelector('[data-reel-publish-composer-notice]')).toBeNull();
+    expect(target.querySelector('[data-reel-keep-as-post]')).toBeNull();
   });
 });
