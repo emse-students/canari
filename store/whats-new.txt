@@ -1,3 +1,3 @@
-version: 1.3.0
+version: 1.3.1
 
-Nouveau : les réservations de salles et de ressources, avec créneaux, affiche, pièces jointes et export pour les organisateurs. Un GIF se charge désormais via Canari. La présence n'est visible que des personnes qui partagent une conversation ou une communauté. Les notifications sont dans la langue de l'application. Un message en échec peut être relancé, et supprimer un compte efface aussi ses données locales.
+Nouveau : un double-tap aime un post ou un CanaReel ; la caméra du nouveau post filme directement un CanaReel ; une association peut republier le post d'une personne avec son accord ; « Mes institutions » et « Mes listes » ont leur onglet ; la grille des réservations est plus dense et se remplit en glissant. Corrigé : supprimer une association ou un formulaire fonctionne à nouveau, et ouvrir la caméra ne rend plus l'application sombre.
