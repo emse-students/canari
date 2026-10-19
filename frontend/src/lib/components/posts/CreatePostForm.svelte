@@ -585,7 +585,7 @@
         transition:slide={{ duration: 200 }}
         role="list"
       >
-        {#each selectedFiles as file, i (file.name + i)}
+        {#each selectedFiles as file, i (`${i}:${file.name}`)}
           {@const Icon = fileTypeIcon(file)}
           <div class="flex w-28 shrink-0 snap-start flex-col gap-1.5" role="listitem">
             <div

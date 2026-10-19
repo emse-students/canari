@@ -199,7 +199,7 @@
             : 'grid-cols-2'}"
           data-post-gallery={gallery.shape}
         >
-          {#each lightboxMedia.slice(0, gallery.visible) as media, i (media.mediaId)}
+          {#each lightboxMedia.slice(0, gallery.visible) as media, i (`${i}:${media.mediaId}`)}
             {@const featured = gallery.shape === 'feature' && i === 0}
             {@const overflowCell = gallery.overflow > 0 && i === gallery.visible - 1}
             <div
@@ -242,7 +242,7 @@
           {/each}
         </div>
       {/if}
-      {#each documentMedia as media, i (media.mediaId)}
+      {#each documentMedia as media, i (`${i}:${media.mediaId}`)}
         <div class={gallery.shape !== 'none' || i > 0 ? 'mt-2' : ''} data-gallery-document>
           {@render singleMedia(media)}
         </div>
