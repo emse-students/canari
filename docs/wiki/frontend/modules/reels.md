@@ -548,14 +548,18 @@ below; **owed on both phones**
   **the reader's OWN emoji in its place for any other kind** (lead's decision after review,
   2026-10-19), named "Votre réaction : ..., retirer" - so a tap, which takes the reader's reaction
   back, never removes a 😂 the rail did not show. With none, a tap gives "J'aime". The number is
-  every reaction. Changing to another kind stays the card's picker. Same path as the double tap
+  every reaction; a kind this client does not know (a newer server's) is named "Votre réaction",
+  never "J'aime". Changing to another kind stays the card's picker. Same path as the double tap
   (`toggledReactions`, `sendPostReaction`, `publishPostReactions`, rollback + toast), and **one
   reaction in flight per reel**: a second tap (heart or double tap) before the server answered is
   ignored and logged, so two answers never land out of order and a rollback returns to a state no
-  later tap moved.
+  later tap moved. A request the server never answers does not hold the heart forever: every
+  `apiFetch` carries its response deadline (`RequestDeadlineError`), which rolls the heart back
+  with the card's sentence and frees it.
 - **The comment number is the server's total** (`commentCount`, `posts/commentChange.ts`): a list
   row carries only the newest twenty comments, so `comments.length` read "20" for a post of 57 -
-  on the rail and on the card's button alike. Every write keeps the total in step.
+  on the rail and on the card's button alike. Every write keeps the total in step, and "load all"
+  (`GET /api/posts/:id`, every comment and no total) sets it to the rows it read.
 - **Send is the post menu's share** (`posts/sharePost.ts`: copy the public link, toast). Sending a
   post INTO a conversation does not exist; it is an owed decision, not built here.
 - **The comments sheet** (`ReelCommentsSheet`): the POST's own thread - `PostComments` in its
@@ -585,9 +589,13 @@ below; **owed on both phones**
 - **The mouse wheel turns the page on a desktop** (user, 2026-10-19; `reels/reelWheel.ts`): a notch
   down is the next reel, up the previous, through `go` - the arrow buttons' and keys' own step. ONE
   GESTURE, ONE PAGE: a trackpad flick or a free-spinning wheel sends dozens of events and its
-  inertia keeps going after the page lands, so the first consumed event takes a lock released only
-  when the transition has landed AND the wheel has been quiet for `WHEEL_QUIET_MS` (200 ms; the
-  wheel sends no "end" event, so the quiet is the only proof a gesture ended). Left to the browser:
+  inertia keeps going after the page lands, so a new page turns only when the last one has landed
+  (the viewer's own `settling`, the one state every entry point reads) AND the wheel has been quiet
+  for `WHEEL_QUIET_MS` (200 ms; the wheel sends no "end" event, so the quiet is the only proof a
+  gesture ended). The chevrons wait for `settling` like the keys and the swipe, a `touchcancel`
+  moves nothing unless a drag of the viewer's was under way, and `settle` never drops a pending
+  landing: a move started over one runs it first and logs an error (review of #2119: a chevron
+  clicked mid-transition used to drop the wheel's landing and jam the wheel for good). Left to the browser:
   ctrl+wheel (zoom, and a trackpad pinch), a mostly horizontal scroll, the wheel while the comments
   sheet is open or over a child that scrolls (the list, an unfolded caption). The listener is
   non-passive on the viewer only, `preventDefault` runs only on a consumed event, and it goes with

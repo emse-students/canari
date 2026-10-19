@@ -18,23 +18,11 @@ describe('WheelPageLock', () => {
   beforeEach(() => vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] }));
   afterEach(() => vi.useRealTimers());
 
-  it('holds until the page has landed AND the wheel went quiet', () => {
+  it('is free again only once the wheel has been quiet, and every event restarts the quiet', () => {
     const lock = new WheelPageLock();
     expect(lock.free).toBe(true);
     lock.heard();
-    lock.take();
-    vi.advanceTimersByTime(WHEEL_QUIET_MS + 1);
-    // Quiet, but the transition is still running.
     expect(lock.free).toBe(false);
-    lock.land();
-    expect(lock.free).toBe(true);
-  });
-
-  it('an inertia tail after the landing restarts the quiet, so it never turns a second page', () => {
-    const lock = new WheelPageLock();
-    lock.heard();
-    lock.take();
-    lock.land();
     vi.advanceTimersByTime(WHEEL_QUIET_MS - 1);
     lock.heard();
     vi.advanceTimersByTime(WHEEL_QUIET_MS - 1);

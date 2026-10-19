@@ -11,6 +11,8 @@ import type { PostComment, PostEntity } from '$lib/posts/api';
 import { addReaction, removeReaction } from '$lib/posts/api';
 import { pushHistoryOverlay } from '$lib/utils/historyOverlayStack';
 import { sharePostLink } from '$lib/posts/sharePost';
+import { showToast } from '$lib/stores/toast.svelte';
+import { RequestDeadlineError } from '$lib/utils/requestDeadline';
 import { m } from '$lib/paraglide/messages';
 
 vi.mock('$lib/reels/reelPreload', () => ({
@@ -279,4 +281,39 @@ it('a second tap while the first reaction is in flight sends nothing, and the an
   vi.mocked(removeReaction).mockResolvedValue({ ok: true, reactions: {} });
   await click('[data-reel-rail-heart]');
   expect(removeReaction).toHaveBeenCalledTimes(1);
+});
+
+it('a reaction kind this client does not know is named neutrally, never "J\'aime"', async () => {
+  await render(post('a', { reactions: { alice: 'Licorne' } }), 'alice');
+  expect(q('[data-reel-rail-emoji]')).not.toBeNull();
+  expect(q('[data-reel-rail-heart]')!.getAttribute('aria-label')).toBe(
+    m.reels_rail_mine_unknown({ count: 1 })
+  );
+});
+
+it('a request the server never answers is aborted by its deadline: rolled back, said, and the heart works again', async () => {
+  // The request's own deadline (`apiFetch` -> `RequestDeadlineError`) aborts it; triggered by hand.
+  let abort!: () => void;
+  vi.mocked(addReaction).mockImplementationOnce(
+    () =>
+      new Promise((_resolve, reject) => {
+        abort = () =>
+          reject(new RequestDeadlineError('write', 15000, 'POST', '/api/posts/a/reactions', 30));
+      })
+  );
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  await render(post('a'), 'alice');
+  vi.mocked(showToast).mockClear();
+
+  await click('[data-reel-rail-heart]');
+  expect(q('[data-reel-rail-heart]')!.getAttribute('aria-pressed')).toBe('true');
+  abort();
+  await settle();
+
+  expect(q('[data-reel-rail-heart]')!.getAttribute('aria-pressed')).toBe('false');
+  expect(showToast).toHaveBeenCalledWith(expect.any(String), 'error');
+  vi.mocked(addReaction).mockResolvedValue({ ok: true, reactions: { alice: "J'aime" } });
+  await click('[data-reel-rail-heart]');
+  expect(addReaction).toHaveBeenCalledTimes(2);
+  warn.mockRestore();
 });

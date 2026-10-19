@@ -16,7 +16,7 @@
   import { m } from '$lib/paraglide/messages';
   import { compactCount } from '$lib/reels/reelRail';
   import { DOUBLE_TAP_REACTION } from '$lib/posts/postReaction';
-  import { reactionTypeToEmoji, reactionTypeToLabel } from '$lib/posts/reactions';
+  import { REACTIONS, reactionTypeToEmoji, reactionTypeToLabel } from '$lib/posts/reactions';
   import EmojiText from '$lib/components/shared/EmojiText.svelte';
 
   interface Props {
@@ -39,6 +39,24 @@
     $props();
 
   const reacted = $derived(readerReaction !== null);
+  /**
+   * What the heart is called: "J'aime" with none or with the heart, the reader's own reaction by
+   * name otherwise - and, for a kind this client does not know (a newer server's), a neutral "your
+   * reaction", never "J'aime" (`reactionTypeToLabel` falls back to it).
+   */
+  const heartLabel = $derived.by(() => {
+    if (!readerReaction || readerReaction === DOUBLE_TAP_REACTION) {
+      return m.reels_rail_like({ count: reactionCount });
+    }
+    if (!REACTIONS.some((r) => r.type === readerReaction)) {
+      return m.reels_rail_mine_unknown({ count: reactionCount });
+    }
+    return m.reels_rail_mine({
+      count: reactionCount,
+      reaction: reactionTypeToLabel(readerReaction),
+    });
+  });
+
   /** The reader's emoji when their reaction is not the heart. */
   const otherEmoji = $derived(
     readerReaction && readerReaction !== DOUBLE_TAP_REACTION
@@ -63,9 +81,7 @@
       type="button"
       class="ui-icon-button rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
       aria-pressed={reacted}
-      aria-label={otherEmoji && readerReaction
-        ? m.reels_rail_mine({ count: reactionCount, reaction: reactionTypeToLabel(readerReaction) })
-        : m.reels_rail_like({ count: reactionCount })}
+      aria-label={heartLabel}
       onclick={onHeart}
       data-reel-rail-heart
     >

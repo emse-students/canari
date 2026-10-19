@@ -262,6 +262,14 @@
    * once - a transition that does not happen fires no end event.
    */
   function settle(x: number, y: number, then?: () => void) {
+    // A LANDING IS NEVER DROPPED: a move started over one still pending (every entry point waits for
+    // `settling` to clear, so this is a defect upstream) runs it first, and says so.
+    if (afterSettle) {
+      console.error('[reel-viewer] a move started over a pending landing - the landing runs first');
+      const pending = afterSettle;
+      afterSettle = null;
+      pending();
+    }
     if (reducedMotion() || (x === offsetX && y === offsetY)) {
       offsetX = x;
       offsetY = y;
@@ -284,11 +292,8 @@
     next?.();
   }
 
-  /**
-   * Carries out a verdict: the track leaves towards it, then the index moves and the track rests.
-   * `landed` runs once the track is at rest - at once when nothing moves (an end of the list).
-   */
-  function go(verdict: ReelSwipeVerdict, landed?: () => void) {
+  /** Carries out a verdict: the track leaves towards it, then the index moves and the track rests. */
+  function go(verdict: ReelSwipeVerdict) {
     const height = frame?.clientHeight ?? window.innerHeight;
     const width = frame?.clientWidth ?? window.innerWidth;
     const target = stepReelIndex(index, verdict, reels.length);
@@ -298,7 +303,7 @@
       return;
     }
     if (target === index) {
-      settle(0, 0, landed);
+      settle(0, 0);
       return;
     }
     console.debug(`[reel-viewer] ${verdict}: ${index} -> ${target}`);
@@ -307,7 +312,6 @@
       settling = false;
       index = target;
       offsetY = 0;
-      landed?.();
     });
   }
 
@@ -328,12 +332,12 @@
       const step = wheelStep(e);
       if (!step || commentsFor || wheelOverScrollable(e.target, el!)) return;
       e.preventDefault();
+      // Free when the wheel was quiet AND the last page has landed (`settling` clears on landing).
       const free = lock.free && !settling;
       lock.heard();
       if (!free) return;
       console.debug(`[reel-viewer] wheel: ${step}`);
-      lock.take();
-      go(step, () => lock.land());
+      go(step);
     }
     el.addEventListener('wheel', onWheel, { passive: false });
     return () => {
@@ -406,7 +410,9 @@
       );
     }
 
+    // A cancel ends a drag of OURS; one arriving while a page lands (no drag was taken) moves nothing.
     function onCancel() {
+      if (!gesture) return;
       gesture = null;
       settle(0, 0);
     }
@@ -522,7 +528,7 @@
         aria-label={m.reels_viewer_prev()}
         title={m.reels_viewer_prev()}
         disabled={index === 0}
-        onclick={() => go('prev')}
+        onclick={() => !settling && go('prev')}
       >
         <ChevronUp size={22} strokeWidth={2.5} />
       </button>
@@ -532,7 +538,7 @@
         aria-label={m.reels_viewer_next()}
         title={m.reels_viewer_next()}
         disabled={index >= reels.length - 1}
-        onclick={() => go('next')}
+        onclick={() => !settling && go('next')}
       >
         <ChevronDown size={22} strokeWidth={2.5} />
       </button>

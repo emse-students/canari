@@ -6,11 +6,12 @@
  * with the viewer. Reduced motion lands every step at once; the quiet is a faked timer, so no
  * assertion reads a clock.
  */
-import { afterEach, beforeEach, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, tick, unmount } from 'svelte';
 import ReelViewer from './ReelViewer.svelte';
 import type { PostEntity } from '$lib/posts/api';
 import { WHEEL_QUIET_MS } from '$lib/reels/reelWheel';
+import { m } from '$lib/paraglide/messages';
 
 vi.mock('$lib/reels/reelPreload', () => ({
   ReelPreload: class {
@@ -172,4 +173,61 @@ it('the listener goes with the viewer', async () => {
   unmount(mounted.pop()!);
   expect(app).toBeTruthy();
   expect(removed.mock.calls.some(([type]) => type === 'wheel')).toBe(true);
+});
+
+describe('with motion on (the page takes a transition to land)', () => {
+  // jsdom lays nothing out: a screen of 0 px would make every move a no-op that lands at once.
+  const realHeight = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientHeight')!;
+  beforeEach(() => {
+    vi.stubGlobal('matchMedia', () => ({ matches: false }));
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get: () => 800,
+    });
+  });
+  afterEach(() => {
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', realHeight);
+  });
+
+  /** The track's transform transition ends, as the engine reports it. */
+  async function land() {
+    const track = document.querySelector('[data-reel-track]')!;
+    const e = new Event('transitionend', { bubbles: true });
+    Object.defineProperty(e, 'propertyName', { value: 'transform' });
+    track.dispatchEvent(e);
+    await settle();
+  }
+
+  const chevron = (label: string) =>
+    document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!;
+
+  it('a chevron clicked while the wheel page lands neither drops that landing nor jams the wheel', async () => {
+    await render();
+    await wheel({ deltaY: 100 });
+    chevron(m.reels_viewer_next()).click();
+    await settle();
+    await land();
+    expect(playing()).toEqual(['m-b']);
+
+    await quiet();
+    expect(await wheel({ deltaY: 100 })).toBe(true);
+    await land();
+    expect(playing()).toEqual(['m-c']);
+  });
+
+  it('a touchcancel while the wheel page lands neither drops that landing nor jams the wheel', async () => {
+    await render();
+    await wheel({ deltaY: 100 });
+    document
+      .querySelector('[data-reel-track]')!
+      .parentElement!.dispatchEvent(new Event('touchcancel'));
+    await settle();
+    await land();
+    expect(playing()).toEqual(['m-b']);
+
+    await quiet();
+    await wheel({ deltaY: 100 });
+    await land();
+    expect(playing()).toEqual(['m-c']);
+  });
 });

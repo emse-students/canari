@@ -101,7 +101,9 @@ reel filter of every feed arm, behind the same visibility rules, and keys its ow
 Without `kind=reel` it means nothing. **An older server strips the unknown parameter**
 (`ValidationPipe({ whitelist: true })`) and answers reels only, so a newer client against it simply
 shows no photo pages. **`kind=reel` is ordered by `publishedAt` alone** (`listOrderSql`): a pin is
-a feed concept and does not head the CanaReels list. Pinned by `posts.service.reels.spec.ts` (every
+a feed concept and does not head the CanaReels list. Every list order ends in `posts.id DESC`, so
+posts published at the same instant (scheduled ones) can neither repeat nor be skipped across
+`OFFSET` pages. Pinned by `posts.service.reels.spec.ts` (every
 arm) and `single-photo-sql.integration.spec.ts` (the `jsonb` arithmetic, on a real PostgreSQL).
 
 **An expired reel is never served**, whether the worker has reached it or not: a reel whose

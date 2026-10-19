@@ -198,7 +198,11 @@
       ledger.hold('comments');
     },
     adoptThread: (full) => {
-      localPost = ledger.mergeRead(localPost, { comments: full.comments }, servedAt(full));
+      localPost = ledger.mergeRead(
+        localPost,
+        { comments: full.comments, commentCount: full.commentCount },
+        servedAt(full)
+      );
     },
     fail: (message) => (errorMessage = message),
   });

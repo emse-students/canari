@@ -67,7 +67,7 @@
       onChange({
         ...post,
         comments: full.comments,
-        commentCount: full.commentCount ?? post.commentCount,
+        commentCount: full.commentCount,
       }),
     fail: (message) => showToast(message, 'error'),
   });

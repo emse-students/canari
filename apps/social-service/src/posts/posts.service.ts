@@ -231,12 +231,13 @@ export class PostsService {
    * A list page's order. THE CANAREELS LIST (`kind=reel`) IS NEWEST FIRST AND NOTHING ELSE (lead's
    * decision, 2026-10-19): a pin is a feed concept, and a pinned reel or photo post heading the
    * full-screen list would greet every reader with the same page. Every other list keeps its pinned
-   * posts first.
+   * posts first. THE ORDER IS TOTAL: `id` breaks a tie of `publishedAt` (scheduled posts published
+   * at the same instant), so an `OFFSET` page can neither repeat nor skip a row.
    */
   private listOrderSql(kind: PostKind | undefined): string {
     return kind === 'reel'
-      ? `ORDER BY posts."publishedAt" DESC`
-      : `ORDER BY posts.pinned DESC, posts."publishedAt" DESC`;
+      ? `ORDER BY posts."publishedAt" DESC, posts.id DESC`
+      : `ORDER BY posts.pinned DESC, posts."publishedAt" DESC, posts.id DESC`;
   }
 
   /**

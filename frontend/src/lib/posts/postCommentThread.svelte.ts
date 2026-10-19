@@ -253,7 +253,9 @@ export class PostCommentThread {
   async loadAll(): Promise<void> {
     this.host.holdThread();
     try {
-      this.host.adoptThread(await getPost(this.host.read().id));
+      const full = await getPost(this.host.read().id);
+      // A read of the post itself carries EVERY comment and no `commentCount`: its rows are the total.
+      this.host.adoptThread({ ...full, commentCount: (full.comments ?? []).length });
     } catch (err) {
       Log.d('PostCommentThread.loadAll failed - the thread shown is kept', err);
     }
