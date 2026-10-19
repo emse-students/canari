@@ -4159,7 +4159,11 @@ export class ChannelService {
       throw new ForbiddenException('Not allowed to access this channel');
     }
 
-    const audience = await this.channelAudience(channel);
+    // THE SENDER IS NOT TOLD ABOUT THEIR OWN TYPING: the client dropped that frame on arrival (115
+    // frames back for 112 POSTs in one web console, 2026-10-18), so it was transport and a console
+    // line for nothing. The audience is a list of USER ids, so this also spares the sender's other
+    // devices - which have no use for it either, a typing indicator names someone ELSE.
+    const audience = (await this.channelAudience(channel)).filter((id) => id !== userId);
     await this.redis.publishChannelEvent(
       'channel.typing',
       { channelId, userId, state: isTyping ? 'start' : 'stop' },

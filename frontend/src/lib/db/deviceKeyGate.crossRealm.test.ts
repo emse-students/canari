@@ -14,6 +14,7 @@ import { toBase64 } from '$lib/utils/hex';
 import type { StoredMessage } from '$lib/db';
 import { resealDeviceKeyStores } from '$lib/utils/chat/pinChange';
 import { FakeChannel, FakeLocks } from '../../test/crossRealmDoubles';
+import { flushMacrotask, settleUntilStable } from '../../test/flush';
 
 type Gate = typeof import('./deviceKeyGate');
 
@@ -105,10 +106,9 @@ describe('deviceKeyGate across two tabs of one account', () => {
       waiting
     );
     // The notice reaches the follower; it may not hand the store over while its write is inside.
-    await new Promise((r) => setTimeout(r, 10));
-    expect(passStarted).toBe(false);
     // The screen is told why it waits: another tab still holds the lock.
-    expect(waiting).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => expect(waiting).toHaveBeenCalledTimes(1));
+    expect(passStarted).toBe(false);
     // A write the follower issues now is REFUSED, not queued under a key about to be retired.
     await expect(b.saveMessage(message('m3'), OLD)).rejects.toBeInstanceOf(
       follower.StaleDeviceKeyError
@@ -159,7 +159,7 @@ describe('deviceKeyGate across two tabs of one account', () => {
     const c = late.gateStorage(rawC, userId);
     let wrote = false;
     const write = c.saveMessage(message('m1'), NEW).then(() => (wrote = true));
-    await new Promise((r) => setTimeout(r, 10));
+    await settleUntilStable(() => wrote);
     expect(wrote).toBe(false);
 
     finish();
@@ -187,7 +187,7 @@ describe('deviceKeyGate across two tabs of one account', () => {
     const read = reloaded.withDeviceKeyHeld(userId, async () => {
       order.push('mls-read');
     });
-    await new Promise((r) => setTimeout(r, 10));
+    await settleUntilStable(() => order.length);
     expect(order).toEqual([]);
 
     finish();
@@ -251,7 +251,8 @@ describe('deviceKeyGate across two tabs of one account', () => {
     const ran: string[] = [];
     const one = first.holdOtherRealmsForKeyChange(userId, async () => {
       // Long enough for the second tab's notice to arrive while this one is changing.
-      await new Promise((r) => setTimeout(r, 10));
+      await flushMacrotask();
+      await flushMacrotask();
       ran.push('first');
     });
     const two = second.holdOtherRealmsForKeyChange(userId, async () => {
@@ -333,7 +334,7 @@ describe('deviceKeyGate across two tabs of one account', () => {
         )
       )
       .then(() => (done = true));
-    await new Promise((r) => setTimeout(r, 10));
+    await settleUntilStable(() => done);
     expect(done).toBe(false);
 
     land();

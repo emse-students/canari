@@ -139,6 +139,7 @@ s-maxage=60` since 2026-09-17, because a purge can reach Cloudflare and can neve
 disk. Why those terms, what purges the zone and what `dev` gets instead are on
 [cloudflare-edge](cloudflare-edge.md#the-shell-is-cached-at-the-edge-and-nowhere-else-and-the-deploy-says-when-it-expired);
 the assertions that keep them honest are in `.github/scripts/tests/static-headers.test.mjs`.
+**Except a degraded page (2026-10-18):** when frontend-ssr's enrichment got no answer it sends `X-Canari-Degraded`, and `$ssr_cache_control` turns the header into `no-store` - nothing may cache the generic card. A response that declares its own `public, max-age=N` (the sitemap, 1 h) keeps it: the first map `$ssr_cache_control_declared` passes it through, only a page declaring nothing gets the 60 s default ([seo](../frontend/seo.md#a-shared-post-and-the-ten-days-it-previewed-as-nothing)).
 
 Two things the first deployment got wrong, both worth keeping in mind for any future upstream:
 

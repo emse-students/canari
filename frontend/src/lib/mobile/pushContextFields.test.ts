@@ -5,8 +5,8 @@ import { fileURLToPath } from 'node:url';
 /**
  * Push-context contract guardrail.
  *
- * `store_push_context` (push.rs) writes push_context.json. Three native background readers
- * parse that same file:
+ * `store_push_context` (push.rs, through `write_session_push_context`) writes push_context.json.
+ * Three native background readers parse that same file:
  *   - ObjC:   canari_push.mm            `CanariLoadPushContext`
  *   - Swift:  NotificationService.swift `loadPushContext`
  *   - Kotlin: MlsContextLoader.kt       `loadPushContext`
@@ -80,11 +80,11 @@ describe('push_context.json contract (Rust writer vs 3 native readers)', () => {
   const kotlinSource = readFileSync(MLS_CONTEXT_LOADER_KT, 'utf8');
   const kotlinAppSource = readFileSync(CANARI_APPLICATION_KT, 'utf8');
 
-  // Keys written by store_push_context.
+  // Keys written by store_push_context, through its file half `write_session_push_context`.
   const rustJsonBlock = functionBody(
     rustSource,
-    /fn store_push_context/,
-    /std::fs::write\(data_dir\.join\("push_context\.json"\)/
+    /fn write_session_push_context/,
+    /std::fs::write\(data_dir\.join\(PUSH_CONTEXT_FILE\)/
   );
   const rustKeys = extractKeys(rustJsonBlock, /"(\w+)"\s*:/g);
 

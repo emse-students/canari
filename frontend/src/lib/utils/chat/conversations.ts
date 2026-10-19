@@ -3,6 +3,7 @@
  * persistence. These are pure functions that accept state by reference so they
  * work with Svelte 5's $state without requiring a specific composable wrapper.
  */
+import { clearConversationControlRefusals } from './controlRefusals.svelte';
 import { SvelteMap } from 'svelte/reactivity';
 import { m } from '$lib/paraglide/messages';
 import { ACCOUNT_KEY } from '$lib/utils/accountLocalKeys';
@@ -223,6 +224,7 @@ export async function retireConversation(params: {
   if (!convo || convo.lifecycle === 'removed') return false;
   conversations.set(key, { ...convo, ...patch, lifecycle: 'removed' });
   forgetGroupReconciliation(groupId);
+  clearConversationControlRefusals(groupId);
   await saveConversation?.(key).catch(() => {});
   return true;
 }
@@ -291,7 +293,10 @@ export async function purgeConversation(params: {
   const { conversations, key, deleteStored } = params;
   const convo = conversations.get(key);
   const groupId = params.groupId ?? convo?.id;
-  if (groupId) forgetGroupReconciliation(groupId);
+  if (groupId) {
+    forgetGroupReconciliation(groupId);
+    clearConversationControlRefusals(groupId);
+  }
   await deleteStored?.(key).catch(() => {});
   return conversations.delete(key);
 }

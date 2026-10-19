@@ -22,6 +22,7 @@
  */
 
 import { RequestDeadlineError } from '$lib/utils/requestDeadline';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 /** Bytes handed to the network so far, out of the whole body. `total` is 0 when it is unknown. */
 export interface UploadProgress {
@@ -90,13 +91,13 @@ export const UPLOAD_NO_ANSWER_ATTEMPTS = 3;
 export const UPLOAD_PROGRESS_MARGIN_BYTES = 256 * 1024;
 
 /**
- * The connection broke under an upload (XHR `onerror`). A `TypeError` because that is what `fetch`
- * throws and what {@link isTransportFailure} reads, but a TYPE of its own so the outbox can tell the
- * transport's failure from a `TypeError` thrown by preparation or encryption.
+ * The connection broke under an upload (XHR `onerror`). A {@link TransportFailureError}, which
+ * {@link isTransportFailure} reads, but a TYPE of its own so the outbox can tell the transport's
+ * failure from a `TypeError` thrown by preparation or encryption.
  */
-export class UploadNetworkError extends TypeError {
+export class UploadNetworkError extends TransportFailureError {
   constructor(where: string) {
-    super(`Network request failed: POST ${where}`);
+    super(where, `Network request failed: POST ${where}`);
     this.name = 'UploadNetworkError';
   }
 }

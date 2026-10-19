@@ -7,6 +7,7 @@
 import { describe, it, expect, afterEach, vi, beforeEach } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
 import MessageInfoTooltip from './MessageInfoTooltip.svelte';
+import { flushMacrotask } from '../../../test/flush';
 
 const calls = vi.hoisted(() => ({ sync: 0, resolve: 0 }));
 
@@ -19,8 +20,7 @@ vi.mock('$lib/utils/users/displayName', () => ({
   // Each name answers on its own macrotask, as the network does: one answer, one write.
   resolveUserDisplayName: (id: string) => {
     calls.resolve++;
-    const delay = Number(id.split('-')[1]);
-    return new Promise((done) => setTimeout(() => done(`Name ${id}`), delay));
+    return flushMacrotask().then(() => `Name ${id}`);
   },
 }));
 
@@ -55,7 +55,7 @@ function render(visible: boolean) {
 /** Lets every pending name answer land and every effect it scheduled run. */
 async function settle(): Promise<void> {
   for (let i = 0; i < 20; i++) {
-    await new Promise((done) => setTimeout(done, 20));
+    await flushMacrotask();
     flushSync();
   }
 }

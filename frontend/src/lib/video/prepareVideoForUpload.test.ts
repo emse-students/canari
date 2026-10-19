@@ -338,6 +338,17 @@ describe('chooseAudioRoute', () => {
     ).toBe('copy');
   });
 
+  it('copies against the audio bitrate of the profile: 128 kb/s is dear for chat (96)', () => {
+    const facts = { codecString: 'mp4a.40.2', removeAudio: false, canEncodeAac: true };
+    expect(chooseAudioRoute({ ...facts, sourceBitrate: 128_000 })).toBe('copy');
+    expect(chooseAudioRoute({ ...facts, sourceBitrate: 128_000, audioBitrate: 96_000 })).toBe(
+      'encode'
+    );
+    expect(chooseAudioRoute({ ...facts, sourceBitrate: 96_000, audioBitrate: 96_000 })).toBe(
+      'copy'
+    );
+  });
+
   it('encodes every other codec, and has no track to route when there is none', () => {
     const other = (codecString: string | null, removeAudio = false) =>
       chooseAudioRoute({ codecString, removeAudio, sourceBitrate: null, canEncodeAac: null });

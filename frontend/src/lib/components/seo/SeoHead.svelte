@@ -67,6 +67,7 @@
   const ogImageHeight = $derived(
     isDefaultOgImage ? SITE.defaultOgImageHeight : (resolved.imageHeight ?? null)
   );
+  const ogImageType = $derived(isDefaultOgImage ? SITE.defaultOgImageType : resolved.imageType);
   const robotsContent = $derived(resolved.noindex ? 'noindex, nofollow' : 'index, follow');
   const ogType = $derived(resolved.ogType ?? SITE.defaultOgType);
   /**
@@ -115,6 +116,9 @@
   {#if ogImageWidth && ogImageHeight}
     <meta property="og:image:width" content={String(ogImageWidth)} />
     <meta property="og:image:height" content={String(ogImageHeight)} />
+  {/if}
+  {#if ogImageType}
+    <meta property="og:image:type" content={ogImageType} />
   {/if}
   {#if ogImageAlt}
     <meta property="og:image:alt" content={ogImageAlt} />

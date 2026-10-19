@@ -963,6 +963,7 @@ export class BookingsService {
    * so no past instant is ever marked. Refused while COMING live
    * bookings fall inside it, naming them (D29): the organiser cancels them explicitly first. A
    * booking already under way cannot be cancelled, so it neither refuses the block nor is named.
+   * A block overlapping one of the resource's own is refused `block-overlap` (the same block twice).
    */
   async addBlock(resourceId: string, dto: CreateBlockDto, actor: Actor, nowMs: number) {
     this.logger.debug(`[BOOKINGS] addBlock resource=${resourceId}`);
@@ -999,6 +1000,20 @@ export class BookingsService {
           code: 'bookings-inside-block',
           bookingIds: inside.map((b) => b.id),
         });
+      }
+      // IDEMPOTENCE FROM DURABLE STATE: a block over a block of the same resource is the same
+      // "Indisponible" written twice (a retry after a lost answer). Any overlap is refused; the
+      // range starts at or after now, so a block that overlaps it has not ended.
+      const [overlap]: { id: string }[] = await m.query(
+        `SELECT id FROM booking_blocks
+          WHERE "resourceId" = $1 AND "startsAt" < $3 AND "endsAt" > $2 LIMIT 1`,
+        [resourceId, new Date(range.startMs), new Date(range.endMs)]
+      );
+      if (overlap) {
+        this.logger.debug(
+          `[BOOKINGS] addBlock refused: overlaps block=${overlap.id.slice(0, 8)} resource=${resourceId.slice(0, 8)}`
+        );
+        throw new ConflictException({ code: 'block-overlap' });
       }
       const [row]: { id: string }[] = await m.query(
         `INSERT INTO booking_blocks ("resourceId", "startsAt", "endsAt", reason, "reasonVisible", "createdById")

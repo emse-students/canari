@@ -1344,6 +1344,18 @@ that mirrors the locale; a device that has, cannot. Why Rust and not a KIND word
 is what the FCM cache persists as a message body, and one implementation keeps Android and iOS from
 diverging ([mobile](../mobile.md#the-language-a-notification-speaks)).
 
+### "Format non supporte" names its cause in the log (2026-10-18)
+
+`VoiceMessagePlayer` draws "Format non supporte / Telecharger" on ANY `error` event of its `<audio>`
+element, and four causes reach that event: an abort (`MediaError` code 1), a revoked or unreadable
+blob URL (2), bytes the engine cannot decode (3), a container it does not know (4). Two voice notes showed the label
+on the Mi 9T on 2026-10-06 while an iPhone listed them, and the branch logged nothing, so the cause
+could not be read. It now writes one `[voice] the audio element refused its source` warning carrying
+the code and its name, the engine's message, the type the message declares and the engine's
+`canPlayType` answer for that type: `canPlayType` "no" means the engine lacks the format, a
+"maybe"/"probably" with code 3 or 4 means the bytes are not what the message declares. **Owed: the
+line from the Mi 9T on that conversation** ([backlog](../../backlog.md)).
+
 ### A system event is executed, never displayed
 
 **`appMsgToEnvelope` returns `null` for a `system` AppMessage, and that null is load-bearing.** Every

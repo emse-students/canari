@@ -78,7 +78,12 @@ map $request_uri $logged_request_uri {\n\
     "~^(?<uri_before_token>.*[?&])token=[^&]*(?<uri_after_token>.*)$" "${uri_before_token}token=redacted${uri_after_token}";\n\
     default $request_uri;\n\
 }\n\
-log_format canari_redacted "$remote_addr - $remote_user [$time_local] \\"$request_method $logged_request_uri $server_protocol\\" $status $body_bytes_sent \\"$http_referer\\" \\"$http_user_agent\\" \\"$http_x_forwarded_for\\"";\n\
+# FIVE DIAGNOSTIC FIELDS TRAIL THE LINE (2026-10-18), for the intermittent Messenger preview failure the\n\
+# access log could not explain: it held two response sizes for one crawler hit and nothing to say why.\n\
+# rt = total time; urt and ust = the upstream's time and status (a slow or failing SSR shows here);\n\
+# ce = whether THIS response was compressed; deg = the SSR's own admission that it served a degraded\n\
+# head (X-Canari-Degraded). Durations, statuses and one header value: no address, cookie or query.\n\
+log_format canari_redacted "$remote_addr - $remote_user [$time_local] \\"$request_method $logged_request_uri $server_protocol\\" $status $body_bytes_sent \\"$http_referer\\" \\"$http_user_agent\\" \\"$http_x_forwarded_for\\" rt=$request_time urt=$upstream_response_time ust=$upstream_status ce=$sent_http_content_encoding deg=$sent_http_x_canari_degraded";\n\
 \n\
 # THE COOKIE ADMINER IS GIVEN: the browser sends the Canari adminer session (canari_adminer) with\n\
 # every request on /adminer/, and the upstream has no use for it - it is stripped, and the cookies of Adminer\n\
@@ -113,6 +118,22 @@ map $request_method $lives_ingest_key {\n\
     PUT $binary_remote_addr;\n\
 }\n\
 limit_req_zone $lives_ingest_key zone=lives_ingest:1m rate=2r/s;\n\
+\n\
+# THE CACHE-CONTROL OF AN SSR RESPONSE, decided in two steps.\n\
+# 1. A response that DECLARED its own public max-age keeps it: routes/sitemap.xml/+server.ts is\n\
+#    prerender=false, so it is served through @ssr, and its 1 h is a budget it set for itself.\n\
+#    An SSR page declares none (adapter-node sets no Cache-Control), so it takes the default:\n\
+#    shared-cacheable for 60 s (see @ssr).\n\
+map $upstream_http_cache_control $ssr_cache_control_declared {\n\
+    default "public, max-age=0, s-maxage=60";\n\
+    "~^public, max-age=[0-9]+$" $upstream_http_cache_control;\n\
+}\n\
+# 2. EXCEPT a response the SSR itself marked degraded (`X-Canari-Degraded`, any value), which is\n\
+#    `no-store` whatever it declared.\n\
+map $upstream_http_x_canari_degraded $ssr_cache_control {\n\
+    default $ssr_cache_control_declared;\n\
+    "~." "no-store";\n\
+}\n\
 \n\
 server {\n\
     listen 80;\n\
@@ -439,7 +460,15 @@ server {\n\
     # block declared none, which is how HTML kept CSP, nosniff and X-Frame-Options by\n\
     # inheritance; adding Cache-Control here would have stripped all three from every\n\
     # navigation on the site.\n\
-    add_header Cache-Control "public, max-age=0, s-maxage=60" always;\n\
+    # A DEGRADED HEAD IS NEVER OFFERED TO A CACHE (2026-10-18). When the enrichment of a page got\n\
+    # no answer, frontend-ssr serves the generic head and says so with `X-Canari-Degraded`; the\n\
+    # map `$ssr_cache_control` turns that into `no-store` here, where the one Cache-Control of this\n\
+    # block is decided. Without it the 60 s above pinned the generic card at the edge for a minute,\n\
+    # and every unfurler retry inside it was handed the same failure. The upstream's own\n\
+    # Cache-Control is hidden and re-emitted by the map, so there is ONE declaration: a page gets the\n\
+    # default, and the sitemap's own public max-age passes through the first map unchanged.\n\
+    proxy_hide_header Cache-Control;\n\
+    add_header Cache-Control $ssr_cache_control always;\n\
     include /etc/nginx/snippets/csp.conf;\n\
     add_header X-Content-Type-Options "nosniff" always;\n\
     add_header X-Frame-Options "DENY" always;\n\

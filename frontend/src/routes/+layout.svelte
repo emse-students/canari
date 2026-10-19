@@ -698,7 +698,11 @@
           bind:this={pageScrollWrap}
           class="page-scroll-wrap absolute inset-0 overflow-y-auto pb-(--bottom-nav-reserve) md:pb-0"
         >
-          <svelte:boundary onerror={(e) => console.error('[Layout] page crash:', e)}>
+          <!-- console.error enters the in-app log (appLog.ts); the route id names the page there,
+               where no URL bar does, and carries no member's id. -->
+          <svelte:boundary
+            onerror={(e) => console.error(`[Layout] page crash on ${page.route.id ?? '?'}:`, e)}
+          >
             {@render children?.()}
             {#snippet failed(_error, reset)}
               <div class="flex h-full flex-col items-center justify-center gap-4 p-8 text-center">

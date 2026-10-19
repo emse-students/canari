@@ -108,6 +108,7 @@ vi.mock('pdfjs-dist', () => ({
 vi.mock('pdfjs-dist/build/pdf.worker.min.mjs?url', () => ({ default: 'worker.mjs' }));
 
 import { openPdfDocument, PdfRenderCancelled } from './pdfDocument';
+import { flushMacrotask } from '../../test/flush';
 
 beforeEach(() => {
   state.getPage = deferred();
@@ -119,7 +120,7 @@ beforeEach(() => {
 });
 
 /** Lets every pending microtask run. */
-const flush = () => new Promise((r) => setTimeout(r, 0));
+const flush = () => flushMacrotask();
 
 describe('PdfDocument.renderPage', () => {
   it('resolves with the canvas, sized by the render scale', async () => {

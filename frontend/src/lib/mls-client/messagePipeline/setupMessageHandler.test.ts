@@ -1376,10 +1376,9 @@ describe('setupMessageHandler (MLS inbound + channel events)', () => {
       f?: boolean
     ) => Promise<boolean>;
 
-    const verdict = await Promise.race([
-      onMsg('peer', new Uint8Array([1]), gid, false, undefined, false),
-      new Promise((resolve) => setTimeout(() => resolve('BLOCKED'), 500)),
-    ]);
+    // Awaited bare: a handler that blocked would hang here and fail on the test timeout, which is a
+    // failure mode, not a duration the assertion depends on.
+    const verdict = await onMsg('peer', new Uint8Array([1]), gid, false, undefined, false);
 
     expect(verdict).toBe(true);
     expect(vi.mocked(requestReAdd)).toHaveBeenCalled();
