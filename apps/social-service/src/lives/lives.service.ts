@@ -35,6 +35,7 @@ import {
   LIVE_STARTS_PER_HOUR,
   type LiveEndReason,
 } from './live.constants';
+import { LiveSeats } from './live-seats';
 import { LIVE_SEGMENT_STORE, type LiveSegmentStore } from './live-segment-store';
 
 /** A live as its viewers read it: the key included (L2, Q4). */
@@ -56,7 +57,10 @@ export interface LiveListItem {
   startedAt: Date;
 }
 
-/** One segment of a manifest: `name` is its address, `GET /api/media/live/<liveId>/<name>`. */
+/**
+ * One segment of a manifest: `name` is its address, `GET /api/media/public/live/<liveId>/<name>` -
+ * no token, answered by Canari's nginx cache (WP-L4, lives.md "Serving a segment").
+ */
 export interface LiveManifestSegment {
   index: number;
   name: string;
@@ -153,7 +157,8 @@ export class LivesService {
     @InjectDataSource() private readonly db: DataSource,
     @Inject(LIVE_SEGMENT_STORE) private readonly store: LiveSegmentStore,
     private readonly associations: AssociationsService,
-    private readonly moderation: ModerationService
+    private readonly moderation: ModerationService,
+    private readonly seats: LiveSeats
   ) {}
 
   /**
@@ -249,6 +254,7 @@ export class LivesService {
   /** One live and its key, to a viewer allowed to watch it ({@link assertMayWatch}). */
   async get(viewerId: string, liveId: string): Promise<LiveView> {
     const row = await this.assertMayWatch(this.db.manager, viewerId, liveId);
+    await this.takeSeat(row, viewerId);
     return toView(row);
   }
 
@@ -259,6 +265,7 @@ export class LivesService {
    */
   async manifest(viewerId: string, liveId: string, from?: number): Promise<LiveManifest> {
     const row = await this.assertMayWatch(this.db.manager, viewerId, liveId);
+    await this.takeSeat(row, viewerId);
     const start = from ?? Math.max(0, row.nextIndex - LIVE_MANIFEST_WINDOW);
     const segments: LiveManifestSegment[] = await this.db.query(
       `SELECT s."index", s.name, s.bytes
@@ -621,6 +628,13 @@ export class LivesService {
       );
     });
     this.logger.log(`[LIVE] ${liveId}: viewer ${short(viewer)} removed by the broadcaster`);
+    // The removal is the row above; the seat is freed now rather than when its lease lapses, and a
+    // failure here only means it lapses (the removed viewer's next poll is refused 403 anyway).
+    await this.seats.release(liveId, viewer).catch((e: unknown) => {
+      this.logger.warn(
+        `[LIVE_SEAT] ${liveId}: removed viewer's seat left to its lease: ${String(e)}`
+      );
+    });
     return { liveId, viewerId: viewer };
   }
 
@@ -685,6 +699,14 @@ export class LivesService {
       this.logger.warn(`[LIVE_GC] ${liveId} is OPEN: the purge path refuses it`);
       return 'kept';
     }
+    // AN ENDED LIVE SEATS NOBODY: its viewers' next poll is a 410 that renews nothing, so the seats
+    // would lapse within a lease anyway - freed here, on every path that ends a live (they all
+    // purge), so the next live's viewers do not wait for them. Best-effort: a failure is the lease.
+    await this.seats.releaseLive(liveId).catch((e: unknown) => {
+      this.logger.warn(
+        `[LIVE_SEAT] ${liveId}: ended live's seats left to their lease: ${String(e)}`
+      );
+    });
     if (row?.storeInFlight) {
       this.logger.debug(`[LIVE_GC] ${liveId} kept: a segment is still storing`);
       return 'kept';
@@ -745,6 +767,27 @@ export class LivesService {
     if (affected > 0)
       this.logger.debug(`[LIVE_GC] ${affected} start(s) older than the hour deleted`);
     return affected;
+  }
+
+  /**
+   * Gives the viewer leaving a live its seat back (`DELETE /api/lives/:id/seat`). No watch check: a
+   * viewer may always give back what it holds, even once the live has ended or it was removed.
+   * The seat is the ACCOUNT's (lives.md, "The viewer cap"): one device leaving frees it for an
+   * account watching on two, whose other device takes it again at its next poll.
+   */
+  async leave(viewerId: string, liveId: string): Promise<void> {
+    await this.seats.release(liveId, viewerId);
+  }
+
+  /**
+   * THE VIEWER CAP (lives.md, "The viewer cap"): a viewer reading the key or polling the manifest
+   * takes or renews a seat, 503 `LIVE_FULL` past the host's cap. Taken AFTER the watch check, so a
+   * removed, blocked or ended answer is never masked as "full". The broadcaster takes none: its
+   * reads cost the uplink nothing a viewer's would.
+   */
+  private async takeSeat(row: LiveRow, viewerId: string): Promise<void> {
+    if (row.broadcasterId === viewerId) return;
+    await this.seats.take(row.id, viewerId);
   }
 
   /**
