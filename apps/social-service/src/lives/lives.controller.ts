@@ -2,7 +2,9 @@ import {
   BadRequestException,
   Body,
   Controller,
+  Delete,
   Get,
+  Header,
   Headers,
   HttpCode,
   Param,
@@ -64,15 +66,23 @@ export class LivesController {
 
   /**
    * One live and its key: 404 absent, not in its audience (spaces, as a post) or blocked, 410 ended,
-   * 403 removed viewer.
+   * 403 removed viewer, 503 `LIVE_FULL` past the host's viewer cap (the read takes a seat).
+   * `no-store`: a key never sits in any cache.
    */
   @Get(':id')
+  @Header('Cache-Control', 'no-store')
   get(@Param('id', ParseUUIDPipe) id: string, @Headers('x-user-id') userId: string) {
     return this.lives.get(callerOf(userId), id);
   }
 
-  /** What a viewer polls; `?from=<index>` lists from that segment on. Refused as the key is. */
+  /**
+   * What a viewer polls; `?from=<index>` lists from that segment on. Refused as the key is, and each
+   * poll renews the viewer's seat. `no-store`: the manifest is the live edge, so the shortest cache
+   * is none - a copy one poll old is a viewer one segment behind, and the answer is per viewer
+   * (a removed one is refused), so no shared cache may hold it. The SEGMENTS are the cached half.
+   */
   @Get(':id/manifest')
+  @Header('Cache-Control', 'no-store')
   async manifest(
     @Param('id', ParseUUIDPipe) id: string,
     @Headers('x-user-id') userId: string,
@@ -99,6 +109,16 @@ export class LivesController {
     const at = indexOf(index, 'INDEX');
     const data = await readBoundedBody(req, LIVE_SEGMENT_MAX_BYTES);
     return this.lives.ingest(callerOf(userId), id, at, data);
+  }
+
+  /** The viewer leaves: its seat goes back to the host's cap now rather than when its lease lapses. */
+  @Delete(':id/seat')
+  @HttpCode(204)
+  async leave(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') userId: string
+  ): Promise<void> {
+    await this.lives.leave(callerOf(userId), id);
   }
 
   /** Ends the live, by its broadcaster: idempotent while the row exists, 404 once it is deleted. */

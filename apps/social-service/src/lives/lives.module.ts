@@ -12,6 +12,7 @@ import { LIVE_STORE_TIMEOUT_MS } from './live.constants';
 import { HttpLiveSegmentStore, LIVE_SEGMENT_STORE } from './live-segment-store';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
 import { LiveAnnouncer } from './live-announcer';
+import { LiveSeats } from './live-seats';
 import { LivesController } from './lives.controller';
 import { LivesService } from './lives.service';
 
@@ -40,6 +41,7 @@ export const LIVE_ENTITIES = [Live, LiveSegment, LiveRemovedViewer, LiveStart];
     LivesService,
     LiveRetentionScheduler,
     LiveAnnouncer,
+    LiveSeats,
     { provide: LIVE_SEGMENT_STORE, useClass: HttpLiveSegmentStore },
   ],
 })

@@ -25,11 +25,12 @@ import { readFileSync } from 'fs';
 import { join } from 'path';
 import { Client } from 'pg';
 import { DataSource } from 'typeorm';
-import { HttpStatus } from '@nestjs/common';
+import { HttpStatus, ServiceUnavailableException } from '@nestjs/common';
 import { LIVE_ENTITIES } from './lives.module';
 import { LivesService } from './lives.service';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
 import { LiveAnnouncer, liveAudienceSql } from './live-announcer';
+import { seatMember, type LiveSeats } from './live-seats';
 import type { LivePurgeResult, LiveSegmentStore } from './live-segment-store';
 import {
   LIVE_BYTE_BUDGET,
@@ -141,6 +142,35 @@ class MemoryStore implements LiveSegmentStore {
   }
 }
 
+/**
+ * The viewer seats, in memory, answering as `LiveSeats` does: one seat per (live, viewer), a cap,
+ * and the typed 503 `LIVE_FULL` past it. The cap's ATOMICITY is the Lua script's, proven against a
+ * real Redis in `live-seats.spec.ts`; this proves where the service takes and gives seats.
+ */
+class MemorySeats {
+  cap = Number.POSITIVE_INFINITY;
+  readonly held = new Set<string>();
+
+  async take(liveId: string, viewerId: string): Promise<void> {
+    const member = seatMember(liveId, viewerId);
+    if (!this.held.has(member) && this.held.size >= this.cap) {
+      throw new ServiceUnavailableException({ code: 'LIVE_FULL', viewerCap: this.cap });
+    }
+    this.held.add(member);
+  }
+
+  async release(liveId: string, viewerId: string): Promise<void> {
+    this.held.delete(seatMember(liveId, viewerId));
+  }
+
+  async releaseLive(liveId: string): Promise<number> {
+    const prefix = seatMember(liveId, '');
+    const gone = [...this.held].filter((m) => m.startsWith(prefix));
+    for (const m of gone) this.held.delete(m);
+    return gone.length;
+  }
+}
+
 /** The HTTP status a Nest exception would answer, and its body's `code`. */
 async function refusal(p: Promise<unknown>): Promise<{ status: number; code?: string }> {
   try {
@@ -172,6 +202,7 @@ maybe('lives against PostgreSQL (migration 091)', () => {
     },
   } as unknown as PostNotificationsService;
   const liveEnabledBefore = process.env.LIVE_ENABLED;
+  let seats: MemorySeats;
   const muted = new Set<string>();
   const mayActAs = new Set<string>();
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
@@ -248,6 +279,7 @@ maybe('lives against PostgreSQL (migration 091)', () => {
     mayActAs.clear();
     store = new MemoryStore();
     announcer = new LiveAnnouncer(ds, notifications);
+    seats = new MemorySeats();
     lives = new LivesService(
       ds,
       store,
@@ -256,6 +288,7 @@ maybe('lives against PostgreSQL (migration 091)', () => {
           mayActAs.has(`${userId}:${associationId}`),
       } as unknown as AssociationsService,
       { isUserMuted: async (userId: string) => muted.has(userId) } as unknown as ModerationService,
+      seats as unknown as LiveSeats,
       announcer
     );
     sweeper = new LiveRetentionScheduler(lives);
@@ -386,6 +419,46 @@ maybe('lives against PostgreSQL (migration 091)', () => {
         status: HttpStatus.NOT_FOUND,
         code: 'LIVE_NOT_FOUND',
       });
+    });
+  });
+
+  describe('the viewer cap (WP-L4)', () => {
+    it('seats a viewer at the key read, keeps it on every poll, and refuses viewer N+1 with LIVE_FULL', async () => {
+      seats.cap = 1;
+      const live = await start();
+      await lives.get(BOB, live.id);
+      await lives.manifest(BOB, live.id);
+      expect([...seats.held]).toEqual([`${live.id}:${BOB}`]);
+      expect(await refusal(lives.get(CAROL, live.id))).toEqual({
+        status: HttpStatus.SERVICE_UNAVAILABLE,
+        code: 'LIVE_FULL',
+      });
+      expect((await refusal(lives.manifest(CAROL, live.id))).code).toBe('LIVE_FULL');
+      // The broadcaster takes no seat, however full the host is.
+      await expect(lives.manifest(ALICE, live.id)).resolves.toMatchObject({ liveId: live.id });
+      // A viewer leaving gives its seat to the next one in - whatever case its URL spelled the id in.
+      await lives.leave(BOB, live.id.toUpperCase());
+      await expect(lives.get(CAROL, live.id)).resolves.toMatchObject({ id: live.id });
+    });
+
+    it('answers removed, blocked and ended BEFORE full, and frees the seat of a removed viewer', async () => {
+      seats.cap = 1;
+      const live = await start();
+      await lives.get(BOB, live.id);
+      await lives.removeViewer(ALICE, live.id, BOB);
+      expect(seats.held.size).toBe(0);
+      expect((await refusal(lives.get(BOB, live.id))).code).toBe('LIVE_VIEWER_REMOVED');
+      await lives.get(CAROL, live.id);
+      await q(`INSERT INTO user_blocks VALUES ($1, $2)`, [ALICE, BOB]);
+      expect((await refusal(lives.get(BOB, live.id))).code).toBe('LIVE_NOT_FOUND');
+      // The store refuses the purge, so the ended row is still there to be asked about; and no seat
+      // is left, so a "full" would win if it were asked first.
+      store.failPurge = true;
+      await lives.end(ALICE, live.id);
+      // The end frees the live's seats at once, even with the purge refused (CAROL's, here).
+      expect(seats.held.size).toBe(0);
+      seats.cap = 0;
+      expect((await refusal(lives.manifest(CAROL, live.id))).code).toBe('LIVE_ENDED');
     });
   });
 
@@ -696,6 +769,7 @@ maybe('lives against PostgreSQL (migration 091)', () => {
         store,
         { mayAct: async () => false } as unknown as AssociationsService,
         { isUserMuted: async () => false } as unknown as ModerationService,
+        seats as unknown as LiveSeats,
         new LiveAnnouncer(ds, {
           resolveDisplayName: async () => 'Alice',
           pushNotice: async () => {
@@ -726,6 +800,7 @@ maybe('lives against PostgreSQL (migration 091)', () => {
         store,
         { mayAct: async () => false } as unknown as AssociationsService,
         { isUserMuted: async () => false } as unknown as ModerationService,
+        seats as unknown as LiveSeats,
         new LiveAnnouncer(ds, {
           resolveDisplayName: async () => 'Alice',
           pushNotice: async (data: { recipientIds: string[] }) => {
@@ -792,6 +867,7 @@ maybe('lives against PostgreSQL (migration 091)', () => {
           store,
           { mayAct: async () => false } as unknown as AssociationsService,
           { isUserMuted: async () => false } as unknown as ModerationService,
+          seats as unknown as LiveSeats,
           new LiveAnnouncer(one, notifications)
         );
         const live = await onOne.start(ALICE, { key: KEY });

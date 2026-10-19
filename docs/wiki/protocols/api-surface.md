@@ -377,7 +377,7 @@ Signal frames (JSON over WebSocket): `Join { room_id, room_token }`, `Joined`, `
 
 ### Lives
 
-`/api/lives/*` and `GET /api/media/live/:liveId/:name`: see [lives](../services/lives.md), the only
+`/api/lives/*` and `GET /api/media/public/live/:liveId/:name` (no token, cached by nginx): see [lives](../services/lives.md), the only
 copy of the routes and their refusal codes. Every one is a 404 unless `LIVE_ENABLED=true`.
 
 ### Associations
