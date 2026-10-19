@@ -735,8 +735,8 @@ box no longer defines anything.
 | Surface | Who sees it | State |
 | --- | --- | --- |
 | Association post | author; members; readers its association's audience reaches (or a republishing one's), passing the filters | built (filters not built) |
-| Personal post | author and people sharing a space; never an institution; an admin only by id | built |
-| Republication (D38) | only associations and institutions, by proposal accepted by the other's admins; never a personal post; card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04)) |
+| Personal post | author and people sharing a space; the readers of an association its author let carry it (D38b); never an institution; an admin only by id | built |
+| Republication (D38) | only associations and institutions, by proposal accepted by the other's admins; a personal post only with its AUTHOR's consent (D38b); card shows "republished by X, Y"; notifies only those who newly see it | built ([as built](#d38-republication-as-built-2026-10-04), [D38b](#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built)) |
 | Event (D39) | union of the audiences of the organiser and of each ACCEPTED co-organiser | built ([as built](#d39-co-organisation-as-built-2026-10-05)) |
 | Agenda signed in | as events above | built |
 | Agenda anonymous / `.ics` (D40) | one feed per selection (campus, formation x campus, "mine") | built, bare URL refused, **selection SIGNED since 2026-10-06** ([as built](#d40---the-anonymous-agenda-per-selection-as-built-2026-10-05), [amended](#d40-amended---the-selection-is-signed-and-only-the-readers-own-spaces-are-signed-2026-10-06)); "mine" is the signed-in agenda only |
@@ -903,6 +903,203 @@ run against a real PostgreSQL with 073 applied:
 - hide and delete removing everything.
 
 A control that drops the `NOT visible-before` term from the newly-reached SQL fails 3 cases.
+
+### D38b - a personal post republished with its author's consent (decided 2026-10-19, as built)
+
+**The decision (user, 2026-10-19):** *"J'aimerais bien qu'on puisse republier en tant
+qu'association le post d'une personne."* An association PROPOSES and the AUTHOR consents: nothing
+is visible before they accept. Only holders of `POST_AS_ASSO` in the proposing association may
+ask. The author may withdraw the republication at any time, and so may the association.
+Deleting the post removes everything, as for D38.
+
+**The shape: a fourth kind of proposal, addressed to a PERSON.** Migration
+`096_personal_republication_requests.sql` (094 and 095 were taken by open pull requests on
+2026-10-19) makes the generic table address EITHER an association or a user:
+
+- `toUserId` (nullable), with `toAssociationId` now nullable too.
+- `CHK_proposals_one_target`: exactly one of the two.
+- `CHK_proposals_user_target_kind`: `repost-personal` addresses a user, and nothing else does.
+- `UQ_proposals_subject_from_user_target`: one standing request per (post, proposing association).
+  A refusal stands; a withdrawal frees the place.
+- `IDX_proposals_user_target_pending`: the inbox read.
+- The post-delete trigger now also covers `repost-personal`.
+
+`ProposalsService` gains `UserProposalKindHandler` (`resolveRecipient`, `apply`, `announce`,
+`decided`, `describeRequests`), `proposeToUser` and `listForUser`. The handler is
+`posts/personal-republications.service.ts`.
+
+**Routes:**
+
+- `POST /api/posts/:id/republication-requests {associationId}` - ask the author.
+- `GET /api/posts/me/republication-requests` - the author's inbox.
+- `POST /api/associations/proposals/:id/accept|refuse|withdraw` - the generic routes. The
+  recipient alone decides: no administrator stands in.
+- `DELETE /api/posts/:id/republications/:associationId` - the author may withdraw ANY
+  republication of their personal post, and the association its own.
+
+**Refusals, checked in this order. Each is a typed `code` (`REPOST_PERSONAL_*`), and each has an
+integration case:**
+
+1. A post that is absent, hidden, scheduled or expired: 404.
+2. A post the proposer does not see WITHOUT a read grant and without the administrator's reach by
+   id: 404. The refusal confirms nothing about the post.
+3. An association post: 400. D38's routes apply to it.
+4. An anonymous post: 400. An association carrying it would tie it back to its author.
+5. The proposer's own post: 400.
+6. An association of another kind (institution, list) or an archived one: 400.
+7. A block either way between the proposer and the author: 403.
+8. A post the association already carries: 409.
+9. A request that already stands (pending or refused): 409, from the unique index.
+10. The caps: 409. They are STATE, not a clock: at most 20 pending requests per author and 10 per
+    association, counted under `pg_advisory_xact_lock`.
+11. A muted proposer is refused at the route (`assertNotMuted`). A muted AUTHOR cannot accept
+    (403 on accept): accepting would widen what they published.
+
+**Visibility.** The personal branch of `postVisibleToUserSql` gains
+`republicationReachesUserSql`. A personal post is now ALSO visible to the readers of an
+association carrying it. Read grants never reach that branch.
+
+**Who is told:**
+
+- The AUTHOR gets `repost_personal_requested`, in-app and as a push.
+  - The push is `contentKey` `social_repost_personal_requested`, composed on the device from
+    `strings.xml` and `Localizable.strings` (fr and en).
+  - Its tap target is `fr.emse.canari://republication-requests`, which opens
+    `/notifications/requests`.
+- On acceptance, the newly reached readers are told ONCE, under the D38 lock
+  (`newlyReachedByPersonalRepublicationSql`):
+  - the association's readers who could not see the post;
+  - minus anyone in a block with the author;
+  - minus, before the first announce, the author's followers, whom the sweep tells.
+- The PROPOSER gets `repost_personal_accepted` or `repost_personal_refused` in-app, with no push.
+- **Only the FIRST ask of a (post, association) pair is announced** (review of #2116): the state is
+  the earlier `proposals` row, read in the asking transaction, never a clock. A withdrawal by the
+  association also deletes the author's bell row for that request, so ask / withdraw / ask cannot
+  ring the author again. `repost_personal_requested` is in `MUTABLE_PUSH_TYPES`: the author's mute
+  of the asking association silences it.
+
+**What an officer sees of a request it sent.** The association queue describes a
+`repost-personal` request only to a viewer who sees the post (`postVisibleToViewerSql`, no read
+grant, no administrator reach). To another `POST_AS_ASSO` holder of the association, `subjectId`,
+`subject` and `toUser` are null: the queue says "a request to an author", never the post's id, its
+preview or the name. A withdrawal answers `{ id, status }` only, never the row (which names the
+author and the post).
+
+**An asker who no longer speaks (second review of #2116).** "Speaks" is ONE SQL predicate,
+`senderSpeaksSql`: the asker holds `POST_AS_ASSO` in the association and is not muted. A request
+whose asker stopped speaking - flag lost, left, muted, erased - is:
+
+- not shown in the author's inbox and not counted in its badge;
+- not counted in either cap (20 per author, 10 per association);
+- voided when the author accepts it: 409 with code `PROPOSAL_SENDER_GONE`;
+- voided when the same association asks again for the same post, so the pair's place in the
+  unique index is freed;
+- voided at once by the asker's erasure (`proposals_voided`).
+
+Voided means `withdrawn` with `decidedBy` = `[voided]` (`PROPOSAL_VOIDED_BY`), which names neither
+the author nor the asker, and the author's bell row goes in the same transaction. A flag change or a
+departure does NOT void at that moment: those have many writers. The predicate makes the request
+inert until one of the voids above finds it.
+
+**Lock order: the associations (`FOR KEY SHARE`), then the subject, then the proposal.**
+`ProposalsService.lockInOrder` takes it for every decision (accept, refuse, withdraw) of every kind
+and every ask to a person. The handler's `lockSubject` is `lockPostRow` (the post `FOR UPDATE`) for
+the republication kinds; `coorganise` has none, so its next lock is the proposal itself.
+
+| Writer | 1. association | 2. subject | 3. proposal |
+| --- | --- | --- | --- |
+| a decision or an ask (`lockInOrder`) | `FOR KEY SHARE`, from and to | the post `FOR UPDATE` (none for `coorganise`) | the conditional `UPDATE` |
+| a moderation hide, a post delete | - | the post | its pending proposals (096's trigger for a delete) |
+| a republication withdrawal (`unrepublish`) | - | the post | - |
+| the account erasure | `FOR NO KEY UPDATE`, its FIRST statement, every association its writes reach, ordered by id (`ERASURE_ASSOCIATION_LOCK_SQL`) | the posts it scrubs | LAST (`ERASURE_PROPOSAL_STATEMENTS`) |
+| an association delete (`AssociationsService.remove`) | `FOR UPDATE`, its FIRST statement | its events (074's trigger), forms, members, then the row's cascade (never posts: `posts."associationId"` has no foreign key) | through the trigger and the cascade |
+
+- The erasure anonymised `proposedBy` first, then locked the posts the account had reacted to,
+  until a fix. Two connections reproduced `deadlock detected` against an acceptance, and the erasure
+  aborted.
+- The association delete took the association LAST (2026-10-19, review of the D38b second pass): it
+  deleted the events first, whose 074 trigger took their `coorganise` proposals, then waited on a
+  co-organisation decision's `KEY SHARE` while that decision waited on the proposal. Reproduced as
+  `40P01` on PostgreSQL 18. It must be `FOR UPDATE`: `FOR NO KEY UPDATE` does not conflict with
+  `KEY SHARE`.
+- The erasure reached the association only at `UPDATE associations SET "createdBy"`, near its end
+  (2026-10-19, review of the fix above). For an account that created an association and belonged
+  to it, the erasure held the member row while the delete held the association and its events; each
+  then waited on the other (`40P01`, PostgreSQL 18). The erasure now locks first every association
+  one of its writes reaches through a row the delete removes: created, member, role history, push
+  mutes, events it created, validated or rejected, forms it owns or answered, proposals and the
+  republications it made or that name its posts (the post delete cascades into them), and the
+  booking spaces under its bookings, participations, blocks, files and linked resources. A
+  missing source reopens the cycle for its rows. `FOR NO KEY UPDATE` conflicts with the delete's
+  `FOR UPDATE`, is the lock the `createdBy` update takes anyway, and does not block a decision's
+  `KEY SHARE`. Id order keeps two erasures apart too.
+- Two deletes of associations that co-organise each other's events can still deadlock. This is
+  older than both fixes and is a P3 in [backlog](backlog.md).
+- A `KEY SHARE` blocks a delete or a KEY change of the association, never another edit. The key is
+  the primary key AND every unique column, so a write of `slug` (unique) waits behind an in-flight
+  decision, as a delete does.
+
+Five integration cases hold the contested row from a second connection and prove the order: a hide,
+an association delete against an acceptance (the delete holds the association), an erasure racing
+an acceptance (both complete), and two in `coorganisation.integration.spec.ts` against the real
+`AssociationsService.remove`. One is a co-organisation decision, the other an erasure of the
+association's creator and member. In both the delete waits holding nothing, and both sides complete.
+Each fails with its lock removed.
+
+**The counts.** The inbox's "readers who would see it first" is computed by the very query
+acceptance notifies with (`newlyReachedByPersonalRepublicationSql`, with the post's
+`feedNotifiedAt`), so the two agree. `/notifications` reads only
+`GET /api/posts/me/republication-requests/count`.
+
+**The author's request states plainly:**
+
+- who asked (the member);
+- in which association's name;
+- the post;
+- how many readers would see it for the first time - a count, never names.
+
+**Withdrawal:**
+
+- The author's withdrawal deletes the row and records the request as `refused`: it stands, so the
+  same association cannot ask again.
+- The association's withdrawal records it as `withdrawn`, so it may ask again later.
+
+**Removal:**
+
+- Hiding the post (`dropRepublicationsOf`) deletes its republications and PENDING requests; an
+  accepted or refused request stays until the post is deleted.
+- Deleting the post: the foreign key and the trigger.
+- The author's erasure deletes every request addressed to them (`proposals_to_user`).
+- The proposer's erasure voids their PENDING requests (`[voided]`, bell rows deleted): no one is
+  left to speak for them. Their decided requests keep the record, with `proposedBy` anonymised.
+
+**The client:**
+
+- The menu entry "Republier au nom d'une association" (`canRequestRepublication`) opens
+  `RepublishDialog` in `request` mode. It lists the reader's HELD `POST_AS_ASSO` associations of
+  type `association`.
+- The card shows "Demande envoyee au nom de X" for a pending request (`republicationRequests`),
+  and the menu offers "Annuler la demande de X".
+- The inbox is `/notifications/requests`. `/notifications` links to it when something is waiting.
+- An association's sent requests appear in its "Propositions" tab, addressed to the author.
+
+**Not built (in [backlog](backlog.md)):**
+
+- No expiry for a pending request: it waits like a D38 proposal.
+- No per-author opt-out of being asked.
+- No list of the readers reached.
+
+**Proof:** `posts/personal-republications.integration.spec.ts`, against PostgreSQL with 096
+applied. It covers every refusal above with its code, and:
+
+- the inbox and the queue;
+- accept, refuse, and both withdrawals;
+- the notification sets;
+- the muted author;
+- hide, delete and erasure;
+- the two CHECKs;
+- the caps;
+- that the card offers exactly what the write accepts.
 
 ### D39 co-organisation as built (2026-10-05)
 

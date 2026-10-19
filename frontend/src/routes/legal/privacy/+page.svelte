@@ -30,7 +30,7 @@
 <LegalDocument
   title={m.legal_privacy_title()}
   subtitle={m.legal_privacy_subtitle()}
-  updated="18/10/2026"
+  updated="19/10/2026"
   {sections}
 >
   <!-- 1 -->
@@ -98,7 +98,11 @@
         <dt>Publications, commentaires, réactions, sondages, CanaReels</dt>
         <dd>
           Contenus que vous publiez volontairement sur le fil, visibles par les membres de la
-          plateforme selon l'audience choisie. Les fichiers joints sont chiffrés avant l'envoi.
+          plateforme selon l'audience choisie. Les fichiers joints sont chiffrés avant l'envoi. Une
+          association peut vous demander de relayer une de vos publications personnelles : la
+          demande (l'association, le membre qui l'a faite, la publication) vous est adressée, et
+          rien n'est montré à son public tant que vous n'avez pas accepté. Vous pouvez retirer ce
+          relais à tout moment ; la demande est effacée avec la publication ou avec votre compte.
         </dd>
       </div>
       <div>

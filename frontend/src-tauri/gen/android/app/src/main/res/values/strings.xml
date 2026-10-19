@@ -84,6 +84,8 @@
     <string name="notif_social_association_repost_body">Nouvelle publication</string>
     <string name="notif_social_repost_proposed_title">%1$s propose de relayer une publication</string>
     <string name="notif_social_repost_proposed_body">Publication à relayer</string>
+    <string name="notif_social_repost_personal_requested_title">%1$s demande à relayer votre publication</string>
+    <string name="notif_social_repost_personal_requested_body">Demande de republication</string>
     <string name="notif_social_coorganise_proposed_title">%1$s propose de co-organiser un événement</string>
     <string name="notif_social_coorganise_proposed_body">Événement à co-organiser</string>
     <string name="notif_social_live_started_title">%1$s est en live</string>

@@ -24,6 +24,7 @@ import {
   followedPostContent,
   associationRepostContent,
   repostProposedContent,
+  repostPersonalRequestedContent,
   coorganiseProposedContent,
   liveStartedContent,
   publicMediaIconId,
@@ -95,6 +96,10 @@ export class PostNotificationsService {
         return associationRepostContent(actorName, text, icon);
       case 'repost_proposed':
         return repostProposedContent(actorName, text, icon);
+      // D38b: an association asks the AUTHOR to let it republish their personal post. `actorName`
+      // is the ASSOCIATION. Its answers (`repost_personal_accepted` / `_refused`) are in-app only.
+      case 'repost_personal_requested':
+        return repostPersonalRequestedContent(actorName, text, icon);
       // Co-organisation (D39). `actorName` is the ORGANISING association, `text` the event title.
       case 'coorganise_proposed':
         return coorganiseProposedContent(actorName, text, icon);
@@ -268,6 +273,11 @@ export class PostNotificationsService {
     associationLogoMediaId?: string | null;
     /** Extra fields for the push payload, e.g. the association the event belongs to. */
     pushData?: Record<string, string>;
+    /**
+     * In-app rows only, no push - a type that is deliberately never pushed (the answer to a
+     * republication request, D38b) rather than one `pushContent` forgot.
+     */
+    skipPush?: boolean;
   }): Promise<number> {
     const recipients = [...new Set(data.recipientIds)].filter((id) => id !== data.actorId);
     if (recipients.length === 0) return 0;
@@ -287,6 +297,7 @@ export class PostNotificationsService {
         })
       )
     );
+    if (data.skipPush) return recipients.length;
 
     await this.fanOutPush({ ...data, actorName }, recipients);
     return recipients.length;

@@ -1,4 +1,5 @@
 import { MOBILE_APP_PROTOCOL } from './appSiteAssociation';
+import { REPUBLICATION_REQUESTS_ROUTE } from '$lib/posts/notificationTarget';
 
 /**
  * The query parameter naming the comment a post link opens at - written by the server into a
@@ -12,8 +13,9 @@ export const POST_COMMENT_PARAM = 'comment';
  *
  * The hosts are the ones the server writes into a social push (`socialDeepLink` in social-service)
  * and the ones Android and iOS build natively: `post/<id>`, `form/<id>`, `posts`, `calendar`,
- * `admin-agenda` and `live/<id>`. `posts` is what a payload naming nothing falls back to on the server, and it has
- * no id; the two agenda hosts mirror `notificationHref` (the in-app bell).
+ * `admin-agenda`, `live/<id>` and `republication-requests` (D38b). `posts` is what a payload
+ * naming nothing falls back to on the server, and it has no id; the two agenda hosts and
+ * `republication-requests` mirror `notificationHref` (the in-app bell).
  *
  * Returns null for a host this table does not own (chat, callback, payment and open have their own
  * handling) or for a host that needs an id and has none, so the caller can log instead of guessing.
@@ -42,6 +44,9 @@ export function appRouteForDeepLink(u: URL): string | null {
     // on the feed instead of the unknown-host branch of the hook.
     case 'live':
       return '/posts';
+    // D38b: a request to let an association carry a personal post - the author's inbox.
+    case 'republication-requests':
+      return REPUBLICATION_REQUESTS_ROUTE;
     default:
       return null;
   }

@@ -20,6 +20,7 @@ describe('categoryOfDataPush', () => {
     ['social_followed_post', 'posts'],
     ['social_association_repost', 'posts'],
     ['social_repost_proposed', 'posts'],
+    ['social_repost_personal_requested', 'posts'],
     ['social_coorganise_proposed', 'events'],
     ['social_live_started', 'posts'],
     ['form_opening_soon', 'forms'],

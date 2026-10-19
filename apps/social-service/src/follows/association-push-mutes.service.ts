@@ -19,6 +19,8 @@ export const MUTABLE_PUSH_TYPES: ReadonlySet<string> = new Set([
   'association_post',
   'association_repost',
   'live_started',
+  // D38b: an association asking an author to carry their post - muting that association stops it.
+  'repost_personal_requested',
 ]);
 
 /** A muted association as the settings list shows it. */

@@ -16,6 +16,7 @@ import { PostNotification } from './entities/post-notification.entity';
 import { PostRepublication } from './entities/post-republication.entity';
 import { RepublicationsService } from './republications.service';
 import { RepublicationsController } from './republications.controller';
+import { PersonalRepublicationsService } from './personal-republications.service';
 import { ProposalsModule } from '../proposals/proposals.module';
 import { AssociationsModule } from '../associations/associations.module';
 import { FollowsModule } from '../follows/follows.module';
@@ -30,7 +31,8 @@ import { ModerationModule } from '../moderation/moderation.module';
     AssociationsModule,
     FollowsModule,
     ModerationModule,
-    // The generic proposals; this module registers their `repost` kind (`RepublicationsService`).
+    // The generic proposals; this module registers their `repost` kind (`RepublicationsService`)
+    // and their `repost-personal` kind (`PersonalRepublicationsService`, D38b).
     ProposalsModule,
   ],
   controllers: [PostsController, RepublicationsController],
@@ -46,6 +48,8 @@ import { ModerationModule } from '../moderation/moderation.module';
     PostMediaRetentionService,
     ReelRetentionScheduler,
     RepublicationsService,
+    // D38b: the `repost-personal` kind, whose receiver is the post's author.
+    PersonalRepublicationsService,
     PushService,
   ],
   // `PostPreviewService` is exported for `PublicModule` alone: the unauthenticated link-preview

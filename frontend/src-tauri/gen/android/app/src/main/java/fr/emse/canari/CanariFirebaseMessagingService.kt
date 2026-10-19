@@ -4449,6 +4449,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_repost_proposed_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_repost_proposed_body) }
             )
+            // D38b: an association asks the AUTHOR to republish their personal post. `actor` is the
+            // asking association, `arg` the post's opening.
+            "social_repost_personal_requested" -> Pair(
+                res.getString(R.string.notif_social_repost_personal_requested_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_repost_personal_requested_body) }
+            )
             // Co-organisation (D39): the organising association, then the event title.
             "social_coorganise_proposed" -> Pair(
                 res.getString(R.string.notif_social_coorganise_proposed_title, actor),

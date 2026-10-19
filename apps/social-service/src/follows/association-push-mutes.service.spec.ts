@@ -82,6 +82,7 @@ describe('AssociationPushMutesService', () => {
       'association_post',
       'association_repost',
       'live_started',
+      'repost_personal_requested',
     ]);
   });
 });

@@ -31,6 +31,8 @@
 "notif.social.association_repost.body" = "New post";
 "notif.social.repost_proposed.title" = "%@ proposes a post to share";
 "notif.social.repost_proposed.body" = "A post to share";
+"notif.social.repost_personal_requested.title" = "%@ asks to share your post";
+"notif.social.repost_personal_requested.body" = "A request to share your post";
 "notif.social.coorganise_proposed.title" = "%@ proposes to co-organise an event";
 "notif.social.coorganise_proposed.body" = "An event to co-organise";
 "notif.social.live_started.title" = "%@ is live";

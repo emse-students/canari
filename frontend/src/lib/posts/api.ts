@@ -111,6 +111,16 @@ export interface PostLinkedCalendarEvent {
   associationSlug: string;
 }
 
+/** One request an association of the reader made for a personal post (D38b). */
+export interface PersonalRepublicationRequestState {
+  associationId: string;
+  /** Named on the card: "Demande envoyee au nom de X". */
+  associationName: string;
+  /** The proposal, which the association withdraws while it is `pending`. */
+  proposalId: string;
+  status: 'pending' | 'refused';
+}
+
 export interface PostEntity {
   id: string;
   /** Omitted when the post is published as an association (`association` is set). */
@@ -142,8 +152,19 @@ export interface PostEntity {
   /** The republishers (ids in `republishedBy`) whose republication this reader may withdraw. */
   canUnrepublishAs?: string[];
   /**
+   * "Republier au nom d'une association" (D38b): a personal post its author may be ASKED about, by
+   * an association of the reader's that has not asked yet. The author decides; nothing is shown
+   * before they accept.
+   */
+  canRequestRepublication?: boolean;
+  /**
+   * What the reader's associations already asked for this personal post and still stands: `pending`
+   * (the card says "Demande envoyee") or `refused` (recorded, and it stands).
+   */
+  republicationRequests?: PersonalRepublicationRequestState[];
+  /**
    * The associations that republished this post, oldest first (D38) - the card's "Republie par"
-   * line. Present on association posts only; a personal post is never republished.
+   * line. A personal post carries it too once its author accepted a request (D38b).
    */
   republishedBy?: PostAssociationAuthor[];
   authorDisplayName?: string | null;
@@ -495,6 +516,21 @@ export async function proposeRepublication(
   associationId: string
 ): Promise<unknown> {
   return request(`/api/posts/${postId}/republication-proposals`, {
+    method: 'POST',
+    body: JSON.stringify({ associationId }),
+  });
+}
+
+/**
+ * Asks the AUTHOR of a personal post to let `associationId` carry it (D38b). Nothing is visible
+ * before the author accepts. A refusal carries a typed `code` (`REPOST_PERSONAL_*`), read with
+ * `refusalCode`: 409 for a request that already stands or a cap reached, 403 for a block.
+ */
+export async function requestPersonalRepublication(
+  postId: string,
+  associationId: string
+): Promise<unknown> {
+  return request(`/api/posts/${postId}/republication-requests`, {
     method: 'POST',
     body: JSON.stringify({ associationId }),
   });

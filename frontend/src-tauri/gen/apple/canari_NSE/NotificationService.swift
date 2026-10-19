@@ -158,6 +158,8 @@ class NotificationService: UNNotificationServiceExtension {
     // Republication (D38): the republishing, then the proposing, association names the title.
     case "social_association_repost": composed = actorTitled("association_repost")
     case "social_repost_proposed": composed = actorTitled("repost_proposed")
+    // D38b: an association asks the AUTHOR to republish their personal post.
+    case "social_repost_personal_requested": composed = actorTitled("repost_personal_requested")
     // Co-organisation (D39): the organising association names the title, the event is the body.
     case "social_coorganise_proposed": composed = actorTitled("coorganise_proposed")
     // A live started (WP-L7): the broadcaster names the title, the body is the fixed sentence.

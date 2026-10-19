@@ -1,3 +1,6 @@
+/** The `target` naming a person's republication requests page (D38b), and the deep-link host for it. */
+export const REPUBLICATION_REQUESTS_TARGET = 'republication-requests';
+
 /**
  * WHERE A SOCIAL PUSH GOES WHEN IT IS TAPPED, as a deep link the SERVER writes.
  *
@@ -35,6 +38,11 @@ export function socialDeepLink(data: Record<string, string>): string {
   // to be. A build older than that route does not route it: it opens the app, and at most lands on
   // the notifications list (the hook's unknown-host branch).
   if (data.liveId) return `fr.emse.canari://live/${encodeURIComponent(data.liveId)}`;
+  // A request to the AUTHOR to republish their personal post (D38b): their own requests page, where
+  // the answer is given. A TYPED target, from a closed set - never a path the payload names.
+  if (data.target === REPUBLICATION_REQUESTS_TARGET) {
+    return `fr.emse.canari://${REPUBLICATION_REQUESTS_TARGET}`;
+  }
   const postId = data.postId;
   if (postId) {
     const post = `fr.emse.canari://post/${encodeURIComponent(postId)}`;

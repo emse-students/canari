@@ -1,6 +1,12 @@
 import type { PostNotification } from './api';
 
 /**
+ * The author's inbox of republication requests (D38b) - where a `repost_personal_requested`
+ * notification and its push (`fr.emse.canari://republication-requests`) both land.
+ */
+export const REPUBLICATION_REQUESTS_ROUTE = '/notifications/requests';
+
+/**
  * WHERE A NOTIFICATION GOES WHEN IT IS OPENED - the one answer, for both surfaces.
  *
  * The bell dropdown and `/notifications` render the same rows and, until this existed, each decided
@@ -42,6 +48,10 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'repost_proposed':
     case 'coorganise_proposed':
       return null;
+    // D38b: the author was asked to let an association carry a personal post. Their inbox is where
+    // the answer is given; `postId` is the post, which the inbox row links to.
+    case 'repost_personal_requested':
+      return REPUBLICATION_REQUESTS_ROUTE;
     // The types whose `postId` IS a post.
     case 'comment':
     case 'reply':
@@ -50,6 +60,9 @@ export function notificationHref(notif: Pick<PostNotification, 'type' | 'postId'
     case 'association_post':
     case 'followed_post':
     case 'association_repost':
+    // D38b: the proposer was told the author's answer - the post shows it (carried, or not).
+    case 'repost_personal_accepted':
+    case 'repost_personal_refused':
       return `/posts/${notif.postId}`;
     // A type this build does not know has an id of unknown meaning. The old default sent it to
     // `/posts/<id>`, a dead link for anything that is not a post.
@@ -73,6 +86,9 @@ export const KNOWN_NOTIFICATION_TYPES: ReadonlySet<string> = new Set([
   'association_repost',
   'repost_proposed',
   'coorganise_proposed',
+  'repost_personal_requested',
+  'repost_personal_accepted',
+  'repost_personal_refused',
   'event_proposed',
   'event_validated',
   'event_rejected',

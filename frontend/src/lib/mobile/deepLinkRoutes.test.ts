@@ -40,6 +40,10 @@ describe('appRouteForDeepLink', () => {
     expect(route('fr.emse.canari://calendar')).toBe(
       notificationHref({ type: 'event_validated', postId: 'a1' })
     );
+    // D38b: the push of a request to the author and its in-app row land on the same inbox.
+    expect(route('fr.emse.canari://republication-requests')).toBe(
+      notificationHref({ type: 'repost_personal_requested', postId: 'p1' })
+    );
   });
 
   it('refuses a page host with no id, and hosts it does not own', () => {

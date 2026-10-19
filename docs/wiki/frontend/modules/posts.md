@@ -248,6 +248,23 @@ association post through `POST_AS_ASSO` for creation and management alike. What 
 report is the post itself: whether its publisher held `POST_AS_ASSO` on that association, or reached
 the composer through the global-admin route alone.
 
+## Asking the author of a personal post (D38b, 2026-10-19)
+
+A personal post is carried by an association only with its author's consent; the decision, the
+refusals and the proof are on
+[profiles-and-access](../../profiles-and-access.md#d38b---a-personal-post-republished-with-its-authors-consent-decided-2026-10-19-as-built).
+On the card, three served fields:
+
+- `canRequestRepublication` draws "Republier au nom d'une association", which opens
+  `RepublishDialog` in `request` mode (`personalRequestCandidates`).
+- `republicationRequests` draws "Demande envoyee au nom de X" under the header and "Annuler la
+  demande de X" in the menu (`withdrawProposal`).
+- `canUnrepublishAs` lists EVERY republisher for the post's author, who may withdraw any of them.
+
+A refused request is read by its typed `code` (`personalRequestRefusalMessage`), never its message.
+The author answers in `/notifications/requests`, reached from the notification, its push
+(`fr.emse.canari://republication-requests`) and a link on `/notifications` while one waits.
+
 ## The search stops where the feed stops (2026-10-04)
 
 `/api/posts/search` is ONE server query - `ILIKE` over the body and the association name, pinned
@@ -1028,6 +1045,7 @@ the console line separates the causes the shared message cannot: a refused conne
 | `/posts` | Main feed |
 | `/post/[postId]` | Single post page |
 | `/posts/new` | Create post form |
+| `/notifications/requests` | The author's inbox of republication requests (D38b): accept or refuse an association's request to carry a personal post |
 
 ## One catch said seven things
 
@@ -1551,7 +1569,9 @@ merges over it.
   not carry it.
 - **Without any of the reader's served rights.** Every `can*` field (`canManage`, `canPin`,
   `canReport`, `canUnmaskAnonymous`, `canRepublish`, `canProposeRepublication`,
-  `canUnrepublishAs`) is removed before the page is sealed, and `canVote` is stored as `false`. A
+  `canUnrepublishAs`, `canRequestRepublication`) is removed before the page is sealed, and so is
+  `republicationRequests` (D38b: what the reader's associations asked an author, perhaps answered
+  since); `canVote` is stored as `false`. A
   card drawn from the device therefore offers no edit, no delete, no pin, no vote and no
   republication until the server's own answer says who this reader is. A reader holding a nominative
   read grant (#1606) can never be offered a vote from the copy. The reason is the same as F1's for
