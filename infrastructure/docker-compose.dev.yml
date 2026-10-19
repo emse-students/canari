@@ -197,6 +197,15 @@ services:
       # peer and this service only relays their handshake - it opens no peer connection, so it has
       # nothing to point at a relay. The CLIENTS get TURN from chat-delivery-service, below.
       CALL_ROOM_SECRET: ${CALL_ROOM_SECRET:-}
+    # Production's, plus `start_interval`. Without it the deploy read this service as `none` - started,
+    # never proven to answer - on the estate where dev calls are tested (2026-10-19).
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3004/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+      start_interval: 2s
 
   # ─────────────────────────────────────────────────────
   # Node services
@@ -342,6 +351,15 @@ services:
       - media_meta:/app/media_meta
       # Staging of resumable upload sessions (parts land here before the object store takes the blob).
       - media_upload_sessions:/app/upload_sessions
+    # Production's, plus `start_interval`: the deploy read this service as `none` until 2026-10-19,
+    # and it carries the live segments `LIVE_ENABLED` opens on dev.
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3011/api/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+      start_interval: 2s
     depends_on:
       garage:
         condition: service_healthy

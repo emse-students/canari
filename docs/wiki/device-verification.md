@@ -1397,6 +1397,71 @@ camera. **Owed one reading each on the Mi 9T and the iPhone 12:**
 - The overlay over the keyboard and over a conversation with a pending draft; a camera refused
   (permission denied) shows the refusal screen with no native fallback.
 
+## CALL-L1. A 1:1 dev call between the two bench phones - owed on BOTH
+
+Lot 1 of [calls](frontend/modules/calls.md#lot-1-2026-10-17---11-audio-peer-to-peer-dev-builds-only):
+in-app 1:1 AUDIO, peer to peer, Cloudflare TURN as the last resort, on dev builds only
+(`CALLS_ENABLED = CALLS_COMPILED || deployEnvironment() === 'development'`). Nothing in it was ever
+run on a phone ([2026-10-18 bench](device-readings-calls-live-2026-10-18.md): `BLOCKED`, dev was on
+`1.2.9-alpha.7`). Written 2026-10-19, when dev served `1.3.0-alpha.4` with the dev TURN pair.
+
+**Preconditions - each one is a reading, never assumed:**
+
+1. **Both phones run a PRE-RELEASE build**: Settings > A propos shows `X.Y.Z-alpha.N` and the app
+   talks to `dev.canari-emse.fr`. A stable build has `CALLS_ENABLED = false` and no call button.
+   **TRAP: a store serves the HIGHEST build number.** The stable `1.3.0` is `100300099` and outranks
+   `1.3.0-alpha.4` (`100300004`), so once `1.3.0` is offered, Play updates the Mi 9T to a build that
+   cannot call; on TestFlight, pick the alpha build by hand. When Play offers no alpha above the
+   latest stable, the reading needs the next pre-release (`v1.3.1-alpha.1` = `100300101`).
+2. **Two dev accounts, one per phone, sharing a DIRECT conversation**: calls are offered in direct
+   conversations only. No block between them (a block refuses the call with `call_unavailable`).
+3. **The call permission is not refused**: the conversation's panel, "Appels", reads "Autorises", or
+   no choice was made and the level is not `none`.
+4. **Both apps OPEN, in the foreground, screen on.** The ring is the MLS `call_invite` over the chat
+   socket. A killed or backgrounded app is NOT rung (`CALLS_COMPILED = false`, no native ring; and dev
+   has no Firebase sender, so chat-delivery logs `[ring] Firebase Admin is not initialised` at every
+   ring - expected on dev, not the finding).
+5. **The microphone prompt** appears on the first call on each phone: accept it.
+
+**The log.** A store build is not inspectable: Settings > A propos > "Enregistrer le journal" saves
+the in-app log after each call. **Never paste the `[Call] encryption key derived from MLS (fp=...)`
+line into this public repository** - it prints key bytes (owed fix, [calls](frontend/modules/calls.md)).
+
+**Steps:**
+
+| # | Action | Expected on screen | Expected in the log |
+| --- | --- | --- | --- |
+| 1 | Mi 9T opens the DM, taps "Appel audio" | the call screen; the iPhone rings IN-APP within seconds | caller: `[Call] fetching ICE servers for group=...`, `[Call] server ring sent - answer window open`, `[Call] signalling connected, joining p2p room...`, `[Call] p2p room ready (...)`; callee: `[Call] signal from <id> in <group> call=<id>` |
+| 2 | iPhone answers | both show the call in progress; each hears the other, both ways, for at least 30 s | caller `[Call] peer ready - this side is initiator`, callee `... is polite`; `[Call] offer (...) -> peer` / `[Call] answer (...) -> peer`; `[Call] connectionState=connected`; `[Call] selected path pair=<local>/<proto>-><remote>/<proto> relayed=yes\|no`; `[Call] E2E encrypting audio` and `[Call] E2E decrypting audio`; `[Call] remote track unmuted kind=audio` |
+| 3 | iPhone hangs up | both screens leave the call; the conversation shows the call line | no `[Call] terminal failure` |
+| 4 | Steps 1-3 the other way: the iPhone calls the Mi 9T | the same | the same, roles swapped |
+| 5 | Mi 9T calls, nobody answers | after 60 s the ring stops; a missed-call line on both | caller `[Call] ring window (60000 ms) closed unanswered - call=<id>` |
+| 6 | The callee app KILLED, then called | **nothing rings - EXPECTED in lot 1**, not a `FAIL` | caller as step 5 |
+| 7 | Callee sets "Appels" to "Non autorises", then is called; then back to "Autorises" | refused: no ring, a missed-call line at once; allowed again: it rings | callee: `[Call] invite <id> in <group> not rung - calls are not allowed in this conversation` |
+
+**Record per direction:** the verdict, the `relayed=` value (only `relayed=yes` is billed TURN), the
+network (bench Wi-Fi; no SIM in either phone, so cellular stays owed), and the build on each phone.
+
+**Failure signatures, and what each names:**
+
+- `[Call] ICE servers HTTP 503`: the dev TURN pair is missing from dev's chat-delivery-service
+  (`DEV_CLOUDFLARE_CALLS_API_TOKEN`, `DEV_CLOUDFLARE_TURN_KEY_ID`), or the monthly budget refused.
+- `[Call] startCall refused - RTCRtpScriptTransform unavailable` (or `acceptCall refused ...`): that
+  WebView has no E2E transform - a finding about the engine, P1 for lot 1, never a reason to degrade.
+- `[Call] WARN remote audio still muted after 5s`, or `[Call] E2E decrypt failed`: media arrives
+  but cannot be heard or decrypted - the per-side key derivation (F5 on
+  [calls](frontend/modules/calls.md)); note both phones' MLS state.
+- `[Call] signalling refused: <reason>`: the relay refused the room (`room-full`, `group-mismatch`).
+- `[Call] connectionState=failed` with no `selected path`: no candidate pair, not even TURN - read
+  `iceConnectionState` and the network.
+
+**`[CALL_REPORT]` IS NOT IN ANY BUILD YET**: it is #2011, an open draft. Once a pre-release carries it,
+each device logs one line per call every 10 s and once at the end
+(`[CALL_REPORT] call=<roomId> phase=<tick|end> dur_ms= setup_ms= engine= ice= pair= relayed= ...
+e2e=on enc_frames= dec_frames= dec_fail=`); record `setup_ms`, `relayed`, `rtt_ms`, `loss_in_pct` and
+`dec_fail` per direction, which is the plan's exit criterion
+([calls-revival-plan](frontend/modules/calls-revival-plan.md)).
+
 ## The Mi 9T readings of v1.2.9-alpha.7 (2026-10-17)
 
 Build `1.2.9 (100200907)`, the `v1.2.9-alpha.7` release APK (`app-universal-release.apk`, sha256
