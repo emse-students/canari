@@ -1,5 +1,6 @@
 import {
   Injectable,
+  OnApplicationBootstrap,
   NotFoundException,
   ForbiddenException,
   Logger,
@@ -195,8 +196,15 @@ export function sortChannels<T extends Pick<Channel, 'id' | 'sortOrder' | 'creat
  */
 export const UNREAD_TRACKED_SINCE_MS = Date.UTC(2026, 9, 8);
 
+/** What the outbox entry of a salon row keeps for its push (migration 093). */
+export interface ChannelFanoutPayload {
+  mentionedUserIds?: string[];
+  seedFrame?: string;
+  seedGroupId?: string;
+}
+
 @Injectable()
-export class ChannelService {
+export class ChannelService implements OnApplicationBootstrap {
   private readonly logger = new Logger(ChannelService.name);
   private readonly internalSecret = process.env.INTERNAL_SECRET ?? '';
 
@@ -3224,7 +3232,12 @@ export class ChannelService {
     const clientMessageId = this.readClientMessageId(channel.id, input);
     if (clientMessageId) {
       const stored = await this.findByClientMessageId(channelId, input.senderId, clientMessageId);
-      if (stored) return stored;
+      if (stored) {
+        // A repeat drains the row's own outbox entry at once: if the process that wrote it died
+        // before handing its broadcast off, this is the first moment anyone can finish the job.
+        this.drainFanoutInBackground(stored.id);
+        return stored;
+      }
     }
 
     // A poll is just an encrypted message carrying a label-free descriptor: we
@@ -3259,9 +3272,12 @@ export class ChannelService {
       pinned: autoPin,
     });
 
-    const saved = await this.saveUnderUnusedKey(msg, input);
+    const saved = await this.saveUnderUnusedKey(msg, input, this.fanoutPayloadOf(input));
     // Two repeats racing: the other one wrote the row, this one is answered with it.
-    if (saved.replayed) return saved.row;
+    if (saved.replayed) {
+      this.drainFanoutInBackground(saved.row.id);
+      return saved.row;
+    }
     const savedMsg = saved.row;
     if (pollMeta) {
       this.logger.log(
@@ -3269,46 +3285,229 @@ export class ChannelService {
       );
     }
 
-    // Publish event fire-and-forget - do not block the HTTP response. Addressed to the people who
-    // may READ the salon: this frame carries the ciphertext inline, and a private channel's
-    // audience is not its community's.
-    this.channelAudience(channel)
-      .then((audience) =>
-        this.redis.publishChannelEvent(
-          'channel.message.created',
-          {
-            channelId,
-            messageId: savedMsg.id,
-            senderId: input.senderId,
-            ciphertext: input.ciphertext,
-            nonce: input.nonce,
-            senderSessionId: input.senderSessionId,
-            messageIndex: input.messageIndex,
-            signature: savedMsg.signature,
-            createdAt: savedMsg.createdAt,
-            silent: savedMsg.silent,
-            // Poll descriptor (no labels) so peers render the card live without refetch.
-            poll: this.servedPoll(pollMeta),
-            pinned: savedMsg.pinned,
-          },
-          audience
-        )
-      )
-      .catch((err) => this.logger.error(`Failed to publish channel message event: ${err}`));
-
-    // Fan out push notifications to offline/background members, honouring each member's
-    // per-channel level. Fire-and-forget: never block the HTTP response on FCM.
-    //
-    // A SILENT row rings nobody. A reaction that pushed would make every heart a notification, and
-    // a community where that happens is a community people mute. The author is still told, by the
-    // client, through the same targeted push a DM reaction uses.
-    if (!savedMsg.silent) {
-      this.notifyChannelRecipients(channel, savedMsg, input).catch((err) =>
-        this.logger.error(`[CHANNEL_PUSH] fan-out failed channel=${channelId}: ${err}`)
-      );
-    }
+    // The broadcast and the push run after the answer is ready - never block the HTTP response on
+    // them - and from the row's OUTBOX entry (migration 093), written in the send's transaction: a
+    // process killed from here on leaves the entry behind, and the next boot (or a repeat of this
+    // send) finishes the job.
+    this.fanoutInBackground(channel, savedMsg, this.fanoutPayloadOf(input));
 
     return savedMsg;
+  }
+
+  /**
+   * What a push needs that the stored row does not carry: the sender's cleartext mentions and the
+   * seed frame (an MLS private message, opaque here) riding the push. Kept in the outbox entry so a
+   * fan-out finished after a crash rings the same phones with the same payload.
+   */
+  private fanoutPayloadOf(input: SendChannelMessageDto): ChannelFanoutPayload {
+    return {
+      ...(input.mentionedUserIds?.length ? { mentionedUserIds: input.mentionedUserIds } : {}),
+      ...(input.seedFrame && input.seedGroupId
+        ? { seedFrame: input.seedFrame, seedGroupId: input.seedGroupId }
+        : {}),
+    };
+  }
+
+  /**
+   * Every fan-out running in THIS process, by message id. It answers two questions by proof rather
+   * than by a clock: `settleFanouts` (what must finish before a replaced replica exits - a normal
+   * deploy is the commonest process death there is) and `drainFanout` (an entry whose fan-out is
+   * running here is not drained a second time). It cannot see another replica's fan-outs: a claim
+   * across replicas is out of scope, and a duplicate there is settled downstream (see
+   * {@link runFanout}).
+   */
+  private readonly fanoutsInFlight = new Map<string, Promise<void>>();
+
+  /** Starts `work` as THE fan-out of `messageId`, visible to {@link settleFanouts} until it ends. */
+  private trackFanout(messageId: string, work: () => Promise<void>): Promise<void> {
+    const running = work().finally(() => this.fanoutsInFlight.delete(messageId));
+    this.fanoutsInFlight.set(messageId, running);
+    return running;
+  }
+
+  /**
+   * Resolves once every fan-out running in this process has ended, successfully or not. The SIGTERM
+   * path awaits it before the process exits (`drainOnSigterm`): a replaced replica's last requests
+   * were answered BEFORE their broadcast and push ran, and exiting first would leave their entries
+   * for a boot that may be days away. Bounded by nothing of its own: the shutdown mechanism's
+   * existing stop timeout is the bound.
+   */
+  async settleFanouts(): Promise<void> {
+    while (this.fanoutsInFlight.size > 0) {
+      this.logger.log(
+        `[CHANNEL_FANOUT] waiting for ${this.fanoutsInFlight.size} fan-out(s) before exit`
+      );
+      await Promise.allSettled(this.fanoutsInFlight.values());
+    }
+  }
+
+  /** Runs {@link runFanout} off the request path; a failure is logged and leaves the entry for the drain. */
+  private fanoutInBackground(
+    channel: Channel,
+    row: ChannelMessage,
+    payload: ChannelFanoutPayload
+  ): void {
+    this.trackFanout(row.id, () => this.runFanout(channel, row, payload)).catch((err) =>
+      this.logger.error(
+        `[CHANNEL_FANOUT] channel=${channel.id} message=${row.id} failed, the entry stays for the next drain: ${String(err)}`
+      )
+    );
+  }
+
+  /**
+   * The two things a stored salon row owes the world - the live `channel.message.created` frame to
+   * the people who may READ the salon, and the push to the members who should be rung - then the
+   * deletion of its outbox entry, but ONLY when both were handed off. The frame carries the
+   * ciphertext inline, so a private channel's audience is not its community's.
+   *
+   * A SILENT row rings nobody: a reaction that pushed would make every heart a notification, and a
+   * community where that happens is a community people mute. The author is still told, by the
+   * client, through the same targeted push a DM reaction uses.
+   *
+   * The two run independently (a refused push never stops the frame) and each failure is logged by
+   * branch. A kept entry is drained at the next boot, which can repeat a half that DID succeed:
+   * clients settle a duplicate frame by message id and Android settles a duplicate push by its
+   * `createdAt`.
+   */
+  private async runFanout(
+    channel: Channel,
+    row: ChannelMessage,
+    payload: ChannelFanoutPayload
+  ): Promise<void> {
+    const pollMeta = (row.metadata as { poll?: ChannelPollMeta } | null)?.poll ?? null;
+    const published = this.channelAudience(channel).then((audience) =>
+      this.redis.publishChannelEvent(
+        'channel.message.created',
+        {
+          channelId: channel.id,
+          messageId: row.id,
+          senderId: row.authorId,
+          ciphertext: row.content,
+          nonce: row.nonce,
+          senderSessionId: row.senderSessionId,
+          messageIndex: row.messageIndex,
+          signature: row.signature,
+          createdAt: row.createdAt,
+          silent: row.silent,
+          // Poll descriptor (no labels) so peers render the card live without refetch.
+          poll: this.servedPoll(pollMeta),
+          pinned: row.pinned,
+        },
+        audience
+      )
+    );
+    const pushed = row.silent
+      ? Promise.resolve()
+      : this.notifyChannelRecipients(channel, row, {
+          senderId: row.authorId,
+          ciphertext: row.content,
+          nonce: row.nonce,
+          senderSessionId: row.senderSessionId ?? '',
+          messageIndex: row.messageIndex ?? 0,
+          ...(row.signature ? { signature: row.signature } : {}),
+          ...payload,
+        } as SendChannelMessageDto);
+    const [frame, push] = await Promise.allSettled([published, pushed]);
+    if (frame.status === 'rejected') {
+      this.logger.error(
+        `Failed to publish channel message event: channel=${channel.id} message=${row.id}: ${frame.reason}`
+      );
+    }
+    if (push.status === 'rejected') {
+      this.logger.error(
+        `[CHANNEL_PUSH] fan-out failed channel=${channel.id} message=${row.id}: ${push.reason}`
+      );
+    }
+    if (frame.status === 'rejected' || push.status === 'rejected') return;
+    try {
+      await this.messageRepo.query(`DELETE FROM channel_message_fanout WHERE "messageId" = $1`, [
+        row.id,
+      ]);
+    } catch (err) {
+      this.logger.error(
+        `[CHANNEL_FANOUT] channel=${channel.id} message=${row.id} handed off but its entry could not be deleted - the next drain repeats it: ${String(err)}`
+      );
+    }
+  }
+
+  /**
+   * Finishes the fan-out of ONE stored row whose outbox entry is still there; false when there is
+   * none (the ordinary answer to a repeat of a send that completed).
+   */
+  private async drainFanout(messageId: string): Promise<boolean> {
+    if (this.fanoutsInFlight.has(messageId)) {
+      this.logger.log(
+        `[CHANNEL_FANOUT] message=${messageId.slice(0, 8)} is being fanned out here - not drained`
+      );
+      return false;
+    }
+    const entries: { payload: ChannelFanoutPayload }[] = await this.messageRepo.query(
+      `SELECT payload FROM channel_message_fanout WHERE "messageId" = $1`,
+      [messageId]
+    );
+    if (entries.length === 0) return false;
+    const row = await this.messageRepo.findOne({ where: { id: messageId } });
+    const channel = row ? await this.channelRepo.findOne({ where: { id: row.channelId } }) : null;
+    if (!row || !channel) {
+      // The entry cascades with its message, so this is a race with a delete: nothing to announce.
+      this.logger.warn(
+        `[CHANNEL_FANOUT] message=${messageId} has an entry but no row or channel - dropped`
+      );
+      await this.messageRepo.query(`DELETE FROM channel_message_fanout WHERE "messageId" = $1`, [
+        messageId,
+      ]);
+      return false;
+    }
+    // Checked again here: the awaits above are where a send's own fan-out can have started.
+    if (this.fanoutsInFlight.has(messageId)) return false;
+    this.logger.log(
+      `[CHANNEL_FANOUT] finishing the fan-out of message=${messageId.slice(0, 8)} channel=${channel.id} - its writer never handed it off`
+    );
+    await this.trackFanout(messageId, () => this.runFanout(channel, row, entries[0].payload ?? {}));
+    return true;
+  }
+
+  /** A repeat's drain: never blocks the answer, logs what it cannot do. */
+  private drainFanoutInBackground(messageId: string): void {
+    this.drainFanout(messageId).catch((err) =>
+      this.logger.error(`[CHANNEL_FANOUT] drain of message=${messageId} failed: ${String(err)}`)
+    );
+  }
+
+  /**
+   * Every entry still in the outbox, once each, in order. A crash is the only thing that leaves one
+   * behind, so at boot the table is ordinarily empty; an entry whose fan-out fails again stays for
+   * the next boot rather than being retried in a loop. A rolling deploy can drain an entry its old
+   * replica is still handing off: the duplicate frame and push are settled downstream.
+   */
+  async drainPendingFanouts(): Promise<number> {
+    const entries: { messageId: string }[] = await this.messageRepo.query(
+      `SELECT "messageId" FROM channel_message_fanout ORDER BY "createdAt"`
+    );
+    if (entries.length > 0) {
+      this.logger.warn(`[CHANNEL_FANOUT] ${entries.length} entries left by a process that died`);
+    }
+    let finished = 0;
+    for (const { messageId } of entries) {
+      try {
+        if (await this.drainFanout(messageId)) finished += 1;
+      } catch (err) {
+        this.logger.error(`[CHANNEL_FANOUT] drain of message=${messageId} failed: ${String(err)}`);
+      }
+    }
+    return finished;
+  }
+
+  /** Boot: finish the fan-outs a dead process left, without holding the boot. */
+  onApplicationBootstrap(): void {
+    // Not a precondition of serving, so a failure is said once at ERROR and the next boot repeats it.
+    // The table comes from migration 093, applied before any service starts; CI's boot job and local
+    // stacks build it from the entity.
+    this.drainPendingFanouts().catch((err) =>
+      this.logger.error(
+        `[CHANNEL_FANOUT] boot drain failed, retried at the next boot: ${String(err)}`
+      )
+    );
   }
 
   /**
@@ -3366,12 +3565,11 @@ export class ChannelService {
    */
   private async saveUnderUnusedKey(
     msg: ChannelMessage,
-    input: SendChannelMessageDto
+    input: SendChannelMessageDto,
+    fanout: ChannelFanoutPayload
   ): Promise<{ row: ChannelMessage; replayed: boolean }> {
     try {
-      const row = msg.clientMessageId
-        ? await this.saveUnlessDeleted(msg, msg.clientMessageId)
-        : await this.messageRepo.save(msg);
+      const row = await this.saveUnlessDeleted(msg, msg.clientMessageId, fanout);
       return { row, replayed: false };
     } catch (err) {
       if (!isUniqueViolation(err)) throw err;
@@ -3444,7 +3642,8 @@ export class ChannelService {
   }
 
   /**
-   * Inserts a message that carries a client id, unless that id names a message this author's salon
+   * Inserts a message AND its fan-out outbox entry (migration 093) in one transaction. A message
+   * that carries a client id is refused first, if that id names a message this author's salon
    * has DELETED (migration 090's tombstone). A delete drops the row, so the lookup in `sendMessage`
    * finds nothing for a repeat that arrives after it - a first POST whose answer was lost, its app
    * killed, the message removed by a moderator or by its author on another device - and without this
@@ -3456,19 +3655,32 @@ export class ChannelService {
    *
    * @throws GoneException `CHANNEL_MESSAGE_DELETED` (410): the client forgets the send.
    */
-  private saveUnlessDeleted(msg: ChannelMessage, clientMessageId: string): Promise<ChannelMessage> {
+  private saveUnlessDeleted(
+    msg: ChannelMessage,
+    clientMessageId: string | null,
+    fanout: ChannelFanoutPayload
+  ): Promise<ChannelMessage> {
     return this.messageRepo.manager.transaction(async (tx) => {
-      const params = [msg.authorId, msg.channelId, clientMessageId];
-      await tx.query(`SELECT ${clientIdLockSql('$1', '$2', '$3')}`, params);
-      // A new statement after the lock: READ COMMITTED reads what a delete holding it committed.
-      const tombstones: unknown[] = await tx.query(
-        `SELECT 1 FROM channel_message_client_tombstones
-          WHERE "authorId" = $1 AND "channelId" = $2 AND "clientMessageId" = $3`,
-        params
+      if (clientMessageId) {
+        const params = [msg.authorId, msg.channelId, clientMessageId];
+        await tx.query(`SELECT ${clientIdLockSql('$1', '$2', '$3')}`, params);
+        // A new statement after the lock: READ COMMITTED reads what a delete holding it committed.
+        const tombstones: unknown[] = await tx.query(
+          `SELECT 1 FROM channel_message_client_tombstones
+            WHERE "authorId" = $1 AND "channelId" = $2 AND "clientMessageId" = $3`,
+          params
+        );
+        if (tombstones.length > 0)
+          this.refuseDeletedRepeat(msg.channelId, msg.authorId, clientMessageId);
+      }
+      const saved = await tx.getRepository(ChannelMessage).save(msg);
+      // THE OUTBOX ENTRY COMMITS WITH THE ROW (migration 093): a process that dies after this
+      // transaction leaves both, and the fan-out it never made is found and finished at boot.
+      await tx.query(
+        `INSERT INTO channel_message_fanout ("messageId", payload) VALUES ($1, $2::jsonb)`,
+        [saved.id, JSON.stringify(fanout)]
       );
-      if (tombstones.length > 0)
-        this.refuseDeletedRepeat(msg.channelId, msg.authorId, clientMessageId);
-      return tx.getRepository(ChannelMessage).save(msg);
+      return saved;
     });
   }
 

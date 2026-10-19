@@ -1122,6 +1122,263 @@ describe('ChannelService security hardening', () => {
     );
   });
 
+  // THE FAN-OUT OUTBOX (migration 093): a stored row whose process died before its broadcast is
+  // finished at boot, or by a repeat of its send.
+  describe('the fan-out outbox of a stored salon row (migration 093)', () => {
+    const CLIENT_ID = '7b0c1d2e-3f40-4a5b-8c6d-7e8f90a1b2c3';
+    const flush = () => new Promise((resolve) => setImmediate(resolve));
+    const sql = (messageRepo: { query: jest.Mock }) =>
+      messageRepo.query.mock.calls.map((call: unknown[]) => call[0] as string);
+    const arrange = () => {
+      const repos = makeService();
+      repos.channelRepo.findOne.mockResolvedValue({
+        id: 'ch1',
+        workspaceId: 'ws1',
+        isPrivate: false,
+        writePolicy: 'everyone',
+      });
+      repos.memberRepo.findOne.mockResolvedValue({ workspaceId: 'ws1', userId: 'u1', roleIds: [] });
+      repos.memberRepo.find.mockResolvedValue([]);
+      repos.messageRepo.create.mockImplementation((row: any) => row);
+      repos.messageRepo.save.mockImplementation(async (row: any) => ({
+        ...row,
+        id: 'm1',
+        createdAt: new Date(),
+      }));
+      const notify = jest
+        .spyOn(repos.service as any, 'notifyChannelRecipients')
+        .mockResolvedValue(undefined);
+      return { ...repos, notify };
+    };
+    const body = {
+      senderId: 'u1',
+      ciphertext: 'abc',
+      nonce: 'def',
+      senderSessionId: 'sess-1',
+      messageIndex: 0,
+      signature: SIGNATURE,
+      mentionedUserIds: ['u2'],
+    };
+
+    it('writes the entry in the send transaction, with what the push needs', async () => {
+      const { service, messageRepo } = arrange();
+      await service.sendMessage('ch1', { ...body, messageId: CLIENT_ID } as never);
+
+      expect(messageRepo.manager.transaction).toHaveBeenCalledTimes(1);
+      const insert = messageRepo.query.mock.calls.find((call: unknown[]) =>
+        (call[0] as string).includes('INSERT INTO channel_message_fanout')
+      );
+      expect(insert?.[1]).toEqual(['m1', JSON.stringify({ mentionedUserIds: ['u2'] })]);
+      // After the row, inside the same transaction: both commit or neither does.
+      expect(messageRepo.save.mock.invocationCallOrder[0]).toBeLessThan(
+        messageRepo.query.mock.invocationCallOrder[
+          sql(messageRepo).findIndex((text) => text.includes('INSERT INTO channel_message_fanout'))
+        ]
+      );
+    });
+
+    it('a send without a client id is in a transaction too', async () => {
+      const { service, messageRepo } = arrange();
+      await service.sendMessage('ch1', body as never);
+      expect(messageRepo.manager.transaction).toHaveBeenCalledTimes(1);
+      expect(sql(messageRepo).some((t) => t.includes('INSERT INTO channel_message_fanout'))).toBe(
+        true
+      );
+    });
+
+    it('deletes the entry once the frame and the push are handed off', async () => {
+      const { service, messageRepo, redis, notify } = arrange();
+      await service.sendMessage('ch1', body as never);
+      await flush();
+
+      expect(redis.publishChannelEvent).toHaveBeenCalledTimes(1);
+      expect(notify).toHaveBeenCalledTimes(1);
+      expect(sql(messageRepo).some((t) => t.includes('DELETE FROM channel_message_fanout'))).toBe(
+        true
+      );
+    });
+
+    // The production RedisService swallows its own publish errors, so a Redis outage deletes the
+    // entry: the outbox covers process death and database failures. A rejection reaching here is
+    // what a failing audience read looks like; the mock rejects the publish to model it.
+    it.each([
+      ['the broadcast', 'publish'],
+      ['the push', 'push'],
+    ])('keeps the entry when %s fails', async (_label, which) => {
+      const { service, messageRepo, redis, notify } = arrange();
+      if (which === 'publish') redis.publishChannelEvent.mockRejectedValue(new Error('redis down'));
+      else notify.mockRejectedValue(new Error('fcm down'));
+      const error = jest.spyOn((service as any).logger, 'error').mockImplementation(() => {});
+      await service.sendMessage('ch1', body as never);
+      await flush();
+
+      expect(sql(messageRepo).some((t) => t.includes('DELETE FROM channel_message_fanout'))).toBe(
+        false
+      );
+      expect(error).toHaveBeenCalled();
+      // The OTHER half still ran: a refused push never stops the frame, nor the reverse.
+      expect(which === 'publish' ? notify : redis.publishChannelEvent).toHaveBeenCalledTimes(1);
+    });
+
+    it('does not push a silent row, and still broadcasts and clears it', async () => {
+      const { service, messageRepo, redis, notify } = arrange();
+      await service.sendMessage('ch1', { ...body, silent: true } as never);
+      await flush();
+      expect(notify).not.toHaveBeenCalled();
+      expect(redis.publishChannelEvent).toHaveBeenCalledTimes(1);
+      expect(sql(messageRepo).some((t) => t.includes('DELETE FROM channel_message_fanout'))).toBe(
+        true
+      );
+    });
+
+    /** The outbox as a table: one entry per id, answering the three statements the service reads. */
+    const outbox = (
+      repos: ReturnType<typeof arrange>,
+      entries: Record<string, Record<string, unknown>>
+    ) => {
+      repos.messageRepo.query.mockImplementation(async (text: string, params?: unknown[]) => {
+        if (text.includes('SELECT "messageId"')) {
+          return Object.keys(entries).map((messageId) => ({ messageId }));
+        }
+        if (text.includes('SELECT payload')) {
+          const entry = entries[params?.[0] as string];
+          return entry ? [{ payload: entry }] : [];
+        }
+        if (text.includes('DELETE FROM channel_message_fanout')) {
+          delete entries[params?.[0] as string];
+        }
+        return [];
+      });
+    };
+    const stored = { id: 'm1', channelId: 'ch1', authorId: 'u1', content: 'abc', nonce: 'def' };
+
+    it('boot finishes an entry a dead process left, with its own push payload', async () => {
+      const repos = arrange();
+      const entries = { m1: { mentionedUserIds: ['u2'], seedFrame: 'ZnJhbWU=', seedGroupId: 'g' } };
+      outbox(repos, entries);
+      repos.messageRepo.findOne.mockResolvedValue({
+        ...stored,
+        silent: false,
+        createdAt: new Date(),
+        metadata: {},
+      });
+
+      expect(await repos.service.drainPendingFanouts()).toBe(1);
+
+      expect(repos.redis.publishChannelEvent).toHaveBeenCalledWith(
+        'channel.message.created',
+        expect.objectContaining({ channelId: 'ch1', messageId: 'm1', ciphertext: 'abc' }),
+        expect.anything()
+      );
+      expect(repos.notify).toHaveBeenCalledWith(
+        expect.objectContaining({ id: 'ch1' }),
+        expect.objectContaining({ id: 'm1' }),
+        expect.objectContaining({
+          senderId: 'u1',
+          mentionedUserIds: ['u2'],
+          seedFrame: 'ZnJhbWU=',
+          seedGroupId: 'g',
+        })
+      );
+      expect(entries).toEqual({});
+    });
+
+    it('settleFanouts waits for a fan-out still running, so a replaced replica does not exit on it', async () => {
+      const { service, redis } = arrange();
+      let release: () => void = () => {};
+      redis.publishChannelEvent.mockImplementation(
+        () => new Promise<void>((resolve) => (release = resolve))
+      );
+      await service.sendMessage('ch1', body as never);
+      await flush();
+
+      let settled = false;
+      const waiting = service.settleFanouts().then(() => (settled = true));
+      await flush();
+      expect(settled).toBe(false);
+      release();
+      await waiting;
+      expect(settled).toBe(true);
+      // Nothing left to wait for.
+      await service.settleFanouts();
+    });
+
+    it('a repeat does not drain an entry whose fan-out is running in this process', async () => {
+      const repos = arrange();
+      let release: () => void = () => {};
+      repos.redis.publishChannelEvent.mockImplementation(
+        () => new Promise<void>((resolve) => (release = resolve))
+      );
+      outbox(repos, { m1: {} });
+      repos.messageRepo.findOne.mockResolvedValue(null);
+      await repos.service.sendMessage('ch1', { ...body, messageId: CLIENT_ID } as never);
+      await flush();
+      expect(repos.redis.publishChannelEvent).toHaveBeenCalledTimes(1);
+
+      // The winner's fan-out is in flight; the repeat finds the stored row and must not start a second.
+      repos.messageRepo.findOne.mockResolvedValue({ ...stored, silent: false, metadata: {} });
+      await repos.service.sendMessage('ch1', { ...body, messageId: CLIENT_ID } as never);
+      await flush();
+      expect(repos.redis.publishChannelEvent).toHaveBeenCalledTimes(1);
+      release();
+      await repos.service.settleFanouts();
+    });
+
+    it('boot with an empty outbox does nothing', async () => {
+      const repos = arrange();
+      outbox(repos, {});
+      expect(await repos.service.drainPendingFanouts()).toBe(0);
+      expect(repos.redis.publishChannelEvent).not.toHaveBeenCalled();
+    });
+
+    it('one entry that fails does not stop the next', async () => {
+      const repos = arrange();
+      const entries = { m1: {}, m2: {} };
+      outbox(repos, entries);
+      jest.spyOn((repos.service as any).logger, 'error').mockImplementation(() => {});
+      repos.messageRepo.findOne
+        .mockRejectedValueOnce(new Error('db blip'))
+        .mockResolvedValueOnce({ ...stored, id: 'm2', silent: true, metadata: {} });
+
+      expect(await repos.service.drainPendingFanouts()).toBe(1);
+      expect(Object.keys(entries)).toEqual(['m1']);
+    });
+
+    it('a repeat of a send drains its own entry at once, and writes nothing', async () => {
+      const repos = arrange();
+      const entries = { m1: { mentionedUserIds: ['u2'] } };
+      outbox(repos, entries);
+      repos.messageRepo.findOne.mockResolvedValue({
+        ...stored,
+        silent: false,
+        createdAt: new Date(),
+        metadata: {},
+      });
+
+      const answer = await repos.service.sendMessage('ch1', {
+        ...body,
+        messageId: CLIENT_ID,
+      } as never);
+      await flush();
+
+      expect(answer.id).toBe('m1');
+      expect(repos.messageRepo.save).not.toHaveBeenCalled();
+      expect(repos.redis.publishChannelEvent).toHaveBeenCalledTimes(1);
+      expect(entries).toEqual({});
+    });
+
+    it('a repeat of a send that completed finds no entry and publishes nothing', async () => {
+      const repos = arrange();
+      outbox(repos, {});
+      repos.messageRepo.findOne.mockResolvedValue({ ...stored, silent: false, metadata: {} });
+
+      await repos.service.sendMessage('ch1', { ...body, messageId: CLIENT_ID } as never);
+      await flush();
+
+      expect(repos.redis.publishChannelEvent).not.toHaveBeenCalled();
+    });
+  });
+
   describe('the seed frame a message carries (channel-encryption section 19)', () => {
     const FRAME = { seedFrame: 'ZnJhbWU=', seedGroupId: 'dist-ws1' };
     const send = (extra: Record<string, unknown>, channel: Record<string, unknown> = {}) => {

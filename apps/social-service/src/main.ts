@@ -4,6 +4,7 @@ import { AppModule } from './app.module';
 import * as bodyParser from 'body-parser';
 import { buildAllowedOrigins, corsOptions } from './cors-origins';
 import { drainOnSigterm } from './drain-on-sigterm';
+import { ChannelService } from './channels/channel.service';
 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule);
@@ -26,7 +27,10 @@ async function bootstrap() {
 
   await app.listen(Number(process.env.PORT || 3014));
   // A release retires this replica with SIGTERM once its successor is healthy; see the module.
-  drainOnSigterm(app.getHttpServer());
+  // The salon fan-outs run after their answer: the exit waits for them (ChannelService.settleFanouts).
+  drainOnSigterm(app.getHttpServer(), undefined, process, () =>
+    app.get(ChannelService, { strict: false }).settleFanouts()
+  );
 }
 
 void bootstrap().catch((err) => {

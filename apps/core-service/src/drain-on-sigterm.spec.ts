@@ -41,6 +41,48 @@ describe('drainOnSigterm', () => {
     expect(exits).toEqual([0]);
   });
 
+  it('awaits the work it still owes after the last answer, then exits', async () => {
+    const server = http.createServer((_req, res) => res.end('ok'));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const signals = new EventEmitter();
+    const exits: number[] = [];
+    let finish: () => void = () => {};
+    const owed = new Promise<void>((resolve) => (finish = resolve));
+    drainOnSigterm(
+      server,
+      (code) => exits.push(code),
+      signals,
+      () => owed
+    );
+
+    signals.emit('SIGTERM');
+    // The listener is closed and nothing is in flight, yet the process stays up for what it owes.
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(exits).toEqual([]);
+    finish();
+    await owed;
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(exits).toEqual([0]);
+  });
+
+  it('exits even when the owed work fails', async () => {
+    const server = http.createServer((_req, res) => res.end('ok'));
+    await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+    const signals = new EventEmitter();
+    const exits: number[] = [];
+    drainOnSigterm(
+      server,
+      (code) => exits.push(code),
+      signals,
+      () => Promise.reject(new Error('owed work failed'))
+    );
+    signals.emit('SIGTERM');
+    await new Promise((resolve) => setImmediate(resolve));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(exits).toEqual([0]);
+  });
+
   it('does nothing before SIGTERM', async () => {
     const server = http.createServer((_req, res) => res.end('ok'));
     await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
