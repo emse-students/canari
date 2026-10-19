@@ -309,6 +309,22 @@ describe('LiveSegmentUploader', () => {
     expect(apiFetch).not.toHaveBeenCalled();
   });
 
+  it('tells each retried failure to onRetry, with its index and attempt, and never a stored one', async () => {
+    apiFetch
+      .mockRejectedValueOnce(new TransportFailureError(new TypeError('Failed to fetch')))
+      .mockResolvedValueOnce(json(503, { code: 'LIVE_STORE_UNAVAILABLE' }))
+      .mockResolvedValueOnce(ok(0));
+    const onRetry = vi.fn();
+    const up = new LiveSegmentUploader(LIVE, { backoffMs: () => 0, onRetry });
+    up.enqueue(0, new Uint8Array([1]));
+    await up.idle();
+    expect(onRetry.mock.calls.map((c) => [c[0], c[1]])).toEqual([
+      [0, 1],
+      [0, 2],
+    ]);
+    expect(isLiveRefusal(onRetry.mock.calls[1][2], 'retry-segment')).toBe(true);
+  });
+
   it('stops on a verdict (the live ended) and hands it over', async () => {
     apiFetch.mockResolvedValue(json(410, { code: 'LIVE_ENDED' }));
     const onStopped = vi.fn();

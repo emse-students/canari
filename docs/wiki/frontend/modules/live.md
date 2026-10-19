@@ -1,11 +1,11 @@
-# Live - the plan (R4 / decision C9; the server half WP-L2/L3 built 2026-10-18, WP-L7's push 2026-10-19, nothing else)
+# Live - the plan (R4 / decision C9; the server half WP-L2/L3 built 2026-10-18, WP-L7's push and the WP-L5 viewer and broadcaster behind a dev-only switch 2026-10-19)
 
 > **Note 2026-10-19:** lives now come BEFORE the calls revival ([decisions](#decisions-of-2026-10-19)). **Note 2026-10-17:** the user's 2026-10-16 calls decisions - 1:1 calls go peer-to-peer direct with Cloudflare TURN as the fallback - post-date this plan; every "relay-only" and SFU statement below describes the code of 2026-10-15, not the target, and WP-L0 is to be re-read against them.
 
 A member opens the composer, picks **Live**, and the whole Canari network can watch until the
 broadcast ends - Facebook-style. This page is the PLAN: what the user decided on 2026-10-15, what the
 existing calling bricks really are (read from the code that day), the questions still open for the
-user, and the work packages in order. Nothing of it is built. It is stage R4 of the CanaReels chantier
+user, and the work packages in order. What is built is said where it is: the server half ([lives](../../services/lives.md)), the client foundation and seal, and the viewer and broadcaster behind a dev-only switch (below). It is stage R4 of the CanaReels chantier
 ([reels C9](reels.md#the-chantier-the-comparison-the-ten-decisions-the-build-order-user-2026-09-29)),
 and since 2026-10-19 it no longer waits for the calls revival ([calls](calls.md)).
 
@@ -187,7 +187,7 @@ draft. `frontend/src/lib/live/liveCrypto.ts` exports `sealLiveSegment(keyHex, li
 | Cipher | AES-256-GCM, 128-bit tag, the live key (the 32 bytes behind `LiveView.key`) |
 | IV | 12 bytes, fresh from `crypto.getRandomValues` for every seal |
 | Sealed object (concatenated) | `iv(12) + ciphertext + tag(16)` and nothing else - so at least 28 bytes |
-| Plaintext | the raw fMP4 bytes of ONE `MediaRecorder` slice, nothing else |
+| Plaintext | raw fMP4 bytes and nothing else: since the broadcaster (below), ONE segment = its recorder's init followed by ONE fragment ([why](#every-segment-is-self-contained)) |
 | AAD (concatenated) | ASCII `canari-live-v1` + `0x00` + the live id as its 16 raw uuid bytes + the index as u32 big-endian (35 bytes) |
 
 **Why each part.**
@@ -241,15 +241,15 @@ not end-to-end encryption against the server, and no page may call it that.
 WP-L5's VIEWER half, **behind `LIVE_ENABLED` (`frontend/src/lib/features.ts`): on for dev builds only**,
 by the same `deployEnvironment() === 'development'` test as `CALLS_ENABLED`. A production binary asks
 `/api/lives` nothing and draws nothing; the server answers `404` there anyway. Not built: the
-broadcaster, chat and reactions (WP-L6), moderation (WP-L8).
+chat and reactions (WP-L6), moderation (WP-L8).
 
 | File | What it holds |
 | --- | --- |
 | `lib/live/livePlayer.ts` | The MSE player and its state machine; everything outside it (API, seal, media source, timer) injected, so it is tested with fake MSE objects and a manual clock |
 | `lib/live/liveViewerState.ts` | The states, and `liveFailureOutcome`: the ONE decision from a failure to a screen |
-| `lib/live/fmp4Segments.ts` | The ONE fMP4 box reader of the live: `initSegmentEnd` (where a segment's `ftyp` + `moov` stop) and `Fmp4ParseError` (a box it cannot frame: "Live indisponible", `playback`) |
+| `lib/live/fmp4Segments.ts` | The ONE fMP4 box reader of the live: `initSegmentEnd` (where a segment's `ftyp` + `moov` stop), on the same box-header reader as the [broadcaster's](#the-broadcaster-as-built) `Fmp4Splitter`, and `Fmp4ParseError` (a box it cannot frame: "Live indisponible", `playback`) |
 | `lib/live/openLives.ts` | The card's list (the reader's own live left out), `formatLiveElapsed` |
-| `lib/live/liveCrypto.ts` | Not this package's: the seal of [format v1](#the-segment-seal-format-v1) (draft PR #2111, which this one is stacked on); the viewer calls `openLiveSegment` and skips a segment on `LiveSegmentOpenError` |
+| `lib/live/liveCrypto.ts` | The seal of [format v1](#the-segment-seal-format-v1); the viewer calls `openLiveSegment` and skips a segment on `LiveSegmentOpenError` |
 | `components/live/` | `LiveFeedCard`, `LiveViewer`, `LiveIdentity` (who is on air: picture and name, a member or an association), `LiveBadge` |
 
 **The card.** At the top of the feed, under the tab row, whatever the tab; hidden during a search and
@@ -269,7 +269,7 @@ other key is taken. The sequence is WP-L1's bench (`tools/live-bench/bench.js`):
    `LIVE_RECORDER_MIME`, so an engine that cannot play never takes a seat.
 2. `GET /api/lives/:id`: the key and the seat.
 3. The join on the NEWEST segment alone. Every segment is SELF-CONTAINED - the recorder's init
-   (`ftyp` + `moov`) then one fragment (`moof` + `mdat`), the broadcaster's shape (#2115) - so its
+   (`ftyp` + `moov`) then one fragment (`moof` + `mdat`), the [broadcaster's shape](#every-segment-is-self-contained) - so its
    own init is appended, then its fragment, then a seek to `end - LIVE_PLAYER_TARGET_BUFFER_MS`.
    A first segment with no init is "Live indisponible" (`playback`).
 4. A poll every `LIVE_MANIFEST_POLL_MS` from `last + 1`, segments taken in order. **A segment's init
@@ -317,8 +317,127 @@ never one line each; the key and segment bytes never.
 **Verified by tests only** (`livePlayer.test.ts`, `liveViewerState.test.ts`, `fmp4Segments.test.ts`,
 `openLives.test.ts`, `LiveFeedCard.svelte.test.ts`, `LiveViewer.svelte.test.ts`). **Owed on hardware**:
 check Y of [device-verification](../../device-verification.md#y-watching-a-live---owed-on-both-phones-mi-9t-iphone-12),
-which needs a broadcaster sealing format v1 (the broadcaster screen is not built). **Known gaps:** `ManagedMediaSource`'s `endstreaming` hint is ignored
+with the [broadcaster](#the-broadcaster-as-built) on the other phone. **Known gaps:** `ManagedMediaSource`'s `endstreaming` hint is ignored
 (read on the iPhone in check Y); no deep link to one live.
+
+## The broadcaster (as built)
+
+WP-L5's broadcaster half, built 2026-10-19 on the client foundation and the seal above, **behind
+the viewer's switch, the ONE `LIVE_ENABLED`: on for dev builds only**. It turns on for production with WP-L8 (moderation, a release
+blocker since any member may broadcast, D3), the device readings, and the server's switch, in one
+release. **Not built: chat and reactions (WP-L6), moderation (WP-L8).**
+
+| File | What it holds |
+| --- | --- |
+| `lib/live/fmp4Segments.ts` | The pure fMP4 reader: `Fmp4Splitter` turns recorder chunks into one init and its fragments (a box cut across chunks is carried), reads whether each fragment's video starts on a sync sample, `composeSegment`, and `rebaseFragment` (the media-time shift below) - and the viewer's `initSegmentEnd`, on the same box-header reader. |
+| `lib/live/liveSegmentPipeline.ts` | Chunk -> fragments -> segment -> seal -> queue, ONE chunk at a time through one promise chain: the index is read from `uploader.nextIndex`, sealed for and enqueued with (no second counter). A summary line every 15 segments. |
+| `lib/live/liveRecorder.ts` | `MediaRecorder` with `LIVE_RECORDER_MIME`, 2.0 Mb/s, 2 s timeslice and keyframe interval; no second container (an engine that cannot record that exact type cannot broadcast, said before Start). |
+| `lib/live/liveDevice.ts` | The camera at 1280x720 + microphone (exact lens), the Screen Wake Lock (every request carries a ticket, so a lock answered after a release or a newer hold is given straight back: hold -> release -> hold never leaks one), the Battery API reading. |
+| `lib/live/liveBroadcast.svelte.ts` | The state machine: `preview -> starting -> live <-> away -> ending -> ended`, every dependency injected. |
+| `components/live/LiveOverlay.svelte`, `LiveBroadcaster.svelte` | The full-screen layer (portal, `coversScreen`, one history entry, the edge swipe) and the broadcast screen. The viewer's identity chip is `LiveIdentity`, a different component. |
+
+**The entry.** The post composer's chip row carries "En direct" when `LIVE_ENABLED` is on. The live
+goes out under the identity chosen in the composer: the member, or an association they may post as
+(`associationId`; the server checks `POST_AS_ASSO`). Never anonymous: the chip is not drawn while
+"anonymous" is chosen, nor while the chosen association is missing from the list read.
+
+**The pre-live screen is the rules, shown before EVERY live (L11)**: visible like a post by the same
+identity and only while on air; reportable and cuttable by moderation; at most `maxDurationMs`; the
+camera may be away at most `reconnectWindowMs` - both read from `GET /api/lives/limits`. A warning
+under 60 % battery where the engine has the Battery API (Android; WebKit has none), charging or not
+(WP-L1 drained ~40 %/h on a charger). Start is the acceptance; **nothing records the acceptance on
+the server** (owed if L11's "accepted before a member's first live" must be provable).
+
+### Every segment is self-contained
+
+**ONE SEGMENT = the recorder's init (`ftyp` + `moov`, ~1.2 kB) + ONE fragment (`moof` + `mdat`,
+~600-800 kB)**: 0.2 % more bytes, for three things no viewer has to work out - a join at ANY index
+with no hunt for segment 0, the Android/iOS difference in the first chunk gone (Android's first chunk
+is the init alone and produces no segment; iOS's is init + media), and a camera re-acquired after a
+background (a new recorder, a new init) needing no signal. A chunk carrying two 2 s fragments (14 % on
+Android in WP-L1) becomes TWO segments, so a segment is always about 2 s. Each fragment's keyframe
+start is READ and counted (`not on keyframe` in the summary); one that does not start on a keyframe is
+still sent (the ingest is gapless) and logged - WP-L1 measured none.
+
+The [viewer](#the-viewer-as-built-2026-10-19) appends a segment's init only when it differs from the last one
+appended; MSE would accept a repeated init, so that is economy, not correctness.
+
+### Background, a lens taken, and the same live
+
+The camera is **given back when the app is hidden, on both platforms** (the reel camera's rule), the
+recorder stopped first so its last chunk still goes out. That makes WP-L1's two behaviours one path:
+the Android WebView ENDED the track ~6 s after `hidden`, Safari MUTED it - neither reaches a recorder
+that no longer exists. On return the server is read first (`GET /api/lives/:id`): ended (`410` /
+`404`) is the end screen "stopped while the camera was paused"; any other answer, or none, re-opens
+the camera and starts a NEW recorder on the SAME live - the index continues, the screen is held again.
+**A new recorder restarts its media time at zero, so its fragments' `tfdt` are shifted by the time
+since the first recorder started** (`rebaseFragment`): the timeline viewers append stays monotonic and
+the pause is a GAP the player seeks over, never a jump back. A lens ENDED while visible (another app
+took it) and a recorder `error` go `away` the same way, with a Retry. A `mute` on air is logged and
+nothing else: nothing records twice.
+
+**Each recorder's chunks are pushed with ITS pipeline generation, fixed when the recorder is
+created** (`push(generation, chunk)`): the old recorder's last chunk, delivered by its `stop` after a
+new generation began, still lands in the old splitter with the old init and offset. The return also
+WAITS for the paused recorder's `stop` (bounded) and closes its generation before starting the next
+one; a generation closed with bytes still in its splitter (a box cut short) is LOGGED as lost. A
+generation BREAKS on two things - the chain itself never rejects: a chunk it cannot read (a Blob
+read that rejects) or frame, and `MAX_CONSECUTIVE_DROPS` (3, ~6 s) fragments IN A ROW that could not
+be sent (a rebase that failed, a seal that threw, a segment over the server's `segmentMaxBytes`). A
+single dropped fragment is a gap in the picture and is only counted; a run of them is a recorder
+whose output does not get through. Either way the pipeline TELLS the state machine (`onBroken`),
+which goes `away` with the camera given back, a sentence saying what the camera records could not
+be sent (`awayProblem = 'unsendable'`) and a Retry that starts a fresh recorder. **Before
+2026-10-19's review a drop was only counted**, so a recorder whose every segment was over 4 MB stayed
+"on air" with nothing sent. **That a new recorder restarts its media time at zero is an ASSUMPTION** WP-L1 did not measure:
+LIVE-B1 row 8 reads it.
+
+### Upload health and the end
+
+`LiveSegmentUploader` gained `onRetry(index, attempt, error)`: a retried send shows a quiet
+"Reconnexion..." badge with the backlog (a plural), and the next stored segment clears it.
+
+**The backlog is CAPPED in this layer, not the uploader's** (the queue in `api.ts` is unbounded,
+~230 MB in ten minutes offline), and **the cause is read from the last segment the server STORED,
+not from the count**:
+
+- nothing stored for longer than `reconnectWindowMs` (since the start, before the first, and RESET on every return to air - nothing is stored while
+  away, so an absence is never read as silence): the
+  broadcast ends itself as `connection-lost` - the server has ended a live that silent anyway;
+- still storing, but past `ceil(reconnectWindowMs / LIVE_SEGMENT_MS)` +
+  `LIVE_BACKLOG_MARGIN_SEGMENTS` (5) segments waiting: an uplink slower than real time. At 80 % of
+  real time the queue grows one segment in five and crosses the cap in ~6 min while the server
+  still receives; the live ends as `upload-too-slow` ("the connection sends more slowly than the
+  camera records"), never as a lost connection.
+
+Either end drops the queue (`uploader.stop()`) and asks `/end` best-effort. The clock is the
+injected monotonic `now`, read only when a segment is queued, stored or retried.
+
+**The End button** (confirmed; Back and the edge swipe ask the same question) stops the recorder -
+waiting for its last chunk at most `LIVE_RECORDER_STOP_BOUND_MS` (one segment + 1 s; a recorder
+that never fires `stop` is logged and abandoned) - flushes the pipeline, and **gives back the camera
+and the screen lock THEN**, before any network wait. What is left is the queue reaching the server,
+waited for at most `reconnectWindowMs` (past it the server ended the live by absence; the unsent
+queue is dropped, logged); the "ending" screen says so and offers "Quitter sans attendre", which
+disposes the screen and ends the live best-effort. Then `POST /end`; a `410` the uploader hears
+while the End drains labels the end screen as the server's ("the hour, or moderation"), never as
+the member's. On air, a `410` from the uploader ends the screen ("the hour, or moderation") with no
+end call; any other stopping refusal ends it as failed and calls `/end`; the screen unmounting or
+`pagehide` ends what is on air best-effort; a killed app is the server's absence rule. A start refused
+`LIVE_ALREADY_OPEN` (a previous screen killed) is not resumed: the member is told it closes within the
+minute.
+
+**What the server does not give, so the client does not show it:** a viewer count (no field in
+`LiveView` or the manifest), and WHY a `410` ended a live (the body has `endedAt`, no reason - so
+"the hour" and "a moderation cut" share one sentence).
+
+**Verified by tests** (fakes for the recorder, camera, uploader and server; no clock, no sleep):
+`fmp4Segments.test.ts`, `liveSegmentPipeline.test.ts`, `liveBroadcast.svelte.test.ts`, `liveDevice.test.ts`,
+`LiveBroadcaster.svelte.test.ts`, the composer chip in `PostComposerBar.svelte.test.ts`. **Owed on the
+phones**: [LIVE-B1](../../device-verification.md#live-b1-the-broadcaster-on-both-bench-phones---owed-on-both) -
+ten minutes on air watched, background and return, past the window, a network cut, the end, battery
+unplugged, the screen kept on; and whether the iOS app's WKWebView honours
+`videoKeyFrameIntervalDuration` (WP-L1 read Safari only).
 
 ## Open questions for the user, each with a recommendation
 
@@ -350,9 +469,9 @@ Q1 = C; since 2026-10-19 WP-L0 no longer precedes the lives ([D1](#decisions-of-
 | **WP-L2** (**built 2026-10-18, server only, [lives](../../services/lives.md)**) | **The live row and its key**: a `lives` record (broadcaster, as-association, key, `started_at`, `ended_at`), removed-viewer list, the end as durable state. | social-service posts / reels server ([reels (server)](../../services/reels.md)) | API tests: key served as a post CEK to members; refused to a removed viewer; nothing after `ended_at` |
 | **WP-L3** (**built 2026-10-18, server only, [lives](../../services/lives.md)**) | **Segment ingest and the manifest**: a growing sealed object or one object per segment, a manifest viewers poll, deletion at `ended_at` plus a sweep (Q10). | the upload session ([media-streaming-upload](../../services/media-streaming-upload.md)) | specs: a segment out of order is refused; the manifest stops at `ended_at`; everything is gone after the sweep |
 | **WP-L4** (**built 2026-10-19, server and nginx, [lives](../../services/lives.md#serving-a-segment-from-the-nginx-cache-wp-l4); cap 24 viewers from the measured ~90 Mb/s, [viewer cap](../../services/lives.md#the-viewer-cap-wp-l4)**) | **Segments served by nginx**: an unauthenticated route for sealed live segments answered by Canari's own nginx (cache or static files), never reaching media-service or the database; the per-host viewer cap from WP-L1's uplink figure, refused with a clear "live full" screen. | `infrastructure/local/Dockerfile.frontend` (Canari's nginx), `GET /api/media/public/:id` as the model | a second viewer's fetch is served without a media-service log line; viewer N+1 past the cap is refused |
-| **WP-L5** | **Broadcaster and viewer UI**: composer "Live" entry, broadcast screen, viewer screen, reconnect state (Q5), first-live rules (L11). | the composer ([posts](posts.md)) and camera ([reels](reels.md)) | e2e on two browser contexts; phone readings on Mi 9T and iPhone 12 |
+| **WP-L5** (**viewer and broadcaster built 2026-10-19 behind `LIVE_ENABLED`, dev builds only, [viewer](#the-viewer-as-built-2026-10-19), [broadcaster](#the-broadcaster-as-built); the phone readings are owed**) | **Broadcaster and viewer UI**: composer "Live" entry, broadcast screen, viewer screen, reconnect state (Q5), first-live rules (L11). | the composer ([posts](posts.md)) and camera ([reels](reels.md)) | e2e on two browser contexts; phone readings on Mi 9T and iPhone 12 |
 | **WP-L6** | **Live comments and floating reactions ARE wanted (user, 2026-10-19, D5)**, encrypted with the live key, ephemeral. | the WS gateway ([chat-gateway](../../services/chat-gateway.md)) | tests: messages unreadable without the key; nothing persisted after `ended_at` |
-| **WP-L7** (**server half built 2026-10-19, [lives](../../services/lives.md#the-push-to-the-followers-wp-l7-server-half); a tap lands on the feed (`appRouteForDeepLink` owns the `live` host); the LIVE card and the live's own viewer route are still owed**) | **Announcement**: LIVE card at the top of the feed; push to followers (L10), sent at the first stored segment. | the feed, `PostNotificationsService` | tests on the follower set incl. mutes; one push per live, never on reconnect |
+| **WP-L7** (**server half built 2026-10-19, [lives](../../services/lives.md#the-push-to-the-followers-wp-l7-server-half); a tap lands on the feed (`appRouteForDeepLink` owns the `live` host), where the LIVE card is (dev builds only, [viewer](#the-viewer-as-built-2026-10-19)); the live's own viewer route is still owed**) | **Announcement**: LIVE card at the top of the feed; push to followers (L10), sent at the first stored segment. | the feed, `PostNotificationsService` | tests on the follower set incl. mutes; one push per live, never on reconnect |
 | **WP-L8** (**RELEASE BLOCKER before any stable, D3; moderation works like posts, D6: reuse the posts code path, no parallel mechanism**) | **Moderation**: hide message, remove viewer, block, report a live through `content_reports` like a post, staff remote cut (the live equivalent of "delete the post"). | `content_reports`, [moderation-and-blocking](../../moderation-and-blocking.md) | tests: a cut ends the live and the row; a report reaches staff while live |
 | **WP-L9** (Q2 answers precede any store submission, D3) | **Store review**: UGC answers (Q2), the review video for live, then a pre-release to testers. | [mobile](../mobile.md) submission notes | accepted builds on both stores |
 | **WP-L10** (only if A is kept) | **Low-latency small-audience mode on the SFU**: a `broadcast` room kind (broadcaster-only publish, receive-only viewers, a cap, a server-side kick), frame E2E keyed by the live key with **no cleartext path**, the SFU bench with 1 then 30 subscribers. | `apps/call-service/src/main.rs` `on_track`, `tests/relay_path.rs`, `CallService.ts` `setupEncryption` | Rust tests: a viewer's track is refused, a kicked peer cannot rejoin; a missing transform refuses to broadcast; TURN GB per live-hour measured |

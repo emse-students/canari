@@ -65,6 +65,32 @@ export const LIVE_PLAYER_TARGET_BUFFER_MS = LIVE_SEGMENT_MS;
 export const LIVE_MANIFEST_POLL_MS = 1_000;
 
 /**
+ * Below this battery level (0..1) the pre-live screen warns, where the engine has the Battery API
+ * (Android's WebView; WebKit has none). The Mi 9T broadcasting drained ~40 %/h WHILE PLUGGED into a
+ * 400 mA port (WP-L1 run A), and ~59 %/h unplugged without the upload (2026-10-18) - so an hour's
+ * live from 60 % is about where a phone runs out.
+ */
+export const LIVE_BATTERY_WARN_LEVEL = 0.6;
+
+/**
+ * How long a stopping recorder may take to hand over its last chunk. A healthy one answers within
+ * one timeslice; one that never fires `stop` must not hold the camera, the screen lock or the next
+ * recorder - so past this the wait is abandoned, LOGGED, and whatever it still held is lost.
+ */
+export const LIVE_RECORDER_STOP_BOUND_MS = LIVE_SEGMENT_MS + 1_000;
+
+/**
+ * Segments waiting for the server beyond the reconnect window's worth: the broadcaster gives up
+ * there, and the CAUSE is read from the last segment the server STORED, not from the count. Silent
+ * past `reconnectWindowMs` is a lost connection - the server ends a live absent that long anyway. Still
+ * storing is an uplink slower than real time: the queue grows by the difference (at 80 % of real time,
+ * past the cap in ~6 min), viewers fall further behind every minute, and memory grows ~23 MB a minute
+ * of backlog - so the live ends saying the upload is too slow, never that the connection was lost.
+ * The margin absorbs a slow link's ordinary jitter.
+ */
+export const LIVE_BACKLOG_MARGIN_SEGMENTS = 5;
+
+/**
  * The planning figure for ONE viewer's egress, in bits per second: the Android broadcaster's
  * measured mean (3.08 Mb/s, the heavier of the two engines; iPhone 2.32 Mb/s). For estimates only -
  * the cap itself is the server's (`viewerCap` in `/limits`).

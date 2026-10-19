@@ -64,16 +64,21 @@ export const CALLS_ENABLED = CALLS_COMPILED || deployEnvironment() === 'developm
 export const CALLS_VIDEO_ENABLED = false;
 
 /**
- * Lives, client side - ONE switch for both halves: watching (the LIVE card at the top of the feed,
- * the full-screen viewer) and broadcasting (`components/live/`, `lib/live/`).
+ * Lives, client side - ONE switch for both halves of WP-L5: watching (the LIVE card at the top of
+ * the feed, the full-screen viewer) and broadcasting (the composer's "Live" chip, the pre-live and
+ * broadcast screens) - `components/live/`, `lib/live/`.
  *
- * **ON FOR A DEV BUILD ONLY (WP-L5, 2026-10-19)**, by the same test as {@link CALLS_ENABLED}: a build
- * made for `dev.canari-emse.fr` carries `VITE_DEPLOY_ENVIRONMENT=development`, a production build
- * never does, so a production binary asks `/api/lives` nothing and draws nothing. The server answers
- * `404` on production anyway (`LIVE_ENABLED`, docs/wiki/services/lives.md) - two locks, one per side.
+ * **ON FOR A DEV BUILD ONLY (2026-10-19)**, by the same test as {@link CALLS_ENABLED}: a build made
+ * for `dev.canari-emse.fr` carries `VITE_DEPLOY_ENVIRONMENT=development`, a production build never
+ * does, so a production binary asks `/api/lives` nothing and draws nothing. The server answers every
+ * `/api/lives` route `404` on production anyway (its own `LIVE_ENABLED`, docs/wiki/services/lives.md)
+ * - two locks, one per side. It is off there because **any member may broadcast** (decision D3) and
+ * moderation - report a live, the staff cut, block (WP-L8) - is not built: a live nobody can cut is
+ * not shipped.
  *
- * **Turns on for production when** moderation (WP-L8, a release blocker by D3) and the store answers
- * (WP-L9) are in, and the viewer readings owed on the Mi 9T and the iPhone 12 have passed
- * (docs/wiki/device-verification.md, docs/wiki/frontend/modules/live.md).
+ * **Turns on for production when** WP-L8 is built, the store answers (WP-L9) are in, the viewer and
+ * broadcaster readings of docs/wiki/device-verification.md (checks Y and LIVE-B1) have passed on the
+ * Mi 9T and the iPhone 12, and the server's `LIVE_ENABLED` turns on in the same release
+ * (docs/wiki/frontend/modules/live.md).
  */
 export const LIVE_ENABLED = deployEnvironment() === 'development';

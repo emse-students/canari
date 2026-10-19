@@ -1212,8 +1212,8 @@ Mi 9T, the in-app log on the iPhone) for the `[doubleTapLike] double tap` and
 own WebViews, which no gate here runs: the tests drive fake MSE objects, and WP-L1 measured the
 bench page, not this player. **Precondition:** a DEV build carrying the viewer (`LIVE_ENABLED` is on
 for dev builds only), a broadcaster sealing segments in [format v1](frontend/modules/live.md#the-segment-seal-format-v1)
-(the broadcaster screen once built, or the WP-L1 bench switched to `sealLiveSegment` - its own
-`live-bench` seal reads "Live indisponible" here, by design), and the console over CDP or the WebKit bridge for the `[LIVE]` lines.
+(the app's own broadcaster on the other phone - run with [LIVE-B1](#live-b1-the-broadcaster-on-both-bench-phones---owed-on-both);
+the WP-L1 bench's own `live-bench` seal reads "Live indisponible" here, by design), and the console over CDP or the WebKit bridge for the `[LIVE]` lines.
 
 1. **Watch from the other phone.** Start a live on phone A; on phone B open the Feed: the LIVE card is
    at the top, naming A. Tap it: `[LIVE] viewer joined <id> at segment N`, then picture and sound
@@ -1491,6 +1491,33 @@ camera. **Owed one reading each on the Mi 9T and the iPhone 12:**
   prompt is the in-app one (`NSCameraUsageDescription` stays, `getUserMedia` needs it).
 - The overlay over the keyboard and over a conversation with a pending draft; a camera refused
   (permission denied) shows the refusal screen with no native fallback.
+
+## LIVE-B1. The broadcaster on both bench phones - owed on BOTH
+
+The broadcaster of WP-L5 ([live](frontend/modules/live.md#the-broadcaster-as-built)), on dev builds
+only (`LIVE_ENABLED = deployEnvironment() === 'development'`; dev's server has `LIVE_ENABLED` on).
+Every test of it runs on fakes: none of the readings below has been taken. Written 2026-10-19.
+
+**Preconditions - each a reading:** both phones on a PRE-RELEASE build carrying the broadcaster
+(Settings > A propos shows `X.Y.Z-alpha.N`, the store-serves-the-highest-build TRAP of CALL-L1
+applies); two dev accounts sharing a space (a member's live is watched by readers sharing one); the
+app's own viewer on the other phone - [check Y](#y-watching-a-live---owed-on-both-phones-mi-9t-iphone-12)
+reads the same session from that side. Save the in-app log after each run
+(Settings > A propos > "Enregistrer le journal"); the `[LIVE-PIPE] summary` and `[LIVE-BROADCAST]`
+lines are what decide each row - no key, no segment byte is ever in them.
+
+| Row | Mi 9T (app WebView) | iPhone 12 (app WKWebView) |
+| --- | --- | --- |
+| **1. Ten minutes on air**, the other phone watching: the composer's "En direct" chip, the rules screen with 60 min and 60 s from the server, Start, the red badge and its clock. Log: `[LIVE-BROADCAST] on air (recorder 1)`, a summary every 30 s with `not on keyframe 0`, `dropped 0`, and `two-fragment chunks` near 14 % of segments on Android (0 on iOS) | owed | owed |
+| **2. Background and return**: home for ~20 s, back. The screen shows "Camera en pause" while away, then the badge again on the SAME live; the viewer sees a gap then catches up. Log: `recording paused: the app is in the background`, `re-acquiring`, `on air (recorder 2)`, and `generation 2 begins at +<ms>` | owed (the WebView ENDED the track in WP-L1: the release-on-hidden must make that moot) | owed (WP-L1 saw a MUTE in Safari; the app's WKWebView is unread) |
+| **3. Background past the window**: home for 90 s, back. The end screen says the live stopped while the camera was paused; no camera opens. Log: `ended while the camera was away` | owed | owed |
+| **4. Network cut and restored** (airplane mode ~20 s, on air): the quiet "Reconnexion..." badge with a growing backlog, which drains by itself when the network returns; nothing ends. Log: `reconnecting`, then summaries resuming with no `dropped` | owed | owed |
+| **5. End**: End, "Continuer" keeps the live, End again and confirm. The viewer's live ends; the end screen says you ended it. Log: `ended (broadcaster)` | owed | owed |
+| **6. Battery, UNPLUGGED, 30 min on air**: the level before and after, the phone's heat by hand. Also: under 60 % the rules screen shows the battery warning (Android only: WebKit has no Battery API) | owed (WP-L1: ~40 %/h PLUGGED) | owed (no warning expected) |
+| **7. The screen stays on** for the whole of row 1 without a touch (the Screen Wake Lock); if the log says `no Screen Wake Lock API here`, that engine dims and it is a finding | owed | owed |
+| **8. Does a NEW recorder's media time start at 0?** After row 2's return, read the first segment of `recorder 2` on the viewer side (or the rig's `readTimes`): its `tfdt` must be the `+<ms>` of `generation 2 begins`, NOT that plus the time the first recorder ran. `rebaseFragment` ASSUMES a fresh recorder restarts at zero - WP-L1 never measured it; an engine that keeps counting would put the second recorder's picture in the future for every viewer | owed | owed |
+| **9. Network cut longer than the window** (airplane mode ~90 s, on air): the end screen says the connection was lost too long, the camera light goes off. Log: `segments waiting, over the <n> the reconnect window holds`, `ended (connection-lost)` | owed | owed |
+| **10. End while offline**: airplane mode, End, confirm. The camera light goes off AT ONCE; the screen says the last seconds are being sent and offers "Quitter sans attendre", which closes it. Log: `camera given back; <n> segments to send` | owed | owed |
 
 ## CALL-L1. A 1:1 dev call between the two bench phones - owed on BOTH
 
