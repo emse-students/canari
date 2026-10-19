@@ -1679,9 +1679,13 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
   describe('the live chat and floating reactions (WP-L6, migration 098)', () => {
     let chat: LiveChatService;
     beforeEach(() => {
-      chat = new LiveChatService(ds, {
-        isUserMuted: async (userId: string) => muted.has(userId),
-      } as unknown as ModerationService);
+      chat = new LiveChatService(
+        ds,
+        {
+          isUserMuted: async (userId: string) => muted.has(userId),
+        } as unknown as ModerationService,
+        lives
+      );
     });
 
     /** A sealed message as the server sees it: opaque bytes, base64 - the text never reaches it. */
@@ -1933,6 +1937,96 @@ maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
       expect(joiner.messagesCursor).toBe(60);
       expect(joiner.reactions).toEqual([]);
       expect(joiner.reactionsCursor).toBe(1);
+    });
+
+    /** The whole body of a refusal: `endReason` and `retryAfterMs` ride next to the code. */
+    const body = async (p: Promise<unknown>) => {
+      try {
+        await p;
+      } catch (e) {
+        const err = e as { getStatus: () => number; getResponse: () => Record<string, unknown> };
+        return { status: err.getStatus(), ...err.getResponse() };
+      }
+      throw new Error('expected a refusal, got an answer');
+    };
+
+    it('every chat 410 carries the end reason; a hide on a CUT then purged live answers 410 cut', async () => {
+      const MOD = '9'.repeat(64);
+      const dropped = await start(CAROL);
+      const onDropped = await say(BOB, dropped.id, 'x');
+      await q(`UPDATE lives SET "endedAt" = now(), "endReason" = 'dropped' WHERE id = $1`, [
+        dropped.id,
+      ]);
+      const DROPPED = { status: HttpStatus.GONE, code: 'LIVE_ENDED', endReason: 'dropped' };
+      expect(
+        await body(chat.post(BOB, dropped.id, { clientId: uuid(), sealed: sealed('y') }))
+      ).toMatchObject(DROPPED);
+      expect(
+        await body(chat.react(BOB, dropped.id, { burstId: uuid(), counts: { like: 1 } }))
+      ).toMatchObject(DROPPED);
+      expect(await body(chat.hide(CAROL, false, dropped.id, onDropped.id))).toMatchObject(DROPPED);
+
+      store.failPurge = false;
+      const live = await start();
+      const said = await say(BOB, live.id, 'insult');
+      await lives.cut(MOD, live.id, { reason: 'harassment' });
+      const CUT = { status: HttpStatus.GONE, code: 'LIVE_ENDED', endReason: 'cut' };
+      // From the row, before the purge.
+      expect(await body(chat.hide(ALICE, false, live.id, said.id))).toMatchObject(CUT);
+      await sweeper.sweepOnce();
+      expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+      // From WP-L8's cut record, once the row is gone: to the broadcaster and to staff...
+      expect(await body(chat.hide(ALICE, false, live.id, said.id))).toMatchObject(CUT);
+      expect(await body(chat.hide(EVE, true, live.id, said.id))).toMatchObject(CUT);
+      // ...a viewer's late write too (the watch rule passed before the purge)...
+      expect(
+        await body(chat.post(BOB, live.id, { clientId: uuid(), sealed: sealed('late') }))
+      ).toMatchObject(CUT);
+      // ...and to anyone else the 404 of a live that does not exist.
+      expect(await body(chat.hide(CAROL, false, live.id, said.id))).toMatchObject({
+        status: HttpStatus.NOT_FOUND,
+        code: 'LIVE_NOT_FOUND',
+      });
+    });
+
+    it('a too fast reaction says WHEN, from the rows, as a too fast message does', async () => {
+      const live = await start();
+      await tap(BOB, live.id, { like: 1 });
+      await tap(BOB, live.id, { like: 1 });
+      await age('live_reaction_bursts', 'userId', BOB, 1_500);
+      const refused = (await body(tap(BOB, live.id, { like: 1 }))) as {
+        status: number;
+        retryAfterMs?: number;
+      };
+      expect(refused).toMatchObject({ status: 429, code: 'LIVE_REACTION_TOO_FAST' });
+      // The oldest burst leaves the 2 s window in ~500 ms - never the constant 2000.
+      expect(refused.retryAfterMs).toBeGreaterThan(0);
+      expect(refused.retryAfterMs).toBeLessThanOrEqual(500);
+    });
+
+    it('a late joiner gets the newest 50 VISIBLE messages: hides and blocked authors never empty it', async () => {
+      const live = await start();
+      await q(
+        `INSERT INTO live_chat_messages ("liveId", seq, "authorId", "clientId", sealed)
+         SELECT $1, s, CASE WHEN s > 70 THEN $3 ELSE $2 END, gen_random_uuid(),
+                decode(repeat('00', 40), 'hex')
+           FROM generate_series(1, 75) s`,
+        [live.id, BOB, DAVE]
+      );
+      await q(`UPDATE lives SET "chatSeq" = 75 WHERE id = $1`, [live.id]);
+      // The ten newest of BOB's hidden, and DAVE (the five newest of all) blocked by the joiner.
+      await q(
+        `UPDATE live_chat_messages SET sealed = NULL, "hiddenAt" = now()
+          WHERE "liveId" = $1 AND seq BETWEEN 61 AND 70`,
+        [live.id]
+      );
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [CAROL, DAVE]);
+      const joiner = await chat.read(CAROL, live.id, {});
+      expect(joiner.messages.map((m) => m.seq)).toEqual(
+        Array.from({ length: 50 }, (_, i) => i + 11)
+      );
+      // The cursor is the live's top, so nothing hidden or filtered comes back as new.
+      expect(joiner.messagesCursor).toBe(75);
     });
 
     it('AGGREGATES taps per 2 s window, leaves out my own, and holds 2 bursts / 10 taps per window', async () => {

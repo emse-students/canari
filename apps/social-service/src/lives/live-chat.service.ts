@@ -2,7 +2,6 @@ import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
-  GoneException,
   HttpException,
   HttpStatus,
   Injectable,
@@ -25,8 +24,10 @@ import {
   LIVE_REACTION_PAGE,
   LIVE_REACTION_TAPS_PER_WINDOW,
   LIVE_REACTION_WINDOW_MS,
+  type LiveEndReason,
   type LiveReactionKind,
 } from './live.constants';
+import { LivesService, liveEnded } from './lives.service';
 
 /** A message as the poll serves it: ciphertext under the live key, base64 (C12). */
 export interface LiveChatMessageView {
@@ -186,6 +187,7 @@ export function sumReactionBursts(
 interface LockedLive {
   broadcasterId: string;
   endedAt: Date | null;
+  endReason: LiveEndReason | null;
 }
 
 /** A message row as read back. */
@@ -218,7 +220,8 @@ export class LiveChatService {
 
   constructor(
     @InjectDataSource() private readonly db: DataSource,
-    private readonly moderation: ModerationService
+    private readonly moderation: ModerationService,
+    private readonly lives: LivesService
   ) {}
 
   /**
@@ -317,13 +320,16 @@ export class LiveChatService {
         );
         throw new ConflictException({ code: 'LIVE_REACTION_CONFLICT' });
       }
-      const [rate]: { bursts: number; taps: number }[] = await tx.query(
-        `SELECT count(*)::int AS bursts, COALESCE(sum(taps), 0)::int AS taps
+      const [rate]: { bursts: number; taps: number; retryAfterMs: number | null }[] =
+        await tx.query(
+          `SELECT count(*)::int AS bursts, COALESCE(sum(taps), 0)::int AS taps,
+                ceil(extract(epoch FROM min("createdAt") + $3 * interval '1 millisecond' - now()) * 1000)::int
+                  AS "retryAfterMs"
            FROM live_reaction_bursts
           WHERE "liveId" = $1 AND "userId" = $2
             AND "createdAt" + $3 * interval '1 millisecond' > now()`,
-        [liveId, userId, LIVE_REACTION_WINDOW_MS]
-      );
+          [liveId, userId, LIVE_REACTION_WINDOW_MS]
+        );
       if (
         rate.bursts >= LIVE_REACTION_BURSTS_PER_WINDOW ||
         rate.taps + input.taps > LIVE_REACTION_TAPS_PER_WINDOW
@@ -332,7 +338,12 @@ export class LiveChatService {
           `[LIVE_REACT] burst refused on ${liveId}: ${short(userId)} at ${rate.bursts} bursts, ${rate.taps} taps`
         );
         throw new HttpException(
-          { code: 'LIVE_REACTION_TOO_FAST', retryAfterMs: LIVE_REACTION_WINDOW_MS },
+          {
+            code: 'LIVE_REACTION_TOO_FAST',
+            // When the OLDEST burst of the window leaves it - computed as the message 429 is, from
+            // the rows by the database clock, never a constant.
+            retryAfterMs: Math.max(0, rate.retryAfterMs ?? 0),
+          },
           HttpStatus.TOO_MANY_REQUESTS
         );
       }
@@ -377,6 +388,15 @@ export class LiveChatService {
     const id = messageId.toLowerCase();
     const by = await this.db.transaction(async (tx) => {
       const live = await this.lock(tx, liveId);
+      if (!live) {
+        // A live STAFF CUT and then purged answers its 410 `cut` (WP-L8's record), to the
+        // broadcaster and to staff - the callers who may moderate it; anyone else gets the 404.
+        const cut = await this.lives.cutOf(tx, liveId);
+        if (cut && (cut.broadcasterId === callerId || isStaff)) {
+          this.logger.debug(`[LIVE_CHAT] hide on ${liveId}: the live was cut and purged`);
+          throw liveEnded(cut.liveEndedAt, cut.liveEndReason);
+        }
+      }
       const own = live?.broadcasterId === callerId;
       if (!live || !(own || isStaff)) {
         this.logger.debug(
@@ -384,7 +404,7 @@ export class LiveChatService {
         );
         throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
       }
-      if (live.endedAt) throw new GoneException({ code: 'LIVE_ENDED', endedAt: live.endedAt });
+      if (live.endedAt) throw liveEnded(live.endedAt, live.endReason);
       const rows: { hidden: boolean }[] = await tx.query(
         `SELECT "hiddenAt" IS NOT NULL AS hidden FROM live_chat_messages
           WHERE id = $1 AND "liveId" = $2`,
@@ -415,12 +435,26 @@ export class LiveChatService {
   async read(viewerId: string, liveId: string, cursors: LiveChatCursors): Promise<LiveChatBlock> {
     const blocked = new Set(await blockedUserIdsFor(this.db.manager, viewerId));
     const first = cursors.messagesAfter === undefined;
+    // A late joiner's cursor is the live's highest seq, read BEFORE its rows: the rows' snapshot is
+    // then at least as new (numbers commit in order, C4), so nothing between is skipped; a row read
+    // twice is deduped by the client on `author:clientId`.
+    const top = first
+      ? (
+          (await this.db.query(
+            `SELECT COALESCE(max(seq), 0)::int AS top FROM live_chat_messages WHERE "liveId" = $1`,
+            [liveId]
+          )) as { top: number }[]
+        )[0].top
+      : 0;
     const rows: MessageRow[] = first
       ? (
           (await this.db.query(
+            // The newest {@link LIVE_CHAT_BACKLOG} the viewer can SEE: hidden rows and blocked
+            // authors are left out BEFORE the limit, so hides never empty a joiner's backlog.
             `SELECT id, seq, "authorId", "clientId", sealed, "createdAt" FROM live_chat_messages
-              WHERE "liveId" = $1 ORDER BY seq DESC LIMIT $2`,
-            [liveId, LIVE_CHAT_BACKLOG]
+              WHERE "liveId" = $1 AND sealed IS NOT NULL AND NOT ("authorId" = ANY($3::varchar[]))
+              ORDER BY seq DESC LIMIT $2`,
+            [liveId, LIVE_CHAT_BACKLOG, [...blocked]]
           )) as MessageRow[]
         ).reverse()
       : await this.db.query(
@@ -437,8 +471,11 @@ export class LiveChatService {
         messages.push(toMessageView(row));
       }
     }
-    const messagesCursor =
-      rows.length > 0 ? rows[rows.length - 1].seq : (cursors.messagesAfter ?? 0);
+    const messagesCursor = first
+      ? Math.max(top, rows.length > 0 ? rows[rows.length - 1].seq : 0)
+      : rows.length > 0
+        ? rows[rows.length - 1].seq
+        : (cursors.messagesAfter ?? 0);
 
     if (cursors.reactionsAfter === undefined) {
       const [{ top }]: { top: number }[] = await this.db.query(
@@ -476,7 +513,7 @@ export class LiveChatService {
   /** Takes the live's row lock; `null` when there is no such live. */
   private async lock(tx: EntityManager, liveId: string): Promise<LockedLive | null> {
     const rows: LockedLive[] = await tx.query(
-      `SELECT "broadcasterId", "endedAt" FROM lives WHERE id = $1 FOR UPDATE`,
+      `SELECT "broadcasterId", "endedAt", "endReason" FROM lives WHERE id = $1 FOR UPDATE`,
       [liveId]
     );
     return rows[0] ?? null;
@@ -490,8 +527,13 @@ export class LiveChatService {
    */
   private async lockOpen(tx: EntityManager, liveId: string, userId: string): Promise<void> {
     const live = await this.lock(tx, liveId);
-    if (!live) throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
-    if (live.endedAt) throw new GoneException({ code: 'LIVE_ENDED', endedAt: live.endedAt });
+    if (!live) {
+      // Purged since the watch rule let this account in: a CUT live answers its 410 `cut`, as
+      // every live route does (WP-L8's lookup), anything else the 404.
+      await this.lives.refuseIfCut(tx, liveId, userId, 'viewer');
+      throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    }
+    if (live.endedAt) throw liveEnded(live.endedAt, live.endReason);
     if (live.broadcasterId === userId) return;
     const removed: unknown[] = await tx.query(
       `SELECT 1 FROM live_removed_viewers WHERE "liveId" = $1 AND "viewerId" = $2`,
