@@ -334,15 +334,35 @@ export class LiveSegmentUploader {
     this.next = options.startIndex ?? 0;
   }
 
-  /** Queues the next sealed segment and returns the index it will be sent as. */
-  enqueue(sealed: Uint8Array<ArrayBuffer>): number {
+  /**
+   * The index the next {@link enqueue} must carry. The caller reads it BEFORE sealing, because the
+   * seal binds the index (it is in the AAD): the uploader is the ONE counter, so a sealed segment
+   * and the index it is sent as cannot drift apart.
+   */
+  get nextIndex(): number {
+    return this.next;
+  }
+
+  /**
+   * Queues a segment sealed for `index`. Throws a `RangeError` unless `index` is {@link nextIndex}:
+   * a segment sealed for another index would be stored and then never open for any viewer,
+   * silently - refusing it here makes the drift loud at its source.
+   */
+  enqueue(index: number, sealed: Uint8Array<ArrayBuffer>): void {
     if (this.stopped) throw new Error(`live ${this.liveId}: uploader stopped`);
-    const index = this.next++;
+    if (index !== this.next) {
+      console.error(
+        `[LIVE] uploader for ${this.liveId} refused segment ${index}: the next index is ${this.next}`
+      );
+      throw new RangeError(
+        `live ${this.liveId}: segment sealed for index ${index}, the next index is ${this.next}`
+      );
+    }
+    this.next++;
     this.queue.push({ index, sealed });
     this.running ??= this.drain().finally(() => {
       this.running = null;
     });
-    return index;
   }
 
   /** How many segments wait to be stored (the backlog a "reconnecting" badge can show). */

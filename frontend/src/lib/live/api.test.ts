@@ -258,9 +258,11 @@ describe('LiveSegmentUploader', () => {
       startIndex: 5,
       onStored: (r) => stored.push(r.index),
     });
-    expect(up.enqueue(new Uint8Array([1]))).toBe(5);
-    expect(up.enqueue(new Uint8Array([2]))).toBe(6);
-    expect(up.enqueue(new Uint8Array([3]))).toBe(7);
+    expect(up.nextIndex).toBe(5);
+    up.enqueue(5, new Uint8Array([1]));
+    up.enqueue(6, new Uint8Array([2]));
+    up.enqueue(up.nextIndex, new Uint8Array([3]));
+    expect(up.nextIndex).toBe(8);
     await up.idle();
     expect(sent()).toEqual([5, 6, 7]);
     expect(stored).toEqual([5, 6, 7]);
@@ -275,28 +277,45 @@ describe('LiveSegmentUploader', () => {
       .mockResolvedValueOnce(ok(0))
       .mockResolvedValueOnce(ok(1));
     const up = new LiveSegmentUploader(LIVE, { backoffMs: () => 0 });
-    up.enqueue(new Uint8Array([1]));
-    up.enqueue(new Uint8Array([2]));
+    up.enqueue(0, new Uint8Array([1]));
+    up.enqueue(1, new Uint8Array([2]));
     await up.idle();
     expect(sent()).toEqual([0, 0, 0, 0, 1]);
+    // Every retry of index 0 carries the SAME sealed bytes - a re-seal would be a 409 conflict.
+    const bodies = await Promise.all(
+      apiFetch.mock.calls.map(async (c) => [
+        ...new Uint8Array(await (c[1].body as Blob).arrayBuffer()),
+      ])
+    );
+    expect(bodies).toEqual([[1], [1], [1], [1], [2]]);
+  });
+
+  it('refuses an index other than nextIndex, loudly, and queues nothing', () => {
+    apiFetch.mockImplementation(async (url: string) => ok(Number(url.split('/').pop())));
+    const up = new LiveSegmentUploader(LIVE, { startIndex: 3 });
+    expect(() => up.enqueue(4, new Uint8Array([1]))).toThrow(RangeError);
+    expect(() => up.enqueue(2, new Uint8Array([1]))).toThrow(RangeError);
+    expect(up.nextIndex).toBe(3);
+    expect(up.backlog).toBe(0);
+    expect(apiFetch).not.toHaveBeenCalled();
   });
 
   it('stops on a verdict (the live ended) and hands it over', async () => {
     apiFetch.mockResolvedValue(json(410, { code: 'LIVE_ENDED' }));
     const onStopped = vi.fn();
     const up = new LiveSegmentUploader(LIVE, { onStopped, backoffMs: () => 0 });
-    up.enqueue(new Uint8Array([1]));
-    up.enqueue(new Uint8Array([2]));
+    up.enqueue(0, new Uint8Array([1]));
+    up.enqueue(1, new Uint8Array([2]));
     await up.idle();
     expect(sent()).toEqual([0]);
     expect(isLiveRefusal(onStopped.mock.calls[0][0], 'ended')).toBe(true);
-    expect(() => up.enqueue(new Uint8Array([3]))).toThrow();
+    expect(() => up.enqueue(up.nextIndex, new Uint8Array([3]))).toThrow();
   });
 
   it('stop() during a backoff ends the queue without another send', async () => {
     apiFetch.mockResolvedValue(json(503, { code: 'LIVE_INGEST_BUSY' }));
     const up = new LiveSegmentUploader(LIVE, { backoffMs: () => 60_000 });
-    up.enqueue(new Uint8Array([1]));
+    up.enqueue(0, new Uint8Array([1]));
     await vi.waitFor(() => expect(apiFetch).toHaveBeenCalledTimes(1));
     up.stop();
     await up.idle();
