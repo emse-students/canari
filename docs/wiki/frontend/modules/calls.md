@@ -262,12 +262,15 @@ offer that went into a dead socket costs one restart - the price of a bound a fl
 escape, since the keepalive can now break a pairing every 20-30 s. It is CHARGED when the offer is
 actually made (`sendIceRestartOffer`, after its pairing check; the polite side's request when it is
 sent), so a restart dropped in the queue costs nothing. It is REFUNDED on evidence, not only on a
-state transition: when ICE connects, when a resume finds audio carried across the outage, or when
+state transition: when ICE connects, when a resume finds MORE packets after the outage than before
+it (unreadable stats are no evidence, and refund nothing), or when
 the inbound packet count at a new break is above the count taken when the last restart's
 negotiation completed (`packetsAtRestart`) - a restart that worked while ICE never left `connected`
 (review of #2148: otherwise a long call ended at its third blip). **Every queued step belongs to
 the call it was queued for**: a step whose call is over (another call, idle, or the 1.5 s ended
-summary) is dropped and logged once per call (`... dropped - the call is now ...`), and `failCall`
+summary) is dropped - SILENTLY when it is still that call's ended summary (an ordinary hangup
+delivers both the MLS hangup and `PeerLeft`: expected), logged once per call
+(`... dropped - the call is now ...`) when it met a different call or none - and `failCall`
 on a call already over does nothing - so a late `PeerLeft` or restart can never end the next call
 or print a second "terminal failure". Two edges are recorded, not built (F6, F7 in
 [backlog](../../backlog.md)). The resume ladder has no jitter: two clients that lost the same

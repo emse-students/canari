@@ -1540,14 +1540,14 @@ describe('a network blip does not end the call', () => {
       expect(get(service.callState)).toBe('ended');
     });
 
-    it('a step queued for a call that is over is dropped, logged once, and fails nothing', async () => {
+    it('steps queued for the SAME call, arriving after its hangup, are dropped SILENTLY and fail nothing', async () => {
       const { appendLog } = await import('$lib/utils/sessionLog');
       const service = new CallService(fakeMls);
       const { ws, pc } = await connectedCaller(service);
       pc.latency = 8;
 
-      // A restart request starts a slow offer; the user hangs up meanwhile, and two more frames
-      // were already on their way.
+      // An ordinary hangup: the MLS hangup ends the call, and the relay's frames - a PeerLeft
+      // among them - still arrive. They are expected, so no line names them.
       ws.deliver({ type: 'IceRestartRequest' });
       ws.deliver({ type: 'IceRestartRequest' });
       ws.deliver({ type: 'PeerLeft' });
@@ -1556,8 +1556,53 @@ describe('a network blip does not end the call', () => {
       await settle();
 
       const lines = vi.mocked(appendLog).mock.calls.map(([l]) => l as string);
-      expect(lines.filter((l) => l.includes('dropped - the call is now'))).toHaveLength(1);
+      expect(lines.filter((l) => l.includes('dropped - the call is now'))).toHaveLength(0);
       expect(lines.some((l) => l.includes('terminal failure'))).toBe(false);
+      expect(get(service.callState)).toBe('ended');
+    });
+
+    it('steps that outlived their call into the next state (cleaned up) are dropped and logged ONCE', async () => {
+      const { appendLog } = await import('$lib/utils/sessionLog');
+      const service = new CallService(fakeMls);
+      const { ws } = await connectedCaller(service);
+
+      ws.deliver({ type: 'IceRestartRequest' });
+      ws.deliver({ type: 'PeerLeft' });
+      vi.mocked(appendLog).mockClear();
+      service.endCall();
+      // The ended summary's 1.5 s passes BEFORE the queued steps get their turn (synchronous
+      // advance: no microtask runs), so they meet a different call - none.
+      vi.advanceTimersByTime(2_000);
+      expect(get(service.callState)).toBe('idle');
+      await settle();
+
+      const lines = vi.mocked(appendLog).mock.calls.map(([l]) => l as string);
+      expect(lines.filter((l) => l.includes('dropped - the call is now none'))).toHaveLength(1);
+      expect(lines.some((l) => l.includes('terminal failure'))).toBe(false);
+    });
+
+    it('no refund without evidence: unreadable stats across a resume give nothing back', async () => {
+      const service = new CallService(fakeMls);
+      const { ws, pc } = await connectedCaller(service);
+      expect(pc.inboundPackets).toBeNull();
+
+      await ice(pc, 'disconnected');
+      expect(pc.restarts).toBe(1);
+      await answer(ws);
+      // ICE recovers without the browser saying so (no transition event): only evidence refunds.
+      pc.iceConnectionState = 'connected';
+      ws.deliver({ type: 'PeerAway' });
+      ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+      await settle();
+      expect(pc.restarts).toBe(1);
+
+      // The first restart is still charged: two more, then the call ends.
+      for (let n = 2; n <= CALL_ICE_RESTART_ATTEMPTS; n++) {
+        await ice(pc, 'failed');
+        expect(pc.restarts).toBe(n);
+        await answer(ws);
+      }
+      await ice(pc, 'failed');
       expect(get(service.callState)).toBe('ended');
     });
   });

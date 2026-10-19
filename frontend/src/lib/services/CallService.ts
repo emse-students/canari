@@ -1227,6 +1227,9 @@ export class CallService {
    * is over too ({@link isCallLive}).
    */
   private dropStaleStep(label: string, callId: string | null): void {
+    // The SAME call, merely over: an ordinary hangup delivers both the MLS hangup and the relay's
+    // `PeerLeft`, so a step dropped here is expected and says nothing worth a line.
+    if (this.currentCallId === callId) return;
     if (this.staleStepsOfCall === callId) return;
     this.staleStepsOfCall = callId;
     appendLog(
@@ -1450,7 +1453,10 @@ export class CallService {
     );
     if (!staleOffer && !stalled && !down) {
       appendLog('[Call] the media path carried audio across the outage - no ICE restart');
-      if (this.iceRestarts > 0) this.refundIceRestarts('audio carried across the outage');
+      // Refunded only on PROOF that audio flowed: unreadable stats (`null`) are no evidence.
+      if (this.iceRestarts > 0 && before !== null && now !== null && now > before) {
+        this.refundIceRestarts(`audio carried across the outage (packets ${before} -> ${now})`);
+      }
       return;
     }
     const why = [

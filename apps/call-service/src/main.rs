@@ -1052,7 +1052,17 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
                     info!("[call] {} closing - its seat was resumed on a new socket", peer_id);
                     // Bounded like every write: a stale socket the peer no longer reads must not
                     // hold this loop.
-                    let _ = bounded_write(period, writer_socket.send(Message::Close(None))).await;
+                    match bounded_write(period, writer_socket.send(Message::Close(None))).await {
+                        WriteOutcome::Sent => {}
+                        WriteOutcome::Failed(e) => {
+                            info!("[call] {} Close to the replaced socket failed: {}", peer_id, e)
+                        }
+                        WriteOutcome::NotTaken => info!(
+                            "[call] {} Close to the replaced socket not taken within {} ms - dropped unsent",
+                            peer_id,
+                            period.as_millis()
+                        ),
+                    }
                     end_session(&session, Disposition::Resumed);
                     break;
                 }
