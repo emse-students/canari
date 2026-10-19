@@ -700,3 +700,71 @@ describe('a cancel cannot fail on the blob bookkeeping', () => {
     expect(sql.rows.has('m1')).toBe(false);
   });
 });
+
+describe('getOutboxEntry(..., { withFile: false }): the description without the file (RC-5 withdrawal)', () => {
+  /** A queued reel whose resumable session is recorded in the row. */
+  function reelWithSession(id: string, bytes: Uint8Array): OutboxEntry {
+    const entry = mediaEntry(id, bytes);
+    entry.media = {
+      ...entry.media!,
+      upload: {
+        keyHex: '11'.repeat(32),
+        ivHex: '22'.repeat(12),
+        plaintextSha256: '33'.repeat(32),
+        plaintextBytes: bytes.length,
+        uploadId: 'session-1',
+        partBytes: 1024,
+      },
+    };
+    return entry;
+  }
+
+  const backends = {
+    sqlite: async () => sqliteStorage().storage,
+    indexeddb: async () => {
+      const storage = new IndexedDbStorage(uid());
+      await storage.init();
+      return storage;
+    },
+  };
+
+  for (const [name, open] of Object.entries(backends)) {
+    it(`${name}: returns the recorded session and NO bytes, and never reads the blob`, async () => {
+      const storage = await open();
+      const bytes = pattern(300_000);
+      await storage.saveOutboxEntry(reelWithSession('m1', bytes), KEY);
+      const get = vi.spyOn(blobsOf(storage), 'get');
+      const described = await storage.getOutboxEntry('m1', KEY, { withFile: false });
+      expect(described?.media?.upload?.uploadId).toBe('session-1');
+      expect(described?.media?.fileBytes).toBeUndefined();
+      expect(get).not.toHaveBeenCalled();
+      // The default still attaches the file.
+      expect(sameBytes((await storage.getOutboxEntry('m1', KEY))?.media?.fileBytes, bytes)).toBe(
+        true
+      );
+      expect(get).toHaveBeenCalledTimes(1);
+    });
+
+    it(`${name}: reads the description even when the blob is gone (an evicted take can still be withdrawn)`, async () => {
+      const storage = await open();
+      await storage.saveOutboxEntry(reelWithSession('m1', pattern(2000)), KEY);
+      await blobsOf(storage).delete('m1');
+      const described = await storage.getOutboxEntry('m1', KEY, { withFile: false });
+      expect(described?.media?.upload?.uploadId).toBe('session-1');
+      await expect(storage.getOutboxEntry('m1', KEY)).rejects.toBeInstanceOf(
+        OutboxPayloadUnreadableError
+      );
+    });
+
+    it(`${name}: an absent row is null, an undecryptable one is still typed`, async () => {
+      const storage = await open();
+      expect(await storage.getOutboxEntry('nope', KEY, { withFile: false })).toBeNull();
+      await storage.saveOutboxEntry(reelWithSession('m1', pattern(2000)), KEY);
+      await expect(
+        storage.getOutboxEntry('m1', 'BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=', {
+          withFile: false,
+        })
+      ).rejects.toBeInstanceOf(OutboxPayloadUnreadableError);
+    });
+  }
+});

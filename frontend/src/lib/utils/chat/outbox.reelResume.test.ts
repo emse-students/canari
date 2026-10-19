@@ -551,7 +551,15 @@ describe('a chat reel through the outbox (RC-5)', () => {
       for (let attempt = 1; attempt <= 3; attempt++) {
         await vi.waitFor(() => expect(w.settled).toBeGreaterThanOrEqual(attempt));
         await vi.waitFor(() => expect(['waiting', 'failed']).toContain(uploadViewOf(ID)?.phase));
-        if (uploadViewOf(ID)?.phase === 'waiting') await vi.advanceTimersByTimeAsync(61_000);
+        // To the backoff timer and NEVER PAST IT: overshooting moved the faked clock under the next
+        // attempt, whose stall hint then read a 60 s silence (a 'stalled' seen under load).
+        const before = w.settled;
+        for (let step = 0; step < 50; step++) {
+          if (w.settled !== before || uploadViewOf(ID)?.phase !== 'waiting') break;
+          await vi.advanceTimersToNextTimerAsync();
+          // Fake-IndexedDB runs on the REAL setImmediate: let it move before the next look.
+          await new Promise((resolve) => setImmediate(resolve));
+        }
       }
       await vi.waitFor(() => expect(uploadViewOf(ID)?.phase).toBe('failed'));
       const [session] = [...w.server.sessions.keys()];
@@ -577,7 +585,9 @@ describe('a chat reel through the outbox (RC-5)', () => {
     };
     await first.outbox.enqueue(rawTakeEntry());
     await vi.waitFor(() => expect(w.server.partsReceived()).toBe(2));
-    w.server.fault = () => undefined;
+    // The second life may start its own flush as it is created: whatever it sends never lands, so
+    // the parts and the object counted below are the first life's. Only the release is served.
+    w.server.fault = (method) => (method === 'DELETE' ? undefined : 'hang');
     const [session] = [...w.server.sessions.keys()];
 
     const second = life(w);

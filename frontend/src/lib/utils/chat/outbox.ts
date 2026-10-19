@@ -1219,8 +1219,10 @@ export function createOutbox(deps: OutboxDeps): OutboxController {
    * row does not name, and only the row's rewrite makes them the entry's - a kill before that
    * prepares the take again, a kill after it uploads what was prepared.
    *
-   * Throws `UploadAbortedError` on a cancel or a retry, {@link OutboxPrepareError} when the take
-   * cannot be prepared or the result cannot be stored - the take stays, parked with a retry.
+   * Throws `UploadAbortedError` on a cancel or a retry; passes the preparer's
+   * {@link OutboxPrepareRefusedError} through unchanged (a refusal for good, which `settleFailure`
+   * retires with its sentence); and throws {@link OutboxPrepareError} when this attempt could not
+   * prepare the take or store the result - the take stays, parked with a retry.
    */
   async function prepareQueued(
     entry: OutboxEntry,

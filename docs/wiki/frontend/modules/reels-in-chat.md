@@ -736,15 +736,21 @@ new field lives in the encrypted outbox payload.
   })`, so a cancel never decrypts a 90 s video to learn an id). So a cancel releases whatever the
   entry was doing: a transfer running, waiting in backoff, parked as failed, or never restarted since
   a relaunch - the cases where no abort exists to reach an uploader. A session whose init was in
-  flight at the withdrawal is released when that transfer ends. A permanent failure that deletes the
+  flight at the withdrawal is released when that transfer ends - IF its answer arrived. **An init the
+  server created whose answer never reached the client** (the abort, a kill or a cut landing between
+  the server's write and the response) leaves a session whose id the client never learns, so nothing
+  here can release it: it holds an open slot until the server's 15-minute empty-session sweep, the
+  only mechanism that covers it (no part was ever staged, so no bytes and no budget beyond the
+  slot). A permanent failure that deletes the
   row (group deleted, eviction, an unpreparable take) releases it the same way.
   **Best effort, and what it does not cover**: a `DELETE` that gets no answer (the cancel was made
   offline, on the weak link the reel was stuck on) is logged `NOT released` and left to the server's
   sweep - 24 h holding one of the owner's 4 open sessions, up to 256 MiB staged and its share of the
   daily `chat-reel` budget. Four such cancels in a day would be answered 429 until the sweep. A
-  durable "to release" mark swept at the next launch would close it; it is not built. A sign-out,
-  an account erasure and an account deletion wipe the outbox without a `DELETE` either: the same
-  sweep holds those sessions.
+  sign-out, an account erasure and an account deletion wipe the outbox without a `DELETE` either:
+  the same sweep holds those sessions. **Filed as a P2 owed BEFORE the writer is switched on**
+  ([backlog](../../backlog.md#p2---a-withdrawn-or-wiped-chat-reel-can-leak-its-upload-session-for-24-h-owed-before-chat_reel_writer_enabled)):
+  a durable "to release" mark swept at the next start or sign-in.
 - **The tile** shows the sender's own unsent reel with the attachment bubble's figure, cancel and
   retry (`ChatReelTile` `upload`/`uploadFailed`/`orphan`); with no `mediaId` there is nothing to open,
   so no tap is offered. Queued with no transfer running yet it still offers the cancel. Drawn with
@@ -796,4 +802,5 @@ upload runs in the WebView; a backgrounded iOS app pauses it, and the next foreg
 | IndexedDB eviction of a queued take under storage pressure | iPhone | the typed "no longer readable" park, not a ghost |
 | The part size through the dev estate's relay | dev, any phone | 1 MiB bodies pass the relay that refused over 1 MiB |
 | Peak memory while a 90 s take is prepared and stored | Mi 9T, iPhone | raw + about 2 x prepared at the last step stays under the WebView's ceiling |
+| A take prepared while the app is BACKGROUNDED, on Android | Mi 9T | hypothesis to refute: a WebView that reports the AVC/AAC encoder unavailable for a moment (backgrounded, the codec taken by another app) gets `unsupported`, which `isUnpreparableFault` treats as FINAL - the reel would fail for good where a later attempt would have worked. Look for `REFUSED by the preparer` with `unsupported` after a background/foreground cycle |
 | Cancel while offline, then online | any phone | `NOT released` logged; the session is the server sweep's, and a later reel still opens a session |
