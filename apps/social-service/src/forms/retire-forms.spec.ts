@@ -13,7 +13,8 @@ function makeManager(affected: { update: number; delete: number }) {
     select: () => sub,
     from: () => sub,
     where: () => sub,
-    getQuery: () => '(SELECT 1 FROM "submissions" "s" WHERE "s"."formId" = "forms"."id")',
+    // What TypeORM really returns: a bare SELECT, no parentheses (`retireForms` adds them).
+    getQuery: () => 'SELECT 1 FROM "submissions" "s" WHERE "s"."formId" = "forms"."id"',
   };
   const builder = (kind: 'update' | 'delete') => {
     const call = {
@@ -83,12 +84,15 @@ describe('retireForms', () => {
     expect(update.where).toEqual([
       '"id" = :value',
       '"deletedAt" IS NULL',
-      expect.stringMatching(/^EXISTS /),
+      expect.stringMatching(/^EXISTS \(SELECT .*\)$/),
     ]);
     expect(update.params[0]).toEqual({ value: 'f1' });
     expect(typeof (update.set as { deletedAt: () => string }).deletedAt).toBe('function');
     expect(del.kind).toBe('delete');
-    expect(del.where).toEqual(['"id" = :value', expect.stringMatching(/^NOT EXISTS /)]);
+    expect(del.where).toEqual([
+      '"id" = :value',
+      expect.stringMatching(/^NOT EXISTS \(SELECT .*\)$/),
+    ]);
   });
 
   it('scopes both statements to an association', async () => {
