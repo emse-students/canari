@@ -13,10 +13,8 @@
  * how the first count came back as eleven and missed the co-owner lines.
  */
 import { describe, it, expect } from 'vitest';
-import { join, dirname, relative } from 'node:path';
-import { readdirSync, statSync, readFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { withoutAnyComments } from '$lib/styles/markupSources';
+import { relativeTo, sourceFiles } from '../../test/sourceTree';
 import { associationAccent, associationAccentHex } from './accent';
 import { generateAvatarColor } from '$lib/utils/avatar';
 
@@ -55,18 +53,6 @@ describe('the association accent', () => {
   });
 });
 
-const src = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-
-/** Every `.ts` and `.svelte` under `dir`, recursively, tests excluded. */
-function sourceFiles(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) sourceFiles(full, out);
-    else if (/\.(ts|svelte)$/.test(entry) && !entry.includes('.test.')) out.push(full);
-  }
-  return out;
-}
-
 describe('nothing derives it a second time', () => {
   it('leaves the association derivation to the one module that owns it', () => {
     // `generateAvatarColor` is a general utility and keeps honest users - a member's avatar in the
@@ -75,10 +61,17 @@ describe('nothing derives it a second time', () => {
     // for the function: a `generateAvatarColor` call sitting beside a `color` fallback.
     const offenders: string[] = [];
 
-    for (const file of [...sourceFiles(join(src, 'lib')), ...sourceFiles(join(src, 'routes'))]) {
-      const rel = relative(src, file);
-      if (rel.endsWith(join('associations', 'accent.ts'))) continue; // the one that owns it
-      for (const line of withoutAnyComments(readFileSync(file, 'utf8')).split('\n')) {
+    // Hand-written source only (the shared snapshot holds no generated file): a Paraglide getter
+    // cannot derive an accent.
+    const files = sourceFiles({
+      under: ['src/lib', 'src/routes'],
+      extensions: ['ts', 'svelte'],
+      tests: 'exclude',
+    });
+    for (const { path, text } of files) {
+      const rel = relativeTo(path, 'src');
+      if (rel.endsWith('associations/accent.ts')) continue; // the one that owns it
+      for (const line of withoutAnyComments(text).split('\n')) {
         if (!line.includes('generateAvatarColor')) continue;
         if (/color(\?\.trim\(\))?\s*(\?\?|\|\|)/i.test(line)) {
           offenders.push(`${rel}: ${line.trim().slice(0, 100)}`);

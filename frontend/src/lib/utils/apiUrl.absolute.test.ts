@@ -1,7 +1,5 @@
-import { readdirSync, readFileSync, statSync } from 'node:fs';
-import { resolve, dirname, relative } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import { relativeTo, sourceFiles } from '../../test/sourceTree';
 
 /**
  * No `fetch` may address the API with a RELATIVE path - it is dead on mobile, and it lies.
@@ -30,9 +28,6 @@ import { describe, expect, it } from 'vitest';
  * opening a fetch argument and not on the resulting string: a template whose first segment is a base
  * expression is exactly the correct form, whatever it evaluates to.
  */
-const here = dirname(fileURLToPath(import.meta.url));
-const SRC = resolve(here, '../..');
-
 /** `fetch('/api/…')` / `fetch("/api/…")` / `fetch(`/api/…`)`, with any whitespace after the paren. */
 const RELATIVE_API_FETCH = /\bfetch\(\s*[`'"]\/api\//;
 
@@ -67,22 +62,15 @@ const RELATIVE_API_SRC = /\bsrc=[{]?\s*[`'"]\/api\//;
 const RAW_STORED_ASSET_SRC =
   /\bsrc=\{\s*[A-Za-z_$][\w$]*(?:\s*[?.]*\.\s*[\w$]+)*\.(?:iconUrl|logoUrl)\b|\bsrc=\{\s*(?:iconUrl|logoUrl)\b/;
 
-function sourceFiles(dir: string): string[] {
-  const out: string[] = [];
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'paraglide' || entry === 'node_modules') continue;
-    const full = resolve(dir, entry);
-    if (statSync(full).isDirectory()) out.push(...sourceFiles(full));
-    else if (/\.(ts|svelte)$/.test(entry) && !entry.endsWith('.test.ts')) out.push(full);
-  }
-  return out;
-}
+const SOURCES = sourceFiles({ under: 'src', extensions: ['ts', 'svelte'], tests: 'exclude' });
+
+/** The files of `SOURCES` whose text matches `re`, as paths relative to `src`. */
+const matching = (re: RegExp): string[] =>
+  SOURCES.filter(({ text }) => re.test(text)).map(({ path }) => relativeTo(path, 'src'));
 
 describe('API calls are addressed absolutely', () => {
   it('has no fetch() to a relative /api/ path anywhere in src', () => {
-    const offenders = sourceFiles(SRC)
-      .filter((file) => RELATIVE_API_FETCH.test(readFileSync(file, 'utf8')))
-      .map((file) => relative(SRC, file).replace(/\\/g, '/'));
+    const offenders = matching(RELATIVE_API_FETCH);
 
     expect(
       offenders,
@@ -93,9 +81,7 @@ describe('API calls are addressed absolutely', () => {
   });
 
   it('has no element src pointing at a relative /api/ path anywhere in src', () => {
-    const offenders = sourceFiles(SRC)
-      .filter((file) => RELATIVE_API_SRC.test(readFileSync(file, 'utf8')))
-      .map((file) => relative(SRC, file).replace(/\\/g, '/'));
+    const offenders = matching(RELATIVE_API_SRC);
 
     expect(
       offenders,
@@ -106,9 +92,7 @@ describe('API calls are addressed absolutely', () => {
   });
 
   it('never binds a stored iconUrl/logoUrl field straight into a src attribute', () => {
-    const offenders = sourceFiles(SRC)
-      .filter((file) => RAW_STORED_ASSET_SRC.test(readFileSync(file, 'utf8')))
-      .map((file) => relative(SRC, file).replace(/\\/g, '/'));
+    const offenders = matching(RAW_STORED_ASSET_SRC);
 
     expect(
       offenders,

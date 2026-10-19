@@ -11,21 +11,11 @@
  * calls `vi.useFakeTimers(`, where the delay is a simulated latency and not a wait. A comment that
  * names `useFakeTimers` exempts nothing. One case, every offender listed.
  */
-import { readFileSync, readdirSync } from 'node:fs';
-import { join, relative, resolve, sep } from 'node:path';
-
 import { describe, expect, it } from 'vitest';
 
-const SRC = resolve(import.meta.dirname, '..');
-const FAKE_TIMERS_CALL = /\bvi\.useFakeTimers\(/;
+import { relativeTo, sourceFiles } from './sourceTree';
 
-function testFiles(dir: string): string[] {
-  return readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) return testFiles(path);
-    return /\.(test|spec)\.ts$/.test(entry.name) ? [path] : [];
-  });
-}
+const FAKE_TIMERS_CALL = /\bvi\.useFakeTimers\(/;
 
 /**
  * The source with every comment blanked (length and newlines kept). String literals are skipped
@@ -90,17 +80,14 @@ export function sleepsForADuration(source: string): boolean {
 
 describe('real sleeps in tests', () => {
   it('no file gives setTimeout a non-zero delay without really faking timers', () => {
-    const files = testFiles(SRC);
+    const files = sourceFiles({ under: 'src', extensions: ['ts'], tests: 'only' });
     // The scan is reading the tree it thinks it is.
     expect(files.length).toBeGreaterThan(500);
 
     const offenders = files
-      .filter((file) => file !== import.meta.filename)
-      .filter((file) => {
-        const source = readFileSync(file, 'utf8');
-        return sleepsForADuration(source) && !FAKE_TIMERS_CALL.test(stripComments(source));
-      })
-      .map((file) => relative(SRC, file).split(sep).join('/'));
+      .filter(({ path }) => path !== 'src/test/noRealSleeps.test.ts')
+      .filter(({ text }) => sleepsForADuration(text) && !FAKE_TIMERS_CALL.test(stripComments(text)))
+      .map(({ path }) => relativeTo(path, 'src'));
 
     expect(offenders).toEqual([]);
   });

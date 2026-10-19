@@ -297,6 +297,10 @@ searches), `HEAD` content-length.
 
 **User goal: on a slow network and a poor phone, opening a community is almost instantaneous.** Budget: rail + salons and a salon opened before **<= 200 ms from local state, with 0 request on the path**. F1 (saved workspace list), F2, F3, F4 (a salon's last page kept locally), F5 and F6 are built and measured; the tab is 2-4x faster and works offline, but still short of 200 ms (first mount cut, see the page). **Left:** F7's second half (one native call for a page's signatures; native, so a lead review), a re-measure against the budget on the Mi 9T, a CPU profile of the warm resume at 4x, the history head/body split, iOS. State and numbers: [community-open-budget](frontend/community-open-budget.md). Instrument: `bun tools/cold-start/community-open.mjs`.
 
+## P3 - ChatArea's mount cost grows with the whole thread, not with the 60-row window (measured 2026-10-19)
+
+Mounting `ChatArea` on 300 messages costs 2.0 s in happy-dom, on 70 messages 0.5 s, although the entry window mounts 60 rows either way, so something walks or derives from every message before the window cuts it. Found while making `ChatArea.entryWindow` stop timing out under load ([test-suite-reform](test-suite-reform.md#wp-t9-s---one-walk-of-the-source-tree-for-every-scan-2026-10-19), which now mounts 80 rows). Not read in the component; profile a long real thread on the Mi 9T before assuming it matters there. Delete this item with the cause or the measurement that refutes it.
+
 ## P3 - The reel viewer has no like control: a keyboard or screen-reader member cannot like a reel there (#2113, 2026-10-19, a decision for the user)
 
 The double tap that likes a reel (#2113) is a pointer gesture only; the viewer draws no heart or reaction button, so a keyboard or VoiceOver/TalkBack member must close it and use the card's picker, and a like given there is also taken back only from the card. Decide whether the viewer gets a reaction control (Instagram's right-hand rail) or stays as it is. [reels](frontend/modules/reels.md#a-double-tap-on-a-reel-likes-it-2026-10-19)

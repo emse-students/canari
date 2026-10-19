@@ -1,5 +1,4 @@
-import { readdirSync, readFileSync } from 'node:fs';
-import { join, relative } from 'node:path';
+import { readSource, relativeTo, sourceFiles } from '../../../test/sourceTree';
 
 /**
  * EVERY PATH THAT SPENDS A RATCHET GENERATION MUST RECORD THAT IT DID.
@@ -22,10 +21,7 @@ import { join, relative } from 'node:path';
  * will not. A new decrypt site fails this test until it either records the consumption or is listed
  * below with the reason it must not.
  */
-// FROM THE PROJECT ROOT, not from `import.meta.url`: this file runs in the happy-dom environment,
-// where `import.meta.url` is not a `file:` URL and `fileURLToPath` throws. `process.cwd()` is the
-// frontend package under vitest, which is what the config's `root` fixes.
-const LIB = join(process.cwd(), 'src', 'lib');
+const LIB = 'src/lib';
 
 /**
  * Files that call `processIncomingMessage` and deliberately do NOT record, each with the reason.
@@ -42,18 +38,8 @@ const EXEMPT: Record<string, string> = {
 };
 
 /** Every `.ts` under `src/lib`, excluding tests and the generated trees. */
-function sources(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const full = join(dir, entry.name);
-    if (entry.isDirectory()) {
-      if (['paraglide', 'wasm', 'proto'].includes(entry.name)) continue;
-      sources(full, out);
-    } else if (entry.name.endsWith('.ts') && !entry.name.includes('.test.')) {
-      out.push(full);
-    }
-  }
-  return out;
-}
+const sources = () =>
+  sourceFiles({ under: LIB, extensions: ['ts'], tests: 'exclude', skipDirs: ['proto'] });
 
 /**
  * A CALL, never a declaration. `abstract processIncomingMessage(` in `BaseMlsService`, the signature
@@ -66,9 +52,9 @@ const CALLS = /\.processIncomingMessage\s*\(/;
 const RECORDS = /noteFrameConsumed\s*\(|markHistoryFrameConsumed\s*\(/;
 
 describe('the frame-consumption seam', () => {
-  const callers = sources(LIB)
-    .filter((f) => CALLS.test(readFileSync(f, 'utf8')))
-    .map((f) => relative(LIB, f).replace(/\\/g, '/'));
+  const callers = sources()
+    .filter(({ text }) => CALLS.test(text))
+    .map(({ path }) => relativeTo(path, LIB));
 
   it('finds the decrypt sites at all - a test that matches nothing proves nothing', () => {
     expect(callers.length).toBeGreaterThanOrEqual(4);
@@ -76,7 +62,7 @@ describe('the frame-consumption seam', () => {
 
   it('every caller of processIncomingMessage records the consumption, or says why it must not', () => {
     const silent = callers.filter(
-      (rel) => !EXEMPT[rel] && !RECORDS.test(readFileSync(join(LIB, rel), 'utf8'))
+      (rel) => !EXEMPT[rel] && !RECORDS.test(readSource(`${LIB}/${rel}`))
     );
     expect(silent).toEqual([]);
   });
@@ -89,11 +75,8 @@ describe('the frame-consumption seam', () => {
     // Not a restatement of the test above: these two are pinned BY NAME because they are the ones
     // that shipped the defect, and a refactor that moved the recording out of them would otherwise
     // pass on the strength of some other file in the same list.
-    const commitReplay = readFileSync(join(LIB, 'utils/chat/commitReplay.ts'), 'utf8');
-    const handler = readFileSync(
-      join(LIB, 'mls-client/messagePipeline/setupMessageHandler.ts'),
-      'utf8'
-    );
+    const commitReplay = readSource(`${LIB}/utils/chat/commitReplay.ts`);
+    const handler = readSource(`${LIB}/mls-client/messagePipeline/setupMessageHandler.ts`);
     expect(commitReplay).toMatch(/noteFrameConsumed\(userId, groupId, bytes\)/);
     expect(handler).toMatch(/noteFrameConsumed\(userId, joinedGroupId, msg\.content\)/);
   });
