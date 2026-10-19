@@ -3867,6 +3867,7 @@
   "bookings_day_empty": "Rien n'est proposé ce jour-là.",
   "bookings_grid_caption": "Créneaux de {space}",
   "bookings_grid_time_header": "Horaire",
+  "bookings_grid_drag_hint": "Glissez sur la grille (appui long sur mobile) pour choisir plusieurs créneaux.",
   "bookings_cell_free": "Libre",
   "bookings_cell_booked": "Occupé",
   "bookings_cell_mine": "Ma réservation",

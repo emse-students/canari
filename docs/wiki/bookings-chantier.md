@@ -611,6 +611,18 @@ id to the organiser and the linked account, not to a booker.
 | `lib/bookings/bookingActions.ts` | cancel, leave and lift: ONE implementation each (ask, call, say), shared by both pages; the calendar event of a booking |
 | `lib/bookings/refusals.ts` | every booker code (`BOOKER_REFUSAL_CODES`) to its sentence, beside the organiser's |
 
+- **A DRAG PICKS A RANGE (user, 2026-10-21)**: press a free unit of the grid and drag along the same
+  resource's column; the range follows the pointer (a yellow outline and a chip with its hours at the
+  bottom of the screen) and letting go opens the booking sheet with that length already chosen
+  (`initialCount`). The range is `dragRange` in `lib/bookings/grid.ts`: it grows from the pressed row,
+  up or down, and stops at the first row that is not a FREE unit touching the previous one, or when
+  `bookingUnitLimit` units are covered - so it can never cover a taken unit nor exceed `maxSteps`.
+  **A mouse or a pen drags at once; a finger must HOLD 250 ms first** (a quicker drag is the page
+  scrolling and is left alone), and the page does not scroll while a range is drawn (a non-passive
+  `touchmove`). A plain tap still opens the sheet with one unit, and a drag is never also a click.
+  Not offered in slots mode (a slot is booked whole). **Seen** at 390 px in a headless Chrome on a
+  fixture grid (mouse): 4 units at the ceiling, 2 before a taken unit. **NOT seen on a phone**: the
+  hold-then-drag and the scroll lock are the part only a finger can judge.
 - **THE DEFAULT VIEW FOLLOWS THE WIDTH** as the agenda's (`SCHEDULE_AGENDA_QUERY`): the planning
   on a phone, the grid wider - until the reader picks one, then theirs holds.
 - **TIMES ARE THE SPACE'S** (D25), read in its zone; when the device's clock reads differently,
