@@ -25,6 +25,7 @@
   import { markViewerLayer } from '$lib/utils/viewerLayer';
   import { railHeartToggle, type ReelRailActions } from '$lib/reels/reelRail';
   import { sharePostLink } from '$lib/posts/sharePost';
+  import { WheelPageLock, wheelOverScrollable, wheelStep } from '$lib/reels/reelWheel';
   import { portal } from '$lib/actions/portal';
   import { coversScreen } from '$lib/actions/coversScreen.svelte';
   import type { PostEntity } from '$lib/posts/api';
@@ -283,8 +284,11 @@
     next?.();
   }
 
-  /** Carries out a verdict: the track leaves towards it, then the index moves and the track rests. */
-  function go(verdict: ReelSwipeVerdict) {
+  /**
+   * Carries out a verdict: the track leaves towards it, then the index moves and the track rests.
+   * `landed` runs once the track is at rest - at once when nothing moves (an end of the list).
+   */
+  function go(verdict: ReelSwipeVerdict, landed?: () => void) {
     const height = frame?.clientHeight ?? window.innerHeight;
     const width = frame?.clientWidth ?? window.innerWidth;
     const target = stepReelIndex(index, verdict, reels.length);
@@ -294,7 +298,7 @@
       return;
     }
     if (target === index) {
-      settle(0, 0);
+      settle(0, 0, landed);
       return;
     }
     console.debug(`[reel-viewer] ${verdict}: ${index} -> ${target}`);
@@ -303,8 +307,40 @@
       settling = false;
       index = target;
       offsetY = 0;
+      landed?.();
     });
   }
+
+  let viewerEl = $state<HTMLDivElement | null>(null);
+
+  /**
+   * THE MOUSE WHEEL TURNS THE PAGE (user, 2026-10-19, desktop): one gesture, one page, through
+   * `go` - the arrow buttons' path (`reels/reelWheel.ts`). Not while the comments sheet is open nor
+   * over a child that scrolls (the list scrolls instead), never on ctrl+wheel (zoom) or a horizontal
+   * scroll. Non-passive, on the viewer only, so `preventDefault` runs exactly when the event is
+   * consumed; removed with the viewer.
+   */
+  $effect(() => {
+    const el = viewerEl;
+    if (!el) return;
+    const lock = new WheelPageLock();
+    function onWheel(e: WheelEvent) {
+      const step = wheelStep(e);
+      if (!step || commentsFor || wheelOverScrollable(e.target, el!)) return;
+      e.preventDefault();
+      const free = lock.free && !settling;
+      lock.heard();
+      if (!free) return;
+      console.debug(`[reel-viewer] wheel: ${step}`);
+      lock.take();
+      go(step, () => lock.land());
+    }
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => {
+      el.removeEventListener('wheel', onWheel);
+      lock.dispose();
+    };
+  });
 
   // Touch listeners by hand with `passive: false`: Svelte registers touch handlers as passive, where
   // `preventDefault()` is ignored and the page would scroll under the drag.
@@ -429,6 +465,7 @@
 
 <div use:portal>
   <div
+    bind:this={viewerEl}
     use:coversScreen
     class="fixed inset-0 z-(--z-viewer) overflow-hidden bg-black text-white"
     role="dialog"

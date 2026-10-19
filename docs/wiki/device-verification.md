@@ -1295,6 +1295,11 @@ the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[reel-view
    player bar, the caption lower, the same rail. A post of two photos never appears.
 7. **VoiceOver / TalkBack**: the rail reads "J'aime, N réactions", "Commentaires, N commentaires",
    "Partager"; the sheet takes the focus on open and gives it back to the comments button on close.
+8. **Desktop wheel** (a browser on a desktop, a mouse, then a trackpad): one wheel notch down is
+   the next reel, up the previous; a hard spin of a free-spinning wheel and a trackpad flick each
+   turn ONE page (`[reel-viewer] wheel` once per gesture); ctrl+wheel zooms the page and does not
+   turn it; with the comments sheet open the wheel scrolls the list; over an unfolded caption it
+   scrolls the caption.
 
 ## The iPhone 12 owed-readings inventory (2026-10-11)
 

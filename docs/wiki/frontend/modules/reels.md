@@ -582,6 +582,17 @@ below; **owed on both phones**
   (`kind=reel&singlePhotos=true`, [server half](../../services/reels.md#reading)); a row it serves
   that the client reads as neither is drawn as a reel and accused once in the log.
 
+- **The mouse wheel turns the page on a desktop** (user, 2026-10-19; `reels/reelWheel.ts`): a notch
+  down is the next reel, up the previous, through `go` - the arrow buttons' and keys' own step. ONE
+  GESTURE, ONE PAGE: a trackpad flick or a free-spinning wheel sends dozens of events and its
+  inertia keeps going after the page lands, so the first consumed event takes a lock released only
+  when the transition has landed AND the wheel has been quiet for `WHEEL_QUIET_MS` (200 ms; the
+  wheel sends no "end" event, so the quiet is the only proof a gesture ended). Left to the browser:
+  ctrl+wheel (zoom, and a trackpad pinch), a mostly horizontal scroll, the wheel while the comments
+  sheet is open or over a child that scrolls (the list, an unfolded caption). The listener is
+  non-passive on the viewer only, `preventDefault` runs only on a consumed event, and it goes with
+  the viewer. Touch, swipes and their thresholds are unchanged.
+
 #### Instagram reference (Mi 9T, 2026-10-19)
 
 Observed in the Instagram app on the bench Mi 9T (1080 x 2340 px at 396 dpi, 2.475 px per dp), an
