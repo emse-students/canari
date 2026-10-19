@@ -37,3 +37,23 @@ export function mlsFrameEpoch(protoBase64: string): number | null {
   const epoch = bytes.readBigUInt64BE(offset);
   return epoch > BigInt(Number.MAX_SAFE_INTEGER) ? null : Number(epoch);
 }
+
+/**
+ * How many PAST epochs of message secrets every Canari client keeps: `max_past_epochs(2)` in
+ * `frontend/mls-core` (`group.rs`, `welcome.rs`). OpenMLS stores the current epoch plus this many
+ * before it, so a member at epoch E opens frames sealed at E, E-1 and E-2, and nothing older.
+ */
+export const MLS_MAX_PAST_EPOCHS = 2;
+
+/**
+ * Whether a frame sealed at `frameEpoch` is already outside the past-epoch window of a member at
+ * the group's `activeEpoch` - unreadable to every member that is up to date, the moment it is sent.
+ *
+ * WHY THE SERVER ASKS (backlog, 2026-10-12 console export): seed requests sealed at epochs 135-138
+ * reached a key group at 141, no current member could open them, and each loss drove a re-ask. The
+ * sender cannot know it is behind while the commits are still in flight to it; the server holds
+ * both numbers at send time, so it is where the lagging sender is named.
+ */
+export function isBeyondPastEpochWindow(frameEpoch: number, activeEpoch: number): boolean {
+  return frameEpoch < activeEpoch - MLS_MAX_PAST_EPOCHS;
+}

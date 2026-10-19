@@ -27,7 +27,11 @@ import { MlsGroupInfo } from '../entities/mls-group-info.entity';
 import { RevokedDevice } from '../entities/revoked-device.entity';
 import { resolveUserDisplayName, resolveUserDisplayNamesBatch } from '../utils/display-name';
 import { activeRevocationWhere } from '../utils/revocation';
-import { mlsFrameEpoch } from '../utils/mls-frame-epoch';
+import {
+  MLS_MAX_PAST_EPOCHS,
+  isBeyondPastEpochWindow,
+  mlsFrameEpoch,
+} from '../utils/mls-frame-epoch';
 import { GroupMembershipInterval } from '../entities/group-membership-interval.entity';
 import {
   exclusionWindows,
@@ -131,6 +135,18 @@ export interface SendMessageResult {
    * undated message cannot be placed against an exclusion window).
    */
   receivedAt: number;
+}
+
+/**
+ * An application frame's clear epoch and who sealed it, carried from the send path to the locked
+ * group read, where it is compared with the group's `activeEpoch` (see `isBeyondPastEpochWindow`).
+ */
+interface SealedFrame {
+  epoch: number;
+  /** `userId:deviceId` as the body declared it. */
+  sender: string;
+  /** The sender device's build from its KeyPackage row, or `unknown` when it has none. */
+  appVersion: string;
 }
 
 export interface ValidateCommitBody {
@@ -1072,6 +1088,8 @@ export class MessagingService {
     const receivedAt = new Date();
     /** `userId:deviceId` of the parting devices this commit was queued to - consumed once queued. */
     let partingConsumed: string[] = [];
+    /** An application frame's clear epoch and its author, compared with the group's under the lock. */
+    let sealed: SealedFrame | undefined;
 
     this.logger.log(
       `[SEND][${traceId}] START group=${body.groupId ?? 'none'} sender=${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'} hasProto=${!!body.proto} isWelcome=${!!body.isWelcome} isCommit=${!!body.isCommit}` +
@@ -1202,18 +1220,29 @@ export class MessagingService {
         // storage that nothing will ever collect or read (WP-GHOST-1). Deliberately narrow: an
         // `active` membership whose device merely went quiet still has its KeyPackage for the
         // whole 90-day window, so a legitimately offline device is never dropped.
-        const liveDeviceIds = recipients.length
-          ? new Set(
-              (
-                await this.keyPackageRepo.find({
-                  where: {
-                    deviceId: In([...new Set(recipients.map((m) => m.deviceId))]),
-                  },
-                  select: { userId: true, deviceId: true },
-                })
-              ).map((kp) => `${kp.userId}:${kp.deviceId}`)
-            )
-          : new Set<string>();
+        const recipientKeyPackages = recipients.length
+          ? await this.keyPackageRepo.find({
+              where: {
+                deviceId: In([...new Set(recipients.map((m) => m.deviceId))]),
+              },
+              select: { userId: true, deviceId: true, deviceAppVersion: true },
+            })
+          : [];
+        const liveDeviceIds = new Set(
+          recipientKeyPackages.map((kp) => `${kp.userId}:${kp.deviceId}`)
+        );
+        if (!isHandshake && frameEpoch !== null) {
+          // The sender's own row is in that read whenever its membership is active, which an
+          // application frame needs to get this far - so naming its build costs no query.
+          const senderVersion = recipientKeyPackages.find(
+            (kp) => kp.userId === body.senderId && kp.deviceId === body.senderDeviceId
+          )?.deviceAppVersion;
+          sealed = {
+            epoch: frameEpoch,
+            sender: `${body.senderId ?? 'unknown'}:${body.senderDeviceId ?? 'unknown'}`,
+            appVersion: senderVersion ?? 'unknown',
+          };
+        }
         const members = recipients.filter(
           (m) =>
             !isSender(m) &&
@@ -1449,7 +1478,7 @@ export class MessagingService {
 
     // 1. Persist ALL messages first (survives crashes / timing races)
     if (toDeliver.length > 0) {
-      await this.enqueueForLiveGroup(toDeliver, body.groupId, 'SEND', traceId);
+      await this.enqueueForLiveGroup(toDeliver, body.groupId, 'SEND', traceId, sealed);
       this.logger.log(`[SEND][${traceId}] QUEUED count=${toDeliver.length}`);
       if (partingConsumed.length > 0 && body.groupId) {
         await this.redis
@@ -1469,7 +1498,7 @@ export class MessagingService {
       // and relies on this refusal, so it is owed on the empty roster too. Handshake frames are
       // left alone: their own paths decide what a dead group means for them.
       if (body.proto && body.groupId && !body.isCommit && !body.isWelcome) {
-        await this.enqueueForLiveGroup([], body.groupId, 'SEND', traceId);
+        await this.enqueueForLiveGroup([], body.groupId, 'SEND', traceId, sealed);
       }
       // TWO CAUSES, AND THE SENTENCE USED TO NAME NEITHER. `toDeliver` empties for one of exactly
       // two reasons and they want opposite readings: a group that named no other device has nobody
@@ -3169,13 +3198,20 @@ export class MessagingService {
     rows: QueuedMessage[],
     groupId: string | undefined,
     tag: string,
-    traceId: string
+    traceId: string,
+    sealed?: SealedFrame
   ): Promise<QueuedMessage[]> {
     if (!groupId) return this.queuedMessageRepo.save(rows);
     return this.queuedMessageRepo.manager.transaction(async (manager) => {
       const [group] = await manager.getRepository(Group).find({
         where: { id: groupId },
-        select: { id: true, deletedAt: true },
+        select: {
+          id: true,
+          deletedAt: true,
+          activeEpoch: true,
+          distributionWorkspaceId: true,
+          distributionChannelId: true,
+        },
         lock: { mode: 'pessimistic_read' },
       });
       if (!group || group.deletedAt) {
@@ -3186,6 +3222,21 @@ export class MessagingService {
             `for ever - nothing queued`
         );
         throw new GoneException({ error: 'group_deleted', groupId });
+      }
+      // A FRAME SEALED BEYOND THE PAST-EPOCH WINDOW IS REPORTED, NOT REFUSED (backlog, 2026-10-12:
+      // seed requests sealed at 135-138 reached a key group at 141). Read under the same lock as the
+      // write, so the epoch compared is the one these rows are queued against. Refusing would change
+      // what every shipped client sees on a send, and which builds lag is not yet measured - this
+      // line is that measurement: the sender's device and build, and how far behind it sealed.
+      if (sealed && isBeyondPastEpochWindow(sealed.epoch, group.activeEpoch)) {
+        const keyGroup = !!(group.distributionWorkspaceId || group.distributionChannelId);
+        this.logger.warn(
+          `[${tag}][${traceId}] STALE_EPOCH_FRAME group=${groupId} keyGroup=${keyGroup} ` +
+            `frameEpoch=${sealed.epoch} activeEpoch=${group.activeEpoch} ` +
+            `behind=${group.activeEpoch - sealed.epoch} sender=${sealed.sender} ` +
+            `app=${sealed.appVersion} rows=${rows.length} - sealed more than ` +
+            `${MLS_MAX_PAST_EPOCHS} epochs behind the group, so no member at the current epoch can open it`
+        );
       }
       // An empty batch is a liveness check alone (an emptied roster, see `sendMessage`).
       if (rows.length === 0) return [];

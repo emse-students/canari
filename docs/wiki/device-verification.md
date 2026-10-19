@@ -1173,6 +1173,7 @@ the build it names.**
 | #1742 reel frame parity | PR | **WAITS** (merged, in no release yet) |
 | #1738 IndexedDB eviction: kill with a queued 13 MB file, relaunch | PR #1738 (open) | **WAITS**: the PR is not merged |
 | #1744 feed reel fetch, playback start | PR #1744 (open) | **WAITS**: not merged |
+| An account deletion empties the App Group copies: delete a throwaway account on a debug (inspectable) build, then list `group.fr.emse.canari` - no `push_context.json` or `fcm_message_cache.ndjson` left, `mls.bin` / `graine_seeds.json` / `push_secret.txt` kept; `[DEL-LOCAL] push files: N removed from the extension's container` in the log, no `no App Group container` | [auth](frontend/modules/auth.md#an-account-deletion-wipes-that-accounts-local-database-and-vault-slot-wp-del-local-2026-10-18), added 2026-10-19 | **WAITS for a pre-release carrying it**: the `#[cfg(target_os = "ios")]` branch is not even compiled before the release's iOS build |
 | PDF viewer performance | branch `perf/pdf-viewer` | **WAITS**: no pull request yet |
 | Session holds, check P | CLAUDE.md | **not re-read by rule**: proven, "must not be re-verified" |
 
@@ -2037,6 +2038,21 @@ it ("Ouvrir"), then a `terminate` and a relaunch. Settings > A propos read "Vers
 
 **Left on the bench:** signed in as `canari-test-gamma` on `1.2.9-alpha.7`, unlocked, on the feed.
 Dynamic Type and 200 % text were not read (not owed by this build).
+
+**3b, read again from the same evidence.** The emoji keyboard opened over the already-open DM
+keyboard (`overlap=388`, 13:50:58), and `11-dmkbd-menu-open.png` then shows the header and the "+"
+in place. Only the rise from a CLOSED keyboard goes wrong. The analysis and the three candidate
+causes are in [mobile](frontend/mobile.md#the-dm-whose-chrome-stands-one-keyboard-too-high-2026-10-17).
+**Owed on the next build that carries `keyboard settled:` (one reading names the cause):**
+
+1. Run `pymobiledevice3 syslog live -pn Canari`, grepping for `[CanariIOS] keyboard`.
+2. Open the same DM (last message a tall video) and tap the composer field with the keyboard
+   closed. Then run `bun tools/ios-device/ios.mjs shot` and `bun tools/ios-device/ios.mjs webview`
+   (543 tall expected), and `find "Ajouter"` for the native "+" rect.
+3. Copy the `keyboard settled:` line that follows `overlap=301`.
+4. Control 1: the salon "general", same steps.
+5. Control 2: the DM after the emoji keyboard. Switch to it, then back.
+6. Close and reopen the keyboard three times in the DM. One line per rise is the measurement.
 
 ## Traps that outlived the work that found them
 

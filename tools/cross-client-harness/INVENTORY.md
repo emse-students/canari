@@ -18,7 +18,7 @@ make a gesture as unfindable as leaving it out entirely.
 
 One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a fact rather than a clock, reads before it acts so a second call is a read, and addresses the product structurally rather than by pixel or wording. See [`atoms.mjs`](atoms.mjs) for the contract and the grouped inventory.
 
-81 scripts.
+82 scripts.
 
 | script | what it is |
 |---|---|
@@ -50,6 +50,7 @@ One GESTURE each, or the vocabulary a gesture is built from. An atom ends on a f
 | `grainedb.mjs` | The three questions the COMM phase cannot ask a SCREEN, asked of production's database instead. |
 | `groupnav.mjs` | Opening a GROUP conversation by name, and proving the right one opened. |
 | `identity.mjs` | WHICH ACCOUNT A CLIENT IS ACTUALLY ACTING AS, ASKED OF THE TOKEN AND OF NOTHING ELSE. |
+| `idpform.mjs` | The identity provider's sign-in stages as the rig sees them: which one is on screen, and what answers it. |
 | `instrument.mjs` | THE HASH OF WHAT A CHECK MEASURES WITH, as opposed to the hash of the check itself. |
 | `inventory.mjs` | THE INDEX OF EVERY SCRIPT IN THIS RIG, GENERATED FROM THE SCRIPTS THEMSELVES. |
 | `invite.mjs` | Invites a user into the open group conversation - i.e. produces an MLS Add commit. |
@@ -208,7 +209,7 @@ One QUESTION each, composed of gestures, ending in a verdict in `results.ndjson`
 
 These test the HARNESS, not the product, and record nothing: they are the gated suite `make test-harness` runs. A failure here means an instrument is lying, which is worse than a failing row.
 
-41 scripts.
+42 scripts.
 
 | script | what it is |
 |---|---|
@@ -226,6 +227,7 @@ These test the HARNESS, not the product, and record nothing: they are the gated 
 | `archive/gate-probe-selftest.mjs` | `pin.mjs`'s gate probe, exercised on the pages it has to tell apart. |
 | `archive/gate-selftest.mjs` | EVERY SELF-TEST IN THE CI GATE MUST BE IMPORTABLE ON A MACHINE THAT HAS NO RIG. |
 | `archive/identity-selftest.mjs` | Pins the two ways a client's identity can be misread, and the one way it must not pass quietly. |
+| `archive/idpform-selftest.mjs` | The rig's sign-in reads the MiConnect terms page as a stage it answers, not as a stall. |
 | `archive/imports-selftest.mjs` | EVERY IMPORT IN EVERY RUNNER RESOLVES, AND NAMES SOMETHING THE TARGET ACTUALLY EXPORTS. |
 | `archive/instrument-selftest.mjs` | THE HASH THAT SAYS WHAT A CHECK MEASURES WITH IS ONLY WORTH ANYTHING IF IT SEES EVERY FILE. |
 | `archive/ios-observables-selftest.mjs` | THE iPHONE'S WDA-ONLY OBSERVABLES (O3, O6-O11 of docs/wiki/cross-client-ios.md) - every decision |
@@ -307,4 +309,4 @@ They live under `archive/` but they are NOT questions - they take no verdict. Ru
 
 ---
 
-246 scripts in total.
+248 scripts in total.

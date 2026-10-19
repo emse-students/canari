@@ -1,4 +1,5 @@
 import { SvelteMap } from 'svelte/reactivity';
+import { TransportFailureError } from '$lib/utils/transportFailure';
 
 // Encryption is leader-only (WP-MULTITAB-1), so every flush case here is a leader unless it says
 // otherwise. The cross-tab channel is stubbed too: what matters is which side is asked to act,
@@ -2463,7 +2464,7 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
 
   it('shows the next attempt as waiting after a transport failure, restarting from zero', async () => {
     const storage = makeStorage([mediaEntry('w1')]);
-    const uploadMedia = vi.fn().mockRejectedValue(new TypeError('Network request failed'));
+    const uploadMedia = vi.fn().mockRejectedValue(new UploadNetworkError('/x'));
     const conversations = new SvelteMap<string, Conversation>([['g1', convoWith('g1', ['w1'])]]);
     const outbox = createOutbox(
       makeDeps({
@@ -2524,7 +2525,7 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
         mlsService: makeMls(),
         storage,
         conversations,
-        uploadMedia: vi.fn().mockRejectedValue(new TypeError('Network request failed')),
+        uploadMedia: vi.fn().mockRejectedValue(new UploadNetworkError('/x')),
         isGroupHealthy: () => true,
       })
     );
@@ -3049,7 +3050,7 @@ describe('outbox uploads - a queued attachment shows its real progress and can b
     }
 
     it.each([
-      ['a transport failure', () => new TypeError('Failed to fetch')],
+      ['a transport failure', () => new TransportFailureError(new TypeError('Failed to fetch'))],
       ['a 5xx', () => new MediaUploadError(503, 'later')],
       ['an unexpected non-local throw', () => new Error('boom')],
     ])(
