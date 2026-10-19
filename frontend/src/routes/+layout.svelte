@@ -640,7 +640,7 @@
        included; at 390px it was 84px tall and hid the whole 56px mobile header, so the phone showed
        no top bar at all. A row in the shell's own column cannot overlap it, at any width and for any
        number of banners, with nothing measured and no variable to keep in step. -->
-  <div bind:this={bannerColumn} class="z-(--z-banner) flex shrink-0 flex-col">
+  <div bind:this={bannerColumn} class="app-banner-column z-(--z-banner) flex shrink-0 flex-col">
     <!-- FIRST, and it decides for itself whether to render. The others come and go; this one is a
          property of the whole deployment, so a transient notice must not push it off screen. -->
     <EnvironmentBanner />

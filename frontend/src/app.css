@@ -1393,6 +1393,35 @@ html[data-swipe-nav='prev']::view-transition-new(swipe-nav-in) {
   padding-top: 0;
 }
 
+/* A MINIMISED CALL IS ABOVE EVERY LAYER (CALL-BAR-COVERED, Mi 9T and iPhone, 2026-10-19). With the
+   new-post composer (a modal, 280) or its camera (a viewer, 300) open, the call bar - a row of the
+   banner column at `--z-banner`, 120 - was painted over, and `elementFromPoint` on its hang-up
+   returned the camera's video. While a call bar is up (`data-call-bar`, set by `CallBanner`):
+   1. the banner column takes `--z-call`, above every sheet, modal, viewer and confirmation;
+   2. every covering surface (`data-covers-screen`, set by the `coversScreen` action) reads its top
+      inset as the status bar PLUS the banner column, so its own top controls (the camera's close,
+      a modal's title) land below the bar instead of under it - the bar becomes part of the status
+      band, as the in-call status bar is on a phone. `--app-cover-top` is resolved HERE, on the root,
+      so the surface's redefinition of `--safe-area-inset-top` cannot read itself;
+   3. the camera tab, which gives its shell padding back to run under the status bar, takes it again:
+      without it the bar would sit under the notch.
+   Pinned by `callBarLayer.test.ts`; the rule is in calls.md. */
+:root {
+  --app-cover-top: calc(var(--safe-area-inset-top, 0px) + var(--app-banner-height, 0px));
+}
+
+:root[data-call-bar] .app-banner-column {
+  z-index: var(--z-call);
+}
+
+:root[data-call-bar] [data-covers-screen] {
+  --safe-area-inset-top: var(--app-cover-top);
+}
+
+:root.fullscreen-place-open[data-call-bar] .app-shell {
+  padding-top: var(--safe-area-inset-top, 0px);
+}
+
 /* A GLYPH CONFINED TO A FIXED BOX DOES NOT GROW WITH THE SYSTEM TEXT SIZE. Android's WebView
    scales font sizes and leaves lengths alone, so at 200 % avatar initials came out twice the size
    of their circle and were cut by it (Mi 9T, 2026-09-30). `--text-zoom` is that factor, measured by

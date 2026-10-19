@@ -590,6 +590,44 @@ the full screen STEPS BACK and the call is the top bar, which is in flow and cov
 back when the PIN is entered. A ring on a locked app is still answerable from the bar - the device is
 not unlocked by it, and the conversation behind stays sealed.
 
+### The bar is never under a layer (CALL-BAR-COVERED, 2026-10-19)
+
+**Read on both phones (`1.3.0-alpha.2`):** with the new-post composer (a modal, 280) or its camera
+(a viewer, 300) open, the bar - a row of the banner column at `--z-banner` (120) - was under that
+layer, `elementFromPoint` at its hang-up returned the camera's video, and the call could not be
+ended until the layer closed.
+
+**THE RULE: while a call bar is up, nothing that covers the screen covers the bar.** `CallBanner`
+sets `data-call-bar` on the root, and `app.css` then:
+
+1. lifts the banner column (`.app-banner-column`) to `--z-call` - above every sheet, modal, viewer
+   and confirmation (the full screen, which also takes `--z-call`, is never up at the same time);
+2. pushes every covering surface's top inset below the column: the `coversScreen` action marks its
+   node `data-covers-screen`, and on such a node `--safe-area-inset-top` reads `--app-cover-top`
+   (status bar + `--app-banner-height`, resolved on the root). The surface still fills the screen
+   behind the bar; its OWN top controls (the camera's close, a phone-full modal's title) move below
+   it, as under a phone's in-call status bar. Every top control reads `--safe-area-inset-top`, never
+   `env()`, which is what makes one variable enough;
+3. gives the camera TAB (`fullscreen-place-open`, which runs under the status bar) its top padding
+   back, or the bar would sit under the notch.
+
+So a NEW covering surface is covered by the rule if it uses `coversScreen` and a rung below
+`--z-call`. `styles/callBarLayer.test.ts` fails on a covering file naming a rung at or above
+`--z-call`, on a component reading `env(safe-area-inset-top)`, and on any of the three rules gone.
+Measured in Chromium at 390x844 (touch) and 1280x800 with a stand-in `CallService` and a stand-in
+viewer-rung layer marked `data-covers-screen`: `elementFromPoint` at the centre of each of the bar's
+three controls lands on that control, and the layer's top control moves from y = 12 to y = 64 (the
+52px bar + its own 12px). With `data-call-bar` removed, the same probe on hang-up lands on the layer.
+**Owed: one look on each phone** with the composer and the camera open during a call.
+
+**The OS banner on top of the ring (CALL-OS-BANNER, iPhone, same reading).** In the foreground the
+ring is already the whole screen, and an "Appel entrant" OS notification was drawn over it. The local
+notification (`useNotifications.notifyIncomingCall`) is now DEFERRED while the page is visible:
+posted if the app leaves the screen while the call still rings, dropped when the ring ends; logged
+`[NOTIF] incoming call in <group> rings in-app - no OS notification while the app is on screen`.
+If a banner still shows in the foreground on the next reading, it is not this path - see
+[backlog](../../backlog.md#p3---an-os-incoming-call-banner-over-the-in-app-ring-if-it-outlives-the-web-fix-2026-10-19).
+
 ### Ringing, announcing, hearing
 
 - **The ring is an `alertdialog` with focus on Accept** (`preventScroll`); once answered it is a
