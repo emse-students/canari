@@ -510,6 +510,9 @@ static void CanariComposeServerNotification(NSDictionary *data, NSString **title
     @"social_repost_proposed" : @"repost_proposed",
     // Co-organisation (D39): the organising association names the title, the event is the body.
     @"social_coorganise_proposed" : @"coorganise_proposed",
+    // A live started (WP-L7): the broadcaster - a person or an association - names the title, and
+    // the body is always the fixed sentence (the server sends no fragment).
+    @"social_live_started" : @"live_started",
   };
   NSString *stem = actorTitled[key];
   if (stem) {

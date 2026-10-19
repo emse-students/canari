@@ -11,11 +11,14 @@ import { Association } from '../associations/entities/association.entity';
  * `coorganise_proposed` and the six `event_*` types go to the association's MANAGERS and carry
  * work they must do (a proposal to approve, an agenda decision), so a reader-side mute must not
  * reach them. `followed_post` is a person's post, not an association's. `mention`, `reply`,
- * `reaction` and `comment` are somebody addressing YOU.
+ * `reaction` and `comment` are somebody addressing YOU. `live_started` is an association's live
+ * announced to its followers (WP-L7, decision L10: "minus `association_push_mutes`"); a MEMBER's
+ * live carries no association, so no mute is ever asked about it.
  */
 export const MUTABLE_PUSH_TYPES: ReadonlySet<string> = new Set([
   'association_post',
   'association_repost',
+  'live_started',
 ]);
 
 /** A muted association as the settings list shows it. */

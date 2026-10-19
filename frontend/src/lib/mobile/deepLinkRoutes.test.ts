@@ -14,6 +14,8 @@ describe('appRouteForDeepLink', () => {
     expect(route('fr.emse.canari://posts')).toBe('/posts');
     expect(route('fr.emse.canari://calendar')).toBe('/calendar');
     expect(route('fr.emse.canari://admin-agenda')).toBe('/admin/agenda');
+    // A live opens the feed until WP-L5's viewer page exists.
+    expect(route('fr.emse.canari://live/l1')).toBe('/posts');
   });
 
   it('keeps the comment a comment push names, and only that parameter', () => {

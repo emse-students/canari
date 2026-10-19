@@ -9,6 +9,7 @@ import {
   HttpStatus,
   Logger,
   NotFoundException,
+  type OnModuleDestroy,
   PayloadTooLargeException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -37,6 +38,8 @@ import {
 } from './live.constants';
 import { LiveSeats } from './live-seats';
 import { LIVE_SEGMENT_STORE, type LiveSegmentStore } from './live-segment-store';
+import { LiveAnnouncer, type ClaimedLive } from './live-announcer';
+import { liveVisibleToViewerSql } from '../spaces/reader-spaces';
 
 /** A live as its viewers read it: the key included (L2, Q4). */
 export interface LiveView {
@@ -148,17 +151,20 @@ const short = (id: string) => id.slice(0, 8);
  * write that outlives the store's own timeout, which the orphan reaper takes.
  */
 @Injectable()
-export class LivesService {
+export class LivesService implements OnModuleDestroy {
   private readonly logger = new Logger(LivesService.name);
   /** Segment ingests running in this instance, bounded by {@link LIVE_INGEST_MAX_CONCURRENT}. */
   private ingestsInFlight = 0;
+  /** Announcements started after a segment 0's commit and not yet settled (WP-L7). */
+  private readonly announcements = new Set<Promise<void>>();
 
   constructor(
     @InjectDataSource() private readonly db: DataSource,
     @Inject(LIVE_SEGMENT_STORE) private readonly store: LiveSegmentStore,
     private readonly associations: AssociationsService,
     private readonly moderation: ModerationService,
-    private readonly seats: LiveSeats
+    private readonly seats: LiveSeats,
+    private readonly announcer: LiveAnnouncer
   ) {}
 
   /**
@@ -234,13 +240,17 @@ export class LivesService {
     return toView(row);
   }
 
-  /** The open lives the viewer may watch: not ended, not blocked either way, not removed from. */
+  /**
+   * The open lives the viewer may watch: not ended, visible to them as a post of the same broadcaster
+   * would be (`liveVisibleToViewerSql`), not blocked either way, not removed from.
+   */
   async listOpen(viewerId: string): Promise<LiveListItem[]> {
     const blocked = await blockedUserIdsFor(this.db.manager, viewerId);
     const rows: LiveListItem[] = await this.db.query(
       `SELECT l.id, l."broadcasterId", l."associationId", l."startedAt"
          FROM lives l
         WHERE l."endedAt" IS NULL
+          AND ${liveVisibleToViewerSql('l', '$1')}
           AND l."broadcasterId" <> ALL($2::varchar[])
           AND NOT EXISTS (SELECT 1 FROM live_removed_viewers r
                            WHERE r."liveId" = l.id AND r."viewerId" = $1)
@@ -349,7 +359,40 @@ export class LivesService {
       await this.purgeBestEffort(liveId, 'after an ingest that met the end');
       throw new GoneException({ code: 'LIVE_ENDED' });
     }
-    return outcome;
+    // Segment 0 claimed the live's announcement in its own commit (WP-L7): the push goes after that
+    // commit, NOT AWAITED - segment 0's answer and this ingest's slot do not wait for the audience
+    // query and the fan-out. Once per live still holds: the claim is the commit, not this call.
+    if (outcome.claimed) this.announceInBackground(liveId, outcome.claimed);
+    return outcome.result;
+  }
+
+  /**
+   * Starts a claimed live's announcement and tracks it until it settles. `announce` logs its own
+   * failures and never throws; a rejection reaching here would be a defect in it, so it is logged at
+   * error rather than swallowed - and it never reaches the segment.
+   */
+  private announceInBackground(liveId: string, claimed: ClaimedLive): void {
+    const pending = this.announcer
+      .announce(liveId, claimed)
+      .then(() => undefined)
+      .catch((e: unknown) => {
+        this.logger.error(`[LIVE_ANNOUNCE] ${liveId} announce threw: ${causeOf(e)}`);
+      })
+      .finally(() => this.announcements.delete(pending));
+    this.announcements.add(pending);
+  }
+
+  /**
+   * Resolves once every announcement started so far has settled - a PROOF of completion, for a
+   * shutdown and for the tests that read the push, never a delay.
+   */
+  async announcementsSettled(): Promise<void> {
+    while (this.announcements.size > 0) await Promise.all(this.announcements);
+  }
+
+  /** Waits for the announcements in flight before the module goes away. */
+  async onModuleDestroy(): Promise<void> {
+    await this.announcementsSettled();
   }
 
   /**
@@ -394,7 +437,8 @@ export class LivesService {
       if (!row) throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
       if (row.broadcasterId !== broadcasterId) {
         this.logger.debug(`[LIVE] segment refused: ${short(broadcasterId)} is not ${liveId}'s`);
-        throw new ForbiddenException({ code: 'LIVE_NOT_BROADCASTER' });
+        // The same 404 as a live that does not exist: a write route is no oracle for one that does.
+        throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
       }
       if (row.endedAt) {
         this.logger.debug(`[LIVE] segment ${index} refused: ${liveId} ended (${row.endReason})`);
@@ -479,6 +523,10 @@ export class LivesService {
    * Step three of an ingest, ONE SHORT TRANSACTION: under the row lock, record the segment and clear
    * the reservation - unless the live ended meanwhile (the reservation is cleared, nothing recorded,
    * `'ended'`) or the reservation is no longer this ingest's (taken over as abandoned: 409).
+   *
+   * Segment 0 also CLAIMS the live's announcement (`announcedAt`, WP-L7) in this same transaction:
+   * the first frame and the claim are one commit, so the announcement is decided by durable state and
+   * by no second path. `claimed` is set only for the call that wrote the stamp.
    */
   private async confirm(
     liveId: string,
@@ -486,8 +534,9 @@ export class LivesService {
     name: string,
     bytes: number,
     sha256: string
-  ): Promise<LiveIngestResult | 'ended'> {
-    return this.db.transaction(async (tx): Promise<LiveIngestResult | 'ended'> => {
+  ): Promise<{ result: LiveIngestResult; claimed: ClaimedLive | null } | 'ended'> {
+    type Confirmed = { result: LiveIngestResult; claimed: ClaimedLive | null };
+    return this.db.transaction(async (tx): Promise<Confirmed | 'ended'> => {
       const rows: { endedAt: Date | null; pendingName: string | null; nextIndex: number }[] =
         await tx.query(
           `SELECT "endedAt", "pendingName", "nextIndex" FROM lives WHERE id = $1 FOR UPDATE`,
@@ -529,7 +578,20 @@ export class LivesService {
         [liveId, bytes]
       );
       this.logger.debug(`[LIVE] segment ${index} of ${liveId} stored (${bytes} B)`);
-      return { index, name, nextIndex: index + 1 };
+      let claimed: ClaimedLive | null = null;
+      if (index === 0) {
+        const [stamped] = (await tx.query(
+          `UPDATE lives SET "announcedAt" = now()
+            WHERE id = $1 AND "announcedAt" IS NULL
+            RETURNING "broadcasterId", "associationId"`,
+          [liveId]
+        )) as [ClaimedLive[], number];
+        claimed = stamped[0] ?? null;
+        this.logger.debug(
+          `[LIVE] ${liveId} ${claimed ? 'claimed for its announcement' : 'already announced'}`
+        );
+      }
+      return { result: { index, name, nextIndex: index + 1 }, claimed };
     });
   }
 
@@ -584,7 +646,8 @@ export class LivesService {
       const row = current[0];
       if (!row) throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
       if (row.broadcasterId !== broadcasterId) {
-        throw new ForbiddenException({ code: 'LIVE_NOT_BROADCASTER' });
+        this.logger.debug(`[LIVE] end refused: ${short(broadcasterId)} is not ${liveId}'s`);
+        throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
       }
       // Ended already (by an earlier call, the sweep, an erasure): the same fact, answered again.
       ended = { id: row.id, endedAt: row.endedAt!, endReason: row.endReason! };
@@ -618,7 +681,8 @@ export class LivesService {
       const row = rows[0];
       if (!row) throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
       if (row.broadcasterId !== broadcasterId) {
-        throw new ForbiddenException({ code: 'LIVE_NOT_BROADCASTER' });
+        this.logger.debug(`[LIVE] removal refused: ${short(broadcasterId)} is not ${liveId}'s`);
+        throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
       }
       if (row.endedAt) throw new GoneException({ code: 'LIVE_ENDED', endedAt: row.endedAt });
       await tx.query(
@@ -793,7 +857,10 @@ export class LivesService {
   /**
    * Who may read a live's key and manifest:
    *
-   * - absent, or a broadcaster blocked either way: 404 - invisible, as the feed hides them;
+   * - absent, NOT VISIBLE to the viewer (the rule of a post by the same broadcaster or association,
+   *   `liveVisibleToViewerSql` - spaces respected), or a broadcaster blocked either way: 404
+   *   `LIVE_NOT_FOUND` - invisible, as the feed hides them, and asked BEFORE the end so a 410 never
+   *   tells an outsider that a live existed;
    * - ended: 410 to everybody, the broadcaster included - nothing is served after `endedAt`;
    * - a viewer the broadcaster removed: 403 `LIVE_VIEWER_REMOVED`.
    */
@@ -803,12 +870,20 @@ export class LivesService {
     liveId: string
   ): Promise<LiveRow & { serverNow: Date }> {
     // `serverNow` from the same clock that wrote `lastSegmentAt`, so a viewer compares like with like.
-    const rows: (LiveRow & { serverNow: Date })[] = await manager.query(
-      `SELECT ${LIVE_COLUMNS}, now() AS "serverNow" FROM lives WHERE id = $1`,
-      [liveId]
+    const rows: (LiveRow & { serverNow: Date; visible: boolean })[] = await manager.query(
+      `SELECT ${LIVE_COLUMNS}, now() AS "serverNow",
+              ${liveVisibleToViewerSql('lives', '$2')} AS visible
+         FROM lives WHERE id = $1`,
+      [liveId, viewerId]
     );
-    const row = rows[0];
-    if (!row) throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    const found = rows[0];
+    if (!found) throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    const { visible, ...row } = found;
+    // `=== true` and nothing looser: a driver answering `'t'` must not widen the gate.
+    if (visible !== true) {
+      this.logger.debug(`[LIVE] ${liveId} hidden from ${short(viewerId)}: not in its audience`);
+      throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    }
     const own = row.broadcasterId === viewerId;
     if (!own && (await isBlockedBetween(manager, viewerId, row.broadcasterId))) {
       this.logger.debug(`[LIVE] ${liveId} hidden from ${short(viewerId)}: a block`);

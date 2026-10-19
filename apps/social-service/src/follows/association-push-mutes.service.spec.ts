@@ -78,6 +78,10 @@ describe('AssociationPushMutesService', () => {
   });
 
   it('mutes only the types that reach a reader', () => {
-    expect([...MUTABLE_PUSH_TYPES].sort()).toEqual(['association_post', 'association_repost']);
+    expect([...MUTABLE_PUSH_TYPES].sort()).toEqual([
+      'association_post',
+      'association_repost',
+      'live_started',
+    ]);
   });
 });

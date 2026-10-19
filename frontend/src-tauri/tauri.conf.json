@@ -91,6 +91,12 @@
         },
         {
           "scheme": [
+            "fr.emse.canari"
+          ],
+          "host": "live"
+        },
+        {
+          "scheme": [
             "https"
           ],
           "host": "canari-emse.fr",

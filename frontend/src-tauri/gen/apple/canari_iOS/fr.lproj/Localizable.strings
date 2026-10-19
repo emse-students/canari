@@ -46,6 +46,8 @@
 "notif.social.repost_proposed.body" = "Publication à relayer";
 "notif.social.coorganise_proposed.title" = "%@ propose de co-organiser un événement";
 "notif.social.coorganise_proposed.body" = "Événement à co-organiser";
+"notif.social.live_started.title" = "%@ est en live";
+"notif.social.live_started.body" = "Appuyez pour regarder";
 "notif.form.opening_soon.title" = "Formulaire bientôt ouvert";
 "notif.form.opening_soon.body" = "Un formulaire que vous suivez ouvre dans 5 minutes !";
 "notif.form.open.title" = "Formulaire ouvert !";

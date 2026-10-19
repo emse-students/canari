@@ -24,7 +24,7 @@ import type { PushContent } from '../push/push-content';
 describe('PostNotificationsService.createNotifications', () => {
   const saved: unknown[] = [];
   const updates: unknown[] = [];
-  const pushes: { userId: string; content: PushContent }[] = [];
+  const pushes: { userId: string; content: PushContent; data?: Record<string, string> }[] = [];
   const mutedIds = new Set<string>();
   const muteAsks: string[] = [];
   let warn: jest.SpyInstance;
@@ -44,8 +44,8 @@ describe('PostNotificationsService.createNotifications', () => {
       manager: { query: () => Promise.resolve([{ displayName: 'Claire' }]) },
     };
     const push = {
-      notifyContent: (userId: string, content: PushContent) => {
-        pushes.push({ userId, content });
+      notifyContent: (userId: string, content: PushContent, data?: Record<string, string>) => {
+        pushes.push({ userId, content, data });
         return Promise.resolve();
       },
     };
@@ -337,5 +337,98 @@ describe('PostNotificationsService.createNotifications', () => {
       expect(pushes.map((p) => p.userId)).toEqual(['a', 'b']);
       expect(muteAsks).toEqual([]);
     });
+  });
+  /**
+   * A LIVE IS ANNOUNCED BY PUSH ONLY (WP-L7): it is deleted when it ends (L3), so a bell row would
+   * name a 404 for ever after. Same mapping, same icon rule, same mute as a post - one helper.
+   */
+  describe('pushNotice', () => {
+    const flush = () => new Promise((resolve) => setImmediate(resolve));
+    const live = {
+      type: 'live_started',
+      actorId: 'broadcaster',
+      actorName: 'Claire',
+      text: '',
+      pushData: { liveId: 'live-1' },
+    };
+
+    it('pushes the live key to each recipient but the broadcaster, and writes no row', async () => {
+      const addressed = await service().pushNotice({
+        ...live,
+        recipientIds: ['a', 'broadcaster', 'b', 'a'],
+      });
+      await flush();
+      expect(addressed).toBe(2);
+      expect(saved).toEqual([]);
+      expect(pushes.map((p) => p.userId)).toEqual(['a', 'b']);
+      expect(pushes[0].content).toMatchObject({
+        key: 'social_live_started',
+        actorName: 'Claire',
+        arg: '',
+        icon: { kind: 'user', userId: 'broadcaster' },
+      });
+      expect(pushes[0].data).toEqual({ type: 'social', liveId: 'live-1' });
+      expect(muteAsks).toEqual([]);
+    });
+
+    it("withholds an association's live from the followers who muted it, with its logo", async () => {
+      mutedIds.add('a');
+      await service().pushNotice({
+        ...live,
+        actorName: 'BDE',
+        associationId: 'asso1',
+        associationLogoMediaId: 'logo1',
+        recipientIds: ['a', 'b'],
+      });
+      await flush();
+      expect(muteAsks).toEqual(['asso1']);
+      expect(pushes.map((p) => p.userId)).toEqual(['b']);
+      expect(pushes[0].content.icon).toEqual({ kind: 'publicMedia', mediaId: 'logo1' });
+    });
+
+    it('addresses nobody when the broadcaster is the only candidate', async () => {
+      expect(await service().pushNotice({ ...live, recipientIds: ['broadcaster'] })).toBe(0);
+      await flush();
+      expect(pushes).toEqual([]);
+    });
+  });
+});
+
+/**
+ * A NAME, OR NOTHING: `resolveDisplayName` answers `null` where `resolveActorName` falls back to the
+ * id - a live's announcement refuses to title a push with a 64-hex user id (WP-L7). A failed lookup
+ * is NOT "no name": it throws, and `resolveActorName` alone turns it into the id, with a warn.
+ */
+describe('PostNotificationsService.resolveDisplayName', () => {
+  const withQuery = (query: () => Promise<unknown>) =>
+    new PostNotificationsService(
+      {} as never,
+      // The users table is read through the POST repository's manager.
+      { manager: { query } } as never,
+      {} as never,
+      {} as never
+    );
+  const id = 'f'.repeat(64);
+
+  afterEach(() => jest.restoreAllMocks());
+
+  it('names a user with a name, and answers null for a missing row or an empty name', async () => {
+    expect(await withQuery(async () => [{ displayName: 'Claire' }]).resolveDisplayName(id)).toBe(
+      'Claire'
+    );
+    expect(await withQuery(async () => []).resolveDisplayName(id)).toBeNull();
+    expect(await withQuery(async () => [{}]).resolveDisplayName(id)).toBeNull();
+  });
+
+  it('THROWS on a failed lookup; resolveActorName logs it at warn and still falls back to the id', async () => {
+    const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
+    const broken = withQuery(async () => {
+      throw new Error('users down');
+    });
+    await expect(broken.resolveDisplayName(id)).rejects.toThrow('users down');
+    expect(warn).not.toHaveBeenCalled();
+    expect(await broken.resolveActorName(id)).toBe(id);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('users down'));
+    expect(await withQuery(async () => []).resolveActorName(id)).toBe(id);
   });
 });

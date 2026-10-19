@@ -65,8 +65,9 @@ export class LivesController {
   }
 
   /**
-   * One live and its key: 404 absent or blocked, 410 ended, 403 removed viewer, 503 `LIVE_FULL` past
-   * the host's viewer cap (the read takes a seat). `no-store`: a key never sits in any cache.
+   * One live and its key: 404 absent, not in its audience (spaces, as a post) or blocked, 410 ended,
+   * 403 removed viewer, 503 `LIVE_FULL` past the host's viewer cap (the read takes a seat).
+   * `no-store`: a key never sits in any cache.
    */
   @Get(':id')
   @Header('Cache-Control', 'no-store')

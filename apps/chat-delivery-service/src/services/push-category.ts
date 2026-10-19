@@ -14,7 +14,7 @@ export const NOTIFICATION_CATEGORIES = [
   'messages',
   /** Messages in community salons (the per-salon level in social-service still applies first). */
   'channels',
-  /** An association's publication, or one by someone the reader follows. */
+  /** An association's publication, or one by someone the reader follows - a post or a live. */
   'posts',
   /** A comment, or a reply to the reader's comment. */
   'comments',
@@ -51,6 +51,9 @@ const CATEGORY_BY_CONTENT_KEY: Readonly<Record<string, NotificationCategory>> = 
   social_association_repost: 'posts',
   social_repost_proposed: 'posts',
   social_coorganise_proposed: 'events',
+  // A live started by a member or an association the reader follows (WP-L7): a publication of the
+  // people the reader follows, so the switch that silences their posts silences their lives too.
+  social_live_started: 'posts',
   form_opening_soon: 'forms',
   form_open: 'forms',
   event_proposed: 'events',
