@@ -106,7 +106,8 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   (`CameraOverlay`, `ReelCapture` with `destination="post"`): a PHOTO or a VIDEO taken there comes
   back as a file through `onFiles` and is attached - and retained - as any picked post media, with
   the POST class, never as a reel. The sound-removal button and the gallery shortcut of the reel flow
-  are not offered there. **The post camera asks the lens and the microphone as TWO requests**
+  are not offered there. What differs from the swipe-to-camera tab, entry by entry, and the user's
+  open decision on it: [reels](reels.md#the-two-ways-into-the-camera-and-what-each-publishes-2026-10-19). **The post camera asks the lens and the microphone as TWO requests**
   (`postCameraOpener`, PR #1859 review 2026-10-15; one opener per camera session, which does not ask again after a refusal, so a lens flip asks nothing): one combined request made a refused microphone a
   refused camera, so a post took no photo either. A refused microphone leaves a live camera with no
   audio track: every press is a photo, said once ("Micro indisponible : photos uniquement"). A cap
