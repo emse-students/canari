@@ -201,6 +201,19 @@ describe('LiveViewer', () => {
     expect(document.querySelector('[data-live-back]')).not.toBeNull();
   });
 
+  it('a cut live gets its own screen, with the way back, and not the plain end', async () => {
+    await render();
+    manifestErrors.push(
+      new LiveRefusalError(410, 'LIVE_ENDED', '', 'ended', null, null, null, 'cut')
+    );
+    timers.shift()!();
+    await settle();
+    expect(stateOf()).toBe('ended');
+    expect(viewer().textContent).toContain(m.live_viewer_cut_title());
+    expect(viewer().textContent).not.toContain(m.live_viewer_ended_title());
+    expect(document.querySelector('[data-live-back]')).not.toBeNull();
+  });
+
   it.each([
     ['not-found', 404],
     ['removed', 403],

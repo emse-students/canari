@@ -265,7 +265,9 @@
         {:else if viewerState.kind === 'ended' || viewerState.kind === 'unavailable'}
           <h2 class="text-lg font-bold">
             {viewerState.kind === 'ended'
-              ? m.live_viewer_ended_title()
+              ? viewerState.cut
+                ? m.live_viewer_cut_title()
+                : m.live_viewer_ended_title()
               : m.live_viewer_unavailable_title()}
           </h2>
           {#if viewerState.kind === 'unavailable'}

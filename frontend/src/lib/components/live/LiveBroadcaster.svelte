@@ -181,7 +181,8 @@
     failed: m.live_limits_failed,
   };
 
-  const END_TEXT: Record<LiveEndCause, () => string> = {
+  // A moderation cut has its own TITLE and no sentence under it, so it is not in this table.
+  const END_TEXT: Record<Exclude<LiveEndCause, 'cut'>, () => string> = {
     broadcaster: m.live_ended_broadcaster,
     server: m.live_ended_server,
     'server-while-away': m.live_ended_server_away,
@@ -490,8 +491,12 @@
       role="alert"
       data-live-ended={broadcast.endCause}
     >
-      <h2 class="text-lg font-bold">{m.live_ended_title()}</h2>
-      <p class="text-sm text-white/80">{END_TEXT[broadcast.endCause]()}</p>
+      {#if broadcast.endCause === 'cut'}
+        <h2 class="text-lg font-bold">{m.live_broadcast_cut_title()}</h2>
+      {:else}
+        <h2 class="text-lg font-bold">{m.live_ended_title()}</h2>
+        <p class="text-sm text-white/80">{END_TEXT[broadcast.endCause]()}</p>
+      {/if}
       <button type="button" class="{pill} mt-2 bg-white/15 hover:bg-white/25" onclick={close}>
         {m.common_close_label()}
       </button>

@@ -496,7 +496,7 @@ describe('every refusal has its screen', () => {
     await joined();
     live.manifestErrors.push(refusal('ended', 410));
     await tickTimer();
-    expect(states.at(-1)).toEqual({ kind: 'ended' });
+    expect(states.at(-1)).toEqual({ kind: 'ended', cut: false });
     expect(video.pause).toHaveBeenCalled();
     expect(timers).toHaveLength(0);
     expect(deps.leaveSeat).not.toHaveBeenCalled();
@@ -506,7 +506,7 @@ describe('every refusal has its screen', () => {
     await joined();
     live.manifestErrors.push(refusal('not-found', 404));
     await tickTimer();
-    expect(states.at(-1)).toEqual({ kind: 'ended' });
+    expect(states.at(-1)).toEqual({ kind: 'ended', cut: false });
   });
 
   it('not-found once the key was served, before any segment, is the end too', async () => {
@@ -514,7 +514,7 @@ describe('every refusal has its screen', () => {
     await flush();
     live.manifestErrors.push(refusal('not-found', 404));
     await tickTimer();
-    expect(states.at(-1)).toEqual({ kind: 'ended' });
+    expect(states.at(-1)).toEqual({ kind: 'ended', cut: false });
   });
 
   it.each([

@@ -264,6 +264,21 @@ describe('LiveBroadcaster', () => {
     expect(document.body.textContent).toContain(m.live_ended_server());
   });
 
+  it('a 410 whose endReason is cut gives the cut its own title, and not the generic server sentence', async () => {
+    const { uploaders } = screen();
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    uploaders[0].options.onStopped!(
+      new LiveRefusalError(410, 'LIVE_ENDED', '', 'ended', null, null, null, 'cut')
+    );
+    await settle();
+    expect(q('[data-live-ended]')!.dataset.liveEnded).toBe('cut');
+    expect(document.body.textContent).toContain(m.live_broadcast_cut_title());
+    expect(document.body.textContent).not.toContain(m.live_ended_server());
+    expect(document.body.textContent).not.toContain(m.live_ended_title());
+  });
+
   it('the app hidden on air shows the camera paused, and coming back resumes on the same live', async () => {
     const { broadcast, recorders, setHidden } = screen();
     await settle();

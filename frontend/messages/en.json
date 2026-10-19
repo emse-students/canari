@@ -4060,11 +4060,49 @@
   "live_ending": "Ending the live…",
   "live_ended_title": "Live ended",
   "live_ended_broadcaster": "You ended the live. Nothing of it is kept.",
-  "live_ended_server": "The live was stopped: it reached its longest duration, or moderation cut it.",
+  "live_ended_server": "The live was stopped: it reached its longest duration.",
   "live_ended_server_away": "The live stopped while the camera was paused.",
   "live_ended_failed": "The live stopped: the server refused the rest of the broadcast.",
   "live_ended_connection_lost": "The live stopped: the connection was lost for too long for the broadcast to resume.",
   "live_ended_upload_too_slow": "The live stopped: the connection sends more slowly than the camera records, so viewers fell too far behind.",
   "live_ending_leave": "Leave now",
-  "live_ending_waiting": "Sending the last seconds… You may leave: the live will stop by itself."
+  "live_ending_waiting": "Sending the last seconds… You may leave: the live will stop by itself.",
+  "live_viewer_cut_title": "This live was stopped by moderators",
+  "live_broadcast_cut_title": "Your live was stopped by moderators",
+  "notif_live_cut_text": "Your live was stopped by moderators",
+  "moderation_type_live": "Live",
+  "moderation_live_state_open": "On air",
+  "moderation_live_state_ended": "Ended",
+  "moderation_live_state_cut": "Cut",
+  "moderation_live_state_gone": "Ended and deleted",
+  "moderation_live_broadcaster_label": "Broadcaster: {name}",
+  "moderation_live_started_label": "Started {date}",
+  "moderation_live_ended_label": "Ended {date}",
+  "moderation_live_cut_reason_label": "Reason for the cut: {reason}",
+  "moderation_live_gone_hint": "Nothing is left to watch or cut: only the broadcaster can still be restricted.",
+  "moderation_live_cut_button": "Cut the live",
+  "moderation_live_cut_title": "Cut this live?",
+  "moderation_live_cut_reason_prompt": "Reason for the cut",
+  "moderation_live_cut_details_label": "Details (optional)",
+  "moderation_live_cut_continue_button": "Continue",
+  "moderation_live_cut_back_button": "Back",
+  "moderation_live_cut_confirm_body": "{name}'s live will be stopped for every viewer, and {name} will be told.",
+  "moderation_live_cut_confirm_button": "Cut the live",
+  "moderation_live_cut_in_progress": "Cutting…",
+  "moderation_live_cut_done": "The live was cut.",
+  "moderation_live_cut_already": "This live had already been cut.",
+  "moderation_live_cut_forbidden": "You are not allowed to cut a live.",
+  "moderation_live_cut_not_found": "This live no longer exists: there is nothing left to cut.",
+  "moderation_live_cut_invalid": "The server refused the reason or the details.",
+  "moderation_live_cut_error": "The live could not be cut. Try again.",
+  "moderation_live_prior_cuts": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} previous cut",
+        "countPlural=other": "{count} previous cuts"
+      }
+    }
+  ]
 }

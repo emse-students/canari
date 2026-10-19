@@ -11,6 +11,9 @@ import type { LiveRefusalKind } from './types';
 const refusal = (kind: LiveRefusalKind, viewerCap: number | null = null) =>
   new LiveRefusalError(503, null, kind, kind, viewerCap, null, null);
 
+const cutRefusal = () =>
+  new LiveRefusalError(410, 'LIVE_ENDED', 'ended', 'ended', null, null, null, 'cut');
+
 describe('liveFailureOutcome', () => {
   it.each([['seats-unavailable'], ['rate-limited'], ['unavailable'], ['retry-segment']] as const)(
     '%s is a retry, never "complet"',
@@ -27,14 +30,37 @@ describe('liveFailureOutcome', () => {
   });
 
   it('ended is the end', () => {
-    expect(liveFailureOutcome(refusal('ended'), false)).toEqual({ stop: { kind: 'ended' } });
+    expect(liveFailureOutcome(refusal('ended'), false)).toEqual({
+      stop: { kind: 'ended', cut: false },
+    });
+  });
+
+  it('a 410 whose endReason is cut is the cut screen, joined or not', () => {
+    expect(liveFailureOutcome(cutRefusal(), false)).toEqual({ stop: { kind: 'ended', cut: true } });
+    expect(liveFailureOutcome(cutRefusal(), true)).toEqual({ stop: { kind: 'ended', cut: true } });
+  });
+
+  it('an ended refusal with another endReason, or none, is the plain end', () => {
+    const dropped = new LiveRefusalError(
+      410,
+      'LIVE_ENDED',
+      '',
+      'ended',
+      null,
+      null,
+      null,
+      'dropped'
+    );
+    expect(liveFailureOutcome(dropped, true)).toEqual({ stop: { kind: 'ended', cut: false } });
   });
 
   it('not-found is unavailable before the join and the end after it', () => {
     expect(liveFailureOutcome(refusal('not-found'), false)).toEqual({
       stop: { kind: 'unavailable', reason: 'not-found' },
     });
-    expect(liveFailureOutcome(refusal('not-found'), true)).toEqual({ stop: { kind: 'ended' } });
+    expect(liveFailureOutcome(refusal('not-found'), true)).toEqual({
+      stop: { kind: 'ended', cut: false },
+    });
   });
 
   it.each([
@@ -65,7 +91,7 @@ describe('liveRetryDelayMs', () => {
 describe('isTerminalLiveState', () => {
   it('only full, ended and unavailable are final', () => {
     expect(isTerminalLiveState({ kind: 'full', viewerCap: null })).toBe(true);
-    expect(isTerminalLiveState({ kind: 'ended' })).toBe(true);
+    expect(isTerminalLiveState({ kind: 'ended', cut: false })).toBe(true);
     expect(isTerminalLiveState({ kind: 'unavailable', reason: 'removed' })).toBe(true);
     expect(isTerminalLiveState({ kind: 'playing' })).toBe(false);
     expect(isTerminalLiveState({ kind: 'reconnecting', reason: 'network' })).toBe(false);

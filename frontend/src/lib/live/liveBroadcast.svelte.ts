@@ -35,6 +35,7 @@ import {
   fetchLive,
   fetchLiveLimits,
   fetchLiveRules,
+  isLiveCut,
   isLiveRefusal,
   LiveRefusalError,
   LiveSegmentUploader,
@@ -81,6 +82,8 @@ export type LiveEndCause =
   | 'broadcaster'
   /** The server ended it while on air: the hour, or a moderation cut (a `410`). */
   | 'server'
+  /** A moderator cut it (a `410` whose `endReason` is `cut`): its own sentence, never "the hour". */
+  | 'cut'
   /** The server ended it while the camera was away: past the reconnect window, most often. */
   | 'server-while-away'
   /** A refusal the uploader cannot get past, or a recorder that would not start. */
@@ -221,7 +224,8 @@ export class LiveBroadcast {
   /** When the server last STORED a segment (the live's start before the first): what it has heard. */
   #lastStoredAt: number | null = null;
   /** The uploader heard the server's end (`410`) while the End was draining: the server ended it first. */
-  #serverEndedWhileEnding = false;
+  /** The cause the server's own `410` gave while the End was draining, or null (the member's end). */
+  #serverEndedWhileEnding: 'server' | 'cut' | null = null;
   #firstRecordAt: number | null = null;
   #disposed = false;
 
@@ -412,8 +416,11 @@ export class LiveBroadcast {
     } catch (e) {
       if (attempt !== this.#reacquireGeneration || this.phase !== 'away') return;
       if (isLiveRefusal(e, 'ended') || isLiveRefusal(e, 'not-found')) {
-        console.warn(`[LIVE-BROADCAST] ${liveId} ended while the camera was away`);
-        this.#finish('server-while-away', false);
+        const cut = isLiveCut(e);
+        console.warn(
+          `[LIVE-BROADCAST] ${liveId} ${cut ? 'was cut by moderation' : 'ended'} while the camera was away`
+        );
+        this.#finish(cut ? 'cut' : 'server-while-away', false);
         return;
       }
       // No verdict (offline, a 5xx): the camera comes back, and the uploader's next answer decides.
@@ -471,7 +478,10 @@ export class LiveBroadcast {
     try {
       await this.#deps.endLive(liveId);
     } catch (e) {
-      if (!isLiveRefusal(e, 'ended') && !isLiveRefusal(e, 'not-found')) {
+      if (isLiveCut(e)) {
+        console.warn('[LIVE-BROADCAST] the End was answered by a moderation cut');
+        this.#serverEndedWhileEnding = 'cut';
+      } else if (!isLiveRefusal(e, 'ended') && !isLiveRefusal(e, 'not-found')) {
         console.warn(
           '[LIVE-BROADCAST] the end was not confirmed - the server ends it by absence',
           e
@@ -479,7 +489,7 @@ export class LiveBroadcast {
       }
     }
     // A 410 heard while draining means the server had ended it first (the hour, a moderation cut).
-    this.#settle(this.#serverEndedWhileEnding ? 'server' : 'broadcaster');
+    this.#settle(this.#serverEndedWhileEnding ?? 'broadcaster');
   }
 
   /** The screen is going away (closed, navigated, the page hidden for good): nothing stays on air. */
@@ -668,17 +678,22 @@ export class LiveBroadcast {
     if (this.phase === 'ending') {
       // The End is draining and settles the screen, but must not call the server's end the member's.
       if (ended) {
-        console.warn('[LIVE-BROADCAST] the server ended the live while the End was draining');
-        this.#serverEndedWhileEnding = true;
+        const cut = isLiveCut(error);
+        console.warn(
+          `[LIVE-BROADCAST] the server ${cut ? 'cut' : 'ended'} the live while the End was draining`
+        );
+        this.#serverEndedWhileEnding = cut ? 'cut' : 'server';
       }
       return;
     }
     if (this.phase === 'ended') return;
-    const cause: LiveEndCause = ended
-      ? this.phase === 'away'
-        ? 'server-while-away'
-        : 'server'
-      : 'failed';
+    const cause: LiveEndCause = isLiveCut(error)
+      ? 'cut'
+      : ended
+        ? this.phase === 'away'
+          ? 'server-while-away'
+          : 'server'
+        : 'failed';
     console.warn(`[LIVE-BROADCAST] the uploader stopped (${cause})`);
     this.#finish(cause, !ended);
   }

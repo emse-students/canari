@@ -9,7 +9,7 @@
  */
 
 /** Why a live ended - the row's `endReason` (`LiveEndReason` on the server). */
-export type LiveEndReason = 'broadcaster' | 'dropped' | 'max_duration' | 'erased';
+export type LiveEndReason = 'broadcaster' | 'dropped' | 'max_duration' | 'erased' | 'cut';
 
 /**
  * A live as `POST /api/lives` (201) and `GET /api/lives/:id` answer it: the KEY included (L2, Q4).
@@ -69,6 +69,22 @@ export interface LiveEndResult {
   id: string;
   endedAt: string;
   endReason: LiveEndReason;
+}
+
+/** The reason a moderator gives for a cut: the report reasons' own four. */
+export type LiveCutReason = 'spam' | 'harassment' | 'inappropriate' | 'other';
+
+/** `POST /api/lives/:id/cut` (200, idempotent): `newlyCut` false is the answer to a repeat. */
+export interface LiveCutResult {
+  liveId: string;
+  broadcasterId: string;
+  reason: LiveCutReason;
+  cutAt: string;
+  endReason: LiveEndReason;
+  /** True when this call recorded the cut; false when the live had already been cut. */
+  newlyCut: boolean;
+  /** How many times the broadcaster was cut BEFORE this one - the repeat-offender count. */
+  priorCuts: number;
 }
 
 /** `POST /api/lives/:id/removed-viewers`. */
@@ -134,7 +150,10 @@ export type LiveRefusalCode =
   | 'LIVE_INDEX_INVALID'
   | 'LIVE_FROM_INVALID'
   | 'LIVE_VIEWER_INVALID'
-  | 'LIVE_VIEWER_IS_SELF';
+  | 'LIVE_VIEWER_IS_SELF'
+  | 'LIVE_CUT_FORBIDDEN'
+  | 'LIVE_CUT_REASON_INVALID'
+  | 'LIVE_CUT_DETAILS_INVALID';
 
 /**
  * WHAT A SCREEN DOES WITH A REFUSAL - decided once, at the throw ({@link classifyLiveRefusal}), so
@@ -148,7 +167,7 @@ export type LiveRefusalCode =
  *   own (no code: the ingest zone, or the per-address segment bound).
  * - `not-found`: `404 LIVE_NOT_FOUND` (absent, invisible, blocked, another member's live on a write,
  *   or an ended live already purged), or a 404 on a segment fetch.
- * - `ended`: `410 LIVE_ENDED`.
+ * - `ended`: `410 LIVE_ENDED`, whose body carries `endedAt` and `endReason` (`cut`: a moderator ended it).
  * - `removed`: `403 LIVE_VIEWER_REMOVED` - the broadcaster removed this viewer.
  * - `disabled`: a `404` with no code on `/api/lives` - the `LIVE_ENABLED` guard (off on production).
  * - `out-of-order`: `409 LIVE_SEGMENT_OUT_OF_ORDER` - `nextIndex` says which index the server wants.
