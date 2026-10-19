@@ -1310,17 +1310,50 @@ pub(crate) fn delete_user_push_files(
     #[cfg(target_os = "ios")]
     {
         let group = crate::app_group::app_group_dir();
-        let removed = remove_user_push_files(&data_dir, group.as_deref().ok(), &user_id)?;
-        if let Err(e) = group {
+        let removed =
+            remove_account_push_and_name_files(&data_dir, group.as_deref().ok(), &user_id);
+        if let Err(e) = &group {
             log::error!(
                 "[DEL-LOCAL] no App Group container - the extension's copies were not reached: {e}"
             );
-            return Err(e);
         }
+        if let Err(e) = &removed {
+            log::error!("[DEL-LOCAL] the account's push files were not all removed: {e}");
+        }
+        let removed = removed?;
+        group?;
         Ok(removed)
     }
     #[cfg(not(target_os = "ios"))]
-    remove_user_push_files(&data_dir, None, &user_id)
+    remove_account_push_and_name_files(&data_dir, None, &user_id)
+}
+
+/// The body of [`delete_user_push_files`]: the mirrored names (`display_names.json`, in the data
+/// directory and in `group`, the iOS App Group), then [`remove_user_push_files`].
+///
+/// The names carry their own owner, so they are removed on THEIR proof, not the context's. A
+/// failure there is LOGGED AND CARRIED, never a `?`: an early return would leave
+/// `push_context.json` and the outbox - the files the deletion exists for - on the disk of a
+/// deleted account. Everything is attempted, then the first error is returned.
+pub(crate) fn remove_account_push_and_name_files(
+    data_dir: &std::path::Path,
+    group: Option<&std::path::Path>,
+    user_id: &str,
+) -> Result<usize, String> {
+    let mut names_error: Option<String> = None;
+    for dir in std::iter::once(data_dir).chain(group) {
+        if let Err(e) = crate::commands::display_names::remove_display_names_of(dir, user_id) {
+            log::error!("[DEL-LOCAL] names copy not removed, the other push files still are: {e}");
+            names_error.get_or_insert(e);
+        }
+    }
+    let removed = remove_user_push_files(data_dir, group, user_id)?;
+    match names_error {
+        Some(e) => Err(format!(
+            "{removed} push file(s) removed, but the names copy was not: {e}"
+        )),
+        None => Ok(removed),
+    }
 }
 
 /// The names in [`ACCOUNT_PUSH_FILES`] plus `push_context.json` that can also exist in the iOS App
@@ -1947,6 +1980,42 @@ mod delete_user_push_files_tests {
         std::fs::write(&group, b"x").unwrap();
         assert!(remove_user_push_files(&dir, Some(&group), "a").is_err());
         assert!(dir.join(PUSH_CONTEXT_FILE).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// An unreadable names copy is reported, and never keeps the deleted account's context and
+    /// outbox on disk: every other file is still removed.
+    #[test]
+    fn a_names_copy_that_cannot_be_read_does_not_stop_the_rest() {
+        let dir = dir_with("names", Some(r#"{"userId":"a","deviceId":"d"}"#));
+        // A directory where the file should be: reading it fails with something other than
+        // "not found", which is the case a `?` used to turn into an early return.
+        std::fs::create_dir_all(dir.join(crate::commands::display_names::DISPLAY_NAMES_FILE))
+            .unwrap();
+        let err = super::remove_account_push_and_name_files(&dir, None, "a").unwrap_err();
+        assert!(err.contains("5 push file(s) removed"), "{err}");
+        for f in ACCOUNT_PUSH_FILES {
+            assert!(!dir.join(f).exists(), "{f}");
+        }
+        assert!(!dir.join(PUSH_CONTEXT_FILE).exists());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The names copy of the deleted account goes with the rest, in both directories.
+    #[test]
+    fn removes_the_deleted_accounts_names_copy_too() {
+        use crate::commands::display_names::{merge_display_names, DISPLAY_NAMES_FILE};
+        let dir = dir_with("names_ok", Some(r#"{"userId":"a","deviceId":"d"}"#));
+        let group = dir.join("group");
+        let names = std::collections::HashMap::from([("1".repeat(64), "Alice".to_string())]);
+        merge_display_names(&dir, "a", &names, &[]).unwrap();
+        merge_display_names(&group, "a", &names, &[]).unwrap();
+        assert_eq!(
+            super::remove_account_push_and_name_files(&dir, Some(&group), "a").unwrap(),
+            5
+        );
+        assert!(!dir.join(DISPLAY_NAMES_FILE).exists());
+        assert!(!group.join(DISPLAY_NAMES_FILE).exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

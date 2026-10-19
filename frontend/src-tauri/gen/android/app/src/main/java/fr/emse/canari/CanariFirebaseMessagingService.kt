@@ -4718,6 +4718,8 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
         // language Rust words its own sentences in (empty when none was mirrored: the base locale).
         val pushCtx  = MlsContextLoader.loadPushContext(this)
         val myUserId = pushCtx?.userId
+        // The phone's names, read at most once for this banner: the author line and the tokens share it.
+        val nameBook = lazy { loadMentionNames(myUserId?.lowercase()) }
         // Set only where the banner's body IS the decrypted text: every other branch below posts the
         // generic line, on which "Marquer comme lu" would move a receipt for an unseen message.
         var showsMessage = false
@@ -4738,7 +4740,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                     val text = json.optString("text").takeIf { it.isNotEmpty() }
                     if (text != null) {
                         showsMessage = true
-                        renderMentions(text, myUserId, res).take(200)
+                        renderMentions(text, myUserId, res, nameBook).take(200)
                     } else {
                         buildChannelFallbackText(res, channelName)
                     }
@@ -4779,6 +4781,9 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             buildChannelFallbackText(res, channelName)
         }
 
+        // A salon banner names no author (its "sender" is the salon's title), so a mention of this
+        // reader says WHO above the line - the iOS twin is the banner's subtitle (WP-MENTION-NAME).
+        val shownBody = if (mentionsMe) "${mentionAuthorLine(senderId, nameBook, res)}\n$body" else body
         val avatarBitmap = if (senderId.isNotEmpty()) fetchAvatar(senderId) else null
         val largeIcon    = avatarBitmap ?: generateInitialsBitmap(channelName)
         val title = buildChannelPushTitle(workspaceName, channelName)
@@ -4789,7 +4794,7 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
             // human sender to name anyway - the server sends only `senderId`, for the avatar.
             senderName = title,
             groupName  = "",
-            body       = body,
+            body       = shownBody,
             largeIcon  = largeIcon,
             groupId    = conversationId,
             channel    = if (mentionsMe) CHANNEL_MENTIONS else CHANNEL_MESSAGES,
@@ -4986,12 +4991,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * `@[f7a9bb80...5d8ce1]  COMM14-mtnq7c2dlh3-tagged` - and it is the worst place for it, because a
      * mention is exactly what posts on the high-priority `CHANNEL_MENTIONS` channel.
      *
-     * WHY IT DOES NOT RESOLVE NAMES. This runs in a push handler with no name directory: the only
-     * thing the push path can fetch is an avatar, by id, over `PushSecret`. Adding a name lookup
-     * would put a network round trip per token on the path that has to post a banner in seconds, and
-     * would still fail offline. So it renders the one id this device knows for certain - its own -
-     * and states plainly that it does not know the others, rather than showing a hex blob and
-     * calling it a name. That matches the web, whose own unresolved-name label is a WORD.
+     * NAMES FROM THE PHONE'S OWN COPY, NEVER FROM THE NETWORK (WP-MENTION-NAME, 2026-10-18). A
+     * push handler has no name directory and a lookup would put a round trip per token on the path
+     * that must post a banner in seconds. So the names come from `display_names.json`, which the
+     * WebView writes with every name it has already resolved for this account ([loadMentionNames]);
+     * this device's own id is "you", and an id the phone has never named stays the WORD "someone" -
+     * never a hex blob, never a name the push carried.
      *
      * The double space the old body showed is gone with it: a token is replaced by its label, and
      * the run of whitespace that used to sit between `]` and the text is collapsed.
@@ -4999,16 +5004,78 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
      * @param text the decrypted message body, possibly carrying tokens
      * @param myUserId this device's user id, or null when the push context could not be read
      * @param res the (locale-aware) context the strings are read from
+     * @param nameBook the phone's names, read once per BANNER: the salon path shares it with
+     *   [mentionAuthorLine], so naming the author and the tokens costs one file read
      */
-    private fun renderMentions(text: String, myUserId: String?, res: Context): String {
+    private fun renderMentions(
+        text: String,
+        myUserId: String?,
+        res: Context,
+        nameBook: Lazy<JSONObject?> = lazy { loadMentionNames(myUserId?.lowercase()) },
+    ): String {
         if (!text.contains("@[")) return text
         val me = myUserId?.lowercase()
-        return MENTION_TOKEN.replace(text) { m ->
+        // Read only when a token names somebody else.
+        val names by nameBook
+        var named = 0
+        var unknown = 0
+        val rendered = MENTION_TOKEN.replace(text) { m ->
             val id = m.groupValues[1].lowercase()
-            val label = if (me != null && id == me) res.getString(R.string.notif_mention_you)
-                        else res.getString(R.string.notif_mention_someone)
+            val label = if (me != null && id == me) {
+                res.getString(R.string.notif_mention_you)
+            } else {
+                names?.optString(id)?.takeIf { it.isNotBlank() }?.also { named++ }
+                    ?: res.getString(R.string.notif_mention_someone).also { unknown++ }
+            }
             "@" + label
         }.replace(Regex("[ \t]{2,}"), " ")
+        if (named + unknown > 0) Log.d(TAG, "[MENTION_NAME] named=$named unknown=$unknown")
+        return rendered
+    }
+
+    /**
+     * "Alice vous a mentionné" for a salon banner that mentions this reader (WP-MENTION-NAME,
+     * 2026-10-18): the AUTHOR, named from the phone's own copy of names - the same
+     * `display_names.json`, under the same owner rule, as the tokens - and "Quelqu'un" when the phone
+     * has never named them. Never from the push: a salon push carries only `senderId`, and the
+     * decision is that no name rides it.
+     *
+     * Salon only. An MLS (DM or group) banner already names its sender in the title or the line.
+     */
+    private fun mentionAuthorLine(senderId: String, nameBook: Lazy<JSONObject?>, res: Context): String {
+        val name = senderId.lowercase().takeIf { it.isNotEmpty() }
+            ?.let { nameBook.value?.optString(it) }
+            ?.takeIf { it.isNotBlank() }
+        Log.d(TAG, "[MENTION_NAME] author named=${name != null}")
+        // The placeholder opens the sentence in both languages, so the word is capitalised there.
+        val who = name ?: res.getString(R.string.notif_mention_someone).replaceFirstChar { it.titlecase() }
+        return res.getString(R.string.notif_social_mention_title, who)
+    }
+
+    /**
+     * The `names` map of `display_names.json`, or null when it cannot be used: absent, unreadable,
+     * or written for another account than [me] (the file is one per install, two accounts may sign
+     * in on one phone). Written by `store_display_names` (Rust, `commands/display_names.rs`).
+     */
+    private fun loadMentionNames(me: String?): JSONObject? {
+        if (me == null) return null
+        val file = File(MlsContextLoader.tauriDataDir(this), "display_names.json")
+        if (!file.exists()) {
+            Log.d(TAG, "[MENTION_NAME] no display_names.json yet - every other mention is 'someone'")
+            return null
+        }
+        return try {
+            val root = JSONObject(file.readText())
+            if (!root.optString("userId").equals(me, ignoreCase = true)) {
+                Log.d(TAG, "[MENTION_NAME] display_names.json belongs to another account - not used")
+                null
+            } else {
+                root.optJSONObject("names")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "[MENTION_NAME] display_names.json unreadable: ${e.message}")
+            null
+        }
     }
 
     private fun buildChannelFallbackText(res: Context, channelName: String): String =

@@ -472,6 +472,51 @@ describe('formatProfileDisplayName (indirect)', () => {
     expect(vi.mocked(userModule.fetchUserProfile)).toHaveBeenCalledTimes(1);
   });
 
+  it("drops a deleted account from the phone's native names, so no banner names it (WP-MENTION-NAME)", async () => {
+    vi.resetModules();
+    const noteDeletedAccount = vi.fn();
+    vi.doMock('./nameMirror', () => ({ noteResolvedName: vi.fn(), noteDeletedAccount }));
+    const userModule = await import('$lib/stores/user');
+    const mod = await import('./displayName');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.mocked(userModule.fetchUserProfile).mockRejectedValue(new userModule.DeletedAccountError());
+    // Seeded first: the name the web may keep showing is still no licence for a native banner.
+    mod.seedUserDisplayName('usr_erased', 'Bob');
+    await mod.resolveUserDisplayName('usr_erased');
+    expect(noteDeletedAccount).toHaveBeenCalledWith('usr_erased');
+    vi.doUnmock('./nameMirror');
+  });
+
+  it('mirrors a fetched name, and never the unknown-user label of a profile with no name column', async () => {
+    vi.resetModules();
+    const noteResolvedName = vi.fn();
+    vi.doMock('./nameMirror', () => ({ noteResolvedName, noteDeletedAccount: vi.fn() }));
+    const userModule = await import('$lib/stores/user');
+    const mod = await import('./displayName');
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    vi.mocked(userModule.fetchUserProfile).mockResolvedValueOnce({
+      id: 'usr_nameless',
+      displayName: null,
+      firstName: '  ',
+      lastName: null,
+    } as never);
+    expect(await mod.resolveUserDisplayName('usr_nameless')).toBe(UNKNOWN_LABEL);
+    expect(noteResolvedName).not.toHaveBeenCalled();
+
+    // The control: the same path does mirror a profile that carries a name.
+    vi.mocked(userModule.fetchUserProfile).mockResolvedValueOnce({
+      id: 'usr_named',
+      displayName: 'Ada Lovelace',
+      firstName: null,
+      lastName: null,
+    } as never);
+    await mod.resolveUserDisplayName('usr_named');
+    expect(noteResolvedName).toHaveBeenCalledTimes(1);
+    vi.doUnmock('./nameMirror');
+  });
+
   it('does not re-ask for an absent user when connectivity returns', async () => {
     // `failedAt` is cleared on reconnect, because a failure recorded while the network was down is
     // evidence about the network. An absent account is evidence about the account, so a reconnect

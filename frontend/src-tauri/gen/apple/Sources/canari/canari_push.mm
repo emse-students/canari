@@ -2463,12 +2463,77 @@ static NSString *_Nullable CanariFetchAndDecryptMedia(CanariPushContext *ctx,
   return tmpPath;
 }
 
-// Replaces the `@[<64 hex>]` mention tokens a decrypted body carries with a WORD - "you" for this
-// device's own user, "someone" for anybody else - and collapses the run of spaces a token left.
-// No name directory reaches this process, so it names the one id it knows for certain rather than
-// show a hex blob on the banner a mention makes time-sensitive. Twins: the NSE's `renderMentions`
-// and Android's `renderMentions`.
-static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUserId) {
+// The `names` map of `display_names.json` in the app's data directory, or nil when it cannot be
+// used: absent, unreadable, or written for another account than `me` (one file per install, and two
+// accounts may sign in on one phone). Written by `store_display_names` (Rust).
+static NSDictionary *_Nullable CanariLoadMentionNames(NSString *_Nullable me) {
+  NSString *dir = CanariTauriDataDir();
+  if (me.length == 0 || dir == nil) {
+    return nil;
+  }
+  NSData *data = [NSData dataWithContentsOfFile:[dir stringByAppendingPathComponent:@"display_names.json"]];
+  if (data == nil) {
+    NSLog(@"[CanariPush] [MENTION_NAME] no display_names.json - every other mention is 'someone'");
+    return nil;
+  }
+  id root = [NSJSONSerialization JSONObjectWithData:data options:0 error:nil];
+  if (![root isKindOfClass:[NSDictionary class]]) {
+    NSLog(@"[CanariPush] [MENTION_NAME] display_names.json unreadable");
+    return nil;
+  }
+  id owner = ((NSDictionary *)root)[@"userId"];
+  if (![owner isKindOfClass:[NSString class]] || ![[owner lowercaseString] isEqualToString:me]) {
+    NSLog(@"[CanariPush] [MENTION_NAME] display_names.json belongs to another account - not used");
+    return nil;
+  }
+  id names = ((NSDictionary *)root)[@"names"];
+  return [names isKindOfClass:[NSDictionary class]] ? names : nil;
+}
+
+// The phone's names for ONE banner: `display_names.json` is read on the first call only, so the
+// author line and the tokens of one banner cost one file read, and a banner needing neither none.
+typedef NSDictionary *_Nullable (^CanariMentionNameBook)(void);
+static CanariMentionNameBook CanariMakeMentionNameBook(NSString *_Nullable myUserId) {
+  NSString *me = myUserId.lowercaseString;
+  __block NSDictionary *names = nil;
+  __block BOOL read = NO;
+  return ^NSDictionary *_Nullable {
+    if (!read) {
+      names = CanariLoadMentionNames(me);
+      read = YES;
+    }
+    return names;
+  };
+}
+
+// "Alice mentioned you" for a salon banner that mentions this reader (WP-MENTION-NAME, 2026-10-18):
+// the AUTHOR, named from the phone's own copy of names under the same owner rule as the tokens, and
+// "Someone" when the phone has never named them. Never from the push, which carries only
+// `senderId`. Salon only: an MLS banner already names its sender. Twins: the NSE's and Android's
+// `mentionAuthorLine`.
+static NSString *CanariMentionAuthorLine(NSString *senderId, CanariMentionNameBook nameBook) {
+  NSString *idLower = senderId.lowercaseString;
+  id name = idLower.length > 0 ? nameBook()[idLower] : nil;
+  BOOL known = [name isKindOfClass:[NSString class]] && [(NSString *)name length] > 0;
+  NSLog(@"[CanariPush] [MENTION_NAME] author named=%d", known);
+  // The placeholder opens the sentence in both languages, so the word is capitalised there.
+  NSString *someone = CanariLocalized(@"notif.mention.someone");
+  NSString *who = known ? (NSString *)name
+                        : (someone.length > 0
+                               ? [[[someone substringToIndex:1] uppercaseString]
+                                     stringByAppendingString:[someone substringFromIndex:1]]
+                               : someone);
+  return [NSString stringWithFormat:CanariLocalized(@"notif.social.mention.title"), who];
+}
+
+// Replaces the `@[<64 hex>]` mention tokens a decrypted body carries with something readable - "you"
+// for this device's own user, the NAME the phone already holds for anybody else, and the word
+// "someone" for an id it has never named - and collapses the run of spaces a token left. The names
+// come from the phone's own copy (`nameBook`, shared with `CanariMentionAuthorLine` so one banner
+// reads the file once), never from the push or the network (WP-MENTION-NAME, 2026-10-18). Twins:
+// the NSE's `renderMentions` and Android's `renderMentions`.
+static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUserId,
+                                      CanariMentionNameBook nameBook) {
   if (text.length == 0 || [text rangeOfString:@"@["].location == NSNotFound) {
     return text;
   }
@@ -2480,15 +2545,33 @@ static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUser
   NSString *me = myUserId.lowercaseString;
   NSMutableString *out = [NSMutableString string];
   NSUInteger cursor = 0;
+  NSUInteger named = 0;
+  NSUInteger unknown = 0;
   for (NSTextCheckingResult *match in [regex matchesInString:text options:0 range:NSMakeRange(0, text.length)]) {
     [out appendString:[text substringWithRange:NSMakeRange(cursor, match.range.location - cursor)]];
     NSString *mentioned = [[text substringWithRange:[match rangeAtIndex:1]] lowercaseString];
     BOOL isMe = me.length > 0 && [mentioned isEqualToString:me];
     [out appendString:@"@"];
-    [out appendString:CanariLocalized(isMe ? @"notif.mention.you" : @"notif.mention.someone")];
+    if (isMe) {
+      [out appendString:CanariLocalized(@"notif.mention.you")];
+    } else {
+      // Read only when a token names somebody else.
+      id name = nameBook()[mentioned];
+      if ([name isKindOfClass:[NSString class]] && [(NSString *)name length] > 0) {
+        named++;
+        [out appendString:name];
+      } else {
+        unknown++;
+        [out appendString:CanariLocalized(@"notif.mention.someone")];
+      }
+    }
     cursor = match.range.location + match.range.length;
   }
   [out appendString:[text substringFromIndex:cursor]];
+  if (named + unknown > 0) {
+    NSLog(@"[CanariPush] [MENTION_NAME] named=%lu unknown=%lu", (unsigned long)named,
+          (unsigned long)unknown);
+  }
   return [out stringByReplacingOccurrencesOfString:@"[ \\t]{2,}"
                                         withString:@" "
                                            options:NSRegularExpressionSearch
@@ -2504,10 +2587,15 @@ static NSString *CanariRenderMentions(NSString *text, NSString *_Nullable myUser
 // because only the caller knows: a DM draws the sender, a salon draws the SALON (Android does the
 // same), and the title this function composes is no help - for a salon it is
 // `<Communaute> - #<salon>`, whose first character would be the community's, or a `#`.
+//
+// `namesMentionAuthor` is YES on the SALON path only: its title is the salon, so a mention of this
+// reader names its author in the subtitle (`CanariMentionAuthorLine`, WP-MENTION-NAME). An MLS
+// banner passes NO - its push already names the sender in the title or the subtitle.
 static void CanariShowMessageNotification(NSString *senderName, NSString *groupName, NSString *body,
                                           NSString *groupId, NSString *senderId,
                                           CanariDecryptedMessage *_Nullable decrypted,
-                                          BOOL mentionedByServer, NSString *_Nullable initialsName) {
+                                          BOOL mentionedByServer, NSString *_Nullable initialsName,
+                                          BOOL namesMentionAuthor) {
   if (canari_ios_is_in_foreground()) {
     return;
   }
@@ -2547,8 +2635,13 @@ static void CanariShowMessageNotification(NSString *senderName, NSString *groupN
   // Inside a group conversation, surface who spoke as a subtitle (Android: MessagingStyle.Message
   // already carries the sender Person). NSE twin: applyMessageContent in NotificationService.swift.
   NSString *subtitle = isGroup ? senderName : nil;
+  // The phone's names, read at most once for this banner: the author line and the tokens share it.
+  CanariMentionNameBook nameBook = CanariMakeMentionNameBook(ctx != nil ? ctx.userId : nil);
+  if (namesMentionAuthor && mentionsMe) {
+    subtitle = CanariMentionAuthorLine(senderId, nameBook);
+  }
   // Rendered for DISPLAY only, after the mention-of-me scan above has read the raw tokens.
-  NSString *shown = CanariRenderMentions(body, ctx != nil ? ctx.userId : nil);
+  NSString *shown = CanariRenderMentions(body, ctx != nil ? ctx.userId : nil, nameBook);
   CanariShowLocalNotification(title, shown, deepLink, threadId, notifId, attachmentPath,
                               groupId, mentionsMe, subtitle, decrypted != nil ? decrypted.sentAt : 0,
                               mentionsMe ? kCanariSoundMention : kCanariSoundMessage);
@@ -2973,7 +3066,7 @@ static void CanariHandleMlsMessage(NSDictionary *data) {
     dispatch_async(dispatch_get_main_queue(), ^{
       // MLS: the server cannot know who is mentioned, so the body scan inside decides.
       CanariShowMessageNotification(senderName, groupName, body, groupId, senderId, decrypted, NO,
-                                    senderName);
+                                    senderName, NO);
     });
 
     CanariPushContext *drainCtx = CanariLoadPushContext();
@@ -3133,7 +3226,7 @@ static void CanariHandleChannelMessage(NSDictionary *data) {
       // The initials fall back to the SALON, not to the composed title: Android twin uses
       // channelName for exactly the same reason.
       CanariShowMessageNotification(displayName, @"", body, conversationId, senderId, nil,
-                                    mentionsMe, channelName);
+                                    mentionsMe, channelName, YES);
     });
   });
 }
