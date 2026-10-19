@@ -84,10 +84,15 @@ export type LiveEndCause =
   /** A refusal the uploader cannot get past, or a recorder that would not start. */
   | 'failed'
   /**
-   * The backlog outgrew the server's reconnect window: the connection was lost for longer than the
-   * server keeps a silent live, so nothing still queued could be watched.
+   * The server stored nothing for longer than it keeps a silent live: the connection was lost, and
+   * nothing still queued could be watched.
    */
-  | 'connection-lost';
+  | 'connection-lost'
+  /**
+   * The server still stores segments, but slower than they are recorded: the backlog outgrew the
+   * reconnect window's worth, so viewers fall further behind every minute.
+   */
+  | 'upload-too-slow';
 
 /** Whether the segments are getting through: `retrying` is the quiet "reconnecting" badge. */
 export type LiveUploadHealth = 'ok' | 'retrying';
@@ -173,6 +178,11 @@ export class LiveBroadcast {
   /** Segments sealed and waiting for the server. */
   backlog = $state(0);
   liveId = $state<string | null>(null);
+  /**
+   * Why the screen is `away` when it is not the camera's doing: the recorder's output could not be
+   * read or sent, so Retry starts a fresh recorder. Null for a background or a lens taken.
+   */
+  awayProblem = $state<'unsendable' | null>(null);
   /** Whether this engine records the live's container at all (read once). */
   readonly supported: boolean;
 
@@ -195,6 +205,10 @@ export class LiveBroadcast {
   /** Bumped by every re-acquisition and every hide: a stale one stops at its next await. */
   #reacquireGeneration = 0;
   #startedAt: number | null = null;
+  /** When the server last STORED a segment (the live's start before the first): what it has heard. */
+  #lastStoredAt: number | null = null;
+  /** The uploader heard the server's end (`410`) while the End was draining: the server ended it first. */
+  #serverEndedWhileEnding = false;
   #firstRecordAt: number | null = null;
   #disposed = false;
 
@@ -267,9 +281,11 @@ export class LiveBroadcast {
     this.#keyHex = keyHex;
     this.liveId = live.id;
     this.#startedAt = this.#deps.now();
+    this.#lastStoredAt = this.#startedAt;
     this.#uploader = this.#deps.createUploader(live.id, {
       startIndex: live.nextIndex,
       onStored: () => {
+        this.#lastStoredAt = this.#deps.now();
         this.health = 'ok';
         this.#noteBacklog();
       },
@@ -397,7 +413,8 @@ export class LiveBroadcast {
         );
       }
     }
-    this.#settle('broadcaster');
+    // A 410 heard while draining means the server had ended it first (the hour, a moderation cut).
+    this.#settle(this.#serverEndedWhileEnding ? 'server' : 'broadcaster');
   }
 
   /** The screen is going away (closed, navigated, the page hidden for good): nothing stays on air. */
@@ -447,6 +464,7 @@ export class LiveBroadcast {
     this.#watchTrack(stream, generation);
     this.phase = 'live';
     this.health = 'ok';
+    this.awayProblem = null;
     void this.#deps.wakeLock.hold();
     console.log(`[LIVE-BROADCAST] on air (recorder ${generation})`);
   }
@@ -481,8 +499,8 @@ export class LiveBroadcast {
   }
 
   /**
-   * The pipeline could not read or frame a chunk of `generation`: that recorder sends nothing any
-   * more, so the screen must not go on saying "on air". The camera is given back and Retry starts a
+   * The pipeline could not read or frame a chunk of `generation`, or could not send several of its
+   * fragments in a row: that recorder sends nothing any more, so the screen must not go on saying "on air". The camera is given back and Retry starts a
    * fresh recorder - a fresh init - on the same live.
    */
   #pipelineBroken(generation: number): void {
@@ -492,8 +510,9 @@ export class LiveBroadcast {
       );
       return;
     }
-    console.error('[LIVE-BROADCAST] the recorder output is unreadable - away until Retry');
-    this.#awayUntilRetry('the recorder output is unreadable');
+    console.error('[LIVE-BROADCAST] the recorder output cannot be sent - away until Retry');
+    this.#awayUntilRetry('the recorder output cannot be sent');
+    this.awayProblem = 'unsendable';
   }
 
   #awayUntilRetry(why: string): void {
@@ -546,26 +565,47 @@ export class LiveBroadcast {
   }
 
   /**
-   * Reads the queue's backlog onto the screen and enforces its cap: past the reconnect window's
-   * worth of segments the connection has been lost longer than the server keeps a silent live, so
-   * recording on only grows memory (~23 MB a minute) for segments nobody can watch.
+   * Reads the queue's backlog onto the screen and ends what the server cannot recover - measured on
+   * what it last STORED, not on the count alone:
+   * - nothing stored for longer than `reconnectWindowMs`: the server ends a live that silent anyway,
+   *   so the connection is lost (`connection-lost`);
+   * - still storing, but the backlog past the window's worth of segments: the uplink is slower than
+   *   real time, viewers fall further behind every minute and memory grows (~23 MB a minute), so
+   *   the live ends saying so (`upload-too-slow`) - never that the connection was lost.
    */
   #noteBacklog(): void {
     const backlog = this.#uploader?.backlog ?? 0;
     this.backlog = backlog;
     if ((this.phase !== 'live' && this.phase !== 'away') || !this.limits) return;
-    const cap =
-      Math.ceil(this.limits.reconnectWindowMs / LIVE_SEGMENT_MS) + LIVE_BACKLOG_MARGIN_SEGMENTS;
+    const window = this.limits.reconnectWindowMs;
+    const now = this.#deps.now();
+    const silentMs = now - (this.#lastStoredAt ?? now);
+    if (silentMs > window) {
+      console.warn(
+        `[LIVE-BROADCAST] nothing stored for ${Math.round(silentMs)} ms, past the ${window} ms the server keeps a silent live - connection lost, ending`
+      );
+      this.#finish('connection-lost', true);
+      return;
+    }
+    const cap = Math.ceil(window / LIVE_SEGMENT_MS) + LIVE_BACKLOG_MARGIN_SEGMENTS;
     if (backlog <= cap) return;
     console.warn(
-      `[LIVE-BROADCAST] ${backlog} segments waiting, over the ${cap} the reconnect window holds - connection lost too long, ending`
+      `[LIVE-BROADCAST] ${backlog} segments waiting, over the ${cap} the reconnect window holds, while the server still stores (last ${Math.round(silentMs)} ms ago) - the upload is too slow, ending`
     );
-    this.#finish('connection-lost', true);
+    this.#finish('upload-too-slow', true);
   }
 
   #uploaderStopped(error: unknown): void {
-    if (this.phase === 'ending' || this.phase === 'ended') return;
     const ended = isLiveRefusal(error, 'ended') || isLiveRefusal(error, 'not-found');
+    if (this.phase === 'ending') {
+      // The End is draining and settles the screen, but must not call the server's end the member's.
+      if (ended) {
+        console.warn('[LIVE-BROADCAST] the server ended the live while the End was draining');
+        this.#serverEndedWhileEnding = true;
+      }
+      return;
+    }
+    if (this.phase === 'ended') return;
     const cause: LiveEndCause = ended
       ? this.phase === 'away'
         ? 'server-while-away'

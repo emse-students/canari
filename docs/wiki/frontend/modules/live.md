@@ -332,7 +332,7 @@ release. **Not built: chat and reactions (WP-L6), moderation (WP-L8).**
 | `lib/live/fmp4Segments.ts` | The pure fMP4 reader: `Fmp4Splitter` turns recorder chunks into one init and its fragments (a box cut across chunks is carried), reads whether each fragment's video starts on a sync sample, `composeSegment`, and `rebaseFragment` (the media-time shift below) - and the viewer's `initSegmentEnd`, on the same box-header reader. |
 | `lib/live/liveSegmentPipeline.ts` | Chunk -> fragments -> segment -> seal -> queue, ONE chunk at a time through one promise chain: the index is read from `uploader.nextIndex`, sealed for and enqueued with (no second counter). A summary line every 15 segments. |
 | `lib/live/liveRecorder.ts` | `MediaRecorder` with `LIVE_RECORDER_MIME`, 2.0 Mb/s, 2 s timeslice and keyframe interval; no second container (an engine that cannot record that exact type cannot broadcast, said before Start). |
-| `lib/live/liveDevice.ts` | The camera at 1280x720 + microphone (exact lens), the Screen Wake Lock, the Battery API reading. |
+| `lib/live/liveDevice.ts` | The camera at 1280x720 + microphone (exact lens), the Screen Wake Lock (every request carries a ticket, so a lock answered after a release or a newer hold is given straight back: hold -> release -> hold never leaks one), the Battery API reading. |
 | `lib/live/liveBroadcast.svelte.ts` | The state machine: `preview -> starting -> live <-> away -> ending -> ended`, every dependency injected. |
 | `components/live/LiveOverlay.svelte`, `LiveBroadcaster.svelte` | The full-screen layer (portal, `coversScreen`, one history entry, the edge swipe) and the broadcast screen. The viewer's identity chip is `LiveIdentity`, a different component. |
 
@@ -381,10 +381,15 @@ created** (`push(generation, chunk)`): the old recorder's last chunk, delivered 
 new generation began, still lands in the old splitter with the old init and offset. The return also
 WAITS for the paused recorder's `stop` (bounded) and closes its generation before starting the next
 one; a generation closed with bytes still in its splitter (a box cut short) is LOGGED as lost. A
-chunk the pipeline cannot read (a Blob read that rejects) or frame breaks its generation - the
-chain itself never rejects - and the pipeline TELLS the state machine (`onBroken`), which goes
-`away` with the camera given back and a Retry, rather than a screen saying "on air" while nothing is
-sent. **That a new recorder restarts its media time at zero is an ASSUMPTION** WP-L1 did not measure:
+generation BREAKS on two things - the chain itself never rejects: a chunk it cannot read (a Blob
+read that rejects) or frame, and `MAX_CONSECUTIVE_DROPS` (3, ~6 s) fragments IN A ROW that could not
+be sent (a rebase that failed, a seal that threw, a segment over the server's `segmentMaxBytes`). A
+single dropped fragment is a gap in the picture and is only counted; a run of them is a recorder
+whose output does not get through. Either way the pipeline TELLS the state machine (`onBroken`),
+which goes `away` with the camera given back, a sentence saying what the camera records could not
+be sent (`awayProblem = 'unsendable'`) and a Retry that starts a fresh recorder. **Before
+2026-10-19's review a drop was only counted**, so a recorder whose every segment was over 4 MB stayed
+"on air" with nothing sent. **That a new recorder restarts its media time at zero is an ASSUMPTION** WP-L1 did not measure:
 LIVE-B1 row 8 reads it.
 
 ### Upload health and the end
@@ -393,10 +398,19 @@ LIVE-B1 row 8 reads it.
 "Reconnexion..." badge with the backlog (a plural), and the next stored segment clears it.
 
 **The backlog is CAPPED in this layer, not the uploader's** (the queue in `api.ts` is unbounded,
-~230 MB in ten minutes offline): past `ceil(reconnectWindowMs / LIVE_SEGMENT_MS)` +
-`LIVE_BACKLOG_MARGIN_SEGMENTS` (5) segments waiting, the broadcast ends itself as
-`connection-lost` - the server has ended a live that silent anyway, so recording on fills memory with
-segments nobody can watch. The end drops the queue (`uploader.stop()`) and asks `/end` best-effort.
+~230 MB in ten minutes offline), and **the cause is read from the last segment the server STORED,
+not from the count**:
+
+- nothing stored for longer than `reconnectWindowMs` (since the start, before the first): the
+  broadcast ends itself as `connection-lost` - the server has ended a live that silent anyway;
+- still storing, but past `ceil(reconnectWindowMs / LIVE_SEGMENT_MS)` +
+  `LIVE_BACKLOG_MARGIN_SEGMENTS` (5) segments waiting: an uplink slower than real time. At 80 % of
+  real time the queue grows one segment in five and crosses the cap in ~6 min while the server
+  still receives; the live ends as `upload-too-slow` ("the connection sends more slowly than the
+  camera records"), never as a lost connection.
+
+Either end drops the queue (`uploader.stop()`) and asks `/end` best-effort. The clock is the
+injected monotonic `now`, read only when a segment is queued, stored or retried.
 
 **The End button** (confirmed; Back and the edge swipe ask the same question) stops the recorder -
 waiting for its last chunk at most `LIVE_RECORDER_STOP_BOUND_MS` (one segment + 1 s; a recorder
@@ -404,7 +418,9 @@ that never fires `stop` is logged and abandoned) - flushes the pipeline, and **g
 and the screen lock THEN**, before any network wait. What is left is the queue reaching the server,
 waited for at most `reconnectWindowMs` (past it the server ended the live by absence; the unsent
 queue is dropped, logged); the "ending" screen says so and offers "Quitter sans attendre", which
-disposes the screen and ends the live best-effort. Then `POST /end`; a `410` from the uploader ends the screen ("the hour, or moderation") with no
+disposes the screen and ends the live best-effort. Then `POST /end`; a `410` the uploader hears
+while the End drains labels the end screen as the server's ("the hour, or moderation"), never as
+the member's. On air, a `410` from the uploader ends the screen ("the hour, or moderation") with no
 end call; any other stopping refusal ends it as failed and calls `/end`; the screen unmounting or
 `pagehide` ends what is on air best-effort; a killed app is the server's absence rule. A start refused
 `LIVE_ALREADY_OPEN` (a previous screen killed) is not resumed: the member is told it closes within the
@@ -415,7 +431,7 @@ minute.
 "the hour" and "a moderation cut" share one sentence).
 
 **Verified by tests** (fakes for the recorder, camera, uploader and server; no clock, no sleep):
-`fmp4Segments.test.ts`, `liveSegmentPipeline.test.ts`, `liveBroadcast.svelte.test.ts`,
+`fmp4Segments.test.ts`, `liveSegmentPipeline.test.ts`, `liveBroadcast.svelte.test.ts`, `liveDevice.test.ts`,
 `LiveBroadcaster.svelte.test.ts`, the composer chip in `PostComposerBar.svelte.test.ts`. **Owed on the
 phones**: [LIVE-B1](../../device-verification.md#live-b1-the-broadcaster-on-both-bench-phones---owed-on-both) -
 ten minutes on air watched, background and return, past the window, a network cut, the end, battery

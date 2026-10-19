@@ -30,6 +30,14 @@ import {
 /** A summary line every this many segments (30 s at 2 s segments). */
 export const SUMMARY_EVERY = 15;
 
+/**
+ * Fragments in a row of one recorder that could not be sent (a rebase, a seal or the size limit
+ * failed) before that recorder is called broken. A COUNT of segments, never a timer: one bad
+ * fragment is a gap in the picture, three in a row (~6 s) is a recorder whose output does not get
+ * through - and a screen saying ON AIR while nothing is sent is the defect this ends.
+ */
+export const MAX_CONSECUTIVE_DROPS = 3;
+
 /** What the pipeline needs from the outside. */
 export interface LiveSegmentPipelineDeps {
   /** Seals one plaintext segment for `index` (the live's key and id are bound by the caller). */
@@ -45,7 +53,10 @@ export interface LiveSegmentPipelineDeps {
   maxSegmentBytes: number;
   /** A monotonic clock in ms, for the seal timing in the summary. */
   now: () => number;
-  /** Told when a generation breaks (an unreadable chunk): nothing more of that recorder is sent. */
+  /**
+   * Told when a generation breaks - an unreadable chunk, or {@link MAX_CONSECUTIVE_DROPS} fragments
+   * in a row that could not be sent: nothing more of that recorder is sent.
+   */
   onBroken?: (generation: number) => void;
 }
 
@@ -69,6 +80,8 @@ interface Generation {
   init: Fmp4Init | null;
   /** A read or parse failure poisons the generation: its bytes cannot be framed any more. */
   broken: boolean;
+  /** Fragments in a row not sent; reset by every segment queued. */
+  consecutiveDrops: number;
 }
 
 export class LiveSegmentPipeline {
@@ -103,6 +116,7 @@ export class LiveSegmentPipeline {
       offsetMs,
       init: null,
       broken: false,
+      consecutiveDrops: 0,
     });
     return id;
   }
@@ -172,22 +186,41 @@ export class LiveSegmentPipeline {
       }
       if (split.fragments.length > 1) this.stats.multiFragmentChunks++;
       for (const raw of split.fragments) {
-        if (this.#closed) return;
+        if (this.#closed || generation.broken) return;
         await this.#send(generation, raw);
       }
     } catch (e) {
-      // A recorder whose output cannot be read or framed cannot be resynchronised from the middle:
-      // the generation stops producing, LOUDLY, and the owner is told so the screen does not go on
-      // saying "on air" while nothing is sent.
-      generation.broken = true;
+      // A recorder whose output cannot be read or framed cannot be resynchronised from the middle.
       this.stats.dropped++;
       const why = e instanceof Fmp4ParseError ? e.message : String(e);
-      console.error(`[LIVE-PIPE] generation ${generation.id}: unreadable recorder output (${why})`);
-      try {
-        this.deps.onBroken?.(generation.id);
-      } catch (inner) {
-        console.error('[LIVE-PIPE] the broken-generation handler threw', inner);
-      }
+      this.#breakGeneration(generation, `unreadable recorder output (${why})`);
+    }
+  }
+
+  /**
+   * The generation stops producing, LOUDLY, and the owner is told so the screen does not go on
+   * saying "on air" while nothing is sent.
+   */
+  #breakGeneration(generation: Generation, why: string): void {
+    if (generation.broken) return;
+    generation.broken = true;
+    console.error(`[LIVE-PIPE] generation ${generation.id}: ${why} - nothing more of it is sent`);
+    try {
+      this.deps.onBroken?.(generation.id);
+    } catch (inner) {
+      console.error('[LIVE-PIPE] the broken-generation handler threw', inner);
+    }
+  }
+
+  /** One fragment of `generation` not sent: counted, and a run of them breaks the generation. */
+  #drop(generation: Generation): void {
+    this.stats.dropped++;
+    generation.consecutiveDrops++;
+    if (generation.consecutiveDrops >= MAX_CONSECUTIVE_DROPS) {
+      this.#breakGeneration(
+        generation,
+        `${generation.consecutiveDrops} fragments in a row could not be sent`
+      );
     }
   }
 
@@ -200,8 +233,8 @@ export class LiveSegmentPipeline {
     try {
       plain = composeSegment(init, rebaseFragment(raw, init, generation.offsetMs));
     } catch (e) {
-      this.stats.dropped++;
       console.error(`[LIVE-PIPE] a fragment could not be rebased - not sent`, e);
+      this.#drop(generation);
       return;
     }
     if (raw.startsOnKeyframe === false) {
@@ -217,8 +250,8 @@ export class LiveSegmentPipeline {
     try {
       sealed = await this.deps.seal(index, plain);
     } catch (e) {
-      this.stats.dropped++;
       console.error(`[LIVE-PIPE] segment ${index} could not be sealed - not sent`, e);
+      this.#drop(generation);
       return;
     }
     if (this.#closed) return;
@@ -226,10 +259,10 @@ export class LiveSegmentPipeline {
     if (sealed.byteLength > this.deps.maxSegmentBytes) {
       // The server would answer 413 and the uploader would stop the whole live on it: one
       // oversized segment is a gap in the picture, not the end of the broadcast.
-      this.stats.dropped++;
       console.error(
         `[LIVE-PIPE] segment ${index} is ${sealed.byteLength} B, over the server's ${this.deps.maxSegmentBytes} - not sent`
       );
+      this.#drop(generation);
       return;
     }
     try {
@@ -242,6 +275,7 @@ export class LiveSegmentPipeline {
       console.error(`[LIVE-PIPE] segment ${index} refused by the queue - pipeline closed`, e);
       return;
     }
+    generation.consecutiveDrops = 0;
     this.stats.segments++;
     this.stats.plainBytes += plain.byteLength;
     console.debug(`[LIVE-PIPE] segment ${index} queued`);

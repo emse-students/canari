@@ -153,7 +153,20 @@ describe('LiveBroadcaster', () => {
     expect(deps.endLive).toHaveBeenCalledTimes(1);
   });
 
-  it('a backlog past the reconnect window ends the screen with the lost-connection sentence', async () => {
+  it('nothing stored past the reconnect window ends the screen with the lost-connection sentence', async () => {
+    const { uploaders, clock } = screen();
+    await settle();
+    q<HTMLButtonElement>('[data-live-start]')!.click();
+    await settle();
+    uploaders[0].backlog = 40;
+    clock.t += 61_000;
+    uploaders[0].options.onRetry!(0, 50, new Error('x'));
+    await settle();
+    expect(q('[data-live-ended]')!.dataset.liveEnded).toBe('connection-lost');
+    expect(document.body.textContent).toContain(m.live_ended_connection_lost());
+  });
+
+  it('a backlog past the cap while the server still stores ends the screen with the too-slow sentence', async () => {
     const { uploaders } = screen();
     await settle();
     q<HTMLButtonElement>('[data-live-start]')!.click();
@@ -161,8 +174,8 @@ describe('LiveBroadcaster', () => {
     uploaders[0].backlog = 1_000;
     uploaders[0].options.onRetry!(0, 50, new Error('x'));
     await settle();
-    expect(q('[data-live-ended]')!.dataset.liveEnded).toBe('connection-lost');
-    expect(document.body.textContent).toContain(m.live_ended_connection_lost());
+    expect(q('[data-live-ended]')!.dataset.liveEnded).toBe('upload-too-slow');
+    expect(document.body.textContent).toContain(m.live_ended_upload_too_slow());
   });
 
   it('End asks first; "keep going" keeps the live, yes ends it and shows why', async () => {

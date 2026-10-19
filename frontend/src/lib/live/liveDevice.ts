@@ -69,10 +69,16 @@ export interface WakeLockApi {
  * KEEPS THE SCREEN ON WHILE A LIVE IS ON AIR. The engine releases a screen lock by itself when the
  * page is hidden, so {@link hold} is called again on every return to the screen; holding twice is a
  * no-op while the first lock stands.
+ *
+ * EVERY REQUEST CARRIES A TICKET, bumped by every hold and every release: a sentinel that resolves
+ * after a release, or after a newer hold, is given straight back - so hold -> release -> hold with
+ * the first request still in flight can never leave an orphan lock nobody releases.
  */
 export class ScreenWakeLock {
   #sentinel: Sentinel | null = null;
   #wanted = false;
+  /** The newest hold or release; a request answered under an older one is stale. */
+  #ticket = 0;
   #warned = false;
 
   constructor(
@@ -94,10 +100,12 @@ export class ScreenWakeLock {
       return;
     }
     if (this.#sentinel && !this.#sentinel.released) return;
+    const ticket = ++this.#ticket;
     try {
       const sentinel = await this.api.request('screen');
-      if (!this.#wanted) {
-        // Released while the request was in flight: give it straight back.
+      if (ticket !== this.#ticket || !this.#wanted) {
+        // Released, or held again, while the request was in flight: this one is nobody's.
+        console.debug('[LIVE-WAKE] a stale screen lock answered - given straight back');
         await sentinel.release();
         return;
       }
@@ -112,6 +120,7 @@ export class ScreenWakeLock {
   /** Lets the screen sleep again. */
   release(): void {
     this.#wanted = false;
+    ++this.#ticket;
     const sentinel = this.#sentinel;
     this.#sentinel = null;
     if (!sentinel || sentinel.released) return;

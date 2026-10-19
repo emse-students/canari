@@ -4008,6 +4008,7 @@
   "live_end_keep": "Continuer",
   "live_away_title": "Caméra en pause",
   "live_away_body": "Les spectateurs voient une coupure. La diffusion reprend dès que la caméra revient.",
+  "live_away_unsendable": "Ce que la caméra enregistre n'a pas pu être envoyé. Reprenez la caméra ; si cela recommence, terminez le live.",
   "live_away_retry": "Reprendre la caméra",
   "live_ending": "Fin du live…",
   "live_ended_title": "Live terminé",
@@ -4016,6 +4017,7 @@
   "live_ended_server_away": "Le live s'est arrêté pendant que la caméra était en pause.",
   "live_ended_failed": "Le live s'est arrêté : le serveur a refusé la suite de la diffusion.",
   "live_ended_connection_lost": "Le live s'est arrêté : la connexion a été perdue trop longtemps pour que la diffusion reprenne.",
+  "live_ended_upload_too_slow": "Le live s'est arrêté : la connexion envoie moins vite que la caméra n'enregistre, et les spectateurs avaient trop de retard.",
   "live_ending_leave": "Quitter sans attendre",
   "live_ending_waiting": "Envoi des dernières secondes… Vous pouvez quitter : le live s'arrêtera de lui-même."
 }

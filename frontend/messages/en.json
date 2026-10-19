@@ -4008,6 +4008,7 @@
   "live_end_keep": "Keep going",
   "live_away_title": "Camera paused",
   "live_away_body": "Viewers see a gap. The live resumes as soon as the camera is back.",
+  "live_away_unsendable": "What the camera records could not be sent. Resume the camera; if it happens again, end the live.",
   "live_away_retry": "Resume the camera",
   "live_ending": "Ending the live…",
   "live_ended_title": "Live ended",
@@ -4016,6 +4017,7 @@
   "live_ended_server_away": "The live stopped while the camera was paused.",
   "live_ended_failed": "The live stopped: the server refused the rest of the broadcast.",
   "live_ended_connection_lost": "The live stopped: the connection was lost for too long for the broadcast to resume.",
+  "live_ended_upload_too_slow": "The live stopped: the connection sends more slowly than the camera records, so viewers fell too far behind.",
   "live_ending_leave": "Leave now",
   "live_ending_waiting": "Sending the last seconds… You may leave: the live will stop by itself."
 }

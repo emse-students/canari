@@ -4,7 +4,7 @@
  * with their own init and a shifted media time, on the same index sequence.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { LiveSegmentPipeline, SUMMARY_EVERY } from './liveSegmentPipeline';
+import { LiveSegmentPipeline, MAX_CONSECUTIVE_DROPS, SUMMARY_EVERY } from './liveSegmentPipeline';
 import { fragment, initSegment, join, readTimes } from './fmp4.test-helper';
 
 /** A queue with the uploader's contract: one counter, any other index refused. */
@@ -135,6 +135,50 @@ describe('LiveSegmentPipeline', () => {
     expect(q.items).toHaveLength(1);
     expect(q.items[0].index).toBe(0);
     expect(p.stats.dropped).toBe(1);
+  });
+
+  it(`EVERY segment over the limit: after ${MAX_CONSECUTIVE_DROPS} in a row the generation breaks and the owner is told, once`, async () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const q = new FakeQueue();
+    const onBroken = vi.fn();
+    const p = pipeline(q, { maxSegmentBytes: initSegment().length + 4 + 200, onBroken });
+    const g = p.beginGeneration(0);
+    await p.push(g, initSegment());
+    for (let i = 0; i < MAX_CONSECUTIVE_DROPS + 2; i++) {
+      await p.push(g, fragment({ mediaBytes: 500 }));
+    }
+    expect(q.items).toEqual([]);
+    expect(onBroken).toHaveBeenCalledExactlyOnceWith(g);
+    expect(p.stats.dropped).toBe(MAX_CONSECUTIVE_DROPS);
+    expect(error).toHaveBeenCalledWith(expect.stringContaining('in a row could not be sent'));
+  });
+
+  it('a seal that keeps throwing breaks the generation the same way', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const q = new FakeQueue();
+    const onBroken = vi.fn();
+    const p = pipeline(q, { seal: () => Promise.reject(new Error('OperationError')), onBroken });
+    const g = p.beginGeneration(0);
+    await p.push(g, join(initSegment(), fragment(), fragment(), fragment(), fragment()));
+    expect(onBroken).toHaveBeenCalledExactlyOnceWith(g);
+    expect(p.stats.dropped).toBe(MAX_CONSECUTIVE_DROPS);
+  });
+
+  it('drops that are not in a row never break the generation: a queued segment resets the count', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const q = new FakeQueue();
+    const onBroken = vi.fn();
+    const p = pipeline(q, { maxSegmentBytes: initSegment().length + 4 + 200, onBroken });
+    const g = p.beginGeneration(0);
+    await p.push(g, initSegment());
+    for (let i = 0; i < 3; i++) {
+      for (let d = 0; d < MAX_CONSECUTIVE_DROPS - 1; d++) {
+        await p.push(g, fragment({ mediaBytes: 500 }));
+      }
+      await p.push(g, fragment({ mediaBytes: 10 }));
+    }
+    expect(onBroken).not.toHaveBeenCalled();
+    expect(q.items).toHaveLength(3);
   });
 
   it('an unparseable chunk breaks its generation loudly and TELLS the owner; the next generation goes on air', async () => {

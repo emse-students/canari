@@ -185,6 +185,7 @@
     'server-while-away': m.live_ended_server_away,
     failed: m.live_ended_failed,
     'connection-lost': m.live_ended_connection_lost,
+    'upload-too-slow': m.live_ended_upload_too_slow,
   };
 
   const CAMERA_FAULT_TEXT: Record<CameraFault, () => string> = {
@@ -398,6 +399,9 @@
       <CameraOff size={40} strokeWidth={1.5} class="text-white/70" />
       <h2 class="text-base font-bold">{m.live_away_title()}</h2>
       <p class="text-sm text-white/70">{m.live_away_body()}</p>
+      {#if broadcast.awayProblem === 'unsendable'}
+        <p class="text-sm text-white/70" data-live-away-problem>{m.live_away_unsendable()}</p>
+      {/if}
       {#if camera.phase === 'error' && camera.fault}
         <p class="text-sm text-white/70">{CAMERA_FAULT_TEXT[camera.fault]()}</p>
       {/if}

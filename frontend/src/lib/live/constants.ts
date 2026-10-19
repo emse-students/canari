@@ -81,9 +81,12 @@ export const LIVE_RECORDER_STOP_BOUND_MS = LIVE_SEGMENT_MS + 1_000;
 
 /**
  * Segments waiting for the server beyond the reconnect window's worth: the broadcaster gives up
- * there. Offline, the queue grows ~1 segment per {@link LIVE_SEGMENT_MS} (~230 MB in 10 min) and the
- * server ENDS a live absent for `reconnectWindowMs` anyway, so holding more than that window's
- * segments sends nothing anyone can watch. The margin absorbs a slow link's ordinary jitter.
+ * there, and the CAUSE is read from the last segment the server STORED, not from the count. Silent
+ * past `reconnectWindowMs` is a lost connection - the server ends a live absent that long anyway. Still
+ * storing is an uplink slower than real time: the queue grows by the difference (at 80 % of real time,
+ * past the cap in ~6 min), viewers fall further behind every minute, and memory grows ~23 MB a minute
+ * of backlog - so the live ends saying the upload is too slow, never that the connection was lost.
+ * The margin absorbs a slow link's ordinary jitter.
  */
 export const LIVE_BACKLOG_MARGIN_SEGMENTS = 5;
 

@@ -225,22 +225,75 @@ describe('LiveBroadcast - on air', () => {
     expect(deps.endLive).toHaveBeenCalledTimes(1);
   });
 
-  it("a backlog past the reconnect window's worth of segments ends the live as a lost connection, dropping the queue", async () => {
-    const { b, deps, uploaders, recorders } = await ready();
+  it('nothing stored for longer than the reconnect window ends the live as a lost connection, dropping the queue', async () => {
+    const { b, deps, uploaders, recorders, clock } = await ready();
     await b.start();
-    const cap =
-      Math.ceil(LIMITS.reconnectWindowMs / LIVE_SEGMENT_MS) + LIVE_BACKLOG_MARGIN_SEGMENTS;
     const u = uploaders[0];
-    u.backlog = cap;
+    u.backlog = 10;
+    clock.t += LIMITS.reconnectWindowMs;
     u.options.onRetry!(0, 9, new TransportFailureError(new TypeError('x')));
-    expect(b.phase).toBe('live');
-    u.backlog = cap + 1;
+    expect(b.phase).toBe('live'); // exactly the window: the server still holds the live
+    clock.t += 1;
     u.options.onRetry!(0, 10, new TransportFailureError(new TypeError('x')));
     expect(b.phase).toBe('ended');
     expect(b.endCause).toBe('connection-lost');
     expect(u.stop).toHaveBeenCalled();
     expect(recorders[0].stop).toHaveBeenCalled();
     expect(deps.endLive).toHaveBeenCalledWith(LIVE_ID);
+  });
+
+  it('a slow but ALIVE uplink (80 % of real time) is never called a lost connection: past the cap it ends as too slow', async () => {
+    const { b, uploaders, clock } = await ready();
+    await b.start();
+    const cap =
+      Math.ceil(LIMITS.reconnectWindowMs / LIVE_SEGMENT_MS) + LIVE_BACKLOG_MARGIN_SEGMENTS;
+    const u = uploaders[0];
+    // Every 2 s one segment is recorded; the server stores 4 in every 5 - the backlog grows by one
+    // every 5 segments, and a segment is STORED at least every 2.5 s throughout.
+    let stored = 0;
+    for (let s = 1; b.phase === 'live' && s < 10_000; s++) {
+      clock.t += LIVE_SEGMENT_MS;
+      if (s % 5 !== 0) {
+        u.options.onStored!({ index: stored, name: 'n', nextIndex: stored + 1 });
+        stored++;
+      }
+      u.backlog = s - stored;
+      u.options.onRetry!(stored, 1, new TransportFailureError(new TypeError('slow')));
+    }
+    expect(b.phase).toBe('ended');
+    expect(b.endCause).toBe('upload-too-slow');
+    expect(b.backlog).toBe(cap + 1);
+  });
+
+  it("a 410 heard while the End drains labels the end as the server's, not the member's", async () => {
+    const { b, uploaders } = await ready();
+    await b.start();
+    let drain!: () => void;
+    uploaders[0].idle.mockImplementation(() => new Promise<void>((r) => (drain = r)));
+    const ending = b.end();
+    await vi.waitFor(() => expect(uploaders[0].idle).toHaveBeenCalled());
+    uploaders[0].options.onStopped!(ended());
+    drain();
+    await ending;
+    expect(b.phase).toBe('ended');
+    expect(b.endCause).toBe('server');
+  });
+
+  it('a recorder whose fragments can never be sent (every one over the size limit) goes away with a reason, not a silent ON AIR', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { b, recorders, uploaders } = await ready();
+    b.limits = { ...LIMITS, segmentMaxBytes: initSegment().length + 4 + 200 };
+    await b.start();
+    await chunk(recorders[0], initSegment());
+    for (let i = 0; i < 5 && b.phase === 'live'; i++) {
+      await chunk(recorders[0], fragment({ mediaBytes: 500 }));
+    }
+    await vi.waitFor(() => expect(b.phase).toBe('away'));
+    expect(b.awayProblem).toBe('unsendable');
+    expect(uploaders[0].sent).toEqual([]);
+    await b.reacquire();
+    expect(b.phase).toBe('live');
+    expect(b.awayProblem).toBeNull();
   });
 
   it('a chunk the pipeline cannot read takes the screen off air (away, camera given back) instead of a silent ON AIR', async () => {
