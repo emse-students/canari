@@ -10,9 +10,9 @@
    * leaving the camera; a Back during the re-encode also stops it. Once the upload has begun nothing
    * is cancelled: the reel is being created, and the feed it lands on is where it appears.
    */
-  import { onDestroy, onMount } from 'svelte';
+  import { onDestroy, onMount, untrack } from 'svelte';
   import { fade } from 'svelte/transition';
-  import { ChevronLeft, CircleAlert } from '@lucide/svelte';
+  import { ChevronLeft, CircleAlert, Clock } from '@lucide/svelte';
   import { goto } from '$app/navigation';
   import PostIdentityPicker from '$lib/components/posts/PostIdentityPicker.svelte';
   import VideoPoster from '$lib/components/shared/VideoPoster.svelte';
@@ -37,6 +37,26 @@
   import { VideoPreparationState } from '$lib/video/videoPreparationState.svelte';
   import { m } from '$lib/paraglide/messages';
 
+  /**
+   * The step was reached from the new-post composer's camera (user, 2026-10-19: one camera, one
+   * behaviour). A member who opened "new post" may not expect a CanaReel, which is DELETED after its
+   * days - so the step says so before "Publier", starts from what the composer held, and offers the
+   * old outcome: the video handed back to the composer, kept as an ordinary post.
+   */
+  interface ReelPublishFromComposer {
+    /** The composer's text, the caption's start. */
+    caption: string;
+    /** The composer's "who is publishing" choice, the picker's start. */
+    identity: string;
+    /**
+     * "Garder comme post": the video goes back to the composer as an attachment, with the caption
+     * and identity as the step holds them NOW - an edit made here is the member's, not lost.
+     */
+    onkeep: (caption: string, identity: string) => void;
+    /** The reel was published, as `identity`: the composer closes behind it. */
+    onpublished: (identity: string) => void;
+  }
+
   interface Props {
     clip: ReelClip;
     limits: ReelLimits;
@@ -44,27 +64,60 @@
     onclose: () => void;
     /** Injectable for tests; the real services otherwise. */
     deps?: PublishReelDeps;
+    /** Set when the take was filmed from the new-post composer; absent on the CanaReels tab. */
+    composer?: ReelPublishFromComposer;
   }
 
-  let { clip, limits, onclose, deps }: Props = $props();
+  let { clip, limits, onclose, deps, composer }: Props = $props();
 
-  let caption = $state('');
-  let identity = $state('');
+  // Read once: the step starts from the composer and is the member's to change from there.
+  let caption = $state(untrack(() => composer?.caption ?? ''));
+  let identity = $state(untrack(() => composer?.identity ?? ''));
   let associations = $state<Association[]>([]);
   let publishing = $state(false);
   let stage = $state<PublishStage | null>(null);
   let errorMessage = $state('');
   /** The preview's first frame is decoded: Canari's poster gives way to it. */
   let previewReady = $state(false);
+  /** Where the focus goes when the step opens: the deletion notice first, else the title. */
+  let notice = $state<HTMLElement | null>(null);
+  let heading = $state<HTMLElement | null>(null);
   const preparation = new VideoPreparationState();
+
+  /**
+   * The publish can no longer be stopped, so nothing may close the step under it. A VIDEO is
+   * stoppable until its upload: the re-encode signal is armed when "Publier" is pressed, and an
+   * abort during the mute check or the token makes the re-encode refuse at its first line, so no
+   * post is created. A PHOTO has no signal at any stage (`publishCameraPhoto`), so from the press
+   * on it is past stopping (re-review of #2124: a Back in its first second gave a second post).
+   */
+  const uploading = $derived(
+    publishing &&
+      (clip.blob.type.startsWith('image/') || stage === 'mediaUpload' || stage === 'createPost')
+  );
 
   const overlay = bindHistoryOverlay(
     () => true,
-    () => {
+    (reason) => {
+      /*
+       * A PUBLISH PAST ITS UPLOAD KEEPS THE SHEET (review of #2124). Closing it used to hand the take
+       * back to its review while the upload went on, and "Suivant" then "Publier" published the same
+       * take a SECOND time. So a Back here is refused and the entry given back: the sheet - whose
+       * `publishing` disables "Publier" - stays up until the publish ends. Nothing else can unmount
+       * it from under a publish except leaving the screen, which takes the take with it.
+       */
+      if (uploading && reason === 'back') {
+        console.debug(
+          `[reel-publish] Back refused: the publish can no longer be stopped (${stage})`
+        );
+        overlay.clearRef();
+        overlay.syncOpen();
+        return;
+      }
       // Only a publish that has not reached the upload has anything to cancel. Cancelling after it
       // (the landing on the feed closes this sheet too) logged "cancelled by the member" for a reel
       // that had just been published (REEL-2 on the Mi 9T, 2026-10-02).
-      const cancellable = publishing && stage !== 'mediaUpload' && stage !== 'createPost';
+      const cancellable = publishing && !uploading;
       console.debug(
         `[reel-publish] the sheet was dismissed${cancellable ? ', publish cancelled' : ''}`
       );
@@ -83,6 +136,9 @@
 
   onMount(() => {
     overlay.syncOpen();
+    // THE FOCUS MOVES INTO THE STEP, so a screen reader starts here - from the composer, on the
+    // notice that the reel is deleted, before anything can be published.
+    (notice ?? heading)?.focus();
     void (async () => {
       try {
         associations = await listPostAsAssociations();
@@ -125,6 +181,11 @@
         );
       }
       showToast(m.reels_publish_done(), 'info');
+      if (composer) {
+        // Over the composer on the feed already: the composer closes, no navigation.
+        composer.onpublished(identity);
+        return;
+      }
       await goto(resolve('/posts'), { replaceState: true });
     } catch (err) {
       const cause = err instanceof ReelPublishError ? err.cause : err;
@@ -164,14 +225,29 @@
       class="ui-icon-button"
       aria-label={m.reels_publish_back()}
       title={m.reels_publish_back()}
+      disabled={uploading}
       onclick={() => overlay.dismissFromUi()}
     >
       <ChevronLeft size={24} strokeWidth={2.5} />
     </button>
-    <h1 class="text-base font-bold">{m.reels_publish_title()}</h1>
+    <h1 bind:this={heading} tabindex="-1" class="text-base font-bold outline-none">
+      {m.reels_publish_title()}
+    </h1>
   </header>
 
   <div class="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 pt-4 pb-3">
+    {#if composer}
+      <p
+        bind:this={notice}
+        role="note"
+        tabindex="-1"
+        class="bg-amber-warn/10 text-amber-warn mb-4 flex items-start gap-2 rounded-lg px-3 py-2.5 text-sm font-semibold outline-none"
+        data-reel-publish-composer-notice
+      >
+        <Clock size={16} strokeWidth={2.5} class="mt-0.5 shrink-0" />
+        <span>{m.reels_publish_from_composer_notice({ days: limits.retentionDays })}</span>
+      </p>
+    {/if}
     <PostIdentityPicker id="reel-identity-select" {associations} bind:value={identity} />
 
     <div class="mt-4 flex gap-3">
@@ -248,6 +324,20 @@
     <div class="flex items-center justify-end gap-3">
       {#if busyLabel}
         <span class="text-text-muted text-sm" aria-live="polite">{busyLabel}</span>
+      {:else if composer}
+        <Button
+          type="button"
+          variant="outline"
+          class="shrink-0 px-4 py-2 text-sm font-semibold"
+          disabled={publishing}
+          onclick={() => {
+            console.debug('[reel-publish] kept as a post: the video goes back to the composer');
+            composer.onkeep(caption, identity);
+          }}
+          data-reel-keep-as-post
+        >
+          {m.reels_publish_keep_as_post()}
+        </Button>
       {/if}
       <Button
         type="button"

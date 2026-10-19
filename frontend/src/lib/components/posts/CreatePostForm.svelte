@@ -25,6 +25,7 @@
     ANONYMOUS_POST_IDENTITY,
     buildCreateFormHref,
     clearPostComposerDraft,
+    composerAllowsReel,
     emptyPostComposerDraft,
     heldPostComposerMedia,
     holdPostComposerMedia,
@@ -40,7 +41,11 @@
     type Association,
     type AssociationCalendarEvent,
   } from '$lib/associations/api';
-  import { listPostAsAssociations, postIdentityFields } from '$lib/posts/postIdentity';
+  import {
+    isAssociationIdentity,
+    listPostAsAssociations,
+    postIdentityFields,
+  } from '$lib/posts/postIdentity';
   import Picker from '$lib/components/ui/Picker.svelte';
   import PostIdentityPicker from './PostIdentityPicker.svelte';
   import MarkdownComposerField from '$lib/components/shared/MarkdownComposerField.svelte';
@@ -229,21 +234,28 @@
     savePostComposerDraft(snapshotComposerDraft());
   }
 
+  /** Saves the composer as it is now, or forgets the draft when nothing in it is worth keeping. */
+  function saveOrClearComposerDraft(): boolean {
+    const snap = snapshotComposerDraft();
+    if (isPostComposerDraftWorthKeeping(withoutAbandonedAttachments(snap))) {
+      savePostComposerDraft(snap);
+      return true;
+    }
+    clearPostComposerDraft();
+    return false;
+  }
+
   /** Debounced draft save after any composer field changes. */
   $effect(() => {
     void snapshotComposerDraft();
     if (draftSaveTimer) clearTimeout(draftSaveTimer);
     let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
     draftSaveTimer = setTimeout(() => {
-      const snap = snapshotComposerDraft();
-      if (isPostComposerDraftWorthKeeping(withoutAbandonedAttachments(snap))) {
-        savePostComposerDraft(snap);
+      if (saveOrClearComposerDraft()) {
         draftSaved = true;
         feedbackTimer = setTimeout(() => {
           draftSaved = false;
         }, 1800);
-      } else {
-        clearPostComposerDraft();
       }
     }, 800);
     // Clear both timers on re-run or component destruction.
@@ -252,6 +264,53 @@
       if (feedbackTimer) clearTimeout(feedbackTimer);
     };
   });
+
+  /**
+   * A video filmed with this composer's camera was published as a CanaReel (one camera, one
+   * behaviour, user 2026-10-19). Its caption WAS this text, so the text goes - and the draft is
+   * saved now, not by the debounce the closing composer would cancel, or the next open would bring
+   * back a caption already published. Whatever else was here (media, poll, form) stays as the draft.
+   */
+  /**
+   * WHETHER A VIDEO FILMED HERE MAY BECOME A CANAREEL. A reel carries no schedule, poll, form or
+   * linked event (the server refuses each on a reel, `assertCreateKindShape`), so a composer the
+   * member has set one of them on keeps the camera's old outcome: the video is attached to THIS
+   * post, which can honour them (review of #2124). Read when the camera opens, as the chips stand.
+   */
+  const reelAllowed = $derived(
+    composerAllowsReel({
+      scheduledAt,
+      includePoll,
+      includeForm,
+      linkedCalendarEventId: selectedLinkedCalendarEventId,
+    })
+  );
+
+  /**
+   * "Garder comme post" from the reel publish step: the video comes back through `onFiles`, and
+   * what the member changed in that step comes with it. The caption REPLACES this text only when
+   * it differs from it (it started as this text, so an untouched caption changes nothing); the
+   * identity chosen there is the post's.
+   */
+  function onReelKept(caption: string, identity: string) {
+    if (caption !== markdown) {
+      Log.d(
+        'POST_COMPOSER',
+        'kept as a post: the caption edited in the reel step replaces the text'
+      );
+      markdown = caption;
+    }
+    selectedAssociationId = identity;
+  }
+
+  function onReelPublished(identity: string) {
+    Log.d('POST_COMPOSER', 'a reel filmed from this composer was published: its text is spent');
+    markdown = '';
+    saveOrClearComposerDraft();
+    onPostCreated(
+      landingFeedFor({ asAssociation: isAssociationIdentity(identity), scheduled: false })
+    );
+  }
 
   /*
    * THE ERROR BANNER USED TO ERASE ITSELF AFTER 5 SECONDS, AND THAT IS WHY A REPORT ARRIVED WITH
@@ -464,7 +523,7 @@
       stage = 'createPost';
       // Read BEFORE the reset below: the form forgets who it posted as.
       const landing = landingFeedFor({
-        asAssociation: !!selectedAssociationId,
+        asAssociation: isAssociationIdentity(selectedAssociationId),
         scheduled: !!scheduledAt,
       });
       await createPost(payload);
@@ -727,6 +786,14 @@
       status={draftSaved ? m.post_create_draft_saved_label() : ''}
       onLive={LIVE_ENABLED && !isAnonymousSelected && (!isAssociationSelected || liveAssociation)
         ? () => (liveOpen = true)
+        : undefined}
+      reel={reelAllowed
+        ? {
+            caption: markdown,
+            identity: selectedAssociationId,
+            onpublished: onReelPublished,
+            onkept: onReelKept,
+          }
         : undefined}
     >
       {#snippet action()}

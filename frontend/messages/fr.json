@@ -3507,6 +3507,8 @@
   "reels_publish_done": "CanaReel publié",
   "reels_publish_error": "Le CanaReel n'a pas pu être publié. Réessayez.",
   "reels_publish_expiry_note": "Visible {days} jours, puis supprimé automatiquement. Vous pourrez l'enregistrer dans votre galerie d'ici là.",
+  "reels_publish_from_composer_notice": "CanaReel : supprimé au bout de {days} jours. Pour garder la vidéo, gardez-la comme post.",
+  "reels_publish_keep_as_post": "Garder comme post",
   "reels_viewer_label": "CanaReels",
   "reels_viewer_close": "Fermer les CanaReels",
   "reels_viewer_prev": "CanaReel précédent",

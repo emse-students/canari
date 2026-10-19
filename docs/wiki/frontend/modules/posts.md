@@ -103,11 +103,17 @@ empty field, four unlabelled icons, and "Publier" ABOVE them. The measurement it
   file browser instead of the photo picker, so photos/videos and documents have one each.
   **There is NO capture input and no system camera (user, 2026-10-11, D-camera).** The ONE camera chip
   ("Ouvrir la camera", not drawn for a fine pointer) opens the in-app CanaReel camera as an overlay
-  (`CameraOverlay`, `ReelCapture` with `destination="post"`): a PHOTO or a VIDEO taken there comes
+  (`CameraOverlay`, `ReelCapture` with `destination="post"`): a PHOTO taken there comes
   back as a file through `onFiles` and is attached - and retained - as any picked post media, with
-  the POST class, never as a reel. The sound-removal button and the gallery shortcut of the reel flow
-  are not offered there. What differs from the swipe-to-camera tab, entry by entry, and the user's
-  open decision on it: [reels](reels.md#the-two-ways-into-the-camera-and-what-each-publishes-2026-10-19). **The post camera asks the lens and the microphone as TWO requests**
+  the POST class, never as a reel. **A VIDEO filmed there is a CanaReel since 2026-10-19** (user:
+  one camera, one behaviour): it goes to the reel publish step with the composer's text as caption,
+  that step says it is deleted after 30 days, and "Garder comme post" hands it back here as an
+  ordinary attachment, with the caption and identity as edited there. A new post with a schedule, a
+  poll, a form or a linked event keeps the old outcome (a reel carries none of them): its camera
+  attaches the video. A video picked from the gallery stays a post, and the post EDITOR's camera
+  (`destination="post-edit"`) attaches videos too - an existing post never becomes a reel
+  ([reels](reels.md#the-two-ways-into-the-camera-publish-the-same-thing-2026-10-19)). The
+  sound-removal button and the gallery shortcut of the reel flow are not offered there. **The post camera asks the lens and the microphone as TWO requests**
   (`postCameraOpener`, PR #1859 review 2026-10-15; one opener per camera session, which does not ask again after a refusal, so a lens flip asks nothing): one combined request made a refused microphone a
   refused camera, so a post took no photo either. A refused microphone leaves a live camera with no
   audio track: every press is a photo, said once ("Micro indisponible : photos uniquement"). A cap

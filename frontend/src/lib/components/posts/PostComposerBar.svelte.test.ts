@@ -136,20 +136,27 @@ it('keeps focus in the editor when a formatting button is pressed', () => {
   expect(down.defaultPrevented).toBe(true);
 });
 
-it('has ONE camera chip, a button opening the in-app overlay for a POST - never a capture input', () => {
-  const { target } = mountBar();
-  expect(target.querySelectorAll('input[capture]')).toHaveLength(0);
-  const chips = target.querySelectorAll<HTMLButtonElement>('button[data-post-camera]');
-  expect(chips).toHaveLength(1);
-  expect(chips[0].textContent?.trim()).toBe('Ouvrir la caméra');
+it.each([
+  ['the NEW-post composer (reel set): its filmed video may become a CanaReel', true, 'post'],
+  ['the post EDITOR (no reel): every take is attached', false, 'post-edit'],
+] as const)(
+  'has ONE camera chip, a button opening the in-app overlay - %s',
+  (_, isNew, destination) => {
+    const reel = { caption: '', identity: '', onpublished: vi.fn() };
+    const { target } = mountBar(isNew ? { reel } : {});
+    expect(target.querySelectorAll('input[capture]')).toHaveLength(0);
+    const chips = target.querySelectorAll<HTMLButtonElement>('button[data-post-camera]');
+    expect(chips).toHaveLength(1);
+    expect(chips[0].textContent?.trim()).toBe('Ouvrir la caméra');
 
-  chips[0].click();
-  flushSync();
+    chips[0].click();
+    flushSync();
 
-  expect(document.querySelector('[data-camera-overlay]')?.getAttribute('data-camera-overlay')).toBe(
-    'post'
-  );
-});
+    expect(
+      document.querySelector('[data-camera-overlay]')?.getAttribute('data-camera-overlay')
+    ).toBe(destination);
+  }
+);
 
 it('in the iOS app "Photo/video" is the native library: no input WebKit would answer with its camera', async () => {
   runtime.iosApp = true;
