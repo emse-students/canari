@@ -1208,6 +1208,14 @@ export class LivesService implements OnModuleDestroy {
   }
 
   /**
+   * The watch rule ({@link assertMayWatch}) for a caller outside this service - the live chat's
+   * writes (WP-L6), which are refused exactly as the key is. Throws the same typed refusals.
+   */
+  async mayWatch(viewerId: string, liveId: string): Promise<void> {
+    await this.assertMayWatch(this.db.manager, viewerId, liveId);
+  }
+
+  /**
    * Who may read a live's key and manifest:
    *
    * - absent, NOT VISIBLE to the viewer (the rule of a post by the same broadcaster or association,

@@ -1,17 +1,19 @@
-# Lives - the server half (WP-L2, WP-L3, WP-L4, WP-L7's push, WP-L8's moderation)
+# Lives - the server half (WP-L2, WP-L3, WP-L4, WP-L6, WP-L7's push, WP-L8's moderation)
 
 The server half of the live chantier planned on [live](../frontend/modules/live.md): the `lives` row
 and its key (WP-L2), the segment ingest, the manifest viewers poll and the deletion at the end
 (WP-L3), the segments served from Canari's nginx cache and the host's viewer cap (WP-L4, built
 2026-10-19), and the push to the broadcaster's followers when a live goes on air (WP-L7's server
-half, [below](#the-push-to-the-followers-wp-l7-server-half), 2026-10-19). The moderation of a live - a report, a staff
+half, [below](#the-push-to-the-followers-wp-l7-server-half), 2026-10-19), and the live chat and
+floating reactions ([WP-L6](#live-chat-and-floating-reactions-wp-l6), 2026-10-19, draft). The moderation of a live - a report, a staff
 cut, the first-live rules - is WP-L8's server half ([below](#moderation-wp-l8-server-half), 2026-10-19). WP-L2 and WP-L3 were built 2026-10-18 on the plan's RECOMMENDATIONS, which the user said to take ("take the
 decisions"): architecture **C** (segmented HTTP, no transcoding), key design **Q4**, durable end
 **Q5**, retention **Q10**. **No client calls any of it yet** (WP-L5), and **it is switched OFF on
 production** (below).
 
 Code: `apps/social-service/src/lives/` (row, key, manifest, ingest, sweep, `live-seats.ts`,
-`live-announcer.ts`), migrations `091_lives.sql`, `094_live_announced_at.sql` and `097_live_moderation.sql`,
+`live-announcer.ts`, `live-chat.service.ts`, `live-chat.controller.ts`), migrations `091_lives.sql`,
+`094_live_announced_at.sql`, `097_live_moderation.sql` and `098_live_chat.sql`,
 `apps/media-service/src/media/live-segments.service.ts` (the bytes), and the `live_segments` cache in
 `infrastructure/local/Dockerfile.frontend` (Canari's nginx).
 
@@ -556,7 +558,8 @@ is built in rather than added:
 (`erased`, unless already ended) and its broadcaster becomes `[deleted]` **in one statement**, so an
 open live never carries the tombstone and the one-open-live index never sees two; the sweep deletes
 its segments and row within one run. The account's place on another live's removed-viewer list is
-deleted, and so are its `live_starts` rows. The cuts OF its lives (`live_cuts`) and its first-live rules
+deleted, and so are its `live_starts` rows and its live chat messages and reaction bursts on any
+live (WP-L6, after `lives_broadcaster`: the lock order every chat write takes). The cuts OF its lives (`live_cuts`) and its first-live rules
 acceptance are deleted; a cut it MADE as a moderator is anonymised (the decision stays). Lock order:
 `lives` first, then `live_cuts`, the order a cut takes them. `broadcaster` and `viewer` were added to the shared account-column pattern
 (`libs/contracts/account-reference-columns.json`) so the coverage spec sees both columns. Register
@@ -596,6 +599,61 @@ and a link that reaches the hook lands on `/notifications` with the unknown-host
 `live/<id>` case reading the id once WP-L5's viewer page exists; the LIVE card at
 the top of the feed (L5) reading `GET /api/lives`; and the store builds carrying the new native
 strings (an installed build without them shows the server's French wording, with a warn).
+
+## Live chat and floating reactions (WP-L6)
+
+Wanted by the user on 2026-10-19 (D5 of the [plan](../frontend/modules/live.md#decisions-of-2026-10-19)):
+comments and floating reactions on a live, the chat **encrypted with the live key** (L4), **ephemeral**,
+moderated **like posts** (D6: the broadcaster hides a message and removes a viewer, staff may act).
+Designed and built 2026-10-19 by the lead on the user's instruction to take the decisions; each one
+below is reversible and names its reason.
+
+### The decisions
+
+| # | Question | Decision | Why |
+| --- | --- | --- | --- |
+| C1 | **Storage** | **PostgreSQL rows** (`live_chat_messages`, `live_reaction_bursts`, migration 098), with a FOREIGN KEY on the live that CASCADES - not a Redis ring buffer | Every rule a chat needs is already a row rule here: the order is the live's row lock (C4), idempotence is a unique index (C5), the rate is a COUNT of durable rows (C6), the account erasure is two SQL statements its coverage spec sees, and the retention is the live row's own deletion (C2). A Redis list would need its own erasure scan, its own idempotence keys and its own expiry - three mechanisms the row gets for free. Redis stays what it is here: the seat counter. |
+| C2 | **Retention** | **Erased with the live, at its end** - by the cascade when the live's row is deleted (at once at the broadcaster's end, or by the 30 s sweep). **No 24 h grace, no replay of the chat** | L3 (no replay): an ended live answers `410` to every read, so a kept message is one nobody can ever read again - except the server, which holds the live key. Keeping it would only serve a moderator reading a report after the end, and the report path (WP-L8) owns what it keeps. **The longest a message lives is the live (60 min at most) plus the purge** (seconds, or until the media store proves the segments gone - the row waits for that proof, lives.md "Deletion"). Database backups may hold the rows of a live that crossed a nightly dump (register C19). |
+| C3 | **Transport** | **The manifest poll the viewer already makes, once a second**: `GET /api/lives/:id/manifest?chat=1&messagesAfter=<seq>&reactionsAfter=<seq>` carries a `chat` block. **Not the WebSocket gateway, and not a second endpoint** | ONE request per viewer per tick, not two: 24 viewers are 24 requests a second either way, each with an `auth_request` sub-request, and a sibling route would double both. The gateway (chat-delivery) routes MLS frames to DEVICES of CONVERSATIONS; a live's audience is a visibility predicate in social-service (spaces, blocks, removals) the gateway knows nothing of, so a WebSocket fan-out would need a per-viewer filter in a second service, a resubscription on every reconnect, and a catch-up read on HTTP anyway for a late joiner. The picture is already 5-10 s behind (option C), so the 1 s poll adds at most a second to a chat that is ahead of the video. No timer is added: the cursor is a sequence number (C4), so a lost poll loses nothing. The nginx limits are untouched: `/api/lives` limits only `PUT` per address (`lives_ingest`), and `limit_conn ... 24` is the SEGMENT location's alone. |
+| C4 | **Order** | A **server sequence per live** - `lives."chatSeq"` for messages, `lives."reactionSeq"` for reaction bursts - incremented under the live's ROW LOCK in the same transaction that inserts the row | A `bigserial` would number rows in the order they START and commit them in any order, so a poller reading "after 10" while 10 is still uncommitted and 11 is visible would skip 10 for ever. Under the row lock, a sequence number is allocated and committed in one order, so any snapshot sees a gapless PREFIX and the cursor "the highest seq I was given" can never skip a row. The lock is the one every other write of a live takes (lives.md "The end is the row's state"), so a post also serialises against the end and a removal (C9). |
+| C5 | **Idempotence** | The client's `clientId` (a uuid) is unique per `(live, author)`; a repeat with the same sealed bytes answers the stored message, other bytes are `409 LIVE_MESSAGE_CONFLICT`. A reaction burst carries a `burstId`, unique the same way | Durable state, never a clock (CLAUDE.md). A lost answer retried is the same row, not a second message. |
+| C6 | **Rate limits, per account per live** | **3 messages per rolling 5 s**; **2 reaction bursts and 10 taps per rolling 2 s** - counted from the rows themselves under the row lock (the database clock), `429 LIVE_MESSAGE_TOO_FAST` / `429 LIVE_REACTION_TOO_FAST` | A count held in durable state, as the segment rate is. 10 taps per 2 s is 5 a second, faster than a thumb sustains; the client sends at most one burst per poll tick (1 s), so two per window leaves room for jitter. |
+| C7 | **Reactions are aggregated by the SERVER** | A tap is never an event: the client sums its taps and sends ONE burst `{ burstId, counts: { like: 3 } }` per tick at most; the poll answers `reactions: [{ window, counts }]`, the sums of every burst since the cursor **per 2 s window** (`window` = the burst's age into the live in 2 s steps), minus the viewer's own bursts (already drawn by its own client) and minus bursts of accounts blocked either way | One aggregate per window per poll, whatever the audience: 24 viewers tapping produce one small object a second, never 24 x taps events. |
+| C8 | **The five reaction kinds** | `like` ❤️, `love` 😍, `laugh` 😂, `happy` 😊, `canari` 🐤 - five of the post reaction set (`frontend/src/lib/posts/reactions.ts`), drawn with the Noto SVG pictures every emoji uses ([emoji](../frontend/emoji.md)) | The post set's own pictures and labels; ASCII wire names (a new wire, so no accented key). Sad and angry are left out of a floating stream on purpose. Server: `LIVE_REACTION_KINDS`. |
+| C9 | **Who may post** | Exactly who may WATCH (`assertMayWatch`: the rule of a post, not blocked with the broadcaster, not removed, the live open), **and not muted** (`403 LIVE_MUTED`, the account-level mute of [moderation](../moderation-and-blocking.md), the same code as a muted start). The ended and removed checks are **repeated under the row lock**, so a removal or an end that commits first is never overtaken by a message. **No seat is needed**: a seat is bandwidth, and a message costs none of it | "A banned or removed viewer cannot post" (user): banned is the account mute, removed is the broadcaster's per-live list. |
+| C10 | **Blocks between viewers** | A viewer never receives the messages, or the reaction taps, of an account blocked either way (`blockedUserIdsFor`, filtered per poll) | As the feed hides a blocked author. |
+| C11 | **Content** | **Plain text only**, at most **300 characters** (UTF-16 units, the client's to enforce before sealing - the server sees ciphertext). The server bounds the SEALED size: 29 to 928 bytes (12 IV + at most 900 UTF-8 bytes + 16 tag). **No link is rendered** (a URL stays text), **no mention in v1**, no media | The server cannot read a message, so length and shape are the client's; the byte bound is what the server CAN hold. A rendered link or a mention would need the server to resolve something it cannot read. |
+| C12 | **Encryption** | The message is sealed with the LIVE KEY (AES-256-GCM, fresh 12-byte IV): `iv + ciphertext + tag`, AAD `canari-live-chat-v1` `0x00` + the live id (16 raw bytes) + the `clientId` (16 raw bytes) + the author's account id (UTF-8). Built in `frontend/src/lib/live/liveChatCrypto.ts` (client PR), **owed the same adversarial crypto review as the segment seal** | The AAD binds a message to its live, its author and its idempotence key: a server (or a store) that served one author's ciphertext under another's name, or replayed it on another live, makes it FAIL to open, and the client drops it. Like the segments, this protects against the store and the database's readers, **not against social-service**, which serves the key. Reactions are NOT sealed: the server must add them up (C7), and a kind and a count say nothing a picture on the screen does not. |
+| C13 | **A late joiner** | The first poll without `messagesAfter` answers the **newest 50 messages** (hidden ones and blocked authors left out) and the cursors to continue from; **no reaction backlog** (`reactionsAfter` absent: the cursor only) | A reaction is a moment; a joiner sees the stream from now. |
+| C14 | **Hiding a message** | `POST /api/lives/:id/messages/:messageId/hide`, by the **broadcaster or staff** (global admin). It ERASES the ciphertext (`sealed = NULL`, `hiddenAt` set) and gives the row a NEW sequence number, so every viewer's next poll carries a tombstone `{ id, seq, hidden: true }` and removes the line it drew. Idempotent; `404 LIVE_MESSAGE_NOT_FOUND` for a message not on that live; a caller who is neither is `404 LIVE_NOT_FOUND` (no oracle, as every write) | D6. Erasing rather than flagging: nobody may read it again, so nothing keeps it. Re-sequencing is what makes the cursor carry a hide without a second channel. **Removing a viewer and reporting are WP-L8's** (its own pull request), not duplicated here. |
+| C15 | **The live ends** | Every chat route answers what the live's other routes answer: `410 LIVE_ENDED`; the rows go with the live (C2) | One end, the row's (Q5). |
+| C16 | **Push** | **None.** A live message notifies nobody | A live chat is read while watching; a push per message to 24 viewers is noise (CLAUDE.md). |
+
+### The contract
+
+| Route | Who | Answers |
+| --- | --- | --- |
+| `GET /api/lives/:id/manifest?chat=1[&messagesAfter=<seq>][&reactionsAfter=<seq>]` | who may watch | the manifest plus `chat: { messages, messagesCursor, reactions, reactionsCursor }`. `messages`: ascending `seq`, at most 100 after the cursor (or the newest 50 without one), each `{ id, seq, authorId, clientId, sealed (base64), createdAt }` or a tombstone `{ id, seq, hidden: true }`. `reactions`: `[{ window, counts: { like?, love?, laugh?, happy?, canari? } }]`. Pass each cursor back as is. Without `chat=1`, the manifest is unchanged |
+| `POST /api/lives/:id/messages` `{ clientId, sealed }` | who may watch, not muted | `201` the message. `400 LIVE_MESSAGE_INVALID` (not a uuid / not base64 / out of 29..928 bytes), `403 LIVE_MUTED`, `409 LIVE_MESSAGE_CONFLICT`, `429 LIVE_MESSAGE_TOO_FAST` (with `retryAfterMs`), and the watch refusals (`404`, `403 LIVE_VIEWER_REMOVED`, `410`) |
+| `POST /api/lives/:id/reactions` `{ burstId, counts }` | who may watch, not muted | `201 { burstId, seq }`. `400 LIVE_REACTION_INVALID` (an unknown kind, a count not 1..10, an empty burst), `403 LIVE_MUTED`, `409 LIVE_REACTION_CONFLICT`, `429 LIVE_REACTION_TOO_FAST`, the watch refusals |
+| `POST /api/lives/:id/messages/:messageId/hide` | the broadcaster, or staff | `200 { liveId, messageId, hidden: true }`, idempotent; `404 LIVE_MESSAGE_NOT_FOUND`, `404 LIVE_NOT_FOUND`, `410 LIVE_ENDED` |
+
+The numbers (`chatMessageMaxChars`, `chatSealedMaxBytes`, the two rates, `chatBacklog`,
+`reactionKinds`, `reactionWindowMs`) are in `GET /api/lives/limits`, from `live.constants.ts`.
+
+### The row lock, extended
+
+A message, a reaction burst and a hide take the live's row lock (`SELECT ... FOR UPDATE`) FIRST,
+like the ingest's two steps, the end and a removal; none of them calls another service inside the
+transaction. **The lock is now taken by every chat write**, so an ingest may wait behind a few of
+them: each is a few statements with no network in between, bounded by the rates of C6 (24 viewers at
+full rate are about 40 short transactions a second on one row, at the worst). Measured: nothing yet -
+the first dev reading with several viewers is owed (below).
+
+The account erasure deletes the account's messages and bursts AFTER `lives_broadcaster` (the
+lives-then-rows order every chat write takes), so an erasure and a message on the account's own live
+wait for each other rather than deadlock. A message whose transaction commits after the erasure's
+DELETE was not visible to it and survives - until its live ends, at most an hour later (C2).
 
 ## The migration: `091_lives.sql`
 
@@ -638,6 +696,11 @@ and #1940 is renumbering into the space below it (2026-10-19).
   Garage listing (the delimiter listing is exercised on a fake bucket).
 - **The ingest semaphore is per instance.** social-service runs one replica (two for a moment during
   a rolling deploy); a second permanent replica would double the bound.
+- **The live chat (WP-L6)** is proven on a real PostgreSQL (`lives.integration.spec.ts`: fifteen
+  writers racing a poller - every seq once, gapless; a removal and an end committed past the watch
+  check refused under the lock; a hide reaching a cursor as a tombstone; the purge taking every row;
+  the erasure) and nothing else: **not through nginx, not with a real client, not under an ingest
+  sharing the row lock** - the first reading is several dev viewers chatting during a live.
 - The 60 s window, the 4 MiB bound, the 30 s seat lease, the 2.5 Mb/s budget and its 1.5 margin, and the one-second
   segment floor are planning figures until WP-L1 measures segment sizes and reconnect times.
 

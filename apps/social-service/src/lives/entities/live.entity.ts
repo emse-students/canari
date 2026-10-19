@@ -30,6 +30,7 @@ export const LIVES_ONE_OPEN_PER_BROADCASTER = 'lives_one_open_per_broadcaster';
 )
 @Check('lives_next_index', `"nextIndex" >= 0`)
 @Check('lives_stored_bytes', `"storedBytes" >= 0`)
+@Check('lives_chat_seq', `"chatSeq" >= 0 AND "reactionSeq" >= 0`)
 @Check(
   'lives_pending_whole',
   `("pendingName" IS NULL) = ("pendingSha256" IS NULL) AND ("pendingName" IS NULL) = ("pendingAt" IS NULL)`
@@ -92,4 +93,16 @@ export class Live {
    */
   @Column({ type: 'timestamptz', nullable: true })
   announcedAt: Date | null;
+
+  /**
+   * The last sequence number given to a chat message, or to a hide (WP-L6, migration 098). Taken
+   * under this row's lock in the transaction that writes the message, so numbers commit in their
+   * own order and a viewer's cursor never skips one (lives.md, C4).
+   */
+  @Column({ type: 'integer', default: 0 })
+  chatSeq: number;
+
+  /** The same for reaction bursts (C4, C7). */
+  @Column({ type: 'integer', default: 0 })
+  reactionSeq: number;
 }

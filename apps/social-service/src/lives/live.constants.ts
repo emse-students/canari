@@ -165,6 +165,64 @@ export const LIVE_CUT_RETENTION_MS = 365 * 24 * 60 * 60_000;
  * it. Raise it when the rules' TEXT changes, so every member accepts the new text once.
  */
 export const LIVE_RULES_VERSION = 1;
+/**
+ * THE LONGEST CHAT MESSAGE, in UTF-16 code units of plain text (WP-L6, C11). The server never sees
+ * the text - it is sealed with the live key - so this is the CLIENT's bound, published here so an
+ * installed build reads it rather than carries it; the server bounds the sealed size below.
+ */
+export const LIVE_CHAT_MESSAGE_MAX_CHARS = 300;
+
+/** The AES-GCM overhead of a sealed message: a 12-byte IV and a 16-byte tag (C12). */
+export const LIVE_CHAT_SEAL_OVERHEAD_BYTES = 12 + 16;
+
+/**
+ * The largest sealed message the server stores: the overhead plus 300 UTF-16 units at most 3 UTF-8
+ * bytes each (a pair of units is a 4-byte character, under 6), so 928 bytes.
+ */
+export const LIVE_CHAT_SEALED_MAX_BYTES =
+  LIVE_CHAT_SEAL_OVERHEAD_BYTES + 3 * LIVE_CHAT_MESSAGE_MAX_CHARS;
+
+/** The smallest: the overhead and one byte of text - an empty message is not a message. */
+export const LIVE_CHAT_SEALED_MIN_BYTES = LIVE_CHAT_SEAL_OVERHEAD_BYTES + 1;
+
+/**
+ * How many messages one account may post on one live in {@link LIVE_CHAT_RATE_WINDOW_MS} (C6),
+ * counted from its rows under the live's row lock, by the database clock. 429 `LIVE_MESSAGE_TOO_FAST`.
+ */
+export const LIVE_CHAT_MESSAGES_PER_WINDOW = 3;
+
+/** The rolling window of {@link LIVE_CHAT_MESSAGES_PER_WINDOW}. */
+export const LIVE_CHAT_RATE_WINDOW_MS = 5_000;
+
+/** What a viewer's FIRST poll (no `messagesAfter`) receives: the newest messages, at most this many (C13). */
+export const LIVE_CHAT_BACKLOG = 50;
+
+/** The most messages one poll answers after its cursor; the rest come with the next poll. */
+export const LIVE_CHAT_PAGE = 100;
+
+/**
+ * THE FIVE FLOATING REACTIONS (C8), five of the post reaction set (frontend `posts/reactions.ts`):
+ * ❤️ like, 😍 love, 😂 laugh, 😊 happy, 🐤 canari. ASCII wire names; the client draws the Noto picture.
+ */
+export const LIVE_REACTION_KINDS = ['like', 'love', 'laugh', 'happy', 'canari'] as const;
+
+/** One of {@link LIVE_REACTION_KINDS}. */
+export type LiveReactionKind = (typeof LIVE_REACTION_KINDS)[number];
+
+/**
+ * The step reactions are summed over (C7): a burst falls in window floor(age / 2 s) of its live, and
+ * the poll answers one sum per kind per window. Also the rolling window of the two rates below.
+ */
+export const LIVE_REACTION_WINDOW_MS = 2_000;
+
+/** How many bursts one account may send per {@link LIVE_REACTION_WINDOW_MS} (C6). */
+export const LIVE_REACTION_BURSTS_PER_WINDOW = 2;
+
+/** How many taps one account may make per {@link LIVE_REACTION_WINDOW_MS}: five a second (C6). */
+export const LIVE_REACTION_TAPS_PER_WINDOW = 10;
+
+/** The most bursts one poll sums after its cursor; the rest come with the next poll. */
+export const LIVE_REACTION_PAGE = 500;
 
 /** The numbers as the API serves them. */
 export function liveLimits(): {
@@ -179,6 +237,15 @@ export function liveLimits(): {
   viewerCap: number;
   seatLeaseMs: number;
   rulesVersion: number;
+  chatMessageMaxChars: number;
+  chatSealedMaxBytes: number;
+  chatMessagesPerWindow: number;
+  chatRateWindowMs: number;
+  chatBacklog: number;
+  reactionKinds: readonly LiveReactionKind[];
+  reactionWindowMs: number;
+  reactionBurstsPerWindow: number;
+  reactionTapsPerWindow: number;
 } {
   return {
     segmentMaxBytes: LIVE_SEGMENT_MAX_BYTES,
@@ -192,5 +259,14 @@ export function liveLimits(): {
     viewerCap: LIVE_VIEWER_CAP,
     seatLeaseMs: LIVE_SEAT_LEASE_MS,
     rulesVersion: LIVE_RULES_VERSION,
+    chatMessageMaxChars: LIVE_CHAT_MESSAGE_MAX_CHARS,
+    chatSealedMaxBytes: LIVE_CHAT_SEALED_MAX_BYTES,
+    chatMessagesPerWindow: LIVE_CHAT_MESSAGES_PER_WINDOW,
+    chatRateWindowMs: LIVE_CHAT_RATE_WINDOW_MS,
+    chatBacklog: LIVE_CHAT_BACKLOG,
+    reactionKinds: LIVE_REACTION_KINDS,
+    reactionWindowMs: LIVE_REACTION_WINDOW_MS,
+    reactionBurstsPerWindow: LIVE_REACTION_BURSTS_PER_WINDOW,
+    reactionTapsPerWindow: LIVE_REACTION_TAPS_PER_WINDOW,
   };
 }

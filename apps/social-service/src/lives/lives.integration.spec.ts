@@ -28,6 +28,7 @@ import { DataSource } from 'typeorm';
 import { HttpStatus, ServiceUnavailableException } from '@nestjs/common';
 import { LIVE_ENTITIES } from './lives.module';
 import { LivesService } from './lives.service';
+import { LiveChatService } from './live-chat.service';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
 import { LiveAnnouncer, liveAudienceSql } from './live-announcer';
 import { seatMember, type LiveSeats } from './live-seats';
@@ -63,6 +64,7 @@ const MODERATION = readFileSync(
   join(__dirname, '..', 'migrations', '097_live_moderation.sql'),
   'utf8'
 );
+const CHAT = readFileSync(join(__dirname, '..', 'migrations', '098_live_chat.sql'), 'utf8');
 
 const ALICE = 'a'.repeat(64);
 const BOB = 'b'.repeat(64);
@@ -191,7 +193,7 @@ async function refusal(p: Promise<unknown>): Promise<{ status: number; code?: st
   throw new Error('expected a refusal, got an answer');
 }
 
-maybe('lives against PostgreSQL (migration 091)', () => {
+maybe('lives against PostgreSQL (migrations 091, 094, 098)', () => {
   const schema = `lives_it_${Math.random().toString(36).slice(2, 10)}`;
   let admin: Client;
   let ds: DataSource;
@@ -284,6 +286,8 @@ maybe('lives against PostgreSQL (migration 091)', () => {
     await q(ANNOUNCED_AT);
     await q(MODERATION);
     await q(MODERATION);
+    await q(CHAT);
+    await q(CHAT);
     process.env.LIVE_ENABLED = 'true';
   });
 
@@ -1669,6 +1673,319 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       expect((await refusal(lives.cut(MOD, first.id, { reason: 'spam' }))).code).toBe(
         'LIVE_NOT_FOUND'
       );
+    });
+  });
+
+  describe('the live chat and floating reactions (WP-L6, migration 098)', () => {
+    let chat: LiveChatService;
+    beforeEach(() => {
+      chat = new LiveChatService(ds, {
+        isUserMuted: async (userId: string) => muted.has(userId),
+      } as unknown as ModerationService);
+    });
+
+    /** A sealed message as the server sees it: opaque bytes, base64 - the text never reaches it. */
+    const sealed = (text: string) =>
+      Buffer.from(`iv+ciphertext+tag of ${text}`.padEnd(40)).toString('base64');
+    let n = 0;
+    const uuid = () => `00000000-0000-4000-8000-${String(++n).padStart(12, '0')}`;
+    /** As the controller does it: the watch rule, then the chat. */
+    const say = async (who: string, liveId: string, text: string, clientId = uuid()) => {
+      await lives.mayWatch(who, liveId);
+      return chat.post(who, liveId, { clientId, sealed: sealed(text) });
+    };
+    const tap = async (
+      who: string,
+      liveId: string,
+      counts: Record<string, number>,
+      burstId = uuid()
+    ) => {
+      await lives.mayWatch(who, liveId);
+      return chat.react(who, liveId, { burstId, counts });
+    };
+    /** Moves an author's rows back by SQL, relative to the database clock: no wall clock asserted. */
+    const age = (table: string, column: string, who: string, ms: number) =>
+      q(
+        `UPDATE ${table} SET "createdAt" = "createdAt" - $2 * interval '1 millisecond' WHERE "${column}" = $1`,
+        [who, ms]
+      );
+
+    it('orders messages by a server sequence, and a cursor continues exactly where it stopped', async () => {
+      const live = await start();
+      const first = await say(BOB, live.id, 'hello');
+      expect(first).toMatchObject({ seq: 1, authorId: BOB, sealed: sealed('hello') });
+
+      const joiner = await chat.read(CAROL, live.id, {});
+      expect(joiner.messages.map((m) => m.seq)).toEqual([1]);
+      expect(joiner.messagesCursor).toBe(1);
+
+      await say(CAROL, live.id, 'hi');
+      await say(ALICE, live.id, 'welcome');
+      const next = await chat.read(BOB, live.id, { messagesAfter: 1, reactionsAfter: 0 });
+      expect(next.messages.map((m) => m.seq)).toEqual([2, 3]);
+      expect(next.messagesCursor).toBe(3);
+      const idle = await chat.read(BOB, live.id, { messagesAfter: 3, reactionsAfter: 0 });
+      expect(idle).toEqual({ messages: [], messagesCursor: 3, reactions: [], reactionsCursor: 0 });
+    });
+
+    it('NEVER SKIPS A MESSAGE under concurrent writers: seqs are gapless, and a poller reading meanwhile sees each once', async () => {
+      const live = await start();
+      const authors = [ALICE, BOB, CAROL, DAVE, EVE];
+      const seen = new Map<string, number>();
+      let cursor = 0;
+      let writing = true;
+      const poller = (async () => {
+        // Polls as fast as the database answers while the writers race; then once more after.
+        for (;;) {
+          const done = !writing;
+          const block = await chat.read(CAROL, live.id, {
+            messagesAfter: cursor,
+            reactionsAfter: 0,
+          });
+          for (const m of block.messages) seen.set(m.id, (seen.get(m.id) ?? 0) + 1);
+          cursor = block.messagesCursor;
+          if (done) return;
+        }
+      })();
+      const posted = await Promise.all(
+        authors.flatMap((who) => [0, 1, 2].map((i) => say(who, live.id, `${who.slice(0, 1)}${i}`)))
+      );
+      writing = false;
+      await poller;
+      expect(posted.map((m) => m.seq).sort((a, b) => a - b)).toEqual(
+        Array.from({ length: 15 }, (_, i) => i + 1)
+      );
+      // CAROL's own three are in her stream too (the client dedupes by clientId); each exactly once.
+      expect(seen.size).toBe(15);
+      expect([...seen.values()].every((count) => count === 1)).toBe(true);
+    });
+
+    it('answers a repeat with the stored message, and refuses other bytes under the same clientId', async () => {
+      const live = await start();
+      const id = uuid();
+      const once = await say(BOB, live.id, 'same', id);
+      await expect(say(BOB, live.id, 'same', id)).resolves.toEqual(once);
+      expect(await refusal(say(BOB, live.id, 'different', id))).toEqual({
+        status: HttpStatus.CONFLICT,
+        code: 'LIVE_MESSAGE_CONFLICT',
+      });
+      // The same clientId from ANOTHER author is another message.
+      await expect(say(CAROL, live.id, 'same', id)).resolves.toMatchObject({ seq: 2 });
+    });
+
+    it('holds 3 messages per 5 s per account, counted from its rows', async () => {
+      const live = await start();
+      for (const i of [1, 2, 3]) await say(BOB, live.id, `m${i}`);
+      const refused = await refusal(say(BOB, live.id, 'm4'));
+      expect(refused).toEqual({
+        status: HttpStatus.TOO_MANY_REQUESTS,
+        code: 'LIVE_MESSAGE_TOO_FAST',
+      });
+      // Another account is not slowed by BOB, and a repeat of one of BOB's is not a new message.
+      await expect(say(CAROL, live.id, 'c1')).resolves.toBeDefined();
+      await age('live_chat_messages', 'authorId', BOB, 5_001);
+      await expect(say(BOB, live.id, 'm4')).resolves.toMatchObject({ seq: 5 });
+    });
+
+    it('refuses a muted account, and a REMOVED viewer even past the watch check (the lock re-asks)', async () => {
+      const live = await start();
+      muted.add(BOB);
+      expect((await refusal(say(BOB, live.id, 'x'))).code).toBe('LIVE_MUTED');
+      expect((await refusal(tap(BOB, live.id, { like: 1 }))).code).toBe('LIVE_MUTED');
+      muted.clear();
+
+      await lives.mayWatch(CAROL, live.id);
+      await lives.removeViewer(ALICE, live.id, CAROL);
+      // The removal committed between the watch check and the write: the row lock sees it.
+      expect(
+        await refusal(chat.post(CAROL, live.id, { clientId: uuid(), sealed: sealed('late') }))
+      ).toEqual({
+        status: HttpStatus.FORBIDDEN,
+        code: 'LIVE_VIEWER_REMOVED',
+      });
+      expect(
+        (await refusal(chat.react(CAROL, live.id, { burstId: uuid(), counts: { like: 1 } }))).code
+      ).toBe('LIVE_VIEWER_REMOVED');
+      expect((await refusal(say(CAROL, live.id, 'x'))).code).toBe('LIVE_VIEWER_REMOVED');
+      // An outsider (no shared space) and a blocked viewer are the 404 of a live that does not exist.
+      expect((await refusal(say(FRANK, live.id, 'x'))).code).toBe('LIVE_NOT_FOUND');
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [ALICE, DAVE]);
+      expect((await refusal(say(DAVE, live.id, 'x'))).code).toBe('LIVE_NOT_FOUND');
+    });
+
+    it('ENDS WITH THE LIVE: 410 to a message after the end, and every row gone with the purge', async () => {
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await say(BOB, live.id, 'bye');
+      await tap(BOB, live.id, { like: 2 });
+      await q(`UPDATE lives SET "endedAt" = now(), "endReason" = 'dropped' WHERE id = $1`, [
+        live.id,
+      ]);
+      // Past the watch check: the lock refuses an end that committed first.
+      expect(
+        await refusal(chat.post(BOB, live.id, { clientId: uuid(), sealed: sealed('x') }))
+      ).toEqual({
+        status: HttpStatus.GONE,
+        code: 'LIVE_ENDED',
+      });
+      expect((await refusal(say(BOB, live.id, 'x'))).code).toBe('LIVE_ENDED');
+      expect(await sweeper.sweepOnce()).toMatchObject({ deleted: 1 });
+      expect(await q(`SELECT 1 FROM live_chat_messages WHERE "liveId" = $1`, [live.id])).toEqual(
+        []
+      );
+      expect(await q(`SELECT 1 FROM live_reaction_bursts WHERE "liveId" = $1`, [live.id])).toEqual(
+        []
+      );
+    });
+
+    it('HIDES a message: the ciphertext erased, a tombstone in the next poll, nothing for a late joiner', async () => {
+      const live = await start();
+      const bad = await say(BOB, live.id, 'insult');
+      await say(CAROL, live.id, 'fine');
+      const before = await chat.read(DAVE, live.id, {});
+      expect(before.messagesCursor).toBe(2);
+
+      // Neither the broadcaster nor staff: the 404 of a live that does not exist.
+      expect(await refusal(chat.hide(CAROL, false, live.id, bad.id))).toEqual({
+        status: HttpStatus.NOT_FOUND,
+        code: 'LIVE_NOT_FOUND',
+      });
+      await expect(chat.hide(ALICE, false, live.id, bad.id)).resolves.toEqual({
+        liveId: live.id,
+        messageId: bad.id,
+        hidden: true,
+      });
+      // Idempotent, and staff may too.
+      await chat.hide(EVE, true, live.id, bad.id);
+      expect((await refusal(chat.hide(ALICE, false, live.id, uuid()))).code).toBe(
+        'LIVE_MESSAGE_NOT_FOUND'
+      );
+
+      const [row] = await q(
+        `SELECT sealed, "hiddenAt", seq FROM live_chat_messages WHERE id = $1`,
+        [bad.id]
+      );
+      expect(row.sealed).toBeNull();
+      expect(row.hiddenAt).not.toBeNull();
+      expect(row.seq).toBe(3);
+
+      const after = await chat.read(DAVE, live.id, {
+        messagesAfter: before.messagesCursor,
+        reactionsAfter: 0,
+      });
+      expect(after.messages).toEqual([{ id: bad.id, seq: 3, hidden: true }]);
+      const joiner = await chat.read(EVE, live.id, {});
+      expect(joiner.messages.map((m) => m.id)).not.toContain(bad.id);
+      expect(joiner.messagesCursor).toBe(3);
+      // The author's retry of a hidden message answers its tombstone, never a resurrection.
+      await expect(
+        chat.post(BOB, live.id, {
+          clientId: (bad as { clientId: string }).clientId,
+          sealed: sealed('insult'),
+        })
+      ).resolves.toEqual({ id: bad.id, seq: 3, hidden: true });
+    });
+
+    it('hides a message ON ITS LIVE only, and never after the end', async () => {
+      const live = await start();
+      const other = await start(CAROL);
+      const onOther = await say(BOB, other.id, 'x');
+      expect((await refusal(chat.hide(ALICE, false, live.id, onOther.id))).code).toBe(
+        'LIVE_MESSAGE_NOT_FOUND'
+      );
+      await q(`UPDATE lives SET "endedAt" = now(), "endReason" = 'dropped' WHERE id = $1`, [
+        other.id,
+      ]);
+      expect((await refusal(chat.hide(CAROL, false, other.id, onOther.id))).code).toBe(
+        'LIVE_ENDED'
+      );
+    });
+
+    it('filters a BLOCKED account, either way, out of my messages and my reaction sums', async () => {
+      const live = await start();
+      await say(BOB, live.id, 'from bob');
+      await say(DAVE, live.id, 'from dave');
+      const before = await chat.read(CAROL, live.id, { reactionsAfter: 0 });
+      await tap(BOB, live.id, { like: 3 });
+      await tap(DAVE, live.id, { like: 1 });
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [BOB, CAROL]);
+      const block = await chat.read(CAROL, live.id, { reactionsAfter: before.reactionsCursor });
+      expect(block.messages.map((m) => (m as { authorId: string }).authorId)).toEqual([DAVE]);
+      expect(block.messagesCursor).toBe(2);
+      expect(block.reactions).toEqual([{ window: expect.any(Number), counts: { like: 1 } }]);
+      expect(block.reactionsCursor).toBe(2);
+    });
+
+    it('serves a late joiner the newest 50 messages and the cursor, and no reaction backlog', async () => {
+      const live = await start();
+      await q(
+        `INSERT INTO live_chat_messages ("liveId", seq, "authorId", "clientId", sealed)
+         SELECT $1, s, $2, gen_random_uuid(), decode(repeat('00', 40), 'hex')
+           FROM generate_series(1, 60) s`,
+        [live.id, BOB]
+      );
+      await q(`UPDATE lives SET "chatSeq" = 60 WHERE id = $1`, [live.id]);
+      await tap(BOB, live.id, { canari: 4 });
+      const joiner = await chat.read(CAROL, live.id, {});
+      expect(joiner.messages.map((m) => m.seq)).toEqual(
+        Array.from({ length: 50 }, (_, i) => i + 11)
+      );
+      expect(joiner.messagesCursor).toBe(60);
+      expect(joiner.reactions).toEqual([]);
+      expect(joiner.reactionsCursor).toBe(1);
+    });
+
+    it('AGGREGATES taps per 2 s window, leaves out my own, and holds 2 bursts / 10 taps per window', async () => {
+      const live = await start();
+      await tap(BOB, live.id, { like: 2, love: 1 });
+      await tap(CAROL, live.id, { like: 5 });
+      await tap(DAVE, live.id, { canari: 1 });
+      const sums = await chat.read(DAVE, live.id, { messagesAfter: 0, reactionsAfter: 0 });
+      // One window (the live is seconds old), DAVE's own canari left out.
+      expect(sums.reactions).toEqual([{ window: 0, counts: { like: 7, love: 1 } }]);
+      expect(sums.reactionsCursor).toBe(3);
+
+      // BOB: a second burst fits, a third in the same 2 s does not; nor do taps past ten.
+      await tap(BOB, live.id, { laugh: 1 });
+      expect(await refusal(tap(BOB, live.id, { laugh: 1 }))).toEqual({
+        status: HttpStatus.TOO_MANY_REQUESTS,
+        code: 'LIVE_REACTION_TOO_FAST',
+      });
+      expect((await refusal(tap(CAROL, live.id, { like: 6 }))).code).toBe('LIVE_REACTION_TOO_FAST');
+      await age('live_reaction_bursts', 'userId', BOB, 2_001);
+      await expect(tap(BOB, live.id, { laugh: 1 })).resolves.toMatchObject({ seq: 5 });
+    });
+
+    it('answers a repeated burst with its seq, and refuses other counts under the same burstId', async () => {
+      const live = await start();
+      const id = uuid();
+      const first = await tap(BOB, live.id, { like: 2, happy: 1 }, id);
+      await expect(tap(BOB, live.id, { happy: 1, like: 2 }, id)).resolves.toEqual(first);
+      expect((await refusal(tap(BOB, live.id, { like: 3 }, id))).code).toBe(
+        'LIVE_REACTION_CONFLICT'
+      );
+    });
+
+    it("an account erasure deletes the account's messages and bursts on every live", async () => {
+      const live = await start();
+      await say(BOB, live.id, 'mine');
+      await tap(BOB, live.id, { like: 1 });
+      await say(CAROL, live.id, 'hers');
+      await ds.transaction((m) =>
+        runErasureStatements(
+          {
+            write: async (sql, params) => ((await m.query(sql, params)) as [unknown, number])[1],
+            read: async <T>(sql: string, params: unknown[]) => (await m.query(sql, params)) as T[],
+          },
+          LIVES_ERASURE_STATEMENTS,
+          BOB
+        )
+      );
+      expect(await q(`SELECT 1 FROM live_chat_messages WHERE "authorId" = $1`, [BOB])).toEqual([]);
+      expect(await q(`SELECT 1 FROM live_reaction_bursts WHERE "userId" = $1`, [BOB])).toEqual([]);
+      expect(
+        await q(`SELECT 1 FROM live_chat_messages WHERE "authorId" = $1`, [CAROL])
+      ).toHaveLength(1);
     });
   });
 });

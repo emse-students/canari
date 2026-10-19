@@ -210,6 +210,12 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'live_cuts.broadcasterId': { action: 'delete' },
   'live_cuts.reviewerId': { action: 'anonymise' },
   'live_rules_acceptances.userId': { action: 'delete' },
+  // The live chat (WP-L6): the account's messages and reaction taps go; a count map holds no id.
+  'live_chat_messages.authorId': { action: 'delete' },
+  'live_reaction_bursts.userId': { action: 'delete' },
+  'live_reaction_bursts.counts': NO_ACCOUNT(
+    'a reaction kind to tap count map (like, love, ...), never an id'
+  ),
 
   // -- Not an account reference, despite the name ----------------------------------------------
   'associations.contactEmail': {
@@ -319,6 +325,7 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
  *
  * LOCK ORDER: `lives` first, then `live_cuts` - the order a staff cut takes them (the live's row
  * lock, then the cut's insert) - so an erasure racing a cut waits or is waited for, never deadlocks.
+ * - Its live chat messages and reaction bursts, on any live, are deleted (WP-L6, migration 098).
  *
  * Exported apart so `lives.integration.spec.ts` runs exactly these against the schema 091 builds.
  */
@@ -350,6 +357,16 @@ export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'live_rules_acceptances',
     sql: `DELETE FROM live_rules_acceptances WHERE "userId" = $1`,
+  },
+  // AFTER lives_broadcaster: a chat write takes the live's row lock, then writes its row, so the
+  // erasure takes them in the same order and the two wait for each other rather than deadlock.
+  {
+    label: 'live_chat_messages',
+    sql: `DELETE FROM live_chat_messages WHERE "authorId" = $1`,
+  },
+  {
+    label: 'live_reaction_bursts',
+    sql: `DELETE FROM live_reaction_bursts WHERE "userId" = $1`,
   },
 ];
 
