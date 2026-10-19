@@ -107,11 +107,12 @@ export const CALL_SIGNALLING_RESUME_MAX_DELAY_MS = 4_000;
 export const CALL_SIGNALLING_RESUME_TIMEOUT_MS = 5_000;
 
 /**
- * How many ICE restarts the initiator makes for ONE loss of the media path (the count resets the
- * moment ICE connects again, and whenever the signalling pair breaks or re-forms - an offer sent
- * to a pair that then broke proves nothing about ICE). Each one after the first is triggered by
- * ICE reporting `failed`, which the browser's ICE agent always reaches - so the budget ends on
- * events, not on a clock.
+ * How many ICE restarts the initiator makes for ONE loss of the media path, ACROSS signalling
+ * pairings (the count resets only when ICE connects again, or the peer connection is rebuilt). An
+ * offer that went into a dead socket costs one: that is the price of a bound a flapping peer cannot
+ * escape, now that the keepalive can break a pairing every 20-30 s. Each restart after the first is
+ * triggered by ICE reporting `failed` or by a re-formed pairing finding the path still down - events,
+ * not a clock.
  */
 export const CALL_ICE_RESTART_ATTEMPTS = 3;
 
@@ -164,6 +165,25 @@ export type SignalFrame =
   | { type: 'Refused'; reason: string }
   | { type: 'Offer' | 'Answer'; sdp: string }
   | { type: 'IceCandidate'; candidate: string };
+
+/**
+ * A session description as it travels inside an `Offer`/`Answer` frame's `sdp` string. `seq` is
+ * the offer's IDENTITY: the offerer numbers each offer it sends, the answerer echoes the number of
+ * the offer it answers, so an answer is matched to ITS offer and never to a later one (an answer to
+ * an offer rolled back after its socket died would otherwise pair with the restart offer that
+ * replaced it). It lives inside the string the relay already forwards verbatim, so `call-service`
+ * is unchanged; a client older than it sends no `seq` and its answers are matched by signaling
+ * state alone, as before.
+ */
+export type WireDescription = RTCSessionDescriptionInit & { seq?: number };
+
+/** Serialises a local description for the relay, carrying the offer number it is or answers. */
+export function wireDescription(
+  desc: RTCSessionDescriptionInit | null,
+  seq: number | undefined
+): string {
+  return JSON.stringify({ type: desc?.type, sdp: desc?.sdp, seq });
+}
 
 /**
  * Manages 1:1 calls: MLS signalling for ring/answer/hangup, a PEER-TO-PEER media path negotiated
@@ -222,6 +242,17 @@ export class CallService {
   private restartRequestEpoch: number | null = null;
   /** Inbound audio packets when the pair broke, compared once it re-forms. */
   private packetsAtLoss: Promise<number | null> | null = null;
+  /** The number of the last offer this side sent (see {@link WireDescription}). */
+  private localOfferSeq = 0;
+  /** The number of this side's offer awaiting its answer; `null` when none is. */
+  private pendingOfferSeq: number | null = null;
+  /**
+   * EVERY negotiation step runs here, one at a time, in order: the relay's frames AND this side's
+   * own offers (`negotiationneeded`, an ICE restart). An offer made beside the frame chain could be
+   * rolled back or replaced while an answer frame was half applied - the race the async fake of
+   * `CallService.p2p.test.ts` reproduces.
+   */
+  private signalQueue: Promise<void> = Promise.resolve();
   private localStream: MediaStream | null = null;
   private encryptionWorker: Worker | null = null;
   private workerKeyReady: Promise<void> | null = null;
@@ -674,6 +705,9 @@ export class CallService {
     this.restartOfferEpoch = null;
     this.restartRequestEpoch = null;
     this.packetsAtLoss = null;
+    this.localOfferSeq = 0;
+    this.pendingOfferSeq = null;
+    this.signalQueue = Promise.resolve();
     this.reconnecting.set(false);
     this.removeBackgroundHandler();
     this.syncCallPresence(false);
@@ -901,18 +935,32 @@ export class CallService {
    * that collides with our own is dropped by the impolite side and wins on the polite side, where
    * `setRemoteDescription` rolls our offer back implicitly. Every applied offer is answered.
    */
-  private async handleRemoteDescription(sdp: RTCSessionDescriptionInit): Promise<void> {
+  private async handleRemoteDescription(sdp: WireDescription): Promise<void> {
     const pc = this.pc;
     if (!pc) {
       appendLog(`[Call] remote ${sdp.type} with no peer connection - dropped`);
       return;
     }
-    if (sdp.type === 'answer' && pc.signalingState !== 'have-local-offer') {
-      // The answer to an offer this side rolled back for a newer restart: nothing to apply it to.
-      appendLog(
-        `[Call] answer with no offer of ours pending (signaling=${pc.signalingState}) - dropped`
-      );
-      return;
+    if (sdp.type === 'answer') {
+      if (pc.signalingState !== 'have-local-offer') {
+        // The answer to an offer this side rolled back for a newer restart: nothing to apply it to.
+        appendLog(
+          `[Call] answer to offer #${sdp.seq ?? '?'} with no offer of ours pending (signaling=${pc.signalingState}) - dropped`
+        );
+        return;
+      }
+      if (sdp.seq !== undefined && sdp.seq !== this.pendingOfferSeq) {
+        // An answer to an EARLIER offer (one rolled back after its socket died), arriving while a
+        // newer one is pending: applied, it would pair the new offer with a stale answer.
+        appendLog(
+          `[Call] answer to offer #${sdp.seq} while offer #${this.pendingOfferSeq ?? '?'} is pending - stale, dropped`
+        );
+        return;
+      }
+      if (sdp.seq === undefined) {
+        // A client older than the offer numbering: matched by signaling state alone, as before.
+        appendLog('[Call] unnumbered answer (older client) - applied to the pending offer');
+      }
     }
     const collision = sdp.type === 'offer' && (this.makingOffer || pc.signalingState !== 'stable');
     this.ignoreOffer = !this.polite && collision;
@@ -920,15 +968,22 @@ export class CallService {
       appendLog('[Call] offer collision - the impolite side keeps its own offer');
       return;
     }
-    await pc.setRemoteDescription(sdp);
+    await pc.setRemoteDescription({ type: sdp.type, sdp: sdp.sdp });
     await this.flushPendingRemoteIceCandidates();
-    if (sdp.type === 'answer') this.restartOfferEpoch = null;
+    if (sdp.type === 'answer') {
+      this.pendingOfferSeq = null;
+      this.restartOfferEpoch = null;
+    }
     if (sdp.type === 'offer') {
-      // The initiator's offer is what a restart request asked for.
+      // The initiator's offer is what a restart request asked for; an offer of ours it collided
+      // with on this (polite) side was rolled back by `setRemoteDescription`.
       this.restartRequestEpoch = null;
+      this.pendingOfferSeq = null;
       await pc.setLocalDescription();
-      appendLog(`[Call] answer (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`);
-      this.sendSignal({ type: 'Answer', sdp: JSON.stringify(pc.localDescription) });
+      appendLog(
+        `[Call] answer to offer #${sdp.seq ?? '?'} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`
+      );
+      this.sendSignal({ type: 'Answer', sdp: wireDescription(pc.localDescription, sdp.seq) });
     }
     await configureCallAudioSenders(pc, this.callHasVideo);
   }
@@ -1029,9 +1084,6 @@ export class CallService {
       // The relay seated us on THIS socket. Only a socket that was joined can be LOST: one that
       // failed before its `Joined` has already rejected, and its close is not a second event.
       let joined = false;
-      // Frames are handled ONE AT A TIME, in arrival order: building the peer connection on
-      // `PeerReady` awaits the E2E worker, and the initiator's Offer can arrive meanwhile.
-      let chain: Promise<void> = Promise.resolve();
 
       const fail = (err: unknown) => {
         if (settled) return;
@@ -1125,14 +1177,23 @@ export class CallService {
           }
           return;
         }
-        chain = chain
-          .then(() => this.handleSignalFrame(frame))
-          .catch((err) => {
-            appendLog(`[Call] signalling ${frame.type} failed: ${String(err)}`);
-            this.failCall(`signalling ${frame.type} failed`);
-          });
+        void this.serialized(`signalling ${frame.type}`, () => this.handleSignalFrame(frame));
       };
     });
+  }
+
+  /**
+   * Appends one negotiation step to {@link signalQueue}. A step that throws is a negotiation this
+   * side could not complete: named, and the call ends (an unanswerable offer leaves nothing to
+   * wait for). Returns the step's own completion, which the caller may await.
+   */
+  private serialized(label: string, step: () => Promise<void>): Promise<void> {
+    const run = this.signalQueue.then(step).catch((err: unknown) => {
+      appendLog(`[Call] ${label} failed: ${String(err)}`);
+      this.failCall(`${label} failed`);
+    });
+    this.signalQueue = run;
+    return run;
   }
 
   /** Acts on one frame from the relay, after the room is joined. */
@@ -1160,7 +1221,7 @@ export class CallService {
         return;
       case 'Offer':
       case 'Answer': {
-        const sdp = JSON.parse(frame.sdp) as RTCSessionDescriptionInit;
+        const sdp = JSON.parse(frame.sdp) as WireDescription;
         appendLog(`[Call] peer -> ${frame.type} (signaling=${this.pc?.signalingState ?? 'none'})`);
         await this.handleRemoteDescription(sdp);
         return;
@@ -1187,7 +1248,6 @@ export class CallService {
     this.peerAway = false;
     this.clearRingTimer();
     this.pairEpoch += 1;
-    this.iceRestarts = 0;
     appendLog(
       `[Call] peer ready - this side is ${initiator ? 'initiator' : 'polite'}${resumed ? ' (resumed)' : ''} (pairing ${this.pairEpoch})`
     );
@@ -1205,9 +1265,11 @@ export class CallService {
       this.makingOffer = false;
       this.ignoreOffer = false;
       this.mediaEverConnected = false;
+      this.iceRestarts = 0;
       this.restartOfferEpoch = null;
       this.restartRequestEpoch = null;
       this.packetsAtLoss = null;
+      this.pendingOfferSeq = null;
     }
     await this.initPeerConnection();
     this.updateReconnecting();
@@ -1302,10 +1364,13 @@ export class CallService {
    * have gone into the dead socket - and snapshots the inbound packet count, the evidence
    * {@link restartIfMediaDidNotSurvive} compares once the pair re-forms. The FIRST break of an
    * outage keeps its snapshot: a second one inside the same outage measures nothing new.
+   *
+   * The restart BUDGET is NOT reset here: it counts per media loss, across pairings. An offer sent
+   * into a dead socket costs one restart, and since the keepalive can break a pairing every 20-30 s,
+   * a reset per pairing would let a flapping peer restart for ever.
    */
   private onPairBroken(why: string): void {
     this.pairEpoch += 1;
-    this.iceRestarts = 0;
     if (this.pc && !this.packetsAtLoss) this.packetsAtLoss = inboundAudioPackets(this.pc);
     appendLog(`[Call] signalling pair broken (${why}) - pairing ${this.pairEpoch}`);
   }
@@ -1397,41 +1462,68 @@ export class CallService {
       this.sendSignal({ type: 'IceRestartRequest' });
       return;
     }
-    void this.sendIceRestartOffer(`${reason}, ice=${ice}`);
+    this.enqueueIceRestartOffer(`${reason}, ice=${ice}`);
+  }
+
+  /**
+   * Decides an initiator restart NOW (the pairing's in-flight mark is set at once, so a second
+   * trigger in the same tick adds none) and runs it on {@link signalQueue}, after whatever frame is
+   * being applied - never beside it.
+   */
+  private enqueueIceRestartOffer(why: string): void {
+    const epoch = this.pairEpoch;
+    this.restartOfferEpoch = epoch;
+    appendLog(`[Call] ICE restart ${this.iceRestarts}/${CALL_ICE_RESTART_ATTEMPTS} (${why})`);
+    void this.serialized('ICE restart offer', () => this.sendIceRestartOffer(epoch));
   }
 
   /**
    * The initiator's restart: an EXPLICIT `createOffer({ iceRestart: true })`, sent at once, after
    * rolling back any offer still pending (its answer died with a socket - see
    * {@link restartIfMediaDidNotSurvive}). Not `pc.restartIce()`: that only flags the next
-   * negotiation, and a connection stuck in `have-local-offer` never starts one.
+   * negotiation, and a connection stuck in `have-local-offer` never starts one. Runs on the queue
+   * only.
+   *
+   * An engine that cannot CREATE the offer ends the call, named: nothing this side does next would
+   * differ (same connection, same state), so a retry would only repeat the refusal.
    */
-  private async sendIceRestartOffer(why: string): Promise<void> {
+  private async sendIceRestartOffer(epoch: number): Promise<void> {
     const pc = this.pc;
     if (!pc) return;
-    const epoch = this.pairEpoch;
-    this.restartOfferEpoch = epoch;
-    appendLog(
-      `[Call] ICE restart ${this.iceRestarts}/${CALL_ICE_RESTART_ATTEMPTS} (${why}, signaling=${pc.signalingState})`
-    );
+    if (epoch !== this.pairEpoch) {
+      // The pair broke again before this step ran: the next `PeerReady` decides afresh.
+      appendLog(`[Call] ICE restart of pairing ${epoch} dropped - pairing ${this.pairEpoch} now`);
+      return;
+    }
     this.makingOffer = true;
     try {
       if (pc.signalingState === 'have-local-offer') {
-        appendLog('[Call] rolling back an unanswered offer - its answer can no longer come');
+        appendLog(
+          `[Call] rolling back unanswered offer #${this.pendingOfferSeq ?? '?'} - its answer can no longer come`
+        );
         await pc.setLocalDescription({ type: 'rollback' });
+        this.pendingOfferSeq = null;
       }
       await pc.setLocalDescription(await pc.createOffer({ iceRestart: true }));
       if (this.pc !== pc) return;
+      const seq = this.nextOfferSeq();
       appendLog(
-        `[Call] ICE restart offer (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`
+        `[Call] ICE restart offer #${seq} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`
       );
-      this.sendSignal({ type: 'Offer', sdp: JSON.stringify(pc.localDescription) });
+      this.sendSignal({ type: 'Offer', sdp: wireDescription(pc.localDescription, seq) });
     } catch (e) {
-      appendLog(`[Call] ICE restart offer failed: ${String(e)}`);
-      if (this.restartOfferEpoch === epoch) this.restartOfferEpoch = null;
+      if (this.pc !== pc) return;
+      this.failCall(`ICE restart offer could not be made: ${String(e)}`);
     } finally {
       this.makingOffer = false;
     }
+  }
+
+  /** Numbers the offer this side is about to send, and marks it as the one awaiting an answer. */
+  private nextOfferSeq(): number {
+    this.localOfferSeq += 1;
+    this.pendingOfferSeq = this.localOfferSeq;
+    return this.localOfferSeq;
   }
 
   /**
@@ -1455,7 +1547,7 @@ export class CallService {
       return;
     }
     this.iceRestarts += 1;
-    void this.sendIceRestartOffer('requested by the other party');
+    this.enqueueIceRestartOffer('requested by the other party');
   }
 
   /**
@@ -1587,21 +1679,34 @@ export class CallService {
       }
     };
 
-    pc.onnegotiationneeded = async () => {
-      // The polite side never opens the negotiation: it answers the initiator's first offer,
-      // which already carries a slot for its tracks. After that, either side may renegotiate.
-      if (this.polite && !pc.remoteDescription) return;
-      try {
-        this.makingOffer = true;
-        await pc.setLocalDescription();
-        appendLog(`[Call] offer (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`);
-        this.sendSignal({ type: 'Offer', sdp: JSON.stringify(pc.localDescription) });
-      } catch (e) {
-        appendLog(`[Call] creating an offer failed: ${String(e)}`);
-      } finally {
-        this.makingOffer = false;
-      }
-    };
+    // On the negotiation queue like every other step, so an offer is never made while a frame
+    // is half applied.
+    pc.onnegotiationneeded = () =>
+      this.serialized('offer', async () => {
+        // The polite side never opens the negotiation: it answers the initiator's first offer,
+        // which already carries a slot for its tracks. After that, either side may renegotiate.
+        if (this.pc !== pc || (this.polite && !pc.remoteDescription)) return;
+        if (pc.signalingState !== 'stable') {
+          // A step queued before this one (an ICE restart offer) already opened a negotiation.
+          appendLog(
+            `[Call] negotiationneeded in signaling=${pc.signalingState} - already offering`
+          );
+          return;
+        }
+        try {
+          this.makingOffer = true;
+          await pc.setLocalDescription();
+          const seq = this.nextOfferSeq();
+          appendLog(
+            `[Call] offer #${seq} (${pc.localDescription?.sdp?.length ?? 0} bytes) -> peer`
+          );
+          this.sendSignal({ type: 'Offer', sdp: wireDescription(pc.localDescription, seq) });
+        } catch (e) {
+          appendLog(`[Call] creating an offer failed: ${String(e)}`);
+        } finally {
+          this.makingOffer = false;
+        }
+      });
 
     pc.onicegatheringstatechange = () => {
       appendLog(`[Call] iceGatheringState=${pc.iceGatheringState}`);

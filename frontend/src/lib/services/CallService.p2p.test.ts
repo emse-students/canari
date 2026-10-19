@@ -194,7 +194,20 @@ class FakePeerConnection {
   rollbacks = 0;
   /** Inbound audio RTP packets the stats report; `null` = no inbound stream yet. */
   inboundPackets: number | null = null;
+  /**
+   * Microtask turns each description operation takes before it completes. 0 = at once; above it,
+   * an operation started beside another one INTERLEAVES with it, as the browser's can - the only
+   * way a race between the frame chain and an offer made outside it shows up here.
+   */
+  latency = 0;
+  /** When set, `createOffer` refuses with it (an engine that cannot make the offer). */
+  offerError: Error | null = null;
+  private async lag() {
+    for (let i = 0; i < this.latency; i++) await Promise.resolve();
+  }
   async createOffer(options?: RTCOfferOptions) {
+    await this.lag();
+    if (this.offerError) throw this.offerError;
     if (options?.iceRestart) this.restarts += 1;
     return { type: 'offer' as const, sdp: `v=0 offer${options?.iceRestart ? ' ice-restart' : ''}` };
   }
@@ -232,6 +245,7 @@ class FakePeerConnection {
     return this.senders.map((sender, i) => ({ sender, receiver: this.receivers[i] }));
   }
   async setLocalDescription(desc?: RTCSessionDescriptionInit) {
+    await this.lag();
     if (desc?.type === 'rollback') {
       if (this.signalingState !== 'have-local-offer')
         throw new Error('InvalidStateError: rollback');
@@ -250,6 +264,7 @@ class FakePeerConnection {
     this.signalingState = type === 'offer' ? 'have-local-offer' : 'stable';
   }
   async setRemoteDescription(sdp: RTCSessionDescriptionInit) {
+    await this.lag();
     // As the browser: an answer applies only to an offer of ours that is pending.
     if (sdp.type === 'answer' && this.signalingState !== 'have-local-offer') {
       throw new Error(`InvalidStateError: answer in ${this.signalingState}`);
@@ -1373,6 +1388,111 @@ describe('a network blip does not end the call', () => {
       await settle();
       expect(get(service.callState)).toBe('ended');
       expect(get(service.reconnecting)).toBe(false);
+    });
+
+    /** The number the latest offer this side sent carries. */
+    const lastOfferSeq = (ws: FakeSocket) =>
+      (JSON.parse(ws.framesOfType('Offer').at(-1)!.sdp as string) as { seq: number }).seq;
+    /** The peer's answer to offer `seq`, numbered as a current client numbers it. */
+    const answerTo = (seq: number) => ({
+      type: 'Answer',
+      sdp: JSON.stringify({ type: 'answer', sdp: `v=0 answer #${seq}`, seq }),
+    });
+
+    it('with every description operation ASYNCHRONOUS, a late answer to the rolled-back offer never fails the call nor pairs with its replacement, whenever it lands', async () => {
+      // The answer to the offer that went into the dead socket is delivered at EVERY point of the
+      // resume: before, during and after the rollback and the new offer. Only the queue and the
+      // offer number keep it from an InvalidStateError or from being applied to the new offer.
+      for (let turns = 0; turns <= 24; turns += 2) {
+        FakeSocket.instances = [];
+        FakePeerConnection.instances = [];
+        const service = new CallService(fakeMls);
+        const { ws, pc } = await connectedCaller(service);
+        await ice(pc, 'disconnected');
+        const lost = lastOfferSeq(ws);
+        // Longer than the queue's hand-off between two steps, so a step run BESIDE the queue
+        // overlaps the rollback (measured: at 3 turns a bypass of the queue went unnoticed; at 8,
+        // turning `enqueueIceRestartOffer` into a direct call fails this test, as does removing
+        // the offer-number check).
+        pc.latency = 8;
+
+        ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+        for (let i = 0; i < turns; i++) await Promise.resolve();
+        ws.deliver(answerTo(lost));
+        await settle();
+
+        expect(get(service.callState), `turns=${turns}`).toBe('incall');
+        const latest = lastOfferSeq(ws);
+        expect(latest, `turns=${turns}`).toBeGreaterThan(lost);
+        expect(pc.signalingState, `turns=${turns}`).toBe('have-local-offer');
+        ws.deliver(answerTo(latest));
+        await settle();
+        expect(pc.signalingState, `turns=${turns}`).toBe('stable');
+        expect(pc.remoteDescription?.sdp, `turns=${turns}`).toBe(`v=0 answer #${latest}`);
+        service.endCall();
+      }
+    });
+
+    it('an answer to an earlier offer is dropped while a later one is pending', async () => {
+      const service = new CallService(fakeMls);
+      const { ws, pc } = await connectedCaller(service);
+      await ice(pc, 'disconnected');
+      const lost = lastOfferSeq(ws);
+      ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+      await settle();
+      expect(pc.rollbacks).toBe(1);
+
+      ws.deliver(answerTo(lost));
+      await settle();
+      expect(pc.signalingState).toBe('have-local-offer');
+      expect(get(service.callState)).toBe('incall');
+    });
+
+    it('the polite side answers with the number of the offer it answers', async () => {
+      const service = new CallService(fakeMls);
+      const { ws } = await connectedCallee(service);
+      ws.deliver({
+        type: 'Offer',
+        sdp: JSON.stringify({ type: 'offer', sdp: 'v=0 ice-restart', seq: 7 }),
+      });
+      await settle();
+      const answer = JSON.parse(ws.framesOfType('Answer').at(-1)!.sdp as string);
+      expect(answer).toMatchObject({ type: 'answer', seq: 7 });
+    });
+
+    it('an engine that cannot CREATE the restart offer ends the call, and says why', async () => {
+      const { appendLog } = await import('$lib/utils/sessionLog');
+      const service = new CallService(fakeMls);
+      const { pc } = await connectedCaller(service);
+      pc.offerError = new Error('OperationError: refused');
+
+      await ice(pc, 'disconnected');
+
+      expect(get(service.callState)).toBe('ended');
+      expect(vi.mocked(appendLog).mock.calls.map(([l]) => l)).toContain(
+        '[Call] terminal failure: ICE restart offer could not be made: Error: OperationError: refused - ending call'
+      );
+    });
+
+    it('a peer that keeps dropping its signalling cannot restart for ever: the budget counts per media loss, across pairings', async () => {
+      const service = new CallService(fakeMls);
+      const { ws, pc } = await connectedCaller(service);
+
+      await ice(pc, 'failed');
+      expect(pc.restarts).toBe(1);
+      for (let flap = 2; flap <= CALL_ICE_RESTART_ATTEMPTS; flap++) {
+        ws.deliver({ type: 'PeerAway' });
+        ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+        await settle();
+        expect(pc.restarts).toBe(flap);
+        expect(get(service.callState)).toBe('incall');
+      }
+      // The path never came back across three pairings: the next one ends the call.
+      ws.deliver({ type: 'PeerAway' });
+      ws.deliver({ type: 'PeerReady', initiator: true, resumed: true });
+      await settle();
+      expect(pc.restarts).toBe(CALL_ICE_RESTART_ATTEMPTS);
+      expect(get(service.callState)).toBe('ended');
     });
   });
 });

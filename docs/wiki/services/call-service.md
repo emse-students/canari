@@ -129,10 +129,22 @@ peer connection** - nothing in this mode touches webrtc-rs, TURN or a port - and
     ever came - measured on the bench, the seat was never marked away, the partner's ICE restart
     offer was relayed into the dead socket, and after a 90 s outage the partner sat on
     "Reconnexion..." for good. Now a Ping goes out every 10 s (`CALL_KEEPALIVE_MS`) and ANY frame
-    from the peer (its browser answers every Ping with a Pong from the network stack) resets the
-    count; two pings in a row unanswered (`MISSED_PONGS_LIMIT`) end the socket `keepalive-lost`,
-    at most 30 s after the peer's last frame. A COUNT of ticks, so the partner of a device that
-    never returns is told `PeerAway` within 30 s and `PeerLeft` within ~90 s.
+    from the peer (a running browser answers every Ping with a Pong from its network stack) resets
+    the count; two pings in a row unanswered (`MISSED_PONGS_LIMIT`) end the socket
+    `keepalive-lost`, at most 30 s after the peer's last frame. A COUNT of ticks, so the partner of
+    a device that never returns is told `PeerAway` within 30 s and `PeerLeft` within ~90 s. The
+    loop's `select!` is `biased` with the socket read FIRST and the outbound queue (`Shutdown`)
+    before the tick, so a Pong already readable is never counted missing and a socket whose seat
+    was resumed is never accused; the interval is `MissedTickBehavior::Delay`, so a stalled loop
+    does not fire its missed ticks back to back.
+  - **A BEHAVIOUR CHANGE THIS BUYS, OWED A READING.** The Pong comes from a RUNNING process - a
+    throttled background tab answers. A SUSPENDED one does not: an iOS or Android app the OS froze
+    mid-call (screen locked, app backgrounded) now ends `keepalive-lost` 20-30 s in, and its
+    partner gets `PeerLeft` ~60 s later; before, a suspended app's socket sat half-open and the
+    seat stayed "present". Whether the bench phones stay running in a call with the screen locked
+    is CALL-L1 row 11
+    ([device-verification](../device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both));
+    Android's background microphone is already CALL-LOCK-ANDROID.
   - **Resume:** every p2p `Joined` carries `resume_token`, a room token this service mints with the
     same `CALL_ROOM_SECRET` plus a `seat` claim (the peer id), valid 4 h (the longest call
     chat-delivery counts). A `Join` with it takes THAT seat back IN PLACE - same user and group

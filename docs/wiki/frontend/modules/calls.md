@@ -237,8 +237,17 @@ Read from the Mi 9T's exported log and the code, three causes, one chain:
    restart of a pairing that no longer existed. **Fix (client):** the restart is an EXPLICIT
    `createOffer({ iceRestart: true })`, sent at once, after rolling back any pending offer; and an
    offer or request belongs to the PAIRING it was sent in (`pairEpoch`, bumped on every signalling
-   break and every `PeerReady`), so one from an earlier pairing never blocks a new one. An answer
-   arriving for a rolled-back offer is dropped, not applied.
+   break and every `PeerReady`), so one from an earlier pairing never blocks a new one.
+   **Two invariants keep an answer with ITS offer** (review of #2148): EVERY negotiation step -
+   the relay's frames, `negotiationneeded`, an ICE restart offer - runs on ONE queue
+   (`signalQueue`), so no offer is rolled back or made while an answer is half applied; and every
+   offer carries a NUMBER (`seq`, inside the `sdp` string the relay already forwards verbatim -
+   `call-service` is unchanged) that the answerer echoes. An answer to any offer but the pending one
+   is dropped, named. A client older than the numbering sends none, and its answers are matched by
+   signaling state alone, as before (calls are dev-only, so both phones carry it after one deploy).
+   An engine that cannot CREATE the restart offer ends the call with
+   `ICE restart offer could not be made: <error>` - a retry would meet the same connection in the
+   same state.
 3. **The resume itself was late:** the uncapped ladder put attempt 5 at +31 s. **Fix:** capped at
    4 s, 15 attempts (the 14 s outage resumes at +15 s).
 
@@ -246,6 +255,18 @@ Also read in that log: Android Chromium reached `connectionState=failed` while
 `iceConnectionState` stayed `disconnected`, so `connectionState=failed` now triggers the restart
 too (`mediaPathDown` reads both). And the resume decides from the inbound audio packet count
 across the outage, not from a state that may still read `connected` on a path carrying nothing.
+
+**The restart budget counts per media LOSS, across pairings** (`CALL_ICE_RESTART_ATTEMPTS`, reset
+only when ICE connects or the peer connection is rebuilt). An offer that went into a dead socket
+costs one restart - the price of a bound a flapping peer cannot escape, since the keepalive can now
+break a pairing every 20-30 s. The resume ladder has no jitter: two clients that lost the same
+network at the same moment retry in step (P3 in [backlog](../../backlog.md)).
+
+**A BEHAVIOUR CHANGE: A SUSPENDED APP NOW LEAVES THE CALL.** The keepalive's Pong comes from a
+RUNNING process. An iOS or Android app the OS froze mid-call (screen locked, sent to the
+background) answers nothing, so it is held dead 20-30 s in and its partner gets `PeerLeft` ~60 s
+later; before, its half-open socket kept the seat "present" indefinitely. Whether the bench phones
+stay running in a call is owed: CALL-L1 row 11.
 
 **AN ACCEPTED COST: AN APP KILLED BY THE OS NOW LOOKS LIKE A BLIP.** A killed app sends no Close
 frame and no MLS hangup, so the server cannot tell it from a network loss: the partner sees
@@ -268,7 +289,12 @@ peer connection with rollback and inbound packet stats, fake `setTimeout` steppe
 ladder, no real sleep - including "the bench outages of 2026-10-19, replayed": 6 s, 14 s on each
 phone, 90 s on each phone) and `apps/call-service` (`src/p2p.rs` seat tests,
 `tests/p2p_signalling.rs` drop / resume / Close / grace-0 expiry / stolen token / a silent
-half-open peer held dead by the keepalive, and its resume, over the real binary). **Owed on a phone:** check CALL-L1 steps 8-10
+half-open peer held dead by the keepalive, and its resume, over the real binary). **What the
+fakes cannot prove:** the ORDER in which a real engine completes a rollback, an offer and a
+remote answer. The async fake (`latency`) reproduces ONE interleaving class - an operation started
+beside another overlapping it - and a mutation check shows it catches both a step run beside the
+queue and a missing offer-number check; WebKit's and Chromium's real ordering is read only on a
+phone. **Owed on a phone:** check CALL-L1 steps 8-11
 ([device-verification](../../device-verification.md#call-l1-a-11-dev-call-between-the-two-bench-phones---owed-on-both)).
 Not handled here: a phone that changes network WITHOUT its socket dropping relies on ICE alone
 (`disconnected` -> one restart); cellular handover is unmeasured (no SIM on the bench).

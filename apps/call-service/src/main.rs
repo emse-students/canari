@@ -77,10 +77,14 @@ impl RoomMode {
 /// so a write error never came and the seat was never marked away. Measured on the bench: the
 /// partner's ICE restart offer was relayed into that dead socket, and after a 90 s outage the
 /// partner sat on "Reconnexion..." until its own hang-up. Now the peer must ANSWER: a socket that
-/// let [`MISSED_PONGS_LIMIT`] pings go by without sending a single frame (a browser answers every
-/// Ping with a Pong, from its network stack, even in a backgrounded page) is ended as
+/// let [`MISSED_PONGS_LIMIT`] pings go by without sending a single frame is ended as
 /// `keepalive-lost`, which keeps a p2p seat for a resume like any network failure. Overridden by
 /// `CALL_KEEPALIVE_MS` (the tests' only use).
+///
+/// A browser answers a Ping from its network stack while its process RUNS - a throttled background
+/// tab included. A SUSPENDED process (a phone app the OS froze, screen locked or backgrounded)
+/// answers nothing: such a call now becomes `keepalive-lost` 20-30 s in and `PeerLeft` for the
+/// partner a grace later - a behaviour change owed a reading on both phones (CALL-L1).
 const DEFAULT_KEEPALIVE: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// Pings in a row a socket may leave unanswered before it is held dead: one can cross a slow
@@ -785,18 +789,22 @@ fn resolve_peer<'a>(
     if let Some(ctx) = room.peers.get(peer_id) {
         return Some(ctx);
     }
-    let already_explained = session
-        .ledger
-        .as_ref()
-        .map(|l| l.disposition().is_some())
-        .unwrap_or(false);
-    if !already_explained {
+    if !session_ended(session) {
         warn!(
             "[call] {} sent {} in room {} but is not registered in it - dropped",
             peer_id, frame, room_id
         );
     }
     None
+}
+
+/// The session's record already names why it ended (a resume, an eviction): later events of the
+/// same socket are consequences, and must not be logged as fresh accusations.
+fn session_ended(session: &PeerSession) -> bool {
+    session
+        .ledger
+        .as_ref()
+        .is_some_and(|l| l.disposition().is_some())
 }
 
 /// Records why a session ended on its ledger, when it has one. A socket that never completed a
@@ -937,6 +945,9 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
     // `interval` fires at once on its first tick; skip it so the first ping goes out one period in.
     let period = state.keepalive;
     let mut keepalive = tokio::time::interval_at(tokio::time::Instant::now() + period, period);
+    // A loop held up (a slow write) must not fire the missed ticks back to back: each would count
+    // as one more unanswered ping without the peer having had a period to answer it.
+    keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     // Pings sent since the peer's last frame of ANY kind (a Pong, a signal, its own Ping).
     let mut unanswered_pings: u32 = 0;
 
@@ -951,7 +962,11 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
     let mut writer_socket = socket;
 
     loop {
+        // `biased`: the arms are polled IN ORDER. A frame already readable (a Pong) is taken before
+        // a keepalive tick that would count it missing, and an outbound frame - `Shutdown` above
+        // all - before a tick that would accuse a socket whose seat already moved.
         tokio::select! {
+            biased;
             msg = writer_socket.recv() => {
                 if matches!(msg, Some(Ok(_))) {
                     unanswered_pings = 0;
@@ -1006,23 +1021,6 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
                     _ => {}
                 }
             }
-            _ = keepalive.tick() => {
-                if unanswered_pings >= MISSED_PONGS_LIMIT {
-                    warn!(
-                        "[call] {} answered none of {} keepalive pings - held dead (half-open socket)",
-                        peer_id, unanswered_pings
-                    );
-                    end_session(&session, Disposition::KeepaliveLost);
-                    break;
-                }
-                unanswered_pings += 1;
-                // A Ping frame, answered by the browser's own Pong; nothing in the page sees it.
-                if let Err(e) = writer_socket.send(Message::Ping(Default::default())).await {
-                    warn!("[call] {} keepalive ping failed: {}", peer_id, e);
-                    end_session(&session, Disposition::SendFailed);
-                    break;
-                }
-            }
             Some(msg) = rx.recv() => {
                 if matches!(msg, SignalMessage::Shutdown) {
                     // Our seat was resumed on another socket: this one is the same device's stale
@@ -1044,6 +1042,28 @@ async fn handle_socket(socket: WebSocket, state: Arc<AppState>, user_id: String)
                 // `.into()`: axum 0.8 carries text frames as `Utf8Bytes`, not `String`.
                 if let Err(e) = writer_socket.send(Message::Text(text.into())).await {
                     error!("[call] {} socket write failed on {}: {}", peer_id, msg.kind(), e);
+                    end_session(&session, Disposition::SendFailed);
+                    break;
+                }
+            }
+            _ = keepalive.tick() => {
+                if session_ended(&session) {
+                    // The record already names the end (a resume moved the seat): no accusation.
+                    info!("[call] {} keepalive stopped - session already ended", peer_id);
+                    break;
+                }
+                if unanswered_pings >= MISSED_PONGS_LIMIT {
+                    warn!(
+                        "[call] {} answered none of {} keepalive pings - held dead (half-open socket)",
+                        peer_id, unanswered_pings
+                    );
+                    end_session(&session, Disposition::KeepaliveLost);
+                    break;
+                }
+                unanswered_pings += 1;
+                // A Ping frame, answered by the browser's own Pong; nothing in the page sees it.
+                if let Err(e) = writer_socket.send(Message::Ping(Default::default())).await {
+                    warn!("[call] {} keepalive ping failed: {}", peer_id, e);
                     end_session(&session, Disposition::SendFailed);
                     break;
                 }
