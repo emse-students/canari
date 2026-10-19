@@ -1,5 +1,7 @@
 // encryption.worker.ts - WebRTC Encoded Transform (insertable streams) for MLS-derived call keys.
 
+import { isValidOpusPacket } from '../utils/opusPacket';
+
 /** Minimal typing for RTCTransformEvent (DOM lib may omit it in worker context). */
 interface TransformEventLike {
   transformer: {
@@ -18,6 +20,10 @@ const encrypted = { audio: 0, video: 0 };
 const decrypted = { audio: 0, video: 0 };
 let videoKeyframesIn = 0;
 let droppedNoKey = 0;
+/** Plaintext audio payloads that are NOT Opus packets, per side (see `checkOpus`). */
+const opusInvalid = { sender: 0, receiver: 0 };
+/** Receiver payloads that decrypted TWICE with the call key: the sender encrypted them twice. */
+let doubleEncrypted = 0;
 /** `onrtctransform` is the standard handler (Firefox 117+); typed explicitly for workers. */
 type RtcTransformWorkerScope = typeof self & {
   onrtctransform: ((event: Event) => void) | null;
@@ -67,6 +73,7 @@ workerScope.onrtctransform = (event: Event) => {
       try {
         const mediaKind = frameTypeLabel(frame);
         if (side === 'sender') {
+          if (mediaKind === 'audio') checkOpus(frame, new Uint8Array(frame.data), 'sender');
           await encryptFrame(frame, controller);
           encrypted[mediaKind]++;
           if (encrypted[mediaKind] === 1 || encrypted[mediaKind] % 300 === 0) {
@@ -118,6 +125,71 @@ function isVideoKeyframe(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): bo
   }
 }
 
+/**
+ * Counts and names a plaintext audio payload that is not an Opus packet (RFC 6716 R1-R7): on the
+ * sender BEFORE it is encrypted, on the receiver AFTER it is decrypted. The payload is forwarded
+ * unchanged - this is a witness, not a filter: the decoder rejects such a frame itself and NetEq
+ * conceals it, and what was missing until 2026-10-19 was knowing WHICH side handed it over (a Mi 9T
+ * hearing an iPhone logged NetEq decode errors on 30 % of packets with no way to say). A frame whose
+ * metadata names another codec (RED, CN) is not an Opus packet by design and is not checked.
+ * Returns whether the payload is a valid Opus packet (or was not checked).
+ */
+function checkOpus(
+  frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame,
+  payload: Uint8Array,
+  side: 'sender' | 'receiver'
+): boolean {
+  // An EMPTY payload is the encoder saying "nothing this frame" (DTX), not a packet: measured in
+  // Chrome 155 with usedtx=1, which hands the transform 0-byte frames in every pause.
+  if (payload.byteLength === 0) return true;
+  const meta = frameMetadata(frame);
+  if (meta.mimeType && meta.mimeType.toLowerCase() !== 'audio/opus') return true;
+  if (isValidOpusPacket(payload)) return true;
+  const count = ++opusInvalid[side];
+  if (count <= 3 || count % 100 === 0) {
+    self.postMessage({
+      type: 'opusInvalid',
+      side,
+      count,
+      length: payload.byteLength,
+      toc: payload[0] ?? -1,
+      payloadType: meta.payloadType ?? -1,
+    });
+  }
+  return false;
+}
+
+/**
+ * A decrypted audio payload that is not Opus: does it decrypt AGAIN with the same key? If so the
+ * sender applied the transform twice, which is proof, not inference - logged, never undone here.
+ */
+async function probeDoubleEncryption(clear: Uint8Array): Promise<void> {
+  if (clear.byteLength <= ivLength || !callKey) return;
+  try {
+    await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: clear.slice(0, ivLength) },
+      callKey,
+      clear.slice(ivLength)
+    );
+  } catch {
+    // The expected answer: the payload is not a second ciphertext under this key.
+    return;
+  }
+  doubleEncrypted++;
+  if (doubleEncrypted <= 3 || doubleEncrypted % 100 === 0) {
+    self.postMessage({ type: 'doubleEncrypted', count: doubleEncrypted });
+  }
+}
+
+/** The frame's metadata, or an empty object on an engine without `getMetadata`. */
+function frameMetadata(frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame): {
+  mimeType?: string;
+  payloadType?: number;
+} {
+  const f = frame as { getMetadata?: () => { mimeType?: string; payloadType?: number } };
+  return typeof f.getMetadata === 'function' ? (f.getMetadata() ?? {}) : {};
+}
+
 async function encryptFrame(
   frame: RTCEncodedVideoFrame | RTCEncodedAudioFrame,
   controller: TransformStreamDefaultController
@@ -146,6 +218,10 @@ async function decryptFrame(
 
   try {
     const plaintext = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, callKey!, ciphertext);
+    if (frameTypeLabel(frame) === 'audio') {
+      const clear = new Uint8Array(plaintext);
+      if (!checkOpus(frame, clear, 'receiver')) await probeDoubleEncryption(clear);
+    }
     frame.data = plaintext;
     controller.enqueue(frame);
     return true;
