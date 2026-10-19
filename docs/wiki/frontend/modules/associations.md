@@ -49,6 +49,12 @@
 
 ## One header and one creation flow for the three directories (2026-10-07)
 
+**"Mes ..." blocks live in their own tab (user, 2026-10-19).** `MyMembershipsSection.svelte` is the pinned block on top
+of a directory: `/associations` draws only "Mes associations", `/institutions` only "Mes institutions", `/lists` only
+"Mes listes" (one `groupAssociationsForSelect` classifier, the data `listMyAssociations` already returned). Empty blocks
+are not drawn. The directory below still lists every row with the member's own one badged (the pinned-subset pattern the
+Associations tab always had). Test: `routes/associations/mineBlocks.svelte.test.ts`.
+
 Audited on 2026-10-07 after a screenshot of `/associations`: four buttons of two kinds (three links to
 directories, one creation) drawn alike, and **`/institutions` had NO creation button**. What existed
 before: creation was a checkbox on `/associations/new` visible to a global admin; the reach was only
