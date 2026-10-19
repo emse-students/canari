@@ -1,0 +1,163 @@
+/**
+ * THE WIRE SHAPES OF `/api/lives`, as social-service really serialises them.
+ *
+ * Read from `apps/social-service/src/lives/lives.service.ts` (`LiveView`, `LiveListItem`,
+ * `LiveManifest`, `LiveIngestResult`, `LiveEndResult`) and `live.constants.ts` (`liveLimits`), not
+ * from the wiki. Every server `Date` crosses the network as an ISO-8601 string, so it is typed
+ * `string` here - a caller parses it where it needs a number, it is never silently a `Date`.
+ * Contract: docs/wiki/services/lives.md, "The API contract".
+ */
+
+/** Why a live ended - the row's `endReason` (`LiveEndReason` on the server). */
+export type LiveEndReason = 'broadcaster' | 'dropped' | 'max_duration' | 'erased';
+
+/**
+ * A live as `POST /api/lives` (201) and `GET /api/lives/:id` answer it: the KEY included (L2, Q4).
+ * `key` is 64 lower-case hex characters - 32 bytes of AES-256 key material, never logged.
+ */
+export interface LiveView {
+  id: string;
+  broadcasterId: string;
+  associationId: string | null;
+  startedAt: string;
+  /** Written by the ingest only: the broadcaster's own liveness. `null` before segment 0. */
+  lastSegmentAt: string | null;
+  nextIndex: number;
+  key: string;
+}
+
+/** One open live in `GET /api/lives` (newest first, at most 50) - no key; the key is read by opening it. */
+export interface LiveListItem {
+  id: string;
+  broadcasterId: string;
+  associationId: string | null;
+  startedAt: string;
+}
+
+/**
+ * One segment of a manifest. `name` is its address under
+ * `/api/media/public/live/<liveId>/<name>` (no token, nginx-cached); `bytes` is the ciphertext size.
+ */
+export interface LiveManifestSegment {
+  index: number;
+  name: string;
+  bytes: number;
+}
+
+/**
+ * What a viewer polls: `GET /api/lives/:id/manifest[?from=<index>]`. `serverNow` and `lastSegmentAt`
+ * are BOTH the database's clock, so "reconnecting" is decided by comparing them, never against the
+ * device's clock. At most `manifestWindow` segments, ascending by index.
+ */
+export interface LiveManifest {
+  liveId: string;
+  nextIndex: number;
+  lastSegmentAt: string | null;
+  serverNow: string;
+  segments: LiveManifestSegment[];
+}
+
+/** `PUT /api/lives/:id/segments/:index` - and its idempotent repeat with the same bytes. */
+export interface LiveIngestResult {
+  index: number;
+  name: string;
+  nextIndex: number;
+}
+
+/** `POST /api/lives/:id/end`. */
+export interface LiveEndResult {
+  id: string;
+  endedAt: string;
+  endReason: LiveEndReason;
+}
+
+/** `POST /api/lives/:id/removed-viewers`. */
+export interface LiveRemovedViewer {
+  liveId: string;
+  viewerId: string;
+}
+
+/**
+ * `GET /api/lives/limits` - the server's numbers, the ONE copy (`liveLimits()`). A client carries
+ * none of them, because an installed build keeps whatever it was compiled with.
+ */
+export interface LiveLimits {
+  segmentMaxBytes: number;
+  reconnectWindowMs: number;
+  maxDurationMs: number;
+  manifestWindow: number;
+  byteBudget: number;
+  segmentMinDurationMs: number;
+  segmentBurst: number;
+  startsPerHour: number;
+  viewerCap: number;
+  seatLeaseMs: number;
+}
+
+/**
+ * Every `code` a lives route (or the segment fetch) puts in a refusal body. The server throws each
+ * as `new XxxException({ code, ... })`, which Nest serialises as that object.
+ */
+export type LiveRefusalCode =
+  | 'LIVE_KEY_INVALID'
+  | 'LIVE_ASSOCIATION_INVALID'
+  | 'LIVE_MUTED'
+  | 'LIVE_ASSOCIATION_FORBIDDEN'
+  | 'LIVE_ALREADY_OPEN'
+  | 'LIVE_START_RATE'
+  | 'LIVE_NOT_FOUND'
+  | 'LIVE_ENDED'
+  | 'LIVE_VIEWER_REMOVED'
+  | 'LIVE_FULL'
+  | 'LIVE_SEATS_UNAVAILABLE'
+  | 'LIVE_SEGMENT_OUT_OF_ORDER'
+  | 'LIVE_SEGMENT_CONFLICT'
+  | 'LIVE_SEGMENT_IN_PROGRESS'
+  | 'LIVE_SEGMENT_RESERVATION_LOST'
+  | 'LIVE_SEGMENT_TOO_FAST'
+  | 'LIVE_SEGMENT_EMPTY'
+  | 'LIVE_BUDGET_EXHAUSTED'
+  | 'LIVE_STORE_UNAVAILABLE'
+  | 'LIVE_INGEST_BUSY'
+  | 'LIVE_INDEX_INVALID'
+  | 'LIVE_FROM_INVALID'
+  | 'LIVE_VIEWER_INVALID'
+  | 'LIVE_VIEWER_IS_SELF';
+
+/**
+ * WHAT A SCREEN DOES WITH A REFUSAL - decided once, at the throw ({@link classifyLiveRefusal}), so
+ * no caller re-derives it from a status. The three the brief forbids confusing are separate kinds:
+ *
+ * - `full`: `503 LIVE_FULL` - every seat of the host is held. The "live complet" screen; back off,
+ *   never hammer (a 503 is what HTTP stacks retry on their own).
+ * - `seats-unavailable`: `503 LIVE_SEATS_UNAVAILABLE` - the seat count (Redis) did not answer. A
+ *   failure to retry, NEVER "complet".
+ * - `rate-limited`: any `429` - a server code (`LIVE_START_RATE`, `LIVE_SEGMENT_TOO_FAST`) or nginx's
+ *   own (no code: the ingest zone, or the per-address segment bound).
+ * - `not-found`: `404 LIVE_NOT_FOUND` (absent, invisible, blocked, another member's live on a write,
+ *   or an ended live already purged), or a 404 on a segment fetch.
+ * - `ended`: `410 LIVE_ENDED`.
+ * - `removed`: `403 LIVE_VIEWER_REMOVED` - the broadcaster removed this viewer.
+ * - `disabled`: a `404` with no code on `/api/lives` - the `LIVE_ENABLED` guard (off on production).
+ * - `out-of-order`: `409 LIVE_SEGMENT_OUT_OF_ORDER` - `nextIndex` says which index the server wants.
+ * - `retry-segment`: the SAME index should be sent again after a short backoff:
+ *   `409 LIVE_SEGMENT_IN_PROGRESS`, `409 LIVE_SEGMENT_RESERVATION_LOST`,
+ *   `503 LIVE_STORE_UNAVAILABLE`, `503 LIVE_INGEST_BUSY`.
+ * - `refused`: any other answer the gateway gave a verdict in (a 4xx with or without a code:
+ *   validation, `LIVE_MUTED`, `LIVE_ALREADY_OPEN`, `LIVE_SEGMENT_CONFLICT`, a 413...). Read `code`.
+ * - `unavailable`: a 5xx with no live code (a 502 mid-deploy, an edge error page): nobody gave a
+ *   verdict; retry later. A 4xx from the edge (a WAF page, nginx's own 413) is `refused`, since
+ *   re-sending the same request meets the same refusal.
+ */
+export type LiveRefusalKind =
+  | 'full'
+  | 'seats-unavailable'
+  | 'rate-limited'
+  | 'not-found'
+  | 'ended'
+  | 'removed'
+  | 'disabled'
+  | 'out-of-order'
+  | 'retry-segment'
+  | 'refused'
+  | 'unavailable';
