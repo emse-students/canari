@@ -2,8 +2,8 @@ import { IsIn, IsNotEmpty, IsOptional, IsString, MaxLength } from 'class-validat
 
 /** DTO for reporting a piece of content. */
 export class CreateReportDto {
-  @IsIn(['post', 'comment', 'user'])
-  contentType: 'post' | 'comment' | 'user';
+  @IsIn(['post', 'comment', 'user', 'live'])
+  contentType: 'post' | 'comment' | 'user' | 'live';
 
   @IsString()
   @IsNotEmpty()

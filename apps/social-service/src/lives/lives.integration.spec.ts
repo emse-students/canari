@@ -36,10 +36,14 @@ import {
   LIVE_BYTE_BUDGET,
   LIVE_INGEST_MAX_CONCURRENT,
   LIVE_SEGMENT_BURST,
+  LIVE_RULES_VERSION,
   LIVE_STARTS_PER_HOUR,
 } from './live.constants';
 import type { AssociationsService } from '../associations/associations.service';
-import type { ModerationService } from '../moderation/moderation.service';
+import { ModerationService } from '../moderation/moderation.service';
+import { ContentReport } from '../moderation/entities/content-report.entity';
+import type { UserModeration } from '../moderation/entities/user-moderation.entity';
+import type { Repository } from 'typeorm';
 import type { PostNotificationsService } from '../posts/post-notifications.service';
 import {
   DELETED_ACCOUNT,
@@ -53,6 +57,10 @@ const maybe = URL ? describe : describe.skip;
 const MIGRATION = readFileSync(join(__dirname, '..', 'migrations', '091_lives.sql'), 'utf8');
 const ANNOUNCED_AT = readFileSync(
   join(__dirname, '..', 'migrations', '094_live_announced_at.sql'),
+  'utf8'
+);
+const MODERATION = readFileSync(
+  join(__dirname, '..', 'migrations', '097_live_moderation.sql'),
   'utf8'
 );
 
@@ -193,12 +201,19 @@ maybe('lives against PostgreSQL (migration 091)', () => {
   let announcer: LiveAnnouncer;
   /** Every `pushNotice` the announcer made - the one pipeline, faked at its seam. */
   const notices: Parameters<PostNotificationsService['pushNotice']>[0][] = [];
+  /** Every in-app notification written (the cut's notice to its broadcaster, WP-L8). */
+  const bell: Parameters<PostNotificationsService['createNotification']>[0][] = [];
   const notifications = {
     // Only ALICE has a name: BOB is the broadcaster with no `users` name to give.
     resolveDisplayName: async (id: string) => (id === ALICE ? 'Alice' : null),
     pushNotice: async (data: Parameters<PostNotificationsService['pushNotice']>[0]) => {
       notices.push(data);
       return data.recipientIds.length;
+    },
+    createNotification: async (
+      data: Parameters<PostNotificationsService['createNotification']>[0]
+    ) => {
+      bell.push(data);
     },
   } as unknown as PostNotificationsService;
   const liveEnabledBefore = process.env.LIVE_ENABLED;
@@ -214,7 +229,8 @@ maybe('lives against PostgreSQL (migration 091)', () => {
     ds = new DataSource({
       type: 'postgres',
       url: URL,
-      entities: LIVE_ENTITIES,
+      // `content_reports`: a live is reported through the posts' one report store (WP-L8, D6).
+      entities: [...LIVE_ENTITIES, ContentReport],
       synchronize: false,
       extra: { options: `-c search_path=${schema}` },
     });
@@ -234,7 +250,15 @@ maybe('lives against PostgreSQL (migration 091)', () => {
     // ISMIN and shares no space with any of them.
     await q(
       `CREATE TABLE users (id varchar(255) PRIMARY KEY, admin boolean NOT NULL DEFAULT false,
-         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]')`
+         campus varchar(32), cursus jsonb NOT NULL DEFAULT '[]', "displayName" varchar)`
+    );
+    // The report store, in the columns `ModerationService` writes and the cut marks reviewed.
+    await q(
+      `CREATE TABLE content_reports (id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+         "reporterId" varchar NOT NULL, "contentType" varchar(30) NOT NULL, "contentId" varchar NOT NULL,
+         reason varchar(50) NOT NULL, details text, status varchar(20) NOT NULL DEFAULT 'pending',
+         "reviewedBy" varchar, "reviewedAt" timestamptz, "reportedUserId" varchar,
+         "createdAt" timestamp NOT NULL DEFAULT now())`
     );
     await q(`CREATE TABLE spaces (formation varchar, campus varchar)`);
     await q(`INSERT INTO spaces (formation, campus) VALUES ('ICM', ${SE}), ('ISMIN', ${GA})`);
@@ -258,6 +282,8 @@ maybe('lives against PostgreSQL (migration 091)', () => {
     await q(MIGRATION);
     await q(ANNOUNCED_AT);
     await q(ANNOUNCED_AT);
+    await q(MODERATION);
+    await q(MODERATION);
     process.env.LIVE_ENABLED = 'true';
   });
 
@@ -271,6 +297,16 @@ maybe('lives against PostgreSQL (migration 091)', () => {
     await q(`DELETE FROM association_members`);
     await q(`DELETE FROM association_audiences`);
     await q(`DELETE FROM read_grants`);
+    await q(`DELETE FROM live_cuts`);
+    await q(`DELETE FROM content_reports`);
+    await q(`DELETE FROM live_rules_acceptances`);
+    // Every member accepted the first-live rules, as a member who broadcast once has (L11); the
+    // rules' own tests take an acceptance away.
+    await q(
+      `INSERT INTO live_rules_acceptances ("userId", "rulesVersion") SELECT id, $1 FROM users`,
+      [LIVE_RULES_VERSION]
+    );
+    bell.length = 0;
     // The previous test's announcements settle first, so none lands in this one's `notices`.
     await lives?.announcementsSettled();
     notices.length = 0;
@@ -289,7 +325,8 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       } as unknown as AssociationsService,
       { isUserMuted: async (userId: string) => muted.has(userId) } as unknown as ModerationService,
       seats as unknown as LiveSeats,
-      announcer
+      announcer,
+      notifications
     );
     sweeper = new LiveRetentionScheduler(lives);
   });
@@ -776,7 +813,8 @@ maybe('lives against PostgreSQL (migration 091)', () => {
             attempts += 1;
             throw new Error('mute lookup down');
           },
-        } as unknown as PostNotificationsService)
+        } as unknown as PostNotificationsService),
+        notifications
       );
       const live = await broken.start(ALICE, { key: KEY });
       await expect(broken.ingest(ALICE, live.id, 0, segment(0))).resolves.toMatchObject({
@@ -808,7 +846,8 @@ maybe('lives against PostgreSQL (migration 091)', () => {
             await gate;
             return data.recipientIds.length;
           },
-        } as unknown as PostNotificationsService)
+        } as unknown as PostNotificationsService),
+        notifications
       );
       const live = await held.start(ALICE, { key: KEY });
       // Answered with the push still held inside `pushNotice`: nothing here waits for it.
@@ -868,7 +907,8 @@ maybe('lives against PostgreSQL (migration 091)', () => {
           { mayAct: async () => false } as unknown as AssociationsService,
           { isUserMuted: async () => false } as unknown as ModerationService,
           seats as unknown as LiveSeats,
-          new LiveAnnouncer(one, notifications)
+          new LiveAnnouncer(one, notifications),
+          notifications
         );
         const live = await onOne.start(ALICE, { key: KEY });
         const hold = store.holdNextStore();
@@ -957,7 +997,9 @@ maybe('lives against PostgreSQL (migration 091)', () => {
           .slice(0, 64)
       );
       const ids: string[] = [];
-      for (const b of broadcasters) ids.push((await lives.start(b, { key: KEY })).id);
+      for (const b of broadcasters) {
+        ids.push((await lives.start(b, { key: KEY, acceptedRulesVersion: LIVE_RULES_VERSION })).id);
+      }
       const gate = store.holdStores();
       const running = broadcasters
         .slice(0, LIVE_INGEST_MAX_CONCURRENT)
@@ -1090,7 +1132,7 @@ maybe('lives against PostgreSQL (migration 091)', () => {
         [silent.id]
       );
       const report = await sweeper.sweepOnce();
-      expect(report).toEqual({ ended: 1, deleted: 1, kept: 0, orphans: 0 });
+      expect(report).toEqual({ ended: 1, deleted: 1, kept: 0, orphans: 0, cutsPruned: 0 });
       expect(store.countFor(silent.id)).toBe(0);
       await expect(lives.get(CAROL, talking.id)).resolves.toBeDefined();
       expect(store.countFor(talking.id)).toBe(1);
@@ -1101,7 +1143,13 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       await q(`UPDATE lives SET "startedAt" = now() - interval '2 minutes' WHERE id = $1`, [
         live.id,
       ]);
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 1, deleted: 1, kept: 0, orphans: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({
+        ended: 1,
+        deleted: 1,
+        kept: 0,
+        orphans: 0,
+        cutsPruned: 0,
+      });
     });
 
     it('ends a live past its hour, from the sweep or from the ingest that finds it', async () => {
@@ -1132,17 +1180,35 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       await lives.removeViewer(ALICE, live.id, BOB);
       store.failPurge = true;
       await lives.end(ALICE, live.id);
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 0, kept: 1, orphans: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({
+        ended: 0,
+        deleted: 0,
+        kept: 1,
+        orphans: 0,
+        cutsPruned: 0,
+      });
       expect(store.countFor(live.id)).toBe(1);
 
       store.failPurge = false;
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 1, kept: 0, orphans: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({
+        ended: 0,
+        deleted: 1,
+        kept: 0,
+        orphans: 0,
+        cutsPruned: 0,
+      });
       expect(store.objects.size).toBe(0);
       for (const table of ['lives', 'live_segments', 'live_removed_viewers']) {
         expect(await q(`SELECT 1 FROM ${table}`)).toEqual([]);
       }
       // And a second run finds nothing to do.
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 0, kept: 0, orphans: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({
+        ended: 0,
+        deleted: 0,
+        kept: 0,
+        orphans: 0,
+        cutsPruned: 0,
+      });
     });
 
     it('keeps the row while the store still lists a segment, even when the call itself answered', async () => {
@@ -1150,18 +1216,367 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       await lives.ingest(ALICE, live.id, 0, segment(0));
       store.refuseDeletes = true;
       await lives.end(ALICE, live.id);
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 0, kept: 1, orphans: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({
+        ended: 0,
+        deleted: 0,
+        kept: 1,
+        orphans: 0,
+        cutsPruned: 0,
+      });
       expect(await q(`SELECT "endReason" FROM lives WHERE id = $1`, [live.id])).toEqual([
         { endReason: 'broadcaster' },
       ]);
       store.refuseDeletes = false;
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 1, kept: 0, orphans: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({
+        ended: 0,
+        deleted: 1,
+        kept: 0,
+        orphans: 0,
+        cutsPruned: 0,
+      });
     });
 
     it('never ends an open live through the purge path, whatever id reaches it', async () => {
       const live = await start();
       await lives.purgeEnded(live.id);
       await expect(lives.get(BOB, live.id)).resolves.toBeDefined();
+    });
+  });
+
+  describe('moderation (WP-L8): a report, a staff cut, the first-live rules', () => {
+    const MOD = '9'.repeat(64);
+    const reports = () =>
+      new ModerationService(ds.getRepository(ContentReport), {} as Repository<UserModeration>);
+    const report = (reporterId: string, liveId: string) =>
+      reports().createReport({
+        reporterId,
+        contentType: 'live',
+        contentId: liveId,
+        reason: 'spam',
+      });
+    /** The whole body of a refusal - `endReason` is what a screen branches on. */
+    const body = async (p: Promise<unknown>) => {
+      try {
+        await p;
+      } catch (e) {
+        const err = e as { getStatus: () => number; getResponse: () => Record<string, unknown> };
+        return { status: err.getStatus(), ...err.getResponse() };
+      }
+      throw new Error('expected a refusal, got an answer');
+    };
+    const CUT = { status: HttpStatus.GONE, code: 'LIVE_ENDED', endReason: 'cut' };
+
+    it('a viewer REPORTS a live through content_reports; once each; staff read its state', async () => {
+      await q(`UPDATE users SET "displayName" = 'Alice' WHERE id = $1`, [ALICE]);
+      const live = await start();
+      // `reportedUserId` from the client is ignored: the broadcaster comes from the live row.
+      await expect(
+        reports().createReport({
+          reporterId: BOB,
+          contentType: 'live',
+          contentId: live.id.toUpperCase(),
+          reason: 'harassment',
+          reportedUserId: CAROL,
+        })
+      ).resolves.toMatchObject({ contentId: live.id, reportedUserId: ALICE, status: 'pending' });
+      expect(await refusal(report(BOB, live.id))).toEqual({
+        status: HttpStatus.CONFLICT,
+        code: 'ALREADY_REPORTED',
+      });
+      // Not in its audience (no shared space), or a block: the live API's own 404.
+      expect(await refusal(report(FRANK, live.id))).toEqual({
+        status: HttpStatus.NOT_FOUND,
+        code: 'LIVE_NOT_FOUND',
+      });
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [ALICE, DAVE]);
+      expect((await refusal(report(DAVE, live.id))).code).toBe('LIVE_NOT_FOUND');
+
+      const [row] = await reports().listAllReports();
+      expect(row).toMatchObject({
+        contentType: 'live',
+        contentPreview: 'Alice',
+        live: { state: 'open', broadcasterId: ALICE, broadcasterName: 'Alice', broadcasterCuts: 0 },
+      });
+    });
+
+    it('A CUT ends the live for everyone: 410 with endReason cut, no segment, no seat, no listing', async () => {
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.get(BOB, live.id);
+      expect(seats.held.size).toBe(1);
+      await report(BOB, live.id);
+      await report(CAROL, live.id);
+
+      const cut = await lives.cut(MOD, live.id, { reason: 'harassment', details: 'note' });
+      expect(cut).toMatchObject({
+        liveId: live.id,
+        broadcasterId: ALICE,
+        reason: 'harassment',
+        endReason: 'cut',
+        newlyCut: true,
+        priorCuts: 0,
+      });
+
+      // Purged at once: the segments, the row and every seat.
+      expect(store.countFor(live.id)).toBe(0);
+      expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+      expect(seats.held.size).toBe(0);
+      // ...and still told apart from an ordinary end, by the cut row, to whom the live was visible.
+      expect(await body(lives.get(BOB, live.id))).toMatchObject(CUT);
+      expect(await body(lives.manifest(CAROL, live.id))).toMatchObject(CUT);
+      expect(await body(lives.ingest(ALICE, live.id, 1, segment(1)))).toMatchObject(CUT);
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ endReason: 'cut' });
+      await expect(lives.listOpen(BOB)).resolves.toEqual([]);
+      // Nobody else learns the live existed: outside its audience, a block, another member's write.
+      expect((await refusal(lives.get(FRANK, live.id))).code).toBe('LIVE_NOT_FOUND');
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [DAVE, ALICE]);
+      expect((await refusal(lives.get(DAVE, live.id))).code).toBe('LIVE_NOT_FOUND');
+      expect((await refusal(lives.ingest(BOB, live.id, 0, segment(0)))).code).toBe(
+        'LIVE_NOT_FOUND'
+      );
+      expect((await refusal(lives.end(BOB, live.id))).code).toBe('LIVE_NOT_FOUND');
+
+      // The reports it answered carry the moderator; the broadcaster has a bell row, no push.
+      const handled = await q(
+        `SELECT status, "reviewedBy" FROM content_reports WHERE "contentId" = $1`,
+        [live.id]
+      );
+      expect(handled).toEqual([
+        { status: 'reviewed', reviewedBy: MOD },
+        { status: 'reviewed', reviewedBy: MOD },
+      ]);
+      expect(bell).toEqual([
+        {
+          recipientId: ALICE,
+          type: 'live_cut',
+          postId: live.id,
+          actorId: '',
+          actorName: '',
+          text: 'harassment',
+          skipPush: true,
+        },
+      ]);
+      const [listed] = await reports().listAllReports();
+      expect(listed.live).toMatchObject({
+        state: 'cut',
+        cutReason: 'harassment',
+        broadcasterCuts: 1,
+      });
+
+      // Idempotent: the first cut is answered again, nothing is written twice.
+      await expect(lives.cut(MOD, live.id, { reason: 'spam' })).resolves.toMatchObject({
+        reason: 'harassment',
+        newlyCut: false,
+      });
+      expect(bell).toHaveLength(1);
+    });
+
+    it('answers 410 cut FROM THE ROW while a refused purge keeps it, and counts the strikes', async () => {
+      store.failPurge = true;
+      const first = await start();
+      await lives.cut(MOD, first.id, { reason: 'spam' });
+      expect(await body(lives.get(BOB, first.id))).toMatchObject(CUT);
+      await expect(lives.listOpen(BOB)).resolves.toEqual([]);
+      store.failPurge = false;
+      // A NEW live of the same broadcaster is not blocked by the cut - only counted.
+      const second = await start();
+      await expect(lives.cut(MOD, second.id, { reason: 'other' })).resolves.toMatchObject({
+        priorCuts: 1,
+      });
+    });
+
+    it('a cut of a live ENDED BY ITS BROADCASTER records the decision and rewrites nothing - ONE answer before and after the purge, no notice', async () => {
+      store.failPurge = true;
+      const live = await start();
+      const ended = await lives.end(ALICE, live.id);
+      const ENDED = {
+        status: HttpStatus.GONE,
+        code: 'LIVE_ENDED',
+        endReason: 'broadcaster',
+        endedAt: ended.endedAt,
+      };
+      await expect(lives.cut(MOD, live.id, { reason: 'spam' })).resolves.toMatchObject({
+        endReason: 'broadcaster',
+        newlyCut: true,
+      });
+      expect(
+        await q(`SELECT "liveEndReason", "liveEndedAt" FROM live_cuts WHERE "liveId" = $1`, [
+          live.id,
+        ])
+      ).toEqual([{ liveEndReason: 'broadcaster', liveEndedAt: ended.endedAt }]);
+      // The broadcaster ended it themselves: they are not told moderators stopped it.
+      expect(bell).toEqual([]);
+
+      // BEFORE the purge (the row is kept by the refused purge)...
+      expect(await body(lives.get(BOB, live.id))).toEqual(ENDED);
+      expect(await body(lives.ingest(ALICE, live.id, 1, segment(1)))).toEqual(ENDED);
+      await expect(lives.end(ALICE, live.id)).resolves.toMatchObject({ endReason: 'broadcaster' });
+      // ...and AFTER it, from the cut row: the same answer.
+      store.failPurge = false;
+      await sweeper.sweepOnce();
+      expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+      expect(await body(lives.get(BOB, live.id))).toEqual(ENDED);
+      expect(await body(lives.manifest(CAROL, live.id))).toEqual(ENDED);
+      expect(await body(lives.ingest(ALICE, live.id, 1, segment(1)))).toEqual(ENDED);
+      await expect(lives.end(ALICE, live.id)).resolves.toEqual({
+        id: live.id,
+        endedAt: ended.endedAt,
+        endReason: 'broadcaster',
+      });
+      await expect(lives.cut(MOD, live.id, { reason: 'other' })).resolves.toMatchObject({
+        endReason: 'broadcaster',
+        newlyCut: false,
+      });
+    });
+
+    it("a cut that ENDS the live answers cut before and after the purge, with the cut's own time", async () => {
+      store.failPurge = true;
+      const live = await start();
+      const cut = await lives.cut(MOD, live.id, { reason: 'spam' });
+      const before = await body(lives.get(BOB, live.id));
+      store.failPurge = false;
+      await sweeper.sweepOnce();
+      expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+      const after = await body(lives.get(BOB, live.id));
+      expect(after).toEqual(before);
+      expect(after).toEqual({ ...CUT, endedAt: cut.cutAt });
+    });
+
+    it('refuses a cut with no reason code, an oversized note, or no live: every refusal typed', async () => {
+      const live = await start();
+      expect(await refusal(lives.cut(MOD, live.id, {}))).toEqual({
+        status: HttpStatus.BAD_REQUEST,
+        code: 'LIVE_CUT_REASON_INVALID',
+      });
+      expect((await refusal(lives.cut(MOD, live.id, { reason: 'Spam' }))).code).toBe(
+        'LIVE_CUT_REASON_INVALID'
+      );
+      expect(
+        (await refusal(lives.cut(MOD, live.id, { reason: 'spam', details: 'x'.repeat(501) }))).code
+      ).toBe('LIVE_CUT_DETAILS_INVALID');
+      expect(
+        await refusal(lives.cut(MOD, '33333333-3333-4333-8333-333333333333', { reason: 'spam' }))
+      ).toEqual({ status: HttpStatus.NOT_FOUND, code: 'LIVE_NOT_FOUND' });
+      // Nothing of a refused cut is left behind: the live is still on air.
+      await expect(lives.get(BOB, live.id)).resolves.toMatchObject({ id: live.id });
+    });
+
+    it('RACE: a cut during a stalled segment store answers at once; the segment gets 410 cut; nothing outlives the purge', async () => {
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      const hold = store.holdNextStore();
+      const ingest = body(lives.ingest(ALICE, live.id, 1, segment(1)));
+      await hold.entered;
+
+      await expect(lives.cut(MOD, live.id, { reason: 'spam' })).resolves.toMatchObject({
+        endReason: 'cut',
+      });
+      // The purge waited for the reservation: the row is kept, ended by the cut.
+      expect(await q(`SELECT "endReason" FROM lives WHERE id = $1`, [live.id])).toEqual([
+        { endReason: 'cut' },
+      ]);
+      hold.release();
+      expect(await ingest).toMatchObject(CUT);
+      expect(store.countFor(live.id)).toBe(0);
+      expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+    });
+
+    it('RACE: a cut, a segment and a viewer join at once - whatever wins, nothing is served after the cut', async () => {
+      const live = await start();
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      const [cut, put, join] = await Promise.allSettled([
+        lives.cut(MOD, live.id, { reason: 'inappropriate' }),
+        lives.ingest(ALICE, live.id, 1, segment(1)),
+        lives.get(BOB, live.id),
+      ]);
+      expect(cut.status).toBe('fulfilled');
+      // Each of the two either ran BEFORE the cut (an answer) or after it (the cut's 410) - never
+      // another refusal, and never a segment taken after the cut.
+      const refused = [put, join].filter((o) => o.status === 'rejected');
+      const bodies = await Promise.all(
+        refused.map((o) => body(Promise.reject((o as PromiseRejectedResult).reason)))
+      );
+      expect(bodies).toEqual(bodies.map(() => expect.objectContaining(CUT)));
+      await sweeper.sweepOnce();
+      expect(store.countFor(live.id)).toBe(0);
+      expect(await q(`SELECT 1 FROM lives WHERE id = $1`, [live.id])).toEqual([]);
+      expect(await body(lives.get(BOB, live.id))).toMatchObject(CUT);
+      expect(await body(lives.ingest(ALICE, live.id, 2, segment(2)))).toMatchObject(CUT);
+    });
+
+    it('keeps a cut a year, then the sweep deletes it', async () => {
+      const live = await start();
+      await lives.cut(MOD, live.id, { reason: 'spam' });
+      await q(`UPDATE live_cuts SET "cutAt" = now() - interval '364 days'`);
+      await sweeper.sweepOnce();
+      expect(await q(`SELECT 1 FROM live_cuts`)).toHaveLength(1);
+      await q(`UPDATE live_cuts SET "cutAt" = now() - interval '366 days'`);
+      await expect(sweeper.sweepOnce()).resolves.toMatchObject({ cutsPruned: 1 });
+      expect(await q(`SELECT 1 FROM live_cuts`)).toEqual([]);
+    });
+
+    it('a throw in the start prune does not skip the cut prune', async () => {
+      const live = await start();
+      await lives.cut(MOD, live.id, { reason: 'spam' });
+      await q(`UPDATE live_cuts SET "cutAt" = now() - interval '366 days'`);
+      const spy = jest.spyOn(lives, 'pruneStarts').mockRejectedValueOnce(new Error('boom'));
+      try {
+        await expect(sweeper.sweepOnce()).resolves.toMatchObject({ cutsPruned: 1 });
+      } finally {
+        spy.mockRestore();
+      }
+      expect(await q(`SELECT 1 FROM live_cuts`)).toEqual([]);
+    });
+
+    it('REFUSES A START until the first-live rules are accepted, and records the acceptance', async () => {
+      await q(`DELETE FROM live_rules_acceptances WHERE "userId" = $1`, [ALICE]);
+      await expect(lives.rulesStatus(ALICE)).resolves.toEqual({
+        version: LIVE_RULES_VERSION,
+        acceptedVersion: null,
+        acceptedAt: null,
+      });
+      for (const accepted of [
+        undefined,
+        null,
+        0,
+        LIVE_RULES_VERSION + 1,
+        String(LIVE_RULES_VERSION),
+      ]) {
+        expect(
+          await body(lives.start(ALICE, { key: KEY, acceptedRulesVersion: accepted }))
+        ).toEqual({
+          status: HttpStatus.FORBIDDEN,
+          code: 'LIVE_RULES_NOT_ACCEPTED',
+          rulesVersion: LIVE_RULES_VERSION,
+        });
+      }
+      expect(await q(`SELECT 1 FROM lives`)).toEqual([]);
+
+      const live = await lives.start(ALICE, { key: KEY, acceptedRulesVersion: LIVE_RULES_VERSION });
+      expect(live.broadcasterId).toBe(ALICE);
+      expect(await lives.rulesStatus(ALICE)).toMatchObject({ acceptedVersion: LIVE_RULES_VERSION });
+      // Recorded once: the next start needs no field.
+      await lives.end(ALICE, live.id);
+      await expect(lives.start(ALICE, { key: KEY })).resolves.toBeDefined();
+    });
+
+    it('a muted member is refused a start before anything is recorded (the posting rule)', async () => {
+      await q(`DELETE FROM live_rules_acceptances WHERE "userId" = $1`, [BOB]);
+      muted.add(BOB);
+      expect(
+        (await refusal(lives.start(BOB, { key: KEY, acceptedRulesVersion: LIVE_RULES_VERSION })))
+          .code
+      ).toBe('LIVE_MUTED');
+      expect(await q(`SELECT 1 FROM live_rules_acceptances WHERE "userId" = $1`, [BOB])).toEqual(
+        []
+      );
+    });
+
+    it('the CHECK takes cut and still refuses an unknown end reason', async () => {
+      const live = await start();
+      await expect(
+        q(`UPDATE lives SET "endedAt" = now(), "endReason" = 'bogus' WHERE id = $1`, [live.id])
+      ).rejects.toThrow(/lives_end_reason/);
     });
   });
 
@@ -1196,9 +1611,64 @@ maybe('lives against PostgreSQL (migration 091)', () => {
       );
       // Idempotent: a second run changes nothing.
       await erase(ALICE);
-      expect(await sweeper.sweepOnce()).toEqual({ ended: 0, deleted: 1, kept: 0, orphans: 0 });
+      expect(await sweeper.sweepOnce()).toEqual({
+        ended: 0,
+        deleted: 1,
+        kept: 0,
+        orphans: 0,
+        cutsPruned: 0,
+      });
       expect(store.countFor(own.id)).toBe(0);
       await expect(lives.get(BOB, other.id)).resolves.toBeDefined();
+    });
+
+    it('deletes the cuts OF the account and its rules acceptance; a cut it MADE keeps the decision', async () => {
+      const MOD = '9'.repeat(64);
+      const own = await start(ALICE);
+      await lives.cut(MOD, own.id, { reason: 'spam' });
+      const other = await start(CAROL);
+      await lives.cut(ALICE, other.id, { reason: 'other' });
+
+      await erase(ALICE);
+      expect(await q(`SELECT "liveId", "reviewerId" FROM live_cuts ORDER BY "cutAt"`)).toEqual([
+        { liveId: other.id, reviewerId: DELETED_ACCOUNT },
+      ]);
+      expect(await q(`SELECT 1 FROM live_rules_acceptances WHERE "userId" = $1`, [ALICE])).toEqual(
+        []
+      );
+      // Idempotent.
+      await expect(erase(ALICE)).resolves.toEqual({});
+    });
+
+    it("REFUSES TO CUT an erased broadcaster's live: typed, and no cut pools the erased as one offender", async () => {
+      const MOD = '9'.repeat(64);
+      store.failPurge = true;
+      const first = await start(ALICE);
+      const second = await start(CAROL);
+      await erase(ALICE);
+      await erase(CAROL);
+      for (const live of [first, second]) {
+        const refused = await lives.cut(MOD, live.id, { reason: 'spam' }).then(
+          () => null,
+          (e: { getStatus: () => number; getResponse: () => object }) => ({
+            status: e.getStatus(),
+            ...e.getResponse(),
+          })
+        );
+        expect(refused).toMatchObject({
+          status: HttpStatus.GONE,
+          code: 'LIVE_ENDED',
+          endReason: 'erased',
+        });
+      }
+      expect(await q(`SELECT 1 FROM live_cuts`)).toEqual([]);
+      expect(bell).toEqual([]);
+      // Once purged, nothing is left to cut.
+      store.failPurge = false;
+      await sweeper.sweepOnce();
+      expect((await refusal(lives.cut(MOD, first.id, { reason: 'spam' }))).code).toBe(
+        'LIVE_NOT_FOUND'
+      );
     });
   });
 });

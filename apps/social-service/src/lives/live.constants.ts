@@ -136,8 +136,35 @@ export const LIVE_VIEWER_CAP = Math.floor(
  */
 export const LIVE_SEAT_LEASE_MS = 30_000;
 
-/** Why a live ended - the `endReason` column. */
-export type LiveEndReason = 'broadcaster' | 'dropped' | 'max_duration' | 'erased';
+/** Why a live ended - the `endReason` column. `cut`: staff ended it (WP-L8, `POST /api/lives/:id/cut`). */
+export type LiveEndReason = 'broadcaster' | 'dropped' | 'max_duration' | 'erased' | 'cut';
+
+/**
+ * THE REASON CODES OF A STAFF CUT - the report reasons of `content_reports`
+ * (`frontend/src/lib/moderation/reasons.ts`), so a moderator answers a report in the vocabulary it
+ * was filed in. A code, never a sentence: the broadcaster's client words it in its own language.
+ */
+export const LIVE_CUT_REASONS = ['spam', 'harassment', 'inappropriate', 'other'] as const;
+export type LiveCutReason = (typeof LIVE_CUT_REASONS)[number];
+
+/** The longest free text a moderator may attach to a cut (the mute reason's bound). */
+export const LIVE_CUT_DETAILS_MAX = 500;
+
+/**
+ * How long a cut is KEPT (`live_cuts`), and so the window a moderator's count of a broadcaster's
+ * earlier cuts covers. A PLANNING FIGURE, NOT A POLICY THE USER TOOK: no strike rule exists yet
+ * (backlog, "repeat offenders"), and a year is the longest horizon such a rule would plausibly read.
+ * Deleted by the live sweep past it; an account erasure deletes the account's at once.
+ */
+export const LIVE_CUT_RETENTION_MS = 365 * 24 * 60 * 60_000;
+
+/**
+ * THE VERSION OF THE RULES A MEMBER ACCEPTS BEFORE BROADCASTING (L11). A start is refused 403
+ * `LIVE_RULES_NOT_ACCEPTED` unless the member's recorded acceptance (`live_rules_acceptances`) is at
+ * least this version, or the start itself carries `acceptedRulesVersion` equal to it - which records
+ * it. Raise it when the rules' TEXT changes, so every member accepts the new text once.
+ */
+export const LIVE_RULES_VERSION = 1;
 
 /** The numbers as the API serves them. */
 export function liveLimits(): {
@@ -151,6 +178,7 @@ export function liveLimits(): {
   startsPerHour: number;
   viewerCap: number;
   seatLeaseMs: number;
+  rulesVersion: number;
 } {
   return {
     segmentMaxBytes: LIVE_SEGMENT_MAX_BYTES,
@@ -163,5 +191,6 @@ export function liveLimits(): {
     startsPerHour: LIVE_STARTS_PER_HOUR,
     viewerCap: LIVE_VIEWER_CAP,
     seatLeaseMs: LIVE_SEAT_LEASE_MS,
+    rulesVersion: LIVE_RULES_VERSION,
   };
 }

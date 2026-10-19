@@ -81,6 +81,16 @@ ici avec :
 | **Supprimer la publication** | Retire definitivement la publication pour tous |
 | **Ignorer le signalement** | Marque le signalement comme traite, la publication est conservee |
 
+### Les lives (en preparation, pas encore dans l'application publiee)
+
+Un live peut etre signale comme une publication. Pour un live, l'action n'est pas "supprimer" mais
+**couper le live** : il s'arrete aussitot pour tous les spectateurs, n'est plus visible, et son
+auteur recoit une notification. La coupure est enregistree (qui, quand, quel motif) et les
+signalements en attente sur ce live sont marques comme traites. Le nombre de lives deja coupes d'un
+membre est affiche ; aucune sanction automatique n'en decoule, la restriction du compte (muet) reste
+une decision du moderateur. Le bouton arrive avec la partie application du chantier
+([lives](../wiki/services/lives.md#moderation-wp-l8-server-half)).
+
 ---
 
 ## 4. Gestion des utilisateurs (`/admin/users`)

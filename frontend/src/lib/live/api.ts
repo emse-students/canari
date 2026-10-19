@@ -28,6 +28,7 @@ import type {
   LiveManifest,
   LiveRefusalKind,
   LiveRemovedViewer,
+  LiveRulesStatus,
   LiveView,
 } from './types';
 
@@ -165,20 +166,41 @@ export async function listOpenLives(): Promise<LiveListItem[]> {
   return liveJson<LiveListItem[]>(livesBase(), 'Live list');
 }
 
+/** `GET /api/lives/rules` - whether the caller must accept the first-live rules before starting. */
+export async function fetchLiveRules(): Promise<LiveRulesStatus> {
+  console.debug('[LIVE] rules');
+  return liveJson<LiveRulesStatus>(`${livesBase()}/rules`, 'Live rules');
+}
+
 /**
  * `POST /api/lives` - starts a live (201, the live WITH its key).
  *
  * @param keyHex The live key the broadcaster's client generated: 64 lower-case hex characters, as
  *   `generateMediaCek()` (`$lib/mediaCrypto`) produces. Never logged.
  * @param associationId Broadcast AS this association (needs `POST_AS_ASSO` there), or omitted.
- * Refusals: `LIVE_KEY_INVALID`, `LIVE_ASSOCIATION_INVALID`, `LIVE_MUTED`,
+ * @param acceptedRulesVersion The rules version the member accepted on THIS screen, sent only then:
+ *   the server records it with the start. Omitted when the account accepted it before.
+ * Refusals: `LIVE_KEY_INVALID`, `LIVE_ASSOCIATION_INVALID`, `LIVE_MUTED`, `LIVE_RULES_NOT_ACCEPTED`,
  * `LIVE_ASSOCIATION_FORBIDDEN`, `LIVE_ALREADY_OPEN` (all `refused`), `LIVE_START_RATE` (`rate-limited`).
  */
-export async function startLive(keyHex: string, associationId?: string): Promise<LiveView> {
-  console.debug(`[LIVE] start${associationId ? ` as association ${associationId}` : ''}`);
+export async function startLive(
+  keyHex: string,
+  associationId?: string,
+  acceptedRulesVersion?: number
+): Promise<LiveView> {
+  console.debug(
+    `[LIVE] start${associationId ? ` as association ${associationId}` : ''}${
+      acceptedRulesVersion === undefined ? '' : `, rules v${acceptedRulesVersion} accepted`
+    }`
+  );
+  const body: { key: string; associationId?: string; acceptedRulesVersion?: number } = {
+    key: keyHex,
+  };
+  if (associationId) body.associationId = associationId;
+  if (acceptedRulesVersion !== undefined) body.acceptedRulesVersion = acceptedRulesVersion;
   const live = await liveJson<LiveView>(livesBase(), 'Live start', {
     method: 'POST',
-    body: JSON.stringify(associationId ? { key: keyHex, associationId } : { key: keyHex }),
+    body: JSON.stringify(body),
   });
   console.log(`[LIVE] started ${live.id}`);
   return live;

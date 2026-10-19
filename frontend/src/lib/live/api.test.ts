@@ -22,6 +22,7 @@ import {
   endLive,
   fetchLive,
   fetchLiveLimits,
+  fetchLiveRules,
   fetchLiveManifest,
   fetchLiveSegment,
   isLiveRefusal,
@@ -89,6 +90,22 @@ describe('the routes', () => {
       key: KEY,
       associationId: 'asso-1',
     });
+    await startLive(KEY, undefined, 1);
+    expect(JSON.parse(apiFetch.mock.lastCall![1].body)).toEqual({
+      key: KEY,
+      acceptedRulesVersion: 1,
+    });
+  });
+
+  it('the rules standing is a GET on /api/lives/rules; its refusal at the start is typed', async () => {
+    apiFetch.mockResolvedValueOnce(
+      json(200, { version: 1, acceptedVersion: null, acceptedAt: null })
+    );
+    expect(await fetchLiveRules()).toEqual({ version: 1, acceptedVersion: null, acceptedAt: null });
+    expect(apiFetch).toHaveBeenLastCalledWith('https://social.test/api/lives/rules', {});
+    apiFetch.mockResolvedValueOnce(json(403, { code: 'LIVE_RULES_NOT_ACCEPTED', rulesVersion: 1 }));
+    const refused = await refusal(startLive(KEY));
+    expect(refused).toMatchObject({ code: 'LIVE_RULES_NOT_ACCEPTED', kind: 'refused' });
   });
 
   it('the start never logs the key', async () => {

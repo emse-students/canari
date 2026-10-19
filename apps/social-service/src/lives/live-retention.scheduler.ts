@@ -15,6 +15,8 @@ export interface LiveSweepReport {
   kept: number;
   /** Segment folders with no live row behind them, emptied by the orphan reaper. */
   orphans: number;
+  /** Staff cuts past `LIVE_CUT_RETENTION_MS`, deleted from `live_cuts`. */
+  cutsPruned: number;
 }
 
 /**
@@ -26,7 +28,8 @@ export interface LiveSweepReport {
  *    store proves the live's prefix empty (`LivesService.purgeEnded`).
  * 3. REAPS every segment folder with no live row behind it - a store that outlived its own timeout
  *    and landed after its live's purge (`LivesService.reapOrphans`, a row-state rule, no clock) -
- *    and deletes the `live_starts` rows older than the hour they are counted in.
+ *    and deletes the `live_starts` rows older than the hour they are counted in, and the `live_cuts`
+ *    rows past their retention (`LIVE_CUT_RETENTION_MS`).
  *
  * THE STATE IS THE ROW: a live with `endedAt` and a row is due, a deleted row is done - no "last
  * run", no marker. Idempotent: a crash between the store and the row leaves an ended row whose
@@ -67,7 +70,7 @@ export class LiveRetentionScheduler {
 
   /** The whole run, separated so a test can call it without a scheduler. */
   async sweepOnce(): Promise<LiveSweepReport> {
-    const report: LiveSweepReport = { ended: 0, deleted: 0, kept: 0, orphans: 0 };
+    const report: LiveSweepReport = { ended: 0, deleted: 0, kept: 0, orphans: 0, cutsPruned: 0 };
     report.ended = (await this.lives.endDue()).length;
 
     const kept: string[] = [];
@@ -100,11 +103,22 @@ export class LiveRetentionScheduler {
     } catch (e) {
       this.logger.warn(`[LIVE_GC] orphan reaper skipped this run: ${String(e)}`);
     }
-    await this.lives.pruneStarts();
+    // Each prune in its own `try`, for the same reason: a throw in one must not skip the other, nor
+    // cost the report.
+    try {
+      await this.lives.pruneStarts();
+    } catch (e) {
+      this.logger.warn(`[LIVE_GC] start prune skipped this run: ${String(e)}`);
+    }
+    try {
+      report.cutsPruned = await this.lives.pruneCuts();
+    } catch (e) {
+      this.logger.warn(`[LIVE_GC] cut prune skipped this run: ${String(e)}`);
+    }
 
-    if (report.ended + report.deleted + report.kept + report.orphans > 0) {
+    if (report.ended + report.deleted + report.kept + report.orphans + report.cutsPruned > 0) {
       this.logger.log(
-        `[LIVE_GC] ended=${report.ended} deleted=${report.deleted} kept=${report.kept} orphans=${report.orphans}`
+        `[LIVE_GC] ended=${report.ended} deleted=${report.deleted} kept=${report.kept} orphans=${report.orphans} cutsPruned=${report.cutsPruned}`
       );
     }
     return report;

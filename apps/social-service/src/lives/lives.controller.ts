@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Body,
+  ForbiddenException,
   Controller,
   Delete,
   Get,
@@ -17,6 +18,7 @@ import {
 } from '@nestjs/common';
 import type { Request } from 'express';
 import { NginxAuthGuard } from '../common/guards/nginx-auth.guard';
+import { AssociationsService } from '../associations/associations.service';
 import { LiveEnabledGuard } from './live-enabled.guard';
 import { LIVE_SEGMENT_MAX_BYTES, liveLimits } from './live.constants';
 import { LivesService } from './lives.service';
@@ -41,12 +43,25 @@ function indexOf(value: string, field: string): number {
 @Controller('lives')
 @UseGuards(LiveEnabledGuard, NginxAuthGuard)
 export class LivesController {
-  constructor(private readonly lives: LivesService) {}
+  constructor(
+    private readonly lives: LivesService,
+    private readonly associations: AssociationsService
+  ) {}
 
   /** The live's numbers, so a client carries no copy of them. Declared before `:id`. */
   @Get('limits')
   limits() {
     return liveLimits();
+  }
+
+  /**
+   * The caller's standing with the first-live rules (L11): `{ version, acceptedVersion, acceptedAt }`.
+   * The pre-live screen shows the rules when `acceptedVersion` is below `version`, and the start then
+   * carries `acceptedRulesVersion`. Declared before `:id`.
+   */
+  @Get('rules')
+  rules(@Headers('x-user-id') userId: string) {
+    return this.lives.rulesStatus(callerOf(userId));
   }
 
   /** The open lives the caller may watch, newest first. */
@@ -55,11 +70,15 @@ export class LivesController {
     return this.lives.listOpen(callerOf(userId));
   }
 
-  /** Starts a live: `{ key: <64 hex>, associationId?: <uuid> }`. 409 if the caller has one open. */
+  /**
+   * Starts a live: `{ key: <64 hex>, associationId?: <uuid>, acceptedRulesVersion?: <int> }`. 409 if
+   * the caller has one open; 403 `LIVE_RULES_NOT_ACCEPTED` while the first-live rules are not
+   * accepted (send `acceptedRulesVersion` when the member tapped Start on them).
+   */
   @Post()
   start(
     @Headers('x-user-id') userId: string,
-    @Body() body: { key?: unknown; associationId?: unknown }
+    @Body() body: { key?: unknown; associationId?: unknown; acceptedRulesVersion?: unknown }
   ) {
     return this.lives.start(callerOf(userId), body ?? {});
   }
@@ -137,5 +156,28 @@ export class LivesController {
     @Body() body: { viewerId?: unknown }
   ) {
     return this.lives.removeViewer(callerOf(userId), id, body?.viewerId);
+  }
+
+  /**
+   * STAFF CUT a live (WP-L8): `{ reason: 'spam'|'harassment'|'inappropriate'|'other', details? }`.
+   * Who may: `isContentModerator` - a platform admin or a BDE member holding `MODERATE`, the ONE
+   * predicate of the posts' moderation controls and of `/api/moderation`. Anyone else is 403
+   * `LIVE_CUT_FORBIDDEN`, asked BEFORE the live is looked up, so the refusal says nothing about
+   * whether the live exists. Idempotent: a repeat answers the first cut with `newlyCut: false`.
+   */
+  @Post(':id/cut')
+  @HttpCode(200)
+  async cut(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Headers('x-user-id') userId: string,
+    @Headers('x-global-admin') globalAdmin: string | undefined,
+    @Body() body: { reason?: unknown; details?: unknown }
+  ) {
+    const caller = callerOf(userId);
+    const mayModerate = await this.associations.isContentModerator(caller, {
+      isGlobalAdmin: globalAdmin === 'true',
+    });
+    if (!mayModerate) throw new ForbiddenException({ code: 'LIVE_CUT_FORBIDDEN' });
+    return this.lives.cut(caller, id.toLowerCase(), body ?? {});
   }
 }

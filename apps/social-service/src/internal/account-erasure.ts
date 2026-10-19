@@ -205,6 +205,11 @@ export const ACCOUNT_ERASURE_COVERAGE: Record<string, ErasureDisposition> = {
   'lives.broadcasterId': { action: 'anonymise' },
   'live_removed_viewers.viewerId': { action: 'delete' },
   'live_starts.broadcasterId': { action: 'delete' },
+  // A cut is a moderation record ABOUT the broadcaster (WP-L8): it goes with their account. The
+  // moderator who cut is anonymised - the decision stays, the name goes.
+  'live_cuts.broadcasterId': { action: 'delete' },
+  'live_cuts.reviewerId': { action: 'anonymise' },
+  'live_rules_acceptances.userId': { action: 'delete' },
 
   // -- Not an account reference, despite the name ----------------------------------------------
   'associations.contactEmail': {
@@ -309,6 +314,11 @@ export const BOOKINGS_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
  *   because every read of an ended live is a 410.
  * - The account's place on another live's removed-viewer list is deleted.
  * - Its `live_starts` rows (the rolling hour `LIVE_STARTS_PER_HOUR` counts) are deleted.
+ * - The cuts of its lives (`live_cuts`, WP-L8) and its first-live rules acceptance are deleted; a
+ *   cut it made AS A MODERATOR keeps the decision and loses the name.
+ *
+ * LOCK ORDER: `lives` first, then `live_cuts` - the order a staff cut takes them (the live's row
+ * lock, then the cut's insert) - so an erasure racing a cut waits or is waited for, never deadlocks.
  *
  * Exported apart so `lives.integration.spec.ts` runs exactly these against the schema 091 builds.
  */
@@ -328,6 +338,18 @@ export const LIVES_ERASURE_STATEMENTS: readonly ErasureStatement[] = [
   {
     label: 'live_starts',
     sql: `DELETE FROM live_starts WHERE "broadcasterId" = $1`,
+  },
+  {
+    label: 'live_cuts',
+    sql: `DELETE FROM live_cuts WHERE "broadcasterId" = $1`,
+  },
+  {
+    label: 'live_cuts_reviewer',
+    sql: `UPDATE live_cuts SET "reviewerId" = $2 WHERE "reviewerId" = $1`,
+  },
+  {
+    label: 'live_rules_acceptances',
+    sql: `DELETE FROM live_rules_acceptances WHERE "userId" = $1`,
   },
 ];
 

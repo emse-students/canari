@@ -8,6 +8,8 @@ import { Live } from './entities/live.entity';
 import { LiveSegment } from './entities/live-segment.entity';
 import { LiveRemovedViewer } from './entities/live-removed-viewer.entity';
 import { LiveStart } from './entities/live-start.entity';
+import { LiveCut } from './entities/live-cut.entity';
+import { LiveRulesAcceptance } from './entities/live-rules-acceptance.entity';
 import { LIVE_STORE_TIMEOUT_MS } from './live.constants';
 import { HttpLiveSegmentStore, LIVE_SEGMENT_STORE } from './live-segment-store';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
@@ -16,8 +18,15 @@ import { LiveSeats } from './live-seats';
 import { LivesController } from './lives.controller';
 import { LivesService } from './lives.service';
 
-/** Every table of the module (migrations 091 and 094), parent first. */
-export const LIVE_ENTITIES = [Live, LiveSegment, LiveRemovedViewer, LiveStart];
+/** Every table of the module (migrations 091, 094 and 097), parent first. */
+export const LIVE_ENTITIES = [
+  Live,
+  LiveSegment,
+  LiveRemovedViewer,
+  LiveStart,
+  LiveCut,
+  LiveRulesAcceptance,
+];
 
 /**
  * Lives (docs/wiki/services/lives.md): the row, its key and removed viewers (WP-L2), the segment

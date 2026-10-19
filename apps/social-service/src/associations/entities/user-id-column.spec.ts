@@ -13,6 +13,8 @@ import { BookingParticipant } from '../../bookings/entities/booking-participant.
 import { Live } from '../../lives/entities/live.entity';
 import { LiveRemovedViewer } from '../../lives/entities/live-removed-viewer.entity';
 import { LiveStart } from '../../lives/entities/live-start.entity';
+import { LiveCut } from '../../lives/entities/live-cut.entity';
+import { LiveRulesAcceptance } from '../../lives/entities/live-rules-acceptance.entity';
 
 /**
  * A user id in this estate is NOT a UUID, and one column forgot it.
@@ -41,6 +43,9 @@ describe('a user-id column is varchar(255), never uuid', () => {
     ['lives', 'broadcasterId', Live],
     ['live_removed_viewers', 'viewerId', LiveRemovedViewer],
     ['live_starts', 'broadcasterId', LiveStart],
+    ['live_cuts', 'broadcasterId', LiveCut],
+    ['live_cuts', 'reviewerId', LiveCut],
+    ['live_rules_acceptances', 'userId', LiveRulesAcceptance],
   ];
 
   it.each(CASES)('%s.%s is declared varchar(255)', (_table, property, target) => {

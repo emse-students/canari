@@ -34,6 +34,7 @@ import {
   endLive,
   fetchLive,
   fetchLiveLimits,
+  fetchLiveRules,
   isLiveRefusal,
   LiveRefusalError,
   LiveSegmentUploader,
@@ -54,7 +55,7 @@ import {
   LIVE_RECORDER_STOP_BOUND_MS,
   LIVE_SEGMENT_MS,
 } from './constants';
-import type { LiveEndResult, LiveLimits, LiveView } from './types';
+import type { LiveEndResult, LiveLimits, LiveRulesStatus, LiveView } from './types';
 
 /** Where the broadcast stands; see the diagram in the module comment. */
 export type LiveBroadcastPhase = 'preview' | 'starting' | 'live' | 'away' | 'ending' | 'ended';
@@ -62,6 +63,7 @@ export type LiveBroadcastPhase = 'preview' | 'starting' | 'live' | 'away' | 'end
 /** Why a start was refused - one sentence each on the pre-live screen. */
 export type LiveStartProblem =
   | 'muted'
+  | 'rules-not-accepted'
   | 'already-open'
   | 'association-forbidden'
   | 'rate-limited'
@@ -106,7 +108,12 @@ export type LiveUploaderLike = Pick<
 /** Everything the broadcast reaches outside itself. */
 export interface LiveBroadcastDeps {
   fetchLiveLimits: () => Promise<LiveLimits>;
-  startLive: (keyHex: string, associationId?: string) => Promise<LiveView>;
+  fetchLiveRules: () => Promise<LiveRulesStatus>;
+  startLive: (
+    keyHex: string,
+    associationId?: string,
+    acceptedRulesVersion?: number
+  ) => Promise<LiveView>;
   fetchLive: (liveId: string) => Promise<LiveView>;
   endLive: (liveId: string) => Promise<LiveEndResult>;
   createUploader: (liveId: string, options: LiveSegmentUploaderOptions) => LiveUploaderLike;
@@ -131,6 +138,7 @@ export interface LiveBroadcastDeps {
 export function defaultLiveBroadcastDeps(): LiveBroadcastDeps {
   return {
     fetchLiveLimits,
+    fetchLiveRules,
     startLive,
     fetchLive,
     endLive,
@@ -150,6 +158,7 @@ export function defaultLiveBroadcastDeps(): LiveBroadcastDeps {
 export function startProblemOf(error: unknown): LiveStartProblem {
   if (error instanceof LiveRefusalError) {
     if (error.code === 'LIVE_MUTED') return 'muted';
+    if (error.code === 'LIVE_RULES_NOT_ACCEPTED') return 'rules-not-accepted';
     if (error.code === 'LIVE_ALREADY_OPEN') return 'already-open';
     if (error.code === 'LIVE_ASSOCIATION_FORBIDDEN') return 'association-forbidden';
     if (error.kind === 'rate-limited') return 'rate-limited';
@@ -171,6 +180,10 @@ function limitsProblemOf(error: unknown): LiveLimitsProblem {
 export class LiveBroadcast {
   phase = $state<LiveBroadcastPhase>('preview');
   limits = $state.raw<LiveLimits | null>(null);
+  /** The member's standing with the first-live rules (L11), read with the limits. */
+  rules = $state.raw<LiveRulesStatus | null>(null);
+  /** The member tapped "I accept" on THIS screen: the start then sends the version. */
+  rulesAcceptedHere = $state(false);
   limitsProblem = $state<LiveLimitsProblem | null>(null);
   startProblem = $state<LiveStartProblem | null>(null);
   endCause = $state<LiveEndCause | null>(null);
@@ -229,15 +242,43 @@ export class LiveBroadcast {
     return this.#startedAt === null ? 0 : this.#deps.now() - this.#startedAt;
   }
 
-  /** Reads the server's numbers; the Start button waits for them. */
+  /**
+   * Reads the server's numbers and the member's standing with the rules, together: the Start
+   * button waits for both, and either failing is the same "could not read" with its Retry.
+   */
   async loadLimits(): Promise<void> {
     this.limitsProblem = null;
     try {
-      this.limits = await this.#deps.fetchLiveLimits();
+      const [limits, rules] = await Promise.all([
+        this.#deps.fetchLiveLimits(),
+        this.#deps.fetchLiveRules(),
+      ]);
+      this.limits = limits;
+      this.rules = rules;
+      console.debug(
+        `[LIVE-BROADCAST] rules v${rules.version}, accepted v${rules.acceptedVersion ?? '-'}`
+      );
     } catch (e) {
       this.limitsProblem = limitsProblemOf(e);
       console.warn(`[LIVE-BROADCAST] limits not read (${this.limitsProblem})`);
     }
+  }
+
+  /**
+   * Whether the rules must be accepted on this screen before Start: the account's accepted version
+   * is below the current one (never accepted, or the rules changed), and it was not accepted here.
+   */
+  get rulesPending(): boolean {
+    if (this.rules === null || this.rulesAcceptedHere) return false;
+    return (this.rules.acceptedVersion ?? 0) < this.rules.version;
+  }
+
+  /** The member tapped "I accept the rules": the next start records it with the server. */
+  acceptRules(): void {
+    if (this.rules === null) return;
+    console.log(`[LIVE-BROADCAST] rules v${this.rules.version} accepted on screen`);
+    this.rulesAcceptedHere = true;
+    if (this.startProblem === 'rules-not-accepted') this.startProblem = null;
   }
 
   /** Whether Start may be pressed now. */
@@ -246,9 +287,27 @@ export class LiveBroadcast {
       this.phase === 'preview' &&
       this.supported &&
       this.limits !== null &&
+      this.rules !== null &&
+      !this.rulesPending &&
       this.camera.phase === 'live' &&
       this.camera.stream !== null
     );
+  }
+
+  /**
+   * The server refused the start for the rules (a version raised since they were read): read them
+   * again, which shows them. A failed read is the limits' own "could not read" with its Retry
+   * (Start waits for the rules again), never a guess at the standing.
+   */
+  async #rulesRefused(): Promise<void> {
+    this.rulesAcceptedHere = false;
+    try {
+      this.rules = await this.#deps.fetchLiveRules();
+    } catch (e) {
+      this.rules = null;
+      this.limitsProblem = limitsProblemOf(e);
+      console.warn(`[LIVE-BROADCAST] rules not re-read after the refusal (${this.limitsProblem})`);
+    }
   }
 
   /** Starts the live on the camera already open. */
@@ -265,10 +324,16 @@ export class LiveBroadcast {
     let keyHex: string;
     try {
       keyHex = await this.#deps.generateKeyHex();
-      live = await this.#deps.startLive(keyHex, this.associationId ?? undefined);
+      live = await this.#deps.startLive(
+        keyHex,
+        this.associationId ?? undefined,
+        this.rulesAcceptedHere ? this.rules?.version : undefined
+      );
     } catch (e) {
       if (this.#disposed) return;
       this.startProblem = startProblemOf(e);
+      if (this.startProblem === 'rules-not-accepted') await this.#rulesRefused();
+      if (this.#disposed) return;
       this.phase = 'preview';
       console.warn(`[LIVE-BROADCAST] start refused (${this.startProblem})`);
       return;

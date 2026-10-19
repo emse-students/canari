@@ -102,6 +102,7 @@
 - [Host OS updates](infrastructure/host-updates.md) — the four boxes' security updates, the `#clear` without which the policy is decorative, the 30-second `502` this scope does NOT incur, and the daily run that fails on a finding
 - [Dev environment](infrastructure/dev-environment.md) — `dev.canari-emse.fr`: what keeps it apart from production, the full copy and its three strips, the declared version gap, and the one kind of evidence that lifts a merge ceiling
 - [Store listings](store-listings.md) - what Play and the App Store show: current texts and what is stale, screenshot sizes, the fictional-demo-data pipeline and its privacy checklist
+- [Store UGC answers](store-ugc-answers.md) - what Apple 1.2 and Play's UGC policy ask (filter, report, block, contact, terms), mapped to what the app has and what is missing (WP-L9)
 - [Production queue and epoch audit, 2026-10-12](infrastructure/prod-queue-and-epoch-audit-2026-10-12.md) - why `queued_message` reached 93 k rows: repair answers sent to every seat of a new community, and seats of devices with no session left; no client stuck, the reaper by age rejected
 - [Storage forecast](infrastructure/storage-forecast.md) — Measured unit costs, the model at 400 daily users, and why the backup scheme fails before the data does
 - [Storage and retention](infrastructure/storage-and-retention.md) — Draft audit of 2026-10-11: host disk, volumes, logs and backups measured read-only; the unmeasured remainder is listed

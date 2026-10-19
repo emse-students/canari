@@ -7,7 +7,7 @@ import { vi } from 'vitest';
 import { CameraSession } from '$lib/reels/cameraSession.svelte';
 import type { LiveSegmentUploaderOptions } from './api';
 import type { LiveBroadcastDeps } from './liveBroadcast.svelte';
-import type { LiveLimits, LiveView } from './types';
+import type { LiveLimits, LiveRulesStatus, LiveView } from './types';
 
 export class FakeTrack extends EventTarget {
   readyState: 'live' | 'ended' = 'live';
@@ -128,6 +128,12 @@ export function fakeDeps() {
   let hidden = false;
   const deps = {
     fetchLiveLimits: vi.fn(async () => LIMITS),
+    // Accepted already by default: a test of the rules step overrides it.
+    fetchLiveRules: vi.fn(async (): Promise<LiveRulesStatus> => ({
+      version: 1,
+      acceptedVersion: 1,
+      acceptedAt: '2026-10-19T09:00:00.000Z',
+    })),
     startLive: vi.fn(async () => liveView()),
     fetchLive: vi.fn(async () => liveView()),
     endLive: vi.fn(async () => ({

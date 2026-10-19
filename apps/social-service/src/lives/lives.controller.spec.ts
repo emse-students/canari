@@ -6,6 +6,7 @@ import { LiveEnabledGuard, isLiveEnabled } from './live-enabled.guard';
 import { LIVE_SEGMENT_MAX_BYTES } from './live.constants';
 import { LivesController } from './lives.controller';
 import type { LivesService } from './lives.service';
+import type { AssociationsService } from '../associations/associations.service';
 import { readBoundedBody } from './read-bounded-body';
 
 /** A request whose body is `chunks`, with `content-length` when given. */
@@ -71,10 +72,22 @@ describe('a segment body', () => {
   });
 });
 
+const MODERATOR = 'm'.repeat(64);
+
 describe('LivesController', () => {
   const ingest = jest.fn().mockResolvedValue({ index: 0 });
   const manifest = jest.fn().mockResolvedValue({});
-  const controller = new LivesController({ ingest, manifest } as unknown as LivesService);
+  const cut = jest.fn().mockResolvedValue({ newlyCut: true });
+  const rulesStatus = jest.fn().mockResolvedValue({ version: 1 });
+  /** The posts' one moderator predicate, faked: only `MODERATOR` holds `MODERATE` in a BDE. */
+  const isContentModerator = jest.fn(
+    async (userId: string, opts?: { isGlobalAdmin?: boolean }) =>
+      opts?.isGlobalAdmin === true || userId === MODERATOR
+  );
+  const controller = new LivesController(
+    { ingest, manifest, cut, rulesStatus } as unknown as LivesService,
+    { isContentModerator } as unknown as AssociationsService
+  );
   const LIVE = '22222222-2222-4222-8222-222222222222';
 
   beforeEach(() => jest.clearAllMocks());
@@ -99,5 +112,38 @@ describe('LivesController', () => {
     expect(await statusOf(controller.manifest(LIVE, 'b'.repeat(64), 'x'))).toBe(
       HttpStatus.BAD_REQUEST
     );
+  });
+
+  describe('the staff cut: WHO may (the posts moderation predicate)', () => {
+    const body = { reason: 'harassment' };
+
+    it.each([
+      ['a member', 'b'.repeat(64), undefined],
+      ['the broadcaster', 'a'.repeat(64), undefined],
+      ['a member sending x-global-admin: false', 'c'.repeat(64), 'false'],
+      ['a member sending a misspelt admin header', 'c'.repeat(64), 'TRUE'],
+    ])(
+      'refuses %s with 403 LIVE_CUT_FORBIDDEN, before the live is looked up',
+      async (_who, userId, admin) => {
+        await expect(controller.cut(LIVE, userId, admin, body)).rejects.toMatchObject({
+          status: HttpStatus.FORBIDDEN,
+          response: { code: 'LIVE_CUT_FORBIDDEN' },
+        });
+        expect(cut).not.toHaveBeenCalled();
+      }
+    );
+
+    it('lets a BDE moderator and a platform admin cut, the caller and the id in lower case', async () => {
+      await controller.cut(LIVE.toUpperCase(), MODERATOR.toUpperCase(), undefined, body);
+      expect(cut).toHaveBeenLastCalledWith(MODERATOR, LIVE, body);
+      await controller.cut(LIVE, 'd'.repeat(64), 'true', body);
+      expect(cut).toHaveBeenLastCalledWith('d'.repeat(64), LIVE, body);
+      expect(isContentModerator).toHaveBeenLastCalledWith('d'.repeat(64), { isGlobalAdmin: true });
+    });
+  });
+
+  it('answers the caller its first-live rules standing', async () => {
+    await controller.rules('A'.repeat(64));
+    expect(rulesStatus).toHaveBeenCalledWith('a'.repeat(64));
   });
 });
