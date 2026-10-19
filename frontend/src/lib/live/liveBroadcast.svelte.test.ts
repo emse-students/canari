@@ -242,6 +242,27 @@ describe('LiveBroadcast - on air', () => {
     expect(deps.endLive).toHaveBeenCalledWith(LIVE_ID);
   });
 
+  it('an absence longer than the window is not silence on air: the return keeps the live, and a new silence ON AIR still ends it', async () => {
+    const { b, uploaders, recorders, clock, setHidden } = await ready();
+    await b.start();
+    const u = uploaders[0];
+    setHidden(true);
+    b.appHidden();
+    expect(b.phase).toBe('away');
+    clock.t += LIMITS.reconnectWindowMs * 3;
+    setHidden(false);
+    b.appVisible();
+    await vi.waitFor(() => expect(b.phase).toBe('live'));
+    expect(recorders).toHaveLength(2);
+    u.backlog = 1;
+    u.options.onRetry!(0, 1, new TransportFailureError(new TypeError('x')));
+    expect(b.phase).toBe('live');
+    clock.t += LIMITS.reconnectWindowMs + 1;
+    u.options.onRetry!(0, 2, new TransportFailureError(new TypeError('x')));
+    expect(b.phase).toBe('ended');
+    expect(b.endCause).toBe('connection-lost');
+  });
+
   it('a slow but ALIVE uplink (80 % of real time) is never called a lost connection: past the cap it ends as too slow', async () => {
     const { b, uploaders, clock } = await ready();
     await b.start();

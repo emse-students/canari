@@ -79,6 +79,8 @@ export class ScreenWakeLock {
   #wanted = false;
   /** The newest hold or release; a request answered under an older one is stale. */
   #ticket = 0;
+  /** The ticket of the newest request the browser refused; a lock answered later may stand. */
+  #refusedTicket = -1;
   #warned = false;
 
   constructor(
@@ -103,8 +105,11 @@ export class ScreenWakeLock {
     const ticket = ++this.#ticket;
     try {
       const sentinel = await this.api.request('screen');
-      if (ticket !== this.#ticket || !this.#wanted) {
-        // Released, or held again, while the request was in flight: this one is nobody's.
+      const heldAlready = this.#sentinel !== null && !this.#sentinel.released;
+      const newestRefused = this.#refusedTicket === this.#ticket;
+      if (!this.#wanted || heldAlready || (ticket !== this.#ticket && !newestRefused)) {
+        // Released, held by another request, or superseded by one still in flight: this one is
+        // nobody's. Superseded by one that was REFUSED it is not stale: the only lock there is.
         console.debug('[LIVE-WAKE] a stale screen lock answered - given straight back');
         await sentinel.release();
         return;
@@ -113,6 +118,7 @@ export class ScreenWakeLock {
       console.debug('[LIVE-WAKE] screen held on');
     } catch (err) {
       // A hidden page, or a policy: the screen may dim. Logged, never retried on a timer.
+      this.#refusedTicket = ticket;
       console.warn('[LIVE-WAKE] the screen lock was refused', err);
     }
   }

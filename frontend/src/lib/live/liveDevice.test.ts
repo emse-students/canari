@@ -93,6 +93,30 @@ describe('ScreenWakeLock', () => {
     expect(held()).toEqual([]);
   });
 
+  it('a hold superseded by one that was REFUSED still keeps the lock it got', async () => {
+    const api0 = fakeApi();
+    const reject: ((e: Error) => void)[] = [];
+    let call = 0;
+    const api: WakeLockApi = {
+      request: vi.fn(() => {
+        const i = call++;
+        if (i === 1) return new Promise<never>((_, rej) => reject.push(rej));
+        return api0.api.request('screen');
+      }),
+    };
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const lock = new ScreenWakeLock(api);
+    const a = lock.hold();
+    const b = lock.hold();
+    reject[0](new Error('hidden'));
+    await b;
+    const sentinel = api0.answer(0);
+    await a;
+    await settle();
+    expect(sentinel.released).toBe(false);
+    expect(api0.held()).toEqual([sentinel]);
+  });
+
   it('holding again while a lock stands asks for nothing', async () => {
     const { api, answer } = fakeApi();
     const lock = new ScreenWakeLock(api);

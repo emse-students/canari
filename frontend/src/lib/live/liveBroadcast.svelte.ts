@@ -443,6 +443,9 @@ export class LiveBroadcast {
     const generation = ++this.#recorderGeneration;
     const first = this.#firstRecordAt === null;
     const now = this.#deps.now();
+    // Silence is measured ON AIR only: nothing is stored while away, so a clock left running across
+    // a background would read the whole absence as a lost connection at the first enqueue.
+    this.#lastStoredAt = now;
     this.#firstRecordAt ??= now;
     // The generation is FIXED in this recorder's callback: its last chunk, arriving after a pause,
     // still lands in its own splitter and never in the next recorder's.

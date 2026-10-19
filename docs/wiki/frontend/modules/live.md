@@ -401,7 +401,8 @@ LIVE-B1 row 8 reads it.
 ~230 MB in ten minutes offline), and **the cause is read from the last segment the server STORED,
 not from the count**:
 
-- nothing stored for longer than `reconnectWindowMs` (since the start, before the first): the
+- nothing stored for longer than `reconnectWindowMs` (since the start, before the first, and RESET on every return to air - nothing is stored while
+  away, so an absence is never read as silence): the
   broadcast ends itself as `connection-lost` - the server has ended a live that silent anyway;
 - still storing, but past `ceil(reconnectWindowMs / LIVE_SEGMENT_MS)` +
   `LIVE_BACKLOG_MARGIN_SEGMENTS` (5) segments waiting: an uplink slower than real time. At 80 % of
