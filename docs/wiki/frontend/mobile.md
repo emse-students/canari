@@ -2080,7 +2080,10 @@ it from there:
 
 The Rust row covers what the scanner composes from a DECRYPTED message - a system event, a reaction,
 a photo or a voice message, a poll, a call (WP-PUSH-I18N, 2026-10-18;
-[chat](modules/chat.md#a-voice-note-declares-itself-because-nothing-downstream-can-tell)).
+[chat](modules/chat.md#a-voice-note-declares-itself-because-nothing-downstream-can-tell)), and a
+CanaReel sent in a conversation, which also comes back as `mediaKind: "reel"` with its key withheld so
+no thumbnail is ever attempted (WP-RC-7, 2026-10-19;
+[reels-in-chat](modules/reels-in-chat.md#push-text)).
 
 The appex has its OWN copy because an app extension is a separate bundle and `Bundle.main` there is
 the appex - that duplication is the platform's, not a choice, and it is what Android does not have
@@ -2568,7 +2571,8 @@ still there after all seven passes, which is the paragraph above, measured.
 UPGRADED.** `📷 Photo` is a NOTIFICATION string (`proto_fields.rs`, hardcoded per `mediaKind`),
 while `[Media]` is the app's own label for an envelope it summarises on purpose (a conversation-list
 line, a reply quote). If `📷 Photo` is ever seen in a bubble again, the arrival orders above are
-where to look. Whether the rows already stuck are worth recovering is the user's decision
+where to look. The same holds for every media line of `push_text.rs`, `🎬 CanaReel` (WP-RC-7)
+included. Whether the rows already stuck are worth recovering is the user's decision
 ([backlog](../backlog.md#owed-to-the-user---decisions-rotations-and-one-off-clicks)).
 
 **THE CHECK CANNOT BE MOVED INSIDE THE WRITE, AND THAT IS A PROPERTY OF THE ENGINE RATHER THAN A CHOICE.** An IndexedDB transaction closes on the first `await` of a non-IDB promise, and reading a stored row means awaiting WebCrypto - so no single transaction can both read the existing content and decide on it. The read is a separate step, exactly as in `updateMessage`, which is safe here because the injection runs inside the `fcm_cache` startup phase, after the conversations are loaded and before the MLS sync writes anything. `getMessage` is the primitive that reclaimed it: it was already written twice, inline in the body of each `updateMessage`, and both now delegate to it.
