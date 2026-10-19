@@ -385,3 +385,84 @@ Rig lessons: `ios.mjs url <https url>` opens Mobile Safari, not the app; TestFli
 tapped. On the Mi 9T, `adb` remote paths need `MSYS_NO_PATHCONV=1` under Git Bash, `uiautomator dump` sees only a system dialog over a
 Tauri WebView (read the DOM over CDP instead), and a `getUserMedia` hook installed on a live page misses the calls already made. A
 60 s ring window makes a slow rig miss the call: accept in the same command that detects the ring.
+
+## 2026-10-19 (evening) - `v1.3.1-alpha.2` on both bench phones: the call UI, CALL-WIFI, the noise, the reel from the composer
+
+Pre-release run 39299547723 (commit `6f97c078e`, dev estate green). **Mi 9T**: the release APK of the
+GitHub release, `versionCode` 100300102, `adb install -r` over alpha.1 (data kept), account `delta`, read
+over CDP (`adb forward` on the app's `webview_devtools_remote_<pid>`) with real touches from `adb input`.
+**iPhone 12** (iOS 27.0.1): TestFlight `1.3.1 (100300102)` (it appeared about 8 min after the release run
+ended: pull to refresh, then "Mettre a jour"), account `gamma`, driven through WDA. Both on the bench
+Wi-Fi, no SIM. Every call below is `delta` and `gamma` in their shared direct conversation, both apps open.
+
+| Row | Mi 9T | iPhone 12 |
+| --- | --- | --- |
+| 1. starts, version | **`PASS`**: "A propos" reads "Version de Canari 1.3.1-alpha.2", "derniere version" | **`PASS`**: PIN screen, then the feed under the test banner; "A propos" reads `1.3.1-alpha.2` |
+| 2a. incoming ring full screen on any route, Accept focused | **`PASS`**: on `/posts` the `alertdialog` is 436x945 (the whole viewport) at `z-index` 330, `document.activeElement` is "Accepter l'appel entrant", three controls (reduce, refuse, accept) | **`PASS` for the screen**: full screen over the dashboard route, Refuser and Accepter at the bottom; focus is not readable through WDA. An OS banner "Appel entrant - ... vous appelle" was ALSO on screen while the app was in the foreground, see the findings |
+| 2b. in-call full screen, controls reachable | **`PASS`**: chevron, E2E line, avatar, timer, speaker / mute / hang-up under the thumb | **`PASS`**: same screen, hang-up at the bottom, not under the tab bar (the tab bar is hidden) |
+| 2c. hang up from both | **`PASS`** (full screen and bar): the iPhone left the call within 2 s | **`PASS`: CALL-IOS-HANGUP is closed.** Hang-up reached by a WDA touch from the bar over a conversation (the Mi 9T logged `the other party left the call room` 2 s later) and from the full screen, three calls |
+| 2d. minimise over an open conversation / a long page | **`PASS`**: the green bar sits under the test banner, the conversation header and the feed's own header are pushed DOWN, not covered; the tap on the bar returns to the full screen | **`PASS`** for both (conversation, then the feed scrolled): bar under the banner, the page header below it, the glass pill header of the conversation below the bar. The tap on the bar itself was not exercised (only the chevron and the hang-up) |
+| 2e. Back from full screen minimises, no ghost history | **`PASS`**: `history.length` 28, first expand 29, then 29 after Back, expand, Back; the path stays `/chat` | n/a (no system Back) |
+| 2f. timer after the app was backgrounded 10 s | **`PASS`**: bar read 03:22 at 20:45:06 for a call connected at 20:41:44 | **`PASS`**: 03:45 on the bar after 14 s on the home screen (connected 20:41:44, read 20:45:31) |
+| 2g. remote audio starts after Accept | **`PASS` as far as the DOM can say**: the single `<audio>` is playing with one track, no "Toucher pour entendre" ever drawn, `[Call] voice playing (stream arrived)`; NetEq decoded the iPhone's packets from the first second. Heard by ear: not judged | **`NOT-READ`**: no "Toucher pour entendre" in the tree on a call the Mi 9T placed; nothing says the voice was audible |
+| 3a. CALL-WIFI, Wi-Fi off 6 s | **`PASS`**: `signalling WebSocket closed code=1006 - resuming`, `reconnecting=true`, attempts 1-3 failed (`connection failed`) while the radio was off, `signalling resumed on attempt 4` 15 s after the drop, `peer ready - ... polite (resumed)`, `reconnecting=false`; no terminal failure; "Reconnexion..." on the bar; NetEq's decode lines stopped 21:05:51 and came back 21:06:02 (the iPhone's audio is back at the Mi 9T). **The direction Mi 9T to iPhone could not be read** (store build) | `NOT-READ` (log unreadable, see the noise section) |
+| 3b. Wi-Fi off 14 s | **`FAIL`**: the drop at 21:06:30, attempts 1-4 failed, `connectionState=failed after a connection - left to the ICE restart`, `signalling resumed on attempt 5` at 21:07:02 (32 s after the drop, 16 s after the radio was back) and `ICE disconnected (signalling resumed) - asking the initiator to restart (1/3)`, then NOTHING: no `ICE restart`, no `media path restored`. 90 s later both phones still read "Reconnexion...", no decode line since 21:06:31: no audio. The call was only ended by the hang-up | the iPhone (initiator in this call) also stayed on "Reconnexion..." |
+| 3c. Wi-Fi off 90 s | **`FAIL`**: the Mi 9T gave up first, `terminal failure: signalling not restored after 5 resume attempts - ending call` 30 s after the drop (attempts at +1, +2, +4, +8, +16 s, so BEFORE the 60 s seat grace) | **`FAIL`: the iPhone was left on "Reconnexion..." with Raccrocher for over 100 s after the Mi 9T ended**; it only left when its own hang-up was pressed. A phone that gives up while offline cannot tell the relay, and the relay's grace did not end the call on the other side within the time watched |
+| 5a. background 10 s (HOME) | **`PASS` with a visible blip**: `[WS] Paused - disconnect sent` then `[Call] app hidden state=incall mic=live voice=playing`; signalling closed 1006 5 s later, attempts 1-2 failed, `[Call] app visible state=incall mic=live voice=playing` on return, `signalling resumed on attempt 3`; "Reconnexion..." for about 12 s; the call survived | **`PASS`**: the call survived 14 s on the home screen, the timer was right; the app's own `app hidden` lines are unread |
+| 5b. screen locked 60 s | **`FAIL`**: lock at 21:09:11. The iPhone's audio stopped within 1 s of the lock (74 NetEq decode lines in that second, none after); signalling 1006 at +5 s, attempts 1-4 failed, `terminal failure ... ending call` at +54 s; `[Call] app hidden state=incall mic=live voice=playing` was the only hidden line (no `os-muted`). The call does not survive a locked Android screen, which is what the native half is owed for | **`PASS` for survival, no audio while locked**: locked by WDA for 60 s, the call stayed up (the Mi 9T saw no signalling fault), but the iPhone's audio to the Mi 9T stopped within a second (2 decode lines, then none for 60 s) and came back on unlock |
+| 6. composer camera video to a CanaReel (#2124) | **`PASS`**: "Ouvrir la camera" (front lens, dark room), shutter held 3.3 s, review screen (take 718x1278, "Suivant"), the publish step "Nouveau CanaReel" with "CanaReel : supprime au bout de 30 jours. Pour garder la video, gardez-la comme post." and "Visible 30 jours, puis supprime automatiquement...". **"Garder comme post"** closes the sheet and the composer holds the video tile (with "Legende"). **Publier**: `[reel-publish] start: camera, video/x-matroska;codecs=avc1,opus, 202570 bytes`, `POST /api/posts` 201, `a reel filmed from the post composer was published`. **Back during publish: `PARTIAL`**: pressed 0.7 s after Publier, in the re-encode, it DISMISSED the sheet and CANCELLED the publish (`[reel-publish] the sheet was dismissed, publish cancelled`, `stopped: the re-encode was cancelled`) and the review came back; the whole publish took 3 s so a Back after the upload started was not reached | `NOT-READ` |
+| 7a. booking smoke | **`PASS`**: Reservations > "Modifier" opens "Modifier l'espace" with the name and description filled; the 11:00-11:30 slot booked ("C'est reserve."), listed as "Titulaire" under "Mes reservations a venir", cancelled behind a confirm, the list empty again | `NOT-READ` |
+| 7b. delete without a submission (#2133) | **`PARTIAL`**: a personal form with one question and no submission created and deleted from `/forms` (`DELETE /api/forms/<id>` 200, the list empty). **The association path of #2133 (`retireForms` inside the association's delete) was NOT read**: the bench accounts own no association and the "create" button is absent for `delta` | `NOT-READ` |
+
+### The audio noise (CALL-AUDIO-1), `delta` receiving `gamma`'s iPhone
+
+**Unchanged on alpha.2.** NetEq on the Mi 9T logged **437 `Decode error` (each with a `failed to
+GetAudioFrameWithInfo`) in a 30 s window, 14.5 a second**, against 50 packets a second: the same 29 % as
+alpha.1 (14,568 over four calls). Per second 3-31, steady for the whole call. The concealed-sample ratio
+itself was not read (the peer connection is not reachable from the page; no `getStats`).
+
+**The new diagnostics, verbatim, from the Mi 9T's app log and console, five calls, both roles:**
+
+```
+[Call] E2E sender transform attached (audio)
+[Call] E2E receiver transform attached (audio)
+[Call] audio send=audio/opus pt=111 ch=2 [minptime=10;useinbandfec=1] recv=audio/opus pt=111 ch=2 [minptime=10;useinbandfec=1] | local m=audio opus/111,red/63,g722/9,pcmu/0,pcma/8,cn/13,telephone-event/110,telephone-event/126 | remote m=audio opus/111,red/63,g722/9,pcmu/0,pcma/8,cn/13,telephone-event/110,telephone-event/126
+```
+
+The codec is Opus on both sides at payload type 111 and the offer order is `opus/111,red/63,g722/9,pcmu/0,...` in
+both descriptions, so H3 of the table in
+[calls](frontend/modules/calls.md#the-iphones-sender-read-from-the-code-2026-10-19) is not supported by what the
+Mi 9T sees. **What is absent is the finding:** on the Mi 9T, in every call, there is NO
+`[Call] E2E sender transformer #N ...` line, NO `[Call] E2E sender audio #N: ... frame(s), not-opus= ...` line, NO
+`[Call] E2E encrypting audio (N frame(s))`, NO `[Call] E2E decrypting audio (N frame(s))`, and no `ERROR E2E ...`
+line. The worker's first-frame messages should have produced the first two within a second of the first packet
+and the last two at frame 1. Either the worker's messages do not reach `appendLog` (the console shows only the
+main thread's `attached` lines and the `audio send=` line) or no frame ever reaches the transform on the
+Mi 9T. Which one was not separated (no worker target attached over CDP). **It cannot be read as "the transform is
+clean" nor as "the transform is off".**
+
+**The iPhone's lines (the sender of the noisy direction) are `NOT-READ`.** The in-app log was exported
+("Enregistrer le journal", saved in Files as `canari-log-1.3.1-alpha.2-20261019-2047`, 1.1 MB, 13,371 lines since
+2026-10-14, the first call of that session inside it) but it cannot be paged from the workstation: Quick Look's
+search field takes the focus and not the text typed through WDA, and WDA times out on the 1 MB text view (the
+daemon had to be restarted once). The syslog does not carry the app's console. **Owed: a smaller export (a
+"clear the log" button, or one export per call) or any way to get that file onto the workstation.** Calls to
+or from a desktop Chrome were not made (no desktop client signed in on dev as the counterpart).
+
+### Findings
+
+| Id | Severity | What | Evidence |
+| --- | --- | --- | --- |
+| CALL-WIFI-14 | **P2** | After a 14 s outage the call never recovers: the signalling resumes at attempt 5 (+32 s), ICE has failed, the callee asks the initiator to restart (1/3) and nothing follows; both screens say "Reconnexion..." with no audio until someone hangs up. A 6 s outage recovers | rows 3a, 3b; the log of 21:06:30-21:08:30; the initiator's side (iPhone) is unreadable |
+| CALL-WIFI-GHOST | **P2** | A phone that gives up (5 attempts, +30 s) while offline leaves the other phone on "Reconnexion..." for more than 100 s; the relay's 60 s grace did not end the call on the remaining side in that time, so a call can sit dead on one phone | row 3c |
+| CALL-LOCK-ANDROID | **P1, already in the backlog** | A locked Mi 9T drops the call at +54 s and its audio at once; the iPhone keeps the call but sends no audio while locked | row 5b; the native half is owed |
+| CALL-AUDIO-1 | **P1, unchanged** | 14.5 NetEq decode errors a second from the iPhone's sender | above |
+| CALL-E2E-LINES | **P2 to read** | No worker E2E line at all on the Mi 9T, neither the new diagnostics nor the first-frame `encrypting` / `decrypting` lines | above; to be read before the diagnostics table can be used |
+| CALL-BAR-COVERED | **P3** | With the composer or its camera open (full-screen layers above the banner column), the call bar is hidden: `elementFromPoint` at the bar's centre returns the camera's `<video>`; mute and hang-up are unreachable until the layer is closed (the call itself stays up) | Mi 9T, the composer open then its camera, call minimised |
+| CALL-OS-BANNER | **P3** | An OS notification "Appel entrant - ... vous appelle" is drawn on the iPhone while the in-app full-screen ring is already on screen in the foreground | the WDA tree during the ring |
+| LOG-IOS-SIZE | **P3 (tooling)** | The iPhone's exported log is 1.1 MB and cannot be searched or paged through the bench; there is no way to clear it | above |
+
+**Owed:** the iPhone's `[Call] ... E2E` lines (needs a readable log), a worker-side read on the Mi 9T, a desktop
+counterpart for the noise, the Mi 9T as the caller in the Wi-Fi rows, the iPhone's booking and reel rows, an
+association delete with a form (an account that owns an association), a Back after the upload has begun, a hearing
+check of the remote voice on both phones, and the iPhone's `app hidden` lines.
