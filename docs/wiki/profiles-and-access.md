@@ -1096,7 +1096,7 @@ An institution is an `associations` row of that type, so it reuses every mechani
 - **Listings**: `?type=institution` is accepted by the directory and the public listing. **`/institutions` is its own page**
   (user, 2026-10-05): the same directory API and `AssociationTile` as `/associations` and `/lists`, narrowed by type, so the
   same visibility (rules reaching the reader's spaces, plus memberships, D37). `/associations` no longer lists institutions in
-  its catalogue (the cleaner reading of the choice; its "mine" shelf still shows the ones the reader belongs to) and carries an
+  its catalogue (the cleaner reading of the choice; since 2026-10-19 the reader's own institutions are the "Mes institutions" block on top of `/institutions`, and "Mes listes" on top of `/lists`) and carries an
   "Institutions" button, as it does for lists. The page is `noindex` like `/lists` and has its title in `resolve.ts`. An
   institution can never be a BDE (the `/admin/spaces` button is for `association` only).
 - **Reach**: its audience rules (its ceiling, D33) are the same `association_audiences` rows, edited on the grid.
