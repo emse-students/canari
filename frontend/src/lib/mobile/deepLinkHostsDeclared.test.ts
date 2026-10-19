@@ -52,7 +52,9 @@ describe('custom-scheme deep-link hosts', () => {
     }
   );
 
-  it.each([...CHECKOUT_HOSTS, ...BROWSER_RETURN_HOSTS])(
+  // The server hosts too: the committed manifest carries one filter per declared host (#1635), and
+  // a host declared above with no filter here is a manifest that was not regenerated with it.
+  it.each([...SERVER_HOSTS, ...CHECKOUT_HOSTS, ...BROWSER_RETURN_HOSTS])(
     'the Android manifest filters fr.emse.canari://%s too',
     (host) => {
       const manifest = readFileSync(

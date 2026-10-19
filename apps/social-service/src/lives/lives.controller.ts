@@ -62,7 +62,10 @@ export class LivesController {
     return this.lives.start(callerOf(userId), body ?? {});
   }
 
-  /** One live and its key: 404 absent or blocked, 410 ended, 403 removed viewer. */
+  /**
+   * One live and its key: 404 absent, not in its audience (spaces, as a post) or blocked, 410 ended,
+   * 403 removed viewer.
+   */
   @Get(':id')
   get(@Param('id', ParseUUIDPipe) id: string, @Headers('x-user-id') userId: string) {
     return this.lives.get(callerOf(userId), id);

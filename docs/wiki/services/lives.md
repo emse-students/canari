@@ -73,8 +73,10 @@ membership, a read grant that watches without a push).
 block between the viewer and the broadcaster in either direction, is `404 LIVE_NOT_FOUND` (invisible,
 as the feed hides a post it does not show) - asked BEFORE the end, so an outsider never reads a `410`
 that would say a live existed; an ended live is `410 LIVE_ENDED` to everybody else, the broadcaster
-included; a viewer the broadcaster removed is `403 LIVE_VIEWER_REMOVED`. A write on another member's
-live is `403 LIVE_NOT_BROADCASTER`.
+included; a viewer the broadcaster removed is `403 LIVE_VIEWER_REMOVED`. **A write on another
+member's live** (a segment, the end, a removal) **is `404 LIVE_NOT_FOUND`**, the answer to a live that
+does not exist - a `403` there would tell any signed-in account which live ids are real (review,
+2026-10-19).
 
 **A segment is read from media-service**, `GET /api/media/live/<liveId>/<name>` (JWT), by the `name`
 the manifest gives. Serving it from Canari's own nginx without reaching media-service is WP-L4; until
@@ -226,8 +228,9 @@ client half - the LIVE card in the feed and the app route the tap opens - is NOT
 | **When** | At the **first STORED segment**, not at `POST /api/lives`: a row alone has nothing to watch, and a start the client abandons (camera refused, app killed, an immediate end) would ring every follower for nothing. So a refused start, and a live ended before its first segment, are never announced. |
 | **Once per live** | `lives."announcedAt"` (migration 094). Segment 0's CONFIRM stamps it in the SAME transaction, under the same row lock, as the segment itself (`WHERE "announcedAt" IS NULL`), and the push follows the commit. A repeat of segment 0, a reconnect, every later segment: the same stamped row, no second push. A NEW live (a new row) is a new announcement. No timer and no sweep: there is no second path to reconcile. |
 | **The trade** | Stamp before send, as `PostAnnounceScheduler` does: a crash between the commit and the send loses ONE announcement (`[LIVE_ANNOUNCE] ... NOT announced` at warn when it is an error rather than a crash); the other order could repeat it. A failing announcement never fails the segment. |
+| **Not awaited** | The ingest STARTS the announcement after segment 0's commit and answers without waiting for it, so segment 0 and its ingest slot (`LIVE_INGEST_MAX_CONCURRENT`) never wait on the audience query or the fan-out. Once per live is untouched - the claim is the commit, not the call. `LivesService` tracks the announcements in flight: `announcementsSettled()` resolves when they have (awaited at module shutdown, and by the integration spec before it reads a push - a proof, never a delay); a rejection reaching it would be a defect in `announce`, logged at error. |
 | **Who** | A member's live: `user_follows` (followers of the broadcaster). A live AS an association: `association_follows` of that association - the member's own followers are NOT told. Both minus the broadcaster, minus a follower the live is not VISIBLE to ([the rule of a post](#who-may-watch-the-rule-of-a-post): a member's follower with no space in common, an association's follower its rules and membership do not reach), minus either side of a block with the broadcaster and a viewer the broadcaster already removed: exactly who `assertMayWatch` lets in (read grants aside, which never notify), narrowed to followers (`liveAudienceSql`). |
-| **The name** | The association's `name`, or the member's display name from `PostNotificationsService.resolveDisplayName`. **A member with no name to give (no `users` row, no name, a failed lookup) is NOT announced** - `[LIVE_ANNOUNCE] ... NOT announced` at warn - rather than titled with the 64-hex user id, the fallback `resolveActorName` keeps for its other callers. The claim is committed, so it is not retried. |
+| **The name** | The association's `name`, or the member's display name from `PostNotificationsService.resolveDisplayName`. **A member with no name to give (no `users` row, or no name in it) is NOT announced** - `[LIVE_ANNOUNCE] ... NOT announced: broadcaster ... has no display name` at warn - rather than titled with the 64-hex user id, the fallback `resolveActorName` keeps for its other callers. A lookup that FAILED is a different outcome, classified where it happens: `resolveDisplayName` throws (only `null` means "no name"), and the one warn line carries that cause instead. Either way the claim is committed, so it is not retried. |
 | **Mutes** | `association_push_mutes`: `live_started` is in `MUTABLE_PUSH_TYPES`, applied by `PostNotificationsService` like an association's post ([social-service](social-service.md)). A member's live has no association, so no mute applies. |
 | **Notification levels** | The push's `contentKey` `social_live_started` is filed under the reader's **`posts`** category in chat-delivery (`push-category.ts`): the switch that silences the posts of the people you follow silences their lives too. No new category (it would need a settings row on the client). |
 | **The pipeline** | `PostNotificationsService.pushNotice`: the same content mapping, icon rule (the association's logo, the member's face), mute and bounded per-recipient fan-out as `createNotifications`, sharing one private `fanOutPush`, but **no `post_notifications` row** - a live is deleted at its end (L3), so a bell row would be a 404 for ever after. |
@@ -239,7 +242,9 @@ Observed by `[LIVE_ANNOUNCE] <liveId> by <broadcaster> kind=member or associatio
 
 **The tap, and what the client still owes (WP-L7's other half, with WP-L5):** `appRouteForDeepLink`
 (`frontend/src/lib/mobile/deepLinkRoutes.ts`) owns the `live` host and sends it to the FEED
-(`/posts`), and `tauri.conf.json` declares it (Android's deep-link plugin drops an undeclared host).
+(`/posts`), and `tauri.conf.json` declares it (Android's deep-link plugin drops an undeclared host)
+with its intent filter in the committed `AndroidManifest.xml`, as #1635 did for the agenda hosts
+(`deepLinkHostsDeclared.test.ts` pins both).
 A build older than that change does not route the tap: Android opens the app and stays where it was,
 and a link that reaches the hook lands on `/notifications` with the unknown-host warn. Owed: the
 `live/<id>` case reading the id once WP-L5's viewer page exists; the LIVE card at

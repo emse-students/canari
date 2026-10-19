@@ -126,7 +126,8 @@ export class LiveAnnouncer {
     } else {
       // NOT `resolveActorName`, which falls back to the raw user id: a lock screen reading
       // "<64 hex> est en live" is a fault shown to every follower. An unnamed broadcaster is refused
-      // here, and `announce` logs it at warn.
+      // here; a lookup that FAILED throws from `resolveDisplayName` itself, with its own cause. Either
+      // way `announce` logs the one line, at warn, that says which.
       const name = await this.notifications.resolveDisplayName(live.broadcasterId);
       if (!name) throw new Error(`broadcaster ${short(live.broadcasterId)} has no display name`);
       actorName = name;

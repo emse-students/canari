@@ -9,6 +9,7 @@ import {
   HttpStatus,
   Logger,
   NotFoundException,
+  type OnModuleDestroy,
   PayloadTooLargeException,
   ServiceUnavailableException,
 } from '@nestjs/common';
@@ -146,10 +147,12 @@ const short = (id: string) => id.slice(0, 8);
  * write that outlives the store's own timeout, which the orphan reaper takes.
  */
 @Injectable()
-export class LivesService {
+export class LivesService implements OnModuleDestroy {
   private readonly logger = new Logger(LivesService.name);
   /** Segment ingests running in this instance, bounded by {@link LIVE_INGEST_MAX_CONCURRENT}. */
   private ingestsInFlight = 0;
+  /** Announcements started after a segment 0's commit and not yet settled (WP-L7). */
+  private readonly announcements = new Set<Promise<void>>();
 
   constructor(
     @InjectDataSource() private readonly db: DataSource,
@@ -349,10 +352,40 @@ export class LivesService {
       await this.purgeBestEffort(liveId, 'after an ingest that met the end');
       throw new GoneException({ code: 'LIVE_ENDED' });
     }
-    // Segment 0 claimed the live's announcement in its own commit (WP-L7): the push goes now, after
-    // that commit. `announce` never throws - a lost announcement must not fail the segment.
-    if (outcome.claimed) await this.announcer.announce(liveId, outcome.claimed);
+    // Segment 0 claimed the live's announcement in its own commit (WP-L7): the push goes after that
+    // commit, NOT AWAITED - segment 0's answer and this ingest's slot do not wait for the audience
+    // query and the fan-out. Once per live still holds: the claim is the commit, not this call.
+    if (outcome.claimed) this.announceInBackground(liveId, outcome.claimed);
     return outcome.result;
+  }
+
+  /**
+   * Starts a claimed live's announcement and tracks it until it settles. `announce` logs its own
+   * failures and never throws; a rejection reaching here would be a defect in it, so it is logged at
+   * error rather than swallowed - and it never reaches the segment.
+   */
+  private announceInBackground(liveId: string, claimed: ClaimedLive): void {
+    const pending = this.announcer
+      .announce(liveId, claimed)
+      .then(() => undefined)
+      .catch((e: unknown) => {
+        this.logger.error(`[LIVE_ANNOUNCE] ${liveId} announce threw: ${causeOf(e)}`);
+      })
+      .finally(() => this.announcements.delete(pending));
+    this.announcements.add(pending);
+  }
+
+  /**
+   * Resolves once every announcement started so far has settled - a PROOF of completion, for a
+   * shutdown and for the tests that read the push, never a delay.
+   */
+  async announcementsSettled(): Promise<void> {
+    while (this.announcements.size > 0) await Promise.all(this.announcements);
+  }
+
+  /** Waits for the announcements in flight before the module goes away. */
+  async onModuleDestroy(): Promise<void> {
+    await this.announcementsSettled();
   }
 
   /**
@@ -397,7 +430,8 @@ export class LivesService {
       if (!row) throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
       if (row.broadcasterId !== broadcasterId) {
         this.logger.debug(`[LIVE] segment refused: ${short(broadcasterId)} is not ${liveId}'s`);
-        throw new ForbiddenException({ code: 'LIVE_NOT_BROADCASTER' });
+        // The same 404 as a live that does not exist: a write route is no oracle for one that does.
+        throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
       }
       if (row.endedAt) {
         this.logger.debug(`[LIVE] segment ${index} refused: ${liveId} ended (${row.endReason})`);
@@ -605,7 +639,8 @@ export class LivesService {
       const row = current[0];
       if (!row) throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
       if (row.broadcasterId !== broadcasterId) {
-        throw new ForbiddenException({ code: 'LIVE_NOT_BROADCASTER' });
+        this.logger.debug(`[LIVE] end refused: ${short(broadcasterId)} is not ${liveId}'s`);
+        throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
       }
       // Ended already (by an earlier call, the sweep, an erasure): the same fact, answered again.
       ended = { id: row.id, endedAt: row.endedAt!, endReason: row.endReason! };
@@ -639,7 +674,8 @@ export class LivesService {
       const row = rows[0];
       if (!row) throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
       if (row.broadcasterId !== broadcasterId) {
-        throw new ForbiddenException({ code: 'LIVE_NOT_BROADCASTER' });
+        this.logger.debug(`[LIVE] removal refused: ${short(broadcasterId)} is not ${liveId}'s`);
+        throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
       }
       if (row.endedAt) throw new GoneException({ code: 'LIVE_ENDED', endedAt: row.endedAt });
       await tx.query(

@@ -142,29 +142,30 @@ export class PostNotificationsService {
    * an id is NOT acceptable as a title asks {@link resolveDisplayName} instead.
    */
   async resolveActorName(actorId: string): Promise<string> {
-    return (await this.resolveDisplayName(actorId)) ?? actorId;
+    try {
+      return (await this.resolveDisplayName(actorId)) ?? actorId;
+    } catch (e) {
+      this.logger.warn(
+        `[NOTIF] display name of ${actorId.slice(0, 8)} unreadable, the id stands in: ${e instanceof Error ? e.message : String(e)}`
+      );
+      return actorId;
+    }
   }
 
   /**
-   * A user's display name, or `null` when there is none to give: no `users` row, a row with no
-   * name, or a failed lookup (logged at warn - the caller decides what an unnamed actor means).
+   * A user's display name, or `null` when there is GENUINELY none: no `users` row, or a row with no
+   * name. A failed lookup is not that answer and THROWS - the caller tells "nobody to name" from
+   * "could not ask" by the type of the outcome, never by reading a message.
    */
   async resolveDisplayName(actorId: string): Promise<string | null> {
-    try {
-      const rows: unknown = await this.postRepo.manager.query(
-        `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1`,
-        [actorId]
-      );
-      if (!Array.isArray(rows) || rows.length === 0) return null;
-      const u: unknown = rows[0];
-      if (typeof u !== 'object' || u === null) return null;
-      return formatUserDisplayNameFromRaw(u as Record<string, unknown>) || null;
-    } catch (e) {
-      this.logger.warn(
-        `[NOTIF] display name of ${actorId.slice(0, 8)} unreadable: ${e instanceof Error ? e.message : String(e)}`
-      );
-      return null;
-    }
+    const rows: unknown = await this.postRepo.manager.query(
+      `SELECT "displayName", "firstName", "lastName" FROM users WHERE id = $1`,
+      [actorId]
+    );
+    if (!Array.isArray(rows) || rows.length === 0) return null;
+    const u: unknown = rows[0];
+    if (typeof u !== 'object' || u === null) return null;
+    return formatUserDisplayNameFromRaw(u as Record<string, unknown>) || null;
   }
 
   /**

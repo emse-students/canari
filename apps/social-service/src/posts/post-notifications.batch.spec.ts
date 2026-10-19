@@ -397,7 +397,7 @@ describe('PostNotificationsService.createNotifications', () => {
 /**
  * A NAME, OR NOTHING: `resolveDisplayName` answers `null` where `resolveActorName` falls back to the
  * id - a live's announcement refuses to title a push with a 64-hex user id (WP-L7). A failed lookup
- * is LOGGED, never swallowed.
+ * is NOT "no name": it throws, and `resolveActorName` alone turns it into the id, with a warn.
  */
 describe('PostNotificationsService.resolveDisplayName', () => {
   const withQuery = (query: () => Promise<unknown>) =>
@@ -420,14 +420,15 @@ describe('PostNotificationsService.resolveDisplayName', () => {
     expect(await withQuery(async () => [{}]).resolveDisplayName(id)).toBeNull();
   });
 
-  it('logs a failed lookup at warn and answers null; resolveActorName still falls back to the id', async () => {
+  it('THROWS on a failed lookup; resolveActorName logs it at warn and still falls back to the id', async () => {
     const warn = jest.spyOn(Logger.prototype, 'warn').mockImplementation(() => undefined);
     const broken = withQuery(async () => {
       throw new Error('users down');
     });
-    expect(await broken.resolveDisplayName(id)).toBeNull();
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('users down'));
+    await expect(broken.resolveDisplayName(id)).rejects.toThrow('users down');
+    expect(warn).not.toHaveBeenCalled();
     expect(await broken.resolveActorName(id)).toBe(id);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('users down'));
     expect(await withQuery(async () => []).resolveActorName(id)).toBe(id);
   });
 });
