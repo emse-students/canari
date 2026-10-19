@@ -359,6 +359,8 @@ skipDirs })`, `readSource(path)`, `relativeTo(path, base)`; the first call in a 
 snapshot (tens of ms) and every later call is a filter over strings. The 19 scans use it and their
 walkers are deleted.
 
+**It fails loud.** The walk (`sourceTreeWalk.ts`) throws when `src/lib` or `static` is missing or when fewer than 1,500 files are found (75 % of the 1,995 measured), because six of the scans have no "is reading the tree" assertion of their own and an empty list passes them all. Setup also deletes `snapshot-<pid>.json` files older than a day (a killed run); a younger one belongs to a concurrent run. `src/test/sourceTree.test.ts` pins the reader (`under`, `tests`, `skipDirs`, `extensions`), the snapshot's content, and a planted offender over a fixture tree.
+
 **Same cases, same pass set.** 315 cases before and after on the 19 files. Each scan was shown a
 planted offender (one file with one violation per rule) and each failure names it; the planted files
 were removed. Three deliberate differences, none a loss: `accent` and `markupSources` no longer walk

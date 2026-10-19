@@ -58,14 +58,17 @@ function load(): Map<string, string> {
   return snapshot;
 }
 
-/** The files of the snapshot matching `query`, in path order. */
-export function sourceFiles(query: SourceQuery): SourceFile[] {
+/** The files of `files` (path to text) matching `query`, in path order. Pure: the unit tests feed it a fixture. */
+export function selectSources(
+  files: ReadonlyMap<string, string>,
+  query: SourceQuery
+): SourceFile[] {
   const roots = (typeof query.under === 'string' ? [query.under] : [...query.under]).map(
     (root) => `${root.replace(/\/+$/, '')}/`
   );
   const skip = new Set(query.skipDirs ?? []);
   const out: SourceFile[] = [];
-  for (const [path, text] of load()) {
+  for (const [path, text] of files) {
     if (!roots.some((root) => path.startsWith(root))) continue;
     const segments = path.split('/');
     const name = segments[segments.length - 1];
@@ -76,6 +79,11 @@ export function sourceFiles(query: SourceQuery): SourceFile[] {
     out.push({ path, text });
   }
   return out.sort((a, b) => (a.path < b.path ? -1 : 1));
+}
+
+/** The files of the shared snapshot matching `query`, in path order. */
+export function sourceFiles(query: SourceQuery): SourceFile[] {
+  return selectSources(load(), query);
 }
 
 /** `path` made relative to `base` (`relativeTo('src/lib/db.ts', 'src')` is `lib/db.ts`). */
