@@ -417,6 +417,8 @@ more. The Rust crate stays: Rust `log::` lines still reach logcat and the privat
 exactly as before. The `log:` grants stay too, because `tauriCapabilities.test.ts` requires one for
 every plugin with a JS command surface, and an exemption there is how that test stops working.
 
+**THE LIVE CONSOLE IS REDACTED TOO, FOR PROSE FIELDS (WP-CONSOLE-PLAINTEXT, 2026-10-19).** The wrapper's second argument, `redactConsoleProse` (`appLogRedact.ts`), runs on every STRING argument before it is printed: the value of a prose field (`text=`, `contact=`, `body:` ...) becomes `[N chars]` by the same field rules as the stored log. Secrets and the rest of the line are untouched on the console (no cap, no accent stripping): a developer reads it. Objects passed as arguments are not touched. A call site still must not interpolate message text - `consolePlaintext.inventory.test.ts` fails on `text=${`, `plaintext=${`, `caption=${`, `draft=${`, `snippet=${` and `preview=${`; log `chars=${text.length}`.
+
 **What replaced it** (`utils/appLog.ts`, `appLogRedact.ts`, `appLogExport.ts`):
 
 | Part | Decision |

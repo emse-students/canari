@@ -19,6 +19,7 @@ import { describeDeepLink } from '$lib/utils/logSanitize';
 import { openClaimedAppLink } from '$lib/utils/appLinkNavigation';
 import { installAppLinkClickHandler, isTauriRuntime } from '$lib/utils/openExternal';
 import { installConsoleIdTruncation } from '$lib/utils/logTruncate';
+import { redactConsoleProse } from '$lib/utils/appLogRedact';
 import { captureConsoleLine, installAppLogFlushTriggers } from '$lib/utils/appLog';
 import { apiServiceOrigins } from '$lib/utils/apiUrl';
 import { createRoutedFetch } from '$lib/utils/fetchRouting';
@@ -29,7 +30,7 @@ import { CHECKOUT_RETURN_HOST } from '$lib/utils/checkoutCallbacks';
 // Condense long identifiers (UUIDs, hex >= 16) in every console log, before any other logging, so
 // web logs stay as readable as adb ones - and hand every non-debug line to the in-app log, the only
 // log a store build keeps (docs/wiki/frontend/mobile.md#the-in-app-log).
-installConsoleIdTruncation(captureConsoleLine);
+installConsoleIdTruncation(captureConsoleLine, redactConsoleProse);
 installAppLogFlushTriggers();
 
 // ════════════════════════════════════════════════════════════════════════════
