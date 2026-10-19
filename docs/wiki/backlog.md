@@ -27,6 +27,21 @@ half, the shipped half is a pointer, never a retelling.
 
 ---
 
+## P1 - Live moderation (WP-L8): the server half is BUILT, the client half and four decisions are owed (2026-10-19)
+
+A RELEASE BLOCKER (D3): no stable carries lives before it. Built on the server, draft PR: a live is
+reported through `content_reports`, staff cut it (`POST /api/lives/:id/cut`, 410 `endReason: 'cut'`),
+the first-live rules acceptance is recorded and required ([lives](services/lives.md#moderation-wp-l8-server-half)).
+**Owed, code:** the client half - the viewer's report control and cut screen, the broadcaster's cut
+screen and `acceptedRulesVersion`, the bell's `live_cut` row, the admin cut button (the strings are
+listed there); the chat-line hiding inside WP-L6, by the contract written there; a push for the cut
+once `notif_social_live_cut_*` exist in both native apps. **Owed, the user:** (1) the STRIKE POLICY -
+what N cuts trigger (a mute, a broadcasting ban, nothing), today only recorded and counted;
+(2) how long a cut is kept (365 days, a planning figure); (3) whether a live past N pending reports is
+cut automatically (today never: a person cuts); (4) the store answers that only the user can give
+- the response-time commitment, the filtering statement, the terms' lives paragraph
+([store-ugc-answers](store-ugc-answers.md)).
+
 ## Orphan media rows: source fixed, one reading owed (2026-10-10)
 
 P3. A `mediaId: ''` placeholder with no outbox entry (Mi 9T, alpha.3) is closed at the source and on screen ([media-frame 7](frontend/media-frame.md#7-an-orphan-media-row-and-a-card-with-no-bubble)): `enqueue` and `enqueueOutboxMessage` now REJECT (`OutboxEnqueueError`) with no storage, no controller or a failed durable write, `handleSendChat` withdraws the placeholder before re-staging, and the bubble asks the durable queue (`isOutboxEntryQueued`). OWED: (a) BUILT (draft PR, WP-CONTROL-NOTICE, [media-frame 7](frontend/media-frame.md#7-an-orphan-media-row-and-a-card-with-no-bubble)): a refused reaction/edit/pin/delete wears a mention with "Retry" and a refused delete is no longer tombstoned; owed one look on a phone; (b) the row already stored on the Mi 9T is only cleared by its Delete; (c) a reading of the dark card on the phone.
@@ -196,6 +211,7 @@ else holds, a console owned by the user, or hardware that does not exist.
 
 | What | Kind | Where the substance is |
 | --- | --- | --- |
+| **decide the live strike policy, the cut retention, an automatic cut on N reports, and the store answers only you can give** (a response-time commitment, the filtering statement, the terms' lives paragraph) | 4 decisions, 1 text | [live moderation](#p1---live-moderation-wp-l8-the-server-half-is-built-the-client-half-and-four-decisions-are-owed-2026-10-19) |
 | **send the DPO dossier to the school's DPO** and bring back the answers to its three questions (the school's role, the hosting agreement with the DSI, the MiGallery DPIA); MiTV keeps the proof of each member's face-recognition consent | 1 e-mail, 1 conversation | [the GDPR entry](#p2---gdpr-compliance-the-open-items-of-the-register-2026-10-16), [dso-dossier](compliance/dso-dossier.md) |
 | **wipe the real-data copy dev still holds, once the fictional seed has merged and a pre-release has moved `dev-deployed`, and BEFORE the next stable - that stable ships the privacy page and dev banner saying dev holds no production data, which is false until this wipe has run and verified** (owner, 2026-10-16, GDPR): run `scheduled.yml` `job=dev-reset` with `dry_run=true`, then `false`; delete any leftover copy dump (`/tmp/canari-copy.*`) and the copy-era dev log archives on the host; grant your own dev row `admin` after signing in. A production-estate write, the owner's | 1 dispatch, 1 ssh session | [dev-environment](infrastructure/dev-environment.md#3-the-data-a-fictional-seed-and-nothing-from-production-owner-2026-10-16) |
 | **decide the LOCAL copy of production** (`pull-prod-dump.sh` + `restore-into-local.sh`, PII included onto a developer's machine) - the one copy of production left after the dev copy was deleted on 2026-10-16 | 1 decision | [dev-environment](infrastructure/dev-environment.md#what-the-copy-was-kept-so-nobody-rebuilds-it), [databases](infrastructure/databases.md) |

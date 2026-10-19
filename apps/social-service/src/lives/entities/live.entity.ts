@@ -7,7 +7,7 @@ export const LIVES_ONE_OPEN_PER_BROADCASTER = 'lives_one_open_per_broadcaster';
 /**
  * A live broadcast (WP-L2, docs/wiki/services/lives.md, migration 091).
  *
- * THE END IS THIS ROW'S STATE. `endedAt` is written once - by the broadcaster, by the sweep when
+ * THE END IS THIS ROW'S STATE. `endedAt` is written once - by the broadcaster, by staff (`cut`, WP-L8), by the sweep when
  * the broadcaster's segments stopped (`dropped`) or the hour ran out (`max_duration`), or by an
  * account erasure (`erased`) - and from then on every read answers 410, no segment is accepted, and
  * the sweep deletes the segments and then this row. There is no replay (L3).
@@ -26,7 +26,7 @@ export const LIVES_ONE_OPEN_PER_BROADCASTER = 'lives_one_open_per_broadcaster';
 @Check('lives_end_pair', `("endedAt" IS NULL) = ("endReason" IS NULL)`)
 @Check(
   'lives_end_reason',
-  `"endReason" IS NULL OR "endReason" IN ('broadcaster', 'dropped', 'max_duration', 'erased')`
+  `"endReason" IS NULL OR "endReason" IN ('broadcaster', 'dropped', 'max_duration', 'erased', 'cut')`
 )
 @Check('lives_next_index', `"nextIndex" >= 0`)
 @Check('lives_stored_bytes', `"storedBytes" >= 0`)

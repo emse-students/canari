@@ -40,6 +40,16 @@ describing it as a live rival is what made it look like a design decision rather
 | `post` | post id | first 250 characters of the markdown |
 | `comment` | comment id | the comment text, plus `postId` for navigation |
 | `user` | the reported account's id | the account's display name |
+| `live` | a live's id | the broadcaster's display name, plus `live: { state, ... }` - open, ended, cut or gone ([lives](services/lives.md#moderation-wp-l8-server-half)) |
+
+`live` arrived with WP-L8 (2026-10-19, decision D6: a live is moderated like a post). Its `reportedUserId` is
+the broadcaster read from the live row, never the client's; the live must still have a row and be
+visible to the reporter (the rule of a post, no block), else `404 LIVE_NOT_FOUND`. Where a post's
+answer is "delete the post", a live's is **"cut the live"**: `POST /api/lives/:id/cut`, the same
+`isContentModerator` predicate, which ends the live for everyone, records the cut (`live_cuts`: who,
+when, which reason code) and marks the live's pending reports `reviewed`. A live is never
+auto-hidden by a count. No strike policy reads the cuts yet - the user's decision
+([lives](services/lives.md#moderation-wp-l8-server-half)).
 
 `user` arrived with blocking, as its counterpart: blocking is silent, reporting is how a person asks
 for help. A `message` case was declared in the DTO, the entity and the client type and produced by
@@ -92,7 +102,8 @@ The lazy purge is gone, the cron is the only mechanism, and its clock is `review
 ### Who may read the queue
 
 `isContentModerator`: a platform admin, or a BDE member holding `MODERATE`. One predicate, shared by
-`/api/moderation/*` and by the post controls that give the same people the same reach.
+`/api/moderation/*` and by the post controls that give the same people the same reach - and, since
+WP-L8, by the staff cut of a live.
 
 ### Anonymous posts - the fourth control that predicate now gates
 
@@ -165,6 +176,8 @@ Two write paths never checked `anonymous` before resolving and storing the real 
 - Neither can **call** the other, in an existing conversation included: a call is a new ring, not
   the existing conversation (`initiate`, `ring` and `room-token` answer `403 USER_BLOCKED`,
   [calls](frontend/modules/calls.md#the-switches-agree-and-a-silent-frame-stays-unread)).
+- Neither sees, watches, reports nor is notified of the other's **live** (the list, the key and the
+  manifest answer `404`, the push skips them; [lives](services/lives.md#who-may-watch-the-rule-of-a-post)).
 - Neither is shown the other's **personal posts**, nor their **comments** under anybody's post -
   in the feed, in search, by id, and under an agenda event. **An association post and an anonymous
   post are exempt**, and the section below is why.

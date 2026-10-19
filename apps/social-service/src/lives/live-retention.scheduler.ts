@@ -26,7 +26,8 @@ export interface LiveSweepReport {
  *    store proves the live's prefix empty (`LivesService.purgeEnded`).
  * 3. REAPS every segment folder with no live row behind it - a store that outlived its own timeout
  *    and landed after its live's purge (`LivesService.reapOrphans`, a row-state rule, no clock) -
- *    and deletes the `live_starts` rows older than the hour they are counted in.
+ *    and deletes the `live_starts` rows older than the hour they are counted in, and the `live_cuts`
+ *    rows past their retention (`LIVE_CUT_RETENTION_MS`).
  *
  * THE STATE IS THE ROW: a live with `endedAt` and a row is due, a deleted row is done - no "last
  * run", no marker. Idempotent: a crash between the store and the row leaves an ended row whose
@@ -101,6 +102,7 @@ export class LiveRetentionScheduler {
       this.logger.warn(`[LIVE_GC] orphan reaper skipped this run: ${String(e)}`);
     }
     await this.lives.pruneStarts();
+    await this.lives.pruneCuts();
 
     if (report.ended + report.deleted + report.kept + report.orphans > 0) {
       this.logger.log(

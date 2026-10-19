@@ -1,4 +1,6 @@
 import { ConflictException, Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { isBlockedBetween } from '../common/user-blocks';
+import { liveVisibleToViewerSql } from '../spaces/reader-spaces';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { ContentReport } from './entities/content-report.entity';
@@ -11,12 +13,27 @@ const AUTO_HIDE_THRESHOLD = 5;
 
 export interface CreateReportData {
   reporterId: string;
-  contentType: 'post' | 'comment' | 'user';
+  contentType: 'post' | 'comment' | 'user' | 'live';
   contentId: string;
   reason: string;
   details?: string;
   /** User ID of the content author, used to enable quick moderation actions. */
   reportedUserId?: string | null;
+}
+
+/** A reported live as the moderation queue shows it ({@link ModerationService.listAllReports}). */
+export interface LiveReportState {
+  state: 'open' | 'ended' | 'cut' | 'gone';
+  broadcasterId: string | null;
+  broadcasterName: string | null;
+  associationId: string | null;
+  startedAt: Date | null;
+  endedAt: Date | null;
+  endReason: string | null;
+  /** The cut's reason code, when staff cut it. */
+  cutReason: string | null;
+  /** How many of the broadcaster's lives staff cut (kept `live_cuts`), this one included. */
+  broadcasterCuts: number;
 }
 
 /** Handles content reports and user mute/unmute moderation actions. */
@@ -47,6 +64,16 @@ export class ModerationService {
    * call site will make. It read `message.includes('already')` until 2026-08-27.
    */
   async createReport(data: CreateReportData): Promise<ContentReport> {
+    if (data.contentType === 'live') {
+      // The broadcaster is read from the live, never taken from the client: it is who a moderator's
+      // cut and mute act on.
+      // The id in lower case, as the cut matches it, so one live is one subject for the dedup.
+      data = {
+        ...data,
+        contentId: data.contentId.toLowerCase(),
+        reportedUserId: await this.reportableLiveBroadcaster(data),
+      };
+    }
     const existing = await this.reportRepo.findOne({
       where: {
         reporterId: data.reporterId,
@@ -97,6 +124,36 @@ export class ModerationService {
   }
 
   /**
+   * A LIVE IS REPORTED BY THOSE WHO CAN SEE IT (WP-L8, D6): the live's row must exist (open, or ended
+   * and not yet purged) and be visible to the reporter by the rule of a post
+   * (`liveVisibleToViewerSql`), with no block between them - otherwise 404 `LIVE_NOT_FOUND`, the
+   * live API's own answer, so the report route is no oracle for a live the reporter could not watch.
+   * A live ended and purged has nothing left to review (no replay, L3): report the person instead.
+   * Returns the broadcaster, stored as the report's `reportedUserId`.
+   */
+  private async reportableLiveBroadcaster(data: CreateReportData): Promise<string> {
+    const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+    if (!uuid.test(data.contentId)) throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    const rows: { broadcasterId: string; visible: boolean }[] = await this.reportRepo.manager.query(
+      `SELECT "broadcasterId", ${liveVisibleToViewerSql('lives', '$2')} AS visible
+         FROM lives WHERE id = $1`,
+      [data.contentId.toLowerCase(), data.reporterId]
+    );
+    const live = rows[0];
+    if (
+      !live ||
+      live.visible !== true ||
+      (await isBlockedBetween(this.reportRepo.manager, data.reporterId, live.broadcasterId))
+    ) {
+      this.logger.debug(
+        `[REPORT] live ${sanitizeLog(data.contentId)} not reportable by ${sanitizeLog(data.reporterId)}`
+      );
+      throw new NotFoundException({ code: 'LIVE_NOT_FOUND' });
+    }
+    return live.broadcasterId;
+  }
+
+  /**
    * Returns all content reports regardless of status, newest first.
    * Each report is enriched with `contentPreview` (a short text excerpt of the
    * reported content, or the display name when the report targets a person) and
@@ -109,7 +166,15 @@ export class ModerationService {
   async listAllReports(
     limit = 50,
     offset = 0
-  ): Promise<Array<ContentReport & { contentPreview: string | null; postId: string | null }>> {
+  ): Promise<
+    Array<
+      ContentReport & {
+        contentPreview: string | null;
+        postId: string | null;
+        live: LiveReportState | null;
+      }
+    >
+  > {
     const reports = await this.reportRepo.find({
       order: { createdAt: 'DESC' },
       take: Math.min(limit, 200),
@@ -154,6 +219,8 @@ export class ModerationService {
       for (const row of rows) userPreviews.set(row.id, row.displayName ?? row.id);
     }
 
+    const lives = await this.liveReportStates(reports.filter((r) => r.contentType === 'live'));
+
     return reports.map((r) => ({
       ...r,
       contentPreview:
@@ -163,10 +230,88 @@ export class ModerationService {
             ? (commentPreviews.get(r.contentId)?.text ?? null)
             : r.contentType === 'user'
               ? (userPreviews.get(r.contentId) ?? null)
-              : null,
+              : r.contentType === 'live'
+                ? (lives.get(r.contentId)?.broadcasterName ?? null)
+                : null,
       postId:
         r.contentType === 'comment' ? (commentPreviews.get(r.contentId)?.postId ?? null) : null,
+      live: r.contentType === 'live' ? (lives.get(r.contentId) ?? null) : null,
     }));
+  }
+
+  /**
+   * What a moderator needs to act on a reported LIVE (WP-L8): whether it is still on air (`open` - the
+   * cut button), `ended` (its row not yet purged), `cut` (staff cut it: reason and time), or `gone`
+   * (ended and purged - nothing left to watch or cut; the person can still be muted). Plus who
+   * broadcast it and how many of their lives staff cut (`broadcasterCuts`, the kept `live_cuts` -
+   * the repeat-offender count, which no policy acts on yet).
+   */
+  private async liveReportStates(reports: ContentReport[]): Promise<Map<string, LiveReportState>> {
+    const out = new Map<string, LiveReportState>();
+    if (reports.length === 0) return out;
+    const ids = [...new Set(reports.map((r) => r.contentId))];
+    const lives: {
+      id: string;
+      broadcasterId: string;
+      associationId: string | null;
+      startedAt: Date;
+      endedAt: Date | null;
+      endReason: string | null;
+    }[] = await this.reportRepo.manager.query(
+      `SELECT id::text, "broadcasterId", "associationId", "startedAt", "endedAt", "endReason"
+         FROM lives WHERE id = ANY($1::uuid[])`,
+      [ids]
+    );
+    const cuts: {
+      liveId: string;
+      broadcasterId: string;
+      associationId: string | null;
+      reason: string;
+      cutAt: Date;
+      liveStartedAt: Date;
+    }[] = await this.reportRepo.manager.query(
+      `SELECT "liveId"::text, "broadcasterId", "associationId", reason, "cutAt", "liveStartedAt"
+         FROM live_cuts WHERE "liveId" = ANY($1::uuid[])`,
+      [ids]
+    );
+    const liveById = new Map(lives.map((l) => [l.id, l]));
+    const cutById = new Map(cuts.map((c) => [c.liveId, c]));
+    const broadcasterOf = (r: ContentReport): string | null =>
+      liveById.get(r.contentId)?.broadcasterId ??
+      cutById.get(r.contentId)?.broadcasterId ??
+      r.reportedUserId;
+    const broadcasters = [
+      ...new Set(reports.map(broadcasterOf).filter((b): b is string => b !== null)),
+    ];
+    const names: { id: string; displayName: string | null }[] = await this.reportRepo.manager.query(
+      `SELECT id, "displayName" FROM users WHERE id = ANY($1)`,
+      [broadcasters]
+    );
+    const nameOf = new Map(names.map((n) => [n.id, n.displayName ?? n.id]));
+    const counts: { broadcasterId: string; n: number }[] = await this.reportRepo.manager.query(
+      `SELECT "broadcasterId", count(*)::int AS n FROM live_cuts
+        WHERE "broadcasterId" = ANY($1) GROUP BY "broadcasterId"`,
+      [broadcasters]
+    );
+    const cutsOf = new Map(counts.map((c) => [c.broadcasterId, c.n]));
+
+    for (const r of reports) {
+      const live = liveById.get(r.contentId);
+      const cut = cutById.get(r.contentId);
+      const broadcasterId = broadcasterOf(r);
+      out.set(r.contentId, {
+        state: cut ? 'cut' : !live ? 'gone' : live.endedAt ? 'ended' : 'open',
+        broadcasterId,
+        broadcasterName: broadcasterId ? (nameOf.get(broadcasterId) ?? null) : null,
+        associationId: live?.associationId ?? cut?.associationId ?? null,
+        startedAt: live?.startedAt ?? cut?.liveStartedAt ?? null,
+        endedAt: live?.endedAt ?? cut?.cutAt ?? null,
+        endReason: live?.endReason ?? (cut ? 'cut' : null),
+        cutReason: cut?.reason ?? null,
+        broadcasterCuts: broadcasterId ? (cutsOf.get(broadcasterId) ?? 0) : 0,
+      });
+    }
+    return out;
   }
 
   /**
