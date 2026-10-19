@@ -286,3 +286,102 @@ blocked or waits for the next pre-release are in one table:
 #1605 on the iPhone, the glass chrome's alignment, picker and names, #1370 on the front lens, the
 emoji pictures in the composer, the profile breadcrumb, the associations scroll. `FAIL`: check W, in
 a new shape. Bench trap: TestFlight's automatic updates had put the PRODUCTION stable on the bench.
+
+## 2026-10-19 - `v1.3.1-alpha.1` on both bench phones (iPhone 12 and Mi 9T), and the first 1:1 call between them
+
+Pre-release run 39242441752 (commit `1d0de7574`). **iPhone 12** (iOS 27.0.1): TestFlight installed build
+`1.3.1 (100300101)`; Settings > "A propos" reads "Version de Canari 1.3.1-alpha.1". Read signed in on
+`dev.canari-emse.fr` through WDA. **Mi 9T** (Android 16, release APK `versionCode` 100300101, sideloaded over
+`1.3.0`, data kept): read in a second pass once the screen was unlocked, signed in on dev as a second bench
+account, through the app's WebView (inspectable: a `webview_devtools_remote` socket, forwarded with
+`adb forward` and driven over CDP) plus `adb` taps for the real touches.
+
+| Reading | iPhone 12 | Mi 9T |
+| --- | --- | --- |
+| A. starts, signed in on dev, version string | **`PASS`**: PIN screen, then the feed under the "Environnement de test" banner; "A propos" says `1.3.1-alpha.1` | **`PASS`**: lands on the chat list under the test banner; "A propos" says "Version de Canari 1.3.1-alpha.1", "Vous utilisez la derniere version" |
+| B1. no abort at launch with accessibility on | **`PASS`**: launched three times under WDA, no Canari crash report | n/a (iOS fix) |
+| B2. bookings space editor | **`PASS`**: opens with the fields filled, saves ("Reglages enregistres.") | **`PASS`**: Reservations > Modifier opens "Modifier l'espace" with name, description, poster and resource filled; the description was edited by real typing, "Enregistrer les reglages" answered "Reglages enregistres.", and the new description was on the space page after a re-open |
+| C. 1:1 audio call (CALL-L1) | see the call tables below | see the call tables below |
+| D. localized native push, #2047, App Group erasure | **`NOT-READ`**: dev cannot send a push (Firebase service account absent on dev) | **`NOT-READ`**: same reason |
+| E. booking flow | **`PASS`** book and cancel | **`PASS`**: the 17:00 slot booked ("C'est reserve."), listed under "Mes reservations a venir" as "Titulaire", cancelled behind a confirm; the past list went 1 -> 2 and the upcoming list emptied |
+| F. CanaReels | **`PASS`** | **`PASS`**: the viewer opens a reel from the feed and its three clips play (`currentTime` advancing, 718x1278); the composer's "Ouvrir la camera" opens the camera with the close, lens flip and shutter controls; `/camera` opens the same camera |
+| App logs | **`NOT-READ`**: the TestFlight build is not inspectable | **`PASS` with findings**: logcat and the page console read for the whole session, see the findings below |
+
+### The call (CALL-L1), Mi 9T (caller) to iPhone 12 (callee), same Wi-Fi, both on speaker
+
+| Step | Result |
+| --- | --- |
+| Ring on the callee | **`PASS`**: "Appel entrant" with accept and refuse, within seconds; the 60 s ring window closes the call when nobody answers (a late accept is refused, as designed) |
+| Answer, both ways audible | **`PASS` for connection**: media flowed both ways for 7 minutes in one call (selected pair `host/udp -> host/udp`, RTT 5-35 ms, no relay). **Audio quality `FAIL`**: see the numbers |
+| Hang up from the Mi 9T | **`PASS`**: the other end dropped within 3 s, the chat line read "a duree 7 minutes", audio mode back to normal |
+| Hang up from the iPhone | **`FAIL`, not reachable**: the minimised call card's mute, speaker and hang-up controls sit UNDER the glass tab bar (visible through it, the red hang-up glyph under the glass), and its expand button did not react to taps by text, by point and by gesture; the call could only be ended from the other phone |
+| Wi-Fi off then on on the Mi 9T, mid-call | **`FAIL`**: a 14 s outage ended the call about 10 s in; a 6 s outage did too. The app log reads `[Call] terminal failure: signalling WebSocket closed code=1006 - ending call`, then `remote track ended`. There is no reconnection and no ICE restart: the call is dead on the first signalling socket close |
+
+### The numbers, Mi 9T receiving the iPhone's audio (`getStats` every 5 s through CDP, 3 calls)
+
+The `getUserMedia` the call makes asks `echoCancellation`, `noiseSuppression` and `autoGainControl` as `ideal: true`
+and the Mi 9T applied all three (`channelCount` 1, `sampleRate` 48000, `latency` 0.01; the app log says
+`micro: echo=true noise=true agc=true rate=48000Hz ch=1`). Codec Opus, 48000 Hz, 2 channels declared
+(`minptime=10;useinbandfec=1`), target bitrate 48000, about 38-45 kbit/s sent, 50 packets/s each way.
+Android audio mode `MODE_IN_COMMUNICATION`, route `speaker`, during the whole call.
+
+Call 1, 90 s, per 5 s interval:
+
+```
+t(s) pkts lost jitter(ms) jbDelay(ms) concealed% concealEvents inserted rtt(ms) outKbps
+  5   233    0     4.0         38          74          46        2636     5       35
+ 10   254    0     3.0         31          61          63         834     6       40
+ 15   252    0     8.0         35          66          48         678     8       39
+ 20   255    0     5.0         31          65          50        1315    34       40
+ 25   270    0     4.0         32          60          52         378     6       40
+ 30   265    0     5.0         32          66          60         466     7       38
+ 35   261    0     4.0         41          77          47         759    17       39
+ 40   244    0     6.0         40          60          43         870     8       37
+ 45   246    0     4.0         45          72          53         642     7       36
+ 51   293    0     4.0         34          59          71        1043     5       38
+ 57   336    0     4.0         36          64          54        1741     7       39
+ 64   332    0     5.0         34          65          65        1254     5       39
+ 70   299    0     3.0         33          61          56        2028    29       38
+ 82   633    0     7.0         38          57         117        2681     8       39
+ 89   341    0     5.0         42          66          68        1885    13       38
+```
+
+(The `lost` column is the cumulative count; the concealed share is per interval. 633 packets at t=82 is a
+12 s gap between two samples.) Calls 2 and 4 read the same: 41-69 % concealed per interval. Over the third
+call, 205 s: **6,133,524 of 9,839,040 samples concealed (62 %)**, 2,334 concealment events, 62,430 samples
+inserted for deceleration, 7 packets lost. Network: jitter 3-19 ms, RTT 5-53 ms, 0-17 packets lost per call.
+The network is not what is lost.
+
+**The cause the logs name.** The WebView's NetEq logged, over the four calls, **14,568 `Decode error` /
+`Decoder error (no error code)` pairs, each followed by `GetAudioFromSources: failed to
+GetAudioFrameWithInfo() from source`, plus 142 `audio_frame->samples_per_channel_ (480) != output_size_samples_
+(480)`**: about 14 a second, 30 % of the 50 packets a second, for the whole call. In words: the iPhone's
+packets ARRIVE (low loss, low jitter) but the Opus decoder on the Android side rejects a third of them and NetEq
+conceals in their place. That matches "sounds horrible" and it is NOT an echo, level or network problem. What it does
+not yet say: whether the fault is the iPhone's WebKit encoder output, the AES-GCM frame transform on either side
+(a decrypted payload is the sent payload, so a corrupt one would be a framing issue, not a key one), or a frame-size
+mismatch at the Opus layer. The other direction (Mi 9T audio heard on the iPhone) could not be read, the store build
+not being inspectable. Next steps: a call between two Chromium engines (the desktop fidelity rig), and a dev build
+with the frame transform bypassed: the decode errors stay or go with one of the two.
+
+Input level: the received stream's `audioLevel` read 1.000 in many samples. Both phones were on speaker next to each
+other, which is a feedback loop in the room on top of the above; the echo cancellers were on.
+
+### Defects, with evidence
+
+| Id | Severity | Defect | Evidence |
+| --- | --- | --- | --- |
+| CALL-AUDIO-1 | **P1** | The Opus decoder rejects about 30 % of the received packets (NetEq `Decode error`) while the network loses none; 62 % of the audio is concealed | the tables above; 14,568 `Decode error` lines in logcat over 4 calls |
+| CALL-IOS-HANGUP | **P1** | On the iPhone the minimised call card is covered by the glass tab bar: mute, speaker and hang-up cannot be reached and the expand button does not answer; the only way out is the other phone | iPhone screenshots 17:00 and 17:02 (the red hang-up glyph is visible UNDER the glass); the WDA tree puts the buttons at y=768 pt, inside the tab bar |
+| CALL-WIFI | **P2** | A signalling-socket close ends the call at once (no reconnect, no ICE restart), although the peer connection could ride out a 6 s outage | `[Call] terminal failure: signalling WebSocket closed code=1006 - ending call` after a 6 s and a 14 s Wi-Fi drop |
+| CALL-TURN | **P3** | Every call logs 4-8 `TURN CreatePermission error response` (403 and 600) on a call that runs on the host pair, plus IPv6 socket-binding warnings: noise to explain (dev TURN credentials or the socket binding) | logcat `turn_port.cc:1902` and the `Socket is bound to the address ... rather than an address associated with network` warnings |
+| CAM-BANNER | **P3** | On the camera pages the "Environnement de test" banner overlaps the status bar region (dev build only) | Mi 9T screenshot of `/camera` |
+| LOG-1 | **P3** | The in-app log is batched: during the session IndexedDB `CanariDBLog` held lines from 2026-10-15 only, so a call's own lines were readable only by hooking `console` live | `CanariDBLog` read over CDP |
+
+Other log lines of the session: `[GroupMembers]` and `Failed to fetch presence` as `TransportFailureError`, and `[WS] 4 pings
+without server response - closing zombie connection`, all at the Wi-Fi drops (expected). No Android crash, ANR or fatal in logcat.
+
+Rig lessons: `ios.mjs url <https url>` opens Mobile Safari, not the app; TestFlight may sit on "Mettre a jour" until it is
+tapped. On the Mi 9T, `adb` remote paths need `MSYS_NO_PATHCONV=1` under Git Bash, `uiautomator dump` sees only a system dialog over a
+Tauri WebView (read the DOM over CDP instead), and a `getUserMedia` hook installed on a live page misses the calls already made. A
+60 s ring window makes a slow rig miss the call: accept in the same command that detects the ring.
