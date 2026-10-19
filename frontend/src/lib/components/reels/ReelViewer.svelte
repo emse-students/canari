@@ -145,20 +145,52 @@
   }
 
   /**
-   * A DOUBLE TAP ON A REEL LIKES IT, AND NEVER UNLIKES IT (user, 2026-10-19) - the card's reaction
-   * path (`posts/postReaction.ts`): the same refusal known before any request, the same request
-   * behind `assertNotMuted`, the same failure sentence, said here as a toast since the viewer has
-   * no card line. A reel the reader already reacted to, with any reaction, gets the heart and no
-   * request. True when the reel now carries the reader's reaction, which is when the heart is drawn.
-   * The server's answer goes to the cards on screen too, so the feed behind shows the like.
+   * The posts whose reaction is on its way to the server. ONE AT A TIME PER POST: a second tap
+   * while the first is in flight is ignored (logged), so two answers can never land out of order,
+   * and a failure rolls back to the state the tap started from, which no later tap has moved.
+   */
+  // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a guard read by handlers, never rendered
+  const reactionInFlight = new Set<string>();
+
+  /**
+   * Sends the reader's reaction `type` on `post` (taking it back when `wasReacted`) on the card's
+   * path (`posts/postReaction.ts`): written on the tap, the server's answer adopted and announced to
+   * the cards behind, a failure rolled back and said as the card's sentence in a toast.
+   */
+  function sendReaction(post: PostEntity, me: string, type: string, wasReacted: boolean) {
+    const before = post.reactions ?? {};
+    reactionInFlight.add(post.id);
+    setReactions(post.id, toggledReactions(before, me, type).next);
+    sendPostReaction(post.id, type, wasReacted)
+      .then(
+        (reactions) => {
+          setReactions(post.id, reactions);
+          publishPostReactions(post.id, reactions);
+        },
+        (err: unknown) => {
+          console.warn(`[reel-viewer] the reaction on ${post.id} was not recorded`, err);
+          setReactions(post.id, before);
+          showToast(publishFailureMessage(err, m.post_reaction_error()), 'error');
+        }
+      )
+      .finally(() => reactionInFlight.delete(post.id));
+  }
+
+  /**
+   * A DOUBLE TAP ON A REEL LIKES IT, AND NEVER UNLIKES IT (user, 2026-10-19), on `sendReaction`.
+   * A reel the reader already reacted to, with any reaction, gets the heart and no request. True
+   * when the reel now carries the reader's reaction, which is when the heart is drawn.
    */
   function likeReel(post: PostEntity): boolean {
     const me = likerId;
     if (!me) return false;
-    const before = post.reactions ?? {};
-    if (before[me]) {
+    if ((post.reactions ?? {})[me]) {
       console.debug(`[reel-viewer] double tap on ${post.id}: already reacted, heart only`);
       return true;
+    }
+    if (reactionInFlight.has(post.id)) {
+      console.debug(`[reel-viewer] double tap on ${post.id}: a reaction is in flight, ignored`);
+      return false;
     }
     if (reactionRefusedLocally()) {
       console.debug(`[reel-viewer] double tap on ${post.id}: refused, the reader is muted`);
@@ -166,49 +198,29 @@
       return false;
     }
     console.debug(`[reel-viewer] double tap on ${post.id}: like`);
-    setReactions(post.id, toggledReactions(before, me, DOUBLE_TAP_REACTION).next);
-    sendPostReaction(post.id, DOUBLE_TAP_REACTION, false).then(
-      (reactions) => {
-        setReactions(post.id, reactions);
-        publishPostReactions(post.id, reactions);
-      },
-      (err: unknown) => {
-        console.warn(`[reel-viewer] the like on ${post.id} was not recorded`, err);
-        setReactions(post.id, before);
-        showToast(publishFailureMessage(err, m.post_reaction_error()), 'error');
-      }
-    );
+    sendReaction(post, me, DOUBLE_TAP_REACTION, false);
     return true;
   }
 
   /**
    * THE RAIL'S HEART (`reels/reelRail.ts`): it takes the reader's reaction back if they hold one,
-   * and gives "J'aime" if not - the card's toggle, on the card's path (`posts/postReaction.ts`):
-   * the same refusal before any request, the same request, the same failure sentence as a toast.
+   * and gives "J'aime" if not - the card's toggle, on `sendReaction`.
    */
   function toggleHeart(post: PostEntity) {
     const me = likerId;
     if (!me) return;
+    if (reactionInFlight.has(post.id)) {
+      console.debug(`[reel-viewer] heart on ${post.id}: a reaction is in flight, ignored`);
+      return;
+    }
     if (reactionRefusedLocally()) {
       console.debug(`[reel-viewer] heart on ${post.id}: refused, the reader is muted`);
       showToast(m.post_action_not_allowed(), 'error');
       return;
     }
-    const before = post.reactions ?? {};
-    const { type, wasReacted } = railHeartToggle(before, me);
+    const { type, wasReacted } = railHeartToggle(post.reactions ?? {}, me);
     console.debug(`[reel-viewer] heart on ${post.id}: ${wasReacted ? 'take back' : 'like'}`);
-    setReactions(post.id, toggledReactions(before, me, type).next);
-    sendPostReaction(post.id, type, wasReacted).then(
-      (reactions) => {
-        setReactions(post.id, reactions);
-        publishPostReactions(post.id, reactions);
-      },
-      (err: unknown) => {
-        console.warn(`[reel-viewer] the heart on ${post.id} was not recorded`, err);
-        setReactions(post.id, before);
-        showToast(publishFailureMessage(err, m.post_reaction_error()), 'error');
-      }
-    );
+    sendReaction(post, me, type, wasReacted);
   }
 
   /** The post whose comments sheet is open, by id - the sheet follows the row, not an index. */

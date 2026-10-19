@@ -1281,7 +1281,10 @@ the console (CDP on the Mi 9T, the in-app log on the iPhone) for the `[reel-view
 1. **The rail**: open CanaReels. Expect heart, comments and send bottom-right over every page, with
    their numbers, clear of the caption and of the player's bar, at 1x and at 200 % text.
 2. **The heart**: tap it - filled, the count +1, one `heart ... like` line; tap again - empty, a
-   `take back` line. A double tap on the rail likes nothing more (no burst at the finger).
+   `take back` line. A double tap on the rail likes nothing more (no burst at the finger). On a
+   post the account reacted to with 😂 (from the card's picker), the rail shows 😂, not a heart.
+   Two fast taps on a slow network send one request (`in flight, ignored` line).
+   The comments number matches the card's on a post of more than twenty comments.
 3. **The sheet**: tap comments - the sheet rises over the lower ~60 %, the reel keeps playing above.
    Type a comment: the keyboard does not cover the field. Send it; close the viewer - the card shows
    it. Close the sheet each way: drag the grabber down, Back (the viewer stays open), tap the reel

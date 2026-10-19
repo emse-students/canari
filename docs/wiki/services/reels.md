@@ -94,12 +94,15 @@ Every filter the feed has applies (blocked authors, moderation-hidden, promo gat
 picture - the photo pages of the CanaReels viewer ([client half](../frontend/modules/reels.md#the-rail-the-comments-sheet-and-the-photo-pages-user-2026-10-19-instagrams-reels)).
 The clause is `SINGLE_PHOTO_POST_SQL` (`posts/single-photo-sql.ts`): exactly one element in
 `images`, typed `image` (or untyped with an `image/` mime type, a legacy row), no poll, no form, no
-attached form. It is OR-ed into the reel filter of every feed arm, behind the same visibility rules,
-and keys its own cache entry. Without `kind=reel` it means nothing. **An older server strips the
-unknown parameter** (`ValidationPipe({ whitelist: true })`) and answers reels only, so a newer
-client against it simply shows no photo pages. Pinned photo posts sort first, as pinned posts do
-in the feed. Pinned by `posts.service.reels.spec.ts` (every arm) and
-`single-photo-sql.integration.spec.ts` (the `jsonb` arithmetic, on a real PostgreSQL).
+attached form, no linked calendar event, no `http(s)://` in the text (whose preview the page would
+drop). A column holding JSON `null` or a scalar counts as empty through a `CASE` on
+`jsonb_typeof` - `jsonb_array_length` raises on it and would fail the page. It is OR-ed into the
+reel filter of every feed arm, behind the same visibility rules, and keys its own cache entry.
+Without `kind=reel` it means nothing. **An older server strips the unknown parameter**
+(`ValidationPipe({ whitelist: true })`) and answers reels only, so a newer client against it simply
+shows no photo pages. **`kind=reel` is ordered by `publishedAt` alone** (`listOrderSql`): a pin is
+a feed concept and does not head the CanaReels list. Pinned by `posts.service.reels.spec.ts` (every
+arm) and `single-photo-sql.integration.spec.ts` (the `jsonb` arithmetic, on a real PostgreSQL).
 
 **An expired reel is never served**, whether the worker has reached it or not: a reel whose
 `expiresAt` has passed is excluded from every read (`GET /api/posts/:id` answers `404`). The client

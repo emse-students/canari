@@ -12,9 +12,10 @@
  * (`pending`), the refusal known before any request, the request behind `assertNotMuted`, the
  * row-by-row rollback - is the class below.
  *
- * A thread written on one surface is announced to the others showing the same post
- * ({@link publishPostComments}), so closing the reel viewer shows the card with the comment just
- * written there.
+ * A write on one surface is announced to the others showing the same post AS A CHANGE
+ * ({@link publishPostComments}, `posts/commentChange.ts`), never as a list - so closing the reel
+ * viewer shows the card with the comment just written there, and the card keeps every row it held.
+ * Every write keeps the post's `commentCount` (the server's total) in step.
  */
 import { SvelteSet } from 'svelte/reactivity';
 import {
@@ -29,6 +30,7 @@ import {
 } from '$lib/posts/api';
 import { assertNotMuted, cachedMuteStatus } from '$lib/moderation/muteCheck';
 import { publishFailureMessage } from '$lib/posts/publishFailure';
+import { withCommentCountDelta, type CommentChange } from '$lib/posts/commentChange';
 import { Log } from '$lib/utils/Log';
 import { m } from '$lib/paraglide/messages';
 
@@ -57,19 +59,19 @@ export interface CommentThreadHost {
 /** How a new comment ended: sent, refused before anything was written, or failed after. */
 export type CommentOutcome = 'sent' | 'refused' | 'failed';
 
-type CommentsListener = (comments: PostComment[], from: object) => void;
+type CommentsListener = (change: CommentChange, from: object) => void;
 /** Surfaces listening for a thread written elsewhere, by post id. */
 // eslint-disable-next-line svelte/prefer-svelte-reactivity -- a registry of callbacks, never rendered
 const listeners = new Map<string, Set<CommentsListener>>();
 
 /**
- * Tells every surface showing `postId` the thread written on another one (`from`, which its own
+ * Tells every surface showing `postId` a write made on another one (`from`, which its own
  * listener ignores). A listener that throws is logged and does not stop the others.
  */
-export function publishPostComments(postId: string, comments: PostComment[], from: object): void {
+export function publishPostComments(postId: string, change: CommentChange, from: object): void {
   for (const listener of listeners.get(postId) ?? []) {
     try {
-      listener(comments, from);
+      listener(change, from);
     } catch (err) {
       console.error(`[post-comments] a surface failed to take the comments of ${postId}`, err);
     }
@@ -116,10 +118,9 @@ export class PostCommentThread {
 
   constructor(private readonly host: CommentThreadHost) {}
 
-  /** Announces this surface's thread to the others showing the same post. */
-  private announce(): void {
-    const post = this.host.read();
-    publishPostComments(post.id, post.comments ?? [], this);
+  /** Announces this surface's write to the others showing the same post. */
+  private announce(change: CommentChange): void {
+    publishPostComments(this.host.read().id, change, this);
   }
 
   /**
@@ -157,7 +158,9 @@ export class PostCommentThread {
     };
     this.pending.add(pendingId);
     const before = this.host.read();
-    this.host.write({ ...before, comments: [...(before.comments ?? []), row] });
+    this.host.write(
+      withCommentCountDelta({ ...before, comments: [...(before.comments ?? []), row] }, 1)
+    );
     clear();
     this.submitting = true;
 
@@ -166,13 +169,13 @@ export class PostCommentThread {
       await assertNotMuted();
       const result = await addComment(this.host.read().id, { text, parentId, media });
       this.host.write(withComment(this.host.read(), pendingId, result.comment));
-      this.announce();
+      this.announce({ kind: 'upsert', comment: result.comment });
       return 'sent';
     } catch (err) {
       // Two causes wear this sentence: moderation refusing, and `addComment` failing. Only the row
       // this write added goes; the list carries the reader's other writes, which this says nothing about.
       console.error('[post-comments] comment refused', err);
-      this.host.write(withComment(this.host.read(), pendingId, null));
+      this.host.write(withCommentCountDelta(withComment(this.host.read(), pendingId, null), -1));
       this.host.fail(publishFailureMessage(err, m.post_unable_to_comment()));
       return 'failed';
     } finally {
@@ -201,7 +204,7 @@ export class PostCommentThread {
     try {
       const result = await likeCommentApi(this.host.read().id, commentId);
       this.host.write(withComment(this.host.read(), commentId, result.comment));
-      this.announce();
+      this.announce({ kind: 'upsert', comment: result.comment });
     } catch (err) {
       Log.d('PostCommentThread.like failed', err);
       this.host.write(withComment(this.host.read(), commentId, previous));
@@ -216,7 +219,7 @@ export class PostCommentThread {
       const result = await editCommentApi(this.host.read().id, commentId, text);
       this.host.answered();
       this.host.write(withComment(this.host.read(), commentId, result.comment));
-      this.announce();
+      this.announce({ kind: 'upsert', comment: result.comment });
     } catch (err) {
       Log.d('PostCommentThread.edit failed', err);
       this.host.fail(m.post_unable_to_edit_comment());
@@ -229,13 +232,14 @@ export class PostCommentThread {
       await deleteCommentApi(this.host.read().id, commentId);
       this.host.answered();
       const post = this.host.read();
-      this.host.write({
-        ...post,
-        comments: (post.comments ?? []).filter(
-          (c) => c.id !== commentId && c.parentId !== commentId
-        ),
-      });
-      this.announce();
+      const held = post.comments ?? [];
+      const kept = held.filter((c) => c.id !== commentId && c.parentId !== commentId);
+      // The server deletes the comment and its replies; the count goes down by the rows held, and
+      // by one at least - the comment itself, even when this copy no longer held it.
+      const count = Math.max(1, held.length - kept.length);
+      const ids = held.filter((c) => !kept.includes(c)).map((c) => c.id);
+      this.host.write(withCommentCountDelta({ ...post, comments: kept }, -count));
+      this.announce({ kind: 'remove', ids: ids.length > 0 ? ids : [commentId], count });
     } catch (err) {
       Log.d('PostCommentThread.remove failed', err);
       this.host.fail(m.post_unable_to_delete_comment());

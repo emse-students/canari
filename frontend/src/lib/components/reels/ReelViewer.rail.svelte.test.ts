@@ -243,3 +243,40 @@ it('a post of one picture is a photo page, with the rail and no player', async (
   expect(error).not.toHaveBeenCalled();
   error.mockRestore();
 });
+
+it('the comments number is the server total, not the twenty rows a feed row carries', async () => {
+  const twenty = Array.from({ length: 20 }, (_, i) => comment(`c${i}`));
+  await render(post('a', { comments: twenty, commentCount: 57 }), 'alice');
+  expect(q('[data-reel-rail-comments]')!.getAttribute('aria-label')).toBe(
+    m.reels_rail_comments({ count: 57 })
+  );
+});
+
+it('a reader whose reaction is not the heart sees THEIR emoji there, named as theirs', async () => {
+  await render(post('a', { reactions: { alice: 'Rire' } }), 'alice');
+  expect(q('[data-reel-rail-emoji]')).not.toBeNull();
+  expect(q('[data-reel-rail-emoji] img')?.getAttribute('alt')).toBe('😂');
+  expect(q('[data-reel-rail-heart]')!.getAttribute('aria-label')).toBe(
+    m.reels_rail_mine({ count: 1, reaction: m.post_reaction_name_laugh() })
+  );
+});
+
+it('a second tap while the first reaction is in flight sends nothing, and the answer is the one adopted', async () => {
+  let answer!: (value: { ok: boolean; reactions: Record<string, string> }) => void;
+  vi.mocked(addReaction).mockImplementation(() => new Promise((resolve) => (answer = resolve)));
+  await render(post('a'), 'alice');
+
+  await click('[data-reel-rail-heart]');
+  await click('[data-reel-rail-heart]');
+
+  expect(addReaction).toHaveBeenCalledTimes(1);
+  expect(removeReaction).not.toHaveBeenCalled();
+  answer({ ok: true, reactions: { alice: "J'aime" } });
+  await settle();
+  expect(q('[data-reel-rail-heart]')!.getAttribute('aria-pressed')).toBe('true');
+
+  // Landed: the next tap is heard again.
+  vi.mocked(removeReaction).mockResolvedValue({ ok: true, reactions: {} });
+  await click('[data-reel-rail-heart]');
+  expect(removeReaction).toHaveBeenCalledTimes(1);
+});

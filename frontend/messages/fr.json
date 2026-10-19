@@ -3517,6 +3517,16 @@
       }
     }
   ],
+  "reels_rail_mine": [
+    {
+      "declarations": ["input count", "input reaction", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "Votre réaction : {reaction}, retirer. {count} réaction",
+        "countPlural=other": "Votre réaction : {reaction}, retirer. {count} réactions"
+      }
+    }
+  ],
   "reels_rail_comments": [
     {
       "declarations": ["input count", "local countPlural = count: plural"],

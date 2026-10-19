@@ -51,6 +51,7 @@
   import ReelActionRail from './ReelActionRail.svelte';
   import { fullScreenMediaOf, fullScreenPageOf } from '$lib/reels/fullScreenPost';
   import { reactionTotal, type ReelRailActions } from '$lib/reels/reelRail';
+  import { commentCountOf } from '$lib/posts/commentChange';
 
   interface Props {
     post: PostEntity;
@@ -77,7 +78,8 @@
    * said once in the log below.
    */
   const page = $derived(fullScreenPageOf(post) ?? 'reel');
-  const reacted = $derived(!!rail && !!post.reactions?.[rail.readerId]);
+  /** The reader's own reaction on the post, which the rail's heart draws. */
+  const readerReaction = $derived((rail && post.reactions?.[rail.readerId]) || null);
 
   let hearts = $state<DoubleTapHeart | undefined>();
 
@@ -284,9 +286,9 @@
            and of the viewer's swipe (`data-reel-rail`, `NOT_A_GESTURE`). -->
       <div class="pointer-events-none absolute right-1 bottom-0 z-30 {bottomPad}">
         <ReelActionRail
-          {reacted}
+          {readerReaction}
           reactionCount={reactionTotal(post.reactions)}
-          commentCount={(post.comments ?? []).length}
+          commentCount={commentCountOf(post)}
           onHeart={rail.onHeart}
           onComments={rail.onComments}
           onSend={rail.onSend}

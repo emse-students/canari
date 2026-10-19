@@ -176,6 +176,32 @@ describe('reads exclude a reel past its month', () => {
     }
   });
 
+  it('the CanaReels list is newest first in EVERY arm: a pin does not head it', async () => {
+    for (const feed of ['all', 'associations', 'custom'] as const) {
+      const { service, queries } = makeService({});
+      await service.listPosts({
+        limit: 10,
+        offset: 0,
+        feed,
+        kind: 'reel',
+        singlePhotos: true,
+        viewerUserId: 'alice',
+      });
+      const sql = queries.find((q) => /FROM posts/.test(q.sql) && /LIMIT \$1/.test(q.sql))?.sql;
+      expect(sql).toContain(`ORDER BY posts."publishedAt" DESC`);
+      expect(sql).not.toContain('posts.pinned DESC');
+    }
+  });
+
+  it('every other list keeps its pinned posts first', async () => {
+    for (const kind of [undefined, 'post'] as const) {
+      const { service, queries } = makeService({});
+      await service.listPosts({ limit: 10, offset: 0, feed: 'all', kind, viewerUserId: 'alice' });
+      const sql = queries.find((q) => /LIMIT \$1/.test(q.sql))?.sql ?? '';
+      expect(sql).toContain(`ORDER BY posts.pinned DESC, posts."publishedAt" DESC`);
+    }
+  });
+
   it('singlePhotos means nothing without kind=reel', async () => {
     const { service, queries } = makeService({});
     await service.listPosts({ limit: 10, offset: 0, feed: 'all', singlePhotos: true });

@@ -228,6 +228,18 @@ export class PostsService {
   }
 
   /**
+   * A list page's order. THE CANAREELS LIST (`kind=reel`) IS NEWEST FIRST AND NOTHING ELSE (lead's
+   * decision, 2026-10-19): a pin is a feed concept, and a pinned reel or photo post heading the
+   * full-screen list would greet every reader with the same page. Every other list keeps its pinned
+   * posts first.
+   */
+  private listOrderSql(kind: PostKind | undefined): string {
+    return kind === 'reel'
+      ? `ORDER BY posts."publishedAt" DESC`
+      : `ORDER BY posts.pinned DESC, posts."publishedAt" DESC`;
+  }
+
+  /**
    * Throws the whole feed cache away, for every reader.
    *
    * It used to delete eight literal keys, and every one of them named the ANONYMOUS reader at
@@ -1254,7 +1266,7 @@ export class PostsService {
          ${serviceAccountFilter}
          ${promoSql(3)}
          ${visibleAt(3 + tail.length)}
-       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
+       ${this.listOrderSql(kind)}
        LIMIT $1 OFFSET $2`,
         [limit, offset, ...tail, viewerParam]
       );
@@ -1272,7 +1284,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(3)}
          ${visibleAt(3 + tail.length)}
-       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
+       ${this.listOrderSql(kind)}
        LIMIT $1 OFFSET $2`,
         [limit, offset, ...tail, viewerParam]
       );
@@ -1299,7 +1311,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
          ${visibleAt(5 + tail.length)}
-       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
+       ${this.listOrderSql(kind)}
        LIMIT $1 OFFSET $2`,
         [limit, offset, followedAssocIds, followedUserIds, ...tail, viewerParam]
       );
@@ -1322,7 +1334,7 @@ export class PostsService {
          ${this.blockedAuthorSql(bp)}
          ${promoSql(5)}
          ${visibleAt(5 + tail.length)}
-       ORDER BY posts.pinned DESC, posts."publishedAt" DESC
+       ${this.listOrderSql(kind)}
        LIMIT $1 OFFSET $2`,
         [limit, offset, promoParam, formationParam, ...tail, viewerParam]
       );

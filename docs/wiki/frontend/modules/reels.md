@@ -544,10 +544,18 @@ below; **owed on both phones**
   (`likerId`), so a conversation's reel (RC-1) has none. `data-no-double-tap` keeps it out of the
   double tap, `data-reel-rail` out of the viewer's swipe (`NOT_A_GESTURE`).
 - **The heart says "I reacted"** (`reels/reelRail.ts`): a post carries reactions of several kinds,
-  one per reader, and the rail has room for one. Filled when the reader holds ANY reaction; the
-  number is every reaction; a tap takes the reader's reaction back if they hold one, else gives
-  "J'aime". Changing to another kind stays the card's picker. Same path as the double tap
-  (`toggledReactions`, `sendPostReaction`, `publishPostReactions`, rollback + toast).
+  one per reader, and the rail has room for one. Empty with no reaction, red with "J'aime", and
+  **the reader's OWN emoji in its place for any other kind** (lead's decision after review,
+  2026-10-19), named "Votre réaction : ..., retirer" - so a tap, which takes the reader's reaction
+  back, never removes a 😂 the rail did not show. With none, a tap gives "J'aime". The number is
+  every reaction. Changing to another kind stays the card's picker. Same path as the double tap
+  (`toggledReactions`, `sendPostReaction`, `publishPostReactions`, rollback + toast), and **one
+  reaction in flight per reel**: a second tap (heart or double tap) before the server answered is
+  ignored and logged, so two answers never land out of order and a rollback returns to a state no
+  later tap moved.
+- **The comment number is the server's total** (`commentCount`, `posts/commentChange.ts`): a list
+  row carries only the newest twenty comments, so `comments.length` read "20" for a post of 57 -
+  on the rail and on the card's button alike. Every write keeps the total in step.
 - **Send is the post menu's share** (`posts/sharePost.ts`: copy the public link, toast). Sending a
   post INTO a conversation does not exist; it is an owed decision, not built here.
 - **The comments sheet** (`ReelCommentsSheet`): the POST's own thread - `PostComments` in its
@@ -558,14 +566,19 @@ below; **owed on both phones**
   It closes by a drag down on its top (`decideDismiss`, the media viewer's rule), Back (its own
   history entry, so Back closes the sheet and not the viewer), a tap on the reel above it, Escape,
   and the X. No focus trap: it takes the focus on open and hands it back to the button on close.
-  A comment written there reaches the card behind (`publishPostComments`).
+  A write there reaches the card behind AS A CHANGE (`publishPostComments` carries an upsert or a
+  removal, never a list): the viewer's copy is a feed row of the newest twenty, and a card holding
+  the whole thread used to adopt it and collapse.
 - **Dialogs opened from inside the viewer** (the report, the GIF picker) used to sit UNDER it
   (`--z-modal` 280, `--z-sheet` 160, against `--z-viewer` 300): `utils/viewerLayer.ts` marks the
   viewer's subtree and `Modal`/`ModalOverlay` take the `--z-viewer-dialog` rung (305) there.
 - **Photo pages** (`reels/fullScreenPost.ts`): a post whose ONLY content is one picture - no other
   media, no poll, no form - is a page like a reel: the same frame, caption and rail, its picture
   instead of the video, no player bar (so the caption sits lower). Several media, a video outside a
-  reel, a file and text alone stay out. The list comes from the server
+  reel, a file and text alone stay out, and so do **a linked calendar event and a link in the
+  text**: the card draws the event's card (date, place, add to calendar) and the link's preview,
+  and a page would silently drop both. **The list is newest first and nothing else** (lead's
+  decision): a pin is a feed concept, and a pinned post would head every reader's CanaReels. The list comes from the server
   (`kind=reel&singlePhotos=true`, [server half](../../services/reels.md#reading)); a row it serves
   that the client reads as neither is drawn as a reel and accused once in the log.
 
@@ -595,7 +608,8 @@ flick distance between 60 and 120 px (~24-48 dp). Canari's reel pager is the med
 flick of 0.4 CSS px/ms (`FLICK_VELOCITY`) over 24 CSS px (`FLICK_MIN_DISTANCE_PX`) - a CSS px is a
 dp in the WebView. So a slow drag commits SOONER in Canari (25 % against 50 %) and a flick needs to
 be about seven times FASTER. These numbers are the reference for tuning it; this change applies
-none of them.
+none of them. **Follow-up, after the phone reading of RR:** decide whether the reel pager moves
+towards these thresholds (lead's decision: not in the rail's pull request).
 
 ### The CanaReels entry - an icon beside the tabs that opens the viewer (user, 2026-10-16)
 

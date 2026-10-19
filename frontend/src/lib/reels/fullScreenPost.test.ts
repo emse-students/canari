@@ -28,6 +28,10 @@ describe('fullScreenPageOf', () => {
     expect(fullScreenPageOf(post({ media: [legacy] }))).toBe('photo');
   });
 
+  it('keeps a picture with a caption that carries no link', () => {
+    expect(fullScreenPageOf(post({ media: [picture], markdown: 'Soiree au foyer' }))).toBe('photo');
+  });
+
   it('reads `images` from a server older than the rename', () => {
     expect(fullScreenPageOf(post({ media: undefined, images: [picture] }))).toBe('photo');
   });
@@ -43,6 +47,11 @@ describe('fullScreenPageOf', () => {
     ['a picture with a poll', { media: [picture], polls: [{ id: 'q' }] as PostEntity['polls'] }],
     ['a picture with a form', { media: [picture], forms: [{ id: 'f' }] as PostEntity['forms'] }],
     ['a picture with an attached form', { media: [picture], attachedFormId: 'form-1' }],
+    ['a picture with a linked event', { media: [picture], linkedCalendarEventId: 'ev-1' }],
+    [
+      'a picture with a link in its text',
+      { media: [picture], markdown: 'voir https://example.org' },
+    ],
   ])('keeps %s out', (_label, fields) => {
     expect(fullScreenPageOf(post(fields as Partial<PostEntity>))).toBeNull();
   });

@@ -15,10 +15,17 @@
   import { getLocale } from '$lib/paraglide/runtime';
   import { m } from '$lib/paraglide/messages';
   import { compactCount } from '$lib/reels/reelRail';
+  import { DOUBLE_TAP_REACTION } from '$lib/posts/postReaction';
+  import { reactionTypeToEmoji, reactionTypeToLabel } from '$lib/posts/reactions';
+  import EmojiText from '$lib/components/shared/EmojiText.svelte';
 
   interface Props {
-    /** Whether the reader holds a reaction on the post: the heart is filled. */
-    reacted: boolean;
+    /**
+     * The reader's own reaction on the post, or null. "J'aime" fills the heart; ANY OTHER KIND IS
+     * DRAWN AS ITSELF in the heart's place (lead's decision, 2026-10-19), so a tap that takes it
+     * back never removes a reaction the rail did not show.
+     */
+    readerReaction: string | null;
     /** Every reaction on the post. */
     reactionCount: number;
     /** The comments the post carries, replies included - the card's own count. */
@@ -28,7 +35,16 @@
     onSend: () => void;
   }
 
-  let { reacted, reactionCount, commentCount, onHeart, onComments, onSend }: Props = $props();
+  let { readerReaction, reactionCount, commentCount, onHeart, onComments, onSend }: Props =
+    $props();
+
+  const reacted = $derived(readerReaction !== null);
+  /** The reader's emoji when their reaction is not the heart. */
+  const otherEmoji = $derived(
+    readerReaction && readerReaction !== DOUBLE_TAP_REACTION
+      ? reactionTypeToEmoji(readerReaction)
+      : null
+  );
 
   const locale = getLocale();
 </script>
@@ -47,16 +63,24 @@
       type="button"
       class="ui-icon-button rounded-full outline-none focus-visible:ring-2 focus-visible:ring-amber-500"
       aria-pressed={reacted}
-      aria-label={m.reels_rail_like({ count: reactionCount })}
+      aria-label={otherEmoji && readerReaction
+        ? m.reels_rail_mine({ count: reactionCount, reaction: reactionTypeToLabel(readerReaction) })
+        : m.reels_rail_like({ count: reactionCount })}
       onclick={onHeart}
       data-reel-rail-heart
     >
-      <Heart
-        size={30}
-        strokeWidth={2}
-        class="drop-shadow-md {reacted ? 'fill-red-500 text-red-500' : ''}"
-        aria-hidden="true"
-      />
+      {#if otherEmoji}
+        <span class="text-2xl leading-none drop-shadow-md" aria-hidden="true" data-reel-rail-emoji
+          ><EmojiText text={otherEmoji} /></span
+        >
+      {:else}
+        <Heart
+          size={30}
+          strokeWidth={2}
+          class="drop-shadow-md {reacted ? 'fill-red-500 text-red-500' : ''}"
+          aria-hidden="true"
+        />
+      {/if}
     </button>
     <span class="text-xs font-semibold drop-shadow-md" aria-hidden="true"
       >{compactCount(reactionCount, locale)}</span

@@ -193,6 +193,12 @@ export interface PostEntity {
   linkedCalendarEvent?: PostLinkedCalendarEvent | null;
   reactions?: Record<string, string>; // userId -> reactionType
   comments?: PostComment[];
+  /**
+   * The post's comments in all, as the server counted them for this reader (blocked authors left
+   * out). A list row carries only the newest twenty in `comments`, so the number shown is this one
+   * (`posts/commentChange.ts`, `commentCountOf`); absent from a server older than the field.
+   */
+  commentCount?: number | null;
   pinned?: boolean;
   scheduledAt?: string | null;
   createdAt: string;

@@ -22,6 +22,7 @@
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
   import type { PostComment, PostEntity, PostMediaRef } from '$lib/posts/api';
   import { PostCommentThread } from '$lib/posts/postCommentThread.svelte';
+  import { commentCountOf } from '$lib/posts/commentChange';
   import { reportComment } from '$lib/posts/reportComment';
   import type { ReportReason } from '$lib/moderation/reasons';
   import { bindHistoryOverlay } from '$lib/utils/bindHistoryOverlay.svelte';
@@ -62,7 +63,12 @@
     end: () => {},
     answered: () => {},
     holdThread: () => {},
-    adoptThread: (full) => onChange({ ...post, comments: full.comments }),
+    adoptThread: (full) =>
+      onChange({
+        ...post,
+        comments: full.comments,
+        commentCount: full.commentCount ?? post.commentCount,
+      }),
     fail: (message) => showToast(message, 'error'),
   });
 
@@ -266,7 +272,7 @@
         onDeleteComment={(id) => thread.remove(id)}
         onReport={handleReportComment}
         onLoadAllComments={() => thread.loadAll()}
-        totalCommentCount={comments.length}
+        totalCommentCount={commentCountOf(post)}
       />
     </div>
   </div>

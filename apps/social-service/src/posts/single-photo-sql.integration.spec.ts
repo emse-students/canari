@@ -5,7 +5,8 @@
  * the `jsonb` arithmetic says what `single-photo-sql.ts` claims. The cases are the client's
  * (`frontend/src/lib/reels/fullScreenPost.test.ts`): one picture in, one picture with a legacy
  * row's `mimeType` only in, a video, two pictures, a file, text alone, a picture with a poll and a
- * picture with a form out.
+ * picture with a form out; a linked calendar event and a link in the text out (the page would drop
+ * the card each one draws); a column holding JSON `null` or a scalar read as empty, never raising.
  *
  * GATED ON `SOCIAL_IT_DATABASE_URL`, like every integration spec here: skipped without a database,
  * never passing. CI's `test-social-integration` sets it and fails on a skipped test. Everything
@@ -35,7 +36,9 @@ maybe('the one-picture clause against PostgreSQL', () => {
       images jsonb DEFAULT '[]'::jsonb,
       polls jsonb DEFAULT '[]'::jsonb,
       forms jsonb DEFAULT '[]'::jsonb,
-      "attachedFormId" uuid NULL
+      "attachedFormId" uuid NULL,
+      "linkedCalendarEventId" uuid NULL,
+      markdown text NULL
     )`);
     const rows: Array<[string, unknown[], unknown[], unknown[], string | null]> = [
       ['one-picture', [picture], [], [], null],
@@ -58,6 +61,27 @@ maybe('the one-picture clause against PostgreSQL', () => {
     await client.query(
       `INSERT INTO posts (id, images, polls, forms) VALUES ('nulls', NULL, NULL, NULL)`
     );
+    // JSON `null` and scalars: `jsonb_array_length` raises on them, which would fail the page.
+    await client.query(
+      `INSERT INTO posts (id, images, polls, forms) VALUES ('json-null-images', 'null'::jsonb, '[]', '[]')`
+    );
+    const one = JSON.stringify([picture]);
+    await client.query(
+      `INSERT INTO posts (id, images, polls, forms) VALUES ('picture-scalar-polls', $1, 'null'::jsonb, '3'::jsonb)`,
+      [one]
+    );
+    await client.query(
+      `INSERT INTO posts (id, images, "linkedCalendarEventId") VALUES ('picture-and-event', $1, '00000000-0000-4000-8000-000000000001')`,
+      [one]
+    );
+    await client.query(
+      `INSERT INTO posts (id, images, markdown) VALUES ('picture-and-link', $1, 'voir https://example.org')`,
+      [one]
+    );
+    await client.query(
+      `INSERT INTO posts (id, images, markdown) VALUES ('picture-and-caption', $1, 'Soiree au foyer')`,
+      [one]
+    );
   });
 
   afterAll(async () => {
@@ -69,6 +93,11 @@ maybe('the one-picture clause against PostgreSQL', () => {
     const res = await client.query<{ id: string }>(
       `SELECT id FROM posts WHERE ${SINGLE_PHOTO_POST_SQL} ORDER BY id`
     );
-    expect(res.rows.map((r) => r.id)).toEqual(['legacy-picture', 'one-picture']);
+    expect(res.rows.map((r) => r.id)).toEqual([
+      'legacy-picture',
+      'one-picture',
+      'picture-and-caption',
+      'picture-scalar-polls',
+    ]);
   });
 });

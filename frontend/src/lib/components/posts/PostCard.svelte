@@ -21,6 +21,7 @@
   import ReportReasonDialog from '$lib/components/moderation/ReportReasonDialog.svelte';
   import { reportComment } from '$lib/posts/reportComment';
   import { PostCommentThread, onPostComments } from '$lib/posts/postCommentThread.svelte';
+  import { applyCommentChange, commentCountOf } from '$lib/posts/commentChange';
   import {
     DOUBLE_TAP_REACTION,
     onPostReactions,
@@ -434,14 +435,17 @@
   }
 
   /**
-   * A thread written on another surface showing this post (the reel viewer's comments sheet): the
-   * card takes it, so closing the viewer shows the comment that was just written there.
+   * A write made on another surface showing this post (the reel viewer's comments sheet), applied
+   * to THIS card's thread as a change (`posts/commentChange.ts`): closing the viewer shows the
+   * comment just written there, and a card holding the whole thread keeps every row - the viewer's
+   * copy is a feed row of the newest twenty, never a list to adopt.
    */
   $effect(() =>
-    onPostComments(postId, (comments, from) => {
+    onPostComments(postId, (change, from) => {
       if (from === thread) return;
+      Log.d('PostCard.onPostComments', `${change.kind} from another surface on ${postId}`);
       ledger.answered(['comments']);
-      localPost = { ...localPost, comments };
+      localPost = applyCommentChange(localPost, change);
     })
   );
 
@@ -702,7 +706,7 @@
         {userReaction}
         {showReactionPicker}
         reactionList={REACTIONS}
-        commentCount={comments.length || undefined}
+        commentCount={commentCountOf(localPost) || undefined}
         onToggleReactionPicker={() => (showReactionPicker = !showReactionPicker)}
         onReactionSelect={handleReaction}
         onCommentClick={() => (showComments = !showComments)}
@@ -767,7 +771,7 @@
         onDeleteComment={(id) => thread.remove(id)}
         onReport={handleReportComment}
         onLoadAllComments={loadAllComments}
-        totalCommentCount={(localPost.comments ?? []).length}
+        totalCommentCount={commentCountOf(localPost)}
       />
     </div>
 
