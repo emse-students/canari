@@ -29,8 +29,10 @@ import type { Conversion, DiscardedTrack } from 'mediabunny';
 import {
   AUDIO_BITRATE,
   VIDEO_KEY_FRAME_INTERVAL,
+  VIDEO_PROFILES,
   planVideoEncoding,
   type VideoEncodingPlan,
+  type VideoProfileName,
 } from './videoEncodingPlan';
 
 /**
@@ -106,6 +108,11 @@ export interface PrepareVideoOptions {
    * ended 71 ms before it). Left off for an attachment, whose sound past the picture is content.
    */
   trimToVideo?: boolean;
+  /**
+   * The encoding profile ({@link VIDEO_PROFILES}): `feed` (720p, ~2.5 Mb/s, the default) or `chat`
+   * (about 540p at 1.2 Mb/s, for a reel sent in a conversation). Same container and codecs.
+   */
+  profile?: VideoProfileName;
   /** Called with the share done, from 0 to 1, as frames are encoded. */
   onProgress?: (fraction: number) => void;
   /** Aborting it stops the encoder and rejects with the `aborted` fault. */
@@ -155,12 +162,15 @@ export async function prepareVideoForUpload(
     signal,
     removeAudio = false,
     trimToVideo = false,
+    profile: profileName = 'feed',
   } = options;
+  const profile = VIDEO_PROFILES[profileName];
   console.debug(
     `[video-prep] start: ${source.type || 'unknown'}, ${source.size} bytes` +
       (removeAudio ? ', audio removed' : '') +
       (trimToVideo ? ', trim to video' : '') +
       (maxSeconds !== undefined ? `, max ${maxSeconds} s` : '') +
+      `, profile ${profileName}` +
       (maxBytes !== undefined ? `, max ${maxBytes} bytes` : '')
   );
   if (signal?.aborted) throw new VideoPrepareError('aborted', 'video preparation aborted');
@@ -235,7 +245,7 @@ export async function prepareVideoForUpload(
         ? await mb.canEncodeAudio('aac', {
             numberOfChannels: await audioTrack.getNumberOfChannels(),
             sampleRate: await audioTrack.getSampleRate(),
-            quality: new mb.Quality({ bitrate: AUDIO_BITRATE }),
+            quality: new mb.Quality({ bitrate: profile.audioBitrate }),
           })
         : null;
     const audioRoute = chooseAudioRoute({
@@ -243,13 +253,14 @@ export async function prepareVideoForUpload(
       removeAudio,
       sourceBitrate: sourceAudioBitrate,
       canEncodeAac,
+      audioBitrate: profile.audioBitrate,
     });
     // A copied track costs what it carries, measured over every packet; an encoded one, the plan's.
     const audioBitrate =
       audioRoute === 'copy'
         ? (sourceAudioBitrate ?? 0)
         : audioRoute === 'encode'
-          ? AUDIO_BITRATE
+          ? profile.audioBitrate
           : 0;
     console.debug(
       `[video-prep] audio: ${audioRoute}, ${Math.round(audioBitrate / 1000)} kb/s` +
@@ -265,7 +276,8 @@ export async function prepareVideoForUpload(
         frameRate: stats.averagePacketRate,
         audioBitrate,
       },
-      maxBytes
+      maxBytes,
+      profile
     );
     if (plan === 'no-dimensions') {
       console.warn('[video-prep] refused: the video track reports no frame size');
@@ -304,7 +316,7 @@ export async function prepareVideoForUpload(
         allowTransformationMetadata: false,
         forceTranscode: true,
       },
-      audio: audioConversionOptions(mb, audioRoute),
+      audio: audioConversionOptions(mb, audioRoute, profile.audioBitrate),
       ...(trim ? { trim } : {}),
     });
     // A dropped track is a refusal, never a quieter video: an engine that cannot decode the source
@@ -403,6 +415,8 @@ export interface AudioRouteFacts {
   sourceBitrate: number | null;
   /** Whether this engine can encode AAC at the plan's settings; `null` when it was not asked. */
   canEncodeAac: boolean | null;
+  /** The profile's AAC bitrate: the most a copied track may cost; defaults to {@link AUDIO_BITRATE}. */
+  audioBitrate?: number;
 }
 
 /**
@@ -419,9 +433,10 @@ export interface AudioRouteFacts {
  */
 export function chooseAudioRoute(facts: AudioRouteFacts): 'none' | 'copy' | 'encode' {
   const { codecString, removeAudio, sourceBitrate, canEncodeAac } = facts;
+  const audioBitrate = facts.audioBitrate ?? AUDIO_BITRATE;
   if (codecString === null || removeAudio) return 'none';
   if (codecString.toLowerCase() !== AAC_LC_CODEC_STRING) return 'encode';
-  if (sourceBitrate !== null && sourceBitrate <= AUDIO_BITRATE) return 'copy';
+  if (sourceBitrate !== null && sourceBitrate <= audioBitrate) return 'copy';
   return canEncodeAac === true ? 'encode' : 'copy';
 }
 
@@ -432,13 +447,14 @@ export function chooseAudioRoute(facts: AudioRouteFacts): 'none' | 'copy' | 'enc
  */
 export function audioConversionOptions(
   mb: typeof import('mediabunny'),
-  route: 'none' | 'copy' | 'encode'
+  route: 'none' | 'copy' | 'encode',
+  audioBitrate: number = AUDIO_BITRATE
 ) {
   if (route === 'none') return { discard: true as const };
   if (route === 'copy') return { codec: 'aac' as const };
   return {
     codec: 'aac' as const,
-    quality: new mb.Quality({ bitrate: AUDIO_BITRATE }),
+    quality: new mb.Quality({ bitrate: audioBitrate }),
     forceTranscode: true,
   };
 }

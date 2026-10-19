@@ -32,29 +32,81 @@ const check = (cond, m) => (cond ? ok(m) : bad(m));
 
 const PASSWORD = 'correct-horse-battery';
 
-/** A fake estate: IdP on one port, backend on another. `mode` shapes what it refuses. */
+/**
+ * A fake estate: IdP on one port, backend on another. `mode` shapes what it refuses.
+ *
+ * The IdP copies the SHAPE MiConnect (authentik 2026.8) showed on 2026-10-18, the first live run:
+ * - authorize without a session 302s to the DEFAULT flow page, `/if/flow/cas-only/?<its own
+ *   params>&next=<authorize, encoded>`; the page answers 200 and the browser hands the executor its
+ *   whole query string;
+ * - the default flow identifies anyone, then DENIES a password account (`ak-stage-access-denied`):
+ *   it is CAS-only, so the smoke account must start on `password-login`;
+ * - an ACCEPTED stage answer is a 302 back to the executor's own URL, a REFUSED one a 200 challenge
+ *   carrying `response_errors` - the 302 is what the first run died on;
+ * - the last stage is `xak-flow-redirect` to the DECODED `next`, so a `next` passed unencoded loses
+ *   everything after its first `&` and the authorize below refuses it;
+ * - authorize WITH the session cookie 302s to `redirect_uri` with a code.
+ */
 function fake(mode) {
+  /** Per-session flow state: the pending user and the stage reached, keyed by cookie. */
+  const sessions = new Map();
+  const sessionOf = (req) => /(?:^|; )sess=([^;]+)/.exec(req.headers.get('cookie') ?? '')?.[1];
   const idp = Bun.serve({
     port: 0,
     async fetch(req) {
       const url = new URL(req.url);
       if (url.pathname === '/application/o/authorize/') {
+        const sid = sessionOf(req);
+        if (sid && sessions.get(sid)?.done) {
+          const back = url.searchParams.get('redirect_uri');
+          if (!back) return new Response('missing redirect_uri', { status: 400 });
+          return new Response(null, {
+            status: 302,
+            headers: { Location: `${back}?code=abc&state=${url.searchParams.get('state')}` },
+          });
+        }
+        const next = encodeURIComponent(`${url.pathname}${url.search}`);
         return new Response(null, {
           status: 302,
-          headers: {
-            Location: `/if/flow/svc/?${url.searchParams}`,
-            'Set-Cookie': 'sess=1; Path=/',
-          },
+          headers: { Location: `/if/flow/cas-only/?${url.searchParams}&next=${next}` },
         });
       }
-      if (url.pathname === '/if/flow/svc/') return new Response('<html>flow</html>');
-      if (url.pathname === '/api/v3/flows/executor/svc/') {
-        if (req.method === 'GET') return Response.json({ component: 'ak-stage-identification' });
-        const body = await req.json();
-        if (body.component === 'ak-stage-identification') {
-          if (mode === 'mfa')
+      const page = /^\/if\/flow\/([^/]+)\/$/.exec(url.pathname);
+      if (page) {
+        const sid = crypto.randomUUID();
+        sessions.set(sid, { stage: 'identify', done: false });
+        return new Response('<html>flow</html>', {
+          headers: { 'Set-Cookie': `sess=${sid}; Path=/` },
+        });
+      }
+      const exec = /^\/api\/v3\/flows\/executor\/([^/]+)\/$/.exec(url.pathname);
+      if (exec) {
+        const slug = exec[1];
+        const s = sessions.get(sessionOf(req));
+        if (!s) return new Response('no session', { status: 403 });
+        const next = new URLSearchParams(url.searchParams.get('query') ?? '').get('next');
+        if (req.method === 'GET') {
+          if (s.stage === 'identify')
+            return Response.json({ component: 'ak-stage-identification' });
+          if (s.stage === 'denied')
+            return Response.json({
+              component: 'ak-stage-access-denied',
+              error_message: 'CAS only',
+            });
+          if (s.stage === 'mfa')
             return Response.json({ component: 'ak-stage-authenticator-validate' });
-          return Response.json({ component: 'ak-stage-password' });
+          if (s.stage === 'password') return Response.json({ component: 'ak-stage-password' });
+          s.done = true;
+          return Response.json({ component: 'xak-flow-redirect', to: next });
+        }
+        const body = await req.json();
+        const again = new Response(null, {
+          status: 302,
+          headers: { Location: `${url.pathname}${url.search}` },
+        });
+        if (body.component === 'ak-stage-identification') {
+          s.stage = slug === 'cas-only' ? 'denied' : mode === 'mfa' ? 'mfa' : 'password';
+          return again;
         }
         if (body.component === 'ak-stage-password') {
           if (body.password !== PASSWORD) {
@@ -63,10 +115,8 @@ function fake(mode) {
               response_errors: { password: [{ string: 'no' }] },
             });
           }
-          return Response.json({
-            component: 'xak-flow-redirect',
-            to: `${new URL(req.url).origin}/application/o/authorize/?done=1`,
-          });
+          s.stage = 'redirect';
+          return again;
         }
       }
       return new Response('?', { status: 404 });
@@ -96,27 +146,11 @@ function fake(mode) {
   return { idp, backend, idpOrigin, backendOrigin };
 }
 
-/**
- * The fake IdP cannot know the backend's origin at construction, so the final authorize hop is
- * answered by a fetch wrapper: a request for `/application/o/authorize/?done=1` becomes a 302 to the
- * callback with a code, exactly what MiConnect does once the flow plan is complete.
- */
-function wrapped(backendOrigin) {
-  return (url, init) => {
-    const u = new URL(url);
-    if (u.pathname === '/application/o/authorize/' && u.searchParams.get('done')) {
-      return Promise.resolve(
-        new Response(null, {
-          status: 302,
-          headers: { Location: `${backendOrigin}/auth/callback?code=abc&state=s` },
-        })
-      );
-    }
-    return fetch(url, init);
-  };
-}
-
-async function run(mode, creds = { username: 'smoke', password: PASSWORD }) {
+async function run(
+  mode,
+  creds = { username: 'smoke', password: PASSWORD },
+  flowSlug = 'password-login'
+) {
   const f = fake(mode);
   const lines = [];
   try {
@@ -125,7 +159,7 @@ async function run(mode, creds = { username: 'smoke', password: PASSWORD }) {
       idpUrl: f.idpOrigin,
       clientId: 'cid',
       ...creds,
-      fetchImpl: wrapped(f.backendOrigin),
+      flowSlug,
       log: (l) => lines.push(l),
     });
     return { out, lines };
@@ -211,6 +245,14 @@ check(
 check(
   ![...wrong.lines, wrong.err?.message ?? ''].some((l) => l.includes('hunter2-bad')),
   'the refused password is never printed'
+);
+
+const casOnly = await run('ok', undefined, null);
+check(
+  casOnly.err instanceof SmokeError &&
+    casOnly.err.stage === 'flow' &&
+    /denied the account on the cas-only flow/.test(casOnly.err.message),
+  'the default (CAS-only) flow is a named denial, not an HTTP 302'
 );
 
 const second = await run('mfa');

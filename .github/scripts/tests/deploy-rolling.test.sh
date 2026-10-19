@@ -130,7 +130,18 @@ replace_services <<<"$(plan)" >"$TMP/v1.log" 2>&1 || {
   cat "$TMP/v1.log" >&2
   exit 1
 }
-if curl -fsS -X POST "$URL" >/dev/null; then ok "v1 answers through the edge"; else fail "v1 answers through the edge"; fi
+# ONE POST, NO RETRY: replace_services returned only once every service, the edge included, was
+# HEALTHY - and the edge's healthcheck is its listener. A reset here is the deploy believing an edge
+# that was not yet listening (3 runs in 62, 2026-10-18, before the edge had a healthcheck), so the
+# edge's own log is printed: it separates "never listened" from "listened and could not reach frontend".
+if curl -fsS -X POST "$URL" >/dev/null; then
+  ok "v1 answers through the edge"
+else
+  fail "v1 answers through the edge"
+  edge_cid="$(containers_of edge)"
+  $DOCKER_CLI inspect -f 'edge state: {{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' "$edge_cid" >&2 || true
+  $DOCKER_CLI logs --tail 20 "$edge_cid" >&2 2>&1 || true
+fi
 edge_before="$(containers_of edge)"
 
 # ── 1. A release under load ──────────────────────────────────────────────────

@@ -1135,7 +1135,7 @@ publishes like the other four. The audience always comes from `channelAudience`,
 reaches its roster and a public one the whole community, and the publish always happens AFTER the
 row is saved - the audience is derived from access, so announcing first would address the event to
 everyone except the person it is about.
-| `channel.typing`, `channel.pin`, `channel.poll.vote` | live UI signals |
+| `channel.typing`, `channel.pin`, `channel.poll.vote` | live UI signals; typing goes to the channel audience MINUS the typist (user ids, so their other devices too) |
 
 The chat-gateway subscribers fan out these events to all connected devices of the affected users.
 

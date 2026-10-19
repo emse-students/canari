@@ -276,7 +276,9 @@ jobs:
           SMOKE_CLIENT_ID: ${{ secrets.DEV_AUTHENTIK_CLIENT_ID }}
           SMOKE_USERNAME: ${{ secrets.DEV_SMOKE_USERNAME }}
           SMOKE_PASSWORD: ${{ secrets.DEV_SMOKE_PASSWORD }}
-          SMOKE_FLOW_SLUG: ${{ vars.DEV_SMOKE_FLOW_SLUG }}
+          # MiConnect's default flow is CAS-only and denies a password account; this is the one the
+          # test campaign signs in through (`PASSWORD_LOGIN_FLOW_SLUG`, docs/wiki/infrastructure/authentik.md).
+          SMOKE_FLOW_SLUG: password-login
         run: |
           set -euo pipefail
           bun .github/scripts/smoke-login.mjs
@@ -293,4 +295,3 @@ jobs:
             "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" \
             refs/tags/dev-deployed
           echo "dev-deployed -> ${{ inputs.sha }} (v${{ inputs.version }})"
-

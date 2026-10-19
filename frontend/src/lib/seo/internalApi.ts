@@ -1,4 +1,7 @@
 import { env } from '$env/dynamic/private';
+// The fetchers live in `upstream.ts`, which reads no environment and so can be unit-tested; they
+// are re-exported so every caller keeps one door.
+export { FETCH_TIMEOUT_MS, fetchJson, fetchJsonOrThrow } from '$lib/seo/upstream';
 
 /**
  * The one seam through which the SSR process talks to the services.
@@ -18,9 +21,6 @@ export const CORE_URL = (): string =>
 export const DELIVERY_URL = (): string =>
   (env.DELIVERY_SERVICE_URL || 'http://chat-delivery-service:3010').replace(/\/$/, '');
 
-/** Budget for one enrichment call. An unfurler gives up long before a user would. */
-export const FETCH_TIMEOUT_MS = 1500;
-
 /**
  * Headers proving a server-to-server call.
  *
@@ -34,28 +34,4 @@ export function internalHeaders(): Record<string, string> {
     return {};
   }
   return { 'X-Internal-Secret': secret };
-}
-
-/** GETs JSON with a hard timeout. Returns null on any failure, logging the cause. */
-export async function fetchJson<T>(
-  url: string,
-  headers: Record<string, string> = {},
-  timeoutMs: number = FETCH_TIMEOUT_MS
-): Promise<T | null> {
-  const abort = new AbortController();
-  const timer = setTimeout(() => abort.abort(), timeoutMs);
-  try {
-    const res = await fetch(url, { headers, signal: abort.signal });
-    if (!res.ok) {
-      console.log(`[SEO] ${url} answered ${res.status}`);
-      return null;
-    }
-    return (await res.json()) as T;
-  } catch (err) {
-    // `fetch` reports every transport failure as a bare TypeError; the diagnosis is in `cause`.
-    console.log(`[SEO] ${url} failed:`, (err as Error)?.message, (err as Error)?.cause ?? '');
-    return null;
-  } finally {
-    clearTimeout(timer);
-  }
 }

@@ -801,7 +801,7 @@ Tap to a usable conversation: <= 0.35 s backgrounded, 2.7 s killed, 5 s killed b
 
 ### Changed - the 29 orphan form submissions are deleted on dev and prod
 
-Submissions naming a deleted form (5 paid, all old Stripe test charges) were backed up and then deleted in one checked transaction per estate. Migration 081 can now add its foreign key ([backlog](docs/wiki/backlog.md#p3---submissionsformid-names-a-form-nothing-keeps-and-29-rows-point-at-deleted-ones)).
+Submissions naming a deleted form (5 paid, all old Stripe test charges) were backed up and then deleted in one checked transaction per estate. Migration 081 can now add its foreign key ([forms](docs/wiki/frontend/modules/forms.md#a-form-with-submissions-is-archived-never-removed-2026-10-11)).
 
 ### Fixed - a queued attachment no longer lives inside the outbox row
 

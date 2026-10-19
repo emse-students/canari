@@ -81,6 +81,7 @@ export function renderSeoTags(meta: SeoMeta, pathname: string): string {
   const hasDimensions = !!declaredWidth && !!declaredHeight;
   const imageWidth = hasDimensions ? String(declaredWidth) : '';
   const imageHeight = hasDimensions ? String(declaredHeight) : '';
+  const imageType = isDefaultImage ? SITE.defaultOgImageType : meta.imageType;
   const isArticle = (meta.ogType ?? SITE.defaultOgType) === 'article';
 
   return [
@@ -96,6 +97,7 @@ export function renderSeoTags(meta: SeoMeta, pathname: string): string {
     metaProperty('og:image', image),
     metaProperty('og:image:width', imageWidth),
     metaProperty('og:image:height', imageHeight),
+    metaProperty('og:image:type', imageType),
     metaProperty('og:image:alt', imageAlt),
     isArticle ? metaProperty('article:published_time', meta.publishedAt) : '',
     isArticle ? metaProperty('article:author', meta.authorName) : '',

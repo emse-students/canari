@@ -22,6 +22,7 @@ import { WEBVIEW_MATCH as IOS_WEBVIEW, signInThroughSheet } from './phone-ios.mj
 import { isIosName } from './phone-platform.mjs';
 import { armIfPhone, resolveDevice } from './device.mjs';
 import { PORTS, SITE } from './names.mjs';
+import { DEEP, FORM_SHAPE, stageTable, tickScript } from './idpform.mjs';
 
 const argv = process.argv.slice(2);
 const opt = (name, fallback) => {
@@ -204,48 +205,12 @@ const FLOW = opt('flow', 'service-account');
 const LAUNCHER_BUTTON =
   FLOW === 'cas' ? 'text=Se connecter' : 'text=Connexion externe (service-account)';
 
-/**
- * Resolves a selector THROUGH SHADOW ROOTS, because one of the two forms lives inside one.
- *
- * Authentik's flow executor renders its stages in web components, so `document.querySelector` sees
- * none of its fields: the identification stage's `input[name=uidField]` and the password stage's
- * `input[type=password]` are both several shadow roots down. A probe that cannot see them reports
- * "no credential form" about a form filling the screen - the same failure shape the CAS half of
- * this file was written to stop. Plain DOM lookups still work: the walk starts at `document`.
- *
- * IT PREFERS A VISIBLE MATCH, and that is not cosmetic. Authentik ships a hidden autofill trio -
- * `username`, `password`, `code` - on every stage, so `input[type=password]` matches an invisible
- * field while the identification stage is still on screen. Typing into it succeeds silently and
- * submits nothing, which is a filled form that never logs anybody in.
- */
-const DEEP = `(function (sel) {
-  var hits = [];
-  (function walk(root) {
-    Array.prototype.push.apply(hits, root.querySelectorAll(sel));
-    root.querySelectorAll('*').forEach(function (n) { if (n.shadowRoot) walk(n.shadowRoot); });
-  })(document);
-  var shown = hits.filter(function (e) {
-    var r = e.getBoundingClientRect();
-    return r.width > 0 && r.height > 0;
-  });
-  return shown[0] || null;
-})`;
-
-/**
- * THE TWO CREDENTIAL FORMS, each named by what it actually renders.
- *
- * `cas` is the school's server-rendered page (`#username`, `#password`, `#submitBtn`, top level).
- * `authentik` is the service-account flow, which is TWO stages one after the other on the same URL:
- * the identifier first, then the password, each its own render. So the fill loop below is a loop -
- * it answers whichever stage is on screen and looks again - rather than a fixed pair of fields.
- */
-const FORM_SHAPE = `(function () {
-  var q = ${DEEP};
-  if (document.querySelector('#username')) return 'cas';
-  if (q('input[name=uidField]')) return 'authentik-uid';
-  if (q('input[type=password]')) return 'authentik-password';
-  return null;
-})()`;
+// THE CREDENTIAL STAGES - which one is on screen (`FORM_SHAPE`), the visible-only shadow-root lookup
+// (`DEEP`) and what answers each (`stageTable`) - live in `idpform.mjs`, so the copy the page runs
+// is the copy `archive/idpform-selftest.mjs` exercises. Up to THREE authentik stages share one URL:
+// the identifier, the password, and the MiConnect terms page an account sees until its
+// `attributes.cgu_version` is current. So the fill loop below is a loop - it answers whichever stage
+// is on screen and looks again - rather than a fixed pair of fields.
 
 // The Canari login page is only a launcher. The hop is canari -> auth.canari (Authentik flow)
 // -> cas.emse.fr, and the middle page is a real render, so poll for the FIELD rather than for a
@@ -473,17 +438,13 @@ if (tabTarget) {
 }
 
 /**
- * What each shape wants typed into it, and what submits it.
+ * What each shape wants typed into it, ticked, and what submits it.
  *
  * CAS puts both credentials on one page; the service-account flow asks for them in two successive
- * renders. Expressing them as one table rather than two code paths is what keeps the fill loop
+ * renders, then the terms page for an account that has not accepted the current version. Expressing them as one table rather than two code paths is what keeps the fill loop
  * below a loop over STAGES instead of a branch that has to know which IdP it is talking to.
  */
-const STAGE = {
-  cas: { fields: [['#username', creds.username], ['#password', creds.password]], submit: '#submitBtn' },
-  'authentik-uid': { fields: [['input[name=uidField]', creds.username]], submit: 'button[type=submit]' },
-  'authentik-password': { fields: [['input[type=password]', creds.password]], submit: 'button[type=submit]' },
-};
+const STAGE = stageTable(creds);
 
 // Focused BY ELEMENT, never by a synthetic click - the same reasoning the submit below already
 // carried, and it applies to the fields for the same reason. On the phone's narrow CAS layout a
@@ -515,6 +476,13 @@ const answerOneStage = async (shape, formCx) => {
       `(function () { var e = ${DEEP}(${JSON.stringify(selector)}); return e ? e.value.length : -1; })()`,
     );
     console.log(`[login:${account}] ${shape}: ${selector} <- ${len} chars`);
+  }
+  // A required box (the MiConnect terms page): ticked, and its END state read back - a box that did
+  // not tick is refused by the server's validation policy, so submitting it would only loop.
+  for (const selector of STAGE[shape].ticks) {
+    const ticked = await evaluate(formCx, tickScript(selector));
+    console.log(`[login:${account}] ${shape}: ${selector} ${ticked}`);
+    if (ticked !== 'ticked') throw new Error(`cannot tick ${selector} on the ${shape} stage: ${ticked}`);
   }
   // Activate the button BY ELEMENT, not by coordinates. On the phone the focused field raises the
   // IME, the viewport resizes, and a centre computed a moment earlier lands somewhere else - a race
@@ -571,7 +539,7 @@ const freshFormCx = async () => {
 // identification and password as two separate stages on the SAME url, so nothing about the address
 // says how many are left - the loop asks what is on screen and answers it. The bound exists only so
 // a flow that keeps producing stages is REPORTED rather than looping for ever; `MAX_STAGES` is
-// deliberately larger than the two either IdP asks for today.
+// deliberately larger than the three the service-account flow can ask for (identifier, password, terms).
 // THE STAGE JUST ANSWERED IS NOT THE NEXT ONE, and reading it as such is what makes this loop
 // re-type a field it has already submitted. Authentik re-renders in place: for a second or so after
 // the click the identification stage is STILL on screen, so a wait that ends on "some form is up"
