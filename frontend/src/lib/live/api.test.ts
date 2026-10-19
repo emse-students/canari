@@ -158,6 +158,15 @@ describe('the routes', () => {
     expect(apiFetch).not.toHaveBeenCalled();
     expect(liveSegmentUrl(LIVE, 'n')).toBe(`https://media.test/api/media/public/live/${LIVE}/n`);
   });
+
+  it("the segment fetch carries the caller's signal, and nothing else is added for it", async () => {
+    trackedFetch.mockResolvedValue(new Response(new Uint8Array([1]), { status: 200 }));
+    const ctrl = new AbortController();
+    await fetchLiveSegment(LIVE, 'abc', ctrl.signal);
+    const [, , init] = trackedFetch.mock.lastCall!;
+    expect(init).toEqual({ method: 'GET', signal: ctrl.signal });
+    expect(Object.keys(init).sort()).toEqual(['method', 'signal']);
+  });
 });
 
 describe('refusals, typed at the throw', () => {

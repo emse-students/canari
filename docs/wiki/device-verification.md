@@ -1206,6 +1206,37 @@ Mi 9T, the in-app log on the iPhone) for the `[doubleTapLike] double tap` and
 7. **Haptic**: the Mi 9T ticks on a like with vibrations on in the settings, and not with them off.
    The iPhone has no web vibration and is expected to stay still.
 
+## Y. Watching a live - owed on BOTH phones (Mi 9T, iPhone 12)
+
+**Proves** [the live viewer](frontend/modules/live.md#the-viewer-as-built-2026-10-19) in the app's
+own WebViews, which no gate here runs: the tests drive fake MSE objects, and WP-L1 measured the
+bench page, not this player. **Precondition:** a DEV build carrying the viewer (`LIVE_ENABLED` is on
+for dev builds only), a broadcaster sealing segments in [format v1](frontend/modules/live.md#the-segment-seal-format-v1)
+(the broadcaster screen once built, or the WP-L1 bench switched to `sealLiveSegment` - its own
+`live-bench` seal reads "Live indisponible" here, by design), and the console over CDP or the WebKit bridge for the `[LIVE]` lines.
+
+1. **Watch from the other phone.** Start a live on phone A; on phone B open the Feed: the LIVE card is
+   at the top, naming A. Tap it: `[LIVE] viewer joined <id> at segment N`, then picture and sound
+   (after one tap on the sound button), the LIVE badge and the time on air counting. Read
+   glass-to-glass against WP-L1's 5.8-7.3 s p50 (clap in front of A's camera).
+2. **Kill the network** on B for 20 s (airplane mode): "Reconnexion..." within a few polls, never
+   "Live complet". Back online: `seek to the live edge (catch-up)` and the picture at the edge, not
+   replaying the gap. Then kill A's network for 20 s: B says "Le live est interrompu, il devrait
+   reprendre." and comes back by itself when A does.
+3. **Rejoin**: close the viewer (X, then Android Back on a second try), reopen from the card. The
+   server's seat count must not grow (`DELETE /api/lives/:id/seat` in the access log on close).
+4. **The cap**: on dev, lower `LIVE_VIEWER_CAP` to 1 for the reading (an operator change on the dev
+   estate, put back afterwards), watch from a browser, then open on B: "Live complet" with "Réessayer";
+   close the browser viewer, tap "Réessayer" on B: it plays.
+5. **Background and foreground** B for 10 s, then 40 s (past the 30 s seat lease): it comes back to
+   the live edge, or to "Live complet" if the seat was taken meanwhile - never a frozen frame.
+6. **The end**: end the live on A: B reads "Le live est terminé" within about a second, the video
+   stops, and no further `[LIVE]` poll line follows.
+
+Record per phone: the engine's MSE flavour (`MediaSource` on the Mi 9T, `ManagedMediaSource` on the
+iPhone), any `append failed` or `did not open` line, and whether `endstreaming` from
+`ManagedMediaSource` (ignored in v1) left the iPhone starved.
+
 ## The iPhone 12 owed-readings inventory (2026-10-11)
 
 Every reading the wiki, the backlog, `CLAUDE.md` and the pull requests of 2026-10-09 to 2026-10-11

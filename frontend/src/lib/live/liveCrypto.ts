@@ -6,7 +6,8 @@
  * group state only) with the live key, a fresh random 12-byte IV per segment:
  *
  *   sealed = iv(12) || ciphertext || tag(16)
- *   plain  = the raw fMP4 bytes of ONE `MediaRecorder` slice, nothing else
+ *   plain  = ONE self-contained fMP4 segment: the recorder's init (`ftyp` + `moov`), then ONE
+ *            fragment (`moof` + `mdat`) - nothing else
  *   AAD    = ASCII "canari-live-v1" || 0x00 || liveId (16 raw uuid bytes) || index (u32 big-endian)
  *
  * The AAD binds a segment to its live, its index and the format version, so the storage, a cache or
