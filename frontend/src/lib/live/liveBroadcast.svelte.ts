@@ -504,6 +504,29 @@ export class LiveBroadcast {
     if (open && this.liveId) this.#endBestEffort(this.liveId);
   }
 
+  /**
+   * The live's key, for the chat that seals with it (WP-L6), or null before a start. Set in the same
+   * step as `liveId`, so a screen reading both once `liveId` is set reads the pair. Never logged.
+   */
+  get chatKey(): string | null {
+    return this.#keyHex;
+  }
+
+  /**
+   * The chat's loop heard the server's verdict that the live is over (`410` or the `404` of a purged
+   * live) before the uploader did: the SAME end as the uploader's own verdict, never a second rule -
+   * so the end screen, a moderation cut's included, does not depend on which request heard it first.
+   */
+  chatHeardEnd(verdict: unknown): void {
+    console.debug(`[LIVE-BROADCAST] the chat heard the end of ${this.liveId} in ${this.phase}`);
+    if (this.phase !== 'live' && this.phase !== 'away' && this.phase !== 'ending') return;
+    if (!isLiveRefusal(verdict, 'ended') && !isLiveRefusal(verdict, 'not-found')) {
+      console.warn('[LIVE-BROADCAST] the chat reported an end that is no end verdict - ignored');
+      return;
+    }
+    this.#uploaderStopped(verdict);
+  }
+
   /** Starts recording the camera in hand, or goes `away` when there is none to record. */
   #goOnAir(): void {
     const stream = this.camera.stream;

@@ -287,6 +287,23 @@ export class LivePlayer {
     this.giveBackSeat();
   }
 
+  /**
+   * A refusal heard OUTSIDE the player's own requests - the chat's write (WP-L6) - that the live is
+   * over for this viewer. It goes through the SAME decision as the player's own failures
+   * ({@link liveFailureOutcome} via `fail`), so the screen is the one the next poll would have shown,
+   * its `endReason` included. A verdict that would only be a retry is not the chat's to act on.
+   */
+  refusedElsewhere(error: unknown): void {
+    if (!this.running) return;
+    const outcome = liveFailureOutcome(error, this.joined || this.keyHex !== null);
+    if (outcome === 'retry') {
+      console.debug(`[LIVE] viewer ${this.liveId}: a chat refusal that is no verdict - ignored`);
+      return;
+    }
+    console.debug(`[LIVE] viewer ${this.liveId}: the chat heard the live is over`);
+    this.fail(this.generation, error, async () => {});
+  }
+
   /** The video ran dry (`waiting`): the next segment that lands seeks back to the live edge. */
   noteStall(): void {
     if (!this.joined || this.stalled) return;

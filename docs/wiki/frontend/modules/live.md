@@ -492,7 +492,7 @@ does with them. Behind `LIVE_ENABLED` like the rest: the chat exists only inside
 | `lib/live/livePlayer.ts` | The `chat` hook (`LivePlayerChatHook`): `onKey` at the open, `query()` before each manifest request, `receive(block)` after it |
 | `components/live/LiveChatPanel.svelte` | The lines (a `log` live region) and the composer; a hide button per line for a moderator |
 | `components/live/LiveReactionBar.svelte`, `LiveReactionsLayer.svelte` | The five buttons; the rising floats, at most 24 on screen |
-| `components/live/LiveBroadcasterChat.svelte` | The broadcaster's view with hide buttons, a HOOK for the broadcaster screen of #2115 (unmerged when written): mounted with the live's id and key |
+| `components/live/LiveBroadcasterChat.svelte` | The broadcaster's view with hide buttons, mounted by `LiveBroadcaster.svelte` while on air with the live's id and `LiveBroadcast.chatKey` |
 
 **One loop, not two (C3).** The viewer's chat rides the player's manifest poll: the player asks the
 session for its cursors before each request (`?chat=1&messagesAfter=&reactionsAfter=`) and hands it
@@ -500,7 +500,19 @@ the answer's `chat` block. The session owns no timer, so a stopped player (close
 full) stops the chat with it; the catch-up's second fetch of the newest window asks no chat, so one
 tick never answers a cursor twice. A broadcaster plays nothing, so `LiveBroadcasterChatPoller` is ITS
 one loop: the same request once a tick, stopped for good by the server's `410` (or the `404` of a
-live deleted at its end), any other failure retried after the player's backoff.
+live deleted at its end), any other failure retried after the player's backoff. The broadcaster
+screen mounts it while on air (live or away: the away layer paints over it, and its lines and cursors
+survive the camera being taken away), between the top third and the End button.
+
+**A chat refusal that ends the live goes to the screen's OWN decision, never a second rule.** A
+write (a message, a hide, a burst) answered `410`, `404` or `403 LIVE_VIEWER_REMOVED`
+(`isLiveOverRefusal`) is handed by the session to `onLiveOver`: the viewer passes it to
+`LivePlayer.refusedElsewhere`, which runs `liveFailureOutcome` - the player's one decision - and
+stops on the screen its own next poll would have shown; the broadcaster's loop and writes pass it to
+`LiveBroadcast.chatHeardEnd`, which ends exactly as an uploader `410` does. So whatever that
+decision reads in the refusal - `endReason`, and a cut's own screen once WP-L8's client half (#2143)
+carries `endReason` on `LiveRefusalError` - reaches a chat `410` with no line here. A refusal
+that is only a retry (`429`, no answer) is the one write's, never the live's.
 
 **Order and idempotence.** **The cursors move when a block ARRIVES** (`receive`, synchronously), not
 when its asynchronous opening ends: the next tick's `query()` can run first, and asking from the old
@@ -537,8 +549,10 @@ sealing. Every string is Paraglide (`live_chat_*`, `live_reaction*`).
 
 **Hiding (C14).** The broadcaster's view (`LiveBroadcasterChat`) has a hide button on every line;
 the line goes at once on the server's answer, and every viewer's next poll carries the tombstone.
-**Staff hiding from the VIEWER is not drawn**: the client does not know who holds `isContentModerator`,
-and the route already answers staff - the viewer's `canModerate` is the open hook for WP-L8.
+**Staff hide from the viewer** draws the button for the tier the moderation page opens to: a platform
+admin, or a member whose BDE holds `MODERATE` (`ensureContentModerator`, probed once at the
+viewer's open, cached for the session, read reactively) - the client mirror of the server's
+`isContentModerator`, which the hide route checks. A failed probe draws no button and is logged.
 
 **Logs** (`[LIVE_CHAT]`, `LiveChat`): entry and decisions at `debug`, a dropped message, a dropped
 burst and a failed send at `warn`, a wiring defect at `error`; lengths and ids only, never the key,
@@ -546,7 +560,7 @@ a text or a ciphertext.
 
 **Verified by tests only** (`liveChatCrypto.test.ts` against real WebCrypto, `liveChat.test.ts`,
 `livePlayer.test.ts`'s chat block, `api.test.ts`'s chat routes, `LiveChatPanel.svelte.test.ts`,
-`LiveViewer.svelte.test.ts`'s chat cases). **Owed**: the crypto review of the chat seal, and a phone
+`LiveViewer.svelte.test.ts`'s chat cases, `LiveBroadcaster.svelte.test.ts`'s on-air chat, `liveBroadcast.svelte.test.ts`'s `chatHeardEnd`). **Owed**: the crypto review of the chat seal, and a phone
 reading of the panel, the bar and the floats on the Mi 9T and the iPhone 12 ([backlog](../../backlog.md)).
 
 ## Open questions for the user, each with a recommendation

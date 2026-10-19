@@ -16,6 +16,7 @@ import type {
 import type { LiveChatDeps } from '$lib/live/liveChat';
 import type { LiveLimits, LiveListItem, LiveManifest } from '$lib/live/types';
 import { videoSound } from '$lib/stores/videoSound.svelte';
+import { setContentModerator } from '$lib/stores/userState.svelte';
 import { m } from '$lib/paraglide/messages';
 
 vi.mock('$lib/components/shared/Avatar.svelte', async () => ({
@@ -25,7 +26,10 @@ vi.mock('$lib/utils/users/displayName', () => ({
   getUserDisplayNameSync: () => '',
   resolveUserDisplayName: async () => 'Ada',
 }));
-vi.mock('$lib/associations/api', () => ({ getAssociation: vi.fn() }));
+vi.mock('$lib/associations/api', () => ({
+  getAssociation: vi.fn(),
+  ensureContentModerator: vi.fn(async () => false),
+}));
 vi.mock('$lib/stores/userState.svelte', async (orig) => ({
   ...(await orig<typeof import('$lib/stores/userState.svelte')>()),
   currentUserId: () => 'a'.repeat(64),
@@ -149,6 +153,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  setContentModerator(false);
   while (mounted.length) unmount(mounted.pop()!);
   document.body.innerHTML = '';
   vi.restoreAllMocks();
@@ -169,7 +174,14 @@ async function render() {
   mounted.push(
     mount(LiveViewer, {
       target,
-      props: { live: LIVE, onClose, deps, chatDeps, fetchLimits: async () => LIMITS },
+      props: {
+        live: LIVE,
+        onClose,
+        deps,
+        chatDeps,
+        fetchLimits: async () => LIMITS,
+        probeModerator: async () => false,
+      },
     })
   );
   await settle();
@@ -336,5 +348,74 @@ describe('LiveViewer', () => {
     flushSync();
     expect(document.querySelector('[data-live-chat]')).toBeNull();
     expect(document.querySelector('[data-live-reactions]')).not.toBeNull();
+  });
+
+  /** Every manifest carries one line from another member. */
+  function withOneLine() {
+    const plain = deps.fetchManifest!;
+    deps.fetchManifest = vi.fn(async (...args: Parameters<typeof plain>) => ({
+      ...(await plain(...args)),
+      chat: {
+        messages: [
+          {
+            id: 'm-1',
+            seq: 1,
+            authorId: 'b'.repeat(64),
+            clientId: '33333333-3333-4333-8333-333333333333',
+            sealed: 'S:bonjour',
+            createdAt: '2026-10-19T10:01:00.000Z',
+          },
+        ],
+        messagesCursor: 1,
+        reactions: [],
+        reactionsCursor: 0,
+      },
+    }));
+  }
+
+  it("a chat write answered 410 shows the player's end screen, not a failed line", async () => {
+    chatDeps.postReactions = vi.fn(async () => {
+      throw refusal('ended', 410);
+    });
+    await render();
+    expect(stateOf()).toBe('playing');
+    document.querySelector<HTMLButtonElement>('[data-live-reaction="canari"]')!.click();
+    timers.shift()!();
+    await settle();
+    expect(chatDeps.postReactions).toHaveBeenCalledTimes(1);
+    expect(stateOf()).toBe('ended');
+    expect(document.body.textContent).toContain(m.live_viewer_ended_title());
+    expect(document.querySelector('[data-live-chat]')).toBeNull();
+  });
+
+  it('a chat write refused for that write alone (429) leaves the live playing', async () => {
+    chatDeps.postReactions = vi.fn(async () => {
+      throw refusal('rate-limited', 429);
+    });
+    await render();
+    document.querySelector<HTMLButtonElement>('[data-live-reaction="canari"]')!.click();
+    timers.shift()!();
+    await settle();
+    expect(chatDeps.postReactions).toHaveBeenCalledTimes(1);
+    expect(stateOf()).toBe('playing');
+  });
+
+  it('the hide button is for staff only: a content moderator sees it, a viewer does not', async () => {
+    withOneLine();
+    chatDeps.hideMessage = vi.fn(async (liveId: string, messageId: string) => ({
+      liveId,
+      messageId,
+      hidden: true as const,
+    }));
+    await render();
+    expect(document.querySelector('[data-live-chat-line="m-1"]')).not.toBeNull();
+    expect(document.querySelector('[data-live-chat-hide]')).toBeNull();
+    setContentModerator(true);
+    flushSync();
+    document
+      .querySelector<HTMLButtonElement>('[data-live-chat-line="m-1"] [data-live-chat-hide]')!
+      .click();
+    await settle();
+    expect(chatDeps.hideMessage).toHaveBeenCalledWith(LIVE.id, 'm-1');
   });
 });

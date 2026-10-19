@@ -140,6 +140,13 @@ export interface LiveChatSessionOptions {
   onChange(lines: readonly LiveChatLine[]): void;
   /** Told reactions to float: mine at the tap, everyone else's as each poll brings them. */
   onFloat?(kind: LiveReactionKind, count: number): void;
+  /**
+   * Told when a write (a message, a hide, a burst) was answered by a verdict that the live is over
+   * for me ({@link isLiveOverRefusal}): the screen hands it to the SAME decision its own requests
+   * use (the player's `liveFailureOutcome`, the broadcast machine's end), so a chat `410` shows the
+   * same screen - its `endReason` included - as the player's would.
+   */
+  onLiveOver?(error: LiveRefusalError): void;
   deps?: Partial<LiveChatDeps>;
 }
 
@@ -164,6 +171,19 @@ export function liveChatSendFailure(error: unknown): LiveChatSendFailure {
   }
   if (isTransportFailure(error)) return 'network';
   return 'refused';
+}
+
+/**
+ * Whether a refusal says the live is over FOR ME: ended (`410`, whose body carries `endReason`), gone
+ * (`404` of a live purged at its end, or one I can no longer see), or me removed by its broadcaster.
+ * Any other refusal is about the one write, never about the live.
+ */
+export function isLiveOverRefusal(error: unknown): error is LiveRefusalError {
+  return (
+    isLiveRefusal(error, 'ended') ||
+    isLiveRefusal(error, 'not-found') ||
+    isLiveRefusal(error, 'removed')
+  );
 }
 
 function isTombstone(m: LiveChatMessageWire | LiveChatTombstoneWire): m is LiveChatTombstoneWire {
@@ -357,6 +377,7 @@ export class LiveChatSession {
       await this.deps.hideMessage(this.liveId, messageId);
     } catch (e) {
       console.warn(`[LIVE_CHAT] ${this.liveId}: hiding ${messageId} failed (${String(e)})`);
+      this.reportLiveOver(e);
       return false;
     }
     console.log(`[LIVE_CHAT] ${this.liveId}: message ${messageId} hidden`);
@@ -423,6 +444,7 @@ export class LiveChatSession {
       const failure = liveChatSendFailure(e);
       console.warn(`[LIVE_CHAT] ${this.liveId}: message ${clientId} not sent (${failure})`);
       this.markFailed(clientId, failure);
+      this.reportLiveOver(e);
       return failure;
     }
   }
@@ -449,7 +471,17 @@ export class LiveChatSession {
     this.deps.postReactions(this.liveId, burstId, counts).catch((e: unknown) => {
       // A burst is a moment: a refused or lost one is dropped, said, never retried.
       console.warn(`[LIVE_CHAT] ${this.liveId}: a burst of ${taps} taps dropped (${String(e)})`);
+      this.reportLiveOver(e);
     });
+  }
+
+  /** A write's refusal that ends the live for me goes to the screen's own decision. */
+  private reportLiveOver(error: unknown): void {
+    if (this.stopped || !isLiveOverRefusal(error)) return;
+    console.warn(
+      `[LIVE_CHAT] ${this.liveId}: a write was answered ${error.status} ${error.code ?? '-'} - the live is over for me`
+    );
+    this.opts.onLiveOver?.(error);
   }
 
   private async apply(block: LiveChatBlock): Promise<void> {
@@ -571,8 +603,11 @@ export class LiveBroadcasterChatPoller {
     private readonly liveId: string,
     private readonly session: LiveChatSession,
     deps: Partial<LiveBroadcasterChatPollerDeps> = {},
-    /** Told once when the live is over and the loop stopped. */
-    private readonly onEnded?: () => void
+    /**
+     * Told once when the live is over and the loop stopped, with the server's verdict - the broadcast
+     * machine decides the end screen from it (`endReason` included), as from its uploader's.
+     */
+    private readonly onEnded?: (verdict: LiveRefusalError) => void
   ) {
     this.deps = {
       fetchManifest: fetchLiveManifest,
@@ -612,7 +647,7 @@ export class LiveBroadcasterChatPoller {
           `[LIVE_CHAT] broadcaster chat loop on ${this.liveId} stopped: the live is over`
         );
         this.generation++;
-        this.onEnded?.();
+        this.onEnded?.(e);
         return;
       }
       this.attempt++;

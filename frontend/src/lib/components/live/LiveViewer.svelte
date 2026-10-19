@@ -46,6 +46,8 @@
     type LiveChatSendFailure,
   } from '$lib/live/liveChat';
   import { currentUserId } from '$lib/stores/userState.svelte';
+  import { isContentModerator, isGlobalAdmin } from '$lib/stores/user';
+  import { ensureContentModerator } from '$lib/associations/api';
   import { formatLiveElapsed } from '$lib/live/openLives';
   import { isTerminalLiveState, type LiveViewerState } from '$lib/live/liveViewerState';
   import type { LiveListItem } from '$lib/live/types';
@@ -60,9 +62,18 @@
     chatDeps?: Partial<LiveChatDeps>;
     /** Replaces the limits fetch - for tests. */
     fetchLimits?: typeof fetchLiveLimits;
+    /** Replaces the content-moderator probe - for tests. */
+    probeModerator?: typeof ensureContentModerator;
   }
 
-  let { live, onClose, deps, chatDeps, fetchLimits = fetchLiveLimits }: Props = $props();
+  let {
+    live,
+    onClose,
+    deps,
+    chatDeps,
+    fetchLimits = fetchLiveLimits,
+    probeModerator = ensureContentModerator,
+  }: Props = $props();
 
   let video = $state<HTMLVideoElement | null>(null);
   /** The final screen's one button (retry or back), focused when that screen appears. */
@@ -81,6 +92,10 @@
   let chatKeyed = $state(false);
   const chatCanWrite = $derived(chatKeyed && currentUserId() !== null);
   let chatOpen = $state(true);
+  // STAFF HIDE (C14): the server opens the hide route to the broadcaster and to the content
+  // moderators; a viewer screen shows the button to the same tier the moderation page opens to (a
+  // platform admin, or `ensureContentModerator`), read reactively - the probe answers after mount.
+  const chatCanModerate = $derived(isGlobalAdmin() || isContentModerator());
   let reactions = $state<LiveReactionsLayer | null>(null);
 
   const overlay = bindHistoryOverlay(
@@ -152,9 +167,15 @@
         chatLines = lines;
       },
       onFloat: (kind, count) => reactions?.add(kind, count),
+      // A write answered "the live is over" shows the screen the player's own poll would have shown.
+      onLiveOver: (verdict) => player?.refusedElsewhere(verdict),
       deps: chatDeps,
     });
     chat = session;
+    probeModerator().catch((e: unknown) => {
+      // No answer: no hide button for staff here; the moderation page still reaches the message.
+      console.warn(`[LIVE_CHAT] the moderator probe failed (${String(e)})`);
+    });
     fetchLimits().then(
       (limits) => {
         session.setLimits(limits);
@@ -336,6 +357,7 @@
               lines={chatLines}
               canWrite={chatCanWrite}
               maxChars={chatMaxChars}
+              canModerate={chatCanModerate}
               send={sendChat}
               retry={(id) => void chat?.retry(id)}
               discard={(id) => chat?.discard(id)}

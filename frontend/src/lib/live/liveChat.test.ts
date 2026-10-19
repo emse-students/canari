@@ -12,6 +12,7 @@ import {
   LIVE_CHAT_KEPT_LINES,
   LiveBroadcasterChatPoller,
   LiveChatSession,
+  isLiveOverRefusal,
   liveChatSendFailure,
   liveReactionEmoji,
   type LiveChatDeps,
@@ -402,6 +403,8 @@ describe("the broadcaster's chat loop", () => {
     const t = timers.shift()!;
     t.fn();
     await vi.waitFor(() => expect(ended).toHaveBeenCalledTimes(1));
+    expect(ended.mock.calls[0][0]).toBeInstanceOf(LiveRefusalError);
+    expect((ended.mock.calls[0][0] as LiveRefusalError).status).toBe(410);
     expect(timers).toHaveLength(0);
     warn.mockRestore();
     poller.stop();
@@ -485,5 +488,64 @@ describe('the review of #2136', () => {
     await s.receive(block([wire(1, 'one', BOB, 'c-x')], 1));
     await s.receive(block([{ ...wire(9, 'one', BOB, 'c-x') }], 9));
     expect(texts()).toEqual(['one']);
+  });
+});
+
+describe('a write answered "the live is over" (WP-L6)', () => {
+  function overSession() {
+    const over = vi.fn();
+    const s = new LiveChatSession({
+      liveId: LIVE,
+      me: () => ME,
+      onChange: (l) => {
+        lines = l;
+      },
+      onLiveOver: over,
+      deps,
+    });
+    s.setKey(KEY);
+    return { s, over };
+  }
+
+  it('the verdicts are ended, not-found and removed - nothing else', () => {
+    expect(isLiveOverRefusal(refusal('ended', 410, 'LIVE_ENDED'))).toBe(true);
+    expect(isLiveOverRefusal(refusal('not-found', 404))).toBe(true);
+    expect(isLiveOverRefusal(refusal('removed', 403))).toBe(true);
+    expect(isLiveOverRefusal(refusal('rate-limited', 429))).toBe(false);
+    expect(isLiveOverRefusal(refusal('refused', 403, 'LIVE_MUTED'))).toBe(false);
+    expect(isLiveOverRefusal(new TransportFailureError('offline'))).toBe(false);
+  });
+
+  it('a send, a hide and a burst each hand the verdict to the screen; a 429 does not', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { s, over } = overSession();
+    const gone = refusal('ended', 410, 'LIVE_ENDED');
+    deps.postMessage.mockRejectedValueOnce(gone);
+    expect(await s.send('hi')).toBe('ended');
+    expect(over).toHaveBeenLastCalledWith(gone);
+    deps.hideMessage.mockRejectedValueOnce(gone);
+    expect(await s.hide('m-1')).toBe(false);
+    expect(over).toHaveBeenCalledTimes(2);
+    deps.postReactions.mockRejectedValueOnce(gone);
+    s.tap('like');
+    s.query();
+    await vi.waitFor(() => expect(over).toHaveBeenCalledTimes(3));
+    deps.postMessage.mockRejectedValueOnce(refusal('rate-limited', 429));
+    expect(await s.send('again')).toBe('too-fast');
+    expect(over).toHaveBeenCalledTimes(3);
+    warn.mockRestore();
+  });
+
+  it('after the screen stopped the session, a late verdict is not reported', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const { s, over } = overSession();
+    let reject!: (e: unknown) => void;
+    deps.hideMessage.mockImplementationOnce(() => new Promise((_, r) => (reject = r)));
+    const hiding = s.hide('m-1');
+    s.stop();
+    reject(refusal('ended', 410, 'LIVE_ENDED'));
+    expect(await hiding).toBe(false);
+    expect(over).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 });

@@ -4,14 +4,15 @@
    * sees, with a HIDE button on every line (C14), fed by the broadcaster's ONE chat loop
    * (`LiveBroadcasterChatPoller` - a broadcaster plays nothing, so no player polls for it).
    *
-   * A HOOK for the broadcaster screen of WP-L5's broadcaster half (#2115, not merged when this was
-   * written): it mounts with the live's id and key, and needs nothing else from that screen. Place
-   * it inside a positioned box over the preview; it fills that box.
+   * Mounted by the broadcaster screen (`LiveBroadcaster.svelte`) while on air, with the live's id
+   * and key. Every verdict that the live is over - the loop's, or one answering the broadcaster's own
+   * write - goes to `onEnded`, which hands it to the broadcast machine. It fills the positioned box
+   * it is placed in.
    */
   import { onMount } from 'svelte';
   import LiveChatPanel from './LiveChatPanel.svelte';
   import LiveReactionsLayer from './LiveReactionsLayer.svelte';
-  import { fetchLiveLimits } from '$lib/live/api';
+  import { fetchLiveLimits, type LiveRefusalError } from '$lib/live/api';
   import {
     LiveBroadcasterChatPoller,
     LiveChatSession,
@@ -26,8 +27,8 @@
     liveId: string;
     /** The live key the broadcaster generated - never logged. */
     keyHex: string;
-    /** Told once when the server says the live is over. */
-    onEnded?: () => void;
+    /** Told when the server says the live is over, with its verdict (`endReason` in the body). */
+    onEnded?: (verdict: LiveRefusalError) => void;
     /** Replace the outside world - for tests. */
     chatDeps?: Partial<LiveChatDeps>;
     pollerDeps?: Partial<LiveBroadcasterChatPollerDeps>;
@@ -60,6 +61,7 @@
         lines = next;
       },
       onFloat: (kind, count) => reactions?.add(kind, count),
+      onLiveOver: (verdict) => onEnded?.(verdict),
       deps: chatDeps,
     });
     s.setKey(keyHex);
@@ -73,9 +75,9 @@
         console.warn(`[LIVE_CHAT] the live limits could not be read (${String(e)})`);
       }
     );
-    const poller = new LiveBroadcasterChatPoller(liveId, s, pollerDeps, () => {
+    const poller = new LiveBroadcasterChatPoller(liveId, s, pollerDeps, (verdict) => {
       ended = true;
-      onEnded?.();
+      onEnded?.(verdict);
     });
     poller.start();
     return () => {

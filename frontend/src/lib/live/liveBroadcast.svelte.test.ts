@@ -269,6 +269,27 @@ describe('LiveBroadcast - on air', () => {
     expect(deps.endLive).toHaveBeenCalledWith(LIVE_ID);
   });
 
+  it("the chat's end verdict ends the screen exactly as the uploader's would; anything else is ignored", async () => {
+    const { b, deps } = await ready();
+    await b.start();
+    b.chatHeardEnd(refused('LIVE_SEGMENT_CONFLICT'));
+    expect(b.phase).toBe('live');
+    b.chatHeardEnd(ended());
+    expect(b.phase).toBe('ended');
+    expect(b.endCause).toBe('server');
+    expect(deps.endLive).not.toHaveBeenCalled();
+    // A second report after the end changes nothing.
+    b.chatHeardEnd(ended());
+    expect(b.endCause).toBe('server');
+  });
+
+  it('the chat reads the key the live was started with', async () => {
+    const { b } = await ready();
+    expect(b.chatKey).toBeNull();
+    await b.start();
+    expect(b.chatKey).toBe(KEY);
+  });
+
   it('End: the recorder stops, the last chunk is queued, the queue drains, THEN the live is ended', async () => {
     const { b, deps, recorders, uploaders } = await ready();
     await b.start();
