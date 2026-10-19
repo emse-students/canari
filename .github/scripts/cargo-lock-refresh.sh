@@ -116,7 +116,9 @@ log() { printf '%s\n' "$*"; }
 
 [ -n "$REPO" ] || die "REPO is unset and GITHUB_REPOSITORY is empty - this job does not know which repository to act on."
 [ -f "$CONFIG" ] || die "$CONFIG is not in the tree, so no directory can be derived."
-[ -n "${COMMIT_NAME:-}" ] && [ -n "${COMMIT_EMAIL:-}" ] || die "COMMIT_NAME and COMMIT_EMAIL are required: the commit must be the App's, never an anonymous one."
+if [ -z "${COMMIT_NAME:-}" ] || [ -z "${COMMIT_EMAIL:-}" ]; then
+  die "COMMIT_NAME and COMMIT_EMAIL are required: the commit must be the App's, never an anonymous one."
+fi
 [ -n "${REPORT_TOKEN:-}" ] || die "REPORT_TOKEN is unset, so a refusal could not be reported - and an unreported refusal is found by hand, a day late."
 command -v "$CARGO" >/dev/null 2>&1 || die "\`$CARGO\` is not on PATH, so nothing was checked. An unrun check is not a clean one."
 command -v jq >/dev/null 2>&1 || die "jq is not on PATH, so no API answer can be read."
@@ -127,7 +129,7 @@ if ! [[ "$APP_SLUG" =~ ^[a-z0-9][a-z0-9-]{0,62}$ ]] || [ "$COMMIT_NAME" != "${AP
   die "COMMIT_NAME must be the App's bot name, \`<slug>[bot]\`."
 fi
 
-# shellcheck disable=SC2329 # invoked by the EXIT trap
+# shellcheck disable=SC2317,SC2329 # invoked only by the EXIT trap, so the body looks unreachable and the definition unused (SC2329 exists from shellcheck 0.11; CI pins 0.10)
 cleanup() {
   local w
   for w in "${workdirs[@]:-}"; do
