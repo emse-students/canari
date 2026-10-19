@@ -31,6 +31,7 @@ export type PushContentKey =
   | 'social_association_repost'
   | 'social_repost_proposed'
   | 'social_coorganise_proposed'
+  | 'social_live_started'
   | 'form_opening_soon'
   | 'form_open'
   | 'event_proposed'
@@ -108,6 +109,7 @@ export type PushContent = {
    * - `social_mention` / `social_reply` / `social_comment`: the text the author typed
    * - `social_reaction`: the reaction itself (an emoji)
    * - `social_association_post` / `social_followed_post`: the opening of the post's own text
+   * - `social_live_started`: nothing, always empty
    * - the two form keys: nothing, always empty
    * - the five event keys: the event's own title, which is not translatable either
    */
@@ -539,5 +541,21 @@ export function coorganiseProposedContent(
     arg: eventTitle,
     legacyTitle: `${associationName} propose de co-organiser un événement`,
     legacyBody: eventTitle || 'Événement à co-organiser',
+  };
+}
+
+/**
+ * A member or an association the recipient follows started a live (WP-L7, decision L10). `actorName`
+ * is the BROADCASTER - the association's name for a live broadcast as one, the member's otherwise;
+ * `arg` is always empty: a live has no text to quote, so the body is the fixed sentence.
+ */
+export function liveStartedContent(broadcasterName: string, icon?: PushIcon): PushContent {
+  return {
+    key: 'social_live_started',
+    icon,
+    actorName: broadcasterName,
+    arg: '',
+    legacyTitle: `${broadcasterName} est en live`,
+    legacyBody: 'Appuyez pour regarder',
   };
 }

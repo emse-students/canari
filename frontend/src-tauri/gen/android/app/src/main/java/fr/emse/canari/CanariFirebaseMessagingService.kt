@@ -4451,6 +4451,12 @@ class CanariFirebaseMessagingService : FirebaseMessagingService() {
                 res.getString(R.string.notif_social_coorganise_proposed_title, actor),
                 arg.ifEmpty { res.getString(R.string.notif_social_coorganise_proposed_body) }
             )
+            // A live started (WP-L7): the broadcaster, a person or an association, then a fixed
+            // sentence - the server sends no fragment for this key.
+            "social_live_started" -> Pair(
+                res.getString(R.string.notif_social_live_started_title, actor),
+                arg.ifEmpty { res.getString(R.string.notif_social_live_started_body) }
+            )
             "form_opening_soon" -> Pair(
                 res.getString(R.string.notif_form_opening_soon_title),
                 res.getString(R.string.notif_form_opening_soon_body)

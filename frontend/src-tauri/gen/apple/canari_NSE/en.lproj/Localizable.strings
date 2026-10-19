@@ -31,6 +31,8 @@
 "notif.social.repost_proposed.body" = "A post to share";
 "notif.social.coorganise_proposed.title" = "%@ proposes to co-organise an event";
 "notif.social.coorganise_proposed.body" = "An event to co-organise";
+"notif.social.live_started.title" = "%@ is live";
+"notif.social.live_started.body" = "Tap to watch";
 "notif.form.opening_soon.title" = "Form opening soon";
 "notif.form.opening_soon.body" = "A form you are watching opens in 5 minutes!";
 "notif.form.open.title" = "Form now open!";

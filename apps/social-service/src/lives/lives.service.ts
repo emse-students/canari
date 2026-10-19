@@ -36,6 +36,7 @@ import {
   type LiveEndReason,
 } from './live.constants';
 import { LIVE_SEGMENT_STORE, type LiveSegmentStore } from './live-segment-store';
+import { LiveAnnouncer, type ClaimedLive } from './live-announcer';
 
 /** A live as its viewers read it: the key included (L2, Q4). */
 export interface LiveView {
@@ -153,7 +154,8 @@ export class LivesService {
     @InjectDataSource() private readonly db: DataSource,
     @Inject(LIVE_SEGMENT_STORE) private readonly store: LiveSegmentStore,
     private readonly associations: AssociationsService,
-    private readonly moderation: ModerationService
+    private readonly moderation: ModerationService,
+    private readonly announcer: LiveAnnouncer
   ) {}
 
   /**
@@ -342,7 +344,10 @@ export class LivesService {
       await this.purgeBestEffort(liveId, 'after an ingest that met the end');
       throw new GoneException({ code: 'LIVE_ENDED' });
     }
-    return outcome;
+    // Segment 0 claimed the live's announcement in its own commit (WP-L7): the push goes now, after
+    // that commit. `announce` never throws - a lost announcement must not fail the segment.
+    if (outcome.claimed) await this.announcer.announce(liveId, outcome.claimed);
+    return outcome.result;
   }
 
   /**
@@ -472,6 +477,10 @@ export class LivesService {
    * Step three of an ingest, ONE SHORT TRANSACTION: under the row lock, record the segment and clear
    * the reservation - unless the live ended meanwhile (the reservation is cleared, nothing recorded,
    * `'ended'`) or the reservation is no longer this ingest's (taken over as abandoned: 409).
+   *
+   * Segment 0 also CLAIMS the live's announcement (`announcedAt`, WP-L7) in this same transaction:
+   * the first frame and the claim are one commit, so the announcement is decided by durable state and
+   * by no second path. `claimed` is set only for the call that wrote the stamp.
    */
   private async confirm(
     liveId: string,
@@ -479,8 +488,9 @@ export class LivesService {
     name: string,
     bytes: number,
     sha256: string
-  ): Promise<LiveIngestResult | 'ended'> {
-    return this.db.transaction(async (tx): Promise<LiveIngestResult | 'ended'> => {
+  ): Promise<{ result: LiveIngestResult; claimed: ClaimedLive | null } | 'ended'> {
+    type Confirmed = { result: LiveIngestResult; claimed: ClaimedLive | null };
+    return this.db.transaction(async (tx): Promise<Confirmed | 'ended'> => {
       const rows: { endedAt: Date | null; pendingName: string | null; nextIndex: number }[] =
         await tx.query(
           `SELECT "endedAt", "pendingName", "nextIndex" FROM lives WHERE id = $1 FOR UPDATE`,
@@ -522,7 +532,20 @@ export class LivesService {
         [liveId, bytes]
       );
       this.logger.debug(`[LIVE] segment ${index} of ${liveId} stored (${bytes} B)`);
-      return { index, name, nextIndex: index + 1 };
+      let claimed: ClaimedLive | null = null;
+      if (index === 0) {
+        const [stamped] = (await tx.query(
+          `UPDATE lives SET "announcedAt" = now()
+            WHERE id = $1 AND "announcedAt" IS NULL
+            RETURNING "broadcasterId", "associationId"`,
+          [liveId]
+        )) as [ClaimedLive[], number];
+        claimed = stamped[0] ?? null;
+        this.logger.debug(
+          `[LIVE] ${liveId} ${claimed ? 'claimed for its announcement' : 'already announced'}`
+        );
+      }
+      return { result: { index, name, nextIndex: index + 1 }, claimed };
     });
   }
 

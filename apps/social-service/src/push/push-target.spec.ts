@@ -35,6 +35,11 @@ describe('socialDeepLink - the payload contract of a tap', () => {
     );
   });
 
+  it('a live notice opens the live, its id encoded like any other', () => {
+    expect(socialDeepLink({ type: 'social', liveId: 'l1' })).toBe('fr.emse.canari://live/l1');
+    expect(socialDeepLink({ liveId: 'a/b?x=1' })).toBe('fr.emse.canari://live/a%2Fb%3Fx%3D1');
+  });
+
   it('a payload naming nothing opens the posts list', () => {
     expect(socialDeepLink({ type: 'social' })).toBe('fr.emse.canari://posts');
   });

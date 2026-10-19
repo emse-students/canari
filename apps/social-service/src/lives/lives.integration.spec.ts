@@ -1,6 +1,7 @@
 /**
- * LIVES AGAINST A REAL POSTGRESQL - migration 091, `LivesService`, the live sweep and the lives part
- * of the account erasure (WP-L2, WP-L3; docs/wiki/services/lives.md).
+ * LIVES AGAINST A REAL POSTGRESQL - migrations 091 and 095, `LivesService`, the live sweep, the push
+ * to the followers when a live goes on air, and the lives part of the account erasure (WP-L2, WP-L3,
+ * WP-L7; docs/wiki/services/lives.md).
  *
  * What a mocked repository cannot judge is exactly what this module rests on: the row lock and the
  * committed reservation that order a segment and an end without holding a pooled connection across
@@ -28,6 +29,7 @@ import { HttpStatus } from '@nestjs/common';
 import { LIVE_ENTITIES } from './lives.module';
 import { LivesService } from './lives.service';
 import { LiveRetentionScheduler } from './live-retention.scheduler';
+import { LiveAnnouncer, liveAudienceSql } from './live-announcer';
 import type { LivePurgeResult, LiveSegmentStore } from './live-segment-store';
 import {
   LIVE_BYTE_BUDGET,
@@ -37,6 +39,7 @@ import {
 } from './live.constants';
 import type { AssociationsService } from '../associations/associations.service';
 import type { ModerationService } from '../moderation/moderation.service';
+import type { PostNotificationsService } from '../posts/post-notifications.service';
 import {
   DELETED_ACCOUNT,
   LIVES_ERASURE_STATEMENTS,
@@ -47,10 +50,16 @@ const URL = process.env.SOCIAL_IT_DATABASE_URL;
 const maybe = URL ? describe : describe.skip;
 
 const MIGRATION = readFileSync(join(__dirname, '..', 'migrations', '091_lives.sql'), 'utf8');
+const ANNOUNCED_AT = readFileSync(
+  join(__dirname, '..', 'migrations', '095_live_announced_at.sql'),
+  'utf8'
+);
 
 const ALICE = 'a'.repeat(64);
 const BOB = 'b'.repeat(64);
 const CAROL = 'c'.repeat(64);
+const DAVE = 'd'.repeat(64);
+const EVE = 'e'.repeat(64);
 const KEY = '0f'.repeat(32);
 const ASSO = '11111111-1111-4111-8111-111111111111';
 
@@ -147,6 +156,17 @@ maybe('lives against PostgreSQL (migration 091)', () => {
   let store: MemoryStore;
   let lives: LivesService;
   let sweeper: LiveRetentionScheduler;
+  let announcer: LiveAnnouncer;
+  /** Every `pushNotice` the announcer made - the one pipeline, faked at its seam. */
+  const notices: Parameters<PostNotificationsService['pushNotice']>[0][] = [];
+  const notifications = {
+    resolveActorName: async (id: string) => (id === ALICE ? 'Alice' : id),
+    pushNotice: async (data: Parameters<PostNotificationsService['pushNotice']>[0]) => {
+      notices.push(data);
+      return data.recipientIds.length;
+    },
+  } as unknown as PostNotificationsService;
+  const liveEnabledBefore = process.env.LIVE_ENABLED;
   const muted = new Set<string>();
   const mayActAs = new Set<string>();
   const q = (sql: string, params: unknown[] = []) => ds.query(sql, params);
@@ -165,18 +185,35 @@ maybe('lives against PostgreSQL (migration 091)', () => {
     await ds.initialize();
     // The one other table the service reads, in the shape it reads it (core-service owns it).
     await q(`CREATE TABLE user_blocks ("blockerId" varchar(255), "blockedId" varchar(255))`);
+    // And the three the announcement reads (WP-L7), in the columns it reads.
+    await q(
+      `CREATE TABLE user_follows ("followerUserId" varchar(255), "followedUserId" varchar(255))`
+    );
+    await q(
+      `CREATE TABLE association_follows ("followerUserId" varchar(255), "associationId" uuid)`
+    );
+    await q(`CREATE TABLE associations (id uuid, name varchar, "logoMediaId" varchar)`);
     // Applied TWICE: the deploy re-runs a file whose successor failed, so it must be a no-op then.
     await q(MIGRATION);
     await q(MIGRATION);
+    await q(ANNOUNCED_AT);
+    await q(ANNOUNCED_AT);
+    process.env.LIVE_ENABLED = 'true';
   });
 
   beforeEach(async () => {
     await q(`DELETE FROM lives`);
     await q(`DELETE FROM live_starts`);
     await q(`DELETE FROM user_blocks`);
+    await q(`DELETE FROM user_follows`);
+    await q(`DELETE FROM association_follows`);
+    await q(`DELETE FROM associations`);
+    notices.length = 0;
+    process.env.LIVE_ENABLED = 'true';
     muted.clear();
     mayActAs.clear();
     store = new MemoryStore();
+    announcer = new LiveAnnouncer(ds, notifications);
     lives = new LivesService(
       ds,
       store,
@@ -184,12 +221,15 @@ maybe('lives against PostgreSQL (migration 091)', () => {
         mayAct: async (userId: string, associationId: string) =>
           mayActAs.has(`${userId}:${associationId}`),
       } as unknown as AssociationsService,
-      { isUserMuted: async (userId: string) => muted.has(userId) } as unknown as ModerationService
+      { isUserMuted: async (userId: string) => muted.has(userId) } as unknown as ModerationService,
+      announcer
     );
     sweeper = new LiveRetentionScheduler(lives);
   });
 
   afterAll(async () => {
+    if (liveEnabledBefore === undefined) delete process.env.LIVE_ENABLED;
+    else process.env.LIVE_ENABLED = liveEnabledBefore;
     await ds?.destroy();
     await admin?.query(`DROP SCHEMA IF EXISTS ${schema} CASCADE`);
     await admin?.end();
@@ -398,6 +438,165 @@ maybe('lives against PostgreSQL (migration 091)', () => {
     });
   });
 
+  describe('the push to the followers when a live goes on air (WP-L7)', () => {
+    const follow = (follower: string, followed = ALICE) =>
+      q(`INSERT INTO user_follows ("followerUserId", "followedUserId") VALUES ($1, $2)`, [
+        follower,
+        followed,
+      ]);
+
+    it("tells the broadcaster's followers ONCE, at the first stored segment - minus a block and a removal", async () => {
+      await follow(BOB);
+      await follow(CAROL);
+      await follow(EVE);
+      await follow(DAVE, BOB); // follows somebody else: not told
+      await q(`INSERT INTO user_blocks ("blockerId", "blockedId") VALUES ($1, $2)`, [CAROL, ALICE]);
+      const live = await start();
+      await lives.removeViewer(ALICE, live.id, EVE);
+
+      // The start alone has nothing to watch: nobody is told yet.
+      expect(notices).toEqual([]);
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      expect(notices).toEqual([
+        {
+          recipientIds: [BOB],
+          type: 'live_started',
+          actorId: ALICE,
+          actorName: 'Alice',
+          text: '',
+          associationLogoMediaId: null,
+          pushData: { liveId: live.id },
+        },
+      ]);
+
+      // The rest of the live, a repeat of segment 0 (a lost answer retried) and a reconnect after a
+      // silence are the same row, already stamped: never a second push.
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      await lives.ingest(ALICE, live.id, 1, segment(1));
+      await q(`UPDATE lives SET "lastSegmentAt" = now() - interval '40 seconds' WHERE id = $1`, [
+        live.id,
+      ]);
+      await lives.ingest(ALICE, live.id, 2, segment(2));
+      expect(notices).toHaveLength(1);
+      const [row] = await q(`SELECT "announcedAt" FROM lives WHERE id = $1`, [live.id]);
+      expect(row.announcedAt).not.toBeNull();
+    });
+
+    it('tells nobody about a live ended before its first segment, nor about a refused start', async () => {
+      await follow(BOB);
+      const live = await start();
+      await lives.end(ALICE, live.id);
+      expect((await refusal(lives.ingest(ALICE, live.id, 0, segment(0)))).status).toBeGreaterThan(
+        399
+      );
+      muted.add(ALICE);
+      expect((await refusal(start())).code).toBe('LIVE_MUTED');
+      expect(notices).toEqual([]);
+    });
+
+    it('a NEW live is a new announcement: one push per live row, not per broadcaster', async () => {
+      await follow(BOB);
+      const first = await start();
+      await lives.ingest(ALICE, first.id, 0, segment(0));
+      await lives.end(ALICE, first.id);
+      const second = await start();
+      await lives.ingest(ALICE, second.id, 0, segment(0));
+      expect(notices.map((n) => n.pushData?.liveId)).toEqual([first.id, second.id]);
+    });
+
+    it("an association's live goes to the ASSOCIATION's followers, named and pictured as it", async () => {
+      await q(`INSERT INTO associations (id, name, "logoMediaId") VALUES ($1, 'BDE', 'logo1')`, [
+        ASSO,
+      ]);
+      await q(
+        `INSERT INTO association_follows ("followerUserId", "associationId") VALUES ($1, $2), ($3, $2)`,
+        [CAROL, ASSO, ALICE]
+      );
+      await follow(BOB); // follows the member, not the association: not told
+      mayActAs.add(`${ALICE}:${ASSO}`);
+      const live = await lives.start(ALICE, { key: KEY, associationId: ASSO });
+      await lives.ingest(ALICE, live.id, 0, segment(0));
+      expect(notices).toEqual([
+        {
+          recipientIds: [CAROL],
+          type: 'live_started',
+          actorId: ALICE,
+          actorName: 'BDE',
+          text: '',
+          associationId: ASSO,
+          associationLogoMediaId: 'logo1',
+          pushData: { liveId: live.id, associationId: ASSO },
+        },
+      ]);
+    });
+
+    it('sends nothing while LIVE_ENABLED is off, and the segment is still taken', async () => {
+      await follow(BOB);
+      const live = await start();
+      process.env.LIVE_ENABLED = 'false';
+      await expect(lives.ingest(ALICE, live.id, 0, segment(0))).resolves.toMatchObject({
+        index: 0,
+      });
+      expect(notices).toEqual([]);
+    });
+
+    it('a failing announcement never fails the segment, and is not retried', async () => {
+      await follow(BOB);
+      let attempts = 0;
+      const broken = new LivesService(
+        ds,
+        store,
+        { mayAct: async () => false } as unknown as AssociationsService,
+        { isUserMuted: async () => false } as unknown as ModerationService,
+        new LiveAnnouncer(ds, {
+          resolveActorName: async () => 'Alice',
+          pushNotice: async () => {
+            attempts += 1;
+            throw new Error('mute lookup down');
+          },
+        } as unknown as PostNotificationsService)
+      );
+      const live = await broken.start(ALICE, { key: KEY });
+      await expect(broken.ingest(ALICE, live.id, 0, segment(0))).resolves.toMatchObject({
+        index: 0,
+      });
+      await expect(broken.ingest(ALICE, live.id, 1, segment(1))).resolves.toMatchObject({
+        index: 1,
+      });
+      expect(attempts).toBe(1);
+    });
+
+    it('reads the audience on its own: followers only, deduplicated, never the broadcaster', async () => {
+      await follow(BOB);
+      await follow(BOB);
+      await follow(ALICE);
+      const live = await start();
+      expect(await q(liveAudienceSql(false), [ALICE, live.id])).toEqual([{ id: BOB }]);
+    });
+
+    it('stamps the lives that exist when the column is ADDED, so the deploy announces none of them', async () => {
+      const fresh = `lives_it_mig_${Math.random().toString(36).slice(2, 10)}`;
+      await admin.query(`CREATE SCHEMA ${fresh}`);
+      try {
+        await admin.query(`SET search_path TO ${fresh}`);
+        await admin.query(MIGRATION);
+        await admin.query(`INSERT INTO lives ("broadcasterId", "liveKey") VALUES ($1, $2)`, [
+          ALICE,
+          KEY,
+        ]);
+        await admin.query(ANNOUNCED_AT);
+        await admin.query(ANNOUNCED_AT);
+        const { rows } = await admin.query(
+          `SELECT "announcedAt" = "startedAt" AS stamped FROM lives`
+        );
+        expect(rows).toEqual([{ stamped: true }]);
+      } finally {
+        await admin.query(`SET search_path TO public`);
+        await admin.query(`DROP SCHEMA IF EXISTS ${fresh} CASCADE`);
+      }
+    });
+  });
+
   describe('the reservation: no pooled connection held across the store (P2-1)', () => {
     it('A STALLED STORE DOES NOT BLOCK AN UNRELATED QUERY on the same pool, even a pool of ONE', async () => {
       const one = new DataSource({
@@ -413,7 +612,8 @@ maybe('lives against PostgreSQL (migration 091)', () => {
           one,
           store,
           { mayAct: async () => false } as unknown as AssociationsService,
-          { isUserMuted: async () => false } as unknown as ModerationService
+          { isUserMuted: async () => false } as unknown as ModerationService,
+          new LiveAnnouncer(one, notifications)
         );
         const live = await onOne.start(ALICE, { key: KEY });
         const hold = store.holdNextStore();

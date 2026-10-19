@@ -1,4 +1,4 @@
-# Live - the plan (R4 / decision C9; the server half WP-L2/L3 built 2026-10-18, nothing else)
+# Live - the plan (R4 / decision C9; the server half WP-L2/L3 built 2026-10-18, WP-L7's push 2026-10-19, nothing else)
 
 > **Note 2026-10-17:** the user's 2026-10-16 calls decisions - 1:1 calls go peer-to-peer direct with Cloudflare TURN as the fallback - post-date this plan; every "relay-only" and SFU statement below describes the code of 2026-10-15, not the target, and WP-L0 is to be re-read against them.
 
@@ -171,14 +171,14 @@ Q1 = C; WP-L0 stays first by the user's decision (L7).
 | **WP-L4** | **Segments served by nginx**: an unauthenticated route for sealed live segments answered by Canari's own nginx (cache or static files), never reaching media-service or the database; the per-host viewer cap from WP-L1's uplink figure, refused with a clear "live full" screen. | `infrastructure/local/Dockerfile.frontend` (Canari's nginx), `GET /api/media/public/:id` as the model | a second viewer's fetch is served without a media-service log line; viewer N+1 past the cap is refused |
 | **WP-L5** | **Broadcaster and viewer UI**: composer "Live" entry, broadcast screen, viewer screen, reconnect state (Q5), first-live rules (L11). | the composer ([posts](posts.md)) and camera ([reels](reels.md)) | e2e on two browser contexts; phone readings on Mi 9T and iPhone 12 |
 | **WP-L6** | **Live chat and floating reactions**, encrypted with the live key, ephemeral. | the WS gateway ([chat-gateway](../../services/chat-gateway.md)) | tests: messages unreadable without the key; nothing persisted after `ended_at` |
-| **WP-L7** | **Announcement**: LIVE card at the top of the feed; push to followers (L10). | the feed, `PostNotificationsService` | tests on the follower set incl. mutes; one push per live, never on reconnect |
+| **WP-L7** (**server half built 2026-10-19, [lives](../../services/lives.md#the-push-to-the-followers-wp-l7-server-half); the LIVE card and the `live/<id>` deep-link route are still owed**) | **Announcement**: LIVE card at the top of the feed; push to followers (L10), sent at the first stored segment. | the feed, `PostNotificationsService` | tests on the follower set incl. mutes; one push per live, never on reconnect |
 | **WP-L8** | **Moderation**: hide message, remove viewer, block, report a live, staff remote cut. | `content_reports`, [moderation-and-blocking](../../moderation-and-blocking.md) | tests: a cut ends the live and the row; a report reaches staff while live |
 | **WP-L9** | **Store review**: UGC answers (Q2), the review video for live, then a pre-release to testers. | [mobile](../mobile.md) submission notes | accepted builds on both stores |
 | **WP-L10** (only if A is kept) | **Low-latency small-audience mode on the SFU**: a `broadcast` room kind (broadcaster-only publish, receive-only viewers, a cap, a server-side kick), frame E2E keyed by the live key with **no cleartext path**, the SFU bench with 1 then 30 subscribers. | `apps/call-service/src/main.rs` `on_track`, `tests/relay_path.rs`, `CallService.ts` `setupEncryption` | Rust tests: a viewer's track is refused, a kicked peer cannot rejoin; a missing transform refuses to broadcast; TURN GB per live-hour measured |
 
 ## See also
 
-- [lives](../../services/lives.md) - the server half as built (WP-L2, WP-L3), and its switch
+- [lives](../../services/lives.md) - the server half as built (WP-L2, WP-L3, WP-L7's push), and its switch
 
 - [calls](calls.md) - the switches and why calls are held off
 - [call-service](../../services/call-service.md) - the SFU

@@ -1,14 +1,15 @@
-# Lives - the server half (WP-L2, WP-L3)
+# Lives - the server half (WP-L2, WP-L3, and WP-L7's push)
 
 The server half of the live chantier planned on [live](../frontend/modules/live.md): the `lives` row
 and its key (WP-L2), the segment ingest, the manifest viewers poll and the deletion at the end
-(WP-L3). Built 2026-10-18 on the plan's RECOMMENDATIONS, which the user said to take ("take the
+(WP-L3), and the push to the broadcaster's followers when a live goes on air (WP-L7's server half,
+[below](#the-push-to-the-followers-wp-l7-server-half), 2026-10-19). WP-L2/L3 were built 2026-10-18 on the plan's RECOMMENDATIONS, which the user said to take ("take the
 decisions"): architecture **C** (segmented HTTP, no transcoding), key design **Q4**, durable end
 **Q5**, retention **Q10**. **No client calls any of it yet** (WP-L5), and **it is switched OFF on
 production** (below).
 
-Code: `apps/social-service/src/lives/` (row, key, manifest, ingest, sweep), migration
-`091_lives.sql`, and `apps/media-service/src/media/live-segments.service.ts` (the bytes).
+Code: `apps/social-service/src/lives/` (row, key, manifest, ingest, sweep, `live-announcer.ts`),
+migrations `091_lives.sql` and `095_live_announced_at.sql`, and `apps/media-service/src/media/live-segments.service.ts` (the bytes).
 
 ## The switch: `LIVE_ENABLED`
 
@@ -194,6 +195,34 @@ deleted, and so are its `live_starts` rows. `broadcaster` and `viewer` were adde
 (`libs/contracts/account-reference-columns.json`) so the coverage spec sees both columns. Register
 row C19 ([register-of-processing](../compliance/register-of-processing.md)).
 
+## The push to the followers (WP-L7, server half)
+
+The user's question, 2026-10-19: *can a follower get "X est en live" the way they get "X a publie"?*
+Decisions L5 and L10 of the [plan](../frontend/modules/live.md): a push ONLY to the followers of the
+member or association broadcasting. Built in `LiveAnnouncer` (`lives/live-announcer.ts`); **the
+client half - the LIVE card in the feed and the app route the tap opens - is NOT built** (below).
+
+| Question | Answer, and where it is decided |
+| --- | --- |
+| **When** | At the **first STORED segment**, not at `POST /api/lives`: a row alone has nothing to watch, and a start the client abandons (camera refused, app killed, an immediate end) would ring every follower for nothing. So a refused start, and a live ended before its first segment, are never announced. |
+| **Once per live** | `lives."announcedAt"` (migration 095). Segment 0's CONFIRM stamps it in the SAME transaction, under the same row lock, as the segment itself (`WHERE "announcedAt" IS NULL`), and the push follows the commit. A repeat of segment 0, a reconnect, every later segment: the same stamped row, no second push. A NEW live (a new row) is a new announcement. No timer and no sweep: there is no second path to reconcile. |
+| **The trade** | Stamp before send, as `PostAnnounceScheduler` does: a crash between the commit and the send loses ONE announcement (`[LIVE_ANNOUNCE] ... NOT announced` at warn when it is an error rather than a crash); the other order could repeat it. A failing announcement never fails the segment. |
+| **Who** | A member's live: `user_follows` (followers of the broadcaster). A live AS an association: `association_follows` of that association - the member's own followers are NOT told. Both minus the broadcaster, either side of a block with the broadcaster, and a viewer the broadcaster already removed: exactly who `assertMayWatch` lets in, narrowed to followers (`liveAudienceSql`). |
+| **Mutes** | `association_push_mutes`: `live_started` is in `MUTABLE_PUSH_TYPES`, applied by `PostNotificationsService` like an association's post ([social-service](social-service.md)). A member's live has no association, so no mute applies. |
+| **Notification levels** | The push's `contentKey` `social_live_started` is filed under the reader's **`posts`** category in chat-delivery (`push-category.ts`): the switch that silences the posts of the people you follow silences their lives too. No new category (it would need a settings row on the client). |
+| **The pipeline** | `PostNotificationsService.pushNotice`: the same content mapping, icon rule (the association's logo, the member's face), mute and bounded per-recipient fan-out as `createNotifications`, sharing one private `fanOutPush`, but **no `post_notifications` row** - a live is deleted at its end (L3), so a bell row would be a 404 for ever after. |
+| **Language** | Composed ON THE DEVICE from `contentKey`, as every social push since 2026-08-19: `notif_social_live_started_*` (Android, fr + en) and `notif.social.live_started.*` (iOS app and NSE, fr + en) - FR "X est en live" / "Appuyez pour regarder", EN "X is live" / "Tap to watch". The server's French `title`/`body` ride along for builds older than the key. Pinned by `push-content.spec.ts` and `nativeStrings.test.ts`. |
+| **Payload** | `{ type: 'social', liveId, associationId?, deepLink: 'fr.emse.canari://live/<liveId>', contentKey, actorName, contentArg: '', iconUserId or iconMediaId }` - `socialDeepLink` writes the link. |
+| **The switch** | Nothing is sent unless `LIVE_ENABLED` is `true` (checked by the announcer itself, on top of the ingest route's own guard): **off on production**. |
+
+Observed by `[LIVE_ANNOUNCE] <liveId> by <broadcaster> kind=member or association followers=<n>`.
+
+**What the client still owes (WP-L7's other half, with WP-L5):** `appRouteForDeepLink`
+(`frontend/src/lib/mobile/deepLinkRoutes.ts`) has no `live` host, so today a tap answers null there
+and only opens the app - it needs a `live/<id>` case once WP-L5's viewer page exists; the LIVE card at
+the top of the feed (L5) reading `GET /api/lives`; and the store builds carrying the new native
+strings (an installed build without them shows the server's French wording, with a warn).
+
 ## The migration: `091_lives.sql`
 
 Four new tables (`lives`, `live_segments`, `live_removed_viewers`, `live_starts`), nothing existing
@@ -201,6 +230,10 @@ changes; idempotent (applied twice by the integration spec), and
 `synchronize` against it changes nothing on a live table (asserted). User ids are `varchar(255)`.
 No foreign key to `associations`: an association deleted during a live leaves a live that still ends
 and is still deleted.
+
+`095_live_announced_at.sql` adds `lives."announcedAt"` and, in the same step that creates the column,
+stamps every existing row with its start, so the first deploy announces no live that began before the
+feature; a re-run touches nothing. 095 because 093 is the highest on `main` and #1940 takes 094.
 
 ## What is not proven
 

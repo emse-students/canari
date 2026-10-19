@@ -21,6 +21,7 @@ describe('categoryOfDataPush', () => {
     ['social_association_repost', 'posts'],
     ['social_repost_proposed', 'posts'],
     ['social_coorganise_proposed', 'events'],
+    ['social_live_started', 'posts'],
     ['form_opening_soon', 'forms'],
     ['form_open', 'forms'],
     ['event_proposed', 'events'],

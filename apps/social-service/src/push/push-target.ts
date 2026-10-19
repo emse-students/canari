@@ -12,7 +12,7 @@
  * and a post notice opens the post. The hosts are resolved by `appRouteForDeepLink` in the frontend.
  *
  * @param data - The flat push data the caller built (`postId`, `commentId`, `formId`, `action`,
- *   `associationId`, `queueAssociationId`).
+ *   `associationId`, `queueAssociationId`, `liveId`).
  */
 export function socialDeepLink(data: Record<string, string>): string {
   const formId = data.formId;
@@ -30,6 +30,9 @@ export function socialDeepLink(data: Record<string, string>): string {
   if (data.queueAssociationId) {
     return `fr.emse.canari://proposals/${encodeURIComponent(data.queueAssociationId)}`;
   }
+  // A live started (WP-L7): the live itself. The app's route for it is WP-L5's viewer, still owed -
+  // until then `appRouteForDeepLink` answers null for this host and the tap opens the app only.
+  if (data.liveId) return `fr.emse.canari://live/${encodeURIComponent(data.liveId)}`;
   const postId = data.postId;
   if (postId) {
     const post = `fr.emse.canari://post/${encodeURIComponent(postId)}`;

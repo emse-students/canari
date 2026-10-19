@@ -160,6 +160,8 @@ class NotificationService: UNNotificationServiceExtension {
     case "social_repost_proposed": composed = actorTitled("repost_proposed")
     // Co-organisation (D39): the organising association names the title, the event is the body.
     case "social_coorganise_proposed": composed = actorTitled("coorganise_proposed")
+    // A live started (WP-L7): the broadcaster names the title, the body is the fixed sentence.
+    case "social_live_started": composed = actorTitled("live_started")
     case "social_reaction":
       composed = (
         Self.localized("notif.social.reaction.title", locale: locale),

@@ -949,6 +949,7 @@ accident):
 | --- | --- | --- |
 | `association_post` | a reader | yes |
 | `association_repost` | a reader the republication newly reached (the mute is the REPUBLISHING association's) | yes |
+| `live_started` | a follower of the association broadcasting a live (WP-L7; push only, no bell row - `pushNotice`, [lives](lives.md#the-push-to-the-followers-wp-l7-server-half)) | yes |
 | `repost_proposed`, `coorganise_proposed` | managers who must accept | **no** - operational |
 | `event_proposed/validated/rejected/updated/deleted/pending` | validators and proposers | **no** - operational |
 | `followed_post`, `mention`, `reply`, `reaction`, `comment` | addressed to you by a person | **no** - not an association's push |
