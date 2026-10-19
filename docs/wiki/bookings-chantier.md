@@ -623,6 +623,15 @@ id to the organiser and the linked account, not to a booker.
   Not offered in slots mode (a slot is booked whole). **Seen** at 390 px in a headless Chrome on a
   fixture grid (mouse): 4 units at the ceiling, 2 before a taken unit. **NOT seen on a phone**: the
   hold-then-drag and the scroll lock are the part only a finger can judge.
+- **THE GRID IS DENSER (user, 2026-10-21, after seeing both)**: a row is 32 px (was 44), touching free
+  units, touching blocked units and the units of ONE booking are drawn as a single block (rounded
+  only at its ends, its label said once, `sameRun` in `SpaceGrid.svelte`), and the time column
+  carries a bold label on the hour and a faint one on the half hours. **Every unit is still its own
+  button**, so a press or a drag lands on the step under the pointer. Measured on a 12 h fixture day
+  at 390 px: the table went from 1196 px to 827 px (-31 %). **The cost, accepted by the user: a row
+  is under the 44 px touch target on a phone**, which the drag partly offsets (no need to aim a
+  single tap at one step). The next lever, if more is wanted, is not density but the hours shown
+  (fold the unused ones) or a horizontal strip for a one-resource space.
 - **THE DEFAULT VIEW FOLLOWS THE WIDTH** as the agenda's (`SCHEDULE_AGENDA_QUERY`): the planning
   on a phone, the grid wider - until the reader picks one, then theirs holds.
 - **TIMES ARE THE SPACE'S** (D25), read in its zone; when the device's clock reads differently,
