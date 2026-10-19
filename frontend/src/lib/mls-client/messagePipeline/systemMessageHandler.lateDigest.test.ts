@@ -4,6 +4,7 @@ import {
   noteDigestSolicited,
   resetHistoryDigestRendezvousForTests,
 } from '$lib/utils/chat/historyDigestRendezvous';
+import { flushMacrotask } from '../../../test/flush';
 
 /**
  * A DIGEST THAT ARRIVES AFTER THE RESPONDER STOPPED WAITING FOR IT.
@@ -80,7 +81,7 @@ const DIGEST_FRAME = {
 };
 
 /** Lets the `void`-ed answer chain behind `answerAfterMailboxDrained` run. */
-const settle = () => new Promise((r) => setTimeout(r, 0));
+const settle = () => flushMacrotask();
 
 beforeEach(() => {
   resetHistoryDigestRendezvousForTests();

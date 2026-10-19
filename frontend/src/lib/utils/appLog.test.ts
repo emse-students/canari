@@ -101,8 +101,7 @@ describe('the batch', () => {
     const needed = Math.ceil(appLog.FLUSH_CHARS / STORED);
     for (let i = 0; i < needed; i++) appLog.captureConsoleLine('log', [LINE]);
     // No explicit flush: the batch must already be on its way.
-    await new Promise((r) => setTimeout(r, 50));
-    expect(await records()).toHaveLength(1);
+    await vi.waitFor(async () => expect(await records()).toHaveLength(1));
   });
 
   it('stores the REDACTED line, never the raw one', async () => {

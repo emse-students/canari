@@ -1,4 +1,5 @@
 import { MlsPerGroupScheduler, type MlsQueuedMessage } from './mlsPerGroupScheduler';
+import { flushMacrotask } from '../../test/flush';
 
 function msg(
   groupId: string,
@@ -116,7 +117,7 @@ describe('MlsPerGroupScheduler', () => {
     await scheduler.drain(async () => {
       concurrent += 1;
       maxConcurrent = Math.max(maxConcurrent, concurrent);
-      await new Promise((r) => setTimeout(r, 5));
+      await flushMacrotask();
       concurrent -= 1;
     });
 

@@ -23,6 +23,7 @@ import {
   registerCommunityHistoryVisibility,
   setGraineRuntime,
 } from './runtime';
+import { flushMacrotask } from '../../../test/flush';
 
 /** When the rows that named a missing session were sent, on the server clock. */
 const SENT_AT = Date.parse('2026-08-20T12:00:00Z');
@@ -160,7 +161,7 @@ afterEach(() => {
  * day a hop was added (1.2.5).
  */
 async function settle() {
-  await new Promise((resolve) => setTimeout(resolve, 0));
+  await flushMacrotask();
 }
 
 describe('noteMissingSeed', () => {

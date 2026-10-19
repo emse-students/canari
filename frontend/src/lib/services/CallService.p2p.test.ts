@@ -4,6 +4,7 @@ import type { IMlsService } from '$lib/mls-client';
 import { CallService, CALL_ICE_TRANSPORT_POLICY } from './CallService';
 import { CallE2eUnsupportedError } from '$lib/utils/callFailure';
 import { m } from '$lib/paraglide/messages';
+import { flushMacrotask } from '../../test/flush';
 
 /**
  * The client half of a PEER-TO-PEER 1:1 call (lot 1 of the revival, 2026-10-17), driven through
@@ -187,7 +188,7 @@ const fakeMls = {
 } as unknown as IMlsService;
 
 /** Lets every pending promise and microtask of the service settle. */
-const settle = () => new Promise((r) => setTimeout(r, 0));
+const settle = () => flushMacrotask();
 
 beforeEach(() => {
   server.ringTimeoutMs = 60_000;
@@ -373,7 +374,15 @@ describe('a peer-to-peer call, client side', () => {
  * an EVENT - registered before the wait, shorter than it - never asserting a wall clock.
  */
 describe('the ring window, both sides', () => {
-  const pastWindow = () => new Promise((r) => setTimeout(r, 30));
+  // The window is a timer: fake it, and step past it. `setTimeout` only, so the harness's own
+  // microtask and macrotask yields still run.
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+  const pastWindow = () => vi.advanceTimersByTimeAsync(30);
   const invite = (ringTimeoutMs?: number) => ({
     callId: 'room-1',
     offerSdp: 'START',

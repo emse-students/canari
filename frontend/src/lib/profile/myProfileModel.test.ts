@@ -22,6 +22,7 @@ vi.mock('$lib/utils/Log', () => ({ Log: { d: vi.fn() } }));
 
 import { UserProfileFetchError } from '$lib/stores/user';
 import { MyProfileModel } from './myProfileModel.svelte';
+import { flushMacrotask } from '../../test/flush';
 
 const tree = { found: true, parrains: [{ prenom: 'A' }], fillots: [] };
 
@@ -33,7 +34,7 @@ beforeEach(() => {
   fetchUserParrainage.mockResolvedValue(tree);
 });
 
-const settled = () => new Promise((r) => setTimeout(r, 0));
+const settled = () => flushMacrotask();
 
 describe('MyProfileModel', () => {
   it('loads the identity and the three extras', async () => {
