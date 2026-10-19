@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { IMlsService } from '$lib/mls-client';
 import { createMlsHolder } from './mlsHolder';
+import { flushMacrotask } from '../../../test/flush';
 
 /**
  * The retirement chain is what `loginImpl` awaits before it opens any state, so it must SETTLE
@@ -50,7 +51,7 @@ describe('createMlsHolder - a retirement always settles', () => {
     void holder.retire(Promise.resolve());
     let released = false;
     void holder.whenRetired().then(() => (released = true));
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
     expect(released).toBe(false);
     expect(holder.isRetiring()).toBe(true);
     landFirst();

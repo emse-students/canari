@@ -28,6 +28,7 @@ await import('./useMessaging.svelte');
 type MessagingContext = import('./useMessaging.svelte').MessagingContext;
 import type { Conversation } from '$lib/types';
 import type { PendingMediaFile } from '$lib/media';
+import { flushMacrotask } from '../../test/flush';
 
 const CONVO = 'conversation-key';
 
@@ -154,7 +155,7 @@ describe('the staging belongs to ONE conversation and ONE account', () => {
     ctx.verifyCurrentUserMembership = () => new Promise((r) => (admit = r));
 
     const sending = messaging.handleSendChat(ctx, '');
-    await new Promise((r) => setTimeout(r, 0));
+    await flushMacrotask();
     await messaging.handleFilesSelected([pdf('second.pdf')], ctx);
     admit(true);
     await sending;

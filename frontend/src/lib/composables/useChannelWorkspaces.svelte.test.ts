@@ -117,6 +117,7 @@ import {
   settleSalonListing,
   whenSalonSendable,
 } from '$lib/utils/graine/salonSendGate';
+import { flushMacrotask } from '../../test/flush';
 
 function makeContext(overrides: Partial<ChannelWorkspaceContext> = {}): ChannelWorkspaceContext {
   return {
@@ -157,7 +158,7 @@ function makeChannelDto(
 }
 
 function tick() {
-  return new Promise<void>((resolve) => setTimeout(resolve, 0));
+  return flushMacrotask();
 }
 
 describe('useChannelWorkspaces - loadChannelWorkspacesFromBackend', () => {

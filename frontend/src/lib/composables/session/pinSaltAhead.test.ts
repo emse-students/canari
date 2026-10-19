@@ -6,6 +6,7 @@ import {
   resetPinSaltAheadForTests,
   takePinSaltAhead,
 } from './pinSaltAhead';
+import { flushMacrotask } from '../../../test/flush';
 
 /**
  * The salt asked while the PIN keypad is up: one round trip per keypad, consumed once, a failure
@@ -55,7 +56,7 @@ describe('the PIN salt asked while the keypad is up', () => {
     const log = vi.fn();
     askPinSaltAhead('alice', async () => Promise.reject(new Error('offline')), log);
     // Let the failure reach the eviction handler (a macrotask drains every pending microtask).
-    await new Promise((settle) => setTimeout(settle, 0));
+    await flushMacrotask();
     expect(takePinSaltAhead('alice')).toBeUndefined();
     expect(log.mock.calls.map((c) => c[0]).join('\n')).toContain('offline');
   });

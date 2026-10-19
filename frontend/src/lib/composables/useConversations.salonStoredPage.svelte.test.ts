@@ -5,6 +5,7 @@
 import { SvelteMap } from 'svelte/reactivity';
 import type { Conversation } from '$lib/types';
 import type { StoredMessage } from '$lib/db';
+import { flushMacrotask } from '../../test/flush';
 
 const listMessages = vi.hoisted(() => vi.fn());
 const listReadMarks = vi.hoisted(() => vi.fn());
@@ -242,7 +243,7 @@ describe("a salon's stored page", () => {
     void convs.loadHistoryForConversation(SALON, SALON, ctx);
     await vi.waitFor(() => expect(reads).toBe(2));
     releaseFirstRead([storedRow('old', 1_000)]);
-    await new Promise((resolve) => setTimeout(resolve, 0));
+    await flushMacrotask();
 
     expect(convs.conversations.get(SALON)?.messages).toEqual([]);
   });

@@ -238,7 +238,7 @@ the editor is [reel-editor](frontend/modules/reel-editor.md). **Owed, readings o
 - a reading of the whole editor (text, drawing, stickers, "Suivant") on both phones, then the user's
   Instagram screenshots for E3/E5 ([reel-editor](frontend/modules/reel-editor.md));
 - the front-lens default and full-bleed preview on the iPhone, and the live-mic echo fix (#1368);
-- R4 (live, C9) waits for the calls revival.
+- R4 (live, C9) no longer waits for the calls revival (user, 2026-10-19: lives first, [live](frontend/modules/live.md#decisions-of-2026-10-19)).
 
 ## The Liquid Glass conversation chrome - decided 2026-09-30, WP-G1 then WP-G2
 
@@ -291,6 +291,10 @@ searches), `HEAD` content-length.
 ## P1 - Opening a community: F1-F6 BUILT, the 200 ms budget and the signature batch are what is left (user, 2026-10-14; state re-read 2026-10-18)
 
 **User goal: on a slow network and a poor phone, opening a community is almost instantaneous.** Budget: rail + salons and a salon opened before **<= 200 ms from local state, with 0 request on the path**. F1 (saved workspace list), F2, F3, F4 (a salon's last page kept locally), F5 and F6 are built and measured; the tab is 2-4x faster and works offline, but still short of 200 ms (first mount cut, see the page). **Left:** F7's second half (one native call for a page's signatures; native, so a lead review), a re-measure against the budget on the Mi 9T, a CPU profile of the warm resume at 4x, the history head/body split, iOS. State and numbers: [community-open-budget](frontend/community-open-budget.md). Instrument: `bun tools/cold-start/community-open.mjs`.
+
+## P3 - Bookings: a refused block names only a count (review of #2035, 2026-10-18, not built)
+
+A `bookings-inside-block` refusal is worded with its count and the ids are only logged; the organiser could get the bookings listed as a D29 refusal lists them (`StrandedBookings.svelte`). (The P2 half - a block over a block - is built: `block-overlap`.) [bookings](bookings-chantier.md#wp-b5-as-built---the-bookers-screens-2026-10-18)
 
 ## P3 - A reel's loop holds its first frame ~210 ms longer than the file says, on the Mi 9T (measured 2026-10-16, not built)
 
@@ -1417,3 +1421,7 @@ Each line: the decision, its scope as a work package (WP), and what blocks it. R
 - **Organiser alert for a paid form that is full (D3, held by the user's decision of 2026-10-15):** it ships ONLY once the minimum client version covers the client fix of PR "unknown notification type" (an unknown type renders neutral with no link). Then: a durable flag `organiserNotifiedAt` claimed through `claimFulfilment` and `releaseFulfilment`, recipients = the owner plus holders of `MANAGE_FORMS` through `mayAct` (never a global admin), a new `PushContentKey` whose argument is the form title only, filed under the EXISTING `forms` category (no new id, which also avoids the preferences defect), a migration at the next free number, and a deep link that opens one form's responses (an accordion on `/forms`, so a route or parameter is needed). Designed, not coded.
 - **Accords of the user, recorded (user, 2026-10-15, in session, relayed by the planning session at Master's request), covering: D1-D3 of the paid-form chantier, the backfill of migration 083, the data half of migration 084 before production, `minClientVersion` 1.2.7 (the user's own action), the anonymous-form file question refused, and Lydia states 1 and 5 to be measured by hand on the homologation payer page.** What it does NOT do: it starts no work package (WP-B1 and later lots wait for the lead session), marks nothing ready, merges and releases nothing. The 084 deploy ships with the next STABLE under the lead session's release authority; `minClientVersion` and the two Lydia measurements stay the user's own gestures.
 - **FUTURE lot: a file question on a PUBLIC form (no account) - the user asks for it (2026-10-15).** Refused in #1908 (public and anonymous forms). It needs an abuse design before any code: a limit per address or per token, a size cap, a global quota, a scan, an anonymous upload path with its own purge of files never linked to an answer. Nothing in the repository holds that design yet.
+
+## Decided by the user on 2026-10-19 - lives before calls, and what a live owes before a stable
+
+Wording in [live](frontend/modules/live.md#decisions-of-2026-10-19). Lives come BEFORE the calls revival (calls stay dev-only; supersedes L7). v1 bitrate (720p or 480p) is fixed at launch by the server from the total live load: no transcoding, no mid-live change. Any member may start a live, so **WP-L8 moderation (like posts: `content_reports`, "cut the live" in place of "delete the post", posts code reused) and the per-account limits are a RELEASE BLOCKER before any stable, and the Apple 1.2 / Play UGC answers precede store submission.** Comments and floating reactions are wanted (WP-L6). The "X est en live" notification: server half WP-L7 in progress (draft PR), **owed: the client LIVE card and deep link.** **Open question from the user:** why ask the school IT department - only for raising the shared host nginx connection budget (about 1500 across its sites), not needed until an audience would exceed it.

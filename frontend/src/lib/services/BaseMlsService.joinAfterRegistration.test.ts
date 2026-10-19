@@ -38,6 +38,7 @@ import {
  * reads), and the round is only what makes it true.
  */
 import { keyPackageWaitFields } from './BaseMlsService.keyPackageFixture';
+import { flushMacrotask } from '../../test/flush';
 
 const PUBLISHED = { kind: 'package', device: { keyPackage: new Uint8Array(), deviceId: 'd' } };
 const ABSENT = { kind: 'none', reason: 'unregistered' };
@@ -85,7 +86,7 @@ const externalJoin = (ctx: { externalJoin(g: string): Promise<ExternalJoinOutcom
 const KP = { bytes: new Uint8Array(), notAfterSecs: 1 };
 
 /** Lets every already-resolved promise chain run, so "has not happened yet" is a real reading. */
-const settle = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+const settle = () => flushMacrotask();
 
 /** A round implementation that publishes (flips the server's answer) when released. */
 function controlledRound(ctx: { server: Server }) {
