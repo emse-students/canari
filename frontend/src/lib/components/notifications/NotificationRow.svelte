@@ -15,6 +15,7 @@
     Repeat2,
     CalendarPlus,
     Bell,
+    VideoOff,
   } from '@lucide/svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import AssociationAvatar from '$lib/components/shared/AssociationAvatar.svelte';
@@ -29,6 +30,7 @@
     reportUnknownNotificationType,
   } from '$lib/posts/notificationTarget';
   import { m } from '$lib/paraglide/messages';
+  import type { ReportReason } from '$lib/moderation/reasons';
 
   interface Props {
     /** The notification to render. */
@@ -57,6 +59,27 @@
   $effect(() => {
     if (isUnknownNotif) reportUnknownNotificationType(notif.type);
   });
+
+  /**
+   * A LIVE A MODERATOR CUT. The server writes it with NO actor (`actorId` and `actorName` are `''`:
+   * which moderator cut is not the broadcaster's to read) and `text` = the reason CODE, so the whole
+   * sentence is built here, in the reader's locale, and the avatar is a neutral disc. It has no
+   * destination (the live is deleted), hence the row is not activatable, like an unknown type.
+   */
+  const isLiveCutNotif = $derived(notif.type === 'live_cut');
+  const LIVE_CUT_REASON_LABEL: Record<ReportReason, () => string> = {
+    spam: m.moderation_reason_spam,
+    harassment: m.moderation_reason_harassment,
+    inappropriate: m.moderation_reason_inappropriate,
+    other: m.moderation_reason_other,
+  };
+  /** The reason's label, or null for a code this build does not know (the sentence stands alone). */
+  const liveCutReason = $derived(
+    isLiveCutNotif && notif.text in LIVE_CUT_REASON_LABEL
+      ? LIVE_CUT_REASON_LABEL[notif.text as ReportReason]()
+      : null
+  );
+  const isInert = $derived(isUnknownNotif || isLiveCutNotif);
 
   /** Bumped once async name resolution completes, to re-render resolved mentions. */
   let resolveVersion = $state(0);
@@ -206,7 +229,9 @@
                       ? 'bg-red-500 text-white'
                       : isUnknownNotif
                         ? 'bg-gray-500 text-white'
-                        : 'bg-green-600 text-white'
+                        : isLiveCutNotif
+                          ? 'bg-red-500 text-white'
+                          : 'bg-green-600 text-white'
   );
 
   // ONE GEOMETRY, BECAUSE THERE IS ONE SURFACE. These were `compact ? a : b`, and `compact` was
@@ -219,10 +244,10 @@
 
 <button
   type="button"
-  disabled={isUnknownNotif}
-  aria-disabled={isUnknownNotif}
+  disabled={isInert}
+  aria-disabled={isInert}
   onclick={onOpen}
-  class="flex w-full items-start gap-3 rounded-lg px-2 py-2.5 text-left transition-colors {isUnknownNotif
+  class="flex w-full items-start gap-3 rounded-lg px-2 py-2.5 text-left transition-colors {isInert
     ? 'cursor-default'
     : 'hover:bg-black/5 dark:hover:bg-white/10'}"
 >
@@ -232,7 +257,15 @@
     drawing an outline.
   -->
   <span class="relative shrink-0 {avatarBox}">
-    {#if actorIsAssociation}
+    {#if isLiveCutNotif}
+      <span
+        class="bg-cn-border/60 text-text-muted flex h-full w-full items-center justify-center rounded-full"
+        aria-hidden="true"
+        data-notif-live-cut-avatar
+      >
+        <VideoOff size={24} />
+      </span>
+    {:else if actorIsAssociation}
       <AssociationAvatar name={notif.actorName} logoUrl={notif.associationLogoUrl} fill />
     {:else}
       <Avatar userId={notif.actorId} fill fallbackLabel={notif.actorName} />
@@ -273,6 +306,8 @@
         <CalendarPlus size={glyph} strokeWidth={2.75} />
       {:else if isUnknownNotif}
         <Bell size={glyph} strokeWidth={2.75} />
+      {:else if isLiveCutNotif}
+        <VideoOff size={glyph} strokeWidth={2.75} />
       {:else}
         <MessageCircle size={glyph} strokeWidth={2.75} />
       {/if}
@@ -289,12 +324,14 @@
     <p class="text-sm leading-snug {unread ? 'text-text-main' : 'text-text-muted'}">
       {#if isUnknownNotif}
         {m.notif_unknown_type_text()}
+      {:else if isLiveCutNotif}
+        <span class="font-semibold">{m.notif_live_cut_text()}</span>
       {:else}
         <span class="font-semibold"
           ><EmojiText text={actorNames[0] || m.notif_actor_unknown()} /></span
         >
       {/if}
-      {#if isUnknownNotif}
+      {#if isUnknownNotif || isLiveCutNotif}
         <!-- Neutral and unlinked: nothing more to say about a type this build cannot read. -->
       {:else if otherActorCount === 1}
         {m.notif_grouped_one_other()}
@@ -309,6 +346,8 @@
         {m.notif_reply_text()}
       {:else if notif.type === 'form_reminder'}
         <EmojiText text={bodyText} />
+      {:else if isLiveCutNotif}
+        {#if liveCutReason}&#8212; {liveCutReason}{/if}
       {:else if isEventNotif}
         <!-- Built HERE, in the reader's own locale, from a type and a title - never printed back
              from a sentence the server composed. That is the whole repair. -->

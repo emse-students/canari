@@ -17,6 +17,8 @@ import {
 } from './constants';
 
 const ended = () => new LiveRefusalError(410, 'LIVE_ENDED', 'ended', 'ended', null, null, null);
+const cut = () =>
+  new LiveRefusalError(410, 'LIVE_ENDED', 'ended', 'ended', null, null, null, 'cut');
 const refused = (code: string) =>
   new LiveRefusalError(409, code, code, 'refused', null, null, null);
 
@@ -235,6 +237,28 @@ describe('LiveBroadcast - on air', () => {
     expect(recorders[0].stop).toHaveBeenCalled();
     expect(cam.control.opened[0].video.stop).toHaveBeenCalled();
     expect(deps.wakeLock.release).toHaveBeenCalled();
+  });
+
+  it('a 410 whose endReason is cut ends the screen as a moderation cut, with no end asked', async () => {
+    const { b, deps, uploaders } = await ready();
+    await b.start();
+    uploaders[0].options.onStopped!(cut());
+    expect(b.phase).toBe('ended');
+    expect(b.endCause).toBe('cut');
+    expect(deps.endLive).not.toHaveBeenCalled();
+  });
+
+  it("a cut heard while the End drains is the moderators', not the member's", async () => {
+    const { b, uploaders } = await ready();
+    await b.start();
+    let drain!: () => void;
+    uploaders[0].idle.mockImplementation(() => new Promise<void>((r) => (drain = r)));
+    const ending = b.end();
+    await vi.waitFor(() => expect(uploaders[0].idle).toHaveBeenCalled());
+    uploaders[0].options.onStopped!(cut());
+    drain();
+    await ending;
+    expect(b.endCause).toBe('cut');
   });
 
   it('any other stopping refusal ends as failed, and the live is ended on the server too', async () => {

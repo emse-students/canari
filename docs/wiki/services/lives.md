@@ -532,23 +532,14 @@ is built in rather than added:
 
 ### What the client still owes (strings for Paraglide)
 
-- **Viewer**: a `410` with `endReason: 'cut'` gets its own screen instead of "Le live est terminé"
-  (`live_viewer_cut_title`: FR "Ce live a été interrompu par la modération", EN "This live was
-  stopped by moderators"). `LiveRefusalError` must carry `endReason` from the body (it carries
-  `endedAt` today).
+The cut screens, the `live_cut` bell row, the `LiveRefusalError.endReason` field, the admin queue's
+live row and cut button and the `LiveEndReason` / `LiveRefusalCode` additions are BUILT
+([the moderation client](../frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
+What is left:
+
 - **Viewer report control**: `ReportReasonDialog` with `contentType: 'live'`; `409 ALREADY_REPORTED`
   and `404 LIVE_NOT_FOUND` handled as for a post.
-- **Broadcaster**: the uploader's `410` with `endReason: 'cut'` stops the broadcast with
-  `live_broadcast_cut_title`: FR "Votre live a été interrompu par la modération", EN "Your live was
-  stopped by moderators".
-- **Bell**: a `live_cut` row (`NotificationRow`, `KNOWN_NOTIFICATION_TYPES`, no link):
-  `notif_live_cut_text`: FR "Votre live a été interrompu par la modération", EN "Your live was
-  stopped by moderators", plus the reason from `text` through the existing report-reason labels.
-  Until then the row renders as an unknown type (neutral, unlinked).
-- **Admin queue**: the `live` content-type label (`moderation_type_live`: FR "Live", EN "Live"), the
-  `live.state`, and a "Couper le live" / "Cut the live" button on `open` and `ended` rows calling
-  `POST /api/lives/:id/cut` with the reason picker.
-- `LiveEndReason` and `LiveRefusalCode` gain `cut`, `LIVE_RULES_NOT_ACCEPTED` and `LIVE_CUT_*`.
+- **The push for a cut**: `notif_social_live_cut_*` in both native apps, then `skipPush` goes.
 
 ## A deleted account
 

@@ -7,7 +7,7 @@
  * `rate-limited` are a reconnect - never "complet".
  */
 
-import { LiveRefusalError } from './api';
+import { isLiveCut, LiveRefusalError } from './api';
 import { isTransportFailure } from '$lib/utils/transportFailure';
 
 /** Why the viewer is reconnecting: our link or the server (`network`), or the broadcaster's. */
@@ -29,7 +29,8 @@ export type LiveViewerState =
   | { kind: 'playing' }
   | { kind: 'reconnecting'; reason: LiveReconnectReason }
   | { kind: 'full'; viewerCap: number | null }
-  | { kind: 'ended' }
+  /** `cut`: a moderator ended it - its own screen, never "the live is over". */
+  | { kind: 'ended'; cut: boolean }
   | { kind: 'unavailable'; reason: LiveUnavailableReason };
 
 /**
@@ -50,9 +51,13 @@ export function liveFailureOutcome(
       case 'full':
         return { stop: { kind: 'full', viewerCap: error.viewerCap } };
       case 'ended':
-        return { stop: { kind: 'ended' } };
+        return { stop: { kind: 'ended', cut: isLiveCut(error) } };
       case 'not-found':
-        return { stop: joined ? { kind: 'ended' } : { kind: 'unavailable', reason: 'not-found' } };
+        return {
+          stop: joined
+            ? { kind: 'ended', cut: false }
+            : { kind: 'unavailable', reason: 'not-found' },
+        };
       case 'removed':
         return { stop: { kind: 'unavailable', reason: 'removed' } };
       case 'disabled':

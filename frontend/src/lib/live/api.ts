@@ -7,7 +7,7 @@
  *   status reaches the caller as an ANSWER.
  * - Every refusal is CLASSIFIED AT THE THROW as a {@link LiveRefusalError}: the status and the
  *   server's `code` (read by `refusalFromResponse`, the one implementation), the body's typed extras
- *   (`viewerCap`, `nextIndex`, `endedAt`), and a {@link LiveRefusalKind} saying what a screen does
+ *   (`viewerCap`, `nextIndex`, `endedAt`, `endReason`), and a {@link LiveRefusalKind} saying what a screen does
  *   with it. A caller switches on `kind` or `code`, never on a message.
  * - A transport failure (no answer) is NOT a refusal: it propagates as `TransportFailureError` /
  *   `RequestDeadlineError` (`isTransportFailure`), never wrapped.
@@ -24,6 +24,9 @@ import type {
   LiveEndResult,
   LiveIngestResult,
   LiveLimits,
+  LiveCutReason,
+  LiveCutResult,
+  LiveEndReason,
   LiveListItem,
   LiveManifest,
   LiveRefusalKind,
@@ -49,11 +52,21 @@ export class LiveRefusalError extends ApiRefusalError {
     /** The index the server expects next (`LIVE_SEGMENT_*`, `LIVE_SEGMENT_TOO_FAST`). */
     readonly nextIndex: number | null,
     /** `LIVE_ENDED`: when it ended, when the server says (ISO string). */
-    readonly endedAt: string | null
+    readonly endedAt: string | null,
+    /**
+     * `LIVE_ENDED`: why it ended (`cut`: a moderator ended it) - what a screen branches on, never
+     * the message. Null when the body carries none, or a value this build does not know.
+     */
+    readonly endReason: LiveEndReason | null = null
   ) {
     super(status, code, message);
     this.name = 'LiveRefusalError';
   }
+}
+
+/** Whether `error` is the `410` of a live a moderator CUT - the one test both ends of a live share. */
+export function isLiveCut(error: unknown): boolean {
+  return error instanceof LiveRefusalError && error.kind === 'ended' && error.endReason === 'cut';
 }
 
 /** Whether `error` is a lives refusal of that kind - the one test a screen needs. */
@@ -99,6 +112,19 @@ export function classifyLiveRefusal(
   return 'refused';
 }
 
+const LIVE_END_REASONS: ReadonlySet<string> = new Set<LiveEndReason>([
+  'broadcaster',
+  'dropped',
+  'max_duration',
+  'erased',
+  'cut',
+]);
+
+/** A refusal body's `endReason` when it is one this build knows, else null (never a guess). */
+export function liveEndReasonOf(value: unknown): LiveEndReason | null {
+  return typeof value === 'string' && LIVE_END_REASONS.has(value) ? (value as LiveEndReason) : null;
+}
+
 /** A number field of a refusal body, or null. */
 function numberField(body: Record<string, unknown> | null, key: string): number | null {
   const v = body?.[key];
@@ -125,7 +151,10 @@ async function liveRefusal(
   }
   const kind = classifyLiveRefusal(base.status, base.code, responseOrigin(res), segmentFetch);
   const endedAt = typeof body?.endedAt === 'string' ? body.endedAt : null;
-  console.warn(`[LIVE] ${what}: ${base.status} ${base.code ?? '-'} -> ${kind}`);
+  const endReason = liveEndReasonOf(body?.endReason);
+  console.warn(
+    `[LIVE] ${what}: ${base.status} ${base.code ?? '-'} -> ${kind}${endReason ? ` (${endReason})` : ''}`
+  );
   return new LiveRefusalError(
     base.status,
     base.code,
@@ -133,7 +162,8 @@ async function liveRefusal(
     kind,
     numberField(body, 'viewerCap'),
     numberField(body, 'nextIndex'),
-    endedAt
+    endedAt,
+    endReason
   );
 }
 
@@ -258,6 +288,28 @@ export async function endLive(liveId: string): Promise<LiveEndResult> {
   });
   console.log(`[LIVE] ${liveId} ended (${ended.endReason})`);
   return ended;
+}
+
+/**
+ * `POST /api/lives/:id/cut` - a content moderator ends a live and records why (WP-L8). Safe to
+ * repeat: the second answer is the first cut with `newlyCut: false`. Refusals: `LIVE_CUT_FORBIDDEN`
+ * (403, the caller is not a content moderator), `LIVE_CUT_REASON_INVALID` / `LIVE_CUT_DETAILS_INVALID`
+ * (400), `LIVE_NOT_FOUND` (`not-found`) - all but the last are `refused`; read `code`.
+ */
+export async function cutLive(
+  liveId: string,
+  reason: LiveCutReason,
+  details?: string
+): Promise<LiveCutResult> {
+  console.debug(`[LIVE] cut ${liveId} (${reason})`);
+  const body: { reason: LiveCutReason; details?: string } = { reason };
+  if (details) body.details = details;
+  const cut = await liveJson<LiveCutResult>(`${livePath(liveId)}/cut`, 'Live cut', {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+  console.log(`[LIVE] ${liveId} cut (${cut.newlyCut ? 'new' : 'repeat'}, ${cut.priorCuts} prior)`);
+  return cut;
 }
 
 /**

@@ -277,3 +277,37 @@ describe('NotificationRow with every known type', () => {
     }
   });
 });
+
+describe('NotificationRow for a live a moderator cut', () => {
+  const base: PostNotification = {
+    id: 'n9',
+    type: 'live_cut',
+    postId: 'live-1',
+    // The server writes no actor for it.
+    actorId: '',
+    actorName: '',
+    text: 'harassment',
+    read: false,
+    createdAt: new Date().toISOString(),
+  };
+
+  it('says it in the readers locale with the reason label, and draws no avatar of nobody', () => {
+    const target = renderRow(base);
+    expect(target.textContent).toContain(m.notif_live_cut_text());
+    expect(target.textContent).toContain(m.moderation_reason_harassment());
+    expect(target.textContent).not.toContain(m.notif_unknown_type_text());
+    expect(target.querySelector('[data-notif-live-cut-avatar]')).not.toBeNull();
+    expect(target.querySelector('[aria-label^="Avatar de"]')).toBeNull();
+  });
+
+  it('is not activatable: its live is deleted, there is nowhere to go', () => {
+    const target = renderRow(base);
+    expect(target.querySelector('button')!.disabled).toBe(true);
+  });
+
+  it('a reason code this build does not know leaves the sentence alone', () => {
+    const target = renderRow({ ...base, text: 'something_new' });
+    expect(target.textContent).toContain(m.notif_live_cut_text());
+    expect(target.textContent).not.toContain('something_new');
+  });
+});

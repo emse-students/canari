@@ -51,11 +51,18 @@ describe('notificationHref', () => {
 
   it('gives every known type a destination, bar the two resolved by slug', () => {
     // Compared with a hand-written count so a type removed from the set cannot pass silently.
-    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(21);
+    expect(KNOWN_NOTIFICATION_TYPES.size).toBe(22);
     for (const type of KNOWN_NOTIFICATION_TYPES) {
-      const slugged = type === 'repost_proposed' || type === 'coorganise_proposed';
-      expect(notificationHref({ type, postId: 'x1' }) === null, type).toBe(slugged);
+      // `live_cut` is the one known type that goes nowhere: its live is deleted when it ends.
+      const noHref =
+        type === 'repost_proposed' || type === 'coorganise_proposed' || type === 'live_cut';
+      expect(notificationHref({ type, postId: 'x1' }) === null, type).toBe(noHref);
     }
+  });
+
+  it('knows live_cut and gives it no link, so the row is told and inert rather than a dead /posts/<id>', () => {
+    expect(isKnownNotificationType('live_cut')).toBe(true);
+    expect(notificationHref({ type: 'live_cut', postId: 'live-1' })).toBeNull();
   });
 
   it('gives a type it has never heard of NO link, so the row can say so instead of a dead /posts/<id>', () => {

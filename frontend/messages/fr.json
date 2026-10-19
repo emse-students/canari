@@ -4068,11 +4068,49 @@
   "live_ending": "Fin du live…",
   "live_ended_title": "Live terminé",
   "live_ended_broadcaster": "Vous avez terminé le live. Rien n'en est gardé.",
-  "live_ended_server": "Le live a été arrêté : sa durée maximale est atteinte, ou la modération l'a coupé.",
+  "live_ended_server": "Le live a été arrêté : sa durée maximale est atteinte.",
   "live_ended_server_away": "Le live s'est arrêté pendant que la caméra était en pause.",
   "live_ended_failed": "Le live s'est arrêté : le serveur a refusé la suite de la diffusion.",
   "live_ended_connection_lost": "Le live s'est arrêté : la connexion a été perdue trop longtemps pour que la diffusion reprenne.",
   "live_ended_upload_too_slow": "Le live s'est arrêté : la connexion envoie moins vite que la caméra n'enregistre, et les spectateurs avaient trop de retard.",
   "live_ending_leave": "Quitter sans attendre",
-  "live_ending_waiting": "Envoi des dernières secondes… Vous pouvez quitter : le live s'arrêtera de lui-même."
+  "live_ending_waiting": "Envoi des dernières secondes… Vous pouvez quitter : le live s'arrêtera de lui-même.",
+  "live_viewer_cut_title": "Ce live a été interrompu par la modération",
+  "live_broadcast_cut_title": "Votre live a été interrompu par la modération",
+  "notif_live_cut_text": "Votre live a été interrompu par la modération",
+  "moderation_type_live": "Live",
+  "moderation_live_state_open": "En cours",
+  "moderation_live_state_ended": "Terminé",
+  "moderation_live_state_cut": "Coupé",
+  "moderation_live_state_gone": "Terminé et supprimé",
+  "moderation_live_broadcaster_label": "Diffuseur : {name}",
+  "moderation_live_started_label": "Démarré le {date}",
+  "moderation_live_ended_label": "Terminé le {date}",
+  "moderation_live_cut_reason_label": "Motif de la coupure : {reason}",
+  "moderation_live_gone_hint": "Il ne reste rien à voir ni à couper : seul le diffuseur peut encore être restreint.",
+  "moderation_live_cut_button": "Couper le live",
+  "moderation_live_cut_title": "Couper ce live ?",
+  "moderation_live_cut_reason_prompt": "Motif de la coupure",
+  "moderation_live_cut_details_label": "Précisions (facultatif)",
+  "moderation_live_cut_continue_button": "Continuer",
+  "moderation_live_cut_back_button": "Retour",
+  "moderation_live_cut_confirm_body": "Le live de {name} sera interrompu pour tous ses spectateurs, et {name} en sera informé.",
+  "moderation_live_cut_confirm_button": "Couper le live",
+  "moderation_live_cut_in_progress": "Coupure en cours…",
+  "moderation_live_cut_done": "Le live a été coupé.",
+  "moderation_live_cut_already": "Ce live avait déjà été coupé.",
+  "moderation_live_cut_forbidden": "Vous n'avez pas le droit de couper un live.",
+  "moderation_live_cut_not_found": "Ce live n'existe plus : il n'y a plus rien à couper.",
+  "moderation_live_cut_invalid": "Le serveur a refusé le motif ou les précisions.",
+  "moderation_live_cut_error": "Impossible de couper le live. Réessayez.",
+  "moderation_live_prior_cuts": [
+    {
+      "declarations": ["input count", "local countPlural = count: plural"],
+      "selectors": ["countPlural"],
+      "match": {
+        "countPlural=one": "{count} coupure précédente",
+        "countPlural=other": "{count} coupures précédentes"
+      }
+    }
+  ]
 }

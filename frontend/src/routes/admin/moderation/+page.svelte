@@ -18,6 +18,8 @@
   } from '@lucide/svelte';
   import ModerationPostPreviewModal from '$lib/components/moderation/ModerationPostPreviewModal.svelte';
   import ModerationMuteDialog from '$lib/components/moderation/ModerationMuteDialog.svelte';
+  import ModerationLiveBlock from '$lib/components/moderation/ModerationLiveBlock.svelte';
+  import type { LiveCutResult } from '$lib/live/types';
   import {
     listReports,
     reviewReport,
@@ -27,6 +29,7 @@
     deleteReportedComment,
     type ContentReport,
     type MutedUser,
+    type ReportedLiveState,
   } from '$lib/moderation/api';
   import {
     listHiddenPosts,
@@ -42,6 +45,7 @@
   import { parseTab, tabUrl } from '$lib/navigation/tabQuery';
   import { internalPath } from '$lib/utils/internalPath';
   import { showConfirm } from '$lib/stores/confirm.svelte';
+  import { showToast } from '$lib/stores/toast.svelte';
   import SegmentedControl from '$lib/components/ui/SegmentedControl.svelte';
   import Avatar from '$lib/components/shared/Avatar.svelte';
   import { getUserDisplayNameSync, resolveUserDisplayName } from '$lib/utils/users/displayName';
@@ -347,7 +351,25 @@
     post: m.moderation_post(),
     comment: m.moderation_comment(),
     user: m.moderation_user(),
+    live: m.moderation_type_live(),
   });
+
+  const liveStateLabel: Record<ReportedLiveState, string> = $derived({
+    open: m.moderation_live_state_open(),
+    ended: m.moderation_live_state_ended(),
+    cut: m.moderation_live_state_cut(),
+    gone: m.moderation_live_state_gone(),
+  });
+
+  /** A live was cut from a report row: say what the server did, then read the queue again. */
+  async function handleLiveCut(result: LiveCutResult) {
+    Log.d(
+      'admin.moderation.handleLiveCut',
+      `${result.liveId} ${result.newlyCut ? 'cut' : 'already cut'} (${result.priorCuts} prior)`
+    );
+    showToast(result.newlyCut ? m.moderation_live_cut_done() : m.moderation_live_cut_already());
+    await loadReports();
+  }
 
   const pendingReports = $derived(reports.filter((r) => r.status === 'pending'));
   const resolvedReports = $derived(reports.filter((r) => r.status !== 'pending'));
@@ -483,8 +505,19 @@
               </p>
             {/if}
 
+            <!-- The reported live: its state, its broadcaster's record, and the cut -->
+            {#if report.contentType === 'live' && report.live}
+              <ModerationLiveBlock
+                liveId={report.contentId}
+                live={report.live}
+                {formatDate}
+                reasonLabel={(code) => reasonLabel[code] ?? code}
+                onCut={handleLiveCut}
+              />
+            {/if}
+
             <!-- Content preview -->
-            {#if report.contentPreview}
+            {#if report.contentPreview && report.contentType !== 'live'}
               <div class="mb-3 rounded-lg bg-black/5 px-3 py-2">
                 {#if report.contentType === 'post'}
                   <button
@@ -503,8 +536,8 @@
               </div>
             {/if}
 
-            <!-- ID + navigation -->
-            <div class="mb-3 flex items-center gap-2">
+            <!-- ID + navigation (a live carries its own id link in its block) -->
+            <div class="mb-3 flex items-center gap-2" class:hidden={report.contentType === 'live'}>
               <button
                 onclick={() => void copyId(report.contentId)}
                 class="text-text-muted/50 hover:text-text-muted text-2xs flex items-center gap-1 font-mono transition-colors"
@@ -663,6 +696,11 @@
             <span class="text-text-muted text-xs">
               {contentTypeLabel[report.contentType]} · {reasonLabel[report.reason] ?? report.reason}
             </span>
+            {#if report.contentType === 'live' && report.live}
+              <span class="text-text-muted text-2xs">
+                {liveStateLabel[report.live.state]}
+              </span>
+            {/if}
             {#if report.reportedUserId}
               <span class="text-text-muted hidden text-xs sm:inline">
                 - {names[report.reportedUserId] ?? report.reportedUserId.slice(0, 8) + '…'}

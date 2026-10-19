@@ -32,9 +32,10 @@ half, the shipped half is a pointer, never a retelling.
 A RELEASE BLOCKER (D3): no stable carries lives before it. Built on the server, draft PR: a live is
 reported through `content_reports`, staff cut it (`POST /api/lives/:id/cut`, 410 `endReason: 'cut'`),
 the first-live rules acceptance is recorded and required ([lives](services/lives.md#moderation-wp-l8-server-half)).
-**Owed, code:** the client half - the viewer's report control and cut screen, the broadcaster's cut
-screen and `acceptedRulesVersion`, the bell's `live_cut` row, the admin cut button (the strings are
-listed there); the chat-line hiding inside WP-L6, by the contract written there; a push for the cut
+**Built 2026-10-19, dev builds, draft PR:** the viewer's and the broadcaster's cut screens, the
+`live_cut` bell row and the admin queue's live row with its cut button
+([live](frontend/modules/live.md#the-moderation-client-wp-l8s-client-half-2026-10-19)).
+**Owed, code:** the viewer's report control; the chat-line hiding inside WP-L6, by the contract written there; a push for the cut
 once `notif_social_live_cut_*` exist in both native apps. **Owed, the user:** (1) the STRIKE POLICY -
 what N cuts trigger (a mute, a broadcasting ban, nothing), today only recorded and counted;
 (2) how long a cut is kept (365 days, a planning figure); (3) whether a live past N pending reports is

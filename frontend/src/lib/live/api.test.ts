@@ -19,12 +19,14 @@ vi.mock('$lib/utils/apiUrl', () => ({
 
 import {
   classifyLiveRefusal,
+  cutLive,
   endLive,
   fetchLive,
   fetchLiveLimits,
   fetchLiveRules,
   fetchLiveManifest,
   fetchLiveSegment,
+  isLiveCut,
   isLiveRefusal,
   leaveLiveSeat,
   listOpenLives,
@@ -151,6 +153,39 @@ describe('the routes', () => {
     );
   });
 
+  it('a cut is a POST with the reason, and the details only when given', async () => {
+    const answer = {
+      liveId: LIVE,
+      broadcasterId: 'u9',
+      reason: 'spam',
+      cutAt: '2026-10-19T10:00:00.000Z',
+      endReason: 'cut',
+      newlyCut: true,
+      priorCuts: 2,
+    };
+    apiFetch.mockImplementation(async () => json(200, answer));
+    expect(await cutLive(LIVE, 'spam')).toEqual(answer);
+    expect(apiFetch).toHaveBeenLastCalledWith(`https://social.test/api/lives/${LIVE}/cut`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: 'spam' }),
+    });
+    await cutLive(LIVE, 'other', 'why');
+    expect(apiFetch).toHaveBeenLastCalledWith(`https://social.test/api/lives/${LIVE}/cut`, {
+      method: 'POST',
+      body: JSON.stringify({ reason: 'other', details: 'why' }),
+    });
+  });
+
+  it('a cut refusal keeps its code: forbidden and invalid are refused, a missing live not-found', async () => {
+    apiFetch.mockResolvedValueOnce(json(403, { code: 'LIVE_CUT_FORBIDDEN' }));
+    const forbidden = await refusal(cutLive(LIVE, 'spam'));
+    expect([forbidden.kind, forbidden.code]).toEqual(['refused', 'LIVE_CUT_FORBIDDEN']);
+    apiFetch.mockResolvedValueOnce(json(400, { code: 'LIVE_CUT_REASON_INVALID' }));
+    expect((await refusal(cutLive(LIVE, 'spam'))).code).toBe('LIVE_CUT_REASON_INVALID');
+    apiFetch.mockResolvedValueOnce(json(404, { code: 'LIVE_NOT_FOUND' }));
+    expect((await refusal(cutLive(LIVE, 'spam'))).kind).toBe('not-found');
+  });
+
   it('a segment is a raw octet-stream PUT at its index', async () => {
     apiFetch.mockResolvedValue(json(200, { index: 3, name: 'n', nextIndex: 4 }));
     const sealed = new Uint8Array([1, 2, 3]);
@@ -229,6 +264,29 @@ describe('refusals, typed at the throw', () => {
     const e = await refusal(fetchLive(LIVE));
     expect(e.kind).toBe(kind);
     if (kind === 'ended') expect(e.endedAt).toBe('2026-10-19T10:00:00.000Z');
+  });
+
+  it('a 410 carries its endReason, and only `cut` is a moderation cut', async () => {
+    apiFetch.mockResolvedValueOnce(
+      json(410, { code: 'LIVE_ENDED', endedAt: '2026-10-19T10:00:00.000Z', endReason: 'cut' })
+    );
+    const cut = await refusal(fetchLive(LIVE));
+    expect(cut.kind).toBe('ended');
+    expect(cut.endReason).toBe('cut');
+    expect(isLiveCut(cut)).toBe(true);
+
+    apiFetch.mockResolvedValueOnce(json(410, { code: 'LIVE_ENDED', endReason: 'max_duration' }));
+    const hour = await refusal(fetchLive(LIVE));
+    expect(hour.endReason).toBe('max_duration');
+    expect(isLiveCut(hour)).toBe(false);
+  });
+
+  it('an endReason this build does not know, or none, is null - never a guess', async () => {
+    apiFetch.mockResolvedValueOnce(json(410, { code: 'LIVE_ENDED', endReason: 'something_new' }));
+    expect((await refusal(fetchLive(LIVE))).endReason).toBeNull();
+    apiFetch.mockResolvedValueOnce(json(410, { code: 'LIVE_ENDED' }));
+    expect((await refusal(fetchLive(LIVE))).endReason).toBeNull();
+    expect(isLiveCut(new Error('cut'))).toBe(false);
   });
 
   it.each([
