@@ -354,7 +354,14 @@ a video of the same destination may part ways.
   "Publier" published the take a SECOND time. Now that Back is refused and the entry given back,
   the back arrow is disabled, and "Publier" stays disabled until the publish ends; leaving the
   screen (`navigation`) still closes it and takes the take along. `bindHistoryOverlay` now tells its
-  close WHY it runs, which is what lets the step tell the two apart.
+  close WHY it runs, which is what lets the step tell the two apart. **"Past stopping" is per
+  media (re-review):** a camera PHOTO has no abort at any stage (`publishCameraPhoto` takes no
+  signal), so its Back is refused from the press of "Publier" on - closing in its first second
+  still gave a second post; a VIDEO stays stoppable until its upload, since its re-encode signal is
+  armed at the press and an abort during the mute check or the token makes the re-encode refuse
+  before any post exists. Pinned by `ReelPublishSheet.stopping.svelte.test.ts`.
+- **"Garder comme post" hands the take back FIRST**: the step's caption and identity reach the
+  composer only once it has received the video, never with a take lost to a missing `oncapture`.
 - **An ANONYMOUS post or reel lands in `all`**, never `associations` (`isAssociationIdentity`,
   `posts/postIdentity.ts`; `!!identity` counted anonymity as an association), for the composer's
   ordinary publish too.

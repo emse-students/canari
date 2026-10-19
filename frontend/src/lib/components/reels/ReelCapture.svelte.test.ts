@@ -793,6 +793,38 @@ describe('one camera, one behaviour (user, 2026-10-19): a video filmed from the 
     expect(onclose).toHaveBeenCalledTimes(1);
   });
 
+  it('"Garder comme post" applies the step\'s caption and identity only to a take the composer received', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const onkept = vi.fn();
+    const received: string[] = [];
+    const oncapture = vi.fn(() => received.push('take'));
+    onkept.mockImplementation(() => received.push('caption'));
+    const { target, hold } = await render({
+      destination: 'post',
+      oncapture,
+      onkept,
+      onclose: vi.fn(),
+      publishDeps: publishDeps(),
+    });
+    await hold();
+    target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
+    await settle();
+    target.querySelector<HTMLButtonElement>('[data-reel-keep-as-post]')!.click();
+    await settle();
+    expect(received).toEqual(['take', 'caption']);
+    unmount(mounted.pop()!);
+
+    // No `oncapture`: the take is lost (and said so), and the composer's text is NOT touched.
+    const lost = vi.fn();
+    const second = await render({ destination: 'post', onkept: lost, publishDeps: publishDeps() });
+    await second.hold();
+    second.target.querySelector<HTMLButtonElement>('[data-reel-next]')!.click();
+    await settle();
+    second.target.querySelector<HTMLButtonElement>('[data-reel-keep-as-post]')!.click();
+    await settle();
+    expect(lost).not.toHaveBeenCalled();
+  });
+
   it('a PHOTO from the new-post composer is still handed back as a file', async () => {
     const oncapture = vi.fn();
     const { target, tap } = await render({ destination: 'post', oncapture, onclose: vi.fn() });

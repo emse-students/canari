@@ -84,8 +84,17 @@
   let heading = $state<HTMLElement | null>(null);
   const preparation = new VideoPreparationState();
 
-  /** The upload has begun: the reel is being created and nothing can take it back. */
-  const uploading = $derived(publishing && (stage === 'mediaUpload' || stage === 'createPost'));
+  /**
+   * The publish can no longer be stopped, so nothing may close the step under it. A VIDEO is
+   * stoppable until its upload: the re-encode signal is armed when "Publier" is pressed, and an
+   * abort during the mute check or the token makes the re-encode refuse at its first line, so no
+   * post is created. A PHOTO has no signal at any stage (`publishCameraPhoto`), so from the press
+   * on it is past stopping (re-review of #2124: a Back in its first second gave a second post).
+   */
+  const uploading = $derived(
+    publishing &&
+      (clip.blob.type.startsWith('image/') || stage === 'mediaUpload' || stage === 'createPost')
+  );
 
   const overlay = bindHistoryOverlay(
     () => true,
@@ -98,7 +107,9 @@
        * it from under a publish except leaving the screen, which takes the take with it.
        */
       if (uploading && reason === 'back') {
-        console.debug(`[reel-publish] Back refused: the publish is past its upload (${stage})`);
+        console.debug(
+          `[reel-publish] Back refused: the publish can no longer be stopped (${stage})`
+        );
         overlay.clearRef();
         overlay.syncOpen();
         return;

@@ -256,9 +256,10 @@
 
   /**
    * A composer destination: the take leaves as a file for the composer's attachment path, and the
-   * camera closes. `blob` is the edited media when the editor changed it.
+   * camera closes. `blob` is the edited media when the editor changed it. Returns whether the
+   * composer received it (false: no `oncapture`, the take is lost and said so).
    */
-  function handBack(blob: Blob, poster: Blob | null | undefined) {
+  function handBack(blob: Blob, poster: Blob | null | undefined): boolean {
     const file = captureFileFrom(blob);
     if (poster && file.type.startsWith('video/')) attachCapturePoster(file, poster);
     console.debug(
@@ -267,10 +268,11 @@
     if (!oncapture) {
       console.error('[reel-capture] a composer destination has no oncapture: the take is lost');
       showToast(m.reels_capture_record_error(), 'error');
-      return;
+      return false;
     }
     oncapture(file);
     leaveWithTake();
+    return true;
   }
 
   /**
@@ -644,8 +646,9 @@
               caption: composerCaption,
               identity: composerIdentity,
               onkeep: (caption, identity) => {
-                onkept?.(caption, identity);
-                handBack(clip.blob, clip.poster);
+                // The take first: the step's caption and identity follow only a take the
+                // composer actually received, never one lost to a missing `oncapture`.
+                if (handBack(clip.blob, clip.poster)) onkept?.(caption, identity);
               },
               onpublished: publishedFromComposer,
             }
