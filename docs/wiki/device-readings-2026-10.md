@@ -286,3 +286,27 @@ blocked or waits for the next pre-release are in one table:
 #1605 on the iPhone, the glass chrome's alignment, picker and names, #1370 on the front lens, the
 emoji pictures in the composer, the profile breadcrumb, the associations scroll. `FAIL`: check W, in
 a new shape. Bench trap: TestFlight's automatic updates had put the PRODUCTION stable on the bench.
+
+## 2026-10-19 - `v1.3.1-alpha.1` on the bench iPhone 12; the Mi 9T could not be read
+
+Pre-release run 39242441752 (commit `1d0de7574`). **iPhone 12** (iOS 27.0.1): TestFlight had already
+fetched build `1.3.1 (100300101)` and showed "Mettre a jour"; one tap installed it, and Settings >
+"A propos" reads "Version de Canari 1.3.1-alpha.1". It was read signed in on `dev.canari-emse.fr` (the
+service account), through WDA. **Mi 9T**: the release APK of the pre-release was installed over the
+`1.3.0` build with `adb install -r` (`versionCode` 100300101, `versionName` 1.3.1, data kept), but the
+screen is locked behind a code the agent does not hold, so **no Android reading was taken**.
+
+| Reading | iPhone 12 | Mi 9T |
+| --- | --- | --- |
+| A. starts, signed in on dev, version string | **`PASS`**: PIN screen, then the feed under the "Environnement de test" banner; "A propos" says `1.3.1-alpha.1` | **`NOT-READ`**: locked screen |
+| B1. no abort at launch with accessibility on | **`PASS`**: the app launched three times and stayed in front while WDA (an accessibility client) read its tree each time; `crash ls` lists no Canari report (only system `.ips` files) | n/a (iOS fix) |
+| B2. bookings space editor | **`PASS`**: Reservations > a space > "Gerer l'espace" opens "Modifier l'espace" with the fields filled; the description was edited, "Enregistrer les reglages" answered "Reglages enregistres." | **`NOT-READ`** |
+| C. 1:1 audio call (CALL-L1) | **`NOT-READ`**: needs both phones | **`NOT-READ`** |
+| D. localized native push (DM, mention, community post), #2047, App Group erasure | **`NOT-READ`**: dev cannot send a push (Firebase service account absent on dev, [device-verification](device-verification.md)); no bench account deletion was offered | **`NOT-READ`** |
+| E. booking flow | **`PASS`** for book and cancel: slot 16:00 booked ("C'est reserve."), listed under "Mes reservations a venir" as "Titulaire", cancelled with a confirm ("Reservation annulee.", the past list went 1 -> 2). There is no approve/refuse step and **no notification by design** (D13; the page says so) | **`NOT-READ`** |
+| F. CanaReels | **`PASS`**: the viewer opens a reel with the Pause control, a 0:03 clip, sound and gallery-save controls; the composer's "Ouvrir la camera" opens the camera with the lens flip and shutter | **`NOT-READ`** |
+| App logs | **`NOT-READ`**: the TestFlight build is not inspectable | **`NOT-READ`** |
+
+Rig lessons: `ios.mjs url <https url>` opens Mobile Safari, not the app (a web session with its own PIN
+sheet), so it is not a reading of the app; in-app navigation goes through the dashboard tab. TestFlight
+may sit on "Mettre a jour" without downloading until it is tapped.
