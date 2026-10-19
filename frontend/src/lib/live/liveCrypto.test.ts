@@ -68,6 +68,24 @@ describe('sealLiveSegment / openLiveSegment', () => {
     expect(Buffer.from(opened).equals(Buffer.from(big))).toBe(true);
   });
 
+  it('seals and opens the bytes as they were AT THE CALL, whatever the caller does meanwhile', async () => {
+    const buf = PLAIN.slice();
+    const sealing = sealLiveSegment(KEY, LIVE, 3, buf);
+    buf.fill(0); // the caller reuses its buffer before the seal resolves
+    const sealed = await sealing;
+    expect(await openLiveSegment(KEY, LIVE, 3, sealed)).toEqual(PLAIN);
+
+    const view = sealed.slice();
+    const opening = openLiveSegment(KEY, LIVE, 3, view);
+    view.fill(0);
+    expect(await opening).toEqual(PLAIN);
+
+    const ab = sealed.slice().buffer;
+    const openingAb = openLiveSegment(KEY, LIVE, 3, ab);
+    new Uint8Array(ab).fill(0);
+    expect(await openingAb).toEqual(PLAIN);
+  });
+
   it('draws a fresh IV per seal: the same bytes sealed twice differ', async () => {
     const a = await sealLiveSegment(KEY, LIVE, 1, PLAIN);
     const b = await sealLiveSegment(KEY, LIVE, 1, PLAIN);

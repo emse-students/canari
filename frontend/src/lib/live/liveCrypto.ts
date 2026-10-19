@@ -90,7 +90,10 @@ export async function sealLiveSegment(
   index: number,
   plain: Uint8Array
 ): Promise<Uint8Array<ArrayBuffer>> {
-  Log.d(TAG, { op: 'seal', index, plainBytes: plain.byteLength });
+  // Copied BEFORE the first await: a caller reusing its buffer while the seal runs must not change
+  // what is sealed (the bytes read at the call are the bytes sealed).
+  const own = plain.slice();
+  Log.d(TAG, { op: 'seal', index, plainBytes: own.byteLength });
   checkArgs(keyHex, liveId, index);
   const key = await importLiveKey(keyHex, 'encrypt');
   const iv = crypto.getRandomValues(new Uint8Array(IV_BYTES));
@@ -98,7 +101,7 @@ export async function sealLiveSegment(
     await crypto.subtle.encrypt(
       { name: 'AES-GCM', iv, additionalData: buildAad(liveId, index), tagLength: 128 },
       key,
-      plain.slice()
+      own
     )
   );
   const sealed = new Uint8Array(IV_BYTES + body.byteLength);
@@ -118,7 +121,9 @@ export async function openLiveSegment(
   index: number,
   sealed: Uint8Array | ArrayBuffer
 ): Promise<Uint8Array<ArrayBuffer>> {
-  const bytes = sealed instanceof Uint8Array ? sealed : new Uint8Array(sealed);
+  // Copied BEFORE the first await, for the same reason as the seal: the bytes read at the call are
+  // the bytes opened, whatever the caller does with its buffer meanwhile.
+  const bytes = sealed instanceof Uint8Array ? sealed.slice() : new Uint8Array(sealed.slice(0));
   Log.d(TAG, { op: 'open', index, sealedBytes: bytes.byteLength });
   checkArgs(keyHex, liveId, index);
   if (bytes.byteLength < IV_BYTES + GCM_TAG_BYTES) {
@@ -130,12 +135,12 @@ export async function openLiveSegment(
     const plain = await crypto.subtle.decrypt(
       {
         name: 'AES-GCM',
-        iv: bytes.slice(0, IV_BYTES),
+        iv: bytes.subarray(0, IV_BYTES),
         additionalData: buildAad(liveId, index),
         tagLength: 128,
       },
       key,
-      bytes.slice(IV_BYTES)
+      bytes.subarray(IV_BYTES)
     );
     return new Uint8Array(plain);
   } catch (e) {

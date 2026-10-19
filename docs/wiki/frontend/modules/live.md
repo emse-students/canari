@@ -219,13 +219,22 @@ changed byte - GCM cannot tell those apart, and no caller should try). An argume
 pass (a key that is not 64 hex, a live id that is not a uuid, an index outside u32) is a `RangeError`.
 Nothing logs key material, plaintext or ciphertext: an index and lengths only.
 
-**A retried upload re-sends the SAME sealed bytes, never a re-seal** - the server's repeat of a
-`PUT` is idempotent only for identical bytes.
+Both functions copy their input SYNCHRONOUSLY, before their first `await`: the bytes read at the
+call are the bytes sealed or opened, even if the caller reuses its buffer while the promise runs.
 
-**Owed to the review.** That the server never sees plaintext: social-service stores the key in the
-row, the media service and nginx hold only sealed objects - verify no path decrypts or logs either.
-And that a broadcaster reconnecting inside the 60 s window cannot re-seal an index it already sent
-(the uploader must keep and resend the first sealed bytes).
+**A retry re-sends the SAME sealed bytes, never a re-seal.** `LiveSegmentUploader` keeps the sealed
+object it was handed and sends it again on every retry of that index. The server's repeat of a `PUT`
+for an index it already stored is idempotent only for identical bytes (same sha256); different bytes
+for that index are `409 LIVE_SEGMENT_CONFLICT`, a verdict the uploader does not retry, so a re-seal
+FAILS CLOSED - the queue stops and `onStopped` is told - rather than replacing a segment a viewer may
+already hold. The index itself cannot drift from the one sealed: the caller seals for
+`uploader.nextIndex` and `enqueue(index, sealed)` refuses any other.
+
+**What the seal protects against, and what it does not.** social-service stores the live key in the
+row and serves it as `liveKey` to every account allowed to watch, exactly like a post CEK (Q4 below,
+decision C9). So the seal protects segments against the media store, the nginx cache and anyone who
+holds a segment URL - NOT against social-service, which holds the key next to the manifest. It is
+not end-to-end encryption against the server, and no page may call it that.
 
 ## Open questions for the user, each with a recommendation
 
