@@ -110,9 +110,6 @@
     footer,
   }: Props = $props();
 
-  /** Literals, because Tailwind builds only the classes it can read in source. */
-  const layerClass = $derived(layer === 'critical' ? 'z-(--z-critical)' : 'z-(--z-modal)');
-
   const backdropAlignClass = $derived(
     fullViewport || topAnchored || phoneFullScreen
       ? 'items-stretch sm:items-center'
@@ -248,7 +245,9 @@
       role="presentation"
       use:coversScreen
       data-keyboard-aware-overlay
-      class="fixed {layerClass} flex justify-center bg-black/40 {backdropAlignClass} {phoneFullScreen
+      class="fixed {layer === 'critical'
+        ? 'z-(--z-critical)'
+        : 'z-(--z-modal)'} flex justify-center bg-black/40 {backdropAlignClass} {phoneFullScreen
         ? 'modal-phone-full'
         : ''}"
       onclick={handleBackdropClick}
